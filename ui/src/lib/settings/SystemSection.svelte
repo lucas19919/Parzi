@@ -2,13 +2,15 @@
   import { onMount } from "svelte";
   import { api, type Check, type PluginView } from "../api";
   import Icon from "../Icon.svelte";
+  import Switch from "./Switch.svelte";
   import "./shared.css";
 
   export let notify: (msg: string) => void = () => {};
 
   const I = {
-    copy: "M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-1M8 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M8 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m0 0h2a2 2 0 0 1 2 2v3m2 4H10m0 0l3-3m-3 3l3 3",
+    copy: "M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-1M8 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M8 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m0 0h2a2 2 0 0 1 2 2v3m2 4H10m0 0l3-3m-3 3l3 3",
     trash: "M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
+    issue: "M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z",
   };
 
   let quick: Check[] | null = null;
@@ -111,6 +113,46 @@
       notify(`Purge failed: ${e}`);
     }
   }
+
+  let issueTitle = "";
+  let issueBody = "";
+  let includeDiag = true;
+  let reportErr = "";
+  let reporting = false;
+
+  function diagnosticsBlock(): string {
+    const lines = [...(quick ?? []), ...(mcp ?? [])].map(
+      (c) => `${c.ok ? "PASS" : "FAIL"} [${c.name}] ${c.detail}`,
+    );
+    return lines.join("\n").slice(0, 2800);
+  }
+
+  async function openIssue() {
+    reportErr = "";
+    const title = issueTitle.trim().slice(0, 200);
+    const desc = issueBody.trim().slice(0, 3000);
+    if (!title || !desc) {
+      reportErr = "Give it a title and a short description.";
+      return;
+    }
+    const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+    const platform = nav.userAgentData?.platform ?? navigator.platform ?? "desktop";
+    const body = includeDiag
+      ? `${desc}\n\n---\nParzi ${appVersion || "?"} · ${platform}\nDiagnostics:\n${diagnosticsBlock()}`
+      : desc;
+    const url =
+      "https://github.com/lucas19919/Parzi/issues/new" +
+      `?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+    reporting = true;
+    try {
+      await api.openExternalUrl(url);
+      notify("Opened in your browser — hit Submit to file it");
+    } catch (e) {
+      reportErr = String(e);
+    } finally {
+      reporting = false;
+    }
+  }
 </script>
 
 {#if err}
@@ -122,7 +164,7 @@
     <div class="skel" />
   </div>
 {:else}
-  <div class="pref-section">
+  <div class="pref-section" id="app-updates">
     <div class="section-head-with-action">
       <div>
         <h3 class="section-title">Updates</h3>
@@ -214,6 +256,33 @@
     </div>
   </div>
 
+  <div class="pref-section" id="report-issue">
+    <h3 class="section-title">Report an issue</h3>
+    <p class="section-desc">Opens a prefilled GitHub issue in your browser — diagnostics attached, you hit Submit.</p>
+    <div class="field-card col">
+      <input class="txt" placeholder="Title — e.g. Picker freezes on large catalogs" bind:value={issueTitle} />
+      <textarea
+        class="txt"
+        rows="4"
+        placeholder="What happened, what you expected, steps to reproduce…"
+        bind:value={issueBody}
+      />
+      <div class="report-row">
+        <span class="field-hint">Attach diagnostics</span>
+        <Switch on={includeDiag} title="Include version and health checks" on:toggle={() => (includeDiag = !includeDiag)} />
+      </div>
+      {#if reportErr}
+        <span class="form-err">{reportErr}</span>
+      {/if}
+      <div>
+        <button class="sbtn primary" on:click={openIssue} disabled={reporting || !issueTitle.trim() || !issueBody.trim()}>
+          <Icon d={I.issue} size={12} />
+          <span>{reporting ? "Opening…" : "Open GitHub issue"}</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <div class="pref-section">
     <h3 class="section-title">Keyboard Shortcuts</h3>
     <div class="shortcuts-grid">
@@ -258,4 +327,15 @@
     padding: 2px 6px; border-radius: 4px; color: var(--text);
   }
   .shortcut-action { font-size: 12px; color: var(--text-3); }
+  #report-issue { scroll-margin-top: 8px; }
+  #app-updates { scroll-margin-top: 8px; }
+  .field-card.col { flex-direction: column; align-items: stretch; }
+  .txt {
+    background: var(--input); border: 1px solid var(--line-2); border-radius: var(--radius-2);
+    color: var(--text); font: inherit; font-size: 12.5px; padding: 7px 10px; width: 100%;
+  }
+  textarea.txt { resize: vertical; min-height: 72px; line-height: 1.5; }
+  .txt::placeholder { color: var(--text-4); }
+  .report-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .form-err { font-size: 12px; color: var(--bad); }
 </style>

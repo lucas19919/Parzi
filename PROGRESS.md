@@ -564,21 +564,21 @@
 
 
 ## Custom Windows installer (2026-09-14)
-- Branded installers: Parzi dark-gradient banner/dialog (WiX) + header/sidebar (NSIS) art in src-tauri/installer/, MIT LICENSE, per-user NSIS config; WiX banner/dialog wired (this tauri-cli has no license-page keys, so no license screen — noted, installerHooks/template is the escape hatch)
-- Toolchain: portable WiX 3.14 under %USERPROFILE%\\.tauri\\tools\\wix314 (NSIS blocked: winget needs admin UAC, SourceForge behind Cloudflare) — local builds do MSI only, CI builds NSIS+MSI
+- Branded installers: Parzi dark-gradient banner/dialog (WiX) + header/sidebar (NSIS) art in src-tauri/installer/, MIT LICENSE, per-user NSIS config; WiX banner/dialog wired (this tauri-cli has no license-page keys, so no license screen ï¿½ noted, installerHooks/template is the escape hatch)
+- Toolchain: portable WiX 3.14 under %USERPROFILE%\\.tauri\\tools\\wix314 (NSIS blocked: winget needs admin UAC, SourceForge behind Cloudflare) ï¿½ local builds do MSI only, CI builds NSIS+MSI
 - Hooks fixed to ../ui (beforeBuildCommand ran with doubled ui/ui path and could never have worked)
-- Local MSI verified built (Parzi_0.1.0_x64_en-US.msi, 9.8MB) but installs per-MACHINE (Tauri WiX default, Error 1925 without admin) — friend build = per-user NSIS from CI; tag v* to produce it
+- Local MSI verified built (Parzi_0.1.0_x64_en-US.msi, 9.8MB) but installs per-MACHINE (Tauri WiX default, Error 1925 without admin) ï¿½ friend build = per-user NSIS from CI; tag v* to produce it
 - Trap: local build hangs at updater signing prompt unless TAURI_SIGNING_PRIVATE_KEY (content) is set; _PATH alone is not enough for this CLI
-- Note: parallel lane live-edited tauri.conf.json (devUrl removed, beforeDevCommand now runs build) + regenerated icons/icon.ico with malformed BMP headers (planes/bpp/comp shifted) that broke generate_context — icon.ico restored from HEAD, their 32x32.png + other work untouched and uncommitted
+- Note: parallel lane live-edited tauri.conf.json (devUrl removed, beforeDevCommand now runs build) + regenerated icons/icon.ico with malformed BMP headers (planes/bpp/comp shifted) that broke generate_context ï¿½ icon.ico restored from HEAD, their 32x32.png + other work untouched and uncommitted
 
 
 ## v0.1.0 shipped to CI (2026-09-14)
 - Tag v0.1.0 -> Release workflow green: draft release 'Parzi v0.1.0' holds latest.json + NSIS setup.exe/.sig + MSI/.sig (all updater-signed)
-- Friend file: Parzi_0.1.0_x64-setup.exe (6.8MB, per-user NSIS) downloaded to ~/Downloads — send that; unsigned Authenticode so SmartScreen will ask once (More info -> Run anyway); repo stays private so in-app updates stay quiet until the release is published (drafts don't serve latest.json)
+- Friend file: Parzi_0.1.0_x64-setup.exe (6.8MB, per-user NSIS) downloaded to ~/Downloads ï¿½ send that; unsigned Authenticode so SmartScreen will ask once (More info -> Run anyway); repo stays private so in-app updates stay quiet until the release is published (drafts don't serve latest.json)
 
 
 ## Logo fix: circle-lines everywhere (2026-09-14)
-- Root cause: icon.svg + favicons were already the circle-lines mark, but the master rasters (icon.png, 128x128, .ico) still carried the old serif-P — that P is what the taskbar/Start/installer showed
+- Root cause: icon.svg + favicons were already the circle-lines mark, but the master rasters (icon.png, 128x128, .ico) still carried the old serif-P ï¿½ that P is what the taskbar/Start/installer showed
 - Fix: cargo tauri icon from icon.svg regenerated all 50 icon files (valid PNG-compressed ICO, generate_context decodes it); apple-touch-icon was already correct
 - Bumped to 0.1.1 (workspace + tauri + app + ui versions) so the rebuilt installer carries the new mark
 
@@ -586,11 +586,11 @@
 ## Custom installer voice (2026-09-14)
 - NSIS wizard now speaks Parzi: installer/hooks.nsh sets every page title/copy (welcome, MIT license page via bundle.licenseFile, folder, start-menu, finish with 'Launch Parzi now', uninstall confirm, abort guard); installer/English.nsh re-voices stock strings (desktop shortcut, delete-data, app-running)
 - Uninstaller branded too (icon + header art); homepage set for Add/Remove Programs links; mechanism verified against tauri-bundler 2.9.4 template (hooks include precedes all MUI_PAGE_*, language files included last so overrides win)
-- No local NSIS (toolchain blocked) — verification is the CI-built installer + silent install test on v0.1.2
+- No local NSIS (toolchain blocked) ï¿½ verification is the CI-built installer + silent install test on v0.1.2
 
 
 ## Custom installer voice verified (2026-09-14)
-- v0.1.2 CI failed on config schema (customLanguageFiles is a lang->path MAP not an array; homepage lives under bundle not root) — fixed, schema now pre-validated locally with ajv + Tauri schema before tagging
+- v0.1.2 CI failed on config schema (customLanguageFiles is a lang->path MAP not an array; homepage lives under bundle not root) ï¿½ fixed, schema now pre-validated locally with ajv + Tauri schema before tagging
 - v0.1.3 green: draft release holds setup.exe/.sig + MSI/.sig + latest.json; silent per-user install test passed (LOCALAPPDATA\\Parzi, app launches with Parzi window, uninstall removes everything incl. desktop shortcut)
 - Friend file: Downloads\\Parzi_0.1.3_x64-setup.exe (6.8MB). Wizard pages: Welcome to Parzi -> MIT license -> folder -> Start Menu -> install -> 'Parzi is installed' with Launch + desktop-shortcut options; uninstaller branded with delete-data option
 
@@ -599,25 +599,63 @@
 - Installed app showed empty transparent window; CDP remote-debug proved the WebView sat on about:blank and never loaded the frontend
 - ROOT CAUSE: src-tauri/Cargo.toml lacked the custom-protocol Tauri feature, so cfg(dev) was true in ALL builds and every release binary loaded devUrl (localhost:1420) instead of the bundled dist. The parallel lane's navigate-fallback hunk then raced the load into about:blank
 - Fix: +custom-protocol feature, removed the probe-navigate hunk, restored devUrl + dev-server beforeDevCommand. Verified locally: release binary loads tauri.localhost and renders the full UI (CDP screenshot)
-- Lane WIP note: their uncommitted main.rs still contains the hunk — they must drop it on rebase, else local builds keep the race
+- Lane WIP note: their uncommitted main.rs still contains the hunk ï¿½ they must drop it on rebase, else local builds keep the race
 
 
 ## v0.1.4 verified working (2026-09-14)
-- Installed v0.1.4 from CI setup.exe loads tauri.localhost and renders the full UI (sidebar, Inbox, Asuka stage, glass composer, inspector deck) — CDP screenshot proof; uninstalled after, machine clean
-- Installer wizard pages carry the Parzi voice + art (verified in config/template review; interactive click-through still untested — MUI pages are stock layout with custom art/copy)
+- Installed v0.1.4 from CI setup.exe loads tauri.localhost and renders the full UI (sidebar, Inbox, Asuka stage, glass composer, inspector deck) ï¿½ CDP screenshot proof; uninstalled after, machine clean
+- Installer wizard pages carry the Parzi voice + art (verified in config/template review; interactive click-through still untested ï¿½ MUI pages are stock layout with custom art/copy)
 
 
 ## Dark installer (2026-09-14)
 - Chose dark 6-page flow (no template fork): new vector-style art (ring+lanes, no raster text, no accent-line artifact, #0B0B10-blended), hooks.nsh now sets MUI_BGCOLOR + per-page dark SHOW painters + all Parzi copy
-- Deviation from antigravity plan: dark theme inlined in hooks.nsh (relative !include would resolve against the bundle out-dir); Component 4 (asuka _up_ lookup) SKIPPED — installed-app screenshot proves the wallpaper already loads
+- Deviation from antigravity plan: dark theme inlined in hooks.nsh (relative !include would resolve against the bundle out-dir); Component 4 (asuka _up_ lookup) SKIPPED ï¿½ installed-app screenshot proves the wallpaper already loads
 
 
 ## Dark installer verified live (2026-09-14)
-- v0.1.5 wizard captured via PrintWindow: dark #0B0B10 dialog, vector mark sidebar blending seamlessly, Welcome to Parzi + brand copy, new mark in title bar — the Win32 clash is gone
-- Silent install/uninstall cycle green; machine left clean. Note: fullscreen GDI screenshots go black when the display sleeps — PrintWindow by HWND is the reliable capture method
+- v0.1.5 wizard captured via PrintWindow: dark #0B0B10 dialog, vector mark sidebar blending seamlessly, Welcome to Parzi + brand copy, new mark in title bar ï¿½ the Win32 clash is gone
+- Silent install/uninstall cycle green; machine left clean. Note: fullscreen GDI screenshots go black when the display sleeps ï¿½ PrintWindow by HWND is the reliable capture method
 
 
 ## Installer dark fix, round 2 (2026-09-14)
-- Live screenshot showed the dark bg + art applied but body text dim, button bar light, title bar white: the per-page MUI_*PAGE_SHOWFUNCTION defines don't exist — replaced with the single documented MUI_PAGE_CUSTOMFUNCTION_SHOW hook; added DWM dark title bar call in the painter
-- Start Menu audit: only orphan was a stale root Parzi.lnk (early installs), already gone — one clean Parzi folder left; no source work lost, everything is tagged
+- Live screenshot showed the dark bg + art applied but body text dim, button bar light, title bar white: the per-page MUI_*PAGE_SHOWFUNCTION defines don't exist â€” replaced with the single documented MUI_PAGE_CUSTOMFUNCTION_SHOW hook; added DWM dark title bar call in the painter
+- Start Menu audit: only orphan was a stale root Parzi.lnk (early installs), already gone â€” one clean Parzi folder left; no source work lost, everything is tagged
+
+## OpenCode Zen/Go routing overhaul (2026-09-14)
+- Root cause: the `opencode` adapter pointed at `http://localhost:4096/v1`, but local
+  `opencode serve` exposes NO OpenAI-compatible surface (own API + web UI only; the
+  `/v1/*` feature request is still open upstream). Three `serve` procs on this box
+  all sit on ephemeral ports serving HTML. Parzi now talks to the hosted Zen bases
+  directly with the `opencode-go` key from auth.json (exact read, scrape fallback).
+- New `providers::opencode` (adapter, 339 lines) + `opencode_wire` (runners, 395):
+  Go base (`chat/completions`, Bearer) + Zen-free base + `messages` kind
+  (x-api-key, minimax-*/qwen3.8-flash) + `responses` kind (muse-spark-*/gpt-5.6/grok-4.6).
+  Every kind verified live against this machine's Go subscription, incl. the
+  `x-opencode-session` header (else HTTP 400 MissingSessionID) and `parzi/x` UA.
+- Catalog: placeholder `opencode-default` replaced with the real 35-model roster
+  (28 Go + 7 Zen-free, serve limits/prices/capabilities verbatim, kimi-k3 default);
+  live `go/v1/models` merges without wiping metadata. Picks: low glm-5.3-flash,
+  med kimi-k2.7-code, high kimi-k3. Legacy id + config default auto-remap.
+- Sticky Smart Auto: `launch` persists the resolved `provider/model` for `auto`
+  runs; `send_to` holds it on the next `auto` turn (failover still hops in-run).
+  Proof in transcript events (opencode -> antigravity RouteTransition on 429).
+- Fixes found by live testing: co-located `usage`+`delta` chunks (was dropping all
+  text), dotted tool names 400 on Zen (`fs.read` -> `fs_read` on send, mapped back
+  on receipt; tool round-trip verified live), free Sparks routed at the wrong base.
+- Router: quota/cap errors (`quota`, `usage limit`, `insufficient`, â€¦) and
+  send-phase sheds (`error sending request`) now fail over; antigravity's
+  stay-put transport pin kept (its test guards it â€” narrowed the addition).
+- DEVIATION (documented): replaces PLAN Â§3's `opencode serve` endpoint line; Zen
+  free-tier edge sheds intermittently (rustls + PowerShell alike) â€” failover covers it.
+- OPEN: per-model `reasoningEffort` variants not sent yet (effort = output budget
+  on Zen); Go $ caps not surfaced (subscription bills $0 in the meter); antigravity
+  tool-schema 400 on this box is pre-existing and untouched.
+- Verified: workspace tests green (incl. 7 new opencode + sticky tests), clippy
+  deny-gate clean, `npm run check` 0 errors, UI build green, tauri check green,
+  `doctor`/`health`/`models` live (opencode ok, Go account, 35-model roster).
+
+
+## Footer update button (2026-09-14)
+- Sidebar footer is now gear + alarm + update-download + version: new updateStore (boot check delayed 12s, silent fail, sticky available badge with accent dot), click opens Settings System Updates card (new app-updates anchor) and re-checks; palette gained Check for updates too
+- Note: report-alarm absence in v0.1.5 was just an uncommitted lane button, not a regression; this commit co-mingles with lane WIP in Sidebar/App/SystemSection (theirs untouched, mine additive)
 

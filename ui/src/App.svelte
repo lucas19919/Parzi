@@ -18,31 +18,9 @@
   import SettingsNav from "./lib/SettingsNav.svelte";
   import { ensureModels, modelRows } from "./lib/modelStore";
   import { applyThemeCss } from "./lib/theme";
+  import { checkForUpdates, checkForUpdatesSoon } from "./lib/updateStore";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import Icon from "./lib/Icon.svelte";
-
-  import openaiLogo from "./assets/providers/codex.png";
-  import anthropicLogo from "./assets/providers/anthropic.png";
-  import xaiLogo from "./assets/providers/xai.png";
-  import googleLogo from "./assets/providers/google.svg";
-  import openrouterLogo from "./assets/providers/openrouter.svg";
-  import ollamaLogo from "./assets/providers/ollama.svg";
-  import opencodeLogo from "./assets/providers/opencode.png";
-  import codexLogo from "./assets/providers/codex.png";
-  import antigravityLogo from "./assets/providers/antigravity.png";
-  import t3Logo from "./assets/providers/t3.svg";
-  import metaLogo from "./assets/providers/meta.svg";
-  import deepseekLogo from "./assets/providers/deepseek.svg";
-  import mistralLogo from "./assets/providers/mistral.svg";
-  import geminiLogo from "./assets/providers/gemini.svg";
-
-  const LOGOS: Record<string, string> = {
-    claude: anthropicLogo, openai: openaiLogo, anthropic: anthropicLogo, "claude-code": anthropicLogo,
-    xai: xaiLogo, grok: xaiLogo, "grok-cli": xaiLogo, google: googleLogo, gemini: geminiLogo,
-    openrouter: openrouterLogo, ollama: ollamaLogo, opencode: opencodeLogo, codex: codexLogo,
-    antigravity: antigravityLogo, t3: t3Logo, meta: metaLogo, llama: metaLogo,
-    deepseek: deepseekLogo, mistral: mistralLogo,
-  };
 
   const RM = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const smooth = RM ? { duration: 0 } : { duration: 200, easing: cubicOut };
@@ -80,12 +58,27 @@
   let showSettings = false;
   let settingsSection = "general";
 
-  function openSettings(section?: string) {
+  function openSettings(section?: string, anchor?: string) {
     if (section) {
       settingsSection = section;
     }
     palette = false;
     showSettings = true;
+    // Optional in-tab jump (e.g. straight to the issue reporter): the
+    // section mounts async, so retry until the anchor exists or we give up.
+    if (anchor) {
+      void (async () => {
+        for (let i = 0; i < 10; i++) {
+          await tick();
+          await new Promise((r) => setTimeout(r, 60));
+          const el = document.getElementById(anchor);
+          if (el) {
+            el.scrollIntoView({ block: "start", behavior: RM ? "auto" : "smooth" });
+            break;
+          }
+        }
+      })();
+    }
   }
   let sidebarOpen = true;
   // New-workspace popout (centered over the stage, not crammed in the sidebar).
@@ -729,6 +722,8 @@
     { section: "Actions", label: "New project", sub: "workspace", run: () => { palette = false; openNewWs(); } },
     { section: "Actions", label: "Plan mode", sub: "no edits", run: () => { palette = false; openPlanner(); } },
     { section: "Actions", label: "Settings", sub: "models · connectors · skills", run: () => openSettings() },
+    { section: "Actions", label: "Report issue", sub: "github", run: () => openSettings("system", "report-issue") },
+    { section: "Actions", label: "Check for updates", sub: "stable channel", run: () => { palette = false; openSettings("system", "app-updates"); void checkForUpdates(true); } },
     ...(liveRun
       ? [{ section: "Actions", label: "Kill active run", sub: "stop now", run: () => { palette = false; stopRun(); } }]
       : []),
@@ -854,6 +849,8 @@
 
       // Smart Auto is the default; it routes through whichever
       // subscriptions are signed in. Nothing to pick at boot.
+      // Update badge fills in quietly a few seconds later (never blocks paint).
+      checkForUpdatesSoon();
     } catch (e) {
       toast(`Startup warning: ${e}`, true);
     }
@@ -893,7 +890,6 @@
       {threads}
       {activeThreadId}
       appVersion={appVer}
-      logos={LOGOS}
       on:selectProject={(e) => switchProject(e.detail.name)}
       on:openNewWorkspace={openNewWs}
       on:selectThread={(e) => openThread(e.detail.id)}
@@ -905,6 +901,8 @@
       on:deleteProject={(e) => handleDeleteProject(e.detail.name)}
       on:killRun={(e) => killSession(e.detail.id)}
       on:openSettings={() => openSettings()}
+      on:reportIssue={() => openSettings("system", "report-issue")}
+      on:openUpdates={() => { openSettings("system", "app-updates"); void checkForUpdates(true); }}
       on:openPalette={() => { palette = true; }}
       on:toggleSidebar={() => (sidebarOpen = false)}
     />
@@ -931,7 +929,7 @@
       {#if showSettings}
         <!-- Settings stage: main screen becomes the section (T3-style) -->
         <div class="stage-scroll settings-stage" in:fly={{ y: 12, ...smooth }} out:fly={{ y: 8, ...smoothFast }}>
-          <Settings settingsTab={settingsSection} bareSection={settingsSection} logos={LOGOS} currentProject={curProject} />
+          <Settings settingsTab={settingsSection} bareSection={settingsSection} currentProject={curProject} />
         </div>
       {:else if activeThreadId}
         <!-- Chat Thread View -->
@@ -958,7 +956,6 @@
             {branch}
             tokens={liveTokens}
             {models}
-            logos={LOGOS}
             on:send={send}
             on:stop={stopRun}
             on:modelChange={(e) => (model = e.detail.model)}
@@ -975,7 +972,6 @@
             {branch}
             lanes={currentProjectView?.lanes ?? []}
             {threads}
-            logos={LOGOS}
             on:openThread={(e) => openThread(e.detail.id)}
             on:newThread={newThread}
             on:killRun={(e) => killSession(e.detail.id)}
@@ -999,7 +995,6 @@
             {branch}
             tokens={liveTokens}
             {models}
-            logos={LOGOS}
             on:send={send}
             on:stop={stopRun}
             on:modelChange={(e) => (model = e.detail.model)}
@@ -1025,7 +1020,6 @@
         {activeThreadId}
         {events}
         {approval}
-        logos={LOGOS}
         on:close={() => (rightBarOpen = false)}
         on:tab={(e) => (rightBarTab = e.detail.tab)}
         on:resize={(e) => (rightBarWidth = e.detail.width)}

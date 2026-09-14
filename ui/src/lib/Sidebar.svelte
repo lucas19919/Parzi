@@ -4,6 +4,7 @@
   import { api, type SessionMeta, type ProjectView } from "./api";
   import Icon from "./Icon.svelte";
   import ThreadRow from "./ThreadRow.svelte";
+  import { footerUpdateState, footerUpdateVersion } from "./updateStore";
 
   export let projects: ProjectView[] = [];
   export let currentProject = "default";
@@ -12,8 +13,6 @@
   export let threads: SessionMeta[] = [];
   export let activeThreadId: string | null = null;
   export let appVersion = "";
-  /** Provider logo assets (same map as the model picker). */
-  export let logos: Record<string, string> = {};
 
   const dispatch = createEventDispatcher<{
     selectProject: { name: string };
@@ -27,6 +26,8 @@
     deleteProject: { name: string };
     killRun: { id: string };
     openSettings: void;
+    reportIssue: void;
+    openUpdates: void;
     openPalette: void;
     toggleSidebar: void;
   }>();
@@ -37,6 +38,8 @@
     folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1 2 2H5a2 2 0 0 1-2-2z",
     chevronDown: "M6 9l6 6 6-6",
     gear: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z",
+    issue: "M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z",
+    update: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3",
     edit: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z",
     close: "M18 6L6 18M6 6l12 12",
   };
@@ -302,7 +305,7 @@
     <button class="icon-btn" title="Hide sidebar (Ctrl+B)" on:click={() => dispatch("toggleSidebar")}>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
     </button>
-    <img class="sb-mark" src="/favicon.svg" alt="" width="22" height="22" />
+    <img class="sb-mark" src="/mark.svg" alt="" width="22" height="22" />
     <span class="sb-wordmark">Parzi</span>
   </div>
 
@@ -329,7 +332,7 @@
       {#each pinned as t (t.id)}
         <ThreadRow
           {t} depth={0} active={t.id === activeThreadId}
-          renaming={renamingId === t.id} bind:renameDraft={renameTitle} {logos}
+          renaming={renamingId === t.id} bind:renameDraft={renameTitle}
           branch=""
           showProject={displayName(t.project || "default")}
           on:select={(e) => select(e.detail.id)}
@@ -351,7 +354,7 @@
       {#each g.items as t (t.id)}
         <ThreadRow
           {t} depth={depthOf(t)} active={t.id === activeThreadId}
-          renaming={renamingId === t.id} bind:renameDraft={renameTitle} {logos}
+          renaming={renamingId === t.id} bind:renameDraft={renameTitle}
           branch=""
           showProject={(t.project || "default") === currentProject ? "" : displayName(t.project || "default")}
           on:select={(e) => select(e.detail.id)}
@@ -418,10 +421,21 @@
     {/if}
   </div>
 
-  <button class="settings-row" on:click={() => dispatch("openSettings")}>
-    <Icon d={I.gear} size={13} /><span>Settings</span>
+  <div class="sb-footer">
+    <button class="icon-btn" title="Settings" on:click={() => dispatch("openSettings")}>
+      <Icon d={I.gear} size={14} />
+    </button>
+    <button class="icon-btn" title="Report an issue" on:click={() => dispatch("reportIssue")}>
+      <Icon d={I.issue} size={14} />
+    </button>
+    <button class="icon-btn upd" class:has-update={$footerUpdateState === "available"}
+      title={$footerUpdateState === "available" ? `Parzi v${$footerUpdateVersion} is ready — open Updates` : $footerUpdateState === "checking" ? "Checking for updates…" : "Updates"}
+      on:click={() => dispatch("openUpdates")}>
+      <Icon d={I.update} size={14} />
+      {#if $footerUpdateState === "available"}<span class="upd-dot" />{/if}
+    </button>
     {#if appVersion}<span class="ver">{appVersion}</span>{/if}
-  </button>
+  </div>
 </aside>
 
 {#if ctx}
@@ -520,6 +534,13 @@
   }
   .icon-btn:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
   .icon-btn.sm { min-width: 22px; height: 22px; }
+  .icon-btn.upd { position: relative; }
+  .icon-btn.upd.has-update { color: var(--accent); }
+  .upd-dot {
+    position: absolute; top: 3px; right: 3px; width: 7px; height: 7px;
+    border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 6px var(--accent-glow, var(--accent));
+  }
   .sb-scroll { flex: 1; overflow-y: auto; padding: 2px 10px 8px; display: flex; flex-direction: column; }
   .proj-head {
     display: flex; align-items: center; justify-content: space-between;
@@ -575,13 +596,8 @@
   }
   .mini-btn:hover { background: var(--surface-3); color: var(--text); }
   .empty-state { font-size: 12px; color: var(--text-4); padding: 12px 8px; text-align: center; }
-  .settings-row {
-    display: flex; align-items: center; gap: 8px; margin: 6px 10px 4px; padding: 7px 10px;
-    background: transparent; border: none; border-radius: 7px; color: var(--text-2);
-    font: inherit; font-size: 13px; cursor: pointer; text-align: left;
-  }
-  .settings-row:hover { background: var(--surface-2); color: var(--text); }
-  .settings-row .ver { margin-left: auto; font-size: 10px; color: var(--text-4); font-family: var(--parzi-mono); }
+  .sb-footer { display: flex; align-items: center; gap: 2px; margin: 6px 10px 8px; }
+  .sb-footer .ver { margin-left: auto; font-size: 10px; color: var(--text-4); font-family: var(--parzi-mono); padding-right: 4px; }
 
   /* Right-click menu */
   .ctx-menu {
