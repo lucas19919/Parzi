@@ -571,3 +571,8 @@
 - Trap: local build hangs at updater signing prompt unless TAURI_SIGNING_PRIVATE_KEY (content) is set; _PATH alone is not enough for this CLI
 - Note: parallel lane live-edited tauri.conf.json (devUrl removed, beforeDevCommand now runs build) + regenerated icons/icon.ico with malformed BMP headers (planes/bpp/comp shifted) that broke generate_context — icon.ico restored from HEAD, their 32x32.png + other work untouched and uncommitted
 
+
+## v0.1.0 shipped to CI (2026-09-14)
+- Tag v0.1.0 -> Release workflow green: draft release 'Parzi v0.1.0' holds latest.json + NSIS setup.exe/.sig + MSI/.sig (all updater-signed)
+- Friend file: Parzi_0.1.0_x64-setup.exe (6.8MB, per-user NSIS) downloaded to ~/Downloads — send that; unsigned Authenticode so SmartScreen will ask once (More info -> Run anyway); repo stays private so in-app updates stay quiet until the release is published (drafts don't serve latest.json)
+
