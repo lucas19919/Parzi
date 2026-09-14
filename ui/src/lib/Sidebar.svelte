@@ -12,7 +12,6 @@
   export let branch = "";
   export let threads: SessionMeta[] = [];
   export let activeThreadId: string | null = null;
-  export let appVersion = "";
 
   const dispatch = createEventDispatcher<{
     selectProject: { name: string };
@@ -38,7 +37,7 @@
     folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1 2 2H5a2 2 0 0 1-2-2z",
     chevronDown: "M6 9l6 6 6-6",
     gear: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z",
-    issue: "M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z",
+    issue: "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0",
     update: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3",
     edit: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z",
     close: "M18 6L6 18M6 6l12 12",
@@ -422,7 +421,6 @@
       <Icon d={I.update} size={14} />
       {#if $footerUpdateState === "available"}<span class="upd-dot" />{/if}
     </button>
-    {#if appVersion}<span class="ver">{appVersion}</span>{/if}
   </div>
 </aside>
 
@@ -575,7 +573,6 @@
   .mini-btn:hover { background: var(--surface-3); color: var(--text); }
   .empty-state { font-size: 12px; color: var(--text-4); padding: 12px 8px; text-align: center; }
   .sb-footer { display: flex; align-items: center; gap: 2px; margin: 6px 10px 8px; }
-  .sb-footer .ver { margin-left: auto; font-size: 10px; color: var(--text-4); font-family: var(--parzi-mono); padding-right: 4px; }
 
   /* Right-click menu */
   .ctx-menu {

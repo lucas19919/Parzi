@@ -27,7 +27,6 @@
   const smoothFast = RM ? { duration: 0 } : { duration: 140, easing: cubicOut };
 
   let bg = "";
-  let appVer = "";
   let threads: SessionMeta[] = [];
   let models: ModelRow[] = [];
   let projects: ProjectView[] = [];
@@ -903,7 +902,6 @@
     });
 
     try {
-      appVer = await api.appVersion().catch(() => "v3");
       applyThemeCss(await api.getThemeCss());
 
       bg = await api.backgroundUrl();
@@ -954,7 +952,6 @@
       {branch}
       {threads}
       {activeThreadId}
-      appVersion={appVer}
       on:selectProject={(e) => switchProject(e.detail.name)}
       on:openNewWorkspace={openNewWs}
       on:selectThread={(e) => openThread(e.detail.id)}

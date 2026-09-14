@@ -82,7 +82,7 @@ fn boot() -> anyhow::Result<(ParziConfig, SessionStore)> {
 
 #[tauri::command]
 async fn app_version() -> Result<String, String> {
-    Ok(format!("{}-v3", env!("CARGO_PKG_VERSION")))
+    Ok(env!("CARGO_PKG_VERSION").to_string())
 }
 
 #[tauri::command]
