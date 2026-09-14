@@ -8,21 +8,28 @@
 !define MUI_BGCOLOR "0B0B10"
 !define MUI_HEADERIMAGE_BGCOLOR "0B0B10"
 
-; Paint one wizard page dark: dialog + inner page, light text on near-black.
+; Paint one wizard page dark: dialog + inner page, light text on near-black,
+; plus a dark window title bar (DWMWA_USE_IMMERSIVE_DARK_MODE, Win10 1809+).
 Function ParziDarkShow
+  Push $R8
+  Push $R9
   SetCtlColors $HWNDPARENT "0xEDEDF2" "0x0B0B10"
   FindWindow $R9 "#32770" "" $HWNDPARENT
   SetCtlColors $R9 "0xEDEDF2" "0x0B0B10"
+  System::Alloc 4
+  Pop $R8
+  System::Call "*$R8(i 1)"
+  System::Call "dwmapi::DwmSetWindowAttribute(p $HWNDPARENT, i 20, p $R8, i 4)"
+  System::Free $R8
+  Pop $R9
+  Pop $R8
 FunctionEnd
 
-!define MUI_WELCOMEPAGE_SHOWFUNCTION ParziDarkShow
-!define MUI_LICENSEPAGE_SHOWFUNCTION ParziDarkShow
-!define MUI_DIRECTORYPAGE_SHOWFUNCTION ParziDarkShow
-!define MUI_STARTMENUPAGE_SHOWFUNCTION ParziDarkShow
-!define MUI_INSTFILESPAGE_SHOWFUNCTION ParziDarkShow
-!define MUI_FINISHPAGE_SHOWFUNCTION ParziDarkShow
-!define MUI_UNCONFIRMPAGE_SHOWFUNCTION ParziDarkShow
-!define MUI_UNINSTFILESPAGE_SHOWFUNCTION ParziDarkShow
+; One generic show hook covers every installer page (welcome through finish).
+; The template sets its own SHOW only for the uninstaller confirm page later,
+; which scoped-overrides this there. Per-page MUI_*PAGE_SHOWFUNCTION defines
+; do not exist for these pages, so the generic hook is the correct mechanism.
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW ParziDarkShow
 
 ; ============ Brand voice: page titles and copy. Short lines: 497px pages. ============
 

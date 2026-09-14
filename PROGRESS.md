@@ -616,3 +616,8 @@
 - v0.1.5 wizard captured via PrintWindow: dark #0B0B10 dialog, vector mark sidebar blending seamlessly, Welcome to Parzi + brand copy, new mark in title bar — the Win32 clash is gone
 - Silent install/uninstall cycle green; machine left clean. Note: fullscreen GDI screenshots go black when the display sleeps — PrintWindow by HWND is the reliable capture method
 
+
+## Installer dark fix, round 2 (2026-09-14)
+- Live screenshot showed the dark bg + art applied but body text dim, button bar light, title bar white: the per-page MUI_*PAGE_SHOWFUNCTION defines don't exist — replaced with the single documented MUI_PAGE_CUSTOMFUNCTION_SHOW hook; added DWM dark title bar call in the painter
+- Start Menu audit: only orphan was a stale root Parzi.lnk (early installs), already gone — one clean Parzi folder left; no source work lost, everything is tagged
+
