@@ -654,8 +654,43 @@
   deny-gate clean, `npm run check` 0 errors, UI build green, tauri check green,
   `doctor`/`health`/`models` live (opencode ok, Go account, 35-model roster).
 
+## All-provider routing pass (2026-09-14, night)
+- Shared tool-name sanitizer (`types::sanitize/desanitize_tool`, exact-match-first
+  reverse map): Zen proved dotted names 400, and Anthropic + OpenAI document the
+  same `^[a-zA-Z0-9_-]{1,64}$` rule — now applied in anthropic (claude), codex,
+  openai_compat (xai) and opencode engines. Gemini allows dots: antigravity untouched.
+- Antigravity 400 root-caused: `ui.show_widget`'s `"const": 1` became `enum: [1]`,
+  but Gemini `enum` is `repeated string` — numeric consts are now dropped, string
+  consts still convert (unit test pins it).
+- Codex roster reworked: gpt-5.3-codex/gpt-5-codex are DEAD on ChatGPT sign-in
+  (deprecated; current ids gpt-5.5 default, terra/luna effort tiers, 5.3 price
+  fixed to 1.75/14). Adapter remaps dead ids per path (sub->5.5, terra/luna->API
+  equivalents) so old threads survive; unit tests pin both directions.
+- xAI roster refreshed from official docs: grok-3/grok-4 RETIRED 2026-05-15
+  (server redirects + rebills — kept as legacy rows only), grok-4.3 default,
+  4.6 flagship, 4.1-fast cheap tier, code-fast-1 coding; picks low/fast med/4.3 high/4.6.
+- Claude: sonnet-5 price 3/15 (rate change 2026-09-01), effort extra->xhigh
+  ultra->max (documented ladder).
+- Live status: opencode fully proven earlier. This round BLOCKED on credentials —
+  claude OAuth expired ~16 min before probing (`claude` re-auth needed), codex
+  token expired + no API key on box (`codex login` needed), xai has no key at all,
+  antigravity 403-after-refresh (needs `parzi login`; refresh flow itself is
+  standard OAuth, no downgrade — account-side state). All fixes above are
+  doc-backed + unit-tested; live re-verify after re-auth.
+- NOTE: `plugins::discover_and_install_library` fails deterministically — foreign
+  code from a parallel lane (467 new lines in plugins.rs), untouched here.
+- OPEN: xAI Responses migration (chat is their legacy endpoint); codex `xhigh`
+  on API-key path unverified; Go $ caps still unsurfaced.
+- Verified: providers tests green (incl. codex remap, numeric-const, sanitize
+  round-trip, quota/transport failover), clippy deny-gate clean, tauri check
+  green, `models` shows the new rosters live.
+
 
 ## Footer update button (2026-09-14)
 - Sidebar footer is now gear + alarm + update-download + version: new updateStore (boot check delayed 12s, silent fail, sticky available badge with accent dot), click opens Settings System Updates card (new app-updates anchor) and re-checks; palette gained Check for updates too
 - Note: report-alarm absence in v0.1.5 was just an uncommitted lane button, not a regression; this commit co-mingles with lane WIP in Sidebar/App/SystemSection (theirs untouched, mine additive)
+
+
+## Single search (2026-09-14)
+- Removed the inline Filter threads row + logic + CSS from Sidebar; thread search lives only in the palette (Ctrl+K), which already filters threads � one search entry, no duplication
 

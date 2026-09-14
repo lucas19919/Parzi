@@ -46,7 +46,6 @@
 
   const displayName = (n: string) => (n === "default" ? "Inbox" : n);
 
-  let query = "";
   let wsOpen = false;
   let renamingId: string | null = null;
   let renameTitle = "";
@@ -56,12 +55,9 @@
     | { kind: "project"; name: string; x: number; y: number; confirm: boolean; count: number };
   let ctx: Ctx | null = null;
 
-  $: q = query.trim().toLowerCase();
-  $: matches = (t: SessionMeta) =>
-    !q || (t.title || "").toLowerCase().includes(q);
   $: byUpdated = (a: SessionMeta, b: SessionMeta) =>
     +new Date(b.updated) - +new Date(a.updated);
-  $: pinned = threads.filter((t) => t.pinned && matches(t)).sort(byUpdated);
+  $: pinned = threads.filter((t) => t.pinned).sort(byUpdated);
 
   // All known workspaces, deduped: on-disk folders + thread projects.
   $: workspaceNames = (() => {
@@ -106,10 +102,10 @@
     items: SessionMeta[];
   }
 
-  // Flat T3-style list: time buckets, or a single Results group while filtering.
+  // Flat T3-style list: time buckets. Thread search lives in the
+  // command palette (Ctrl+K), so there is exactly one search.
   $: groups = ((): Group[] => {
-    const list = threads.filter((t) => !t.pinned && matches(t)).sort(byUpdated);
-    if (q) return list.length ? [{ label: `Results (${list.length})`, items: list }] : [];
+    const list = threads.filter((t) => !t.pinned).sort(byUpdated);
     const day = 86400000;
     const t0 = dayStart(new Date());
     const b: Group[] = [
@@ -319,14 +315,6 @@
   </div>
 
   <div class="sb-scroll">
-    <div class="search-row">
-      <Icon d={I.search} size={12} />
-      <input id="sb-search" placeholder="Filter threads" bind:value={query} />
-      {#if query}
-        <button class="icon-btn sm" on:click={() => (query = "")}><Icon d={I.close} size={10} /></button>
-      {/if}
-    </div>
-
     {#if pinned.length}
       <div class="proj-head"><span>★ Pinned</span></div>
       {#each pinned as t (t.id)}
@@ -372,7 +360,7 @@
     {/each}
 
     {#if !pinned.length && !groups.length}
-      <div class="empty-state">{q ? "No matching threads" : "No conversations yet — start a new chat"}</div>
+      <div class="empty-state">No conversations yet — start a new chat</div>
     {/if}
 
     <div
@@ -551,16 +539,6 @@
   .ws-chev { color: var(--text-3); flex: none; transition: transform 0.15s ease; }
   .ws-chev.open { transform: rotate(180deg); }
   .proj-tools { display: flex; gap: 2px; align-items: center; }
-  .search-row {
-    display: flex; align-items: center; gap: 7px; margin: 6px 0 2px; padding: 6px 9px;
-    background: var(--surface-1); border: 1px solid var(--line-2);
-    border-radius: 7px; color: var(--text-3);
-  }
-  .search-row input {
-    flex: 1; min-width: 0; background: transparent; border: none; outline: none;
-    color: var(--text); font: inherit; font-size: 12.5px;
-  }
-  .search-row input::placeholder { color: var(--text-4); }
   .proj-row {
     position: relative;
     display: flex; align-items: center; gap: 7px; width: 100%;
