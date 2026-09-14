@@ -1145,19 +1145,6 @@ fn main() {
         .setup(move |app| {
             let o = orch.clone();
             app.manage(AppState { orch, pending, app: app.handle().clone() });
-            // Debug builds always target the vite dev server (devUrl). When it
-            // isn't running (double-clicked exe, wrong port), the webview would
-            // sit on a localhost error page: fall back to the bundled dist.
-            let dev_up = std::net::TcpStream::connect_timeout(
-                &"127.0.0.1:1420".parse().expect("dev addr"),
-                std::time::Duration::from_millis(400),
-            )
-            .is_ok();
-            if (!dev_up) {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.navigate("tauri://localhost".parse().expect("dist url"));
-                }
-            }
             // Long-lived queue pump + boot kick for sessions left Queued.
             tauri::async_runtime::spawn(async move {
                 o.kick().await;

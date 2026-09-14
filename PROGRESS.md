@@ -594,3 +594,10 @@
 - v0.1.3 green: draft release holds setup.exe/.sig + MSI/.sig + latest.json; silent per-user install test passed (LOCALAPPDATA\\Parzi, app launches with Parzi window, uninstall removes everything incl. desktop shortcut)
 - Friend file: Downloads\\Parzi_0.1.3_x64-setup.exe (6.8MB). Wizard pages: Welcome to Parzi -> MIT license -> folder -> Start Menu -> install -> 'Parzi is installed' with Launch + desktop-shortcut options; uninstaller branded with delete-data option
 
+
+## Blank-app root cause + fix (2026-09-14)
+- Installed app showed empty transparent window; CDP remote-debug proved the WebView sat on about:blank and never loaded the frontend
+- ROOT CAUSE: src-tauri/Cargo.toml lacked the custom-protocol Tauri feature, so cfg(dev) was true in ALL builds and every release binary loaded devUrl (localhost:1420) instead of the bundled dist. The parallel lane's navigate-fallback hunk then raced the load into about:blank
+- Fix: +custom-protocol feature, removed the probe-navigate hunk, restored devUrl + dev-server beforeDevCommand. Verified locally: release binary loads tauri.localhost and renders the full UI (CDP screenshot)
+- Lane WIP note: their uncommitted main.rs still contains the hunk — they must drop it on rebase, else local builds keep the race
+
