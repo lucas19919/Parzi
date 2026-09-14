@@ -611,3 +611,8 @@
 - Chose dark 6-page flow (no template fork): new vector-style art (ring+lanes, no raster text, no accent-line artifact, #0B0B10-blended), hooks.nsh now sets MUI_BGCOLOR + per-page dark SHOW painters + all Parzi copy
 - Deviation from antigravity plan: dark theme inlined in hooks.nsh (relative !include would resolve against the bundle out-dir); Component 4 (asuka _up_ lookup) SKIPPED — installed-app screenshot proves the wallpaper already loads
 
+
+## Dark installer verified live (2026-09-14)
+- v0.1.5 wizard captured via PrintWindow: dark #0B0B10 dialog, vector mark sidebar blending seamlessly, Welcome to Parzi + brand copy, new mark in title bar — the Win32 clash is gone
+- Silent install/uninstall cycle green; machine left clean. Note: fullscreen GDI screenshots go black when the display sleeps — PrintWindow by HWND is the reliable capture method
+
