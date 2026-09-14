@@ -531,3 +531,8 @@
 - Drive-bys: 4 pre-existing clippy denies in src-tauri fixed (too_many_arguments allow on send_message, Ok(x?) flatten in refresh_provider, format! -> to_string, split.last -> next_back)
 - Verified: cargo check green, clippy gate clean, workspace tests pass, npm check 0 errors, npm build green
 
+
+## Private GitHub repo (2026-09-14)
+- https://github.com/lucas19919/Parzi (PRIVATE), branch main, 2 commits pushed; .gitignore added (target/, node_modules/, dist/, *.key); secret scan clean; TAURI_SIGNING_PRIVATE_KEY stored as repo secret; updater feed + Cargo repository retargeted to lucas19919/Parzi
+- Note: a parallel session's dev-server fallback hunk in src-tauri/src/main.rs rode along in the 2nd commit (compiles, gate holds, 1 unused-parens warning is theirs)
+
