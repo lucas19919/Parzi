@@ -601,3 +601,8 @@
 - Fix: +custom-protocol feature, removed the probe-navigate hunk, restored devUrl + dev-server beforeDevCommand. Verified locally: release binary loads tauri.localhost and renders the full UI (CDP screenshot)
 - Lane WIP note: their uncommitted main.rs still contains the hunk — they must drop it on rebase, else local builds keep the race
 
+
+## v0.1.4 verified working (2026-09-14)
+- Installed v0.1.4 from CI setup.exe loads tauri.localhost and renders the full UI (sidebar, Inbox, Asuka stage, glass composer, inspector deck) — CDP screenshot proof; uninstalled after, machine clean
+- Installer wizard pages carry the Parzi voice + art (verified in config/template review; interactive click-through still untested — MUI pages are stock layout with custom art/copy)
+
