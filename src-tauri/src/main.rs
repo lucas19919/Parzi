@@ -28,7 +28,7 @@ enum UiEvent {
     Text { session: String, text: String },
     Reasoning { session: String, text: String },
     ToolCall { session: String, id: String, name: String },
-    ToolResult { session: String, name: String, ok: bool, ms: u128 },
+    ToolResult { session: String, name: String, ok: bool, ms: u64 },
     Notice { session: String, text: String },
     RouteTransition { session: String, from_provider: String, to_provider: String, reason: String, cooldown_secs: Option<u64> },
     Usage { session: String, tokens_in: u64, tokens_out: u64, cost_usd: f64 },
@@ -221,7 +221,7 @@ async fn send_message(
                     tokens_out,
                     cost_usd,
                 },
-                RunEvent::ApprovalRequest { .. } => continue, // GuiApprover emits its own
+                RunEvent::ApprovalRequest { .. } => continue, // GuiApprover emits its own UiEvent::Approval
                 RunEvent::Done { turns } => UiEvent::Done { session: sid_task.clone(), turns },
                 RunEvent::Error(error) => UiEvent::Error { session: sid_task.clone(), error },
             };
@@ -393,7 +393,7 @@ async fn get_models(
     // Full refresh (`refresh: true`): live /models pulls, providers queried
     // concurrently with a per-provider timeout so one hung vendor can't
     // stall settings.
-    let mut cfg = state.orch.config().clone();
+    let mut cfg = state.orch.config();
     if refresh != Some(true) {
         cfg.catalog_refresh = false;
     }
@@ -432,7 +432,7 @@ async fn refresh_provider(
 ) -> Result<ModelRow, String> {
     let id = parzi_providers::canonical_id(provider.trim())
         .ok_or_else(|| "unknown provider (Parzi routes claude, codex, antigravity, opencode, xai)".to_string())?;
-    let mut cfg = state.orch.config().clone();
+    let mut cfg = state.orch.config();
     cfg.catalog_refresh = true;
     tokio::time::timeout(
         std::time::Duration::from_secs(15),
@@ -519,11 +519,123 @@ async fn get_config() -> Result<ParziConfig, String> {
     ParziConfig::load().map_err(|e| e.to_string())
 }
 #[tauri::command]
-async fn save_config(cfg: ParziConfig) -> Result<(), String> {
+async fn save_config(state: State<'_, AppState>, cfg: ParziConfig) -> Result<(), String> {
     if cfg.version != parzi_core::config::CONFIG_VERSION {
         return Err("config version mismatch — reload settings".into());
     }
-    cfg.save().map_err(|e| e.to_string())
+    cfg.save().map_err(|e| e.to_string())?;
+    // Hot-apply: next agent launch uses the new policy/MCP servers, no restart.
+    state.orch.apply_config(cfg).await;
+    Ok(())
+}
+
+/// One connector's tool inventory for the Settings tool browser.
+/// Best-effort: unreachable servers return `ok: false` with the error.
+#[derive(Debug, Clone, serde::Serialize)]
+struct McpToolView {
+    name: String,
+    qualified: String,
+    description: String,
+    exposed: bool,
+    mode: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct McpServerTools {
+    server: String,
+    ok: bool,
+    error: Option<String>,
+    tools: Vec<McpToolView>,
+}
+
+#[tauri::command]
+async fn list_mcp_tools(state: State<'_, AppState>, server: String) -> Result<McpServerTools, String> {
+    let name = server.trim().to_string();
+    if name.is_empty() {
+        return Err("empty server name".into());
+    }
+    let mgr = state.orch.mcp().clone();
+    // Raw list (even unexposed tools) so the UI can render exposure toggles.
+    match tokio::time::timeout(std::time::Duration::from_secs(20), mgr.list_tools(&name)).await {
+        Ok(Ok(tools)) => {
+            let views = tools
+                .into_iter()
+                .map(|t| McpToolView {
+                    qualified: format!("{}.{}", name, t.name),
+                    exposed: mgr.is_tool_exposed(&name, &t.name),
+                    mode: mgr.tool_mode(&name, &t.name),
+                    name: t.name,
+                    description: t.description,
+                })
+                .collect();
+            Ok(McpServerTools { server: name, ok: true, error: None, tools: views })
+        }
+        Ok(Err(e)) => Ok(McpServerTools {
+            server: name,
+            ok: false,
+            error: Some(e.to_string()),
+            tools: vec![],
+        }),
+        Err(_) => Ok(McpServerTools {
+            server: name,
+            ok: false,
+            error: Some("probe timed out".into()),
+            tools: vec![],
+        }),
+    }
+}
+
+/// Tool inventories for every configured server (parallel, 20s cap each).
+/// Powers the Connectors page: one roundtrip renders all tool lists.
+#[tauri::command]
+async fn list_all_mcp_tools(state: State<'_, AppState>) -> Result<Vec<McpServerTools>, String> {
+    let servers = state.orch.mcp().server_names();
+    let mut set = tokio::task::JoinSet::new();
+    for name in servers {
+        let mgr = state.orch.mcp().clone();
+        set.spawn(async move {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(20),
+                mgr.list_tools(&name),
+            )
+            .await
+            {
+                Ok(Ok(tools)) => {
+                    let views = tools
+                        .into_iter()
+                        .map(|t| McpToolView {
+                            qualified: format!("{}.{}", name, t.name),
+                            exposed: mgr.is_tool_exposed(&name, &t.name),
+                            mode: mgr.tool_mode(&name, &t.name),
+                            name: t.name,
+                            description: t.description,
+                        })
+                        .collect();
+                    McpServerTools { server: name, ok: true, error: None, tools: views }
+                }
+                Ok(Err(e)) => McpServerTools {
+                    server: name,
+                    ok: false,
+                    error: Some(e.to_string()),
+                    tools: vec![],
+                },
+                Err(_) => McpServerTools {
+                    server: name,
+                    ok: false,
+                    error: Some("probe timed out".into()),
+                    tools: vec![],
+                },
+            }
+        });
+    }
+    let mut out = vec![];
+    while let Some(row) = set.join_next().await {
+        if let Ok(row) = row {
+            out.push(row);
+        }
+    }
+    out.sort_by(|a, b| a.server.cmp(&b.server));
+    Ok(out)
 }
 
 #[tauri::command]
@@ -579,21 +691,21 @@ async fn background_url(app: AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 async fn run_doctor(state: State<'_, AppState>) -> Result<Vec<parzi_runtime::doctor::Check>, String> {
-    let cfg = state.orch.config().clone();
+    let cfg = state.orch.config();
     Ok(parzi_runtime::doctor::Doctor::new(cfg).run().await)
 }
 
 /// Fast health subset (no MCP probes). System tab renders this immediately.
 #[tauri::command]
 async fn run_doctor_quick(state: State<'_, AppState>) -> Result<Vec<parzi_runtime::doctor::Check>, String> {
-    let cfg = state.orch.config().clone();
+    let cfg = state.orch.config();
     Ok(parzi_runtime::doctor::Doctor::new(cfg).run_quick().await)
 }
 
 /// MCP server probes only (each can take up to 15s). Loaded lazily.
 #[tauri::command]
 async fn run_doctor_mcp(state: State<'_, AppState>) -> Result<Vec<parzi_runtime::doctor::Check>, String> {
-    let cfg = state.orch.config().clone();
+    let cfg = state.orch.config();
     Ok(parzi_runtime::doctor::Doctor::new(cfg).run_mcp_only().await)
 }
 
@@ -733,11 +845,21 @@ async fn list_plugins() -> Result<Vec<PluginView>, String> {
     Ok(parzi_runtime::plugins::scan()
         .map_err(|e| e.to_string())?
         .into_iter()
-        .map(|p| PluginView {
-            name: p.manifest.name,
-            version: p.manifest.version,
-            kind: p.manifest.kind,
-            enabled: p.enabled,
+        .map(|p| {
+            let commands = if p.manifest.kind == "commands" {
+                parzi_runtime::plugins::commands_for(&p.manifest.name)
+                    .map(|c| c.len())
+                    .unwrap_or(0)
+            } else {
+                0
+            };
+            PluginView {
+                name: p.manifest.name,
+                version: p.manifest.version,
+                kind: p.manifest.kind,
+                enabled: p.enabled,
+                commands,
+            }
         })
         .collect())
 }
@@ -748,6 +870,36 @@ struct PluginView {
     version: String,
     kind: String,
     enabled: bool,
+    /// Slash-command count for `commands` packs (0 otherwise).
+    commands: usize,
+}
+
+/// Settings → Skills: paste a commands.toml block or a SKILL.md file.
+#[tauri::command]
+async fn install_pasted_skill(
+    pack_name: String,
+    text: String,
+) -> Result<parzi_runtime::plugins::InstalledSkill, String> {
+    parzi_runtime::plugins::install_pasted_skill(&pack_name, &text).map_err(|e| e.to_string())
+}
+
+/// Settings → Skills: clone a skill library and install every skill inside.
+/// Blocking subprocess — off the async worker thread.
+#[tauri::command]
+async fn install_skill_from_git(
+    url: String,
+) -> Result<parzi_runtime::plugins::SkillInstallReport, String> {
+    tokio::task::spawn_blocking(move || {
+        parzi_runtime::plugins::install_skill_from_git(&url).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Settings → Skills: remove a skill pack entirely.
+#[tauri::command]
+async fn delete_skill(name: String) -> Result<(), String> {
+    parzi_runtime::plugins::delete_skill(name.trim()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -818,6 +970,49 @@ async fn delete_project(state: State<'_, AppState>, name: String) -> Result<usiz
 #[tauri::command]
 async fn list_projects() -> Result<Vec<parzi_core::lanes::ProjectView>, String> {
     parzi_core::lanes::project_views().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_project_roster(
+    project: String,
+) -> Result<parzi_core::lanes::ProjectRoster, String> {
+    parzi_core::lanes::get_project_roster(&project).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn save_project_roster(
+    project: String,
+    roster: parzi_core::lanes::ProjectRoster,
+) -> Result<(), String> {
+    parzi_core::lanes::save_project_roster(&project, &roster).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_project_plan(project: String) -> Result<String, String> {
+    parzi_core::plan::read_plan(&project).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn save_project_plan(project: String, content: String) -> Result<(), String> {
+    parzi_core::plan::write_plan(&project, &content).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn list_checkpoints(
+    repo: String,
+    session_id: String,
+) -> Result<Vec<parzi_runtime::git_checkpoints::CheckpointView>, String> {
+    parzi_runtime::git_checkpoints::list_checkpoints(&repo, &session_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn restore_checkpoint(
+    repo: String,
+    session_id: String,
+    turn: u32,
+) -> Result<(), String> {
+    parzi_runtime::git_checkpoints::restore_checkpoint(&repo, &session_id, turn)
+        .map_err(|e| e.to_string())
 }
 
 /// File picker backend for @-autocomplete: shallow walk, hidden/dirs skipped.
@@ -1066,6 +1261,42 @@ async fn save_skill_commands(
     parzi_runtime::plugins::save_commands(name.trim(), &commands).map_err(|e| e.to_string())
 }
 
+/// Report-an-issue flow: open a URL in the system browser. Allowlisted to
+/// the project's own GitHub pages so this can never become an open redirect.
+#[tauri::command]
+async fn open_external_url(url: String) -> Result<(), String> {
+    const ALLOW: &[&str] = &[
+        "https://github.com/lucas19919/Parzi/",
+        "https://github.com/parzi/parzi/",
+    ];
+    if url.len() > 8192
+        || url.chars().any(char::is_whitespace)
+        || !ALLOW.iter().any(|base| url.starts_with(base))
+    {
+        return Err("that link isn't allowed".into());
+    }
+    #[cfg(target_os = "windows")]
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "start", "", &url])
+        .status()
+        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open")
+        .arg(&url)
+        .status()
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let status = std::process::Command::new("xdg-open")
+        .arg(&url)
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("couldn't open the browser".into())
+    }
+}
+
 #[tauri::command]
 fn window_minimize(window: tauri::Window) -> Result<(), String> {
     window.minimize().map_err(|e| e.to_string())
@@ -1172,6 +1403,12 @@ fn main() {
             rename_thread,
             delete_thread,
             list_projects,
+            get_project_roster,
+            save_project_roster,
+            get_project_plan,
+            save_project_plan,
+            list_checkpoints,
+            restore_checkpoint,
             list_files,
             create_project,
             delete_project,
@@ -1210,8 +1447,14 @@ fn main() {
             run_doctor,
             run_doctor_quick,
             run_doctor_mcp,
+            list_mcp_tools,
+            list_all_mcp_tools,
             list_plugins,
             toggle_plugin,
+            install_pasted_skill,
+            install_skill_from_git,
+            delete_skill,
+            open_external_url,
             read_text_file,
             write_text_file,
             save_project_system,

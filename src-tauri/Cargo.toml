@@ -24,3 +24,18 @@ keyring = "4"
 uuid = { version = "1", features = ["v4"] }
 anyhow = "1"
 async-trait = "0.1"
+
+# S-8: the GUI ships to users — same release profile and lint gates as the
+# workspace crates (opt-level z, LTO, strip, unsafe forbid).
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
