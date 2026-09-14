@@ -1,8 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Parzi",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "com.parzi.app",
+  "homepage": "https://github.com/lucas19919/Parzi",
   "build": {
     "frontendDist": "../ui/dist",
     "beforeDevCommand": "npm --prefix ../ui run build",
@@ -34,6 +35,7 @@
     "targets": "all",
     "publisher": "Parzi",
     "copyright": "Copyright © 2026 Parzi",
+    "licenseFile": "../LICENSE",
     "category": "DeveloperTool",
     "shortDescription": "Lean multi-model agent harness",
     "longDescription": "Parzi routes Claude, Codex, Antigravity, OpenCode and Grok through one elegant harness.",
@@ -55,9 +57,13 @@
       "nsis": {
         "installMode": "currentUser",
         "languages": ["English"],
+        "customLanguageFiles": ["installer/English.nsh"],
+        "installerHooks": "installer/hooks.nsh",
         "headerImage": "installer/header.bmp",
         "sidebarImage": "installer/sidebar.bmp",
         "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "uninstallerHeaderImage": "installer/header.bmp",
         "startMenuFolder": "Parzi"
       }
     }

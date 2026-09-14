@@ -1,6 +1,6 @@
 [package]
 name = "parzi-app"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 
 # Detached crate: not a workspace member, so GUI deps never leak into the CLI.

@@ -582,3 +582,9 @@
 - Fix: cargo tauri icon from icon.svg regenerated all 50 icon files (valid PNG-compressed ICO, generate_context decodes it); apple-touch-icon was already correct
 - Bumped to 0.1.1 (workspace + tauri + app + ui versions) so the rebuilt installer carries the new mark
 
+
+## Custom installer voice (2026-09-14)
+- NSIS wizard now speaks Parzi: installer/hooks.nsh sets every page title/copy (welcome, MIT license page via bundle.licenseFile, folder, start-menu, finish with 'Launch Parzi now', uninstall confirm, abort guard); installer/English.nsh re-voices stock strings (desktop shortcut, delete-data, app-running)
+- Uninstaller branded too (icon + header art); homepage set for Add/Remove Programs links; mechanism verified against tauri-bundler 2.9.4 template (hooks include precedes all MUI_PAGE_*, language files included last so overrides win)
+- No local NSIS (toolchain blocked) — verification is the CI-built installer + silent install test on v0.1.2
+
