@@ -41,3 +41,12 @@ Note: t3.chat itself is closed source. Its Google login is account identity, not
 model auth — models resolve server-side under a paid subscription. Parzi stays
 local-first: the `t3` adapter routes a user's own paid subscription, opt-in,
 with the same TOS caution as Antigravity.
+
+## Bundled artwork (not licensed for redistribution)
+
+The default wallpapers "assets/backgrounds/asuka.png" and
+"assets/backgrounds/eva-crosses.jpg" are Neon Genesis Evangelion fan art
+(artwork (c) khara / Gainax, original artists unknown). They ship as
+personal-use defaults while the repo stays private. Do not include them in
+any public release or public installer: replace with owned/CC0 art first
+(see AUDIT.md B6).

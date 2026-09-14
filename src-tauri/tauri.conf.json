@@ -47,7 +47,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["../assets/backgrounds/asuka.png"],
+    "resources": ["../assets/backgrounds/asuka.png", "../assets/backgrounds/eva-crosses.jpg"],
     "createUpdaterArtifacts": true,
     "windows": {
       "wix": {
