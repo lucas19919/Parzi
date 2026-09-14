@@ -576,3 +576,9 @@
 - Tag v0.1.0 -> Release workflow green: draft release 'Parzi v0.1.0' holds latest.json + NSIS setup.exe/.sig + MSI/.sig (all updater-signed)
 - Friend file: Parzi_0.1.0_x64-setup.exe (6.8MB, per-user NSIS) downloaded to ~/Downloads — send that; unsigned Authenticode so SmartScreen will ask once (More info -> Run anyway); repo stays private so in-app updates stay quiet until the release is published (drafts don't serve latest.json)
 
+
+## Logo fix: circle-lines everywhere (2026-09-14)
+- Root cause: icon.svg + favicons were already the circle-lines mark, but the master rasters (icon.png, 128x128, .ico) still carried the old serif-P — that P is what the taskbar/Start/installer showed
+- Fix: cargo tauri icon from icon.svg regenerated all 50 icon files (valid PNG-compressed ICO, generate_context decodes it); apple-touch-icon was already correct
+- Bumped to 0.1.1 (workspace + tauri + app + ui versions) so the rebuilt installer carries the new mark
+
