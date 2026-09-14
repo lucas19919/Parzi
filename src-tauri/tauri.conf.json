@@ -62,7 +62,7 @@
       "active": true,
       "dialog": false,
       "endpoints": [
-        "https://github.com/parzi/parzi/releases/latest/download/latest.json"
+        "https://github.com/lucas19919/Parzi/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIwMUY2NjI5RERGRDQ4RTYKUldUbVNQM2RLV1lmSUlTZndQeE8ybmZVT0FkS2VuZjRyZlFacmtIa3cxdy9uSTFzVDBLRzhCT3gK"
     }
