@@ -1,0 +1,23 @@
+[package]
+name = "parzi-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+parzi-core = { path = "../parzi-core" }
+parzi-providers = { path = "../parzi-providers" }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "process", "fs", "io-util", "io-std"] }
+tokio-util = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+futures = "0.3"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = "0.4"
+async-trait = "0.1"
+toml = "0.8"

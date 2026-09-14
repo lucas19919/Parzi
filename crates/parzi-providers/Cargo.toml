@@ -1,0 +1,21 @@
+[package]
+name = "parzi-providers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+parzi-core = { path = "../parzi-core" }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time", "net"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-webpki-roots"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+futures = "0.3"
+tracing = "0.1"
+keyring = "4"
+dirs = "5"
+async-trait = "0.1"

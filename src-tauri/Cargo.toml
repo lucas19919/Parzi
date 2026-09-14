@@ -1,0 +1,26 @@
+[package]
+name = "parzi-app"
+version = "0.1.0"
+edition = "2021"
+
+# Detached crate: not a workspace member, so GUI deps never leak into the CLI.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio-util = "0.7"
+parzi-core = { path = "../crates/parzi-core" }
+parzi-providers = { path = "../crates/parzi-providers" }
+parzi-runtime = { path = "../crates/parzi-runtime" }
+keyring = "4"
+uuid = { version = "1", features = ["v4"] }
+anyhow = "1"
+async-trait = "0.1"

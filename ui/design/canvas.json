@@ -1,0 +1,18 @@
+{
+  "pages": [
+    { "id": "page-1", "name": "Screens" },
+    { "id": "page-2", "name": "Alternates" }
+  ],
+  "artboards": [
+    { "file": "Main.dc.html", "title": "Home", "x": 0, "y": 0, "w": 1440, "h": 900, "page": "page-1" },
+    { "file": "Thread.dc.html", "title": "Thread", "x": 1540, "y": 0, "w": 1440, "h": 900, "page": "page-1" },
+    { "file": "Composer.dc.html", "title": "Composer, model menu open", "x": 0, "y": 1060, "w": 880, "h": 620, "page": "page-1" },
+    { "file": "AltIslands.dc.html", "title": "Alt A: Islands", "x": 0, "y": 0, "w": 720, "h": 450, "page": "page-2" },
+    { "file": "AltEditorial.dc.html", "title": "Alt B: Editorial night", "x": 820, "y": 0, "w": 720, "h": 450, "page": "page-2" }
+  ],
+  "annotations": [
+    { "id": "direction", "x": 0, "y": -170, "w": 520, "page": "page-1", "text": "Late night glass, premium pass.\nItalic serif wordmark replaces the P mark. Sidebar glass now has a soft vertical gradient, the composer has an edge light plus ambient and contact shadows, controls carry an inner top highlight, and a faint accent glow sits behind the bar. Inter + JetBrains Mono, accent #7C8CFF." },
+    { "id": "alts", "x": 0, "y": -120, "w": 520, "page": "page-2", "text": "Earlier alternates, kept for reference.\nA: every panel floats as an island. B: serif hero, no sidebar surface." }
+  ],
+  "launch": { "view": "canvas", "page": "page-1" }
+}

@@ -1,0 +1,33 @@
+# Rust / Cargo
+/target/
+src-tauri/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Node / frontend
+node_modules/
+ui/dist/
+ui/dist-ssr/
+*.local
+
+# Tauri dev + updater signing (private keys must NEVER be committed)
+*.key
+*.key.pub
+*.sig
+ui/vite-dev.log
+ui/vite-dev.err.log
+
+# Env / secrets
+.env
+.env.*
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Test / coverage artifacts
+lcov.info
+*.profraw

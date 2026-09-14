@@ -1,0 +1,166 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Instrument+Serif:ital@1&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; background: #0a0a0c; }
+    a { color: #7c8cff; } a:hover { color: #a3aeff; }
+    .grain { position: absolute; inset: 0; opacity: 0.08; pointer-events: none; mix-blend-mode: overlay;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E"); }
+    .glass { backdrop-filter: blur(22px) saturate(1.3); -webkit-backdrop-filter: blur(22px) saturate(1.3); }
+    .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    .wordmark { font-family: 'Instrument Serif', Georgia, serif; font-style: italic; }
+    .row:hover { background: rgba(255,255,255,0.05); }
+    .pill { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px; border-radius: 999px; background: rgba(255,255,255,0.045); border: 1px solid rgba(255,255,255,0.08); box-shadow: inset 0 1px 0 rgba(255,255,255,0.05); color: #c9cdd8; font-size: 12px; letter-spacing: 0.01em; }
+    .group { display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; color: rgba(154,160,174,0.85); text-transform: uppercase; letter-spacing: 0.09em; padding: 12px 6px 4px; }
+    .sub { font-size: 11px; color: #8d93a1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #e4e5ec; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; grid-row: 1 / span 2; }
+  </style>
+</helmet>
+
+<div style="position: relative; width: 1440px; height: 900px; overflow: hidden; background: #0a0a0c; font-family: Inter, system-ui, sans-serif; font-size: 13px; color: #ededf2; -webkit-font-smoothing: antialiased;">
+
+  <div style="position: absolute; inset: 0;">
+    <img src="asuka.jpg" alt="" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 60% 40%;">
+    <div style="position: absolute; inset: 0; background: rgba(5, 5, 10, 0.5);"></div>
+    <div style="position: absolute; inset: 0; background: linear-gradient(180deg, rgba(18, 14, 36, 0.28) 0%, rgba(5, 5, 12, 0.12) 45%, rgba(0, 0, 0, 0.55) 100%);"></div>
+    <div style="position: absolute; inset: 0; background: radial-gradient(ellipse at 55% 42%, transparent 30%, rgba(0, 0, 0, 0.6) 100%);"></div>
+    <div style="position: absolute; left: 50%; bottom: -140px; width: 980px; height: 480px; transform: translateX(-50%); background: radial-gradient(ellipse at center, rgba(124, 140, 255, 0.14), transparent 62%);"></div>
+    <div class="grain"></div>
+  </div>
+
+  <div style="position: absolute; inset: 0; display: flex;">
+
+    <aside class="glass" style="width: 248px; display: flex; flex-direction: column; gap: 4px; padding: 16px 12px 12px; background: linear-gradient(180deg, rgba(8, 8, 12, 0.74), rgba(8, 8, 12, 0.58)); border-right: 1px solid rgba(255,255,255,0.06); box-shadow: inset -1px 0 0 rgba(0,0,0,0.35);">
+
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 0 6px 14px 8px;">
+        <span class="wordmark" style="font-size: 21px; letter-spacing: -0.005em; color: #f4f4f8; line-height: 1;">Parzi</span>
+        <span style="display: inline-flex; color: #7f8592;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v14H4zM9 5v14"></path></svg></span>
+      </div>
+
+      <div style="position: relative;">
+        <span style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: #8d93a1; display: inline-flex;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3"></path></svg></span>
+        <div style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.07); box-shadow: inset 0 1px 0 rgba(255,255,255,0.03); border-radius: 8px; padding: 6px 6px 6px 30px; color: #8d93a1; font-size: 13px;">
+          <span>Search threads</span>
+          <span class="mono" style="font-size: 10px; padding: 2px 5px; border: 1px solid rgba(255,255,255,0.09); border-radius: 4px; background: rgba(255,255,255,0.03); color: #8d93a1;">Ctrl K</span>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 8px; background: linear-gradient(180deg, rgba(124,140,255,0.2), rgba(124,140,255,0.11)); border: 1px solid rgba(124,140,255,0.3); box-shadow: inset 0 1px 0 rgba(255,255,255,0.1); border-radius: 9px; padding: 8px 11px; font-weight: 500; font-size: 13px; margin-top: 2px; color: #f0f1ff;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg>
+        <span>New thread</span>
+      </div>
+
+      <div style="flex: 1; display: flex; flex-direction: column; gap: 2px; margin-top: 6px; overflow: hidden;">
+
+        <div class="group" style="padding-top: 8px;"><span>Pinned</span></div>
+        <div class="row" style="display: grid; grid-template-columns: auto 1fr auto; gap: 2px 8px; align-items: center; padding: 7px 10px; border-radius: 8px;">
+          <span class="dot" style="background: #4ade80; box-shadow: 0 0 8px rgba(74,222,128,0.55);"></span>
+          <span class="title">Coordinator for the build loop</span>
+          <span style="grid-row: 1 / span 2; display: inline-flex;"><svg width="11" height="11" viewBox="0 0 24 24" fill="#7c8cff"><path d="M12 2.5l2.9 6.2 6.8.8-5 4.6 1.3 6.7L12 17.5l-6 3.3 1.3-6.7-5-4.6 6.8-.8z"></path></svg></span>
+          <span class="sub">sonnet-4 · 4m · 12.4k tok</span>
+        </div>
+
+        <div class="group"><span>Strohmann / main</span><span style="opacity: 0.6;">4</span></div>
+        <div class="row" style="display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: center; padding: 7px 10px; border-radius: 8px;">
+          <span class="dot" style="background: #6b7280;"></span>
+          <span class="title">Review the axiom/hansa plan</span>
+          <span class="sub">gpt-5 · 2h · 31k tok</span>
+        </div>
+        <div class="row" style="display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: center; padding: 7px 10px; border-radius: 8px;">
+          <span class="dot" style="background: #7c8cff;"></span>
+          <span class="title">Update the website copy</span>
+          <span class="sub">sonnet-4 · 5h · 8.1k tok</span>
+        </div>
+        <div class="row" style="display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: center; padding: 7px 10px; border-radius: 8px;">
+          <span class="dot" style="background: #7c8cff;"></span>
+          <span class="title">Full light mode for the site</span>
+          <span class="sub">gemini-3-pro · 11h · 19k tok</span>
+        </div>
+        <div class="row" style="display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: center; padding: 7px 10px; border-radius: 8px;">
+          <span class="dot" style="background: #f87171;"></span>
+          <span class="title">We hit the claude limit</span>
+          <span class="sub">claude-code · 13h · 2.0k tok</span>
+        </div>
+
+        <div class="group"><span>Isar / website</span><span style="opacity: 0.6;">2</span></div>
+        <div class="row" style="display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: center; padding: 7px 10px; border-radius: 8px;">
+          <span class="dot" style="background: #7c8cff;"></span>
+          <span class="title">Preview link for the Huber offer</span>
+          <span class="sub">kimi-k2.5 · 1d · 6.6k tok</span>
+        </div>
+        <div class="row" style="display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; align-items: center; padding: 7px 10px; border-radius: 8px;">
+          <span class="dot" style="background: #7c8cff;"></span>
+          <span class="title">Can you generate images?</span>
+          <span class="sub">llama3.1 · 2d · 900 tok</span>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 2px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,0.05); color: #8d93a1;">
+        <span style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 7px; font-size: 12px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10"></path></svg>Runs</span>
+        <span style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 7px; font-size: 12px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"></path></svg>Settings</span>
+        <span class="mono" style="margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; opacity: 0.7; padding-right: 6px;"><span style="width: 5px; height: 5px; border-radius: 50%; background: #4ade80;"></span>1 live</span>
+      </div>
+    </aside>
+
+    <main style="flex: 1; display: flex; flex-direction: column; min-width: 0;">
+
+      <div style="display: flex; align-items: center; justify-content: space-between; padding: 18px 26px 0; font-size: 13px; color: #8d93a1;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+          <span style="color: #e4e5ec;">Strohmann</span>
+          <span style="opacity: 0.45;">/</span>
+          <span>New thread</span>
+        </div>
+        <div class="mono" style="display: flex; align-items: center; gap: 7px; font-size: 11px; opacity: 0.75;">
+          <span style="width: 5px; height: 5px; border-radius: 50%; background: #4ade80;"></span>
+          <span>anthropic · codex · ollama</span>
+        </div>
+      </div>
+
+      <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding-bottom: 56px;">
+
+        <div style="text-align: center; margin-bottom: 28px;">
+          <div style="font-size: 32px; font-weight: 500; letter-spacing: -0.03em; line-height: 1.15; color: #f4f4f8; text-shadow: 0 2px 30px rgba(0,0,0,0.6);">What are we building tonight?</div>
+          <div style="color: rgba(237,237,242,0.58); font-size: 13.5px; margin-top: 9px; letter-spacing: 0.005em; text-shadow: 0 1px 14px rgba(0,0,0,0.7);">Any model, one bar. Attach context with @, run commands with /.</div>
+        </div>
+
+        <div class="glass" style="width: 720px; padding: 14px 14px 12px; background: linear-gradient(180deg, rgba(32, 34, 46, 0.7), rgba(20, 22, 31, 0.7)); border: 1px solid rgba(255,255,255,0.09); border-top-color: rgba(255,255,255,0.22); border-radius: 16px; box-shadow: 0 32px 90px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06);">
+          <div style="padding: 4px 4px 14px; font-size: 14px; color: #868c9b; line-height: 1.5;">Ask anything, / for commands, @ for context</div>
+          <div style="display: flex; align-items: center; gap: 7px;">
+            <span class="pill" style="width: 28px; padding: 0; justify-content: center; color: #9aa0ae;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"></path></svg></span>
+            <span class="pill">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+              <span>Strohmann / main</span>
+            </span>
+            <span class="pill" style="color: #ededf2;">
+              <span style="width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid #c9cdd8; display: inline-block;"></span>
+              <span style="font-weight: 500;">GPT-5</span>
+              <span class="mono" style="font-size: 11px; color: #8d93a1;">$$$</span>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#8d93a1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+            </span>
+            <span class="pill">Med</span>
+            <span style="flex: 1;"></span>
+            <span style="width: 30px; height: 30px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; background: linear-gradient(180deg, #8f9dff, #6e80ff); color: #0b0d12; box-shadow: 0 6px 20px rgba(124,140,255,0.42), inset 0 1px 0 rgba(255,255,255,0.35);"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></span>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 8px; margin-top: 18px;">
+          <span style="padding: 6px 13px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.08); background: rgba(8,8,12,0.3); color: #b8bdc9; font-size: 12px;">Explain this codebase</span>
+          <span style="padding: 6px 13px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.08); background: rgba(8,8,12,0.3); color: #b8bdc9; font-size: 12px;">Review my changes</span>
+          <span style="padding: 6px 13px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.08); background: rgba(8,8,12,0.3); color: #b8bdc9; font-size: 12px;">Plan a refactor</span>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

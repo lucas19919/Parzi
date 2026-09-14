@@ -1,0 +1,70 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Parzi",
+  "version": "0.1.0",
+  "identifier": "com.parzi.app",
+  "build": {
+    "frontendDist": "../ui/dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm --prefix ui run dev -- --port 1420",
+    "beforeBuildCommand": "npm --prefix ui run build"
+  },
+  "app": {
+    "security": {
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$HOME/.parzi/backgrounds/*", "$RESOURCE/*"]
+      }
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "Parzi",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 960,
+        "minHeight": 640,
+        "transparent": true,
+        "decorations": false,
+        "center": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "Parzi",
+    "copyright": "Copyright © 2026 Parzi",
+    "category": "DeveloperTool",
+    "shortDescription": "Lean multi-model agent harness",
+    "longDescription": "Parzi routes Claude, Codex, Antigravity, OpenCode and Grok through one elegant harness.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": ["../assets/backgrounds/asuka.png"],
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "wix": {
+        "language": "en-US"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English"]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "dialog": false,
+      "endpoints": [
+        "https://github.com/parzi/parzi/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIwMUY2NjI5RERGRDQ4RTYKUldUbVNQM2RLV1lmSUlTZndQeE8ybmZVT0FkS2VuZjRyZlFacmtIa3cxdy9uSTFzVDBLRzhCT3gK"
+    }
+  }
+}

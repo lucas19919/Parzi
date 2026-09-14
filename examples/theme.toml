@@ -1,0 +1,26 @@
+[font]
+family = "Inter"
+size = 14
+mono = "JetBrains Mono"
+mono_size = 13
+
+[colors]
+sidebar = "#07070B"
+stage = "#0B0B10"
+accent = "#7C8CFF"
+text = "#EDEDF2"
+text_dim = "#9AA0AE"
+bar = "#1A1D24"
+border = "#2A2E3A"
+
+[background]
+image = "backgrounds/asuka.png"
+dim = 0.66
+vignette = 0.5
+blur = 3.0
+
+[glass]
+opacity = 0.85
+radius = 12
+blur_px = 18
+shadow = true

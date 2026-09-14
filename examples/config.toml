@@ -1,0 +1,46 @@
+version = 1
+default_provider = "anthropic"
+
+[providers.openai]
+default_model = "gpt-5"
+
+[providers.anthropic]
+default_model = "claude-sonnet-4"
+
+[providers.xai]
+default_model = "grok-4"
+
+[providers.openrouter]
+default_model = "anthropic/claude-sonnet-4"
+
+[providers.ollama]
+default_model = "llama3.1"
+base_url = "http://localhost:11434/v1"
+
+[providers.codex]
+default_model = "gpt-5.3-codex"
+
+[providers.claude-code]
+default_model = "sonnet"
+
+[providers.antigravity]
+default_model = "gemini-3.8-flash-medium"
+
+[providers.t3]
+default_model = "kimi-k2.5"
+
+[lanes]
+default_mode = "ask"
+max_steps = 32
+default_allowed_tools = ["fs.read", "fs.list", "ui.show_markdown", "ui.show_widget", "ui.show_diagram"]
+
+[orchestrator]
+max_concurrent = 4
+mcp_idle_kill_secs = 60
+
+# [mcp.servers.fs]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "C:/projects"]
+# allow = ["read"]
+# timeout_ms = 30000
+# enabled = true
