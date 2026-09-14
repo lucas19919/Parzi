@@ -5,7 +5,10 @@ use futures::StreamExt;
 use parzi_core::context::Role;
 use parzi_core::error::{ParziError, Result};
 
-use crate::types::{AuthStatus, Billing, ChatReq, EventRx, EventTx, Model, Provider, StreamEvent};
+use crate::types::{
+    AuthStatus, Billing, ChatReq, EventRx, EventTx, Model, Provider, StreamEvent, ToolDef,
+    desanitize_tool, sanitize_tool,
+};
 
 pub struct OpenAiCompat {
     pub id: &'static str,
@@ -69,7 +72,8 @@ impl OpenAiCompat {
                 serde_json::json!({
                     "type": "function",
                     "function": {
-                        "name": t.name,
+                        // Dots 400 on OpenAI-compatible gates; mapped back on receipt.
+                        "name": sanitize_tool(&t.name),
                         "description": t.description,
                         "parameters": t.schema,
                     }
@@ -149,8 +153,9 @@ impl Provider for OpenAiCompat {
             "stream_options": {"include_usage": true},
         });
         let id = self.id;
+        let defs = req.tools.clone();
         tokio::spawn(async move {
-            if let Err(e) = run_sse(client, url, body, tx.clone(), id).await {
+            if let Err(e) = run_sse(client, url, body, defs, tx.clone(), id).await {
                 let _ = tx.send(Err(e));
             }
         });
@@ -203,6 +208,7 @@ async fn run_sse(
     client: reqwest::Client,
     url: String,
     body: serde_json::Value,
+    defs: Vec<ToolDef>,
     tx: EventTx,
     id: &'static str,
 ) -> Result<()> {
@@ -288,6 +294,7 @@ async fn run_sse(
             continue;
         }
         let args = serde_json::from_str(&args_str).unwrap_or(serde_json::Value::Null);
+        let name = desanitize_tool(&defs, &name);
         let _ = tx.send(Ok(StreamEvent::ToolCall { id: call_id, name, args }));
     }
     Ok(())

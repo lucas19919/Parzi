@@ -16,6 +16,69 @@ pub struct LaneFile {
     /// Working root this project/lane operates on. Lane wins over project.
     #[serde(default)]
     pub root: Option<String>,
+    /// 3-tier agent roster (`[roles.header]` / `[roles.orchestrator]` /
+    /// `[roles.implementation]`). `roster` accepted as a legacy alias.
+    #[serde(default, rename = "roles", alias = "roster")]
+    pub roster: ProjectRoster,
+}
+
+/// One agent role in the 3-tier workspace model (Header / Orchestrator /
+/// Implementation). All fields optional: unset = sensible auto defaults.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AgentRoleConfig {
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+}
+
+/// Per-project agent roster, stored inline in `parzi.toml` under `[roles.*]`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProjectRoster {
+    #[serde(default)]
+    pub header: AgentRoleConfig,
+    #[serde(default)]
+    pub orchestrator: AgentRoleConfig,
+    #[serde(default)]
+    pub implementation: AgentRoleConfig,
+}
+
+/// Load the roster for a project (defaults when unset or file missing).
+pub fn get_project_roster(project: &str) -> Result<ProjectRoster> {
+    let clean = safe_name(project)?;
+    let dir = paths::projects_dir()?.join(&clean);
+    let raw = std::fs::read_to_string(dir.join("parzi.toml")).unwrap_or_default();
+    if raw.trim().is_empty() {
+        return Ok(ProjectRoster::default());
+    }
+    let file: LaneFile = toml::from_str(&raw).unwrap_or_default();
+    Ok(file.roster)
+}
+
+/// Persist the roster, preserving every other `parzi.toml` key byte-for-byte
+/// when possible (TOML round-trip via a value table merge).
+pub fn save_project_roster(project: &str, roster: &ProjectRoster) -> Result<()> {
+    let clean = safe_name(project)?;
+    let dir = paths::projects_dir()?.join(&clean);
+    std::fs::create_dir_all(&dir).map_err(crate::error::ParziError::Io)?;
+    let path = dir.join("parzi.toml");
+    let mut table: toml::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| toml::from_str(&t).ok())
+        .unwrap_or(toml::Value::Table(toml::map::Map::new()));
+    let roster_val = toml::Value::try_from(roster)
+        .map_err(|e| crate::error::ParziError::Config(e.to_string()))?;
+    if let toml::Value::Table(ref mut m) = table {
+        m.insert("roles".to_string(), roster_val);
+        m.remove("roster");
+    }
+    let text =
+        toml::to_string(&table).map_err(|e| crate::error::ParziError::Config(e.to_string()))?;
+    crate::atomic_write(&path, text.as_bytes())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -140,20 +203,50 @@ pub fn project_views() -> Result<Vec<ProjectView>> {
         .collect())
 }
 
+/// Shared project/lane name gate (H-11): `[A-Za-z0-9_-]{1,64}`, no path
+/// separators, no `.`/`..`, no Windows device names. Every name-taking
+/// command must go through here.
+pub fn safe_name(name: &str) -> Result<String> {
+    let clean = name.trim().to_string();
+    if clean.is_empty() || clean.len() > 64 {
+        return Err(crate::error::ParziError::Config("bad project name".into()));
+    }
+    if clean == "." || clean == ".." {
+        return Err(crate::error::ParziError::Config("bad project name".into()));
+    }
+    let ok = clean
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !ok {
+        return Err(crate::error::ParziError::Config("bad project name".into()));
+    }
+    for reserved in [
+        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+    ] {
+        if clean.eq_ignore_ascii_case(reserved) {
+            return Err(crate::error::ParziError::Config("bad project name".into()));
+        }
+    }
+    Ok(clean)
+}
+
 /// Delete a workspace dir (`projects/<name>`). Refuses blanks, `default`,
 /// and path escapes. Missing dirs are a no-op success so UI deletes stay
 /// idempotent when the folder was removed by hand.
 pub fn delete_project(name: &str) -> Result<()> {
-    let clean = name.trim();
-    if clean.is_empty() || clean == "default" {
+    let clean = safe_name(name)?;
+    if clean == "default" {
         return Err(crate::error::ParziError::Config(
             "the default workspace can't be deleted".into(),
         ));
     }
-    if clean.contains('/') || clean.contains('\\') || clean.contains("..") {
+    let dir = crate::paths::projects_dir()?.join(&clean);
+    // Belt-and-braces: the resolved dir must stay under projects/.
+    let base = crate::paths::projects_dir()?;
+    if !dir.starts_with(&base) {
         return Err(crate::error::ParziError::Config("bad project name".into()));
     }
-    let dir = crate::paths::projects_dir()?.join(clean);
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(crate::error::ParziError::Io)?;
     }

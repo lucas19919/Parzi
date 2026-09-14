@@ -46,7 +46,7 @@ struct LiveServer {
 }
 
 pub struct McpManager {
-    configs: HashMap<String, McpServerCfg>,
+    configs: std::sync::RwLock<HashMap<String, McpServerCfg>>,
     live: tokio::sync::Mutex<HashMap<String, LiveServer>>,
     idle_kill: Duration,
 }
@@ -54,14 +54,58 @@ pub struct McpManager {
 impl McpManager {
     pub fn new(configs: HashMap<String, McpServerCfg>, idle_kill_secs: u64) -> Self {
         Self {
-            configs,
+            configs: std::sync::RwLock::new(configs),
             live: tokio::sync::Mutex::new(HashMap::new()),
             idle_kill: Duration::from_secs(idle_kill_secs.max(10)),
         }
     }
 
     pub fn server_names(&self) -> Vec<String> {
-        self.configs.keys().cloned().collect()
+        self.configs.read().map(|c| c.keys().cloned().collect()).unwrap_or_default()
+    }
+
+    fn config_for(&self, name: &str) -> Option<McpServerCfg> {
+        self.configs.read().ok()?.get(name).cloned()
+    }
+
+    /// Hot-swap server configs (Settings save path). Drops live handles for
+    /// servers that vanished or were disabled so the next use re-spawns.
+    pub async fn set_configs(&self, configs: HashMap<String, McpServerCfg>) {
+        let dead: Vec<String> = {
+            let live = self.live.lock().await;
+            live.keys().filter(|k| {
+                match configs.get(*k) {
+                    None => true,
+                    Some(c) => !c.enabled,
+                }
+            }).cloned().collect()
+        };
+        for k in dead {
+            self.stop(&k).await;
+        }
+        if let Ok(mut w) = self.configs.write() {
+            *w = configs;
+        }
+    }
+
+    /// Exposure check: server allow/deny lists. Empty allow = all except denied.
+    pub fn is_tool_exposed(&self, server: &str, tool: &str) -> bool {
+        match self.config_for(server) {
+            Some(c) => c.is_tool_exposed(tool),
+            None => false,
+        }
+    }
+
+    /// Per-tool approval override for `server.tool` (`auto`|`ask`|`deny`).
+    pub fn tool_mode(&self, server: &str, tool: &str) -> Option<String> {
+        self.config_for(server)?.tool_mode(tool)
+    }
+
+    /// Exposed tools for one server (allow/deny applied). Used by the agent
+    /// to advertise `server.tool` defs and by the UI tool browser.
+    pub async fn exposed_tools(&self, name: &str) -> Result<Vec<McpTool>> {
+        let all = self.list_tools(name).await?;
+        Ok(all.into_iter().filter(|t| self.is_tool_exposed(name, &t.name)).collect())
     }
 
     async fn request(
@@ -105,7 +149,7 @@ impl McpManager {
         if live.contains_key(name) {
             return Ok(());
         }
-        let cfg = self.configs.get(name).ok_or_else(|| {
+        let cfg = self.config_for(name).ok_or_else(|| {
             ParziError::Tool("mcp".into(), format!("unknown server `{name}`"))
         })?;
         if !cfg.enabled {
@@ -167,11 +211,12 @@ impl McpManager {
 
     fn timeout_for(&self, name: &str) -> Duration {
         Duration::from_millis(
-            self.configs.get(name).map(|c| c.timeout_ms).unwrap_or(30_000).max(1_000),
+            self.config_for(name).map(|c| c.timeout_ms).unwrap_or(30_000).max(1_000),
         )
     }
 
-    /// List tools (cached per server). Applies the lane `allow` filter upstream.
+    /// List tools (cached per server). Exposure filtering happens in
+    /// `exposed_tools` / the executor, not here.
     pub async fn list_tools(&self, name: &str) -> Result<Vec<McpTool>> {
         let mut live = self.live.lock().await;
         self.reap_idle(&mut live).await;

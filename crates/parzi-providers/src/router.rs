@@ -29,13 +29,18 @@ pub fn pick(provider: &str, effort: &str) -> &'static str {
     match (provider, effort) {
         ("claude", "low") => "claude-sonnet-5",
         ("claude", _) => "claude-opus-5",
-        ("codex", _) => "gpt-5.3-codex",
+        ("codex", "low") => "gpt-5.6-luna",
+        ("codex", "medium" | "med") => "gpt-5.6-terra",
+        ("codex", _) => "gpt-5.5",
         ("antigravity", "low") => "gemini-3.8-flash-low",
         ("antigravity", "high" | "extra" | "ultra") => "gemini-3.8-flash-high",
         ("antigravity", _) => "gemini-3.8-flash-medium",
-        ("opencode", _) => "opencode-default",
-        ("xai", "low") => "grok-3",
-        ("xai", _) => "grok-4",
+        ("opencode", "low") => "glm-5.3-flash",
+        ("opencode", "medium" | "med") => "kimi-k2.7-code",
+        ("opencode", _) => "kimi-k3",
+        ("xai", "low") => "grok-4.1-fast",
+        ("xai", "medium" | "med") => "grok-4.3",
+        ("xai", _) => "grok-4.6",
         _ => "claude-opus-5",
     }
 }
@@ -168,6 +173,8 @@ pub fn parse_cooldown_secs(err: &str) -> Option<u64> {
 /// True for errors worth failing over: rate limits and overloaded backends.
 /// Auth errors, bad requests, and context overflows must NOT fail over
 /// (the next provider would fail the same way or mask a real problem).
+/// Quota/cap errors DO fail over: a spent monthly cap on one subscription
+/// should hop to the next (or to the free tier), not kill the turn.
 pub fn is_retriable(err: &str) -> bool {
     let e = err.to_lowercase();
     e.contains("429")
@@ -181,9 +188,19 @@ pub fn is_retriable(err: &str) -> bool {
         || e.contains("529")
         || e.contains("gateway timeout")
         || e.contains("capacity")
+        || e.contains("quota")
+        || e.contains("usage limit")
+        || e.contains("usage_limit")
+        || e.contains("monthly limit")
+        || e.contains("insufficient")
         || e.contains("timed out")
         || e.contains("timeout")
         || e.contains("try again")
+        // Send-phase shed (edge dropped the request before responding):
+        // hop, don't die. Deliberately narrow — adapters with their own
+        // internal fallback (antigravity) pin other transport failures
+        // as stay-put, and that decision stands.
+        || e.contains("error sending request")
 }
 
 // ---------------------------------------------------------------------------
@@ -235,8 +252,8 @@ pub fn effort_options(provider: &str) -> Vec<EffortOption> {
             opt("low", "Low", "adaptive thinking · effort low"),
             opt("medium", "Medium", "adaptive thinking · effort medium"),
             opt("high", "High", "adaptive thinking · effort high"),
-            opt("extra", "Extra", "effort high · 128k output"),
-            opt("ultra", "Ultra", "effort high · 256k output"),
+            opt("extra", "Extra", "effort xhigh"),
+            opt("ultra", "Ultra", "effort max"),
         ],
         "codex" => vec![
             opt("low", "Low", "low reasoning"),
@@ -244,6 +261,13 @@ pub fn effort_options(provider: &str) -> Vec<EffortOption> {
             opt("high", "High", "high reasoning"),
             opt("extra", "Extra", "xhigh reasoning"),
             opt("ultra", "Ultra", "xhigh reasoning · max output"),
+        ],
+        "opencode" => vec![
+            opt("low", "Low", "glm flash · cheap"),
+            opt("medium", "Medium", "kimi code · coding"),
+            opt("high", "High", "kimi-k3 flagship"),
+            opt("extra", "Extra", "kimi-k3 · 128k output"),
+            opt("ultra", "Ultra", "kimi-k3 · max output"),
         ],
         // No native reasoning knob: effort sizes the output budget.
         _ => vec![

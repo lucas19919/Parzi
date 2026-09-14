@@ -10,12 +10,14 @@ pub mod claude;
 pub mod codex;
 pub mod compat_providers;
 pub mod openai_compat;
+pub mod opencode;
+mod opencode_wire;
 pub mod router;
 pub mod types;
 
 pub use types::{
     AuthStatus, Billing, ChatReq, EventRx, EventTx, Model, Provider, ProviderHealth, StreamEvent,
-    ToolDef,
+    ToolDef, desanitize_tool, sanitize_tool,
 };
 
 use parzi_core::config::ParziConfig;
@@ -80,7 +82,7 @@ pub fn provider(
         "claude" => Box::new(claude::claude()),
         "codex" => Box::new(codex::Codex::new(base)),
         "antigravity" => Box::new(antigravity::Antigravity::new()),
-        "opencode" => Box::new(compat_providers::opencode(base, refresh)),
+        "opencode" => Box::new(opencode::opencode(base, refresh)),
         "xai" => Box::new(compat_providers::xai(base, refresh)),
         _ => unreachable!("canonical_id only returns roster ids"),
     };

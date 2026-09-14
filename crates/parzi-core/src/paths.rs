@@ -2,8 +2,14 @@ use std::path::PathBuf;
 
 use crate::error::{ParziError, Result};
 
-/// All Parzi state lives under `~/.parzi`. Filesystem is the truth.
+/// All Parzi state lives under `~/.parzi` (or `$PARZI_HOME` when set for
+/// hermetic tests). Filesystem is the truth.
 pub fn parzi_dir() -> Result<PathBuf> {
+    if let Some(home) = std::env::var_os("PARZI_HOME") {
+        if !home.is_empty() {
+            return Ok(PathBuf::from(home));
+        }
+    }
     dirs::home_dir()
         .map(|h| h.join(".parzi"))
         .ok_or_else(|| ParziError::Config("cannot locate home directory".into()))
@@ -55,24 +61,28 @@ pub fn ensure_dirs() -> Result<PathBuf> {
     Ok(root)
 }
 
-/// Copy the shipped Asuka background in on first run. Never overwrites user files.
+/// Copy the shipped default backgrounds in on first run. Never overwrites
+/// user files: anything already in `backgrounds/` is left alone.
 fn seed_default_background(root: &std::path::Path) -> Result<()> {
-    let dest = root.join("backgrounds").join("asuka.png");
-    if dest.exists() {
-        return Ok(());
-    }
-    // Shipped next to the binary layout in dev: <repo>/assets/backgrounds/asuka.png.
-    // Release installers place it beside the executable; both are best-effort seeds.
-    let mut candidates: Vec<PathBuf> = vec![PathBuf::from("assets/backgrounds/asuka.png")];
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("asuka.png"));
+    // (bundled file name, dev-tree source name). Release installers place
+    // them beside the executable; both layouts are best-effort seeds.
+    for name in ["asuka.png", "eva-crosses.jpg"] {
+        let dest = root.join("backgrounds").join(name);
+        if dest.exists() {
+            continue;
         }
-    }
-    for c in candidates {
-        if c.exists() {
-            std::fs::copy(&c, &dest)?;
-            return Ok(());
+        // Shipped in dev at <repo>/assets/backgrounds/<name>.
+        let mut candidates: Vec<PathBuf> = vec![PathBuf::from("assets/backgrounds").join(name)];
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                candidates.push(dir.join(name));
+            }
+        }
+        for c in candidates {
+            if c.exists() {
+                std::fs::copy(&c, &dest)?;
+                break;
+            }
         }
     }
     Ok(())
@@ -88,6 +98,14 @@ fn seed_builtin_packs(root: &std::path::Path) -> Result<()> {
 [colors]\nsidebar = \"#07070B\"\nstage = \"#0B0B10\"\naccent = \"#7C8CFF\"\ntext = \"#EDEDF2\"\n\
 text_dim = \"#9AA0AE\"\nbar = \"#1A1D24\"\nborder = \"#2A2E3A\"\n\n\
 [background]\nimage = \"backgrounds/asuka.png\"\ndim = 0.65\nvignette = 0.50\n\n\
+[glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
+        ),
+        (
+            "eva-crosses",
+            "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+[colors]\nsidebar = \"#0D0708\"\nstage = \"#120B0C\"\naccent = \"#E5484D\"\ntext = \"#F5EDED\"\n\
+text_dim = \"#A89A9B\"\nbar = \"#1D1214\"\nborder = \"#33201F\"\n\n\
+[background]\nimage = \"backgrounds/eva-crosses.jpg\"\ndim = 0.62\nvignette = 0.48\n\n\
 [glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
         ),
         (

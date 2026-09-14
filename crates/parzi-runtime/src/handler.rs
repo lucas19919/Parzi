@@ -8,11 +8,12 @@ use parzi_core::error::{ParziError, Result};
 use parzi_core::store::{Event, SessionStatus, SessionStore};
 use parzi_core::{artifacts, lanes, widgets};
 use parzi_providers::{AuthStatus, ChatReq, EventRx, Provider, StreamEvent};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::tools::{
-    Approval, ApprovalMode, Approver, ToolCallInfo, ToolExecutor, is_session_tool, is_ui_tool,
+    Approval, ApprovalMode, Approver, ToolCallInfo, ToolExecutor, is_lane_tool, is_session_tool,
+    is_ui_tool,
 };
 
 #[derive(Debug)]
@@ -22,9 +23,9 @@ pub enum RunEvent {
         text: String,
     },
     ToolCall { id: String, name: String },
-    ToolResult { name: String, ok: bool, ms: u128 },
+    ToolResult { name: String, ok: bool, ms: u64 },
     Usage { tokens_in: u64, tokens_out: u64, cost_usd: f64 },
-    ApprovalRequest { call: ToolCallInfo, reply: oneshot::Sender<Approval> },
+    ApprovalRequest { call: ToolCallInfo },
     /// Non-intrusive timeline note (failover, budget). Toast only, no state change.
     Notice { text: String },
     /// Active route transition (failover or fallback hop).
@@ -164,9 +165,9 @@ impl AgentRun {
         tin as f64 / 1_000_000.0 * slot.price_in + tout as f64 / 1_000_000.0 * slot.price_out
     }
 
-    fn tool_defs(&self, slot: &ProviderSlot) -> Vec<parzi_providers::ToolDef> {
+    async fn tool_defs(&self, slot: &ProviderSlot) -> Vec<parzi_providers::ToolDef> {
         if Self::lookup_tools(&slot.provider_id, &slot.model_id) {
-            self.tools.defs()
+            self.tools.defs_with_mcp().await
         } else {
             vec![]
         }
@@ -312,9 +313,10 @@ impl AgentRun {
                 model: slot.model_id.clone(),
                 system: ctx.system,
                 messages: ctx.messages,
-                tools: self.tool_defs(slot),
+                tools: self.tool_defs(slot).await,
                 max_tokens: self.max_tokens,
                 effort: self.effort.clone(),
+                session: self.session_id.clone(),
             };
             let mut rx: EventRx = match slot.provider.chat_stream(req).await {
                 Ok(rx) => rx,
@@ -443,7 +445,7 @@ impl AgentRun {
         id: &str,
         name: &str,
         args: &serde_json::Value,
-    ) -> (bool, String, u128) {
+    ) -> (bool, String, u64) {
         if is_ui_tool(name) {
             return self.execute_ui_tool(name, args);
         }
@@ -456,35 +458,63 @@ impl AgentRun {
             }
             return self.execute_session_tool(name, args).await;
         }
-        // Approval gate.
+        if is_lane_tool(name) {
+            // lane.dispatch spawns a worker subsession with the project's
+            // implementation role settings. Always gated like session.spawn.
+            if !self.approved(id, name, args).await {
+                return (false, format!("tool `{name}` denied (lane mode / approver)"), 0);
+            }
+            return self.execute_lane_tool(name, args).await;
+        }
+        // Approval gate (covers plan.* + local + MCP via the executor).
         let allowed = self.approved(id, name, args).await;
         if !allowed {
             return (false, format!("tool `{name}` denied (lane mode / approver)"), 0);
         }
         let t0 = std::time::Instant::now();
         let (ok, output) = self.tools.execute(name, args).await;
-        (ok, output, t0.elapsed().as_millis())
+        (ok, output, ms_now(t0))
     }
 
     async fn approved(&self, id: &str, name: &str, args: &serde_json::Value) -> bool {
+        // R-8: lane Deny is absolute — no per-tool override can lift it.
+        // ("Lockdown" must actually lock down.) Allowlist is checked before
+        // any prompt so users never approve a tool that is then denied.
+        if self.mode == ApprovalMode::Deny {
+            return false;
+        }
+        if !self.tools.is_allowed(name) {
+            return false;
+        }
+        // Per-tool connector override wins over lane Ask/Auto (but never over
+        // lane Deny, handled above): `deny` never runs, `auto` skips the
+        // prompt, `ask` always prompts.
+        match self.tools.approval_override(name) {
+            Some(ApprovalMode::Deny) => return false,
+            Some(ApprovalMode::Auto) => return true,
+            Some(ApprovalMode::Ask) => return self.ask_approver(id, name, args).await,
+            None => {}
+        }
         match self.mode {
             ApprovalMode::Auto => true,
             ApprovalMode::Deny => false,
-            ApprovalMode::Ask => {
-                let info = ToolCallInfo {
-                    id: id.into(),
-                    name: name.into(),
-                    args: args.clone(),
-                    lane: self.lane.clone(),
-                };
-                let (reply_tx, reply_rx) = oneshot::channel();
-                self.emit(RunEvent::ApprovalRequest { call: info.clone(), reply: reply_tx });
-                tokio::select! {
-                    _ = self.cancel.cancelled() => false,
-                    r = self.approver.approve(&info) => matches!(r, Approval::Allow),
-                    r = reply_rx => matches!(r, Ok(Approval::Allow)),
-                }
-            }
+            ApprovalMode::Ask => self.ask_approver(id, name, args).await,
+        }
+    }
+
+    async fn ask_approver(&self, id: &str, name: &str, args: &serde_json::Value) -> bool {
+        let info = ToolCallInfo {
+            id: id.into(),
+            name: name.into(),
+            args: args.clone(),
+            lane: self.lane.clone(),
+        };
+        // Single approval path: the Approver is the gate. Emit for observability
+        // (log/toast) — no second channel, so a slow human actually blocks here.
+        self.emit(RunEvent::ApprovalRequest { call: info.clone() });
+        tokio::select! {
+            _ = self.cancel.cancelled() => false,
+            r = self.approver.approve(&info) => matches!(r, Approval::Allow),
         }
     }
 
@@ -494,7 +524,7 @@ impl AgentRun {
         &self,
         name: &str,
         args: &serde_json::Value,
-    ) -> (bool, String, u128) {
+    ) -> (bool, String, u64) {
         let t0 = std::time::Instant::now();
         let Some(bridge) = &self.harness else {
             return (false, "session tools unavailable in this run".into(), 0);
@@ -548,7 +578,7 @@ impl AgentRun {
             }
             _ => return (false, format!("unknown session tool `{name}`"), 0),
         };
-        let ms = t0.elapsed().as_millis();
+        let ms = ms_now(t0);
         match out {
             Ok(text) => {
                 if matches!(name, "session.spawn" | "session.send_message") {
@@ -564,7 +594,65 @@ impl AgentRun {
         }
     }
 
-    fn execute_ui_tool(&self, name: &str, args: &serde_json::Value) -> (bool, String, u128) {
+    /// `lane.dispatch`: orchestrator spawns a worker subsession preconfigured
+    /// with the project's implementation role (model/effort). Falls back to
+    /// the caller's lane/model when the roster is empty.
+    async fn execute_lane_tool(
+        &self,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> (bool, String, u64) {
+        let t0 = std::time::Instant::now();
+        let Some(bridge) = &self.harness else {
+            return (false, "lane tools unavailable in this run".into(), 0);
+        };
+        if name != "lane.dispatch" {
+            return (false, format!("unknown lane tool `{name}`"), 0);
+        }
+        let str_arg = |k: &str| args.get(k).and_then(|v| v.as_str()).map(|s| s.to_string());
+        let title = str_arg("title").unwrap_or_else(|| "lane worker".into());
+        let prompt = str_arg("prompt").unwrap_or_default();
+        if prompt.trim().is_empty() {
+            return (false, "lane.dispatch needs a `prompt`".into(), 0);
+        }
+        let lane = str_arg("lane").filter(|s| !s.trim().is_empty());
+        let wait = args.get("wait").and_then(|v| v.as_bool()).unwrap_or(true);
+        // Role-aware defaults: the implementation role may pin a model.
+        let mut role_model: Option<String> = None;
+        if let Ok(meta) = self.store.get(&self.session_id) {
+            if let Ok(roster) = parzi_core::lanes::get_project_roster(&meta.project) {
+                role_model = roster.implementation.model.filter(|s| !s.trim().is_empty());
+            }
+        }
+        let out = bridge
+            .spawn_session(
+                &self.session_id,
+                &title,
+                &prompt,
+                true,
+                role_model,
+                lane,
+                wait,
+            )
+            .await;
+        let ms = ms_now(t0);
+        match out {
+            Ok(text) => {
+                self.emit(RunEvent::Notice { text: text.chars().take(240).collect() });
+                let _ = self.store.append(
+                    &self.session_id,
+                    &Event::System { text: format!("{name}: {text}") },
+                );
+                // Best-effort shadow checkpoint hook: the orchestrator driver
+                // snapshots the repo worktree per turn when a lane root is a
+                // git checkout (see git_checkpoints). No-op otherwise.
+                (true, text, ms)
+            }
+            Err(e) => (false, e.to_string(), ms),
+        }
+    }
+
+    fn execute_ui_tool(&self, name: &str, args: &serde_json::Value) -> (bool, String, u64) {
         match name {
             "ui.show_markdown" => {
                 let md = args.get("markdown").and_then(|m| m.as_str()).unwrap_or("");
@@ -730,6 +818,11 @@ fn longest_fenced_block(text: &str) -> Option<(String, String)> {
         }
     }
     best
+}
+
+/// Milliseconds since `t0`, saturating to u64 (serde_json cannot persist u128).
+fn ms_now(t0: std::time::Instant) -> u64 {
+    t0.elapsed().as_millis().min(u64::MAX as u128) as u64
 }
 
 /// Short human reason for a failover hop ("rate limit reached").

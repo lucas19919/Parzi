@@ -32,6 +32,20 @@ fn const_becomes_enum() {
 }
 
 #[test]
+fn numeric_const_is_dropped_not_enum() {
+    // Gemini's `enum` is `repeated string`: a numeric entry 400s the whole
+    // request (proven live by `ui.show_widget`'s `"const": 1` discriminator).
+    let v = serde_json::json!({"type": "number", "const": 1});
+    let c = clean_schema(&v);
+    assert_eq!(c.get("type").and_then(|t| t.as_str()), Some("number"));
+    assert!(
+        c.get("enum").is_none(),
+        "numeric const must not become enum"
+    );
+    assert!(c.get("const").is_none());
+}
+
+#[test]
 fn empty_object_gets_placeholder() {
     let v = serde_json::json!({"type": "object"});
     let c = clean_schema(&v);

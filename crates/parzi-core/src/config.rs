@@ -98,12 +98,48 @@ pub struct McpServerCfg {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Exposure allowlist (short tool names): empty = expose all tools.
     #[serde(default)]
     pub allow: Vec<String>,
+    /// Exposure denylist (short tool names): takes precedence over `allow`.
+    #[serde(default)]
+    pub deny: Vec<String>,
+    /// Per-tool approval override: short tool name -> `auto` | `ask` | `deny`.
+    /// Absent = follow the lane mode. `deny` blocks execution even when exposed.
+    #[serde(default)]
+    pub tool_modes: HashMap<String, String>,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+impl McpServerCfg {
+    /// Is `tool` (short name) exposed by this server at all?
+    pub fn is_tool_exposed(&self, tool: &str) -> bool {
+        if !self.enabled {
+            return false;
+        }
+        if self.deny.iter().any(|d| d == tool) {
+            return false;
+        }
+        if self.allow.is_empty() {
+            return true;
+        }
+        self.allow.iter().any(|a| a == tool)
+    }
+
+    /// Per-tool approval override, normalised. None = follow lane mode.
+    pub fn tool_mode(&self, tool: &str) -> Option<String> {
+        self.tool_modes.get(tool).map(|m| {
+            match m.as_str() {
+                "auto" => "auto",
+                "deny" => "deny",
+                _ => "ask",
+            }
+            .to_string()
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,9 +178,9 @@ fn default_idle_kill() -> u64 {
 /// Bundled default model per roster provider.
 pub const PROVIDER_DEFAULTS: &[(&str, &str)] = &[
     ("claude", "claude-opus-5"),
-    ("codex", "gpt-5.3-codex"),
+    ("codex", "gpt-5.5"),
     ("antigravity", "gemini-3.8-flash-medium"),
-    ("opencode", "opencode-default"),
+    ("opencode", "kimi-k3"),
     ("xai", "grok-4"),
 ];
 
@@ -253,10 +289,18 @@ impl ParziConfig {
             }
         }
         for (id, model) in PROVIDER_DEFAULTS {
-            self.providers.entry(id.to_string()).or_insert(ProviderEntry {
-                default_model: (*model).into(),
-                base_url: None,
-            });
+            self.providers
+                .entry(id.to_string())
+                .or_insert(ProviderEntry {
+                    default_model: (*model).into(),
+                    base_url: None,
+                });
+        }
+        // Retired opencode placeholder (pre-Zen adapter): point at the flagship.
+        if let Some(e) = self.providers.get_mut("opencode") {
+            if e.default_model == "opencode-default" {
+                e.default_model = "kimi-k3".into();
+            }
         }
         self.default_provider = alias(&self.default_provider)
             .unwrap_or("claude")
@@ -332,6 +376,9 @@ preferred_subscriptions = ["antigravity", "codex", "claude-code", "t3", "opencod
         let cfg = ParziConfig::default();
         assert_eq!(cfg.providers.len(), 5);
         assert_eq!(cfg.default_provider, "claude");
-        assert_eq!(cfg.routing.auto_order, vec!["claude", "codex", "antigravity", "opencode"]);
+        assert_eq!(
+            cfg.routing.auto_order,
+            vec!["claude", "codex", "antigravity", "opencode"]
+        );
     }
 }

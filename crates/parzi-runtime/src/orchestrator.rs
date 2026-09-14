@@ -13,7 +13,7 @@ use tokio_util::sync::CancellationToken;
 use crate::circuit_breaker::CircuitBreaker;
 use crate::handler::{AgentRun, HarnessBridge, RunEvent, system_parts};
 use crate::mcp::McpManager;
-use crate::tools::{ApprovalMode, Approver, AutoApprover, ToolExecutor};
+use crate::tools::{ApprovalMode, Approver, DenyApprover, ToolExecutor};
 
 /// Effort pill → output budget. Single place both CLI and GUI derive from.
 /// Legacy `"med"` still resolves to medium.
@@ -34,6 +34,22 @@ pub fn normalize_effort(effort: &str) -> String {
         "med" => "medium".to_string(),
         _ => "medium".to_string(),
     }
+}
+
+/// Sticky Smart Auto: when the request is `auto` but the thread already runs
+/// on a resolved `provider/model` (persisted after the previous auto turn),
+/// stay on it — the explicit+failover path keeps the hop safety. A fresh
+/// `auto` on an unresolved thread (or a stored `auto`) stays fully adaptive.
+pub fn sticky_spec(requested: &str, stored: &str) -> String {
+    let autoish = requested == "auto" || requested.starts_with("auto/");
+    if autoish {
+        if let Some((p, _)) = stored.split_once('/') {
+            if parzi_providers::canonical_id(p).is_some() {
+                return stored.to_string();
+            }
+        }
+    }
+    requested.to_string()
 }
 
 #[derive(Debug, Clone)]
@@ -81,11 +97,13 @@ struct QueuedRun {
 }
 
 /// Cloneable handles for the pump, which runs inside finished tasks.
+/// `cfg` is shared (not cloned) so Settings saves apply to the next launch
+/// without an app restart.
 #[derive(Clone)]
 struct Pump {
     queue: Arc<Mutex<VecDeque<QueuedRun>>>,
     notify: Arc<Notify>,
-    cfg: ParziConfig,
+    cfg: std::sync::Arc<std::sync::RwLock<ParziConfig>>,
     factory: ProviderFactory,
     mcp: Arc<McpManager>,
     store: SessionStore,
@@ -93,8 +111,14 @@ struct Pump {
     circuit_breaker: Arc<CircuitBreaker>,
 }
 
+impl Pump {
+    fn cfg_snapshot(&self) -> ParziConfig {
+        self.cfg.read().map(|c| c.clone()).unwrap_or_default()
+    }
+}
+
 pub struct Orchestrator {
-    cfg: ParziConfig,
+    cfg: std::sync::Arc<std::sync::RwLock<ParziConfig>>,
     store: SessionStore,
     mcp: Arc<McpManager>,
     handles: Arc<Mutex<HashMap<String, Handle>>>,
@@ -108,7 +132,7 @@ impl Orchestrator {
     pub fn new(cfg: ParziConfig, store: SessionStore) -> Self {
         let mcp = Arc::new(McpManager::new(cfg.mcp.servers.clone(), cfg.orchestrator.mcp_idle_kill_secs));
         Self {
-            cfg,
+            cfg: std::sync::Arc::new(std::sync::RwLock::new(cfg)),
             store,
             mcp,
             handles: Arc::new(Mutex::new(HashMap::new())),
@@ -150,8 +174,22 @@ impl Orchestrator {
         &self.store
     }
 
-    pub fn config(&self) -> &ParziConfig {
-        &self.cfg
+    pub fn config(&self) -> ParziConfig {
+        self.cfg.read().map(|c| c.clone()).unwrap_or_default()
+    }
+
+    pub fn mcp(&self) -> &Arc<McpManager> {
+        &self.mcp
+    }
+
+    /// Hot-apply a saved config (Settings path): swaps the shared config and
+    /// pushes fresh MCP server configs into the live manager. Next launch
+    /// uses the new policy; no restart needed.
+    pub async fn apply_config(&self, cfg: ParziConfig) {
+        self.mcp.set_configs(cfg.mcp.servers.clone()).await;
+        if let Ok(mut w) = self.cfg.write() {
+            *w = cfg;
+        }
     }
 
     /// Mark crashed Active sessions Idle on boot. Nothing is ever lost:
@@ -196,7 +234,12 @@ impl Orchestrator {
         effort: &str,
         attachments: Vec<parzi_core::context::AttachedFile>,
     ) -> Result<(SessionMeta, mpsc::UnboundedReceiver<RunEvent>)> {
-        let live = self.handles.lock().await.len();
+        // B4: prune finished tasks before measuring capacity.
+        let live = {
+            let mut h = self.handles.lock().await;
+            h.retain(|_, handle| !handle._task.is_finished());
+            h.len()
+        };
         let effort = normalize_effort(effort);
         let title: String = prompt.lines().next().unwrap_or("untitled").chars().take(80).collect();
 
@@ -214,11 +257,12 @@ impl Orchestrator {
             attachments,
             approver,
         };
-        if live >= self.cfg.orchestrator.max_concurrent.max(1) {
-            if !self.cfg.orchestrator.queue_when_busy {
+        let snap = self.config();
+        if live >= snap.orchestrator.max_concurrent.max(1) {
+            if !snap.orchestrator.queue_when_busy {
                 return Err(ParziError::Store(format!(
                     "busy: {live} runs active (max {}); kill one first",
-                    self.cfg.orchestrator.max_concurrent
+                    snap.orchestrator.max_concurrent
                 )));
             }
             self.store.set_status(&meta.id, SessionStatus::Queued)?;
@@ -243,12 +287,20 @@ impl Orchestrator {
         attachments: Vec<parzi_core::context::AttachedFile>,
         model_override: Option<String>,
     ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
-        if self.handles.lock().await.contains_key(id) {
-            return Err(ParziError::Store(format!("run {id} is active; kill it first")));
+        // B4: a finished run must not block its own session. Prune first so a
+        // second message to a completed thread succeeds.
+        {
+            let mut h = self.handles.lock().await;
+            h.retain(|_, handle| !handle._task.is_finished());
+            if h.contains_key(id) {
+                return Err(ParziError::Store(format!("run {id} is active; kill it first")));
+            }
         }
         let meta = self.store.get(id)?;
         // Per-message model switch: the thread follows the newly picked model.
-        let spec = model_override.unwrap_or_else(|| meta.model.clone());
+        // A requested `auto` sticks to the previously resolved route.
+        let requested = model_override.unwrap_or_else(|| meta.model.clone());
+        let spec = sticky_spec(&requested, &meta.model);
         if spec != meta.model {
             self.store.set_model(id, &spec)?;
         }
@@ -264,9 +316,14 @@ impl Orchestrator {
             attachments,
             approver,
         };
-        let live = self.handles.lock().await.len();
-        if live >= self.cfg.orchestrator.max_concurrent.max(1) {
-            if !self.cfg.orchestrator.queue_when_busy {
+        let live = {
+            let mut h = self.handles.lock().await;
+            h.retain(|_, handle| !handle._task.is_finished());
+            h.len()
+        };
+        let snap = self.config();
+        if live >= snap.orchestrator.max_concurrent.max(1) {
+            if !snap.orchestrator.queue_when_busy {
                 return Err(ParziError::Store("busy: max concurrent runs reached".into()));
             }
             self.store.set_status(id, SessionStatus::Queued)?;
@@ -283,7 +340,8 @@ impl Orchestrator {
         model_spec: &str,
         effort: &str,
     ) -> Result<Vec<crate::handler::ProviderSlot>> {
-        Self::slots_for_static(&self.cfg, &self.factory, model_spec, effort)
+        let snap = self.config();
+        Self::slots_for_static(&snap, &self.factory, model_spec, effort)
     }
 
     fn slots_for_static(
@@ -377,9 +435,10 @@ impl Orchestrator {
     /// Live provider health for the Omnibar dots + Settings quota panel.
     /// Merges each provider's auth/tier state with circuit-breaker cooldowns.
     pub fn provider_health(&self) -> Vec<parzi_providers::ProviderHealth> {
+        let snap = self.config();
         let mut out = vec![];
         for id in parzi_providers::PROVIDERS.iter().copied() {
-            let mut h = match (self.factory)(id, &self.cfg) {
+            let mut h = match (self.factory)(id, &snap) {
                 Ok(p) => p.health(),
                 Err(e) => parzi_providers::ProviderHealth {
                     provider: id.to_string(),
@@ -419,6 +478,9 @@ impl Orchestrator {
     pub async fn kill(&self, id: &str) -> Result<()> {
         if let Some(h) = self.handles.lock().await.remove(id) {
             h.cancel.cancel();
+            // R-1 backstop: the run loop may be stuck in a provider stream;
+            // abort the driver task so the slot frees even then.
+            h._task.abort();
         }
         // Dequeue anything waiting for this session too.
         self.queue.lock().await.retain(|q| q.session_id != id);
@@ -490,9 +552,14 @@ impl Orchestrator {
                 attachments: vec![],
                 approver: None,
             };
-            let live = self.handles.lock().await.len();
-            if live >= self.cfg.orchestrator.max_concurrent.max(1) {
-                if self.cfg.orchestrator.queue_when_busy {
+            let live = {
+                let mut h = self.handles.lock().await;
+                h.retain(|_, handle| !handle._task.is_finished());
+                h.len()
+            };
+            let snap = self.config();
+            if live >= snap.orchestrator.max_concurrent.max(1) {
+                if snap.orchestrator.queue_when_busy {
                     let _ = self.store.set_status(&meta.id, SessionStatus::Queued);
                     self.queue.lock().await.push_back(q);
                 }
@@ -507,7 +574,8 @@ impl Orchestrator {
     }
 
     fn lane_policy(&self, project: &str, lane: &str) -> (ApprovalMode, Vec<String>) {
-        Self::lane_policy_for(&self.cfg, project, lane)
+        let snap = self.config();
+        Self::lane_policy_for(&snap, project, lane)
     }
 
     fn lane_policy_for(
@@ -547,11 +615,15 @@ impl Orchestrator {
         // Teamwork harness tools are first-class: agents can delegate to
         // subsessions and message across sessions by default. Spawning and
         // messaging still pause for approval in lane Ask mode (handler gate).
+        // Plan + lane-dispatch tools ship with the project workspace.
         for s in [
             "session.spawn",
             "session.send_message",
             "session.read_session",
             "session.list_sessions",
+            "plan.read",
+            "plan.update",
+            "lane.dispatch",
         ] {
             if !allowed.contains(&s.to_string()) {
                 allowed.push(s.into());
@@ -561,10 +633,22 @@ impl Orchestrator {
     }
 
     /// Build + launch a run for an existing session. Inserts the handle and
-    /// spawns the driver, which pumps the queue when this run finishes.
+    /// spawns the driver, which releases the handle and pumps the queue when
+    /// this run finishes. B4: handles are always removed on completion so the
+    /// concurrency cap counts live runs only.
     async fn launch(p: Pump, q: QueuedRun) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
-        let slots = Self::slots_for_static(&p.cfg, &p.factory, &q.model_spec, &q.effort)?;
-        let (mode, allowed) = Self::lane_policy_for(&p.cfg, &q.project, &q.lane);
+        let snap = p.cfg_snapshot();
+        let slots = Self::slots_for_static(&snap, &p.factory, &q.model_spec, &q.effort)?;
+        // Persist the resolved route so the next `auto` turn sticks to it
+        // (failover still hops on 429/overload within each run).
+        if (q.model_spec == "auto" || q.model_spec.starts_with("auto/")) && !slots.is_empty() {
+            let first = &slots[0];
+            p.store.set_model(
+                &q.session_id,
+                &format!("{}/{}", first.provider_id, first.model_id),
+            )?;
+        }
+        let (mode, allowed) = Self::lane_policy_for(&snap, &q.project, &q.lane);
         let tools = Arc::new(ToolExecutor {
             cwd: q.cwd.clone(),
             mcp: p.mcp.clone(),
@@ -578,16 +662,19 @@ impl Orchestrator {
         let run = AgentRun::new(
             q.session_id.clone(),
             slots,
-            system_parts(&p.cfg, &q.project, &q.lane),
+            system_parts(&snap, &q.project, &q.lane),
             q.lane.clone(),
             mode,
-            p.cfg.lanes.max_steps,
+            snap.lanes.max_steps,
             effort_tokens(&q.effort),
             q.attachments.clone(),
             q.effort.clone(),
             p.store.clone(),
             tools,
-            q.approver.clone().unwrap_or_else(|| Arc::new(AutoApprover)),
+            // B2: harness-spawned children must never silently run as Auto.
+            // No approver carried over = deny by default; explicit callers
+            // (GUI/CLI) always pass Some(...).
+            q.approver.clone().unwrap_or_else(|| Arc::new(DenyApprover)),
             tx,
             cancel.clone(),
         )
@@ -596,6 +683,7 @@ impl Orchestrator {
         p.store.set_status(&q.session_id, SessionStatus::Active)?;
         let parts = p.clone();
         let handles = p.handles.clone();
+        let handles_task = handles.clone();
         let sid = q.session_id.clone();
         let sid_task = sid.clone();
         let prompt = q.prompt.clone();
@@ -607,6 +695,9 @@ impl Orchestrator {
                     &parzi_core::store::Event::System { text: format!("run failed: {e}") },
                 );
             }
+            // B4: release the slot before waking the pump. Finished runs must
+            // not pin `max_concurrent` forever.
+            handles_task.lock().await.remove(&sid_task);
             // Sync wake-up only: awaiting pump() here would close a
             // launch→driver→pump→launch await cycle that Send cannot prove.
             parts.notify.notify_one();
@@ -615,15 +706,24 @@ impl Orchestrator {
         Ok(rx)
     }
 
+    /// Live-run count with finished-task pruning. Call wherever the
+    /// concurrency cap or `is active` guard is read so a just-finished task
+    /// that hasn't self-removed yet never blocks a new run.
+    async fn live_count(p: &Pump) -> usize {
+        let mut h = p.handles.lock().await;
+        h.retain(|_, handle| !handle._task.is_finished());
+        h.len()
+    }
+
     /// Start queued runs while slots are free. Skips killed/missing sessions.
     async fn pump(p: Pump) {
         loop {
             let next = {
-                let h = p.handles.lock().await;
-                if h.len() >= p.cfg.orchestrator.max_concurrent.max(1) {
+                let max = p.cfg_snapshot().orchestrator.max_concurrent.max(1);
+                let live = Self::live_count(&p).await;
+                if live >= max {
                     return;
                 }
-                drop(h);
                 p.queue.lock().await.pop_front()
             };
             let Some(q) = next else { return };
@@ -659,15 +759,15 @@ const HARNESS_WAIT_SECS: u64 = 180;
 
 impl Pump {
     fn max_live(&self) -> usize {
-        self.cfg.orchestrator.max_concurrent.max(1)
+        self.cfg_snapshot().orchestrator.max_concurrent.max(1)
     }
 
     /// Enqueue-or-launch a queued run, mirroring `Orchestrator::spawn`.
     /// Returns true when the run launched immediately (slot free).
     async fn dispatch(&self, q: QueuedRun) -> bool {
-        let live = self.handles.lock().await.len();
+        let live = Orchestrator::live_count(self).await;
         if live >= self.max_live() {
-            if self.cfg.orchestrator.queue_when_busy {
+            if self.cfg_snapshot().orchestrator.queue_when_busy {
                 let _ = self.store.set_status(&q.session_id, SessionStatus::Queued);
                 self.queue.lock().await.push_back(q);
             }
@@ -812,7 +912,14 @@ impl HarnessBridge for Pump {
         wait: bool,
     ) -> Result<String> {
         let target = self.store.get(session_id)?;
-        if self.handles.lock().await.contains_key(session_id) {
+        // B4: prune first — a finished target must take a continuation run,
+        // not an append-to-dead-run.
+        let still_live = {
+            let mut h = self.handles.lock().await;
+            h.retain(|_, handle| !handle._task.is_finished());
+            h.contains_key(session_id)
+        };
+        if still_live {
             self.store.append(session_id, &Event::User { text: message.into() })?;
             if !wait {
                 return Ok(serde_json::json!({
@@ -949,6 +1056,17 @@ mod tests {
         ] {
             assert!(allowed.iter().any(|a| a == t), "lane missing {t}");
         }
+    }
+
+    #[test]
+    fn sticky_auto_holds_the_resolved_route() {
+        assert_eq!(sticky_spec("auto", "opencode/kimi-k3"), "opencode/kimi-k3");
+        assert_eq!(sticky_spec("auto", "claude-code/claude-opus-5"), "claude-code/claude-opus-5");
+        // Unresolved threads stay adaptive; explicit picks always win.
+        assert_eq!(sticky_spec("auto", "auto"), "auto");
+        assert_eq!(sticky_spec("auto", "something"), "auto");
+        assert_eq!(sticky_spec("xai/grok-4", "opencode/kimi-k3"), "xai/grok-4");
+        assert_eq!(sticky_spec("auto", "ollama/llama3.1"), "auto");
     }
 }
 

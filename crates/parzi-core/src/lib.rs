@@ -7,6 +7,7 @@ pub mod context;
 pub mod error;
 pub mod lanes;
 pub mod paths;
+pub mod plan;
 pub mod store;
 pub mod theme;
 pub mod widgets;

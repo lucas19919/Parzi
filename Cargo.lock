@@ -1384,7 +1384,7 @@ checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "parzi-cli"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "parzi-core"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "chrono",
  "dirs",
@@ -1417,7 +1417,7 @@ dependencies = [
 
 [[package]]
 name = "parzi-providers"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "async-trait",
  "dirs",
@@ -1434,7 +1434,7 @@ dependencies = [
 
 [[package]]
 name = "parzi-runtime"
-version = "0.1.0"
+version = "0.1.8"
 dependencies = [
  "async-trait",
  "chrono",

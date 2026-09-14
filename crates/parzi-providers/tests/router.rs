@@ -53,7 +53,7 @@ fn auto_chain_takes_keys_when_opted_in() {
         .find(|r| r.provider == "xai")
         .expect("xai joins with keys_in_auto");
     assert_eq!(xai.reason, "api key (opt-in)");
-    assert_eq!(xai.model, "grok-4");
+    assert_eq!(xai.model, "grok-4.3");
     // Keys sit behind every subscription.
     let first_key = chain
         .iter()

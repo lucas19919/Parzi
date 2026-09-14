@@ -292,7 +292,7 @@ async fn cmd_send(p: SendParams) -> Result<()> {
             RunEvent::Usage { tokens_in, tokens_out, cost_usd } => {
                 eprintln!("\n[usage] {tokens_in} in / {tokens_out} out (${cost_usd:.4})")
             }
-            RunEvent::ApprovalRequest { .. } => {}
+            RunEvent::ApprovalRequest { .. } => {} // CliApprover prompts on stderr; event is observability only
             RunEvent::Notice { text } => eprintln!("\n[router] {text}"),
             RunEvent::RouteTransition { from_provider, to_provider, reason, .. } => {
                 eprintln!("\n[router] {from_provider} -> {to_provider} ({reason})")
@@ -440,10 +440,11 @@ fn cmd_health(json: bool) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&health)?);
         return Ok(());
     }
+    let snap = orch.config();
     println!("routing: auto_failover={} keys_in_auto={} order=[{}]",
-        orch.config().routing.auto_failover,
-        orch.config().routing.keys_in_auto,
-        parzi_providers::router::auto_order(orch.config()).join(","));
+        snap.routing.auto_failover,
+        snap.routing.keys_in_auto,
+        parzi_providers::router::auto_order(&snap).join(","));
     for h in &health {
         let cool = h.cooldown_until.map(|u| u.saturating_sub(now_secs()));
         let cool_s = cool.map(|s| format!(" cooldown={s}s")).unwrap_or_default();

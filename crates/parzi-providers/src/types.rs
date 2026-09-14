@@ -83,6 +83,10 @@ pub struct ChatReq {
     /// low | med | high. Each adapter maps it to its native knob
     /// (effort, reasoning level, variant) or to the output budget.
     pub effort: String,
+    /// Stable Parzi session id. Backends with per-conversation routing or
+    /// prompt caching (opencode Zen) key off this; empty falls back to a
+    /// per-request id (works, caches poorly).
+    pub session: String,
 }
 
 #[derive(Debug, Clone)]
@@ -236,4 +240,25 @@ pub fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Tool-name sanitizer. Anthropic, OpenAI (+ every OpenAI-compatible
+/// gateway) and Zen all require `^[a-zA-Z0-9_-]{1,64}$`; Parzi tools are
+/// dotted (`fs.read`), which 400s everywhere except Gemini. Sanitize on
+/// send, map back on receipt with [`desanitize_tool`].
+pub fn sanitize_tool(name: &str) -> String {
+    name.replace('.', "_")
+}
+
+/// Reverse of [`sanitize_tool`]: exact match first (an MCP tool may natively
+/// carry underscores), else the tool whose sanitized form equals the returned
+/// name, else passthrough.
+pub fn desanitize_tool(defs: &[ToolDef], name: &str) -> String {
+    if defs.iter().any(|d| d.name == name) {
+        return name.to_string();
+    }
+    defs.iter()
+        .find(|d| sanitize_tool(&d.name) == name)
+        .map(|d| d.name.clone())
+        .unwrap_or_else(|| name.to_string())
 }

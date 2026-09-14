@@ -5,7 +5,10 @@ use futures::StreamExt;
 use parzi_core::context::Role;
 use parzi_core::error::{ParziError, Result};
 
-use crate::types::{AuthStatus, Billing, ChatReq, EventRx, Model, Provider, StreamEvent};
+use crate::types::{
+    AuthStatus, Billing, ChatReq, EventRx, Model, Provider, StreamEvent, ToolDef, desanitize_tool,
+    sanitize_tool,
+};
 
 pub struct AnthropicNative {
     pub id: &'static str,
@@ -91,7 +94,8 @@ impl AnthropicNative {
             .iter()
             .map(|t| {
                 serde_json::json!({
-                    "name": t.name,
+                    // Dots 400 (`^[a-zA-Z0-9_-]{1,64}$`); mapped back on receipt.
+                    "name": sanitize_tool(&t.name),
                     "description": t.description,
                     "input_schema": t.schema,
                 })
@@ -112,12 +116,14 @@ impl AnthropicNative {
             body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
         } else {
             // Current models: adaptive thinking; the effort pill is the
-            // native `output_config.effort` level (low/medium/high —
-            // extra and ultra ride on high plus a bigger output budget).
+            // native `output_config.effort` level (documented ladder
+            // low/medium/high/xhigh/max — extra rides xhigh, ultra rides max).
             let effort = match req.effort.as_str() {
                 "low" => "low",
                 "medium" | "med" => "medium",
-                "high" | "extra" | "ultra" => "high",
+                "high" => "high",
+                "extra" => "xhigh",
+                "ultra" => "max",
                 _ => "medium",
             };
             body["thinking"] = serde_json::json!({"type": "adaptive", "display": "summarized"});
@@ -140,10 +146,11 @@ impl Provider for AnthropicNative {
     async fn chat_stream(&self, req: ChatReq) -> Result<EventRx> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let client = self.client()?;
+        let tools = req.tools.clone();
         let body = self.body(&req);
         let id = self.id;
         tokio::spawn(async move {
-            if let Err(e) = run(client, body, tx.clone(), id).await {
+            if let Err(e) = run(client, body, tools, tx.clone(), id).await {
                 let _ = tx.send(Err(e));
             }
         });
@@ -188,6 +195,7 @@ impl Provider for AnthropicNative {
 async fn run(
     client: reqwest::Client,
     body: serde_json::Value,
+    tools: Vec<ToolDef>,
     tx: crate::types::EventTx,
     id: &'static str,
 ) -> Result<()> {
@@ -290,7 +298,8 @@ async fn run(
     }
     if !tool_name.is_empty() {
         let args = serde_json::from_str(&tool_json).unwrap_or(serde_json::Value::Null);
-        let _ = tx.send(Ok(StreamEvent::ToolCall { id: tool_id, name: tool_name, args }));
+        let name = desanitize_tool(&tools, &tool_name);
+        let _ = tx.send(Ok(StreamEvent::ToolCall { id: tool_id, name, args }));
     }
     Ok(())
 }

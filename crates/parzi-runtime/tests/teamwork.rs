@@ -195,16 +195,48 @@ async fn read_and_list_inspect_sessions() {
     cleanup(&[&parent.id, &sub_id]);
 }
 
+/// Never answers: holds its run slot forever so queueing can be tested
+/// without relying on the old handle-leak (B4). Finished runs release their
+/// slot, so this test needs a genuinely hanging provider.
+struct HangProvider;
+
+#[async_trait::async_trait]
+impl Provider for HangProvider {
+    fn id(&self) -> &'static str {
+        "hang"
+    }
+    async fn models(&self) -> Result<Vec<Model>> {
+        Ok(vec![])
+    }
+    async fn chat_stream(&self, _req: ChatReq) -> Result<EventRx> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        // Leak the sender so `recv()` pends forever: the run stays Active
+        // until killed. (Dropping tx would close the channel instantly.)
+        std::mem::forget(tx);
+        Ok(rx)
+    }
+    fn auth_status(&self) -> AuthStatus {
+        AuthStatus::Ok
+    }
+}
+
+fn hang_factory(_id: &str, _cfg: &ParziConfig) -> Result<Box<dyn Provider>> {
+    Ok(Box::new(HangProvider))
+}
+
 #[tokio::test]
 async fn spawn_wait_degrades_to_queued_when_slots_full() {
-    // max=1 with the parent holding the only slot: a blocking wait would
-    // deadlock, so the bridge must return `queued` instead.
-    let (orch, store) = test_orch(1);
+    // max=1 with a genuinely hanging child holding the only slot: a blocking
+    // wait would deadlock, so the bridge must return `queued` instead.
+    // (B4: finished runs release their slot — an answering provider would
+    // finish instantly and free the slot, so we hang here on purpose.)
+    let mut cfg = ParziConfig::default();
+    cfg.orchestrator.max_concurrent = 1;
+    cfg.orchestrator.queue_when_busy = true;
+    let store = SessionStore::open().unwrap();
+    let orch = Arc::new(Orchestrator::new(cfg, store.clone()).with_factory(Arc::new(hang_factory)));
     let pump = orch.clone();
     tokio::spawn(async move { pump.pump_loop().await });
-    // Occupy the single slot with a hanging run is overkill: the bridge
-    // counts live handles, so spawn a first session via the harness with
-    // wait=false, then a wait=true spawn must come back queued.
     let parent = store.create("boss", "t", "", "answer/model").unwrap();
     let h = orch.harness();
     let first = h

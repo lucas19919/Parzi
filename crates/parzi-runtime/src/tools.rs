@@ -74,6 +74,21 @@ impl ToolExecutor {
         })
     }
 
+    /// Per-tool approval override for MCP tools (`auto`|`ask`|`deny`).
+    /// Local/ui/session/plan/lane tools have no per-tool override: None = lane mode wins.
+    pub fn approval_override(&self, name: &str) -> Option<ApprovalMode> {
+        if is_local(name) || is_ui_tool(name) || is_session_tool(name) || is_plan_tool(name) || is_lane_tool(name) {
+            return None;
+        }
+        let (server, tool) = name.split_once('.')?;
+        match self.mcp.tool_mode(server, tool).as_deref() {
+            Some("auto") => Some(ApprovalMode::Auto),
+            Some("deny") => Some(ApprovalMode::Deny),
+            Some(_) => Some(ApprovalMode::Ask),
+            None => None,
+        }
+    }
+
     pub fn defs(&self) -> Vec<ToolDef> {
         let mut d = local_defs();
         d.extend(ui_defs());
@@ -81,15 +96,53 @@ impl ToolExecutor {
         d
     }
 
+    /// Local + always-on defs plus the currently-exposed MCP tools that also
+    /// pass the lane allowlist. Best-effort: an unreachable server contributes
+    /// nothing instead of failing the run. Call once per run start.
+    pub async fn defs_with_mcp(&self) -> Vec<ToolDef> {
+        let mut d = self.defs();
+        for server in self.mcp.server_names() {
+            let tools = match tokio::time::timeout(
+                std::time::Duration::from_secs(12),
+                self.mcp.exposed_tools(&server),
+            )
+            .await
+            {
+                Ok(Ok(t)) => t,
+                _ => continue,
+            };
+            for t in tools {
+                let q = t.qualified();
+                if self.is_allowed(&q) {
+                    d.push(t.to_provider_def());
+                }
+            }
+        }
+        d
+    }
+
     pub async fn execute(&self, name: &str, args: &serde_json::Value) -> (bool, String) {
         if !self.is_allowed(name) {
             return (false, format!("tool `{name}` is not allowed in this lane"));
+        }
+        if is_plan_tool(name) {
+            return execute_plan_tool(name, args).await;
         }
         if let Some((server, tool)) = name.split_once('.').filter(|_| name.contains('.')) {
             // MCP names are `server.tool`; local names are `fs.read` style too,
             // so try local first, then MCP.
             if is_local(name) {
                 return execute_local(name, args, &self.cwd).await;
+            }
+            if is_ui_tool(name) || is_session_tool(name) || is_lane_tool(name) {
+                return (false, format!("tool `{name}` is handled by the agent loop"));
+            }
+            // Server exposure gate (allow/deny lists) + per-tool deny override.
+            if !self.mcp.is_tool_exposed(server, tool) {
+                return (false, format!("tool `{name}` is disabled for this connector"));
+            }
+            if self.mcp.tool_mode(server, tool).as_deref() == Some("deny") {
+                return (false, format!("tool `{name}` is blocked by connector policy"));
             }
             return self.mcp.call_tool(server, tool, args.clone()).await;
         }
@@ -280,7 +333,52 @@ pub fn session_defs() -> Vec<ToolDef> {
                 },
             }),
         },
+        ToolDef {
+            name: "plan.read".into(),
+            description: "Read the project's living PLAN.md (milestones + lane-tagged tasks).".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"project": {"type": "string"}},
+                "required": ["project"],
+            }),
+        },
+        ToolDef {
+            name: "plan.update".into(),
+            description: "Update one living-plan task checkbox by title match (done=true/false) or append a new task line.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "title_match": {"type": "string"},
+                    "done": {"type": "boolean"},
+                    "append": {"type": "string"},
+                },
+                "required": ["project"],
+            }),
+        },
+        ToolDef {
+            name: "lane.dispatch".into(),
+            description: "Orchestrator-only: spawn a lane worker subsession with the project's implementation role settings (model/effort/system prompt).".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "prompt": {"type": "string"},
+                    "lane": {"type": "string"},
+                    "wait": {"type": "boolean"},
+                },
+                "required": ["title", "prompt"],
+            }),
+        },
     ]
+}
+
+pub fn is_plan_tool(name: &str) -> bool {
+    matches!(name, "plan.read" | "plan.update")
+}
+
+pub fn is_lane_tool(name: &str) -> bool {
+    matches!(name, "lane.dispatch")
 }
 
 pub fn is_session_tool(name: &str) -> bool {
@@ -290,30 +388,134 @@ pub fn is_session_tool(name: &str) -> bool {
     )
 }
 
-/// Resolve `path` inside `cwd` (when set). Rejects escapes beyond the root.
+/// Resolve `path` strictly inside `cwd`. Rejects absolute / rooted / drive-
+/// relative / UNC / verbatim paths, `..` escapes, empty cwd, and symlinked
+/// escapes via canonicalization. Used by every fs.* tool.
 fn resolve(cwd: &str, path: &str) -> Result<std::path::PathBuf> {
-    let base = if cwd.is_empty() {
-        std::env::current_dir().map_err(ParziError::Io)?
-    } else {
-        std::path::PathBuf::from(cwd)
-    };
-    let joined = base.join(path);
-    // Lexical containment: `a/b/../../x` must not escape `a`.
-    let mut depth = 0i32;
-    for c in joined.components() {
+    use std::path::{Component, Path};
+    if cwd.trim().is_empty() {
+        return Err(ParziError::Tool("fs".into(), "lane cwd is not set".into()));
+    }
+    let req = Path::new(path);
+    // Any absolute / prefix / root component in the *request* is rejected
+    // outright: `base.join(absolute)` would discard the base on all platforms.
+    for c in req.components() {
         match c {
-            std::path::Component::ParentDir => depth -= 1,
-            std::path::Component::Normal(_) => depth += 1,
+            Component::Prefix(_) | Component::RootDir => {
+                return Err(ParziError::Tool(
+                    "fs".into(),
+                    format!("absolute path not allowed: {path}"),
+                ));
+            }
             _ => {}
         }
-        if depth < 0 {
+    }
+    // Windows drive-relative (`C:foo`) and verbatim (`\\?\`) arrive as
+    // Normal + Prefix or are caught above; also reject explicit UNC prefixes,
+    // backslash-rooted, and NUL bytes that confuse later joins.
+    if path.contains('\0')
+        || path.starts_with(r"\\")
+        || path.starts_with("//")
+        || path.starts_with(r"\")
+        || path.starts_with('/')
+    {
+        return Err(ParziError::Tool(
+            "fs".into(),
+            format!("absolute path not allowed: {path}"),
+        ));
+    }
+    if path.len() >= 2 && path.as_bytes()[1] == b':' {
+        return Err(ParziError::Tool(
+            "fs".into(),
+            format!("absolute path not allowed: {path}"),
+        ));
+    }
+    // Lexical containment counted over the *request* only: `..` must never
+    // climb above the lane root, no matter how deep the base is.
+    let mut depth = 0i32;
+    for c in req.components() {
+        match c {
+            Component::ParentDir => {
+                depth -= 1;
+                if depth < 0 {
+                    return Err(ParziError::Tool(
+                        "fs".into(),
+                        format!("path escapes lane root: {path}"),
+                    ));
+                }
+            }
+            Component::Normal(_) => depth += 1,
+            Component::CurDir => {}
+            _ => {}
+        }
+    }
+    let base = std::path::PathBuf::from(cwd);
+    let joined = base.join(req);
+    // Canonicalize to catch symlink / junction escapes. For not-yet-existing
+    // targets (fs.write creates parents), walk up to the nearest existing
+    // ancestor and require it to stay under the canonical root.
+    let canon_base = base.canonicalize().unwrap_or(base.clone());
+    let mut probe: Option<&Path> = Some(&joined);
+    let mut canon_probe: Option<std::path::PathBuf> = None;
+    while let Some(p) = probe {
+        if let Ok(c) = p.canonicalize() {
+            canon_probe = Some(c);
+            break;
+        }
+        probe = p.parent();
+    }
+    if let Some(canon) = canon_probe {
+        if !canon.starts_with(&canon_base) {
             return Err(ParziError::Tool(
                 "fs".into(),
                 format!("path escapes lane root: {path}"),
             ));
         }
+    } else {
+        // Nothing on disk canonicalizes (fresh tree): fall back to the
+        // lexical guarantee above, which already rejected every escape.
     }
     Ok(joined)
+}
+
+async fn execute_plan_tool(name: &str, args: &serde_json::Value) -> (bool, String) {
+    let project = args.get("project").and_then(|v| v.as_str()).unwrap_or("");
+    if project.trim().is_empty() {
+        return (false, "plan tool needs `project`".into());
+    }
+    match name {
+        "plan.read" => match parzi_core::plan::read_plan(project) {
+            Ok(text) => {
+                let cut: String = text.chars().take(24_000).collect();
+                (true, cut)
+            }
+            Err(e) => (false, e.to_string()),
+        },
+        "plan.update" => {
+            if let Some(append) = args.get("append").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+                let mut raw = parzi_core::plan::read_plan(project).unwrap_or_default();
+                if !raw.ends_with('\n') {
+                    raw.push('\n');
+                }
+                raw.push_str(&format!("- [ ] {append}\n"));
+                match parzi_core::plan::write_plan(project, &raw) {
+                    Ok(()) => return (true, "appended".into()),
+                    Err(e) => return (false, e.to_string()),
+                }
+            }
+            let title = args.get("title_match").and_then(|v| v.as_str()).unwrap_or("");
+            if title.trim().is_empty() {
+                return (false, "plan.update needs `title_match` or `append`".into());
+            }
+            let done = args.get("done").and_then(|v| v.as_bool()).unwrap_or(true);
+            match parzi_core::plan::set_task_status(project, title, done) {
+                Ok(true) => (true, "updated".into()),
+                Ok(false) => (false, "no matching task".into()),
+                Err(e) => (false, e.to_string()),
+            }
+        }
+        _ => (false, format!("unknown plan tool `{name}`")),
+    }
 }
 
 async fn execute_local(name: &str, args: &serde_json::Value, cwd: &str) -> (bool, String) {
@@ -375,6 +577,9 @@ async fn execute_local(name: &str, args: &serde_json::Value, cwd: &str) -> (bool
             if cmd.trim().is_empty() {
                 return (false, "empty command".into());
             }
+            if cwd.trim().is_empty() {
+                return (false, "lane cwd is not set".into());
+            }
             let timeout_ms = args
                 .get("timeout_ms")
                 .and_then(|n| n.as_u64())
@@ -389,9 +594,26 @@ async fn execute_local(name: &str, args: &serde_json::Value, cwd: &str) -> (bool
                 c.arg("-c").arg(cmd);
                 c
             };
-            if !cwd.is_empty() {
-                c.current_dir(cwd);
+            c.current_dir(cwd);
+            // H-6: children never inherit provider keys or other secrets.
+            c.env_clear();
+            for (k, v) in [
+                ("PATH", std::env::var("PATH").unwrap_or_default()),
+                ("SYSTEMROOT", std::env::var("SYSTEMROOT").unwrap_or_default()),
+                ("TEMP", std::env::var("TEMP").unwrap_or_default()),
+                ("TMP", std::env::var("TMP").unwrap_or_default()),
+                ("HOME", std::env::var("HOME").unwrap_or_default()),
+                ("APPDATA", std::env::var("APPDATA").unwrap_or_default()),
+                ("USERPROFILE", std::env::var("USERPROFILE").unwrap_or_default()),
+                ("LANG", std::env::var("LANG").unwrap_or_default()),
+                ("LC_ALL", std::env::var("LC_ALL").unwrap_or_default()),
+            ] {
+                if !v.is_empty() {
+                    c.env(k, v);
+                }
             }
+            c.stdin(std::process::Stdio::null());
+            c.kill_on_drop(true);
             c.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
             match tokio::time::timeout(
                 std::time::Duration::from_millis(timeout_ms),

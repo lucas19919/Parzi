@@ -75,8 +75,10 @@ pub enum Event {
         ok: bool,
         output: String,
         /// Execution time in milliseconds, for the run cards.
+        /// u64 (not u128): serde_json cannot serialize u128, which silently
+        /// dropped every persisted tool result.
         #[serde(default)]
-        ms: u128,
+        ms: u64,
     },
     Widget {
         /// Raw fenced payload (`parzi-widget` / `parzi-diagram` JSON).
@@ -118,7 +120,14 @@ impl SessionStore {
     }
 
     fn dir(&self, id: &str) -> std::path::PathBuf {
-        self.root.join(id)
+        // H-7: session ids come from the webview and from the model. Only a
+        // valid UUID may become a path segment — anything else falls back to
+        // a harmless non-existent sentinel so `remove_dir_all` can never walk.
+        if uuid::Uuid::parse_str(id).is_ok() {
+            self.root.join(id)
+        } else {
+            self.root.join("__invalid-session-id__")
+        }
     }
 
     pub fn create(

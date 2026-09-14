@@ -15,12 +15,34 @@ use parzi_core::context::Role;
 use parzi_core::error::{ParziError, Result};
 
 use crate::types::{
-    AuthStatus, Billing, ChatReq, EventRx, Model, Provider, StreamEvent, env_key, keyring_get,
-    read_json_file,
+    AuthStatus, Billing, ChatReq, EventRx, Model, Provider, StreamEvent, desanitize_tool, env_key,
+    keyring_get, read_json_file, sanitize_tool,
 };
 
 const API_BASE: &str = "https://api.openai.com/v1";
 const CHATGPT_BASE: &str = "https://chatgpt.com/backend-api/codex";
+
+/// ChatGPT sign-in catalogue churns: ids dead on the subscription path ride
+/// the current flagship instead, so old threads/configs keep working.
+/// (Verified 2026-09-14: gpt-5.3-codex/gpt-5.2 already deprecated there;
+///
+/// retired gpt-5.4* never resolve on this path.)
+fn subscription_model(model: &str) -> &str {
+    match model {
+        "gpt-5.3-codex" | "gpt-5-codex" | "gpt-5.4" | "gpt-5.4-mini" | "gpt-5.2" => "gpt-5.5",
+        _ => model,
+    }
+}
+
+/// Inverse: ChatGPT-only ids (terra/luna) are unknown on api.openai.com,
+/// so the key path falls back to API-served coding models.
+fn api_model(model: &str) -> &str {
+    match model {
+        "gpt-5.6-terra" => "gpt-5.5",
+        "gpt-5.6-luna" => "gpt-5.3-codex",
+        _ => model,
+    }
+}
 
 pub struct Codex {
     pub token: Option<String>,
@@ -111,6 +133,13 @@ impl Provider for Codex {
         let key = self.token.clone().ok_or_else(|| {
             ParziError::Provider("codex".into(), "missing Codex credentials".into())
         })?;
+        let subscription = self.billing == Billing::Subscription;
+        let model = if subscription {
+            subscription_model(&req.model)
+        } else {
+            api_model(&req.model)
+        }
+        .to_string();
         let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
         let input: Vec<serde_json::Value> = req
             .messages
@@ -128,7 +157,8 @@ impl Provider for Codex {
             .iter()
             .map(|t| {
                 serde_json::json!({
-                    "type": "function", "name": t.name,
+                    // Dots 400 (`^[a-zA-Z0-9_-]{1,64}$`); mapped back on receipt.
+                    "type": "function", "name": sanitize_tool(&t.name),
                     "description": t.description, "parameters": t.schema,
                 })
             })
@@ -142,12 +172,12 @@ impl Provider for Codex {
             _ => "medium",
         };
         let mut body = serde_json::json!({
-            "model": req.model, "input": input, "tools": tools,
+            "model": model, "input": input, "tools": tools,
             "stream": true,
             "reasoning": {"effort": reasoning_effort, "summary": "auto"},
             "instructions": req.system,
         });
-        let subscription = self.billing == Billing::Subscription;
+        let defs = req.tools.clone();
         if subscription {
             // ChatGPT backend: stateless only; output cap is the plan's.
             body["store"] = serde_json::Value::Bool(false);
@@ -275,7 +305,8 @@ impl Provider for Codex {
             }
             if !fn_name.is_empty() {
                 let args = serde_json::from_str(&arg_buf).unwrap_or(serde_json::Value::Null);
-                let _ = tx.send(Ok(StreamEvent::ToolCall { id: call_id, name: fn_name, args }));
+                let name = desanitize_tool(&defs, &fn_name);
+                let _ = tx.send(Ok(StreamEvent::ToolCall { id: call_id, name, args }));
             }
         });
         Ok(rx)
@@ -288,5 +319,28 @@ impl Provider for Codex {
                 "sign in with the Codex CLI (`codex login`) or add an OpenAI API key".into(),
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{api_model, subscription_model};
+
+    #[test]
+    fn dead_subscription_ids_ride_the_flagship() {
+        for dead in ["gpt-5.3-codex", "gpt-5-codex", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2"] {
+            assert_eq!(subscription_model(dead), "gpt-5.5", "{dead}");
+        }
+        for live in ["gpt-5.5", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            assert_eq!(subscription_model(live), live);
+        }
+    }
+
+    #[test]
+    fn chatgpt_only_ids_fall_back_on_the_key_path() {
+        assert_eq!(api_model("gpt-5.6-terra"), "gpt-5.5");
+        assert_eq!(api_model("gpt-5.6-luna"), "gpt-5.3-codex");
+        assert_eq!(api_model("gpt-5.5"), "gpt-5.5");
+        assert_eq!(api_model("gpt-5.3-codex"), "gpt-5.3-codex");
     }
 }

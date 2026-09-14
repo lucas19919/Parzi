@@ -56,14 +56,12 @@ pub fn claude() -> AnthropicNative {
     let mut expired = false;
     let mut account: Option<String> = None;
     let oauth = keyring_get("claude-code")
-        .map(|t| {
+        .inspect(|_| {
             account = Some("Claude subscription".into());
-            t
         })
         .or_else(|| {
-            env_key("ANTHROPIC_AUTH_TOKEN").map(|t| {
+            env_key("ANTHROPIC_AUTH_TOKEN").inspect(|_| {
                 account = Some("Claude subscription (env)".into());
-                t
             })
         })
         .or_else(|| {
@@ -82,7 +80,8 @@ pub fn claude() -> AnthropicNative {
         oauth_expired: expired,
         account,
         beta: vec!["oauth-2025-04-20".into()],
-        missing_hint: "sign in with the Claude Code CLI (`claude`) or add an Anthropic API key".into(),
+        missing_hint: "sign in with the Claude Code CLI (`claude`) or add an Anthropic API key"
+            .into(),
         static_models: crate::catalog::claude(),
     }
 }

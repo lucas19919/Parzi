@@ -92,7 +92,9 @@ fn first_account_project() -> Option<String> {
 
 /// JSON Schema allowlist for Antigravity's strict validator.
 /// Kept: type/properties/required/description/enum/items.
-/// `const` becomes single-value `enum`. Everything else drops.
+/// String `const` becomes single-value `enum`; non-string consts are
+/// dropped (Gemini's `enum` is `repeated string` — a numeric entry 400s,
+/// as proven live by `ui.show_widget`'s `"const": 1`). Everything else drops.
 pub fn clean_schema(v: &serde_json::Value) -> serde_json::Value {
     match v {
         serde_json::Value::Object(map) => {
@@ -105,8 +107,8 @@ pub fn clean_schema(v: &serde_json::Value) -> serde_json::Value {
             }
             if let Some(e) = map.get("enum") {
                 out.insert("enum".into(), e.clone());
-            } else if let Some(c) = map.get("const") {
-                out.insert("enum".into(), serde_json::Value::Array(vec![c.clone()]));
+            } else if let Some(c) = map.get("const").and_then(|c| c.as_str()) {
+                out.insert("enum".into(), serde_json::json!([c]));
             }
             if let Some(p) = map.get("properties").and_then(|p| p.as_object()) {
                 let cleaned: serde_json::Map<String, serde_json::Value> =
