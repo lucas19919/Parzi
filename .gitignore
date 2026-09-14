@@ -31,3 +31,6 @@ Thumbs.db
 # Test / coverage artifacts
 lcov.info
 *.profraw
+
+# Parallel-lane claim markers (see lane protocol; never commit these)
+.lane_claim_*
