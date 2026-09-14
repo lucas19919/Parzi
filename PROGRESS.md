@@ -588,3 +588,9 @@
 - Uninstaller branded too (icon + header art); homepage set for Add/Remove Programs links; mechanism verified against tauri-bundler 2.9.4 template (hooks include precedes all MUI_PAGE_*, language files included last so overrides win)
 - No local NSIS (toolchain blocked) — verification is the CI-built installer + silent install test on v0.1.2
 
+
+## Custom installer voice verified (2026-09-14)
+- v0.1.2 CI failed on config schema (customLanguageFiles is a lang->path MAP not an array; homepage lives under bundle not root) — fixed, schema now pre-validated locally with ajv + Tauri schema before tagging
+- v0.1.3 green: draft release holds setup.exe/.sig + MSI/.sig + latest.json; silent per-user install test passed (LOCALAPPDATA\\Parzi, app launches with Parzi window, uninstall removes everything incl. desktop shortcut)
+- Friend file: Downloads\\Parzi_0.1.3_x64-setup.exe (6.8MB). Wizard pages: Welcome to Parzi -> MIT license -> folder -> Start Menu -> install -> 'Parzi is installed' with Launch + desktop-shortcut options; uninstaller branded with delete-data option
+
