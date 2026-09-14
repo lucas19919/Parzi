@@ -5,9 +5,8 @@
   "identifier": "com.parzi.app",
   "build": {
     "frontendDist": "../ui/dist",
-    "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "npm --prefix ui run dev -- --port 1420",
-    "beforeBuildCommand": "npm --prefix ui run build"
+    "beforeDevCommand": "npm --prefix ../ui run build",
+    "beforeBuildCommand": "npm --prefix ../ui run build"
   },
   "app": {
     "security": {
@@ -49,11 +48,17 @@
     "createUpdaterArtifacts": true,
     "windows": {
       "wix": {
-        "language": "en-US"
+        "language": "en-US",
+        "bannerPath": "installer/banner.bmp",
+        "dialogImagePath": "installer/dialog.bmp"
       },
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["English"]
+        "languages": ["English"],
+        "headerImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp",
+        "installerIcon": "icons/icon.ico",
+        "startMenuFolder": "Parzi"
       }
     }
   },

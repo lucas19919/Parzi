@@ -526,7 +526,7 @@
 
 ## Signed installer + auto-update (2026-09-14)
 - Updater wired end to end: tauri-plugin-updater (Rust) + @tauri-apps/plugin-updater 2.11.0 (JS) + updater:default capability + pubkey/endpoints in tauri.conf.json (feed: github.com/parzi/parzi releases latest.json); bundle now carries publisher/category/descriptions, createUpdaterArtifacts, currentUser NSIS + en-US WiX config
-- Settings › System has an Updates card: version stamp, Check for updates, progress bar, Download & install, restart notice; dev builds degrade to a friendly message
+- Settings ï¿½ System has an Updates card: version stamp, Check for updates, progress bar, Download & install, restart notice; dev builds degrade to a friendly message
 - Keypair: minisign key at %USERPROFILE%\\.tauri\\parzi.key (private, never committed) + .pub; CI secret TAURI_SIGNING_PRIVATE_KEY signs artifacts in .github/workflows/release.yml (tag v* -> draft release with .exe/.msi/.sig/latest.json)
 - Drive-bys: 4 pre-existing clippy denies in src-tauri fixed (too_many_arguments allow on send_message, Ok(x?) flatten in refresh_provider, format! -> to_string, split.last -> next_back)
 - Verified: cargo check green, clippy gate clean, workspace tests pass, npm check 0 errors, npm build green
@@ -535,4 +535,39 @@
 ## Private GitHub repo (2026-09-14)
 - https://github.com/lucas19919/Parzi (PRIVATE), branch main, 2 commits pushed; .gitignore added (target/, node_modules/, dist/, *.key); secret scan clean; TAURI_SIGNING_PRIVATE_KEY stored as repo secret; updater feed + Cargo repository retargeted to lucas19919/Parzi
 - Note: a parallel session's dev-server fallback hunk in src-tauri/src/main.rs rode along in the 2nd commit (compiles, gate holds, 1 unused-parens warning is theirs)
+
+## MCP connectors rework (2026-09-14)
+- Fixed dead MCP wiring: tools are now advertised to the model (`defs_with_mcp`,
+  12s best-effort per server, lane allowlist applied), `server.allow` is enforced
+  (was a dead field), and saves hot-apply (Orchestrator cfg is shared + `apply_config`
+  pushes fresh MCP configs; no restart needed).
+- Two permission layers: general allowlist (`lanes.default_allowed_tools`, exact /
+  `prefix.*` / `*`) + per-connector exposure (`allow`/`deny`) + per-tool override
+  (`tool_modes`: auto/ask/deny, wins over lane mode in handler + executor).
+- New commands `list_mcp_tools` / `list_all_mcp_tools` feed the tool browser.
+- Connectors page rebuilt: General permissions (policy seg, fs/shell toggles,
+  per-connector `server.*` switches, custom patterns) + installed cards with lazy
+  tool lists (expose switch + Inherit/Auto/Ask/Deny per tool, `blocked above` badge)
+  + 15 grouped one-click presets (fetch/memory/thinking/everything, filesystem,
+  github, gitlab, postgres, sqlite, brave-search, puppeteer, playwright, slack,
+  gdrive, gmail; official/community labelled, required keys/paths validated) +
+  paste-anything + manual + how-permissions-combine explainer.
+- Drive-by: 2 pre-existing clippy `manual_inspect` denies in providers/claude.rs
+  (new toolchain lint) fixed with semantics-identical `.inspect()`.
+- Verified: `cargo test --workspace` 72 pass, clippy deny-gate 0 errors,
+  `npm run check` 0 errors, `npm run build` green.
+- OPEN: `cargo check src-tauri` currently fails in `generate_context!` decoding
+  `src-tauri/icons/icon.ico` (rewritten 13:36 by another lane; 6 valid BMP entries
+  but the 256px entry trips the pinned decoder). Unrelated to this change â€” the bin
+  compiled green with these edits before the icon rewrite; icon owner should
+  regenerate decoder-friendly.
+
+
+## Custom Windows installer (2026-09-14)
+- Branded installers: Parzi dark-gradient banner/dialog (WiX) + header/sidebar (NSIS) art in src-tauri/installer/, MIT LICENSE, per-user NSIS config; WiX banner/dialog wired (this tauri-cli has no license-page keys, so no license screen — noted, installerHooks/template is the escape hatch)
+- Toolchain: portable WiX 3.14 under %USERPROFILE%\\.tauri\\tools\\wix314 (NSIS blocked: winget needs admin UAC, SourceForge behind Cloudflare) — local builds do MSI only, CI builds NSIS+MSI
+- Hooks fixed to ../ui (beforeBuildCommand ran with doubled ui/ui path and could never have worked)
+- Local MSI verified built (Parzi_0.1.0_x64_en-US.msi, 9.8MB) but installs per-MACHINE (Tauri WiX default, Error 1925 without admin) — friend build = per-user NSIS from CI; tag v* to produce it
+- Trap: local build hangs at updater signing prompt unless TAURI_SIGNING_PRIVATE_KEY (content) is set; _PATH alone is not enough for this CLI
+- Note: parallel lane live-edited tauri.conf.json (devUrl removed, beforeDevCommand now runs build) + regenerated icons/icon.ico with malformed BMP headers (planes/bpp/comp shifted) that broke generate_context — icon.ico restored from HEAD, their 32x32.png + other work untouched and uncommitted
 
