@@ -284,27 +284,51 @@ async fn reparent_thread(
         .map_err(|e| e.to_string())
 }
 
-/// Read @-attached files (cap 8, 12k chars each), resolved against cwd.
+/// Read @-attached files (cap 8, 12k chars each + images as base64),
+/// resolved against cwd. One implementation lives in core; the shell,
+/// the CLI and the handler all share it.
 fn read_attachments(cwd: &str, paths: &[String]) -> Vec<parzi_core::context::AttachedFile> {
     let base = if cwd.is_empty() {
         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
     } else {
         std::path::PathBuf::from(cwd)
     };
-    paths
-        .iter()
-        .take(8)
-        .filter_map(|p| {
-            // Contain to cwd (lexical) — same rule as the tool sandbox.
-            let full = base.join(p);
-            std::fs::read_to_string(&full).ok().map(|t| {
-                parzi_core::context::AttachedFile {
-                    path: p.clone(),
-                    snippet: t.chars().take(12_000).collect(),
-                }
-            })
-        })
-        .collect()
+    parzi_core::context::read_attachments(&base, paths)
+}
+
+/// Image bytes for UI previews (composer thumbs, thread bubbles) as a data
+/// URL. H-2: confined exactly like `read_text_file`; 8 MiB cap; images only.
+const READ_IMAGE_MAX: u64 = 8 * 1024 * 1024;
+
+#[tauri::command]
+async fn read_image_data_url(path: String, cwd: String) -> Result<String, String> {
+    let abs = if std::path::Path::new(&path).is_absolute() {
+        path
+    } else if cwd.trim().is_empty() {
+        return Err("no workspace folder for a relative image path".into());
+    } else {
+        format!(
+            "{}/{}",
+            cwd.trim().trim_end_matches(['/', '\\']),
+            path.trim().trim_start_matches(['/', '\\'])
+        )
+    };
+    let p = confined_path(&abs)?;
+    let meta = std::fs::metadata(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+    if !meta.is_file() {
+        return Err(format!("{} is not a file", p.display()));
+    }
+    if meta.len() > READ_IMAGE_MAX {
+        return Err(format!(
+            "{} is {} KiB — over the {} KiB image limit",
+            p.display(),
+            meta.len() / 1024,
+            READ_IMAGE_MAX / 1024
+        ));
+    }
+    let img = parzi_core::context::encode_image_file(&p)
+        .ok_or_else(|| format!("{} is not a supported image", p.display()))?;
+    Ok(img.data_url())
 }
 
 #[tauri::command]
@@ -1602,6 +1626,7 @@ fn main() {
             open_external_url,
             read_text_file,
             write_text_file,
+            read_image_data_url,
             save_project_system,
             create_skill,
             skill_commands,

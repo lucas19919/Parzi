@@ -144,7 +144,7 @@ fn to_contents(req: &ChatReq) -> Vec<serde_json::Value> {
                 Role::Assistant => "model",
                 _ => "user",
             };
-            serde_json::json!({"role": role, "parts": [{"text": m.content}]})
+            serde_json::json!({"role": role, "parts": crate::images::gemini_parts(&m.content, &m.images)})
         })
         .collect()
 }

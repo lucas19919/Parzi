@@ -193,14 +193,36 @@ impl AgentRun {
         true
     }
 
+    /// Capability overlay: does this model take image attachments?
+    pub fn lookup_vision(provider_id: &str, model: &str) -> bool {
+        for m in all_catalog(provider_id) {
+            if m.id == model {
+                return m.vision;
+            }
+        }
+        false
+    }
+
     pub async fn run(&self, prompt: &str) -> Result<()> {
         if self.slots.is_empty() {
             let msg = "no working providers (check Settings > Models)".to_string();
             self.emit(RunEvent::Error(msg.clone()));
             return Err(ParziError::Provider("router".into(), msg));
         }
+        // The transcript names every attachment so the thread, session.md
+        // and later turns show what actually rode along (bytes travel via
+        // the context builder, not the text).
+        let mut user_text = prompt.to_string();
+        if !self.attachments.is_empty() {
+            let names: Vec<&str> = self
+                .attachments
+                .iter()
+                .map(|a| a.path.as_str())
+                .collect();
+            user_text.push_str(&format!("\n[attached: {}]", names.join(", ")));
+        }
         self.store
-            .append(&self.session_id, &Event::User { text: prompt.into() })?;
+            .append(&self.session_id, &Event::User { text: user_text })?;
         self.store.set_status(&self.session_id, SessionStatus::Active)?;
         for (i, slot) in self.slots.iter().enumerate() {
             // If circuit breaker is set and this provider is in cooldown, skip it if there's a subsequent slot
@@ -295,6 +317,7 @@ impl AgentRun {
         }
 
         let mut turns = 0u32;
+        let mut vision_warned = false;
         loop {
             if self.cancel.is_cancelled() {
                 self.finish(SessionStatus::Killed).await;
@@ -308,7 +331,28 @@ impl AgentRun {
             }
             turns += 1;
 
-            let ctx = self.assemble()?;
+            let mut ctx = self.assemble()?;
+            // No-vision model with images attached: strip the bytes (they
+            // would 400) and say so once, instead of failing the run.
+            if !Self::lookup_vision(&slot.provider_id, &slot.model_id)
+                && ctx.messages.iter().any(|m| !m.images.is_empty())
+            {
+                for m in ctx.messages.iter_mut() {
+                    m.images.clear();
+                }
+                if !vision_warned {
+                    vision_warned = true;
+                    let note = format!(
+                        "Images attached, but {}/{} has no vision in the catalog — text only.",
+                        slot.provider_id, slot.model_id
+                    );
+                    let _ = self.store.append(
+                        &self.session_id,
+                        &Event::System { text: note.clone() },
+                    );
+                    self.emit(RunEvent::Notice { text: note });
+                }
+            }
             let req = ChatReq {
                 model: slot.model_id.clone(),
                 system: ctx.system,

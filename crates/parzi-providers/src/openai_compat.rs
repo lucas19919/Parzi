@@ -60,7 +60,7 @@ impl OpenAiCompat {
                 Role::User | Role::Tool => "user",
                 Role::Assistant => "assistant",
             };
-            out.push(serde_json::json!({"role": role, "content": m.content}));
+            out.push(serde_json::json!({"role": role, "content": crate::images::openai_content(&m.content, &m.images)}));
         }
         out
     }

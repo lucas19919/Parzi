@@ -272,17 +272,25 @@
   }
 
   async function send() {
-    let prompt = input.trim();
-    if (!prompt || sending || liveRun || !model) return;
+    const rawPrompt = input.trim();
+    if (!rawPrompt || sending || liveRun || !model) return;
     sending = true;
     input = "";
     const files = [...attachments];
     attachments = [];
     const cwd = currentRoot;
     // Plan mode is a real mode: the model plans, it does not touch the tree.
+    let prompt = rawPrompt;
     if (mode === "plan") {
-      prompt = "Plan only — do not edit files or run commands. Output the plan:\n\n" + prompt;
+      prompt = "Plan only — do not edit files or run commands. Output the plan:\n\n" + rawPrompt;
     }
+
+    // Optimistic user bubble: the backend only returns the persisted
+    // transcript on `done`, so without this the user stares at an empty
+    // thread + "writing…" until the run finishes.
+    const optimisticUser = { kind: "user", text: rawPrompt } as ChatEvent;
+    // If this is a fresh thread there are no events yet; otherwise append.
+    events = [...events, optimisticUser];
 
     try {
       const sid = await api.sendMessage({
@@ -298,12 +306,31 @@
       activeThreadId = sid;
       liveRun = sid;
       await loadThreads();
+      // Reconcile with the persisted transcript (replaces the optimistic
+      // row with the real one; never wipes live assistant text).
+      try {
+        const [meta, ev] = await api.getThread(sid);
+        activeMeta = meta;
+        events = ev;
+        curProject = meta.project || curProject;
+        curLane = meta.lane || curLane;
+      } catch {
+        // Backend already accepted the prompt; keep the optimistic bubble.
+      }
+      await tick();
+      if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
       const queued = threads.find((t) => t.id === sid)?.status === "queued";
       if (queued) {
         liveRun = null;
         toast("queued — starts when a slot frees (kill a run to jump in)");
       }
     } catch (e) {
+      // Restore the prompt — losing a composed message on a send error
+      // is the fastest way to lose trust.
+      input = rawPrompt;
+      attachments = files;
+      // Drop the optimistic bubble again (it never reached the backend).
+      events = events.filter((ev) => ev !== optimisticUser);
       toast(String(e), true);
     } finally {
       sending = false;
@@ -997,7 +1024,7 @@
         <!-- Chat Thread View -->
         <div class="stage-scroll" bind:this={scrollEl}>
           <Thread {events} liveText={live} liveReasoning={liveReasoning} {approval} streaming={!!liveRun}
-            {parentTitle} subsessions={childSubs}
+            {parentTitle} subsessions={childSubs} projectRoot={currentRoot}
             on:goParent={() => { if (activeMeta?.parent_id) openThread(activeMeta.parent_id); }}
             on:openSubsession={(e) => openThread(e.detail.id)}
             on:openArtifact={(e) => showArtifact(e.detail.artifact)}
@@ -1197,7 +1224,11 @@
     color: var(--text);
     font-family: var(--parzi-font), Inter, system-ui, sans-serif;
     overflow: hidden;
-    user-select: none;
+  }
+  /* Visible text highlighting for copy (was invisible: no rule + body none). */
+  :global(::selection) {
+    background: var(--accent-mid);
+    color: var(--text);
   }
   .parzi-app-shell {
     width: 100vw;

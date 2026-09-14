@@ -248,18 +248,12 @@ async fn cmd_send(p: SendParams) -> Result<()> {
     let approver: Arc<dyn Approver> =
         if yes { Arc::new(AutoApprover) } else { Arc::new(CliApprover { yes }) };
     let cwd = cwd.unwrap_or_default();
-    let attachments: Vec<parzi_core::context::AttachedFile> = attach
-        .iter()
-        .take(8)
-        .filter_map(|p| {
-            std::fs::read_to_string(p).ok().map(|t| {
-                parzi_core::context::AttachedFile {
-                    path: p.clone(),
-                    snippet: t.chars().take(12_000).collect(),
-                }
-            })
-        })
-        .collect();
+    let base = if cwd.trim().is_empty() {
+        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+    } else {
+        std::path::PathBuf::from(&cwd)
+    };
+    let attachments = parzi_core::context::read_attachments(&base, &attach);
     let mut rx = if target == "new" {
         let (meta, rx) = orch
             .spawn(

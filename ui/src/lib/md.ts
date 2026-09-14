@@ -67,7 +67,7 @@ md.renderer.rules.fence = (tokens, idx) => {
     } catch {
       html = escapeHtml(tok.content);
     }
-    const htmlLines = html.replace(/\n$/, "").split("\n");
+    const htmlLines = balanceLines(html);
     code = htmlLines
       .map((l, i) => `<span class="cl-line"><span class="cl-no">${i + 1}</span><span class="cl-tx">${l || " "}</span></span>`)
       .join("\n");
@@ -82,6 +82,30 @@ md.renderer.rules.fence = (tokens, idx) => {
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Split highlighted HTML into per-line fragments with spans balanced.
+    hljs opens a <span> on one line and closes it lines later (multi-line
+    comments, <style>/<script> runs, template literals). Naive splitting
+    lets the open span swallow the following rows' gutter markup, so gutters
+    jump (1-6, 19-24, …) and rows merge. Close every open span at EOL and
+    reopen on the next line. */
+function balanceLines(html: string): string[] {
+  const raw = html.replace(/\n$/, "").split("\n");
+  const out: string[] = [];
+  let open: string[] = [];
+  const re = /<(\/?)span(\s[^>]*)?>/g;
+  for (const line of raw) {
+    const prev = open.join("");
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(line)) !== null) {
+      if (m[1] === "/") open.pop();
+      else open.push(m[0]);
+    }
+    out.push(prev + (line || " ") + "</span>".repeat(open.length));
+  }
+  return out;
 }
 /** GFM-ish task lists without a plugin: `- [ ]` / `- [x]` rendering. */
 md.core.ruler.push("parzi-tasklists", (state) => {

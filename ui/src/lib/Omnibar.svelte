@@ -7,7 +7,6 @@
   import Icon from "./Icon.svelte";
   import { api } from "./api";
   import { updateProviderRow } from "./modelStore";
-  import { convertFileSrc } from "@tauri-apps/api/core";
   import type { ModelRow } from "./api";
 
   export let input = "";
@@ -594,7 +593,6 @@
     return base.length > 22 ? base.slice(0, 22) + "…" : base;
   }
 
-  const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   const IMG_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif"]);
 
   function isImage(name: string): boolean {
@@ -602,24 +600,39 @@
     return IMG_EXT.has(ext);
   }
 
-  /** Absolute disk path for an attachment (null when it can't preview). */
-  function absPath(a: string): string | null {
-    if (!IS_TAURI) return null;
-    if (/^[a-zA-Z]:[\\/]/.test(a) || a.startsWith("\\\\") || a.startsWith("/")) return a;
-    const root = (projectRoot || "").replace(/[/\\]+$/, "");
-    if (!root) return null;
-    return `${root}\\${a.replace(/\//g, "\\")}`;
+  /** Data-URL previews via the shell (the asset protocol scope does not
+      cover workspace files, so convertFileSrc thumbs stay blank). */
+  let thumbUrls: Record<string, string | null> = {};
+  let thumbReq = 0;
+  $: void preloadThumbs(attachments, projectRoot);
+  async function preloadThumbs(list: string[], root: string) {
+    const my = ++thumbReq;
+    for (const a of list) {
+      if (a in thumbUrls || !isImage(a)) continue;
+      try {
+        const url = await api.readImageDataUrl(a, root);
+        if (my !== thumbReq) return;
+        thumbUrls = { ...thumbUrls, [a]: url };
+      } catch {
+        if (my === thumbReq) thumbUrls = { ...thumbUrls, [a]: null };
+      }
+    }
+    if (my === thumbReq) {
+      // Drop cache rows for removed attachments so re-adding reloads.
+      const keep = new Set(list);
+      const next: Record<string, string | null> = {};
+      for (const k of Object.keys(thumbUrls)) if (keep.has(k)) next[k] = thumbUrls[k];
+      thumbUrls = next;
+    }
   }
 
-  function thumbSrc(a: string): string | null {
-    if (!isImage(a)) return null;
-    const full = absPath(a);
-    if (!full) return null;
-    try {
-      return convertFileSrc(full);
-    } catch {
-      return null;
-    }
+  function removeAttachment(a: string) {
+    attachments = attachments.filter((x) => x !== a);
+  }
+
+  function clearAttachments() {
+    attachments = [];
+    thumbUrls = {};
   }
 
   let pickingFiles = false;
@@ -674,7 +687,7 @@
     {#if attachments.length}
       <div class="attach-grid" transition:slide={{ duration: 160, easing: cubicOut }}>
         {#each attachments as a (a)}
-          {@const src = thumbSrc(a)}
+          {@const src = thumbUrls[a] ?? null}
           <div class="thumb" class:has-img={!!src} title={a} transition:scale={{ duration: 140, start: 0.9, easing: cubicOut }}>
             {#if src}
               <img src={src} alt="" class="thumb-img" draggable="false" />
@@ -683,11 +696,14 @@
               <Icon d={I.file} size={16} />
               <span class="thumb-name">{shortName(a)}</span>
             {/if}
-            <button class="thumb-x" title="remove" on:click={() => (attachments = attachments.filter((x) => x !== a))}>
-              <Icon d={I.close} size={9} />
+            <button class="thumb-x" title="Remove attachment" aria-label="Remove {a}" on:click={() => removeAttachment(a)}>
+              <Icon d={I.close} size={10} />
             </button>
           </div>
         {/each}
+        {#if attachments.length > 1}
+          <button class="attach-clear" title="Remove all attachments" on:click={clearAttachments}>clear all</button>
+        {/if}
       </div>
     {/if}
 
@@ -955,12 +971,17 @@
     color: var(--text-2); font-size: 9px;
   }
   .thumb-x {
-    position: absolute; top: -7px; right: -7px; width: 18px; height: 18px;
+    position: absolute; top: -8px; right: -8px; width: 22px; height: 22px;
     display: inline-flex; align-items: center; justify-content: center;
     background: var(--menu); border: 1px solid var(--line);
     border-radius: 50%; color: var(--text-3); cursor: pointer; padding: 0;
   }
-  .thumb-x:hover { color: var(--text); border-color: var(--line-3); }
+  .thumb-x:hover { color: var(--text); border-color: var(--bad); }
+  .attach-clear {
+    align-self: center; background: transparent; border: none; border-radius: 5px;
+    color: var(--text-4); font: inherit; font-size: 11px; padding: 4px 8px; cursor: pointer;
+  }
+  .attach-clear:hover { color: var(--bad); background: var(--bad-soft); }
 
   .slash-pop, .at-popup {
     display: flex; flex-direction: column; gap: 1px; margin: 2px 0 8px;

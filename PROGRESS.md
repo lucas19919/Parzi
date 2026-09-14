@@ -694,3 +694,11 @@
 ## Single search (2026-09-14)
 - Removed the inline Filter threads row + logic + CSS from Sidebar; thread search lives only in the palette (Ctrl+K), which already filters threads — one search entry, no duplication
 
+
+## Images end-to-end + thread/selection/artifact fixes (2026-09-14 night)
+- Sent messages visible: send() shows an optimistic user bubble instantly, reconciles with get_thread, scrolls; failed sends restore the prompt (App.svelte).
+- Selection/copy restored: dropped global user-select:none on body, added ::selection highlight, copy button on user bubbles (App/Thread).
+- Artifact deck: md.ts balanceLines keeps gutter numbers consecutive when hljs spans cross lines; HTML/SVG Preview renders the live page in a sandboxed iframe (allow-scripts, opaque origin, no IPC).
+- Images: AttachedFile.image (base64, 4MB raw cap then JPEG downscale) end to end - read_attachments in core shared by shell/CLI/handler; native blocks per wire (images.rs: OpenAI image_url, Anthropic base64 source, Gemini inlineData, Responses input_image); no-vision models strip + Notice; transcript carries [attached: ...]; read_image_data_url (confined, 8MB) feeds composer thumbs + thread bubbles; attachments removable per-file + clear-all.
+- Drive-by: seed_check.rs hermetic temp home (toolchain set_var drift).
+- Verified: cargo test --workspace green (incl. 6 new core attachment tests + 5 new images shape tests), clippy deny-gate clean (pedantic advisories only), npm run check 0 errors, npm run build green.

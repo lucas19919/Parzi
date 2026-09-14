@@ -388,6 +388,9 @@ export const api = {
   readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
   writeTextFile: (path: string, content: string) =>
     invoke<void>("write_text_file", { path, content }),
+  /** Image bytes as a data URL for previews (confined, images only). */
+  readImageDataUrl: (path: string, cwd: string) =>
+    invoke<string>("read_image_data_url", { path, cwd }),
   saveProjectSystem: (project: string, content: string) =>
     invoke<string>("save_project_system", { project, content }),
   createSkill: (name: string) => invoke<void>("create_skill", { name }),

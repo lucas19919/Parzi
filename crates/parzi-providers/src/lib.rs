@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod claude;
 pub mod codex;
 pub mod compat_providers;
+pub mod images;
 pub mod openai_compat;
 pub mod opencode;
 mod opencode_wire;

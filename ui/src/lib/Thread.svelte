@@ -16,6 +16,8 @@
   export let approval: { key: string; call: { id: string; name: string; args: unknown; lane: string } } | null = null;
   /** Set when this thread is a subsession: title of the parent session. */
   export let parentTitle: string | null = null;
+  /** Workspace root: resolves `[attached: …]` image markers to previews. */
+  export let projectRoot = "";
   /** Child subsessions of this thread (team status banner). */
   export let subsessions: { id: string; title: string; status: string }[] = [];
 
@@ -45,7 +47,10 @@
   let openTools: Set<string> = new Set();
 
   function copy(text: string, i: number) {
-    navigator.clipboard.writeText(text);
+    try {
+      const p = navigator.clipboard.writeText(text) as unknown as Promise<void> | undefined;
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } catch {}
     copied = i;
     setTimeout(() => (copied = -1), 1200);
   }
@@ -169,6 +174,27 @@
     if (openTools.has(id)) openTools.delete(id);
     else openTools.add(id);
   }
+
+  const SENT_IMG_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
+  /** Filenames from the backend's `[attached: a, b]` transcript marker. */
+  function attachedImages(text: string): string[] {
+    const m = /\[attached: ([^\]]+)\]/.exec(text);
+    if (!m) return [];
+    return m[1].split(",").map((s) => s.trim()).filter((s) => SENT_IMG_RE.test(s));
+  }
+  function stripMarker(text: string): string {
+    return text.replace(/\n?\[attached: [^\]]+\]/, "").trimEnd();
+  }
+  const sentImgCache = new Map<string, Promise<string | null>>();
+  function sentImgUrl(name: string): Promise<string | null> {
+    const key = `${projectRoot}\n${name}`;
+    let p = sentImgCache.get(key);
+    if (!p) {
+      p = api.readImageDataUrl(name, projectRoot).catch(() => null);
+      sentImgCache.set(key, p);
+    }
+    return p;
+  }
 </script>
 
 <div class="thread-col" on:click={onThreadClick}>
@@ -194,7 +220,22 @@
   {/if}
   {#each chronologicalItems as item, i (i)}
     {#if item.kind === "user"}
-      <div class="msg-row user"><div class="user-bubble">{item.text}</div></div>
+      {@const sentImgs = attachedImages(item.text)}
+      <div class="msg-row user">
+        <div class="user-bubble">{stripMarker(item.text)}</div>
+        {#if sentImgs.length}
+          <div class="sent-imgs">
+            {#each sentImgs as im}
+              {#await sentImgUrl(im) then url}
+                {#if url}<img src={url} alt={im} title={im} class="sent-img" />{/if}
+              {/await}
+            {/each}
+          </div>
+        {/if}
+        <button class="copy-btn" on:click={() => copy(stripMarker(item.text), i)}>
+          {copied === i ? "copied" : "copy"}
+        </button>
+      </div>
     {:else if item.kind === "assistant"}
       <div class="msg-row">
         <div class="msg-body">
@@ -339,6 +380,20 @@
     line-height: 1.5;
     max-width: 80%;
     word-break: break-word;
+  }
+  .sent-imgs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-top: 6px;
+  }
+  .sent-img {
+    max-width: 220px;
+    max-height: 160px;
+    border-radius: 8px;
+    border: 1px solid var(--line-2);
+    object-fit: cover;
   }
   .msg-body {
     display: flex;

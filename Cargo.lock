@@ -1403,6 +1403,7 @@ dependencies = [
 name = "parzi-core"
 version = "0.1.8"
 dependencies = [
+ "base64",
  "chrono",
  "dirs",
  "image",

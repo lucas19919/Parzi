@@ -33,6 +33,10 @@
   $: lines = content ? content.split("\n").length : 0;
   $: isMarkdown = artifact ? artifact.kind === "markdown" : true;
   $: lang = artifact ? (artifact.language || (artifact.kind === "diff" ? "diff" : artifact.kind === "code" ? "" : artifact.kind)) : "markdown";
+  /** HTML/SVG artifacts preview as a live page, not as code. Sandboxed with
+      an opaque origin: scripts run, but reach neither the parent DOM nor IPC. */
+  $: canRender = !!artifact && (artifact.kind === "html" || artifact.kind === "svg") && !!content.trim();
+  $: showRender = canRender && view === "preview";
   $: versions = artifact ? artifacts.filter((a) => a.id === artifact.id).sort((a, b) => a.version - b.version) : [];
   $: docFamilies = (() => {
     const seen = new Map<string, InspectorArtifact>();
@@ -44,12 +48,14 @@
   })();
   $: quickDocs = showAllDocs ? docs : docs.slice(0, 4);
 
-  // Preview HTML: markdown renders as prose; code/diff render through the
+  // Preview HTML: markdown renders as prose; live pages (html/svg) render
+  // in a sandboxed iframe (see showRender); code/diff render through the
   // fenced-block pipeline so highlighting and diff tinting match the thread.
   $: html = (() => {
     if (!content) return "";
     if (view === "raw") return renderMarkdown("```" + (isMarkdown ? "markdown" : lang || "text") + "\n" + content.slice(0, 200000) + "\n```");
     if (isMarkdown) return renderMarkdown(content);
+    if (canRender) return "";
     return renderMarkdown("```" + (lang || "text") + "\n" + content.slice(0, 200000) + "\n```");
   })();
 
@@ -211,7 +217,11 @@
       <!-- Delegated click for the copy chrome inside rendered fences; not a control itself. -->
       <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
       <div class="body" bind:this={body} on:click={onBodyClick}>
-        <div class="prose" class:code={!isMarkdown || view === "raw"}>{@html html}</div>
+        {#if showRender && artifact}
+          <iframe class="render" title={artifact.title} sandbox="allow-scripts" srcdoc={artifact.content}></iframe>
+        {:else}
+          <div class="prose" class:code={!isMarkdown || view === "raw"}>{@html html}</div>
+        {/if}
       </div>
     </div>
   {/if}
@@ -300,7 +310,11 @@
   .toc-row.l2 { padding-left: 10px; }
   .toc-row.l3 { padding-left: 16px; font-size: 10.5px; }
   .toc-row.l4 { padding-left: 22px; font-size: 10.5px; opacity: 0.8; }
-  .body { flex: 1; min-width: 0; overflow: auto; padding: 12px 14px 40px; user-select: text; }
+  .body { flex: 1; min-width: 0; overflow: auto; padding: 12px 14px 40px; user-select: text; display: flex; flex-direction: column; }
+  .render {
+    flex: 1; width: 100%; min-height: 480px; border: 1px solid var(--line-2, rgba(255,255,255,0.08));
+    border-radius: 8px; background: transparent;
+  }
   .prose { font-size: 13px; line-height: 1.6; color: var(--text-2, #d8dbe3); }
   .prose :global(h1) { font-size: 20px; margin: 0.2em 0 0.5em; letter-spacing: -0.3px; color: var(--text, #fff); }
   .prose :global(h2) { font-size: 16px; margin: 1.3em 0 0.4em; color: var(--text, #fff); }

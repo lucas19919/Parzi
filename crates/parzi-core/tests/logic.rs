@@ -36,10 +36,7 @@ fn files_cap_and_truncate() {
     let b = ContextBuilder {
         system_parts: vec![],
         history: vec![],
-        files: vec![AttachedFile {
-            path: "a.rs".into(),
-            snippet: big,
-        }],
+        files: vec![AttachedFile::text("a.rs".into(), big)],
     };
     let ctx = b.assemble(100);
     assert!(ctx.messages.iter().any(|m| m.role == Role::System));

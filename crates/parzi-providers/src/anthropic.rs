@@ -86,7 +86,7 @@ impl AnthropicNative {
                     Role::Assistant => "assistant",
                     _ => "user",
                 };
-                serde_json::json!({"role": role, "content": m.content})
+                serde_json::json!({"role": role, "content": crate::images::anthropic_content(&m.content, &m.images)})
             })
             .collect();
         let tools: Vec<serde_json::Value> = req

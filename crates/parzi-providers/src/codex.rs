@@ -149,7 +149,7 @@ impl Provider for Codex {
                     Role::Assistant => "assistant",
                     _ => "user",
                 };
-                serde_json::json!({"role": role, "content": m.content})
+                serde_json::json!({"role": role, "content": crate::images::responses_content(&m.content, &m.images)})
             })
             .collect();
         let tools: Vec<serde_json::Value> = req
