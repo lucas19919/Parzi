@@ -54,21 +54,26 @@
     {/if}
   </div>
 
-  <RosterSelector {project} {roster} on:saved={(e) => dispatch("rosterSaved", e.detail)} />
+  <details class="setup">
+    <summary>Agents &amp; models</summary>
+    <div class="setup-body">
+      <RosterSelector {project} {roster} on:saved={(e) => dispatch("rosterSaved", e.detail)} />
 
-  <div class="header-hub">
-    <div class="hub-title">Header agent — architecture &amp; planning</div>
-    <div class="hub-row">
-      <input
-        class="hub-in"
-        placeholder="Ask the Header agent about architecture, status, or the plan…"
-        bind:value={headerPrompt}
-        on:keydown={(e) => { if (e.key === "Enter") ask(); }}
-      />
-      <button class="go" on:click={ask}>Ask</button>
+      <div class="header-hub">
+        <div class="hub-title">Header agent — architecture &amp; planning</div>
+        <div class="hub-row">
+          <input
+            class="hub-in"
+            placeholder="Ask the Header agent about architecture, status, or the plan…"
+            bind:value={headerPrompt}
+            on:keydown={(e) => { if (e.key === "Enter") ask(); }}
+          />
+          <button class="go" on:click={ask}>Ask</button>
+        </div>
+        <div class="hub-sub">Answers in a thread using the Header role model. Plan edits sync to the living plan below.</div>
+      </div>
     </div>
-    <div class="hub-sub">Answers in a thread using the Header role model. Plan edits sync to the living plan below.</div>
-  </div>
+  </details>
 
   <div class="split">
     <div class="col">
@@ -124,6 +129,20 @@
   .hub-row { display: flex; gap: 8px; }
   .hub-in { flex: 1; background: var(--surface-2); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 9px 12px; font: inherit; font-size: 13px; }
   .hub-sub { font-size: 11.5px; color: var(--text-3); }
+  .setup {
+    background: var(--surface-1); border: 1px solid var(--line);
+    border-radius: 12px; padding: 4px 14px;
+  }
+  .setup summary {
+    cursor: pointer; font-size: 12px; font-weight: 700; letter-spacing: 0.3px;
+    color: var(--text-3); padding: 8px 0; list-style: none;
+  }
+  .setup summary::-webkit-details-marker { display: none; }
+  .setup summary::before { content: "▸ "; font-size: 10px; }
+  .setup[open] summary::before { content: "▾ "; }
+  .setup summary:hover { color: var(--text); }
+  .setup-body { display: flex; flex-direction: column; gap: 12px; padding: 4px 0 12px; }
+  .setup-body :global(.roster), .setup-body .header-hub { border: none; padding-left: 0; padding-right: 0; }
   .split { display: grid; grid-template-columns: 1.2fr 1fr; gap: 12px; }
   @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
   .col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }

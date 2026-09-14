@@ -17,6 +17,20 @@ use parzi_runtime::tools::{Approval, Approver, ToolCallInfo, ToolExecutor};
 use parzi_runtime::Orchestrator;
 use tokio::sync::mpsc;
 
+/// Hermetic home for this test binary: no test session ever touches the
+/// real ~/.parzi (and the sidebar) again. Called first in every test; the
+/// Once makes parallel tests share one temp home safely.
+static TEST_HOME_INIT: std::sync::Once = std::sync::Once::new();
+
+fn test_home() {
+    TEST_HOME_INIT.call_once(|| {
+        let dir = std::env::temp_dir().join(format!("parzi-test-approval-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("PARZI_HOME", &dir);
+    });
+}
+
 /// Provider that emits one fs.write tool call, then ends.
 struct ToolCallProvider;
 
@@ -79,6 +93,7 @@ fn tool_factory(
 
 #[tokio::test]
 async fn ask_mode_waits_for_slow_approver() {
+    test_home();
     let dir = std::env::temp_dir().join(format!("parzi-gate-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -188,6 +203,7 @@ async fn ask_mode_waits_for_slow_approver() {
 /// message to a finished thread succeeds.
 #[tokio::test]
 async fn sequential_completed_runs_release_slots() {
+    test_home();
     struct Answer;
     #[async_trait::async_trait]
     impl Provider for Answer {

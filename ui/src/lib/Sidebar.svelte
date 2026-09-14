@@ -45,7 +45,7 @@
 
   const displayName = (n: string) => (n === "default" ? "Inbox" : n);
 
-  let wsOpen = false;
+  let wsOpen = true;
   let renamingId: string | null = null;
   let renameTitle = "";
 
@@ -158,6 +158,15 @@
       y: Math.min(y, window.innerHeight - 220),
       confirm: false, count: countFor(name),
     };
+  }
+
+  /** Workspace `···` toggles its menu (click again to dismiss). */
+  function toggleProjectCtx(name: string, x: number, y: number) {
+    if (ctx?.kind === "project" && ctx.name === name && !ctx.confirm) {
+      ctx = null;
+      return;
+    }
+    openProjectCtx(name, x, y);
   }
 
   async function togglePin(id: string) {
@@ -292,7 +301,6 @@
 <svelte:window
   on:click={() => (ctx = null)}
   on:keydown={(e) => { if (e.key === "Escape") ctx = null; }}
-  on:blur={() => (ctx = null)}
 />
 
 <aside class="sb">
@@ -311,6 +319,56 @@
     <button class="t3-row primary" on:click={() => dispatch("newThread")} title="New conversation in {displayName(currentProject)}">
       <Icon d={I.edit} size={14} /><span>New chat</span>
     </button>
+  </div>
+
+  <!-- Workspaces live here, pinned above the thread list, so the project
+    picker never scrolls out of reach no matter how long Today grows. -->
+  <div class="ws-fixed">
+    <div
+      class="proj-head ws-head"
+      role="button"
+      tabindex="0"
+      title={wsOpen ? "Collapse workspaces" : "Expand workspaces"}
+      on:click={() => (wsOpen = !wsOpen)}
+      on:keydown={(e) => { if (e.key === "Enter") wsOpen = !wsOpen; }}
+    >
+      <span>Workspaces ({workspaceNames.length})</span>
+      <span class="proj-tools">
+        <button class="icon-btn sm" title="New workspace" on:click|stopPropagation={() => dispatch("openNewWorkspace")}>
+          <Icon d={I.plus} size={12} />
+        </button>
+        <svg class="ws-chev" class:open={wsOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d={I.chevronDown} /></svg>
+      </span>
+    </div>
+    {#if wsOpen}
+      <div class="ws-list">
+        {#each workspaceNames as name (name)}
+          {@const isCur = name === currentProject}
+          {@const n = countFor(name)}
+          <div
+            class="proj-row"
+            class:cur={isCur}
+            role="button"
+            tabindex="0"
+            title={isCur && currentRoot ? `${name} — ${currentRoot}` : name}
+            on:click={() => dispatch("selectProject", { name })}
+            on:keydown={(e) => { if (e.key === "Enter") dispatch("selectProject", { name }); }}
+            on:contextmenu|preventDefault|stopPropagation={(e) => openProjectCtx(name, e.clientX, e.clientY)}
+          >
+            <Icon d={I.folder} size={13} />
+            <span class="proj-name">{displayName(name)}</span>
+            {#if n > 0}<span class="proj-count">{n}</span>{/if}
+            {#if isCur && branch}<span class="proj-branch">⎇ {branch}</span>{/if}
+            <span class="proj-hover">
+              <button class="mini-btn" title="New conversation in {displayName(name)}"
+                on:click|stopPropagation={() => dispatch("newThreadInProject", { name })}>+</button>
+              <button class="mini-btn" title="Workspace options"
+                on:click|stopPropagation={(e) => toggleProjectCtx(name, e.clientX, e.clientY)}>···</button>
+            </span>
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 
   <div class="sb-scroll">
@@ -360,51 +418,6 @@
 
     {#if !pinned.length && !groups.length}
       <div class="empty-state">No conversations yet — start a new chat</div>
-    {/if}
-
-    <div
-      class="proj-head ws-head"
-      role="button"
-      tabindex="0"
-      title={wsOpen ? "Collapse workspaces" : "Expand workspaces"}
-      on:click={() => (wsOpen = !wsOpen)}
-      on:keydown={(e) => { if (e.key === "Enter") wsOpen = !wsOpen; }}
-    >
-      <span>Workspaces ({workspaceNames.length})</span>
-      <span class="proj-tools">
-        <button class="icon-btn sm" title="New workspace" on:click|stopPropagation={() => dispatch("openNewWorkspace")}>
-          <Icon d={I.plus} size={12} />
-        </button>
-        <svg class="ws-chev" class:open={wsOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d={I.chevronDown} /></svg>
-      </span>
-    </div>
-
-    {#if wsOpen}
-      {#each workspaceNames as name (name)}
-        {@const isCur = name === currentProject}
-        {@const n = countFor(name)}
-        <div
-          class="proj-row"
-          class:cur={isCur}
-          role="button"
-          tabindex="0"
-          title={isCur && currentRoot ? `${name} — ${currentRoot}` : name}
-          on:click={() => dispatch("selectProject", { name })}
-          on:keydown={(e) => { if (e.key === "Enter") dispatch("selectProject", { name }); }}
-          on:contextmenu|preventDefault|stopPropagation={(e) => openProjectCtx(name, e.clientX, e.clientY)}
-        >
-          <Icon d={I.folder} size={13} />
-          <span class="proj-name">{displayName(name)}</span>
-          {#if n > 0}<span class="proj-count">{n}</span>{/if}
-          {#if isCur && branch}<span class="proj-branch">⎇ {branch}</span>{/if}
-          <span class="proj-hover">
-            <button class="mini-btn" title="New conversation in {displayName(name)}"
-              on:click|stopPropagation={() => dispatch("newThreadInProject", { name })}>+</button>
-            <button class="mini-btn" title="Workspace options"
-              on:click|stopPropagation={(e) => openProjectCtx(name, e.clientX, e.clientY)}>···</button>
-          </span>
-        </div>
-      {/each}
     {/if}
   </div>
 
@@ -528,6 +541,11 @@
     box-shadow: 0 0 6px var(--accent-glow, var(--accent));
   }
   .sb-scroll { flex: 1; overflow-y: auto; padding: 2px 10px 8px; display: flex; flex-direction: column; }
+  /* Pinned workspaces: fixed strip above the thread list with its own cap,
+     so the project picker never scrolls out of reach. */
+  .ws-fixed { flex: none; padding: 2px 10px 6px; border-bottom: 1px solid var(--line-2); }
+  .ws-fixed .proj-head { padding-top: 8px; }
+  .ws-list { display: flex; flex-direction: column; overflow-y: auto; max-height: 30vh; }
   .proj-head {
     display: flex; align-items: center; justify-content: space-between;
     font-size: 11px; color: var(--text-3); padding: 10px 4px 4px;

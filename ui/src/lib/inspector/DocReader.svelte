@@ -330,4 +330,8 @@
   .prose.code :global(.codeblock) { border: none; background: transparent; }
   .prose.code :global(.codeblock .code-head) { display: none; }
   .prose.code :global(.codeblock pre) { padding: 0; }
+  /* Deck codeblocks sit on the panel background, so the gutter must not
+     paint its own solid boxes (that is the boxed-numbers look). Static
+     positioning: numbers scroll with the code instead of overlaying it. */
+  .prose.code :global(.cl-no) { background: transparent; position: static; }
 </style>

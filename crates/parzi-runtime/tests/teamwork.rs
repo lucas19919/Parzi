@@ -42,7 +42,18 @@ fn answer_factory(
     Ok(Box::new(AnswerProvider))
 }
 
+fn test_home() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let dir = std::env::temp_dir().join(format!("parzi-test-teamwork-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("PARZI_HOME", &dir);
+    });
+}
+
 fn test_orch(max: usize) -> (Arc<Orchestrator>, SessionStore) {
+    test_home();
     let mut cfg = ParziConfig::default();
     cfg.orchestrator.max_concurrent = max;
     cfg.orchestrator.queue_when_busy = true;
@@ -230,6 +241,7 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
     // wait would deadlock, so the bridge must return `queued` instead.
     // (B4: finished runs release their slot — an answering provider would
     // finish instantly and free the slot, so we hang here on purpose.)
+    test_home();
     let mut cfg = ParziConfig::default();
     cfg.orchestrator.max_concurrent = 1;
     cfg.orchestrator.queue_when_busy = true;
