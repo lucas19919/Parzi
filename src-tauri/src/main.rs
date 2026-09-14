@@ -14,6 +14,7 @@ use parzi_runtime::tools::{Approval, Approver, ToolCallInfo};
 use parzi_runtime::Orchestrator;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tokio::sync::{Mutex, oneshot};
 
 struct AppState {
@@ -519,14 +520,88 @@ async fn get_config() -> Result<ParziConfig, String> {
     ParziConfig::load().map_err(|e| e.to_string())
 }
 #[tauri::command]
-async fn save_config(state: State<'_, AppState>, cfg: ParziConfig) -> Result<(), String> {
+async fn save_config(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    cfg: ParziConfig,
+) -> Result<(), String> {
     if cfg.version != parzi_core::config::CONFIG_VERSION {
         return Err("config version mismatch — reload settings".into());
+    }
+    check_base_urls(&cfg)?;
+    // H-2: a changed MCP command/args runs with user privileges on every
+    // agent turn from the next launch on. New or edited connectors get a
+    // native confirm; removals (fewer capabilities) save silently.
+    let old = ParziConfig::load().unwrap_or_default();
+    let changed = mcp_command_changes(&old, &cfg);
+    if !changed.is_empty() {
+        let msg = format!(
+            "Connector command changed: {}. A malicious command runs with your user account on every agent turn. Save anyway?",
+            changed.join(", ")
+        );
+        let allow = tokio::task::spawn_blocking(move || {
+            app.dialog()
+                .message(msg)
+                .title("Parzi — confirm connector")
+                .buttons(MessageDialogButtons::OkCancel)
+                .blocking_show()
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        if !allow {
+            return Err("connector change cancelled".into());
+        }
     }
     cfg.save().map_err(|e| e.to_string())?;
     // Hot-apply: next agent launch uses the new policy/MCP servers, no restart.
     state.orch.apply_config(cfg).await;
     Ok(())
+}
+
+/// H-2: provider `base_url` overrides must be https, or http on loopback
+/// only — otherwise a bearer token rides to an arbitrary host.
+fn check_base_urls(cfg: &ParziConfig) -> Result<(), String> {
+    for (id, entry) in &cfg.providers {
+        let Some(url) = entry.base_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        let lower = url.to_lowercase();
+        if let Some(_rest) = lower.strip_prefix("https://") {
+            continue;
+        }
+        if let Some(rest) = lower.strip_prefix("http://") {
+            let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+            let host = host.strip_prefix('[').unwrap_or(host);
+            let host = host.split(']').next().unwrap_or(host);
+            let host = match host.rsplit_once(':') {
+                Some((h, port)) if port.chars().all(|c| c.is_ascii_digit()) => h,
+                _ => host,
+            };
+            if host == "localhost" || host == "::1" || host.starts_with("127.") {
+                continue;
+            }
+            return Err(format!("provider {id}: plain http is loopback-only"));
+        }
+        return Err(format!("provider {id}: base_url must be http(s)"));
+    }
+    Ok(())
+}
+
+/// Names of MCP servers whose `command`/`args` were added or edited between
+/// two configs. Pure and unit-tested.
+fn mcp_command_changes(
+    old: &ParziConfig,
+    new: &ParziConfig,
+) -> Vec<String> {
+    let mut out = vec![];
+    for (name, srv) in &new.mcp.servers {
+        match old.mcp.servers.get(name) {
+            Some(prev) if prev.command == srv.command && prev.args == srv.args => {}
+            _ => out.push(name.clone()),
+        }
+    }
+    out.sort();
+    out
 }
 
 /// One connector's tool inventory for the Settings tool browser.
@@ -1097,14 +1172,12 @@ async fn toggle_plugin(name: String, enabled: bool) -> Result<(), String> {
 
 /// Inspector deck: read one text file for side-by-side viewing. Bounded to
 /// 2 MiB so a stray binary or log cannot balloon the webview; lossy UTF-8.
+/// H-2: confined to the Parzi home tree and registered project roots.
 const READ_TEXT_MAX: u64 = 2 * 1024 * 1024;
 
 #[tauri::command]
 async fn read_text_file(path: String) -> Result<String, String> {
-    let p = std::path::PathBuf::from(path.trim());
-    if p.as_os_str().is_empty() {
-        return Err("empty path".into());
-    }
+    let p = confined_path(&path)?;
     let meta = std::fs::metadata(&p).map_err(|e| format!("{}: {e}", p.display()))?;
     if !meta.is_file() {
         return Err(format!("{} is not a file", p.display()));
@@ -1119,6 +1192,87 @@ async fn read_text_file(path: String) -> Result<String, String> {
     }
     let bytes = std::fs::read(&p).map_err(|e| e.to_string())?;
     Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Lexical `.`/`..` normalization without touching disk (floors at the
+/// prefix/root, matching OS semantics). Pure and unit-tested.
+fn normalize_lexical(p: &std::path::Path) -> std::path::PathBuf {
+    use std::path::Component;
+    let mut out = std::path::PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    // Above the root: flooring keeps `C:\..\x` == `C:\x`.
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        out.push(std::path::MAIN_SEPARATOR.to_string());
+    }
+    out
+}
+
+fn contained_in(target: &std::path::Path, roots: &[std::path::PathBuf]) -> bool {
+    roots.iter().any(|r| target.starts_with(r))
+}
+
+/// Resolve every configured file root the shell may touch: the Parzi home
+/// tree plus each registered project/lane root. Canonicalized; missing roots
+/// are skipped (a configured-but-absent folder grants nothing).
+fn file_roots() -> Vec<std::path::PathBuf> {
+    let mut roots = vec![];
+    if let Ok(home) = parzi_core::paths::parzi_dir() {
+        roots.push(home.canonicalize().unwrap_or_else(|_| {
+            parzi_core::paths::parzi_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        }));
+    }
+    if let Ok(scan) = parzi_core::lanes::scan_projects() {
+        for (proj, lanes) in scan {
+            for root in std::iter::once(proj.root).flatten().chain(
+                lanes.into_iter().filter_map(|l| l.root),
+            ) {
+                if root.trim().is_empty() {
+                    continue;
+                }
+                let rb = std::path::PathBuf::from(&root);
+                roots.push(rb.canonicalize().unwrap_or(rb));
+            }
+        }
+    }
+    roots
+}
+
+/// H-2 gate for shell-side file access: absolute path, lexically normalized,
+/// canonicalized (nearest existing ancestor for not-yet-created files), and
+/// required to sit under `file_roots()`. Returns the normalized path to use.
+fn confined_path(raw: &str) -> Result<std::path::PathBuf, String> {
+    let p = std::path::PathBuf::from(raw.trim());
+    if p.as_os_str().is_empty() {
+        return Err("empty path".into());
+    }
+    if !p.is_absolute() {
+        return Err("path must be absolute".into());
+    }
+    let normal = normalize_lexical(&p);
+    let mut probe: Option<&std::path::Path> = Some(&normal);
+    let mut canon: Option<std::path::PathBuf> = None;
+    while let Some(q) = probe {
+        if let Ok(c) = q.canonicalize() {
+            canon = Some(c);
+            break;
+        }
+        probe = q.parent();
+    }
+    let canon = canon.ok_or_else(|| "cannot resolve path".to_string())?;
+    if contained_in(&canon, &file_roots()) {
+        Ok(normal)
+    } else {
+        Err("that location is outside the workspace".into())
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1204,13 +1358,7 @@ async fn write_text_file(path: String, content: String) -> Result<(), String> {
             WRITE_TEXT_MAX / 1024
         ));
     }
-    let p = std::path::PathBuf::from(path.trim());
-    if p.as_os_str().is_empty() {
-        return Err("empty path".into());
-    }
-    if !p.is_absolute() {
-        return Err("path must be absolute".into());
-    }
+    let p = confined_path(&path)?;
     if let Some(parent) = p.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -1223,10 +1371,7 @@ async fn write_text_file(path: String, content: String) -> Result<(), String> {
 /// Settings → Context: create or replace a project's SYSTEM.md prompt.
 #[tauri::command]
 async fn save_project_system(project: String, content: String) -> Result<String, String> {
-    let name = project.trim();
-    if name.is_empty() || name.contains(['/', '\\']) || name.contains("..") {
-        return Err("invalid project name".into());
-    }
+    let name = parzi_core::lanes::safe_name(&project).map_err(|e| e.to_string())?;
     let path = parzi_core::paths::projects_dir()
         .map_err(|e| e.to_string())?
         .join(name)
@@ -1465,4 +1610,72 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("parzi failed to start");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lexical_normalize_floors_at_root() {
+        let norm = |s: &str| normalize_lexical(std::path::Path::new(s));
+        assert_eq!(
+            norm("C:\\proj\\a\\..\\b"),
+            std::path::PathBuf::from("C:\\proj\\b")
+        );
+        // `..` above the root floors instead of escaping.
+        assert_eq!(norm("C:\\..\\x"), std::path::PathBuf::from("C:\\x"));
+        assert_eq!(norm("/a/./b"), std::path::PathBuf::from("/a/b"));
+    }
+
+    #[test]
+    fn containment_is_prefix_based() {
+        let roots = vec![std::path::PathBuf::from("C:\\parzi")];
+        assert!(contained_in(std::path::Path::new("C:\\parzi\\a.md"), &roots));
+        assert!(!contained_in(std::path::Path::new("C:\\other\\a.md"), &roots));
+        // `C:\parzi-evil` shares a string prefix but is not under the root.
+        assert!(!contained_in(std::path::Path::new("C:\\parzi-evil\\a.md"), &roots));
+    }
+
+    #[test]
+    fn base_url_policy_https_or_loopback() {
+        let mut cfg = ParziConfig::default();
+        cfg.providers.insert(
+            "x".into(),
+            parzi_core::config::ProviderEntry {
+                default_model: "m".into(),
+                base_url: Some("https://api.example.com/v1".into()),
+            },
+        );
+        assert!(check_base_urls(&cfg).is_ok());
+        cfg.providers.get_mut("x").unwrap().base_url = Some("http://127.0.0.1:8080/v1".into());
+        assert!(check_base_urls(&cfg).is_ok());
+        cfg.providers.get_mut("x").unwrap().base_url = Some("http://localhost:9000".into());
+        assert!(check_base_urls(&cfg).is_ok());
+        cfg.providers.get_mut("x").unwrap().base_url = Some("http://192.168.1.5/v1".into());
+        assert!(check_base_urls(&cfg).is_err());
+        cfg.providers.get_mut("x").unwrap().base_url = Some("ftp://x/y".into());
+        assert!(check_base_urls(&cfg).is_err());
+        cfg.providers.get_mut("x").unwrap().base_url = None;
+        assert!(check_base_urls(&cfg).is_ok());
+    }
+
+    #[test]
+    fn command_changes_detected_add_and_edit_only() {
+        let old = ParziConfig::default();
+        let mut new = ParziConfig::default();
+        new.mcp.servers.insert(
+            "s".into(),
+            parzi_core::config::McpServerCfg {
+                command: "npx".into(),
+                args: vec!["-y".into()],
+                ..Default::default()
+            },
+        );
+        assert_eq!(mcp_command_changes(&old, &new), vec!["s".to_string()]);
+        // Identical resave is silent.
+        assert!(mcp_command_changes(&new, &new).is_empty());
+        // Removal alone does not prompt.
+        assert!(mcp_command_changes(&new, &old).is_empty());
+    }
 }

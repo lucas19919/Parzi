@@ -91,7 +91,7 @@ pub struct McpConfig {
     pub servers: HashMap<String, McpServerCfg>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct McpServerCfg {
     pub command: String,
     #[serde(default)]
