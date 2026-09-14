@@ -1,4 +1,7 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
+  import ProviderLogo from "./ProviderLogo.svelte";
+  import { hasMark } from "./providerMarks";
   import { createEventDispatcher, onDestroy, onMount } from "svelte";
   import type { SessionMeta } from "./api";
 
@@ -10,7 +13,6 @@
   export let active = false;
   export let renaming = false;
   export let renameDraft = "";
-  export let logos: Record<string, string> = {};
   /** Git branch of the thread's project (dim suffix, T3-style). */
   export let branch = "";
   /** Set when the row is shown outside its workspace group (filter results). */
@@ -38,14 +40,6 @@
   }
 
   $: prov = provOf(t);
-
-  /** Short model label, always shown bottom-right (e.g. `provider/family` → `family`). */
-  $: modelLabel = (() => {
-    const m = (t.model || "auto").trim() || "auto";
-    if (m === "auto") return "auto";
-    const short = m.split("/").pop() || m;
-    return short.length > 16 ? short.slice(0, 16) + "…" : short;
-  })();
 
   // Live "Working 25h 21m" timer: re-render every 30s so the elapsed label
   // ticks without waiting for a thread-list refresh.
@@ -165,11 +159,12 @@
     {#if subLine}<span class="st-lane">{subLine}</span>{/if}
     <span class="meta-spacer" />
     {#if prov === "auto"}
-      <span class="st-auto" title="Smart Auto">⚡</span>
-    {:else if prov && logos[prov]}
-      <img src={logos[prov]} alt={prov} title={t.model} class="prov-logo" draggable="false" />
+      <span class="st-auto" title="Smart Auto"><Icon d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z" size={12} /></span>
+    {:else if hasMark(prov)}
+      <span class="prov-logo" title={t.model}><ProviderLogo provider={prov} size={13} muted /></span>
+    {:else}
+      <span class="prov-logo" title={t.model || "model"}><Icon d="M4 4h16v16H4z" size={11} /></span>
     {/if}
-    <span class="st-model" title={t.model || "auto"}>{modelLabel}</span>
     {#if t.pinned}<span class="st-pin" title="Pinned">★</span>{/if}
   </div>
   <span class="t3-hover" data-act>
@@ -270,13 +265,9 @@
     flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     color: var(--text-4); font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 10.5px;
   }
-  .st-auto { flex: none; color: var(--text-3); font-size: 11px; line-height: 1; }
-  .st-model {
-    flex: none; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    color: var(--text-3); font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 10.5px;
-  }
+  .st-auto { display: inline-flex; flex: none; color: var(--accent-text); opacity: 0.85; }
   .st-pin { flex: none; color: var(--text-3); font-size: 10px; }
-  .prov-logo { width: 13px; height: 13px; flex: none; object-fit: contain; opacity: 0.8; }
+  .prov-logo { display: inline-flex; flex: none; color: var(--text-3); }
   .disclosure {
     flex: none; width: 16px; margin-left: -4px; text-align: center;
     color: var(--text-3); font-size: 10px; cursor: pointer; border-radius: 4px;

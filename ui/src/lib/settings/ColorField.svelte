@@ -42,7 +42,7 @@
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--line-3); cursor: pointer;
   }
   .sw input { position: absolute; inset: -10px; width: 44px; height: 44px; opacity: 0; cursor: pointer; padding: 0; border: none; }
-  .lab { flex: 1; font-size: 12.5px; color: var(--text-2); }
+  .lab { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hex {
     width: 84px; flex: none; background: var(--input); border: 1px solid var(--line-2);
     border-radius: var(--radius-1); color: var(--text-2); padding: 4px 7px; outline: none;

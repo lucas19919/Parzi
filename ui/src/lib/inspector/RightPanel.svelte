@@ -20,7 +20,6 @@
   export let activeThreadId: string | null = null;
   export let events: ChatEvent[] = [];
   export let approval: { key: string; call: { id: string; name: string; args: unknown; lane: string } } | null = null;
-  export let logos: Record<string, string> = {};
 
   export const MIN_W = 340;
   export const MAX_W = 680;
@@ -109,7 +108,7 @@
         on:openDoc on:openTranscript on:openArtifact on:pickFile
       />
     {:else}
-      <AgentVisualizer {nodes} {activeThreadId} {events} {approval} {logos}
+      <AgentVisualizer {nodes} {activeThreadId} {events} {approval}
         on:focus on:fork on:kill on:spawn on:approve />
     {/if}
   </div>

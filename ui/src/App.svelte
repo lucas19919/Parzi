@@ -5,14 +5,14 @@
   import {
     api, onRunEvent,
     type SessionMeta, type ChatEvent, type ModelRow, type UiEvent,
-    type ProjectView, type InspectorArtifact, type InspectorDoc, type DocEntry, type SwarmNode
+    type ProjectView, type ProjectRoster, type InspectorArtifact, type InspectorDoc, type DocEntry, type SwarmNode
   } from "./lib/api";
   import RightPanel from "./lib/inspector/RightPanel.svelte";
 
   import Titlebar from "./lib/Titlebar.svelte";
   import Sidebar from "./lib/Sidebar.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
-  import ProjectOverview from "./lib/ProjectOverview.svelte";
+  import ProjectMainPage from "./lib/ProjectMainPage.svelte";
   import Thread from "./lib/Thread.svelte";
   import Settings from "./lib/Settings.svelte";
   import SettingsNav from "./lib/SettingsNav.svelte";
@@ -37,8 +37,10 @@
   });
 
   let curProject = "default";
-  /** True after an explicit project pick: stage shows the project overview. */
+  /** True after an explicit project pick: stage shows the project Mission Control. */
   let projectSelected = false;
+  let projectRoster: ProjectRoster | null = null;
+  let projectPlan = "";
   let activeThreadId: string | null = null;
   let activeMeta: SessionMeta | null = null;
   let events: ChatEvent[] = [];
@@ -192,6 +194,15 @@
     events = [];
     projectSelected = true;
     await refreshBranch();
+    // Mission Control data: roster + living plan load quietly, never block paint.
+    projectRoster = null;
+    projectPlan = "";
+    try {
+      projectRoster = await api.getProjectRoster(name);
+    } catch {}
+    try {
+      projectPlan = await api.getProjectPlan(name);
+    } catch {}
   }
 
   async function openThread(id: string) {
@@ -317,6 +328,47 @@
       const m = await api.createSubsession({ parentId });
       await loadThreads();
       await openThread(m.id);
+    } catch (e) {
+      toast(String(e), true);
+    }
+  }
+
+  /** Header agent: start (or continue) a thread with the Header role model. */
+  async function askHeader(prompt: string) {
+    try {
+      const headerModel = projectRoster?.header?.model?.trim() || model;
+      const sid = await api.sendMessage({
+        project: curProject,
+        lane: curLane,
+        model: headerModel,
+        prompt: `You are the Header (Architect) agent for project ${curProject}. Answer strategically, reference the living PLAN.md, and propose concrete plan updates when asked:\n\n${prompt}`,
+        cwd: currentRoot,
+        effort,
+      });
+      await loadThreads();
+      await openThread(sid);
+    } catch (e) {
+      toast(String(e), true);
+    }
+  }
+
+  /** Orchestrator: dispatch the first pending plan task as a lane worker. */
+  async function executePlan() {
+    try {
+      const m = projectPlan.match(/^-\s*\[\s\]\s*(.+)$/m);
+      const task = m ? m[1].replace(/\[lane:[^\]]+\]/, "").trim() : "Work the living plan";
+      const implModel = projectRoster?.implementation?.model?.trim() || model;
+      const sid = await api.sendMessage({
+        project: curProject,
+        lane: curLane,
+        model: implModel,
+        prompt: `You are the Orchestrator for project ${curProject}. Living plan task: ${task}. Break it into lane steps, spawn implementation workers via lane.dispatch / session.spawn, and sync checkboxes back to PLAN.md via plan.update.`,
+        cwd: currentRoot,
+        effort,
+      });
+      await loadThreads();
+      await openThread(sid);
+      toast("Orchestrator dispatched");
     } catch (e) {
       toast(String(e), true);
     }
@@ -643,6 +695,19 @@
     } else if (e.kind === "done" || e.kind === "error") {
       const { [e.session]: _gone, ...rest } = sessionTools;
       sessionTools = rest;
+      // B5: a background session finishing must release the composer when it
+      // was the live run. Handle per-session before the active-session gate.
+      if (liveRun === e.session) {
+        liveRun = null;
+        // Only clear the streaming buffers when the finished session is the
+        // one on screen; a background done must not wipe active live text.
+        if (e.session === activeThreadId) {
+          live = "";
+          liveReasoning = "";
+        }
+      }
+      // Per-session completion still refreshes the sidebar even for
+      // background threads (handled below via the early return path).
     }
     if (e.session !== activeThreadId) {
       loadThreads();
@@ -964,18 +1029,24 @@
           />
         </div>
       {:else if projectSelected}
-        <!-- Project overview: live sessions + subsessions, then recent -->
+        <!-- Project Mission Control: roster + living plan + lane swarm -->
         <div class="stage-scroll">
-          <ProjectOverview
+          <ProjectMainPage
             project={curProject}
             root={currentRoot}
             {branch}
             lanes={currentProjectView?.lanes ?? []}
             {threads}
+            roster={projectRoster}
+            plan={projectPlan}
             on:openThread={(e) => openThread(e.detail.id)}
             on:newThread={newThread}
             on:killRun={(e) => killSession(e.detail.id)}
             on:newSubsession={(e) => newSubsession(e.detail.id)}
+            on:askHeader={(e) => askHeader(e.detail.prompt)}
+            on:executePlan={executePlan}
+            on:planChanged={(e) => (projectPlan = e.detail.plan)}
+            on:rosterSaved={(e) => (projectRoster = e.detail.roster)}
           />
         </div>
       {:else}

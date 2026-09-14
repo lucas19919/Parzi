@@ -1,4 +1,6 @@
 <script lang="ts">
+  import ProviderLogo from "./ProviderLogo.svelte";
+  import { hasMark } from "./providerMarks";
   import { createEventDispatcher } from "svelte";
   import type { LaneView, SessionMeta } from "./api";
 
@@ -7,7 +9,6 @@
   export let branch = "";
   export let lanes: LaneView[] = [];
   export let threads: SessionMeta[] = [];
-  export let logos: Record<string, string> = {};
 
   const dispatch = createEventDispatcher<{
     openThread: { id: string };
@@ -142,8 +143,8 @@
                 {#if t.lane}{t.lane} · {/if}{t.model || "no model"} · {toks(t)} · {rel(t.updated)}
               </span>
             </span>
-            {#if prov && prov !== "auto" && logos[prov]}
-              <img src={logos[prov]} alt={prov} title={t.model} class="prov-logo" draggable="false" />
+            {#if prov !== "auto" && hasMark(prov)}
+              <span class="prov-logo" title={t.model}><ProviderLogo provider={prov} size={15} muted /></span>
             {/if}
             <span class="sess-hover">
               <span
@@ -188,8 +189,8 @@
                 {#if t.lane}{t.lane} · {/if}{t.model || "no model"} · {toks(t)} · {rel(t.updated)}
               </span>
             </span>
-            {#if prov && prov !== "auto" && logos[prov]}
-              <img src={logos[prov]} alt={prov} title={t.model} class="prov-logo" draggable="false" />
+            {#if prov !== "auto" && hasMark(prov)}
+              <span class="prov-logo" title={t.model}><ProviderLogo provider={prov} size={15} muted /></span>
             {/if}
             <span class="sess-hover">
               <span
@@ -284,7 +285,7 @@
   .sess-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .sess-title { font-size: 13.5px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sess-meta { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .prov-logo { width: 15px; height: 15px; flex: none; object-fit: contain; opacity: 0.75; }
+  .prov-logo { display: inline-flex; flex: none; }
   .sess-hover { display: none; gap: 2px; color: var(--text-3); flex: none; align-items: center; }
   .sess-row:hover .sess-hover, .sess-row:focus-within .sess-hover { display: inline-flex; }
   .sess-hover span { display: inline-flex; align-items: center; padding: 3px 7px; border-radius: 5px; cursor: pointer; font-size: 12px; }

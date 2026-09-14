@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type PluginView, type SkillCommand } from "../api";
+  import { api, type PluginView } from "../api";
   import Switch from "./Switch.svelte";
   import Icon from "../Icon.svelte";
   import "./shared.css";
@@ -9,7 +9,6 @@
 
   const I = {
     plus: "M12 5v14M5 12h14",
-    edit: "M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z",
     trash: "M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
   };
 
@@ -17,17 +16,22 @@
   let err = "";
   let busy: Record<string, boolean> = {};
 
-  let newSkill = "";
-  let createErr = "";
-  let creating = false;
+  let paste = "";
+  let pasteName = "";
+  let pasteErr = "";
+  let pasting = false;
 
-  /** Expanded skill → its editable command list (null while loading). */
-  let openSkill: string | null = null;
-  let commands: SkillCommand[] | null = null;
-  let cmdErr = "";
-  let saving = false;
-  /** Inline new-command draft per open skill. */
-  let nc = { name: "", description: "", prompt: "" };
+  let gitUrl = "";
+  let gitErr = "";
+  let gitNote = "";
+  let installing = false;
+
+  let showComposer = false;
+  let nd = { name: "", description: "", body: "" };
+  let ndErr = "";
+  let ndBusy = false;
+
+  let armDelete: string | null = null;
 
   onMount(async () => {
     try {
@@ -51,24 +55,6 @@
     }
   }
 
-  async function create() {
-    createErr = "";
-    const name = newSkill.trim();
-    if (!name) return;
-    creating = true;
-    try {
-      await api.createSkill(name);
-      newSkill = "";
-      await refresh();
-      notify(`Skill "${name}" created — add commands below`);
-      void openCommands(name);
-    } catch (e) {
-      createErr = String(e);
-    } finally {
-      creating = false;
-    }
-  }
-
   async function flip(p: PluginView) {
     if (busy[p.name]) return;
     busy = { ...busy, [p.name]: true };
@@ -86,58 +72,85 @@
     }
   }
 
-  async function openCommands(name: string) {
-    if (openSkill === name) {
-      openSkill = null;
-      return;
-    }
-    openSkill = name;
-    commands = null;
-    cmdErr = "";
-    nc = { name: "", description: "", prompt: "" };
+  async function addPasted() {
+    pasteErr = "";
+    if (pasting || !paste.trim()) return;
+    pasting = true;
     try {
-      commands = await api.skillCommands(name);
+      const r = await api.installPastedSkill(pasteName.trim(), paste);
+      paste = "";
+      pasteName = "";
+      await refresh();
+      notify(`Added ${r.name} (${r.commands} command${r.commands === 1 ? "" : "s"})`);
     } catch (e) {
-      cmdErr = String(e);
-    }
-  }
-
-  function addCommand() {
-    if (!commands) return;
-    const name = nc.name.trim().toLowerCase();
-    if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(name)) {
-      cmdErr = "Command name: lowercase letters, numbers, dashes.";
-      return;
-    }
-    if (!nc.description.trim() || !nc.prompt.trim()) {
-      cmdErr = "Description and prompt are required.";
-      return;
-    }
-    if (commands.some((c) => c.name === name)) {
-      cmdErr = "That command already exists in this skill.";
-      return;
-    }
-    cmdErr = "";
-    commands = [...commands, { name, description: nc.description.trim(), prompt: nc.prompt.trim() }];
-    nc = { name: "", description: "", prompt: "" };
-  }
-
-  function removeCommand(name: string) {
-    if (!commands) return;
-    commands = commands.filter((c) => c.name !== name);
-  }
-
-  async function saveCommands() {
-    if (!openSkill || !commands) return;
-    saving = true;
-    cmdErr = "";
-    try {
-      await api.saveSkillCommands(openSkill, commands);
-      notify(`Saved ${commands.length} command${commands.length === 1 ? "" : "s"} to ${openSkill}`);
-    } catch (e) {
-      cmdErr = String(e);
+      pasteErr = String(e);
     } finally {
-      saving = false;
+      pasting = false;
+    }
+  }
+
+  async function installFromGit() {
+    gitErr = "";
+    gitNote = "";
+    if (installing || !gitUrl.trim()) return;
+    installing = true;
+    try {
+      const r = await api.installSkillFromGit(gitUrl.trim());
+      gitUrl = "";
+      await refresh();
+      gitNote =
+        `Installed: ${r.installed.join(", ") || "—"}` +
+        (r.skipped.length ? ` · Skipped: ${r.skipped.join("; ")}` : "");
+      notify(`Installed ${r.installed.length} skill${r.installed.length === 1 ? "" : "s"}`);
+    } catch (e) {
+      gitErr = String(e);
+    } finally {
+      installing = false;
+    }
+  }
+
+  async function createMd() {
+    ndErr = "";
+    const name = nd.name.trim();
+    if (!name) {
+      ndErr = "Give it a name.";
+      return;
+    }
+    if (!nd.body.trim()) {
+      ndErr = "Write the skill first.";
+      return;
+    }
+    if (ndBusy) return;
+    ndBusy = true;
+    try {
+      const md = `---\nname: ${name}\ndescription: ${nd.description.trim()}\n---\n${nd.body.trim()}\n`;
+      const r = await api.installPastedSkill(name, md);
+      nd = { name: "", description: "", body: "" };
+      showComposer = false;
+      await refresh();
+      notify(`Added ${r.name}`);
+    } catch (e) {
+      ndErr = String(e);
+    } finally {
+      ndBusy = false;
+    }
+  }
+
+  async function removeSkill(name: string) {
+    if (armDelete !== name) {
+      armDelete = name;
+      setTimeout(() => {
+        if (armDelete === name) armDelete = null;
+      }, 3000);
+      return;
+    }
+    armDelete = null;
+    try {
+      await api.deleteSkill(name);
+      await refresh();
+      notify(`Deleted ${name}`);
+    } catch (e) {
+      notify(`Delete failed: ${e}`);
     }
   }
 </script>
@@ -153,94 +166,112 @@
   <div class="pref-section">
     <div>
       <h3 class="section-title">Skills</h3>
-      <p class="section-desc">Command packs from <b>~/.parzi/plugins</b> — each enabled skill adds slash commands. Toggles apply immediately.</p>
+      <p class="section-desc">Slash-command packs. Paste one, write one, or pull a whole library from GitHub.</p>
     </div>
 
     {#if !skills.length}
       <div class="field-card">
         <div class="field-info">
-          <span class="field-label">No skills installed</span>
-          <span class="field-hint">Drop a folder with a <b>parzi-plugin.toml</b> of kind <b>commands</b> into ~/.parzi/plugins.</span>
+          <span class="field-label">No skills yet</span>
+          <span class="field-hint">Paste a SKILL.md below, or install a library.</span>
         </div>
       </div>
     {/if}
 
     {#each skills as p (p.name)}
-      <div class="field-card col">
-        <div class="card-top">
-          <div class="field-info">
-            <span class="field-label">{p.name} <span class="kind">skill · v{p.version}</span></span>
-            <span class="field-hint">{p.enabled ? "Slash commands from this pack are live." : "Disabled — commands hidden until re-enabled."}</span>
-          </div>
-          <div class="row-actions">
-            <button class="mini-btn" title={openSkill === p.name ? "Close commands" : `Edit ${p.name} commands`} on:click={() => openCommands(p.name)}>
-              <Icon d={I.edit} size={12} />
-            </button>
-            <Switch on={p.enabled} title={p.enabled ? `Disable ${p.name}` : `Enable ${p.name}`} on:toggle={() => flip(p)} />
-          </div>
+      <div class="field-card">
+        <div class="field-info">
+          <span class="field-label">{p.name} <span class="kind">skill · v{p.version}</span></span>
+          <span class="field-hint">
+            {p.commands} slash command{p.commands === 1 ? "" : "s"}{p.enabled ? "" : " · off — hidden until re-enabled"}
+          </span>
         </div>
-        {#if openSkill === p.name}
-          <div class="cmd-zone">
-            {#if commands === null && !cmdErr}
-              <div class="skel" />
-            {:else}
-              {#each commands ?? [] as c (c.name)}
-                <div class="cmd-row">
-                  <div class="field-info">
-                    <span class="field-label mono">/{c.name}</span>
-                    <span class="field-hint">{c.description}</span>
-                  </div>
-                  <button class="mini-btn" title={`Remove /${c.name}`} on:click={() => removeCommand(c.name)}>
-                    <Icon d={I.trash} size={12} />
-                  </button>
-                </div>
-              {/each}
-              {#if !(commands ?? []).length}
-                <span class="field-hint">No commands yet — add the first one below.</span>
-              {/if}
-              <div class="form-grid">
-                <div class="form-2col">
-                  <input class="txt mono" placeholder="name — e.g. summarize" bind:value={nc.name} />
-                  <input class="txt" placeholder="Short description" bind:value={nc.description} />
-                </div>
-                <textarea class="txt" rows="2" placeholder="Prompt sent when /name runs…" bind:value={nc.prompt} />
-                {#if cmdErr}
-                  <span class="form-err">{cmdErr}</span>
-                {/if}
-                <div class="btn-row">
-                  <button class="sbtn" on:click={addCommand}><Icon d={I.plus} size={12} /><span>Add command</span></button>
-                  <button class="sbtn primary" on:click={saveCommands} disabled={saving}><span>{saving ? "Saving…" : "Save commands"}</span></button>
-                </div>
-              </div>
-            {/if}
-          </div>
-        {/if}
+        <div class="row-actions">
+          <Switch on={p.enabled} title={p.enabled ? `Disable ${p.name}` : `Enable ${p.name}`} on:toggle={() => flip(p)} />
+          <button
+            class="mini-btn"
+            class:armed={armDelete === p.name}
+            title={armDelete === p.name ? "Click again to confirm delete" : `Delete ${p.name}`}
+            on:click={() => removeSkill(p.name)}
+          >
+            {#if armDelete === p.name}<span class="arm-txt">Sure?</span>{:else}<Icon d={I.trash} size={12} />{/if}
+          </button>
+        </div>
       </div>
     {/each}
   </div>
 
   <div class="pref-section">
-    <h3 class="section-title">New skill</h3>
-    <div class="field-card">
-      <div class="field-info">
-        <span class="field-label">Create a command pack</span>
-        <span class="field-hint">Scaffolds <b>~/.parzi/plugins/&lt;name&gt;</b> — then add slash commands above.</span>
-        {#if createErr}
-          <span class="form-err">{createErr}</span>
-        {/if}
-      </div>
-    </div>
-    <div class="new-row">
-      <input
+    <h3 class="section-title">Add a skill</h3>
+    <p class="section-desc">Paste a <b>SKILL.md</b> file or a <b>commands.toml</b> block — name is read from the file when present.</p>
+    <div class="field-card col">
+      <textarea
         class="txt mono"
-        placeholder="skill name — e.g. review"
-        bind:value={newSkill}
-        on:keydown={(e) => e.key === "Enter" && create()}
+        rows="5"
+        placeholder={'---\nname: review\ndescription: Review this diff\n---\n# instructions…\n\n(or a commands.toml [[command]] block)'}
+        bind:value={paste}
       />
-      <button class="sbtn primary" on:click={create} disabled={creating || !newSkill.trim()}>
-        <Icon d={I.plus} size={12} /><span>{creating ? "Creating…" : "Create"}</span>
-      </button>
+      <div class="paste-row">
+        <input class="txt" placeholder="Name (optional — read from the file)" bind:value={pasteName} on:keydown={(e) => e.key === "Enter" && addPasted()} />
+        <button class="sbtn primary" on:click={addPasted} disabled={pasting || !paste.trim()}>
+          <Icon d={I.plus} size={12} />
+          <span>{pasting ? "Adding…" : "Add skill"}</span>
+        </button>
+      </div>
+      {#if pasteErr}
+        <span class="form-err">{pasteErr}</span>
+      {/if}
     </div>
+
+    <div class="or-row"><span>or</span></div>
+
+    <div class="field-card col">
+      <div class="field-info">
+        <span class="field-label">Install a library from GitHub</span>
+        <span class="field-hint">Clones the repo, finds every skill folder, installs what isn't already there.</span>
+      </div>
+      <div class="paste-row">
+        <input
+          class="txt mono"
+          placeholder="owner/repo  — or a full https URL"
+          bind:value={gitUrl}
+          on:keydown={(e) => e.key === "Enter" && installFromGit()}
+        />
+        <button class="sbtn primary" on:click={installFromGit} disabled={installing || !gitUrl.trim()}>
+          <span>{installing ? "Installing…" : "Install"}</span>
+        </button>
+      </div>
+      {#if gitErr}
+        <span class="form-err">{gitErr}</span>
+      {/if}
+      {#if gitNote}
+        <span class="field-hint">{gitNote}</span>
+      {/if}
+    </div>
+
+    <button class="link-btn" on:click={() => (showComposer = !showComposer)}>
+      {showComposer ? "Hide editor ▴" : "Or write a new one ▾"}
+    </button>
+    {#if showComposer}
+      <div class="field-card col">
+        <div class="form-grid">
+          <div class="form-2col">
+            <input class="txt mono" placeholder="name — e.g. review" bind:value={nd.name} />
+            <input class="txt" placeholder="Short description" bind:value={nd.description} />
+          </div>
+          <textarea class="txt" rows="6" placeholder="What should this skill do? Write it like a SKILL.md body…" bind:value={nd.body} />
+        </div>
+        {#if ndErr}
+          <span class="form-err">{ndErr}</span>
+        {/if}
+        <div>
+          <button class="sbtn primary" on:click={createMd} disabled={ndBusy || !nd.name.trim() || !nd.body.trim()}>
+            <Icon d={I.plus} size={12} />
+            <span>{ndBusy ? "Creating…" : "Create skill"}</span>
+          </button>
+        </div>
+      </div>
+    {/if}
   </div>
 
   {#if packs.length}
@@ -296,7 +327,6 @@
   }
   .mono { font-family: var(--parzi-mono), ui-monospace, monospace; }
   .field-card.col { flex-direction: column; align-items: stretch; }
-  .card-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
   .row-actions { display: inline-flex; align-items: center; gap: 8px; flex: none; }
   .mini-btn {
     display: inline-flex; align-items: center; justify-content: center;
@@ -305,22 +335,23 @@
     color: var(--text-3); cursor: pointer;
   }
   .mini-btn:hover { background: var(--surface-2); color: var(--text); }
-  .cmd-zone { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line-2); padding-top: 10px; }
-  .cmd-row {
-    display: flex; align-items: center; gap: 10px;
-    background: var(--surface-1); border: 1px solid var(--line-2);
-    border-radius: var(--radius-2); padding: 8px 12px;
-  }
+  .mini-btn.armed { border-color: var(--bad-line); color: var(--bad); min-width: 52px; }
+  .arm-txt { font-size: 11px; font-weight: 600; }
   .form-grid { display: flex; flex-direction: column; gap: 8px; }
   .form-2col { display: grid; grid-template-columns: 180px 1fr; gap: 8px; }
+  .paste-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
   .txt {
     background: var(--input); border: 1px solid var(--line-2); border-radius: var(--radius-2);
     color: var(--text); font: inherit; font-size: 12.5px; padding: 7px 10px; width: 100%;
   }
-  textarea.txt { resize: vertical; min-height: 48px; line-height: 1.5; }
+  textarea.txt { resize: vertical; min-height: 80px; line-height: 1.5; }
   .txt::placeholder { color: var(--text-4); }
-  .btn-row { display: flex; gap: 8px; }
   .form-err { font-size: 12px; color: var(--bad); }
-  .new-row { display: flex; gap: 8px; }
-  .new-row .txt { flex: 1; }
+  .or-row { display: flex; align-items: center; gap: 10px; color: var(--text-4); font-size: 11px; }
+  .or-row::before, .or-row::after { content: ""; flex: 1; border-top: 1px solid var(--line-2); }
+  .link-btn {
+    background: transparent; border: none; color: var(--text-3); font: inherit;
+    font-size: 12px; cursor: pointer; padding: 2px 0; text-align: left; width: fit-content;
+  }
+  .link-btn:hover { color: var(--text); }
 </style>

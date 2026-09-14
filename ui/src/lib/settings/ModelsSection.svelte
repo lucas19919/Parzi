@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ProviderLogo from "../ProviderLogo.svelte";
   import { onMount } from "svelte";
   import { api, type ModelRow, type ParziConfig } from "../api";
   import { modelRows, ensureModels, refreshModels } from "../modelStore";
@@ -6,7 +7,6 @@
   import "./shared.css";
 
   export let notify: (msg: string) => void = () => {};
-  export let logos: Record<string, string> = {};
 
   /** Roster in display order; mirrors the backend `PROVIDERS` list. */
   interface Meta {
@@ -291,7 +291,7 @@
         {@const live = routesNow(r)}
         <div class="order-row" class:dim={!live}>
           <span class="order-n">{i + 1}</span>
-          {#if logos[id]}<img src={logos[id]} alt="" class="prov-logo" draggable="false" />{/if}
+          <ProviderLogo provider={id} size={15} />
           <span class="order-name">{metaOf(id)?.name ?? id}</span>
           <span class="status-badge {st.cls}">{live ? st.label : r?.auth === "ok" ? "key · skipped" : st.label}</span>
           <span class="head-spacer" />
@@ -304,7 +304,7 @@
         {@const st = statusOf(r)}
         <div class="order-row" class:dim={!routesNow(r)}>
           <span class="order-n">{autoOrder.length + 1}</span>
-          {#if logos.xai}<img src={logos.xai} alt="" class="prov-logo" draggable="false" />{/if}
+          <ProviderLogo provider="xai" size={15} />
           <span class="order-name">Grok</span>
           <span class="status-badge {st.cls}">{st.label}</span>
           <span class="head-spacer" />
@@ -346,7 +346,7 @@
         {#if !q || list.length}
           <div class="provider-card" class:signed-in={row?.auth === "ok"}>
             <div class="provider-head">
-              {#if logos[meta.id]}<img src={logos[meta.id]} alt="" class="prov-logo lg" draggable="false" />{/if}
+              <ProviderLogo provider={meta.id} size={20} />
               <div class="provider-title">
                 <div class="provider-title-row">
                   <span class="provider-name">{meta.name}</span>
@@ -500,8 +500,6 @@
   .provider-name { font-size: 13.5px; font-weight: 700; color: var(--text); }
   .provider-sub { font-size: 11.5px; color: var(--text-3); }
   .provider-how { font-size: 12px; color: var(--text-2); line-height: 1.45; }
-  .prov-logo { width: 15px; height: 15px; flex: none; object-fit: contain; }
-  .prov-logo.lg { width: 20px; height: 20px; }
   .head-spacer { flex: 1; }
   .def-tag {
     font-size: 10.5px; color: var(--accent-text); font-family: var(--parzi-mono), ui-monospace, monospace;

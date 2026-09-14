@@ -13,8 +13,6 @@
   export let settingsTab = "general";
   /** Stage mode: render one section full-bleed without modal chrome. */
   export let bareSection: string | null = null;
-  /** Provider logo assets for the Models browser. */
-  export let logos: Record<string, string> = {};
   /** Preselects the workspace in the Context tab. */
   export let currentProject = "default";
 
@@ -48,7 +46,7 @@
     {#if activeTab === "general"}
       <GeneralSection {notify} />
     {:else if activeTab === "models"}
-      <ModelsSection {notify} {logos} />
+      <ModelsSection {notify} />
     {:else if activeTab === "appearance"}
       <AppearanceSection {notify} />
     {:else if activeTab === "connectors"}

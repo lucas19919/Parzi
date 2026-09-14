@@ -44,7 +44,7 @@
     <button class="icon-btn" title="Back to workspace" on:click={() => dispatch("back")}>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d={I.back} /></svg>
     </button>
-    <img class="sb-mark" src="/favicon.svg" alt="" width="22" height="22" />
+    <img class="sb-mark" src="/mark.svg" alt="" width="22" height="22" />
     <span class="sb-wordmark">Parzi</span>
     <span class="sn-sub">Settings</span>
   </div>

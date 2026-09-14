@@ -1,4 +1,6 @@
 <script lang="ts">
+  import ProviderLogo from "./ProviderLogo.svelte";
+  import { hasMark } from "./providerMarks";
   import { createEventDispatcher } from "svelte";
   import { scale, fade, slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -18,7 +20,6 @@
   export let branch = "";
   export let tokens = 0;
   export let models: ModelRow[] = [];
-  export let logos: Record<string, string> = {};
   export let projectRoot = "";
   export let attachments: string[] = [];
   export let mode: "chat" | "plan" | "build" = "chat";
@@ -719,8 +720,8 @@
     <div class="controls">
       <div class="model-zone ctl-zone">
         <button bind:this={modelBtn} class="ctl" class:open={showModelPicker} on:click|stopPropagation={togglePicker} title="Model — open picker">
-          {#if logos[activeModelInfo.provider]}
-            <img src={logos[activeModelInfo.provider]} alt="" class="ctl-logo" />
+          {#if hasMark(activeModelInfo.provider)}
+            <ProviderLogo provider={activeModelInfo.provider} size={13} />
           {:else}
             <span class="ctl-glyph"><Icon d={I.model} size={13} /></span>
           {/if}
@@ -810,8 +811,8 @@
                   on:click={() => selectRail(p)}
                   title={st.kind === "off" || st.kind === "expired" ? `${PROVIDER_NAME[p] ?? p} — ${pr.hint || "Not signed in"}` : (PROVIDER_NAME[p] ?? p)}
                 >
-                  {#if logos[p]}
-                    <img src={logos[p]} alt="" class="rail-logo" />
+                  {#if hasMark(p)}
+                    <ProviderLogo provider={p} size={18} />
                   {:else}
                     <span class="m-initial sm">{(p[0] ?? "?").toUpperCase()}</span>
                   {/if}
@@ -839,8 +840,8 @@
                 on:click={() => pickFamily(row)}
                 on:mousemove={() => (modelIndex = i)}
               >
-                {#if q && logos[row.provider]}
-                  <img src={logos[row.provider]} alt="" class="m-logo" />
+                {#if q && hasMark(row.provider)}
+                  <ProviderLogo provider={row.provider} size={14} />
                 {/if}
                 <span class="meta">
                   <span class="nm">{row.label}</span>
@@ -991,7 +992,6 @@
   .ctl .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ctl .chev { color: var(--text-3); display: inline-flex; flex: none; }
   .ctl:hover .chev, .ctl.open .chev { color: var(--text-2); }
-  .ctl-logo { width: 13px; height: 13px; flex: none; object-fit: contain; }
   .ctl-glyph { display: inline-flex; color: var(--text-3); flex: none; }
   .ctl:hover .ctl-glyph, .ctl.open .ctl-glyph { color: var(--text); }
   .vdiv { width: 1px; height: 16px; background: var(--line-2); margin: 0 5px; flex: none; }
@@ -1045,7 +1045,6 @@
   .rail-row.on { background: var(--surface-3); color: var(--text); }
   .rail-row.dim { opacity: 0.4; }
   .rail-row.dim:hover { opacity: 0.8; }
-  .rail-logo { width: 19px; height: 19px; flex: none; display: block; object-fit: contain; border-radius: 5px; }
   .rail-auto { display: inline-flex; color: var(--accent-text); }
   .rail-row.on .rail-auto { color: var(--accent-text); }
   .rail-star { flex: none; color: var(--warn); font-size: 15px; line-height: 1; }
@@ -1092,7 +1091,6 @@
   }
   .mrow:hover, .mrow.on, .opt-row:hover, .opt-row.on { background: var(--surface-2); color: var(--text); }
   .opt-row.on { background: var(--surface-3); color: var(--text); }
-  .m-logo { width: 14px; height: 14px; flex: none; object-fit: contain; }
   .m-initial {
     width: 22px; height: 22px; flex: none; display: inline-flex; align-items: center; justify-content: center;
     background: var(--surface-2); border: 1px solid var(--line-2);

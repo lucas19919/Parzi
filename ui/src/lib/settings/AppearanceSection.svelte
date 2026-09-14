@@ -548,7 +548,9 @@
   .wall-name { font-size: 11.5px; padding: 0 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   .field-card.stack { flex-direction: column; align-items: stretch; gap: 12px; }
-  .field-card.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; align-items: center; }
+  /* Auto-fit (not a viewport breakpoint): columns stack based on the card's
+     real width, so narrow stages never squeeze fields into each other. */
+  .field-card.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px 24px; align-items: center; }
   .inline-actions { display: flex; align-items: center; gap: 12px; flex: none; }
 
   .swatches { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%; }
@@ -576,8 +578,4 @@
   .css:focus { border-color: var(--accent-line) !important; box-shadow: none; }
   .actions-row-end { display: flex; justify-content: flex-end; }
   code { font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 11px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
-
-  @media (max-width: 1100px) {
-    .field-card.grid2 { grid-template-columns: 1fr; }
-  }
 </style>

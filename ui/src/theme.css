@@ -124,13 +124,6 @@ code, pre, kbd { font-family: var(--parzi-mono), ui-monospace, monospace; }
 *::-webkit-scrollbar-thumb { background: transparent; }
 *::-webkit-scrollbar-track { background: transparent; }
 * { scrollbar-width: none; -ms-overflow-style: none; }
-/* Provider logo legibility: several roster marks are black `currentColor`
-   SVGs (invisible on dark glass when loaded via <img>), so every logo chip
-   gets a light tile. Coloured marks look fine on it too. */
-.rail-logo, .ctl-logo, .m-logo, .prov-logo, img.logo {
-  background: #e9ebf1;
-  border-radius: 5px;
-}
 /* ================= smooth scrolling =================
    Buttery anchor/keyboard scrolling for nav + content lists. Wheel
    scrolling is compositor-driven; this smooths keyboard/anchor jumps.
@@ -228,7 +221,6 @@ kbd {
 .pill.static { cursor: default; }
 .pill.hot { background: var(--accent-soft); border-color: var(--accent-line); color: var(--text); box-shadow: 0 0 0 2px var(--accent-soft); }
 .pill .tier { font-family: var(--parzi-mono); font-size: 11px; color: var(--text-3); }
-.prov-logo { width: 13px; height: 13px; object-fit: contain; }
 .tokens { font-family: var(--parzi-mono); font-size: 11px; color: var(--text-3); }
 .tokens, .m-tier, .live-count, .t-sub, .think-meta { font-variant-numeric: tabular-nums; }
 

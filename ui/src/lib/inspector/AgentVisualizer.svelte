@@ -1,4 +1,6 @@
 <script lang="ts">
+  import ProviderLogo from "../ProviderLogo.svelte";
+  import { PROVIDER_MARKS } from "../providerMarks";
   import { createEventDispatcher } from "svelte";
   import type { ChatEvent, SwarmNode } from "../api";
 
@@ -8,7 +10,6 @@
   /** Events of the active thread: tool trace + message vectors come from here. */
   export let events: ChatEvent[] = [];
   export let approval: { key: string; call: { id: string; name: string; args: unknown; lane: string } } | null = null;
-  export let logos: Record<string, string> = {};
 
   const dispatch = createEventDispatcher<{
     focus: { id: string };
@@ -164,8 +165,9 @@
                 <rect width={NW} height={NH} rx="10" class="node-bg" />
                 <circle cx="13" cy="15" r="3.5" class="dot {n.status}" />
                 <text x="23" y="19" class="node-title">{(n.title || "untitled").slice(0, 17)}</text>
-                {#if logos[provider(n.model)]}
-                  <image href={logos[provider(n.model)]} x="10" y="26" width="11" height="11" opacity="0.8" />
+                {#if PROVIDER_MARKS[provider(n.model)]}
+                  {@const mk = PROVIDER_MARKS[provider(n.model)]}
+                  <svg x="10" y="26" width="11" height="11" viewBox={mk.viewBox} opacity="0.8" fill={mk.fill} fill-rule={mk.fillRule}>{@html mk.body}</svg>
                   <text x="26" y="35" class="node-sub">{shortModel(n.model).slice(0, 18)}</text>
                 {:else}
                   <text x="10" y="35" class="node-sub">{(n.lane ? n.lane + " · " : "") + shortModel(n.model)}</text>
@@ -192,7 +194,7 @@
               <span class="title">{n.title || "untitled"}</span>
             </button>
             <span class="cell model" title={n.model}>
-              {#if logos[provider(n.model)]}<img src={logos[provider(n.model)]} alt="" class="logo" draggable="false" />{/if}
+              <ProviderLogo provider={provider(n.model)} size={12} muted />
               <span>{shortModel(n.model)}</span>
             </span>
             <span class="cell num">{fmtTokens(n.tokens)} · {fmtCost(n.cost)}</span>
@@ -324,7 +326,6 @@
   .cell.name .title { color: var(--text, #f1f5f9); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
   .cell.name:hover .title { color: var(--accent-text, #c7ccff); }
   .cell.model { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3, #94a3b8); font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .cell.model .logo { width: 12px; height: 12px; object-fit: contain; opacity: 0.8; flex: none; }
   .cell.num { font-family: var(--parzi-mono, monospace); font-size: 10.5px; color: var(--text-3, #94a3b8); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .cell.tool { grid-column: 2 / span 2; display: inline-flex; align-items: center; gap: 5px; font-family: var(--parzi-mono, monospace); font-size: 10.5px; color: var(--text-4, #5d636f); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .cell.acts { grid-column: 4; display: inline-flex; gap: 3px; justify-content: flex-end; }

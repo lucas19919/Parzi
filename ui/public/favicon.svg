@@ -1,13 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <!-- Parzi mark: three lanes in a loop. Copy of src-tauri/icons/icon.svg (master). -->
+  <!-- Parzi tab mark: ring + two lanes, tuned for 16-32px. Copy of optical v2 source. -->
   <defs>
-    <clipPath id="inner"><circle cx="512" cy="512" r="256"/></clipPath>
+    <clipPath id="inner"><circle cx="512" cy="512" r="240"/></clipPath>
   </defs>
   <circle cx="512" cy="512" r="385" fill="#07070B"/>
-  <g clip-path="url(#inner)" stroke="#EDEDF2" stroke-width="80">
-    <path d="M 240 240 L 784 784"/>
-    <path d="M 342 116 L 908 682"/>
-    <path d="M 116 342 L 682 908"/>
+  <g clip-path="url(#inner)" stroke="#EDEDF2" stroke-width="110">
+    <path d="M 109 349 L 675 915"/>
+    <path d="M 349 109 L 915 675"/>
   </g>
-  <circle cx="512" cy="512" r="340" fill="none" stroke="#EDEDF2" stroke-width="84"/>
+  <circle cx="512" cy="512" r="335" fill="none" stroke="#EDEDF2" stroke-width="100"/>
 </svg>

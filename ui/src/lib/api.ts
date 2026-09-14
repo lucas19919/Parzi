@@ -81,11 +81,28 @@ export interface Check {
   detail: string;
 }
 
+export interface McpToolView {
+  name: string;
+  qualified: string;
+  description: string;
+  exposed: boolean;
+  mode: string | null;
+}
+
+export interface McpServerTools {
+  server: string;
+  ok: boolean;
+  error: string | null;
+  tools: McpToolView[];
+}
+
 export interface PluginView {
   name: string;
   version: string;
   kind: string;
   enabled: boolean;
+  /** Slash-command count for `commands` packs (0 otherwise). */
+  commands: number;
 }
 
 /** One slash command inside a `commands` skill pack. */
@@ -93,6 +110,18 @@ export interface SkillCommand {
   name: string;
   description: string;
   prompt: string;
+}
+
+/** What paste-installing one skill produced. */
+export interface InstalledSkill {
+  name: string;
+  commands: number;
+}
+
+/** Result of pulling a skill library: installed names + "name — reason" skips. */
+export interface SkillInstallReport {
+  installed: string[];
+  skipped: string[];
 }
 
 export interface EffortOption {
@@ -145,6 +174,33 @@ export interface LaneView {
   model: string | null;
   root: string | null;
   allowed_tools: string[];
+}
+
+export interface AgentRoleConfig {
+  model?: string | null;
+  effort?: string | null;
+  system_prompt?: string | null;
+  temperature?: number | null;
+}
+
+export interface ProjectRoster {
+  header: AgentRoleConfig;
+  orchestrator: AgentRoleConfig;
+  implementation: AgentRoleConfig;
+}
+
+export interface PlanItem {
+  title: string;
+  status: "Pending" | "InProgress" | "Done";
+  lane?: string | null;
+  line: number;
+}
+
+export interface CheckpointView {
+  session_id: string;
+  turn: number;
+  hash: string;
+  created: string;
 }
 
 export interface ProjectView {
@@ -219,7 +275,7 @@ export const api = {
     parentId?: string;
   }) =>
     invoke<string>("send_message", {
-      sessionId: args.sessionId ?? null,
+      session_id: args.sessionId ?? null,
       project: args.project,
       lane: args.lane,
       model: args.model,
@@ -227,7 +283,7 @@ export const api = {
       cwd: args.cwd,
       effort: args.effort ?? null,
       attachments: args.attachments ?? [],
-      parentId: args.parentId ?? null,
+      parent_id: args.parentId ?? null,
     }),
   createSubsession: (args: {
     parentId: string;
@@ -236,7 +292,7 @@ export const api = {
     model?: string;
   }) =>
     invoke<SessionMeta>("create_subsession", {
-      parentId: args.parentId,
+      parent_id: args.parentId,
       title: args.title ?? "",
       prompt: args.prompt ?? null,
       model: args.model ?? null,
@@ -247,6 +303,18 @@ export const api = {
     invoke<void>("rename_thread", { id, title }),
   deleteThread: (id: string) => invoke<number>("delete_thread", { id }),
   listProjects: () => invoke<ProjectView[]>("list_projects"),
+  getProjectRoster: (project: string) =>
+    invoke<ProjectRoster>("get_project_roster", { project }),
+  saveProjectRoster: (project: string, roster: ProjectRoster) =>
+    invoke<void>("save_project_roster", { project, roster }),
+  getProjectPlan: (project: string) =>
+    invoke<string>("get_project_plan", { project }),
+  saveProjectPlan: (project: string, content: string) =>
+    invoke<void>("save_project_plan", { project, content }),
+  listCheckpoints: (repo: string, session_id: string) =>
+    invoke<CheckpointView[]>("list_checkpoints", { repo, session_id }),
+  restoreCheckpoint: (repo: string, session_id: string, turn: number) =>
+    invoke<void>("restore_checkpoint", { repo, session_id, turn }),
   listFiles: (root: string, query: string) =>
     invoke<string[]>("list_files", { root, query }),
   createProject: (name: string, root: string) =>
@@ -284,6 +352,9 @@ export const api = {
   runDoctor: () => invoke<Check[]>("run_doctor"),
   runDoctorQuick: () => invoke<Check[]>("run_doctor_quick"),
   runDoctorMcp: () => invoke<Check[]>("run_doctor_mcp"),
+  listMcpTools: (server: string) =>
+    invoke<McpServerTools>("list_mcp_tools", { server }),
+  listAllMcpTools: () => invoke<McpServerTools[]>("list_all_mcp_tools"),
   listPacks: () => invoke<string[]>("list_packs"),
   listPackInfos: () => invoke<PackInfo[]>("list_pack_infos"),
   deletePack: (name: string) => invoke<void>("delete_pack", { name }),
@@ -296,7 +367,7 @@ export const api = {
   setBackground: (name: string) => invoke<string>("set_background", { name }),
   uploadBackground: (src: string) => invoke<string>("upload_background", { src }),
   saveBackgroundData: async (name: string, base64Data: string) => {
-    const abs = await invoke<string>("save_background_data", { name, base64Data });
+    const abs = await invoke<string>("save_background_data", { name, base64_data: base64Data });
     return abs ? convertFileSrc(abs) : "";
   },
   backgroundFile: async (name: string) => {
@@ -308,6 +379,12 @@ export const api = {
   listPlugins: () => invoke<PluginView[]>("list_plugins"),
   togglePlugin: (name: string, enabled: boolean) =>
     invoke<void>("toggle_plugin", { name, enabled }),
+  installPastedSkill: (pack_name: string, text: string) =>
+    invoke<InstalledSkill>("install_pasted_skill", { pack_name, text }),
+  installSkillFromGit: (url: string) =>
+    invoke<SkillInstallReport>("install_skill_from_git", { url }),
+  deleteSkill: (name: string) => invoke<void>("delete_skill", { name }),
+  openExternalUrl: (url: string) => invoke<void>("open_external_url", { url }),
   readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
   writeTextFile: (path: string, content: string) =>
     invoke<void>("write_text_file", { path, content }),
