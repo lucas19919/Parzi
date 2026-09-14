@@ -606,3 +606,8 @@
 - Installed v0.1.4 from CI setup.exe loads tauri.localhost and renders the full UI (sidebar, Inbox, Asuka stage, glass composer, inspector deck) — CDP screenshot proof; uninstalled after, machine clean
 - Installer wizard pages carry the Parzi voice + art (verified in config/template review; interactive click-through still untested — MUI pages are stock layout with custom art/copy)
 
+
+## Dark installer (2026-09-14)
+- Chose dark 6-page flow (no template fork): new vector-style art (ring+lanes, no raster text, no accent-line artifact, #0B0B10-blended), hooks.nsh now sets MUI_BGCOLOR + per-page dark SHOW painters + all Parzi copy
+- Deviation from antigravity plan: dark theme inlined in hooks.nsh (relative !include would resolve against the bundle out-dir); Component 4 (asuka _up_ lookup) SKIPPED — installed-app screenshot proves the wallpaper already loads
+

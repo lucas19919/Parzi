@@ -1,6 +1,30 @@
-; Parzi installer voice: page titles and copy for the NSIS wizard.
+; Parzi installer: dark wizard + brand voice.
 ; Included by the Tauri template BEFORE any MUI_PAGE_* macro, so every
-; MUI_*PAGE define below takes effect. Keep lines short: the wizard is 497px.
+; MUI_* define below takes effect. Single file on purpose: relative
+; !includes from here would resolve against the bundle output dir, not
+; src-tauri/installer, so the dark theme lives inline.
+
+; ============ Dark palette (matches installer art: #0B0B10 -> #161726) ============
+!define MUI_BGCOLOR "0B0B10"
+!define MUI_HEADERIMAGE_BGCOLOR "0B0B10"
+
+; Paint one wizard page dark: dialog + inner page, light text on near-black.
+Function ParziDarkShow
+  SetCtlColors $HWNDPARENT "0xEDEDF2" "0x0B0B10"
+  FindWindow $R9 "#32770" "" $HWNDPARENT
+  SetCtlColors $R9 "0xEDEDF2" "0x0B0B10"
+FunctionEnd
+
+!define MUI_WELCOMEPAGE_SHOWFUNCTION ParziDarkShow
+!define MUI_LICENSEPAGE_SHOWFUNCTION ParziDarkShow
+!define MUI_DIRECTORYPAGE_SHOWFUNCTION ParziDarkShow
+!define MUI_STARTMENUPAGE_SHOWFUNCTION ParziDarkShow
+!define MUI_INSTFILESPAGE_SHOWFUNCTION ParziDarkShow
+!define MUI_FINISHPAGE_SHOWFUNCTION ParziDarkShow
+!define MUI_UNCONFIRMPAGE_SHOWFUNCTION ParziDarkShow
+!define MUI_UNINSTFILESPAGE_SHOWFUNCTION ParziDarkShow
+
+; ============ Brand voice: page titles and copy. Short lines: 497px pages. ============
 
 ; --- Welcome ---
 !define MUI_WELCOMEPAGE_TITLE "Welcome to Parzi"
