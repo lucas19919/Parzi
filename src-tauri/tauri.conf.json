@@ -47,7 +47,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["../assets/backgrounds/eva-crosses.jpg"],
+    "resources": [],
     "createUpdaterArtifacts": true,
     "windows": {
       "wix": {

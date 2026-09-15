@@ -114,7 +114,7 @@ fn c_border() -> String {
     "#2A2E3A".into()
 }
 fn d_bg_image() -> String {
-    "backgrounds/eva-crosses.jpg".into()
+    "".into()
 }
 fn d_dim() -> f64 {
     0.66

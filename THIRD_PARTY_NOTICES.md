@@ -44,9 +44,7 @@ with the same TOS caution as Antigravity.
 
 ## Bundled artwork (not licensed for redistribution)
 
-The default wallpaper "assets/backgrounds/eva-crosses.jpg" is Neon Genesis
-Evangelion fan art (artwork (c) khara / Gainax, original artist unknown). It
-ships as a personal-use default while the repo stays private. Do not include
-it in any public release or public installer: replace with owned/CC0 art
-first (see AUDIT.md B6). The previously bundled "asuka.png" was removed;
-existing installs clean it up automatically.
+No third-party artwork ships in the bundle. The Evangelion fan wallpapers
+previously bundled ("asuka.png", "eva-crosses.jpg") were removed before the
+repository went public; existing installs keep their local copies, and old
+theme packs referencing them retire on upgrade.

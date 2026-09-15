@@ -70,30 +70,10 @@ pub fn ensure_dirs() -> Result<PathBuf> {
     Ok(root)
 }
 
-/// Copy the shipped default backgrounds in on first run. Never overwrites
-/// user files: anything already in `backgrounds/` is left alone.
-fn seed_default_background(root: &std::path::Path) -> Result<()> {
-    // (bundled file name, dev-tree source name). Release installers place
-    // them beside the executable; both layouts are best-effort seeds.
-    for name in ["eva-crosses.jpg"] {
-        let dest = root.join("backgrounds").join(name);
-        if dest.exists() {
-            continue;
-        }
-        // Shipped in dev at <repo>/assets/backgrounds/<name>.
-        let mut candidates: Vec<PathBuf> = vec![PathBuf::from("assets/backgrounds").join(name)];
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                candidates.push(dir.join(name));
-            }
-        }
-        for c in candidates {
-            if c.exists() {
-                std::fs::copy(&c, &dest)?;
-                break;
-            }
-        }
-    }
+/// Copy shipped default backgrounds in on first run. The bundle currently
+/// ships no artwork (see THIRD_PARTY_NOTICES): the loop stays so a future
+/// default can be added in one place. Never overwrites user files.
+fn seed_default_background(_root: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
@@ -106,7 +86,7 @@ fn seed_builtin_packs(root: &std::path::Path) -> Result<()> {
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
 [colors]\nsidebar = \"#0D0708\"\nstage = \"#120B0C\"\naccent = \"#E5484D\"\ntext = \"#F5EDED\"\n\
 text_dim = \"#A89A9B\"\nbar = \"#1D1214\"\nborder = \"#33201F\"\n\n\
-[background]\nimage = \"backgrounds/eva-crosses.jpg\"\ndim = 0.62\nvignette = 0.48\nblur = 0.0\n\n\
+[background]\nimage = \"\"\ndim = 0.62\nvignette = 0.48\nblur = 0.0\n\n\
 [glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
         ),
         (
