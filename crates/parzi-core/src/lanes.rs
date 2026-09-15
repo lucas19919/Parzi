@@ -16,6 +16,9 @@ pub struct LaneFile {
     /// Working root this project/lane operates on. Lane wins over project.
     #[serde(default)]
     pub root: Option<String>,
+    /// Execute worker tasks in an isolated git worktree rather than in-place.
+    #[serde(default)]
+    pub isolated_worktree: bool,
     /// 3-tier agent roster (`[roles.header]` / `[roles.orchestrator]` /
     /// `[roles.implementation]`). `roster` accepted as a legacy alias.
     #[serde(default, rename = "roles", alias = "roster")]
@@ -96,6 +99,8 @@ pub struct LaneView {
     pub model: Option<String>,
     pub root: Option<String>,
     pub allowed_tools: Vec<String>,
+    #[serde(default)]
+    pub isolated_worktree: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +122,8 @@ pub struct Lane {
     pub allowed_tools: Vec<String>,
     /// Resolved working root: lane > project > None.
     pub root: Option<String>,
+    /// Resolved worktree flag: lane > project defaults.
+    pub isolated_worktree: bool,
 }
 
 fn read_system(dir: &std::path::Path) -> Option<String> {
@@ -173,6 +180,7 @@ pub fn scan_projects() -> Result<Vec<(Project, Vec<Lane>)>> {
                         lf.allowed_tools
                     },
                     root: lf.root.or(file.root.clone()),
+                    isolated_worktree: lf.isolated_worktree || file.isolated_worktree,
                 });
             }
         }
@@ -197,6 +205,7 @@ pub fn project_views() -> Result<Vec<ProjectView>> {
                     model: l.model,
                     root: l.root,
                     allowed_tools: l.allowed_tools,
+                    isolated_worktree: l.isolated_worktree,
                 })
                 .collect(),
         })
@@ -351,3 +360,32 @@ pub fn migrate_tasks_to_lanes(project: &str) -> Result<usize> {
     }
     Ok(made)
 }
+
+/// Read cumulative knowledge for a project (`projects/<p>/KNOWLEDGE.md`).
+pub fn read_knowledge(project: &str) -> Option<String> {
+    let clean = safe_name(project).ok()?;
+    let path = paths::project_knowledge_path(&clean).ok()?;
+    std::fs::read_to_string(path).ok().filter(|t| !t.trim().is_empty())
+}
+
+/// Append an architectural note, discovered pattern, or gotcha to cumulative knowledge.
+pub fn append_knowledge(project: &str, note: &str) -> Result<()> {
+    let clean = safe_name(project)?;
+    let path = paths::project_knowledge_path(&clean)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(crate::error::ParziError::Io)?;
+    }
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(crate::error::ParziError::Io)?;
+    let trimmed = note.trim();
+    if !trimmed.is_empty() {
+        let ts = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+        writeln!(f, "- [{ts}] {trimmed}").map_err(crate::error::ParziError::Io)?;
+    }
+    Ok(())
+}
+

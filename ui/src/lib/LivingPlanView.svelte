@@ -12,7 +12,7 @@
   let newTask = "";
   let newLane = "";
 
-  interface Row { done: boolean; title: string; lane: string | null; raw: string }
+  interface Row { done: boolean; title: string; lane: string | null; worktree: boolean; raw: string }
   interface Group { title: string; rows: Row[] }
 
   function parse(text: string): Group[] {
@@ -35,7 +35,12 @@
           lane = lm[1].trim();
           body = body.replace(lm[0], "").trim();
         }
-        cur.rows.push({ done, title: body, lane, raw: line });
+        let worktree = false;
+        if (body.includes("[worktree]") || body.includes("[isolated]")) {
+          worktree = true;
+          body = body.replace(/\[worktree\]|\[isolated\]/g, "").trim();
+        }
+        cur.rows.push({ done, title: body, lane, worktree, raw: line });
       }
     }
     groups.push(cur);
@@ -97,6 +102,7 @@
         <input type="checkbox" checked={r.done} disabled={saving} on:change={() => toggle(r)} />
         <span class="t" class:done={r.done}>{r.title}</span>
         {#if r.lane}<span class="lane">{r.lane}</span>{/if}
+        {#if r.worktree}<span class="wt-badge">worktree</span>{/if}
       </label>
     {/each}
   {/each}
@@ -124,6 +130,7 @@
   .row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer; }
   .row .t.done { text-decoration: line-through; opacity: 0.6; }
   .lane { font-size: 10px; color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 1px 6px; }
+  .wt-badge { font-size: 9.5px; font-family: var(--parzi-mono), monospace; color: var(--ok); background: var(--ok-soft); border: 1px solid var(--ok-line); border-radius: 4px; padding: 1px 5px; }
   .add { display: flex; gap: 6px; margin-top: 8px; }
   .in { flex: 1; background: var(--surface-2); border: 1px solid var(--line); color: var(--text); border-radius: 7px; padding: 7px 10px; font: inherit; font-size: 12.5px; }
   .lane-in { max-width: 110px; }

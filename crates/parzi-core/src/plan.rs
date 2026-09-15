@@ -20,6 +20,8 @@ pub struct PlanTask {
     pub status: TaskStatus,
     pub lane: Option<String>,
     pub line: usize,
+    #[serde(default)]
+    pub worktree: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +88,7 @@ pub fn parse_plan(text: &str) -> ProjectPlan {
                 status: TaskStatus::Pending,
                 lane: Some("milestone".into()),
                 line: idx,
+                worktree: false,
             });
             in_milestone = true;
             continue;
@@ -127,6 +130,18 @@ fn parse_task_line(t: &str, line: usize) -> Option<PlanTask> {
                 .to_string();
         }
     }
+    let mut worktree = false;
+    if let Some(s) = rest.find("[worktree]") {
+        worktree = true;
+        rest = format!("{} {}", rest[..s].trim(), rest[s + 10..].trim())
+            .trim()
+            .to_string();
+    } else if let Some(s) = rest.find("[isolated]") {
+        worktree = true;
+        rest = format!("{} {}", rest[..s].trim(), rest[s + 10..].trim())
+            .trim()
+            .to_string();
+    }
     let lower = rest.to_lowercase();
     let status = if status == TaskStatus::Pending
         && (lower.contains("[wip]")
@@ -147,6 +162,7 @@ fn parse_task_line(t: &str, line: usize) -> Option<PlanTask> {
         status,
         lane,
         line,
+        worktree,
     })
 }
 
@@ -206,6 +222,17 @@ pub fn set_task_status(project: &str, title_match: &str, done: bool) -> Result<b
     Ok(changed)
 }
 
+/// Find the first pending task in a project's living plan.
+pub fn next_pending_task(project: &str) -> Option<PlanTask> {
+    let plan_text = read_plan(project).ok()?;
+    let parsed = parse_plan(&plan_text);
+    parsed
+        .milestones
+        .into_iter()
+        .chain(parsed.loose_tasks)
+        .find(|t| t.status == TaskStatus::Pending && t.lane.as_deref() != Some("milestone"))
+}
+
 fn default_plan(project: &str) -> String {
     format!(
         "# {project} — living plan\n\n_This file is maintained by the Header agent and the orchestrator. Edit freely; lane workers sync task checkboxes back here._\n\n## Milestone 1\n\n- [ ] Define the first milestone [lane:core]\n"
@@ -218,7 +245,7 @@ mod tests {
 
     #[test]
     fn parses_milestones_tasks_and_lanes() {
-        let raw = "# P\n\n## Alpha\n\n- [ ] build core [lane:core]\n- [x] ship ui [lane:ui]\n- [/] docs wip\n";
+        let raw = "# P\n\n## Alpha\n\n- [ ] build core [lane:core] [worktree]\n- [x] ship ui [lane:ui]\n- [/] docs wip\n";
         let p = parse_plan(raw);
         assert_eq!(p.milestones.len(), 4); // header + 3 tasks
         let tasks: Vec<&PlanTask> = p
@@ -228,7 +255,9 @@ mod tests {
             .collect();
         assert_eq!(tasks.len(), 3);
         assert_eq!(tasks[0].lane.as_deref(), Some("core"));
+        assert!(tasks[0].worktree);
         assert_eq!(tasks[1].status, TaskStatus::Done);
+        assert!(!tasks[1].worktree);
         assert_eq!(tasks[2].status, TaskStatus::InProgress);
         assert_eq!(p.milestones_grouped().len(), 1);
     }

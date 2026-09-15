@@ -3,6 +3,7 @@
 pub mod circuit_breaker;
 pub mod doctor;
 pub mod git_checkpoints;
+pub mod git_worktree;
 pub mod handler;
 pub mod mcp;
 pub mod orchestrator;

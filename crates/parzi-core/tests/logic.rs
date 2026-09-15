@@ -228,9 +228,9 @@ fn purge_cascade_kills_descendants_at_any_depth() {
 }
 
 #[test]
-fn theme_emits_css_vars_with_asuka_default() {
+fn theme_emits_css_vars_with_eva_default() {
     let t = Theme::default();
-    assert_eq!(t.background.image, "backgrounds/asuka.png");
+    assert_eq!(t.background.image, "backgrounds/eva-crosses.jpg");
     let css = t.to_css_vars();
     assert!(css.contains("--parzi-accent:#7C8CFF"));
     assert!(css.contains("--parzi-glass-blur:18px"));

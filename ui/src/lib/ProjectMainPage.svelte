@@ -2,7 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import RosterSelector from "./RosterSelector.svelte";
   import LivingPlanView from "./LivingPlanView.svelte";
-  import type { LaneView, ProjectRoster, SessionMeta } from "./api";
+  import { api, type LaneView, type ProjectRoster, type SessionMeta } from "./api";
 
   export let project = "default";
   export let root = "";
@@ -24,6 +24,27 @@
   }>();
 
   let headerPrompt = "";
+  let knowledge = "";
+  let savingKnowledge = false;
+  let knowledgeLoadedFor = "";
+
+  $: if (project && project !== knowledgeLoadedFor) {
+    knowledgeLoadedFor = project;
+    api.getProjectKnowledge(project).then((k) => {
+      knowledge = k || "";
+    }).catch(() => {
+      knowledge = "";
+    });
+  }
+
+  async function saveKnowledge() {
+    savingKnowledge = true;
+    try {
+      await api.saveProjectKnowledge(project, knowledge);
+    } finally {
+      savingKnowledge = false;
+    }
+  }
 
   $: mine = threads.filter((t) => (t.project || "default") === project);
   $: live = mine.filter((t) => t.status === "active" || t.status === "queued").slice(0, 8);
@@ -48,7 +69,11 @@
     {#if lanes.length}
       <div class="chips">
         {#each lanes as l}
-          <span class="chip">{l.name}<span class="mode">{l.mode}</span></span>
+          <span class="chip">
+            {l.name}
+            <span class="mode">{l.mode}</span>
+            {#if l.isolated_worktree}<span class="wt-chip">worktree</span>{/if}
+          </span>
         {/each}
       </div>
     {/if}
@@ -71,6 +96,22 @@
           <button class="go" on:click={ask}>Ask</button>
         </div>
         <div class="hub-sub">Answers in a thread using the Header role model. Plan edits sync to the living plan below.</div>
+      </div>
+
+      <div class="knowledge-hub">
+        <div class="k-head">
+          <div class="hub-title">Cumulative Project Knowledge (<code>KNOWLEDGE.md</code>)</div>
+          <button class="go-sm" on:click={saveKnowledge} disabled={savingKnowledge}>
+            {savingKnowledge ? "Saving…" : "Save Knowledge"}
+          </button>
+        </div>
+        <textarea
+          class="k-area"
+          rows="4"
+          placeholder="Architectural decisions, learned patterns, gotchas... (automatically injected into Header &amp; Worker context)"
+          bind:value={knowledge}
+        ></textarea>
+        <div class="hub-sub">Agents automatically read and contribute learnings here to persist context across sessions.</div>
       </div>
     </div>
   </details>
@@ -124,11 +165,15 @@
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: 7px; padding: 4px 9px; }
   .mode { font-size: 10px; color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 1px 5px; }
-  .header-hub { background: var(--surface-1); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+  .wt-chip { font-size: 9.5px; font-family: var(--parzi-mono), monospace; color: var(--ok); background: var(--ok-soft); border: 1px solid var(--ok-line); border-radius: 4px; padding: 1px 5px; }
+  .header-hub, .knowledge-hub { background: var(--surface-1); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
   .hub-title { font-size: 12px; font-weight: 700; letter-spacing: 0.3px; color: var(--text); }
   .hub-row { display: flex; gap: 8px; }
   .hub-in { flex: 1; background: var(--surface-2); border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 9px 12px; font: inherit; font-size: 13px; }
   .hub-sub { font-size: 11.5px; color: var(--text-3); }
+  .k-head { display: flex; align-items: center; justify-content: space-between; }
+  .go-sm { background: var(--accent-soft); border: 1px solid var(--accent-line); color: var(--accent-text); font: inherit; font-size: 11px; padding: 4px 10px; cursor: pointer; border-radius: 6px; }
+  .k-area { width: 100%; box-sizing: border-box; background: var(--surface-2); border: 1px solid var(--line); color: var(--text); font-family: var(--parzi-mono), monospace; font-size: 12px; border-radius: 8px; padding: 8px 10px; resize: vertical; line-height: 1.4; }
   .setup {
     background: var(--surface-1); border: 1px solid var(--line);
     border-radius: 12px; padding: 4px 14px;

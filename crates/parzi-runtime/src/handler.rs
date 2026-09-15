@@ -928,5 +928,13 @@ pub fn system_parts(cfg: &ParziConfig, project: &str, lane: &str) -> Vec<String>
             }
         }
     }
+    if let Some(knowledge) = lanes::read_knowledge(project) {
+        let capped = if knowledge.len() > 4_000 {
+            format!("{}\n…(earlier knowledge truncated)", &knowledge[..4_000])
+        } else {
+            knowledge
+        };
+        parts.push(format!("# Project Cumulative Knowledge & Lessons Learned\n\n{capped}"));
+    }
     parts
 }

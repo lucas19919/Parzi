@@ -928,6 +928,21 @@
       bg = (e as CustomEvent<string>).detail;
     });
 
+    // Transparent frameless window: keep the 10px corner radius only while
+    // floating — a maximized window must go square to meet the screen edges.
+    import("@tauri-apps/api/window")
+      .then(({ getCurrentWindow }) => {
+        const w = getCurrentWindow();
+        const sync = () =>
+          w
+            .isMaximized()
+            .then((m) => document.documentElement.classList.toggle("parzi-maximized", m))
+            .catch(() => {});
+        void sync();
+        void w.onResized(() => void sync());
+      })
+      .catch(() => {});
+
     try {
       applyThemeCss(await api.getThemeCss());
 
@@ -1217,10 +1232,13 @@
 <svelte:window on:keydown={onGlobalKey} />
 
 <style>
+  :global(html) {
+    background: transparent;
+  }
   :global(body) {
     margin: 0;
     padding: 0;
-    background: var(--stage);
+    background: transparent;
     color: var(--text);
     font-family: var(--parzi-font), Inter, system-ui, sans-serif;
     overflow: hidden;
@@ -1237,6 +1255,14 @@
     flex-direction: column;
     position: relative;
     overflow: hidden;
+    /* Frameless transparent window: soft 10px corners so no edge cuts hard
+       against the desktop. `.maximized` (see onMount) drops it to square. */
+    border-radius: 10px;
+  }
+  /* Maximized state arrives on <html> at runtime (see onMount), so the
+     selector lives behind :global to keep svelte-check quiet. */
+  :global(html.parzi-maximized) .parzi-app-shell {
+    border-radius: 0;
   }
   /* Wallpaper stack: picture → stage-tinted dim → vignette → faint accent glow.
      Every layer follows the theme; with no picture the stage colour shows. */

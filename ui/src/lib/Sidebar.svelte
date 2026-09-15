@@ -590,7 +590,11 @@
   }
   .mini-btn:hover { background: var(--surface-3); color: var(--text); }
   .empty-state { font-size: 12px; color: var(--text-4); padding: 12px 8px; text-align: center; }
-  .sb-footer { display: flex; align-items: center; gap: 2px; margin: 6px 10px 8px; }
+  .sb-footer {
+    display: flex; align-items: center; gap: 2px;
+    margin: 0; padding: 8px 10px 10px;
+    border-top: 1px solid var(--line-2);
+  }
 
   /* Right-click menu */
   .ctx-menu {

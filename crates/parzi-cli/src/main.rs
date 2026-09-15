@@ -95,6 +95,40 @@ enum Cmd {
     Logout {
         provider: String,
     },
+    /// Manage cumulative project knowledge (KNOWLEDGE.md).
+    Knowledge {
+        project: String,
+        /// Note to append; when omitted, displays current knowledge.
+        note: Option<String>,
+    },
+    /// Living project plan: check status or run pending tasks headlessly.
+    Plan {
+        project: String,
+        #[command(subcommand)]
+        action: PlanAction,
+    },
+    /// Review isolated worktree diff for a session and optionally apply it.
+    Review {
+        project: String,
+        session_id: String,
+        #[arg(long)]
+        lane: Option<String>,
+        #[arg(long)]
+        apply: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PlanAction {
+    /// Show current living plan status and pending tasks.
+    Status,
+    /// Execute pending living plan tasks headlessly.
+    Run {
+        #[arg(long)]
+        lane: Option<String>,
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 /// Prompts y/N on a terminal; denies when piped (safe default).
@@ -159,6 +193,11 @@ async fn main() -> Result<()> {
         Cmd::ResetCooldowns { provider } => cmd_reset_cooldowns(provider.as_deref()),
         Cmd::Login { provider } => cmd_login(&provider).await,
         Cmd::Logout { provider } => cmd_logout(&provider),
+        Cmd::Knowledge { project, note } => cmd_knowledge(&project, note.as_deref()),
+        Cmd::Plan { project, action } => cmd_plan(&project, action).await,
+        Cmd::Review { project, session_id, lane, apply } => {
+            cmd_review(&project, &session_id, lane.as_deref(), apply)
+        }
     }
 }
 
@@ -487,4 +526,168 @@ fn resolve_id(store: &SessionStore, id: &str) -> Result<String> {
         }
     }
     anyhow::bail!("no session matching `{id}`");
+}
+
+fn cmd_knowledge(project: &str, note: Option<&str>) -> Result<()> {
+    if let Some(n) = note {
+        parzi_core::lanes::append_knowledge(project, n)
+            .context("appending to cumulative knowledge")?;
+        println!("recorded knowledge for project `{project}`");
+    } else {
+        match parzi_core::lanes::read_knowledge(project) {
+            Some(text) => println!("{text}"),
+            None => println!("no cumulative knowledge recorded yet for project `{project}`"),
+        }
+    }
+    Ok(())
+}
+
+fn cmd_review(project: &str, session_id: &str, lane: Option<&str>, apply: bool) -> Result<()> {
+    let (_, store) = boot()?;
+    let id = resolve_id(&store, session_id)?;
+    let meta = store.get(&id).context("reading session")?;
+    let lane_name = lane.unwrap_or(&meta.lane);
+    let clean_lane = if lane_name.trim().is_empty() { "default" } else { lane_name.trim() };
+    let wt_path = paths::worktrees_dir()?.join(project).join(clean_lane).join(&id);
+    if !wt_path.exists() {
+        println!("no isolated worktree found for session {id} at {}", wt_path.display());
+        return Ok(());
+    }
+    let diff = parzi_runtime::git_worktree::worktree_diff(&wt_path)
+        .context("reading worktree diff")?;
+    if diff.trim().is_empty() {
+        println!("no changes in worktree for session {id}");
+    } else {
+        println!("=== Worktree Diff ({id} / {clean_lane}) ===\n");
+        println!("{diff}");
+    }
+    if apply {
+        let root = parzi_core::lanes::lane_root(project, clean_lane)
+            .unwrap_or_else(|| meta.cwd.clone());
+        if root.trim().is_empty() {
+            anyhow::bail!("cannot apply: project root is not set");
+        }
+        let out = parzi_runtime::git_worktree::apply_worktree(&root, clean_lane, &id)
+            .context("applying worktree to project root")?;
+        println!("applied changes to {root}:\n{out}");
+    }
+    Ok(())
+}
+
+async fn cmd_plan(project: &str, action: PlanAction) -> Result<()> {
+    match action {
+        PlanAction::Status => {
+            let raw = parzi_core::plan::read_plan(project).context("reading plan")?;
+            let plan = parzi_core::plan::parse_plan(&raw);
+            println!("=== Living Plan: {project} ===\n");
+            for milestone in plan.milestones_grouped() {
+                println!("## {}", milestone.title);
+                for task in milestone.tasks {
+                    let status_char = match task.status {
+                        parzi_core::plan::TaskStatus::Done => 'x',
+                        parzi_core::plan::TaskStatus::InProgress => '/',
+                        parzi_core::plan::TaskStatus::Pending => ' ',
+                    };
+                    let lane_tag = task.lane.as_deref().map(|l| format!(" [lane:{l}]")).unwrap_or_default();
+                    let wt_tag = if task.worktree { " [worktree]" } else { "" };
+                    println!("- [{status_char}] {}{lane_tag}{wt_tag}", task.title);
+                }
+                println!();
+            }
+            if !plan.loose_tasks.is_empty() {
+                println!("## Tasks");
+                for task in plan.loose_tasks {
+                    let status_char = match task.status {
+                        parzi_core::plan::TaskStatus::Done => 'x',
+                        parzi_core::plan::TaskStatus::InProgress => '/',
+                        parzi_core::plan::TaskStatus::Pending => ' ',
+                    };
+                    let lane_tag = task.lane.as_deref().map(|l| format!(" [lane:{l}]")).unwrap_or_default();
+                    let wt_tag = if task.worktree { " [worktree]" } else { "" };
+                    println!("- [{status_char}] {}{lane_tag}{wt_tag}", task.title);
+                }
+            }
+        }
+        PlanAction::Run { lane, yes } => {
+            let mut completed = 0;
+            while let Some(task) = parzi_core::plan::next_pending_task(project) {
+                let target_lane = lane
+                    .clone()
+                    .or(task.lane.clone())
+                    .unwrap_or_else(|| "core".into());
+                let wt_label = if task.worktree { " (isolated worktree)" } else { "" };
+                println!("\n>>> Executing task: {}{wt_label} in lane `{target_lane}`", task.title);
+                
+                let prompt = format!(
+                    "Execute living plan task: {}\n\nPerform all required edits, run tests, and record any gotchas or decisions with knowledge.record.",
+                    task.title
+                );
+                
+                let (mut cfg, store) = boot()?;
+                cfg.orchestrator.queue_when_busy = false;
+                let orch = Orchestrator::new(cfg.clone(), store.clone());
+                orch.recover().ok();
+                
+                let roster = parzi_core::lanes::get_project_roster(project).unwrap_or_default();
+                let model = roster.orchestrator.model
+                    .filter(|m| !m.trim().is_empty())
+                    .unwrap_or_else(|| cfg.default_provider.clone());
+                
+                let root = parzi_core::lanes::lane_root(project, &target_lane).unwrap_or_default();
+                let mut session_cwd = root.clone();
+                let approver: Arc<dyn Approver> =
+                    if yes { Arc::new(AutoApprover) } else { Arc::new(CliApprover { yes }) };
+
+                let (meta, mut rx) = orch
+                    .spawn(
+                        project,
+                        &target_lane,
+                        &model,
+                        &prompt,
+                        Some(approver),
+                        &session_cwd,
+                        "medium",
+                        vec![],
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+                if task.worktree && !root.is_empty() && parzi_runtime::git_worktree::is_git_repo(&root) {
+                    if let Ok(wt) = parzi_runtime::git_worktree::create_worktree(&root, project, &target_lane, &meta.id) {
+                        session_cwd = wt.to_string_lossy().to_string();
+                        let _ = store.set_cwd(&meta.id, &session_cwd);
+                        println!("isolated worktree: {session_cwd}");
+                    }
+                }
+
+                while let Some(event) = rx.recv().await {
+                    match event {
+                        RunEvent::Text(t) => print!("{t}"),
+                        RunEvent::ToolCall { name, .. } => eprintln!("[tool: {name}]"),
+                        RunEvent::ToolResult { name, ok, ms } => eprintln!("[result: {name} ok={ok} {ms}ms]"),
+                        RunEvent::Done { .. } => {
+                            eprintln!("\n[done]");
+                            break;
+                        }
+                        RunEvent::Error(e) => {
+                            eprintln!("\n[error: {e}]");
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Mark task complete in living plan
+                let _ = parzi_core::plan::set_task_status(project, &task.title, true);
+                completed += 1;
+                println!(">>> Task marked done in PLAN.md: {}", task.title);
+            }
+            if completed == 0 {
+                println!("no pending tasks found in living plan for project `{project}`");
+            } else {
+                println!("\nAll pending tasks completed ({completed} total).");
+            }
+        }
+    }
+    Ok(())
 }

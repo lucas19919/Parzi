@@ -624,6 +624,8 @@ impl Orchestrator {
             "plan.read",
             "plan.update",
             "lane.dispatch",
+            "knowledge.read",
+            "knowledge.record",
         ] {
             if !allowed.contains(&s.to_string()) {
                 allowed.push(s.into());
