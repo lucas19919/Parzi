@@ -2903,6 +2903,7 @@ version = "0.1.8"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "keyring",
  "parzi-core",
  "parzi-providers",

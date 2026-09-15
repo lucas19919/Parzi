@@ -274,3 +274,21 @@ From `tests-conformance.md` §F, ordered by what they would have caught this wee
 - Static only. B1 was re-read by the orchestrator (`emit` → sink; forwarder `continue`; `select!` semantics) but not timed in a running app. Nothing was executed against a provider.
 - The tree was edited by other sessions during the audit: v0.1.7 tagged at 18:17Z; providers crate edited 20:05–20:22 (for ~7 minutes it did not compile); `svelte-check` errors fixed in the working tree between the two gate runs.
 - `cargo audit` is not installed; Rust advisories were checked by version inspection only.
+
+---
+
+## 9. Streamlining and resource efficiency (second pass, 22:30)
+
+Measured on the running v0.1.8 build, no subagents. Full review with the causes, the per-turn and per-token hot paths, and a 15-second measurement script: `docs/audit/2026-09-14/efficiency.md`.
+
+| Measured | Value |
+|---|---|
+| GUI idle, foreground | ≈ 507 MB private across 7 processes (Rust host 17 MB; WebView2 GPU process 364 MB; renderer 91 MB); ≈ 15 % of one core |
+| GUI idle, background | ≈ 410 MB private; 0.8 % of one core |
+| CLI | `parzi list` 9.5 MB peak, 53 ms; binary 5.1 MB with image decoders it never uses |
+| Bundle | dist 3.0 MB: JS 1.58 MB (full highlight.js), 78 font files 1.3 MB |
+| PLAN §11 budgets | GUI 3× over; CLI within; cold start, token latency and 10k-line scroll never measured |
+
+Top moves (E-numbers in the review): E1 compositor diet (wallpaper filter only when blur > 0, one overlay layer, backdrop-filter on the composer and popovers only) for roughly −200 MB and idle CPU toward 2 %; E2 downscale wallpapers to the display at set time; E3 highlight.js core + 12 languages and latin-only woff2 fonts (dist → ≈ 1.2 MB); E4 coalesce token deltas and render the live segment incrementally (the current path is quadratic); E5 stop rewriting `session.md` on every event; E6 tool definitions and one HTTP client per run instead of per turn; E10–E11 one workspace, 71 → ≈ 30 commands, one SSE reader, one provider roster, wire-or-delete the unwired features.
+
+E1–E3 are an evening and touch nothing security-relevant, so they can run as a light lane beside Phase 1.
