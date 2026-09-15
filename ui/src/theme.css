@@ -345,7 +345,7 @@ kbd {
 .codeblock pre { margin: 0; padding: 12px 14px; font-size: var(--parzi-mono-size); line-height: 1.55; overflow-x: auto; overflow-y: hidden; font-family: var(--parzi-mono); tab-size: 4; }
 .codeblock pre code { display: block; min-width: max-content; }
 .cl-line { display: flex; white-space: pre; overflow-wrap: normal; word-break: normal; }
-.cl-no { width: 2.2em; flex: none; text-align: right; margin-right: 1em; user-select: none; color: var(--text-4); position: sticky; left: 0; background: var(--code); }
+.cl-no { width: 2.2em; flex: none; text-align: right; margin-right: 1em; user-select: none; color: var(--text-4); background: transparent; font-variant-numeric: tabular-nums; }
 .cl-tx { flex: none; min-width: max-content; white-space: pre; overflow-wrap: normal; word-break: normal; }
 .dl-line { display: flex; gap: 10px; white-space: pre; overflow-wrap: normal; word-break: normal; }
 .dl-mark { width: 1.2em; flex: none; text-align: center; user-select: none; opacity: 0.8; }

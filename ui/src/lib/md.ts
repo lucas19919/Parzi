@@ -69,7 +69,7 @@ md.renderer.rules.fence = (tokens, idx) => {
     }
     const htmlLines = balanceLines(html);
     code = htmlLines
-      .map((l, i) => `<span class="cl-line"><span class="cl-no">${i + 1}</span><span class="cl-tx">${l || " "}</span></span>`)
+      .map((l, i) => `<span class="cl-line"><span class="cl-no">${i + 1}</span><span class="cl-tx">${stripLeadingBullet(l, i + 1) || " "}</span></span>`)
       .join("\n");
   }
   const clamped = lines.length > 30 ? " clamped" : "";
@@ -106,6 +106,19 @@ function balanceLines(html: string): string[] {
     out.push(prev + (line || " ") + "</span>".repeat(open.length));
   }
   return out;
+}
+
+/** Drop a highlight bullet that only duplicates the gutter number: `-`/`*`/`+`
+    always; `N.`/`N)` only when N equals the gutter line (a list starting at
+    0. or 3. keeps its marker — the gutter must not rewrite content). */
+function stripLeadingBullet(line: string, gutter: number): string {
+  const m = /^<span class="hljs-bullet">(.*?)<\/span>/.exec(line);
+  if (!m) return line;
+  const mark = m[1].trim();
+  if (mark === "-" || mark === "*" || mark === "+") return line.slice(m[0].length);
+  const n = /^(\d+)[.)]$/.exec(mark);
+  if (n && Number(n[1]) === gutter) return line.slice(m[0].length);
+  return line;
 }
 /** GFM-ish task lists without a plugin: `- [ ]` / `- [x]` rendering. */
 md.core.ruler.push("parzi-tasklists", (state) => {
