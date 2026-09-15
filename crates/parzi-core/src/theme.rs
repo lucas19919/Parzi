@@ -114,7 +114,7 @@ fn c_border() -> String {
     "#2A2E3A".into()
 }
 fn d_bg_image() -> String {
-    "backgrounds/asuka.png".into()
+    "backgrounds/eva-crosses.jpg".into()
 }
 fn d_dim() -> f64 {
     0.66
@@ -393,15 +393,7 @@ pub fn write_user_css(css: &str) -> Result<()> {
 
 /// Shipped packs, in display order. They re-seed when missing and can't be
 /// deleted from the UI; user packs sort after them.
-pub const BUILTIN_PACKS: &[&str] = &[
-    "moody-midnight",
-    "tokyo-night",
-    "catppuccin-mocha",
-    "dracula",
-    "nordic-frost",
-    "oled-black",
-    "rose-pine",
-];
+pub const BUILTIN_PACKS: &[&str] = &["eva-crosses", "midnight", "grey", "light"];
 
 pub fn themes_dir() -> Result<std::path::PathBuf> {
     Ok(paths::parzi_dir()?.join("themes"))
@@ -616,9 +608,7 @@ pub fn set_background(name: &str) -> Result<Theme> {
         }
         let p = paths::backgrounds_dir()?.join(name);
         if !is_bg_file(&p) {
-            return Err(ParziError::Config(format!(
-                "background not found: {name}"
-            )));
+            return Err(ParziError::Config(format!("background not found: {name}")));
         }
     }
     let mut theme = Theme::load()?;

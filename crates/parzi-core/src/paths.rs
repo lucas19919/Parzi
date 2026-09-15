@@ -75,14 +75,7 @@ pub fn ensure_dirs() -> Result<PathBuf> {
 fn seed_default_background(root: &std::path::Path) -> Result<()> {
     // (bundled file name, dev-tree source name). Release installers place
     // them beside the executable; both layouts are best-effort seeds.
-    for name in [
-        "eva-crosses.jpg",
-        "code-geass.jpg",
-        "death-note.jpg",
-        "itachi.jpg",
-        "rei-dark.jpg",
-        "uchiha.jpg",
-    ] {
+    for name in ["eva-crosses.jpg"] {
         let dest = root.join("backgrounds").join(name);
         if dest.exists() {
             continue;
@@ -117,43 +110,27 @@ text_dim = \"#A89A9B\"\nbar = \"#1D1214\"\nborder = \"#33201F\"\n\n\
 [glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
         ),
         (
-            "code-geass",
+            "midnight",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#08080C\"\nstage = \"#0C0C12\"\naccent = \"#E51616\"\ntext = \"#EDEDF2\"\n\
-text_dim = \"#9AA0AE\"\nbar = \"#141419\"\nborder = \"#26262E\"\n\n\
-[background]\nimage = \"backgrounds/code-geass.jpg\"\ndim = 0.55\nvignette = 0.50\nblur = 0.0\n\n\
+[colors]\nsidebar = \"#0A0C12\"\nstage = \"#0E1118\"\naccent = \"#7C8CFF\"\ntext = \"#E8EAF0\"\n\
+text_dim = \"#8B93A7\"\nbar = \"#161B26\"\nborder = \"#262D3D\"\n\n\
+[background]\nimage = \"\"\ndim = 0.60\nvignette = 0.45\nblur = 0.0\n\n\
 [glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
         ),
         (
-            "death-note",
+            "grey",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#14090B\"\nstage = \"#1A0D10\"\naccent = \"#E5484D\"\ntext = \"#F5E9E4\"\n\
-text_dim = \"#B59A95\"\nbar = \"#241215\"\nborder = \"#422024\"\n\n\
-[background]\nimage = \"backgrounds/death-note.jpg\"\ndim = 0.68\nvignette = 0.50\nblur = 0.0\n\n\
+[colors]\nsidebar = \"#101012\"\nstage = \"#171719\"\naccent = \"#B8BCC8\"\ntext = \"#EDEDEF\"\n\
+text_dim = \"#9A9AA2\"\nbar = \"#1F1F23\"\nborder = \"#2E2E35\"\n\n\
+[background]\nimage = \"\"\ndim = 0.60\nvignette = 0.40\nblur = 0.0\n\n\
 [glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
         ),
         (
-            "itachi",
+            "light",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#070C0E\"\nstage = \"#0B1114\"\naccent = \"#E52A2A\"\ntext = \"#E9EFF2\"\n\
-text_dim = \"#8FA0A8\"\nbar = \"#121A1E\"\nborder = \"#24333A\"\n\n\
-[background]\nimage = \"backgrounds/itachi.jpg\"\ndim = 0.60\nvignette = 0.55\nblur = 0.0\n\n\
-[glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
-        ),
-        (
-            "rei",
-            "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#080A12\"\nstage = \"#0C0F1A\"\naccent = \"#8EA2FF\"\ntext = \"#E8EDF7\"\n\
-text_dim = \"#8E9BB5\"\nbar = \"#121828\"\nborder = \"#26304A\"\n\n\
-[background]\nimage = \"backgrounds/rei-dark.jpg\"\ndim = 0.50\nvignette = 0.50\nblur = 0.0\n\n\
-[glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
-        ),
-        (
-            "uchiha",
-            "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#0A0A0C\"\nstage = \"#0F0F12\"\naccent = \"#E5484D\"\ntext = \"#EDEDF2\"\n\
-text_dim = \"#9AA0AE\"\nbar = \"#17171B\"\nborder = \"#2A2A30\"\n\n\
-[background]\nimage = \"backgrounds/uchiha.jpg\"\ndim = 0.50\nvignette = 0.45\nblur = 0.0\n\n\
+[colors]\nsidebar = \"#F2F3F5\"\nstage = \"#FFFFFF\"\naccent = \"#4F5EE0\"\ntext = \"#1A1D24\"\n\
+text_dim = \"#5B6472\"\nbar = \"#E9EBEF\"\nborder = \"#D5D9E0\"\n\n\
+[background]\nimage = \"\"\ndim = 0.50\nvignette = 0.35\nblur = 0.0\n\n\
 [glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
         ),
     ];
@@ -187,6 +164,11 @@ fn retire_legacy_packs(root: &std::path::Path) {
         ("eva-unit01", "image = \"backgrounds/eva-unit01.webp\""),
         ("shinkai-city", "image = \"backgrounds/shinkai-city.jpg\""),
         ("rei", "image = \"backgrounds/rei.jpg\""),
+        ("code-geass", "image = \"backgrounds/code-geass.jpg\""),
+        ("death-note", "image = \"backgrounds/death-note.jpg\""),
+        ("itachi", "image = \"backgrounds/itachi.jpg\""),
+        ("rei", "image = \"backgrounds/rei-dark.jpg\""),
+        ("uchiha", "image = \"backgrounds/uchiha.jpg\""),
         ("cyberpunk-noir", "accent = \"#00F0FF\""),
         ("emerald-matrix", "text_dim = \"#6EE7B7\""),
     ];
