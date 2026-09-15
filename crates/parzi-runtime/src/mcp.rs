@@ -60,6 +60,7 @@ const CHILD_ENV_PASSTHROUGH: &[&str] = &[
     "SYSTEMROOT",
     "TEMP",
     "TMP",
+    "TMPDIR",
     "HOME",
     "APPDATA",
     "USERPROFILE",
@@ -414,6 +415,7 @@ mod tests {
             "SYSTEMROOT",
             "TEMP",
             "TMP",
+            "TMPDIR",
             "HOME",
             "APPDATA",
             "USERPROFILE",
@@ -425,6 +427,6 @@ mod tests {
                 "shell.exec allows {k} but MCP spawn does not"
             );
         }
-        assert_eq!(CHILD_ENV_PASSTHROUGH.len(), 9);
+        assert_eq!(CHILD_ENV_PASSTHROUGH.len(), 10);
     }
 }

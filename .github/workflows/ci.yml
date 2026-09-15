@@ -7,7 +7,11 @@ concurrency:
   cancel-in-progress: true
 jobs:
   rust:
-    runs-on: windows-latest # matches the only release target; WebView2 present
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest] # both release targets
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master

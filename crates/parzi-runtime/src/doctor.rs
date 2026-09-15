@@ -186,9 +186,16 @@ impl Doctor {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
     fn check_webview(&self) -> Check {
-        Check::ok("webview2", "check runs on Windows targets")
+        // macOS renders via the system WKWebView — always present, no
+        // Evergreen-style runtime to probe like WebView2 on Windows.
+        Check::ok("webview", "system WKWebView")
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    fn check_webview(&self) -> Check {
+        Check::ok("webview", "check runs on Windows and macOS targets")
     }
 }
 

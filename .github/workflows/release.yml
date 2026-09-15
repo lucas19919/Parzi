@@ -1,8 +1,10 @@
 name: Release
 
-# Ship signed Windows installers + the updater feed.
+# Ship Windows installers + macOS DMG + the updater feed.
 # Flow: tag a version (git tag v0.1.0; git push origin v0.1.0) -> CI builds
-# the NSIS .exe + MSI, signs the updater artifacts with
+# per platform (Windows: NSIS .exe + MSI; macOS: unsigned universal .dmg for
+# Apple Silicon + Intel — deliberately no Apple signing, see the Gatekeeper
+# note in the release body), signs the updater artifacts with
 # TAURI_SIGNING_PRIVATE_KEY, and opens a DRAFT release with latest.json.
 # Publish the draft and installed Parzi copies will offer the update.
 
@@ -21,6 +23,9 @@ jobs:
       matrix:
         include:
           - platform: windows-latest
+            args: ""
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +37,11 @@ jobs:
           cache-dependency-path: ui/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
+
+      # Universal macOS binary (Apple Silicon + Intel in one .dmg).
+      - name: Add macOS Rust targets
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -46,6 +56,29 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Parzi ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download and install this version."
+          releaseBody: |
+            ## Parzi ${{ github.ref_name }}
+
+            One harness, five providers — Claude, Codex, Antigravity, OpenCode, Grok.
+
+            ### Download
+
+            | Your machine | Pick this file |
+            | --- | --- |
+            | Windows 10 / 11, 64-bit (recommended) | `Parzi_*_x64-setup.exe` — per-user install, no admin needed |
+            | Windows, system-wide | `Parzi_*_x64_en-US.msi` — needs admin |
+            | macOS, Apple Silicon or Intel | `Parzi_*_universal.dmg` — drag Parzi into Applications |
+
+            ### First launch (once per machine)
+
+            - **Windows:** SmartScreen asks once because the installer isn't Authenticode-signed yet — *More info → Run anyway*.
+            - **macOS:** Gatekeeper asks once because the build isn't Apple-notarized — right-click (or Ctrl-click) Parzi in Applications → *Open* → *Open*. Afterwards it launches normally.
+
+            ### Updates
+
+            Parzi checks for new versions on launch and offers them in the app — no manual reinstalls.
+
+            > Your threads and settings live in `~/.parzi` and are never touched by updates or reinstalls.
           releaseDraft: true
           prerelease: false
+          args: ${{ matrix.args }}

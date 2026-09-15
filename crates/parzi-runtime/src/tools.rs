@@ -823,6 +823,7 @@ async fn execute_local(name: &str, args: &serde_json::Value, cwd: &str) -> (bool
                 ),
                 ("TEMP", std::env::var("TEMP").unwrap_or_default()),
                 ("TMP", std::env::var("TMP").unwrap_or_default()),
+                ("TMPDIR", std::env::var("TMPDIR").unwrap_or_default()),
                 ("HOME", std::env::var("HOME").unwrap_or_default()),
                 ("APPDATA", std::env::var("APPDATA").unwrap_or_default()),
                 (

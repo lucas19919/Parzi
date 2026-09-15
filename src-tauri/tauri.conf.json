@@ -67,6 +67,12 @@
         "uninstallerHeaderImage": "installer/header.bmp",
         "startMenuFolder": "Parzi"
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "dmg": {
+        "windowSize": { "width": 660, "height": 400 }
+      }
     }
   },
   "plugins": {

@@ -7,7 +7,24 @@ Claude, Codex, Antigravity, OpenCode, Grok — subscriptions first, keys only wh
 - `LOOP.md` — how it gets built (gates, phases)
 - `PROGRESS.md` — build evidence per phase
 
-Quick start:
+## Install
+
+Grab the latest release from
+[GitHub Releases](https://github.com/lucas19919/Parzi/releases):
+
+| Your machine | Pick this file |
+| --- | --- |
+| Windows 10 / 11, 64-bit (recommended) | `Parzi_*_x64-setup.exe` — per-user install, no admin needed |
+| Windows, system-wide | `Parzi_*_x64_en-US.msi` — needs admin |
+| macOS, Apple Silicon or Intel | `Parzi_*_universal.dmg` — drag Parzi into Applications |
+
+First launch asks once: on Windows SmartScreen wants
+*More info → Run anyway*; on macOS right-click (or Ctrl-click) Parzi in
+Applications → *Open* → *Open*. Afterwards it launches normally and
+updates itself in-app. Your threads and settings live in `~/.parzi` and
+are never touched by updates or reinstalls.
+
+Quick start (from source):
 
 ```powershell
 cargo build -p parzi-cli

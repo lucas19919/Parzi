@@ -76,6 +76,8 @@ fn auth_file() -> Option<std::path::PathBuf> {
     [
         ".local/share/opencode/auth.json",
         ".config/opencode/auth.json",
+        // macOS layout (opencode under Application Support).
+        "Library/Application Support/opencode/auth.json",
     ]
     .iter()
     .map(|rel| home.join(rel))
