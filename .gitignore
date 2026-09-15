@@ -32,5 +32,8 @@ Thumbs.db
 lcov.info
 *.profraw
 
+# Tauri generated schemas (rebuilt by tauri-build; never commit)
+src-tauri/gen/
+
 # Parallel-lane claim markers (see lane protocol; never commit these)
 .lane_claim_*

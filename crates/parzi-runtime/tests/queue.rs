@@ -39,14 +39,47 @@ fn hang_factory(
 }
 
 fn test_orch(max: usize) -> (Arc<Orchestrator>, SessionStore) {
+    test_home();
     let mut cfg = ParziConfig::default();
     cfg.orchestrator.max_concurrent = max;
     cfg.orchestrator.queue_when_busy = true;
-    // Isolate: point the store at a temp home via env is racy; instead rely
-    // on unique titles and clean up our own sessions afterwards.
     let store = SessionStore::open().unwrap();
     let orch = Arc::new(Orchestrator::new(cfg, store.clone()).with_factory(Arc::new(hang_factory)));
     (orch, store)
+}
+
+/// Hermetic home for this test binary (see approval_gate.rs).
+fn test_home() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let dir = std::env::temp_dir().join(format!("parzi-test-queue-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("PARZI_HOME", &dir);
+    });
+}
+
+/// Session dirs registered here are removed on Drop — including test
+/// failure by panic (assert) — so a flaky timing assert can never orphan
+/// sessions into a real home again.
+struct CleanupGuard {
+    ids: Vec<String>,
+}
+
+impl CleanupGuard {
+    fn add(&mut self, id: &str) {
+        self.ids.push(id.to_string());
+    }
+}
+
+impl Drop for CleanupGuard {
+    fn drop(&mut self) {
+        if let Ok(dir) = parzi_core::paths::sessions_dir() {
+            for id in &self.ids {
+                let _ = std::fs::remove_dir_all(dir.join(id));
+            }
+        }
+    }
 }
 
 async fn wait_status(store: &SessionStore, id: &str, want: SessionStatus) -> bool {
@@ -64,6 +97,7 @@ async fn wait_status(store: &SessionStore, id: &str, want: SessionStatus) -> boo
 #[tokio::test]
 async fn busy_spawn_queues_then_pump_starts_it() {
     let (orch, store) = test_orch(1);
+    let mut guard = CleanupGuard { ids: vec![] };
     let pump = orch.clone();
     tokio::spawn(async move { pump.pump_loop().await });
     // Abandon the loop at test end via abort (test process exits anyway).
@@ -71,11 +105,13 @@ async fn busy_spawn_queues_then_pump_starts_it() {
         .spawn("t", "", "hang/model", "first", None, "", "med", vec![])
         .await
         .unwrap();
+    guard.add(&first.id);
     assert!(wait_status(&store, &first.id, SessionStatus::Active).await);
     let (second, _rx2) = orch
         .spawn("t", "", "hang/model", "second", None, "", "med", vec![])
         .await
         .unwrap();
+    guard.add(&second.id);
     assert!(wait_status(&store, &second.id, SessionStatus::Queued).await);
     orch.kill(&first.id).await.unwrap();
     assert!(
@@ -83,33 +119,26 @@ async fn busy_spawn_queues_then_pump_starts_it() {
         "pump should start the queued run after kill"
     );
     orch.kill(&second.id).await.unwrap();
-    cleanup(&[&first.id, &second.id]);
-}
-
-fn cleanup(ids: &[&str]) {
-    if let Ok(dir) = parzi_core::paths::sessions_dir() {
-        for id in ids {
-            let _ = std::fs::remove_dir_all(dir.join(id));
-        }
-    }
 }
 
 #[tokio::test]
 async fn queue_reject_mode_errors_loudly() {
+    test_home();
     let mut cfg = ParziConfig::default();
     cfg.orchestrator.max_concurrent = 1;
     cfg.orchestrator.queue_when_busy = false;
     let store = SessionStore::open().unwrap();
     let orch = Orchestrator::new(cfg, store).with_factory(Arc::new(hang_factory));
+    let mut guard = CleanupGuard { ids: vec![] };
     let (first, _rx) = orch
         .spawn("t", "", "hang/model", "first", None, "", "med", vec![])
         .await
         .unwrap();
+    guard.add(&first.id);
     let err = orch
         .spawn("t", "", "hang/model", "second", None, "", "med", vec![])
         .await
         .unwrap_err();
     assert!(err.to_string().contains("busy"), "{err}");
     orch.kill(&first.id).await.unwrap();
-    cleanup(&[&first.id]);
 }
