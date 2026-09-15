@@ -12,8 +12,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::tools::{
-    Approval, ApprovalMode, Approver, ToolCallInfo, ToolExecutor, is_lane_tool, is_session_tool,
-    is_ui_tool,
+    is_lane_tool, is_session_tool, is_ui_tool, Approval, ApprovalMode, Approver, ToolCallInfo,
+    ToolExecutor,
 };
 
 #[derive(Debug)]
@@ -22,12 +22,27 @@ pub enum RunEvent {
     Reasoning {
         text: String,
     },
-    ToolCall { id: String, name: String },
-    ToolResult { name: String, ok: bool, ms: u64 },
-    Usage { tokens_in: u64, tokens_out: u64, cost_usd: f64 },
-    ApprovalRequest { call: ToolCallInfo },
+    ToolCall {
+        id: String,
+        name: String,
+    },
+    ToolResult {
+        name: String,
+        ok: bool,
+        ms: u64,
+    },
+    Usage {
+        tokens_in: u64,
+        tokens_out: u64,
+        cost_usd: f64,
+    },
+    ApprovalRequest {
+        call: ToolCallInfo,
+    },
     /// Non-intrusive timeline note (failover, budget). Toast only, no state change.
-    Notice { text: String },
+    Notice {
+        text: String,
+    },
     /// Active route transition (failover or fallback hop).
     RouteTransition {
         from_provider: String,
@@ -35,7 +50,9 @@ pub enum RunEvent {
         reason: String,
         cooldown_secs: Option<u64>,
     },
-    Done { turns: u32 },
+    Done {
+        turns: u32,
+    },
     Error(String),
 }
 
@@ -214,16 +231,13 @@ impl AgentRun {
         // the context builder, not the text).
         let mut user_text = prompt.to_string();
         if !self.attachments.is_empty() {
-            let names: Vec<&str> = self
-                .attachments
-                .iter()
-                .map(|a| a.path.as_str())
-                .collect();
+            let names: Vec<&str> = self.attachments.iter().map(|a| a.path.as_str()).collect();
             user_text.push_str(&format!("\n[attached: {}]", names.join(", ")));
         }
         self.store
             .append(&self.session_id, &Event::User { text: user_text })?;
-        self.store.set_status(&self.session_id, SessionStatus::Active)?;
+        self.store
+            .set_status(&self.session_id, SessionStatus::Active)?;
         for (i, slot) in self.slots.iter().enumerate() {
             // If circuit breaker is set and this provider is in cooldown, skip it if there's a subsequent slot
             if let Some(ref cb) = self.circuit_breaker {
@@ -311,7 +325,8 @@ impl AgentRun {
             self.store.append(
                 &self.session_id,
                 &Event::System {
-                    text: "This model has no tool support in the catalog; answering directly.".into(),
+                    text: "This model has no tool support in the catalog; answering directly."
+                        .into(),
                 },
             )?;
         }
@@ -326,7 +341,9 @@ impl AgentRun {
             }
             if turns >= self.max_steps {
                 self.finish(SessionStatus::Done).await;
-                self.emit(RunEvent::Error(format!("stopped after {turns} steps (lane budget)")));
+                self.emit(RunEvent::Error(format!(
+                    "stopped after {turns} steps (lane budget)"
+                )));
                 return Ok(RunEnd::Done);
             }
             turns += 1;
@@ -346,10 +363,9 @@ impl AgentRun {
                         "Images attached, but {}/{} has no vision in the catalog — text only.",
                         slot.provider_id, slot.model_id
                     );
-                    let _ = self.store.append(
-                        &self.session_id,
-                        &Event::System { text: note.clone() },
-                    );
+                    let _ = self
+                        .store
+                        .append(&self.session_id, &Event::System { text: note.clone() });
                     self.emit(RunEvent::Notice { text: note });
                 }
             }
@@ -392,12 +408,19 @@ impl AgentRun {
                     Ok(StreamEvent::ToolCall { id, name, args }) => {
                         calls.push((id, name, args));
                     }
-                    Ok(StreamEvent::Usage { tokens_in, tokens_out }) => {
+                    Ok(StreamEvent::Usage {
+                        tokens_in,
+                        tokens_out,
+                    }) => {
                         let cost = Self::cost_for(slot, tokens_in, tokens_out);
                         let _ = self
                             .store
                             .add_usage(&self.session_id, tokens_in, tokens_out, cost);
-                        self.emit(RunEvent::Usage { tokens_in, tokens_out, cost_usd: cost });
+                        self.emit(RunEvent::Usage {
+                            tokens_in,
+                            tokens_out,
+                            cost_usd: cost,
+                        });
                     }
                     Err(e) => {
                         let msg = e.to_string();
@@ -405,7 +428,10 @@ impl AgentRun {
                             if !text.trim().is_empty() {
                                 let _ = self.store.append(
                                     &self.session_id,
-                                    &Event::Assistant { text: text.clone(), done: false },
+                                    &Event::Assistant {
+                                        text: text.clone(),
+                                        done: false,
+                                    },
                                 );
                             }
                             return Ok(RunEnd::Retryable(retry_reason(&msg)));
@@ -423,13 +449,18 @@ impl AgentRun {
             if !reasoning.trim().is_empty() {
                 let _ = self.store.append(
                     &self.session_id,
-                    &Event::Reasoning { text: reasoning.clone() },
+                    &Event::Reasoning {
+                        text: reasoning.clone(),
+                    },
                 );
             }
             if !text.trim().is_empty() {
                 let _ = self.store.append(
                     &self.session_id,
-                    &Event::Assistant { text: text.clone(), done: calls.is_empty() },
+                    &Event::Assistant {
+                        text: text.clone(),
+                        done: calls.is_empty(),
+                    },
                 );
                 if calls.is_empty() {
                     if let Some(note) = self.maybe_autosave_artifact(&text) {
@@ -446,16 +477,33 @@ impl AgentRun {
                 if self.cancel.is_cancelled() {
                     break;
                 }
-                self.emit(RunEvent::ToolCall { id: id.clone(), name: name.clone() });
+                self.emit(RunEvent::ToolCall {
+                    id: id.clone(),
+                    name: name.clone(),
+                });
                 let _ = self.store.append(
                     &self.session_id,
-                    &Event::ToolCall { id: id.clone(), name: name.clone(), args: args.clone() },
+                    &Event::ToolCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        args: args.clone(),
+                    },
                 );
                 let (ok, output, ms) = self.execute_tool(&id, &name, &args).await;
-                self.emit(RunEvent::ToolResult { name: name.clone(), ok, ms });
+                self.emit(RunEvent::ToolResult {
+                    name: name.clone(),
+                    ok,
+                    ms,
+                });
                 let _ = self.store.append(
                     &self.session_id,
-                    &Event::ToolResult { id, name, ok, output, ms },
+                    &Event::ToolResult {
+                        id,
+                        name,
+                        ok,
+                        output,
+                        ms,
+                    },
                 );
             }
         }
@@ -498,7 +546,11 @@ impl AgentRun {
             // in lane Ask mode like any other tool. Reads are side-effect free.
             let gated = matches!(name, "session.spawn" | "session.send_message");
             if gated && !self.approved(id, name, args).await {
-                return (false, format!("tool `{name}` denied (lane mode / approver)"), 0);
+                return (
+                    false,
+                    format!("tool `{name}` denied (lane mode / approver)"),
+                    0,
+                );
             }
             return self.execute_session_tool(name, args).await;
         }
@@ -506,14 +558,22 @@ impl AgentRun {
             // lane.dispatch spawns a worker subsession with the project's
             // implementation role settings. Always gated like session.spawn.
             if !self.approved(id, name, args).await {
-                return (false, format!("tool `{name}` denied (lane mode / approver)"), 0);
+                return (
+                    false,
+                    format!("tool `{name}` denied (lane mode / approver)"),
+                    0,
+                );
             }
             return self.execute_lane_tool(name, args).await;
         }
         // Approval gate (covers plan.* + local + MCP via the executor).
         let allowed = self.approved(id, name, args).await;
         if !allowed {
-            return (false, format!("tool `{name}` denied (lane mode / approver)"), 0);
+            return (
+                false,
+                format!("tool `{name}` denied (lane mode / approver)"),
+                0,
+            );
         }
         let t0 = std::time::Instant::now();
         let (ok, output) = self.tools.execute(name, args).await;
@@ -598,7 +658,11 @@ impl AgentRun {
                 let target = str_arg("session_id").unwrap_or_default();
                 let message = str_arg("message").unwrap_or_default();
                 if target.trim().is_empty() || message.trim().is_empty() {
-                    return (false, "session.send_message needs `session_id` + `message`".into(), 0);
+                    return (
+                        false,
+                        "session.send_message needs `session_id` + `message`".into(),
+                        0,
+                    );
                 }
                 bridge
                     .send_message(&self.session_id, &target, &message, bool_arg("wait", false))
@@ -626,10 +690,14 @@ impl AgentRun {
         match out {
             Ok(text) => {
                 if matches!(name, "session.spawn" | "session.send_message") {
-                    self.emit(RunEvent::Notice { text: text.chars().take(240).collect() });
+                    self.emit(RunEvent::Notice {
+                        text: text.chars().take(240).collect(),
+                    });
                     let _ = self.store.append(
                         &self.session_id,
-                        &Event::System { text: format!("{name}: {text}") },
+                        &Event::System {
+                            text: format!("{name}: {text}"),
+                        },
                     );
                 }
                 (true, text, ms)
@@ -641,11 +709,7 @@ impl AgentRun {
     /// `lane.dispatch`: orchestrator spawns a worker subsession preconfigured
     /// with the project's implementation role (model/effort). Falls back to
     /// the caller's lane/model when the roster is empty.
-    async fn execute_lane_tool(
-        &self,
-        name: &str,
-        args: &serde_json::Value,
-    ) -> (bool, String, u64) {
+    async fn execute_lane_tool(&self, name: &str, args: &serde_json::Value) -> (bool, String, u64) {
         let t0 = std::time::Instant::now();
         let Some(bridge) = &self.harness else {
             return (false, "lane tools unavailable in this run".into(), 0);
@@ -682,10 +746,14 @@ impl AgentRun {
         let ms = ms_now(t0);
         match out {
             Ok(text) => {
-                self.emit(RunEvent::Notice { text: text.chars().take(240).collect() });
+                self.emit(RunEvent::Notice {
+                    text: text.chars().take(240).collect(),
+                });
                 let _ = self.store.append(
                     &self.session_id,
-                    &Event::System { text: format!("{name}: {text}") },
+                    &Event::System {
+                        text: format!("{name}: {text}"),
+                    },
                 );
                 // Best-effort shadow checkpoint hook: the orchestrator driver
                 // snapshots the repo worktree per turn when a lane root is a
@@ -705,7 +773,10 @@ impl AgentRun {
                     Ok(_) => {
                         let _ = self.store.append(
                             &self.session_id,
-                            &Event::Widget { fence: "parzi-widget".into(), payload },
+                            &Event::Widget {
+                                fence: "parzi-widget".into(),
+                                payload,
+                            },
                         );
                         (true, "rendered".into(), 0)
                     }
@@ -716,7 +787,10 @@ impl AgentRun {
                 Ok(_) => {
                     let _ = self.store.append(
                         &self.session_id,
-                        &Event::Widget { fence: "parzi-widget".into(), payload: args.clone() },
+                        &Event::Widget {
+                            fence: "parzi-widget".into(),
+                            payload: args.clone(),
+                        },
                     );
                     (true, "rendered".into(), 0)
                 }
@@ -726,7 +800,10 @@ impl AgentRun {
                 Ok(_) => {
                     let _ = self.store.append(
                         &self.session_id,
-                        &Event::Widget { fence: "parzi-diagram".into(), payload: args.clone() },
+                        &Event::Widget {
+                            fence: "parzi-diagram".into(),
+                            payload: args.clone(),
+                        },
                     );
                     (true, "rendered".into(), 0)
                 }
@@ -746,7 +823,10 @@ impl AgentRun {
         let mut candidate = artifacts::validate_artifact(args).map_err(|e| e.to_string())?;
         let existing = self.existing_artifacts();
         if artifacts::is_same_content(&candidate.id, &candidate.content, &existing) {
-            return Ok(format!("artifact {} unchanged (no new version)", candidate.id));
+            return Ok(format!(
+                "artifact {} unchanged (no new version)",
+                candidate.id
+            ));
         }
         candidate.version = artifacts::next_version(&candidate.id, &existing);
         let payload = serde_json::to_value(&candidate).map_err(|e| e.to_string())?;
@@ -762,7 +842,10 @@ impl AgentRun {
                 },
             )
             .map_err(|e| e.to_string())?;
-        Ok(format!("rendered artifact {} v{}", candidate.id, candidate.version))
+        Ok(format!(
+            "rendered artifact {} v{}",
+            candidate.id, candidate.version
+        ))
     }
 
     fn existing_artifacts(&self) -> Vec<artifacts::ArtifactV1> {
@@ -804,7 +887,11 @@ impl AgentRun {
         } else {
             "code"
         };
-        let language = if kind == "code" { Some(block.0.clone()) } else { None };
+        let language = if kind == "code" {
+            Some(block.0.clone())
+        } else {
+            None
+        };
         let candidate = artifacts::ArtifactV1 {
             artifact: artifacts::ARTIFACT_VERSION,
             id: id.clone(),
@@ -850,9 +937,9 @@ fn longest_fenced_block(text: &str) -> Option<(String, String)> {
         } else if in_block && line.trim_start().starts_with("```") {
             in_block = false;
             let len = cur_body.chars().count();
-            let replace = best.as_ref().is_none_or(|(_, b): &(String, String)| {
-                b.chars().count() < len
-            });
+            let replace = best
+                .as_ref()
+                .is_none_or(|(_, b): &(String, String)| b.chars().count() < len);
             if replace {
                 best = Some((cur_lang.clone(), cur_body.clone()));
             }
@@ -872,9 +959,17 @@ fn ms_now(t0: std::time::Instant) -> u64 {
 /// Short human reason for a failover hop ("rate limit reached").
 fn retry_reason(err: &str) -> String {
     let e = err.to_lowercase();
-    if e.contains("429") || e.contains("rate limit") || e.contains("rate_limit") || e.contains("rate-limited") {
+    if e.contains("429")
+        || e.contains("rate limit")
+        || e.contains("rate_limit")
+        || e.contains("rate-limited")
+    {
         "rate limit reached".to_string()
-    } else if e.contains("overload") || e.contains("503") || e.contains("529") || e.contains("capacity") {
+    } else if e.contains("overload")
+        || e.contains("503")
+        || e.contains("529")
+        || e.contains("capacity")
+    {
         "backend overloaded".to_string()
     } else {
         "provider error".to_string()
@@ -934,7 +1029,9 @@ pub fn system_parts(cfg: &ParziConfig, project: &str, lane: &str) -> Vec<String>
         } else {
             knowledge
         };
-        parts.push(format!("# Project Cumulative Knowledge & Lessons Learned\n\n{capped}"));
+        parts.push(format!(
+            "# Project Cumulative Knowledge & Lessons Learned\n\n{capped}"
+        ));
     }
     parts
 }

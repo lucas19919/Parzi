@@ -11,7 +11,7 @@ use parzi_core::store::SessionStore;
 use parzi_providers::{AuthStatus, ChatReq, EventRx, Model, Provider, StreamEvent};
 use parzi_runtime::handler::HarnessBridge;
 use parzi_runtime::mcp::McpManager;
-use parzi_runtime::tools::{ToolExecutor, is_session_tool, session_defs};
+use parzi_runtime::tools::{is_session_tool, session_defs, ToolExecutor};
 use parzi_runtime::Orchestrator;
 
 /// Answers every turn with one fixed text chunk, then ends the turn.
@@ -35,10 +35,7 @@ impl Provider for AnswerProvider {
     }
 }
 
-fn answer_factory(
-    _id: &str,
-    _cfg: &ParziConfig,
-) -> Result<Box<dyn Provider>> {
+fn answer_factory(_id: &str, _cfg: &ParziConfig) -> Result<Box<dyn Provider>> {
     Ok(Box::new(AnswerProvider))
 }
 
@@ -58,7 +55,8 @@ fn test_orch(max: usize) -> (Arc<Orchestrator>, SessionStore) {
     cfg.orchestrator.max_concurrent = max;
     cfg.orchestrator.queue_when_busy = true;
     let store = SessionStore::open().unwrap();
-    let orch = Arc::new(Orchestrator::new(cfg, store.clone()).with_factory(Arc::new(answer_factory)));
+    let orch =
+        Arc::new(Orchestrator::new(cfg, store.clone()).with_factory(Arc::new(answer_factory)));
     (orch, store)
 }
 
@@ -100,7 +98,15 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
     let h = orch.harness();
 
     let sub_json = h
-        .spawn_session(&parent.id, "research", "look into x", true, None, None, false)
+        .spawn_session(
+            &parent.id,
+            "research",
+            "look into x",
+            true,
+            None,
+            None,
+            false,
+        )
         .await
         .unwrap();
     let sub: serde_json::Value = serde_json::from_str(&sub_json).unwrap();
@@ -111,10 +117,22 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
         store.get(&sub_id).unwrap().parent_id.as_deref(),
         Some(parent.id.as_str())
     );
-    assert!(store.list_children(&parent.id).unwrap().iter().any(|m| m.id == sub_id));
+    assert!(store
+        .list_children(&parent.id)
+        .unwrap()
+        .iter()
+        .any(|m| m.id == sub_id));
 
     let full_json = h
-        .spawn_session(&parent.id, "side quest", "do y", false, Some("answer/other".into()), None, false)
+        .spawn_session(
+            &parent.id,
+            "side quest",
+            "do y",
+            false,
+            Some("answer/other".into()),
+            None,
+            false,
+        )
         .await
         .unwrap();
     let full: serde_json::Value = serde_json::from_str(&full_json).unwrap();
@@ -134,7 +152,15 @@ async fn spawn_wait_collects_child_reply() {
 
     let out = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        h.spawn_session(&parent.id, "research", "look into x", true, None, None, true),
+        h.spawn_session(
+            &parent.id,
+            "research",
+            "look into x",
+            true,
+            None,
+            None,
+            true,
+        ),
     )
     .await
     .expect("spawn wait timed out")
@@ -185,11 +211,19 @@ async fn read_and_list_inspect_sessions() {
     let parent = store.create("boss", "t", "", "answer/model").unwrap();
     let h = orch.harness();
     let sub_json = h
-        .spawn_session(&parent.id, "research", "look into x", true, None, None, false)
+        .spawn_session(
+            &parent.id,
+            "research",
+            "look into x",
+            true,
+            None,
+            None,
+            false,
+        )
         .await
         .unwrap();
-    let sub_id: String = serde_json::from_str::<serde_json::Value>(&sub_json)
-        .unwrap()["session_id"]
+    let sub_id: String = serde_json::from_str::<serde_json::Value>(&sub_json).unwrap()
+        ["session_id"]
         .as_str()
         .unwrap()
         .to_string();
@@ -255,8 +289,7 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
         .spawn_session(&parent.id, "one", "first work", true, None, None, false)
         .await
         .unwrap();
-    let first_id: String = serde_json::from_str::<serde_json::Value>(&first)
-        .unwrap()["session_id"]
+    let first_id: String = serde_json::from_str::<serde_json::Value>(&first).unwrap()["session_id"]
         .as_str()
         .unwrap()
         .to_string();

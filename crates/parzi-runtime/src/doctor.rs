@@ -13,10 +13,18 @@ pub struct Check {
 
 impl Check {
     fn ok(name: &str, detail: impl Into<String>) -> Self {
-        Self { name: name.into(), ok: true, detail: detail.into() }
+        Self {
+            name: name.into(),
+            ok: true,
+            detail: detail.into(),
+        }
     }
     fn fail(name: &str, detail: impl Into<String>) -> Self {
-        Self { name: name.into(), ok: false, detail: detail.into() }
+        Self {
+            name: name.into(),
+            ok: false,
+            detail: detail.into(),
+        }
     }
 }
 
@@ -92,7 +100,9 @@ impl Doctor {
                 }
             };
             match p.auth_status() {
-                parzi_providers::AuthStatus::Ok => out.push(Check::ok(&format!("auth:{id}"), "credential present")),
+                parzi_providers::AuthStatus::Ok => {
+                    out.push(Check::ok(&format!("auth:{id}"), "credential present"))
+                }
                 parzi_providers::AuthStatus::Missing(h) => {
                     out.push(Check::fail(&format!("auth:{id}"), format!("missing — {h}")))
                 }
@@ -115,20 +125,27 @@ impl Doctor {
             "strict — 429s halt, no cross-provider hop"
         };
         out.push(Check::ok("routing:failover", mode));
-        let auto: Vec<String> =
-            parzi_providers::router::auto_chain("medium", &self.cfg)
-                .into_iter()
-                .map(|r| r.provider)
-                .collect();
+        let auto: Vec<String> = parzi_providers::router::auto_chain("medium", &self.cfg)
+            .into_iter()
+            .map(|r| r.provider)
+            .collect();
         out.push(Check::ok("routing:chain:auto", auto.join(" -> ")));
         let p = self.cfg.default_provider.clone();
-        let m = self.cfg.providers.get(&p).map(|e| e.default_model.clone()).unwrap_or_default();
+        let m = self
+            .cfg
+            .providers
+            .get(&p)
+            .map(|e| e.default_model.clone())
+            .unwrap_or_default();
         let explicit: Vec<String> =
             parzi_providers::router::tier_fallback_chain(&p, &m, "medium", &self.cfg)
                 .into_iter()
                 .map(|r| r.provider)
                 .collect();
-        out.push(Check::ok(&format!("routing:chain:{p}"), explicit.join(" -> ")));
+        out.push(Check::ok(
+            &format!("routing:chain:{p}"),
+            explicit.join(" -> "),
+        ));
         out
     }
 
@@ -142,11 +159,15 @@ impl Doctor {
             self.cfg.orchestrator.mcp_idle_kill_secs,
         );
         for name in mgr.server_names() {
-            match tokio::time::timeout(std::time::Duration::from_secs(15), mgr.list_tools(&name)).await
+            match tokio::time::timeout(std::time::Duration::from_secs(15), mgr.list_tools(&name))
+                .await
             {
                 Ok(Ok(tools)) => {
                     mgr.stop(&name).await;
-                    out.push(Check::ok(&format!("mcp:{name}"), format!("{} tools", tools.len())));
+                    out.push(Check::ok(
+                        &format!("mcp:{name}"),
+                        format!("{} tools", tools.len()),
+                    ));
                 }
                 Ok(Err(e)) => out.push(Check::fail(&format!("mcp:{name}"), e.to_string())),
                 Err(_) => out.push(Check::fail(&format!("mcp:{name}"), "probe timed out")),

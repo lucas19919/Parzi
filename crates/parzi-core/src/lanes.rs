@@ -365,7 +365,9 @@ pub fn migrate_tasks_to_lanes(project: &str) -> Result<usize> {
 pub fn read_knowledge(project: &str) -> Option<String> {
     let clean = safe_name(project).ok()?;
     let path = paths::project_knowledge_path(&clean).ok()?;
-    std::fs::read_to_string(path).ok().filter(|t| !t.trim().is_empty())
+    std::fs::read_to_string(path)
+        .ok()
+        .filter(|t| !t.trim().is_empty())
 }
 
 /// Append an architectural note, discovered pattern, or gotcha to cumulative knowledge.
@@ -388,4 +390,3 @@ pub fn append_knowledge(project: &str, note: &str) -> Result<()> {
     }
     Ok(())
 }
-

@@ -55,10 +55,7 @@ impl Provider for GoodProvider {
     }
 }
 
-fn failover_factory(
-    id: &str,
-    _cfg: &ParziConfig,
-) -> Result<Box<dyn Provider>> {
+fn failover_factory(id: &str, _cfg: &ParziConfig) -> Result<Box<dyn Provider>> {
     if id == "flaky" {
         Ok(Box::new(FlakyProvider))
     } else {
@@ -87,7 +84,12 @@ async fn explicit_pick_429_hops_with_route_transition() {
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(60), async {
         while let Some(ev) = rx.recv().await {
             match ev {
-                RunEvent::RouteTransition { from_provider, to_provider, reason, .. } => {
+                RunEvent::RouteTransition {
+                    from_provider,
+                    to_provider,
+                    reason,
+                    ..
+                } => {
                     hop = Some((from_provider, to_provider, reason));
                 }
                 RunEvent::Done { .. } => {

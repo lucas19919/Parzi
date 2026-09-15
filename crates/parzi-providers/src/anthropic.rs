@@ -6,8 +6,8 @@ use parzi_core::context::Role;
 use parzi_core::error::{ParziError, Result};
 
 use crate::types::{
-    AuthStatus, Billing, ChatReq, EventRx, Model, Provider, StreamEvent, ToolDef, desanitize_tool,
-    sanitize_tool,
+    desanitize_tool, sanitize_tool, AuthStatus, Billing, ChatReq, EventRx, Model, Provider,
+    StreamEvent, ToolDef,
 };
 
 pub struct AnthropicNative {
@@ -43,16 +43,16 @@ impl AnthropicNative {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(
             "anthropic-version",
-            Self::VERSION.parse().map_err(|_| {
-                ParziError::Provider(self.id.into(), "bad version header".into())
-            })?,
+            Self::VERSION
+                .parse()
+                .map_err(|_| ParziError::Provider(self.id.into(), "bad version header".into()))?,
         );
         if let Some(t) = &self.oauth_token {
             headers.insert(
                 reqwest::header::AUTHORIZATION,
-                format!("Bearer {t}").parse().map_err(|_| {
-                    ParziError::Provider(self.id.into(), "bad token".into())
-                })?,
+                format!("Bearer {t}")
+                    .parse()
+                    .map_err(|_| ParziError::Provider(self.id.into(), "bad token".into()))?,
             );
             if !self.beta.is_empty() {
                 headers.insert(
@@ -65,9 +65,8 @@ impl AnthropicNative {
         } else if let Some(k) = &self.api_key {
             headers.insert(
                 "x-api-key",
-                k.parse().map_err(|_| {
-                    ParziError::Provider(self.id.into(), "bad api key".into())
-                })?,
+                k.parse()
+                    .map_err(|_| ParziError::Provider(self.id.into(), "bad api key".into()))?,
             );
         }
         reqwest::Client::builder()
@@ -215,7 +214,10 @@ async fn run(
             .unwrap_or_default();
         let text = resp.text().await.unwrap_or_default();
         let short: String = text.chars().take(300).collect();
-        return Err(ParziError::Provider(id.into(), format!("http {code}{retry}: {short}")));
+        return Err(ParziError::Provider(
+            id.into(),
+            format!("http {code}{retry}: {short}"),
+        ));
     }
     let mut tool_json = String::new();
     let mut tool_name = String::new();
@@ -281,15 +283,23 @@ async fn run(
                 "message_delta" => {
                     if let Some(u) = v.get("usage") {
                         let out = u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                        let _ = tx.send(Ok(StreamEvent::Usage { tokens_in: 0, tokens_out: out }));
+                        let _ = tx.send(Ok(StreamEvent::Usage {
+                            tokens_in: 0,
+                            tokens_out: out,
+                        }));
                     }
                 }
                 "message_start" => {
-                    if let Some(u) =
-                        v.get("message").and_then(|m| m.get("usage")).and_then(|u| u.as_object())
+                    if let Some(u) = v
+                        .get("message")
+                        .and_then(|m| m.get("usage"))
+                        .and_then(|u| u.as_object())
                     {
                         let inp = u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                        let _ = tx.send(Ok(StreamEvent::Usage { tokens_in: inp, tokens_out: 0 }));
+                        let _ = tx.send(Ok(StreamEvent::Usage {
+                            tokens_in: inp,
+                            tokens_out: 0,
+                        }));
                     }
                 }
                 _ => {}
@@ -299,7 +309,11 @@ async fn run(
     if !tool_name.is_empty() {
         let args = serde_json::from_str(&tool_json).unwrap_or(serde_json::Value::Null);
         let name = desanitize_tool(&tools, &tool_name);
-        let _ = tx.send(Ok(StreamEvent::ToolCall { id: tool_id, name, args }));
+        let _ = tx.send(Ok(StreamEvent::ToolCall {
+            id: tool_id,
+            name,
+            args,
+        }));
     }
     Ok(())
 }
@@ -310,10 +324,21 @@ mod tests {
 
     #[test]
     fn current_models_take_effort_not_budget() {
-        for m in ["claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "claude-opus-4-8", "claude-sonnet-4-6"] {
+        for m in [
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "claude-fable-5-1",
+            "claude-opus-4-8",
+            "claude-sonnet-4-6",
+        ] {
             assert!(!takes_budget(m), "{m}");
         }
-        for m in ["claude-haiku-4-5", "claude-sonnet-4-5", "claude-opus-4-1", "claude-3-7-sonnet"] {
+        for m in [
+            "claude-haiku-4-5",
+            "claude-sonnet-4-5",
+            "claude-opus-4-1",
+            "claude-3-7-sonnet",
+        ] {
             assert!(takes_budget(m), "{m}");
         }
     }

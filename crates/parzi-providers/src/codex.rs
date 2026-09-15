@@ -15,8 +15,8 @@ use parzi_core::context::Role;
 use parzi_core::error::{ParziError, Result};
 
 use crate::types::{
-    AuthStatus, Billing, ChatReq, EventRx, Model, Provider, StreamEvent, desanitize_tool, env_key,
-    keyring_get, read_json_file, sanitize_tool,
+    desanitize_tool, env_key, keyring_get, read_json_file, sanitize_tool, AuthStatus, Billing,
+    ChatReq, EventRx, Model, Provider, StreamEvent,
 };
 
 const API_BASE: &str = "https://api.openai.com/v1";
@@ -209,16 +209,13 @@ impl Provider for Codex {
                     return;
                 }
             };
-            let resp = match client
-                .post(&url)
-                .bearer_auth(&key)
-                .json(&body)
-                .send()
-                .await
-            {
+            let resp = match client.post(&url).bearer_auth(&key).json(&body).send().await {
                 Ok(r) => r,
                 Err(e) => {
-                    let _ = tx.send(Err(ParziError::Provider("codex".into(), format!("request: {e}"))));
+                    let _ = tx.send(Err(ParziError::Provider(
+                        "codex".into(),
+                        format!("request: {e}"),
+                    )));
                     return;
                 }
             };
@@ -247,7 +244,10 @@ impl Provider for Codex {
                 let chunk = match chunk {
                     Ok(c) => c,
                     Err(e) => {
-                        let _ = tx.send(Err(ParziError::Provider("codex".into(), format!("stream: {e}"))));
+                        let _ = tx.send(Err(ParziError::Provider(
+                            "codex".into(),
+                            format!("stream: {e}"),
+                        )));
                         return;
                     }
                 };
@@ -285,18 +285,37 @@ impl Provider for Codex {
                         }
                         "response.output_item.done" => {
                             if let Some(item) = v.get("item") {
-                                if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
-                                    fn_name = item.get("name").and_then(|n| n.as_str()).unwrap_or("").into();
-                                    call_id = item.get("call_id").and_then(|n| n.as_str()).unwrap_or("call_0").into();
-                                    arg_buf = item.get("arguments").and_then(|a| a.as_str()).unwrap_or("").into();
+                                if item.get("type").and_then(|t| t.as_str())
+                                    == Some("function_call")
+                                {
+                                    fn_name = item
+                                        .get("name")
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("")
+                                        .into();
+                                    call_id = item
+                                        .get("call_id")
+                                        .and_then(|n| n.as_str())
+                                        .unwrap_or("call_0")
+                                        .into();
+                                    arg_buf = item
+                                        .get("arguments")
+                                        .and_then(|a| a.as_str())
+                                        .unwrap_or("")
+                                        .into();
                                 }
                             }
                         }
                         "response.completed" => {
                             if let Some(u) = v.get("response").and_then(|r| r.get("usage")) {
-                                let pin = u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                                let pout = u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                                let _ = tx.send(Ok(StreamEvent::Usage { tokens_in: pin, tokens_out: pout }));
+                                let pin =
+                                    u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
+                                let pout =
+                                    u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
+                                let _ = tx.send(Ok(StreamEvent::Usage {
+                                    tokens_in: pin,
+                                    tokens_out: pout,
+                                }));
                             }
                         }
                         _ => {}
@@ -306,7 +325,11 @@ impl Provider for Codex {
             if !fn_name.is_empty() {
                 let args = serde_json::from_str(&arg_buf).unwrap_or(serde_json::Value::Null);
                 let name = desanitize_tool(&defs, &fn_name);
-                let _ = tx.send(Ok(StreamEvent::ToolCall { id: call_id, name, args }));
+                let _ = tx.send(Ok(StreamEvent::ToolCall {
+                    id: call_id,
+                    name,
+                    args,
+                }));
             }
         });
         Ok(rx)
@@ -328,7 +351,13 @@ mod tests {
 
     #[test]
     fn dead_subscription_ids_ride_the_flagship() {
-        for dead in ["gpt-5.3-codex", "gpt-5-codex", "gpt-5.4", "gpt-5.4-mini", "gpt-5.2"] {
+        for dead in [
+            "gpt-5.3-codex",
+            "gpt-5-codex",
+            "gpt-5.4",
+            "gpt-5.4-mini",
+            "gpt-5.2",
+        ] {
             assert_eq!(subscription_model(dead), "gpt-5.5", "{dead}");
         }
         for live in ["gpt-5.5", "gpt-5.6-terra", "gpt-5.6-luna"] {

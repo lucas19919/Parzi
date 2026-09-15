@@ -17,8 +17,8 @@ pub mod router;
 pub mod types;
 
 pub use types::{
-    AuthStatus, Billing, ChatReq, EventRx, EventTx, Model, Provider, ProviderHealth, StreamEvent,
-    ToolDef, desanitize_tool, sanitize_tool,
+    desanitize_tool, sanitize_tool, AuthStatus, Billing, ChatReq, EventRx, EventTx, Model,
+    Provider, ProviderHealth, StreamEvent, ToolDef,
 };
 
 use parzi_core::config::ParziConfig;
@@ -76,7 +76,10 @@ pub fn provider(
             "unknown provider (Parzi routes claude, codex, antigravity, opencode, xai)".into(),
         )
     })?;
-    let entry = cfg.providers.get(id).or_else(|| cfg.providers.get(router_id));
+    let entry = cfg
+        .providers
+        .get(id)
+        .or_else(|| cfg.providers.get(router_id));
     let base = entry.and_then(|e| e.base_url.clone());
     let refresh = cfg.catalog_refresh;
     let boxed: Box<dyn Provider> = match id {

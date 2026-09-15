@@ -208,7 +208,10 @@ pub fn find_token(v: &serde_json::Value) -> Option<String> {
             for (k, val) in map {
                 if let serde_json::Value::String(s) = val {
                     let kl = k.to_lowercase();
-                    if (kl.contains("token") || kl.contains("api_key") || kl == "key" || kl == "apikey")
+                    if (kl.contains("token")
+                        || kl.contains("api_key")
+                        || kl == "key"
+                        || kl == "apikey")
                         && s.trim().len() > 10
                     {
                         return Some(s.clone());

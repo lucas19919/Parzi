@@ -42,7 +42,12 @@ pub fn headers() -> reqwest::header::HeaderMap {
         .unwrap_or(0))
         % agents.len();
     h.insert("User-Agent", agents[pick].parse().unwrap());
-    h.insert("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1".parse().unwrap());
+    h.insert(
+        "X-Goog-Api-Client",
+        "google-cloud-sdk vscode_cloudshelleditor/0.1"
+            .parse()
+            .unwrap(),
+    );
     h.insert(
         "Client-Metadata",
         r#"{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}"#
@@ -99,11 +104,21 @@ async fn token_request(form: &[(&str, &str)]) -> Result<Tokens> {
         .await
         .map_err(|e| ParziError::Provider("antigravity".into(), format!("oauth parse: {e}")))?;
     if let Some(err) = v.get("error") {
-        return Err(ParziError::Provider("antigravity".into(), format!("oauth: {err}")));
+        return Err(ParziError::Provider(
+            "antigravity".into(),
+            format!("oauth: {err}"),
+        ));
     }
     Ok(Tokens {
-        access: v.get("access_token").and_then(|t| t.as_str()).unwrap_or("").into(),
-        refresh: v.get("refresh_token").and_then(|t| t.as_str()).map(str::to_string),
+        access: v
+            .get("access_token")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .into(),
+        refresh: v
+            .get("refresh_token")
+            .and_then(|t| t.as_str())
+            .map(str::to_string),
     })
 }
 
@@ -141,9 +156,10 @@ pub async fn wait_for_code(timeout_secs: u64) -> Result<String> {
         .map_err(|_| ParziError::Provider("antigravity".into(), "sign-in expired (5 min)".into()))?
         .map_err(|e| ParziError::Provider("antigravity".into(), format!("callback: {e}")))?;
     let mut buf = vec![0u8; 8192];
-    let n = sock.read(&mut buf).await.map_err(|e| {
-        ParziError::Provider("antigravity".into(), format!("callback read: {e}"))
-    })?;
+    let n = sock
+        .read(&mut buf)
+        .await
+        .map_err(|e| ParziError::Provider("antigravity".into(), format!("callback read: {e}")))?;
     let req = String::from_utf8_lossy(&buf[..n]);
     let code = req
         .split_whitespace()

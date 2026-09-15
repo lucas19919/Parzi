@@ -7,11 +7,11 @@ use std::sync::Arc;
 use parzi_core::config::ParziConfig;
 use parzi_core::error::{ParziError, Result};
 use parzi_core::store::{Event, SessionMeta, SessionStatus, SessionStore};
-use tokio::sync::{Mutex, Notify, mpsc};
+use tokio::sync::{mpsc, Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
 use crate::circuit_breaker::CircuitBreaker;
-use crate::handler::{AgentRun, HarnessBridge, RunEvent, system_parts};
+use crate::handler::{system_parts, AgentRun, HarnessBridge, RunEvent};
 use crate::mcp::McpManager;
 use crate::tools::{ApprovalMode, Approver, DenyApprover, ToolExecutor};
 
@@ -130,7 +130,10 @@ pub struct Orchestrator {
 
 impl Orchestrator {
     pub fn new(cfg: ParziConfig, store: SessionStore) -> Self {
-        let mcp = Arc::new(McpManager::new(cfg.mcp.servers.clone(), cfg.orchestrator.mcp_idle_kill_secs));
+        let mcp = Arc::new(McpManager::new(
+            cfg.mcp.servers.clone(),
+            cfg.orchestrator.mcp_idle_kill_secs,
+        ));
         Self {
             cfg: std::sync::Arc::new(std::sync::RwLock::new(cfg)),
             store,
@@ -212,7 +215,11 @@ impl Orchestrator {
                 id: m.id.clone(),
                 status: m.status,
                 model: m.model.clone(),
-                lane: if m.lane.is_empty() { m.project.clone() } else { format!("{}/{}", m.project, m.lane) },
+                lane: if m.lane.is_empty() {
+                    m.project.clone()
+                } else {
+                    format!("{}/{}", m.project, m.lane)
+                },
                 tokens_in: m.tokens_in,
                 tokens_out: m.tokens_out,
                 cost_usd: m.cost_usd,
@@ -241,7 +248,13 @@ impl Orchestrator {
             h.len()
         };
         let effort = normalize_effort(effort);
-        let title: String = prompt.lines().next().unwrap_or("untitled").chars().take(80).collect();
+        let title: String = prompt
+            .lines()
+            .next()
+            .unwrap_or("untitled")
+            .chars()
+            .take(80)
+            .collect();
 
         let mut meta = self.store.create(&title, project, lane, model_spec)?;
         meta.cwd = cwd.to_string();
@@ -293,7 +306,9 @@ impl Orchestrator {
             let mut h = self.handles.lock().await;
             h.retain(|_, handle| !handle._task.is_finished());
             if h.contains_key(id) {
-                return Err(ParziError::Store(format!("run {id} is active; kill it first")));
+                return Err(ParziError::Store(format!(
+                    "run {id} is active; kill it first"
+                )));
             }
         }
         let meta = self.store.get(id)?;
@@ -311,7 +326,11 @@ impl Orchestrator {
             lane: meta.lane.clone(),
             model_spec: spec,
             prompt: prompt.to_string(),
-            cwd: if cwd.is_empty() { meta.cwd.clone() } else { cwd.to_string() },
+            cwd: if cwd.is_empty() {
+                meta.cwd.clone()
+            } else {
+                cwd.to_string()
+            },
             effort,
             attachments,
             approver,
@@ -324,7 +343,9 @@ impl Orchestrator {
         let snap = self.config();
         if live >= snap.orchestrator.max_concurrent.max(1) {
             if !snap.orchestrator.queue_when_busy {
-                return Err(ParziError::Store("busy: max concurrent runs reached".into()));
+                return Err(ParziError::Store(
+                    "busy: max concurrent runs reached".into(),
+                ));
             }
             self.store.set_status(id, SessionStatus::Queued)?;
             self.queue.lock().await.push_back(q);
@@ -364,7 +385,8 @@ impl Orchestrator {
             let mut slots = vec![];
             for route in parzi_providers::router::auto_chain(effort, cfg) {
                 let provider = factory(&route.provider, cfg)?;
-                let (price_in, price_out) = priced(provider.as_ref(), &route.provider, &route.model);
+                let (price_in, price_out) =
+                    priced(provider.as_ref(), &route.provider, &route.model);
                 slots.push(ProviderSlot {
                     provider_id: route.provider,
                     provider,
@@ -393,12 +415,9 @@ impl Orchestrator {
         // Strict mode (auto_failover=false): single slot, 429s halt.
         if cfg.routing.auto_failover {
             let mut slots = vec![];
-            for route in parzi_providers::router::tier_fallback_chain(
-                &provider_id,
-                &model_id,
-                effort,
-                cfg,
-            ) {
+            for route in
+                parzi_providers::router::tier_fallback_chain(&provider_id, &model_id, effort, cfg)
+            {
                 match factory(&route.provider, cfg) {
                     Ok(provider) => {
                         let (price_in, price_out) =
@@ -566,7 +585,9 @@ impl Orchestrator {
             } else if let Err(e) = Self::launch(self.pump_parts(), q).await {
                 let _ = self.store.append(
                     &meta.id,
-                    &Event::System { text: format!("subsession run failed to start: {e}") },
+                    &Event::System {
+                        text: format!("subsession run failed to start: {e}"),
+                    },
                 );
             }
         }
@@ -591,7 +612,10 @@ impl Orchestrator {
                     continue;
                 }
                 mode = ApprovalMode::parse(
-                    &p.defaults.mode.clone().unwrap_or_else(|| cfg.lanes.default_mode.clone()),
+                    &p.defaults
+                        .mode
+                        .clone()
+                        .unwrap_or_else(|| cfg.lanes.default_mode.clone()),
                 );
                 if !p.defaults.allowed_tools.is_empty() {
                     allowed.clone_from(&p.defaults.allowed_tools);
@@ -694,7 +718,9 @@ impl Orchestrator {
             if let Err(e) = run.run(&prompt).await {
                 let _ = store.append(
                     &sid_task,
-                    &parzi_core::store::Event::System { text: format!("run failed: {e}") },
+                    &parzi_core::store::Event::System {
+                        text: format!("run failed: {e}"),
+                    },
                 );
             }
             // B4: release the slot before waking the pump. Finished runs must
@@ -704,7 +730,13 @@ impl Orchestrator {
             // launch→driver→pump→launch await cycle that Send cannot prove.
             parts.notify.notify_one();
         });
-        handles.lock().await.insert(sid, Handle { cancel, _task: task });
+        handles.lock().await.insert(
+            sid,
+            Handle {
+                cancel,
+                _task: task,
+            },
+        );
         Ok(rx)
     }
 
@@ -844,7 +876,13 @@ impl HarnessBridge for Pump {
     ) -> Result<String> {
         let caller = self.store.get(caller_id)?;
         let title: String = if title.trim().is_empty() {
-            prompt.lines().next().unwrap_or("subsession").chars().take(80).collect()
+            prompt
+                .lines()
+                .next()
+                .unwrap_or("subsession")
+                .chars()
+                .take(80)
+                .collect()
         } else {
             title.chars().take(80).collect()
         };
@@ -922,7 +960,12 @@ impl HarnessBridge for Pump {
             h.contains_key(session_id)
         };
         if still_live {
-            self.store.append(session_id, &Event::User { text: message.into() })?;
+            self.store.append(
+                session_id,
+                &Event::User {
+                    text: message.into(),
+                },
+            )?;
             if !wait {
                 return Ok(serde_json::json!({
                     "session_id": session_id,
@@ -992,16 +1035,27 @@ impl HarnessBridge for Pump {
                 Event::User { text } => format!("user: {}\n", truncate(text, 1_000)),
                 Event::Assistant { text, .. } => format!("assistant: {}\n", truncate(text, 2_000)),
                 Event::ToolCall { name, .. } => format!("tool_call: {name}\n"),
-                Event::ToolResult { name, ok, output, .. } => {
+                Event::ToolResult {
+                    name, ok, output, ..
+                } => {
                     format!("tool_result({name}, ok={ok}): {}\n", truncate(output, 500))
                 }
                 Event::Reasoning { text } => format!("reasoning: {}\n", truncate(text, 300)),
-                Event::Checkpoint { summary } => format!("checkpoint: {}\n", truncate(summary, 300)),
+                Event::Checkpoint { summary } => {
+                    format!("checkpoint: {}\n", truncate(summary, 300))
+                }
                 Event::Widget { .. } => "[widget]\n".to_string(),
-                Event::Artifact { id, title, version, .. } => {
+                Event::Artifact {
+                    id, title, version, ..
+                } => {
                     format!("artifact: {title} ({id} v{version})\n")
                 }
-                Event::RouteTransition { from_provider, to_provider, reason, .. } => {
+                Event::RouteTransition {
+                    from_provider,
+                    to_provider,
+                    reason,
+                    ..
+                } => {
                     format!("route: {from_provider} -> {to_provider} ({reason})\n")
                 }
             };
@@ -1063,7 +1117,10 @@ mod tests {
     #[test]
     fn sticky_auto_holds_the_resolved_route() {
         assert_eq!(sticky_spec("auto", "opencode/kimi-k3"), "opencode/kimi-k3");
-        assert_eq!(sticky_spec("auto", "claude-code/claude-opus-5"), "claude-code/claude-opus-5");
+        assert_eq!(
+            sticky_spec("auto", "claude-code/claude-opus-5"),
+            "claude-code/claude-opus-5"
+        );
         // Unresolved threads stay adaptive; explicit picks always win.
         assert_eq!(sticky_spec("auto", "auto"), "auto");
         assert_eq!(sticky_spec("auto", "something"), "auto");

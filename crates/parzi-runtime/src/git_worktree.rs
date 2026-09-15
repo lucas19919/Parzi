@@ -35,29 +35,35 @@ pub fn is_git_repo(path: &str) -> bool {
 
 /// Branch name generated for a session's isolated worktree.
 pub fn session_branch(lane: &str, session_id: &str) -> String {
-    let clean_lane = if lane.trim().is_empty() { "default" } else { lane.trim() };
+    let clean_lane = if lane.trim().is_empty() {
+        "default"
+    } else {
+        lane.trim()
+    };
     format!("parzi/{clean_lane}/{session_id}")
 }
 
 /// Create an isolated worktree for a session off `HEAD`.
 /// Returns the absolute path to the created worktree directory.
-pub fn create_worktree(
-    repo: &str,
-    project: &str,
-    lane: &str,
-    session_id: &str,
-) -> Result<PathBuf> {
+pub fn create_worktree(repo: &str, project: &str, lane: &str, session_id: &str) -> Result<PathBuf> {
     for c in ["..", "/", "\\", " ", "\n", "\r", "\t"] {
         if session_id.contains(c) {
             return Err(ParziError::Tool("worktree".into(), "bad session id".into()));
         }
     }
     let base = paths::worktrees_dir()?;
-    let clean_lane = if lane.trim().is_empty() { "default" } else { lane.trim() };
+    let clean_lane = if lane.trim().is_empty() {
+        "default"
+    } else {
+        lane.trim()
+    };
     let dest = base.join(project).join(clean_lane).join(session_id);
 
     if dest.exists() {
-        let _ = git(repo, &["worktree", "remove", "--force", &dest.to_string_lossy()]);
+        let _ = git(
+            repo,
+            &["worktree", "remove", "--force", &dest.to_string_lossy()],
+        );
         let _ = std::fs::remove_dir_all(&dest);
     }
     if let Some(parent) = dest.parent() {
@@ -126,7 +132,11 @@ mod tests {
     fn init_git_repo(dir: &Path) {
         git(&dir.to_string_lossy(), &["init"]).unwrap();
         git(&dir.to_string_lossy(), &["config", "user.name", "Test"]).unwrap();
-        git(&dir.to_string_lossy(), &["config", "user.email", "test@test.com"]).unwrap();
+        git(
+            &dir.to_string_lossy(),
+            &["config", "user.email", "test@test.com"],
+        )
+        .unwrap();
         std::fs::write(dir.join("README.md"), "# Test\n").unwrap();
         git(&dir.to_string_lossy(), &["add", "README.md"]).unwrap();
         git(&dir.to_string_lossy(), &["commit", "-m", "initial"]).unwrap();

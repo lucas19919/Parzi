@@ -45,8 +45,14 @@ fn sort_models_default_first_alpha_legacy_last() {
 #[test]
 fn catalog_lookup_accepts_aliases_and_rejects_retired() {
     assert!(!for_provider("claude").is_empty());
-    assert_eq!(for_provider("claude-code").len(), for_provider("claude").len());
-    assert_eq!(for_provider("anthropic").len(), for_provider("claude").len());
+    assert_eq!(
+        for_provider("claude-code").len(),
+        for_provider("claude").len()
+    );
+    assert_eq!(
+        for_provider("anthropic").len(),
+        for_provider("claude").len()
+    );
     assert!(!for_provider("grok").is_empty());
     assert!(for_provider("ollama").is_empty());
     assert!(for_provider("t3").is_empty());
@@ -65,6 +71,10 @@ fn every_catalog_has_exactly_one_default() {
 fn claude_ids_are_bare_aliases() {
     for m in for_provider("claude") {
         assert!(m.id.starts_with("claude-"), "{}", m.id);
-        assert!(!m.id.chars().rev().take(8).all(|c| c.is_ascii_digit()), "date-suffixed id {}", m.id);
+        assert!(
+            !m.id.chars().rev().take(8).all(|c| c.is_ascii_digit()),
+            "date-suffixed id {}",
+            m.id
+        );
     }
 }

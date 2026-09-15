@@ -77,7 +77,12 @@ impl ToolExecutor {
     /// Per-tool approval override for MCP tools (`auto`|`ask`|`deny`).
     /// Local/ui/session/plan/lane tools have no per-tool override: None = lane mode wins.
     pub fn approval_override(&self, name: &str) -> Option<ApprovalMode> {
-        if is_local(name) || is_ui_tool(name) || is_session_tool(name) || is_plan_tool(name) || is_lane_tool(name) {
+        if is_local(name)
+            || is_ui_tool(name)
+            || is_session_tool(name)
+            || is_plan_tool(name)
+            || is_lane_tool(name)
+        {
             return None;
         }
         let (server, tool) = name.split_once('.')?;
@@ -142,10 +147,16 @@ impl ToolExecutor {
             }
             // Server exposure gate (allow/deny lists) + per-tool deny override.
             if !self.mcp.is_tool_exposed(server, tool) {
-                return (false, format!("tool `{name}` is disabled for this connector"));
+                return (
+                    false,
+                    format!("tool `{name}` is disabled for this connector"),
+                );
             }
             if self.mcp.tool_mode(server, tool).as_deref() == Some("deny") {
-                return (false, format!("tool `{name}` is blocked by connector policy"));
+                return (
+                    false,
+                    format!("tool `{name}` is blocked by connector policy"),
+                );
             }
             return self.mcp.call_tool(server, tool, args.clone()).await;
         }
@@ -428,23 +439,91 @@ pub struct BuiltinTool {
 
 pub fn builtin_tools() -> Vec<BuiltinTool> {
     vec![
-        BuiltinTool { name: "fs.read", group: "Files", blurb: "Read files in the project" },
-        BuiltinTool { name: "fs.write", group: "Files", blurb: "Create and overwrite files" },
-        BuiltinTool { name: "fs.list", group: "Files", blurb: "Browse directories" },
-        BuiltinTool { name: "shell.exec", group: "Shell", blurb: "Run shell commands in the repo" },
-        BuiltinTool { name: "session.spawn", group: "Teamwork", blurb: "Spawn child subsessions" },
-        BuiltinTool { name: "session.send_message", group: "Teamwork", blurb: "Message other sessions" },
-        BuiltinTool { name: "session.read_session", group: "Teamwork", blurb: "Inspect other transcripts" },
-        BuiltinTool { name: "session.list_sessions", group: "Teamwork", blurb: "List sessions" },
-        BuiltinTool { name: "plan.read", group: "Plans", blurb: "Read the living project plan" },
-        BuiltinTool { name: "plan.update", group: "Plans", blurb: "Update plan checkboxes" },
-        BuiltinTool { name: "lane.dispatch", group: "Plans", blurb: "Dispatch a lane worker" },
-        BuiltinTool { name: "knowledge.read", group: "Knowledge", blurb: "Read recorded project knowledge" },
-        BuiltinTool { name: "knowledge.record", group: "Knowledge", blurb: "Record durable project knowledge" },
-        BuiltinTool { name: "ui.show_markdown", group: "Display", blurb: "Render rich text (always on)" },
-        BuiltinTool { name: "ui.show_widget", group: "Display", blurb: "Render cards and charts (always on)" },
-        BuiltinTool { name: "ui.show_diagram", group: "Display", blurb: "Render diagrams (always on)" },
-        BuiltinTool { name: "ui.show_artifact", group: "Display", blurb: "Save versioned artifacts" },
+        BuiltinTool {
+            name: "fs.read",
+            group: "Files",
+            blurb: "Read files in the project",
+        },
+        BuiltinTool {
+            name: "fs.write",
+            group: "Files",
+            blurb: "Create and overwrite files",
+        },
+        BuiltinTool {
+            name: "fs.list",
+            group: "Files",
+            blurb: "Browse directories",
+        },
+        BuiltinTool {
+            name: "shell.exec",
+            group: "Shell",
+            blurb: "Run shell commands in the repo",
+        },
+        BuiltinTool {
+            name: "session.spawn",
+            group: "Teamwork",
+            blurb: "Spawn child subsessions",
+        },
+        BuiltinTool {
+            name: "session.send_message",
+            group: "Teamwork",
+            blurb: "Message other sessions",
+        },
+        BuiltinTool {
+            name: "session.read_session",
+            group: "Teamwork",
+            blurb: "Inspect other transcripts",
+        },
+        BuiltinTool {
+            name: "session.list_sessions",
+            group: "Teamwork",
+            blurb: "List sessions",
+        },
+        BuiltinTool {
+            name: "plan.read",
+            group: "Plans",
+            blurb: "Read the living project plan",
+        },
+        BuiltinTool {
+            name: "plan.update",
+            group: "Plans",
+            blurb: "Update plan checkboxes",
+        },
+        BuiltinTool {
+            name: "lane.dispatch",
+            group: "Plans",
+            blurb: "Dispatch a lane worker",
+        },
+        BuiltinTool {
+            name: "knowledge.read",
+            group: "Knowledge",
+            blurb: "Read recorded project knowledge",
+        },
+        BuiltinTool {
+            name: "knowledge.record",
+            group: "Knowledge",
+            blurb: "Record durable project knowledge",
+        },
+        BuiltinTool {
+            name: "ui.show_markdown",
+            group: "Display",
+            blurb: "Render rich text (always on)",
+        },
+        BuiltinTool {
+            name: "ui.show_widget",
+            group: "Display",
+            blurb: "Render cards and charts (always on)",
+        },
+        BuiltinTool {
+            name: "ui.show_diagram",
+            group: "Display",
+            blurb: "Render diagrams (always on)",
+        },
+        BuiltinTool {
+            name: "ui.show_artifact",
+            group: "Display",
+            blurb: "Save versioned artifacts",
+        },
     ]
 }
 
@@ -474,7 +553,11 @@ mod tests {
             .collect();
         let catalog = builtin_tools();
         for n in &names {
-            assert_eq!(catalog.iter().filter(|t| t.name == n.as_str()).count(), 1, "catalog gap/dupe: {n}");
+            assert_eq!(
+                catalog.iter().filter(|t| t.name == n.as_str()).count(),
+                1,
+                "catalog gap/dupe: {n}"
+            );
         }
         assert_eq!(catalog.len(), names.len(), "catalog drift vs defs");
     }
@@ -584,7 +667,11 @@ async fn execute_plan_tool(name: &str, args: &serde_json::Value) -> (bool, Strin
             Err(e) => (false, e.to_string()),
         },
         "plan.update" => {
-            if let Some(append) = args.get("append").and_then(|v| v.as_str()).filter(|s| !s.trim().is_empty()) {
+            if let Some(append) = args
+                .get("append")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+            {
                 let mut raw = parzi_core::plan::read_plan(project).unwrap_or_default();
                 if !raw.ends_with('\n') {
                     raw.push('\n');
@@ -595,7 +682,10 @@ async fn execute_plan_tool(name: &str, args: &serde_json::Value) -> (bool, Strin
                     Err(e) => return (false, e.to_string()),
                 }
             }
-            let title = args.get("title_match").and_then(|v| v.as_str()).unwrap_or("");
+            let title = args
+                .get("title_match")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if title.trim().is_empty() {
                 return (false, "plan.update needs `title_match` or `append`".into());
             }
@@ -628,7 +718,10 @@ async fn execute_knowledge_tool(name: &str, args: &serde_json::Value) -> (bool, 
             if note.trim().is_empty() {
                 return (false, "knowledge.record needs `note`".into());
             }
-            let category = args.get("category").and_then(|v| v.as_str()).unwrap_or("decision");
+            let category = args
+                .get("category")
+                .and_then(|v| v.as_str())
+                .unwrap_or("decision");
             let formatted = format!("[{category}] {note}");
             match parzi_core::lanes::append_knowledge(project, &formatted) {
                 Ok(()) => (true, "knowledge recorded".into()),
@@ -679,7 +772,11 @@ async fn execute_local(name: &str, args: &serde_json::Value, cwd: &str) -> (bool
                     Ok(mut rd) => {
                         let mut out = String::new();
                         while let Ok(Some(e)) = rd.next_entry().await {
-                            let ft = e.file_type().await.map(|t| if t.is_dir() { "d" } else { "f" }).unwrap_or("?");
+                            let ft = e
+                                .file_type()
+                                .await
+                                .map(|t| if t.is_dir() { "d" } else { "f" })
+                                .unwrap_or("?");
                             out.push_str(&format!("{ft} {}\n", e.file_name().to_string_lossy()));
                             if out.len() > 12_000 {
                                 out.push_str("…(truncated)\n");
@@ -720,12 +817,18 @@ async fn execute_local(name: &str, args: &serde_json::Value, cwd: &str) -> (bool
             c.env_clear();
             for (k, v) in [
                 ("PATH", std::env::var("PATH").unwrap_or_default()),
-                ("SYSTEMROOT", std::env::var("SYSTEMROOT").unwrap_or_default()),
+                (
+                    "SYSTEMROOT",
+                    std::env::var("SYSTEMROOT").unwrap_or_default(),
+                ),
                 ("TEMP", std::env::var("TEMP").unwrap_or_default()),
                 ("TMP", std::env::var("TMP").unwrap_or_default()),
                 ("HOME", std::env::var("HOME").unwrap_or_default()),
                 ("APPDATA", std::env::var("APPDATA").unwrap_or_default()),
-                ("USERPROFILE", std::env::var("USERPROFILE").unwrap_or_default()),
+                (
+                    "USERPROFILE",
+                    std::env::var("USERPROFILE").unwrap_or_default(),
+                ),
                 ("LANG", std::env::var("LANG").unwrap_or_default()),
                 ("LC_ALL", std::env::var("LC_ALL").unwrap_or_default()),
             ] {
@@ -735,12 +838,10 @@ async fn execute_local(name: &str, args: &serde_json::Value, cwd: &str) -> (bool
             }
             c.stdin(std::process::Stdio::null());
             c.kill_on_drop(true);
-            c.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(timeout_ms),
-                c.output(),
-            )
-            .await
+            c.stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), c.output())
+                .await
             {
                 Ok(Ok(o)) => {
                     let mut s = String::from_utf8_lossy(&o.stdout).to_string();

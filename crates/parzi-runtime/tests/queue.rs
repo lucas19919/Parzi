@@ -45,18 +45,11 @@ fn test_orch(max: usize) -> (Arc<Orchestrator>, SessionStore) {
     // Isolate: point the store at a temp home via env is racy; instead rely
     // on unique titles and clean up our own sessions afterwards.
     let store = SessionStore::open().unwrap();
-    let orch = Arc::new(
-        Orchestrator::new(cfg, store.clone())
-            .with_factory(Arc::new(hang_factory)),
-    );
+    let orch = Arc::new(Orchestrator::new(cfg, store.clone()).with_factory(Arc::new(hang_factory)));
     (orch, store)
 }
 
-async fn wait_status(
-    store: &SessionStore,
-    id: &str,
-    want: SessionStatus,
-) -> bool {
+async fn wait_status(store: &SessionStore, id: &str, want: SessionStatus) -> bool {
     for _ in 0..100 {
         if let Ok(m) = store.get(id) {
             if m.status == want {

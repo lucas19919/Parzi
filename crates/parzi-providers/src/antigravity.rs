@@ -17,7 +17,10 @@ use parzi_core::context::Role;
 use parzi_core::error::{ParziError, Result};
 
 use crate::antigravity_oauth;
-use crate::types::{AuthStatus, Billing, ChatReq, EventRx, Model, Provider, StreamEvent, env_key, keyring_get, read_json_file};
+use crate::types::{
+    env_key, keyring_get, read_json_file, AuthStatus, Billing, ChatReq, EventRx, Model, Provider,
+    StreamEvent,
+};
 
 const HOSTS: &[&str] = &[
     "https://daily-cloudcode-pa.sandbox.googleapis.com",
@@ -33,20 +36,25 @@ pub struct Antigravity {
 
 impl Antigravity {
     pub fn new() -> Self {
-        let access_token = keyring_get("antigravity").or_else(|| env_key("ANTIGRAVITY_ACCESS_TOKEN"));
-        let refresh_token = keyring_get("antigravity-refresh")
-            .or_else(|| env_key("ANTIGRAVITY_REFRESH_TOKEN"));
+        let access_token =
+            keyring_get("antigravity").or_else(|| env_key("ANTIGRAVITY_ACCESS_TOKEN"));
+        let refresh_token =
+            keyring_get("antigravity-refresh").or_else(|| env_key("ANTIGRAVITY_REFRESH_TOKEN"));
         let project_id = env_key("ANTIGRAVITY_PROJECT_ID").or_else(|| first_account_project());
-        Self { access_token, refresh_token, project_id }
+        Self {
+            access_token,
+            refresh_token,
+            project_id,
+        }
     }
 
     fn headers(&self, access: &str) -> Result<reqwest::header::HeaderMap> {
         let mut h = antigravity_oauth::headers();
         h.insert(
             reqwest::header::AUTHORIZATION,
-            format!("Bearer {access}").parse().map_err(|_| {
-                ParziError::Provider("antigravity".into(), "bad token".into())
-            })?,
+            format!("Bearer {access}")
+                .parse()
+                .map_err(|_| ParziError::Provider("antigravity".into(), "bad token".into()))?,
         );
         Ok(h)
     }
@@ -54,11 +62,17 @@ impl Antigravity {
     /// Exchange the stored refresh token for a fresh access token (keyring updated).
     async fn refresh_now(&mut self) -> Result<()> {
         let rt = self.refresh_token.clone().ok_or_else(|| {
-            ParziError::Provider("antigravity".into(), "no refresh token — run `parzi login`".into())
+            ParziError::Provider(
+                "antigravity".into(),
+                "no refresh token — run `parzi login`".into(),
+            )
         })?;
         let toks = antigravity_oauth::refresh_access(&rt).await?;
         if toks.access.is_empty() {
-            return Err(ParziError::Provider("antigravity".into(), "refresh rejected".into()));
+            return Err(ParziError::Provider(
+                "antigravity".into(),
+                "refresh rejected".into(),
+            ));
         }
         self.access_token = Some(toks.access.clone());
         if let Ok(entry) = keyring::Entry::new("parzi", "antigravity") {
@@ -111,8 +125,10 @@ pub fn clean_schema(v: &serde_json::Value) -> serde_json::Value {
                 out.insert("enum".into(), serde_json::json!([c]));
             }
             if let Some(p) = map.get("properties").and_then(|p| p.as_object()) {
-                let cleaned: serde_json::Map<String, serde_json::Value> =
-                    p.iter().map(|(k, v)| (k.clone(), clean_schema(v))).collect();
+                let cleaned: serde_json::Map<String, serde_json::Value> = p
+                    .iter()
+                    .map(|(k, v)| (k.clone(), clean_schema(v)))
+                    .collect();
                 out.insert("properties".into(), cleaned.into());
             }
             if let Some(r) = map.get("required") {
@@ -191,8 +207,7 @@ fn wrap(req: &ChatReq, project: &Option<String>) -> serde_json::Value {
     }
     let model_id = with_effort(&req.model, &req.effort);
     if model_id.contains("thinking") || model_id.starts_with("claude-sonnet-4-6") {
-        inner["generationConfig"]["thinkingConfig"] =
-            serde_json::json!({"thinkingLevel": "high"});
+        inner["generationConfig"]["thinkingConfig"] = serde_json::json!({"thinkingLevel": "high"});
     }
     serde_json::json!({
         "project": project.clone().unwrap_or_else(|| "rising-fact-p41fc".into()),
@@ -413,7 +428,11 @@ async fn post_once(
                     .trim()
                     .to_string();
                 // A real status is always more informative than a transport error.
-                last = Some(PostFail { code, retry_after, detail });
+                last = Some(PostFail {
+                    code,
+                    retry_after,
+                    detail,
+                });
             }
             Err(e) => {
                 if last.as_ref().map(|f| f.code == 0).unwrap_or(true) {
@@ -441,7 +460,10 @@ async fn stream_response(resp: reqwest::Response, tx: crate::types::EventTx) {
         let chunk = match chunk {
             Ok(c) => c,
             Err(e) => {
-                let _ = tx.send(Err(ParziError::Provider("antigravity".into(), format!("stream: {e}"))));
+                let _ = tx.send(Err(ParziError::Provider(
+                    "antigravity".into(),
+                    format!("stream: {e}"),
+                )));
                 return;
             }
         };
@@ -460,9 +482,18 @@ async fn stream_response(resp: reqwest::Response, tx: crate::types::EventTx) {
             // Envelope unwrap: inner `response` object.
             let inner = v.get("response").unwrap_or(&v);
             if let Some(u) = inner.get("usageMetadata") {
-                let pin = u.get("promptTokenCount").and_then(|n| n.as_u64()).unwrap_or(0);
-                let pout = u.get("candidatesTokenCount").and_then(|n| n.as_u64()).unwrap_or(0);
-                let _ = tx.send(Ok(StreamEvent::Usage { tokens_in: pin, tokens_out: pout }));
+                let pin = u
+                    .get("promptTokenCount")
+                    .and_then(|n| n.as_u64())
+                    .unwrap_or(0);
+                let pout = u
+                    .get("candidatesTokenCount")
+                    .and_then(|n| n.as_u64())
+                    .unwrap_or(0);
+                let _ = tx.send(Ok(StreamEvent::Usage {
+                    tokens_in: pin,
+                    tokens_out: pout,
+                }));
             }
             let parts = inner
                 .get("candidates")
@@ -475,9 +506,17 @@ async fn stream_response(resp: reqwest::Response, tx: crate::types::EventTx) {
                 .unwrap_or_default();
             for p in parts {
                 if let Some(call) = p.get("functionCall") {
-                    let name = call.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                    let name = call
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let args = call.get("args").cloned().unwrap_or(serde_json::Value::Null);
-                    calls.push((format!("call_{}", calls.len()), name, serde_json::to_string(&args).unwrap_or_default()));
+                    calls.push((
+                        format!("call_{}", calls.len()),
+                        name,
+                        serde_json::to_string(&args).unwrap_or_default(),
+                    ));
                 } else if let Some(t) = p.get("text").and_then(|t| t.as_str()) {
                     // `thought: true` parts are reasoning: rail, not body text.
                     if p.get("thought").and_then(|b| b.as_bool()).unwrap_or(false) {
@@ -500,7 +539,7 @@ async fn stream_response(resp: reqwest::Response, tx: crate::types::EventTx) {
 
 #[cfg(test)]
 mod tests {
-    use super::{PostFail, fail_message};
+    use super::{fail_message, PostFail};
     use crate::router::{is_retriable, parse_cooldown_secs};
 
     fn fail(code: u16, retry_after: Option<&str>, detail: &str) -> PostFail {
@@ -531,7 +570,11 @@ mod tests {
         // 401/403 short-circuit before this helper in chat_stream, but the
         // message itself must never read as retriable either.
         assert!(!is_retriable(&fail_message(&fail(401, None, ""))));
-        assert!(!is_retriable(&fail_message(&fail(400, None, "bad request"))));
+        assert!(!is_retriable(&fail_message(&fail(
+            400,
+            None,
+            "bad request"
+        ))));
         // Pure transport failure keeps the legacy message and does not hop.
         let msg = fail_message(&fail(0, None, "connection refused"));
         assert!(msg.contains("endpoints unreachable"), "{msg}");

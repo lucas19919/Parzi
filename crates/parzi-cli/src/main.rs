@@ -34,9 +34,7 @@ enum Cmd {
         json: bool,
     },
     /// Print transcript to stdout (pipe-friendly for other harnesses).
-    Export {
-        id: String,
-    },
+    Export { id: String },
     /// Send a message: `new` starts a session, an id continues one.
     Send {
         target: String,
@@ -66,35 +64,25 @@ enum Cmd {
         at: Option<usize>,
     },
     /// Cancel a live run and mark it killed.
-    Kill {
-        id: String,
-    },
+    Kill { id: String },
     /// Health checks: config, keys (presence only), MCP, webview.
     Doctor {
         #[arg(long)]
         json: bool,
     },
     /// List known models per provider.
-    Models {
-        provider: Option<String>,
-    },
+    Models { provider: Option<String> },
     /// Live provider health: auth, tier, account, active cooldowns.
     Health {
         #[arg(long)]
         json: bool,
     },
     /// Clear rate-limit cooldowns (one provider, or all when omitted).
-    ResetCooldowns {
-        provider: Option<String>,
-    },
+    ResetCooldowns { provider: Option<String> },
     /// Sign in with a subscription provider (antigravity: Google OAuth).
-    Login {
-        provider: String,
-    },
+    Login { provider: String },
     /// Sign out (deletes stored tokens).
-    Logout {
-        provider: String,
-    },
+    Logout { provider: String },
     /// Manage cumulative project knowledge (KNOWLEDGE.md).
     Knowledge {
         project: String,
@@ -143,7 +131,10 @@ impl Approver for CliApprover {
             return Approval::Allow;
         }
         eprintln!("tool `{}` in lane `{}`", call.name, call.lane);
-        eprintln!("{}", serde_json::to_string_pretty(&call.args).unwrap_or_default());
+        eprintln!(
+            "{}",
+            serde_json::to_string_pretty(&call.args).unwrap_or_default()
+        );
         eprintln!("allow? [y/N] ");
         use std::io::Write;
         let _ = std::io::stderr().flush();
@@ -164,14 +155,26 @@ impl Approver for CliApprover {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt().with_max_level(tracing::Level::WARN).init();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .init();
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Init => cmd_init(),
         Cmd::List { json } => cmd_list(json),
         Cmd::Show { id, json } => cmd_show(&id, json),
         Cmd::Export { id } => cmd_export(&id),
-        Cmd::Send { target, message, project, lane, model, cwd, yes, attach, effort } => {
+        Cmd::Send {
+            target,
+            message,
+            project,
+            lane,
+            model,
+            cwd,
+            yes,
+            attach,
+            effort,
+        } => {
             cmd_send(SendParams {
                 target: target.clone(),
                 message: message.join(" "),
@@ -195,9 +198,12 @@ async fn main() -> Result<()> {
         Cmd::Logout { provider } => cmd_logout(&provider),
         Cmd::Knowledge { project, note } => cmd_knowledge(&project, note.as_deref()),
         Cmd::Plan { project, action } => cmd_plan(&project, action).await,
-        Cmd::Review { project, session_id, lane, apply } => {
-            cmd_review(&project, &session_id, lane.as_deref(), apply)
-        }
+        Cmd::Review {
+            project,
+            session_id,
+            lane,
+            apply,
+        } => cmd_review(&project, &session_id, lane.as_deref(), apply),
     }
 }
 
@@ -275,7 +281,17 @@ struct SendParams {
 }
 
 async fn cmd_send(p: SendParams) -> Result<()> {
-    let SendParams { target, message, project, lane, model, cwd, yes, attach, effort } = p;
+    let SendParams {
+        target,
+        message,
+        project,
+        lane,
+        model,
+        cwd,
+        yes,
+        attach,
+        effort,
+    } = p;
     if message.trim().is_empty() {
         anyhow::bail!("empty message");
     }
@@ -284,8 +300,11 @@ async fn cmd_send(p: SendParams) -> Result<()> {
     cfg.orchestrator.queue_when_busy = false;
     let orch = Orchestrator::new(cfg.clone(), store);
     orch.recover().ok();
-    let approver: Arc<dyn Approver> =
-        if yes { Arc::new(AutoApprover) } else { Arc::new(CliApprover { yes }) };
+    let approver: Arc<dyn Approver> = if yes {
+        Arc::new(AutoApprover)
+    } else {
+        Arc::new(CliApprover { yes })
+    };
     let cwd = cwd.unwrap_or_default();
     let base = if cwd.trim().is_empty() {
         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -311,9 +330,17 @@ async fn cmd_send(p: SendParams) -> Result<()> {
         rx
     } else {
         let id = target.clone();
-        orch.send_to(&id, &message, Some(approver), &cwd, &effort, attachments, None)
-            .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?
+        orch.send_to(
+            &id,
+            &message,
+            Some(approver),
+            &cwd,
+            &effort,
+            attachments,
+            None,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?
     };
     while let Some(ev) = rx.recv().await {
         match ev {
@@ -322,12 +349,21 @@ async fn cmd_send(p: SendParams) -> Result<()> {
             RunEvent::ToolResult { name, ok, ms } => {
                 eprintln!("[result] {name} ok={ok} {ms}ms")
             }
-            RunEvent::Usage { tokens_in, tokens_out, cost_usd } => {
+            RunEvent::Usage {
+                tokens_in,
+                tokens_out,
+                cost_usd,
+            } => {
                 eprintln!("\n[usage] {tokens_in} in / {tokens_out} out (${cost_usd:.4})")
             }
             RunEvent::ApprovalRequest { .. } => {} // CliApprover prompts on stderr; event is observability only
             RunEvent::Notice { text } => eprintln!("\n[router] {text}"),
-            RunEvent::RouteTransition { from_provider, to_provider, reason, .. } => {
+            RunEvent::RouteTransition {
+                from_provider,
+                to_provider,
+                reason,
+                ..
+            } => {
                 eprintln!("\n[router] {from_provider} -> {to_provider} ({reason})")
             }
             RunEvent::Reasoning { text } => {
@@ -358,7 +394,10 @@ fn cmd_fork(id: &str, at: Option<usize>) -> Result<()> {
 async fn cmd_kill(id: &str) -> Result<()> {
     let (cfg, store) = boot()?;
     let id = resolve_id(&store, id)?;
-    Orchestrator::new(cfg, store).kill(&id).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    Orchestrator::new(cfg, store)
+        .kill(&id)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     println!("killed {id}");
     Ok(())
 }
@@ -372,7 +411,12 @@ async fn cmd_doctor(json: bool) -> Result<()> {
     }
     let mut bad = 0;
     for c in &checks {
-        println!("{} {} — {}", if c.ok { "ok  " } else { "FAIL" }, c.name, c.detail);
+        println!(
+            "{} {} — {}",
+            if c.ok { "ok  " } else { "FAIL" },
+            c.name,
+            c.detail
+        );
         if !c.ok {
             bad += 1;
         }
@@ -449,7 +493,10 @@ fn cmd_models(provider: Option<&str>) -> Result<()> {
                 };
                 println!("{id} [{status}]");
                 for m in crate_models(id) {
-                    println!("  {}  ctx={}  ${}/${} per 1M", m.id, m.context_limit, m.price_in, m.price_out);
+                    println!(
+                        "  {}  ctx={}  ${}/${} per 1M",
+                        m.id, m.context_limit, m.price_in, m.price_out
+                    );
                 }
             }
             Err(e) => println!("{id} error: {e}"),
@@ -474,16 +521,29 @@ fn cmd_health(json: bool) -> Result<()> {
         return Ok(());
     }
     let snap = orch.config();
-    println!("routing: auto_failover={} keys_in_auto={} order=[{}]",
+    println!(
+        "routing: auto_failover={} keys_in_auto={} order=[{}]",
         snap.routing.auto_failover,
         snap.routing.keys_in_auto,
-        parzi_providers::router::auto_order(&snap).join(","));
+        parzi_providers::router::auto_order(&snap).join(",")
+    );
     for h in &health {
         let cool = h.cooldown_until.map(|u| u.saturating_sub(now_secs()));
         let cool_s = cool.map(|s| format!(" cooldown={s}s")).unwrap_or_default();
-        let acct = h.active_account.as_ref().map(|a| format!(" acct={a}")).unwrap_or_default();
-        let err = h.last_error.as_ref().map(|e| format!(" err={e}")).unwrap_or_default();
-        println!("{:12} {:12} tier={:<12}{}{}{}", h.provider, h.status, h.tier, acct, cool_s, err);
+        let acct = h
+            .active_account
+            .as_ref()
+            .map(|a| format!(" acct={a}"))
+            .unwrap_or_default();
+        let err = h
+            .last_error
+            .as_ref()
+            .map(|e| format!(" err={e}"))
+            .unwrap_or_default();
+        println!(
+            "{:12} {:12} tier={:<12}{}{}{}",
+            h.provider, h.status, h.tier, acct, cool_s, err
+        );
     }
     Ok(())
 }
@@ -547,14 +607,24 @@ fn cmd_review(project: &str, session_id: &str, lane: Option<&str>, apply: bool) 
     let id = resolve_id(&store, session_id)?;
     let meta = store.get(&id).context("reading session")?;
     let lane_name = lane.unwrap_or(&meta.lane);
-    let clean_lane = if lane_name.trim().is_empty() { "default" } else { lane_name.trim() };
-    let wt_path = paths::worktrees_dir()?.join(project).join(clean_lane).join(&id);
+    let clean_lane = if lane_name.trim().is_empty() {
+        "default"
+    } else {
+        lane_name.trim()
+    };
+    let wt_path = paths::worktrees_dir()?
+        .join(project)
+        .join(clean_lane)
+        .join(&id);
     if !wt_path.exists() {
-        println!("no isolated worktree found for session {id} at {}", wt_path.display());
+        println!(
+            "no isolated worktree found for session {id} at {}",
+            wt_path.display()
+        );
         return Ok(());
     }
-    let diff = parzi_runtime::git_worktree::worktree_diff(&wt_path)
-        .context("reading worktree diff")?;
+    let diff =
+        parzi_runtime::git_worktree::worktree_diff(&wt_path).context("reading worktree diff")?;
     if diff.trim().is_empty() {
         println!("no changes in worktree for session {id}");
     } else {
@@ -562,8 +632,8 @@ fn cmd_review(project: &str, session_id: &str, lane: Option<&str>, apply: bool) 
         println!("{diff}");
     }
     if apply {
-        let root = parzi_core::lanes::lane_root(project, clean_lane)
-            .unwrap_or_else(|| meta.cwd.clone());
+        let root =
+            parzi_core::lanes::lane_root(project, clean_lane).unwrap_or_else(|| meta.cwd.clone());
         if root.trim().is_empty() {
             anyhow::bail!("cannot apply: project root is not set");
         }
@@ -588,7 +658,11 @@ async fn cmd_plan(project: &str, action: PlanAction) -> Result<()> {
                         parzi_core::plan::TaskStatus::InProgress => '/',
                         parzi_core::plan::TaskStatus::Pending => ' ',
                     };
-                    let lane_tag = task.lane.as_deref().map(|l| format!(" [lane:{l}]")).unwrap_or_default();
+                    let lane_tag = task
+                        .lane
+                        .as_deref()
+                        .map(|l| format!(" [lane:{l}]"))
+                        .unwrap_or_default();
                     let wt_tag = if task.worktree { " [worktree]" } else { "" };
                     println!("- [{status_char}] {}{lane_tag}{wt_tag}", task.title);
                 }
@@ -602,7 +676,11 @@ async fn cmd_plan(project: &str, action: PlanAction) -> Result<()> {
                         parzi_core::plan::TaskStatus::InProgress => '/',
                         parzi_core::plan::TaskStatus::Pending => ' ',
                     };
-                    let lane_tag = task.lane.as_deref().map(|l| format!(" [lane:{l}]")).unwrap_or_default();
+                    let lane_tag = task
+                        .lane
+                        .as_deref()
+                        .map(|l| format!(" [lane:{l}]"))
+                        .unwrap_or_default();
                     let wt_tag = if task.worktree { " [worktree]" } else { "" };
                     println!("- [{status_char}] {}{lane_tag}{wt_tag}", task.title);
                 }
@@ -615,28 +693,40 @@ async fn cmd_plan(project: &str, action: PlanAction) -> Result<()> {
                     .clone()
                     .or(task.lane.clone())
                     .unwrap_or_else(|| "core".into());
-                let wt_label = if task.worktree { " (isolated worktree)" } else { "" };
-                println!("\n>>> Executing task: {}{wt_label} in lane `{target_lane}`", task.title);
-                
+                let wt_label = if task.worktree {
+                    " (isolated worktree)"
+                } else {
+                    ""
+                };
+                println!(
+                    "\n>>> Executing task: {}{wt_label} in lane `{target_lane}`",
+                    task.title
+                );
+
                 let prompt = format!(
                     "Execute living plan task: {}\n\nPerform all required edits, run tests, and record any gotchas or decisions with knowledge.record.",
                     task.title
                 );
-                
+
                 let (mut cfg, store) = boot()?;
                 cfg.orchestrator.queue_when_busy = false;
                 let orch = Orchestrator::new(cfg.clone(), store.clone());
                 orch.recover().ok();
-                
+
                 let roster = parzi_core::lanes::get_project_roster(project).unwrap_or_default();
-                let model = roster.orchestrator.model
+                let model = roster
+                    .orchestrator
+                    .model
                     .filter(|m| !m.trim().is_empty())
                     .unwrap_or_else(|| cfg.default_provider.clone());
-                
+
                 let root = parzi_core::lanes::lane_root(project, &target_lane).unwrap_or_default();
                 let mut session_cwd = root.clone();
-                let approver: Arc<dyn Approver> =
-                    if yes { Arc::new(AutoApprover) } else { Arc::new(CliApprover { yes }) };
+                let approver: Arc<dyn Approver> = if yes {
+                    Arc::new(AutoApprover)
+                } else {
+                    Arc::new(CliApprover { yes })
+                };
 
                 let (meta, mut rx) = orch
                     .spawn(
@@ -652,8 +742,16 @@ async fn cmd_plan(project: &str, action: PlanAction) -> Result<()> {
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-                if task.worktree && !root.is_empty() && parzi_runtime::git_worktree::is_git_repo(&root) {
-                    if let Ok(wt) = parzi_runtime::git_worktree::create_worktree(&root, project, &target_lane, &meta.id) {
+                if task.worktree
+                    && !root.is_empty()
+                    && parzi_runtime::git_worktree::is_git_repo(&root)
+                {
+                    if let Ok(wt) = parzi_runtime::git_worktree::create_worktree(
+                        &root,
+                        project,
+                        &target_lane,
+                        &meta.id,
+                    ) {
                         session_cwd = wt.to_string_lossy().to_string();
                         let _ = store.set_cwd(&meta.id, &session_cwd);
                         println!("isolated worktree: {session_cwd}");
@@ -664,7 +762,9 @@ async fn cmd_plan(project: &str, action: PlanAction) -> Result<()> {
                     match event {
                         RunEvent::Text(t) => print!("{t}"),
                         RunEvent::ToolCall { name, .. } => eprintln!("[tool: {name}]"),
-                        RunEvent::ToolResult { name, ok, ms } => eprintln!("[result: {name} ok={ok} {ms}ms]"),
+                        RunEvent::ToolResult { name, ok, ms } => {
+                            eprintln!("[result: {name} ok={ok} {ms}ms]")
+                        }
                         RunEvent::Done { .. } => {
                             eprintln!("\n[done]");
                             break;

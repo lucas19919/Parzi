@@ -7,7 +7,7 @@ use parzi_core::context::Role;
 use parzi_core::error::{ParziError, Result};
 
 use super::opencode::Opencode;
-use crate::types::{ChatReq, StreamEvent, desanitize_tool, sanitize_tool};
+use crate::types::{desanitize_tool, sanitize_tool, ChatReq, StreamEvent};
 
 /// POST helper: short error bodies stay routable (429/overload hop, 4xx halt).
 async fn post(
@@ -76,13 +76,15 @@ impl Opencode {
         let mut buf = String::new();
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            let chunk =
-                chunk.map_err(|e| ParziError::Provider("opencode".into(), format!("stream: {e}")))?;
+            let chunk = chunk
+                .map_err(|e| ParziError::Provider("opencode".into(), format!("stream: {e}")))?;
             buf.push_str(&String::from_utf8_lossy(&chunk));
             while let Some(pos) = buf.find('\n') {
                 let line = buf[..pos].trim().to_string();
                 buf.drain(..=pos);
-                let Some(data) = sse_data(&line) else { continue };
+                let Some(data) = sse_data(&line) else {
+                    continue;
+                };
                 let v: serde_json::Value = match serde_json::from_str(&data) {
                     Ok(v) => v,
                     Err(_) => continue,
@@ -91,8 +93,14 @@ impl Opencode {
                 // both must be read; never `continue` after usage.
                 if let Some(u) = v.get("usage") {
                     let pin = u.get("prompt_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                    let pout = u.get("completion_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                    let _ = tx.send(Ok(StreamEvent::Usage { tokens_in: pin, tokens_out: pout }));
+                    let pout = u
+                        .get("completion_tokens")
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(0);
+                    let _ = tx.send(Ok(StreamEvent::Usage {
+                        tokens_in: pin,
+                        tokens_out: pout,
+                    }));
                 }
                 let delta = match v
                     .get("choices")
@@ -117,9 +125,9 @@ impl Opencode {
                 if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
                     for tc in tcs {
                         let idx = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
-                        let e = calls
-                            .entry(idx)
-                            .or_insert_with(|| (format!("call_{idx}"), String::new(), String::new()));
+                        let e = calls.entry(idx).or_insert_with(|| {
+                            (format!("call_{idx}"), String::new(), String::new())
+                        });
                         if let Some(call_id) = tc.get("id").and_then(|i| i.as_str()) {
                             e.0 = call_id.to_string();
                         }
@@ -143,7 +151,11 @@ impl Opencode {
             }
             let args = serde_json::from_str(&args_str).unwrap_or(serde_json::Value::Null);
             let name = desanitize_tool(&req.tools, &name);
-            let _ = tx.send(Ok(StreamEvent::ToolCall { id: call_id, name, args }));
+            let _ = tx.send(Ok(StreamEvent::ToolCall {
+                id: call_id,
+                name,
+                args,
+            }));
         }
         Ok(())
     }
@@ -197,13 +209,15 @@ impl Opencode {
         let mut buf = String::new();
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            let chunk =
-                chunk.map_err(|e| ParziError::Provider("opencode".into(), format!("stream: {e}")))?;
+            let chunk = chunk
+                .map_err(|e| ParziError::Provider("opencode".into(), format!("stream: {e}")))?;
             buf.push_str(&String::from_utf8_lossy(&chunk));
             while let Some(pos) = buf.find('\n') {
                 let line = buf[..pos].trim().to_string();
                 buf.drain(..=pos);
-                let Some(data) = sse_data(&line) else { continue };
+                let Some(data) = sse_data(&line) else {
+                    continue;
+                };
                 let v: serde_json::Value = match serde_json::from_str(&data) {
                     Ok(v) => v,
                     Err(_) => continue,
@@ -256,16 +270,19 @@ impl Opencode {
                             .and_then(|u| u.as_object())
                         {
                             let inp = u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                            let _ =
-                                tx.send(Ok(StreamEvent::Usage { tokens_in: inp, tokens_out: 0 }));
+                            let _ = tx.send(Ok(StreamEvent::Usage {
+                                tokens_in: inp,
+                                tokens_out: 0,
+                            }));
                         }
                     }
                     "message_delta" => {
                         if let Some(u) = v.get("usage") {
-                            let out =
-                                u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                            let _ =
-                                tx.send(Ok(StreamEvent::Usage { tokens_in: 0, tokens_out: out }));
+                            let out = u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
+                            let _ = tx.send(Ok(StreamEvent::Usage {
+                                tokens_in: 0,
+                                tokens_out: out,
+                            }));
                         }
                     }
                     _ => {}
@@ -275,7 +292,11 @@ impl Opencode {
         if !tool_name.is_empty() {
             let args = serde_json::from_str(&tool_json).unwrap_or(serde_json::Value::Null);
             let name = desanitize_tool(&req.tools, &tool_name);
-            let _ = tx.send(Ok(StreamEvent::ToolCall { id: tool_id, name, args }));
+            let _ = tx.send(Ok(StreamEvent::ToolCall {
+                id: tool_id,
+                name,
+                args,
+            }));
         }
         Ok(())
     }
@@ -326,13 +347,15 @@ impl Opencode {
         let mut buf = String::new();
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            let chunk =
-                chunk.map_err(|e| ParziError::Provider("opencode".into(), format!("stream: {e}")))?;
+            let chunk = chunk
+                .map_err(|e| ParziError::Provider("opencode".into(), format!("stream: {e}")))?;
             buf.push_str(&String::from_utf8_lossy(&chunk));
             while let Some(pos) = buf.find('\n') {
                 let line = buf[..pos].trim().to_string();
                 buf.drain(..=pos);
-                let Some(data) = sse_data(&line) else { continue };
+                let Some(data) = sse_data(&line) else {
+                    continue;
+                };
                 let v: serde_json::Value = match serde_json::from_str(&data) {
                     Ok(v) => v,
                     Err(_) => continue,
@@ -356,8 +379,11 @@ impl Opencode {
                     "response.output_item.done" => {
                         if let Some(item) = v.get("item") {
                             if item.get("type").and_then(|t| t.as_str()) == Some("function_call") {
-                                fn_name =
-                                    item.get("name").and_then(|n| n.as_str()).unwrap_or("").into();
+                                fn_name = item
+                                    .get("name")
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("")
+                                    .into();
                                 call_id = item
                                     .get("call_id")
                                     .and_then(|n| n.as_str())
@@ -373,12 +399,12 @@ impl Opencode {
                     }
                     "response.completed" => {
                         if let Some(u) = v.get("response").and_then(|r| r.get("usage")) {
-                            let pin =
-                                u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                            let pout =
-                                u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                            let _ =
-                                tx.send(Ok(StreamEvent::Usage { tokens_in: pin, tokens_out: pout }));
+                            let pin = u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
+                            let pout = u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
+                            let _ = tx.send(Ok(StreamEvent::Usage {
+                                tokens_in: pin,
+                                tokens_out: pout,
+                            }));
                         }
                     }
                     _ => {}
@@ -388,7 +414,11 @@ impl Opencode {
         if !fn_name.is_empty() {
             let args = serde_json::from_str(&arg_buf).unwrap_or(serde_json::Value::Null);
             let name = desanitize_tool(&req.tools, &fn_name);
-            let _ = tx.send(Ok(StreamEvent::ToolCall { id: call_id, name, args }));
+            let _ = tx.send(Ok(StreamEvent::ToolCall {
+                id: call_id,
+                name,
+                args,
+            }));
         }
         Ok(())
     }

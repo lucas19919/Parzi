@@ -42,7 +42,9 @@ fn mode_parses() {
 #[tokio::test]
 async fn disallowed_tool_fails_closed() {
     let e = exec(&[]);
-    let (ok, _) = e.execute("fs.read", &serde_json::json!({"path": "x"})).await;
+    let (ok, _) = e
+        .execute("fs.read", &serde_json::json!({"path": "x"}))
+        .await;
     assert!(!ok);
     let (ok, _) = e.execute("evil.tool", &serde_json::json!({})).await;
     assert!(!ok);

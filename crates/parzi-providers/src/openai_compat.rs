@@ -6,8 +6,8 @@ use parzi_core::context::Role;
 use parzi_core::error::{ParziError, Result};
 
 use crate::types::{
-    AuthStatus, Billing, ChatReq, EventRx, EventTx, Model, Provider, StreamEvent, ToolDef,
-    desanitize_tool, sanitize_tool,
+    desanitize_tool, sanitize_tool, AuthStatus, Billing, ChatReq, EventRx, EventTx, Model,
+    Provider, StreamEvent, ToolDef,
 };
 
 pub struct OpenAiCompat {
@@ -37,9 +37,8 @@ impl OpenAiCompat {
         }
         for (k, v) in &self.extra_headers {
             headers.insert(
-                reqwest::header::HeaderName::from_bytes(k.as_bytes()).map_err(|_| {
-                    ParziError::Provider(self.id.into(), "bad header name".into())
-                })?,
+                reqwest::header::HeaderName::from_bytes(k.as_bytes())
+                    .map_err(|_| ParziError::Provider(self.id.into(), "bad header name".into()))?,
                 v.parse()
                     .map_err(|_| ParziError::Provider(self.id.into(), "bad header value".into()))?,
             );
@@ -110,7 +109,8 @@ impl Provider for OpenAiCompat {
                                     .map(|id| {
                                         let known = self.static_models.iter().find(|m| m.id == id);
                                         Model {
-                                            context_limit: known.map_or(128_000, |m| m.context_limit),
+                                            context_limit: known
+                                                .map_or(128_000, |m| m.context_limit),
                                             output_limit: known.map_or(16_384, |m| m.output_limit),
                                             price_in: known.map_or(0.0, |m| m.price_in),
                                             price_out: known.map_or(0.0, |m| m.price_out),
@@ -118,10 +118,15 @@ impl Provider for OpenAiCompat {
                                             vision: known.map_or(false, |m| m.vision),
                                             legacy: known.map_or(false, |m| m.legacy),
                                             is_default: known.map_or(false, |m| m.is_default),
-                                            family: known.map_or_else(|| id.clone(), |m| m.family.clone()),
-                                            family_name: known.map_or_else(|| id.clone(), |m| m.family_name.clone()),
+                                            family: known
+                                                .map_or_else(|| id.clone(), |m| m.family.clone()),
+                                            family_name: known.map_or_else(
+                                                || id.clone(),
+                                                |m| m.family_name.clone(),
+                                            ),
                                             variant: known.and_then(|m| m.variant.clone()),
-                                            name: known.map_or_else(|| id.clone(), |m| m.name.clone()),
+                                            name: known
+                                                .map_or_else(|| id.clone(), |m| m.name.clone()),
                                             id,
                                         }
                                     })
@@ -199,9 +204,7 @@ fn is_loopback(base: &str) -> bool {
         .next()
         .unwrap_or("");
     let bare = host.strip_prefix('[').unwrap_or(host);
-    bare.eq_ignore_ascii_case("localhost")
-        || bare.starts_with("127.")
-        || bare == "::1"
+    bare.eq_ignore_ascii_case("localhost") || bare.starts_with("127.") || bare == "::1"
 }
 
 async fn run_sse(
@@ -222,7 +225,10 @@ async fn run_sse(
         let code = resp.status();
         let text = resp.text().await.unwrap_or_default();
         let short: String = text.chars().take(300).collect();
-        return Err(ParziError::Provider(id.into(), format!("http {code}: {short}")));
+        return Err(ParziError::Provider(
+            id.into(),
+            format!("http {code}: {short}"),
+        ));
     }
     // Accumulate tool-call argument fragments keyed by index.
     let mut calls: std::collections::HashMap<usize, (String, String, String)> =
@@ -248,8 +254,14 @@ async fn run_sse(
             };
             if let Some(u) = v.get("usage") {
                 let pin = u.get("prompt_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                let pout = u.get("completion_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                let _ = tx.send(Ok(StreamEvent::Usage { tokens_in: pin, tokens_out: pout }));
+                let pout = u
+                    .get("completion_tokens")
+                    .and_then(|n| n.as_u64())
+                    .unwrap_or(0);
+                let _ = tx.send(Ok(StreamEvent::Usage {
+                    tokens_in: pin,
+                    tokens_out: pout,
+                }));
                 continue;
             }
             let delta = match v
@@ -269,9 +281,9 @@ async fn run_sse(
             if let Some(tcs) = delta.get("tool_calls").and_then(|t| t.as_array()) {
                 for tc in tcs {
                     let idx = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
-                    let e = calls.entry(idx).or_insert_with(|| {
-                        (format!("call_{idx}"), String::new(), String::new())
-                    });
+                    let e = calls
+                        .entry(idx)
+                        .or_insert_with(|| (format!("call_{idx}"), String::new(), String::new()));
                     if let Some(call_id) = tc.get("id").and_then(|i| i.as_str()) {
                         e.0 = call_id.to_string();
                     }
@@ -295,7 +307,11 @@ async fn run_sse(
         }
         let args = serde_json::from_str(&args_str).unwrap_or(serde_json::Value::Null);
         let name = desanitize_tool(&defs, &name);
-        let _ = tx.send(Ok(StreamEvent::ToolCall { id: call_id, name, args }));
+        let _ = tx.send(Ok(StreamEvent::ToolCall {
+            id: call_id,
+            name,
+            args,
+        }));
     }
     Ok(())
 }

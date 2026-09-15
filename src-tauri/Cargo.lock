@@ -2899,7 +2899,7 @@ dependencies = [
 
 [[package]]
 name = "parzi-app"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2921,7 +2921,7 @@ dependencies = [
 
 [[package]]
 name = "parzi-core"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2937,7 +2937,7 @@ dependencies = [
 
 [[package]]
 name = "parzi-providers"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "dirs 5.0.1",
@@ -2954,7 +2954,7 @@ dependencies = [
 
 [[package]]
 name = "parzi-runtime"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "async-trait",
  "chrono",

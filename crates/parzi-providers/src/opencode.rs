@@ -21,8 +21,8 @@ use parzi_core::context::Role;
 use parzi_core::error::{ParziError, Result};
 
 use crate::types::{
-    AuthStatus, Billing, ChatReq, EventRx, Model, Provider, env_key, keyring_get,
-    now_secs, read_json_file, sanitize_tool,
+    env_key, keyring_get, now_secs, read_json_file, sanitize_tool, AuthStatus, Billing, ChatReq,
+    EventRx, Model, Provider,
 };
 
 pub const GO_BASE: &str = "https://opencode.ai/zen/go/v1";
@@ -52,7 +52,10 @@ pub fn route_for(model: &str) -> (&'static str, ZenKind) {
         "muse-spark-1.3-contributor-free" | "muse-spark-1.2-contributor-free" => {
             (ZEN_BASE, ZenKind::Responses)
         }
-        "big-pickle" | "nemotron-3-ultra-free" | "nemotron-3.5-lightning-free" | "mimo-v2.5-free"
+        "big-pickle"
+        | "nemotron-3-ultra-free"
+        | "nemotron-3.5-lightning-free"
+        | "mimo-v2.5-free"
         | "ling-3.0-flash-fin-free" => (ZEN_BASE, ZenKind::Chat),
         _ if model.ends_with("-free") => (ZEN_BASE, ZenKind::Chat),
         _ => (GO_BASE, ZenKind::Chat),
@@ -70,10 +73,13 @@ pub fn resolve_model_id(model: &str) -> &str {
 
 fn auth_file() -> Option<std::path::PathBuf> {
     let home = dirs::home_dir()?;
-    [".local/share/opencode/auth.json", ".config/opencode/auth.json"]
-        .iter()
-        .map(|rel| home.join(rel))
-        .find(|p| p.is_file())
+    [
+        ".local/share/opencode/auth.json",
+        ".config/opencode/auth.json",
+    ]
+    .iter()
+    .map(|rel| home.join(rel))
+    .find(|p| p.is_file())
 }
 
 /// Exact `opencode-go.key` read only (H-10: no recursive scrape — another
@@ -101,7 +107,11 @@ pub struct Opencode {
 }
 
 pub fn opencode(go_base: Option<String>, refresh: bool) -> Opencode {
-    Opencode { key: resolve_key(), refresh, go_base }
+    Opencode {
+        key: resolve_key(),
+        refresh,
+        go_base,
+    }
 }
 
 impl Opencode {
@@ -109,10 +119,18 @@ impl Opencode {
         self.go_base.as_deref().unwrap_or(GO_BASE)
     }
 
-    pub(crate) fn headers(&self, session: &str, api_key_style: bool) -> Result<reqwest::header::HeaderMap> {
+    pub(crate) fn headers(
+        &self,
+        session: &str,
+        api_key_style: bool,
+    ) -> Result<reqwest::header::HeaderMap> {
         let key = self.key.clone().unwrap_or_default();
         let mut h = reqwest::header::HeaderMap::new();
-        let auth_val = if api_key_style { key } else { format!("Bearer {key}") };
+        let auth_val = if api_key_style {
+            key
+        } else {
+            format!("Bearer {key}")
+        };
         if api_key_style {
             h.insert(
                 "x-api-key",
@@ -130,20 +148,23 @@ impl Opencode {
         }
         h.insert(
             "x-opencode-session",
-            session.parse().map_err(|_| {
-                ParziError::Provider("opencode".into(), "bad session id".into())
-            })?,
+            session
+                .parse()
+                .map_err(|_| ParziError::Provider("opencode".into(), "bad session id".into()))?,
         );
         if api_key_style {
-            h.insert("anthropic-version", ANTHROPIC_VERSION.parse().map_err(|_| {
-                ParziError::Provider("opencode".into(), "bad version header".into())
-            })?);
+            h.insert(
+                "anthropic-version",
+                ANTHROPIC_VERSION.parse().map_err(|_| {
+                    ParziError::Provider("opencode".into(), "bad version header".into())
+                })?,
+            );
         }
         h.insert(
             reqwest::header::USER_AGENT,
-            concat!("parzi/", env!("CARGO_PKG_VERSION")).parse().map_err(|_| {
-                ParziError::Provider("opencode".into(), "bad user agent".into())
-            })?,
+            concat!("parzi/", env!("CARGO_PKG_VERSION"))
+                .parse()
+                .map_err(|_| ParziError::Provider("opencode".into(), "bad user agent".into()))?,
         );
         Ok(h)
     }
@@ -222,7 +243,10 @@ impl Provider for Opencode {
                 if let Ok(resp) = client
                     .get(&url)
                     .bearer_auth(&key)
-                    .header(reqwest::header::USER_AGENT, concat!("parzi/", env!("CARGO_PKG_VERSION")))
+                    .header(
+                        reqwest::header::USER_AGENT,
+                        concat!("parzi/", env!("CARGO_PKG_VERSION")),
+                    )
                     .send()
                     .await
                 {
@@ -266,7 +290,11 @@ impl Provider for Opencode {
         let model = resolve_model_id(&req.model).to_string();
         let (base_cfg, kind) = route_for(&model);
         // A configured proxy overrides the Go base only; free tier is hosted.
-        let base = if base_cfg == GO_BASE { self.go().to_string() } else { base_cfg.to_string() };
+        let base = if base_cfg == GO_BASE {
+            self.go().to_string()
+        } else {
+            base_cfg.to_string()
+        };
         let session = if req.session.trim().is_empty() {
             format!("parzi-{}-{}", std::process::id(), now_secs())
         } else {
@@ -282,7 +310,10 @@ impl Provider for Opencode {
             let r = match kind {
                 ZenKind::Chat => me.run_chat(model, base, session, req, tx.clone()).await,
                 ZenKind::Messages => me.run_messages(model, base, session, req, tx.clone()).await,
-                ZenKind::Responses => me.run_responses(model, base, session, req, tx.clone()).await,
+                ZenKind::Responses => {
+                    me.run_responses(model, base, session, req, tx.clone())
+                        .await
+                }
             };
             if let Err(e) = r {
                 let _ = tx.send(Err(e));

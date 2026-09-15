@@ -51,6 +51,45 @@ pub struct McpManager {
     idle_kill: Duration,
 }
 
+/// Parent-env keys a spawned connector may inherit. Everything else — notably
+/// provider API keys — is scrubbed, mirroring the `shell.exec` posture in
+/// `tools.rs` (same key list, same intent: children never see our secrets).
+/// Per-server `env` from config is layered on top afterwards.
+const CHILD_ENV_PASSTHROUGH: &[&str] = &[
+    "PATH",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "HOME",
+    "APPDATA",
+    "USERPROFILE",
+    "LANG",
+    "LC_ALL",
+];
+
+fn child_env(extra: &HashMap<String, String>) -> HashMap<String, String> {
+    let parent: HashMap<String, String> = std::env::vars().collect();
+    child_env_from(&parent, extra)
+}
+
+fn child_env_from(
+    parent: &HashMap<String, String>,
+    extra: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for k in CHILD_ENV_PASSTHROUGH {
+        if let Some(v) = parent.get(*k) {
+            if !v.is_empty() {
+                out.insert((*k).to_string(), v.clone());
+            }
+        }
+    }
+    for (k, v) in extra {
+        out.insert(k.clone(), v.clone());
+    }
+    out
+}
+
 impl McpManager {
     pub fn new(configs: HashMap<String, McpServerCfg>, idle_kill_secs: u64) -> Self {
         Self {
@@ -61,7 +100,10 @@ impl McpManager {
     }
 
     pub fn server_names(&self) -> Vec<String> {
-        self.configs.read().map(|c| c.keys().cloned().collect()).unwrap_or_default()
+        self.configs
+            .read()
+            .map(|c| c.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     fn config_for(&self, name: &str) -> Option<McpServerCfg> {
@@ -73,12 +115,13 @@ impl McpManager {
     pub async fn set_configs(&self, configs: HashMap<String, McpServerCfg>) {
         let dead: Vec<String> = {
             let live = self.live.lock().await;
-            live.keys().filter(|k| {
-                match configs.get(*k) {
+            live.keys()
+                .filter(|k| match configs.get(*k) {
                     None => true,
                     Some(c) => !c.enabled,
-                }
-            }).cloned().collect()
+                })
+                .cloned()
+                .collect()
         };
         for k in dead {
             self.stop(&k).await;
@@ -105,7 +148,10 @@ impl McpManager {
     /// to advertise `server.tool` defs and by the UI tool browser.
     pub async fn exposed_tools(&self, name: &str) -> Result<Vec<McpTool>> {
         let all = self.list_tools(name).await?;
-        Ok(all.into_iter().filter(|t| self.is_tool_exposed(name, &t.name)).collect())
+        Ok(all
+            .into_iter()
+            .filter(|t| self.is_tool_exposed(name, &t.name))
+            .collect())
     }
 
     async fn request(
@@ -121,22 +167,26 @@ impl McpManager {
         });
         let mut wire = serde_json::to_string(&line)?;
         wire.push('\n');
-        sv.stdin.write_all(wire.as_bytes()).await.map_err(|e| {
-            ParziError::Tool("mcp".into(), format!("write failed: {e}"))
-        })?;
-        sv.stdin.flush().await.map_err(|e| {
-            ParziError::Tool("mcp".into(), format!("flush failed: {e}"))
-        })?;
+        sv.stdin
+            .write_all(wire.as_bytes())
+            .await
+            .map_err(|e| ParziError::Tool("mcp".into(), format!("write failed: {e}")))?;
+        sv.stdin
+            .flush()
+            .await
+            .map_err(|e| ParziError::Tool("mcp".into(), format!("flush failed: {e}")))?;
         let mut out = String::new();
         tokio::time::timeout(timeout, sv.stdout.read_line(&mut out))
             .await
             .map_err(|_| ParziError::Tool("mcp".into(), format!("{method} timed out")))?
             .map_err(|e| ParziError::Tool("mcp".into(), format!("read failed: {e}")))?;
-        let v: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| {
-            ParziError::Tool("mcp".into(), format!("bad jsonrpc: {e}"))
-        })?;
+        let v: serde_json::Value = serde_json::from_str(out.trim())
+            .map_err(|e| ParziError::Tool("mcp".into(), format!("bad jsonrpc: {e}")))?;
         if let Some(err) = v.get("error") {
-            return Err(ParziError::Tool("mcp".into(), format!("server error: {err}")));
+            return Err(ParziError::Tool(
+                "mcp".into(),
+                format!("server error: {err}"),
+            ));
         }
         Ok(v.get("result").cloned().unwrap_or(serde_json::Value::Null))
     }
@@ -149,26 +199,34 @@ impl McpManager {
         if live.contains_key(name) {
             return Ok(());
         }
-        let cfg = self.config_for(name).ok_or_else(|| {
-            ParziError::Tool("mcp".into(), format!("unknown server `{name}`"))
-        })?;
+        let cfg = self
+            .config_for(name)
+            .ok_or_else(|| ParziError::Tool("mcp".into(), format!("unknown server `{name}`")))?;
         if !cfg.enabled {
-            return Err(ParziError::Tool("mcp".into(), format!("server `{name}` disabled")));
+            return Err(ParziError::Tool(
+                "mcp".into(),
+                format!("server `{name}` disabled"),
+            ));
         }
         let mut child: Child = Command::new(&cfg.command)
             .args(&cfg.args)
-            .envs(&cfg.env)
+            // Scrubbed like shell.exec children: passthrough allowlist plus the
+            // server's own configured env. Never the full parent environment.
+            .env_clear()
+            .envs(child_env(&cfg.env))
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
             .spawn()
             .map_err(|e| ParziError::Tool("mcp".into(), format!("spawn `{name}`: {e}")))?;
-        let stdin = child.stdin.take().ok_or_else(|| {
-            ParziError::Tool("mcp".into(), "no stdin".into())
-        })?;
-        let stdout = child.stdout.take().ok_or_else(|| {
-            ParziError::Tool("mcp".into(), "no stdout".into())
-        })?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| ParziError::Tool("mcp".into(), "no stdin".into()))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| ParziError::Tool("mcp".into(), "no stdout".into()))?;
         let mut sv = LiveServer {
             child,
             stdin,
@@ -188,9 +246,10 @@ impl McpManager {
         let note = serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
         let mut wire = serde_json::to_string(&note)?;
         wire.push('\n');
-        sv.stdin.write_all(wire.as_bytes()).await.map_err(|e| {
-            ParziError::Tool("mcp".into(), format!("write failed: {e}"))
-        })?;
+        sv.stdin
+            .write_all(wire.as_bytes())
+            .await
+            .map_err(|e| ParziError::Tool("mcp".into(), format!("write failed: {e}")))?;
         live.insert(name.to_string(), sv);
         Ok(())
     }
@@ -211,7 +270,10 @@ impl McpManager {
 
     fn timeout_for(&self, name: &str) -> Duration {
         Duration::from_millis(
-            self.config_for(name).map(|c| c.timeout_ms).unwrap_or(30_000).max(1_000),
+            self.config_for(name)
+                .map(|c| c.timeout_ms)
+                .unwrap_or(30_000)
+                .max(1_000),
         )
     }
 
@@ -234,7 +296,11 @@ impl McpManager {
                 out.push(McpTool {
                     server: name.to_string(),
                     name: t.get("name").and_then(|n| n.as_str()).unwrap_or("?").into(),
-                    description: t.get("description").and_then(|d| d.as_str()).unwrap_or("").into(),
+                    description: t
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("")
+                        .into(),
                     schema: t
                         .get("inputSchema")
                         .cloned()
@@ -275,7 +341,10 @@ impl McpManager {
         let params = serde_json::json!({"name": tool, "arguments": args});
         let res = Self::request(sv, "tools/call", params, timeout).await?;
         // content: [{type:"text",text}, ...] — join text, flag isError.
-        let is_err = res.get("isError").and_then(|b| b.as_bool()).unwrap_or(false);
+        let is_err = res
+            .get("isError")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false);
         let mut text = String::new();
         if let Some(arr) = res.get("content").and_then(|c| c.as_array()) {
             for c in arr {
@@ -300,5 +369,62 @@ impl McpManager {
         if let Some(mut s) = live.remove(name) {
             let _ = s.child.kill().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn child_env_scrubs_parent_secrets_but_keeps_passthrough_and_cfg() {
+        let parent = map(&[
+            ("PATH", "/usr/bin:/bin"),
+            ("HOME", "/home/u"),
+            ("ANTHROPIC_API_KEY", "sk-ant-secret"),
+            ("XAI_API_KEY", "x-secret"),
+            ("SOME_RANDOM_VAR", "nope"),
+        ]);
+        let extra = map(&[("GITHUB_PERSONAL_ACCESS_TOKEN", "ghp-x")]);
+        let env = child_env_from(&parent, &extra);
+        assert_eq!(env.get("PATH").map(String::as_str), Some("/usr/bin:/bin"));
+        assert_eq!(env.get("HOME").map(String::as_str), Some("/home/u"));
+        assert_eq!(
+            env.get("GITHUB_PERSONAL_ACCESS_TOKEN").map(String::as_str),
+            Some("ghp-x")
+        );
+        assert!(!env.contains_key("ANTHROPIC_API_KEY"));
+        assert!(!env.contains_key("XAI_API_KEY"));
+        assert!(!env.contains_key("SOME_RANDOM_VAR"));
+    }
+
+    #[test]
+    fn child_env_matches_shell_exec_posture() {
+        // The passthrough list must stay identical to shell.exec's inline list
+        // in tools.rs; if either side changes, reunite them deliberately.
+        for k in [
+            "PATH",
+            "SYSTEMROOT",
+            "TEMP",
+            "TMP",
+            "HOME",
+            "APPDATA",
+            "USERPROFILE",
+            "LANG",
+            "LC_ALL",
+        ] {
+            assert!(
+                CHILD_ENV_PASSTHROUGH.contains(&k),
+                "shell.exec allows {k} but MCP spawn does not"
+            );
+        }
+        assert_eq!(CHILD_ENV_PASSTHROUGH.len(), 9);
     }
 }
