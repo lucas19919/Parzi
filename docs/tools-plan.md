@@ -81,14 +81,14 @@ first run. P1 must decide: sensible-default bundle vs explicit opt-in (see §4 Q
 - No roots, sampling, resources, or prompts. Three different timeouts (12s defs /
   15s doctor / per-server `timeout_ms`) with no stated relationship.
 
-### 1G. MCP children inherit the full parent env (the real hole)
+### 1G. MCP children inherit the full parent env (the real hole — fixed P0)
 
-`shell.exec` scrubs the environment down to an allowlist and documents that
+`shell.exec` scrubbed the environment down to an allowlist and documented that
 children never inherit provider keys (`tools.rs:719-735`). `McpManager::ensure_live`
-does **not** scrub — `Command` inherits the whole parent env plus cfg env
-(`mcp.rs:158-165`). Every MCP server process sees every provider key in Parzi's
-env. Either scrub both or justify the difference; current state is inconsistent,
-and the scrubbed one proves the intent was to scrub.
+did **not** scrub — spawned servers inherited the whole parent env plus cfg env.
+Fixed 2026-09-15: spawn now uses `env_clear()` + the same 9-key passthrough list,
+pinned by a parity test in `mcp.rs`. Config `env` secrets still live in plaintext
+`config.toml` — keyring migration stays in P4.
 
 ### 1H. Extension sprawl: three systems, one dead kind
 
@@ -138,12 +138,40 @@ and `HttpTransport` (Streamable HTTP) behind it. One timeout policy
 (per-server `timeout_ms`, one code path). Doctor probes through the **live**
 manager so probing warms instead of duplicating.
 
-**One extension story.** Skills, presets, and `mcp-pack` converge: an installable
-**pack** = slash commands + connector definitions + optional theme, one manifest,
-one installer (paste / git / one-click), one list UI. Either implement `mcp-pack`
-loading or delete the kind — no third option. Settings collapses to
-**Capabilities** (what agents can do: built-ins + connector tools, with the
-verdict UI) and **Packs** (how new capabilities arrive).
+**Enterprise browser (decided 2026-09-15 — "just browse for Higgsfield").**
+The Connectors page becomes search/browse/install, Claude-Code-simple:
+- **Source:** the official MCP registry REST API (`registry.modelcontextprotocol.io`,
+  `server.json` metadata carries install info: package, args, env vars). Base URL
+  is configurable so an enterprise-internal registry implementing the same OpenAPI
+  spec works as a drop-in — that is the enterprise story, not a bigger preset list.
+  Curated presets survive only as offline fallback/helpers, never the primary path.
+- **Flow:** search → server detail (tools, required env/secrets, transport) →
+  one-click add with scope (this project vs global) → secrets into keyring with
+  presence-only display → auto-probe on add. STDIO installs map registry metadata
+  straight to command/args/env; no hand-typed JSON.
+- **Remote servers are required, not deferred.** Higgsfield's official MCP is a
+  remote HTTP server (`https://mcp.higgsfield.ai/mcp`, OAuth, no API key) —
+  STDIO-only Parzi cannot add it at all. So the browser milestone ships a minimal
+  `HttpTransport` (tools/list + tools/call over Streamable HTTP, static headers).
+  Explicitly deferred past that: full OAuth browser flow (Higgsfield needs it —
+  until then, remote servers with static-header auth work, OAuth ones show their
+  setup docs instead of a broken install button).
+
+**Three surfaces, Claude-Code-shaped (decided 2026-09-15).** No "Packs"
+unification — Lucas: add MCPs, add skills, manage context; a connector *is* an MCP
+connection. So:
+1. **Connectors** = MCP connections, nothing else. Add by command (STDIO) like
+   `claude mcp add`: name + command + args + env, with scope (this project vs
+   global). No presets gallery as the primary path — paste/command first,
+   curated list demoted to helpers. Terminology purge: "connector" always means
+   an MCP connection; the settings page stops explaining what a connector is.
+2. **Skills** = SKILL.md slash-command folders (existing format, keep it).
+   Install via paste or git, list, toggle, delete. Nothing else lives here —
+   no theme packs, no `mcp-pack` kind (deleted, see P4).
+3. **Context** = what feeds the agent: SYSTEM.md overlays, KNOWLEDGE.md,
+   attached files, allowlisted roots. The permission verdict rows (§2 pipeline)
+   live here next to the memory surfaces, so "what can it touch" and "what does
+   it know" are one screen, not two pages of prose.
 
 **Secrets.** Connector env secrets move to the keyring with presence-only display,
 same pattern as provider keys. Plus: scrub MCP child env to match `shell.exec`
@@ -156,10 +184,10 @@ same pattern as provider keys. Plus: scrub MCP child env to match `shell.exec`
   spawns have identical secret posture; test asserts it.
 - **P1 — honesty (no new features).** Advertise only allowed tools (§1B); fix the
   `ui.show_artifact` triple inconsistency (§1C) one way or the other; unify
-  Turbo/Lockdown/auto/deny naming in UI; dedupe `patternAllows`. Decide the
-  fresh-install default (§1E). Acceptance: blocked tools never appear in defs;
-  catalog test covers all six lists; first-run agent can read files (or an
-  explicit, visible choice says why not).
+  Turbo/Lockdown/auto/deny naming in UI; dedupe `patternAllows`; ship the
+  sensible-default bundle (§1E, decided: fs.read/list + shell on). Acceptance:
+  blocked tools never appear in defs;
+  catalog test covers all six lists; first-run agent can read files.
 - **P2 — one pipeline.** Implement `evaluate()` (§2), render verdict+reason rows
   in a merged Capabilities UI, collapse the duplicated permission prose into the
   rows themselves. `session_defs` split into honest groups. Acceptance: every
@@ -170,19 +198,34 @@ same pattern as provider keys. Plus: scrub MCP child env to match `shell.exec`
   fan-out with a global budget. HTTP transport behind the trait (or a dated,
   explicit deferral). Acceptance: chaos test (chatty server, slow server, dead
   server) green; N-server startup bounded.
-- **P4 — packs + scoping.** `mcp-pack` implemented or deleted; Skills/presets/
-  plugins converge on one installer + one list; per-project connector scoping UI;
-  connector secrets to keyring. Acceptance: install anything three ways, see it
-  once; scope a connector to one project from the UI.
+- **P4 — connectors/skills/context.** Delete the `mcp-pack` plugin kind;
+  Connectors page becomes the registry-backed enterprise browser (search, detail,
+  one-click add with project/global scope, keyring secrets, auto-probe) plus
+  minimal `HttpTransport` so remote servers (Higgsfield-class) install at all —
+  OAuth flow explicitly deferred with honest per-server messaging. Skills keeps
+  paste/git install as its own surface; Context screen
+  owns SYSTEM/KNOWLEDGE/attachments plus the permission verdict rows;
+  per-project connector scoping UI. Acceptance:
+  find Higgsfield by browsing and reach its real auth step with no docs open;
+  add any STDIO server in under a minute; scope a connector to one project from
+  the UI; no settings page needs a "what is X" paragraph.
 
 Each phase: `cargo test`, `cargo clippy -- -D warnings`, UI smoke of the touched
 surfaces. No phase starts until the prior acceptance passes (LOOP.md rules).
 
-## 4. Open questions for Lucas
+## 4. Decisions (resolved 2026-09-15)
 
-1. **Fresh-install default:** agents-can-read-files out of the box (sensible
-   bundle on, user locks down), or default-deny (current, user opts in)?
-2. **Unify extensions** (one Packs concept for skills + presets + plugins), or
-   keep Skills and Connectors separate and just kill `mcp-pack`?
-3. **HTTP MCP now or defer?** Is any must-have connector HTTP-only for you, or
-   can P3 ship hardened-STDIO first with HTTP as a dated follow-up?
+1. **Fresh-install default: sensible bundle on.** `fs.read`/`fs.list` (+ shell)
+   allowlisted out of the box; lockdown stays one click.
+2. **No Packs unification.** Three surfaces: Connectors (= MCP connections),
+   Skills (SKILL.md folders), Context (SYSTEM/KNOWLEDGE/attachments/policy).
+   Claude Code is the reference interaction, not our invented taxonomy.
+3. **HTTP transport: minimal remote in browser milestone, OAuth deferred.**
+   P3 still hardens STDIO first; the browser milestone adds just enough
+   `HttpTransport` (list/call, static headers) for remote servers. Full OAuth
+   browser flow is a dated follow-up, and OAuth-only servers say so in the UI
+   instead of failing.
+
+## 5. Open questions
+
+None outstanding — all three resolved in §4. Add new ones here as they surface.

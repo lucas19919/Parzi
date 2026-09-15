@@ -49,6 +49,10 @@
   let liveReasoning = "";
   let liveTokens = 0;
   let liveCost = 0;
+  /** Two-track streaming: assistant text flows into `live`, while tool
+      status flows into `liveTools` + the "Now:" line (derived in Thread).
+      Both reset whenever the transcript reloads. */
+  let liveTools: { id: string; name: string; label: string; running: boolean; ok: boolean; ms: number }[] = [];
   let input = "";
   let model = "auto";
   let effort: "low" | "medium" | "high" | "extra" | "ultra" = "medium";
@@ -64,6 +68,7 @@
       settingsSection = section;
     }
     palette = false;
+    showNewChat = false;
     showSettings = true;
     // Optional in-tab jump (e.g. straight to the issue reporter): the
     // section mounts async, so retry until the anchor exists or we give up.
@@ -132,6 +137,79 @@
 
   function focusWsName(node: HTMLInputElement) {
     node.focus();
+  }
+
+  // New-chat project picker: every fresh conversation starts as a draft
+  // (no thread row until the first send) bound to an explicit project.
+  let showNewChat = false;
+  let newChatQuery = "";
+  let newChatIndex = 0;
+  const displayName = (n: string) => (n === "default" ? "Inbox" : n);
+  $: allWorkspaceNames = (() => {
+    const set = new Set<string>();
+    for (const p of projects) if (p.name) set.add(p.name);
+    for (const t of threads) set.add(t.project || "default");
+    if (set.size === 0) set.add("default");
+    const arr = [...set];
+    arr.sort((a, b) => {
+      if (a === curProject) return -1;
+      if (b === curProject) return 1;
+      if (a === "default") return 1;
+      if (b === "default") return -1;
+      return a.localeCompare(b);
+    });
+    return arr;
+  })();
+  $: newChatOptions = allWorkspaceNames.filter(
+    (n) => !newChatQuery.trim() || displayName(n).toLowerCase().includes(newChatQuery.trim().toLowerCase()) || n.toLowerCase().includes(newChatQuery.trim().toLowerCase())
+  );
+  $: if (newChatIndex >= Math.max(1, newChatOptions.length + 1)) newChatIndex = 0;
+
+  function openNewChat() {
+    palette = false;
+    newChatQuery = "";
+    newChatIndex = 0;
+    showNewChat = true;
+  }
+
+  function closeNewChat() {
+    showNewChat = false;
+    newChatQuery = "";
+    newChatIndex = 0;
+  }
+
+  function focusNewChat(node: HTMLInputElement) {
+    node.focus();
+  }
+
+  /** Draft era: clear the stage without creating a thread row yet. */
+  async function startDraftInProject(name: string) {
+    const target = name.trim() || "default";
+    closeNewChat();
+    if (target !== curProject) {
+      curProject = target;
+      await refreshBranch();
+      projectRoster = null;
+      projectPlan = "";
+      try {
+        projectRoster = await api.getProjectRoster(target);
+      } catch {}
+      try {
+        projectPlan = await api.getProjectPlan(target);
+      } catch {}
+    }
+    newThread();
+  }
+
+  function confirmNewChatRow(i: number) {
+    // Last row is always "New workspace…".
+    if (i === newChatOptions.length) {
+      closeNewChat();
+      openNewWs();
+      return;
+    }
+    const name = newChatOptions[i];
+    if (name) void startDraftInProject(name);
   }
   let modelMenu = false;
   let modelQuery = "";
@@ -210,6 +288,7 @@
     liveReasoning = "";
     liveTokens = 0;
     liveCost = 0;
+    liveTools = [];
     approval = null;
     try {
       const [meta, ev] = await api.getThread(id);
@@ -242,15 +321,15 @@
     liveReasoning = "";
     liveTokens = 0;
     liveCost = 0;
+    liveTools = [];
     approval = null;
     input = "";
     attachments = [];
   }
 
   async function newThreadInProject(name: string) {
-    if (name !== curProject) await switchProject(name);
-    newThread();
-    toast(`New conversation in ${name}`);
+    await startDraftInProject(name);
+    toast(`New draft in ${displayName(name)} — pick a project anytime before sending`);
   }
 
   async function handleCreateProject(name: string, root: string) {
@@ -259,8 +338,8 @@
     try {
       await api.createProject(name, root.trim());
       await loadProjects();
-      await switchProject(name);
-      toast(`Workspace ${name} created`);
+      await startDraftInProject(name);
+      toast(`Workspace ${name} created — draft ready`);
     } catch (e) {
       toast(String(e), true);
     }
@@ -305,6 +384,9 @@
       });
       activeThreadId = sid;
       liveRun = sid;
+      live = "";
+      liveReasoning = "";
+      liveTools = [];
       await loadThreads();
       // Reconcile with the persisted transcript (replaces the optimistic
       // row with the real one; never wipes live assistant text).
@@ -415,6 +497,8 @@
   async function handleBarCommand(name: string) {
     switch (name) {
       case "new":
+        openNewChat();
+        break;
       case "clear":
         newThread();
         break;
@@ -485,6 +569,7 @@
         liveRun = null;
         live = "";
         liveReasoning = "";
+        liveTools = [];
       }
       if (activeThreadId === id) {
         activeThreadId = null;
@@ -502,6 +587,7 @@
         liveRun = null;
         live = "";
         liveReasoning = "";
+        liveTools = [];
       }
       toast(n > 1 ? `deleted ${n} sessions` : "thread deleted");
     } catch (e) {
@@ -708,9 +794,26 @@
     }
     if (e.kind === "tool_call") {
       sessionTools = { ...sessionTools, [e.session]: { name: e.name, since: Date.now(), running: true } };
+      // Status track: append to the live tool list (dedup by id — the
+      // backend may re-emit on reconnect). Text keeps streaming untouched.
+      if (e.session === activeThreadId && !liveTools.some((t) => t.id === e.id)) {
+        liveTools = [...liveTools, { id: e.id, name: e.name, label: e.label || e.name, running: true, ok: true, ms: 0 }];
+      }
     } else if (e.kind === "tool_result") {
       const cur = sessionTools[e.session];
       sessionTools = { ...sessionTools, [e.session]: { name: e.name, since: cur?.since ?? Date.now(), running: false } };
+      if (e.session === activeThreadId) {
+        // Exact join by id; fall back to the first running row with the
+        // same name for backends that predate result ids.
+        let joined = false;
+        liveTools = liveTools.map((t) => {
+          if (!joined && t.running && (t.id === e.id || t.name === e.name)) {
+            joined = true;
+            return { ...t, running: false, ok: e.ok, ms: e.ms };
+          }
+          return t;
+        });
+      }
       // An artifact landed: pull it into the deck without resetting the live stream.
       if (e.name === "ui.show_artifact" && e.ok && e.session === activeThreadId) {
         refreshEvents().then(() => {
@@ -730,6 +833,7 @@
         if (e.session === activeThreadId) {
           live = "";
           liveReasoning = "";
+          liveTools = [];
         }
       }
       // Per-session completion still refreshes the sidebar even for
@@ -754,10 +858,13 @@
       liveRun = null;
       live = "";
       liveReasoning = "";
+      liveTools = [];
       loadThreads().then(() => {
         if (activeThreadId) openThread(activeThreadId);
       });
-    } else {
+    } else if (e.kind !== "tool_call" && e.kind !== "tool_result") {
+      // Tool status already landed in liveTools/sessionTools above — no
+      // sidebar reload needed per tool event (kills IPC churn mid-run).
       loadThreads();
     }
   }
@@ -809,7 +916,7 @@
   }
 
   $: palActions = [
-    { section: "Actions", label: "New thread", sub: "start fresh", run: () => { palette = false; newThread(); } },
+    { section: "Actions", label: "New chat…", sub: "pick a project first", run: () => { palette = false; openNewChat(); } },
     { section: "Actions", label: "New project", sub: "workspace", run: () => { palette = false; openNewWs(); } },
     { section: "Actions", label: "Plan mode", sub: "no edits", run: () => { palette = false; openPlanner(); } },
     { section: "Actions", label: "Settings", sub: "models · connectors · skills", run: () => openSettings() },
@@ -878,7 +985,7 @@
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
       e.preventDefault();
-      newThread();
+      openNewChat();
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
@@ -914,8 +1021,18 @@
     } else if (palette && e.key === "Enter") {
       e.preventDefault();
       palAll[palIndex]?.run();
+    } else if (showNewChat && e.key === "ArrowDown") {
+      e.preventDefault();
+      newChatIndex = (newChatIndex + 1) % Math.max(1, newChatOptions.length + 1);
+    } else if (showNewChat && e.key === "ArrowUp") {
+      e.preventDefault();
+      newChatIndex = (newChatIndex - 1 + Math.max(1, newChatOptions.length + 1)) % Math.max(1, newChatOptions.length + 1);
+    } else if (showNewChat && e.key === "Enter") {
+      e.preventDefault();
+      confirmNewChatRow(newChatIndex);
     } else if (e.key === "Escape") {
-      if (showNewWs) closeNewWs();
+      if (showNewChat) closeNewChat();
+      else if (showNewWs) closeNewWs();
       else if (palette) palette = false;
       else if (showSettings) showSettings = false;
       else if (rightBarOpen && rbEl && rbEl.contains(document.activeElement)) rightBarOpen = false;
@@ -998,7 +1115,7 @@
       on:openNewWorkspace={openNewWs}
       on:selectThread={(e) => openThread(e.detail.id)}
       on:newSubsession={(e) => newSubsession(e.detail.id)}
-      on:newThread={newThread}
+      on:newThread={openNewChat}
       on:newThreadInProject={(e) => newThreadInProject(e.detail.name)}
       on:forkThread={(e) => fork(e.detail.id)}
       on:deleteThread={(e) => handleDeleteThread(e.detail.id)}
@@ -1017,7 +1134,7 @@
     <div class="stage-col">
     <Titlebar
       title={showSettings ? "Settings" : curProject === "default" ? "Inbox" : curProject}
-      subtitle={showSettings ? settingsSection : activeMeta ? activeMeta.title : ""}
+      subtitle={showSettings ? settingsSection : activeMeta ? activeMeta.title : !activeThreadId && !projectSelected ? "new draft — pick a project anytime" : projectSelected ? "overview" : ""}
       showExpand={!sidebarOpen}
       panelOpen={rightBarOpen}
       panelTab={rightBarTab}
@@ -1038,7 +1155,7 @@
       {:else if activeThreadId}
         <!-- Chat Thread View -->
         <div class="stage-scroll" bind:this={scrollEl}>
-          <Thread {events} liveText={live} liveReasoning={liveReasoning} {approval} streaming={!!liveRun}
+          <Thread {events} liveText={live} liveReasoning={liveReasoning} {liveTools} {approval} streaming={!!liveRun}
             {parentTitle} subsessions={childSubs} projectRoot={currentRoot}
             on:goParent={() => { if (activeMeta?.parent_id) openThread(activeMeta.parent_id); }}
             on:openSubsession={(e) => openThread(e.detail.id)}
@@ -1089,8 +1206,15 @@
           />
         </div>
       {:else}
-        <!-- Pure Minimalist Home Stage with Centered Floating Omnibar -->
+        <!-- Draft era: no thread row exists until the first send. -->
         <div class="home-hero-stage">
+          <button class="draft-project" on:click={openNewChat} title="New chat lives in one project — click to change">
+            <span class="draft-dot" />
+            <span class="draft-label">Draft in</span>
+            <strong>{displayName(curProject)}</strong>
+            {#if currentRoot}<span class="draft-root" title={currentRoot}>{currentRoot}</span>{/if}
+            <span class="draft-change">Change</span>
+          </button>
           <Omnibar
             bind:input
             bind:model
@@ -1156,6 +1280,59 @@
       </div>
     {/each}
   </div>
+
+  <!-- New Chat project picker: draft era starts with an explicit project. -->
+  {#if showNewChat}
+    <div class="ws-backdrop" transition:fade={{ duration: 140 }} on:click={closeNewChat}>
+      <div class="ws-modal nc-modal" on:click|stopPropagation>
+        <div class="ws-head">
+          <span>New chat — pick a project</span>
+          <button class="ws-x" title="Cancel (Esc)" on:click={closeNewChat}>
+            <Icon d="M18 6L6 18M6 6l12 12" size={12} />
+          </button>
+        </div>
+        <input
+          class="ws-name"
+          placeholder="Filter projects…"
+          bind:value={newChatQuery}
+          use:focusNewChat
+          on:input={() => (newChatIndex = 0)}
+        />
+        <div class="nc-list">
+          {#each newChatOptions as name, i}
+            {@const p = projects.find((x) => x.name === name)}
+            {@const n = threads.filter((t) => (t.project || "default") === name).length}
+            <button
+              class="nc-row"
+              class:on={i === newChatIndex}
+              class:cur={name === curProject}
+              on:click={() => confirmNewChatRow(i)}
+              on:mousemove={() => (newChatIndex = i)}
+            >
+              <span class="nc-name">{displayName(name)}</span>
+              {#if n > 0}<span class="nc-count">{n}</span>{/if}
+              {#if p?.root}<span class="nc-root" title={p.root}>{p.root}</span>{/if}
+              {#if name === curProject}<span class="nc-cur">current</span>{/if}
+            </button>
+          {/each}
+          {#if !newChatOptions.length}
+            <div class="nc-empty">No project matches “{newChatQuery}”.</div>
+          {/if}
+          <button
+            class="nc-row nc-new"
+            class:on={newChatIndex === newChatOptions.length}
+            on:click={() => confirmNewChatRow(newChatOptions.length)}
+            on:mousemove={() => (newChatIndex = newChatOptions.length)}
+          >
+            <span class="nc-name">+ New workspace…</span>
+          </button>
+        </div>
+        <div class="ws-foot">
+          <span class="hint">Draft — nothing is saved until you send</span>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   <!-- New Workspace Popout (centered over the backdrop) -->
   {#if showNewWs}
@@ -1461,4 +1638,51 @@
   }
   .ws-create:hover:not(:disabled) { filter: brightness(1.08); }
   .ws-create:disabled { opacity: 0.4; cursor: default; }
+
+  /* Draft era: project chip above the home composer */
+  .draft-project {
+    display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+    background: var(--menu); border: 1px solid var(--line-3);
+    border-radius: 999px; color: var(--text-2);
+    font: inherit; font-size: 12.5px; padding: 6px 8px 6px 12px;
+    cursor: pointer; box-sizing: border-box;
+  }
+  .draft-project:hover { border-color: var(--accent-line); color: var(--text); }
+  .draft-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex: none; }
+  .draft-label { color: var(--text-3); }
+  .draft-project strong { font-weight: 650; color: var(--text); }
+  .draft-root {
+    max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 11px; color: var(--text-4);
+  }
+  .draft-change {
+    font-size: 11px; font-weight: 600; color: var(--accent-text);
+    background: var(--accent-soft); border: 1px solid var(--accent-line);
+    border-radius: 999px; padding: 2px 9px; flex: none;
+  }
+
+  /* New-chat picker list */
+  .nc-modal { width: 380px; }
+  .nc-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+  .nc-row {
+    display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box;
+    background: transparent; border: 1px solid transparent; border-radius: 8px;
+    color: var(--text-2); font: inherit; font-size: 13px; text-align: left;
+    padding: 8px 10px; cursor: pointer;
+  }
+  .nc-row:hover, .nc-row.on { background: var(--surface-2); color: var(--text); }
+  .nc-row.on { border-color: var(--line-2); }
+  .nc-row.cur { color: var(--text); }
+  .nc-name { flex: none; font-weight: 600; }
+  .nc-count {
+    flex: none; font-size: 10.5px; color: var(--text-3); font-variant-numeric: tabular-nums;
+    background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 999px; padding: 0 6px;
+  }
+  .nc-root {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 10.5px; color: var(--text-4);
+  }
+  .nc-cur { flex: none; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent-text); }
+  .nc-new { color: var(--accent-text); }
+  .nc-empty { font-size: 12px; color: var(--text-3); padding: 10px 4px; text-align: center; }
 </style>

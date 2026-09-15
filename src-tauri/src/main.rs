@@ -28,8 +28,8 @@ struct AppState {
 enum UiEvent {
     Text { session: String, text: String },
     Reasoning { session: String, text: String },
-    ToolCall { session: String, id: String, name: String },
-    ToolResult { session: String, name: String, ok: bool, ms: u64 },
+    ToolCall { session: String, id: String, name: String, label: String },
+    ToolResult { session: String, id: String, name: String, ok: bool, ms: u64 },
     Notice { session: String, text: String },
     RouteTransition { session: String, from_provider: String, to_provider: String, reason: String, cooldown_secs: Option<u64> },
     Usage { session: String, tokens_in: u64, tokens_out: u64, cost_usd: f64 },
@@ -204,11 +204,11 @@ async fn send_message(
                 RunEvent::Reasoning { text } => {
                     UiEvent::Reasoning { session: sid_task.clone(), text }
                 }
-                RunEvent::ToolCall { id, name } => {
-                    UiEvent::ToolCall { session: sid_task.clone(), id, name }
+                RunEvent::ToolCall { id, name, label } => {
+                    UiEvent::ToolCall { session: sid_task.clone(), id, name, label }
                 }
-                RunEvent::ToolResult { name, ok, ms } => {
-                    UiEvent::ToolResult { session: sid_task.clone(), name, ok, ms }
+                RunEvent::ToolResult { id, name, ok, ms } => {
+                    UiEvent::ToolResult { session: sid_task.clone(), id, name, ok, ms }
                 }
                 RunEvent::Notice { text } => {
                     UiEvent::Notice { session: sid_task.clone(), text }

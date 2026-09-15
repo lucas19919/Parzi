@@ -25,8 +25,14 @@ pub enum RunEvent {
     ToolCall {
         id: String,
         name: String,
+        /// Deterministic one-line status ("Reading Cargo.toml") from
+        /// `tools::humanize_tool_call`. The UI renders this directly — no LLM.
+        label: String,
     },
     ToolResult {
+        /// Matches the `ToolCall.id` so live UIs join results exactly, even
+        /// when the same tool runs twice in one turn.
+        id: String,
         name: String,
         ok: bool,
         ms: u64,
@@ -480,6 +486,7 @@ impl AgentRun {
                 self.emit(RunEvent::ToolCall {
                     id: id.clone(),
                     name: name.clone(),
+                    label: crate::tools::humanize_tool_call(&name, &args),
                 });
                 let _ = self.store.append(
                     &self.session_id,
@@ -491,6 +498,7 @@ impl AgentRun {
                 );
                 let (ok, output, ms) = self.execute_tool(&id, &name, &args).await;
                 self.emit(RunEvent::ToolResult {
+                    id: id.clone(),
                     name: name.clone(),
                     ok,
                     ms,

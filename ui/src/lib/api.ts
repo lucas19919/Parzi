@@ -66,8 +66,8 @@ export interface ModelRow {
 export type UiEvent =
   | { kind: "text"; session: string; text: string }
   | { kind: "reasoning"; session: string; text: string }
-  | { kind: "tool_call"; session: string; id: string; name: string }
-  | { kind: "tool_result"; session: string; name: string; ok: boolean; ms: number }
+  | { kind: "tool_call"; session: string; id: string; name: string; label: string }
+  | { kind: "tool_result"; session: string; id: string; name: string; ok: boolean; ms: number }
   | { kind: "notice"; session: string; text: string }
   | { kind: "usage"; session: string; tokens_in: number; tokens_out: number; cost_usd: number }
   | { kind: "approval"; key: string; call: { id: string; name: string; args: unknown; lane: string } }

@@ -538,6 +538,107 @@ pub fn tool_group(name: &str) -> &'static str {
     "Connector"
 }
 
+/// One-line human status for a tool call ("Reading Cargo.toml"). Pure and
+/// unit-tested: the single source for the live "Now:" line in the GUI, the
+/// CLI `[tool]` line, and the viewer. Unknown/connector tools fall back to
+/// `Calling server.tool` plus the most interesting string arg, so opaque MCP
+/// tools still read sensibly without an LLM.
+pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
+    let str_arg = |k: &str| {
+        args.get(k)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    // First interesting string arg for opaque tools (path > file > cmd >
+    // query > prompt > title > url > ...). Keys are exact-match on purpose:
+    // guessing shapes from training data is how args get misread.
+    let hint = [
+        "path", "file", "cmd", "query", "prompt", "title", "url", "message", "note", "number", "id",
+    ]
+    .iter()
+    .find_map(|k| str_arg(k));
+    match name {
+        "fs.read" => format!("Reading {}", str_arg("path").unwrap_or_else(|| "?".into())),
+        "fs.write" => format!("Writing {}", str_arg("path").unwrap_or_else(|| "?".into())),
+        "fs.list" => format!("Listing {}", str_arg("path").unwrap_or_else(|| ".".into())),
+        "shell.exec" => format!(
+            "Running `{}`",
+            one_line(&str_arg("cmd").unwrap_or_default(), 60)
+        ),
+        "session.spawn" => format!(
+            "Delegating: {}",
+            one_line(&str_arg("title").unwrap_or_else(|| "subsession".into()), 60)
+        ),
+        "session.send_message" => format!(
+            "Messaging {}",
+            short_id(&str_arg("session_id").unwrap_or_else(|| "session".into()))
+        ),
+        "session.read_session" => "Reading session".into(),
+        "session.list_sessions" => "Listing sessions".into(),
+        "plan.read" => "Reading plan".into(),
+        "plan.update" => format!(
+            "Updating plan: {}",
+            one_line(
+                &str_arg("title_match")
+                    .or_else(|| str_arg("append"))
+                    .unwrap_or_default(),
+                60
+            )
+        ),
+        "lane.dispatch" => format!(
+            "Dispatching worker: {}",
+            one_line(&str_arg("title").unwrap_or_else(|| "worker".into()), 60)
+        ),
+        "knowledge.read" => "Reading knowledge".into(),
+        "knowledge.record" => "Recording knowledge".into(),
+        "ui.show_markdown" => "Rendering text".into(),
+        "ui.show_widget" => format!(
+            "Rendering {}",
+            one_line(
+                &str_arg("title")
+                    .unwrap_or_else(|| str_arg("type").unwrap_or_else(|| "widget".into())),
+                60
+            )
+        ),
+        "ui.show_diagram" => "Rendering diagram".into(),
+        "ui.show_artifact" => format!(
+            "Saving {}",
+            one_line(
+                &str_arg("title")
+                    .or_else(|| str_arg("id"))
+                    .unwrap_or_else(|| "artifact".into()),
+                60
+            )
+        ),
+        _ => match hint {
+            Some(h) => format!("Calling {name} {}", one_line(&h, 60)),
+            None => format!("Calling {name}"),
+        },
+    }
+}
+
+/// First line of `s`, capped at `n` chars (no newlines leak into status lines).
+fn one_line(s: &str, n: usize) -> String {
+    let first = s.lines().next().unwrap_or("").trim();
+    let cut: String = first.chars().take(n).collect();
+    if first.chars().count() > n {
+        format!("{cut}…")
+    } else {
+        cut
+    }
+}
+
+/// Session ids are UUIDs; status lines only need the head.
+fn short_id(s: &str) -> String {
+    if s.len() > 8 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        s.chars().take(8).collect()
+    } else {
+        one_line(s, 24)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -560,6 +661,37 @@ mod tests {
             );
         }
         assert_eq!(catalog.len(), names.len(), "catalog drift vs defs");
+    }
+
+    #[test]
+    fn humanizer_names_the_interesting_arg() {
+        let j = |s: &str| serde_json::from_str(s).unwrap();
+        assert_eq!(
+            humanize_tool_call("fs.read", &j(r#"{"path":"Cargo.toml"}"#)),
+            "Reading Cargo.toml"
+        );
+        assert_eq!(
+            humanize_tool_call("shell.exec", &j(r#"{"cmd":"cargo test -p parzi-core"}"#)),
+            "Running `cargo test -p parzi-core`"
+        );
+        assert_eq!(
+            humanize_tool_call(
+                "session.spawn",
+                &j(r#"{"title":"auth worker","prompt":"x"}"#)
+            ),
+            "Delegating: auth worker"
+        );
+        // Opaque connector tools degrade to name + hint, never empty.
+        assert_eq!(
+            humanize_tool_call("gh.issue_get", &j(r#"{"number":"12"}"#)),
+            "Calling gh.issue_get 12"
+        );
+        assert_eq!(
+            humanize_tool_call("weird.tool", &j("{}")),
+            "Calling weird.tool"
+        );
+        // Status lines stay single-line.
+        assert!(!humanize_tool_call("shell.exec", &j(r#"{"cmd":"a\nb"}"#)).contains('\n'));
     }
 }
 

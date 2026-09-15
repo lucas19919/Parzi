@@ -6,12 +6,23 @@
   import Widget from "./widgets/Widget.svelte";
   import Diagram from "./widgets/Diagram.svelte";
   import ArtifactCard from "./widgets/ArtifactCard.svelte";
+  import ToolStack from "./ToolStack.svelte";
   import type { ChatEvent, InspectorArtifact } from "./api";
   import { api } from "./api";
 
   export let events: ChatEvent[] = [];
   export let liveText = "";
   export let liveReasoning = "";
+  interface LiveTool {
+    id: string;
+    name: string;
+    label: string;
+    running: boolean;
+    ok: boolean;
+    ms: number;
+  }
+  /** Status track: live tool calls with backend humanized labels. */
+  export let liveTools: LiveTool[] = [];
   export let streaming = false;
   export let approval: { key: string; call: { id: string; name: string; args: unknown; lane: string } } | null = null;
   /** Set when this thread is a subsession: title of the parent session. */
@@ -44,7 +55,6 @@
 
   const spring = { duration: 160, easing: cubicOut };
   let copied = -1;
-  let openTools: Set<string> = new Set();
 
   function copy(text: string, i: number) {
     try {
@@ -81,15 +91,42 @@
     }
   }
 
-  function toolIcon(name: string): string {
-    if (name.startsWith("fs.")) return "file";
-    if (name.startsWith("shell")) return "term";
-    if (name.startsWith("ui.")) return "eye";
-    return "globe";
-  }
-
-  function fmtMs(ms: number): string {
-    return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+  /** Display label for a persisted tool call. Mirrors the backend
+      `humanize_tool_call` (Rust is the source of truth; this covers history
+      rows whose events carry raw args). */
+  function toolLabel(name: string, args?: unknown): string {
+    const a = (args ?? {}) as Record<string, unknown>;
+    const s = (k: string) => {
+      const v = a[k];
+      return typeof v === "string" && v.trim() ? v.trim() : "";
+    };
+    const oneLine = (v: string, n: number) => {
+      const f = v.split("\n")[0].trim();
+      return f.length > n ? f.slice(0, n) + "…" : f;
+    };
+    switch (name) {
+      case "fs.read": return `Reading ${s("path") || "?"}`;
+      case "fs.write": return `Writing ${s("path") || "?"}`;
+      case "fs.list": return `Listing ${s("path") || "."}`;
+      case "shell.exec": return `Running \`${oneLine(s("cmd"), 60)}\``;
+      case "session.spawn": return `Delegating: ${oneLine(s("title") || "subsession", 60)}`;
+      case "session.send_message": return `Messaging ${(s("session_id") || "session").slice(0, 8)}`;
+      case "session.read_session": return "Reading session";
+      case "session.list_sessions": return "Listing sessions";
+      case "plan.read": return "Reading plan";
+      case "plan.update": return `Updating plan: ${oneLine(s("title_match") || s("append"), 60)}`;
+      case "lane.dispatch": return `Dispatching worker: ${oneLine(s("title") || "worker", 60)}`;
+      case "knowledge.read": return "Reading knowledge";
+      case "knowledge.record": return "Recording knowledge";
+      case "ui.show_markdown": return "Rendering text";
+      case "ui.show_widget": return `Rendering ${oneLine(s("title") || s("type") || "widget", 60)}`;
+      case "ui.show_diagram": return "Rendering diagram";
+      case "ui.show_artifact": return `Saving ${oneLine(s("title") || s("id") || "artifact", 60)}`;
+      default: {
+        const hint = s("path") || s("file") || s("cmd") || s("query") || s("prompt") || s("title") || s("url") || s("message") || s("note") || s("number") || s("id");
+        return hint ? `Calling ${name} ${oneLine(hint, 60)}` : `Calling ${name}`;
+      }
+    }
   }
 
   type RenderItem =
@@ -105,12 +142,18 @@
         kind: "tool";
         id: string;
         name: string;
+        label: string;
         args?: unknown;
         ok?: boolean;
         ms?: number;
         output?: string;
         running: boolean;
       };
+
+  type ToolItem = Extract<RenderItem, { kind: "tool" }>;
+  /** Consecutive tool calls collapse into one stack so a busy turn is a
+      single line until expanded. */
+  type GroupedItem = RenderItem | { kind: "toolgroup"; key: string; tools: ToolItem[] };
 
   $: chronologicalItems = (() => {
     const out: RenderItem[] = [];
@@ -149,6 +192,7 @@
             kind: "tool",
             id: e.id,
             name: e.name,
+            label: toolLabel(e.name, e.args),
             args: e.args,
             ok: res.ok,
             ms: res.ms,
@@ -160,6 +204,7 @@
             kind: "tool",
             id: e.id,
             name: e.name,
+            label: toolLabel(e.name, e.args),
             args: e.args,
             running: true,
           });
@@ -169,11 +214,40 @@
     return out;
   })();
 
-  function toggleTool(id: string) {
-    openTools = new Set(openTools);
-    if (openTools.has(id)) openTools.delete(id);
-    else openTools.add(id);
-  }
+  $: groupedItems = ((): GroupedItem[] => {
+    const out: GroupedItem[] = [];
+    let buf: ToolItem[] = [];
+    const flush = () => {
+      if (buf.length) {
+        out.push({ kind: "toolgroup", key: buf.map((t) => t.id).join("+"), tools: buf });
+        buf = [];
+      }
+    };
+    for (const it of chronologicalItems) {
+      if (it.kind === "tool") buf.push(it);
+      else {
+        flush();
+        out.push(it);
+      }
+    }
+    flush();
+    return out;
+  })();
+
+  /** The "Now:" line: last running tool's label, else the text-track state. */
+  $: liveRunning = liveTools.filter((t) => t.running);
+  $: lastRunning = liveRunning.length ? liveRunning[liveRunning.length - 1] : null;
+  $: nowText = lastRunning
+    ? lastRunning.label + "…"
+    : streaming
+      ? liveText
+        ? "Writing…"
+        : liveReasoning
+          ? "Thinking…"
+          : liveTools.length
+            ? "Working…"
+            : "Starting…"
+      : "";
 
   const SENT_IMG_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
   /** Filenames from the backend's `[attached: a, b]` transcript marker. */
@@ -218,7 +292,7 @@
       {/each}
     </div>
   {/if}
-  {#each chronologicalItems as item, i (i)}
+  {#each groupedItems as item, i (item.kind === "toolgroup" ? "g" + item.key : "i" + i)}
     {#if item.kind === "user"}
       {@const sentImgs = attachedImages(item.text)}
       <div class="msg-row user">
@@ -278,43 +352,20 @@
       {/if}
     {:else if item.kind === "artifact"}
       <ArtifactCard data={item.payload} fallbackId={item.id} fallbackTitle={item.title} fallbackKind={item.artifact_kind} fallbackVersion={item.version} on:openInDeck={toDeck} />
-    {:else if item.kind === "tool"}
-      <div
-        class="tool-card"
-        class:running={item.running}
-        class:bad={!item.running && !item.ok}
-        transition:fade|local={spring}
-      >
-        <span class="tool-ico {toolIcon(item.name)}">
-          {#if toolIcon(item.name) === "file"}
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6" /></svg>
-          {:else if toolIcon(item.name) === "term"}
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 17l6-5-6-5M12 19h8" /></svg>
-          {:else if toolIcon(item.name) === "eye"}
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" /></svg>
-          {:else}
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c3 3.5 3 14 0 18M12 3c-3 3.5-3 14 0 18" /></svg>
-          {/if}
-        </span>
-        <span class="tool-name">{item.name}</span>
-        {#if item.running}
-          <span class="tool-pill run"><span class="pulse-dot" />running</span>
-        {:else}
-          <button class="tool-pill {item.ok ? 'ok' : 'bad'}" on:click={() => toggleTool(item.id)}>
-            {item.ok ? "✓" : "✗"} {fmtMs(item.ms ?? 0)}
-          </button>
-          <button class="tool-caret" on:click={() => toggleTool(item.id)}>
-            {openTools.has(item.id) ? "▾" : "▸"}
-          </button>
-        {/if}
-      </div>
-      {#if !item.running && item.output && openTools.has(item.id)}
-        <div class="tool-output-box" transition:fade|local={spring}>
-          {@html renderMarkdown("```\n" + item.output.slice(0, 6000) + "\n```")}
-        </div>
-      {/if}
+    {:else if item.kind === "toolgroup"}
+      <ToolStack tools={item.tools} />
     {/if}
   {/each}
+
+  {#if streaming && nowText}
+    <div class="now-pill" transition:fade|local={spring}>
+      <span class="streaming-dot" /><span>{nowText}</span>
+    </div>
+  {/if}
+
+  {#if liveTools.length}
+    <ToolStack tools={liveTools} />
+  {/if}
 
   {#if liveReasoning}
     <details class="think" open transition:fade|local={spring}>
@@ -337,7 +388,7 @@
     {/each}
   {/if}
 
-  {#if streaming && !liveText && !liveReasoning}
+  {#if streaming && !liveText && !liveReasoning && !liveTools.length && !nowText}
     <div class="streaming-row"><span class="streaming-dot" /><span>writing…</span></div>
   {/if}
 
@@ -417,6 +468,24 @@
   .msg-row:hover .copy-btn {
     opacity: 1;
   }
+  .now-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    align-self: flex-start;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-mid);
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 12px;
+    color: var(--text);
+    max-width: 100%;
+  }
+  .now-pill span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .tool-line.route {
     color: var(--accent);
   }
@@ -454,61 +523,6 @@
     color: var(--text-2);
     white-space: pre-wrap;
     word-break: break-word;
-  }
-  .tool-card {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: var(--surface-1);
-    border: 1px solid var(--line-2);
-    border-radius: 8px;
-    padding: 6px 10px;
-    font-size: 12px;
-    max-width: fit-content;
-  }
-  .tool-card.bad {
-    border-color: var(--bad-line);
-    background: var(--bad-soft);
-  }
-  .tool-ico {
-    display: flex;
-    align-items: center;
-    color: var(--text-3);
-  }
-  .tool-name {
-    font-family: var(--parzi-mono), ui-monospace, monospace;
-    font-size: 11px;
-    color: var(--text);
-  }
-  .tool-pill {
-    background: var(--surface-2);
-    border: none;
-    border-radius: 4px;
-    padding: 2px 6px;
-    font-size: 10px;
-    font-family: var(--parzi-mono), ui-monospace, monospace;
-    color: var(--text-3);
-    cursor: pointer;
-  }
-  .tool-pill.ok {
-    color: var(--ok);
-    background: var(--ok-soft);
-  }
-  .tool-pill.bad {
-    color: var(--bad);
-    background: var(--bad-soft);
-  }
-  .tool-caret {
-    background: transparent;
-    border: none;
-    color: var(--text-3);
-    cursor: pointer;
-    font-size: 12px;
-    padding: 0 2px;
-  }
-  .tool-output-box {
-    margin-top: 4px;
-    font-size: 11px;
   }
   .streaming-row {
     display: flex;

@@ -316,7 +316,7 @@
     <button class="t3-row" on:click={() => dispatch("openPalette")} title="Search everything">
       <Icon d={I.search} size={14} /><span>Search</span>
     </button>
-    <button class="t3-row primary" on:click={() => dispatch("newThread")} title="New conversation in {displayName(currentProject)}">
+    <button class="t3-row primary" on:click={() => dispatch("newThread")} title="New chat — pick a project">
       <Icon d={I.edit} size={14} /><span>New chat</span>
     </button>
   </div>

@@ -21,8 +21,7 @@ static TEST_HOME_INIT: std::sync::Once = std::sync::Once::new();
 
 fn test_home() {
     TEST_HOME_INIT.call_once(|| {
-        let dir =
-            std::env::temp_dir().join(format!("parzi-test-failover-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("parzi-test-failover-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("PARZI_HOME", &dir);

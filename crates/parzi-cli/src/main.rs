@@ -345,8 +345,8 @@ async fn cmd_send(p: SendParams) -> Result<()> {
     while let Some(ev) = rx.recv().await {
         match ev {
             RunEvent::Text(t) => print!("{t}"),
-            RunEvent::ToolCall { name, .. } => eprintln!("\n[tool] {name}"),
-            RunEvent::ToolResult { name, ok, ms } => {
+            RunEvent::ToolCall { name, label, .. } => eprintln!("\n[tool] {name} — {label}"),
+            RunEvent::ToolResult { name, ok, ms, .. } => {
                 eprintln!("[result] {name} ok={ok} {ms}ms")
             }
             RunEvent::Usage {
@@ -761,8 +761,10 @@ async fn cmd_plan(project: &str, action: PlanAction) -> Result<()> {
                 while let Some(event) = rx.recv().await {
                     match event {
                         RunEvent::Text(t) => print!("{t}"),
-                        RunEvent::ToolCall { name, .. } => eprintln!("[tool: {name}]"),
-                        RunEvent::ToolResult { name, ok, ms } => {
+                        RunEvent::ToolCall { name, label, .. } => {
+                            eprintln!("[tool: {name} — {label}]")
+                        }
+                        RunEvent::ToolResult { name, ok, ms, .. } => {
                             eprintln!("[result: {name} ok={ok} {ms}ms]")
                         }
                         RunEvent::Done { .. } => {
