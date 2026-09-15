@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/parzi-core", "crates/parzi-providers", "crates/parzi-runtime", "crates/parzi-cli"]
+members = [
+    "crates/parzi-core",
+    "crates/parzi-providers",
+    "crates/parzi-runtime",
+    "crates/parzi-cli",
+    "crates/parzi-desk",
+]
 # src-tauri is a detached crate (own lockfile surface); GUI deps never leak into the CLI.
 exclude = ["src-tauri"]
 resolver = "2"
@@ -22,3 +28,8 @@ opt-level = "z"
 lto = true
 strip = true
 codegen-units = 1
+
+# The GUI is latency bound, not size bound: `opt-level = "z"` slows egui layout
+# and text shaping. Keep the CLI tiny, the desk fast.
+[profile.release.package.parzi-desk]
+opt-level = 2
