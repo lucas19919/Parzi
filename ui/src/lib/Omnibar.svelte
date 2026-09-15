@@ -651,6 +651,49 @@
     attachments = [...attachments, ...norm.filter((n) => !attachments.includes(n))].slice(0, 8);
   }
 
+  let stageErr = "";
+
+  /** Stage clipboard/dropped image files through the shell and attach the
+      returned paths. Text pastes and non-image drops pass through untouched. */
+  async function stageImageFiles(files: FileList | File[]): Promise<void> {
+    const imgs = [...files].filter(
+      (f) => f.type.startsWith("image/") || isImage(f.name)
+    );
+    if (!imgs.length) return;
+    stageErr = "";
+    for (const f of imgs.slice(0, Math.max(0, 8 - attachments.length))) {
+      try {
+        const dataUrl = await new Promise<string>((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(String(r.result ?? ""));
+          r.onerror = () => rej(r.error);
+          r.readAsDataURL(f);
+        });
+        const b64 = dataUrl.split(",", 2)[1] ?? "";
+        if (!b64) continue;
+        addAttachments([await api.stageImage(f.name || "pasted.png", b64)]);
+      } catch (e) {
+        stageErr = `Couldn't attach ${f.name || "image"}: ${e}`;
+      }
+    }
+  }
+
+  function onPaste(e: ClipboardEvent) {
+    const files = e.clipboardData?.files;
+    if (!files?.length) return;
+    if (![...files].some((f) => f.type.startsWith("image/"))) return;
+    e.preventDefault();
+    void stageImageFiles(files);
+  }
+
+  function onDropFiles(e: DragEvent) {
+    const files = e.dataTransfer?.files;
+    if (!files?.length) return;
+    if (![...files].some((f) => f.type.startsWith("image/"))) return;
+    e.preventDefault();
+    void stageImageFiles(files);
+  }
+
   /** Native file explorer. Falls back to @ mention flow outside Tauri (browser dev). */
   async function pickFiles() {
     if (pickingFiles) return;
@@ -682,6 +725,10 @@
 <div class="ob">
   <div
     class="ob-card"
+    role="group"
+    aria-label="Message composer — drop images to attach"
+    on:dragover|preventDefault
+    on:drop|preventDefault={onDropFiles}
     title={`${currentProject}${currentTask ? ` / ${currentTask}` : ""}${currentSubfolder ? ` (${currentSubfolder})` : ""}${branch ? ` ⎇ ${branch}` : ""}${tokens > 0 ? ` · ${tokens} tok` : ""}`}
   >
     {#if attachments.length}
@@ -710,10 +757,12 @@
     <textarea
       bind:this={textareaEl}
       rows="1"
-      placeholder={streaming ? "Agent is working... (Esc to stop)" : "Ask anything, @ to mention, / for actions"}
+      placeholder={streaming ? "Agent is working... (Esc to stop)" : "Ask anything, @ to mention, / for actions — paste images too"}
       bind:value={input}
       on:input={handleInput}
+      on:paste={onPaste}
     />
+    {#if stageErr}<div class="stage-err" role="alert">{stageErr}</div>{/if}
 
     {#if slashOpen && slashItems.length}
       <div class="slash-pop" transition:scale={{ duration: 150, start: 0.96, easing: cubicOut }}>
@@ -982,6 +1031,7 @@
     color: var(--text-4); font: inherit; font-size: 11px; padding: 4px 8px; cursor: pointer;
   }
   .attach-clear:hover { color: var(--bad); background: var(--bad-soft); }
+  .stage-err { font-size: 11px; color: var(--bad); padding: 2px 2px 6px; }
 
   .slash-pop, .at-popup {
     display: flex; flex-direction: column; gap: 1px; margin: 2px 0 8px;

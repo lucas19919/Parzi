@@ -331,9 +331,78 @@ async fn read_image_data_url(path: String, cwd: String) -> Result<String, String
     Ok(img.data_url())
 }
 
+/// Staged paste/drop images for the composer: pasted pixels have no disk
+/// path, so the shell stores them under `<parzi>/attachments/<uuid>.<ext>`
+/// (8 MiB cap, image extensions only) and returns the absolute path, which
+/// attaches exactly like a picker-chosen file. Oldest staged files past 32
+/// are pruned on each stage so the folder cannot grow without bound.
+#[tauri::command]
+async fn stage_image(name: String, base64_data: String) -> Result<String, String> {
+    use base64::Engine as _;
+    const STAGE_MAX: usize = 8 * 1024 * 1024;
+    const KEEP: usize = 32;
+    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
+    if !matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"
+    ) {
+        return Err(format!("{name} is not a supported image"));
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_data.trim())
+        .map_err(|_| "bad image data".to_string())?;
+    if bytes.len() > STAGE_MAX {
+        return Err("image is over the 8 MiB stage limit".into());
+    }
+    // Refuse non-image payloads wearing an image extension.
+    if parzi_core::context::encode_image(&format!("x.{ext}"), &bytes).is_none() {
+        return Err(format!("{name} is not a supported image"));
+    }
+    let dir = parzi_core::paths::parzi_dir()
+        .map_err(|e| e.to_string())?
+        .join("attachments");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let dest = dir.join(format!("{}.{ext}", uuid::Uuid::new_v4()));
+    std::fs::write(&dest, &bytes).map_err(|e| e.to_string())?;
+    // Prune oldest past KEEP (best-effort, never fails the stage).
+    if let Ok(mut files) = std::fs::read_dir(&dir).map(|rd| {
+        rd.flatten()
+            .filter(|e| e.path().is_file())
+            .filter_map(|e| e.metadata().ok().and_then(|m| m.modified().ok()).map(|t| (t, e.path())))
+            .collect::<Vec<_>>()
+    }) {
+        files.sort_by_key(|(t, _)| *t);
+        for (_, p) in files.iter().take(files.len().saturating_sub(KEEP)) {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+    Ok(dest.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 async fn toggle_pin(state: State<'_, AppState>, id: String, pinned: bool) -> Result<(), String> {
     state.orch.store().set_pinned(&id, pinned).map_err(|e| e.to_string())
+}
+
+/// Built-in (non-connector) tool catalog for the Agent-tools settings page:
+/// groups and blurbs come from the runtime so docs and UI never drift.
+#[derive(Debug, Clone, Serialize)]
+struct BuiltinToolView {
+    name: String,
+    group: String,
+    blurb: String,
+}
+
+#[tauri::command]
+async fn list_builtin_tools() -> Result<Vec<BuiltinToolView>, String> {
+    Ok(parzi_runtime::tools::builtin_tools()
+        .into_iter()
+        .map(|t| BuiltinToolView {
+            name: t.name.to_string(),
+            group: t.group.to_string(),
+            blurb: t.blurb.to_string(),
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -1097,6 +1166,52 @@ async fn save_project_plan(project: String, content: String) -> Result<(), Strin
 }
 
 #[tauri::command]
+async fn get_project_knowledge(project: String) -> Result<String, String> {
+    Ok(parzi_core::lanes::read_knowledge(&project).unwrap_or_default())
+}
+
+#[tauri::command]
+async fn save_project_knowledge(project: String, content: String) -> Result<(), String> {
+    let clean = parzi_core::lanes::safe_name(&project).map_err(|e| e.to_string())?;
+    let path = parzi_core::paths::project_knowledge_path(&clean).map_err(|e| e.to_string())?;
+    if let Some(p) = path.parent() {
+        let _ = std::fs::create_dir_all(p);
+    }
+    parzi_core::atomic_write(&path, content.as_bytes()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_worktree_diff(
+    project: String,
+    lane: String,
+    session_id: String,
+) -> Result<String, String> {
+    let clean_lane = if lane.trim().is_empty() { "default" } else { lane.trim() };
+    let wt_path = parzi_core::paths::worktrees_dir()
+        .map_err(|e| e.to_string())?
+        .join(project)
+        .join(clean_lane)
+        .join(session_id);
+    if !wt_path.exists() {
+        return Ok(String::new());
+    }
+    parzi_runtime::git_worktree::worktree_diff(&wt_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn apply_worktree(
+    project: String,
+    lane: String,
+    session_id: String,
+) -> Result<String, String> {
+    let clean_lane = if lane.trim().is_empty() { "default" } else { lane.trim() };
+    let root = parzi_core::lanes::lane_root(&project, clean_lane)
+        .ok_or_else(|| "project root not configured".to_string())?;
+    parzi_runtime::git_worktree::apply_worktree(&root, clean_lane, &session_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn list_checkpoints(
     repo: String,
     session_id: String,
@@ -1576,6 +1691,10 @@ fn main() {
             save_project_roster,
             get_project_plan,
             save_project_plan,
+            get_project_knowledge,
+            save_project_knowledge,
+            get_worktree_diff,
+            apply_worktree,
             list_checkpoints,
             restore_checkpoint,
             list_files,
@@ -1618,6 +1737,7 @@ fn main() {
             run_doctor_mcp,
             list_mcp_tools,
             list_all_mcp_tools,
+            list_builtin_tools,
             list_plugins,
             toggle_plugin,
             install_pasted_skill,
@@ -1627,6 +1747,7 @@ fn main() {
             read_text_file,
             write_text_file,
             read_image_data_url,
+            stage_image,
             save_project_system,
             create_skill,
             skill_commands,

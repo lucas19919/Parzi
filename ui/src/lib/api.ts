@@ -174,6 +174,7 @@ export interface LaneView {
   model: string | null;
   root: string | null;
   allowed_tools: string[];
+  isolated_worktree?: boolean;
 }
 
 export interface AgentRoleConfig {
@@ -201,6 +202,13 @@ export interface CheckpointView {
   turn: number;
   hash: string;
   created: string;
+}
+
+/** One built-in (non-connector) agent tool with its settings group. */
+export interface BuiltinTool {
+  name: string;
+  group: string;
+  blurb: string;
 }
 
 export interface ProjectView {
@@ -311,10 +319,19 @@ export const api = {
     invoke<string>("get_project_plan", { project }),
   saveProjectPlan: (project: string, content: string) =>
     invoke<void>("save_project_plan", { project, content }),
+  getProjectKnowledge: (project: string) =>
+    invoke<string>("get_project_knowledge", { project }),
+  saveProjectKnowledge: (project: string, content: string) =>
+    invoke<void>("save_project_knowledge", { project, content }),
+  getWorktreeDiff: (project: string, lane: string, sessionId: string) =>
+    invoke<string>("get_worktree_diff", { project, lane, session_id: sessionId }),
+  applyWorktree: (project: string, lane: string, sessionId: string) =>
+    invoke<string>("apply_worktree", { project, lane, session_id: sessionId }),
   listCheckpoints: (repo: string, session_id: string) =>
     invoke<CheckpointView[]>("list_checkpoints", { repo, session_id }),
   restoreCheckpoint: (repo: string, session_id: string, turn: number) =>
     invoke<void>("restore_checkpoint", { repo, session_id, turn }),
+  listBuiltinTools: () => invoke<BuiltinTool[]>("list_builtin_tools"),
   listFiles: (root: string, query: string) =>
     invoke<string[]>("list_files", { root, query }),
   createProject: (name: string, root: string) =>
@@ -388,6 +405,9 @@ export const api = {
   readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
   writeTextFile: (path: string, content: string) =>
     invoke<void>("write_text_file", { path, content }),
+  /** Stage pasted/dropped image bytes; returns an attachable absolute path. */
+  stageImage: (name: string, base64Data: string) =>
+    invoke<string>("stage_image", { name, base64_data: base64Data }),
   /** Image bytes as a data URL for previews (confined, images only). */
   readImageDataUrl: (path: string, cwd: string) =>
     invoke<string>("read_image_data_url", { path, cwd }),

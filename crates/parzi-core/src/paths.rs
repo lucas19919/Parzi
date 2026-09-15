@@ -43,6 +43,14 @@ pub fn logs_dir() -> Result<PathBuf> {
     Ok(parzi_dir()?.join("logs"))
 }
 
+pub fn worktrees_dir() -> Result<PathBuf> {
+    Ok(parzi_dir()?.join("worktrees"))
+}
+
+pub fn project_knowledge_path(project: &str) -> Result<PathBuf> {
+    Ok(projects_dir()?.join(project).join("KNOWLEDGE.md"))
+}
+
 /// Create the full tree. Idempotent. Also seeds the default background.
 pub fn ensure_dirs() -> Result<PathBuf> {
     let root = parzi_dir()?;
@@ -53,6 +61,7 @@ pub fn ensure_dirs() -> Result<PathBuf> {
         "plugins",
         "logs",
         "themes",
+        "attachments",
     ] {
         std::fs::create_dir_all(root.join(sub))?;
     }
@@ -66,7 +75,14 @@ pub fn ensure_dirs() -> Result<PathBuf> {
 fn seed_default_background(root: &std::path::Path) -> Result<()> {
     // (bundled file name, dev-tree source name). Release installers place
     // them beside the executable; both layouts are best-effort seeds.
-    for name in ["asuka.png", "eva-crosses.jpg"] {
+    for name in [
+        "eva-crosses.jpg",
+        "code-geass.jpg",
+        "death-note.jpg",
+        "itachi.jpg",
+        "rei-dark.jpg",
+        "uchiha.jpg",
+    ] {
         let dest = root.join("backgrounds").join(name);
         if dest.exists() {
             continue;
@@ -93,67 +109,51 @@ fn seed_default_background(root: &std::path::Path) -> Result<()> {
 fn seed_builtin_packs(root: &std::path::Path) -> Result<()> {
     let packs: &[(&str, &str)] = &[
         (
-            "moody-midnight",
-            "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#07070B\"\nstage = \"#0B0B10\"\naccent = \"#7C8CFF\"\ntext = \"#EDEDF2\"\n\
-text_dim = \"#9AA0AE\"\nbar = \"#1A1D24\"\nborder = \"#2A2E3A\"\n\n\
-[background]\nimage = \"backgrounds/asuka.png\"\ndim = 0.65\nvignette = 0.50\n\n\
-[glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
-        ),
-        (
             "eva-crosses",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
 [colors]\nsidebar = \"#0D0708\"\nstage = \"#120B0C\"\naccent = \"#E5484D\"\ntext = \"#F5EDED\"\n\
 text_dim = \"#A89A9B\"\nbar = \"#1D1214\"\nborder = \"#33201F\"\n\n\
-[background]\nimage = \"backgrounds/eva-crosses.jpg\"\ndim = 0.62\nvignette = 0.48\n\n\
+[background]\nimage = \"backgrounds/eva-crosses.jpg\"\ndim = 0.62\nvignette = 0.48\nblur = 0.0\n\n\
 [glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
         ),
         (
-            "tokyo-night",
+            "code-geass",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#16161E\"\nstage = \"#1A1B26\"\naccent = \"#7AA2F7\"\ntext = \"#C0CAF5\"\n\
-text_dim = \"#7982A9\"\nbar = \"#24283B\"\nborder = \"#3B4261\"\n\n\
-[background]\nimage = \"\"\ndim = 0.60\nvignette = 0.45\n\n\
-[glass]\nopacity = 0.88\nradius = 12\nblur_px = 22\nshadow = true\n",
-        ),
-        (
-            "catppuccin-mocha",
-            "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#11111B\"\nstage = \"#181825\"\naccent = \"#CBA6F7\"\ntext = \"#CDD6F4\"\n\
-text_dim = \"#9399B2\"\nbar = \"#1E1E2E\"\nborder = \"#313244\"\n\n\
-[background]\nimage = \"\"\ndim = 0.62\nvignette = 0.45\n\n\
+[colors]\nsidebar = \"#08080C\"\nstage = \"#0C0C12\"\naccent = \"#E51616\"\ntext = \"#EDEDF2\"\n\
+text_dim = \"#9AA0AE\"\nbar = \"#141419\"\nborder = \"#26262E\"\n\n\
+[background]\nimage = \"backgrounds/code-geass.jpg\"\ndim = 0.55\nvignette = 0.50\nblur = 0.0\n\n\
 [glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
         ),
         (
-            "dracula",
+            "death-note",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#1E1F29\"\nstage = \"#282A36\"\naccent = \"#BD93F9\"\ntext = \"#F8F8F2\"\n\
-text_dim = \"#989BB0\"\nbar = \"#343746\"\nborder = \"#44475A\"\n\n\
-[background]\nimage = \"\"\ndim = 0.60\nvignette = 0.40\n\n\
-[glass]\nopacity = 0.86\nradius = 12\nblur_px = 18\nshadow = true\n",
+[colors]\nsidebar = \"#14090B\"\nstage = \"#1A0D10\"\naccent = \"#E5484D\"\ntext = \"#F5E9E4\"\n\
+text_dim = \"#B59A95\"\nbar = \"#241215\"\nborder = \"#422024\"\n\n\
+[background]\nimage = \"backgrounds/death-note.jpg\"\ndim = 0.68\nvignette = 0.50\nblur = 0.0\n\n\
+[glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
         ),
         (
-            "nordic-frost",
+            "itachi",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#1E222A\"\nstage = \"#242933\"\naccent = \"#88C0D0\"\ntext = \"#ECEFF4\"\n\
-text_dim = \"#8FBCBB\"\nbar = \"#2E3440\"\nborder = \"#3B4252\"\n\n\
-[background]\nimage = \"\"\ndim = 0.58\nvignette = 0.40\n\n\
-[glass]\nopacity = 0.85\nradius = 12\nblur_px = 18\nshadow = true\n",
+[colors]\nsidebar = \"#070C0E\"\nstage = \"#0B1114\"\naccent = \"#E52A2A\"\ntext = \"#E9EFF2\"\n\
+text_dim = \"#8FA0A8\"\nbar = \"#121A1E\"\nborder = \"#24333A\"\n\n\
+[background]\nimage = \"backgrounds/itachi.jpg\"\ndim = 0.60\nvignette = 0.55\nblur = 0.0\n\n\
+[glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
         ),
         (
-            "oled-black",
+            "rei",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#000000\"\nstage = \"#030303\"\naccent = \"#10B981\"\ntext = \"#F9FAFB\"\n\
-text_dim = \"#9CA3AF\"\nbar = \"#0A0A0A\"\nborder = \"#27272A\"\n\n\
-[background]\nimage = \"\"\ndim = 0.80\nvignette = 0.60\n\n\
-[glass]\nopacity = 0.92\nradius = 12\nblur_px = 16\nshadow = true\n",
+[colors]\nsidebar = \"#080A12\"\nstage = \"#0C0F1A\"\naccent = \"#8EA2FF\"\ntext = \"#E8EDF7\"\n\
+text_dim = \"#8E9BB5\"\nbar = \"#121828\"\nborder = \"#26304A\"\n\n\
+[background]\nimage = \"backgrounds/rei-dark.jpg\"\ndim = 0.50\nvignette = 0.50\nblur = 0.0\n\n\
+[glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
         ),
         (
-            "rose-pine",
+            "uchiha",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#12101B\"\nstage = \"#191724\"\naccent = \"#EB6F92\"\ntext = \"#E0DEF4\"\n\
-text_dim = \"#908CAA\"\nbar = \"#211F2D\"\nborder = \"#393552\"\n\n\
-[background]\nimage = \"\"\ndim = 0.62\nvignette = 0.48\n\n\
+[colors]\nsidebar = \"#0A0A0C\"\nstage = \"#0F0F12\"\naccent = \"#E5484D\"\ntext = \"#EDEDF2\"\n\
+text_dim = \"#9AA0AE\"\nbar = \"#17171B\"\nborder = \"#2A2A30\"\n\n\
+[background]\nimage = \"backgrounds/uchiha.jpg\"\ndim = 0.50\nvignette = 0.45\nblur = 0.0\n\n\
 [glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
         ),
     ];
@@ -175,6 +175,18 @@ text_dim = \"#908CAA\"\nbar = \"#211F2D\"\nborder = \"#393552\"\n\n\
 /// edited or renamed copy is never taken from the user.
 fn retire_legacy_packs(root: &std::path::Path) {
     const LEGACY: &[(&str, &str)] = &[
+        ("moody-midnight", "accent = \"#7C8CFF\""),
+        ("tokyo-night", "accent = \"#7AA2F7\""),
+        ("catppuccin-mocha", "accent = \"#CBA6F7\""),
+        ("dracula", "accent = \"#BD93F9\""),
+        ("nordic-frost", "accent = \"#88C0D0\""),
+        ("oled-black", "accent = \"#10B981\""),
+        ("rose-pine", "accent = \"#EB6F92\""),
+        ("asuka", "image = \"backgrounds/asuka.png\""),
+        ("eva-end", "image = \"backgrounds/eva-end.webp\""),
+        ("eva-unit01", "image = \"backgrounds/eva-unit01.webp\""),
+        ("shinkai-city", "image = \"backgrounds/shinkai-city.jpg\""),
+        ("rei", "image = \"backgrounds/rei.jpg\""),
         ("cyberpunk-noir", "accent = \"#00F0FF\""),
         ("emerald-matrix", "text_dim = \"#6EE7B7\""),
     ];

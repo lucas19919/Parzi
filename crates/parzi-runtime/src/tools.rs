@@ -128,6 +128,9 @@ impl ToolExecutor {
         if is_plan_tool(name) {
             return execute_plan_tool(name, args).await;
         }
+        if is_knowledge_tool(name) {
+            return execute_knowledge_tool(name, args).await;
+        }
         if let Some((server, tool)) = name.split_once('.').filter(|_| name.contains('.')) {
             // MCP names are `server.tool`; local names are `fs.read` style too,
             // so try local first, then MCP.
@@ -370,11 +373,37 @@ pub fn session_defs() -> Vec<ToolDef> {
                 "required": ["title", "prompt"],
             }),
         },
+        ToolDef {
+            name: "knowledge.read".into(),
+            description: "Read the project's cumulative knowledge and lessons learned (KNOWLEDGE.md).".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"project": {"type": "string"}},
+                "required": ["project"],
+            }),
+        },
+        ToolDef {
+            name: "knowledge.record".into(),
+            description: "Record an architectural decision, discovered pattern, or gotcha into the project's cumulative knowledge base.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "note": {"type": "string"},
+                    "category": {"type": "string", "enum": ["decision", "pattern", "gotcha"]},
+                },
+                "required": ["project", "note"],
+            }),
+        },
     ]
 }
 
 pub fn is_plan_tool(name: &str) -> bool {
     matches!(name, "plan.read" | "plan.update")
+}
+
+pub fn is_knowledge_tool(name: &str) -> bool {
+    matches!(name, "knowledge.read" | "knowledge.record")
 }
 
 pub fn is_lane_tool(name: &str) -> bool {
@@ -386,6 +415,69 @@ pub fn is_session_tool(name: &str) -> bool {
         name,
         "session.spawn" | "session.send_message" | "session.read_session" | "session.list_sessions"
     )
+}
+
+/// Built-in (non-connector) tool catalog: the single source of truth for how
+/// base tools are grouped and described in Settings. Groups: Files, Shell,
+/// Teamwork, Plans, Knowledge, Display.
+pub struct BuiltinTool {
+    pub name: &'static str,
+    pub group: &'static str,
+    pub blurb: &'static str,
+}
+
+pub fn builtin_tools() -> Vec<BuiltinTool> {
+    vec![
+        BuiltinTool { name: "fs.read", group: "Files", blurb: "Read files in the project" },
+        BuiltinTool { name: "fs.write", group: "Files", blurb: "Create and overwrite files" },
+        BuiltinTool { name: "fs.list", group: "Files", blurb: "Browse directories" },
+        BuiltinTool { name: "shell.exec", group: "Shell", blurb: "Run shell commands in the repo" },
+        BuiltinTool { name: "session.spawn", group: "Teamwork", blurb: "Spawn child subsessions" },
+        BuiltinTool { name: "session.send_message", group: "Teamwork", blurb: "Message other sessions" },
+        BuiltinTool { name: "session.read_session", group: "Teamwork", blurb: "Inspect other transcripts" },
+        BuiltinTool { name: "session.list_sessions", group: "Teamwork", blurb: "List sessions" },
+        BuiltinTool { name: "plan.read", group: "Plans", blurb: "Read the living project plan" },
+        BuiltinTool { name: "plan.update", group: "Plans", blurb: "Update plan checkboxes" },
+        BuiltinTool { name: "lane.dispatch", group: "Plans", blurb: "Dispatch a lane worker" },
+        BuiltinTool { name: "knowledge.read", group: "Knowledge", blurb: "Read recorded project knowledge" },
+        BuiltinTool { name: "knowledge.record", group: "Knowledge", blurb: "Record durable project knowledge" },
+        BuiltinTool { name: "ui.show_markdown", group: "Display", blurb: "Render rich text (always on)" },
+        BuiltinTool { name: "ui.show_widget", group: "Display", blurb: "Render cards and charts (always on)" },
+        BuiltinTool { name: "ui.show_diagram", group: "Display", blurb: "Render diagrams (always on)" },
+        BuiltinTool { name: "ui.show_artifact", group: "Display", blurb: "Save versioned artifacts" },
+    ]
+}
+
+/// Group label for any known tool name (MCP `server.tool` names report
+/// "Connector"). Used by Settings and diagnostics.
+pub fn tool_group(name: &str) -> &'static str {
+    for t in builtin_tools() {
+        if t.name == name {
+            return t.group;
+        }
+    }
+    "Connector"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn catalog_covers_every_advertised_tool_exactly_once() {
+        // session_defs carries session.* + plan.* + lane.dispatch + knowledge.*.
+        let names: Vec<String> = local_defs()
+            .into_iter()
+            .chain(ui_defs())
+            .chain(session_defs())
+            .map(|d| d.name)
+            .collect();
+        let catalog = builtin_tools();
+        for n in &names {
+            assert_eq!(catalog.iter().filter(|t| t.name == n.as_str()).count(), 1, "catalog gap/dupe: {n}");
+        }
+        assert_eq!(catalog.len(), names.len(), "catalog drift vs defs");
+    }
 }
 
 /// Resolve `path` strictly inside `cwd`. Rejects absolute / rooted / drive-
@@ -515,6 +607,35 @@ async fn execute_plan_tool(name: &str, args: &serde_json::Value) -> (bool, Strin
             }
         }
         _ => (false, format!("unknown plan tool `{name}`")),
+    }
+}
+
+async fn execute_knowledge_tool(name: &str, args: &serde_json::Value) -> (bool, String) {
+    let project = args.get("project").and_then(|v| v.as_str()).unwrap_or("");
+    if project.trim().is_empty() {
+        return (false, "knowledge tool needs `project`".into());
+    }
+    match name {
+        "knowledge.read" => match parzi_core::lanes::read_knowledge(project) {
+            Some(text) => {
+                let cut: String = text.chars().take(24_000).collect();
+                (true, cut)
+            }
+            None => (true, "no knowledge recorded yet for this project".into()),
+        },
+        "knowledge.record" => {
+            let note = args.get("note").and_then(|v| v.as_str()).unwrap_or("");
+            if note.trim().is_empty() {
+                return (false, "knowledge.record needs `note`".into());
+            }
+            let category = args.get("category").and_then(|v| v.as_str()).unwrap_or("decision");
+            let formatted = format!("[{category}] {note}");
+            match parzi_core::lanes::append_knowledge(project, &formatted) {
+                Ok(()) => (true, "knowledge recorded".into()),
+                Err(e) => (false, e.to_string()),
+            }
+        }
+        _ => (false, format!("unknown knowledge tool `{name}`")),
     }
 }
 

@@ -24,6 +24,7 @@ keyring = "4"
 uuid = { version = "1", features = ["v4"] }
 anyhow = "1"
 async-trait = "0.1"
+base64 = "0.22"
 
 # S-8: the GUI ships to users — same release profile and lint gates as the
 # workspace crates (opt-level z, LTO, strip, unsafe forbid).
