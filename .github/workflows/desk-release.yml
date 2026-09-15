@@ -1,0 +1,74 @@
+# DISABLED — Phase 5 research draft. MUST STAY DISABLED until the Phase 6
+# cutover is approved (see docs/native-ui/packaging.md cutover checklist).
+#
+# - Every job carries `if: false`, so neither tag pushes (`v*`) nor manual
+#   `workflow_dispatch` runs anything. Do NOT remove an `if: false` without
+#   cutover approval, and do NOT touch the live pipeline in
+#   .github/workflows/release.yml (Tauri NSIS+MSI+DMG+updater ships from there).
+# - Shape mirrors release.yml (matrix: windows-latest + macos-latest,
+#   universal macOS target, draft release with latest.json) with the Tauri
+#   steps swapped for `cargo build --release -p parzi-desk` + cargo-packager.
+# - UNCERTAIN: the exact cargo-packager CLI invocation and its config path
+#   (flags below are placeholders to be verified against
+#   https://docs.crabnebula.dev/packager/ in Phase 6 — see
+#   crates/parzi-desk/packaging/NOTES.md §6). Nothing here is expected to run.
+
+name: Desk-Release (DISABLED — Phase 6 cutover only)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  desk-release:
+    if: false
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Universal macOS binary (Apple Silicon + Intel in one .dmg) — same as live.
+      - name: Add macOS Rust targets
+        if: false
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      # Native build: single Rust binary, no Node/frontend step (M7 deletes ui/).
+      - name: Build parzi-desk
+        if: false
+        run: cargo build --release -p parzi-desk ${{ matrix.args }}
+
+      # UNCERTAIN: exact packager invocation + config path
+      # (crates/parzi-desk/packaging/packager.toml is a commented draft).
+      # Signing secret (minisign private key) TBD in Phase 6 — pending the
+      # key-compat test (reuse TAURI_SIGNING_PRIVATE_KEY material vs new
+      # keypair via `cargo packager signer generate`); see
+      # docs/native-ui/packaging.md.
+      - name: Package (NSIS per-user + MSI on Windows; DMG on macOS)
+        if: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PACKAGER_SIGNING_KEY: ${{ secrets.DESK_SIGNING_PRIVATE_KEY }}  # name TBD Phase 6
+        run: echo "DISABLED: cargo-packager invocation TBD (Phase 6)"
+
+      # Draft release carrying latest.json updater feed — same contract as live:
+      # endpoint https://github.com/lucas19919/Parzi/releases/latest/download/latest.json
+      - name: Draft release with updater feed
+        if: false
+        run: echo "DISABLED: draft-release upload incl. latest.json TBD (Phase 6)"
