@@ -122,7 +122,7 @@
       <span>Docs</span>
       {#if docsLoaded}<span class="deck-ind" />{/if}
     </button>
-    <button class="deck-pill" class:on={panelOpen && panelTab === "agents"} title="Agents — swarm, processes, tool trace"
+      <button class="deck-pill" class:on={panelOpen && panelTab === "agents"} title="Agents — tree, approvals, tool trace"
       aria-pressed={panelOpen && panelTab === "agents"} on:click={() => pillTap("agents", () => dispatch("toggleAgents"))}>
       <Icon d={I.bolt} size={12} />
       <span>Agents</span>

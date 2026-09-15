@@ -45,6 +45,7 @@
 .switch:hover .knob { background: var(--text-2); }
 .switch.on { background: var(--accent); border-color: transparent; }
 .switch.on .knob { left: 18px; background: var(--accent-ink); }
+.switch.locked { opacity: 0.55; cursor: not-allowed; }
 
 .sbtn {
   background: var(--surface-2);
@@ -87,3 +88,23 @@
   border: 1px solid var(--bad-line);
   border-radius: var(--radius-2); padding: 10px 14px;
 }
+
+/* Permission rows + pattern chips (Agent tools, Connectors). */
+.perm-rows { display: flex; flex-direction: column; gap: 2px; width: 100%; }
+.perm-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 6px 2px; border-top: 1px solid var(--line-2);
+}
+.perm-row:first-child { border-top: none; }
+.perm-name { color: var(--text-2); }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface-2); border: 1px solid var(--line-3);
+  border-radius: var(--radius-pill); padding: 3px 6px 3px 10px; font-size: 11px; color: var(--text-2);
+}
+.chip-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: var(--text-3); cursor: pointer; padding: 2px;
+}
+.chip-x:hover { color: var(--bad); }

@@ -32,13 +32,6 @@
     book: "M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5A2.5 2.5 0 0 0 4 4.5v15z",
   };
 
-  const LOCAL_TOOLS = [
-    { name: "fs.read", label: "Read files", hint: "Let the agent read files in the project" },
-    { name: "fs.write", label: "Write files", hint: "Let the agent create / overwrite files" },
-    { name: "fs.list", label: "List directories", hint: "Let the agent browse the project tree" },
-    { name: "shell.exec", label: "Shell commands", hint: "Run bash / powershell in the repository" },
-  ];
-
   let cfg: ParziConfig | null = null;
   let servers: Record<string, McpServer> = {};
   let loading = true;
@@ -64,9 +57,6 @@
   /** Per-preset install inputs (arg + env), kept while configuring. */
   let presetInputs: Record<string, { open: boolean; arg: string; env: Record<string, string> }> = {};
   let installing: string | null = null;
-
-  let customPattern = "";
-  let customErr = "";
 
   function sanitizeName(s: string): string {
     return s.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
@@ -321,41 +311,6 @@
     );
   }
 
-  function toggleGlobalPattern(pattern: string) {
-    if (!cfg) return;
-    const list = cfg.lanes.default_allowed_tools ?? [];
-    cfg.lanes.default_allowed_tools = list.includes(pattern)
-      ? list.filter((t) => t !== pattern)
-      : [...list, pattern];
-    cfg = cfg;
-    void persist(list.includes(pattern) ? `Blocked ${pattern}` : `Allowed ${pattern}`);
-  }
-
-  function addCustomPattern() {
-    customErr = "";
-    const p = customPattern.trim();
-    if (!cfg || !p) return;
-    if (!/^[a-zA-Z0-9_*.-]+$/.test(p)) {
-      customErr = "Letters, numbers, ., -, _, * only — e.g. github.* or shell.exec.";
-      return;
-    }
-    if ((cfg.lanes.default_allowed_tools ?? []).includes(p)) {
-      customErr = "That pattern is already allowed.";
-      return;
-    }
-    cfg.lanes.default_allowed_tools = [...(cfg.lanes.default_allowed_tools ?? []), p];
-    customPattern = "";
-    cfg = cfg;
-    void persist(`Allowed ${p}`);
-  }
-
-  function setGlobalMode(mode: string) {
-    if (!cfg) return;
-    cfg.lanes.default_mode = mode;
-    cfg = cfg;
-    void persist(mode === "auto" ? "Turbo: tools run without asking" : mode === "deny" ? "Lockdown: tools blocked" : "Ask: tools need approval");
-  }
-
   /* ---------- installed servers ---------- */
 
   function toggleEnabled(name: string) {
@@ -566,79 +521,11 @@
     <div class="skel" />
   </div>
 {:else}
-  <!-- General permissions: lane allowlist + approval policy -->
+  <!-- Lane policy and built-in tools live under Agent tools now. -->
   <div class="pref-section">
     <div>
-      <h3 class="section-title">General permissions</h3>
-      <p class="section-desc">What the agent may use at all. A tool reaches the agent only when <b>both</b> layers agree: allowed here <b>and</b> exposed on its connector card below.</p>
-    </div>
-
-    <div class="field-card">
-      <div class="field-info">
-        <span class="field-label">Tool execution policy</span>
-        <span class="field-hint">
-          {cfg && cfg.lanes.default_mode === "auto"
-            ? "Turbo: tools run without asking"
-            : cfg && cfg.lanes.default_mode === "deny"
-            ? "Lockdown: tools are blocked (per-tool Auto can still punch through)"
-            : "Ask: each tool run needs approval (per-tool Auto/Ask/Deny overrides)"}
-        </span>
-      </div>
-      {#if cfg}
-        <SegControl
-          options={[{ value: "ask", label: "Ask" }, { value: "auto", label: "Turbo" }, { value: "deny", label: "Lockdown" }]}
-          value={cfg.lanes.default_mode}
-          on:pick={(e) => setGlobalMode(e.detail)}
-        />
-      {/if}
-    </div>
-
-    {#each LOCAL_TOOLS as t (t.name)}
-      <div class="field-card">
-        <div class="field-info">
-          <span class="field-label mono">{t.name}</span>
-          <span class="field-hint">{t.hint}</span>
-        </div>
-        <Switch on={patternAllows(globalPatterns, t.name)} title={patternAllows(globalPatterns, t.name) ? `Block ${t.name}` : `Allow ${t.name}`} on:toggle={() => toggleGlobalPattern(t.name)} />
-      </div>
-    {/each}
-
-    {#if serverNames.length}
-      <div class="field-card col">
-        <div class="field-info">
-          <span class="field-label">Connector access</span>
-          <span class="field-hint"><span class="mono">server.*</span> lets the agent use that connector's exposed tools. Turn one off to cut the whole connector without uninstalling it.</span>
-        </div>
-        <div class="perm-rows">
-          {#each serverNames as name (name)}
-            <div class="perm-row">
-              <span class="mono perm-name">{name}.*</span>
-              <Switch on={patternAllows(globalPatterns, `${name}.`)} title={patternAllows(globalPatterns, `${name}.`) ? `Block all ${name} tools` : `Allow ${name} tools`} on:toggle={() => toggleGlobalPattern(`${name}.*`)} />
-            </div>
-          {/each}
-        </div>
-      </div>
-    {/if}
-
-    <div class="field-card col">
-      <div class="field-info">
-        <span class="field-label">Custom patterns</span>
-        <span class="field-hint">Exact names (<span class="mono">github.create_issue</span>), prefixes (<span class="mono">github.*</span>) or <span class="mono">*</span>. UI and teamwork tools stay on — rendering isn't execution.</span>
-      </div>
-      {#if globalPatterns.length}
-        <div class="chip-row">
-          {#each globalPatterns as p (p)}
-            <span class="chip mono">{p}<button class="chip-x" title={`Block ${p}`} on:click={() => toggleGlobalPattern(p)}><Icon d={I.x} size={10} /></button></span>
-          {/each}
-        </div>
-      {/if}
-      <div class="paste-row">
-        <input class="txt mono" placeholder="e.g. github.create_issue  —  Enter to allow" bind:value={customPattern} on:keydown={(e) => e.key === "Enter" && addCustomPattern()} />
-        <button class="sbtn" on:click={addCustomPattern} disabled={!customPattern.trim()}><Icon d={I.plus} size={12} /><span>Allow</span></button>
-      </div>
-      {#if customErr}
-        <span class="form-err">{customErr}</span>
-      {/if}
+      <h3 class="section-title">Permissions moved</h3>
+      <p class="section-desc">Execution policy, built-in agent tools and allow patterns now live under <b>Agent tools</b>. This page is connectors only.</p>
     </div>
   </div>
 
@@ -759,7 +646,7 @@
             <label class="fld"><span>Args (space-separated)</span><input class="txt mono" bind:value={draft.args} /></label>
             <label class="fld"><span>Env (one KEY=value per line)</span><textarea class="txt mono" rows="3" bind:value={draft.env} /></label>
             <label class="fld"><span>Timeout (seconds)</span><input class="txt mono" bind:value={draft.timeout} inputmode="numeric" /></label>
-            <span class="field-hint">Tool exposure is managed in the Tools list above ({exposureSummary(s)}).</span>
+            <span class="field-hint">Per-tool allow/deny lives here; lane allowlist lives under Agent tools ({exposureSummary(s)}).</span>
             {#if draftErr}
               <span class="form-err">{draftErr}</span>
             {/if}
@@ -941,24 +828,6 @@
   .status-badge { margin-left: 8px; }
   .chev { display: inline-flex; transition: transform 150ms ease; }
   .chev.up { transform: rotate(180deg); }
-  .perm-rows { display: flex; flex-direction: column; gap: 2px; width: 100%; }
-  .perm-row {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 6px 2px; border-top: 1px solid var(--line-2);
-  }
-  .perm-row:first-child { border-top: none; }
-  .perm-name { color: var(--text-2); }
-  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip {
-    display: inline-flex; align-items: center; gap: 6px;
-    background: var(--surface-2); border: 1px solid var(--line-3);
-    border-radius: var(--radius-pill); padding: 3px 6px 3px 10px; font-size: 11px; color: var(--text-2);
-  }
-  .chip-x {
-    display: inline-flex; align-items: center; justify-content: center;
-    background: transparent; border: none; color: var(--text-3); cursor: pointer; padding: 2px;
-  }
-  .chip-x:hover { color: var(--bad); }
   .tools-pane {
     display: flex; flex-direction: column; gap: 8px;
     border-top: 1px solid var(--line-2); padding-top: 10px; margin-top: 2px;

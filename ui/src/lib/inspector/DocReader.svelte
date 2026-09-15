@@ -138,7 +138,7 @@
 </script>
 
 <div class="reader">
-  <!-- Quick tabs: project docs, transcript, thread artifacts -->
+  <!-- One tab row: project docs, transcript, artifacts, file picker -->
   <div class="quick">
     {#each quickDocs as d (d.path)}
       <button class="qt" class:on={doc?.path === d.path} title={d.path} on:click={() => dispatch("openDoc", { entry: d })}>
@@ -151,22 +151,16 @@
     {#if hasThread}
       <button class="qt" class:on={doc?.title === "session.md"} title="Formatted transcript of this thread" on:click={() => dispatch("openTranscript")}>session.md</button>
     {/if}
+    {#each docFamilies as a (a.id)}
+      <button class="qt art" class:on={artifact?.id === a.id} title={`${a.id} · v${a.version}`} on:click={() => dispatch("openArtifact", { artifact: a })}>
+        {a.title}
+      </button>
+    {/each}
     <button class="qt pick" title="Open any markdown file from the workspace" on:click={() => dispatch("pickFile")}>
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
       file
     </button>
   </div>
-
-  {#if docFamilies.length}
-    <div class="quick arts">
-      <span class="quick-label">artifacts</span>
-      {#each docFamilies as a (a.id)}
-        <button class="qt art" class:on={artifact?.id === a.id} title={`${a.id} · v${a.version}`} on:click={() => dispatch("openArtifact", { artifact: a })}>
-          {a.title}
-        </button>
-      {/each}
-    </div>
-  {/if}
 
   {#if mode === "empty"}
     <div class="empty">
@@ -232,11 +226,6 @@
   .quick {
     display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
     padding: 8px 10px 4px; flex: none;
-  }
-  .quick.arts { padding-top: 0; }
-  .quick-label {
-    font-family: var(--parzi-mono, monospace); font-size: 10px; letter-spacing: 0.06em;
-    text-transform: uppercase; color: var(--text-4, var(--parzi-text-dim, #5d636f)); padding: 0 4px;
   }
   .qt {
     background: var(--surface-1, rgba(255,255,255,0.04)); border: 1px solid transparent;

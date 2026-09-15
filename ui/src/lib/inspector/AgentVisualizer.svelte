@@ -1,6 +1,5 @@
 <script lang="ts">
   import ProviderLogo from "../ProviderLogo.svelte";
-  import { PROVIDER_MARKS } from "../providerMarks";
   import { createEventDispatcher } from "svelte";
   import type { ChatEvent, SwarmNode } from "../api";
 
@@ -52,52 +51,7 @@
     return "idle";
   }
 
-  /* ---------- graph layout: rows by depth, spread horizontally ---------- */
-  const NW = 148, NH = 44, GX = 14, GY = 40, PAD = 10;
-  $: rows = (() => {
-    const byDepth = new Map<number, SwarmNode[]>();
-    for (const n of nodes) {
-      if (!byDepth.has(n.depth)) byDepth.set(n.depth, []);
-      byDepth.get(n.depth)!.push(n);
-    }
-    return [...byDepth.entries()].sort((a, b) => a[0] - b[0]).map(([, list]) => list);
-  })();
-  $: maxCols = Math.max(1, ...rows.map((r) => r.length));
-  $: W = maxCols * (NW + GX) - GX + PAD * 2;
-  $: H = rows.length * (NH + GY) - GY + PAD * 2;
-  $: pos = (() => {
-    const m = new Map<string, { x: number; y: number }>();
-    rows.forEach((list, ri) => {
-      const rowW = list.length * (NW + GX) - GX;
-      const x0 = (W - rowW) / 2;
-      list.forEach((n, ci) => m.set(n.id, { x: x0 + ci * (NW + GX), y: PAD + ri * (NH + GY) }));
-    });
-    return m;
-  })();
-  $: treeEdges = nodes
-    .filter((n) => n.parentId && pos.has(n.parentId))
-    .map((n) => ({ from: n.parentId as string, to: n.id }));
-
-  /** Messages the active thread sent via session.send_message (glowing vectors). */
-  $: msgEdges = (() => {
-    if (!activeThreadId) return [] as { from: string; to: string }[];
-    const out = new Map<string, { from: string; to: string }>();
-    for (const e of events) {
-      if (e.kind === "tool_call" && e.name === "session.send_message") {
-        const target = String((e.args as any)?.session_id ?? "");
-        if (target && pos.has(target) && target !== activeThreadId) out.set(target, { from: activeThreadId, to: target });
-      }
-    }
-    return [...out.values()];
-  })();
-
-  function edgePath(from: string, to: string): string {
-    const a = pos.get(from), b = pos.get(to);
-    if (!a || !b) return "";
-    const x1 = a.x + NW / 2, y1 = a.y + NH, x2 = b.x + NW / 2, y2 = b.y;
-    const my = (y1 + y2) / 2;
-    return `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
-  }
+  /* ---------- tree order: App emits pre-order (parent, then children) ---------- */
 
   /* ---------- live tool trace (active thread) ---------- */
   $: trace = (() => {
@@ -133,65 +87,20 @@
       <span class="empty-sub">Open a thread. Subsessions spawned with session.spawn appear here as a live tree.</span>
     </div>
   {:else}
-    <!-- Topology -->
+    <!-- Agents: one unified tree (status, cost, last tool, actions). -->
     <section class="sec">
       <div class="sec-head">
-        <span>Topology</span>
-        <span class="sec-meta">{nodes.length} agent{nodes.length === 1 ? "" : "s"} · {liveCount} live</span>
-      </div>
-      <div class="graph-wrap">
-        <svg width="100%" viewBox="0 0 {W} {H}" style="max-height: {Math.min(H, 260)}px" role="img" aria-label="Agent swarm topology">
-          <defs>
-            <marker id="deck-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-              <path d="M0,0 L8,4 L0,8 z" fill="var(--accent, #7c8cff)" />
-            </marker>
-          </defs>
-          {#each treeEdges as e (e.from + ">" + e.to)}
-            <path d={edgePath(e.from, e.to)} fill="none" stroke="var(--line-3, rgba(255,255,255,0.15))" stroke-width="1.5" />
-          {/each}
-          {#each msgEdges as e (e.from + "!" + e.to)}
-            <path class="msg-edge" d={edgePath(e.from, e.to)} fill="none" stroke="var(--accent, #7c8cff)" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#deck-arrow)" />
-          {/each}
-          {#each nodes as n (n.id)}
-            {@const p = pos.get(n.id)}
-            {#if p}
-              <g class="node" class:on={n.id === activeThreadId} class:live={isLive(n.status)} transform="translate({p.x},{p.y})"
-                role="button" tabindex="0" on:click={() => dispatch("focus", { id: n.id })}
-                on:keydown={(e) => { if (e.key === "Enter") dispatch("focus", { id: n.id }); }}>
-                <title>{n.title || "untitled"} · {n.model} · {stateWord(n.status)}</title>
-                {#if isLive(n.status)}
-                  <rect class="ring" x="-3" y="-3" width={NW + 6} height={NH + 6} rx="13" fill="none" stroke="var(--ok, #4ade80)" stroke-width="1.5" />
-                {/if}
-                <rect width={NW} height={NH} rx="10" class="node-bg" />
-                <circle cx="13" cy="15" r="3.5" class="dot {n.status}" />
-                <text x="23" y="19" class="node-title">{(n.title || "untitled").slice(0, 17)}</text>
-                {#if PROVIDER_MARKS[provider(n.model)]}
-                  {@const mk = PROVIDER_MARKS[provider(n.model)]}
-                  <svg x="10" y="26" width="11" height="11" viewBox={mk.viewBox} opacity="0.8" fill={mk.fill} fill-rule={mk.fillRule}>{@html mk.body}</svg>
-                  <text x="26" y="35" class="node-sub">{shortModel(n.model).slice(0, 18)}</text>
-                {:else}
-                  <text x="10" y="35" class="node-sub">{(n.lane ? n.lane + " · " : "") + shortModel(n.model)}</text>
-                {/if}
-              </g>
-            {/if}
-          {/each}
-        </svg>
-      </div>
-    </section>
-
-    <!-- Process manager -->
-    <section class="sec">
-      <div class="sec-head">
-        <span>Processes</span>
-        <span class="sec-meta">{fmtTokens(totalTokens)} tok · {fmtCost(totalCost)}</span>
+        <span>Agents</span>
+        <span class="sec-meta">{nodes.length} agent{nodes.length === 1 ? "" : "s"} · {liveCount} live · {fmtTokens(totalTokens)} tok · {fmtCost(totalCost)}</span>
       </div>
       <div class="table">
         {#each nodes as n (n.id)}
-          <div class="row" class:on={n.id === activeThreadId}>
+          {@const indent = Math.min(n.depth || 0, 5) * 14}
+          <div class="row" class:on={n.id === activeThreadId} style={indent ? `padding-left:${10 + indent}px;` : ""}>
             <span class="dot {n.status}" title={stateWord(n.status)} />
             <button class="cell name" title={`${n.lane || "default"} / ${n.title || "untitled"}`} on:click={() => dispatch("focus", { id: n.id })}>
               <span class="lane">{n.lane || "default"}</span>
-              <span class="title">{n.title || "untitled"}</span>
+              <span class="title">{n.depth > 0 ? "↳ " : ""}{n.title || "untitled"}</span>
             </button>
             <span class="cell model" title={n.model}>
               <ProviderLogo provider={provider(n.model)} size={12} muted />
@@ -271,29 +180,8 @@
   }
   .sec-meta { font-family: var(--parzi-mono, monospace); text-transform: none; letter-spacing: 0; font-size: 10.5px; color: var(--text-4, #5d636f); font-variant-numeric: tabular-nums; }
 
-  .graph-wrap {
-    background: var(--surface-1, rgba(255,255,255,0.03));
-    border: 1px solid var(--line-2, rgba(255,255,255,0.07));
-    border-radius: var(--radius-3, 10px); padding: 6px; overflow: auto;
-  }
-  .graph-wrap svg { display: block; }
-  .node { cursor: pointer; }
-  .node-bg {
-    fill: var(--panel, rgba(20,23,33,0.85)); stroke: var(--line, rgba(255,255,255,0.12)); stroke-width: 1;
-    transition: stroke 0.12s ease;
-  }
-  .node:hover .node-bg { stroke: var(--line-3, rgba(255,255,255,0.25)); }
-  .node.on .node-bg { stroke: var(--accent, #7c8cff); stroke-width: 1.5; }
-  .node-title { fill: var(--text, #f1f5f9); font-size: 12px; font-weight: 600; }
-  .node-sub { fill: var(--text-3, #94a3b8); font-size: 10px; font-family: var(--parzi-mono, monospace); }
-  .ring { opacity: 0.7; animation: deck-ring 1.8s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
-  @keyframes deck-ring { 0%, 100% { opacity: 0.25; transform: scale(1); } 50% { opacity: 0.85; transform: scale(1.03); } }
-  .msg-edge { animation: deck-dash 1.2s linear infinite; filter: drop-shadow(0 0 3px var(--accent-glow, rgba(124,140,255,0.4))); }
-  @keyframes deck-dash { to { stroke-dashoffset: -18; } }
-
   /* Status colour = state, only here. */
   .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--text-4, #5d636f); flex: none; }
-  circle.dot { width: auto; height: auto; }
   .dot.active { background: var(--ok, #4ade80); fill: var(--ok, #4ade80); box-shadow: 0 0 8px var(--ok-line, rgba(74,222,128,0.5)); }
   .dot.queued { background: var(--warn, #fbbf24); fill: var(--warn, #fbbf24); animation: toolpulse 1.6s ease-in-out infinite; }
   .dot.done { background: var(--accent, #7c8cff); fill: var(--accent, #7c8cff); }

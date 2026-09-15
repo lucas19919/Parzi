@@ -6,6 +6,7 @@
   import ModelsSection from "./settings/ModelsSection.svelte";
   import AppearanceSection from "./settings/AppearanceSection.svelte";
   import ConnectorsSection from "./settings/ConnectorsSection.svelte";
+  import AgentToolsSection from "./settings/AgentToolsSection.svelte";
   import SkillsSection from "./settings/SkillsSection.svelte";
   import ContextSection from "./settings/ContextSection.svelte";
   import SystemSection from "./settings/SystemSection.svelte";
@@ -22,6 +23,7 @@
     if (t === "appearance") return "appearance";
     if (t === "models") return "models";
     if (t === "connectors") return "connectors";
+    if (t === "tools") return "tools";
     if (t === "skills") return "skills";
     if (t === "context") return "context";
     return "system";
@@ -51,6 +53,8 @@
       <AppearanceSection {notify} />
     {:else if activeTab === "connectors"}
       <ConnectorsSection {notify} />
+    {:else if activeTab === "tools"}
+      <AgentToolsSection {notify} />
     {:else if activeTab === "skills"}
       <SkillsSection {notify} />
     {:else if activeTab === "context"}

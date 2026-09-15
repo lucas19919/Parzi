@@ -18,6 +18,7 @@
     gear: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z",
     back: "M19 12H5M12 19l-7-7 7-7",
     plug: "M9 7V3M15 7V3M7 7h10v5a5 5 0 0 1-10 0V7zM12 17v4",
+    tools: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
     spark: "M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z",
     layers: "M12 2l9 4.9-9 4.9-9-4.9L12 2zM3 12l9 4.9 9-4.9M3 17l9 4.9 9-4.9",
   };
@@ -27,6 +28,7 @@
     { id: "appearance", label: "Appearance", icon: I.eye },
     { id: "models", label: "Models", icon: I.box },
     { id: "connectors", label: "Connectors", icon: I.plug },
+    { id: "tools", label: "Agent tools", icon: I.tools },
     { id: "skills", label: "Skills", icon: I.spark },
     { id: "context", label: "Context", icon: I.layers },
     { id: "system", label: "System", icon: I.gear },
