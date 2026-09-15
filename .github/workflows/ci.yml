@@ -29,7 +29,9 @@ jobs:
       - run: npm --prefix ui ci
       - run: npm --prefix ui run check
       - run: npm --prefix ui run build
-      - run: npm --prefix ui audit --audit-level=high
+      # Prod deps only: vite/svelte dev-server and SSR advisories never ship
+      # (static dist in a Tauri webview); markdown-it/DOMPurify/hljs do.
+      - run: npm --prefix ui audit --omit=dev --audit-level=high
   hygiene:
     runs-on: ubuntu-latest
     steps:
