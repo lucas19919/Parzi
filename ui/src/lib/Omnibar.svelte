@@ -824,7 +824,7 @@
           <Icon d={I.stop} size={11} />
         </button>
       {:else}
-        <button class="go" title="Send (Enter)" disabled={!input.trim()} on:click={() => dispatch("send")}>
+        <button class="go" class:ready={!!input.trim()} title="Send (Enter)" disabled={!input.trim()} on:click={() => dispatch("send")}>
           <Icon d={I.sendUp} size={14} />
         </button>
       {/if}
@@ -975,14 +975,16 @@
 </div>
 
 <style>
-  /* Sidebar-matched tokens: same glass, borders, radii, text ramp as Sidebar.svelte */
+  /* Same surface recipe as the sidebar shell: near-black vertical
+     gradient + 14px saturate blur. The card keeps its glass radius,
+     shadow and top-edge highlight; only the paint now matches. */
   .ob { position: relative; width: 100%; max-width: 720px; margin: 0 auto; min-width: 0; }
   .ob-card {
     position: relative;
-    background: var(--panel);
-    backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
-    border: 1px solid var(--line);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 88%, transparent), color-mix(in srgb, var(--parzi-sidebar) 78%, transparent));
+    backdrop-filter: blur(14px) saturate(1.2);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    border: 1px solid var(--line-2);
     border-top-color: var(--line-hi);
     border-radius: var(--glass-radius);
     box-shadow: var(--glass-shadow);
@@ -1082,6 +1084,8 @@
     box-shadow: none;
   }
   .go:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
+  .go.ready:not(:disabled) { background: var(--accent); border-color: transparent; color: var(--accent-ink); }
+  .go.ready:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); filter: brightness(1.08); }
   .go:active:not(:disabled) { transform: scale(0.94); }
   .go:disabled { opacity: 0.35; cursor: default; }
   .go.stop { background: var(--bad); border-color: transparent; color: var(--stage); }
