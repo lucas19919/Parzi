@@ -23,6 +23,12 @@ jobs:
       - run: cargo test --workspace --no-fail-fast
         env:
           PARZI_HOME: ${{ runner.temp }}/parzi-test-home
+      # generate_context!() needs the built frontend, so build it here too
+      # (the ui job's dist is not shared across runners).
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm, cache-dependency-path: ui/package-lock.json }
+      - run: npm --prefix ui ci
+      - run: npm --prefix ui run build
       - run: cargo check --manifest-path src-tauri/Cargo.toml
   ui:
     runs-on: ubuntu-latest
