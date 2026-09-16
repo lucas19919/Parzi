@@ -1,12 +1,11 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import DocReader from "./DocReader.svelte";
-  import AgentVisualizer from "./AgentVisualizer.svelte";
   import ProjectPanel from "../deck/ProjectPanel.svelte";
   import { projectPanel } from "../deck/state";
-  import type { ChatEvent, DocEntry, InspectorArtifact, InspectorDoc, SwarmNode } from "../api";
+  import type { DocEntry, InspectorArtifact, InspectorDoc, Project } from "../api";
 
-  export let tab: "project" | "docs" | "agents" = "docs";
+  export let tab: "project" | "docs" = "project";
   export let width = 420;
   export let autoReveal = true;
 
@@ -17,36 +16,33 @@
   export let docs: DocEntry[] = [];
   export let docLoading = false;
 
-  // Agents tab
-  export let nodes: SwarmNode[] = [];
   export let activeThreadId: string | null = null;
-  export let events: ChatEvent[] = [];
-  export let approval: { key: string; call: { id: string; name: string; args: unknown; lane: string } } | null = null;
+
+  // Project tab, while no project is open: the workspace and its projects.
+  export let workspace = "";
+  export let projects: Project[] = [];
 
   export const MIN_W = 340;
   export const MAX_W = 680;
 
   const dispatch = createEventDispatcher<{
     close: void;
-    tab: { tab: "project" | "docs" | "agents" };
+    tab: { tab: "project" | "docs" };
     resize: { width: number };
     autoReveal: { on: boolean };
     openDoc: { entry: DocEntry };
     openTranscript: void;
     openArtifact: { artifact: InspectorArtifact };
     pickFile: void;
-    focus: { id: string };
-    fork: { id: string };
-    kill: { id: string };
-    spawn: { id: string };
-    approve: { key: string; allow: boolean };
+    openProject: { workspace: string; slug: string };
+    newProject: { workspace: string };
+    closeProject: void;
   }>();
 
-  /** The Project tab exists only while a project is open. */
-  $: hasProject = !!$projectPanel;
+  /** The Project tab exists while a project is open or a workspace is picked. */
+  $: hasProject = !!$projectPanel || !!workspace;
   $: shown = tab === "project" && !hasProject ? "docs" : tab;
   $: projectWaiting = $projectPanel ? Object.keys($projectPanel.approvals).length : 0;
-  $: liveAgents = nodes.filter((n) => n.status === "active" || n.status === "queued").length;
 
   /* ---------- drag-to-resize on the left edge ---------- */
   let dragging = false;
@@ -98,11 +94,7 @@
         Docs
         {#if artifact || doc}<span class="tab-dot" />{/if}
       </button>
-      <button class="tab" class:on={shown === "agents"} role="tab" aria-selected={shown === "agents"} on:click={() => shown === "agents" ? dispatch("close") : dispatch("tab", { tab: "agents" })}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" /></svg>
-        Agents
-        {#if nodes.length}<span class="count" class:live={liveAgents > 0}>{liveAgents || nodes.length}</span>{/if}
-      </button>
+
     </div>
     <span class="spacer" />
     <button class="hb" class:on={autoReveal} title={autoReveal ? "Auto-open on artifacts and spawns: on" : "Auto-open on artifacts and spawns: off"}
@@ -116,15 +108,13 @@
 
   <div class="content">
     {#if shown === "project"}
-      <ProjectPanel />
-    {:else if shown === "docs"}
+      <ProjectPanel {workspace} {projects}
+        on:openProject on:newProject on:closeProject />
+    {:else}
       <DocReader
         {artifact} {artifacts} {doc} {docs} loading={docLoading} hasThread={!!activeThreadId}
         on:openDoc on:openTranscript on:openArtifact on:pickFile
       />
-    {:else}
-      <AgentVisualizer {nodes} {activeThreadId} {events} {approval}
-        on:focus on:fork on:kill on:spawn on:approve />
     {/if}
   </div>
 </aside>
@@ -167,7 +157,6 @@
     display: inline-flex; align-items: center; justify-content: center; border-radius: 999px;
     background: var(--surface-3); color: var(--text-3);
   }
-  .count.live { background: var(--ok-soft); color: var(--ok); }
   .count.waiting { background: var(--warn-soft); color: var(--warn); }
   .spacer { flex: 1; }
   .hb {

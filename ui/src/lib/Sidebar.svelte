@@ -5,7 +5,7 @@
   import Icon from "./Icon.svelte";
   import ThreadRow from "./ThreadRow.svelte";
   import { footerUpdateState, footerUpdateVersion } from "./updateStore";
-  import { isChatThread, type NavMode } from "./nav";
+  import { isChatThread } from "./nav";
 
   export let currentProject = "default";
   export let currentRoot = "";
@@ -13,15 +13,8 @@
   export let activeThreadId: string | null = null;
   /** Bumped by the app after a wizard finishes, to re-read the hub rows. */
   export let hubTick = 0;
-  /** The project the deck is showing, `<workspace>/<slug>`; "" when none. */
-  export let openProjectKey = "";
-  /** Chats = general work. Workspaces = real projects. */
-  export let navMode: NavMode = "chats";
-  /** Hub workspace while drilled in; empty on the workspace list. */
-  export let navWorkspace = "";
 
   const dispatch = createEventDispatcher<{
-    setNav: { mode: NavMode; workspace: string };
     selectProject: { name: string };
     openProjectOverview: { name: string };
     openNewWorkspace: void;
@@ -67,7 +60,7 @@
   $: byUpdated = (a: SessionMeta, b: SessionMeta) =>
     +new Date(b.updated) - +new Date(a.updated);
 
-  $: chatThreads = threads.filter((t) => isChatThread(t.project, hubNames));
+  $: chatThreads = threads.filter((t) => isChatThread(t.project, projectSlugs));
 
   // Live running chats float to the top. Coder lanes belong on the workspace.
   $: runningThreads = chatThreads.filter((t) => t.status === "active" || t.status === "queued");
@@ -99,9 +92,8 @@
   $: if (hubTick >= 0) void loadHub();
 
   $: projectsOf = (name: string) => hubProjects[name] ?? [];
-  $: openProjects = navWorkspace ? projectsOf(navWorkspace) : [];
-  /** PROJECT.md writes the status lowercase; read it that way whatever comes. */
-  const statusOf = (p: Project) => String(p.status).toLowerCase();
+  /** Role sessions (header, orchestrator, coders) carry the project slug. */
+  $: projectSlugs = Object.values(hubProjects).flat().map((p) => p.slug);
   // Parent index, built once per thread list instead of once per row (E7).
   $: parentById = new Map(threads.map((x) => [x.id, x.parent_id] as const));
 
@@ -307,7 +299,7 @@
     if (ctx?.kind !== "project") return;
     const name = ctx.name;
     ctx = null;
-    dispatch("setNav", { mode: "workspaces", workspace: name });
+    dispatch("selectProject", { name });
   }
   function ctxCopyName() {
     if (ctx?.kind !== "project") return;
@@ -353,97 +345,13 @@
     </button>
   </div>
 
-  <div class="place" role="tablist" aria-label="Place">
-    <button
-      class="place-btn"
-      class:on={navMode === "chats"}
-      role="tab"
-      aria-selected={navMode === "chats"}
-      on:click={() => dispatch("setNav", { mode: "chats", workspace: "" })}
-    >Chats</button>
-    <button
-      class="place-btn"
-      class:on={navMode === "workspaces"}
-      role="tab"
-      aria-selected={navMode === "workspaces"}
-      on:click={() => dispatch("setNav", { mode: "workspaces", workspace: "" })}
-    >Workspaces</button>
+  <div class="t3-top tight">
+    <button class="t3-row primary" on:click={() => dispatch("newThread")} title="New chat (Ctrl+N)">
+      <span class="lead"><Icon d={I.edit} size={14} /></span><span>New chat</span>
+    </button>
   </div>
 
-  {#if navMode === "chats"}
-    <div class="t3-top tight">
-      <button class="t3-row primary" on:click={() => dispatch("newThread")} title="New chat (Ctrl+N)">
-        <span class="lead"><Icon d={I.edit} size={14} /></span><span>New chat</span>
-      </button>
-    </div>
-  {:else if !navWorkspace}
-    <div class="t3-top tight">
-      <button class="t3-row primary" on:click={() => dispatch("openNewWorkspace")} title="New workspace">
-        <span class="lead"><Icon d={I.plus} size={14} /></span><span>New workspace</span>
-      </button>
-    </div>
-  {:else}
-    <div class="t3-top tight">
-      <button
-        class="t3-row"
-        title="All workspaces"
-        on:click={() => dispatch("setNav", { mode: "workspaces", workspace: "" })}
-      >
-        <span class="lead"><Icon d={I.chevronLeft} size={14} /></span><span>{navWorkspace}</span>
-      </button>
-      <button class="t3-row primary" on:click={() => dispatch("openNewProject", { workspace: navWorkspace })} title="New project">
-        <span class="lead"><Icon d={I.plus} size={14} /></span><span>New project</span>
-      </button>
-    </div>
-  {/if}
-
   <div class="sb-scroll">
-    {#if navMode === "workspaces" && !navWorkspace}
-      {#if !hubNames.length}
-        <div class="empty-state">No workspace yet — create one</div>
-      {:else}
-        {#each hubNames as name (name)}
-          {@const n = projectsOf(name).length}
-          <div
-            class="proj-row"
-            role="button"
-            tabindex="0"
-            title={name}
-            on:click={() => dispatch("setNav", { mode: "workspaces", workspace: name })}
-            on:keydown={(e) => { if (e.key === "Enter") dispatch("setNav", { mode: "workspaces", workspace: name }); }}
-            on:contextmenu|preventDefault|stopPropagation={(e) => openProjectCtx(name, e.clientX, e.clientY)}
-          >
-            <span class="lead"><Icon d={I.folder} size={14} /></span>
-            <span class="proj-name">{name}</span>
-            {#if n > 0}<span class="proj-count">{n}</span>{/if}
-            <span class="proj-hover">
-              <button class="mini-btn" title="Workspace options"
-                on:click|stopPropagation={(e) => toggleProjectCtx(name, e.clientX, e.clientY)}>···</button>
-            </span>
-          </div>
-        {/each}
-      {/if}
-    {:else if navMode === "workspaces" && navWorkspace}
-      {#if !openProjects.length}
-        <div class="empty-state">No project yet — create one</div>
-      {:else}
-        {#each openProjects as p (p.slug)}
-          <div
-            class="proj-row"
-            class:cur={openProjectKey === `${navWorkspace}/${p.slug}`}
-            role="button"
-            tabindex="0"
-            title="{p.title} — {statusOf(p)}"
-            on:click={() => dispatch("openProject", { workspace: navWorkspace, slug: p.slug })}
-            on:keydown={(e) => { if (e.key === "Enter") dispatch("openProject", { workspace: navWorkspace, slug: p.slug }); }}
-          >
-            <span class="lead"><Icon d={I.folder} size={14} /></span>
-            <span class="proj-name">{p.title || p.slug}</span>
-            {#if statusOf(p)}<span class="proj-count">{statusOf(p)}</span>{/if}
-          </div>
-        {/each}
-      {/if}
-    {:else}
     {#if runningThreads.length}
       <div class="proj-head running-head">
         <span class="pulse-dot" />
@@ -454,7 +362,7 @@
           {t} depth={0} active={t.id === activeThreadId}
           renaming={renamingId === t.id} bind:renameDraft={renameTitle}
           branch=""
-          showProject=""
+          showProject={t.project && t.project !== "default" ? t.project : ""}
           on:select={(e) => select(e.detail.id)}
           on:togglePin={(e) => togglePin(e.detail.id)}
           on:startRename={(e) => { ctx = null; startRename(e.detail.id); }}
@@ -476,7 +384,7 @@
           {t} depth={0} active={t.id === activeThreadId}
           renaming={renamingId === t.id} bind:renameDraft={renameTitle}
           branch=""
-          showProject=""
+          showProject={t.project && t.project !== "default" ? t.project : ""}
           on:select={(e) => select(e.detail.id)}
           on:togglePin={(e) => togglePin(e.detail.id)}
           on:startRename={(e) => { ctx = null; startRename(e.detail.id); }}
@@ -498,7 +406,7 @@
           {t} depth={depthOf(t)} active={t.id === activeThreadId}
           renaming={renamingId === t.id} bind:renameDraft={renameTitle}
           branch=""
-          showProject=""
+          showProject={t.project && t.project !== "default" ? t.project : ""}
           on:select={(e) => select(e.detail.id)}
           on:togglePin={(e) => togglePin(e.detail.id)}
           on:startRename={(e) => { ctx = null; startRename(e.detail.id); }}
@@ -520,7 +428,6 @@
 
     {#if !pinned.length && !groups.length && !runningThreads.length}
       <div class="empty-state">No chats yet — start one</div>
-    {/if}
     {/if}
   </div>
 
@@ -648,18 +555,6 @@
   }
   .sb-scroll { flex: 1; overflow-y: auto; padding: 2px 10px 8px; display: flex; flex-direction: column; }
 
-  .place {
-    display: flex; gap: 2px; margin: 0 10px; padding: 2px;
-    background: var(--surface-1); border: 1px solid var(--line-2);
-    border-radius: 8px;
-  }
-  .place-btn {
-    flex: 1; min-width: 0; background: none; border: none; border-radius: 6px;
-    color: var(--text-3); font: inherit; font-size: 12px; font-weight: 550;
-    padding: 5px 6px; cursor: pointer;
-  }
-  .place-btn:hover { color: var(--text-2); }
-  .place-btn.on { background: var(--surface-3); color: var(--text); }
 
   .running-head {
     display: flex; align-items: center; gap: 6px;
@@ -679,35 +574,6 @@
     display: flex; align-items: center; justify-content: space-between;
     font-size: 11px; color: var(--text-3); padding: 10px 4px 4px;
   }
-  .proj-row {
-    position: relative;
-    display: flex; align-items: center; gap: 8px; width: 100%;
-    box-sizing: border-box;
-    background: transparent; border: none; color: var(--text-2); font: inherit; font-size: 13px;
-    padding: 7px 8px; cursor: pointer; text-align: left; border-radius: 7px;
-  }
-  .proj-row:hover { color: var(--text); background: var(--surface-1); }
-  .proj-row.cur { color: var(--text); background: var(--accent-soft); }
-  .proj-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
-  .proj-count {
-    flex: none; font-size: 10.5px; color: var(--text-3); font-variant-numeric: tabular-nums;
-    background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 999px; padding: 0 6px;
-  }
-  .proj-hover {
-    display: none; position: absolute; right: 2px; top: 50%; transform: translateY(-50%); z-index: 2;
-    gap: 1px; align-items: center; height: 24px; padding: 1px 2px;
-    background: var(--menu);
-    border: 1px solid var(--line-2);
-    border-radius: 7px; color: var(--text-3);
-  }
-  .proj-row:hover .proj-hover, .proj-row:focus-within .proj-hover { display: inline-flex; }
-  .mini-btn {
-    display: inline-flex; align-items: center; justify-content: center;
-    min-width: 22px; height: 22px; padding: 0 4px;
-    background: transparent; border: none; border-radius: 5px;
-    color: inherit; font: inherit; font-size: 12px; line-height: 0; cursor: pointer;
-  }
-  .mini-btn:hover { background: var(--surface-3); color: var(--text); }
   .empty-state { font-size: 12px; color: var(--text-4); padding: 12px 8px; text-align: center; }
   .more-row {
     background: transparent; border: none; color: var(--text-3); font: inherit; font-size: 12px;

@@ -284,7 +284,7 @@ export const api = {
     parentId?: string;
   }) =>
     invoke<string>("send_message", {
-      session_id: args.sessionId ?? null,
+      sessionId: args.sessionId ?? null,
       project: args.project,
       lane: args.lane,
       model: args.model,
@@ -292,7 +292,7 @@ export const api = {
       cwd: args.cwd,
       effort: args.effort ?? null,
       attachments: args.attachments ?? [],
-      parent_id: args.parentId ?? null,
+      parentId: args.parentId ?? null,
     }),
   createSubsession: (args: {
     parentId: string;
@@ -301,7 +301,7 @@ export const api = {
     model?: string;
   }) =>
     invoke<SessionMeta>("create_subsession", {
-      parent_id: args.parentId,
+      parentId: args.parentId,
       title: args.title ?? "",
       prompt: args.prompt ?? null,
       model: args.model ?? null,
@@ -325,13 +325,13 @@ export const api = {
   saveProjectKnowledge: (project: string, content: string) =>
     invoke<void>("save_project_knowledge", { project, content }),
   getWorktreeDiff: (project: string, lane: string, sessionId: string) =>
-    invoke<string>("get_worktree_diff", { project, lane, session_id: sessionId }),
+    invoke<string>("get_worktree_diff", { project, lane, sessionId }),
   applyWorktree: (project: string, lane: string, sessionId: string) =>
-    invoke<string>("apply_worktree", { project, lane, session_id: sessionId }),
+    invoke<string>("apply_worktree", { project, lane, sessionId }),
   listCheckpoints: (repo: string, session_id: string) =>
-    invoke<CheckpointView[]>("list_checkpoints", { repo, session_id }),
+    invoke<CheckpointView[]>("list_checkpoints", { repo, sessionId: session_id }),
   restoreCheckpoint: (repo: string, session_id: string, turn: number) =>
-    invoke<void>("restore_checkpoint", { repo, session_id, turn }),
+    invoke<void>("restore_checkpoint", { repo, sessionId: session_id, turn }),
   listBuiltinTools: () => invoke<BuiltinTool[]>("list_builtin_tools"),
   listFiles: (root: string, query: string) =>
     invoke<string[]>("list_files", { root, query }),
@@ -399,7 +399,7 @@ export const api = {
   togglePlugin: (name: string, enabled: boolean) =>
     invoke<void>("toggle_plugin", { name, enabled }),
   installPastedSkill: (pack_name: string, text: string) =>
-    invoke<InstalledSkill>("install_pasted_skill", { pack_name, text }),
+    invoke<InstalledSkill>("install_pasted_skill", { packName: pack_name, text }),
   installSkillFromGit: (url: string) =>
     invoke<SkillInstallReport>("install_skill_from_git", { url }),
   deleteSkill: (name: string) => invoke<void>("delete_skill", { name }),
@@ -409,7 +409,7 @@ export const api = {
     invoke<void>("write_text_file", { path, content }),
   /** Stage pasted/dropped image bytes; returns an attachable absolute path. */
   stageImage: (name: string, base64Data: string) =>
-    invoke<string>("stage_image", { name, base64_data: base64Data }),
+    invoke<string>("stage_image", { name, base64Data }),
   /** Image bytes as a data URL for previews (confined, images only). */
   readImageDataUrl: (path: string, cwd: string) =>
     invoke<string>("read_image_data_url", { path, cwd }),
@@ -525,8 +525,8 @@ export const hub = {
     invoke<string>("repo_clone_or_map", {
       workspace: args.workspace,
       repo: args.repo,
-      local_path: args.localPath ?? null,
-      dest_root: args.destRoot ?? null,
+      localPath: args.localPath ?? null,
+      destRoot: args.destRoot ?? null,
     }),
   createProject: (args: {
     workspace: string;
@@ -540,7 +540,7 @@ export const hub = {
       title: args.title,
       repos: args.repos,
       roster: args.roster,
-      budget_usd: args.budgetUsd ?? null,
+      budgetUsd: args.budgetUsd ?? null,
     }),
   /** Screenshot aid: `PARZI_UI_STATE=new-workspace:repos` opens that step. */
   uiState: () => invoke<string>("ui_state"),
@@ -709,15 +709,22 @@ export const deck = {
    * the Direct toggle sends the same box to the orchestrator. Returns the
    * session id the reply streams into.
    */
-  ask: async (open: ProjectOpen, to: "header" | "orchestrator", prompt: string) => {
+  ask: async (
+    open: ProjectOpen,
+    to: "header" | "orchestrator",
+    prompt: string,
+    opts: { model?: string; effort?: string; attachments?: string[] } = {},
+  ) => {
     const session = to === "header" ? open.header_session : open.orchestrator_session;
     return api.sendMessage({
       sessionId: session ?? undefined,
       project: open.project.slug,
       lane: to,
-      model: to === "header" ? open.project.roster.header : open.project.roster.orchestrator,
+      model: opts.model || (to === "header" ? open.project.roster.header : open.project.roster.orchestrator),
       prompt,
       cwd: "",
+      effort: opts.effort,
+      attachments: opts.attachments,
     });
   },
 };

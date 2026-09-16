@@ -1,12 +1,22 @@
 <script lang="ts">
   /**
-   * The Project tab of the right panel: lanes and settings, nothing else.
-   * The conversation owns the stage; this is where you look when you want
-   * to know who holds what. Data and actions come from the deck's store.
+   * The Project tab of the right panel. No project open: the workspace's
+   * projects. A project open: its lanes and settings. The conversation owns
+   * the stage; data and actions for an open project come from the deck's store.
    */
+  import { createEventDispatcher } from "svelte";
   import SettingsTab from "./SettingsTab.svelte";
   import { laneNames, projectPanel, restingState, type DeckApproval, type TaskLive } from "./state";
-  import type { Plan, Task } from "../api";
+  import type { Plan, Project, Task } from "../api";
+
+  export let workspace = "";
+  export let projects: Project[] = [];
+
+  const dispatch = createEventDispatcher<{
+    openProject: { workspace: string; slug: string };
+    newProject: { workspace: string };
+    closeProject: void;
+  }>();
 
   type LaneState = "running" | "blocked" | "done" | "idle";
   interface LaneRow {
@@ -62,6 +72,10 @@
 
 {#if p}
   <div class="panel">
+    <button class="back" on:click={() => dispatch("closeProject")}>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
+      {p.project.workspace || workspace || "Projects"}
+    </button>
     <div class="head">
       <span class="title" title={p.project.title}>{p.project.title}</span>
       <span class="status">{p.project.status}</span>
@@ -124,7 +138,7 @@
             {/each}
           </ul>
         {:else if !p.audit}
-          <p class="empty">No lanes yet. Talk the project through, then ask the plan side for lanes.</p>
+          <p class="empty">No lanes yet. Talk the project through, then switch the message box to Plan to draft them.</p>
           {#if p.drafts.length}
             <ul class="drafts">
               {#each p.drafts as d (d.path)}
@@ -143,10 +157,47 @@
       {/if}
     </div>
   </div>
+{:else if workspace}
+  <div class="panel">
+    <div class="head">
+      <span class="title">{workspace}</span>
+      <span class="status">projects</span>
+    </div>
+    <div class="body">
+      {#each projects as proj (proj.slug)}
+        <button class="proj" on:click={() => dispatch("openProject", { workspace, slug: proj.slug })}>
+          <span class="p-title">{proj.title || proj.slug}</span>
+          <span class="p-status">{String(proj.status).toLowerCase()}</span>
+        </button>
+      {:else}
+        <p class="empty">No projects in {workspace} yet.</p>
+      {/each}
+      <button class="new" on:click={() => dispatch("newProject", { workspace })}>+ New project</button>
+    </div>
+  </div>
 {/if}
 
 <style>
   .panel { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+  .back {
+    align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; margin: 10px 10px 0;
+    background: none; border: none; padding: 3px 6px; border-radius: var(--radius-1);
+    color: var(--text-3); font: inherit; font-size: 11.5px; cursor: pointer;
+  }
+  .back:hover { color: var(--text); background: var(--surface-1); }
+  .proj {
+    display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+    padding: 9px 10px; border-radius: var(--radius-2); background: var(--surface-1);
+    border: 1px solid var(--line-2); color: var(--text); font: inherit; cursor: pointer;
+  }
+  .proj:hover { background: var(--surface-2); }
+  .p-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .p-status { font-size: 11px; color: var(--text-4); flex: none; }
+  .new {
+    align-self: flex-start; background: none; border: none; padding: 4px 2px;
+    color: var(--text-3); font: inherit; font-size: 12.5px; cursor: pointer;
+  }
+  .new:hover { color: var(--text); }
   .head { display: flex; align-items: baseline; gap: 8px; padding: 14px 14px 10px; min-width: 0; }
   .title { font-size: 14px; font-weight: 650; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .status { font-size: 11px; color: var(--text-4); flex: none; }

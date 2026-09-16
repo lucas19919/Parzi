@@ -23,6 +23,12 @@
   export let attachments: string[] = [];
   export let mode: "chat" | "plan" | "build" = "chat";
   export let permission: string = "full";
+  /** Workspaces a new chat can belong to. Empty list hides the picker. */
+  export let workspaces: string[] = [];
+  /** Workspace this chat belongs to ("" = none). */
+  export let workspace = "";
+  /** Sent chats keep their workspace: the pill shows it but does not open. */
+  export let workspaceLocked = false;
 
   const dispatch = createEventDispatcher<{
     send: void;
@@ -31,6 +37,8 @@
     command: { name: string; arg: string };
     openPlanner: void;
     permissionChange: { permission: string };
+    workspaceChange: { workspace: string };
+    newWorkspace: void;
   }>();
 
   const I = {
@@ -46,6 +54,7 @@
     spark: "M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z",
     clip: "M21 11.5l-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8l8-8a3.7 3.7 0 0 1 5.2 5.2l-8 8a1.8 1.8 0 0 1-2.6-2.6l7-7",
     model: "M4 4h16v16H4z",
+    folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
     file: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6",
     close: "M18 6L6 18M6 6l12 12",
   };
@@ -72,12 +81,16 @@
   const refreshedAt = new Map<string, number>();
   let effortOpen = false;
   let permOpen = false;
+  let wsOpen = false;
   let modelQuery = "";
   let searchInputEl: HTMLInputElement | null = null;
   let modelIndex = 0;
   let modelBtn: HTMLButtonElement | null = null;
   let effortBtn: HTMLButtonElement | null = null;
   let permBtn: HTMLButtonElement | null = null;
+  let wsBtn: HTMLButtonElement | null = null;
+  let wsPopStyle = "";
+  let wsBelow = false;
   let modelPopStyle = "";
   let effortPopStyle = "";
   let permPopStyle = "";
@@ -343,6 +356,7 @@
       if (showModelPicker) showModelPicker = false;
       else if (effortOpen) effortOpen = false;
       else if (permOpen) permOpen = false;
+      else if (wsOpen) wsOpen = false;
       else if (slashOpen) slashOpen = false;
       else if (atOpen) atOpen = false;
     } else if (slashOpen && e.key === "ArrowDown") {
@@ -420,7 +434,7 @@
     cmd.run();
   }
 
-  const POP_W = { model: 440, effort: 300, perm: 320 };
+  const POP_W = { model: 440, effort: 300, perm: 320, ws: 240 };
 
   /**
    * Pin a menu above its trigger when there is room — always staying clear
@@ -428,11 +442,11 @@
    * chrome instead: the menu closes and the window drags). Otherwise drop
    * the menu below the trigger.
    */
-  function placePop(btn: HTMLButtonElement | null, which: "model" | "effort" | "perm") {
+  function placePop(btn: HTMLButtonElement | null, which: "model" | "effort" | "perm" | "ws") {
     if (!btn || typeof window === "undefined") return;
     const r = btn.getBoundingClientRect();
     const w = POP_W[which];
-    const left = Math.max(8, Math.min(which === "perm" ? r.right - w : r.left, window.innerWidth - w - 8));
+    const left = Math.max(8, Math.min(which === "perm" || which === "ws" ? r.right - w : r.left, window.innerWidth - w - 8));
     const spaceAbove = r.top - 46;
     const spaceBelow = window.innerHeight - r.bottom - 8;
     let style: string;
@@ -453,6 +467,9 @@
     } else if (which === "effort") {
       effortPopStyle = style;
       effortBelow = below;
+    } else if (which === "ws") {
+      wsPopStyle = style;
+      wsBelow = below;
     } else {
       permPopStyle = style;
       permBelow = below;
@@ -463,6 +480,7 @@
     if (showModelPicker) placePop(modelBtn, "model");
     if (effortOpen) placePop(effortBtn, "effort");
     if (permOpen) placePop(permBtn, "perm");
+    if (wsOpen) placePop(wsBtn, "ws");
   }
 
   function closeInlinePops() {
@@ -546,6 +564,23 @@
     }
   }
 
+  function toggleWs() {
+    if (workspaceLocked) return;
+    wsOpen = !wsOpen;
+    if (wsOpen) {
+      showModelPicker = false;
+      effortOpen = false;
+      permOpen = false;
+      closeInlinePops();
+      placePop(wsBtn, "ws");
+    }
+  }
+
+  function pickWorkspace(name: string) {
+    wsOpen = false;
+    if (name !== workspace) dispatch("workspaceChange", { workspace: name });
+  }
+
   function togglePerm() {
     permOpen = !permOpen;
     if (permOpen) {
@@ -584,6 +619,7 @@
     if (showModelPicker && !el.closest(".model-zone") && !el.closest(".pop")) showModelPicker = false;
     if (effortOpen && !el.closest(".effort-zone") && !el.closest(".pop")) effortOpen = false;
     if (permOpen && !el.closest(".perm-zone") && !el.closest(".pop")) permOpen = false;
+    if (wsOpen && !el.closest(".ws-zone") && !el.closest(".pop")) wsOpen = false;
     if (slashOpen && !el.closest(".slash-pop")) slashOpen = false;
     if (atOpen && !el.closest(".at-popup")) atOpen = false;
   }
@@ -814,6 +850,18 @@
         </button>
       </div>
 
+      {#if workspaces.length || workspace}
+        <span class="vdiv" />
+        <div class="ws-zone ctl-zone">
+          <button bind:this={wsBtn} class="ctl" class:open={wsOpen} class:locked={workspaceLocked} on:click|stopPropagation={toggleWs}
+            title={workspaceLocked ? `This chat belongs to ${workspace || "no workspace"}` : "Workspace for this chat"}>
+            <span class="ctl-glyph"><Icon d={I.folder} size={13} /></span>
+            <span class="truncate">{workspace || "No workspace"}</span>
+            {#if !workspaceLocked}<span class="chev"><Icon d={I.chevD} size={11} /></span>{/if}
+          </button>
+        </div>
+      {/if}
+
       <span class="spacer" />
 
       <button class="icon-btn" title="Attach files" on:click={pickFiles}>
@@ -959,6 +1007,26 @@
             {#if mode === m.id}<span class="tick"><Icon d={I.check} size={12} /></span>{/if}
           </button>
         {/each}
+      </div>
+    {/if}
+
+    {#if wsOpen}
+      <div class="pop ws-pop from-right" class:from-top={wsBelow} style={wsPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
+        <button class="opt-row" class:on={!workspace} on:click={() => pickWorkspace("")}>
+          <span class="meta"><span class="nm">No workspace</span></span>
+          {#if !workspace}<span class="tick"><Icon d={I.check} size={12} /></span>{/if}
+        </button>
+        {#each workspaces as w (w)}
+          <button class="opt-row" class:on={workspace === w} on:click={() => pickWorkspace(w)}>
+            <span class="p-ico"><Icon d={I.folder} size={13} /></span>
+            <span class="meta"><span class="nm">{w}</span></span>
+            {#if workspace === w}<span class="tick"><Icon d={I.check} size={12} /></span>{/if}
+          </button>
+        {/each}
+        <button class="opt-row new-ws" on:click={() => { wsOpen = false; dispatch("newWorkspace"); }}>
+          <span class="p-ico"><Icon d={I.plus} size={13} /></span>
+          <span class="meta"><span class="nm">New workspace…</span></span>
+        </button>
       </div>
     {/if}
 
@@ -1126,6 +1194,9 @@
   .model-pop .model-list { border: none; padding: 5px 5px 5px 4px; max-height: none; }
   .m-initial.sm { width: 20px; height: 20px; font-size: 10px; border-radius: 6px; }
   .effort-pop { width: 300px; max-width: calc(100vw - 16px); padding: 5px; overflow-y: auto; }
+  .ws-pop { width: 240px; max-width: calc(100vw - 16px); padding: 5px; overflow-y: auto; }
+  .ws-pop .new-ws { color: var(--text-3); border-top: 1px solid var(--line-2); border-radius: 0 0 7px 7px; margin-top: 3px; }
+  .ctl.locked { cursor: default; }
   .perm-pop { width: 320px; max-width: calc(100vw - 16px); padding: 5px; overflow-y: auto; }
 
   .pop-search {

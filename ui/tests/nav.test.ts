@@ -8,10 +8,10 @@ test("Inbox is always a chat", () => {
   assert.equal(isChatThread(undefined, ["acme"]), true);
 });
 
-test("a hub workspace session is not a chat", () => {
-  assert.equal(isChatThread("acme", ["acme"]), false);
+test("a project role session is not a chat", () => {
+  assert.equal(isChatThread("checkout-flow", ["checkout-flow"]), false);
 });
 
-test("a leftover named folder stays a chat if it is not a hub workspace", () => {
-  assert.equal(isChatThread("old-notes", ["acme"]), true);
+test("a chat in a workspace stays a chat", () => {
+  assert.equal(isChatThread("acme", ["checkout-flow"]), true);
 });

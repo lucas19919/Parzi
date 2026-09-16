@@ -18,9 +18,7 @@
   import SettingsNav from "./lib/SettingsNav.svelte";
   import NewWorkspace from "./lib/workspace/NewWorkspace.svelte";
   import NewProject from "./lib/workspace/NewProject.svelte";
-  import WorkspaceHome from "./lib/workspace/WorkspaceHome.svelte";
   import ProjectDeck from "./lib/deck/ProjectDeck.svelte";
-  import { loadNav, saveNav, type NavMode } from "./lib/nav";
   import { ensureModels, modelRows } from "./lib/modelStore";
   import { applyThemeCss } from "./lib/theme";
   import { coalesce, changesThreadList } from "./lib/threadList";
@@ -125,47 +123,52 @@
   let hubView: HubView | null = null;
   /** Bumped after a wizard writes, so the sidebar re-reads the workspaces. */
   let hubTick = 0;
-  const bootNav = loadNav();
-  let navMode: NavMode = bootNav.mode;
-  let navWorkspace = bootNav.workspace;
-  let hubHomeProjects: Project[] = [];
+  /** Hub workspaces; a chat belongs to one of them or to none (`default`). */
+  let wsNames: string[] = [];
+  /** Workspace → first mapped repo checkout, the cwd of its chats. */
+  let wsRoots: Record<string, string> = {};
+  /** Projects of the current workspace, listed in the Project tab. */
+  let wsProjects: Project[] = [];
 
-  async function loadHomeProjects(name: string) {
-    hubHomeProjects = await deck.list(name).catch(() => []);
+  async function loadWorkspaces() {
+    try {
+      wsNames = await hub.workspaces();
+    } catch {
+      wsNames = [];
+    }
+    const pairs = await Promise.all(
+      wsNames.map(async (n) => {
+        const w = await hub.workspace(n).catch(() => null);
+        return [n, w?.repos.find((r) => r.local_path)?.local_path ?? ""] as const;
+      }),
+    );
+    wsRoots = Object.fromEntries(pairs);
   }
-  $: if (navMode === "workspaces" && navWorkspace) void loadHomeProjects(navWorkspace);
-  $: if (hubTick >= 0 && navWorkspace) void loadHomeProjects(navWorkspace);
-  $: openProjectKey =
-    hubView?.kind === "deck" ? `${hubView.workspace}/${hubView.slug}` : "";
+  $: if (hubTick >= 0) void loadWorkspaces();
+  /** The workspace the stage is in: the open project's, else the chat's. */
+  $: curWorkspace = hubView?.kind === "deck" ? hubView.workspace : wsNames.includes(curProject) ? curProject : "";
+  $: if (hubTick >= 0) void loadWsProjects(curWorkspace);
+  async function loadWsProjects(name: string) {
+    wsProjects = name ? await deck.list(name).catch(() => []) : [];
+  }
+
+  /** Pick the workspace a draft chat will belong to; the typed prompt stays. */
+  async function selectWorkspace(name: string) {
+    curProject = name || "default";
+    await refreshBranch();
+  }
 
   function openNewWorkspaceWizard(step = "") {
-    navMode = "workspaces";
-    navWorkspace = "";
-    saveNav({ mode: "workspaces", workspace: "" });
     showSettings = false;
     hubView = { kind: "new-workspace", step };
   }
 
   function openNewProjectWizard(workspace: string, step = "") {
-    navMode = "workspaces";
-    navWorkspace = workspace;
-    saveNav({ mode: "workspaces", workspace });
     showSettings = false;
     hubView = { kind: "new-project", workspace, step };
   }
 
   /** The deck for one project — the stage the whole hub flow ends on. */
-  function setNav(mode: NavMode, workspace = "") {
-    navMode = mode;
-    navWorkspace = mode === "workspaces" ? workspace : "";
-    saveNav({ mode: navMode, workspace: navWorkspace });
-    if (mode === "chats") {
-      hubView = null;
-      return;
-    }
-    if (hubView?.kind === "deck" && hubView.workspace !== navWorkspace) hubView = null;
-    if (hubView?.kind === "new-project" && hubView.workspace !== navWorkspace) hubView = null;
-  }
 
   function openProject(workspace: string, slug: string) {
     activeThreadId = null;
@@ -173,9 +176,6 @@
     events = [];
     projectSelected = false;
     showSettings = false;
-    navMode = "workspaces";
-    navWorkspace = workspace;
-    saveNav({ mode: "workspaces", workspace });
     hubView = { kind: "deck", workspace, slug };
   }
 
@@ -204,13 +204,11 @@
     if (screen === "new-workspace") openNewWorkspaceWizard(step);
     else if (screen === "new-project") openNewProjectWizard("", step);
     else if (screen === "deck") {
-      setNav("workspaces", "acme");
       hubView = { kind: "deck", workspace: "acme", slug: "checkout-flow" };
       // `deck:stage` is the conversation alone; every other deck state shows the panel.
       if (step !== "stage") openRightBar("project");
     }
-    else if (screen === "chats") setNav("chats");
-    else if (screen === "workspaces" || screen === "workspace") setNav("workspaces", step);
+    else if (screen === "chats") hubView = null;
   }
 
   async function browseWsFolder() {
@@ -280,7 +278,7 @@
   }
 
   $: currentProjectView = projects.find((p) => p.name === curProject);
-  $: currentRoot = currentProjectView?.root ?? "";
+  $: currentRoot = currentProjectView?.root || wsRoots[curProject] || "";
 
   async function loadProjects() {
     try {
@@ -390,7 +388,6 @@
   }
 
   function newThread() {
-    setNav("chats");
     hubView = null;
     activeThreadId = null;
     projectSelected = false;
@@ -698,8 +695,8 @@
   })();
   // Closed on cold boot: the stage stays clean until something asks for it.
   let rightBarOpen = false;
-  type RightTab = "project" | "docs" | "agents";
-  let rightBarTab: RightTab = rbSaved.tab === "agents" || rbSaved.tab === "project" ? rbSaved.tab : "docs";
+  type RightTab = "project" | "docs";
+  let rightBarTab: RightTab = rbSaved.tab === "docs" ? "docs" : "project";
   let rightBarWidth = Math.min(680, Math.max(340, Number(rbSaved.width) || 420));
   let autoReveal = rbSaved.auto ?? true;
   let selectedArtifact: InspectorArtifact | null = null;
@@ -851,15 +848,6 @@
     } catch {}
   }
 
-  async function approveFromDeck(key: string, allow: boolean) {
-    try {
-      await api.approveTool(key, allow);
-      approval = null;
-    } catch (e) {
-      toast(String(e), true);
-    }
-  }
-
   /** Background sessions whose "running" row the sidebar already shows (E7). */
   const listedRuns = new Set<string>();
 
@@ -913,7 +901,6 @@
       // A subsession spawned (by the user or an agent tool): refresh the
       // flat list so it shows up under its time bucket.
       loadThreads();
-      if (autoReveal) openRightBar("agents");
       return;
     }
     if (e.kind === "tool_call") {
@@ -1234,15 +1221,9 @@
       {threads}
       {activeThreadId}
       {hubTick}
-      {openProjectKey}
-      {navMode}
-      {navWorkspace}
-      on:setNav={(e) => setNav(e.detail.mode, e.detail.workspace)}
       on:selectProject={(e) => switchProject(e.detail.name)}
       on:openProjectOverview={(e) => switchProject(e.detail.name, true)}
       on:openNewWorkspace={() => openNewWorkspaceWizard()}
-      on:openNewProject={(e) => openNewProjectWizard(e.detail.workspace)}
-      on:openProject={(e) => openProject(e.detail.workspace, e.detail.slug)}
       on:selectThread={(e) => openThread(e.detail.id)}
       on:newSubsession={(e) => newSubsession(e.detail.id)}
       on:newThread={newThread}
@@ -1263,8 +1244,8 @@
     <!-- Central Stage (expand control lives inline in the titlebar) -->
     <div class="stage-col">
     <Titlebar
-      title={showSettings ? "Settings" : hubView?.kind === "new-workspace" ? "New workspace" : hubView?.kind === "new-project" ? "New project" : navMode === "workspaces" ? (hubView?.kind === "deck" ? `${navWorkspace} / ${hubView.slug}` : (navWorkspace || "Workspaces")) : "Inbox"}
-      subtitle={showSettings ? settingsSection : hubView?.kind === "new-workspace" || hubView?.kind === "new-project" ? "" : navMode === "workspaces" ? (hubView?.kind === "deck" ? "" : navWorkspace ? "projects" : "") : activeMeta ? activeMeta.title : !activeThreadId ? "new draft" : ""}
+      title={showSettings ? "Settings" : hubView?.kind === "new-workspace" ? "New workspace" : hubView?.kind === "new-project" ? "New project" : hubView?.kind === "deck" ? `${hubView.workspace} / ${hubView.slug}` : curWorkspace || "Inbox"}
+      subtitle={showSettings ? settingsSection : hubView ? "" : activeMeta ? activeMeta.title : !activeThreadId ? "new draft" : ""}
       showExpand={!sidebarOpen}
       panelOpen={rightBarOpen}
       agentLive={liveAgentCount}
@@ -1282,7 +1263,7 @@
           <NewWorkspace
             initialStep={hubView.step}
             on:cancel={closeHubView}
-            on:created={(e) => { hubTick += 1; setNav("workspaces", e.detail.name); }}
+            on:created={(e) => { hubTick += 1; hubView = null; void selectWorkspace(e.detail.name); }}
           />
         </div>
       {:else if hubView?.kind === "new-project"}
@@ -1303,22 +1284,6 @@
             on:error={(e) => toast(e.detail.text, true)}
             on:openPanel={() => toggleRightBar("project")}
           />
-        </div>
-      {:else if navMode === "workspaces"}
-        <div class="stage-scroll">
-          {#if navWorkspace}
-            <WorkspaceHome
-              workspace={navWorkspace}
-              projects={hubHomeProjects}
-              on:open={(e) => openProject(navWorkspace, e.detail.slug)}
-              on:create={() => openNewProjectWizard(navWorkspace)}
-            />
-          {:else}
-            <div class="ws-pick">
-              <span class="e-title">Workspaces</span>
-              <span class="e-sub">Pick one in the sidebar, or create one.</span>
-            </div>
-          {/if}
         </div>
       {:else if projectSelected}
         <!-- Project Mission Control: roster + living plan + lane swarm -->
@@ -1350,7 +1315,7 @@
               on:goParent={() => { if (activeMeta?.parent_id) openThread(activeMeta.parent_id); }}
               on:openSubsession={(e) => openThread(e.detail.id)}
               on:openArtifact={(e) => showArtifact(e.detail.artifact)}
-              on:inspectSwarm={() => openRightBar("agents")} />
+ />
           </div>
         {:else}
           <div class="home-hero-stage"></div>
@@ -1375,6 +1340,11 @@
             on:modelChange={(e) => (model = e.detail.model)}
             on:command={(e) => handleBarCommand(e.detail.name)}
             on:openPlanner={openPlanner}
+            workspaces={wsNames}
+            workspace={curWorkspace}
+            workspaceLocked={!!activeThreadId}
+            on:workspaceChange={(e) => selectWorkspace(e.detail.workspace)}
+            on:newWorkspace={() => openNewWorkspaceWizard()}
           />
         </div>
       {/if}
@@ -1391,10 +1361,9 @@
         doc={selectedDoc}
         docs={projectDocs}
         {docLoading}
-        nodes={swarmNodes}
         {activeThreadId}
-        {events}
-        {approval}
+        workspace={curWorkspace}
+        projects={wsProjects}
         on:close={() => (rightBarOpen = false)}
         on:tab={(e) => (rightBarTab = e.detail.tab)}
         on:resize={(e) => (rightBarWidth = e.detail.width)}
@@ -1403,11 +1372,9 @@
         on:openTranscript={openTranscript}
         on:openArtifact={(e) => showArtifact(e.detail.artifact)}
         on:pickFile={pickDocFile}
-        on:focus={(e) => openThread(e.detail.id)}
-        on:fork={(e) => fork(e.detail.id)}
-        on:kill={(e) => killSession(e.detail.id)}
-        on:spawn={(e) => newSubsession(e.detail.id)}
-        on:approve={(e) => approveFromDeck(e.detail.key, e.detail.allow)}
+        on:openProject={(e) => openProject(e.detail.workspace, e.detail.slug)}
+        on:newProject={(e) => openNewProjectWizard(e.detail.workspace)}
+        on:closeProject={() => { hubView = null; }}
       />
     </div>
   </div>
@@ -1663,12 +1630,6 @@
   @media (prefers-reduced-motion: reduce) {
     .omnibar-slot { transition: none; }
   }
-  .ws-pick {
-    display: flex; flex-direction: column; gap: 8px;
-    padding: 48px 32px; max-width: 420px;
-  }
-  .ws-pick .e-title { font-size: 18px; font-weight: 600; color: var(--text); letter-spacing: -0.2px; }
-  .ws-pick .e-sub { font-size: 13px; color: var(--text-3); line-height: 1.5; }
   .home-hero-stage {
     flex: 1;
     display: flex;

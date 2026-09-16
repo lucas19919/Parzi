@@ -1,46 +1,15 @@
-/** Sidebar place: chats are general work, workspaces are projects. */
-
-export type NavMode = "chats" | "workspaces";
-
-export interface Nav {
-  mode: NavMode;
-  /** Hub workspace name while drilled in; empty on the workspace list. */
-  workspace: string;
-}
-
-const KEY = "parzi.nav";
-
-export function loadNav(): Nav {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return { mode: "chats", workspace: "" };
-    const v = JSON.parse(raw) as Partial<Nav>;
-    return {
-      mode: v.mode === "workspaces" ? "workspaces" : "chats",
-      workspace: typeof v.workspace === "string" ? v.workspace : "",
-    };
-  } catch {
-    return { mode: "chats", workspace: "" };
-  }
-}
-
-export function saveNav(nav: Nav): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(nav));
-  } catch {
-    /* private mode, quota — the next launch starts on Chats */
-  }
-}
+/** Which threads the sidebar lists as chats. */
 
 /**
- * A chat is Inbox (`default`) or a leftover named folder that is not a hub
- * workspace. Header/coder sessions live on the workspace, not here.
+ * A chat is any thread that is not a project role session. Chats belong to
+ * a workspace (or none); the header, orchestrator and coder sessions of a
+ * project carry that project's slug and live in the project's panel.
  */
 export function isChatThread(
   project: string | undefined,
-  hubNames: readonly string[],
+  projectSlugs: readonly string[],
 ): boolean {
   const p = (project || "default").trim() || "default";
   if (p === "default") return true;
-  return !hubNames.includes(p);
+  return !projectSlugs.includes(p);
 }

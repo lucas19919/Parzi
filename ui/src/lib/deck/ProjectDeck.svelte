@@ -6,7 +6,8 @@
    */
   import { createEventDispatcher, onDestroy, onMount } from "svelte";
   import Thread from "../Thread.svelte";
-  import AskBox from "./AskBox.svelte";
+  import Omnibar from "../Omnibar.svelte";
+  import { ensureModels, modelRows } from "../modelStore";
   import { api, deck, onRunEvent, type AuditResult, type ChatEvent, type Draft, type InspectorDoc, type JournalLine, type Plan, type Project, type ProjectOpen, type UiEvent } from "../api";
   import { deckFixture, deckFixtureStateAsync } from "./fixtures";
   import { deckDrafts, etagOf, liveLaneCount, projectPanel, resolveWorkspace, taskStates, type DeckApproval } from "./state";
@@ -44,8 +45,17 @@
   // Etags: the poll assigns only what changed, so cards do not re-render.
   let tags = { project: "", plan: "", journal: "", drafts: "", status: "" };
 
-  // The role thread under the Ask box.
+  // The role thread on the stage. The message box's mode picks the role:
+  // Chat talks to the header, Plan and Build to the orchestrator.
   let role: "header" | "orchestrator" = "header";
+  let input = "";
+  let attachments: string[] = [];
+  let effort: "low" | "medium" | "high" | "extra" | "ultra" = "medium";
+  let mode: "chat" | "plan" | "build" = "chat";
+  /** Empty = the roster model of whichever role the mode picks. */
+  let pickedModel = "";
+  $: to = (mode === "chat" ? "header" : "orchestrator") as "header" | "orchestrator";
+  $: shownModel = pickedModel || (project ? (to === "header" ? project.roster.header : project.roster.orchestrator) : "");
   let session = "";
   let events: ChatEvent[] = [];
   let liveText = "";
@@ -158,23 +168,42 @@
     liveTools = [];
   }
 
-  async function ask(e: CustomEvent<{ prompt: string; to: "header" | "orchestrator" }>) {
-    if (!open || fixture) return;
-    if (e.detail.to !== role) {
-      role = e.detail.to;
-      session = (role === "header" ? open.header_session : open.orchestrator_session) ?? "";
-      await loadThread();
-    }
-    events = [...events, { kind: "user", text: e.detail.prompt }];
+  // Switching the mode shows that role's thread before anything is sent.
+  $: if (open && to !== role) void switchRole(to);
+  async function switchRole(next: "header" | "orchestrator") {
+    if (!open) return;
+    role = next;
+    session = (role === "header" ? open.header_session : open.orchestrator_session) ?? "";
+    await loadThread();
+  }
+
+  async function ask() {
+    const prompt = input.trim();
+    if (!open || fixture || !prompt || streaming) return;
+    const files = [...attachments];
+    input = "";
+    attachments = [];
+    events = [...events, { kind: "user", text: prompt }];
     streaming = true;
     liveText = "";
     liveTools = [];
     try {
-      const id = await deck.ask(open, e.detail.to, e.detail.prompt);
+      const id = await deck.ask(open, role, prompt, { model: pickedModel, effort, attachments: files });
       session = id;
       if (role === "orchestrator" && open) open = { ...open, orchestrator_session: id };
     } catch (err) {
       streaming = false;
+      input = prompt;
+      attachments = files;
+      fail(err);
+    }
+  }
+
+  async function stop() {
+    if (!session) return;
+    try {
+      await api.killRun(session);
+    } catch (err) {
       fail(err);
     }
   }
@@ -284,6 +313,7 @@
   }
 
   onMount(async () => {
+    void ensureModels(false);
     unlisten = await onRunEvent(onEvent);
     timer = setInterval(() => {
       if (typeof document !== "undefined" && document.hidden) return;
@@ -326,12 +356,18 @@
       {/if}
     </div>
     <div class="ask-dock">
-      <AskBox
-        headerModel={project.roster.header}
-        orchestratorModel={project.roster.orchestrator}
-        canDirect={!fixture}
-        busy={streaming}
-        on:ask={ask}
+      <Omnibar
+        bind:input
+        bind:attachments
+        bind:effort
+        bind:mode
+        model={shownModel}
+        models={$modelRows}
+        streaming={streaming}
+        currentProject={project.slug}
+        on:modelChange={(e) => (pickedModel = e.detail.model)}
+        on:send={ask}
+        on:stop={stop}
       />
     </div>
   {:else}
