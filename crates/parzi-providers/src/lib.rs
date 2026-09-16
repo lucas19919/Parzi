@@ -9,6 +9,8 @@ pub mod catalog;
 pub mod claude;
 pub mod codex;
 pub mod compat_providers;
+/// GitHub: the workspace wizard's credential, repo listing and clone-or-map.
+pub mod github;
 pub mod images;
 pub mod openai_compat;
 pub mod opencode;

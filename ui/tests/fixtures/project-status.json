@@ -1,0 +1,10 @@
+{
+  "source": "crates/parzi-core/src/project/mod.rs — enum Status, #[serde(rename_all = \"lowercase\")]",
+  "note": "What serde writes for every Status variant, in declaration order, plus the #[default]. Transcribed by hand from the Rust enum; change it in the same commit the enum changes.",
+  "statuses": ["drafting", "planned", "running", "done", "parked"],
+  "default": "drafting",
+  "journal_kinds": [
+    "claim", "release", "request", "grant", "deny", "convene",
+    "handoff", "block", "plan_changed", "approve", "note"
+  ]
+}

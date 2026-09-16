@@ -3,9 +3,9 @@
   import { fade, fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import {
-    api, onRunEvent,
+    api, hub, deck, onRunEvent,
     type SessionMeta, type ChatEvent, type ModelRow, type UiEvent,
-    type ProjectView, type ProjectRoster, type InspectorArtifact, type InspectorDoc, type DocEntry, type SwarmNode
+    type ProjectView, type ProjectRoster, type Project, type InspectorArtifact, type InspectorDoc, type DocEntry, type SwarmNode
   } from "./lib/api";
   import RightPanel from "./lib/inspector/RightPanel.svelte";
 
@@ -16,8 +16,14 @@
   import Thread from "./lib/Thread.svelte";
   import Settings from "./lib/Settings.svelte";
   import SettingsNav from "./lib/SettingsNav.svelte";
+  import NewWorkspace from "./lib/workspace/NewWorkspace.svelte";
+  import NewProject from "./lib/workspace/NewProject.svelte";
+  import WorkspaceHome from "./lib/workspace/WorkspaceHome.svelte";
+  import ProjectDeck from "./lib/deck/ProjectDeck.svelte";
+  import { loadNav, saveNav, type NavMode } from "./lib/nav";
   import { ensureModels, modelRows } from "./lib/modelStore";
   import { applyThemeCss } from "./lib/theme";
+  import { coalesce, changesThreadList } from "./lib/threadList";
   import { checkForUpdates, checkForUpdatesSoon } from "./lib/updateStore";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import Icon from "./lib/Icon.svelte";
@@ -68,7 +74,6 @@
       settingsSection = section;
     }
     palette = false;
-    showNewChat = false;
     showSettings = true;
     // Optional in-tab jump (e.g. straight to the issue reporter): the
     // section mounts async, so retry until the anchor exists or we give up.
@@ -110,6 +115,102 @@
     wsRoot = "";
   }
 
+  /* ---------- hub: the two wizards and the project deck (PLAN.md §8) ----------
+     One stage at a time: a wizard or a deck takes the whole middle column,
+     so nothing streams behind a modal and Escape always means "back out". */
+  type HubView =
+    | { kind: "new-workspace"; step: string }
+    | { kind: "new-project"; workspace: string; step: string }
+    | { kind: "deck"; workspace: string; slug: string };
+  let hubView: HubView | null = null;
+  /** Bumped after a wizard writes, so the sidebar re-reads the workspaces. */
+  let hubTick = 0;
+  const bootNav = loadNav();
+  let navMode: NavMode = bootNav.mode;
+  let navWorkspace = bootNav.workspace;
+  let hubHomeProjects: Project[] = [];
+
+  async function loadHomeProjects(name: string) {
+    hubHomeProjects = await deck.list(name).catch(() => []);
+  }
+  $: if (navMode === "workspaces" && navWorkspace) void loadHomeProjects(navWorkspace);
+  $: if (hubTick >= 0 && navWorkspace) void loadHomeProjects(navWorkspace);
+  $: openProjectKey =
+    hubView?.kind === "deck" ? `${hubView.workspace}/${hubView.slug}` : "";
+
+  function openNewWorkspaceWizard(step = "") {
+    navMode = "workspaces";
+    navWorkspace = "";
+    saveNav({ mode: "workspaces", workspace: "" });
+    showSettings = false;
+    hubView = { kind: "new-workspace", step };
+  }
+
+  function openNewProjectWizard(workspace: string, step = "") {
+    navMode = "workspaces";
+    navWorkspace = workspace;
+    saveNav({ mode: "workspaces", workspace });
+    showSettings = false;
+    hubView = { kind: "new-project", workspace, step };
+  }
+
+  /** The deck for one project — the stage the whole hub flow ends on. */
+  function setNav(mode: NavMode, workspace = "") {
+    navMode = mode;
+    navWorkspace = mode === "workspaces" ? workspace : "";
+    saveNav({ mode: navMode, workspace: navWorkspace });
+    if (mode === "chats") {
+      hubView = null;
+      return;
+    }
+    if (hubView?.kind === "deck" && hubView.workspace !== navWorkspace) hubView = null;
+    if (hubView?.kind === "new-project" && hubView.workspace !== navWorkspace) hubView = null;
+  }
+
+  function openProject(workspace: string, slug: string) {
+    activeThreadId = null;
+    activeMeta = null;
+    events = [];
+    projectSelected = false;
+    showSettings = false;
+    navMode = "workspaces";
+    navWorkspace = workspace;
+    saveNav({ mode: "workspaces", workspace });
+    hubView = { kind: "deck", workspace, slug };
+  }
+
+  function closeHubView() {
+    hubView = null;
+  }
+
+  /**
+   * Screenshot aid: `PARZI_UI_STATE=new-workspace:repos` (or `new-project:roles`,
+   * or a `deck:*` fixture) opens that screen at launch, so the verifier can
+   * capture every step without sending input. Same sources the deck's
+   * fixtures read, host first.
+   */
+  async function applyUiState() {
+    let state = "";
+    try {
+      state = (await hub.uiState()).trim();
+    } catch {
+      // No host (browser preview): fall through to the query parameter.
+    }
+    if (!state && typeof location !== "undefined") {
+      state = new URLSearchParams(location.search).get("ui_state")?.trim() ?? "";
+    }
+    if (!state) return;
+    const [screen, step = ""] = state.split(":");
+    if (screen === "new-workspace") openNewWorkspaceWizard(step);
+    else if (screen === "new-project") openNewProjectWizard("", step);
+    else if (screen === "deck") {
+      setNav("workspaces", "acme");
+      hubView = { kind: "deck", workspace: "acme", slug: "" };
+    }
+    else if (screen === "chats") setNav("chats");
+    else if (screen === "workspaces" || screen === "workspace") setNav("workspaces", step);
+  }
+
   async function browseWsFolder() {
     if (pickingWsFolder) return;
     pickingWsFolder = true;
@@ -139,53 +240,11 @@
     node.focus();
   }
 
-  // New-chat project picker: every fresh conversation starts as a draft
-  // (no thread row until the first send) bound to an explicit project.
-  let showNewChat = false;
-  let newChatQuery = "";
-  let newChatIndex = 0;
   const displayName = (n: string) => (n === "default" ? "Inbox" : n);
-  $: allWorkspaceNames = (() => {
-    const set = new Set<string>();
-    for (const p of projects) if (p.name) set.add(p.name);
-    for (const t of threads) set.add(t.project || "default");
-    if (set.size === 0) set.add("default");
-    const arr = [...set];
-    arr.sort((a, b) => {
-      if (a === curProject) return -1;
-      if (b === curProject) return 1;
-      if (a === "default") return 1;
-      if (b === "default") return -1;
-      return a.localeCompare(b);
-    });
-    return arr;
-  })();
-  $: newChatOptions = allWorkspaceNames.filter(
-    (n) => !newChatQuery.trim() || displayName(n).toLowerCase().includes(newChatQuery.trim().toLowerCase()) || n.toLowerCase().includes(newChatQuery.trim().toLowerCase())
-  );
-  $: if (newChatIndex >= Math.max(1, newChatOptions.length + 1)) newChatIndex = 0;
-
-  function openNewChat() {
-    palette = false;
-    newChatQuery = "";
-    newChatIndex = 0;
-    showNewChat = true;
-  }
-
-  function closeNewChat() {
-    showNewChat = false;
-    newChatQuery = "";
-    newChatIndex = 0;
-  }
-
-  function focusNewChat(node: HTMLInputElement) {
-    node.focus();
-  }
 
   /** Draft era: clear the stage without creating a thread row yet. */
   async function startDraftInProject(name: string) {
     const target = name.trim() || "default";
-    closeNewChat();
     if (target !== curProject) {
       curProject = target;
       await refreshBranch();
@@ -199,17 +258,6 @@
       } catch {}
     }
     newThread();
-  }
-
-  function confirmNewChatRow(i: number) {
-    // Last row is always "New workspace…".
-    if (i === newChatOptions.length) {
-      closeNewChat();
-      openNewWs();
-      return;
-    }
-    const name = newChatOptions[i];
-    if (name) void startDraftInProject(name);
   }
   let modelMenu = false;
   let modelQuery = "";
@@ -238,8 +286,14 @@
     } catch {}
   }
 
-  async function loadThreads() {
+  // E7: every `list_threads` re-reads every session's meta.json on the Rust
+  // side, so the fifteen call sites go through one 100 ms coalescer instead
+  // of firing per event. `loadThreads()` still resolves after a real fetch,
+  // so `await loadThreads()` callers keep reading fresh `threads`.
+  let listThreadCalls = 0;
+  async function fetchThreads() {
     try {
+      if (import.meta.env.DEV) console.debug(`[E7] list_threads #${++listThreadCalls}`);
       threads = await api.listThreads();
       // A purged/finished session can vanish under us: drop a stale selection
       // instead of highlighting nothing while the stage shows a dead thread.
@@ -251,6 +305,7 @@
       }
     } catch {}
   }
+  const loadThreads = coalesce(fetchThreads, 100);
 
   async function refreshBranch() {
     if (currentRoot) {
@@ -264,12 +319,9 @@
     }
   }
 
-  async function switchProject(name: string) {
+  async function switchProject(name: string, openOverview = false) {
+    hubView = null;
     curProject = name;
-    activeThreadId = null;
-    activeMeta = null;
-    events = [];
-    projectSelected = true;
     await refreshBranch();
     // Mission Control data: roster + living plan load quietly, never block paint.
     projectRoster = null;
@@ -280,15 +332,35 @@
     try {
       projectPlan = await api.getProjectPlan(name);
     } catch {}
+
+    if (openOverview) {
+      activeThreadId = null;
+      activeMeta = null;
+      events = [];
+      projectSelected = true;
+      return;
+    }
+
+    projectSelected = false;
+    const wsThreads = threads
+      .filter((t) => (t.project || "default") === name)
+      .sort((a, b) => +new Date(b.updated) - +new Date(a.updated));
+    if (wsThreads.length > 0) {
+      await openThread(wsThreads[0].id);
+    } else {
+      newThread();
+    }
   }
 
-  async function openThread(id: string) {
+  /** `keepLive`: leave the streaming tail on screen until the transcript this
+      call fetches has replaced it (the done/error path in `onEvent`). Every
+      other caller is a thread switch, where the old tail goes at once. */
+  async function openThread(id: string, keepLive = false) {
+    hubView = null;
     activeThreadId = id;
-    live = "";
-    liveReasoning = "";
+    if (!keepLive) clearLive();
     liveTokens = 0;
     liveCost = 0;
-    liveTools = [];
     approval = null;
     try {
       const [meta, ev] = await api.getThread(id);
@@ -302,6 +374,9 @@
     } catch (e) {
       toast(String(e), true);
     }
+    // Same synchronous block as `events = ev`, so Svelte renders the swap in
+    // one frame: the answer never disappears and comes back.
+    if (keepLive) clearLive();
     await tick();
     if (scrollEl) {
       // Thread switches jump: bypass `scroll-behavior: smooth` so opening
@@ -313,6 +388,8 @@
   }
 
   function newThread() {
+    setNav("chats");
+    hubView = null;
     activeThreadId = null;
     projectSelected = false;
     activeMeta = null;
@@ -497,7 +574,7 @@
   async function handleBarCommand(name: string) {
     switch (name) {
       case "new":
-        openNewChat();
+        newThread();
         break;
       case "clear":
         newThread();
@@ -780,6 +857,50 @@
     }
   }
 
+  /** Background sessions whose "running" row the sidebar already shows (E7). */
+  const listedRuns = new Set<string>();
+
+  /** E4, UI half: text deltas land in a buffer and reach the reactive `live`
+      on a 60 ms timer, inside one animation frame — ~16 renders a second
+      instead of one per delta. The Rust forwarder already coalesces at 30 ms;
+      this is the other half of the same budget. */
+  const LIVE_FLUSH_MS = 60;
+  let liveBuf = "";
+  let liveBase = "";
+  let liveBufThread: string | null = null;
+  let liveTimer = 0;
+  function flushLive() {
+    liveTimer = 0;
+    if (!liveBuf) return;
+    // `live` moved under us (run finished, thread switched): drop the tail
+    // rather than resurrect text the reloaded transcript already owns.
+    if (live !== liveBase || activeThreadId !== liveBufThread) {
+      liveBuf = "";
+      return;
+    }
+    liveBase += liveBuf;
+    live = liveBase;
+    liveBuf = "";
+  }
+  function pushLive(text: string, session: string) {
+    if (!liveBuf) {
+      liveBase = live;
+      liveBufThread = session;
+    }
+    liveBuf += text;
+    if (liveTimer) return;
+    liveTimer = window.setTimeout(() => requestAnimationFrame(flushLive), LIVE_FLUSH_MS);
+  }
+  /** Run over or thread switched: the pending tail and the text on screen both
+      belong to a transcript that `events` now owns, so the stage renders it. */
+  function clearLive() {
+    liveBuf = "";
+    liveBase = "";
+    live = "";
+    liveReasoning = "";
+    liveTools = [];
+  }
+
   function onEvent(e: UiEvent) {
     if (e.kind === "approval") {
       approval = { key: e.key, call: e.call };
@@ -828,22 +949,25 @@
       // was the live run. Handle per-session before the active-session gate.
       if (liveRun === e.session) {
         liveRun = null;
-        // Only clear the streaming buffers when the finished session is the
-        // one on screen; a background done must not wipe active live text.
-        if (e.session === activeThreadId) {
-          live = "";
-          liveReasoning = "";
-          liveTools = [];
-        }
+        // The on-screen tail is not dropped here. When the finished session is
+        // the one on screen, the done/error path below owns the ordering and
+        // keeps it until the reloaded transcript has replaced it; when it is a
+        // background session, there is nothing of its text on screen anyway.
       }
       // Per-session completion still refreshes the sidebar even for
       // background threads (handled below via the early return path).
     }
     if (e.session !== activeThreadId) {
-      loadThreads();
+      // E7: a background session changes its sidebar row when it starts
+      // (queued → running), when it posts a notice and when it ends — not on
+      // every text delta or usage tick.
+      const first = !listedRuns.has(e.session);
+      if (e.kind === "done" || e.kind === "error") listedRuns.delete(e.session);
+      else listedRuns.add(e.session);
+      if (changesThreadList(e.kind, first)) loadThreads();
       return;
     }
-    if (e.kind === "text") live += e.text;
+    if (e.kind === "text") pushLive(e.text, e.session);
     else if (e.kind === "reasoning") liveReasoning += e.text;
     else if (e.kind === "notice") {
       toast(e.text);
@@ -856,12 +980,14 @@
     } else if (e.kind === "done" || e.kind === "error") {
       if (e.kind === "error") toast(e.error, true);
       liveRun = null;
-      live = "";
-      liveReasoning = "";
-      liveTools = [];
-      loadThreads().then(() => {
-        if (activeThreadId) openThread(activeThreadId);
-      });
+      // Ordering, and the reason for `keepLive`: clearing `live` here left the
+      // stage blank until the transcript came back — `loadThreads` is the 100 ms
+      // E7 coalescer, so that was ~66 ms of empty answer after every run. The
+      // reload now bypasses the coalescer (the sidebar can lag, the stage
+      // cannot) and the live tail stays up until `events` holds the same text.
+      if (activeThreadId) openThread(activeThreadId, true);
+      else clearLive();
+      loadThreads();
     } else if (e.kind !== "tool_call" && e.kind !== "tool_result") {
       // Tool status already landed in liveTools/sessionTools above — no
       // sidebar reload needed per tool event (kills IPC churn mid-run).
@@ -916,7 +1042,7 @@
   }
 
   $: palActions = [
-    { section: "Actions", label: "New chat…", sub: "pick a project first", run: () => { palette = false; openNewChat(); } },
+    { section: "Actions", label: "New chat", sub: "start a new conversation", run: () => { palette = false; newThread(); } },
     { section: "Actions", label: "New project", sub: "workspace", run: () => { palette = false; openNewWs(); } },
     { section: "Actions", label: "Plan mode", sub: "no edits", run: () => { palette = false; openPlanner(); } },
     { section: "Actions", label: "Settings", sub: "models · connectors · skills", run: () => openSettings() },
@@ -985,7 +1111,7 @@
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
       e.preventDefault();
-      openNewChat();
+      newThread();
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
@@ -1021,19 +1147,10 @@
     } else if (palette && e.key === "Enter") {
       e.preventDefault();
       palAll[palIndex]?.run();
-    } else if (showNewChat && e.key === "ArrowDown") {
-      e.preventDefault();
-      newChatIndex = (newChatIndex + 1) % Math.max(1, newChatOptions.length + 1);
-    } else if (showNewChat && e.key === "ArrowUp") {
-      e.preventDefault();
-      newChatIndex = (newChatIndex - 1 + Math.max(1, newChatOptions.length + 1)) % Math.max(1, newChatOptions.length + 1);
-    } else if (showNewChat && e.key === "Enter") {
-      e.preventDefault();
-      confirmNewChatRow(newChatIndex);
     } else if (e.key === "Escape") {
-      if (showNewChat) closeNewChat();
-      else if (showNewWs) closeNewWs();
+      if (showNewWs) closeNewWs();
       else if (palette) palette = false;
+      else if (hubView) closeHubView();
       else if (showSettings) showSettings = false;
       else if (rightBarOpen && rbEl && rbEl.contains(document.activeElement)) rightBarOpen = false;
       else if (liveRun) stopRun();
@@ -1068,6 +1185,7 @@
       await loadProjects();
       await loadThreads();
       await onRunEvent(onEvent);
+      await applyUiState();
 
       // Smart Auto is the default; it routes through whichever
       // subscriptions are signed in. Nothing to pick at boot.
@@ -1083,9 +1201,7 @@
   <!-- Dynamic Background Wallpaper & Moody Atmosphere Grade -->
   <div class="background-backdrop">
     {#if bg}<img src={bg} alt="" class="bg-img" />{/if}
-    <div class="bg-overlay-dim" />
-    <div class="bg-overlay-vignette" />
-    <div class="bg-overlay-glow" />
+    <div class="bg-overlay" />
   </div>
 
   <!-- Main View Split: sidebar runs full height, titlebar lives over the stage -->
@@ -1105,17 +1221,23 @@
     <!-- Clean Minimalist Sidebar -->
     <div class="sb-pane" in:fly={{ x: -12, ...smooth }} out:fly={{ x: -8, ...smoothFast }}>
     <Sidebar
-      {projects}
       currentProject={curProject}
       {currentRoot}
-      {branch}
       {threads}
       {activeThreadId}
+      {hubTick}
+      {openProjectKey}
+      {navMode}
+      {navWorkspace}
+      on:setNav={(e) => setNav(e.detail.mode, e.detail.workspace)}
       on:selectProject={(e) => switchProject(e.detail.name)}
-      on:openNewWorkspace={openNewWs}
+      on:openProjectOverview={(e) => switchProject(e.detail.name, true)}
+      on:openNewWorkspace={() => openNewWorkspaceWizard()}
+      on:openNewProject={(e) => openNewProjectWizard(e.detail.workspace)}
+      on:openProject={(e) => openProject(e.detail.workspace, e.detail.slug)}
       on:selectThread={(e) => openThread(e.detail.id)}
       on:newSubsession={(e) => newSubsession(e.detail.id)}
-      on:newThread={openNewChat}
+      on:newThread={newThread}
       on:newThreadInProject={(e) => newThreadInProject(e.detail.name)}
       on:forkThread={(e) => fork(e.detail.id)}
       on:deleteThread={(e) => handleDeleteThread(e.detail.id)}
@@ -1133,8 +1255,8 @@
     <!-- Central Stage (expand control lives inline in the titlebar) -->
     <div class="stage-col">
     <Titlebar
-      title={showSettings ? "Settings" : curProject === "default" ? "Inbox" : curProject}
-      subtitle={showSettings ? settingsSection : activeMeta ? activeMeta.title : !activeThreadId && !projectSelected ? "new draft — pick a project anytime" : projectSelected ? "overview" : ""}
+      title={showSettings ? "Settings" : hubView?.kind === "new-workspace" ? "New workspace" : hubView?.kind === "new-project" ? "New project" : navMode === "workspaces" ? (hubView?.kind === "deck" ? `${navWorkspace} / ${hubView.slug}` : (navWorkspace || "Workspaces")) : "Inbox"}
+      subtitle={showSettings ? settingsSection : hubView?.kind === "new-workspace" || hubView?.kind === "new-project" ? "" : navMode === "workspaces" ? (hubView?.kind === "deck" ? "" : navWorkspace ? "projects" : "") : activeMeta ? activeMeta.title : !activeThreadId ? "new draft" : ""}
       showExpand={!sidebarOpen}
       panelOpen={rightBarOpen}
       panelTab={rightBarTab}
@@ -1151,6 +1273,48 @@
         <!-- Settings stage: main screen becomes the section (T3-style) -->
         <div class="stage-scroll settings-stage" in:fly={{ y: 12, ...smooth }} out:fly={{ y: 8, ...smoothFast }}>
           <Settings settingsTab={settingsSection} bareSection={settingsSection} currentProject={curProject} />
+        </div>
+      {:else if hubView?.kind === "new-workspace"}
+        <div class="stage-scroll">
+          <NewWorkspace
+            initialStep={hubView.step}
+            on:cancel={closeHubView}
+            on:created={(e) => { hubTick += 1; setNav("workspaces", e.detail.name); }}
+          />
+        </div>
+      {:else if hubView?.kind === "new-project"}
+        <div class="stage-scroll">
+          <NewProject
+            workspace={hubView.workspace}
+            initialStep={hubView.step}
+            on:cancel={closeHubView}
+            on:created={(e) => { hubTick += 1; openProject(e.detail.workspace, e.detail.slug); }}
+          />
+        </div>
+      {:else if hubView?.kind === "deck"}
+        <div class="stage-scroll">
+          <ProjectDeck
+            workspace={hubView.workspace}
+            slug={hubView.slug}
+            on:openDoc={(e) => { selectedDoc = e.detail.doc; selectedArtifact = null; openRightBar("docs"); }}
+            on:error={(e) => toast(e.detail.text, true)}
+          />
+        </div>
+      {:else if navMode === "workspaces"}
+        <div class="stage-scroll">
+          {#if navWorkspace}
+            <WorkspaceHome
+              workspace={navWorkspace}
+              projects={hubHomeProjects}
+              on:open={(e) => openProject(navWorkspace, e.detail.slug)}
+              on:create={() => openNewProjectWizard(navWorkspace)}
+            />
+          {:else}
+            <div class="ws-pick">
+              <span class="e-title">Workspaces</span>
+              <span class="e-sub">Pick one in the sidebar, or create one.</span>
+            </div>
+          {/if}
         </div>
       {:else if activeThreadId}
         <!-- Chat Thread View -->
@@ -1208,13 +1372,20 @@
       {:else}
         <!-- Draft era: no thread row exists until the first send. -->
         <div class="home-hero-stage">
-          <button class="draft-project" on:click={openNewChat} title="New chat lives in one project — click to change">
-            <span class="draft-dot" />
-            <span class="draft-label">Draft in</span>
-            <strong>{displayName(curProject)}</strong>
-            {#if currentRoot}<span class="draft-root" title={currentRoot}>{currentRoot}</span>{/if}
-            <span class="draft-change">Change</span>
-          </button>
+          {#if curProject !== "default" || branch || currentRoot}
+          <div class="hero-context">
+            <div class="hero-ws-badge" title={currentRoot ? `${curProject} — ${currentRoot}` : curProject}>
+              <Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1 2 2H5a2 2 0 0 1-2-2z" size={13} />
+              <span class="hero-ws-name">{displayName(curProject)}</span>
+              {#if branch}
+                <span class="hero-ws-branch">⎇ {branch}</span>
+              {/if}
+              {#if currentRoot}
+                <span class="hero-ws-root" title={currentRoot}>{currentRoot}</span>
+              {/if}
+            </div>
+          </div>
+          {/if}
           <Omnibar
             bind:input
             bind:model
@@ -1281,58 +1452,6 @@
     {/each}
   </div>
 
-  <!-- New Chat project picker: draft era starts with an explicit project. -->
-  {#if showNewChat}
-    <div class="ws-backdrop" transition:fade={{ duration: 140 }} on:click={closeNewChat}>
-      <div class="ws-modal nc-modal" on:click|stopPropagation>
-        <div class="ws-head">
-          <span>New chat — pick a project</span>
-          <button class="ws-x" title="Cancel (Esc)" on:click={closeNewChat}>
-            <Icon d="M18 6L6 18M6 6l12 12" size={12} />
-          </button>
-        </div>
-        <input
-          class="ws-name"
-          placeholder="Filter projects…"
-          bind:value={newChatQuery}
-          use:focusNewChat
-          on:input={() => (newChatIndex = 0)}
-        />
-        <div class="nc-list">
-          {#each newChatOptions as name, i}
-            {@const p = projects.find((x) => x.name === name)}
-            {@const n = threads.filter((t) => (t.project || "default") === name).length}
-            <button
-              class="nc-row"
-              class:on={i === newChatIndex}
-              class:cur={name === curProject}
-              on:click={() => confirmNewChatRow(i)}
-              on:mousemove={() => (newChatIndex = i)}
-            >
-              <span class="nc-name">{displayName(name)}</span>
-              {#if n > 0}<span class="nc-count">{n}</span>{/if}
-              {#if p?.root}<span class="nc-root" title={p.root}>{p.root}</span>{/if}
-              {#if name === curProject}<span class="nc-cur">current</span>{/if}
-            </button>
-          {/each}
-          {#if !newChatOptions.length}
-            <div class="nc-empty">No project matches “{newChatQuery}”.</div>
-          {/if}
-          <button
-            class="nc-row nc-new"
-            class:on={newChatIndex === newChatOptions.length}
-            on:click={() => confirmNewChatRow(newChatOptions.length)}
-            on:mousemove={() => (newChatIndex = newChatOptions.length)}
-          >
-            <span class="nc-name">+ New workspace…</span>
-          </button>
-        </div>
-        <div class="ws-foot">
-          <span class="hint">Draft — nothing is saved until you send</span>
-        </div>
-      </div>
-    </div>
-  {/if}
 
   <!-- New Workspace Popout (centered over the backdrop) -->
   {#if showNewWs}
@@ -1346,7 +1465,7 @@
         </div>
         <input
           class="ws-name"
-          placeholder="Name — e.g. strohmann"
+          placeholder="Name — e.g. acme"
           bind:value={wsName}
           use:focusWsName
           on:keydown={(e) => { if (e.key === "Enter") submitNewWs(); }}
@@ -1455,23 +1574,15 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
-    filter: blur(var(--parzi-bg-blur)) saturate(1.05);
-    transform: scale(1.04);
+    opacity: 0.92;
   }
-  .bg-overlay-dim {
+  .bg-overlay {
     position: absolute;
     inset: 0;
-    background: color-mix(in srgb, var(--stage) var(--parzi-bg-dim-pct), transparent);
-  }
-  .bg-overlay-vignette {
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(ellipse at 55% 42%, transparent 30%, rgba(0, 0, 0, var(--parzi-vignette)) 100%);
-  }
-  .bg-overlay-glow {
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(ellipse at 50% 10%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 60%);
+    background:
+      radial-gradient(ellipse at 50% 10%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 60%),
+      radial-gradient(ellipse at 55% 42%, transparent 30%, rgba(0, 0, 0, var(--parzi-vignette)) 100%),
+      color-mix(in srgb, var(--stage) var(--parzi-bg-dim-pct), transparent);
   }
   .app-body {
     flex: 1;
@@ -1546,6 +1657,12 @@
     display: flex;
     justify-content: center;
   }
+  .ws-pick {
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 48px 32px; max-width: 420px;
+  }
+  .ws-pick .e-title { font-size: 18px; font-weight: 600; color: var(--text); letter-spacing: -0.2px; }
+  .ws-pick .e-sub { font-size: 13px; color: var(--text-3); line-height: 1.5; }
   .home-hero-stage {
     flex: 1;
     display: flex;
@@ -1590,9 +1707,7 @@
   .ws-backdrop {
     position: fixed; inset: 0; z-index: 250;
     display: flex; align-items: center; justify-content: center;
-    background: color-mix(in srgb, var(--stage) 55%, transparent);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
+    background: rgba(5, 5, 8, 0.72);
   }
   .ws-modal {
     width: 340px; max-width: calc(100vw - 48px);
@@ -1639,50 +1754,48 @@
   .ws-create:hover:not(:disabled) { filter: brightness(1.08); }
   .ws-create:disabled { opacity: 0.4; cursor: default; }
 
-  /* Draft era: project chip above the home composer */
-  .draft-project {
-    display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
-    background: var(--menu); border: 1px solid var(--line-3);
-    border-radius: 999px; color: var(--text-2);
-    font: inherit; font-size: 12.5px; padding: 6px 8px 6px 12px;
-    cursor: pointer; box-sizing: border-box;
+  /* Draft era: unified workspace badge above the home composer */
+  .hero-context {
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
-  .draft-project:hover { border-color: var(--accent-line); color: var(--text); }
-  .draft-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); flex: none; }
-  .draft-label { color: var(--text-3); }
-  .draft-project strong { font-weight: 650; color: var(--text); }
-  .draft-root {
-    max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 11px; color: var(--text-4);
+  .hero-ws-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: color-mix(in srgb, var(--parzi-sidebar) 85%, transparent);
+    border: 1px solid var(--line-2);
+    border-top-color: var(--line-hi);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font-size: 12px;
+    color: var(--text-3);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: all 140ms ease;
   }
-  .draft-change {
-    font-size: 11px; font-weight: 600; color: var(--accent-text);
-    background: var(--accent-soft); border: 1px solid var(--accent-line);
-    border-radius: 999px; padding: 2px 9px; flex: none;
+  .hero-ws-badge:hover {
+    border-color: var(--line-3);
+    color: var(--text-2);
   }
-
-  /* New-chat picker list */
-  .nc-modal { width: 380px; }
-  .nc-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
-  .nc-row {
-    display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box;
-    background: transparent; border: 1px solid transparent; border-radius: 8px;
-    color: var(--text-2); font: inherit; font-size: 13px; text-align: left;
-    padding: 8px 10px; cursor: pointer;
+  .hero-ws-name {
+    font-weight: 600;
+    color: var(--text);
   }
-  .nc-row:hover, .nc-row.on { background: var(--surface-2); color: var(--text); }
-  .nc-row.on { border-color: var(--line-2); }
-  .nc-row.cur { color: var(--text); }
-  .nc-name { flex: none; font-weight: 600; }
-  .nc-count {
-    flex: none; font-size: 10.5px; color: var(--text-3); font-variant-numeric: tabular-nums;
-    background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 999px; padding: 0 6px;
+  .hero-ws-branch {
+    font-family: var(--parzi-mono), ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--accent-text);
   }
-  .nc-root {
-    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 10.5px; color: var(--text-4);
+  .hero-ws-root {
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--parzi-mono), ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--text-4);
   }
-  .nc-cur { flex: none; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent-text); }
-  .nc-new { color: var(--accent-text); }
-  .nc-empty { font-size: 12px; color: var(--text-3); padding: 10px 4px; text-align: center; }
 </style>

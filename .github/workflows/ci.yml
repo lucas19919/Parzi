@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
-        with: { toolchain: "1.89.0", components: "clippy, rustfmt" }
+        with: { toolchain: "1.98.0", components: "clippy, rustfmt" }
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: ". -> target\nsrc-tauri -> target" }
       - run: cargo fmt --all --check

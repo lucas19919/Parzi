@@ -757,7 +757,7 @@
     <textarea
       bind:this={textareaEl}
       rows="1"
-      placeholder={streaming ? "Agent is working... (Esc to stop)" : "Ask anything, @ to mention, / for actions — paste images too"}
+      placeholder={streaming ? "Working… Esc to stop" : "Message"}
       bind:value={input}
       on:input={handleInput}
       on:paste={onPaste}

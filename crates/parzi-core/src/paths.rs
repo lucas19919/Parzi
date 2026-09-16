@@ -31,6 +31,12 @@ pub fn projects_dir() -> Result<PathBuf> {
     Ok(parzi_dir()?.join("projects"))
 }
 
+/// Hub workspaces: one small git repo per workspace (PLAN §1.1), each with
+/// `workspace.toml` and `projects/<slug>/`.
+pub fn workspaces_dir() -> Result<PathBuf> {
+    Ok(parzi_dir()?.join("workspaces"))
+}
+
 pub fn sessions_dir() -> Result<PathBuf> {
     Ok(parzi_dir()?.join("sessions"))
 }
@@ -41,6 +47,12 @@ pub fn backgrounds_dir() -> Result<PathBuf> {
 
 pub fn logs_dir() -> Result<PathBuf> {
     Ok(parzi_dir()?.join("logs"))
+}
+
+/// Derived files only: everything here can be deleted and re-rendered
+/// (today: the pre-scaled, pre-blurred wallpaper texture).
+pub fn cache_dir() -> Result<PathBuf> {
+    Ok(parzi_dir()?.join("cache"))
 }
 
 pub fn worktrees_dir() -> Result<PathBuf> {
@@ -56,12 +68,14 @@ pub fn ensure_dirs() -> Result<PathBuf> {
     let root = parzi_dir()?;
     for sub in [
         "projects",
+        "workspaces",
         "sessions",
         "backgrounds",
         "plugins",
         "logs",
         "themes",
         "attachments",
+        "cache",
     ] {
         std::fs::create_dir_all(root.join(sub))?;
     }

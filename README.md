@@ -19,10 +19,11 @@ Grab the latest release from
 | macOS, Apple Silicon or Intel | `Parzi_*_universal.dmg` — drag Parzi into Applications |
 
 First launch asks once: on Windows SmartScreen wants
-*More info → Run anyway*; on macOS right-click (or Ctrl-click) Parzi in
-Applications → *Open* → *Open*. Afterwards it launches normally and
-updates itself in-app. Your threads and settings live in `~/.parzi` and
-are never touched by updates or reinstalls.
+*More info → Run anyway*. On macOS (since builds are not Apple-notarized), Gatekeeper
+asks once: open Terminal and run `xattr -d com.apple.quarantine /Applications/Parzi.app`
+(or go to *System Settings › Privacy & Security › Open Anyway*). Afterwards it
+launches normally and updates itself in-app. Your threads and settings live in
+`~/.parzi` and are never touched by updates or reinstalls.
 
 Quick start (from source):
 
@@ -36,7 +37,7 @@ cargo build -p parzi-cli
 GUI: `cd ui; npm install; npm run build`, then `cargo tauri dev` in `src-tauri`
 (requires `cargo install tauri-cli --locked`).
 
-Default background: Asuka (`assets/backgrounds/asuka.png`), seeded to
-`~/.parzi/backgrounds/` on first run. Replace the file to make it yours.
+Default background: none (a solid stage). Drop any image into
+`~/.parzi/backgrounds/` and pick it under Settings › Appearance.
 
 License: MIT.

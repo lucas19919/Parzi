@@ -111,7 +111,6 @@
     font-size: 12.5px;
     font-weight: 500;
     box-shadow: var(--menu-shadow);
-    backdrop-filter: blur(12px);
     white-space: nowrap;
   }
   .toast-dot {

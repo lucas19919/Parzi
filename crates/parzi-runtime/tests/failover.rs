@@ -92,6 +92,7 @@ async fn explicit_pick_429_hops_with_route_transition() {
         cwd: String::new(),
         mcp: Arc::new(McpManager::new(std::collections::HashMap::new(), 60)),
         allowed: vec![],
+        leases: None,
     });
     let slots = vec![
         ProviderSlot {
@@ -190,6 +191,7 @@ async fn strict_mode_single_slot_halts_on_429() {
         cwd: String::new(),
         mcp: Arc::new(McpManager::new(std::collections::HashMap::new(), 60)),
         allowed: vec![],
+        leases: None,
     });
     let slots = vec![ProviderSlot {
         provider_id: "flaky".into(),

@@ -117,11 +117,9 @@
 <style>
   .deck {
     position: relative; height: 100%; width: 100%; display: flex; flex-direction: column; min-height: 0;
-    background: var(--panel, rgba(26, 29, 36, 0.85));
-    border-left: 1px solid var(--line, rgba(255,255,255,0.1));
-    backdrop-filter: blur(var(--glass-blur, 18px)) saturate(1.3);
-    -webkit-backdrop-filter: blur(var(--glass-blur, 18px)) saturate(1.3);
-    box-shadow: inset 1px 0 0 var(--line-hi, rgba(255,255,255,0.06));
+    background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 96%, transparent), color-mix(in srgb, var(--parzi-sidebar) 90%, transparent));
+    border-left: 1px solid var(--line-2);
+    box-shadow: inset 1px 0 0 var(--line-hi);
   }
   .deck.dragging { user-select: none; }
   .deck.dragging .content { pointer-events: none; }
@@ -133,35 +131,35 @@
     content: ""; position: absolute; left: 3px; top: 0; bottom: 0; width: 2px; border-radius: 2px;
     background: transparent; transition: background 0.12s ease;
   }
-  .grip:hover::after, .deck.dragging .grip::after, .grip:focus-visible::after { background: var(--accent-line, rgba(124,140,255,0.4)); }
+  .grip:hover::after, .deck.dragging .grip::after, .grip:focus-visible::after { background: var(--accent-line); }
   .grip:focus-visible { outline: none; }
 
   .head {
     display: flex; align-items: center; gap: 4px; height: 38px; flex: none; padding: 0 8px 0 10px;
-    border-bottom: 1px solid var(--line-2, rgba(255,255,255,0.07));
+    border-bottom: 1px solid var(--line-2);
   }
   .tabs { display: inline-flex; gap: 2px; }
   .tab {
     display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
-    background: transparent; border: 1px solid transparent; border-radius: var(--radius-2, 8px);
-    color: var(--text-3, #94a3b8); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
+    background: transparent; border: 1px solid transparent; border-radius: var(--radius-2);
+    color: var(--text-3); font: inherit; font-size: 12px; font-weight: 500; cursor: pointer;
   }
-  .tab:hover { color: var(--text, #fff); background: var(--surface-1, rgba(255,255,255,0.05)); }
-  .tab.on { color: var(--text, #fff); background: var(--surface-2, rgba(255,255,255,0.07)); border-color: var(--line-2, rgba(255,255,255,0.08)); }
-  .tab-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent, #7c8cff); }
+  .tab:hover { color: var(--text); background: var(--surface-1); }
+  .tab.on { color: var(--text); background: var(--surface-2); border-color: var(--line-2); }
+  .tab-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
   .count {
-    font-family: var(--parzi-mono, monospace); font-size: 10px; min-width: 16px; height: 16px; padding: 0 5px;
+    font-family: var(--parzi-mono); font-size: 10px; min-width: 16px; height: 16px; padding: 0 5px;
     display: inline-flex; align-items: center; justify-content: center; border-radius: 999px;
-    background: var(--surface-3, rgba(255,255,255,0.1)); color: var(--text-3, #94a3b8);
+    background: var(--surface-3); color: var(--text-3);
   }
-  .count.live { background: var(--ok-soft, rgba(74,222,128,0.14)); color: var(--ok, #4ade80); }
+  .count.live { background: var(--ok-soft); color: var(--ok); }
   .spacer { flex: 1; }
   .hb {
     width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
     background: transparent; border: 1px solid transparent; border-radius: 7px;
-    color: var(--text-3, #94a3b8); cursor: pointer; padding: 0;
+    color: var(--text-3); cursor: pointer; padding: 0;
   }
-  .hb:hover { background: var(--surface-2, rgba(255,255,255,0.07)); color: var(--text, #fff); }
-  .hb.on { color: var(--accent, #7c8cff); }
+  .hb:hover { background: var(--surface-2); color: var(--text); }
+  .hb.on { color: var(--accent); }
   .content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 </style>

@@ -2,7 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
-  import { renderMarkdown, splitSegments } from "./md";
+  import { renderMarkdown, splitSegments, LiveMarkdown } from "./md";
   import Widget from "./widgets/Widget.svelte";
   import Diagram from "./widgets/Diagram.svelte";
   import ArtifactCard from "./widgets/ArtifactCard.svelte";
@@ -129,16 +129,20 @@
     }
   }
 
+  /** `key` is stable for the life of the event it came from (its index in the
+      append-only log, or the tool-call id), so a token landing in the live tail
+      never re-keys — and so never re-renders — a finished message. */
   type RenderItem =
-    | { kind: "user"; text: string }
-    | { kind: "assistant"; text: string }
-    | { kind: "reasoning"; text: string }
-    | { kind: "checkpoint"; text: string }
-    | { kind: "system"; text: string }
-    | { kind: "route"; text: string }
-    | { kind: "widget"; fence: string; payload: unknown }
-    | { kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
+    | { key: string; kind: "user"; text: string }
+    | { key: string; kind: "assistant"; text: string }
+    | { key: string; kind: "reasoning"; text: string }
+    | { key: string; kind: "checkpoint"; text: string }
+    | { key: string; kind: "system"; text: string }
+    | { key: string; kind: "route"; text: string }
+    | { key: string; kind: "widget"; fence: string; payload: unknown }
+    | { key: string; kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
     | {
+        key: string;
         kind: "tool";
         id: string;
         name: string;
@@ -167,28 +171,31 @@
     }
 
     // Build ordered list
-    for (const e of events) {
+    for (let ix = 0; ix < events.length; ix++) {
+      const e = events[ix];
+      const key = `e${ix}`;
       if (e.kind === "user") {
-        out.push({ kind: "user", text: e.text });
+        out.push({ key, kind: "user", text: e.text });
       } else if (e.kind === "assistant") {
-        out.push({ kind: "assistant", text: e.text });
+        out.push({ key, kind: "assistant", text: e.text });
       } else if (e.kind === "reasoning") {
-        out.push({ kind: "reasoning", text: e.text });
+        out.push({ key, kind: "reasoning", text: e.text });
       } else if (e.kind === "checkpoint") {
-        out.push({ kind: "checkpoint", text: e.summary });
+        out.push({ key, kind: "checkpoint", text: e.summary });
       } else if (e.kind === "system") {
-        out.push({ kind: "system", text: e.text });
+        out.push({ key, kind: "system", text: e.text });
       } else if (e.kind === "route_transition") {
         const cd = e.cooldown_secs ? ` (cooldown: ${e.cooldown_secs}s)` : "";
-        out.push({ kind: "route", text: `${e.from_provider} → ${e.to_provider} (${e.reason}${cd})` });
+        out.push({ key, kind: "route", text: `${e.from_provider} → ${e.to_provider} (${e.reason}${cd})` });
       } else if (e.kind === "widget") {
-        out.push({ kind: "widget", fence: e.fence, payload: e.payload });
+        out.push({ key, kind: "widget", fence: e.fence, payload: e.payload });
       } else if (e.kind === "artifact") {
-        out.push({ kind: "artifact", id: e.id, title: e.title, artifact_kind: e.artifact_kind, version: e.version, payload: e.payload });
+        out.push({ key, kind: "artifact", id: e.id, title: e.title, artifact_kind: e.artifact_kind, version: e.version, payload: e.payload });
       } else if (e.kind === "tool_call") {
         const res = resultMap.get(e.id);
         if (res) {
           out.push({
+            key,
             kind: "tool",
             id: e.id,
             name: e.name,
@@ -201,6 +208,7 @@
           });
         } else {
           out.push({
+            key,
             kind: "tool",
             id: e.id,
             name: e.name,
@@ -219,7 +227,7 @@
     let buf: ToolItem[] = [];
     const flush = () => {
       if (buf.length) {
-        out.push({ kind: "toolgroup", key: buf.map((t) => t.id).join("+"), tools: buf });
+        out.push({ kind: "toolgroup", key: "g" + buf.map((t) => t.id).join("+"), tools: buf });
         buf = [];
       }
     };
@@ -248,6 +256,24 @@
             ? "Working…"
             : "Starting…"
       : "";
+
+  /** Live tail (E4). The buffer is split without touching the segment LRU —
+      its key changes on every flush, so caching it would evict the finished
+      messages it exists to keep — and only the last markdown segment streams:
+      the blocks before it are parsed once by `LiveMarkdown` and kept as HTML. */
+  const liveMd = new LiveMarkdown();
+  // Run over or thread switched: forget the frozen HTML, so the next answer
+  // cannot inherit it by sharing a first block with the last one.
+  $: if (!liveText) liveMd.reset();
+  $: liveSegs = liveText ? splitSegments(liveText, false) : [];
+  $: liveTailIdx = (() => {
+    for (let i = liveSegs.length - 1; i >= 0; i--) if (liveSegs[i].kind === "md") return i;
+    return -1;
+  })();
+  $: livePart =
+    liveTailIdx >= 0
+      ? liveMd.render(String(liveSegs[liveTailIdx].body))
+      : { head: "", tail: "" };
 
   const SENT_IMG_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
   /** Filenames from the backend's `[attached: a, b]` transcript marker. */
@@ -292,7 +318,7 @@
       {/each}
     </div>
   {/if}
-  {#each groupedItems as item, i (item.kind === "toolgroup" ? "g" + item.key : "i" + i)}
+  {#each groupedItems as item, i (item.key)}
     {#if item.kind === "user"}
       {@const sentImgs = attachedImages(item.text)}
       <div class="msg-row user">
@@ -375,9 +401,14 @@
   {/if}
 
   {#if liveText}
-    {#each splitSegments(liveText) as seg}
-      {#if seg.kind === "md"}
-        <div class="msg">{@html renderMarkdown(seg.body)}<span class="stream-caret" /></div>
+    {#each liveSegs as seg, si}
+      {#if seg.kind === "md" && si === liveTailIdx}
+        <div class="msg">
+          {#if livePart.head}<div class="live-head">{@html livePart.head}</div>{/if}
+          <div>{@html livePart.tail}<span class="stream-caret" /></div>
+        </div>
+      {:else if seg.kind === "md"}
+        <div class="msg">{@html renderMarkdown(seg.body)}</div>
       {:else if seg.kind === "widget"}
         <Widget data={seg.body} />
       {:else if seg.kind === "artifact"}
@@ -450,6 +481,12 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+  /* The live tail is two elements (frozen blocks + the block being written)
+     so the frozen HTML is never re-set. Keep the seam invisible: the frozen
+     part's last paragraph would otherwise lose its bottom margin. */
+  :global(.live-head > p:last-child) {
+    margin-bottom: 0.55em;
   }
   .copy-btn {
     position: absolute;

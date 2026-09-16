@@ -77,11 +77,15 @@
   let keys: Record<string, string> = {};
   let showKey: Record<string, boolean> = {};
   let signingInGoogle = false;
+  let spendUsd = "";
+  let spendTok = "";
 
   onMount(async () => {
     try {
       const [, c] = await Promise.all([ensureModels(false), api.getConfig()]);
       cfg = c;
+      spendUsd = c.budget?.max_cost_usd != null ? String(c.budget.max_cost_usd) : "";
+      spendTok = c.budget?.max_tokens != null ? String(c.budget.max_tokens) : "";
     } catch (e) {
       err = String(e);
     } finally {
@@ -109,6 +113,17 @@
   })();
   $: keysInAuto = cfg?.routing?.keys_in_auto ?? false;
   $: autoFailover = cfg?.routing?.auto_failover ?? true;
+
+  function saveSpend() {
+    if (!cfg) return;
+    const usd = spendUsd.trim() ? Number(spendUsd) : NaN;
+    const tok = spendTok.trim() ? Number(spendTok) : NaN;
+    cfg.budget = {
+      max_cost_usd: Number.isFinite(usd) && usd > 0 ? usd : null,
+      max_tokens: Number.isFinite(tok) && tok > 0 ? tok : null,
+    };
+    saveCfg();
+  }
 
   function statusOf(r: ModelRow | undefined): { label: string; cls: string } {
     if (!r) return { label: "Unavailable", cls: "missing" };
@@ -325,6 +340,30 @@
         <span class="field-hint">Adaptive: an explicit pick hops to the next provider in the order above on a 429. Strict: halt instead.</span>
       </div>
       <Switch on={autoFailover} title="Fail over to another provider on rate limits" on:toggle={() => setFailover(!autoFailover)} />
+    </div>
+  </div>
+
+  <div class="pref-section">
+    <h3 class="section-title">Spending limits</h3>
+    <p class="section-desc">
+      A run pauses when it hits either cap. Empty is no cap. Projects do not set their own.
+    </p>
+    <div class="field-card">
+      <div class="field-info">
+        <span class="field-label">Max spend per run</span>
+        <span class="field-hint">US dollars. Lanes stop instead of running past this.</span>
+      </div>
+      <div class="spend">
+        <span class="cur">$</span>
+        <input class="spend-in" inputmode="decimal" placeholder="none" bind:value={spendUsd} on:change={saveSpend} />
+      </div>
+    </div>
+    <div class="field-card">
+      <div class="field-info">
+        <span class="field-label">Max tokens per run</span>
+        <span class="field-hint">In plus out. Empty is no cap.</span>
+      </div>
+      <input class="spend-in wide" inputmode="numeric" placeholder="none" bind:value={spendTok} on:change={saveSpend} />
     </div>
   </div>
 
@@ -563,4 +602,13 @@
   }
   .def-btn:hover { color: var(--text); border-color: var(--line-3); background: var(--surface-2); }
   .empty-note { padding: 10px; font-size: 12px; color: var(--text-4); }
+  .spend { display: flex; align-items: center; gap: 6px; }
+  .cur { font-size: 13px; color: var(--text-3); }
+  .spend-in {
+    width: 88px; background: var(--input); border: 1px solid var(--line-2); border-radius: 6px;
+    color: var(--text); font: inherit; font-size: 13px; padding: 6px 8px; outline: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .spend-in.wide { width: 120px; }
+  .spend-in:focus { border-color: var(--accent-line); }
 </style>

@@ -15,7 +15,14 @@ use parzi_runtime::Orchestrator;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{broadcast, oneshot, Mutex};
+
+/// The crate's only unsafe code lives here, and nowhere else.
+#[cfg(target_os = "windows")]
+mod dwm;
+
+/// Hub IPC: workspaces, projects, the two wizards (PLAN.md §1, §2).
+mod hub_cmds;
 
 struct AppState {
     orch: Arc<Orchestrator>,
@@ -26,17 +33,60 @@ struct AppState {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum UiEvent {
-    Text { session: String, text: String },
-    Reasoning { session: String, text: String },
-    ToolCall { session: String, id: String, name: String, label: String },
-    ToolResult { session: String, id: String, name: String, ok: bool, ms: u64 },
-    Notice { session: String, text: String },
-    RouteTransition { session: String, from_provider: String, to_provider: String, reason: String, cooldown_secs: Option<u64> },
-    Usage { session: String, tokens_in: u64, tokens_out: u64, cost_usd: f64 },
-    Approval { key: String, call: ToolCallView },
-    SubsessionCreated { parent_id: String, subsession: SessionMeta },
-    Done { session: String, turns: u32 },
-    Error { session: String, error: String },
+    Text {
+        session: String,
+        text: String,
+    },
+    Reasoning {
+        session: String,
+        text: String,
+    },
+    ToolCall {
+        session: String,
+        id: String,
+        name: String,
+        label: String,
+    },
+    ToolResult {
+        session: String,
+        id: String,
+        name: String,
+        ok: bool,
+        ms: u64,
+    },
+    Notice {
+        session: String,
+        text: String,
+    },
+    RouteTransition {
+        session: String,
+        from_provider: String,
+        to_provider: String,
+        reason: String,
+        cooldown_secs: Option<u64>,
+    },
+    Usage {
+        session: String,
+        tokens_in: u64,
+        tokens_out: u64,
+        cost_usd: f64,
+    },
+    Approval {
+        key: String,
+        call: ToolCallView,
+    },
+    SubsessionCreated {
+        parent_id: String,
+        subsession: SessionMeta,
+    },
+    Done {
+        session: String,
+        turns: u32,
+    },
+    Error {
+        session: String,
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -65,7 +115,13 @@ impl Approver for GuiApprover {
             args: call.args.clone(),
             lane: call.lane.clone(),
         };
-        let _ = self.app.emit("parzi://run-event", UiEvent::Approval { key: key.clone(), call: view });
+        let _ = self.app.emit(
+            "parzi://run-event",
+            UiEvent::Approval {
+                key: key.clone(),
+                call: view,
+            },
+        );
         let out = tokio::time::timeout(std::time::Duration::from_secs(120), rx).await;
         self.pending.lock().await.remove(&key);
         match out {
@@ -99,7 +155,9 @@ async fn toggle_favorite(spec: String) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-async fn effort_options(provider: String) -> Result<Vec<parzi_providers::router::EffortOption>, String> {
+async fn effort_options(
+    provider: String,
+) -> Result<Vec<parzi_providers::router::EffortOption>, String> {
     Ok(parzi_providers::router::effort_options(&provider))
 }
 
@@ -152,10 +210,22 @@ async fn send_message(
         pending: state.pending.clone(),
     });
     let app = state.app.clone();
-    let (sid, mut rx) = match session_id {
+    let (sid, rx) = match session_id {
         Some(id) => {
             // Per-message model switch: the thread follows the picker.
-            let rx = state.orch.send_to(&id, &prompt, Some(approver), &cwd, &effort, attached, Some(model.clone())).await.map_err(|e| e.to_string())?;
+            let rx = state
+                .orch
+                .send_to(
+                    &id,
+                    &prompt,
+                    Some(approver),
+                    &cwd,
+                    &effort,
+                    attached,
+                    Some(model.clone()),
+                )
+                .await
+                .map_err(|e| e.to_string())?;
             (id, rx)
         }
         None => {
@@ -163,11 +233,28 @@ async fn send_message(
             // project/lane/cwd (and model when the picker is untouched).
             if let Some(pid) = parent_id.filter(|p| !p.trim().is_empty()) {
                 let pmeta = state.orch.store().get(&pid).map_err(|e| e.to_string())?;
-                let title: String =
-                    prompt.lines().next().unwrap_or("subsession").chars().take(80).collect();
-                let lane = if lane.is_empty() { pmeta.lane.clone() } else { lane };
-                let model = if model.is_empty() { pmeta.model.clone() } else { model };
-                let cwd = if cwd.is_empty() { pmeta.cwd.clone() } else { cwd };
+                let title: String = prompt
+                    .lines()
+                    .next()
+                    .unwrap_or("subsession")
+                    .chars()
+                    .take(80)
+                    .collect();
+                let lane = if lane.is_empty() {
+                    pmeta.lane.clone()
+                } else {
+                    lane
+                };
+                let model = if model.is_empty() {
+                    pmeta.model.clone()
+                } else {
+                    model
+                };
+                let cwd = if cwd.is_empty() {
+                    pmeta.cwd.clone()
+                } else {
+                    cwd
+                };
                 let meta = state
                     .orch
                     .store()
@@ -178,58 +265,178 @@ async fn send_message(
                 }
                 let rx = state
                     .orch
-                    .send_to(&meta.id, &prompt, Some(approver), &cwd, &effort, attached, Some(model.clone()))
+                    .send_to(
+                        &meta.id,
+                        &prompt,
+                        Some(approver),
+                        &cwd,
+                        &effort,
+                        attached,
+                        Some(model.clone()),
+                    )
                     .await
                     .map_err(|e| e.to_string())?;
                 let _ = app.emit(
                     "parzi://run-event",
-                    UiEvent::SubsessionCreated { parent_id: pid, subsession: meta.clone() },
+                    UiEvent::SubsessionCreated {
+                        parent_id: pid,
+                        subsession: meta.clone(),
+                    },
                 );
                 (meta.id, rx)
             } else {
                 let (meta, rx) = state
                     .orch
-                    .spawn(&project, &lane, &model, &prompt, Some(approver), &cwd, &effort, attached)
+                    .spawn(
+                        &project,
+                        &lane,
+                        &model,
+                        &prompt,
+                        Some(approver),
+                        &cwd,
+                        &effort,
+                        attached,
+                    )
                     .await
                     .map_err(|e| e.to_string())?;
                 (meta.id, rx)
             }
         }
     };
-    let sid_task = sid.clone();
-    tokio::spawn(async move {
-        while let Some(ev) = rx.recv().await {
-            let ui = match ev {
-                RunEvent::Text(text) => UiEvent::Text { session: sid_task.clone(), text },
-                RunEvent::Reasoning { text } => {
-                    UiEvent::Reasoning { session: sid_task.clone(), text }
-                }
-                RunEvent::ToolCall { id, name, label } => {
-                    UiEvent::ToolCall { session: sid_task.clone(), id, name, label }
-                }
-                RunEvent::ToolResult { id, name, ok, ms } => {
-                    UiEvent::ToolResult { session: sid_task.clone(), id, name, ok, ms }
-                }
-                RunEvent::Notice { text } => {
-                    UiEvent::Notice { session: sid_task.clone(), text }
-                }
-                RunEvent::RouteTransition { from_provider, to_provider, reason, cooldown_secs } => {
-                    UiEvent::RouteTransition { session: sid_task.clone(), from_provider, to_provider, reason, cooldown_secs }
-                }
-                RunEvent::Usage { tokens_in, tokens_out, cost_usd } => UiEvent::Usage {
-                    session: sid_task.clone(),
-                    tokens_in,
-                    tokens_out,
-                    cost_usd,
-                },
-                RunEvent::ApprovalRequest { .. } => continue, // GuiApprover emits its own UiEvent::Approval
-                RunEvent::Done { turns } => UiEvent::Done { session: sid_task.clone(), turns },
-                RunEvent::Error(error) => UiEvent::Error { session: sid_task.clone(), error },
-            };
-            let _ = app.emit("parzi://run-event", ui);
-        }
-    });
+    // Events go out on the host bus. setup() subscribed once (R-5), so a
+    // dispatched lane whose receiver is dropped still reaches the deck, and
+    // forwarding here as well would double every token of an interactive run.
+    drop(rx);
     Ok(sid)
+}
+
+fn ui_from_run(session: String, ev: RunEvent) -> Option<UiEvent> {
+    Some(match ev {
+        RunEvent::Text(_) | RunEvent::Reasoning { .. } => return None,
+        RunEvent::ToolCall { id, name, label } => UiEvent::ToolCall {
+            session,
+            id,
+            name,
+            label,
+        },
+        RunEvent::ToolResult { id, name, ok, ms } => UiEvent::ToolResult {
+            session,
+            id,
+            name,
+            ok,
+            ms,
+        },
+        RunEvent::Notice { text } => UiEvent::Notice { session, text },
+        RunEvent::RouteTransition {
+            from_provider,
+            to_provider,
+            reason,
+            cooldown_secs,
+        } => UiEvent::RouteTransition {
+            session,
+            from_provider,
+            to_provider,
+            reason,
+            cooldown_secs,
+        },
+        RunEvent::Usage {
+            tokens_in,
+            tokens_out,
+            cost_usd,
+        } => UiEvent::Usage {
+            session,
+            tokens_in,
+            tokens_out,
+            cost_usd,
+        },
+        // GuiApprover emits its own UiEvent::Approval; a lease transfer
+        // that also notifies ApprovalRequest must not draw a second card.
+        RunEvent::ApprovalRequest { .. } => return None,
+        RunEvent::Done { turns } => UiEvent::Done { session, turns },
+        RunEvent::Error(error) => UiEvent::Error { session, error },
+    })
+}
+
+/// R-5: one subscriber for every run — queued, harness-spawned, and
+/// dispatched lanes whose per-run receiver was dropped.
+async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, RunEvent)>) {
+    #[derive(Default)]
+    struct Buf {
+        text: String,
+        reasoning: String,
+    }
+    let mut bufs: HashMap<String, Buf> = HashMap::new();
+    let flush_interval = std::time::Duration::from_millis(30);
+
+    fn flush_sid(app: &AppHandle, sid: &str, buf: &mut Buf) {
+        if !buf.text.is_empty() {
+            let text = std::mem::take(&mut buf.text);
+            let _ = app.emit(
+                "parzi://run-event",
+                UiEvent::Text {
+                    session: sid.to_string(),
+                    text,
+                },
+            );
+        }
+        if !buf.reasoning.is_empty() {
+            let text = std::mem::take(&mut buf.reasoning);
+            let _ = app.emit(
+                "parzi://run-event",
+                UiEvent::Reasoning {
+                    session: sid.to_string(),
+                    text,
+                },
+            );
+        }
+    }
+
+    loop {
+        let has_buf = bufs
+            .values()
+            .any(|b| !b.text.is_empty() || !b.reasoning.is_empty());
+        let next = if has_buf {
+            tokio::select! {
+                rec = rx.recv() => rec,
+                _ = tokio::time::sleep(flush_interval) => {
+                    for (sid, buf) in bufs.iter_mut() {
+                        flush_sid(&app, sid, buf);
+                    }
+                    continue;
+                }
+            }
+        } else {
+            rx.recv().await
+        };
+        match next {
+            Ok((sid, RunEvent::Text(text))) => {
+                let buf = bufs.entry(sid.clone()).or_default();
+                buf.text.push_str(&text);
+                if buf.text.len() >= 1024 {
+                    flush_sid(&app, &sid, buf);
+                }
+            }
+            Ok((sid, RunEvent::Reasoning { text })) => {
+                let buf = bufs.entry(sid.clone()).or_default();
+                buf.reasoning.push_str(&text);
+                if buf.reasoning.len() >= 1024 {
+                    flush_sid(&app, &sid, buf);
+                }
+            }
+            Ok((sid, other)) => {
+                if let Some(buf) = bufs.get_mut(&sid) {
+                    flush_sid(&app, &sid, buf);
+                }
+                if let Some(ui) = ui_from_run(sid, other) {
+                    let _ = app.emit("parzi://run-event", ui);
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(n)) => {
+                tracing::warn!("host bus lagged by {n} event(s)");
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
 }
 
 #[tauri::command]
@@ -265,7 +472,10 @@ async fn create_subsession(
         .map_err(|e| e.to_string())?;
     let _ = state.app.emit(
         "parzi://run-event",
-        UiEvent::SubsessionCreated { parent_id, subsession: meta.clone() },
+        UiEvent::SubsessionCreated {
+            parent_id,
+            subsession: meta.clone(),
+        },
     );
     Ok(meta)
 }
@@ -368,7 +578,12 @@ async fn stage_image(name: String, base64_data: String) -> Result<String, String
     if let Ok(mut files) = std::fs::read_dir(&dir).map(|rd| {
         rd.flatten()
             .filter(|e| e.path().is_file())
-            .filter_map(|e| e.metadata().ok().and_then(|m| m.modified().ok()).map(|t| (t, e.path())))
+            .filter_map(|e| {
+                e.metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .map(|t| (t, e.path()))
+            })
             .collect::<Vec<_>>()
     }) {
         files.sort_by_key(|(t, _)| *t);
@@ -381,7 +596,11 @@ async fn stage_image(name: String, base64_data: String) -> Result<String, String
 
 #[tauri::command]
 async fn toggle_pin(state: State<'_, AppState>, id: String, pinned: bool) -> Result<(), String> {
-    state.orch.store().set_pinned(&id, pinned).map_err(|e| e.to_string())
+    state
+        .orch
+        .store()
+        .set_pinned(&id, pinned)
+        .map_err(|e| e.to_string())
 }
 
 /// Built-in (non-connector) tool catalog for the Agent-tools settings page:
@@ -406,15 +625,15 @@ async fn list_builtin_tools() -> Result<Vec<BuiltinToolView>, String> {
 }
 
 #[tauri::command]
-async fn approve_tool(
-    state: State<'_, AppState>,
-    key: String,
-    allow: bool,
-) -> Result<(), String> {
+async fn approve_tool(state: State<'_, AppState>, key: String, allow: bool) -> Result<(), String> {
     let tx = state.pending.lock().await.remove(&key);
     match tx {
         Some(tx) => {
-            let _ = tx.send(if allow { Approval::Allow } else { Approval::Deny });
+            let _ = tx.send(if allow {
+                Approval::Allow
+            } else {
+                Approval::Deny
+            });
             Ok(())
         }
         None => Err("approval expired or unknown".into()),
@@ -524,25 +743,28 @@ async fn refresh_provider(
     state: State<'_, AppState>,
     provider: String,
 ) -> Result<ModelRow, String> {
-    let id = parzi_providers::canonical_id(provider.trim())
-        .ok_or_else(|| "unknown provider (Parzi routes claude, codex, antigravity, opencode, xai)".to_string())?;
+    let id = parzi_providers::canonical_id(provider.trim()).ok_or_else(|| {
+        "unknown provider (Parzi routes claude, codex, antigravity, opencode, xai)".to_string()
+    })?;
     let mut cfg = state.orch.config();
     cfg.catalog_refresh = true;
-    tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        model_row_for(id, cfg),
-    )
-    .await
-    .map_err(|_| format!("{id} took too long — check the connection"))
+    tokio::time::timeout(std::time::Duration::from_secs(15), model_row_for(id, cfg))
+        .await
+        .map_err(|_| format!("{id} took too long — check the connection"))
 }
 
 #[tauri::command]
-async fn get_provider_health(state: State<'_, AppState>) -> Result<Vec<parzi_providers::ProviderHealth>, String> {
+async fn get_provider_health(
+    state: State<'_, AppState>,
+) -> Result<Vec<parzi_providers::ProviderHealth>, String> {
     Ok(state.orch.provider_health())
 }
 
 #[tauri::command]
-async fn reset_circuit_breaker(state: State<'_, AppState>, provider: Option<String>) -> Result<(), String> {
+async fn reset_circuit_breaker(
+    state: State<'_, AppState>,
+    provider: Option<String>,
+) -> Result<(), String> {
     state.orch.reset_circuit_breaker(provider.as_deref());
     Ok(())
 }
@@ -582,7 +804,11 @@ async fn reset_theme() -> Result<String, String> {
 
 #[tauri::command]
 async fn purge_sessions(state: State<'_, AppState>) -> Result<usize, String> {
-    state.orch.store().purge_finished().map_err(|e| e.to_string())
+    state
+        .orch
+        .store()
+        .purge_finished()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -655,7 +881,12 @@ async fn save_config(
 /// only — otherwise a bearer token rides to an arbitrary host.
 fn check_base_urls(cfg: &ParziConfig) -> Result<(), String> {
     for (id, entry) in &cfg.providers {
-        let Some(url) = entry.base_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+        let Some(url) = entry
+            .base_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
             continue;
         };
         let lower = url.to_lowercase();
@@ -682,10 +913,7 @@ fn check_base_urls(cfg: &ParziConfig) -> Result<(), String> {
 
 /// Names of MCP servers whose `command`/`args` were added or edited between
 /// two configs. Pure and unit-tested.
-fn mcp_command_changes(
-    old: &ParziConfig,
-    new: &ParziConfig,
-) -> Vec<String> {
+fn mcp_command_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
     let mut out = vec![];
     for (name, srv) in &new.mcp.servers {
         match old.mcp.servers.get(name) {
@@ -717,7 +945,10 @@ struct McpServerTools {
 }
 
 #[tauri::command]
-async fn list_mcp_tools(state: State<'_, AppState>, server: String) -> Result<McpServerTools, String> {
+async fn list_mcp_tools(
+    state: State<'_, AppState>,
+    server: String,
+) -> Result<McpServerTools, String> {
     let name = server.trim().to_string();
     if name.is_empty() {
         return Err("empty server name".into());
@@ -736,7 +967,12 @@ async fn list_mcp_tools(state: State<'_, AppState>, server: String) -> Result<Mc
                     description: t.description,
                 })
                 .collect();
-            Ok(McpServerTools { server: name, ok: true, error: None, tools: views })
+            Ok(McpServerTools {
+                server: name,
+                ok: true,
+                error: None,
+                tools: views,
+            })
         }
         Ok(Err(e)) => Ok(McpServerTools {
             server: name,
@@ -762,11 +998,8 @@ async fn list_all_mcp_tools(state: State<'_, AppState>) -> Result<Vec<McpServerT
     for name in servers {
         let mgr = state.orch.mcp().clone();
         set.spawn(async move {
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(20),
-                mgr.list_tools(&name),
-            )
-            .await
+            match tokio::time::timeout(std::time::Duration::from_secs(20), mgr.list_tools(&name))
+                .await
             {
                 Ok(Ok(tools)) => {
                     let views = tools
@@ -779,7 +1012,12 @@ async fn list_all_mcp_tools(state: State<'_, AppState>) -> Result<Vec<McpServerT
                             description: t.description,
                         })
                         .collect();
-                    McpServerTools { server: name, ok: true, error: None, tools: views }
+                    McpServerTools {
+                        server: name,
+                        ok: true,
+                        error: None,
+                        tools: views,
+                    }
                 }
                 Ok(Err(e)) => McpServerTools {
                     server: name,
@@ -837,6 +1075,25 @@ async fn apply_pack(name: String) -> Result<String, String> {
     Ok(theme_css(&theme))
 }
 
+/// AUDIT C-7, shared by every command that turns a wallpaper name into a
+/// path: `abs` is accepted only when it stays inside `~/.parzi/backgrounds`
+/// and names a regular file. `starts_with` compares components and does not
+/// resolve `..`, so a traversal is refused outright instead of normalized
+/// away; `symlink_metadata` refuses a link pointing out of the folder.
+fn checked_background(abs: std::path::PathBuf) -> Option<std::path::PathBuf> {
+    let bgs = parzi_core::paths::backgrounds_dir().ok()?;
+    if abs
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+        || !abs.starts_with(&bgs)
+    {
+        return None;
+    }
+    std::fs::symlink_metadata(&abs)
+        .is_ok_and(|m| m.is_file())
+        .then_some(abs)
+}
+
 #[tauri::command]
 async fn background_url(app: AppHandle) -> Result<String, String> {
     // Return a plain absolute path; the UI turns it into an asset URL with
@@ -845,34 +1102,69 @@ async fn background_url(app: AppHandle) -> Result<String, String> {
     if theme.background.image.is_empty() {
         return Ok(String::new());
     }
-    let home = app.path().home_dir().map_err(|e| e.to_string())?;
-    let abs = home.join(".parzi").join(&theme.background.image);
-    if abs.exists() {
-        return Ok(abs.to_string_lossy().to_string());
-    }
-    let res = app
-        .path()
-        .resolve("asuka.png", tauri::path::BaseDirectory::Resource)
-        .map_err(|e| e.to_string())?;
-    Ok(if res.exists() { res.to_string_lossy().to_string() } else { String::new() })
+    let abs = parzi_core::paths::parzi_dir()
+        .map_err(|e| e.to_string())?
+        .join(&theme.background.image);
+    // A hand-edited theme.toml must not point the webview outside the
+    // wallpaper folder. A refused, missing or non-regular file means a solid
+    // stage, not an error.
+    let Some(abs) = checked_background(abs) else {
+        return Ok(String::new());
+    };
+    // E2: hand the UI a texture the size of the screen with the blur already
+    // baked in — the CSS filter that used to do it went with the compositor
+    // diet. A render failure falls back to the source: never a black stage.
+    let (sw, sh, scale) = app
+        .available_monitors()
+        .ok()
+        .and_then(|ms| {
+            ms.into_iter()
+                .max_by_key(|m| u64::from(m.size().width) * u64::from(m.size().height))
+        })
+        .map(|m| (m.size().width, m.size().height, m.scale_factor()))
+        .unwrap_or((1920, 1080, 1.0));
+    let cache = parzi_core::paths::cache_dir().map_err(|e| e.to_string())?;
+    let (src, blur) = (abs.clone(), theme.background.blur);
+    let rendered = tauri::async_runtime::spawn_blocking(move || {
+        parzi_core::wallpaper::prepare(&src, &cache, blur, sw, sh, scale)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let out = match rendered {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("wallpaper render failed, serving the source: {e}");
+            abs
+        }
+    };
+    // The cache lives next to the wallpapers, not inside them, so grant the
+    // asset protocol this one file rather than widening the configured glob.
+    let _ = app.asset_protocol_scope().allow_file(&out);
+    Ok(out.to_string_lossy().to_string())
 }
 
 #[tauri::command]
-async fn run_doctor(state: State<'_, AppState>) -> Result<Vec<parzi_runtime::doctor::Check>, String> {
+async fn run_doctor(
+    state: State<'_, AppState>,
+) -> Result<Vec<parzi_runtime::doctor::Check>, String> {
     let cfg = state.orch.config();
     Ok(parzi_runtime::doctor::Doctor::new(cfg).run().await)
 }
 
 /// Fast health subset (no MCP probes). System tab renders this immediately.
 #[tauri::command]
-async fn run_doctor_quick(state: State<'_, AppState>) -> Result<Vec<parzi_runtime::doctor::Check>, String> {
+async fn run_doctor_quick(
+    state: State<'_, AppState>,
+) -> Result<Vec<parzi_runtime::doctor::Check>, String> {
     let cfg = state.orch.config();
     Ok(parzi_runtime::doctor::Doctor::new(cfg).run_quick().await)
 }
 
 /// MCP server probes only (each can take up to 15s). Loaded lazily.
 #[tauri::command]
-async fn run_doctor_mcp(state: State<'_, AppState>) -> Result<Vec<parzi_runtime::doctor::Check>, String> {
+async fn run_doctor_mcp(
+    state: State<'_, AppState>,
+) -> Result<Vec<parzi_runtime::doctor::Check>, String> {
     let cfg = state.orch.config();
     Ok(parzi_runtime::doctor::Doctor::new(cfg).run_mcp_only().await)
 }
@@ -953,7 +1245,13 @@ async fn save_background_data(name: String, base64_data: String) -> Result<Strin
         .map_err(|e| e.to_string())?
         .join(&clean_name);
     std::fs::write(&dest, bytes).map_err(|e| e.to_string())?;
-    let _ = parzi_core::theme::set_background(&clean_name);
+    // `set_background` refuses an image over the source-edge cap. That refusal
+    // is this command's answer — swallowing it left the picture on disk and
+    // reported success while the wallpaper never changed.
+    if let Err(e) = parzi_core::theme::set_background(&clean_name) {
+        let _ = std::fs::remove_file(&dest);
+        return Err(e.to_string());
+    }
     Ok(dest.to_string_lossy().to_string())
 }
 
@@ -975,14 +1273,9 @@ async fn palette_from_background(
     name: Option<String>,
 ) -> Result<parzi_core::theme::Palette, String> {
     let path = match name {
-        Some(n) if !n.is_empty() => {
-            if n.contains('/') || n.contains('\\') || n.contains("..") {
-                return Err("bad background name".into());
-            }
-            parzi_core::paths::backgrounds_dir()
-                .map_err(|e| e.to_string())?
-                .join(n)
-        }
+        Some(n) if !n.is_empty() => parzi_core::paths::backgrounds_dir()
+            .map_err(|e| e.to_string())?
+            .join(n),
         _ => {
             let theme = Theme::load().map_err(|e| e.to_string())?;
             if theme.background.image.is_empty() {
@@ -993,7 +1286,16 @@ async fn palette_from_background(
                 .join(&theme.background.image)
         }
     };
-    parzi_core::theme::extract_palette(&path).map_err(|e| e.to_string())
+    // Same guard as `background_url` (C-7): the decoder must not be pointed
+    // outside the wallpaper folder. Here a refusal is an error, because the
+    // caller asked for a palette of a named picture.
+    let path = checked_background(path).ok_or("bad background name")?;
+    // E9: a full JPEG decode must not sit on a tokio worker.
+    tauri::async_runtime::spawn_blocking(move || {
+        parzi_core::theme::extract_palette(&path).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Generated variables followed by user.css (which loads last and wins).
@@ -1071,8 +1373,16 @@ async fn delete_skill(name: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn rename_thread(state: State<'_, AppState>, id: String, title: String) -> Result<(), String> {
-    state.orch.store().set_title(&id, &title).map_err(|e| e.to_string())
+async fn rename_thread(
+    state: State<'_, AppState>,
+    id: String,
+    title: String,
+) -> Result<(), String> {
+    state
+        .orch
+        .store()
+        .set_title(&id, &title)
+        .map_err(|e| e.to_string())
 }
 
 /// Delete a thread plus its subsession subtree. Live runs in the subtree
@@ -1102,7 +1412,11 @@ async fn delete_thread(state: State<'_, AppState>, id: String) -> Result<usize, 
     for sid in &doomed {
         let _ = state.orch.kill(sid).await;
     }
-    state.orch.store().delete_thread(&id).map_err(|e| e.to_string())
+    state
+        .orch
+        .store()
+        .delete_thread(&id)
+        .map_err(|e| e.to_string())
 }
 
 /// Delete a workspace: its sessions (and subtrees) plus its project dir.
@@ -1141,9 +1455,7 @@ async fn list_projects() -> Result<Vec<parzi_core::lanes::ProjectView>, String> 
 }
 
 #[tauri::command]
-async fn get_project_roster(
-    project: String,
-) -> Result<parzi_core::lanes::ProjectRoster, String> {
+async fn get_project_roster(project: String) -> Result<parzi_core::lanes::ProjectRoster, String> {
     parzi_core::lanes::get_project_roster(&project).map_err(|e| e.to_string())
 }
 
@@ -1186,7 +1498,11 @@ async fn get_worktree_diff(
     lane: String,
     session_id: String,
 ) -> Result<String, String> {
-    let clean_lane = if lane.trim().is_empty() { "default" } else { lane.trim() };
+    let clean_lane = if lane.trim().is_empty() {
+        "default"
+    } else {
+        lane.trim()
+    };
     let wt_path = parzi_core::paths::worktrees_dir()
         .map_err(|e| e.to_string())?
         .join(project)
@@ -1204,7 +1520,11 @@ async fn apply_worktree(
     lane: String,
     session_id: String,
 ) -> Result<String, String> {
-    let clean_lane = if lane.trim().is_empty() { "default" } else { lane.trim() };
+    let clean_lane = if lane.trim().is_empty() {
+        "default"
+    } else {
+        lane.trim()
+    };
     let root = parzi_core::lanes::lane_root(&project, clean_lane)
         .ok_or_else(|| "project root not configured".to_string())?;
     parzi_runtime::git_worktree::apply_worktree(&root, clean_lane, &session_id)
@@ -1220,11 +1540,7 @@ async fn list_checkpoints(
 }
 
 #[tauri::command]
-async fn restore_checkpoint(
-    repo: String,
-    session_id: String,
-    turn: u32,
-) -> Result<(), String> {
+async fn restore_checkpoint(repo: String, session_id: String, turn: u32) -> Result<(), String> {
     parzi_runtime::git_checkpoints::restore_checkpoint(&repo, &session_id, turn)
         .map_err(|e| e.to_string())
 }
@@ -1251,7 +1567,14 @@ async fn list_files(root: String, query: String) -> Result<Vec<String>, String> 
     if root.is_empty() {
         return Ok(vec![]);
     }
-    const SKIP: &[&str] = &[".git", "node_modules", "target", "dist", ".venv", "__pycache__"];
+    const SKIP: &[&str] = &[
+        ".git",
+        "node_modules",
+        "target",
+        "dist",
+        ".venv",
+        "__pycache__",
+    ];
     let q = query.to_lowercase();
     let mut out = vec![];
     let mut stack = vec![(std::path::PathBuf::from(&root), 0u8)];
@@ -1289,7 +1612,9 @@ async fn list_files(root: String, query: String) -> Result<Vec<String>, String> 
 #[tauri::command]
 async fn create_project(name: String, root: String) -> Result<(), String> {
     if name.trim().is_empty()
-        || !name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        || !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
     {
         return Err("project name: letters, numbers, _ and - only".into());
     }
@@ -1371,9 +1696,10 @@ fn file_roots() -> Vec<std::path::PathBuf> {
     }
     if let Ok(scan) = parzi_core::lanes::scan_projects() {
         for (proj, lanes) in scan {
-            for root in std::iter::once(proj.root).flatten().chain(
-                lanes.into_iter().filter_map(|l| l.root),
-            ) {
+            for root in std::iter::once(proj.root)
+                .flatten()
+                .chain(lanes.into_iter().filter_map(|l| l.root))
+            {
                 if root.trim().is_empty() {
                     continue;
                 }
@@ -1445,8 +1771,22 @@ async fn list_project_docs(project: String, root: String) -> Result<Vec<DocEntry
     if root.is_empty() {
         return Ok(out);
     }
-    const SKIP: &[&str] = &[".git", "node_modules", "target", "dist", ".venv", "__pycache__"];
-    const FIRST: &[&str] = &["PLAN.md", "README.md", "AGENTS.md", "CLAUDE.md", "PROGRESS.md", "TODO.md"];
+    const SKIP: &[&str] = &[
+        ".git",
+        "node_modules",
+        "target",
+        "dist",
+        ".venv",
+        "__pycache__",
+    ];
+    const FIRST: &[&str] = &[
+        "PLAN.md",
+        "README.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "PROGRESS.md",
+        "TODO.md",
+    ];
     let root_path = std::path::PathBuf::from(root);
     let mut found: Vec<(String, String)> = vec![];
     let mut stack = vec![(root_path.clone(), 0u8)];
@@ -1477,10 +1817,16 @@ async fn list_project_docs(project: String, root: String) -> Result<Vec<DocEntry
     found.sort_by(|a, b| {
         let ra = FIRST.iter().position(|f| *f == a.0).unwrap_or(FIRST.len());
         let rb = FIRST.iter().position(|f| *f == b.0).unwrap_or(FIRST.len());
-        ra.cmp(&rb).then_with(|| a.0.matches('/').count().cmp(&b.0.matches('/').count())).then_with(|| a.0.cmp(&b.0))
+        ra.cmp(&rb)
+            .then_with(|| a.0.matches('/').count().cmp(&b.0.matches('/').count()))
+            .then_with(|| a.0.cmp(&b.0))
     });
     for (label, path) in found {
-        out.push(DocEntry { label, path, source: "root".into() });
+        out.push(DocEntry {
+            label,
+            path,
+            source: "root".into(),
+        });
     }
     Ok(out)
 }
@@ -1530,9 +1876,7 @@ async fn create_skill(name: String) -> Result<(), String> {
 
 /// Settings → Skills: slash commands inside one pack (empty when none yet).
 #[tauri::command]
-async fn skill_commands(
-    name: String,
-) -> Result<Vec<parzi_runtime::plugins::SlashCommand>, String> {
+async fn skill_commands(name: String) -> Result<Vec<parzi_runtime::plugins::SlashCommand>, String> {
     parzi_runtime::plugins::commands_for(name.trim()).map_err(|e| e.to_string())
 }
 
@@ -1649,6 +1993,17 @@ async fn logout_antigravity() -> Result<(), String> {
 }
 
 fn main() {
+    // E9: Tauri's default runtime is one worker per hardware thread (16 here,
+    // 27 threads in the process at idle). The host only moves IPC and I/O —
+    // every CPU-bound step already runs under spawn_blocking — so three
+    // workers and a small blocking pool are plenty.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(3)
+        .max_blocking_threads(8)
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    tauri::async_runtime::set(rt.handle().clone());
     let (cfg, store) = boot().expect("parzi home");
     let orch = Arc::new(Orchestrator::new(cfg, store));
     orch.recover().ok();
@@ -1659,9 +2014,33 @@ fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             let o = orch.clone();
-            app.manage(AppState { orch, pending, app: app.handle().clone() });
-            // Long-lived queue pump + boot kick for sessions left Queued.
+            app.manage(AppState {
+                orch,
+                pending,
+                app: app.handle().clone(),
+            });
+            #[cfg(target_os = "windows")]
+            if let Some(w) = app.get_webview_window("main") {
+                dwm::round_window_corners(&w);
+            }
+            // R-5: subscribe before any run starts, including recovered
+            // queued ones. Dispatched lanes drop their own receiver; this
+            // is the app's one ear on every run.
+            let bus_rx = o.subscribe();
+            let bus_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                forward_host_bus(bus_app, bus_rx).await;
+            });
+            // Long-lived queue pump + boot kick for sessions left Queued.
+            // R-5: runs that were still queued when the app closed are put
+            // back on the queue first — their prompts live next to the
+            // transcript, so nothing is lost with the process.
+            tauri::async_runtime::spawn(async move {
+                match o.recover_queue().await {
+                    Ok(n) if n > 0 => tracing::info!("re-enqueued {n} queued run(s) from last run"),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("queued runs not recovered: {e}"),
+                }
                 o.kick().await;
                 o.pump_loop().await;
             });
@@ -1753,9 +2132,42 @@ fn main() {
             skill_commands,
             save_skill_commands,
             list_project_docs,
+            // hub (PLAN.md): workspaces, GitHub, projects, the deck's reads.
+            hub_cmds::workspace_list,
+            hub_cmds::workspace_create,
+            hub_cmds::workspace_get,
+            hub_cmds::workspace_add_repos,
+            hub_cmds::workspace_sync,
+            hub_cmds::github_connect,
+            hub_cmds::github_status,
+            hub_cmds::github_list_orgs,
+            hub_cmds::github_list_repos,
+            hub_cmds::repo_clone_or_map,
+            hub_cmds::project_create,
+            hub_cmds::project_get,
+            hub_cmds::project_list,
+            hub_cmds::project_open,
+            hub_cmds::project_drafts,
+            hub_cmds::project_audit,
+            hub_cmds::project_approve,
+            hub_cmds::project_status,
+            hub_cmds::project_plan,
+            hub_cmds::project_journal,
+            hub_cmds::ui_state,
         ])
-        .run(tauri::generate_context!())
-        .expect("parzi failed to start");
+        .build(tauri::generate_context!())
+        .expect("parzi failed to start")
+        .run(|app, event| {
+            // E8/R-2: MCP servers are our children. Kill them (and their
+            // trees) before the process goes away, or every `npx` connector
+            // touched this session outlives the app.
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(state) = app.try_state::<AppState>() {
+                    let mcp = state.orch.mcp().clone();
+                    tauri::async_runtime::block_on(async move { mcp.shutdown().await });
+                }
+            }
+        });
 }
 
 #[cfg(test)]
@@ -1777,10 +2189,19 @@ mod tests {
     #[test]
     fn containment_is_prefix_based() {
         let roots = vec![std::path::PathBuf::from("C:\\parzi")];
-        assert!(contained_in(std::path::Path::new("C:\\parzi\\a.md"), &roots));
-        assert!(!contained_in(std::path::Path::new("C:\\other\\a.md"), &roots));
+        assert!(contained_in(
+            std::path::Path::new("C:\\parzi\\a.md"),
+            &roots
+        ));
+        assert!(!contained_in(
+            std::path::Path::new("C:\\other\\a.md"),
+            &roots
+        ));
         // `C:\parzi-evil` shares a string prefix but is not under the root.
-        assert!(!contained_in(std::path::Path::new("C:\\parzi-evil\\a.md"), &roots));
+        assert!(!contained_in(
+            std::path::Path::new("C:\\parzi-evil\\a.md"),
+            &roots
+        ));
     }
 
     #[test]

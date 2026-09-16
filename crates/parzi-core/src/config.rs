@@ -22,6 +22,9 @@ pub struct ParziConfig {
     pub orchestrator: OrchLimits,
     #[serde(default)]
     pub routing: RoutingConfig,
+    /// R-4: the spend a single run may cost before it pauses. Unset = no cap.
+    #[serde(default)]
+    pub budget: Budget,
     /// Kill-switch for catalog disk-cache refresh (t3code Manifest discipline).
     #[serde(default = "default_true")]
     pub catalog_refresh: bool,
@@ -63,6 +66,53 @@ impl Default for RoutingConfig {
             auto_order: default_auto_order(),
             keys_in_auto: false,
         }
+    }
+}
+
+/// R-4: a spend cap the runtime keeps. Both limits are optional and the
+/// tighter of config and project (`budget:` in PROJECT.md) wins. A run that
+/// hits one pauses (Idle + `budget_exceeded`) — it is never silently cut.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct Budget {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_cost_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
+}
+
+impl Budget {
+    /// The tighter of two caps, limit by limit. `None` never tightens.
+    #[must_use]
+    pub fn tightest(self, other: Self) -> Self {
+        Self {
+            max_cost_usd: match (self.max_cost_usd, other.max_cost_usd) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            },
+            max_tokens: match (self.max_tokens, other.max_tokens) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            },
+        }
+    }
+
+    pub fn is_unlimited(self) -> bool {
+        self.max_cost_usd.is_none() && self.max_tokens.is_none()
+    }
+
+    /// The reason this run must pause, or `None` while it is inside the cap.
+    pub fn exceeded(self, tokens: u64, cost_usd: f64) -> Option<String> {
+        if let Some(max) = self.max_tokens {
+            if tokens >= max {
+                return Some(format!("token budget reached ({tokens}/{max} tokens)"));
+            }
+        }
+        if let Some(max) = self.max_cost_usd {
+            if cost_usd >= max {
+                return Some(format!("cost budget reached (${cost_usd:.4}/${max:.2})"));
+            }
+        }
+        None
     }
 }
 
@@ -212,6 +262,7 @@ impl Default for ParziConfig {
                 queue_when_busy: true,
             },
             routing: RoutingConfig::default(),
+            budget: Budget::default(),
             catalog_refresh: true,
             favorite_models: vec![],
         }

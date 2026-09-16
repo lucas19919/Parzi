@@ -138,6 +138,7 @@ export interface ParziConfig {
   mcp: { servers: Record<string, unknown> };
   orchestrator: { max_concurrent: number; mcp_idle_kill_secs: number; queue_when_busy: boolean };
   routing: { auto_failover: boolean; auto_order: string[]; keys_in_auto: boolean };
+  budget?: { max_cost_usd: number | null; max_tokens: number | null };
   catalog_refresh: boolean;
   favorite_models: string[];
 }
@@ -424,3 +425,297 @@ export const api = {
 export function onRunEvent(cb: (e: UiEvent) => void) {
   return listen<UiEvent>("parzi://run-event", (ev) => cb(ev.payload));
 }
+
+/* ---------- hub (workspaces, GitHub, project creation — PLAN.md §1, §2) ---------- */
+
+// Lowercase on the wire: `workspace.toml` is meant to be read and edited by a
+// person, so core serialises these enums the way they are written in the file.
+export type WorkspaceKind = "solo" | "team";
+export type MemberRole = "owner" | "maintainer" | "member" | "viewer";
+
+/** One repo of a workspace; `local_path` is this machine's mapping. */
+export interface RepoRef {
+  name: string;
+  remote: string;
+  default_branch: string;
+  local_path: string | null;
+}
+
+export interface Member {
+  user: string;
+  role: MemberRole;
+}
+
+/** `workspace.toml` (`parzi_core::workspace::Workspace`). */
+export interface Workspace {
+  name: string;
+  kind: WorkspaceKind;
+  repos: RepoRef[];
+  members: Member[];
+}
+
+/** What the app knows about the GitHub credential — never the token itself. */
+export interface GithubStatus {
+  connected: boolean;
+  login: string;
+  source: "token" | "none";
+  /** `gh` is on PATH, so "Use gh" is worth offering. */
+  gh: boolean;
+}
+
+export interface GithubOrg {
+  login: string;
+  name: string;
+}
+
+export interface GithubRepo {
+  name: string;
+  full_name: string;
+  default_branch: string;
+  clone_url: string;
+  private: boolean;
+}
+
+/** What one `workspace_sync` did (`parzi_core::workspace::sync::SyncReport`). */
+export interface SyncReport {
+  committed: boolean;
+  pushed: boolean;
+  pulled: boolean;
+  /** Paths left for a human; non-empty means nothing was committed. */
+  conflicts: string[];
+}
+
+/** Progress of one `repo_clone_or_map`, pushed on `parzi://repo-clone`. */
+export interface CloneEvent {
+  workspace: string;
+  repo: string;
+  phase: "cloning" | "done" | "error";
+  line: string;
+  path: string;
+}
+
+export const hub = {
+  workspaces: () => invoke<string[]>("workspace_list"),
+  workspace: (name: string) => invoke<Workspace>("workspace_get", { name }),
+  createWorkspace: (name: string, kind: WorkspaceKind) =>
+    invoke<Workspace>("workspace_create", { name, kind }),
+  addRepos: (workspace: string, repos: RepoRef[]) =>
+    invoke<Workspace>("workspace_add_repos", { workspace, repos }),
+  /** Round 1's syncer is the workspace's own git repo (§1.1). */
+  syncWorkspace: (workspace: string) =>
+    invoke<SyncReport>("workspace_sync", { workspace }),
+  /** Paste a token, or pass nothing to borrow the one `gh` holds. */
+  githubConnect: (token?: string) =>
+    invoke<GithubStatus>("github_connect", { token: token ?? null }),
+  githubStatus: () => invoke<GithubStatus>("github_status"),
+  orgs: () => invoke<GithubOrg[]>("github_list_orgs"),
+  /** `org` empty = the signed-in user's own repos. */
+  repos: (org: string) => invoke<GithubRepo[]>("github_list_repos", { org }),
+  /**
+   * Map an existing checkout (`local_path`) or clone in the background.
+   * Resolves with the destination path; progress arrives on `parzi://repo-clone`.
+   */
+  cloneOrMap: (args: {
+    workspace: string;
+    repo: RepoRef;
+    localPath?: string;
+    destRoot?: string;
+  }) =>
+    invoke<string>("repo_clone_or_map", {
+      workspace: args.workspace,
+      repo: args.repo,
+      local_path: args.localPath ?? null,
+      dest_root: args.destRoot ?? null,
+    }),
+  createProject: (args: {
+    workspace: string;
+    title: string;
+    repos: string[];
+    roster: Roster;
+    budgetUsd?: number | null;
+  }) =>
+    invoke<Project>("project_create", {
+      workspace: args.workspace,
+      title: args.title,
+      repos: args.repos,
+      roster: args.roster,
+      budget_usd: args.budgetUsd ?? null,
+    }),
+  /** Screenshot aid: `PARZI_UI_STATE=new-workspace:repos` opens that step. */
+  uiState: () => invoke<string>("ui_state"),
+};
+
+export function onCloneEvent(cb: (e: CloneEvent) => void) {
+  return listen<CloneEvent>("parzi://repo-clone", (ev) => cb(ev.payload));
+}
+
+/* ---------- deck (hub round 1 — PLAN.md §8) ---------- */
+
+/**
+ * The five `status:` values of PROJECT.md, spelled exactly as the wire
+ * spells them: `parzi_core::project::Status` is
+ * `#[serde(rename_all = "lowercase")]`, so a capitalised union never
+ * matches. `tests/fixtures/project-status.json` holds that serde output and
+ * `deckState.test.ts` asserts this list is it.
+ */
+export const PROJECT_STATUSES = ["drafting", "planned", "running", "done", "parked"] as const;
+
+export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
+
+/** One acceptance criterion from PROJECT.md `## What`. */
+export interface Criterion {
+  text: string;
+  done: boolean;
+}
+
+/** `provider/model` per role, as written in PROJECT.md `roster:`. */
+export interface Roster {
+  header: string;
+  orchestrator: string;
+  coder: string;
+}
+
+/** PROJECT.md, parsed (`parzi_core::project::Project`). */
+export interface Project {
+  slug: string;
+  title: string;
+  workspace: string;
+  repos: string[];
+  roster: Roster;
+  budget_usd: number | null;
+  status: ProjectStatus;
+  /** Globs whose lease transfer needs a human. */
+  critical: string[];
+  why: string;
+  what: Criterion[];
+  constraints: string[];
+}
+
+/** One task line of PLAN.md (`parzi_core::plan::Task`). */
+export interface Task {
+  id: string;
+  title: string;
+  repo: string;
+  scope: string[];
+  after: string[];
+  critical: boolean;
+  done: boolean;
+  acceptance: string[];
+}
+
+export interface LanePlan {
+  name: string;
+  tasks: Task[];
+}
+
+export interface Sprint {
+  title: string;
+  target: string;
+  lanes: LanePlan[];
+}
+
+/** PLAN.md v1, parsed (`parzi_core::plan::Plan`). */
+export interface Plan {
+  sprints: Sprint[];
+}
+
+/**
+ * The journal vocabulary, spelled as the wire spells it: the same mistake
+ * as `ProjectStatus` above, but `parzi_core::journal::Kind` is
+ * `#[serde(rename_all = "snake_case")]`, so `PlanChanged` is `plan_changed`.
+ * A capitalised union made every task in the Plan tab read as pending.
+ */
+export const JOURNAL_KINDS = [
+  "claim", "release", "request", "grant", "deny", "convene",
+  "handoff", "block", "plan_changed", "approve", "note",
+] as const;
+
+export type JournalKind = (typeof JOURNAL_KINDS)[number];
+
+/** One line of `<project>/journal.jsonl`. */
+export interface JournalLine {
+  at: string;
+  who: string;
+  kind: JournalKind;
+  task: string | null;
+  text: string;
+}
+
+/** A rough plan the header wrote to `<project>/drafts/<n>.md`. */
+export interface Draft {
+  name: string;
+  title: string;
+  content: string;
+  path: string;
+}
+
+/** What `project_audit` hands back: the orchestrator's <= 15-line summary. */
+export interface AuditResult {
+  summary: string;
+  plan: Plan | null;
+}
+
+/** What `project_open` ensures: the project and its role sessions. */
+export interface ProjectOpen {
+  project: Project;
+  header_session: string;
+  orchestrator_session: string | null;
+}
+
+/** Text plus the mtime etag the poll uses to skip unchanged renders. */
+export interface TextDoc {
+  text: string;
+  etag: string;
+}
+
+/** Commands may answer a bare value or `{value, etag}`; normalise both. */
+function unwrap<T>(v: T, key: string): T {
+  const o = v as unknown as Record<string, unknown>;
+  return o && typeof o === "object" && key in o ? (o[key] as T) : v;
+}
+
+function asTextDoc(v: string | TextDoc): TextDoc {
+  return typeof v === "string" ? { text: v, etag: String(v.length) } : v;
+}
+
+export const deck = {
+  open: (workspace: string, slug: string) =>
+    invoke<ProjectOpen>("project_open", { workspace, slug }),
+  get: (workspace: string, slug: string) =>
+    invoke<Project>("project_get", { workspace, slug }),
+  list: (workspace: string) =>
+    invoke<Project[]>("project_list", { workspace }),
+  drafts: (workspace: string, slug: string) =>
+    invoke<Draft[]>("project_drafts", { workspace, slug }),
+  /** Send one draft to the orchestrator: writes PLAN.md, returns the summary. */
+  audit: async (workspace: string, slug: string, draft: string) => {
+    const r = await invoke<AuditResult | string>("project_audit", { workspace, slug, draft });
+    return typeof r === "string" ? { summary: r, plan: null } : r;
+  },
+  /** Human approval of the audited plan: status Planned, sprint 1 dispatched. */
+  approve: (workspace: string, slug: string) =>
+    invoke<Project>("project_approve", { workspace, slug }),
+  /** Deterministic STATUS.md — no model, safe to poll. */
+  status: async (workspace: string, slug: string) =>
+    asTextDoc(await invoke<string | TextDoc>("project_status", { workspace, slug })),
+  plan: async (workspace: string, slug: string) =>
+    unwrap(await invoke<Plan>("project_plan", { workspace, slug }), "plan"),
+  journal: async (workspace: string, slug: string) =>
+    unwrap(await invoke<JournalLine[]>("project_journal", { workspace, slug }), "lines"),
+  /**
+   * Ask a role. The header answers "what are we building / what's happening";
+   * the Direct toggle sends the same box to the orchestrator. Returns the
+   * session id the reply streams into.
+   */
+  ask: async (open: ProjectOpen, to: "header" | "orchestrator", prompt: string) => {
+    const session = to === "header" ? open.header_session : open.orchestrator_session;
+    return api.sendMessage({
+      sessionId: session ?? undefined,
+      project: open.project.slug,
+      lane: to,
+      model: to === "header" ? open.project.roster.header : open.project.roster.orchestrator,
+      prompt,
+      cwd: "",
+    });
+  },
+};

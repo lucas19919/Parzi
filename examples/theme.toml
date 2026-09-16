@@ -14,7 +14,7 @@ bar = "#1A1D24"
 border = "#2A2E3A"
 
 [background]
-image = "backgrounds/asuka.png"
+image = ""
 dim = 0.66
 vignette = 0.5
 blur = 3.0

@@ -2899,7 +2899,7 @@ dependencies = [
 
 [[package]]
 name = "parzi-app"
-version = "0.1.9"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2916,12 +2916,14 @@ dependencies = [
  "tauri-plugin-updater",
  "tokio",
  "tokio-util",
+ "tracing",
  "uuid",
+ "windows",
 ]
 
 [[package]]
 name = "parzi-core"
-version = "0.1.9"
+version = "0.1.11"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2937,7 +2939,7 @@ dependencies = [
 
 [[package]]
 name = "parzi-providers"
-version = "0.1.9"
+version = "0.1.11"
 dependencies = [
  "async-trait",
  "dirs 5.0.1",
@@ -2954,7 +2956,7 @@ dependencies = [
 
 [[package]]
 name = "parzi-runtime"
-version = "0.1.9"
+version = "0.1.11"
 dependencies = [
  "async-trait",
  "chrono",

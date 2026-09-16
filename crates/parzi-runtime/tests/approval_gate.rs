@@ -107,6 +107,7 @@ async fn ask_mode_waits_for_slow_approver() {
         cwd: cwd.clone(),
         mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
         allowed: vec!["fs.write".into()],
+        leases: None,
     });
     let slots = vec![ProviderSlot {
         provider_id: "toolcall".into(),
@@ -152,6 +153,7 @@ async fn ask_mode_waits_for_slow_approver() {
         cwd: cwd.clone(),
         mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
         allowed: vec!["fs.write".into()],
+        leases: None,
     });
     let slots2 = vec![ProviderSlot {
         provider_id: "toolcall".into(),
@@ -311,5 +313,107 @@ async fn sequential_completed_runs_release_slots() {
     if let Ok(d) = parzi_core::paths::sessions_dir() {
         let _ = std::fs::remove_dir_all(d.join(&m1.id));
         let _ = std::fs::remove_dir_all(d.join(&m2.id));
+    }
+}
+
+/// H-5: `session.*` used to skip the lane allowlist ("reads are free"), so a
+/// lane with session tools removed could still read other sessions. They are
+/// tools like any other now: not allowed, not run.
+#[tokio::test]
+async fn session_tools_obey_the_lane_allowlist() {
+    test_home();
+    /// One `session.list_sessions` call, then plain text.
+    struct SessionCaller;
+    #[async_trait::async_trait]
+    impl Provider for SessionCaller {
+        fn id(&self) -> &'static str {
+            "sessioncaller"
+        }
+        async fn models(&self) -> Result<Vec<Model>, parzi_core::error::ParziError> {
+            Ok(vec![])
+        }
+        async fn chat_stream(
+            &self,
+            req: ChatReq,
+        ) -> Result<EventRx, parzi_core::error::ParziError> {
+            let (tx, rx) = mpsc::unbounded_channel();
+            let called = req
+                .messages
+                .iter()
+                .any(|m| m.content.contains("[tool:session.list_sessions"));
+            if called {
+                let _ = tx.send(Ok(StreamEvent::Text("done".into())));
+            } else {
+                let _ = tx.send(Ok(StreamEvent::ToolCall {
+                    id: "s1".into(),
+                    name: "session.list_sessions".into(),
+                    args: serde_json::json!({}),
+                }));
+            }
+            Ok(rx)
+        }
+        fn auth_status(&self) -> AuthStatus {
+            AuthStatus::Ok
+        }
+    }
+    struct Allow;
+    #[async_trait::async_trait]
+    impl Approver for Allow {
+        async fn approve(&self, _c: &ToolCallInfo) -> Approval {
+            Approval::Allow
+        }
+    }
+
+    let store = SessionStore::open().unwrap();
+    let sid = store
+        .create("locked", "t", "", "sessioncaller/m")
+        .unwrap()
+        .id;
+    let tools = Arc::new(ToolExecutor {
+        cwd: String::new(),
+        mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
+        // No session.* here: the lane is not allowed to inspect other threads.
+        allowed: vec!["fs.read".into()],
+        leases: None,
+    });
+    let (tx, mut rx) = mpsc::unbounded_channel::<RunEvent>();
+    tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let run = AgentRun::new(
+        sid.clone(),
+        vec![ProviderSlot {
+            provider_id: "sessioncaller".into(),
+            provider: Box::new(SessionCaller),
+            model_id: "m".into(),
+            price_in: 0.0,
+            price_out: 0.0,
+            reason: "test",
+        }],
+        vec![],
+        "test".into(),
+        // Auto mode: only the allowlist can stop this call.
+        parzi_runtime::tools::ApprovalMode::Auto,
+        4,
+        4096,
+        vec![],
+        "low".into(),
+        store.clone(),
+        tools,
+        Arc::new(Allow),
+        tx,
+        tokio_util::sync::CancellationToken::new(),
+    );
+    run.run("who else is running?").await.unwrap();
+
+    let denied = store.events(&sid).unwrap().iter().any(|e| {
+        matches!(
+            e,
+            parzi_core::store::Event::ToolResult { name, ok: false, output, .. }
+                if name == "session.list_sessions" && output.contains("denied")
+        )
+    });
+    assert!(denied, "session.* must be refused when the lane forbids it");
+
+    if let Ok(d) = parzi_core::paths::sessions_dir() {
+        let _ = std::fs::remove_dir_all(d.join(&sid));
     }
 }

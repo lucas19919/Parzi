@@ -10,19 +10,19 @@ Replaces the current "shitty trello board" (LivingPlanView checkbox list + hidde
 - "I need to start a new convo everytime." Continuing work means a fresh thread with no lineage. Retry / continue-in-place / fork-at-step exist in the backend but are buried or missing in the project view.
 - "Subconvos arent linked to the project." Backend *does* inherit `project`/`lane` on `create_subsession` (orchestrator.rs:546-547) and on UI-spawned subsessions (main.rs:164-175). The link breaks in the UI: `ProjectMainPage` filters `t.project === project` but only shows live top-8; the sidebar groups by time, not project; opening a thread drops all project context (no breadcrumb, no rail). So this is a UI-legibility bug, not a storage bug — fix by making project membership visible everywhere, and by treating the whole thread *tree* (root + descendants) as the unit, never a lone thread.
 - "The project is for some reason only seen on the workspace." Today the Mission Control only exists on the workspace click. Open a thread and the project vanishes. Project context must be persistent chrome (breadcrumb + rail), not a page you visit.
-- "A workspace like strohmann might have a project called lemma, that would be a subfolder, and that subfolder would hold the domain specific context. So we need like a hierarchy here." Flat `projects/<name>` list is wrong. Need nesting with context inheritance.
+- "A workspace like acme might have a project called shop, that would be a subfolder, and that subfolder would hold the domain specific context. So we need like a hierarchy here." Flat `projects/<name>` list is wrong. Need nesting with context inheritance.
 - Project = mission with a goal (agreed). Not a folder with threads.
 
 ## 2. The new model: Workspace > Project > Thread tree
 
 ```
-Workspace  (repo root, e.g. `strohmann` — has SYSTEM.md, parzi.toml, PLAN.md, KNOWLEDGE.md)
-└── Project (subfolder, e.g. `lemma/` — has its OWN SYSTEM.md / PLAN.md / KNOWLEDGE.md overlays)
+Workspace  (repo root, e.g. `acme` — has SYSTEM.md, parzi.toml, PLAN.md, KNOWLEDGE.md)
+└── Project (subfolder, e.g. `shop/` — has its OWN SYSTEM.md / PLAN.md / KNOWLEDGE.md overlays)
     └── Thread tree (root thread + subsessions, arbitrary depth — the unit of work)
 ```
 
 - **Workspace** = what the sidebar today calls "Workspaces" and the backend calls "projects". Rename to Workspace everywhere. One workspace = one checkout root + one crew + one memory base.
-- **Project** = a named mission *inside* a workspace, bound to a subfolder. `strohmann/lemma/` holds lemma's domain context. A workspace with no sub-projects has exactly one implicit project = the root mission (today's behaviour, zero migration pain).
+- **Project** = a named mission *inside* a workspace, bound to a subfolder. `acme/shop/` holds shop's domain context. A workspace with no sub-projects has exactly one implicit project = the root mission (today's behaviour, zero migration pain).
 - **Thread tree** = root + all descendants. Filtering, costs, and plan linkage always operate on the tree, never on a single thread. If any member is live, the tree is live.
 - **Lanes stop being fake projects.** Today's lanes (`projects/<p>/lanes/<l>/SYSTEM.md`) overlap 90% with the proposed sub-project. Resolution: lanes become *execution targets* (mode + allowed tools + worktree flag + model override), addressable as `project/lane`, while *domain context* lives at the project level. A lane never owns a PLAN.md or KNOWLEDGE.md; only workspaces and projects do.
 
@@ -35,7 +35,7 @@ Disk truth (additive, backwards compatible):
   PLAN.md             # workspace-level milestones (existing behaviour)
   KNOWLEDGE.md        # workspace memory (existing)
   subprojects/<project>/
-    SYSTEM.md         # domain context overlay (NEW — the `lemma` case)
+    SYSTEM.md         # domain context overlay (NEW — the `shop` case)
     PLAN.md           # project milestones (NEW — falls back to workspace PLAN.md)
     KNOWLEDGE.md      # project memory overlay (NEW — falls back to workspace one)
   lanes/<lane>/       # unchanged: execution targets only
@@ -48,7 +48,7 @@ Context builder precedence (inner wins, outer is background):
 
 1. **Iteration is the primitive, not the checkbox.** Every thread tree offers Continue (same thread), Retry (re-run last turn), Fork-at-step, Spawn-subsession — inline, one click. Starting a blank conversation is the *last* resort, never the only path. The project page answers "what happened, what next, who does it" without forcing a new convo.
 2. **Never hand-type a model name again.** The crew shows *resolved* models (`roster value` → else `lane default` → else `Smart Auto`), each row a real picker fed by the model catalog, with auth state (`ok/missing/expired`) inline. Blank = Auto, displayed as Auto, not as an empty box. The omnibar model picker and the crew picker are the same component.
-3. **Project context is chrome, not a page.** Breadcrumb `strohmann / lemma / thread title` in the titlebar everywhere; a slim project rail (goal, health, live trees, next action) follows you into threads. You never "lose" the project by opening work.
+3. **Project context is chrome, not a page.** Breadcrumb `acme / shop / thread title` in the titlebar everywhere; a slim project rail (goal, health, live trees, next action) follows you into threads. You never "lose" the project by opening work.
 4. **State is derived, not declared.** Progress, health, and "what's next" compute from plan + thread trees + recency. Manual checkboxes remain as overrides, but an empty plan with live work still reads as "working", and a full plan with dead threads reads as "stalled". A board nobody updates is a lie; a page that derives is always fresh.
 5. **Memory is visible and earned.** KNOWLEDGE.md renders as a timeline (parsed `- [ts] note` lines, newest first) with a one-line "log what you learned" box. Raw-textarea editing moves to a details disclosure. Agents append via the existing `append_knowledge` tool; humans see it land without reload.
 6. **One overview, not two.** Delete `ProjectOverview.svelte` (dead code — `App.svelte` renders `ProjectMainPage`). One Mission Control per project, embedded in the same chrome as threads.

@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "node --test tests/threadList.test.ts tests/deckState.test.ts tests/roster.test.ts",
+    "bench:stream": "node tests/stream-bench.mjs"
   },
   "dependencies": {
     "@fontsource/instrument-serif": "^5.3.0",

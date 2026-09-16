@@ -108,10 +108,10 @@ fn c_text_dim() -> String {
     "#9AA0AE".into()
 }
 fn c_bar() -> String {
-    "#1A1D24".into()
+    "#0E0E14".into()
 }
 fn c_border() -> String {
-    "#2A2E3A".into()
+    "#20232C".into()
 }
 fn d_bg_image() -> String {
     "".into()
@@ -610,6 +610,9 @@ pub fn set_background(name: &str) -> Result<Theme> {
         if !is_bg_file(&p) {
             return Err(ParziError::Config(format!("background not found: {name}")));
         }
+        // Refuse here, where a person is choosing, rather than at paint time
+        // (the renderer would have to decode it to find out).
+        crate::wallpaper::check_source(&p)?;
     }
     let mut theme = Theme::load()?;
     theme.background.image = if name.is_empty() {
@@ -629,6 +632,7 @@ pub fn upload_background(src: &str) -> Result<String> {
             "not a usable image (png/jpg/webp, ≤20MB)".into(),
         ));
     }
+    crate::wallpaper::check_source(&src_p)?;
     let name = src_p
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -664,8 +668,15 @@ fn hex(r: u8, g: u8, b: u8) -> String {
 /// buckets are ignored; when the art is near-monochrome the accent falls
 /// back to the default indigo instead of a muddy gray.
 pub fn extract_palette(path: &std::path::Path) -> Result<Palette> {
-    let img =
-        image::open(path).map_err(|e| ParziError::Config(format!("unreadable image: {e}")))?;
+    // Decoder limits, not `image::open`'s defaults (AUDIT C-7).
+    let mut reader = image::ImageReader::open(path)
+        .map_err(|e| ParziError::Config(format!("unreadable image: {e}")))?
+        .with_guessed_format()
+        .map_err(|e| ParziError::Config(format!("unreadable image: {e}")))?;
+    reader.limits(crate::wallpaper::limits());
+    let img = reader
+        .decode()
+        .map_err(|e| ParziError::Config(format!("unreadable image: {e}")))?;
     let thumb = img.thumbnail(64, 64).to_rgb8();
     let pixels: Vec<[u8; 3]> = thumb.pixels().map(|p| p.0).collect();
     if pixels.is_empty() {

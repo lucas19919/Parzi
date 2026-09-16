@@ -1,6 +1,6 @@
 # Parzi security audit (cross-cutting) — 2026-09-14
 
-Static review of `C:\Users\lucas\Desktop\Parzi` at working tree (HEAD 4d80a72 + uncommitted changes). Read-only; no build/test run. `cargo audit` is not installed (`cargo audit --version` → "no such command"), so Rust deps were checked by hand from both lockfiles. `npm audit --omit=dev` in `ui/` → 0 vulnerabilities.
+Static review of `the Parzi repo` at working tree (HEAD 4d80a72 + uncommitted changes). Read-only; no build/test run. `cargo audit` is not installed (`cargo audit --version` → "no such command"), so Rust deps were checked by hand from both lockfiles. `npm audit --omit=dev` in `ui/` → 0 vulnerabilities.
 
 ## Executive summary
 
@@ -98,7 +98,7 @@ for c in joined.components() {             // depth is counted over base + path,
 }
 Ok(joined)                                 // never canonicalized: symlinks/junctions unresolved
 ```
-For base `C:\Users\lucas\proj` (depth 3) the check only rejects more than three `..` — i.e. it only rejects paths the OS would reject anyway. Same pattern in the CLI/Tauri attachment reader (`main.rs:297-299`, F16).
+For base `C:\Users\you\proj` (depth 3) the check only rejects more than three `..` — i.e. it only rejects paths the OS would reject anyway. Same pattern in the CLI/Tauri attachment reader (`main.rs:297-299`, F16).
 
 **Fix** (S/M): reject `Path::new(path).is_absolute()` and any `Component::Prefix`/`RootDir`; compute depth over `path` only; then `canonicalize` both root and target (create parent first for writes) and require `target.starts_with(root)` (handle the `\\?\` prefix by canonicalizing the root too). Show the resolved absolute path on the approval card. Add unit tests for `..`, absolute, drive-relative, UNC, junction.
 

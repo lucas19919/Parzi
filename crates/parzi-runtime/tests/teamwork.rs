@@ -9,7 +9,6 @@ use parzi_core::config::ParziConfig;
 use parzi_core::error::Result;
 use parzi_core::store::SessionStore;
 use parzi_providers::{AuthStatus, ChatReq, EventRx, Model, Provider, StreamEvent};
-use parzi_runtime::handler::HarnessBridge;
 use parzi_runtime::mcp::McpManager;
 use parzi_runtime::tools::{is_session_tool, session_defs, ToolExecutor};
 use parzi_runtime::Orchestrator;
@@ -86,6 +85,7 @@ fn session_tools_advertised_and_recognized() {
         cwd: String::new(),
         mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
         allowed: vec!["*".into()],
+        leases: None,
     };
     let defs = e.defs();
     assert!(defs.iter().any(|d| d.name == "session.spawn"));
@@ -185,7 +185,13 @@ async fn send_message_continues_target_and_can_wait() {
 
     let out = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        h.send_message(&parent.id, &target.id, "follow up please", true),
+        h.send_message(
+            &parent.id,
+            &target.id,
+            "follow up please",
+            parzi_runtime::inter::InterKind::Text,
+            true,
+        ),
     )
     .await
     .expect("send_message wait timed out")
@@ -195,9 +201,16 @@ async fn send_message_continues_target_and_can_wait() {
         v["response"].as_str().unwrap().contains("teamwork reply"),
         "expected the target's reply: {out}"
     );
-    // The message landed in the target transcript.
+    // The message landed in the target transcript — as typed data (H-5),
+    // never as a user turn.
     let events = store.events(&target.id).unwrap();
     assert!(events.iter().any(|e| matches!(
+        e,
+        parzi_core::store::Event::System { text }
+            if parzi_runtime::inter::InterSessionMessage::decode(text)
+                .is_some_and(|m| m.body.contains("follow up please"))
+    )));
+    assert!(!events.iter().any(|e| matches!(
         e,
         parzi_core::store::Event::User { text } if text.contains("follow up please")
     )));
@@ -228,7 +241,7 @@ async fn read_and_list_inspect_sessions() {
         .unwrap()
         .to_string();
 
-    let read = h.read_session(&sub_id, Some(10)).await.unwrap();
+    let read = h.read_session(&parent.id, &sub_id, Some(10)).await.unwrap();
     assert!(read.contains("research"), "{read}");
 
     let kids = h.list_sessions(&parent.id, true).await.unwrap();

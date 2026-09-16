@@ -11,6 +11,7 @@ fn exec(allowed: &[&str]) -> ToolExecutor {
         cwd: String::new(),
         mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
         allowed: allowed.iter().map(|s| s.to_string()).collect(),
+        leases: None,
     }
 }
 
@@ -64,6 +65,7 @@ fn exec_in(cwd: &str, allowed: &[&str]) -> ToolExecutor {
         cwd: cwd.to_string(),
         mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
         allowed: allowed.iter().map(|s| s.to_string()).collect(),
+        leases: None,
     }
 }
 

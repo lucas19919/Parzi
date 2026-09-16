@@ -1,14 +1,15 @@
 //! Single-session agent loop. Explicit state machine, crash-safe persistence.
 
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-use parzi_core::config::ParziConfig;
-use parzi_core::context::{AssembledContext, ContextBuilder};
+use parzi_core::config::{Budget, ParziConfig};
+use parzi_core::context::{AssembledContext, ContextBuilder, InterKind};
 use parzi_core::error::{ParziError, Result};
 use parzi_core::store::{Event, SessionStatus, SessionStore};
 use parzi_core::{artifacts, lanes, widgets};
 use parzi_providers::{AuthStatus, ChatReq, EventRx, Provider, StreamEvent};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::tools::{
@@ -16,7 +17,11 @@ use crate::tools::{
     ToolExecutor,
 };
 
-#[derive(Debug)]
+/// R-5: every run also fans its events out here, so a host subscribes once
+/// and still sees the runs it never held a receiver for (queued, harness).
+pub type RunEventBus = broadcast::Sender<(String, RunEvent)>;
+
+#[derive(Debug, Clone)]
 pub enum RunEvent {
     Text(String),
     Reasoning {
@@ -95,15 +100,33 @@ pub trait HarnessBridge: Send + Sync {
         lane: Option<String>,
         wait: bool,
     ) -> Result<String>;
+    /// H-5: cross-session traffic is typed, untrusted data. The bridge builds
+    /// the `InterSessionMessage` from the caller and appends it as a System
+    /// event on the target — never as a User turn.
     async fn send_message(
         &self,
         caller_id: &str,
         session_id: &str,
         message: &str,
+        kind: InterKind,
         wait: bool,
     ) -> Result<String>;
-    async fn read_session(&self, session_id: &str, tail_events: Option<usize>) -> Result<String>;
+    /// `caller_id` is the scope: a session may only read inside its own
+    /// project subtree.
+    async fn read_session(
+        &self,
+        caller_id: &str,
+        session_id: &str,
+        tail_events: Option<usize>,
+    ) -> Result<String>;
     async fn list_sessions(&self, caller_id: &str, only_subsessions: bool) -> Result<String>;
+}
+
+/// Run-level spend, for the budget gate (R-4).
+#[derive(Debug, Clone, Copy, Default)]
+struct Spent {
+    tokens: u64,
+    cost_usd: f64,
 }
 
 pub struct AgentRun {
@@ -124,6 +147,25 @@ pub struct AgentRun {
     cancel: CancellationToken,
     circuit_breaker: Option<Arc<crate::circuit_breaker::CircuitBreaker>>,
     auto_artifacts: bool,
+    /// R-4: what this run may spend before it pauses.
+    budget: Budget,
+    /// R-4: run-level step count. `turns` used to restart at zero on every
+    /// failover slot, so the cap was per slot instead of per run.
+    steps: AtomicU32,
+    spent: std::sync::Mutex<Spent>,
+    /// R-5: mirror of `sink` that outlives the caller's receiver.
+    bus: Option<RunEventBus>,
+    /// The opening turn is already in the transcript (queued at enqueue, or
+    /// an inter-session message): do not append a second User turn.
+    prompt_recorded: bool,
+    /// §1.2: which project role this run is, when it is one. It decides the
+    /// briefing (set in `system_parts` by the orchestrator) and which
+    /// `project.*` tools the run may call.
+    role: Option<crate::roles::RoleBinding>,
+    /// E6: the tool list built once per run, with the MCP config generation it
+    /// was built from. Rebuilding it per turn paid the MCP round trip (up to
+    /// 12 s for an unreachable server) on every turn.
+    tool_defs: tokio::sync::Mutex<Option<(u64, Vec<parzi_providers::ToolDef>)>>,
 }
 
 impl AgentRun {
@@ -162,11 +204,48 @@ impl AgentRun {
             cancel,
             circuit_breaker: None,
             auto_artifacts: false,
+            budget: Budget::default(),
+            steps: AtomicU32::new(0),
+            spent: std::sync::Mutex::new(Spent::default()),
+            bus: None,
+            prompt_recorded: false,
+            role: None,
+            tool_defs: tokio::sync::Mutex::new(None),
         }
     }
 
     pub fn with_auto_artifacts(mut self, on: bool) -> Self {
         self.auto_artifacts = on;
+        self
+    }
+
+    /// R-4: cap this run's spend. Unset limits mean no cap.
+    #[must_use]
+    pub fn with_budget(mut self, budget: Budget) -> Self {
+        self.budget = budget;
+        self
+    }
+
+    /// R-5: fan every event out to the host bus as well as to `sink`.
+    #[must_use]
+    pub fn with_bus(mut self, bus: RunEventBus) -> Self {
+        self.bus = Some(bus);
+        self
+    }
+
+    /// The first turn is already persisted (queued run, inter-session
+    /// message): `run()` must not append it again.
+    #[must_use]
+    pub fn with_prompt_recorded(mut self, recorded: bool) -> Self {
+        self.prompt_recorded = recorded;
+        self
+    }
+
+    /// §1.2: run as a project role. The role's `project.*` tools are then
+    /// offered and dispatched; everything else is unchanged.
+    #[must_use]
+    pub fn with_role(mut self, role: Option<crate::roles::RoleBinding>) -> Self {
+        self.role = role;
         self
     }
 
@@ -181,19 +260,69 @@ impl AgentRun {
     }
 
     fn emit(&self, e: RunEvent) {
+        if let Some(bus) = &self.bus {
+            // No subscriber is not an error: the bus is an extra ear, not the
+            // record (the transcript is).
+            let _ = bus.send((self.session_id.clone(), e.clone()));
+        }
         let _ = self.sink.send(e);
+    }
+
+    /// Book spend against the run budget (R-4).
+    fn record_spend(&self, tokens: u64, cost_usd: f64) {
+        if let Ok(mut s) = self.spent.lock() {
+            s.tokens = s.tokens.saturating_add(tokens);
+            s.cost_usd += cost_usd;
+        }
+    }
+
+    /// The reason this run must pause, or `None` while inside the budget.
+    fn budget_hit(&self) -> Option<String> {
+        if self.budget.is_unlimited() {
+            return None;
+        }
+        let s = self.spent.lock().ok().map(|s| *s).unwrap_or_default();
+        self.budget.exceeded(s.tokens, s.cost_usd)
+    }
+
+    /// Budget stop: say it in the timeline, mark the session, park it Idle.
+    /// Never silent, never a kill — the thread continues once the cap moves.
+    async fn pause_for_budget(&self, reason: &str) {
+        let text = format!(
+            "Paused: {reason}. Raise the budget in Settings or PROJECT.md, or re-scope, \
+             then send the thread on."
+        );
+        let _ = self
+            .store
+            .append(&self.session_id, &Event::System { text: text.clone() });
+        crate::orchestrator::set_run_note(&self.session_id, Some(crate::orchestrator::BUDGET_NOTE));
+        self.emit(RunEvent::Notice { text });
+        self.finish(SessionStatus::Idle).await;
     }
 
     fn cost_for(slot: &ProviderSlot, tin: u64, tout: u64) -> f64 {
         tin as f64 / 1_000_000.0 * slot.price_in + tout as f64 / 1_000_000.0 * slot.price_out
     }
 
+    /// Tool defs for this turn. Built once per run and reused (E6); a Settings
+    /// save bumps the MCP generation, which rebuilds it on the next turn.
     async fn tool_defs(&self, slot: &ProviderSlot) -> Vec<parzi_providers::ToolDef> {
-        if Self::lookup_tools(&slot.provider_id, &slot.model_id) {
-            self.tools.defs_with_mcp().await
-        } else {
-            vec![]
+        if !Self::lookup_tools(&slot.provider_id, &slot.model_id) {
+            return vec![];
         }
+        let gen = self.tools.mcp.generation();
+        let mut cache = self.tool_defs.lock().await;
+        if let Some((cached_gen, defs)) = cache.as_ref() {
+            if *cached_gen == gen {
+                return defs.clone();
+            }
+        }
+        let mut defs = self.tools.defs_with_mcp().await;
+        if let Some(binding) = &self.role {
+            defs.extend(crate::project_flow::project_defs_for(binding.role));
+        }
+        *cache = Some((gen, defs.clone()));
+        defs
     }
 
     /// Resolve `provider/model` prices from the static catalog.
@@ -232,16 +361,11 @@ impl AgentRun {
             self.emit(RunEvent::Error(msg.clone()));
             return Err(ParziError::Provider("router".into(), msg));
         }
-        // The transcript names every attachment so the thread, session.md
-        // and later turns show what actually rode along (bytes travel via
-        // the context builder, not the text).
-        let mut user_text = prompt.to_string();
-        if !self.attachments.is_empty() {
-            let names: Vec<&str> = self.attachments.iter().map(|a| a.path.as_str()).collect();
-            user_text.push_str(&format!("\n[attached: {}]", names.join(", ")));
+        if !self.prompt_recorded {
+            let user_text = user_event_text(prompt, &self.attachments);
+            self.store
+                .append(&self.session_id, &Event::User { text: user_text })?;
         }
-        self.store
-            .append(&self.session_id, &Event::User { text: user_text })?;
         self.store
             .set_status(&self.session_id, SessionStatus::Active)?;
         for (i, slot) in self.slots.iter().enumerate() {
@@ -337,7 +461,6 @@ impl AgentRun {
             )?;
         }
 
-        let mut turns = 0u32;
         let mut vision_warned = false;
         loop {
             if self.cancel.is_cancelled() {
@@ -345,6 +468,7 @@ impl AgentRun {
                 self.emit(RunEvent::Error("cancelled".into()));
                 return Ok(RunEnd::Done);
             }
+            let turns = self.steps.load(Ordering::Relaxed);
             if turns >= self.max_steps {
                 self.finish(SessionStatus::Done).await;
                 self.emit(RunEvent::Error(format!(
@@ -352,7 +476,12 @@ impl AgentRun {
                 )));
                 return Ok(RunEnd::Done);
             }
-            turns += 1;
+            // R-4: every turn costs, so the cap is checked before we buy one.
+            if let Some(reason) = self.budget_hit() {
+                self.pause_for_budget(&reason).await;
+                return Ok(RunEnd::Done);
+            }
+            let turns = self.steps.fetch_add(1, Ordering::Relaxed) + 1;
 
             let mut ctx = self.assemble()?;
             // No-vision model with images attached: strip the bytes (they
@@ -400,8 +529,21 @@ impl AgentRun {
             let mut text = String::new();
             let mut reasoning = String::new();
             let mut calls: Vec<(String, String, serde_json::Value)> = vec![];
-            let mut failed = false;
-            while let Some(ev) = rx.recv().await {
+            loop {
+                // R-1: a kill must land inside the stream, not after it. The
+                // provider's sender sees a closed channel when `rx` drops.
+                let next = tokio::select! {
+                    biased;
+                    () = self.cancel.cancelled() => None,
+                    ev = rx.recv() => Some(ev),
+                };
+                let Some(ev) = next else {
+                    self.persist_partial(&text);
+                    self.finish(SessionStatus::Killed).await;
+                    self.emit(RunEvent::Error("cancelled".into()));
+                    return Ok(RunEnd::Done);
+                };
+                let Some(ev) = ev else { break };
                 match ev {
                     Ok(StreamEvent::Text(t)) => {
                         text.push_str(&t);
@@ -427,6 +569,14 @@ impl AgentRun {
                             tokens_out,
                             cost_usd: cost,
                         });
+                        // R-4: checked on every usage report, so a single
+                        // runaway turn cannot spend past the cap unnoticed.
+                        self.record_spend(tokens_in.saturating_add(tokens_out), cost);
+                        if let Some(reason) = self.budget_hit() {
+                            self.persist_partial(&text);
+                            self.pause_for_budget(&reason).await;
+                            return Ok(RunEnd::Done);
+                        }
                     }
                     Err(e) => {
                         let msg = e.to_string();
@@ -447,10 +597,6 @@ impl AgentRun {
                         return Ok(RunEnd::Done);
                     }
                 }
-            }
-            if failed {
-                self.finish(SessionStatus::Idle).await;
-                return Ok(RunEnd::Done);
             }
             if !reasoning.trim().is_empty() {
                 let _ = self.store.append(
@@ -481,7 +627,9 @@ impl AgentRun {
             }
             for (id, name, args) in calls {
                 if self.cancel.is_cancelled() {
-                    break;
+                    self.finish(SessionStatus::Killed).await;
+                    self.emit(RunEvent::Error("cancelled".into()));
+                    return Ok(RunEnd::Done);
                 }
                 self.emit(RunEvent::ToolCall {
                     id: id.clone(),
@@ -496,7 +644,20 @@ impl AgentRun {
                         args: args.clone(),
                     },
                 );
-                let (ok, output, ms) = self.execute_tool(&id, &name, &args).await;
+                // R-1: a kill during a tool aborts the tool. Dropping the
+                // execution future drops the child process handle, which is
+                // `kill_on_drop` — the subprocess dies with the run.
+                let (ok, output, ms) = {
+                    let exec = self.execute_tool(&id, &name, &args);
+                    tokio::pin!(exec);
+                    tokio::select! {
+                        biased;
+                        () = self.cancel.cancelled() => {
+                            (false, "cancelled: run killed".to_string(), 0)
+                        }
+                        r = &mut exec => r,
+                    }
+                };
                 self.emit(RunEvent::ToolResult {
                     id: id.clone(),
                     name: name.clone(),
@@ -513,12 +674,45 @@ impl AgentRun {
                         ms,
                     },
                 );
+                if self.cancel.is_cancelled() {
+                    self.finish(SessionStatus::Killed).await;
+                    self.emit(RunEvent::Error("cancelled".into()));
+                    return Ok(RunEnd::Done);
+                }
             }
         }
     }
 
+    /// R-1: a killed run stays killed. Whatever the loop wanted to write, a
+    /// cancelled token (or a session the orchestrator already marked Killed)
+    /// wins — `Done` must never paint over a stop the human asked for.
     async fn finish(&self, status: SessionStatus) {
+        let killed = self.cancel.is_cancelled()
+            || matches!(
+                self.store.get(&self.session_id).map(|m| m.status),
+                Ok(SessionStatus::Killed)
+            );
+        let status = if killed {
+            SessionStatus::Killed
+        } else {
+            status
+        };
         let _ = self.store.set_status(&self.session_id, status);
+    }
+
+    /// Persist whatever the assistant had said before a stop, so a killed or
+    /// paused turn is not lost from the transcript.
+    fn persist_partial(&self, text: &str) {
+        if text.trim().is_empty() {
+            return;
+        }
+        let _ = self.store.append(
+            &self.session_id,
+            &Event::Assistant {
+                text: text.to_string(),
+                done: false,
+            },
+        );
     }
 
     fn assemble(&self) -> Result<AssembledContext> {
@@ -550,10 +744,11 @@ impl AgentRun {
             return self.execute_ui_tool(name, args);
         }
         if is_session_tool(name) {
-            // Spawning and messaging change the world: they pause for approval
-            // in lane Ask mode like any other tool. Reads are side-effect free.
-            let gated = matches!(name, "session.spawn" | "session.send_message");
-            if gated && !self.approved(id, name, args).await {
+            // H-5: session tools are tools. They go through the same gate as
+            // everything else — lane allowlist, per-tool override, Ask mode —
+            // instead of the old "reads are free" shortcut, which let a run
+            // read other sessions with `session.*` removed from its lane.
+            if !self.approved(id, name, args).await {
                 return (
                     false,
                     format!("tool `{name}` denied (lane mode / approver)"),
@@ -584,6 +779,19 @@ impl AgentRun {
             );
         }
         let t0 = std::time::Instant::now();
+        // `project.*` belongs to the run's role, not to the lane cwd: it is
+        // dispatched here, past the same approval gate as everything else.
+        if let Some(binding) = &self.role {
+            if crate::project_flow::is_project_tool(name) {
+                let (ok, output) = crate::project_flow::execute_project_tool(
+                    binding.role,
+                    &binding.ctx,
+                    name,
+                    args,
+                );
+                return (ok, output, ms_now(t0));
+            }
+        }
         let (ok, output) = self.tools.execute(name, args).await;
         (ok, output, ms_now(t0))
     }
@@ -672,8 +880,15 @@ impl AgentRun {
                         0,
                     );
                 }
+                let kind = InterKind::parse(&str_arg("kind").unwrap_or_default());
                 bridge
-                    .send_message(&self.session_id, &target, &message, bool_arg("wait", false))
+                    .send_message(
+                        &self.session_id,
+                        &target,
+                        &message,
+                        kind,
+                        bool_arg("wait", false),
+                    )
                     .await
             }
             "session.read_session" => {
@@ -685,7 +900,7 @@ impl AgentRun {
                     .get("tail_events")
                     .and_then(|v| v.as_u64())
                     .map(|n| (n.min(60)) as usize);
-                bridge.read_session(&target, tail).await
+                bridge.read_session(&self.session_id, &target, tail).await
             }
             "session.list_sessions" => {
                 bridge
@@ -924,6 +1139,19 @@ impl AgentRun {
             .ok()?;
         Some(format!("Saved as artifact {id} v{version}"))
     }
+}
+
+/// The User event text for a prompt: the transcript names every attachment
+/// so the thread, `session.md` and later turns show what actually rode along
+/// (bytes travel via the context builder, not the text). Shared with the
+/// orchestrator, which writes this event when a run is queued (R-5).
+pub fn user_event_text(prompt: &str, attachments: &[parzi_core::context::AttachedFile]) -> String {
+    let mut text = prompt.to_string();
+    if !attachments.is_empty() {
+        let names: Vec<&str> = attachments.iter().map(|a| a.path.as_str()).collect();
+        text.push_str(&format!("\n[attached: {}]", names.join(", ")));
+    }
+    text
 }
 
 /// Longest ```fenced block in `text` as (lang, body). Pure, no LLM.

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
   import { renderMarkdown } from "../md";
+  import { deckDrafts } from "../deck/state";
   import type { InspectorArtifact, InspectorDoc, DocEntry } from "../api";
 
   /** Artifact currently shown (null = document mode / empty). */
@@ -47,6 +48,8 @@
     return [...seen.values()];
   })();
   $: quickDocs = showAllDocs ? docs : docs.slice(0, 4);
+  /** Rough plans of the open project (deck lane): `<project>/drafts/*.md`. */
+  $: draftDocs = $deckDrafts.map((d): DocEntry => ({ label: d.label, path: d.path, source: "root" }));
 
   // Preview HTML: markdown renders as prose; live pages (html/svg) render
   // in a sandboxed iframe (see showRender); code/diff render through the
@@ -148,6 +151,14 @@
     {#if docs.length > 4}
       <button class="qt more" on:click={() => (showAllDocs = !showAllDocs)}>{showAllDocs ? "less" : `+${docs.length - 4}`}</button>
     {/if}
+    {#if draftDocs.length}
+      <span class="qgroup">Drafts</span>
+      {#each draftDocs as d (d.path)}
+        <button class="qt draft" class:on={doc?.path === d.path} title={d.path} on:click={() => dispatch("openDoc", { entry: d })}>
+          {d.label}
+        </button>
+      {/each}
+    {/if}
     {#if hasThread}
       <button class="qt" class:on={doc?.title === "session.md"} title="Formatted transcript of this thread" on:click={() => dispatch("openTranscript")}>session.md</button>
     {/if}
@@ -228,103 +239,106 @@
     padding: 8px 10px 4px; flex: none;
   }
   .qt {
-    background: var(--surface-1, rgba(255,255,255,0.04)); border: 1px solid transparent;
-    border-radius: var(--radius-pill, 999px); color: var(--text-3, var(--parzi-text-dim, #94a3b8));
+    background: var(--surface-1); border: 1px solid transparent;
+    border-radius: var(--radius-pill); color: var(--text-3);
     font: inherit; font-size: 11px; padding: 3px 9px; cursor: pointer; max-width: 160px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     display: inline-flex; align-items: center; gap: 4px;
   }
-  .qt:hover { color: var(--text, #f1f5f9); background: var(--surface-2, rgba(255,255,255,0.07)); }
-  .qt.on { background: var(--accent-soft, rgba(124,140,255,0.14)); border-color: var(--accent-line, rgba(124,140,255,0.4)); color: var(--text, #fff); }
-  .qt.more, .qt.pick { color: var(--text-4, #5d636f); background: transparent; border-style: dashed; border-color: var(--line-2, rgba(255,255,255,0.08)); }
-  .qt.art.on { border-color: var(--accent-line, rgba(124,140,255,0.4)); }
+  .qt:hover { color: var(--text); background: var(--surface-2); }
+  .qt.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--text); }
+  .qt.more, .qt.pick { color: var(--text-4); background: transparent; border-style: dashed; border-color: var(--line-2); }
+  .qt.art.on { border-color: var(--accent-line); }
+  /* Group label before the open project's rough plans (deck). */
+  .qgroup { font-size: 10px; color: var(--text-4); letter-spacing: 0.4px; padding: 0 2px 0 6px; }
+  .qt.draft { font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 10.5px; }
 
   .empty {
     flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 6px; color: var(--text-4, #5d636f); padding: 24px; text-align: center;
+    gap: 6px; color: var(--text-4); padding: 24px; text-align: center;
   }
-  .empty-title { font-size: 13px; color: var(--text-3, #94a3b8); font-weight: 500; }
+  .empty-title { font-size: 13px; color: var(--text-3); font-weight: 500; }
   .empty-sub { font-size: 11.5px; max-width: 240px; line-height: 1.5; }
 
   .bar {
     display: flex; align-items: center; gap: 6px; flex: none;
     padding: 6px 10px; margin: 4px 8px 0;
-    background: var(--surface-1, rgba(255,255,255,0.04));
-    border: 1px solid var(--line-2, rgba(255,255,255,0.08));
-    border-radius: var(--radius-3, 10px);
+    background: var(--surface-1);
+    border: 1px solid var(--line-2);
+    border-radius: var(--radius-3);
     font-size: 12px;
   }
   .bar-title {
-    font-weight: 600; color: var(--text, #f1f5f9); overflow: hidden; text-overflow: ellipsis;
+    font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; min-width: 0; flex: 0 1 auto;
   }
   .badge {
-    font-family: var(--parzi-mono, monospace); font-size: 10px; color: var(--text-3, #94a3b8);
-    background: var(--surface-2, rgba(255,255,255,0.05)); border-radius: 4px; padding: 2px 6px; white-space: nowrap; flex: none;
+    font-family: var(--parzi-mono); font-size: 10px; color: var(--text-3);
+    background: var(--surface-2); border-radius: 4px; padding: 2px 6px; white-space: nowrap; flex: none;
   }
   .badge.dim { opacity: 0.7; }
-  .ver-badge { color: var(--accent, #7c8cff); }
+  .ver-badge { color: var(--accent); }
   .ver {
-    font-family: var(--parzi-mono, monospace); font-size: 10px; color: var(--accent, #7c8cff);
-    background: var(--surface-2, rgba(255,255,255,0.05)); border: none; border-radius: 4px; padding: 2px 4px; cursor: pointer;
+    font-family: var(--parzi-mono); font-size: 10px; color: var(--accent);
+    background: var(--surface-2); border: none; border-radius: 4px; padding: 2px 4px; cursor: pointer;
   }
   .spacer { flex: 1; min-width: 4px; }
   .seg {
-    display: inline-flex; background: var(--surface-1, rgba(255,255,255,0.04));
-    border: 1px solid var(--line-2, rgba(255,255,255,0.08)); border-radius: var(--radius-1, 6px); padding: 1px; flex: none;
+    display: inline-flex; background: var(--surface-1);
+    border: 1px solid var(--line-2); border-radius: var(--radius-1); padding: 1px; flex: none;
   }
   .seg-btn {
-    background: transparent; border: none; border-radius: 5px; color: var(--text-3, #94a3b8);
+    background: transparent; border: none; border-radius: 5px; color: var(--text-3);
     font: inherit; font-size: 11px; padding: 2px 8px; cursor: pointer;
   }
-  .seg-btn.on { background: var(--surface-3, rgba(255,255,255,0.11)); color: var(--text, #fff); }
+  .seg-btn.on { background: var(--surface-3); color: var(--text); }
   .mini {
-    background: var(--surface-2, rgba(255,255,255,0.06)); border: none; border-radius: 4px;
-    color: var(--text-3, #94a3b8); font: inherit; font-size: 10px; padding: 3px 8px; cursor: pointer; flex: none;
+    background: var(--surface-2); border: none; border-radius: 4px;
+    color: var(--text-3); font: inherit; font-size: 10px; padding: 3px 8px; cursor: pointer; flex: none;
   }
-  .mini:hover { color: var(--text, #fff); background: var(--surface-3, rgba(255,255,255,0.12)); }
+  .mini:hover { color: var(--text); background: var(--surface-3); }
 
   .split { flex: 1; display: flex; min-height: 0; }
   .toc {
     flex: none; width: 128px; overflow-y: auto; padding: 10px 4px 10px 10px;
-    border-right: 1px solid var(--line-2, rgba(255,255,255,0.06)); display: flex; flex-direction: column; gap: 1px;
+    border-right: 1px solid var(--line-2); display: flex; flex-direction: column; gap: 1px;
   }
   .toc-row {
-    background: transparent; border: none; border-radius: 4px; color: var(--text-3, #94a3b8);
+    background: transparent; border: none; border-radius: 4px; color: var(--text-3);
     font: inherit; font-size: 11px; text-align: left; padding: 3px 6px; cursor: pointer;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.3;
   }
-  .toc-row:hover { color: var(--text, #fff); background: var(--surface-1, rgba(255,255,255,0.04)); }
-  .toc-row.l1 { color: var(--text, #e4e5ec); font-weight: 600; }
+  .toc-row:hover { color: var(--text); background: var(--surface-1); }
+  .toc-row.l1 { color: var(--text); font-weight: 600; }
   .toc-row.l2 { padding-left: 10px; }
   .toc-row.l3 { padding-left: 16px; font-size: 10.5px; }
   .toc-row.l4 { padding-left: 22px; font-size: 10.5px; opacity: 0.8; }
   .body { flex: 1; min-width: 0; overflow: auto; padding: 12px 14px 40px; user-select: text; display: flex; flex-direction: column; }
   .render {
-    flex: 1; width: 100%; min-height: 480px; border: 1px solid var(--line-2, rgba(255,255,255,0.08));
+    flex: 1; width: 100%; min-height: 480px; border: 1px solid var(--line-2);
     border-radius: 8px; background: transparent;
   }
-  .prose { font-size: 13px; line-height: 1.6; color: var(--text-2, #d8dbe3); }
-  .prose :global(h1) { font-size: 20px; margin: 0.2em 0 0.5em; letter-spacing: -0.3px; color: var(--text, #fff); }
-  .prose :global(h2) { font-size: 16px; margin: 1.3em 0 0.4em; color: var(--text, #fff); }
-  .prose :global(h3) { font-size: 14px; margin: 1.1em 0 0.3em; color: var(--text, #fff); }
-  .prose :global(h4) { font-size: 13px; margin: 1em 0 0.3em; color: var(--text, #fff); }
+  .prose { font-size: 13px; line-height: 1.6; color: var(--text-2); }
+  .prose :global(h1) { font-size: 20px; margin: 0.2em 0 0.5em; letter-spacing: -0.3px; color: var(--text); }
+  .prose :global(h2) { font-size: 16px; margin: 1.3em 0 0.4em; color: var(--text); }
+  .prose :global(h3) { font-size: 14px; margin: 1.1em 0 0.3em; color: var(--text); }
+  .prose :global(h4) { font-size: 13px; margin: 1em 0 0.3em; color: var(--text); }
   .prose :global(p) { margin: 0 0 0.8em; }
-  .prose :global(a) { color: var(--accent, #7c8cff); }
+  .prose :global(a) { color: var(--accent); }
   .prose :global(ul), .prose :global(ol) { padding-left: 1.4em; margin: 0 0 0.8em; }
   .prose :global(li) { margin: 0.15em 0; }
   .prose :global(blockquote) {
-    margin: 0 0 0.8em; padding: 6px 12px; border-left: 3px solid var(--accent-line, rgba(124,140,255,0.4));
-    background: var(--surface-1, rgba(255,255,255,0.04)); border-radius: 0 6px 6px 0;
+    margin: 0 0 0.8em; padding: 6px 12px; border-left: 3px solid var(--accent-line);
+    background: var(--surface-1); border-radius: 0 6px 6px 0;
   }
   .prose :global(table) { border-collapse: collapse; font-size: 12px; margin: 0 0 0.8em; max-width: 100%; }
-  .prose :global(th), .prose :global(td) { border: 1px solid var(--line-2, rgba(255,255,255,0.1)); padding: 4px 8px; text-align: left; }
-  .prose :global(th) { background: var(--surface-1, rgba(255,255,255,0.04)); }
+  .prose :global(th), .prose :global(td) { border: 1px solid var(--line-2); padding: 4px 8px; text-align: left; }
+  .prose :global(th) { background: var(--surface-1); }
   .prose :global(code) { font-size: 0.92em; }
   .prose :global(p code), .prose :global(li code) {
-    background: var(--surface-2, rgba(255,255,255,0.07)); padding: 1px 5px; border-radius: 4px;
+    background: var(--surface-2); padding: 1px 5px; border-radius: 4px;
   }
-  .prose :global(hr) { border: none; border-top: 1px solid var(--line-2, rgba(255,255,255,0.1)); margin: 1.2em 0; }
+  .prose :global(hr) { border: none; border-top: 1px solid var(--line-2); margin: 1.2em 0; }
   .prose :global(img) { max-width: 100%; border-radius: 8px; }
   /* Whole document view: never clamp fenced blocks here. */
   .prose :global(.codeblock.clamped pre) { max-height: none; overflow: auto; }

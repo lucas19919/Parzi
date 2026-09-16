@@ -1,21 +1,32 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { createEventDispatcher } from "svelte";
-  import { api, type SessionMeta, type ProjectView } from "./api";
+  import { api, deck, hub, type SessionMeta, type Project } from "./api";
   import Icon from "./Icon.svelte";
   import ThreadRow from "./ThreadRow.svelte";
   import { footerUpdateState, footerUpdateVersion } from "./updateStore";
+  import { isChatThread, type NavMode } from "./nav";
 
-  export let projects: ProjectView[] = [];
   export let currentProject = "default";
   export let currentRoot = "";
-  export let branch = "";
   export let threads: SessionMeta[] = [];
   export let activeThreadId: string | null = null;
+  /** Bumped by the app after a wizard finishes, to re-read the hub rows. */
+  export let hubTick = 0;
+  /** The project the deck is showing, `<workspace>/<slug>`; "" when none. */
+  export let openProjectKey = "";
+  /** Chats = general work. Workspaces = real projects. */
+  export let navMode: NavMode = "chats";
+  /** Hub workspace while drilled in; empty on the workspace list. */
+  export let navWorkspace = "";
 
   const dispatch = createEventDispatcher<{
+    setNav: { mode: NavMode; workspace: string };
     selectProject: { name: string };
+    openProjectOverview: { name: string };
     openNewWorkspace: void;
+    openNewProject: { workspace: string };
+    openProject: { workspace: string; slug: string };
     selectThread: { id: string };
     newSubsession: { id: string };
     newThread: void;
@@ -35,17 +46,16 @@
     search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3",
     plus: "M12 5v14M5 12h14",
     folder: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1 2 2H5a2 2 0 0 1-2-2z",
-    chevronDown: "M6 9l6 6 6-6",
     gear: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z",
     issue: "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0",
     update: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3",
     edit: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z",
     close: "M18 6L6 18M6 6l12 12",
+    chevronLeft: "M15 18l-6-6 6-6",
   };
 
   const displayName = (n: string) => (n === "default" ? "Inbox" : n);
 
-  let wsOpen = true;
   let renamingId: string | null = null;
   let renameTitle = "";
 
@@ -56,30 +66,48 @@
 
   $: byUpdated = (a: SessionMeta, b: SessionMeta) =>
     +new Date(b.updated) - +new Date(a.updated);
-  $: pinned = threads.filter((t) => t.pinned).sort(byUpdated);
 
-  // All known workspaces, deduped: on-disk folders + thread projects.
-  $: workspaceNames = (() => {
-    const set = new Set<string>();
-    for (const p of projects) if (p.name) set.add(p.name);
-    for (const t of threads) set.add(t.project || "default");
-    if (set.size === 0) set.add("default");
-    const arr = [...set];
-    arr.sort((a, b) => {
-      if (a === currentProject) return -1;
-      if (b === currentProject) return 1;
-      if (a === "default") return 1;
-      if (b === "default") return -1;
-      return a.localeCompare(b);
-    });
-    return arr;
-  })();
-  $: countFor = (name: string) =>
-    threads.filter((t) => (t.project || "default") === name).length;
+  $: chatThreads = threads.filter((t) => isChatThread(t.project, hubNames));
+
+  // Live running chats float to the top. Coder lanes belong on the workspace.
+  $: runningThreads = chatThreads.filter((t) => t.status === "active" || t.status === "queued");
+
+  $: scopedThreads = chatThreads;
+
+  // Running threads have their own top section, so exclude them from buckets to avoid duplicates
+  $: idleScopedThreads = scopedThreads.filter((t) => t.status !== "active" && t.status !== "queued");
+  $: pinned = idleScopedThreads.filter((t) => t.pinned).sort(byUpdated);
+
+  // Hub workspaces (`~/.parzi/workspaces/*`) and the projects inside them.
+  // Read here rather than passed down: the two wizards write to disk, and
+  // `hubTick` is the app's way of saying "read it again".
+  let hubNames: string[] = [];
+  let hubProjects: Record<string, Project[]> = {};
+
+  async function loadHub() {
+    try {
+      hubNames = await hub.workspaces();
+    } catch {
+      hubNames = [];
+      return;
+    }
+    const pairs = await Promise.all(
+      hubNames.map(async (n) => [n, await deck.list(n).catch(() => [])] as const),
+    );
+    hubProjects = Object.fromEntries(pairs);
+  }
+  $: if (hubTick >= 0) void loadHub();
+
+  $: projectsOf = (name: string) => hubProjects[name] ?? [];
+  $: openProjects = navWorkspace ? projectsOf(navWorkspace) : [];
+  /** PROJECT.md writes the status lowercase; read it that way whatever comes. */
+  const statusOf = (p: Project) => String(p.status).toLowerCase();
+  // Parent index, built once per thread list instead of once per row (E7).
+  $: parentById = new Map(threads.map((x) => [x.id, x.parent_id] as const));
 
   // Visual indent for subsessions (full tree lives in the Agents deck).
   function depthOf(t: SessionMeta): number {
-    const byId = new Map(threads.map((x) => [x.id, x.parent_id] as const));
+    const byId = parentById;
     let d = 0;
     let p: string | null | undefined = t.parent_id;
     let guard = 0;
@@ -101,10 +129,9 @@
     items: SessionMeta[];
   }
 
-  // Flat T3-style list: time buckets. Thread search lives in the
-  // command palette (Ctrl+K), so there is exactly one search.
+  // Flat T3-style list: time buckets.
   $: groups = ((): Group[] => {
-    const list = threads.filter((t) => !t.pinned).sort(byUpdated);
+    const list = idleScopedThreads.filter((t) => !t.pinned).sort(byUpdated);
     const day = 86400000;
     const t0 = dayStart(new Date());
     const b: Group[] = [
@@ -119,6 +146,23 @@
     }
     return b.filter((g) => g.items.length);
   })();
+
+  // E7: long buckets render their newest rows only; the rest is one click
+  // away ("More"), so a thousand sessions cost a thousand DOM rows only if
+  // you ask for them.
+  const ROW_CAP = 60;
+  let showAll: Record<string, boolean> = {};
+  // The cap must never hide the thread you are looking at: an old selection
+  // past row 60 is appended to its bucket, so the list still shows what the
+  // stage shows. "Show all" stays for everything else.
+  $: rowsOf = (g: Group) => {
+    if (showAll[g.label]) return g.items;
+    const head = g.items.slice(0, ROW_CAP);
+    if (g.items.length <= ROW_CAP || !activeThreadId) return head;
+    if (head.some((t) => t.id === activeThreadId)) return head;
+    const active = g.items.find((t) => t.id === activeThreadId);
+    return active ? [...head, active] : head;
+  };
 
   function subtreeCount(id: string): number {
     const byParent = new Map<string, string[]>();
@@ -156,7 +200,7 @@
       kind: "project", name,
       x: Math.min(x, window.innerWidth - 232),
       y: Math.min(y, window.innerHeight - 220),
-      confirm: false, count: countFor(name),
+      confirm: false, count: (hubProjects[name] ?? []).length,
     };
   }
 
@@ -263,13 +307,7 @@
     if (ctx?.kind !== "project") return;
     const name = ctx.name;
     ctx = null;
-    dispatch("selectProject", { name });
-  }
-  function ctxNewHere() {
-    if (ctx?.kind !== "project") return;
-    const name = ctx.name;
-    ctx = null;
-    dispatch("newThreadInProject", { name });
+    dispatch("setNav", { mode: "workspaces", workspace: name });
   }
   function ctxCopyName() {
     if (ctx?.kind !== "project") return;
@@ -310,68 +348,127 @@
     </button>
     <img class="sb-mark" src="/mark.svg" alt="" width="22" height="22" />
     <span class="sb-wordmark">Parzi</span>
-  </div>
-
-  <div class="t3-top">
-    <button class="t3-row" on:click={() => dispatch("openPalette")} title="Search everything">
-      <Icon d={I.search} size={14} /><span>Search</span>
-    </button>
-    <button class="t3-row primary" on:click={() => dispatch("newThread")} title="New chat — pick a project">
-      <Icon d={I.edit} size={14} /><span>New chat</span>
+    <button class="icon-btn" title="Search (Ctrl+K)" on:click={() => dispatch("openPalette")}>
+      <Icon d={I.search} size={14} />
     </button>
   </div>
 
-  <!-- Workspaces live here, pinned above the thread list, so the project
-    picker never scrolls out of reach no matter how long Today grows. -->
-  <div class="ws-fixed">
-    <div
-      class="proj-head ws-head"
-      role="button"
-      tabindex="0"
-      title={wsOpen ? "Collapse workspaces" : "Expand workspaces"}
-      on:click={() => (wsOpen = !wsOpen)}
-      on:keydown={(e) => { if (e.key === "Enter") wsOpen = !wsOpen; }}
-    >
-      <span>Workspaces ({workspaceNames.length})</span>
-      <span class="proj-tools">
-        <button class="icon-btn sm" title="New workspace" on:click|stopPropagation={() => dispatch("openNewWorkspace")}>
-          <Icon d={I.plus} size={12} />
-        </button>
-        <svg class="ws-chev" class:open={wsOpen} width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d={I.chevronDown} /></svg>
-      </span>
+  <div class="place" role="tablist" aria-label="Place">
+    <button
+      class="place-btn"
+      class:on={navMode === "chats"}
+      role="tab"
+      aria-selected={navMode === "chats"}
+      on:click={() => dispatch("setNav", { mode: "chats", workspace: "" })}
+    >Chats</button>
+    <button
+      class="place-btn"
+      class:on={navMode === "workspaces"}
+      role="tab"
+      aria-selected={navMode === "workspaces"}
+      on:click={() => dispatch("setNav", { mode: "workspaces", workspace: "" })}
+    >Workspaces</button>
+  </div>
+
+  {#if navMode === "chats"}
+    <div class="t3-top tight">
+      <button class="t3-row primary" on:click={() => dispatch("newThread")} title="New chat (Ctrl+N)">
+        <span class="lead"><Icon d={I.edit} size={14} /></span><span>New chat</span>
+      </button>
     </div>
-    {#if wsOpen}
-      <div class="ws-list">
-        {#each workspaceNames as name (name)}
-          {@const isCur = name === currentProject}
-          {@const n = countFor(name)}
+  {:else if !navWorkspace}
+    <div class="t3-top tight">
+      <button class="t3-row primary" on:click={() => dispatch("openNewWorkspace")} title="New workspace">
+        <span class="lead"><Icon d={I.plus} size={14} /></span><span>New workspace</span>
+      </button>
+    </div>
+  {:else}
+    <div class="t3-top tight">
+      <button
+        class="t3-row"
+        title="All workspaces"
+        on:click={() => dispatch("setNav", { mode: "workspaces", workspace: "" })}
+      >
+        <span class="lead"><Icon d={I.chevronLeft} size={14} /></span><span>{navWorkspace}</span>
+      </button>
+      <button class="t3-row primary" on:click={() => dispatch("openNewProject", { workspace: navWorkspace })} title="New project">
+        <span class="lead"><Icon d={I.plus} size={14} /></span><span>New project</span>
+      </button>
+    </div>
+  {/if}
+
+  <div class="sb-scroll">
+    {#if navMode === "workspaces" && !navWorkspace}
+      {#if !hubNames.length}
+        <div class="empty-state">No workspace yet — create one</div>
+      {:else}
+        {#each hubNames as name (name)}
+          {@const n = projectsOf(name).length}
           <div
             class="proj-row"
-            class:cur={isCur}
             role="button"
             tabindex="0"
-            title={isCur && currentRoot ? `${name} — ${currentRoot}` : name}
-            on:click={() => dispatch("selectProject", { name })}
-            on:keydown={(e) => { if (e.key === "Enter") dispatch("selectProject", { name }); }}
+            title={name}
+            on:click={() => dispatch("setNav", { mode: "workspaces", workspace: name })}
+            on:keydown={(e) => { if (e.key === "Enter") dispatch("setNav", { mode: "workspaces", workspace: name }); }}
             on:contextmenu|preventDefault|stopPropagation={(e) => openProjectCtx(name, e.clientX, e.clientY)}
           >
-            <Icon d={I.folder} size={13} />
-            <span class="proj-name">{displayName(name)}</span>
+            <span class="lead"><Icon d={I.folder} size={14} /></span>
+            <span class="proj-name">{name}</span>
             {#if n > 0}<span class="proj-count">{n}</span>{/if}
-            {#if isCur && branch}<span class="proj-branch">⎇ {branch}</span>{/if}
             <span class="proj-hover">
-              <button class="mini-btn" title="New conversation in {displayName(name)}"
-                on:click|stopPropagation={() => dispatch("newThreadInProject", { name })}>+</button>
               <button class="mini-btn" title="Workspace options"
                 on:click|stopPropagation={(e) => toggleProjectCtx(name, e.clientX, e.clientY)}>···</button>
             </span>
           </div>
         {/each}
+      {/if}
+    {:else if navMode === "workspaces" && navWorkspace}
+      {#if !openProjects.length}
+        <div class="empty-state">No project yet — create one</div>
+      {:else}
+        {#each openProjects as p (p.slug)}
+          <div
+            class="proj-row"
+            class:cur={openProjectKey === `${navWorkspace}/${p.slug}`}
+            role="button"
+            tabindex="0"
+            title="{p.title} — {statusOf(p)}"
+            on:click={() => dispatch("openProject", { workspace: navWorkspace, slug: p.slug })}
+            on:keydown={(e) => { if (e.key === "Enter") dispatch("openProject", { workspace: navWorkspace, slug: p.slug }); }}
+          >
+            <span class="lead"><Icon d={I.folder} size={14} /></span>
+            <span class="proj-name">{p.title || p.slug}</span>
+            {#if statusOf(p)}<span class="proj-count">{statusOf(p)}</span>{/if}
+          </div>
+        {/each}
+      {/if}
+    {:else}
+    {#if runningThreads.length}
+      <div class="proj-head running-head">
+        <span class="pulse-dot" />
+        <span>Running ({runningThreads.length})</span>
       </div>
+      {#each runningThreads as t (t.id)}
+        <ThreadRow
+          {t} depth={0} active={t.id === activeThreadId}
+          renaming={renamingId === t.id} bind:renameDraft={renameTitle}
+          branch=""
+          showProject=""
+          on:select={(e) => select(e.detail.id)}
+          on:togglePin={(e) => togglePin(e.detail.id)}
+          on:startRename={(e) => { ctx = null; startRename(e.detail.id); }}
+          on:commitRename={commitRename}
+          on:cancelRename={() => (renamingId = null)}
+          on:killRun={(e) => dispatch("killRun", { id: e.detail.id })}
+          on:newSubsession={(e) => dispatch("newSubsession", { id: e.detail.id })}
+          on:fork={(e) => dispatch("forkThread", { id: e.detail.id })}
+          on:deleteRequest={(e) => openThreadCtx(e.detail.id, window.innerWidth - 260, 220)}
+          on:contextMenu={(e) => openThreadCtx(e.detail.id, e.detail.x, e.detail.y)}
+        />
+      {/each}
     {/if}
-  </div>
 
-  <div class="sb-scroll">
     {#if pinned.length}
       <div class="proj-head"><span>★ Pinned</span></div>
       {#each pinned as t (t.id)}
@@ -379,7 +476,7 @@
           {t} depth={0} active={t.id === activeThreadId}
           renaming={renamingId === t.id} bind:renameDraft={renameTitle}
           branch=""
-          showProject={displayName(t.project || "default")}
+          showProject=""
           on:select={(e) => select(e.detail.id)}
           on:togglePin={(e) => togglePin(e.detail.id)}
           on:startRename={(e) => { ctx = null; startRename(e.detail.id); }}
@@ -396,12 +493,12 @@
 
     {#each groups as g (g.label)}
       <div class="proj-head"><span>{g.label}</span></div>
-      {#each g.items as t (t.id)}
+      {#each rowsOf(g) as t (t.id)}
         <ThreadRow
           {t} depth={depthOf(t)} active={t.id === activeThreadId}
           renaming={renamingId === t.id} bind:renameDraft={renameTitle}
           branch=""
-          showProject={(t.project || "default") === currentProject ? "" : displayName(t.project || "default")}
+          showProject=""
           on:select={(e) => select(e.detail.id)}
           on:togglePin={(e) => togglePin(e.detail.id)}
           on:startRename={(e) => { ctx = null; startRename(e.detail.id); }}
@@ -414,10 +511,16 @@
           on:contextMenu={(e) => openThreadCtx(e.detail.id, e.detail.x, e.detail.y)}
         />
       {/each}
+      {#if !showAll[g.label] && g.items.length > ROW_CAP}
+        <button class="more-row" on:click={() => (showAll = { ...showAll, [g.label]: true })}>
+          More — show all {g.items.length}
+        </button>
+      {/if}
     {/each}
 
-    {#if !pinned.length && !groups.length}
-      <div class="empty-state">No conversations yet — start a new chat</div>
+    {#if !pinned.length && !groups.length && !runningThreads.length}
+      <div class="empty-state">No chats yet — start one</div>
+    {/if}
     {/if}
   </div>
 
@@ -470,8 +573,7 @@
     {:else}
       {#if !ctx.confirm}
         <div class="ctx-title">{displayName(ctx.name)}</div>
-        <button class="menu-item" on:click={ctxOpenProject}>Open overview</button>
-        <button class="menu-item" on:click={ctxNewHere}>New conversation here</button>
+        <button class="menu-item" on:click={ctxOpenProject}>Open</button>
         <button class="menu-item" on:click={ctxCopyName}>Copy name</button>
         {#if currentRoot && ctx.name === currentProject}
           <button class="menu-item" on:click={ctxCopyRoot}>Copy folder path</button>
@@ -481,7 +583,7 @@
           <div class="ctx-note">The Inbox can't be deleted.</div>
         {:else}
           <button class="menu-item danger" on:click={ctxAskDelete}>
-            Delete workspace{ctx.count > 0 ? ` (${ctx.count} session${ctx.count === 1 ? "" : "s"})` : ""}
+            Delete workspace{ctx.count > 0 ? ` (${ctx.count} project${ctx.count === 1 ? "" : "s"})` : ""}
           </button>
         {/if}
       {:else if ctx.kind === "project"}
@@ -499,32 +601,37 @@
 <style>
   .sb {
     width: 248px; min-width: 248px; height: 100%;
-    background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 86%, transparent), color-mix(in srgb, var(--parzi-sidebar) 72%, transparent));
-    backdrop-filter: blur(14px) saturate(1.2);
-    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 95%, transparent), color-mix(in srgb, var(--parzi-sidebar) 88%, transparent));
     border-right: 1px solid var(--line-2);
     display: flex; flex-direction: column; position: relative;
     font-size: 13px; color: var(--text-2);
   }
   .sb-head {
     display: flex; align-items: center; gap: 6px;
-    padding: 10px 10px 4px;
+    padding: 10px 8px 8px;
   }
   .sb-wordmark {
+    flex: 1; min-width: 0;
     font-family: "Instrument Serif", Georgia, serif; font-style: italic; font-size: 17px;
     color: var(--text); padding: 0 2px; user-select: none;
   }
   .sb-mark { width: 22px; height: 22px; border-radius: 6px; flex: none; }
-  .t3-top { display: flex; flex-direction: column; gap: 2px; padding: 10px 10px 2px; }
+  .t3-top { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px 2px; }
+  .t3-top.tight { padding-top: 8px; padding-bottom: 4px; }
+  .lead {
+    flex: none; width: 16px; height: 16px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .lead :global(svg) { display: block; }
   .t3-row {
-    display: flex; align-items: center; gap: 9px; width: 100%;
+    display: flex; align-items: center; gap: 8px; width: 100%;
     background: transparent; border: none; border-radius: 7px; color: var(--text-2);
     font: inherit; font-size: 13px; padding: 7px 8px; cursor: pointer; text-align: left;
   }
   .t3-row:hover { background: var(--surface-2); color: var(--text); }
   .t3-row.primary { color: var(--text-2); }
   .t3-row.primary:hover { background: var(--accent-soft); color: var(--text); }
-  .t3-row > span:first-of-type { flex: 1; }
+  .t3-row > span:not(.lead) { flex: 1; }
   .icon-btn {
     display: inline-flex; align-items: center; justify-content: center;
     min-width: 26px; height: 26px; padding: 0 4px;
@@ -532,7 +639,6 @@
     color: var(--text-3); cursor: pointer; font: inherit; line-height: 0;
   }
   .icon-btn:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
-  .icon-btn.sm { min-width: 22px; height: 22px; }
   .icon-btn.upd { position: relative; }
   .icon-btn.upd.has-update { color: var(--accent); }
   .upd-dot {
@@ -541,39 +647,52 @@
     box-shadow: 0 0 6px var(--accent-glow, var(--accent));
   }
   .sb-scroll { flex: 1; overflow-y: auto; padding: 2px 10px 8px; display: flex; flex-direction: column; }
-  /* Pinned workspaces: fixed strip above the thread list with its own cap,
-     so the project picker never scrolls out of reach. */
-  .ws-fixed { flex: none; padding: 2px 10px 6px; border-bottom: 1px solid var(--line-2); }
-  .ws-fixed .proj-head { padding-top: 8px; }
-  .ws-list { display: flex; flex-direction: column; overflow-y: auto; max-height: 30vh; }
+
+  .place {
+    display: flex; gap: 2px; margin: 0 10px; padding: 2px;
+    background: var(--surface-1); border: 1px solid var(--line-2);
+    border-radius: 8px;
+  }
+  .place-btn {
+    flex: 1; min-width: 0; background: none; border: none; border-radius: 6px;
+    color: var(--text-3); font: inherit; font-size: 12px; font-weight: 550;
+    padding: 5px 6px; cursor: pointer;
+  }
+  .place-btn:hover { color: var(--text-2); }
+  .place-btn.on { background: var(--surface-3); color: var(--text); }
+
+  .running-head {
+    display: flex; align-items: center; gap: 6px;
+    color: var(--ok); font-weight: 600;
+  }
+  .pulse-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--ok); box-shadow: 0 0 6px var(--ok);
+    animation: pulse-ring 1.8s ease-in-out infinite; flex: none;
+  }
+  @keyframes pulse-ring {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.45; transform: scale(0.85); }
+  }
+
   .proj-head {
     display: flex; align-items: center; justify-content: space-between;
     font-size: 11px; color: var(--text-3); padding: 10px 4px 4px;
   }
-  .ws-head { cursor: pointer; border-radius: 7px; }
-  .ws-head:hover { color: var(--text); background: var(--surface-1); }
-  .ws-chev { color: var(--text-3); flex: none; transition: transform 0.15s ease; }
-  .ws-chev.open { transform: rotate(180deg); }
-  .proj-tools { display: flex; gap: 2px; align-items: center; }
   .proj-row {
     position: relative;
-    display: flex; align-items: center; gap: 7px; width: 100%;
+    display: flex; align-items: center; gap: 8px; width: 100%;
     box-sizing: border-box;
-    background: transparent; border: none; color: var(--text-2); font: inherit; font-size: 12.5px;
-    padding: 7px 4px; cursor: pointer; text-align: left; border-radius: 7px;
+    background: transparent; border: none; color: var(--text-2); font: inherit; font-size: 13px;
+    padding: 7px 8px; cursor: pointer; text-align: left; border-radius: 7px;
   }
   .proj-row:hover { color: var(--text); background: var(--surface-1); }
-  .proj-row.cur { color: var(--text); background: var(--surface-2); }
+  .proj-row.cur { color: var(--text); background: var(--accent-soft); }
   .proj-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 550; }
   .proj-count {
     flex: none; font-size: 10.5px; color: var(--text-3); font-variant-numeric: tabular-nums;
     background: var(--surface-2); border: 1px solid var(--line-2); border-radius: 999px; padding: 0 6px;
   }
-  .proj-branch {
-    flex: none; font-size: 11px; color: var(--text-3); font-family: var(--parzi-mono);
-    transition: opacity 0.12s ease; max-width: 72px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .proj-row:hover .proj-branch { opacity: 0; }
   .proj-hover {
     display: none; position: absolute; right: 2px; top: 50%; transform: translateY(-50%); z-index: 2;
     gap: 1px; align-items: center; height: 24px; padding: 1px 2px;
@@ -590,6 +709,11 @@
   }
   .mini-btn:hover { background: var(--surface-3); color: var(--text); }
   .empty-state { font-size: 12px; color: var(--text-4); padding: 12px 8px; text-align: center; }
+  .more-row {
+    background: transparent; border: none; color: var(--text-3); font: inherit; font-size: 12px;
+    padding: 7px 4px; margin: 0; cursor: pointer; text-align: left; border-radius: 7px;
+  }
+  .more-row:hover { color: var(--text); background: var(--surface-1); }
   .sb-footer {
     display: flex; align-items: center; gap: 2px;
     margin: 0; padding: 8px 10px 10px;

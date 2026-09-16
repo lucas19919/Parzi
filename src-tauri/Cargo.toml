@@ -22,9 +22,18 @@ parzi-providers = { path = "../crates/parzi-providers" }
 parzi-runtime = { path = "../crates/parzi-runtime" }
 keyring = "4"
 uuid = { version = "1", features = ["v4"] }
+# The shell logs the same way the crates it drives do (R-5 queue recovery).
+# Already in the tree through parzi-core/-runtime, so nothing new is pulled.
+tracing = "0.1"
 anyhow = "1"
 async-trait = "0.1"
 base64 = "0.22"
+
+# E12: native Windows 11 rounded corners, so the window can stay opaque
+# instead of paying for a per-pixel-alpha composition surface. Same 0.61 the
+# Tauri stack already links, so no new crates enter the tree.
+[target."cfg(windows)".dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
 
 # S-8: the GUI ships to users — same release profile and lint gates as the
 # workspace crates (opt-level z, LTO, strip, unsafe forbid).
@@ -35,7 +44,12 @@ strip = true
 codegen-units = 1
 
 [lints.rust]
-unsafe_code = "forbid"
+# `deny`, not `forbid`: `forbid` cannot be lifted anywhere inside the crate —
+# not even by a scoped `#![allow]` in one module — and the app needs exactly
+# one dwmapi FFI call. So: `deny` here, and the only `#![allow(unsafe_code)]`
+# sits in src/dwm.rs, which contains nothing but that call. Every other file
+# stays unsafe-free, and adding unsafe anywhere else is a build error.
+unsafe_code = "deny"
 
 [lints.clippy]
 all = "warn"

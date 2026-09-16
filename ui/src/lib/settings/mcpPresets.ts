@@ -93,7 +93,7 @@ export const MCP_PRESETS: McpPreset[] = [
     args: ["-y", "@modelcontextprotocol/server-filesystem"],
     argField: {
       label: "Allowed folder",
-      placeholder: "C:\\Users\\lucas\\Documents",
+      placeholder: "C:\\Users\\you\\Documents",
       required: true,
       hint: "The agent can only touch files under this folder.",
     },
@@ -176,7 +176,7 @@ export const MCP_PRESETS: McpPreset[] = [
     args: ["mcp-server-sqlite", "--db-path"],
     argField: {
       label: "Database file",
-      placeholder: "C:\\Users\\lucas\\data\\app.db",
+      placeholder: "C:\\Users\\you\\data\\app.db",
       required: true,
       hint: "Appended after --db-path. Needs uv installed.",
     },

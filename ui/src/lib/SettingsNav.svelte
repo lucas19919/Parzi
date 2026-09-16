@@ -75,9 +75,7 @@
 <style>
   .sb {
     width: 248px; min-width: 248px; height: 100%;
-    background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 86%, transparent), color-mix(in srgb, var(--parzi-sidebar) 72%, transparent));
-    backdrop-filter: blur(14px) saturate(1.2);
-    -webkit-backdrop-filter: blur(14px) saturate(1.2);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 95%, transparent), color-mix(in srgb, var(--parzi-sidebar) 88%, transparent));
     border-right: 1px solid var(--line-2);
     display: flex; flex-direction: column;
     font-size: 13px; color: var(--text-2);

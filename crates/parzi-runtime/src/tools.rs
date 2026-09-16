@@ -4,6 +4,8 @@
 use parzi_core::error::{ParziError, Result};
 use parzi_providers::ToolDef;
 
+use crate::board_tools::{board_defs, is_board_tool};
+use crate::lease_tools::{is_lease_tool, lease_defs, LeaseCtx};
 use crate::mcp::McpManager;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +66,9 @@ pub struct ToolExecutor {
     pub cwd: String,
     pub mcp: std::sync::Arc<McpManager>,
     pub allowed: Vec<String>,
+    /// A project lane's place in the lease layer (PLAN §4). `None` for an
+    /// ordinary thread: no leases, no board, and no write gate.
+    pub leases: Option<LeaseCtx>,
 }
 
 impl ToolExecutor {
@@ -82,6 +87,8 @@ impl ToolExecutor {
             || is_session_tool(name)
             || is_plan_tool(name)
             || is_lane_tool(name)
+            || is_lease_tool(name)
+            || is_board_tool(name)
         {
             return None;
         }
@@ -98,6 +105,12 @@ impl ToolExecutor {
         let mut d = local_defs();
         d.extend(ui_defs());
         d.extend(session_defs());
+        // Only a lane that is in the lease layer sees `lease.*` / `board.*`:
+        // a plain thread has no task to check out and no board to read.
+        if self.leases.is_some() {
+            d.extend(lease_defs());
+            d.extend(board_defs());
+        }
         d
     }
 
@@ -130,6 +143,17 @@ impl ToolExecutor {
         if !self.is_allowed(name) {
             return (false, format!("tool `{name}` is not allowed in this lane"));
         }
+        // PLAN §4: the lease gate sits in front of every write, before the
+        // fs sandbox resolves the path. Reads never reach it.
+        if let Some(refusal) = self.lease_gate(name, args).await {
+            return refusal;
+        }
+        if is_lease_tool(name) {
+            return self.execute_lease_tool(name, args).await;
+        }
+        if is_board_tool(name) {
+            return self.execute_board_tool(name, args).await;
+        }
         if is_plan_tool(name) {
             return execute_plan_tool(name, args).await;
         }
@@ -140,7 +164,7 @@ impl ToolExecutor {
             // MCP names are `server.tool`; local names are `fs.read` style too,
             // so try local first, then MCP.
             if is_local(name) {
-                return execute_local(name, args, &self.cwd).await;
+                return self.run_local(name, args).await;
             }
             if is_ui_tool(name) || is_session_tool(name) || is_lane_tool(name) {
                 return (false, format!("tool `{name}` is handled by the agent loop"));
@@ -161,9 +185,32 @@ impl ToolExecutor {
             return self.mcp.call_tool(server, tool, args.clone()).await;
         }
         if is_local(name) {
-            return execute_local(name, args, &self.cwd).await;
+            return self.run_local(name, args).await;
         }
         (false, format!("unknown tool `{name}`"))
+    }
+
+    /// The local tools, with PLAN §4's after-the-fact gate around
+    /// `shell.exec`: its writes cannot be resolved before it runs, so the
+    /// worktree is fingerprinted around the command instead.
+    async fn run_local(&self, name: &str, args: &serde_json::Value) -> (bool, String) {
+        let call = execute_local(name, args, &self.cwd);
+        if name != "shell.exec" {
+            return call.await;
+        }
+        self.lease_audit_shell(call).await
+    }
+}
+
+/// The argument names carrying a path a tool is about to **write**. PLAN §4
+/// gates every one of them before `resolve` turns it into a real path, so a
+/// local tool that writes is gated the moment it is listed here. `shell.exec`
+/// cannot be listed — what it writes is knowable only afterwards, which is
+/// what `lease_tools::audit` is for.
+pub(crate) fn write_path_args(name: &str) -> &'static [&'static str] {
+    match name {
+        "fs.write" => &["path"],
+        _ => &[],
     }
 }
 
@@ -314,12 +361,16 @@ pub fn session_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "session.send_message".into(),
-            description: "Send a message to another session (child, parent, or peer) and optionally wait for its reply. The target session continues from the message like a new user turn.".into(),
+            description: "Send a message to another session in this project (child, parent, or peer) and optionally wait for its reply. It arrives as typed, untrusted data from your run — not as a user turn — so say what you want done, plainly.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "session_id": {"type": "string"},
                     "message": {"type": "string"},
+                    "kind": {
+                        "type": "string",
+                        "enum": ["text", "lease_request", "lease_answer", "convene"],
+                    },
                     "wait": {"type": "boolean"},
                 },
                 "required": ["session_id", "message"],
@@ -593,6 +644,34 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         ),
         "knowledge.read" => "Reading knowledge".into(),
         "knowledge.record" => "Recording knowledge".into(),
+        // PLAN §4: what the lease layer is doing, in a person's words.
+        "lease.claim" => format!(
+            "Checking out {}",
+            str_arg("task").unwrap_or_else(|| "a task".into())
+        ),
+        "lease.release" => format!(
+            "Releasing {}",
+            str_arg("task").unwrap_or_else(|| "a task".into())
+        ),
+        "lease.request" => format!(
+            "Asking for {}",
+            str_arg("path").unwrap_or_else(|| "a file".into())
+        ),
+        "lease.grant" => "Handing the file over".into(),
+        "lease.deny" => "Keeping the file".into(),
+        "lease.transfer" => format!(
+            "Transfer {} to another lane?",
+            str_arg("path").unwrap_or_else(|| "a critical file".into())
+        ),
+        "board.list" => "Reading the board".into(),
+        "board.handoff" => format!(
+            "Handing off {}",
+            str_arg("task").unwrap_or_else(|| "the task".into())
+        ),
+        "board.block" => format!(
+            "Blocking {}",
+            str_arg("task").unwrap_or_else(|| "the task".into())
+        ),
         "ui.show_markdown" => "Rendering text".into(),
         "ui.show_widget" => format!(
             "Rendering {}",

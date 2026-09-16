@@ -153,7 +153,9 @@ impl Approver for CliApprover {
     }
 }
 
-#[tokio::main]
+// E9: the CLI is one command, one run — a worker per hardware thread buys
+// nothing. Blocking work (stdin prompts, keyring) already uses spawn_blocking.
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
@@ -380,6 +382,8 @@ async fn cmd_send(p: SendParams) -> Result<()> {
             }
         }
     }
+    // E8/R-2: a one-shot command must not leave connectors running behind it.
+    orch.mcp().shutdown().await;
     Ok(())
 }
 
@@ -779,6 +783,9 @@ async fn cmd_plan(project: &str, action: PlanAction) -> Result<()> {
                     }
                 }
 
+                // E8/R-2: this loop builds one orchestrator per task; each
+                // must take its MCP children with it.
+                orch.mcp().shutdown().await;
                 // Mark task complete in living plan
                 let _ = parzi_core::plan::set_task_status(project, &task.title, true);
                 completed += 1;
