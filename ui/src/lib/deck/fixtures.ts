@@ -6,9 +6,16 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AuditResult, Draft, JournalLine, Plan, Project } from "../api";
 
-export type DeckFixtureState = "deck:project" | "deck:plan" | "deck:activity" | "deck:audit-summary";
+export type DeckFixtureState = "deck:project" | "deck:plan" | "deck:activity" | "deck:audit-summary" | "deck:settings";
 
-export type DeckTab = "project" | "plan" | "activity";
+export type DeckTab = "dashboard" | "build" | "settings";
+
+/** Old screenshot names still open the matching tab. */
+export function tabOf(raw: string | undefined): DeckTab {
+  if (raw === "plan" || raw === "lanes" || raw === "build" || raw === "deck:plan") return "build";
+  if (raw === "settings" || raw === "deck:settings") return "settings";
+  return "dashboard";
+}
 
 export interface DeckFixture {
   state: DeckFixtureState;
@@ -23,7 +30,7 @@ export interface DeckFixture {
   audit: AuditResult | null;
 }
 
-const STATES: DeckFixtureState[] = ["deck:project", "deck:plan", "deck:activity", "deck:audit-summary"];
+const STATES: DeckFixtureState[] = ["deck:project", "deck:plan", "deck:activity", "deck:audit-summary", "deck:settings"];
 
 /**
  * The requested screenshot state, from (in order) an explicit prop, the
@@ -306,7 +313,7 @@ const STATUS = [
 ].join("\n");
 
 export function deckFixture(state: DeckFixtureState): DeckFixture {
-  const tab: DeckTab = state === "deck:plan" ? "plan" : state === "deck:activity" ? "activity" : "project";
+  const tab: DeckTab = tabOf(state);
   // `deck:audit-summary` is the Project tab with a summary waiting for
   // Approve: the project is still Drafting and PLAN.md does not exist yet.
   const auditing = state === "deck:audit-summary";

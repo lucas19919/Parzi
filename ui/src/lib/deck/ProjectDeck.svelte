@@ -1,17 +1,16 @@
 <script lang="ts">
   /**
-   * The project deck (PLAN.md §8): Project / Plan / Activity over one
-   * project, with the Ask box that talks to the header and — on Direct —
-   * to the orchestrator. Round 1 is one machine: the poll below is the
-   * stand-in for the hub's push channel.
+   * The project deck: Dash / Build / Settings. Ask docks at the bottom
+   * of Dash. Round 1 is one machine: the poll is the stand-in for push.
    */
   import { createEventDispatcher, onDestroy, onMount } from "svelte";
   import DeckHeader from "./DeckHeader.svelte";
   import ProjectTab from "./ProjectTab.svelte";
   import PlanTab from "./PlanTab.svelte";
-  import ActivityTab from "./ActivityTab.svelte";
+  import SettingsTab from "./SettingsTab.svelte";
+  import AskBox from "./AskBox.svelte";
   import { api, deck, onRunEvent, type AuditResult, type ChatEvent, type Draft, type InspectorDoc, type JournalLine, type Plan, type Project, type ProjectOpen, type UiEvent } from "../api";
-  import { deckFixture, deckFixtureStateAsync, type DeckTab } from "./fixtures";
+  import { deckFixture, deckFixtureStateAsync, tabOf, type DeckTab } from "./fixtures";
   import { deckDrafts, etagOf, liveLaneCount, resolveWorkspace, sprintPosition, taskStates, type DeckApproval } from "./state";
 
   export let workspace = "";
@@ -27,7 +26,7 @@
 
   const POLL_MS = 2000;
 
-  let tab: DeckTab = "project";
+  let tab: DeckTab = "dashboard";
   let ws = workspace;
   let open: ProjectOpen | null = null;
   let project: Project | null = null;
@@ -189,7 +188,7 @@
     try {
       project = await deck.approve(ws, slug);
       audit = null;
-      tab = "plan";
+      tab = "build";
       await refresh();
     } catch (err) {
       fail(err);
@@ -264,6 +263,18 @@
     dispatch("error", { text: error });
   }
 
+  async function saveProject(e: CustomEvent<{ project: Project }>) {
+    if (fixture) {
+      project = e.detail.project;
+      return;
+    }
+    try {
+      project = await deck.save(e.detail.project);
+    } catch (err) {
+      fail(err);
+    }
+  }
+
   onMount(async () => {
     unlisten = await onRunEvent(onEvent);
     timer = setInterval(() => {
@@ -283,10 +294,8 @@
   {#if project}
     <DeckHeader
       title={project.title}
-      workspace={ws}
       {sprint}
       {lanesLive}
-      {people}
       {tab}
       {waiting}
       on:tab={(e) => (tab = e.detail.tab)}
@@ -297,7 +306,7 @@
     {/if}
 
     <div class="body">
-      {#if tab === "project"}
+      {#if tab === "dashboard"}
         <ProjectTab
           {project}
           {drafts}
@@ -308,18 +317,27 @@
           {liveText}
           {liveTools}
           {streaming}
-          canDirect={!fixture}
-          on:ask={ask}
           on:audit={runAudit}
           on:approve={approvePlan}
           on:openDraft={openDraft}
         />
-      {:else if tab === "plan"}
+      {:else if tab === "build"}
         <PlanTab {plan} {live} {approvals} status={project.status} on:approve={answerApproval} />
       {:else}
-        <ActivityTab {journal} {status} />
+        <SettingsTab {project} on:save={saveProject} />
       {/if}
     </div>
+    {#if tab === "dashboard"}
+      <div class="ask-dock">
+        <AskBox
+          headerModel={project.roster.header}
+          orchestratorModel={project.roster.orchestrator}
+          canDirect={!fixture}
+          busy={streaming}
+          on:ask={ask}
+        />
+      </div>
+    {/if}
   {:else}
     <div class="loading">{error || "Opening project…"}</div>
   {/if}
@@ -327,10 +345,11 @@
 
 <style>
   .deck {
-    max-width: 1180px; margin: 0 auto; width: 100%; box-sizing: border-box;
-    padding: 12px 28px 96px; display: flex; flex-direction: column; gap: 14px;
+    max-width: 1180px; margin: 0 auto; width: 100%; height: 100%; box-sizing: border-box;
+    padding: 12px 28px 0; display: flex; flex-direction: column; gap: 14px; min-height: 0;
   }
-  .body { min-width: 0; }
+  .body { min-width: 0; flex: 1; overflow: auto; }
+  .ask-dock { flex: none; padding: 8px 0 18px; }
   .err {
     background: var(--bad-soft); border: 1px solid var(--bad-line); border-radius: var(--radius-2);
     color: var(--text); font-size: 12px; padding: 7px 11px;

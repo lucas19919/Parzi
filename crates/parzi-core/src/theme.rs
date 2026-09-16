@@ -624,6 +624,44 @@ pub fn set_background(name: &str) -> Result<Theme> {
     Ok(theme)
 }
 
+/// Save picked image bytes into saved backgrounds and return the name it was
+/// stored under. The name is sanitized here, once, so the UI selects exactly
+/// the file that exists. A picture over the edge or byte cap is shrunk to a
+/// JPEG instead of refused.
+pub fn import_background(name: &str, bytes: &[u8]) -> Result<String> {
+    let path = std::path::Path::new(name);
+    let ext = path
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let stem: String = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+        .collect();
+    let stem = if stem.is_empty() { "wallpaper".to_string() } else { stem };
+
+    let (w, h) = crate::wallpaper::bytes_size(bytes)?;
+    let too_big = w.max(h) > crate::wallpaper::MAX_SOURCE_EDGE || bytes.len() as u64 > BG_MAX_BYTES;
+    let (data, ext) = if too_big || !BG_EXTS.contains(&ext.as_str()) {
+        (crate::wallpaper::shrink_for_import(bytes)?, "jpg".to_string())
+    } else {
+        (bytes.to_vec(), ext)
+    };
+    if data.len() as u64 > BG_MAX_BYTES {
+        return Err(ParziError::Config("that picture is still over 20 MB after shrinking".into()));
+    }
+
+    let dir = paths::backgrounds_dir()?;
+    std::fs::create_dir_all(&dir)?;
+    let file = format!("{stem}.{ext}");
+    std::fs::write(dir.join(&file), data)?;
+    Ok(file)
+}
+
 /// Copy an outside image into saved backgrounds. Returns its saved name.
 pub fn upload_background(src: &str) -> Result<String> {
     let src_p = std::path::PathBuf::from(src);

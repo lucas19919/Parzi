@@ -24,6 +24,7 @@
   let packName = "";
   let fileInputEl: HTMLInputElement | null = null;
   let sampling = false;
+  let scanOn = false;
 
   // Whole-number twins for the 0..1 fields.
   let dimPct = 66;
@@ -38,7 +39,10 @@
   const COLOR_KEYS = ["sidebar", "stage", "bar", "border", "accent", "text", "text_dim"] as const;
   type ColorKey = (typeof COLOR_KEYS)[number];
 
-  onMount(load);
+  onMount(() => {
+    scanOn = document.documentElement.classList.contains("scanlines");
+    void load();
+  });
   onDestroy(() => {
     if (saveTimer) {
       clearTimeout(saveTimer);
@@ -179,9 +183,10 @@
     reader.onload = async () => {
       try {
         await commitNow();
-        await api.saveBackgroundData(file.name, reader.result as string);
+        notify("Adding image…");
+        const saved = await api.saveBackgroundData(file.name, reader.result as string);
         backgrounds = await api.listBackgroundUrls();
-        await setBg(file.name.replace(/[^A-Za-z0-9._-]/g, ""));
+        await setBg(saved);
       } catch (err) {
         notify(`Could not add image: ${err}`);
       }
@@ -442,6 +447,20 @@
       <Slider label="Opacity" bind:value={opacityPct} min={40} max={100} unit="%" on:input={onOpacity} />
       <Slider label="Blur" bind:value={theme.glass.blur_px} min={0} max={40} unit="px" on:input={touch} />
       <Slider label="Corner radius" bind:value={theme.glass.radius} min={0} max={24} unit="px" on:input={touch} />
+    </div>
+    <div class="field-card">
+      <div class="field-info">
+        <span class="field-label">Scanlines</span>
+        <span class="field-hint">A faint raster over the window. Off by default.</span>
+      </div>
+      <Switch
+        on={scanOn}
+        title="Scanlines"
+        on:toggle={() => {
+          scanOn = document.documentElement.classList.toggle("scanlines");
+          try { localStorage.setItem("parzi.scanlines", scanOn ? "1" : "0"); } catch {}
+        }}
+      />
     </div>
     <div class="field-card">
       <div class="field-info">

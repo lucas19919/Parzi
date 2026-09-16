@@ -1233,26 +1233,26 @@ fn decode_b64(input: &str) -> Option<Vec<u8>> {
 
 #[tauri::command]
 async fn save_background_data(name: String, base64_data: String) -> Result<String, String> {
-    let clean_name = name
-        .chars()
-        .filter(|c| c.is_alphanumeric() || *c == '.' || *c == '_' || *c == '-')
-        .collect::<String>();
-    if clean_name.is_empty() {
-        return Err("invalid background filename".into());
-    }
     let bytes = decode_b64(&base64_data).ok_or("invalid base64 image data")?;
-    let dest = parzi_core::paths::backgrounds_dir()
-        .map_err(|e| e.to_string())?
-        .join(&clean_name);
-    std::fs::write(&dest, bytes).map_err(|e| e.to_string())?;
-    // `set_background` refuses an image over the source-edge cap. That refusal
-    // is this command's answer — swallowing it left the picture on disk and
-    // reported success while the wallpaper never changed.
-    if let Err(e) = parzi_core::theme::set_background(&clean_name) {
-        let _ = std::fs::remove_file(&dest);
+    // Decoding an oversized picture to shrink it is seconds of CPU; keep it
+    // off the async runtime.
+    let saved = tauri::async_runtime::spawn_blocking(move || {
+        parzi_core::theme::import_background(&name, &bytes)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    // `set_background` still checks the stored file. Its refusal is this
+    // command's answer — swallowing it left the picture on disk and reported
+    // success while the wallpaper never changed.
+    if let Err(e) = parzi_core::theme::set_background(&saved) {
+        if let Ok(dir) = parzi_core::paths::backgrounds_dir() {
+            let _ = std::fs::remove_file(dir.join(&saved));
+        }
         return Err(e.to_string());
     }
-    Ok(dest.to_string_lossy().to_string())
+    // The stored name, which is what the gallery lists and selects.
+    Ok(saved)
 }
 
 #[tauri::command]
@@ -2145,6 +2145,7 @@ fn main() {
             hub_cmds::repo_clone_or_map,
             hub_cmds::project_create,
             hub_cmds::project_get,
+            hub_cmds::project_save,
             hub_cmds::project_list,
             hub_cmds::project_open,
             hub_cmds::project_drafts,

@@ -23,57 +23,43 @@
   }
 </script>
 
-<div class="grid" style="--lanes: {lanes.length}">
-  <div class="head corner">sprint</div>
+<div class="lanes">
   {#each lanes as lane (lane)}
-    <div class="head">lane {lane}</div>
-  {/each}
-
-  {#each plan.sprints as sprint, i (sprint.title + i)}
-    <div class="sprint">
-      <div class="s-title">{sprint.title}</div>
-      {#if sprint.target}<div class="s-target">target: {sprint.target}</div>{/if}
-    </div>
-    {#each lanes as lane (lane)}
-      <div class="cell">
-        {#each tasksOf(i, lane) as task (task.id)}
-          <TaskCard
-            {task}
-            live={stateOf(task)}
-            approval={approvals[task.id] ?? null}
-            on:approve={(e) => dispatch("approve", e.detail)}
-          />
-        {/each}
-      </div>
-    {/each}
+    {@const n = plan.sprints.reduce((a, _, i) => a + tasksOf(i, lane).length, 0)}
+    <section class="lane">
+      <header class="lane-h">
+        <h2>{lane}</h2>
+        <span class="n">{n} task{n === 1 ? "" : "s"}</span>
+      </header>
+      {#each plan.sprints as sprint, i (sprint.title + i)}
+        {@const tasks = tasksOf(i, lane)}
+        {#if tasks.length}
+          <div class="sprint">{sprint.title}{#if sprint.target}<span>{" · "}{sprint.target}</span>{/if}</div>
+          {#each tasks as task (task.id)}
+            <TaskCard
+              {task}
+              live={stateOf(task)}
+              approval={approvals[task.id] ?? null}
+              on:approve={(e) => dispatch("approve", e.detail)}
+            />
+          {/each}
+        {/if}
+      {/each}
+    </section>
   {/each}
 </div>
 
 <style>
-  /* Fixed lane width, so the row is measurable: PlanTab compares this grid's
-     width with the viewport's to decide whether to show the scroll hint. */
-  .grid {
+  .lanes {
     display: grid;
-    grid-template-columns: 148px repeat(var(--lanes), 236px);
-    gap: 8px;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 20px 18px;
     align-items: start;
   }
-  .head {
-    font-size: 11px; color: var(--text-3); text-transform: lowercase; letter-spacing: 0.3px;
-    padding: 2px 4px 4px; border-bottom: 1px solid var(--line-2);
-  }
-  .corner { color: var(--text-4); }
-  .sprint {
-    padding: 8px 4px; display: flex; flex-direction: column; gap: 2px;
-  }
-  /* The sprint column stays put while the lanes scroll past it — a lane you
-     scrolled to says nothing without its row label. The negative margin lets
-     it cover the 8px grid gap, so no card shows through the seam. */
-  .corner, .sprint {
-    position: sticky; left: 0; z-index: 1; background: var(--stage);
-    margin-right: -8px; padding-right: 12px; box-shadow: 1px 0 0 var(--line-2);
-  }
-  .s-title { font-size: 12.5px; font-weight: 700; color: var(--text); line-height: 1.3; }
-  .s-target { font-size: 11px; color: var(--text-3); }
-  .cell { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 4px 0; }
+  .lane { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .lane-h { display: flex; align-items: baseline; gap: 8px; padding: 0 2px; }
+  h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+  .n { font-size: 11px; color: var(--text-4); }
+  .sprint { font-size: 11px; color: var(--text-3); padding: 8px 2px 0; }
+  .sprint span { color: var(--text-4); }
 </style>

@@ -71,6 +71,60 @@ pub fn check_source(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Longest edge a picture may have on the way *in*. Wallpapers straight off
+/// the web are routinely 5K–8K; refusing them left "Add image…" doing nothing
+/// useful, so import decodes them once under these looser limits and stores a
+/// copy that fits `MAX_SOURCE_EDGE`.
+const IMPORT_MAX_EDGE: u32 = 12_000;
+/// What an imported copy is shrunk to: a 4K panel's long edge.
+const IMPORT_TARGET_EDGE: u32 = 3840;
+
+/// Re-encode `bytes` as a JPEG no longer than `IMPORT_TARGET_EDGE` on its long
+/// edge. For pictures over the source cap or the byte cap; everything else is
+/// stored as given.
+pub fn shrink_for_import(bytes: &[u8]) -> Result<Vec<u8>> {
+    let mut r = ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| ParziError::Config(format!("unreadable image: {e}")))?;
+    let mut l = image::Limits::default();
+    l.max_image_width = Some(IMPORT_MAX_EDGE);
+    l.max_image_height = Some(IMPORT_MAX_EDGE);
+    l.max_alloc = Some(768 * 1024 * 1024);
+    r.limits(l);
+    let img = r.decode().map_err(|e| {
+        ParziError::Config(format!(
+            "could not read that picture (at most {IMPORT_MAX_EDGE} px on the long edge): {e}"
+        ))
+    })?;
+    let (w, h) = (img.width().max(1), img.height().max(1));
+    let s = (IMPORT_TARGET_EDGE as f64 / w.max(h) as f64).min(1.0);
+    let (nw, nh) = (
+        ((w as f64 * s).round() as u32).max(1),
+        ((h as f64 * s).round() as u32).max(1),
+    );
+    let img = if (nw, nh) == (w, h) {
+        img
+    } else {
+        img.resize_exact(nw, nh, imageops::FilterType::CatmullRom)
+    };
+    let rgb = img.into_rgb8();
+    let mut out = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 90)
+        .encode(rgb.as_raw(), nw, nh, image::ExtendedColorType::Rgb8)
+        .map_err(|e| ParziError::Config(format!("cannot encode wallpaper: {e}")))?;
+    Ok(out)
+}
+
+/// Pixel size from a header in memory — no decode, no allocation.
+pub fn bytes_size(bytes: &[u8]) -> Result<(u32, u32)> {
+    let mut r = ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| ParziError::Config(format!("unreadable image: {e}")))?;
+    r.limits(header_limits());
+    r.into_dimensions()
+        .map_err(|e| ParziError::Config(format!("not a picture Parzi can read (png, jpg or webp): {e}")))
+}
+
 /// Largest size that fits inside `max_w`×`max_h` (itself capped) keeping the
 /// aspect ratio. Never upscales: a small picture stays small and CSS `cover`
 /// stretches it, which is cheaper than storing the stretch.
@@ -309,6 +363,18 @@ mod tests {
         assert_eq!(base.len(), 16);
         assert_eq!(cache_name(&base, 3.0), format!("bg-{base}.webp"));
         assert_eq!(cache_name(&base, 0.0), format!("bg-{base}.jpg"));
+    }
+
+    #[test]
+    fn import_shrinks_an_oversized_picture_instead_of_refusing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("wide.png");
+        png(&src, 6000, 100);
+        let bytes = std::fs::read(&src).unwrap();
+        assert_eq!(bytes_size(&bytes).unwrap(), (6000, 100));
+        let out = shrink_for_import(&bytes).unwrap();
+        assert_eq!(bytes_size(&out).unwrap(), (IMPORT_TARGET_EDGE, 64));
+        assert!(bytes_size(b"not a picture").is_err());
     }
 
     fn png(path: &Path, w: u32, h: u32) {

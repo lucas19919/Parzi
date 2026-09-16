@@ -11,14 +11,16 @@ use parzi_core::journal::Kind;
 use parzi_core::plan::{Plan, Task};
 use parzi_core::project::{self, Project, Status};
 
+use serde::Serialize;
+
 use super::files;
 use crate::lease_tools::LeaseHub;
 use crate::roles::Role;
 use crate::tools::Approver;
 use crate::Orchestrator;
 
-/// One lane started by `approve`.
-#[derive(Debug, Clone)]
+/// One lane started by `approve` or `dispatch_lane`.
+#[derive(Debug, Clone, Serialize)]
 pub struct Dispatched {
     pub lane: String,
     pub task: String,
@@ -126,6 +128,88 @@ pub async fn approve(
     project.status = Status::Running;
     project::save(&project)?;
     Ok(out)
+}
+
+/// Start an agent on a specific lane or task.
+pub async fn dispatch_lane(
+    orch: &Arc<Orchestrator>,
+    workspace: &str,
+    slug: &str,
+    lane_name: &str,
+    task_id: Option<&str>,
+    who: &str,
+    approver: Option<Arc<dyn Approver>>,
+) -> Result<Dispatched> {
+    let hub = orch.leases();
+    let mut project = project::load(workspace, slug)?;
+    let plan = files::plan(workspace, slug)?;
+
+    let task = if let Some(tid) = task_id {
+        plan.tasks()
+            .find(|t| t.id.as_str() == tid)
+            .ok_or_else(|| ParziError::Validation(format!("task {tid} not found in plan")))?
+    } else {
+        let lane_plan = plan
+            .sprints
+            .iter()
+            .flat_map(|s| s.lanes.iter())
+            .find(|l| l.name == lane_name)
+            .ok_or_else(|| ParziError::Validation(format!("lane {lane_name} not found in plan")))?;
+        next_ready(lane_plan.tasks.as_slice(), &plan)
+            .ok_or_else(|| ParziError::Validation(format!("no ready tasks in lane {lane_name}")))?
+    };
+
+    let cwd = task_cwd(workspace, &project, task, lane_name)?;
+    let prompt = coder_prompt(task, lane_name);
+    let meta = orch.role_session(
+        workspace,
+        slug,
+        Role::Coder,
+        lane_name,
+        Some(task.id.as_str()),
+        &cwd,
+    )?;
+    files::set_session(workspace, slug, Role::Coder, lane_name, &meta.id)?;
+    bind_run(
+        &hub,
+        &meta.id,
+        workspace,
+        slug,
+        lane_name,
+        &task.repo,
+        orch,
+        approver.clone(),
+    )
+    .await;
+    drop(
+        orch.send_role(
+            workspace,
+            slug,
+            Role::Coder,
+            &meta.id,
+            &prompt,
+            approver.clone(),
+        )
+        .await?,
+    );
+    files::note(
+        workspace,
+        slug,
+        lane_name,
+        Kind::Note,
+        Some(task.id.as_str()),
+        &format!("{who}: lane {lane_name} dispatched on {}", task.id),
+    )?;
+    if project.status == Status::Drafting || project.status == Status::Planned {
+        project.status = Status::Running;
+        let _ = project::save(&project);
+    }
+    Ok(Dispatched {
+        lane: lane_name.to_string(),
+        task: task.id.0.clone(),
+        session_id: meta.id,
+        cwd,
+    })
 }
 
 /// First task of a lane that is not done and whose `after:` tasks are all

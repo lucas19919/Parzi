@@ -205,7 +205,7 @@
     else if (screen === "new-project") openNewProjectWizard("", step);
     else if (screen === "deck") {
       setNav("workspaces", "acme");
-      hubView = { kind: "deck", workspace: "acme", slug: "" };
+      hubView = { kind: "deck", workspace: "acme", slug: "checkout-flow" };
     }
     else if (screen === "chats") setNav("chats");
     else if (screen === "workspaces" || screen === "workspace") setNav("workspaces", step);
@@ -1158,6 +1158,11 @@
   }
 
   onMount(async () => {
+    try {
+      if (localStorage.getItem("parzi.scanlines") === "1") {
+        document.documentElement.classList.add("scanlines");
+      }
+    } catch {}
     document.addEventListener("parzi:bg", (e) => {
       bg = (e as CustomEvent<string>).detail;
     });
@@ -1259,13 +1264,8 @@
       subtitle={showSettings ? settingsSection : hubView?.kind === "new-workspace" || hubView?.kind === "new-project" ? "" : navMode === "workspaces" ? (hubView?.kind === "deck" ? "" : navWorkspace ? "projects" : "") : activeMeta ? activeMeta.title : !activeThreadId ? "new draft" : ""}
       showExpand={!sidebarOpen}
       panelOpen={rightBarOpen}
-      panelTab={rightBarTab}
-      docsLoaded={!!(selectedArtifact || selectedDoc)}
-      agentCount={swarmNodes.length}
       agentLive={liveAgentCount}
       on:expand={() => (sidebarOpen = true)}
-      on:toggleDocs={() => toggleRightBar("docs")}
-      on:toggleAgents={() => toggleRightBar("agents")}
       on:togglePanel={() => toggleRightBar()}
     />
     <main class="stage-container" class:settings-mode={showSettings}>
@@ -1292,7 +1292,7 @@
           />
         </div>
       {:else if hubView?.kind === "deck"}
-        <div class="stage-scroll">
+        <div class="stage-fill">
           <ProjectDeck
             workspace={hubView.workspace}
             slug={hubView.slug}
@@ -1316,38 +1316,6 @@
             </div>
           {/if}
         </div>
-      {:else if activeThreadId}
-        <!-- Chat Thread View -->
-        <div class="stage-scroll" bind:this={scrollEl}>
-          <Thread {events} liveText={live} liveReasoning={liveReasoning} {liveTools} {approval} streaming={!!liveRun}
-            {parentTitle} subsessions={childSubs} projectRoot={currentRoot}
-            on:goParent={() => { if (activeMeta?.parent_id) openThread(activeMeta.parent_id); }}
-            on:openSubsession={(e) => openThread(e.detail.id)}
-            on:openArtifact={(e) => showArtifact(e.detail.artifact)}
-            on:inspectSwarm={() => openRightBar("agents")} />
-        </div>
-        <div class="stage-omnibar-dock">
-          <Omnibar
-            bind:input
-            bind:model
-            bind:effort
-            bind:mode
-            bind:attachments
-            streaming={!!liveRun}
-            currentProject={curProject}
-            currentTask={null}
-            currentSubfolder={null}
-            projectRoot={currentRoot}
-            {branch}
-            tokens={liveTokens}
-            {models}
-            on:send={send}
-            on:stop={stopRun}
-            on:modelChange={(e) => (model = e.detail.model)}
-            on:command={(e) => handleBarCommand(e.detail.name)}
-            on:openPlanner={openPlanner}
-          />
-        </div>
       {:else if projectSelected}
         <!-- Project Mission Control: roster + living plan + lane swarm -->
         <div class="stage-scroll">
@@ -1370,22 +1338,19 @@
           />
         </div>
       {:else}
-        <!-- Draft era: no thread row exists until the first send. -->
-        <div class="home-hero-stage">
-          {#if curProject !== "default" || branch || currentRoot}
-          <div class="hero-context">
-            <div class="hero-ws-badge" title={currentRoot ? `${curProject} — ${currentRoot}` : curProject}>
-              <Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1 2 2H5a2 2 0 0 1-2-2z" size={13} />
-              <span class="hero-ws-name">{displayName(curProject)}</span>
-              {#if branch}
-                <span class="hero-ws-branch">⎇ {branch}</span>
-              {/if}
-              {#if currentRoot}
-                <span class="hero-ws-root" title={currentRoot}>{currentRoot}</span>
-              {/if}
-            </div>
+        {#if activeThreadId}
+          <div class="stage-scroll" bind:this={scrollEl}>
+            <Thread {events} liveText={live} liveReasoning={liveReasoning} {liveTools} {approval} streaming={!!liveRun}
+              {parentTitle} subsessions={childSubs} projectRoot={currentRoot}
+              on:goParent={() => { if (activeMeta?.parent_id) openThread(activeMeta.parent_id); }}
+              on:openSubsession={(e) => openThread(e.detail.id)}
+              on:openArtifact={(e) => showArtifact(e.detail.artifact)}
+              on:inspectSwarm={() => openRightBar("agents")} />
           </div>
-          {/if}
+        {:else}
+          <div class="home-hero-stage"></div>
+        {/if}
+        <div class="omnibar-slot" class:hero={!activeThreadId} class:dock={!!activeThreadId}>
           <Omnibar
             bind:input
             bind:model
@@ -1652,10 +1617,30 @@
     align-items: stretch;
     padding: 8px 32px 48px;
   }
-  .stage-omnibar-dock {
-    padding: 12px 24px 20px;
-    display: flex;
-    justify-content: center;
+  .stage-fill { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .omnibar-slot {
+    z-index: 6; display: flex; justify-content: center; width: 100%;
+    transition:
+      top 520ms var(--ease-spring),
+      bottom 520ms var(--ease-spring),
+      transform 520ms var(--ease-spring),
+      width 520ms var(--ease-spring),
+      padding 520ms var(--ease-spring);
+  }
+  .omnibar-slot.hero {
+    position: absolute; left: 50%; top: 46%;
+    transform: translate(-50%, -50%);
+    width: min(720px, 90%);
+    padding: 0;
+  }
+  .omnibar-slot.dock {
+    position: absolute; left: 50%; bottom: 12px; top: auto;
+    transform: translate(-50%, 0);
+    width: min(720px, calc(100% - 48px));
+    padding: 0 0 8px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .omnibar-slot { transition: none; }
   }
   .ws-pick {
     display: flex; flex-direction: column; gap: 8px;

@@ -37,6 +37,14 @@ pub async fn project_get(workspace: String, slug: String) -> Result<Project, Str
     project::load(&workspace, &slug).map_err(|e| e.to_string())
 }
 
+/// Persist a project the Settings tab edited. Core owns the file; this
+/// only carries the struct across the IPC boundary.
+#[tauri::command]
+pub async fn project_save(project: Project) -> Result<Project, String> {
+    project::save(&project).map_err(|e| e.to_string())?;
+    project::load(&project.workspace, &project.slug).map_err(|e| e.to_string())
+}
+
 /// Every `projects/<slug>/PROJECT.md` of the workspace, in slug order. A
 /// listing, not a decision: a project whose grammar does not parse is skipped
 /// rather than failing the sidebar.

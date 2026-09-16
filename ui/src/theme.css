@@ -111,6 +111,21 @@
   --dur-lift: 140ms;
 }
 
+html.scanlines .parzi-app-shell::after {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  opacity: 0.22;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0 2px,
+    color-mix(in srgb, var(--parzi-text) 7%, transparent) 2px 3px
+  );
+  mix-blend-mode: overlay;
+}
+
 /* ================= base ================= */
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; }

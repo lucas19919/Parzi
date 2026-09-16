@@ -384,10 +384,11 @@ export const api = {
   listBackgroundUrls: () => invoke<BackgroundFile[]>("list_background_urls"),
   setBackground: (name: string) => invoke<string>("set_background", { name }),
   uploadBackground: (src: string) => invoke<string>("upload_background", { src }),
-  saveBackgroundData: async (name: string, base64Data: string) => {
-    const abs = await invoke<string>("save_background_data", { name, base64_data: base64Data });
-    return abs ? convertFileSrc(abs) : "";
-  },
+  /** Stores the picked picture (shrunk when oversized) and makes it the
+   *  wallpaper; resolves to the name it was saved under. Tauri maps Rust's
+   *  `base64_data` to the camelCase key — snake_case here was rejected. */
+  saveBackgroundData: (name: string, base64Data: string) =>
+    invoke<string>("save_background_data", { name, base64Data }),
   backgroundFile: async (name: string) => {
     const abs = await invoke<string>("background_file", { name });
     return convertFileSrc(abs);
@@ -683,6 +684,7 @@ export const deck = {
     invoke<ProjectOpen>("project_open", { workspace, slug }),
   get: (workspace: string, slug: string) =>
     invoke<Project>("project_get", { workspace, slug }),
+  save: (project: Project) => invoke<Project>("project_save", { project }),
   list: (workspace: string) =>
     invoke<Project[]>("project_list", { workspace }),
   drafts: (workspace: string, slug: string) =>

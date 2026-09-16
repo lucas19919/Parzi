@@ -7,6 +7,7 @@
   import Diagram from "./widgets/Diagram.svelte";
   import ArtifactCard from "./widgets/ArtifactCard.svelte";
   import ToolStack from "./ToolStack.svelte";
+  import TelemetryRibbon from "./TelemetryRibbon.svelte";
   import type { ChatEvent, InspectorArtifact } from "./api";
   import { api } from "./api";
 
@@ -390,7 +391,7 @@
   {/if}
 
   {#if liveTools.length}
-    <ToolStack tools={liveTools} />
+    <TelemetryRibbon tools={liveTools} prose={!!liveText} />
   {/if}
 
   {#if liveReasoning}
@@ -404,8 +405,8 @@
     {#each liveSegs as seg, si}
       {#if seg.kind === "md" && si === liveTailIdx}
         <div class="msg">
-          {#if livePart.head}<div class="live-head">{@html livePart.head}</div>{/if}
-          <div>{@html livePart.tail}<span class="stream-caret" /></div>
+          {#if livePart.head}<div class="live-head fade">{@html livePart.head}</div>{/if}
+          <div class="live-tail">{@html livePart.tail}<span class="stream-caret" /></div>
         </div>
       {:else if seg.kind === "md"}
         <div class="msg">{@html renderMarkdown(seg.body)}</div>
@@ -487,6 +488,22 @@
      part's last paragraph would otherwise lose its bottom margin. */
   :global(.live-head > p:last-child) {
     margin-bottom: 0.55em;
+  }
+  .live-head.fade { opacity: 0.72; filter: saturate(0.92); }
+  .live-tail { color: var(--text); }
+  .stream-caret {
+    display: inline-block; width: 7px; height: 1em; margin-left: 2px;
+    vertical-align: text-bottom; border-radius: 1px;
+    background: var(--accent); box-shadow: 0 0 10px var(--accent-glow), 0 0 2px var(--accent);
+    animation: beacon 1.1s var(--ease-spring) infinite;
+  }
+  @keyframes beacon {
+    0%, 100% { opacity: 1; filter: brightness(1.15); }
+    50% { opacity: 0.35; filter: brightness(0.85); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .stream-caret { animation: none; }
+    .live-head.fade { opacity: 1; filter: none; }
   }
   .copy-btn {
     position: absolute;
