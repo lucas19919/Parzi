@@ -2,9 +2,11 @@
   import { createEventDispatcher } from "svelte";
   import DocReader from "./DocReader.svelte";
   import AgentVisualizer from "./AgentVisualizer.svelte";
+  import ProjectPanel from "../deck/ProjectPanel.svelte";
+  import { projectPanel } from "../deck/state";
   import type { ChatEvent, DocEntry, InspectorArtifact, InspectorDoc, SwarmNode } from "../api";
 
-  export let tab: "docs" | "agents" = "docs";
+  export let tab: "project" | "docs" | "agents" = "docs";
   export let width = 420;
   export let autoReveal = true;
 
@@ -26,7 +28,7 @@
 
   const dispatch = createEventDispatcher<{
     close: void;
-    tab: { tab: "docs" | "agents" };
+    tab: { tab: "project" | "docs" | "agents" };
     resize: { width: number };
     autoReveal: { on: boolean };
     openDoc: { entry: DocEntry };
@@ -40,6 +42,10 @@
     approve: { key: string; allow: boolean };
   }>();
 
+  /** The Project tab exists only while a project is open. */
+  $: hasProject = !!$projectPanel;
+  $: shown = tab === "project" && !hasProject ? "docs" : tab;
+  $: projectWaiting = $projectPanel ? Object.keys($projectPanel.approvals).length : 0;
   $: liveAgents = nodes.filter((n) => n.status === "active" || n.status === "queued").length;
 
   /* ---------- drag-to-resize on the left edge ---------- */
@@ -80,12 +86,19 @@
 
   <header class="head">
     <div class="tabs" role="tablist">
-      <button class="tab" class:on={tab === "docs"} role="tab" aria-selected={tab === "docs"} on:click={() => tab === "docs" ? dispatch("close") : dispatch("tab", { tab: "docs" })}>
+      {#if hasProject}
+        <button class="tab" class:on={shown === "project"} role="tab" aria-selected={shown === "project"} on:click={() => shown === "project" ? dispatch("close") : dispatch("tab", { tab: "project" })}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h10" /></svg>
+          Project
+          {#if projectWaiting}<span class="count waiting">{projectWaiting}</span>{/if}
+        </button>
+      {/if}
+      <button class="tab" class:on={shown === "docs"} role="tab" aria-selected={shown === "docs"} on:click={() => shown === "docs" ? dispatch("close") : dispatch("tab", { tab: "docs" })}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6" /></svg>
         Docs
         {#if artifact || doc}<span class="tab-dot" />{/if}
       </button>
-      <button class="tab" class:on={tab === "agents"} role="tab" aria-selected={tab === "agents"} on:click={() => tab === "agents" ? dispatch("close") : dispatch("tab", { tab: "agents" })}>
+      <button class="tab" class:on={shown === "agents"} role="tab" aria-selected={shown === "agents"} on:click={() => shown === "agents" ? dispatch("close") : dispatch("tab", { tab: "agents" })}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" /></svg>
         Agents
         {#if nodes.length}<span class="count" class:live={liveAgents > 0}>{liveAgents || nodes.length}</span>{/if}
@@ -102,7 +115,9 @@
   </header>
 
   <div class="content">
-    {#if tab === "docs"}
+    {#if shown === "project"}
+      <ProjectPanel />
+    {:else if shown === "docs"}
       <DocReader
         {artifact} {artifacts} {doc} {docs} loading={docLoading} hasThread={!!activeThreadId}
         on:openDoc on:openTranscript on:openArtifact on:pickFile
@@ -153,6 +168,7 @@
     background: var(--surface-3); color: var(--text-3);
   }
   .count.live { background: var(--ok-soft); color: var(--ok); }
+  .count.waiting { background: var(--warn-soft); color: var(--warn); }
   .spacer { flex: 1; }
   .hb {
     width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;

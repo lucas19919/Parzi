@@ -206,6 +206,8 @@
     else if (screen === "deck") {
       setNav("workspaces", "acme");
       hubView = { kind: "deck", workspace: "acme", slug: "checkout-flow" };
+      // `deck:stage` is the conversation alone; every other deck state shows the panel.
+      if (step !== "stage") openRightBar("project");
     }
     else if (screen === "chats") setNav("chats");
     else if (screen === "workspaces" || screen === "workspace") setNav("workspaces", step);
@@ -689,14 +691,15 @@
     }
   }
 
-  /* ---------- Right inspector deck (Docs + Agents) ---------- */
+  /* ---------- Right inspector deck (Project + Docs + Agents) ---------- */
   const RB_KEY = "parzi.rightbar";
   const rbSaved = (() => {
     try { return JSON.parse(localStorage.getItem(RB_KEY) ?? "{}") as { width?: number; auto?: boolean; tab?: string }; } catch { return {}; }
   })();
   // Closed on cold boot: the stage stays clean until something asks for it.
   let rightBarOpen = false;
-  let rightBarTab: "docs" | "agents" = rbSaved.tab === "agents" ? "agents" : "docs";
+  type RightTab = "project" | "docs" | "agents";
+  let rightBarTab: RightTab = rbSaved.tab === "agents" || rbSaved.tab === "project" ? rbSaved.tab : "docs";
   let rightBarWidth = Math.min(680, Math.max(340, Number(rbSaved.width) || 420));
   let autoReveal = rbSaved.auto ?? true;
   let selectedArtifact: InspectorArtifact | null = null;
@@ -709,11 +712,11 @@
 
   $: try { localStorage.setItem(RB_KEY, JSON.stringify({ width: rightBarWidth, auto: autoReveal, tab: rightBarTab })); } catch {}
 
-  function openRightBar(tab: "docs" | "agents") {
+  function openRightBar(tab: RightTab) {
     rightBarTab = tab;
     rightBarOpen = true;
   }
-  function toggleRightBar(tab?: "docs" | "agents") {
+  function toggleRightBar(tab?: RightTab) {
     if (tab && rightBarOpen && rightBarTab !== tab) {
       rightBarTab = tab;
       return;
@@ -1298,6 +1301,7 @@
             slug={hubView.slug}
             on:openDoc={(e) => { selectedDoc = e.detail.doc; selectedArtifact = null; openRightBar("docs"); }}
             on:error={(e) => toast(e.detail.text, true)}
+            on:openPanel={() => toggleRightBar("project")}
           />
         </div>
       {:else if navMode === "workspaces"}
@@ -1335,6 +1339,7 @@
             on:executePlan={executePlan}
             on:planChanged={(e) => (projectPlan = e.detail.plan)}
             on:rosterSaved={(e) => (projectRoster = e.detail.roster)}
+            on:openPanel={() => toggleRightBar("project")}
           />
         </div>
       {:else}
@@ -1598,6 +1603,22 @@
   .rb-wrap.closed {
     margin-right: calc(-1 * var(--rb-w, 420px)); opacity: 0; pointer-events: none; visibility: hidden;
     transition: margin-right 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease, visibility 0s linear 260ms;
+  }
+  /* Narrow window: a docked split would crush the stage to a sliver, so the
+     deck floats over it instead, below the titlebar so the window controls
+     stay reachable. */
+  @media (max-width: 1100px) {
+    .rb-wrap {
+      position: absolute; top: 38px; right: 0; bottom: 0; z-index: 20;
+      width: min(var(--rb-w, 420px), calc(100% - 56px));
+      background: var(--parzi-sidebar);
+      box-shadow: var(--menu-shadow);
+      transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease, visibility 0s linear 0s;
+    }
+    .rb-wrap.closed {
+      margin-right: 0; transform: translateX(100%);
+      transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease, visibility 0s linear 260ms;
+    }
   }
   .stage-container {
     flex: 1;

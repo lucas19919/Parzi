@@ -1,17 +1,15 @@
 <script lang="ts">
   /**
-   * The project deck: Dash / Build / Settings. Ask docks at the bottom
-   * of Dash. Round 1 is one machine: the poll is the stand-in for push.
+   * The project stage: its conversation and the Ask box, nothing else.
+   * Lanes and settings live in the right panel (ProjectPanel) and read the
+   * store this publishes. Round 1 is one machine: the poll stands in for push.
    */
   import { createEventDispatcher, onDestroy, onMount } from "svelte";
-  import DeckHeader from "./DeckHeader.svelte";
-  import ProjectTab from "./ProjectTab.svelte";
-  import PlanTab from "./PlanTab.svelte";
-  import SettingsTab from "./SettingsTab.svelte";
+  import Thread from "../Thread.svelte";
   import AskBox from "./AskBox.svelte";
   import { api, deck, onRunEvent, type AuditResult, type ChatEvent, type Draft, type InspectorDoc, type JournalLine, type Plan, type Project, type ProjectOpen, type UiEvent } from "../api";
-  import { deckFixture, deckFixtureStateAsync, tabOf, type DeckTab } from "./fixtures";
-  import { deckDrafts, etagOf, liveLaneCount, resolveWorkspace, sprintPosition, taskStates, type DeckApproval } from "./state";
+  import { deckFixture, deckFixtureStateAsync } from "./fixtures";
+  import { deckDrafts, etagOf, liveLaneCount, projectPanel, resolveWorkspace, taskStates, type DeckApproval } from "./state";
 
   export let workspace = "";
   export let slug = "";
@@ -22,11 +20,12 @@
     /** A draft asked to be read in the right deck's Docs tab. */
     openDoc: { doc: InspectorDoc };
     error: { text: string };
+    /** Show the Project tab of the right panel. */
+    openPanel: void;
   }>();
 
   const POLL_MS = 2000;
 
-  let tab: DeckTab = "dashboard";
   let ws = workspace;
   let open: ProjectOpen | null = null;
   let project: Project | null = null;
@@ -61,10 +60,22 @@
   let loadedKey = "";
 
   $: live = taskStates(plan, journal);
-  $: sprint = plan.sprints.length ? sprintPosition(plan, live) : { n: 0, m: 0 };
   $: lanesLive = liveLaneCount(live);
-  $: people = [...new Set(journal.filter((l) => !l.who.startsWith("lane ")).map((l) => l.who))].slice(0, 4);
   $: waiting = Object.keys(approvals).length;
+  $: projectPanel.set(
+    project
+      ? {
+          project, plan, live, approvals, drafts, audit, auditing, approving,
+          actions: {
+            audit: (d) => void runAudit(d),
+            approve: () => void approvePlan(),
+            answer: (key, allow) => void answerApproval(key, allow),
+            save: (p) => void saveProject(p),
+            openDraft,
+          },
+        }
+      : null,
+  );
   $: deckDrafts.set(drafts.map((d) => ({ label: d.name.replace(/\.md$/, ""), path: d.path })));
 
   // Reload whenever the deck is pointed at another project. The first run
@@ -81,7 +92,6 @@
     if (state) {
       const f = deckFixture(state);
       fixture = true;
-      tab = f.tab;
       project = f.project;
       ws = f.project.workspace;
       plan = f.plan;
@@ -169,11 +179,11 @@
     }
   }
 
-  async function runAudit(e: CustomEvent<{ draft: Draft }>) {
+  async function runAudit(d: Draft) {
     if (fixture || !project) return;
-    auditing = e.detail.draft.name;
+    auditing = d.name;
     try {
-      audit = await deck.audit(ws, slug, e.detail.draft.name);
+      audit = await deck.audit(ws, slug, d.name);
       await refresh();
     } catch (err) {
       fail(err);
@@ -188,7 +198,6 @@
     try {
       project = await deck.approve(ws, slug);
       audit = null;
-      tab = "build";
       await refresh();
     } catch (err) {
       fail(err);
@@ -198,12 +207,12 @@
   }
 
   /** The transfer card answers through the same gate a tool approval does. */
-  async function answerApproval(e: CustomEvent<{ key: string; allow: boolean }>) {
-    const { [approvalTask(e.detail.key)]: _gone, ...rest } = approvals;
+  async function answerApproval(key: string, allow: boolean) {
+    const { [approvalTask(key)]: _gone, ...rest } = approvals;
     approvals = rest;
     if (fixture) return;
     try {
-      await api.approveTool(e.detail.key, e.detail.allow);
+      await api.approveTool(key, allow);
     } catch (err) {
       fail(err);
     }
@@ -213,8 +222,7 @@
     return Object.keys(approvals).find((t) => approvals[t].key === key) ?? "";
   }
 
-  function openDraft(e: CustomEvent<{ draft: Draft }>) {
-    const d = e.detail.draft;
+  function openDraft(d: Draft) {
     dispatch("openDoc", { doc: { title: d.title || d.name, content: d.content, path: d.path } });
   }
 
@@ -263,13 +271,13 @@
     dispatch("error", { text: error });
   }
 
-  async function saveProject(e: CustomEvent<{ project: Project }>) {
+  async function saveProject(next: Project) {
     if (fixture) {
-      project = e.detail.project;
+      project = next;
       return;
     }
     try {
-      project = await deck.save(e.detail.project);
+      project = await deck.save(next);
     } catch (err) {
       fail(err);
     }
@@ -287,57 +295,45 @@
     if (timer) clearInterval(timer);
     if (unlisten) unlisten();
     deckDrafts.set([]);
+    projectPanel.set(null);
   });
 </script>
 
 <div class="deck">
   {#if project}
-    <DeckHeader
-      title={project.title}
-      {sprint}
-      {lanesLive}
-      {tab}
-      {waiting}
-      on:tab={(e) => (tab = e.detail.tab)}
-    />
+    <header class="head">
+      <span class="title" title={project.title}>{project.title}</span>
+      <span class="status">{project.status}</span>
+      <span class="spacer" />
+      <button class="lanes-btn" class:live={lanesLive > 0} class:waiting={waiting > 0} title="Lanes and settings" on:click={() => dispatch("openPanel")}>
+        <span class="dot" />
+        {#if waiting}{waiting} waiting{:else if lanesLive}{lanesLive} running{:else}Lanes{/if}
+      </button>
+    </header>
 
     {#if error}
       <div class="err" role="status">{error}</div>
     {/if}
 
     <div class="body">
-      {#if tab === "dashboard"}
-        <ProjectTab
-          {project}
-          {drafts}
-          {audit}
-          {auditing}
-          {approving}
-          {events}
-          {liveText}
-          {liveTools}
-          {streaming}
-          on:audit={runAudit}
-          on:approve={approvePlan}
-          on:openDraft={openDraft}
-        />
-      {:else if tab === "build"}
-        <PlanTab {plan} {live} {approvals} status={project.status} on:approve={answerApproval} />
+      {#if events.length || streaming}
+        <Thread {events} {liveText} {liveTools} {streaming} />
       {:else}
-        <SettingsTab {project} on:save={saveProject} />
+        <div class="empty">
+          <span class="e-title">Nothing said yet</span>
+          <span class="e-sub">Talk the project through here. Lanes and settings sit behind the button up top.</span>
+        </div>
       {/if}
     </div>
-    {#if tab === "dashboard"}
-      <div class="ask-dock">
-        <AskBox
-          headerModel={project.roster.header}
-          orchestratorModel={project.roster.orchestrator}
-          canDirect={!fixture}
-          busy={streaming}
-          on:ask={ask}
-        />
-      </div>
-    {/if}
+    <div class="ask-dock">
+      <AskBox
+        headerModel={project.roster.header}
+        orchestratorModel={project.roster.orchestrator}
+        canDirect={!fixture}
+        busy={streaming}
+        on:ask={ask}
+      />
+    </div>
   {:else}
     <div class="loading">{error || "Opening project…"}</div>
   {/if}
@@ -345,10 +341,29 @@
 
 <style>
   .deck {
-    max-width: 1180px; margin: 0 auto; width: 100%; height: 100%; box-sizing: border-box;
-    padding: 12px 28px 0; display: flex; flex-direction: column; gap: 14px; min-height: 0;
+    max-width: 820px; margin: 0 auto; width: 100%; height: 100%; box-sizing: border-box;
+    padding: 12px 28px 0; display: flex; flex-direction: column; gap: 10px; min-height: 0;
   }
+  .head { display: flex; align-items: baseline; gap: 10px; flex: none; padding: 4px 2px 0; min-width: 0; }
+  .title { font-size: 18px; font-weight: 650; color: var(--text); letter-spacing: -0.2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status { font-size: 12px; color: var(--text-4); flex: none; }
+  .spacer { flex: 1; }
+  .lanes-btn {
+    align-self: center; flex: none; display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 11px;
+    background: var(--surface-1); border: 1px solid var(--line-2); border-radius: var(--radius-pill);
+    color: var(--text-3); font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .lanes-btn:hover { color: var(--text); background: var(--surface-2); }
+  .lanes-btn .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-4); }
+  .lanes-btn.live { color: var(--text-2); }
+  .lanes-btn.live .dot { background: var(--ok); }
+  .lanes-btn.waiting { color: var(--text); border-color: var(--warn-line); }
+  .lanes-btn.waiting .dot { background: var(--warn); }
   .body { min-width: 0; flex: 1; overflow: auto; }
+  .body :global(.thread-col) { padding: 8px 0 24px; max-width: none; }
+  .empty { display: flex; flex-direction: column; gap: 6px; padding: 72px 2px 0; }
+  .e-title { font-size: 15px; color: var(--text-2); font-weight: 600; }
+  .e-sub { font-size: 12.5px; color: var(--text-4); }
   .ask-dock { flex: none; padding: 8px 0 18px; }
   .err {
     background: var(--bad-soft); border: 1px solid var(--bad-line); border-radius: var(--radius-2);

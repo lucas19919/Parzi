@@ -6,7 +6,8 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { writable } from "svelte/store";
-import { deck } from "../api";
+import { deck, type AuditResult, type Draft, type Plan, type Project } from "../api";
+import type { TaskLive } from "./derive";
 
 export {
   allTasks,
@@ -31,6 +32,31 @@ export interface DeckApproval {
   name: string;
   detail: string;
 }
+
+/**
+ * The open project as the right panel's Project tab sees it. The deck owns
+ * the data and the poll; the panel only reads this and calls the actions.
+ * `null` while no project is open, which also hides the tab.
+ */
+export interface ProjectPanelState {
+  project: Project;
+  plan: Plan;
+  live: Record<string, TaskLive>;
+  approvals: Record<string, DeckApproval>;
+  drafts: Draft[];
+  audit: AuditResult | null;
+  auditing: string;
+  approving: boolean;
+  actions: {
+    audit: (draft: Draft) => void;
+    approve: () => void;
+    answer: (key: string, allow: boolean) => void;
+    save: (project: Project) => void;
+    openDraft: (draft: Draft) => void;
+  };
+}
+
+export const projectPanel = writable<ProjectPanelState | null>(null);
 
 /**
  * Drafts of the open project, published for the right deck's Docs tab

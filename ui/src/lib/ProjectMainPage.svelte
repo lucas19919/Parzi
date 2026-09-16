@@ -38,7 +38,8 @@
     planChanged: { plan: string };
     rosterSaved: { roster: ProjectRoster };
     openDoc: { doc: InspectorDoc };
+    openPanel: void;
   }>();
 </script>
 
-<ProjectDeck {workspace} slug={project} on:openDoc={(e) => dispatch("openDoc", e.detail)} />
+<ProjectDeck {workspace} slug={project} on:openDoc={(e) => dispatch("openDoc", e.detail)} on:openPanel={() => dispatch("openPanel")} />
