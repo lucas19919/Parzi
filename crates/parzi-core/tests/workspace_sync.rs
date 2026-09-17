@@ -265,11 +265,26 @@ fn markers_written_by_hand_block_the_commit_too() {
 }
 
 /// The workspace-level entry points take a `Workspace`, so they need
-/// `$PARZI_HOME`; no other test in this file reads it.
+/// `$PARZI_HOME`. It is process-global, so the tests below share one home per
+/// binary — a per-test override would race the others — and use distinct
+/// workspace names instead.
+fn test_home() -> PathBuf {
+    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("parzi-test-wssync-{}", std::process::id()));
+        // Cleared exactly once per binary, inside the lock: a clear per test
+        // would delete a parallel test's fixtures.
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("PARZI_HOME", &dir);
+        dir
+    })
+    .clone()
+}
+
 #[test]
 fn syncing_a_workspace_that_was_never_inited_inits_it() {
-    let home = tempfile::tempdir().unwrap();
-    std::env::set_var("PARZI_HOME", home.path());
+    test_home();
 
     let ws = parzi_core::workspace::create(parzi_core::workspace::Workspace::solo("acme"))
         .expect("workspace created");
@@ -290,6 +305,83 @@ fn syncing_a_workspace_that_was_never_inited_inits_it() {
     let second = sync::sync_now(&ws, "parzi: project created").unwrap();
     assert!(second.committed && !second.pushed);
     assert_eq!(git(&dir, &["status", "--porcelain=v1"]), "");
+}
+
+/// The second machine joins by cloning. A hand-made bare remote still points
+/// its HEAD at `master` while every parzi workspace pushes `main`, so the
+/// clone must land on `main` by itself — this is the case that silently gave
+/// an empty tree before.
+#[test]
+fn cloning_joins_a_workspace_that_a_bare_remote_holds_on_main() {
+    let home = test_home();
+    let bare = home.join("remote-joined.git");
+    std::fs::create_dir_all(&bare).unwrap();
+    git(&home, &["init", "--bare", &bare.to_string_lossy()]);
+    assert_eq!(
+        git(&bare, &["symbolic-ref", "HEAD"]),
+        "refs/heads/master",
+        "the trap this test exists for"
+    );
+
+    // Machine A seeds the remote.
+    let seed = home.join("seed-joined");
+    write(&seed, "workspace.toml", &workspace_toml("joined"));
+    write(
+        &seed,
+        "projects/checkout/PROJECT.md",
+        "parzi: 1\n# Checkout\n",
+    );
+    sync::init_at(&seed, Some(&bare.to_string_lossy())).unwrap();
+    assert!(
+        sync::commit_and_push_at(&seed, "parzi: seed")
+            .unwrap()
+            .pushed
+    );
+
+    // Machine B joins.
+    let dir = sync::clone_into(&bare.to_string_lossy(), "joined").unwrap();
+    assert_eq!(dir, parzi_core::workspace::dir("joined"));
+    assert!(read(&dir, "projects/checkout/PROJECT.md").contains("# Checkout"));
+    assert_eq!(git(&dir, &["rev-parse", "--abbrev-ref", "HEAD"]), "main");
+    assert_eq!(
+        parzi_core::workspace::load("joined").unwrap().name,
+        "joined",
+        "the clone is a workspace, not just a directory"
+    );
+
+    // And it syncs both ways from here.
+    write(&dir, "NOTE.md", "from the second machine\n");
+    assert!(sync::sync_now_at(&dir, "parzi: note").unwrap().pushed);
+    assert!(sync::pull_at(&seed).unwrap().pulled);
+    assert!(read(&seed, "NOTE.md").contains("from the second machine"));
+
+    // Joining twice is refused rather than clobbering the local copy.
+    let err = sync::clone_into(&bare.to_string_lossy(), "joined")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("already exists"), "{err}");
+}
+
+#[test]
+fn cloning_something_that_is_not_a_workspace_leaves_no_trace() {
+    let home = test_home();
+    let bare = home.join("remote-plain.git");
+    std::fs::create_dir_all(&bare).unwrap();
+    git(&home, &["init", "--bare", &bare.to_string_lossy()]);
+
+    let seed = home.join("seed-plain");
+    write(&seed, "README.md", "just a repo\n");
+    sync::init_at(&seed, Some(&bare.to_string_lossy())).unwrap();
+    sync::commit_and_push_at(&seed, "parzi: seed").unwrap();
+
+    let err = sync::clone_into(&bare.to_string_lossy(), "plainrepo")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("not a parzi workspace repo"), "{err}");
+    assert!(
+        !parzi_core::workspace::dir("plainrepo").exists(),
+        "a failed join leaves no half-workspace behind"
+    );
 }
 
 #[test]

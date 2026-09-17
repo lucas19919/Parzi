@@ -45,9 +45,9 @@ Default background: none (a solid stage). Drop any image into
 Parzi is a harness other harnesses can drive. Three surfaces, same state
 under `~/.parzi`:
 
-**MCP server** (richest — 19 tools: sessions, workspaces, deck projects,
-knowledge, plans, diagnostics, plus `report_issue` so agents file Parzi bugs
-themselves):
+**MCP server** (richest — 22 tools: sessions, workspaces, deck projects,
+knowledge, plans, diagnostics, workspace sync/remote/clone, plus
+`report_issue` so agents file Parzi bugs themselves):
 
 ```json
 { "mcpServers": { "parzi": { "command": "parzi", "args": ["mcp"] } } }
@@ -57,6 +57,18 @@ themselves):
 `sends` auto-approve (the transport is non-interactive). Destructive tools
 (`workspace_delete`, `project_delete`) kill the affected runs first and say
 how many sessions went with them.
+
+Remote VMs need no new protocol: `ssh user@vm parzi mcp` *is* an MCP
+server entry, and the workspace's git remote moves the work:
+
+```powershell
+parzi workspace remote acme git@github.com:you/acme-workspace.git
+parzi workspace sync acme          # here
+ssh vm parzi workspace clone git@github.com:you/acme-workspace.git acme
+ssh vm parzi workspace sync acme   # there, from now on
+```
+
+See `docs/remote-control.md`.
 
 **CLI** (scripts, pipes, other harnesses):
 

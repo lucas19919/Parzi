@@ -114,6 +114,40 @@ pub fn init_at(dir: &Path, remote: Option<&str>) -> Result<SyncReport> {
     Ok(report)
 }
 
+/// Join a workspace that already exists on a remote. The second machine has
+/// to clone, never create: two machines that each ran `create` hold unrelated
+/// histories and no amount of syncing reconciles them — git refuses the merge
+/// outright. This is the way onto a VM, a teammate's laptop or a second box.
+///
+/// Returns the workspace directory. A clone that carries no `workspace.toml`
+/// is not a workspace repo and is removed again rather than left as a stray
+/// directory that `list` half-recognises.
+pub fn clone_into(url: &str, name: &str) -> Result<PathBuf> {
+    let clean = crate::lanes::safe_name(name)?;
+    let dir = super::dir(&clean);
+    if dir.join("workspace.toml").exists() {
+        return Err(err(format!("workspace `{clean}` already exists here")));
+    }
+    let parent = crate::paths::workspaces_dir()?;
+    std::fs::create_dir_all(&parent).map_err(ParziError::Io)?;
+    git(&parent, &["clone", url, &clean])?;
+    ensure_identity(&dir)?;
+    // A bare repo made by hand still has `HEAD -> master`, while every parzi
+    // workspace pushes `main`. Git then clones an empty tree on an unborn
+    // branch rather than failing, so check out `main` before judging the
+    // contents. Already on `main` (the normal case): this is a no-op.
+    if !dir.join("workspace.toml").is_file() {
+        let _ = git(&dir, &["checkout", "main"]);
+    }
+    if !dir.join("workspace.toml").is_file() {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(err(format!(
+            "{url} is not a parzi workspace repo (no workspace.toml at its root)"
+        )));
+    }
+    Ok(dir)
+}
+
 /// A workspace directory that was written before anyone called [`init`] is
 /// still a pile of files worth sharing, so the workspace-level entry points
 /// below initialise it on first use instead of failing. Already a repo: does

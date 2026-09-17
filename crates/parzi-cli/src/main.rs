@@ -106,10 +106,41 @@ enum Cmd {
         #[arg(long)]
         apply: bool,
     },
+    /// Hub workspaces: list them, or sync one through its git remote.
+    Workspace {
+        #[command(subcommand)]
+        action: WorkspaceAction,
+    },
     /// Serve Parzi to other agents over MCP (JSON-RPC on stdio).
     Mcp,
     /// File an issue on Parzi itself (needs GitHub auth: stored token or gh's).
     ReportIssue { title: String, body: String },
+}
+
+#[derive(Subcommand)]
+enum WorkspaceAction {
+    /// List workspaces with their git remote.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Commit local work, take the team's, hand ours over. Exits non-zero on
+    /// conflicts so a provisioning script stops instead of syncing garbage.
+    Sync {
+        name: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the workspace's sync remote, or point it at one. Without a remote
+    /// a sync only ever commits locally.
+    Remote { name: String, url: Option<String> },
+    /// Join a workspace that already exists on a remote. Use this on a second
+    /// machine instead of `workspace_create` — two creates cannot be merged.
+    Clone {
+        url: String,
+        /// Local name; defaults to the repo's own.
+        name: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -221,6 +252,7 @@ async fn main() -> Result<()> {
             lane,
             apply,
         } => cmd_review(&project, &session_id, lane.as_deref(), apply),
+        Cmd::Workspace { action } => cmd_workspace(action),
         Cmd::Mcp => mcp::run().await,
         Cmd::ReportIssue { title, body } => cmd_report_issue(&title, &body).await,
     }
@@ -626,6 +658,102 @@ fn cmd_knowledge(project: &str, note: Option<&str>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The no-MCP half of remote control: on a VM you have a shell, not a
+/// harness, so syncing a workspace must be one command. Calls the plain
+/// syncer rather than the runtime timer — a one-shot process has no use for
+/// a 60 s background loop it would exit out from under.
+fn cmd_workspace(action: WorkspaceAction) -> Result<()> {
+    use parzi_core::workspace;
+    match action {
+        WorkspaceAction::List { json } => {
+            let rows: Vec<serde_json::Value> = workspace::list()
+                .into_iter()
+                .map(|name| {
+                    let remote = workspace::sync::remote_url(&workspace::dir(&name));
+                    serde_json::json!({ "name": name, "remote": remote })
+                })
+                .collect();
+            if json {
+                println!("{}", serde_json::to_string_pretty(&rows)?);
+            } else if rows.is_empty() {
+                println!("no workspaces");
+            } else {
+                for row in &rows {
+                    let name = row["name"].as_str().unwrap_or_default();
+                    let remote = row["remote"].as_str().unwrap_or("(local only)");
+                    println!("{name}\t{remote}");
+                }
+            }
+            Ok(())
+        }
+        WorkspaceAction::Sync { name, json } => {
+            let ws = workspace::load(&name).context("loading workspace")?;
+            let report = workspace::sync::sync_now(&ws, &format!("parzi: {name} sync"))
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                let did = [
+                    ("committed", report.committed),
+                    ("pulled", report.pulled),
+                    ("pushed", report.pushed),
+                ]
+                .into_iter()
+                .filter(|(_, yes)| *yes)
+                .map(|(what, _)| what)
+                .collect::<Vec<_>>();
+                println!(
+                    "{name}: {}",
+                    if did.is_empty() {
+                        "nothing to do".to_string()
+                    } else {
+                        did.join(", ")
+                    }
+                );
+            }
+            if report.conflicts.is_empty() {
+                Ok(())
+            } else {
+                for path in &report.conflicts {
+                    eprintln!("conflict: {path}");
+                }
+                anyhow::bail!("{} file(s) need a human", report.conflicts.len())
+            }
+        }
+        WorkspaceAction::Remote { name, url } => {
+            let ws = workspace::load(&name).context("loading workspace")?;
+            if url.is_some() {
+                // `init` is the idempotent form: existing history is kept and
+                // `origin` is re-pointed. It never pushes, so the first push
+                // stays an explicit `workspace sync`.
+                workspace::sync::init(&ws, url).map_err(|e| anyhow::anyhow!("{e}"))?;
+            }
+            match workspace::sync::remote_url(&workspace::dir(&name)) {
+                Some(u) => println!("{u}"),
+                None => println!("(local only)"),
+            }
+            Ok(())
+        }
+        WorkspaceAction::Clone { url, name } => {
+            let name = name.unwrap_or_else(|| repo_basename(&url));
+            let dir =
+                workspace::sync::clone_into(&url, &name).map_err(|e| anyhow::anyhow!("{e}"))?;
+            println!("{name}\t{}", dir.display());
+            Ok(())
+        }
+    }
+}
+
+/// `…/team-hub.git` → `team-hub`. Only a default; `safe_name` still judges it.
+fn repo_basename(url: &str) -> String {
+    url.trim_end_matches('/')
+        .rsplit(['/', ':', '\\'])
+        .next()
+        .unwrap_or(url)
+        .trim_end_matches(".git")
+        .to_string()
 }
 
 async fn cmd_report_issue(title: &str, body: &str) -> Result<()> {

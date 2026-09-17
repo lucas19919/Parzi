@@ -180,6 +180,21 @@ fn tool_defs() -> Value {
         t("workspace_migrate",
             "Move a legacy ~/.parzi/projects entry into a hub workspace of the same name. Chat keys survive; only the directory moves.",
             obj(json!({ "name": s("Legacy project name") }), &["name"])),
+        t("workspace_sync",
+            "Sync a hub workspace through its git remote (commit + pull + push). Run it on each machine that shares the workspace — or pair it with a remote parzi over SSH and let each side sync itself.",
+            obj(json!({ "workspace": s("Workspace name") }), &["workspace"])),
+        t("workspace_remote",
+            "Read the workspace's sync remote, or point it at a git URL. Without a remote a sync only commits locally — set one before expecting work to reach another machine.",
+            obj(json!({
+                "workspace": s("Workspace name"),
+                "url": s("Git URL for origin; omit to just read the current one"),
+            }), &["workspace"])),
+        t("workspace_clone",
+            "Join a workspace that already exists on a git remote. Use this on a second machine (a VM, a teammate's box) instead of workspace_create — two separate creates hold unrelated histories and can never be merged.",
+            obj(json!({
+                "url": s("Git URL of the workspace repo"),
+                "name": s("Local workspace name (default: the repo's own)"),
+            }), &["url"])),
         t("project_list", "Deck projects of one workspace.",
             obj(json!({ "workspace": s("Workspace name") }), &["workspace"])),
         t("project_create", "Create a deck project (starts Drafting).",
@@ -367,6 +382,9 @@ async fn dispatch_workspace(name: &str, args: &Value) -> Option<Result<Value, St
             Ok(json!(ws))
         })()),
         "workspace_delete" => Some(tool_workspace_delete(args.clone()).await),
+        "workspace_sync" => Some(tool_workspace_sync(args.clone()).await),
+        "workspace_remote" => Some(tool_workspace_remote(args)),
+        "workspace_clone" => Some(tool_workspace_clone(args)),
         "workspace_migrate" => Some((|| {
             let ws = parzi_core::workspace::import_legacy(&req(args, "name")?)
                 .map_err(|e| e.to_string())?;
@@ -459,6 +477,42 @@ async fn tool_report_issue(args: Value, client: &str) -> Result<Value, String> {
         parzi_providers::github::report_issue(&req(&args, "title")?, &req(&args, "body")?, client)
             .await?;
     Ok(json!({ "url": url }))
+}
+
+async fn tool_workspace_sync(args: Value) -> Result<Value, String> {
+    let report = parzi_runtime::sync_timer::sync_workspace(&req(&args, "workspace")?)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(json!(report))
+}
+
+/// Setting the remote goes through `sync::init`, which is idempotent and
+/// never pushes: the first push stays an explicit `workspace_sync`.
+fn tool_workspace_remote(args: &Value) -> Result<Value, String> {
+    let name = req(args, "workspace")?;
+    let ws = parzi_core::workspace::load(&name).map_err(|e| e.to_string())?;
+    if let Some(url) = s_arg(args, "url").filter(|u| !u.trim().is_empty()) {
+        parzi_core::workspace::sync::init(&ws, Some(url)).map_err(|e| e.to_string())?;
+    }
+    let remote = parzi_core::workspace::sync::remote_url(&parzi_core::workspace::dir(&name));
+    Ok(json!({ "workspace": name, "remote": remote }))
+}
+
+fn tool_workspace_clone(args: &Value) -> Result<Value, String> {
+    let url = req(args, "url")?;
+    let name = s_arg(args, "name")
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| {
+            url.trim_end_matches('/')
+                .rsplit(['/', ':', '\\'])
+                .next()
+                .unwrap_or(&url)
+                .trim_end_matches(".git")
+                .to_string()
+        });
+    parzi_core::workspace::sync::clone_into(&url, &name).map_err(|e| e.to_string())?;
+    let ws = parzi_core::workspace::load(&name).map_err(|e| e.to_string())?;
+    Ok(json!(ws))
 }
 
 async fn tool_doctor() -> Result<Value, String> {
