@@ -714,6 +714,7 @@ async fn a_real_run_sees_the_lease_tools_and_the_collision() {
         vec![],
         "web".into(),
         ApprovalMode::Auto,
+        false,
         4,
         4096,
         vec![],
