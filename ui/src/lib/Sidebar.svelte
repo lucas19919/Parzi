@@ -8,26 +8,17 @@
   import { isChatThread } from "./nav";
   import { portal } from "./portal";
 
-  export let currentProject = "default";
-  export let currentRoot = "";
   export let threads: SessionMeta[] = [];
   export let activeThreadId: string | null = null;
   /** Bumped by the app after a wizard finishes, to re-read the hub rows. */
   export let hubTick = 0;
 
   const dispatch = createEventDispatcher<{
-    selectProject: { name: string };
-    openProjectOverview: { name: string };
-    openNewWorkspace: void;
-    openNewProject: { workspace: string };
-    openProject: { workspace: string; slug: string };
     selectThread: { id: string };
     newSubsession: { id: string };
     newThread: void;
-    newThreadInProject: { name: string };
     forkThread: { id: string };
     deleteThread: { id: string };
-    deleteProject: { name: string };
     killRun: { id: string };
     openSettings: void;
     reportIssue: void;
@@ -53,9 +44,7 @@
   let renamingId: string | null = null;
   let renameTitle = "";
 
-  type Ctx =
-    | { kind: "thread"; id: string; title: string; x: number; y: number; confirm: boolean; count: number }
-    | { kind: "project"; name: string; x: number; y: number; confirm: boolean; count: number };
+  type Ctx = { kind: "thread"; id: string; title: string; x: number; y: number; confirm: boolean; count: number };
   let ctx: Ctx | null = null;
 
   $: byUpdated = (a: SessionMeta, b: SessionMeta) =>
@@ -92,7 +81,6 @@
   }
   $: if (hubTick >= 0) void loadHub();
 
-  $: projectsOf = (name: string) => hubProjects[name] ?? [];
   /** Role sessions (header, orchestrator, coders) carry the project slug. */
   $: projectSlugs = Object.values(hubProjects).flat().map((p) => p.slug);
   // Parent index, built once per thread list instead of once per row (E7).
@@ -188,24 +176,6 @@
     };
   }
 
-  function openProjectCtx(name: string, x: number, y: number) {
-    ctx = {
-      kind: "project", name,
-      x: Math.min(x, window.innerWidth - 232),
-      y: Math.min(y, window.innerHeight - 220),
-      confirm: false, count: (hubProjects[name] ?? []).length,
-    };
-  }
-
-  /** Workspace `···` toggles its menu (click again to dismiss). */
-  function toggleProjectCtx(name: string, x: number, y: number) {
-    if (ctx?.kind === "project" && ctx.name === name && !ctx.confirm) {
-      ctx = null;
-      return;
-    }
-    openProjectCtx(name, x, y);
-  }
-
   async function togglePin(id: string) {
     const t = threads.find((x) => x.id === id);
     if (!t) return;
@@ -293,29 +263,9 @@
     dispatch("deleteThread", { id });
   }
   function ctxPinnedLabel(): string {
-    if (ctx?.kind !== "thread") return "Pin";
-    return threads.find((t) => t.id === (ctx as { id: string }).id)?.pinned ? "Unpin" : "Pin";
-  }
-  function ctxOpenProject() {
-    if (ctx?.kind !== "project") return;
-    const name = ctx.name;
-    ctx = null;
-    dispatch("selectProject", { name });
-  }
-  function ctxCopyName() {
-    if (ctx?.kind !== "project") return;
-    copyText(ctx.name);
-    ctx = null;
-  }
-  function ctxCopyRoot() {
-    copyText(currentRoot);
-    ctx = null;
-  }
-  function ctxConfirmDeleteProject() {
-    if (ctx?.kind !== "project") return;
-    const name = ctx.name;
-    ctx = null;
-    dispatch("deleteProject", { name });
+    if (!ctx) return "Pin";
+    const id = ctx.id;
+    return threads.find((t) => t.id === id)?.pinned ? "Unpin" : "Pin";
   }
 
   // Keep the open thread visible; buckets never collapse so no unhiding needed.
@@ -449,7 +399,7 @@
 </aside>
 
 {#if ctx}
-  <!-- Real right-click menu: threads + workspaces, with two-step delete. -->
+  <!-- Real right-click menu: threads, with two-step delete. -->
   <div
     use:portal
     class="ctx-menu"
@@ -458,51 +408,25 @@
     on:contextmenu|preventDefault|stopPropagation
     on:keydown={(e) => { if (e.key === "Escape") ctx = null; }}
   >
-    {#if ctx.kind === "thread"}
-      {#if !ctx.confirm}
-        <div class="ctx-title">{ctx.title}</div>
-        <button class="menu-item" on:click={ctxOpen}>Open</button>
-        <button class="menu-item" on:click={ctxSubsession}>New subsession</button>
-        <button class="menu-item" on:click={ctxFork}>Duplicate (fork)</button>
-        <button class="menu-item" on:click={ctxTogglePin}>{ctxPinnedLabel()}</button>
-        <button class="menu-item" on:click={ctxRename}>Rename</button>
-        <button class="menu-item" on:click={ctxCopyId}>Copy ID</button>
-        <div class="menu-sep" />
-        <button class="menu-item danger" on:click={ctxAskDelete}>
-          Delete{ctx.count > 0 ? ` (+${ctx.count} subsession${ctx.count === 1 ? "" : "s"})` : ""}
-        </button>
-      {:else}
-        <div class="ctx-title danger-text">Delete “{ctx.title}”?</div>
-        <div class="ctx-note">{ctx.count > 0 ? `${ctx.count + 1} sessions go away, including subsessions.` : "The transcript is removed from disk."} This can't be undone.</div>
-        <div class="ctx-actions">
-          <button class="btn ghost" on:click={() => (ctx = null)}>Cancel</button>
-          <button class="btn danger-solid" on:click={ctxConfirmDeleteThread}>Delete</button>
-        </div>
-      {/if}
+    {#if !ctx.confirm}
+      <div class="ctx-title">{ctx.title}</div>
+      <button class="menu-item" on:click={ctxOpen}>Open</button>
+      <button class="menu-item" on:click={ctxSubsession}>New subsession</button>
+      <button class="menu-item" on:click={ctxFork}>Duplicate (fork)</button>
+      <button class="menu-item" on:click={ctxTogglePin}>{ctxPinnedLabel()}</button>
+      <button class="menu-item" on:click={ctxRename}>Rename</button>
+      <button class="menu-item" on:click={ctxCopyId}>Copy ID</button>
+      <div class="menu-sep" />
+      <button class="menu-item danger" on:click={ctxAskDelete}>
+        Delete{ctx.count > 0 ? ` (+${ctx.count} subsession${ctx.count === 1 ? "" : "s"})` : ""}
+      </button>
     {:else}
-      {#if !ctx.confirm}
-        <div class="ctx-title">{displayName(ctx.name)}</div>
-        <button class="menu-item" on:click={ctxOpenProject}>Open</button>
-        <button class="menu-item" on:click={ctxCopyName}>Copy name</button>
-        {#if currentRoot && ctx.name === currentProject}
-          <button class="menu-item" on:click={ctxCopyRoot}>Copy folder path</button>
-        {/if}
-        <div class="menu-sep" />
-        {#if ctx.name === "default"}
-          <div class="ctx-note">The Inbox can't be deleted.</div>
-        {:else}
-          <button class="menu-item danger" on:click={ctxAskDelete}>
-            Delete workspace{ctx.count > 0 ? ` (${ctx.count} project${ctx.count === 1 ? "" : "s"})` : ""}
-          </button>
-        {/if}
-      {:else if ctx.kind === "project"}
-        <div class="ctx-title danger-text">Delete “{displayName(ctx.name)}”?</div>
-        <div class="ctx-note">{ctx.count > 0 ? `${ctx.count} session${ctx.count === 1 ? "" : "s"} and the workspace folder go away.` : "The workspace folder goes away."} This can't be undone.</div>
-        <div class="ctx-actions">
-          <button class="btn ghost" on:click={() => (ctx = null)}>Cancel</button>
-          <button class="btn danger-solid" on:click={ctxConfirmDeleteProject}>Delete</button>
-        </div>
-      {/if}
+      <div class="ctx-title danger-text">Delete “{ctx.title}”?</div>
+      <div class="ctx-note">{ctx.count > 0 ? `${ctx.count + 1} sessions go away, including subsessions.` : "The transcript is removed from disk."} This can't be undone.</div>
+      <div class="ctx-actions">
+        <button class="btn ghost" on:click={() => (ctx = null)}>Cancel</button>
+        <button class="btn danger-solid" on:click={ctxConfirmDeleteThread}>Delete</button>
+      </div>
     {/if}
   </div>
 {/if}
@@ -592,7 +516,10 @@
   .ctx-menu {
     position: fixed; z-index: 400; width: 220px;
     padding: 5px; display: flex; flex-direction: column; gap: 1px;
-    background: var(--menu); border: 1px solid var(--line-3);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 92%, transparent), color-mix(in srgb, var(--parzi-sidebar) 85%, transparent));
+    backdrop-filter: blur(16px) saturate(1.25);
+    -webkit-backdrop-filter: blur(16px) saturate(1.25);
+    border: 1px solid var(--line-2); border-top-color: var(--line-hi);
     border-radius: 10px; box-shadow: var(--menu-shadow);
   }
   .ctx-title {

@@ -84,6 +84,7 @@ impl Approver for DenyAll {
     }
 }
 
+#[allow(dead_code)]
 fn tool_factory(
     _id: &str,
     _cfg: &ParziConfig,

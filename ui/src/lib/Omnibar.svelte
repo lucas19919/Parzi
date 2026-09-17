@@ -1151,8 +1151,12 @@
 
   .slash-pop, .at-popup {
     display: flex; flex-direction: column; gap: 1px; margin: 2px 0 8px;
-    background: var(--menu); border: 1px solid var(--line);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 92%, transparent), color-mix(in srgb, var(--parzi-sidebar) 85%, transparent));
+    backdrop-filter: blur(16px) saturate(1.25);
+    -webkit-backdrop-filter: blur(16px) saturate(1.25);
+    border: 1px solid var(--line-2); border-top-color: var(--line-hi);
     border-radius: 9px; padding: 5px; max-height: 220px; overflow-y: auto;
+    box-shadow: var(--menu-shadow);
   }
   .slash-pop button, .at-popup button {
     display: flex; align-items: center; gap: 8px; background: transparent; border: none;
@@ -1222,8 +1226,11 @@
 
   .pop {
     position: fixed; z-index: 60;
-    background: var(--menu);
-    border: 1px solid var(--line); border-radius: var(--glass-radius);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 92%, transparent), color-mix(in srgb, var(--parzi-sidebar) 84%, transparent));
+    backdrop-filter: blur(16px) saturate(1.25);
+    -webkit-backdrop-filter: blur(16px) saturate(1.25);
+    border: 1px solid var(--line-2); border-top-color: var(--line-hi);
+    border-radius: var(--glass-radius);
     box-shadow: var(--menu-shadow);
     overflow: hidden;
     transform-origin: bottom left;
@@ -1247,7 +1254,7 @@
     padding: 0; cursor: pointer;
   }
   .rail-row:hover { background: var(--surface-2); color: var(--text); }
-  .rail-row.on { background: var(--surface-3); color: var(--text); }
+  .rail-row.on { background: color-mix(in srgb, var(--accent) 12%, var(--surface-2)); color: var(--text); }
   .rail-row.dim { opacity: 0.4; }
   .rail-row.dim:hover { opacity: 0.8; }
   .rail-auto { display: inline-flex; color: var(--accent-text); }
@@ -1296,9 +1303,16 @@
     display: flex; align-items: center; gap: 9px; width: 100%;
     background: transparent; border: none; border-radius: 7px; color: var(--text-2);
     text-align: left; padding: 6px 8px; cursor: pointer; font: inherit; font-size: 13px;
+    transition: background 100ms ease, color 100ms ease;
   }
-  .mrow:hover, .mrow.on, .opt-row:hover, .opt-row.on { background: var(--surface-2); color: var(--text); }
-  .opt-row.on { background: var(--surface-3); color: var(--text); }
+  .mrow:hover, .opt-row:hover { background: var(--surface-2); color: var(--text); }
+  .mrow.on, .opt-row.on {
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface-2));
+    color: var(--text);
+  }
+  .opt-row.on .nm { font-weight: 550; color: var(--text); }
+  .opt-row.on .sub { color: var(--text-2); }
+  .opt-row.on .tick { color: var(--accent); }
   .m-initial {
     width: 22px; height: 22px; flex: none; display: inline-flex; align-items: center; justify-content: center;
     background: var(--surface-2); border: 1px solid var(--line-2);
@@ -1320,7 +1334,7 @@
   .mrow:hover .star, .mrow:focus-within .star, .star.on { opacity: 1; }
   .star:hover { color: var(--text); }
   .star.on { color: var(--warn); }
-  .tick { color: var(--text-2); display: inline-flex; flex: none; }
+  .tick { color: var(--accent); display: inline-flex; flex: none; }
   .p-ico { display: inline-flex; color: var(--text-2); flex: none; }
   .empty { padding: 14px; text-align: center; color: var(--text-3); font-size: 12px; }
 

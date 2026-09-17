@@ -12,7 +12,6 @@
   import Titlebar from "./lib/Titlebar.svelte";
   import Sidebar from "./lib/Sidebar.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
-  import ProjectMainPage from "./lib/ProjectMainPage.svelte";
   import Thread from "./lib/Thread.svelte";
   import Settings from "./lib/Settings.svelte";
   import SettingsNav from "./lib/SettingsNav.svelte";
@@ -40,8 +39,6 @@
   });
 
   let curProject = "default";
-  /** True after an explicit project pick: stage shows the project Mission Control. */
-  let projectSelected = false;
   let projectRoster: ProjectRoster | null = null;
   let projectPlan = "";
   let activeThreadId: string | null = null;
@@ -184,7 +181,6 @@
     activeThreadId = null;
     activeMeta = null;
     events = [];
-    projectSelected = false;
     showSettings = false;
     hubView = { kind: "deck", workspace, slug };
   }
@@ -334,7 +330,7 @@
     }
   }
 
-  async function switchProject(name: string, openOverview = false) {
+  async function switchProject(name: string) {
     hubView = null;
     curProject = name;
     await refreshBranch();
@@ -348,15 +344,6 @@
       projectPlan = await api.getProjectPlan(name);
     } catch {}
 
-    if (openOverview) {
-      activeThreadId = null;
-      activeMeta = null;
-      events = [];
-      projectSelected = true;
-      return;
-    }
-
-    projectSelected = false;
     const wsThreads = threads
       .filter((t) => (t.project || "default") === name)
       .sort((a, b) => +new Date(b.updated) - +new Date(a.updated));
@@ -405,7 +392,6 @@
   function newThread() {
     hubView = null;
     activeThreadId = null;
-    projectSelected = false;
     activeMeta = null;
     events = [];
     live = "";
@@ -723,7 +709,6 @@
       await loadThreads();
       if (curProject === target) {
         await switchProject("default");
-        projectSelected = false;
       }
       toast(n > 0 ? `workspace ${target} deleted (${n} session${n === 1 ? "" : "s"})` : `workspace ${target} deleted`);
     } catch (e) {
@@ -1261,21 +1246,14 @@
     <!-- Clean Minimalist Sidebar -->
     <div class="sb-pane" in:fly={{ x: -12, ...smooth }} out:fly={{ x: -8, ...smoothFast }}>
     <Sidebar
-      currentProject={curProject}
-      {currentRoot}
       {threads}
       {activeThreadId}
       {hubTick}
-      on:selectProject={(e) => switchProject(e.detail.name)}
-      on:openProjectOverview={(e) => switchProject(e.detail.name, true)}
-      on:openNewWorkspace={() => openNewWorkspaceWizard()}
       on:selectThread={(e) => openThread(e.detail.id)}
       on:newSubsession={(e) => newSubsession(e.detail.id)}
       on:newThread={newThread}
-      on:newThreadInProject={(e) => newThreadInProject(e.detail.name)}
       on:forkThread={(e) => fork(e.detail.id)}
       on:deleteThread={(e) => handleDeleteThread(e.detail.id)}
-      on:deleteProject={(e) => handleDeleteProject(e.detail.name)}
       on:killRun={(e) => killSession(e.detail.id)}
       on:openSettings={() => openSettings()}
       on:reportIssue={() => openSettings("system", "report-issue")}
@@ -1327,28 +1305,6 @@
             slug={hubView.slug}
             on:openDoc={(e) => { selectedDoc = e.detail.doc; selectedArtifact = null; openRightBar("docs"); }}
             on:error={(e) => toast(e.detail.text, true)}
-            on:openPanel={() => toggleRightBar("project")}
-          />
-        </div>
-      {:else if projectSelected}
-        <!-- Project Mission Control: roster + living plan + lane swarm -->
-        <div class="stage-scroll">
-          <ProjectMainPage
-            project={curProject}
-            root={currentRoot}
-            {branch}
-            lanes={currentProjectView?.lanes ?? []}
-            {threads}
-            roster={projectRoster}
-            plan={projectPlan}
-            on:openThread={(e) => openThread(e.detail.id)}
-            on:newThread={newThread}
-            on:killRun={(e) => killSession(e.detail.id)}
-            on:newSubsession={(e) => newSubsession(e.detail.id)}
-            on:askHeader={(e) => askHeader(e.detail.prompt)}
-            on:executePlan={executePlan}
-            on:planChanged={(e) => (projectPlan = e.detail.plan)}
-            on:rosterSaved={(e) => (projectRoster = e.detail.roster)}
             on:openPanel={() => toggleRightBar("project")}
           />
         </div>
@@ -1728,8 +1684,11 @@
     width: 340px; max-width: calc(100vw - 48px);
     display: flex; flex-direction: column; gap: 10px;
     padding: 16px 16px 12px;
-    background: var(--menu);
-    border: 1px solid var(--line-3);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 94%, transparent), color-mix(in srgb, var(--parzi-sidebar) 88%, transparent));
+    backdrop-filter: blur(20px) saturate(1.25);
+    -webkit-backdrop-filter: blur(20px) saturate(1.25);
+    border: 1px solid var(--line-2);
+    border-top-color: var(--line-hi);
     border-radius: 14px;
     box-shadow: var(--menu-shadow);
   }
@@ -1768,49 +1727,4 @@
   }
   .ws-create:hover:not(:disabled) { filter: brightness(1.08); }
   .ws-create:disabled { opacity: 0.4; cursor: default; }
-
-  /* Draft era: unified workspace badge above the home composer */
-  .hero-context {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .hero-ws-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: color-mix(in srgb, var(--parzi-sidebar) 85%, transparent);
-    border: 1px solid var(--line-2);
-    border-top-color: var(--line-hi);
-    border-radius: 999px;
-    padding: 6px 14px;
-    font-size: 12px;
-    color: var(--text-3);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    transition: all 140ms ease;
-  }
-  .hero-ws-badge:hover {
-    border-color: var(--line-3);
-    color: var(--text-2);
-  }
-  .hero-ws-name {
-    font-weight: 600;
-    color: var(--text);
-  }
-  .hero-ws-branch {
-    font-family: var(--parzi-mono), ui-monospace, monospace;
-    font-size: 11px;
-    color: var(--accent-text);
-  }
-  .hero-ws-root {
-    max-width: 260px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: var(--parzi-mono), ui-monospace, monospace;
-    font-size: 11px;
-    color: var(--text-4);
-  }
 </style>

@@ -420,6 +420,7 @@ impl Orchestrator {
         Arc::new(self.pump_parts())
     }
 
+    #[allow(dead_code)]
     fn lane_policy(&self, project: &str, lane: &str) -> (ApprovalMode, Vec<String>) {
         let snap = self.config();
         Self::lane_policy_for(&snap, project, lane)

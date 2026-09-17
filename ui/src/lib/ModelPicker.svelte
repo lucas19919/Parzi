@@ -374,7 +374,10 @@
     position: fixed; z-index: 80; width: 440px; max-width: calc(100vw - 16px);
     height: 430px; max-height: calc(100vh - 120px);
     display: flex; flex-direction: column;
-    background: var(--menu); border: 1px solid var(--line); border-radius: var(--glass-radius);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 92%, transparent), color-mix(in srgb, var(--parzi-sidebar) 84%, transparent));
+    backdrop-filter: blur(16px) saturate(1.25);
+    -webkit-backdrop-filter: blur(16px) saturate(1.25);
+    border: 1px solid var(--line-2); border-top-color: var(--line-hi); border-radius: var(--glass-radius);
     box-shadow: var(--menu-shadow); overflow: hidden; transform-origin: bottom left;
   }
   .pop.from-top { transform-origin: top left; }
@@ -403,7 +406,7 @@
     background: none; border: none; border-radius: 8px; color: var(--text-2); cursor: pointer; padding: 0;
   }
   .rail-row:hover { background: var(--surface-2); color: var(--text); }
-  .rail-row.on { background: var(--surface-3); color: var(--text); }
+  .rail-row.on { background: color-mix(in srgb, var(--accent) 12%, var(--surface-2)); color: var(--text); }
   .rail-row.dim { opacity: 0.4; }
   .star-rail { color: var(--warn); font-size: 15px; line-height: 1; }
   .ini {
@@ -416,7 +419,8 @@
     background: none; border: none; border-radius: 7px; color: var(--text-2);
     text-align: left; padding: 6px 8px; cursor: pointer; font: inherit; font-size: 13px;
   }
-  .mrow:hover, .mrow.on { background: var(--surface-2); color: var(--text); }
+  .mrow:hover { background: var(--surface-2); color: var(--text); }
+  .mrow.on { background: color-mix(in srgb, var(--accent) 12%, var(--surface-2)); color: var(--text); }
   .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sub { font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
