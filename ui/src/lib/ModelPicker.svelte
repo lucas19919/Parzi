@@ -11,6 +11,7 @@
   import Icon from "./Icon.svelte";
   import { api, type ModelRow } from "./api";
   import { updateProviderRow } from "./modelStore";
+  import { portal } from "./portal";
 
   export let value = "";
   export let models: ModelRow[] = [];
@@ -269,6 +270,7 @@
 
   {#if open}
     <div
+      use:portal
       class="pop"
       class:from-top={below}
       style={popStyle}

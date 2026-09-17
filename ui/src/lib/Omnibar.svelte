@@ -5,6 +5,7 @@
   import { scale, fade, slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
+  import { portal } from "./portal";
   import { api } from "./api";
   import { updateProviderRow } from "./modelStore";
   import type { ModelRow } from "./api";
@@ -922,7 +923,7 @@
   </div>
 
     {#if showModelPicker}
-      <div class="pop model-pop from-left" class:from-top={modelBelow} style={modelPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
+      <div use:portal class="pop model-pop from-left" class:from-top={modelBelow} style={modelPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
         <div class="pop-search">
           <Icon d={I.search} size={13} />
           <input
@@ -1034,7 +1035,7 @@
     {/if}
 
     {#if effortOpen}
-      <div class="pop effort-pop from-left" class:from-top={effortBelow} style={effortPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
+      <div use:portal class="pop effort-pop from-left" class:from-top={effortBelow} style={effortPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
         <div class="sec-h">Effort</div>
         {#each effortOpts as opt}
           <button class="opt-row" class:on={effort === opt.id} on:click={() => setEffort(opt.id)}>
@@ -1053,7 +1054,7 @@
     {/if}
 
     {#if wsOpen}
-      <div class="pop ws-pop from-right" class:from-top={wsBelow} style={wsPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
+      <div use:portal class="pop ws-pop from-right" class:from-top={wsBelow} style={wsPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
         <button class="opt-row" class:on={!workspace} on:click={() => pickWorkspace("")}>
           <span class="meta"><span class="nm">No workspace</span></span>
           {#if !workspace}<span class="tick"><Icon d={I.check} size={12} /></span>{/if}
@@ -1073,7 +1074,7 @@
     {/if}
 
     {#if permOpen}
-      <div class="pop perm-pop from-right" class:from-top={permBelow} style={permPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
+      <div use:portal class="pop perm-pop from-right" class:from-top={permBelow} style={permPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
         {#each PERMS as p}
           <button class="opt-row perm" class:on={permission === p.id} on:click={() => setPermission(p.id)}>
             <span class="p-ico"><Icon d={p.icon} size={14} /></span>

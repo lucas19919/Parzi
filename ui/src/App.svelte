@@ -220,6 +220,10 @@
     }
     else if (screen === "chats") hubView = null;
     else if (screen === "thread" && step) openThread(step);
+    // `menu:model|effort|perm|ws` opens a composer menu (no input reaches WebView2).
+    else if (screen === "menu" && step) {
+      setTimeout(() => document.querySelector<HTMLButtonElement>(`.${step}-zone button`)?.click(), 1500);
+    }
   }
 
   async function browseWsFolder() {

@@ -6,6 +6,7 @@
   import ThreadRow from "./ThreadRow.svelte";
   import { footerUpdateState, footerUpdateVersion } from "./updateStore";
   import { isChatThread } from "./nav";
+  import { portal } from "./portal";
 
   export let currentProject = "default";
   export let currentRoot = "";
@@ -450,6 +451,7 @@
 {#if ctx}
   <!-- Real right-click menu: threads + workspaces, with two-step delete. -->
   <div
+    use:portal
     class="ctx-menu"
     style="left:{ctx.x}px;top:{ctx.y}px;"
     on:click|stopPropagation
