@@ -1,14 +1,4 @@
-/**
- * Minimise / maximise / close / drag for a frameless window.
- *
- * Shared because two surfaces own the top of the window at different times:
- * the titlebar normally, and the inspector deck in full view — which covers
- * the titlebar outright, so it has to carry the controls itself or the
- * window becomes undismissable from the keyboard-free path.
- *
- * Each call prefers the Rust command and falls back to the JS window API,
- * which is what the titlebar has always done.
- */
+/** Window controls and dragging for frameless Tauri window. */
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { api } from "./api";

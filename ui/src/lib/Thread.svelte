@@ -92,9 +92,6 @@
     }
   }
 
-  /** Display label for a persisted tool call. Mirrors the backend
-      `humanize_tool_call` (Rust is the source of truth; this covers history
-      rows whose events carry raw args). */
   function toolLabel(name: string, args?: unknown): string {
     const a = (args ?? {}) as Record<string, unknown>;
     const s = (k: string) => {
@@ -130,9 +127,6 @@
     }
   }
 
-  /** `key` is stable for the life of the event it came from (its index in the
-      append-only log, or the tool-call id), so a token landing in the live tail
-      never re-keys — and so never re-renders — a finished message. */
   type RenderItem =
     | { key: string; kind: "user"; text: string }
     | { key: string; kind: "assistant"; text: string }
@@ -156,22 +150,18 @@
       };
 
   type ToolItem = Extract<RenderItem, { kind: "tool" }>;
-  /** Consecutive tool calls collapse into one stack so a busy turn is a
-      single line until expanded. */
   type GroupedItem = RenderItem | { kind: "toolgroup"; key: string; tools: ToolItem[] };
 
   $: chronologicalItems = (() => {
     const out: RenderItem[] = [];
     const resultMap = new Map<string, { ok: boolean; ms: number; output: string }>();
 
-    // Index results
     for (const e of events) {
       if (e.kind === "tool_result") {
         resultMap.set(e.id, { ok: e.ok, ms: e.ms ?? 0, output: e.output });
       }
     }
 
-    // Build ordered list
     for (let ix = 0; ix < events.length; ix++) {
       const e = events[ix];
       const key = `e${ix}`;
@@ -258,13 +248,7 @@
             : "Starting…"
       : "";
 
-  /** Live tail (E4). The buffer is split without touching the segment LRU —
-      its key changes on every flush, so caching it would evict the finished
-      messages it exists to keep — and only the last markdown segment streams:
-      the blocks before it are parsed once by `LiveMarkdown` and kept as HTML. */
   const liveMd = new LiveMarkdown();
-  // Run over or thread switched: forget the frozen HTML, so the next answer
-  // cannot inherit it by sharing a first block with the last one.
   $: if (!liveText) liveMd.reset();
   $: liveSegs = liveText ? splitSegments(liveText, false) : [];
   $: liveTailIdx = (() => {
@@ -366,7 +350,6 @@
         <div class="think-body">{item.text}</div>
       </details>
     {:else if item.kind === "checkpoint"}
-      <!-- A compaction: the model reads the thread from this summary on. -->
       <details class="think">
         <summary>
           <span class="think-rail" />
@@ -447,9 +430,6 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
-    /* The omnibar docks as a floating overlay (~115px single-line, more
-       with attachments or a grown textarea): keep this clearance above the
-       tallest common composer so the last lines never slide underneath it. */
     padding: 16px 24px 190px;
     max-width: 820px;
     margin: 0 auto;
@@ -477,9 +457,6 @@
     overflow-wrap: break-word;
     word-break: break-word;
   }
-  /* User prompts render as markdown now (same pipeline as assistant
-     messages; `{@html}` nodes are invisible to Svelte's scope analysis, so
-     these stay `:global` — plain selectors would warn as unused). */
   .user-bubble :global(h1), .user-bubble :global(h2),
   .user-bubble :global(h3), .user-bubble :global(h4) {
     margin: 0.5em 0 0.3em;
@@ -511,9 +488,6 @@
     flex-direction: column;
     gap: 8px;
   }
-  /* The live tail is two elements (frozen blocks + the block being written)
-     so the frozen HTML is never re-set. Keep the seam invisible: the frozen
-     part's last paragraph would otherwise lose its bottom margin. */
   :global(.live-head > p:last-child) {
     margin-bottom: 0.55em;
   }

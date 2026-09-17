@@ -48,8 +48,6 @@
   let liveReasoning = "";
   let liveTokens = 0;
   let liveCost = 0;
-  /** Context meter: the thread's last measured fill, against the window of
-      the model that answered (or, before any answer, the picked model). */
   let compacting = false;
   $: pickedWindow = (() => {
     const [provider, id] = model.includes("/") ? model.split(/\/(.*)/s) : ["", ""];
@@ -58,18 +56,13 @@
   })();
   $: contextUsed = activeMeta?.context_tokens ?? 0;
   $: contextLimit = activeMeta?.context_limit || pickedWindow;
-  /** Two-track streaming: assistant text flows into `live`, while tool
-      status flows into `liveTools` + the "Now:" line (derived in Thread).
-      Both reset whenever the transcript reloads. */
+
   let liveTools: { id: string; name: string; label: string; running: boolean; ok: boolean; ms: number }[] = [];
   let input = "";
   let model = "auto";
   let effort: "low" | "medium" | "high" | "extra" | "ultra" = "medium";
-  /** Composer permission pill, bound two-way to the Omnibar. Sent with every
-      run as chat intent: supervised/edits ask (edits pre-approves file
-      writes), auto/full run free — and a workspace lockdown always wins. */
   let permission = "full";
-  /** Pill id → run mode override. Unknown ids ride as auto. */
+
   function pillMode(): string {
     if (permission === "supervised" || permission === "edits") return permission;
     return "auto";
@@ -87,8 +80,6 @@
     }
     palette = false;
     showSettings = true;
-    // Optional in-tab jump (e.g. straight to the issue reporter): the
-    // section mounts async, so retry until the anchor exists or we give up.
     if (anchor) {
       void (async () => {
         for (let i = 0; i < 10; i++) {
@@ -105,20 +96,13 @@
   }
   let sidebarOpen = true;
 
-  /* ---------- hub: the two wizards (PLAN.md §8) ----------
-     One stage at a time: a wizard takes the whole middle column,
-     so nothing streams behind a modal and Escape always means "back out". */
   type HubView =
     | { kind: "new-workspace"; step: string }
     | { kind: "new-project"; workspace: string; step: string };
   let hubView: HubView | null = null;
-  /** Bumped after a wizard writes, so the sidebar re-reads the workspaces. */
   let hubTick = 0;
-  /** Hub workspaces; a chat belongs to one of them or to none (`default`). */
   let wsNames: string[] = [];
-  /** Workspace → first mapped repo checkout, the cwd of its chats. */
   let wsRoots: Record<string, string> = {};
-  /** Projects of the current workspace, listed in the Project tab. */
   let wsProjects: Project[] = [];
 
   async function loadWorkspaces() {
@@ -136,17 +120,8 @@
     wsRoots = Object.fromEntries(pairs);
   }
   $: if (hubTick >= 0) void loadWorkspaces();
-  /** The workspace the stage is in: the chat's, when it is a hub workspace. */
   $: curWorkspace = wsNames.includes(curProject) ? curProject : "";
-  /** Antigravity-style sidebar filter: null = all chats. The side dock shows
-      projects only for a selected hub workspace; anything else hides them. */
   let sideFilter: string | null = null;
-  /* `~/.parzi/projects/<n>` is created for any project key that needs a place
-     to put a PLAN.md — including a hub workspace's. Without this filter the
-     same name renders twice: once as a hub row and once tagged `legacy`, and
-     the legacy row's ✕ deletes the chats while leaving the workspace, which
-     reads as "it won't delete". A name that is a hub workspace is a hub
-     workspace; its legacy crumb is not a separate thing to show. */
   $: legacyNames = projects
     .map((p) => p.name)
     .filter((n) => n && n !== "default" && !wsNames.includes(n));
@@ -158,8 +133,6 @@
     wsProjects = name ? await deck.list(name).catch(() => []) : [];
   }
 
-  /** Project selected in the side dock. Project work lives there
-      exclusively — the old full-stage deck is gone. */
   let dockProject: { workspace: string; slug: string } | null = null;
   $: if (dockProject && dockProject.workspace !== panelWs) dockProject = null;
 
@@ -228,8 +201,6 @@
     await adoptWorkspaceDefaults(target);
   }
 
-  /** Move a legacy `~/.parzi/projects` entry into workspaces. The chat key
-      stays the name, so sessions keep working — only the directory moves. */
   async function handleMigrateProject(name: string) {
     try {
       await hub.migrateWorkspace(name);
@@ -248,9 +219,6 @@
     await handleDeleteProject(name);
   }
 
-  /** Delete a hub workspace from the sidebar. The composer's popover has had
-      this all along, but the sidebar is where the workspaces are listed and
-      so where people go looking. Same backend call, same aftermath. */
   async function handleDeleteWorkspace(name: string) {
     if (sideFilter === name) sideFilter = null;
     try {
@@ -261,14 +229,11 @@
     }
   }
 
-  /** New chat adopts the sidebar filter: filtering to a workspace and
-      hitting New chat drafts there instead of in the composer's project. */
   function handleNewThread() {
     if (sideFilter) void startDraftInProject(sideFilter);
     else newThread();
   }
 
-  /** Rename a deck project's title (the slug never moves, so sessions keep working). */
   async function handleRenameDeckProject(workspace: string, slug: string, title: string) {
     try {
       await deck.rename(workspace, slug, title);
@@ -279,7 +244,6 @@
     }
   }
 
-  /** Delete a deck project and its role sessions; deselect it in the dock. */
   async function handleDeleteDeckProject(workspace: string, slug: string) {
     try {
       await deck.remove(workspace, slug);
@@ -294,8 +258,6 @@
     }
   }
 
-  /** A hub workspace was deleted from the picker: drop its dock selection
-      and any thread selection in it, and re-read threads (its sessions are gone). */
   async function handleWorkspaceDeleted(name: string) {
     hubTick += 1;
     if (dockProject && dockProject.workspace === name) dockProject = null;
@@ -327,7 +289,6 @@
     hubView = { kind: "new-project", workspace, step };
   }
 
-  /** Select a project in the side dock and reveal it. */
   function openProject(workspace: string, slug: string) {
     dockProject = { workspace, slug };
     showSettings = false;
@@ -338,18 +299,11 @@
     hubView = null;
   }
 
-  /**
-   * Screenshot aid: `PARZI_UI_STATE=new-workspace:repos` (or `new-project:roles`)
-   * opens that screen at launch, so the verifier can capture every step
-   * without sending input.
-   */
   async function applyUiState() {
     let state = "";
     try {
       state = (await hub.uiState()).trim();
-    } catch {
-      // No host (browser preview): fall through to the query parameter.
-    }
+    } catch {}
     if (!state && typeof location !== "undefined") {
       state = new URLSearchParams(location.search).get("ui_state")?.trim() ?? "";
     }
@@ -359,7 +313,6 @@
     else if (screen === "new-project") openNewProjectWizard("", step);
     else if (screen === "chats") hubView = null;
     else if (screen === "thread" && step) openThread(step);
-    // `menu:model|effort|perm|ws` opens a composer menu (no input reaches WebView2).
     else if (screen === "menu" && step) {
       setTimeout(() => document.querySelector<HTMLButtonElement>(`.${step}-zone button`)?.click(), 1500);
     }
@@ -367,7 +320,6 @@
 
   const displayName = (n: string) => (n === "default" ? "Inbox" : n);
 
-  /** Draft era: clear the stage without creating a thread row yet. */
   async function startDraftInProject(name: string) {
     const target = name.trim() || "default";
     if (target !== curProject) {
@@ -449,7 +401,6 @@
     hubView = null;
     curProject = name;
     await refreshBranch();
-    // Mission Control data: roster + living plan load quietly, never block paint.
     projectRoster = null;
     projectPlan = "";
     try {
@@ -469,9 +420,6 @@
     }
   }
 
-  /** `keepLive`: leave the streaming tail on screen until the transcript this
-      call fetches has replaced it (the done/error path in `onEvent`). Every
-      other caller is a thread switch, where the old tail goes at once. */
   async function openThread(id: string, keepLive = false) {
     hubView = null;
     activeThreadId = id;
@@ -491,13 +439,9 @@
     } catch (e) {
       toast(String(e), true);
     }
-    // Same synchronous block as `events = ev`, so Svelte renders the swap in
-    // one frame: the answer never disappears and comes back.
     if (keepLive) clearLive();
     await tick();
     if (scrollEl) {
-      // Thread switches jump: bypass `scroll-behavior: smooth` so opening
-      // a thread lands instantly instead of animating across the history.
       scrollEl.style.scrollBehavior = "auto";
       scrollEl.scrollTop = scrollEl.scrollHeight;
       scrollEl.style.scrollBehavior = "";
@@ -524,8 +468,6 @@
     toast("Plan mode — the model plans, it does not touch the tree");
   }
 
-  /** Summarize the open thread into a checkpoint. `focus` steers the summary
-      (`/compact keep the API design`). */
   async function compactThread(focus = "") {
     if (!activeThreadId) return toast("Open a chat to compact it", true);
     if (liveRun === activeThreadId) return toast("Wait for the run to finish, then compact", true);
@@ -557,17 +499,12 @@
     const files = [...attachments];
     attachments = [];
     const cwd = currentRoot;
-    // Plan mode is a real mode: the model plans, it does not touch the tree.
     let prompt = rawPrompt;
     if (mode === "plan") {
       prompt = "Plan only — do not edit files or run commands. Output the plan:\n\n" + rawPrompt;
     }
 
-    // Optimistic user bubble: the backend only returns the persisted
-    // transcript on `done`, so without this the user stares at an empty
-    // thread + "writing…" until the run finishes.
     const optimisticUser = { kind: "user", text: rawPrompt } as ChatEvent;
-    // If this is a fresh thread there are no events yet; otherwise append.
     events = [...events, optimisticUser];
 
     try {
@@ -588,17 +525,13 @@
       liveReasoning = "";
       liveTools = [];
       await loadThreads();
-      // Reconcile with the persisted transcript (replaces the optimistic
-      // row with the real one; never wipes live assistant text).
       try {
         const [meta, ev] = await api.getThread(sid);
         activeMeta = meta;
         events = ev;
         curProject = meta.project || curProject;
         curLane = meta.lane || curLane;
-      } catch {
-        // Backend already accepted the prompt; keep the optimistic bubble.
-      }
+      } catch {}
       await tick();
       if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
       const queued = threads.find((t) => t.id === sid)?.status === "queued";
@@ -607,11 +540,8 @@
         toast("queued — starts when a slot frees (kill a run to jump in)");
       }
     } catch (e) {
-      // Restore the prompt — losing a composed message on a send error
-      // is the fastest way to lose trust.
       input = rawPrompt;
       attachments = files;
-      // Drop the optimistic bubble again (it never reached the backend).
       events = events.filter((ev) => ev !== optimisticUser);
       toast(String(e), true);
     } finally {
@@ -630,7 +560,6 @@
     }
   }
 
-  /** Spawn an empty child subsession under a thread and jump into it. */
   async function newSubsession(parentId: string) {
     try {
       const m = await api.createSubsession({ parentId });
@@ -641,7 +570,6 @@
     }
   }
 
-  /** Header agent: start (or continue) a thread with the Header role model. */
   async function askHeader(prompt: string) {
     try {
       const headerModel = projectRoster?.header?.model?.trim() || model;
@@ -661,7 +589,6 @@
     }
   }
 
-  /** Orchestrator: dispatch the first pending plan task as a lane worker. */
   async function executePlan() {
     try {
       const m = projectPlan.match(/^-\s*\[\s\]\s*(.+)$/m);
@@ -838,7 +765,6 @@
   let projectDocs: DocEntry[] = [];
   let docLoading = false;
   let rbEl: HTMLElement | null = null;
-  /** Last tool per session, fed by run events for every session (not just the open one). */
   let sessionTools: Record<string, { name: string; since: number; running: boolean }> = {};
 
   $: try { localStorage.setItem(RB_KEY, JSON.stringify({ width: rightBarWidth, auto: autoReveal, tab: rightBarTab })); } catch {}
@@ -870,7 +796,6 @@
     };
   }
 
-  /** Every artifact version in the open thread, oldest first. */
   $: threadArtifacts = (() => {
     const out: InspectorArtifact[] = [];
     for (const e of events) {
@@ -917,11 +842,6 @@
     }
   }
 
-  /* The dialog is opened by the backend, not here: a file you pick by hand
-     may be anywhere, and only the side that ran the dialog can honestly say
-     the choice was yours. Picking through the JS plugin and then reading
-     through our own command used to fail the read every time — the picker
-     browsed the whole disk and the gate refused whatever came back. */
   async function pickDocFile() {
     try {
       const picked = await api.pickTextFile(currentRoot || undefined);
@@ -942,7 +862,6 @@
   }
   $: if (curProject || currentRoot) loadProjectDocs();
 
-  /** Swarm = the whole tree the open thread belongs to (root + all descendants). */
   $: swarmNodes = (() => {
     if (!activeThreadId) return [] as SwarmNode[];
     const byId = new Map(threads.map((t) => [t.id, t]));
@@ -972,7 +891,6 @@
   })();
   $: liveAgentCount = swarmNodes.filter((n) => n.status === "active" || n.status === "queued").length;
 
-  /** Re-fetch the open thread's persisted events without touching live text. */
   async function refreshEvents() {
     if (!activeThreadId) return;
     try {
@@ -982,13 +900,8 @@
     } catch {}
   }
 
-  /** Background sessions whose "running" row the sidebar already shows (E7). */
   const listedRuns = new Set<string>();
 
-  /** E4, UI half: text deltas land in a buffer and reach the reactive `live`
-      on a 60 ms timer, inside one animation frame — ~16 renders a second
-      instead of one per delta. The Rust forwarder already coalesces at 30 ms;
-      this is the other half of the same budget. */
   const LIVE_FLUSH_MS = 60;
   let liveBuf = "";
   let liveBase = "";
@@ -997,8 +910,6 @@
   function flushLive() {
     liveTimer = 0;
     if (!liveBuf) return;
-    // `live` moved under us (run finished, thread switched): drop the tail
-    // rather than resurrect text the reloaded transcript already owns.
     if (live !== liveBase || activeThreadId !== liveBufThread) {
       liveBuf = "";
       return;
@@ -1006,8 +917,6 @@
     liveBase += liveBuf;
     live = liveBase;
     liveBuf = "";
-    // Stick to the bottom while streaming, but only when the reader was
-    // already there — never yank them away from history they scrolled to.
     if (scrollEl && scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 160) {
       tick().then(() => {
         if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
@@ -1023,8 +932,7 @@
     if (liveTimer) return;
     liveTimer = window.setTimeout(() => requestAnimationFrame(flushLive), LIVE_FLUSH_MS);
   }
-  /** Run over or thread switched: the pending tail and the text on screen both
-      belong to a transcript that `events` now owns, so the stage renders it. */
+
   function clearLive() {
     liveBuf = "";
     liveBase = "";
@@ -1039,15 +947,11 @@
       return;
     }
     if (e.kind === "subsession_created") {
-      // A subsession spawned (by the user or an agent tool): refresh the
-      // flat list so it shows up under its time bucket.
       loadThreads();
       return;
     }
     if (e.kind === "tool_call") {
       sessionTools = { ...sessionTools, [e.session]: { name: e.name, since: Date.now(), running: true } };
-      // Status track: append to the live tool list (dedup by id — the
-      // backend may re-emit on reconnect). Text keeps streaming untouched.
       if (e.session === activeThreadId && !liveTools.some((t) => t.id === e.id)) {
         liveTools = [...liveTools, { id: e.id, name: e.name, label: e.label || e.name, running: true, ok: true, ms: 0 }];
       }
@@ -1055,8 +959,6 @@
       const cur = sessionTools[e.session];
       sessionTools = { ...sessionTools, [e.session]: { name: e.name, since: cur?.since ?? Date.now(), running: false } };
       if (e.session === activeThreadId) {
-        // Exact join by id; fall back to the first running row with the
-        // same name for backends that predate result ids.
         let joined = false;
         liveTools = liveTools.map((t) => {
           if (!joined && t.running && (t.id === e.id || t.name === e.name)) {
@@ -1066,7 +968,6 @@
           return t;
         });
       }
-      // An artifact landed: pull it into the deck without resetting the live stream.
       if (e.name === "ui.show_artifact" && e.ok && e.session === activeThreadId) {
         refreshEvents().then(() => {
           const latest = threadArtifacts[threadArtifacts.length - 1];
@@ -1076,22 +977,11 @@
     } else if (e.kind === "done" || e.kind === "error") {
       const { [e.session]: _gone, ...rest } = sessionTools;
       sessionTools = rest;
-      // B5: a background session finishing must release the composer when it
-      // was the live run. Handle per-session before the active-session gate.
       if (liveRun === e.session) {
         liveRun = null;
-        // The on-screen tail is not dropped here. When the finished session is
-        // the one on screen, the done/error path below owns the ordering and
-        // keeps it until the reloaded transcript has replaced it; when it is a
-        // background session, there is nothing of its text on screen anyway.
       }
-      // Per-session completion still refreshes the sidebar even for
-      // background threads (handled below via the early return path).
     }
     if (e.session !== activeThreadId) {
-      // E7: a background session changes its sidebar row when it starts
-      // (queued → running), when it posts a notice and when it ends — not on
-      // every text delta or usage tick.
       const first = !listedRuns.has(e.session);
       if (e.kind === "done" || e.kind === "error") listedRuns.delete(e.session);
       else listedRuns.add(e.session);
@@ -1102,7 +992,6 @@
     else if (e.kind === "reasoning") liveReasoning += e.text;
     else if (e.kind === "notice") {
       toast(e.text);
-      // Agent teamwork lands here (spawn/message notes): keep the tree live.
       loadThreads();
     }
     else if (e.kind === "usage") {
@@ -1113,17 +1002,10 @@
     } else if (e.kind === "done" || e.kind === "error") {
       if (e.kind === "error") toast(e.error, true);
       liveRun = null;
-      // Ordering, and the reason for `keepLive`: clearing `live` here left the
-      // stage blank until the transcript came back — `loadThreads` is the 100 ms
-      // E7 coalescer, so that was ~66 ms of empty answer after every run. The
-      // reload now bypasses the coalescer (the sidebar can lag, the stage
-      // cannot) and the live tail stays up until `events` holds the same text.
       if (activeThreadId) openThread(activeThreadId, true);
       else clearLive();
       loadThreads();
     } else if (e.kind !== "tool_call" && e.kind !== "tool_result") {
-      // Tool status already landed in liveTools/sessionTools above — no
-      // sidebar reload needed per tool event (kills IPC churn mid-run).
       loadThreads();
     }
   }
@@ -1348,11 +1230,9 @@
     <div class="bg-overlay" />
   </div>
 
-  <!-- Main View Split: sidebar runs full height, titlebar lives over the stage -->
   <div class="app-body">
     <div class="sb-wrap" class:closed={!sidebarOpen}>
     {#if showSettings}
-    <!-- Settings mode: sidebar becomes section nav (T3-style) -->
     <div class="sb-pane" in:fly={{ x: -12, ...smooth }} out:fly={{ x: -8, ...smoothFast }}>
     <SettingsNav
       activeSection={settingsSection}
@@ -1362,7 +1242,6 @@
     />
     </div>
     {:else}
-    <!-- Clean Minimalist Sidebar -->
     <div class="sb-pane" in:fly={{ x: -12, ...smooth }} out:fly={{ x: -8, ...smoothFast }}>
     <Sidebar
       {threads}
@@ -1389,10 +1268,7 @@
     </div>
     {/if}
     </div>
-    <!-- Central Stage (expand control lives inline in the titlebar) -->
     <div class="stage-col">
-    <!-- In full view the deck covers this row and carries the window
-         controls itself, so rendering it would only show through as a seam. -->
     {#if !rbFull}
     <Titlebar
       title={showSettings ? "Settings" : hubView?.kind === "new-workspace" ? "New workspace" : hubView?.kind === "new-project" ? "New project" : curWorkspace || "Inbox"}
@@ -1406,7 +1282,6 @@
     {/if}
     <main class="stage-container" class:settings-mode={showSettings}>
       {#if showSettings}
-        <!-- Settings stage: main screen becomes the section (T3-style) -->
         <div class="stage-scroll settings-stage" in:fly={{ y: 12, ...smooth }} out:fly={{ y: 8, ...smoothFast }}>
           <Settings settingsTab={settingsSection} bareSection={settingsSection} currentProject={curProject} />
         </div>
@@ -1573,7 +1448,6 @@
     font-family: var(--parzi-font), Inter, system-ui, sans-serif;
     overflow: hidden;
   }
-  /* Visible text highlighting for copy (was invisible: no rule + body none). */
   :global(::selection) {
     background: var(--accent-mid);
     color: var(--text);
@@ -1585,17 +1459,11 @@
     flex-direction: column;
     position: relative;
     overflow: hidden;
-    /* Frameless transparent window: soft 10px corners so no edge cuts hard
-       against the desktop. `.maximized` (see onMount) drops it to square. */
     border-radius: 10px;
   }
-  /* Maximized state arrives on <html> at runtime (see onMount), so the
-     selector lives behind :global to keep svelte-check quiet. */
   :global(html.parzi-maximized) .parzi-app-shell {
     border-radius: 0;
   }
-  /* Wallpaper stack: picture → stage-tinted dim → vignette → faint accent glow.
-     Every layer follows the theme; with no picture the stage colour shows. */
   .background-backdrop {
     position: absolute;
     inset: 0;
@@ -1637,9 +1505,6 @@
     transition: margin-left 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease;
   }
   .sb-wrap.closed { margin-left: -248px; opacity: 0; pointer-events: none; }
-  /* Soft divider: a 24px gradient breathes the sidebar into the stage
-     instead of a hard 1px cut. Lives on the wrap so it covers both the
-     workspace sidebar and the settings nav. */
   .sb-wrap::after {
     content: "";
     position: absolute;
@@ -1654,23 +1519,16 @@
     transition: opacity 240ms ease;
   }
   .sb-wrap.closed::after { opacity: 0; }
-  /* Panes overlay so the settings/sidebar crossfade never changes layout width. */
   .sb-pane { position: absolute; inset: 0; width: 248px; display: flex; flex-direction: column; min-height: 0; will-change: transform, opacity; }
-  /* Right inspector deck: mirrors the sidebar slide. Width is a CSS var so a
-     drag-resize stays a style change, not a re-layout of the whole shell. */
   .rb-wrap {
     flex: none; width: var(--rb-w, 420px); margin-right: 0; opacity: 1; position: relative;
     min-height: 0; display: flex;
     transition: margin-right 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease, visibility 0s linear 0s;
   }
-  /* visibility flips after the slide so the deck is untabbable once hidden. */
   .rb-wrap.closed {
     margin-right: calc(-1 * var(--rb-w, 420px)); opacity: 0; pointer-events: none; visibility: hidden;
     transition: margin-right 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease, visibility 0s linear 260ms;
   }
-  /* Narrow window: a docked split would crush the stage to a sliver, so the
-     deck floats over it instead, below the titlebar so the window controls
-     stay reachable. */
   @media (max-width: 1100px) {
     .rb-wrap {
       position: absolute; top: 38px; right: 0; bottom: 0; z-index: 20;
@@ -1684,13 +1542,6 @@
       transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease, visibility 0s linear 260ms;
     }
   }
-  /* Full view: the deck takes the whole window for reading projects and
-     artifacts. Esc, Ctrl+Shift+F, or the button exits; closing the deck
-     resets it (see the rightBarOpen guard). Full bleed from `top: 0` and the
-     titlebar steps aside entirely — leaving a 38px strip above only showed
-     the stage breadcrumb and sidebar chrome peeking out under the reading
-     view, which reads as a mistake. The deck header carries the window
-     controls instead, so nothing is lost by covering it. */
   .rb-wrap.full {
     position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 30;
     width: auto; margin-right: 0; opacity: 1; visibility: visible;
@@ -1718,9 +1569,6 @@
   }
   .omnibar-slot {
     z-index: 6; display: flex; justify-content: center; width: 100%;
-    /* The docked composer floats over the thread: only the card itself
-       takes pointer events, so clicks on the margins reach the transcript
-       instead of dying on an invisible full-width strip. */
     pointer-events: none;
     transition:
       top 520ms var(--ease-spring),
@@ -1760,9 +1608,6 @@
     width: 100%;
     box-sizing: border-box;
   }
-  /* Runs + dialogs removed: creation and run control live in the sidebar. */
-
-  /* Toast Stack */
   .toast-stack {
     position: fixed;
     bottom: 16px;

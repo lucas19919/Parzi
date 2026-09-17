@@ -10,11 +10,8 @@
 
   export let threads: SessionMeta[] = [];
   export let activeThreadId: string | null = null;
-  /** Bumped by the app after a wizard finishes, to re-read the hub rows. */
   export let hubTick = 0;
-  /** Antigravity-style filter: null = all chats, else one workspace/inbox key. */
   export let sideFilter: string | null = null;
-  /** Legacy `~/.parzi/projects` names that are not hub workspaces yet. */
   export let legacyProjects: string[] = [];
 
   const dispatch = createEventDispatcher<{
@@ -58,13 +55,7 @@
   $: byUpdated = (a: SessionMeta, b: SessionMeta) =>
     +new Date(b.updated) - +new Date(a.updated);
 
-  // Role sessions (header, orchestrator, coders) carry the project slug and
-  // stay out of the list — except the one on the stage, which is always shown.
   $: chatThreads = threads.filter((t) => t.id === activeThreadId || isChatThread(t.project, projectSlugs));
-
-  // Antigravity-style workspace filter: running work always floats on top
-  // (never hide a live run), the rest follows the selected workspace.
-  // Live running chats float to the top. Coder lanes belong on the workspace.
   $: runningThreads = chatThreads.filter((t) => t.status === "active" || t.status === "queued");
   $: scopedThreads = sideFilter === null
     ? chatThreads
@@ -80,19 +71,12 @@
     dispatch("filterWorkspace", { name });
   }
 
-  /** Two-step legacy delete: first click arms, second click fires. */
   let legConfirm: string | null = null;
-  /** Same two steps for hub workspaces. Arming one disarms the other, so
-      there is never a primed delete on a row you are no longer looking at. */
   let wsConfirm: string | null = null;
 
-  // Running threads have their own top section, so exclude them from buckets to avoid duplicates
   $: idleScopedThreads = scopedThreads.filter((t) => t.status !== "active" && t.status !== "queued");
   $: pinned = idleScopedThreads.filter((t) => t.pinned).sort(byUpdated);
 
-  // Hub workspaces (`~/.parzi/workspaces/*`) and the projects inside them.
-  // Read here rather than passed down: the two wizards write to disk, and
-  // `hubTick` is the app's way of saying "read it again".
   let hubNames: string[] = [];
   let hubProjects: Record<string, Project[]> = {};
 
@@ -110,9 +94,7 @@
   }
   $: if (hubTick >= 0) void loadHub();
 
-  /** Role sessions (header, orchestrator, coders) carry the project slug. */
   $: projectSlugs = Object.values(hubProjects).flat().map((p) => p.slug);
-  // Parent index, built once per thread list instead of once per row (E7).
   $: parentById = new Map(threads.map((x) => [x.id, x.parent_id] as const));
 
   // Visual indent for subsessions (full tree lives in the Agents deck).
@@ -157,14 +139,8 @@
     return b.filter((g) => g.items.length);
   })();
 
-  // E7: long buckets render their newest rows only; the rest is one click
-  // away ("More"), so a thousand sessions cost a thousand DOM rows only if
-  // you ask for them.
   const ROW_CAP = 60;
   let showAll: Record<string, boolean> = {};
-  // The cap must never hide the thread you are looking at: an old selection
-  // past row 60 is appended to its bucket, so the list still shows what the
-  // stage shows. "Show all" stays for everything else.
   $: rowsOf = (g: Group) => {
     if (showAll[g.label]) return g.items;
     const head = g.items.slice(0, ROW_CAP);
@@ -571,9 +547,6 @@
     flex: none; font-size: 10px; color: var(--warn);
     border: 1px solid var(--warn-line); border-radius: 5px; padding: 0 5px;
   }
-  /* A row that carries its own buttons gives up its padding to the pick, so
-     the hit target still spans the row and the ✕ sits flush at the end.
-     Hub and legacy rows share this; "All chats" and "Inbox" stay plain. */
   .ws-row.split { padding: 0 0 0 8px; }
   .ws-row.split .ws-pick {
     flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;

@@ -222,9 +222,6 @@ pub fn list() -> Vec<String> {
 /// overwrite an existing workspace: renaming is a separate, human act.
 pub fn create(ws: Workspace) -> Result<Workspace> {
     let clean = lanes::safe_name(&ws.name)?;
-    // `default` is the Inbox, and `remove` refuses it by that name. Letting
-    // one be created here makes a workspace that can never be deleted again.
-    // `import_legacy` has always refused it; creation never did.
     if clean == "default" {
         return Err(ParziError::Config(
             "`default` is the Inbox — pick another name".into(),

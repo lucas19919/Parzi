@@ -24,12 +24,8 @@
   export let attachments: string[] = [];
   export let mode: "chat" | "plan" | "build" = "chat";
   export let permission: string = "full";
-  /** Workspaces a new chat can belong to. Empty list hides the picker. */
   export let workspaces: string[] = [];
-  /** Workspace this chat belongs to ("" = none). */
   export let workspace = "";
-  /** A thread is already open in this workspace: its home is fixed, so
-      picking another workspace starts a new draft there instead of moving it. */
   export let workspaceFixed = false;
   /** Context window fill of this chat (tokens the model saw last request). */
   export let contextUsed = 0;
@@ -196,12 +192,6 @@
     legacy: false,
   };
 
-  /**
-   * Side-by-side picker (T3-style): the left rail switches providers, the
-   * right pane lists models. Nothing ever moves under the cursor, so a
-   * click can never leak through a step transition into a model pick.
-   * Searching overrides the rail and matches across all providers.
-   */
   $: mainItems = ((): FamRow[] => {
     if (q) return [AUTO_ROW, ...allFams].filter(matches);
     if (railSel === "__auto") return [AUTO_ROW];
@@ -455,12 +445,6 @@
 
   const POP_W = { model: 440, effort: 300, perm: 320, ws: 240 };
 
-  /**
-   * Pin a menu above its trigger when there is room — always staying clear
-   * of the 38px titlebar drag zone (clicks landing up there hit the window
-   * chrome instead: the menu closes and the window drags). Otherwise drop
-   * the menu below the trigger.
-   */
   function placePop(btn: HTMLButtonElement | null, which: "model" | "effort" | "perm" | "ws") {
     if (!btn || typeof window === "undefined") return;
     const r = btn.getBoundingClientRect();
@@ -546,7 +530,6 @@
     closeInlinePops();
     modelQuery = "";
     modelIndex = 0;
-    // Start where the user is: Smart Auto, current provider, else the first roster row.
     railSel =
       model === "auto"
         ? "__auto"
@@ -681,8 +664,6 @@
     return IMG_EXT.has(ext);
   }
 
-  /** Data-URL previews via the shell (the asset protocol scope does not
-      cover workspace files, so convertFileSrc thumbs stay blank). */
   let thumbUrls: Record<string, string | null> = {};
   let thumbReq = 0;
   $: void preloadThumbs(attachments, projectRoot);
@@ -699,7 +680,6 @@
       }
     }
     if (my === thumbReq) {
-      // Drop cache rows for removed attachments so re-adding reloads.
       const keep = new Set(list);
       const next: Record<string, string | null> = {};
       for (const k of Object.keys(thumbUrls)) if (keep.has(k)) next[k] = thumbUrls[k];
@@ -734,8 +714,6 @@
 
   let stageErr = "";
 
-  /** Stage clipboard/dropped image files through the shell and attach the
-      returned paths. Text pastes and non-image drops pass through untouched. */
   async function stageImageFiles(files: FileList | File[]): Promise<void> {
     const imgs = [...files].filter(
       (f) => f.type.startsWith("image/") || isImage(f.name)
@@ -1125,9 +1103,6 @@
 </div>
 
 <style>
-  /* Same surface recipe as the sidebar shell: near-black vertical
-     gradient + 14px saturate blur. The card keeps its glass radius,
-     shadow and top-edge highlight; only the paint now matches. */
   .ob { position: relative; width: 100%; max-width: 720px; margin: 0 auto; min-width: 0; }
   .ob-card {
     position: relative;
@@ -1150,8 +1125,6 @@
     min-height: 26px; max-height: 180px; padding: 2px 4px 10px; box-sizing: border-box;
   }
   .ob-card textarea::placeholder { color: var(--text-4); }
-  /* Borderless composer: kill the global focus ring (it draws a stray
-     rectangle here) and answer with a subtle card-edge lift instead. */
   .ob-card textarea:focus { border-color: transparent !important; box-shadow: none !important; }
   .ob-card { transition: border-color 140ms ease; }
   .ob-card:focus-within { border-color: var(--line-3); }

@@ -16,12 +16,9 @@
   export let tab: "project" | "docs" = "project";
   export let width = 420;
   export let autoReveal = true;
-  /** Full view: the deck covers the whole body for reading. */
   export let full = false;
-  /** Project selected in the dock; the panel boots its home itself. */
   export let selected: { workspace: string; slug: string } | null = null;
 
-  // Docs tab
   export let artifact: InspectorArtifact | null = null;
   export let artifacts: InspectorArtifact[] = [];
   export let doc: InspectorDoc | null = null;
@@ -30,7 +27,6 @@
 
   export let activeThreadId: string | null = null;
 
-  // Project tab, while no project is open: the workspace and its projects.
   export let workspace = "";
   export let projects: Project[] = [];
 
@@ -57,12 +53,10 @@
     error: { text: string };
   }>();
 
-  /** The Project tab exists while a project is open or a workspace is picked. */
   $: hasProject = !!$projectPanel || !!workspace;
   $: shown = tab === "project" && !hasProject ? "docs" : tab;
   $: projectWaiting = $projectPanel ? Object.keys($projectPanel.approvals).length : 0;
 
-  /* ---------- drag-to-resize on the left edge ---------- */
   let dragging = false;
   let startX = 0;
   let startW = 0;
@@ -133,7 +127,6 @@
       </button>
     {/if}
     {#if full}
-      <!-- Full view hides the titlebar, so this header is the window chrome. -->
       <span class="win-sep" />
       <button class="hb win" title="Minimize" tabindex="-1" on:click={windowMinimize}>
         <Icon d={WIN_ICON.min} size={12} />
@@ -185,7 +178,6 @@
     display: flex; align-items: center; gap: 4px; height: 38px; flex: none; padding: 0 8px 0 10px;
     border-bottom: 1px solid var(--line-2);
   }
-  /* Full view: this header replaces the titlebar, so it drags the window. */
   .head.chrome { -webkit-app-region: drag; user-select: none; }
   .head.chrome button { -webkit-app-region: no-drag; }
   .win-sep {
@@ -218,11 +210,6 @@
   .hb:hover { background: var(--surface-2); color: var(--text); }
   .hb.on { color: var(--accent); }
   .content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  /* Full view is for *reading*, and every child of this deck was laid out
-     for a ~420px column. Left alone at 1900px they become one-line
-     paragraphs and 9px-tall full-width rows floating in a void. Cap the
-     column and centre it; the header above keeps the full width so the
-     close and exit buttons stay where the pointer expects them. */
   .content.wide {
     width: 100%;
     max-width: 920px;

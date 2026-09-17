@@ -8,9 +8,7 @@
 
   export let title = "Parzi";
   export let subtitle = "";
-  /** Sidebar is collapsed: show an inline expand button before the crumb. */
   export let showExpand = false;
-  /** Right inspector is open. */
   export let panelOpen = false;
   export let agentLive = 0;
 
@@ -21,7 +19,6 @@
 
   const I = WIN_ICON;
 
-  /** Fullscreen/maximized must drop the rounded root corners (black wedges). */
   async function syncChrome() {
     try {
       const w = getCurrentWindow();
@@ -137,7 +134,6 @@
   .title-crumb .sub {
     color: var(--text-3);
   }
-  /* Inspector deck controls: sit just left of the window buttons. */
   .deck-controls {
     display: flex; align-items: center; gap: 2px; margin-right: 6px; padding-right: 8px;
     border-right: 1px solid var(--line-2);

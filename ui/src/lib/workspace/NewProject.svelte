@@ -1,18 +1,11 @@
 <script lang="ts">
-  /**
-   * New project (PLAN.md §1.2, §2): pick the workspace, name the work, pick
-   * the repos it touches, bind a model to each of the three roles, cap the
-   * then the deck opens and the header asks what we are building.
-   */
   import { createEventDispatcher, onMount } from "svelte";
   import { hub, type Roster, type Workspace } from "../api";
   import { ensureModels, modelRows } from "../modelStore";
   import ModelRolePicker, { defaultRoster } from "./ModelRolePicker.svelte";
   import RepoPicker, { type PickItem } from "./RepoPicker.svelte";
 
-  /** Preselected workspace; empty means the wizard asks for one. */
   export let workspace = "";
-  /** Screenshot aid: `PARZI_UI_STATE=new-project:<step>` opens here. */
   export let initialStep = "";
 
   const dispatch = createEventDispatcher<{
@@ -52,13 +45,9 @@
     }
     try {
       roster = defaultRoster(await ensureModels());
-    } catch {
-      // No provider signed in yet: the pickers say so and "Auto" still works.
-    }
+    } catch {}
   });
 
-  /** The repos of the chosen workspace, all selected by default: a project
-   *  that touches one repo is the common case and needs no clicking. */
   async function loadWorkspace() {
     ws = await hub.workspace(workspace);
     pickedRepos = ws.repos.map((r) => r.name);
@@ -202,9 +191,6 @@
 </div>
 
 <style>
-  /* The card owns the scrolling, not the page: Back and Continue are the
-     step's only way forward and must never be below the fold (the roles
-     step is three pickers tall at 700px). */
   .wiz {
     display: flex; flex-direction: column; align-items: center; gap: 12px;
     padding: 16px 24px 18px; height: 100%; overflow: hidden; box-sizing: border-box;
@@ -223,7 +209,6 @@
   .body {
     flex: 1 1 auto; min-height: 0; overflow-y: auto;
     display: flex; flex-direction: column; gap: 10px;
-    /* Room for the scrollbar so it never sits on the pickers. */
     margin-right: -8px; padding-right: 8px;
   }
   .lede { margin: 0; font-size: 12px; color: var(--text-3); line-height: 1.4; }

@@ -1723,15 +1723,7 @@ fn contained_in(target: &std::path::Path, roots: &[std::path::PathBuf]) -> bool 
     roots.iter().any(|r| target.starts_with(r))
 }
 
-/// Files the person at the keyboard chose in a native dialog, this run only.
-///
-/// The confinement gate exists so that a path *the model produced* — an
-/// artifact link, a doc entry — can never make the shell read `~/.ssh` and
-/// paste it into a transcript. A file picked by hand is the opposite of that:
-/// it is the clearest consent there is. So the dialog is opened by the
-/// backend (`pick_text_file`) and the grant recorded where the frontend
-/// cannot reach it; nothing the model writes can add an entry here.
-/// Per-file, never a directory, and gone when the app quits.
+/// Files chosen in a native dialog, granted access for the current session.
 static PICKED_FILES: std::sync::Mutex<Option<std::collections::BTreeSet<std::path::PathBuf>>> =
     std::sync::Mutex::new(None);
 
@@ -1750,9 +1742,7 @@ fn was_picked(canon: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Open a file anywhere and read it in the dock. The path is granted before
-/// it is handed back, so the confinement gate lets this one file through
-/// without widening anything else.
+/// Pick a text file via native dialog and grant session access to it.
 #[tauri::command]
 async fn pick_text_file(app: AppHandle, start: Option<String>) -> Result<Option<String>, String> {
     let mut builder = app
@@ -1777,7 +1767,7 @@ async fn pick_text_file(app: AppHandle, start: Option<String>) -> Result<Option<
 
 /// Resolve every configured file root the shell may touch: the Parzi home
 /// tree plus each registered project/lane root. Canonicalized; missing roots
-/// are skipped (a configured-but-absent folder grants nothing).
+/// are skipped.
 fn file_roots() -> Vec<std::path::PathBuf> {
     let mut roots = vec![];
     if let Ok(home) = parzi_core::paths::parzi_dir() {
@@ -1799,10 +1789,7 @@ fn file_roots() -> Vec<std::path::PathBuf> {
             }
         }
     }
-    // Hub workspaces map their own checkouts, and those are what the dock
-    // calls "the workspace". Without them the quick tabs listed a repo's
-    // PLAN.md and README.md and then refused every one of them on click —
-    // `list_project_docs` walks any root it is handed, this gate did not.
+    // Hub workspaces map their own checkouts.
     for name in parzi_core::workspace::list() {
         let Ok(ws) = parzi_core::workspace::load(&name) else {
             continue;
@@ -1818,9 +1805,8 @@ fn file_roots() -> Vec<std::path::PathBuf> {
     roots
 }
 
-/// H-2 gate for shell-side file access: absolute path, lexically normalized,
-/// canonicalized (nearest existing ancestor for not-yet-created files), and
-/// required to sit under `file_roots()`. Returns the normalized path to use.
+/// Gate for shell-side file access: absolute path, lexically normalized,
+/// canonicalized, and required to sit under `file_roots()` or `PICKED_FILES`.
 fn confined_path(raw: &str) -> Result<std::path::PathBuf, String> {
     let p = std::path::PathBuf::from(raw.trim());
     if p.as_os_str().is_empty() {
@@ -1843,8 +1829,6 @@ fn confined_path(raw: &str) -> Result<std::path::PathBuf, String> {
     if contained_in(&canon, &file_roots()) || was_picked(&canon) {
         Ok(normal)
     } else {
-        // Name the way out. The old message told the user their file was
-        // refused and nothing about what to do instead.
         Err("that location is outside the workspace — use Open file to pick it".into())
     }
 }
