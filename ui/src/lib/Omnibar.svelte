@@ -539,6 +539,7 @@
     showModelPicker = true;
     effortOpen = false;
     permOpen = false;
+    wsOpen = false;
     closeInlinePops();
     modelQuery = "";
     modelIndex = 0;
@@ -575,6 +576,7 @@
       showModelPicker = false;
       permOpen = false;
       closeInlinePops();
+      wsOpen = false;
       placePop(effortBtn, "effort");
       refreshEffort(activeModelInfo.provider);
     }
@@ -603,6 +605,7 @@
       showModelPicker = false;
       effortOpen = false;
       closeInlinePops();
+      wsOpen = false;
       placePop(permBtn, "perm");
     }
   }
