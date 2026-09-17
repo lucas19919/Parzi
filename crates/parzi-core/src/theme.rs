@@ -510,6 +510,31 @@ pub fn save_pack(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Rename a user pack. Built-ins stay (they would re-seed anyway); the live
+/// theme is untouched — renaming is library housekeeping, not applying.
+pub fn rename_pack(old: &str, new: &str) -> Result<()> {
+    check_pack_name(old)?;
+    check_pack_name(new)?;
+    if BUILTIN_PACKS.contains(&old) {
+        return Err(ParziError::Config(
+            "built-in themes can't be renamed".into(),
+        ));
+    }
+    let root = themes_dir()?;
+    let src = root.join(old);
+    if !src.join("theme.toml").exists() {
+        return Err(ParziError::Config(format!("no theme named {old}")));
+    }
+    let dest = root.join(new);
+    if dest.exists() {
+        return Err(ParziError::Config(format!(
+            "a theme named {new} already exists"
+        )));
+    }
+    std::fs::rename(&src, &dest).map_err(ParziError::Io)?;
+    Ok(())
+}
+
 /// Remove a user pack. Built-ins stay (they would re-seed anyway).
 pub fn delete_pack(name: &str) -> Result<()> {
     check_pack_name(name)?;
@@ -583,6 +608,24 @@ fn is_bg_file(p: &std::path::Path) -> bool {
         Ok(m) => m.is_file() && m.len() <= BG_MAX_BYTES,
         Err(_) => false,
     }
+}
+
+/// Delete a saved background image. When it is the live wallpaper the theme
+/// falls back to a solid stage instead of pointing at a missing file.
+pub fn delete_background(name: &str) -> Result<Theme> {
+    if name.trim().is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err(ParziError::Config("bad background name".into()));
+    }
+    let p = paths::backgrounds_dir()?.join(name);
+    if p.exists() {
+        std::fs::remove_file(&p).map_err(ParziError::Io)?;
+    }
+    let mut theme = Theme::load()?;
+    if theme.background.image == format!("backgrounds/{name}") {
+        theme.background.image = String::new();
+        theme.save()?;
+    }
+    Ok(theme)
 }
 
 /// Sorted names of saved background images.
@@ -666,7 +709,15 @@ pub fn import_background(name: &str, bytes: &[u8]) -> Result<String> {
 
     let dir = paths::backgrounds_dir()?;
     std::fs::create_dir_all(&dir)?;
-    let file = format!("{stem}.{ext}");
+    // Never silently overwrite a different picture that sanitized to the
+    // same name: sunsets stay sunsets, the newcomer gets a suffix.
+    let mut file = format!("{stem}.{ext}");
+    for n in 2.. {
+        if !dir.join(&file).exists() {
+            break;
+        }
+        file = format!("{stem}-{n}.{ext}");
+    }
     std::fs::write(dir.join(&file), data)?;
     Ok(file)
 }
@@ -878,5 +929,56 @@ mod palette_tests {
     fn unreadable_file_errors() {
         let dir = tempfile::tempdir().unwrap();
         assert!(extract_palette(&dir.path().join("nope.png")).is_err());
+    }
+
+    #[test]
+    fn packs_rename_and_backgrounds_delete_in_a_fresh_home() {
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("PARZI_HOME", home.path());
+        // A pack to rename: seed the theme file directly.
+        let dir = crate::theme::themes_dir().unwrap().join("my-look");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("theme.toml"), "parzi = 1\n").unwrap();
+        assert!(crate::theme::rename_pack("my-look", "my-look-2").is_ok());
+        assert!(!dir.join("theme.toml").exists());
+        assert!(crate::theme::themes_dir()
+            .unwrap()
+            .join("my-look-2")
+            .join("theme.toml")
+            .exists());
+        // Built-ins, missing packs and collisions are refused.
+        assert!(crate::theme::rename_pack("midnight", "nope").is_err());
+        assert!(crate::theme::rename_pack("ghost", "nope").is_err());
+        assert!(crate::theme::rename_pack("my-look-2", "my-look-2").is_err());
+        assert!(crate::theme::rename_pack("my-look-2", "../evil").is_err());
+        // A background deletes; the live wallpaper falls back to solid.
+        let bgs = crate::paths::backgrounds_dir().unwrap();
+        std::fs::create_dir_all(&bgs).unwrap();
+        std::fs::write(bgs.join("pic.png"), [137u8, 80, 78, 71]).unwrap();
+        let mut theme = crate::theme::Theme::load().unwrap_or_default();
+        theme.background.image = "backgrounds/pic.png".into();
+        theme.save().unwrap();
+        let after = crate::theme::delete_background("pic.png").unwrap();
+        assert!(after.background.image.is_empty());
+        assert!(!bgs.join("pic.png").exists());
+        // Missing files are no-ops, bad names are refused, never panics.
+        assert!(crate::theme::delete_background("pic.png")
+            .unwrap()
+            .background
+            .image
+            .is_empty());
+        assert!(crate::theme::delete_background("../evil.png").is_err());
+        assert!(crate::theme::delete_background("").is_err());
+        // A colliding import keeps both pictures: the newcomer gets a suffix.
+        std::fs::write(bgs.join("dusk.png"), [137u8, 80, 78, 71]).unwrap();
+        let dir2 = tempfile::tempdir().unwrap();
+        let red = dir2.path().join("red.png");
+        solid_png(&red, [220, 30, 30]);
+        let bytes = std::fs::read(&red).unwrap();
+        let first = crate::theme::import_background("dusk.png", &bytes).unwrap();
+        let second = crate::theme::import_background("dusk.png", &bytes).unwrap();
+        assert_eq!(first, "dusk-2.png");
+        assert_eq!(second, "dusk-3.png");
+        assert!(bgs.join("dusk.png").exists());
     }
 }
