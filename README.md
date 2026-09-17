@@ -40,4 +40,34 @@ GUI: `cd ui; npm install; npm run build`, then `cargo tauri dev` in `src-tauri`
 Default background: none (a solid stage). Drop any image into
 `~/.parzi/backgrounds/` and pick it under Settings › Appearance.
 
+## Open backend — plug other agents into Parzi
+
+Parzi is a harness other harnesses can drive. Three surfaces, same state
+under `~/.parzi`:
+
+**MCP server** (richest — 19 tools: sessions, workspaces, deck projects,
+knowledge, plans, diagnostics, plus `report_issue` so agents file Parzi bugs
+themselves):
+
+```json
+{ "mcpServers": { "parzi": { "command": "parzi", "args": ["mcp"] } } }
+```
+
+`sessions` run to completion and return the transcript tail plus usage;
+`sends` auto-approve (the transport is non-interactive). Destructive tools
+(`workspace_delete`, `project_delete`) kill the affected runs first and say
+how many sessions went with them.
+
+**CLI** (scripts, pipes, other harnesses):
+
+```powershell
+.\target\debug\parzi.exe send new "hello" --model auto --yes
+.\target\debug\parzi.exe export <id>          # transcript to stdout
+.\target\debug\parzi.exe report-issue "title" "what happened, what you expected"
+```
+
+**Files** (no API at all): sessions, transcripts (`session.md`), `PROJECT.md` /
+`PLAN.md` grammar, `workspace.toml`, `KNOWLEDGE.md` — all plain text under
+`~/.parzi`, readable and writable by anything.
+
 License: MIT.

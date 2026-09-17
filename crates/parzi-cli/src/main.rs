@@ -11,6 +11,8 @@ use parzi_core::store::{SessionMeta, SessionStore};
 use parzi_runtime::tools::{Approval, Approver, AutoApprover, ToolCallInfo};
 use parzi_runtime::{handler::RunEvent, Orchestrator};
 
+mod mcp;
+
 #[derive(Parser)]
 #[command(name = "parzi", version, about = "Lean agent harness")]
 struct Cli {
@@ -104,6 +106,10 @@ enum Cmd {
         #[arg(long)]
         apply: bool,
     },
+    /// Serve Parzi to other agents over MCP (JSON-RPC on stdio).
+    Mcp,
+    /// File an issue on Parzi itself (needs GitHub auth: stored token or gh's).
+    ReportIssue { title: String, body: String },
 }
 
 #[derive(Subcommand)]
@@ -157,10 +163,19 @@ impl Approver for CliApprover {
 // nothing. Blocking work (stdin prompts, keyring) already uses spawn_blocking.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::WARN)
-        .init();
     let cli = Cli::parse();
+    // MCP framing owns stdout: every log line must go to stderr instead,
+    // or one stray print corrupts the protocol.
+    if matches!(cli.cmd, Cmd::Mcp) {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(std::io::stderr)
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .init();
+    }
     match cli.cmd {
         Cmd::Init => cmd_init(),
         Cmd::List { json } => cmd_list(json),
@@ -206,6 +221,8 @@ async fn main() -> Result<()> {
             lane,
             apply,
         } => cmd_review(&project, &session_id, lane.as_deref(), apply),
+        Cmd::Mcp => mcp::run().await,
+        Cmd::ReportIssue { title, body } => cmd_report_issue(&title, &body).await,
     }
 }
 
@@ -606,6 +623,14 @@ fn cmd_knowledge(project: &str, note: Option<&str>) -> Result<()> {
             None => println!("no cumulative knowledge recorded yet for project `{project}`"),
         }
     }
+    Ok(())
+}
+
+async fn cmd_report_issue(title: &str, body: &str) -> Result<()> {
+    let url = parzi_providers::github::report_issue(title, body, "parzi cli")
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!("{url}");
     Ok(())
 }
 
