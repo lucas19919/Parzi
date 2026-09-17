@@ -18,6 +18,11 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
+/// Lower bound on how long we wait for a server's `initialize`, however
+/// impatient `timeout_ms` is: that budget is about a tool call, and a cold
+/// `npx` on Windows spends seconds before it says anything at all.
+const HANDSHAKE_FLOOR: Duration = Duration::from_secs(10);
+
 #[derive(Debug, Clone)]
 pub struct McpTool {
     pub server: String,
@@ -411,8 +416,14 @@ impl McpManager {
             last_used: Instant::now(),
             epoch,
         };
+        // A cold server's first answer includes its own startup — `npx`
+        // resolving a package, node warming up, a python venv — which has
+        // nothing to do with how patient the user wants to be with a *tool
+        // call*. So the handshake gets its own floor; `timeout_ms` still
+        // governs every request after it.
         let timeout = Duration::from_millis(cfg.timeout_ms.max(1_000));
-        if let Err(e) = Self::handshake(&mut sv, name, timeout).await {
+        let handshake = timeout.max(HANDSHAKE_FLOOR);
+        if let Err(e) = Self::handshake(&mut sv, name, handshake).await {
             kill_tree(&mut sv.child).await;
             return Err(e);
         }

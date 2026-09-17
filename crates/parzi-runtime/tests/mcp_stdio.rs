@@ -55,7 +55,19 @@ fn alive(pid: u32) -> bool {
     }
     #[cfg(not(windows))]
     {
-        std::path::Path::new(&format!("/proc/{pid}")).exists()
+        // Not `/proc`: macOS has none, so that check answered "dead" for every
+        // pid and quietly turned both liveness assertions into no-ops. `ps`
+        // exists on both; a zombie is counted as gone, since the child is
+        // already killed and only waiting to be reaped.
+        std::process::Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "stat="])
+            .output()
+            .map(|o| {
+                let stat = String::from_utf8_lossy(&o.stdout);
+                let stat = stat.trim();
+                !stat.is_empty() && !stat.starts_with('Z')
+            })
+            .unwrap_or(false)
     }
 }
 
