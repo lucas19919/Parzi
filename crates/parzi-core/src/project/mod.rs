@@ -195,6 +195,39 @@ pub fn list(workspace: &str) -> Vec<String> {
     slugs
 }
 
+/// Rename a project's title. The slug is the identity (role sessions file
+/// under it), so it never moves — only the human-readable title changes.
+pub fn retitle(workspace: &str, slug: &str, title: &str) -> Result<Project> {
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err(ParziError::Validation(
+            "give the project a title".to_string(),
+        ));
+    }
+    let mut project = load(workspace, slug)?;
+    project.title = title;
+    save(&project)?;
+    Ok(project)
+}
+
+/// Delete a deck project tree (`<workspace>/projects/<slug>`). The shell
+/// removes the role sessions (it owns the store); a missing dir is a no-op
+/// success so UI deletes stay idempotent.
+pub fn remove(workspace: &str, slug: &str) -> Result<()> {
+    let ws = lanes::safe_name(workspace)?;
+    let clean = lanes::safe_name(slug)?;
+    let dir = workspace::dir(&ws).join("projects").join(&clean);
+    let base = workspace::dir(&ws).join("projects");
+    // Belt-and-braces: the resolved dir must stay under projects/.
+    if !dir.starts_with(&base) {
+        return Err(ParziError::Config("bad project slug".into()));
+    }
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(ParziError::Io)?;
+    }
+    Ok(())
+}
+
 /// Title → slug: lowercase, non-alphanumerics folded to `-`, no run of
 /// dashes, capped at 48 chars. Never empty.
 #[must_use]
@@ -265,7 +298,7 @@ pub fn render(p: &Project) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{create, load, Roster, Status};
+    use super::{create, load, remove, retitle, Roster, Status};
 
     #[test]
     fn a_new_project_is_drafting_and_a_slug_is_taken_only_once() {
@@ -293,6 +326,17 @@ mod tests {
         // Same slug from a different title is still the same project.
         assert!(create(&ws, "Checkout Flow!", vec![], Roster::default(), None).is_err());
         assert!(create(&ws, "   ", vec![], Roster::default(), None).is_err());
+        // Retitle changes the title, never the slug; remove deletes the tree.
+        let p = retitle(&ws, "checkout-flow", "  New title  ").expect("retitle");
+        assert_eq!(p.title, "New title");
+        assert_eq!(p.slug, "checkout-flow");
+        assert_eq!(load(&ws, "checkout-flow").expect("load").title, "New title");
+        assert!(retitle(&ws, "checkout-flow", "   ").is_err());
+        remove(&ws, "checkout-flow").expect("remove");
+        assert!(load(&ws, "checkout-flow").is_err());
+        // Idempotent: deleting twice still succeeds.
+        remove(&ws, "checkout-flow").expect("remove again");
+        assert!(remove(&ws, "../evil").is_err());
         scrub();
     }
 }

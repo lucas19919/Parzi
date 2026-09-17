@@ -56,6 +56,49 @@ pub async fn project_list(workspace: String) -> Result<Vec<Project>, String> {
         .collect())
 }
 
+/// Rename a project's title. The slug never moves (role sessions file
+/// under it), so no session migrates — only the human-readable title.
+#[tauri::command]
+pub async fn project_rename(
+    workspace: String,
+    slug: String,
+    title: String,
+) -> Result<Project, String> {
+    project::retitle(&workspace, &slug, &title).map_err(|e| e.to_string())
+}
+
+/// Delete a deck project: its role sessions are killed first and removed
+/// with it (subtrees included), then the project tree.
+#[tauri::command]
+pub async fn project_delete(
+    state: State<'_, AppState>,
+    workspace: String,
+    slug: String,
+) -> Result<usize, String> {
+    // Confirm the slug belongs to this workspace before touching sessions:
+    // slugs are only unique per workspace, and sessions file under the slug.
+    project::load(&workspace, &slug).map_err(|e| e.to_string())?;
+    let ids: Vec<String> = state
+        .orch
+        .store()
+        .list()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|m| m.project == slug)
+        .map(|m| m.id)
+        .collect();
+    for id in &ids {
+        let _ = state.orch.kill(id).await;
+    }
+    let n = state
+        .orch
+        .store()
+        .delete_project_threads(&slug)
+        .map_err(|e| e.to_string())?;
+    project::remove(&workspace, &slug).map_err(|e| e.to_string())?;
+    Ok(n)
+}
+
 /// The project and the sessions the deck talks to. `project_flow::Opened`
 /// crosses the IPC boundary as this; the orchestrator id comes from
 /// `sessions.toml`, which is empty until the first audit.

@@ -281,9 +281,105 @@ pub async fn repos(org: &str) -> Result<Vec<Repo>, String> {
     Ok(out)
 }
 
+/// Parzi's own repo: agent self-reports land here, labelled, not mixed in
+/// with human issues.
+const SELF_REPO: &str = "lucas19919/Parzi";
+/// Triage label for machine-filed issues. Humans file with `bug` from the app.
+const AGENT_LABEL: &str = "agent-report";
+
+#[derive(Deserialize)]
+struct ApiIssue {
+    #[serde(default)]
+    html_url: Option<String>,
+    #[serde(default)]
+    number: Option<u64>,
+}
+
+/// Validate a self-report before it touches the network: real titles and
+/// bodies only, hard caps so a runaway loop cannot paste megabytes.
+pub fn check_report(title: &str, body: &str) -> Result<(String, String), String> {
+    let title = title.trim().to_string();
+    let body = body.trim().to_string();
+    if title.chars().count() < 10 {
+        return Err("give the issue a real title (10+ characters)".into());
+    }
+    if title.chars().count() > 200 {
+        return Err("title is over 200 characters".into());
+    }
+    if body.chars().count() < 40 {
+        return Err(
+            "describe the problem (40+ characters): what happened, what you expected".into(),
+        );
+    }
+    if body.chars().count() > 8000 {
+        return Err("body is over 8000 characters".into());
+    }
+    Ok((title, body))
+}
+
+async fn post_json<T: serde::de::DeserializeOwned>(
+    tok: &str,
+    url: &str,
+    payload: &serde_json::Value,
+) -> Result<T, String> {
+    let res = client()
+        .post(url)
+        .bearer_auth(tok)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .json(payload)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = res.status();
+    if !status.is_success() {
+        let body = res.text().await.unwrap_or_default();
+        let msg: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        let detail = msg
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(status.as_str());
+        return Err(format!("GitHub {status}: {detail}"));
+    }
+    res.json::<T>().await.map_err(|e| e.to_string())
+}
+
+/// File an issue on Parzi itself — the agent self-report path. Uses the
+/// stored token, borrowing `gh`'s when none is stored, so it works exactly
+/// where the workspace wizard works. `client` names the calling harness
+/// (from MCP `initialize`) for triage. Returns the issue URL.
+pub async fn report_issue(title: &str, body: &str, client: &str) -> Result<String, String> {
+    let (title, body) = check_report(title, body)?;
+    let tok = match token() {
+        Some(t) => t,
+        None => gh_token().await?,
+    };
+    let reporter = client.trim();
+    let footer = if reporter.is_empty() {
+        "*Filed by an agent via `parzi mcp`.*".to_string()
+    } else {
+        format!("*Filed by an agent via `parzi mcp` ({reporter}).*")
+    };
+    let payload = serde_json::json!({
+        "title": title,
+        "body": format!("{body}\n\n---\n{footer}"),
+        "labels": [AGENT_LABEL],
+    });
+    let issue: ApiIssue =
+        post_json(&tok, &format!("{API}/repos/{SELF_REPO}/issues"), &payload).await?;
+    issue
+        .html_url
+        .or_else(|| {
+            issue
+                .number
+                .map(|n| format!("https://github.com/{SELF_REPO}/issues/{n}"))
+        })
+        .ok_or_else(|| "GitHub filed the issue but returned no URL".to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{valid_login, MAX_LOGIN};
+    use super::{check_report, valid_login, MAX_LOGIN};
 
     #[test]
     fn a_login_is_letters_digits_and_dashes_and_nothing_else() {
@@ -298,5 +394,19 @@ mod tests {
         assert!(!valid_login("org repo"));
         assert!(!valid_login("org%2f"));
         assert!(!valid_login("org#frag"));
+    }
+
+    #[test]
+    fn self_reports_need_a_real_title_and_body() {
+        assert!(check_report("short", "x".repeat(50).as_str()).is_err());
+        assert!(check_report("a proper title here", "too short").is_err());
+        assert!(check_report("   ", "x".repeat(50).as_str()).is_err());
+        let (t, b) = check_report(
+            "  Workspace picker eats clicks  ",
+            "The picker opens but every click closes it. Expected the menu to stay open for a pick.",
+        )
+        .expect("valid report");
+        assert_eq!(t, "Workspace picker eats clicks");
+        assert!(b.starts_with("The picker opens"));
     }
 }

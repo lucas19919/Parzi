@@ -48,6 +48,54 @@ pub async fn workspace_create(name: String, kind: workspace::Kind) -> Result<Wor
     workspace::create_for(&name, kind, &current_user()).map_err(|e| e.to_string())
 }
 
+/// Delete a hub workspace: its deck projects' role sessions and its own
+/// chats are killed first and removed with it, then the workspace tree.
+/// `default` is the inbox, not a hub workspace, and is refused.
+#[tauri::command]
+pub async fn workspace_delete(
+    state: State<'_, AppState>,
+    workspace: String,
+) -> Result<usize, String> {
+    let target = workspace.trim().to_string();
+    if target.is_empty() || target == "default" {
+        return Err("the Inbox can't be deleted".into());
+    }
+    // Role sessions file under their deck slug, chats under the workspace
+    // name: collect both keys before touching disk.
+    let mut keys = vec![target.clone()];
+    keys.extend(parzi_core::project::list(&target));
+    let ids: Vec<String> = state
+        .orch
+        .store()
+        .list()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|m| keys.iter().any(|k| k == &m.project))
+        .map(|m| m.id)
+        .collect();
+    for id in &ids {
+        let _ = state.orch.kill(id).await;
+    }
+    let mut n = 0;
+    for key in &keys {
+        n += state
+            .orch
+            .store()
+            .delete_project_threads(key)
+            .map_err(|e| e.to_string())?;
+    }
+    parzi_core::workspace::remove(&target).map_err(|e| e.to_string())?;
+    Ok(n)
+}
+
+/// Unify: move a legacy `~/.parzi/projects/<name>` into a hub workspace of
+/// the same name. The chat key stays `name`, so existing sessions keep
+/// working — only the directory moves.
+#[tauri::command]
+pub async fn workspace_migrate(name: String) -> Result<Workspace, String> {
+    workspace::import_legacy(&name).map_err(|e| e.to_string())
+}
+
 /// The local account name — the only identity round 1 has.
 fn current_user() -> String {
     std::env::var("PARZI_USER")

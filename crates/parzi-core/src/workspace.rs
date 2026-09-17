@@ -215,6 +215,28 @@ pub fn create_for(name: &str, kind: Kind, user: &str) -> Result<Workspace> {
     })
 }
 
+/// Delete a workspace tree (`workspaces/<name>`). Refuses blanks, `default`,
+/// and path escapes via `safe_name`. A missing dir is a no-op success so UI
+/// deletes stay idempotent when the folder was removed by hand.
+pub fn remove(name: &str) -> Result<()> {
+    let clean = lanes::safe_name(name)?;
+    if clean == "default" {
+        return Err(ParziError::Config(
+            "the default workspace can't be deleted".into(),
+        ));
+    }
+    let dir = dir(&clean);
+    let base = paths::workspaces_dir()?;
+    // Belt-and-braces: the resolved dir must stay under workspaces/.
+    if !dir.starts_with(&base) {
+        return Err(ParziError::Config("bad workspace name".into()));
+    }
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(ParziError::Io)?;
+    }
+    Ok(())
+}
+
 /// Each machine maps `remote → local path` for itself (§1.1): record where
 /// this machine's checkout of `repo` is. A repo the workspace never named is
 /// an error, not a silent no-op — the wizard would otherwise report a clone
@@ -278,6 +300,22 @@ pub fn from_legacy_project(name: &str) -> Result<Workspace> {
     })
 }
 
+/// Unify: move a legacy `~/.parzi/projects/<name>` into a hub workspace of
+/// the same name. The chat key stays `name`, so existing sessions keep
+/// working — only the directory moves. Refuses when a hub workspace of that
+/// name already exists (create never overwrites), and `default` is the
+/// inbox, not a project.
+pub fn import_legacy(name: &str) -> Result<Workspace> {
+    let clean = lanes::safe_name(name)?;
+    if clean == "default" {
+        return Err(ParziError::Config("the Inbox is not a project".into()));
+    }
+    let ws = from_legacy_project(&clean)?;
+    let ws = create(ws)?;
+    lanes::delete_project(&clean)?;
+    Ok(ws)
+}
+
 /// The lanes of a legacy project as lane-template names (§15.1). Kept apart
 /// from `from_legacy_project` so the wizard can show them without the
 /// workspace grammar growing a field for them.
@@ -300,7 +338,9 @@ pub fn legacy_lane_names(name: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{add_repos, create_for, dir, load, map_repo, Kind, RepoRef, Role};
+    use super::{
+        add_repos, create_for, dir, import_legacy, load, map_repo, remove, Kind, RepoRef, Role,
+    };
     use std::path::{Path, PathBuf};
 
     /// Unique per test, so nothing collides in a shared `PARZI_HOME`.
@@ -344,10 +384,7 @@ mod tests {
 
         let ws = map_repo(&name, "shop-api", Path::new("D:/code/shop-api")).expect("map");
         let want = Some(PathBuf::from("D:/code/shop-api"));
-        assert_eq!(
-            ws.repo("shop-api").and_then(|r| r.local_path.clone()),
-            want
-        );
+        assert_eq!(ws.repo("shop-api").and_then(|r| r.local_path.clone()), want);
         // From disk, not just from the value we were handed.
         let reread = load(&name).expect("load");
         assert_eq!(
@@ -356,6 +393,41 @@ mod tests {
         );
         // A repo the workspace never named is an error, not a no-op.
         assert!(map_repo(&name, "nope", Path::new("D:/code/nope")).is_err());
+        cleanup(&name);
+    }
+
+    #[test]
+    fn removing_a_workspace_deletes_the_tree_and_refuses_default() {
+        let name = scratch("remove");
+        cleanup(&name);
+        create_for(&name, Kind::Solo, "ada").expect("create");
+        assert!(dir(&name).is_dir());
+        remove(&name).expect("remove");
+        assert!(!dir(&name).exists());
+        // Idempotent: deleting twice still succeeds.
+        remove(&name).expect("remove again");
+        assert!(remove("default").is_err());
+        assert!(remove("../evil").is_err());
+        assert!(remove("").is_err());
+    }
+
+    #[test]
+    fn importing_a_legacy_project_moves_the_directory_keeping_the_key() {
+        let name = scratch("import-legacy");
+        cleanup(&name);
+        // A bare legacy project dir is enough: no lanes, no root.
+        std::fs::create_dir_all(crate::paths::projects_dir().expect("dirs").join(&name))
+            .expect("legacy dir");
+        let ws = import_legacy(&name).expect("import");
+        assert_eq!(ws.name, name);
+        assert!(dir(&name).join("workspace.toml").is_file());
+        assert!(!crate::paths::projects_dir()
+            .expect("dirs")
+            .join(&name)
+            .exists());
+        // Twice is a refusal (legacy source is gone), default never imports.
+        assert!(import_legacy(&name).is_err());
+        assert!(import_legacy("default").is_err());
         cleanup(&name);
     }
 }

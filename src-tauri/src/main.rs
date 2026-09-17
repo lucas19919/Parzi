@@ -1094,6 +1094,17 @@ async fn delete_pack(name: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn rename_pack(old: String, new: String) -> Result<(), String> {
+    parzi_core::theme::rename_pack(&old, &new).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_background(name: String) -> Result<String, String> {
+    let theme = parzi_core::theme::delete_background(&name).map_err(|e| e.to_string())?;
+    Ok(theme_css(&theme))
+}
+
+#[tauri::command]
 async fn apply_pack(name: String) -> Result<String, String> {
     let theme = parzi_core::theme::apply_pack(&name).map_err(|e| e.to_string())?;
     Ok(theme_css(&theme))
@@ -2126,10 +2137,12 @@ fn main() {
             save_pack,
             apply_pack,
             delete_pack,
+            rename_pack,
             get_user_css,
             save_user_css,
             list_backgrounds,
             set_background,
+            delete_background,
             upload_background,
             save_background_data,
             background_file,
@@ -2162,6 +2175,8 @@ fn main() {
             hub_cmds::workspace_create,
             hub_cmds::workspace_get,
             hub_cmds::workspace_add_repos,
+            hub_cmds::workspace_delete,
+            hub_cmds::workspace_migrate,
             hub_cmds::workspace_sync,
             hub_cmds::github_connect,
             hub_cmds::github_status,
@@ -2170,6 +2185,8 @@ fn main() {
             hub_cmds::repo_clone_or_map,
             hub_cmds::project_create,
             hub_cmds::project_get,
+            hub_cmds::project_rename,
+            hub_cmds::project_delete,
             hub_cmds::project_save,
             hub_cmds::project_list,
             hub_cmds::project_open,
