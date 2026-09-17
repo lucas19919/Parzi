@@ -85,6 +85,24 @@ Keep them short (under ~200 lines); longer files cap with a note. Deck
 projects carry their goal in `PROJECT.md` instead. Coders stay task-scoped
 on purpose — instructions stop at header/orchestrator level.
 
+## Path-scoped rules
+
+Domain knowledge that loads only when relevant: `<workspace>/rules/*.md`
+(and `projects/<name>/rules/*.md` for legacy projects). A `paths:` frontmatter
+picks the files it governs; attaching one pulls the body into that run:
+
+```markdown
+---
+paths:
+  - "apps/web/**"
+  - "*.tsx"
+---
+Use the shared Button; never raw <button>.
+```
+
+A pattern without a `/` also matches the bare file name; no `paths:` means
+always applies. Bodies cap at 8 KB, 32 files per directory, sorted by name.
+
 ## Workspace composer defaults
 
 A workspace can set the composer's starting pick for new drafts in

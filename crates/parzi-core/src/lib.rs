@@ -13,6 +13,7 @@ pub mod paths;
 pub mod plan;
 pub mod project;
 pub mod prompts;
+pub mod rules;
 pub mod status;
 pub mod store;
 pub mod system;

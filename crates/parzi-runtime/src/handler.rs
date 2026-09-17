@@ -172,6 +172,9 @@ pub struct AgentRun {
     /// was built from. Rebuilding it per turn paid the MCP round trip (up to
     /// 12 s for an unreachable server) on every turn.
     tool_defs: tokio::sync::Mutex<Option<(u64, Vec<parzi_providers::ToolDef>)>>,
+    /// Path-scoped rules matched once per run: attachments do not change
+    /// mid-run, so there is no reason to re-read the rules dir per turn.
+    rule_parts: std::sync::OnceLock<Vec<String>>,
 }
 
 impl AgentRun {
@@ -217,6 +220,7 @@ impl AgentRun {
             prompt_recorded: false,
             role: None,
             tool_defs: tokio::sync::Mutex::new(None),
+            rule_parts: std::sync::OnceLock::new(),
         }
     }
 
@@ -796,8 +800,24 @@ impl AgentRun {
         let events = self.store.events(&self.session_id)?;
         let history = parzi_core::context::since_checkpoint(&events).to_vec();
         let limit = crate::compact::usable_window(context_limit, self.max_tokens) * 9 / 10;
+        // Path-scoped rules, once per run: the attachments they match rode
+        // along with the opening turn and never change after it.
+        let rules = self.rule_parts.get_or_init(|| {
+            let project = self
+                .store
+                .get(&self.session_id)
+                .map(|m| m.project)
+                .unwrap_or_default();
+            let files: Vec<&str> = self.attachments.iter().map(|a| a.path.as_str()).collect();
+            parzi_core::rules::matching(&project, &files)
+                .into_iter()
+                .map(|r| format!("# Path rule ({})\n\n{}", r.name, r.body))
+                .collect()
+        });
+        let mut system_parts = self.system_parts.clone();
+        system_parts.extend(rules.iter().cloned());
         Ok(ContextBuilder {
-            system_parts: self.system_parts.clone(),
+            system_parts,
             history,
             files: self.attachments.clone(),
         }
