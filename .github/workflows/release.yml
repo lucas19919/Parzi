@@ -68,6 +68,7 @@ jobs:
             | Windows 10 / 11, 64-bit (recommended) | `Parzi_*_x64-setup.exe` — per-user install, no admin needed |
             | Windows, system-wide | `Parzi_*_x64_en-US.msi` — needs admin |
             | macOS, Apple Silicon or Intel | `Parzi_*_universal.dmg` — drag Parzi into Applications |
+            | Headless (any agent harness) | `parzi-windows-x64.exe` or `parzi-macos-arm64` — point any MCP client at `parzi mcp` |
 
             ### First launch (once per machine)
 
@@ -82,3 +83,22 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # Ship the headless CLI too: `parzi mcp` is the open backend other
+      # agents plug into. Attaches per-platform binaries to the same draft.
+      - name: Build parzi CLI
+        run: cargo build --release -p parzi-cli
+
+      - name: Attach CLI to the draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp target/release/parzi.exe parzi-windows-x64.exe
+            gh release upload "${{ github.ref_name }}" parzi-windows-x64.exe --clobber
+          else
+            cp target/release/parzi parzi-macos-arm64
+            gh release upload "${{ github.ref_name }}" parzi-macos-arm64 --clobber
+          fi
