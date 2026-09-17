@@ -53,7 +53,7 @@ pub struct ColorTheme {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackgroundTheme {
-    /// Relative to ~/.parzi. Default: the Asuka picture shipped with Parzi.
+    /// Relative to ~/.parzi. Default: empty (solid stage, no image).
     #[serde(default = "d_bg_image")]
     pub image: String,
     #[serde(default = "d_dim")]
@@ -393,7 +393,7 @@ pub fn write_user_css(css: &str) -> Result<()> {
 
 /// Shipped packs, in display order. They re-seed when missing and can't be
 /// deleted from the UI; user packs sort after them.
-pub const BUILTIN_PACKS: &[&str] = &["eva-crosses", "midnight", "grey", "light"];
+pub const BUILTIN_PACKS: &[&str] = &["ember", "midnight", "grey", "light"];
 
 pub fn themes_dir() -> Result<std::path::PathBuf> {
     Ok(paths::parzi_dir()?.join("themes"))
@@ -642,17 +642,26 @@ pub fn import_background(name: &str, bytes: &[u8]) -> Result<String> {
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
         .collect();
-    let stem = if stem.is_empty() { "wallpaper".to_string() } else { stem };
+    let stem = if stem.is_empty() {
+        "wallpaper".to_string()
+    } else {
+        stem
+    };
 
     let (w, h) = crate::wallpaper::bytes_size(bytes)?;
     let too_big = w.max(h) > crate::wallpaper::MAX_SOURCE_EDGE || bytes.len() as u64 > BG_MAX_BYTES;
     let (data, ext) = if too_big || !BG_EXTS.contains(&ext.as_str()) {
-        (crate::wallpaper::shrink_for_import(bytes)?, "jpg".to_string())
+        (
+            crate::wallpaper::shrink_for_import(bytes)?,
+            "jpg".to_string(),
+        )
     } else {
         (bytes.to_vec(), ext)
     };
     if data.len() as u64 > BG_MAX_BYTES {
-        return Err(ParziError::Config("that picture is still over 20 MB after shrinking".into()));
+        return Err(ParziError::Config(
+            "that picture is still over 20 MB after shrinking".into(),
+        ));
     }
 
     let dir = paths::backgrounds_dir()?;

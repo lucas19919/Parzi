@@ -96,7 +96,7 @@ fn seed_default_background(_root: &std::path::Path) -> Result<()> {
 fn seed_builtin_packs(root: &std::path::Path) -> Result<()> {
     let packs: &[(&str, &str)] = &[
         (
-            "eva-crosses",
+            "ember",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
 [colors]\nsidebar = \"#0D0708\"\nstage = \"#120B0C\"\naccent = \"#E5484D\"\ntext = \"#F5EDED\"\n\
 text_dim = \"#A89A9B\"\nbar = \"#1D1214\"\nborder = \"#33201F\"\n\n\
@@ -144,8 +144,11 @@ text_dim = \"#5B6472\"\nbar = \"#E9EBEF\"\nborder = \"#D5D9E0\"\n\n\
 /// Packs that used to ship but no longer do. Removed only while still
 /// untouched (their signature accent line intact, no art, no user.css) so an
 /// edited or renamed copy is never taken from the user.
+/// This list also retires packs whose names referenced third-party anime art;
+/// it deletes them from existing installs, it never ships anything.
 fn retire_legacy_packs(root: &std::path::Path) {
     const LEGACY: &[(&str, &str)] = &[
+        ("eva-crosses", "accent = \"#E5484D\""),
         ("moody-midnight", "accent = \"#7C8CFF\""),
         ("tokyo-night", "accent = \"#7AA2F7\""),
         ("catppuccin-mocha", "accent = \"#CBA6F7\""),
