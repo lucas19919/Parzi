@@ -84,6 +84,31 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
+      # tauri-action's own uploader dropped a finished build twice on the
+      # v0.1.16 tag — once on a GitHub 500, once on "Error creating asset temp
+      # dir" — each time throwing away a twelve-minute macOS build over a
+      # transient API hiccup. `gh release upload --clobber` is idempotent, so
+      # this re-attaches whatever is missing and is a no-op when the upload
+      # worked. Never fatal: on the happy path there is nothing left to do,
+      # and a failure here must not turn a good release red.
+      - name: Re-attach bundles the uploader may have dropped
+        if: always() && startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          shopt -s nullglob
+          # Windows bundles land under target/release, the macOS universal
+          # build under target/universal-apple-darwin/release.
+          files=(src-tauri/target/release/bundle/{nsis,msi}/* \
+                 src-tauri/target/universal-apple-darwin/release/bundle/{dmg,macos}/*)
+          for f in "${files[@]}"; do
+            # Parzi.app is a directory; the updater ships its .tar.gz instead.
+            [ -f "$f" ] || continue
+            gh release upload "${{ github.ref_name }}" "$f" --clobber
+          done
+
       # Ship the headless CLI too: `parzi mcp` is the open backend other
       # agents plug into. Attaches per-platform binaries to the same draft.
       - name: Build parzi CLI
