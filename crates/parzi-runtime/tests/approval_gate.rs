@@ -127,6 +127,7 @@ async fn ask_mode_waits_for_slow_approver() {
         vec![],
         "test".into(),
         parzi_runtime::tools::ApprovalMode::Ask,
+        false,
         4,
         4096,
         vec![],
@@ -172,6 +173,7 @@ async fn ask_mode_waits_for_slow_approver() {
         vec![],
         "test".into(),
         parzi_runtime::tools::ApprovalMode::Ask,
+        false,
         4,
         4096,
         vec![],
@@ -264,6 +266,7 @@ async fn sequential_completed_runs_release_slots() {
             "",
             "low",
             vec![],
+            None,
         )
         .await
         .unwrap();
@@ -284,6 +287,7 @@ async fn sequential_completed_runs_release_slots() {
             "",
             "low",
             vec![],
+            None,
         )
         .await
         .unwrap();
@@ -303,6 +307,7 @@ async fn sequential_completed_runs_release_slots() {
             "",
             "low",
             vec![],
+            None,
             None,
         )
         .await;
@@ -393,6 +398,7 @@ async fn session_tools_obey_the_lane_allowlist() {
         "test".into(),
         // Auto mode: only the allowlist can stop this call.
         parzi_runtime::tools::ApprovalMode::Auto,
+        false,
         4,
         4096,
         vec![],

@@ -201,6 +201,7 @@ async fn send_message(
     effort: Option<String>,
     attachments: Option<Vec<String>>,
     parent_id: Option<String>,
+    mode: Option<String>,
 ) -> Result<String, String> {
     let effort = parzi_runtime::orchestrator::normalize_effort(effort.as_deref().unwrap_or("med"));
     // Cwd: explicit > lane root > empty. @-files resolve against it.
@@ -228,6 +229,7 @@ async fn send_message(
                     &effort,
                     attached,
                     Some(model.clone()),
+                    mode.clone(),
                 )
                 .await
                 .map_err(|e| e.to_string())?;
@@ -278,6 +280,7 @@ async fn send_message(
                         &effort,
                         attached,
                         Some(model.clone()),
+                        mode.clone(),
                     )
                     .await
                     .map_err(|e| e.to_string())?;
@@ -301,6 +304,7 @@ async fn send_message(
                         &cwd,
                         &effort,
                         attached,
+                        mode.clone(),
                     )
                     .await
                     .map_err(|e| e.to_string())?;

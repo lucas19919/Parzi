@@ -8,6 +8,7 @@ pub mod doctor;
 pub mod git_checkpoints;
 pub mod git_worktree;
 pub mod handler;
+pub mod hooks;
 pub mod inter;
 pub mod lease_tools;
 pub mod mcp;

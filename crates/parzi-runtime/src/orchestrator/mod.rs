@@ -264,7 +264,16 @@ impl Orchestrator {
     ) -> Result<(SessionMeta, mpsc::UnboundedReceiver<RunEvent>)> {
         let meta = self.role_session(workspace, slug, role, lane, task, cwd)?;
         let rx = self
-            .send_to(&meta.id, prompt, approver, cwd, "medium", vec![], None)
+            .send_to(
+                &meta.id,
+                prompt,
+                approver,
+                cwd,
+                "medium",
+                vec![],
+                None,
+                None,
+            )
             .await?;
         Ok((self.store.get(&meta.id)?, rx))
     }
@@ -289,7 +298,7 @@ impl Orchestrator {
             let lane = if role == Role::Coder { &meta.lane } else { "" };
             self.bind_role(session_id, workspace, slug, role, lane, None);
         }
-        self.send_to(session_id, text, approver, "", "medium", vec![], None)
+        self.send_to(session_id, text, approver, "", "medium", vec![], None, None)
             .await
     }
 

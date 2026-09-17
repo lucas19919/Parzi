@@ -116,6 +116,7 @@ async fn token_budget_pauses_the_run_and_marks_it() {
         vec![],
         "test".into(),
         parzi_runtime::tools::ApprovalMode::Auto,
+        false,
         // 32 steps would be plenty to spend past the cap without it.
         32,
         4096,
@@ -200,6 +201,7 @@ async fn project_budget_is_read_from_project_md() {
             "",
             "low",
             vec![],
+            None,
         )
         .await
         .unwrap();

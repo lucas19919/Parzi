@@ -102,13 +102,33 @@ async fn busy_spawn_queues_then_pump_starts_it() {
     tokio::spawn(async move { pump.pump_loop().await });
     // Abandon the loop at test end via abort (test process exits anyway).
     let (first, _rx) = orch
-        .spawn("t", "", "hang/model", "first", None, "", "med", vec![])
+        .spawn(
+            "t",
+            "",
+            "hang/model",
+            "first",
+            None,
+            "",
+            "med",
+            vec![],
+            None,
+        )
         .await
         .unwrap();
     guard.add(&first.id);
     assert!(wait_status(&store, &first.id, SessionStatus::Active).await);
     let (second, _rx2) = orch
-        .spawn("t", "", "hang/model", "second", None, "", "med", vec![])
+        .spawn(
+            "t",
+            "",
+            "hang/model",
+            "second",
+            None,
+            "",
+            "med",
+            vec![],
+            None,
+        )
         .await
         .unwrap();
     guard.add(&second.id);
@@ -131,12 +151,32 @@ async fn queue_reject_mode_errors_loudly() {
     let orch = Orchestrator::new(cfg, store).with_factory(Arc::new(hang_factory));
     let mut guard = CleanupGuard { ids: vec![] };
     let (first, _rx) = orch
-        .spawn("t", "", "hang/model", "first", None, "", "med", vec![])
+        .spawn(
+            "t",
+            "",
+            "hang/model",
+            "first",
+            None,
+            "",
+            "med",
+            vec![],
+            None,
+        )
         .await
         .unwrap();
     guard.add(&first.id);
     let err = orch
-        .spawn("t", "", "hang/model", "second", None, "", "med", vec![])
+        .spawn(
+            "t",
+            "",
+            "hang/model",
+            "second",
+            None,
+            "",
+            "med",
+            vec![],
+            None,
+        )
         .await
         .unwrap_err();
     assert!(err.to_string().contains("busy"), "{err}");
@@ -151,7 +191,17 @@ async fn queued_run_survives_a_restart() {
     let (orch, store) = test_orch(1);
     let mut guard = CleanupGuard { ids: vec![] };
     let (first, _rx) = orch
-        .spawn("t", "", "hang/model", "first", None, "", "med", vec![])
+        .spawn(
+            "t",
+            "",
+            "hang/model",
+            "first",
+            None,
+            "",
+            "med",
+            vec![],
+            None,
+        )
         .await
         .unwrap();
     guard.add(&first.id);
@@ -166,6 +216,7 @@ async fn queued_run_survives_a_restart() {
             "",
             "med",
             vec![],
+            None,
         )
         .await
         .unwrap();
@@ -230,7 +281,17 @@ async fn launch_failure_parks_the_session_and_reports_on_the_bus() {
         .with_factory(Arc::new(broken_factory));
     let mut bus = orch.subscribe();
     let err = orch
-        .spawn("t", "", "broken/model", "work", None, "", "med", vec![])
+        .spawn(
+            "t",
+            "",
+            "broken/model",
+            "work",
+            None,
+            "",
+            "med",
+            vec![],
+            None,
+        )
         .await
         .unwrap_err();
     assert!(
@@ -310,7 +371,17 @@ async fn kill_mid_stream_stops_within_one_event_and_stays_killed() {
         }
     });
     let (meta, _rx) = orch
-        .spawn("t", "", "drip/model", "stream on", None, "", "med", vec![])
+        .spawn(
+            "t",
+            "",
+            "drip/model",
+            "stream on",
+            None,
+            "",
+            "med",
+            vec![],
+            None,
+        )
         .await
         .unwrap();
     guard.add(&meta.id);

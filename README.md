@@ -119,4 +119,34 @@ them, but only where the composer is still on app defaults (`auto` /
 `medium`) — an explicit pick is never clobbered. Permission modes stay
 global for now.
 
+## Workspace policy: enforced permissions
+
+`workspace.toml` can floor what runs are allowed to do:
+
+```toml
+[policy]
+mode = "ask"   # ask | auto | deny; unset = the lane policy decides
+```
+
+`deny` is absolute lockdown (nothing lifts it, not even Full access);
+`ask` floors `auto`. The composer's permission pill
+(Supervised/Edits → ask, Auto/Full → auto, Edits pre-approves file writes)
+tightens, never lifts. Applies to chats, MCP sends, and deck role runs alike.
+
+## Workspace hooks: user scripts watching tools
+
+`~/.parzi/hooks.toml` (global) and `workspaces/<name>/hooks.toml`:
+
+```toml
+[[pre_tool]]
+match = "shell.exec"          # exact, family prefix "fs.*", or "*"
+command = "python .parzi/guard.py"
+timeout_secs = 5              # default 5, max 120
+```
+
+`pre_tool` hooks run before the approval gate with the event JSON on stdin:
+exit 0 allows, exit 2 denies (stderr is the reason), anything else allows
+with a warning. `post_tool` hooks are notify-only. Children get a scrubbed
+environment (no provider keys) plus `PARZI_SESSION/PROJECT/TOOL/EVENT`.
+
 License: MIT.

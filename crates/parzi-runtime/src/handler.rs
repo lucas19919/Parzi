@@ -142,6 +142,9 @@ pub struct AgentRun {
     system_parts: Vec<String>,
     lane: String,
     mode: ApprovalMode,
+    /// The composer's "edits" pill: in Ask mode, `fs.write` runs without a
+    /// prompt while everything else still asks. Never lifts Deny.
+    edits_auto: bool,
     max_steps: u32,
     max_tokens: u32,
     attachments: Vec<parzi_core::context::AttachedFile>,
@@ -185,6 +188,7 @@ impl AgentRun {
         system_parts: Vec<String>,
         lane: String,
         mode: ApprovalMode,
+        edits_auto: bool,
         max_steps: u32,
         max_tokens: u32,
         attachments: Vec<parzi_core::context::AttachedFile>,
@@ -202,6 +206,7 @@ impl AgentRun {
             system_parts,
             lane,
             mode,
+            edits_auto,
             max_steps,
             max_tokens,
             attachments,
@@ -825,7 +830,37 @@ impl AgentRun {
     }
 
     /// Returns (ok, output, milliseconds). UI tools append Widget events; MCP/local execute.
+    /// Workspace hooks wrap every call: pre-hooks can deny before the
+    /// approval gate, post-hooks observe after. UI render tools skip hooks —
+    /// drawing is not execution.
     async fn execute_tool(
+        &self,
+        id: &str,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> (bool, String, u64) {
+        if is_ui_tool(name) {
+            return self.execute_ui_tool(name, args);
+        }
+        let (denied, warnings) =
+            crate::hooks::pre_tool(&self.store, &self.session_id, name, args).await;
+        for w in warnings {
+            self.emit(RunEvent::Notice { text: w });
+        }
+        if let Some(reason) = denied {
+            return (false, format!("blocked by a workspace hook: {reason}"), 0);
+        }
+        let (ok, output, ms) = self.execute_inner(id, name, args).await;
+        for n in
+            crate::hooks::post_tool(&self.store, &self.session_id, name, args, ok, &output).await
+        {
+            self.emit(RunEvent::Notice { text: n });
+        }
+        (ok, output, ms)
+    }
+
+    /// Returns (ok, output, milliseconds). UI tools append Widget events; MCP/local execute.
+    async fn execute_inner(
         &self,
         id: &str,
         name: &str,
@@ -909,6 +944,9 @@ impl AgentRun {
         match self.mode {
             ApprovalMode::Auto => true,
             ApprovalMode::Deny => false,
+            // The composer's "edits" pill: file writes run free, everything
+            // else still asks. Deny (above) is never lifted by this.
+            ApprovalMode::Ask if self.edits_auto && name == "fs.write" => true,
             ApprovalMode::Ask => self.ask_approver(id, name, args).await,
         }
     }

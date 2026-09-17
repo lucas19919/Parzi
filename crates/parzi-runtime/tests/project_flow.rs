@@ -202,6 +202,7 @@ fn seed() -> Arc<Orchestrator> {
             local_path: Some(repo),
         }],
         members: vec![],
+        policy: Default::default(),
         defaults: Default::default(),
     })
     .unwrap();

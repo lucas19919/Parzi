@@ -38,6 +38,7 @@ fn budget_for(cfg: &ParziConfig, project: Option<&(String, String)>) -> Budget {
 impl Orchestrator {
     /// Spawn a run. Returns the session id + live event channel.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub async fn spawn(
         &self,
         project: &str,
@@ -48,6 +49,7 @@ impl Orchestrator {
         cwd: &str,
         effort: &str,
         attachments: Vec<parzi_core::context::AttachedFile>,
+        mode_override: Option<String>,
     ) -> Result<(SessionMeta, mpsc::UnboundedReceiver<RunEvent>)> {
         self.spawn_in_project(
             None,
@@ -59,6 +61,7 @@ impl Orchestrator {
             cwd,
             effort,
             attachments,
+            mode_override,
         )
         .await
     }
@@ -77,6 +80,7 @@ impl Orchestrator {
         cwd: &str,
         effort: &str,
         attachments: Vec<parzi_core::context::AttachedFile>,
+        mode_override: Option<String>,
     ) -> Result<(SessionMeta, mpsc::UnboundedReceiver<RunEvent>)> {
         // B4: prune finished tasks before measuring capacity.
         let live = {
@@ -113,6 +117,7 @@ impl Orchestrator {
             approver,
             workspace_project,
             prompt_recorded: false,
+            mode_override,
         };
         let snap = self.config();
         if live >= snap.orchestrator.max_concurrent.max(1) {
@@ -143,6 +148,7 @@ impl Orchestrator {
         effort: &str,
         attachments: Vec<parzi_core::context::AttachedFile>,
         model_override: Option<String>,
+        mode_override: Option<String>,
     ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
         // B4: a finished run must not block its own session. Prune first so a
         // second message to a completed thread succeeds.
@@ -180,6 +186,7 @@ impl Orchestrator {
             approver,
             workspace_project: run_project(id),
             prompt_recorded: false,
+            mode_override,
         };
         let live = {
             let mut h = self.handles.lock().await;
@@ -385,6 +392,15 @@ impl Orchestrator {
                 }
             }
         }
+        // Hub-workspace floor: workspace.toml [policy] mode. Deck slugs are
+        // not workspaces, so role runs are floored by their workspace at the
+        // launch site instead (a slug cannot smuggle itself out from under
+        // its workspace's lockdown by being the project key).
+        if parzi_core::workspace::load(project).is_ok() {
+            if let Some(floor) = Self::workspace_policy_mode(project) {
+                mode = Self::restrict_mode(mode, floor);
+            }
+        }
         // UI tools are always available: rendering is not execution.
         for u in ["ui.show_markdown", "ui.show_widget", "ui.show_diagram"] {
             if !allowed.contains(&u.to_string()) {
@@ -411,6 +427,30 @@ impl Orchestrator {
             }
         }
         (mode, allowed)
+    }
+
+    /// Most restrictive wins: Deny beats everything, Ask beats Auto. Used
+    /// for workspace floors and chat overrides alike — nothing ever lifts a
+    /// stricter setting, it can only tighten.
+    pub(super) fn restrict_mode(a: ApprovalMode, b: ApprovalMode) -> ApprovalMode {
+        use ApprovalMode::{Ask, Auto, Deny};
+        match (a, b) {
+            (Deny, _) | (_, Deny) => Deny,
+            (Ask, _) | (_, Ask) => Ask,
+            (Auto, Auto) => Auto,
+        }
+    }
+
+    /// The `[policy] mode` of a hub workspace, if it states one. Unknown
+    /// words parse to Ask (fail closed, like every other name gate).
+    pub(super) fn workspace_policy_mode(workspace: &str) -> Option<ApprovalMode> {
+        let ws = parzi_core::workspace::load(workspace).ok()?;
+        let m = ws.policy.mode.trim();
+        if m.is_empty() {
+            None
+        } else {
+            Some(ApprovalMode::parse(m))
+        }
     }
 
     /// Build + launch a run for an existing session. Inserts the handle and
@@ -457,7 +497,21 @@ impl Orchestrator {
         // not by the lane's SYSTEM.md. The lane still decides the approval
         // mode — a machine's Ask/Deny is never lifted by a project.
         let role = run_role(&q.session_id);
-        let (mode, mut allowed) = Self::lane_policy_for(&snap, &q.project, &q.lane);
+        let (mut mode, mut allowed) = Self::lane_policy_for(&snap, &q.project, &q.lane);
+        // Deck roles file under their slug, so the floor above missed them:
+        // a role run honours its workspace's policy, never less.
+        if let Some(binding) = &role {
+            if let Some(floor) = Self::workspace_policy_mode(&binding.ctx.workspace) {
+                mode = Self::restrict_mode(mode, floor);
+            }
+        }
+        // Chat intent (the composer's permission pill): tightens, never lifts.
+        // "edits" rides as Ask with file writes pre-approved.
+        let mut edits_auto = false;
+        if let Some(o) = q.mode_override.as_deref() {
+            mode = Self::restrict_mode(mode, ApprovalMode::parse(o));
+            edits_auto = o.trim() == "edits";
+        }
         if let Some(binding) = &role {
             allowed = binding.tools();
             for u in ["ui.show_markdown", "ui.show_widget", "ui.show_diagram"] {
@@ -492,6 +546,7 @@ impl Orchestrator {
             },
             q.lane.clone(),
             mode,
+            edits_auto,
             snap.lanes.max_steps,
             effort_tokens(&q.effort),
             q.attachments.clone(),
@@ -569,5 +624,17 @@ mod tests {
         ] {
             assert!(allowed.iter().any(|a| a == t), "lane missing {t}");
         }
+    }
+
+    #[test]
+    fn mode_floor_never_lifts_only_tightens() {
+        use super::Orchestrator;
+        use crate::tools::ApprovalMode::{Ask, Auto, Deny};
+        assert_eq!(Orchestrator::restrict_mode(Auto, Auto), Auto);
+        assert_eq!(Orchestrator::restrict_mode(Auto, Ask), Ask);
+        assert_eq!(Orchestrator::restrict_mode(Ask, Auto), Ask);
+        assert_eq!(Orchestrator::restrict_mode(Auto, Deny), Deny);
+        assert_eq!(Orchestrator::restrict_mode(Deny, Auto), Deny);
+        assert_eq!(Orchestrator::restrict_mode(Ask, Ask), Ask);
     }
 }

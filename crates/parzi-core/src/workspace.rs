@@ -77,12 +77,33 @@ pub struct Workspace {
     pub repos: Vec<RepoRef>,
     #[serde(default)]
     pub members: Vec<Member>,
+    /// Enforcement floor for runs in this workspace. Empty mode = no opinion
+    /// and the lane policy decides alone. `deny` is absolute (lockdown
+    /// actually locks down); `ask` floors `auto`. File-editable in
+    /// `workspace.toml` under `[policy]`; the file stays clean when unset.
+    #[serde(default, skip_serializing_if = "WorkspacePolicy::is_empty")]
+    pub policy: WorkspacePolicy,
     /// Composer defaults for new drafts in this workspace. All empty = the
     /// workspace has no opinion and the app defaults win. File-editable in
     /// `workspace.toml`; the app adopts them on workspace switch, but only
     /// where the composer is still on its own defaults.
     #[serde(default)]
     pub defaults: WorkspaceDefaults,
+}
+
+/// Enforcement floor for runs in a workspace.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspacePolicy {
+    /// `ask` | `auto` | `deny`. Empty = unset.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub mode: String,
+}
+
+impl WorkspacePolicy {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.mode.is_empty()
+    }
 }
 
 /// Composer defaults a workspace sets for new drafts.
@@ -104,6 +125,7 @@ impl Workspace {
             kind: Kind::Solo,
             repos: vec![],
             members: vec![],
+            policy: WorkspacePolicy::default(),
             defaults: WorkspaceDefaults::default(),
         }
     }
@@ -230,6 +252,7 @@ pub fn create_for(name: &str, kind: Kind, user: &str) -> Result<Workspace> {
             user: user.to_string(),
             role: Role::Owner,
         }],
+        policy: WorkspacePolicy::default(),
         defaults: WorkspaceDefaults::default(),
     })
 }
@@ -316,6 +339,7 @@ pub fn from_legacy_project(name: &str) -> Result<Workspace> {
         kind: Kind::Solo,
         repos,
         members: vec![],
+        policy: WorkspacePolicy::default(),
         defaults: WorkspaceDefaults::default(),
     })
 }

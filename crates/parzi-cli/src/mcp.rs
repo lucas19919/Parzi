@@ -151,6 +151,7 @@ fn tool_defs() -> Value {
                 "cwd": s("Working directory for tools (default the caller cwd)"),
                 "attach": strlist("Workspace-relative files to attach as context"),
                 "auto_approve": b("Approve tool calls without asking (default true; the transport is non-interactive, false is refused)", true),
+                "mode": s("Run mode floor for this send: \"auto\" (default) or \"deny\" for a read-only run. \"ask\" is refused: nothing can answer. Workspace policy still floors both."),
             }), &["target", "message"])),
         t("session_list", "List sessions, newest first.",
             obj(json!({}), &[])),
@@ -526,6 +527,18 @@ async fn tool_send(args: Value) -> Result<Value, String> {
     let attachments = parzi_core::context::read_attachments(&base, &arr_arg(&args, "attach"));
     let effort = s_arg(&args, "effort").unwrap_or_else(|| "medium".into());
     let model = s_arg(&args, "model").unwrap_or_else(|| "auto".into());
+    let mode_override = match s_arg(&args, "mode")
+        .unwrap_or_else(|| "auto".into())
+        .as_str()
+    {
+        "auto" => None,
+        "deny" => Some("deny".to_string()),
+        other => {
+            return Err(format!(
+                "mode must be \"auto\" or \"deny\" over MCP (\"ask\" needs a human); got `{other}`"
+            ))
+        }
+    };
     let (id, mut rx) = if target == "new" {
         let (meta, rx) = orch
             .spawn(
@@ -537,6 +550,7 @@ async fn tool_send(args: Value) -> Result<Value, String> {
                 &cwd,
                 &effort,
                 attachments,
+                mode_override.clone(),
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -553,6 +567,7 @@ async fn tool_send(args: Value) -> Result<Value, String> {
                 &effort,
                 attachments,
                 None,
+                mode_override,
             )
             .await
             .map_err(|e| e.to_string())?;

@@ -6,6 +6,7 @@ pub mod capsule;
 pub mod config;
 pub mod context;
 pub mod error;
+pub mod hooks;
 pub mod journal;
 pub mod lanes;
 pub mod lease;

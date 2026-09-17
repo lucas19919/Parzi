@@ -66,6 +66,15 @@
   let input = "";
   let model = "auto";
   let effort: "low" | "medium" | "high" | "extra" | "ultra" = "medium";
+  /** Composer permission pill, bound two-way to the Omnibar. Sent with every
+      run as chat intent: supervised/edits ask (edits pre-approves file
+      writes), auto/full run free — and a workspace lockdown always wins. */
+  let permission = "full";
+  /** Pill id → run mode override. Unknown ids ride as auto. */
+  function pillMode(): string {
+    if (permission === "supervised" || permission === "edits") return permission;
+    return "auto";
+  }
   let mode: "chat" | "plan" | "build" = "chat";
   let curLane = "";
   let attachments: string[] = [];
@@ -551,6 +560,7 @@
         cwd,
         effort,
         attachments: files,
+        mode: pillMode(),
       });
       activeThreadId = sid;
       liveRun = sid;
@@ -622,6 +632,7 @@
         prompt: `You are the Header (Architect) agent for project ${curProject}. Answer strategically, reference the living PLAN.md, and propose concrete plan updates when asked:\n\n${prompt}`,
         cwd: currentRoot,
         effort,
+        mode: pillMode(),
       });
       await loadThreads();
       await openThread(sid);
@@ -643,6 +654,7 @@
         prompt: `You are the Orchestrator for project ${curProject}. Living plan task: ${task}. Break it into lane steps, spawn implementation workers via lane.dispatch / session.spawn, and sync checkboxes back to PLAN.md via plan.update.`,
         cwd: currentRoot,
         effort,
+        mode: pillMode(),
       });
       await loadThreads();
       await openThread(sid);
@@ -1406,6 +1418,7 @@
             bind:model
             bind:effort
             bind:mode
+            bind:permission
             bind:attachments
             streaming={!!liveRun}
             currentProject={curProject}

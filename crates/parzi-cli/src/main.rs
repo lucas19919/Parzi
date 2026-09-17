@@ -342,6 +342,7 @@ async fn cmd_send(p: SendParams) -> Result<()> {
                 &cwd,
                 &effort,
                 attachments,
+                None,
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -356,6 +357,7 @@ async fn cmd_send(p: SendParams) -> Result<()> {
             &cwd,
             &effort,
             attachments,
+            None,
             None,
         )
         .await
@@ -770,6 +772,7 @@ async fn cmd_plan(project: &str, action: PlanAction) -> Result<()> {
                         &session_cwd,
                         "medium",
                         vec![],
+                        None,
                     )
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;

@@ -66,6 +66,9 @@ struct PersistedRun {
     workspace_project: Option<(String, String)>,
     #[serde(default)]
     prompt_recorded: bool,
+    /// Chat intent survives restarts like the prompt does.
+    #[serde(default)]
+    mode_override: Option<String>,
 }
 
 /// H-7: only a valid uuid ever becomes a path segment.
@@ -170,6 +173,9 @@ pub(super) struct QueuedRun {
     pub(super) effort: String,
     pub(super) attachments: Vec<parzi_core::context::AttachedFile>,
     pub(super) approver: Option<Arc<dyn Approver>>,
+    /// Chat intent for this run (`ask` | `auto`): the composer's permission
+    /// pill. Never lifts the workspace floor — see `restrict_mode`.
+    pub(super) mode_override: Option<String>,
     /// Hub project this run belongs to: `(workspace, slug)`. Set by the role
     /// dispatch path; the run then honours `budget:` from its PROJECT.md.
     /// (Named `workspace_project` because `project` is already the legacy
@@ -191,6 +197,7 @@ impl QueuedRun {
             effort: self.effort.clone(),
             workspace_project: self.workspace_project.clone(),
             prompt_recorded: self.prompt_recorded,
+            mode_override: self.mode_override.clone(),
         }
     }
 
@@ -207,6 +214,7 @@ impl QueuedRun {
             approver: None,
             workspace_project: p.workspace_project,
             prompt_recorded: p.prompt_recorded,
+            mode_override: p.mode_override,
         }
     }
 }
@@ -356,6 +364,9 @@ impl Orchestrator {
                 // budget (R-4).
                 workspace_project: run_project(parent_id),
                 prompt_recorded: false,
+                // No chat intent carried over: children run under policy.
+                // (B2: harness-spawned children must never silently run as Auto.)
+                mode_override: None,
             };
             if q.workspace_project.is_some() {
                 set_run_project(&meta.id, q.workspace_project.clone());

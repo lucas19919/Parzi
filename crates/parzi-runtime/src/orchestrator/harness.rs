@@ -140,6 +140,8 @@ impl HarnessBridge for Pump {
             approver: None,
             workspace_project: run_project(caller_id),
             prompt_recorded: false,
+            // Agent-spawned children run under policy, never a chat intent.
+            mode_override: None,
         };
         if q.workspace_project.is_some() {
             set_run_project(&meta.id, q.workspace_project.clone());
@@ -232,6 +234,7 @@ impl HarnessBridge for Pump {
             // The message is already in the transcript as untrusted data:
             // the run must not also write it as a user turn (H-5).
             prompt_recorded: true,
+            mode_override: None,
         };
         let launched = self.dispatch(q).await;
         if !wait {

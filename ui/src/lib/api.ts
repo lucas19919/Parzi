@@ -287,6 +287,9 @@ export const api = {
     effort?: string;
     attachments?: string[];
     parentId?: string;
+    /** Chat intent for this run: ask | edits | auto. Tightens, never lifts
+        the workspace floor. Omitted = auto. */
+    mode?: string;
   }) =>
     invoke<string>("send_message", {
       sessionId: args.sessionId ?? null,
@@ -298,6 +301,7 @@ export const api = {
       effort: args.effort ?? null,
       attachments: args.attachments ?? [],
       parentId: args.parentId ?? null,
+      mode: args.mode ?? null,
     }),
   createSubsession: (args: {
     parentId: string;
