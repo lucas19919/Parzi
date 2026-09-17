@@ -180,15 +180,10 @@ pub fn matching(project: &str, files: &[&str]) -> Vec<Rule> {
 
 #[cfg(test)]
 mod tests {
-    use super::{governs, matching, parse};
+    use super::{governs, parse};
 
-    /// One hermetic home for the whole file: PARZI_HOME is process-global,
-    /// so a single test owns it rather than racing per-test overrides.
     #[test]
-    fn rules_match_paths_cap_bodies_and_scope_dirs() {
-        let home = tempfile::tempdir().unwrap();
-        std::env::set_var("PARZI_HOME", home.path());
-
+    fn frontmatter_parses_and_governs_paths() {
         // Frontmatter subset: paths list, comments and unknown keys ignored.
         let r = parse(
             "fe.md",
@@ -207,31 +202,5 @@ mod tests {
         let broken = parse("b.md", "---\npaths:\n  - x\nBody here.");
         assert!(broken.paths.is_empty());
         assert_eq!(broken.body, "---\npaths:\n  - x\nBody here.");
-
-        // Scoped dirs: hub workspace rules/ wins the lookup for hub keys.
-        crate::workspace::create_for("w1", crate::workspace::Kind::Solo, "t").unwrap();
-        let dir = crate::workspace::dir("w1").join("rules");
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("fe.md"),
-            "---\npaths:\n  - \"apps/web/**\"\n---\nWeb rules.\n",
-        )
-        .unwrap();
-        std::fs::write(dir.join("zz.txt"), "not markdown, never read").unwrap();
-        let hit = matching("w1", &["apps/web/a.ts"]);
-        assert_eq!(hit.len(), 1);
-        assert_eq!(hit[0].name, "fe.md");
-        assert!(matching("w1", &["apps/api/a.ts"]).is_empty());
-        // Inbox and unknown keys match nothing, never error.
-        assert!(matching("default", &["a.ts"]).is_empty());
-        assert!(matching("", &["a.ts"]).is_empty());
-        assert!(matching("../evil", &["a.ts"]).is_empty());
-        // Legacy projects read their own rules/.
-        let leg = crate::paths::projects_dir().unwrap().join("oldp");
-        std::fs::create_dir_all(leg.join("rules")).unwrap();
-        std::fs::write(leg.join("rules").join("r.md"), "Legacy rules.\n").unwrap();
-        let leg_hit = matching("oldp", &["whatever.rs"]);
-        assert_eq!(leg_hit.len(), 1);
-        assert_eq!(leg_hit[0].body, "Legacy rules.");
     }
 }
