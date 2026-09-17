@@ -151,6 +151,36 @@
       A sent thread keeps its workspace, so switching with one open parks it
       and opens a fresh draft instead of moving it. Blocked mid-run: the live
       tail belongs to the old thread. */
+  const EFFORT_IDS = ["low", "medium", "high", "extra", "ultra"] as const;
+
+  /** Adopt a hub workspace's composer defaults, but only where the composer
+      is still on app defaults — never clobber an explicit pick. */
+  async function adoptWorkspaceDefaults(name: string) {
+    if (!wsNames.includes(name)) return;
+    let ws;
+    try {
+      ws = await hub.workspace(name);
+    } catch {
+      return;
+    }
+    const took: string[] = [];
+    const wantModel = (ws.defaults?.model ?? "").trim();
+    if (wantModel && model === "auto" && (wantModel === "auto" || wantModel.includes("/"))) {
+      model = wantModel;
+      took.push(wantModel);
+    }
+    const wantEffort = (ws.defaults?.effort ?? "").trim();
+    if (
+      wantEffort &&
+      (EFFORT_IDS as readonly string[]).includes(wantEffort) &&
+      effort === "medium"
+    ) {
+      effort = wantEffort as typeof effort;
+      took.push(wantEffort);
+    }
+    if (took.length) toast(`${displayName(name)} defaults: ${took.join(" · ")}`);
+  }
+
   async function selectWorkspace(name: string) {
     const target = name || "default";
     if (liveRun) {
@@ -174,10 +204,12 @@
         projectPlan = await api.getProjectPlan(target);
       } catch {}
       toast(`New draft in ${displayName(target)}`);
+      await adoptWorkspaceDefaults(target);
       return;
     }
     curProject = target;
     await refreshBranch();
+    await adoptWorkspaceDefaults(target);
   }
 
   /** Move a legacy `~/.parzi/projects` entry into workspaces. The chat key
@@ -320,6 +352,7 @@
       try {
         projectPlan = await api.getProjectPlan(target);
       } catch {}
+      await adoptWorkspaceDefaults(target);
     }
     newThread();
   }

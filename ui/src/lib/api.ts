@@ -463,6 +463,8 @@ export interface Workspace {
   kind: WorkspaceKind;
   repos: RepoRef[];
   members: Member[];
+  /** Composer defaults for new drafts; empty strings = no opinion. */
+  defaults: { model: string; effort: string };
 }
 
 /** What the app knows about the GitHub credential — never the token itself. */

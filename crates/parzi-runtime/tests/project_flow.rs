@@ -202,6 +202,7 @@ fn seed() -> Arc<Orchestrator> {
             local_path: Some(repo),
         }],
         members: vec![],
+        defaults: Default::default(),
     })
     .unwrap();
     project::save(&Project {

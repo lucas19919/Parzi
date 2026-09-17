@@ -85,4 +85,20 @@ Keep them short (under ~200 lines); longer files cap with a note. Deck
 projects carry their goal in `PROJECT.md` instead. Coders stay task-scoped
 on purpose — instructions stop at header/orchestrator level.
 
+## Workspace composer defaults
+
+A workspace can set the composer's starting pick for new drafts in
+`workspace.toml`:
+
+```toml
+[defaults]
+model = "claude/opus"   # provider/family, or "auto"
+effort = "high"          # low | medium | high | extra | ultra
+```
+
+Empty (or absent) means no opinion. Switching into the workspace adopts
+them, but only where the composer is still on app defaults (`auto` /
+`medium`) — an explicit pick is never clobbered. Permission modes stay
+global for now.
+
 License: MIT.

@@ -548,6 +548,7 @@ fn workspaces_are_created_loaded_listed_and_re_mapped() {
                 role: Role::Maintainer,
             },
         ],
+        defaults: Default::default(),
     };
     let made = workspace::create(ws.clone()).expect("create");
     assert_eq!(made, ws);

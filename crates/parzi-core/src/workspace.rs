@@ -77,6 +77,23 @@ pub struct Workspace {
     pub repos: Vec<RepoRef>,
     #[serde(default)]
     pub members: Vec<Member>,
+    /// Composer defaults for new drafts in this workspace. All empty = the
+    /// workspace has no opinion and the app defaults win. File-editable in
+    /// `workspace.toml`; the app adopts them on workspace switch, but only
+    /// where the composer is still on its own defaults.
+    #[serde(default)]
+    pub defaults: WorkspaceDefaults,
+}
+
+/// Composer defaults a workspace sets for new drafts.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceDefaults {
+    /// `provider/family` or `auto`. Empty = no opinion.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model: String,
+    /// `low` | `medium` | `high` | `extra` | `ultra`. Empty = no opinion.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub effort: String,
 }
 
 impl Workspace {
@@ -87,6 +104,7 @@ impl Workspace {
             kind: Kind::Solo,
             repos: vec![],
             members: vec![],
+            defaults: WorkspaceDefaults::default(),
         }
     }
 
@@ -212,6 +230,7 @@ pub fn create_for(name: &str, kind: Kind, user: &str) -> Result<Workspace> {
             user: user.to_string(),
             role: Role::Owner,
         }],
+        defaults: WorkspaceDefaults::default(),
     })
 }
 
@@ -297,6 +316,7 @@ pub fn from_legacy_project(name: &str) -> Result<Workspace> {
         kind: Kind::Solo,
         repos,
         members: vec![],
+        defaults: WorkspaceDefaults::default(),
     })
 }
 
@@ -339,7 +359,8 @@ pub fn legacy_lane_names(name: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        add_repos, create_for, dir, import_legacy, load, map_repo, remove, Kind, RepoRef, Role,
+        add_repos, create_for, dir, import_legacy, load, map_repo, remove, save, Kind, RepoRef,
+        Role,
     };
     use std::path::{Path, PathBuf};
 
@@ -409,6 +430,22 @@ mod tests {
         assert!(remove("default").is_err());
         assert!(remove("../evil").is_err());
         assert!(remove("").is_err());
+    }
+
+    #[test]
+    fn workspace_defaults_round_trip_through_toml() {
+        let name = scratch("defaults");
+        cleanup(&name);
+        create_for(&name, Kind::Solo, "ada").expect("create");
+        let mut ws = load(&name).expect("load");
+        assert!(ws.defaults.model.is_empty() && ws.defaults.effort.is_empty());
+        ws.defaults.model = "claude/opus".into();
+        ws.defaults.effort = "high".into();
+        save(&ws).expect("save");
+        let back = load(&name).expect("reload");
+        assert_eq!(back.defaults.model, "claude/opus");
+        assert_eq!(back.defaults.effort, "high");
+        cleanup(&name);
     }
 
     #[test]
