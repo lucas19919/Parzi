@@ -9,6 +9,13 @@
 
   $: pct = max > min ? Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100)) : 0;
   $: shown = Number.isInteger(step) ? String(Math.round(value)) : String(value);
+
+  // Range inputs speak strings: coerce back to a number so bound theme
+  // fields stay numeric — a string reaching `saveTheme` fails serde and the
+  // persisted look silently diverges from the preview.
+  function onRange(e: Event) {
+    value = +(e.currentTarget as HTMLInputElement).value;
+  }
 </script>
 
 <div class="row">
@@ -17,7 +24,7 @@
     {#if hint}<span class="hint">{hint}</span>{/if}
   </div>
   <div class="ctl">
-    <input type="range" {min} {max} {step} bind:value style="--p:{pct}%" aria-label={label} on:input on:change />
+    <input type="range" {min} {max} {step} value={value} style="--p:{pct}%" aria-label={label} on:input={onRange} on:change />
     <span class="val">{shown}{unit}</span>
   </div>
 </div>

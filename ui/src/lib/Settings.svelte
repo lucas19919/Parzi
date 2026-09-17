@@ -94,7 +94,7 @@
     gap: 24px;
   }
 
-  /* Floating sync toast */
+  /* Floating sync toast: quiet confirmation, not a call to action. */
   .sync-toast {
     position: absolute;
     bottom: 18px;
@@ -103,9 +103,9 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 14px;
+    padding: 7px 13px;
     background: var(--menu);
-    border: 1px solid var(--accent-line);
+    border: 1px solid var(--line-2);
     border-radius: 9px;
     color: var(--text);
     font-size: 12.5px;

@@ -115,7 +115,9 @@
   }
 
   let issueTitle = "";
-  let issueBody = "";
+  let issueWhat = "";
+  let issueExpected = "";
+  let issueSteps = "";
   let includeDiag = true;
   let reportErr = "";
   let reporting = false;
@@ -127,30 +129,64 @@
     return lines.join("\n").slice(0, 2800);
   }
 
+  function platformName(): string {
+    const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+    return nav.userAgentData?.platform ?? navigator.platform ?? "desktop";
+  }
+
+  function diagCount(): number {
+    return (quick ?? []).length + (mcp ?? []).length;
+  }
+
+  /** Structured body: sections survive GitHub's rendering, diagnostics hide
+      in a collapsible block so the report stays readable. */
+  function issueMarkdown(): string {
+    const env = `Parzi ${appVersion || "?"} · ${platformName()}`;
+    const diag = includeDiag
+      ? `\n\n<details>\n<summary>Diagnostics (${env})</summary>\n\n\`\`\`\n${diagnosticsBlock()}\n\`\`\`\n\n</details>`
+      : `\n\n_${env}_`;
+    return `## What happened\n\n${issueWhat.trim()}\n\n## What I expected\n\n${issueExpected.trim() || "—"}\n\n## Steps to reproduce\n\n${issueSteps.trim() || "—"}${diag}`;
+  }
+
+  $: canReport = !!issueTitle.trim() && !!issueWhat.trim();
+
+  function clearIssue() {
+    issueTitle = "";
+    issueWhat = "";
+    issueExpected = "";
+    issueSteps = "";
+    reportErr = "";
+  }
+
   async function openIssue() {
     reportErr = "";
     const title = issueTitle.trim().slice(0, 200);
-    const desc = issueBody.trim().slice(0, 3000);
-    if (!title || !desc) {
-      reportErr = "Give it a title and a short description.";
+    if (!title || !issueWhat.trim()) {
+      reportErr = "Give it a title and say what happened.";
       return;
     }
-    const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
-    const platform = nav.userAgentData?.platform ?? navigator.platform ?? "desktop";
-    const body = includeDiag
-      ? `${desc}\n\n---\nParzi ${appVersion || "?"} · ${platform}\nDiagnostics:\n${diagnosticsBlock()}`
-      : desc;
     const url =
       "https://github.com/lucas19919/Parzi/issues/new" +
-      `?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+      `?title=${encodeURIComponent(title)}&body=${encodeURIComponent(issueMarkdown())}&labels=${encodeURIComponent("bug")}`;
     reporting = true;
     try {
       await api.openExternalUrl(url);
+      clearIssue();
       notify("Opened in your browser — hit Submit to file it");
     } catch (e) {
       reportErr = String(e);
     } finally {
       reporting = false;
+    }
+  }
+
+  async function copyIssue() {
+    reportErr = "";
+    try {
+      await navigator.clipboard.writeText(`# ${issueTitle.trim() || "Parzi issue"}\n\n${issueMarkdown()}`);
+      notify("Issue markdown copied — paste it anywhere");
+    } catch (e) {
+      reportErr = String(e);
     }
   }
 </script>
@@ -258,26 +294,36 @@
 
   <div class="pref-section" id="report-issue">
     <h3 class="section-title">Report an issue</h3>
-    <p class="section-desc">Opens a prefilled GitHub issue in your browser — diagnostics attached, you hit Submit.</p>
+    <p class="section-desc">Opens a structured GitHub issue in your browser — you hit Submit. Agents file directly instead, via the <span class="mono">report_issue</span> tool.</p>
     <div class="field-card col">
       <input class="txt" placeholder="Title — e.g. Picker freezes on large catalogs" bind:value={issueTitle} />
       <textarea
         class="txt"
-        rows="4"
-        placeholder="What happened, what you expected, steps to reproduce…"
-        bind:value={issueBody}
+        rows="3"
+        placeholder="What happened…"
+        bind:value={issueWhat}
+      />
+      <input class="txt" placeholder="What you expected (optional)" bind:value={issueExpected} />
+      <textarea
+        class="txt"
+        rows="2"
+        placeholder="Steps to reproduce (optional)…"
+        bind:value={issueSteps}
       />
       <div class="report-row">
-        <span class="field-hint">Attach diagnostics</span>
+        <span class="field-hint">{includeDiag ? `Attaches version, platform and ${diagCount()} checks in a collapsible block` : "No diagnostics attached"}</span>
         <Switch on={includeDiag} title="Include version and health checks" on:toggle={() => (includeDiag = !includeDiag)} />
       </div>
       {#if reportErr}
         <span class="form-err">{reportErr}</span>
       {/if}
-      <div>
-        <button class="sbtn primary" on:click={openIssue} disabled={reporting || !issueTitle.trim() || !issueBody.trim()}>
+      <div class="report-actions">
+        <button class="sbtn primary" on:click={openIssue} disabled={reporting || !canReport}>
           <Icon d={I.issue} size={12} />
           <span>{reporting ? "Opening…" : "Open GitHub issue"}</span>
+        </button>
+        <button class="sbtn" on:click={copyIssue} title="Copy the full report as markdown">
+          <span>Copy markdown</span>
         </button>
       </div>
     </div>
@@ -287,12 +333,15 @@
     <h3 class="section-title">Keyboard Shortcuts</h3>
     <div class="shortcuts-grid">
       {#each [
+        ["Ctrl + B", "Show / hide the sidebar"],
+        ["Ctrl + \\", "Show / hide the inspector dock"],
+        ["Ctrl + Shift + F", "Full view of the inspector dock"],
         ["Ctrl + N", "Start fresh conversation thread"],
         ["Ctrl + ,", "Open settings & preferences"],
         ["Ctrl + K", "Command palette & quick navigation"],
         ["Enter", "Send message to agent"],
         ["Shift + Enter", "Insert newline in prompt composer"],
-        ["Esc", "Stop active agent run / Close open dialog"],
+        ["Esc", "Stop run / close dialog / exit full view"],
         ["F11", "Toggle fullscreen mode"],
       ] as [shortcut, action]}
         <div class="shortcut-item">
@@ -337,5 +386,7 @@
   textarea.txt { resize: vertical; min-height: 72px; line-height: 1.5; }
   .txt::placeholder { color: var(--text-4); }
   .report-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .report-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .mono { font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 11px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
   .form-err { font-size: 12px; color: var(--bad); }
 </style>

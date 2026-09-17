@@ -17,8 +17,6 @@
   let theme: Theme | null = null;
   let packs: PackInfo[] = [];
   let backgrounds: BackgroundFile[] = [];
-  let userCss = "";
-  let savedUserCss = "";
   let loading = true;
   let err = "";
   let packName = "";
@@ -54,17 +52,14 @@
     loading = true;
     err = "";
     try {
-      const [t, p, b, css] = await Promise.all([
+      const [t, p, b] = await Promise.all([
         api.getTheme(),
         api.listPackInfos(),
         api.listBackgroundUrls(),
-        api.getUserCss(),
       ]);
       theme = t;
       packs = p;
       backgrounds = b;
-      userCss = css;
-      savedUserCss = css;
       syncPercents();
     } catch (e) {
       err = String(e);
@@ -88,7 +83,6 @@
     return ps.find((p) => sameColors(p.colors, t.colors))?.name ?? "";
   }
   $: activePack = findActive(theme, packs);
-  $: cssDirty = userCss !== savedUserCss;
 
   // ---- edit pipeline -------------------------------------------------------
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -107,6 +101,13 @@
       applyThemeCss(await api.getThemeCss());
     } catch (e) {
       notify(`Save failed: ${e}`);
+      // Never leave a preview the disk state doesn't match: fall back to
+      // the authoritative stylesheet and re-read the saved theme.
+      try {
+        applyThemeCss(await api.getThemeCss());
+        theme = await api.getTheme();
+        syncPercents();
+      } catch {}
     }
   }
   async function commitNow(msg = "") {
@@ -117,10 +118,15 @@
 
   // ---- themes ---------------------------------------------------------------
   async function applyPack(p: PackInfo) {
+    renamingPack = null;
+    delPack = null;
     try {
       await commitNow();
       applyThemeCss(await api.applyPack(p.name));
       theme = await api.getTheme();
+      // Packs can ship art: re-read the gallery or the new picture has no
+      // thumbnail and the wallpaper highlight cannot move to it.
+      backgrounds = await api.listBackgroundUrls();
       syncPercents();
       await refreshBackground();
       if (theme.background.auto_accent && theme.background.image) await sampleAccent(true);
@@ -129,12 +135,15 @@
       notify(`Could not apply theme: ${e}`);
     }
   }
-  async function savePack() {
-    const name = packName
+  function cleanPackName(raw: string): string {
+    return raw
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9_-]+/g, "-")
       .replace(/^-+|-+$/g, "");
+  }
+  async function savePack() {
+    const name = cleanPackName(packName);
     if (!name) return;
     try {
       await commitNow();
@@ -146,7 +155,14 @@
       notify(`Could not save theme: ${e}`);
     }
   }
+  let delPack: string | null = null;
   async function deletePack(p: PackInfo) {
+    // Two-step: packs are directories, deletion is forever.
+    if (delPack !== p.name) {
+      delPack = p.name;
+      return;
+    }
+    delPack = null;
     try {
       await api.deletePack(p.name);
       packs = await api.listPackInfos();
@@ -156,8 +172,28 @@
     }
   }
 
+  let renamingPack: string | null = null;
+  let renameDraft = "";
+  function focusRename(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
+  async function commitPackRename(p: PackInfo) {
+    const name = cleanPackName(renameDraft);
+    renamingPack = null;
+    if (!name || name === p.name) return;
+    try {
+      await api.renamePack(p.name, name);
+      packs = await api.listPackInfos();
+      notify(`Renamed to ${titleCase(name)}`);
+    } catch (e) {
+      notify(`Could not rename: ${e}`);
+    }
+  }
+
   // ---- wallpaper --------------------------------------------------------------
   async function setBg(name: string) {
+    delWall = null;
     try {
       // Flush pending edits first: set_background re-reads theme.toml.
       await commitNow();
@@ -173,6 +209,26 @@
   }
   function pickFile() {
     fileInputEl?.click();
+  }
+  /** Two-step wallpaper delete: first click arms, second click fires. The
+      live wallpaper falls back to solid instead of a missing file. */
+  let delWall: string | null = null;
+  async function deleteWall(b: BackgroundFile) {
+    if (delWall !== b.name) {
+      delWall = b.name;
+      return;
+    }
+    delWall = null;
+    try {
+      applyThemeCss(await api.deleteBackground(b.name));
+      theme = await api.getTheme();
+      backgrounds = await api.listBackgroundUrls();
+      syncPercents();
+      await refreshBackground();
+      notify(`Deleted ${b.name}`);
+    } catch (e) {
+      notify(`Could not delete image: ${e}`);
+    }
   }
   async function onFile(e: Event) {
     const input = e.currentTarget as HTMLInputElement;
@@ -214,8 +270,10 @@
     if (!theme) return;
     theme.background.auto_accent = !theme.background.auto_accent;
     await commitNow();
-    if (theme.background.auto_accent) await sampleAccent(true);
-    else notify("Accent no longer follows the wallpaper");
+    if (theme.background.auto_accent) {
+      await sampleAccent(true);
+      notify("Accent follows the wallpaper");
+    } else notify("Accent no longer follows the wallpaper");
   }
 
   // ---- fields ----------------------------------------------------------------
@@ -248,16 +306,9 @@
     touch();
   }
 
-  // ---- custom css --------------------------------------------------------------
-  async function saveUserCss() {
-    try {
-      applyThemeCss(await api.saveUserCss(userCss));
-      savedUserCss = userCss;
-      notify(userCss.trim() ? "Custom CSS applied" : "Custom CSS cleared");
-    } catch (e) {
-      notify(`Could not save CSS: ${e}`);
-    }
-  }
+  // ---- custom css: hackers only ------------------------------------------------
+  // `~/.parzi/user.css` still loads last and wins (backend keeps it,
+  // packs snapshot it) — there is just no editor for it here anymore.
 
   async function resetAppearance() {
     try {
@@ -311,10 +362,16 @@
                 <span class="pp-bar"><i /></span>
               </span>
             </span>
-            <span class="pack-name">{titleCase(p.name)}</span>
+            <span class="pack-name">{#if renamingPack === p.name && !p.builtin}<input class="pack-rename" bind:value={renameDraft} use:focusRename on:click|stopPropagation on:keydown={(e) => { if (e.key === "Enter") commitPackRename(p); else if (e.key === "Escape") renamingPack = null; }} />{:else}{titleCase(p.name)}{/if}{#if p.has_art} <span class="art-dot" title="Switches the wallpaper too">🖼</span>{/if}</span>
           </button>
           {#if !p.builtin}
-            <button class="pack-del" title="Delete this theme" aria-label="Delete {titleCase(p.name)}" on:click={() => deletePack(p)}>×</button>
+            <div class="pack-actions">
+              <button class="pack-act" title="Rename {titleCase(p.name)}" aria-label="Rename {titleCase(p.name)}"
+                on:click={() => { renamingPack = p.name; renameDraft = p.name; delPack = null; }}>✎</button>
+              <button class="pack-del" class:armed={delPack === p.name}
+                title={delPack === p.name ? "Click again to delete this theme" : "Delete this theme"}
+                aria-label="Delete {titleCase(p.name)}" on:click={() => deletePack(p)}>{delPack === p.name ? "sure?" : "×"}</button>
+            </div>
           {/if}
         </div>
       {/each}
@@ -347,15 +404,21 @@
         <span class="wall-name">None</span>
       </button>
       {#each backgrounds as b (b.name)}
-        <button
-          class="wall"
-          class:on={theme.background.image.endsWith("/" + b.name)}
-          on:click={() => setBg(b.name)}
-          title={b.name}
-        >
-          <img class="wall-pre" src={convertFileSrc(b.url)} alt="" loading="lazy" draggable="false" />
-          <span class="wall-name">{b.name}</span>
-        </button>
+        <div class="wall-wrap">
+          <button
+            class="wall"
+            class:on={theme.background.image.endsWith("/" + b.name)}
+            on:click={() => setBg(b.name)}
+            title={b.name}
+          >
+            <img class="wall-pre" src={convertFileSrc(b.url)} alt="" loading="lazy" draggable="false" />
+            <span class="wall-name">{b.name}</span>
+          </button>
+          <button class="wall-del" class:armed={delWall === b.name}
+            title={delWall === b.name ? "Click again to delete this image" : `Delete ${b.name}`}
+            aria-label={delWall === b.name ? `Confirm delete ${b.name}` : `Delete ${b.name}`}
+            on:click={() => deleteWall(b)}>{delWall === b.name ? "sure?" : "×"}</button>
+        </div>
       {/each}
     </div>
     <div class="field-card stack">
@@ -480,23 +543,8 @@
     </div>
   </section>
 
-  <!-- Custom CSS -->
-  <section class="pref-section">
-    <div class="section-head-with-action">
-      <div>
-        <h3 class="section-title">Custom CSS</h3>
-        <p class="section-desc">Loads last and wins. Override any <code>--parzi-*</code> input or role token.</p>
-      </div>
-      <button class="sbtn" disabled={!cssDirty} on:click={saveUserCss}>Apply</button>
-    </div>
-    <textarea
-      class="css"
-      bind:value={userCss}
-      spellcheck="false"
-      rows="6"
-      placeholder={":root {\n  --accent: #f5a97f;\n}"}
-    />
-  </section>
+  <!-- Hackers: `~/.parzi/user.css` still loads last and wins — there is
+       just no editor for it here anymore. -->
 
   <div class="actions-row-end">
     <button class="sbtn" on:click={resetAppearance}>Reset appearance</button>
@@ -530,6 +578,24 @@
   }
   .pp-bar i { position: absolute; right: 4px; top: 3px; width: 8px; height: 8px; border-radius: 3px; background: var(--pp-ac); }
   .pack-name { font-size: 12px; padding: 0 3px; }
+  .art-dot { font-size: 11px; opacity: 0.75; }
+  .pack-actions {
+    position: absolute; top: 6px; right: 6px; display: flex; gap: 2px; opacity: 0;
+  }
+  .pack:hover .pack-actions, .pack-actions:focus-within { opacity: 1; }
+  .pack-actions .pack-del { position: static; opacity: 1; }
+  .pack-act {
+    width: 20px; height: 20px; line-height: 1;
+    border-radius: var(--radius-1); border: none; background: var(--menu); color: var(--text-3);
+    font: inherit; font-size: 11px; cursor: pointer; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .pack-act:hover { color: var(--text); }
+  .pack-rename {
+    font: inherit; font-size: 12px; color: var(--text);
+    background: var(--input); border: 1px solid var(--accent-line); border-radius: 5px;
+    padding: 1px 5px; width: 100%; box-sizing: border-box; outline: none;
+  }
   .pack-del {
     position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; line-height: 1;
     border-radius: var(--radius-1); border: none; background: var(--menu); color: var(--text-3);
@@ -565,6 +631,16 @@
     font-size: 11px; color: var(--text-4);
   }
   .wall-name { font-size: 11.5px; padding: 0 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wall-wrap { position: relative; min-width: 0; }
+  .wall-wrap .wall { width: 100%; }
+  .wall-del {
+    position: absolute; top: 8px; right: 8px; min-width: 20px; height: 20px; line-height: 1;
+    border-radius: var(--radius-1); border: none; background: var(--menu); color: var(--text-3);
+    font: inherit; font-size: 12px; cursor: pointer; opacity: 0; padding: 0 3px;
+  }
+  .wall-wrap:hover .wall-del, .wall-del:focus-visible { opacity: 1; }
+  .wall-del:hover { color: var(--bad); }
+  .wall-del.armed { opacity: 1; color: var(--bad); font-size: 10px; font-weight: 600; padding: 0 7px; }
 
   .field-card.stack { flex-direction: column; align-items: stretch; gap: 12px; }
   /* Auto-fit (not a viewport breakpoint): columns stack based on the card's
@@ -587,14 +663,5 @@
   .fld > span { flex: none; }
   .fld .text { max-width: 190px; }
 
-  .css {
-    width: 100%; min-height: 120px; resize: vertical;
-    background: var(--input); border: 1px solid var(--line-2); border-radius: var(--radius-2);
-    color: var(--text); padding: 10px 12px; outline: none;
-    font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 12px; line-height: 1.5;
-  }
-  .css::placeholder { color: var(--text-4); }
-  .css:focus { border-color: var(--accent-line) !important; box-shadow: none; }
   .actions-row-end { display: flex; justify-content: flex-end; }
-  code { font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 11px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
 </style>

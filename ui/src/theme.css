@@ -49,7 +49,9 @@
   --text: var(--parzi-text);
   --text-2: color-mix(in srgb, var(--parzi-text) 70%, var(--parzi-text-dim));
   --text-3: var(--parzi-text-dim);
-  --text-4: color-mix(in srgb, var(--parzi-text-dim) 60%, transparent);
+  /* Faint but legible: 60% vanishes on white stages, 72% holds for counts,
+     hints, placeholders and chevrons on both ends of the luminance range. */
+  --text-4: color-mix(in srgb, var(--parzi-text-dim) 72%, transparent);
 
   /* ---------- surfaces ---------- */
   --stage: var(--parzi-stage);
@@ -77,14 +79,16 @@
   --accent-glow: color-mix(in srgb, var(--accent) 35%, transparent);
   --accent-text: color-mix(in srgb, var(--accent) 65%, var(--parzi-text));
 
-  /* ---------- status: colour means state, nothing else ---------- */
-  --ok: #4ade80;
+  /* ---------- status: colour means state, nothing else ----------
+     Mid-tone 500s, not dark-mode 400s: these double as text (pills, checks,
+     counts) and must read on white stages as well as black ones. */
+  --ok: #22c55e;
   --ok-soft: color-mix(in srgb, var(--ok) 12%, transparent);
   --ok-line: color-mix(in srgb, var(--ok) 32%, transparent);
-  --warn: #fbbf24;
+  --warn: #f59e0b;
   --warn-soft: color-mix(in srgb, var(--warn) 12%, transparent);
   --warn-line: color-mix(in srgb, var(--warn) 35%, transparent);
-  --bad: #f87171;
+  --bad: #ef4444;
   --bad-soft: color-mix(in srgb, var(--bad) 12%, transparent);
   --bad-line: color-mix(in srgb, var(--bad) 38%, transparent);
   --info: #5eb1ff;
