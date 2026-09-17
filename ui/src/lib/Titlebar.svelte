@@ -4,6 +4,7 @@
   import { api } from "./api";
   import Icon from "./Icon.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { WIN_ICON, startWindowDrag, windowClose, windowMaximize, windowMinimize } from "./windowChrome";
 
   export let title = "Parzi";
   export let subtitle = "";
@@ -18,11 +19,7 @@
     togglePanel: void;
   }>();
 
-  const I = {
-    min: "M5 12h14",
-    max: "M5 5h14v14H5z",
-    close: "M18 6L6 18M6 6l12 12",
-  };
+  const I = WIN_ICON;
 
   /** Fullscreen/maximized must drop the rounded root corners (black wedges). */
   async function syncChrome() {
@@ -40,40 +37,10 @@
     return () => window.removeEventListener("resize", syncChrome);
   });
 
-  function onMouseDown(e: MouseEvent) {
-    // Only trigger drag on primary mouse button and not on interactive buttons
-    if (e.button === 0 && !(e.target as HTMLElement).closest("button")) {
-      api.windowStartDragging().catch(() => {
-        try {
-          getCurrentWindow().startDragging();
-        } catch {}
-      });
-    }
-  }
-
-  async function handleMin() {
-    try {
-      await api.windowMinimize();
-    } catch {
-      await getCurrentWindow().minimize();
-    }
-  }
-
-  async function handleMax() {
-    try {
-      await api.windowMaximize();
-    } catch {
-      await getCurrentWindow().toggleMaximize();
-    }
-  }
-
-  async function handleClose() {
-    try {
-      await api.windowClose();
-    } catch {
-      await getCurrentWindow().close();
-    }
-  }
+  const onMouseDown = startWindowDrag;
+  const handleMin = windowMinimize;
+  const handleMax = windowMaximize;
+  const handleClose = windowClose;
 </script>
 
 <div class="parzi-titlebar" data-tauri-drag-region on:mousedown={onMouseDown}>

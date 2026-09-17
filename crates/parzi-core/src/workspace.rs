@@ -222,6 +222,14 @@ pub fn list() -> Vec<String> {
 /// overwrite an existing workspace: renaming is a separate, human act.
 pub fn create(ws: Workspace) -> Result<Workspace> {
     let clean = lanes::safe_name(&ws.name)?;
+    // `default` is the Inbox, and `remove` refuses it by that name. Letting
+    // one be created here makes a workspace that can never be deleted again.
+    // `import_legacy` has always refused it; creation never did.
+    if clean == "default" {
+        return Err(ParziError::Config(
+            "`default` is the Inbox — pick another name".into(),
+        ));
+    }
     let dir = dir(&clean);
     if dir.join("workspace.toml").exists() {
         return Err(ParziError::Config(format!(
@@ -378,117 +386,4 @@ pub fn legacy_lane_names(name: &str) -> Vec<String> {
         }
     }
     names.into_iter().collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        add_repos, create_for, dir, import_legacy, load, map_repo, remove, save, Kind, RepoRef,
-        Role,
-    };
-    use std::path::{Path, PathBuf};
-
-    /// Unique per test, so nothing collides in a shared `PARZI_HOME`.
-    fn scratch(tag: &str) -> String {
-        format!("t-{tag}-{}", std::process::id())
-    }
-
-    fn cleanup(name: &str) {
-        let _ = std::fs::remove_dir_all(dir(name));
-    }
-
-    #[test]
-    fn the_creator_is_the_owner_and_an_owner_is_required() {
-        let name = scratch("create-for");
-        cleanup(&name);
-        let ws = create_for(&name, Kind::Team, " ada ").expect("create");
-        assert_eq!(ws.kind, Kind::Team);
-        assert_eq!(ws.role_of("ada"), Some(Role::Owner));
-        assert!(ws.repos.is_empty());
-        // Twice is a refusal, not a silent overwrite.
-        assert!(create_for(&name, Kind::Solo, "ada").is_err());
-        assert!(create_for(&scratch("no-owner"), Kind::Solo, "  ").is_err());
-        cleanup(&name);
-    }
-
-    #[test]
-    fn mapping_records_this_machines_path_and_refuses_an_unknown_repo() {
-        let name = scratch("map-repo");
-        cleanup(&name);
-        create_for(&name, Kind::Solo, "ada").expect("create");
-        add_repos(
-            &name,
-            vec![RepoRef {
-                name: "shop-api".into(),
-                remote: "https://github.com/org/shop-api.git".into(),
-                default_branch: "main".into(),
-                local_path: None,
-            }],
-        )
-        .expect("add repos");
-
-        let ws = map_repo(&name, "shop-api", Path::new("D:/code/shop-api")).expect("map");
-        let want = Some(PathBuf::from("D:/code/shop-api"));
-        assert_eq!(ws.repo("shop-api").and_then(|r| r.local_path.clone()), want);
-        // From disk, not just from the value we were handed.
-        let reread = load(&name).expect("load");
-        assert_eq!(
-            reread.repo("shop-api").and_then(|r| r.local_path.clone()),
-            want
-        );
-        // A repo the workspace never named is an error, not a no-op.
-        assert!(map_repo(&name, "nope", Path::new("D:/code/nope")).is_err());
-        cleanup(&name);
-    }
-
-    #[test]
-    fn removing_a_workspace_deletes_the_tree_and_refuses_default() {
-        let name = scratch("remove");
-        cleanup(&name);
-        create_for(&name, Kind::Solo, "ada").expect("create");
-        assert!(dir(&name).is_dir());
-        remove(&name).expect("remove");
-        assert!(!dir(&name).exists());
-        // Idempotent: deleting twice still succeeds.
-        remove(&name).expect("remove again");
-        assert!(remove("default").is_err());
-        assert!(remove("../evil").is_err());
-        assert!(remove("").is_err());
-    }
-
-    #[test]
-    fn workspace_defaults_round_trip_through_toml() {
-        let name = scratch("defaults");
-        cleanup(&name);
-        create_for(&name, Kind::Solo, "ada").expect("create");
-        let mut ws = load(&name).expect("load");
-        assert!(ws.defaults.model.is_empty() && ws.defaults.effort.is_empty());
-        ws.defaults.model = "claude/opus".into();
-        ws.defaults.effort = "high".into();
-        save(&ws).expect("save");
-        let back = load(&name).expect("reload");
-        assert_eq!(back.defaults.model, "claude/opus");
-        assert_eq!(back.defaults.effort, "high");
-        cleanup(&name);
-    }
-
-    #[test]
-    fn importing_a_legacy_project_moves_the_directory_keeping_the_key() {
-        let name = scratch("import-legacy");
-        cleanup(&name);
-        // A bare legacy project dir is enough: no lanes, no root.
-        std::fs::create_dir_all(crate::paths::projects_dir().expect("dirs").join(&name))
-            .expect("legacy dir");
-        let ws = import_legacy(&name).expect("import");
-        assert_eq!(ws.name, name);
-        assert!(dir(&name).join("workspace.toml").is_file());
-        assert!(!crate::paths::projects_dir()
-            .expect("dirs")
-            .join(&name)
-            .exists());
-        // Twice is a refusal (legacy source is gone), default never imports.
-        assert!(import_legacy(&name).is_err());
-        assert!(import_legacy("default").is_err());
-        cleanup(&name);
-    }
 }

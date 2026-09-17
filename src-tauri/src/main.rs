@@ -1723,6 +1723,58 @@ fn contained_in(target: &std::path::Path, roots: &[std::path::PathBuf]) -> bool 
     roots.iter().any(|r| target.starts_with(r))
 }
 
+/// Files the person at the keyboard chose in a native dialog, this run only.
+///
+/// The confinement gate exists so that a path *the model produced* — an
+/// artifact link, a doc entry — can never make the shell read `~/.ssh` and
+/// paste it into a transcript. A file picked by hand is the opposite of that:
+/// it is the clearest consent there is. So the dialog is opened by the
+/// backend (`pick_text_file`) and the grant recorded where the frontend
+/// cannot reach it; nothing the model writes can add an entry here.
+/// Per-file, never a directory, and gone when the app quits.
+static PICKED_FILES: std::sync::Mutex<Option<std::collections::BTreeSet<std::path::PathBuf>>> =
+    std::sync::Mutex::new(None);
+
+fn grant_picked(path: &std::path::Path) {
+    let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if let Ok(mut g) = PICKED_FILES.lock() {
+        g.get_or_insert_with(Default::default).insert(canon);
+    }
+}
+
+fn was_picked(canon: &std::path::Path) -> bool {
+    PICKED_FILES
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.contains(canon)))
+        .unwrap_or(false)
+}
+
+/// Open a file anywhere and read it in the dock. The path is granted before
+/// it is handed back, so the confinement gate lets this one file through
+/// without widening anything else.
+#[tauri::command]
+async fn pick_text_file(app: AppHandle, start: Option<String>) -> Result<Option<String>, String> {
+    let mut builder = app
+        .dialog()
+        .file()
+        .set_title("Open a text file")
+        .add_filter("Markdown / text", &["md", "markdown", "txt", "mdx"]);
+    if let Some(dir) = start.filter(|s| !s.trim().is_empty()) {
+        builder = builder.set_directory(dir);
+    }
+    let (tx, rx) = oneshot::channel();
+    builder.pick_file(move |picked| {
+        let _ = tx.send(picked);
+    });
+    let Some(picked) = rx.await.map_err(|_| "the file dialog closed".to_string())? else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    grant_picked(&path);
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
 /// Resolve every configured file root the shell may touch: the Parzi home
 /// tree plus each registered project/lane root. Canonicalized; missing roots
 /// are skipped (a configured-but-absent folder grants nothing).
@@ -1745,6 +1797,22 @@ fn file_roots() -> Vec<std::path::PathBuf> {
                 let rb = std::path::PathBuf::from(&root);
                 roots.push(rb.canonicalize().unwrap_or(rb));
             }
+        }
+    }
+    // Hub workspaces map their own checkouts, and those are what the dock
+    // calls "the workspace". Without them the quick tabs listed a repo's
+    // PLAN.md and README.md and then refused every one of them on click —
+    // `list_project_docs` walks any root it is handed, this gate did not.
+    for name in parzi_core::workspace::list() {
+        let Ok(ws) = parzi_core::workspace::load(&name) else {
+            continue;
+        };
+        for repo in ws.repos {
+            let Some(path) = repo.local_path else { continue };
+            if path.as_os_str().is_empty() {
+                continue;
+            }
+            roots.push(path.canonicalize().unwrap_or(path));
         }
     }
     roots
@@ -1772,10 +1840,12 @@ fn confined_path(raw: &str) -> Result<std::path::PathBuf, String> {
         probe = q.parent();
     }
     let canon = canon.ok_or_else(|| "cannot resolve path".to_string())?;
-    if contained_in(&canon, &file_roots()) {
+    if contained_in(&canon, &file_roots()) || was_picked(&canon) {
         Ok(normal)
     } else {
-        Err("that location is outside the workspace".into())
+        // Name the way out. The old message told the user their file was
+        // refused and nothing about what to do instead.
+        Err("that location is outside the workspace — use Open file to pick it".into())
     }
 }
 
@@ -2166,6 +2236,7 @@ fn main() {
             delete_skill,
             open_external_url,
             read_text_file,
+            pick_text_file,
             write_text_file,
             read_image_data_url,
             stage_image,

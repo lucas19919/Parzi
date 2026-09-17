@@ -3,6 +3,14 @@
   import DocReader from "./DocReader.svelte";
   import ProjectPanel from "../deck/ProjectPanel.svelte";
   import { projectPanel } from "../deck/state";
+  import Icon from "../Icon.svelte";
+  import {
+    WIN_ICON,
+    startWindowDrag,
+    windowClose,
+    windowMaximize,
+    windowMinimize,
+  } from "../windowChrome";
   import type { DocEntry, InspectorArtifact, InspectorDoc, Project } from "../api";
 
   export let tab: "project" | "docs" = "project";
@@ -92,7 +100,9 @@
     on:pointerdown={onGripDown} on:pointermove={onGripMove} on:pointerup={onGripUp} on:pointercancel={onGripUp} on:keydown={onGripKey} />
   {/if}
 
-  <header class="head">
+  <!-- svelte-ignore a11y-no-static-element-interactions -->
+  <header class="head" class:chrome={full} data-tauri-drag-region={full ? "" : undefined}
+    on:mousedown={full ? startWindowDrag : undefined}>
     <div class="tabs" role="tablist">
       {#if hasProject}
         <button class="tab" class:on={shown === "project"} role="tab" aria-selected={shown === "project"} on:click={() => shown === "project" ? dispatch("close") : dispatch("tab", { tab: "project" })}>
@@ -117,12 +127,27 @@
       aria-pressed={full} on:click={() => dispatch("toggleFull")}>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" /></svg>
     </button>
-    <button class="hb" title="Close inspector (Ctrl+\)" on:click={() => dispatch("close")}>
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
-    </button>
+    {#if !full}
+      <button class="hb" title="Close inspector (Ctrl+\)" on:click={() => dispatch("close")}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+      </button>
+    {/if}
+    {#if full}
+      <!-- Full view hides the titlebar, so this header is the window chrome. -->
+      <span class="win-sep" />
+      <button class="hb win" title="Minimize" tabindex="-1" on:click={windowMinimize}>
+        <Icon d={WIN_ICON.min} size={12} />
+      </button>
+      <button class="hb win" title="Maximize / Restore" tabindex="-1" on:click={windowMaximize}>
+        <Icon d={WIN_ICON.max} size={12} />
+      </button>
+      <button class="hb win close" title="Close" tabindex="-1" on:click={windowClose}>
+        <Icon d={WIN_ICON.close} size={12} />
+      </button>
+    {/if}
   </header>
 
-  <div class="content">
+  <div class="content" class:wide={full}>
     {#if shown === "project"}
       <ProjectPanel {workspace} {projects} {selected}
         on:openProject on:newProject on:closeProject on:renameProject on:deleteProject
@@ -160,6 +185,15 @@
     display: flex; align-items: center; gap: 4px; height: 38px; flex: none; padding: 0 8px 0 10px;
     border-bottom: 1px solid var(--line-2);
   }
+  /* Full view: this header replaces the titlebar, so it drags the window. */
+  .head.chrome { -webkit-app-region: drag; user-select: none; }
+  .head.chrome button { -webkit-app-region: no-drag; }
+  .win-sep {
+    width: 1px; height: 16px; margin: 0 4px; flex: none;
+    background: var(--line-2);
+  }
+  .hb.win { color: var(--text-3); }
+  .hb.win.close:hover { background: var(--bad); color: #fff; }
   .tabs { display: inline-flex; gap: 2px; }
   .tab {
     display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
@@ -184,4 +218,15 @@
   .hb:hover { background: var(--surface-2); color: var(--text); }
   .hb.on { color: var(--accent); }
   .content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  /* Full view is for *reading*, and every child of this deck was laid out
+     for a ~420px column. Left alone at 1900px they become one-line
+     paragraphs and 9px-tall full-width rows floating in a void. Cap the
+     column and centre it; the header above keeps the full width so the
+     close and exit buttons stay where the pointer expects them. */
+  .content.wide {
+    width: 100%;
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 0 8px;
+  }
 </style>

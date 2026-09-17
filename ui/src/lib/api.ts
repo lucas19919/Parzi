@@ -419,6 +419,9 @@ export const api = {
   deleteSkill: (name: string) => invoke<void>("delete_skill", { name }),
   openExternalUrl: (url: string) => invoke<void>("open_external_url", { url }),
   readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
+  /** Native file dialog, run by the backend so the pick counts as consent to
+      read that one file. `null` when the dialog was cancelled. */
+  pickTextFile: (start?: string) => invoke<string | null>("pick_text_file", { start }),
   writeTextFile: (path: string, content: string) =>
     invoke<void>("write_text_file", { path, content }),
   /** Stage pasted/dropped image bytes; returns an attachable absolute path. */

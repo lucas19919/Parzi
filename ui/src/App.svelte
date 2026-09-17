@@ -21,7 +21,6 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce, changesThreadList } from "./lib/threadList";
   import { checkForUpdates, checkForUpdatesSoon } from "./lib/updateStore";
-  import { open as openDialog } from "@tauri-apps/plugin-dialog";
   import Icon from "./lib/Icon.svelte";
 
   const RM = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -142,7 +141,15 @@
   /** Antigravity-style sidebar filter: null = all chats. The side dock shows
       projects only for a selected hub workspace; anything else hides them. */
   let sideFilter: string | null = null;
-  $: legacyNames = projects.map((p) => p.name).filter((n) => n && n !== "default");
+  /* `~/.parzi/projects/<n>` is created for any project key that needs a place
+     to put a PLAN.md — including a hub workspace's. Without this filter the
+     same name renders twice: once as a hub row and once tagged `legacy`, and
+     the legacy row's ✕ deletes the chats while leaving the workspace, which
+     reads as "it won't delete". A name that is a hub workspace is a hub
+     workspace; its legacy crumb is not a separate thing to show. */
+  $: legacyNames = projects
+    .map((p) => p.name)
+    .filter((n) => n && n !== "default" && !wsNames.includes(n));
   $: panelWs = sideFilter
     ? (wsNames.includes(sideFilter) ? sideFilter : "")
     : curWorkspace;
@@ -239,6 +246,19 @@
   async function handleDeleteLegacyProject(name: string) {
     if (sideFilter === name) sideFilter = null;
     await handleDeleteProject(name);
+  }
+
+  /** Delete a hub workspace from the sidebar. The composer's popover has had
+      this all along, but the sidebar is where the workspaces are listed and
+      so where people go looking. Same backend call, same aftermath. */
+  async function handleDeleteWorkspace(name: string) {
+    if (sideFilter === name) sideFilter = null;
+    try {
+      await hub.deleteWorkspace(name);
+      await handleWorkspaceDeleted(name);
+    } catch (e) {
+      toast(String(e), true);
+    }
   }
 
   /** New chat adopts the sidebar filter: filtering to a workspace and
@@ -807,7 +827,10 @@
   let rightBarTab: RightTab = rbSaved.tab === "docs" ? "docs" : "project";
   let rightBarWidth = Math.min(680, Math.max(340, Number(rbSaved.width) || 420));
   let autoReveal = rbSaved.auto ?? true;
-  /** Full view: the inspector deck covers the whole body for reading. */
+  /** Full view: the inspector deck covers the body for reading. Anything the
+      deck does that lands on the *stage* — opening a thread, starting the
+      new-project wizard — drops out of it first, or you act on a screen you
+      cannot see. */
   let rbFull = false;
   $: if (!rightBarOpen) rbFull = false;
   let selectedArtifact: InspectorArtifact | null = null;
@@ -894,15 +917,15 @@
     }
   }
 
+  /* The dialog is opened by the backend, not here: a file you pick by hand
+     may be anywhere, and only the side that ran the dialog can honestly say
+     the choice was yours. Picking through the JS plugin and then reading
+     through our own command used to fail the read every time — the picker
+     browsed the whole disk and the gate refused whatever came back. */
   async function pickDocFile() {
     try {
-      const picked = await openDialog({
-        multiple: false,
-        title: "Open a markdown file",
-        defaultPath: currentRoot || undefined,
-        filters: [{ name: "Markdown / text", extensions: ["md", "markdown", "txt", "mdx"] }],
-      });
-      if (typeof picked === "string" && picked) {
+      const picked = await api.pickTextFile(currentRoot || undefined);
+      if (picked) {
         await openProjectDoc({ label: picked.split(/[\\/]/).pop() || picked, path: picked, source: "root" });
       }
     } catch (e) {
@@ -1353,6 +1376,7 @@
       on:filterWorkspace={(e) => (sideFilter = e.detail.name)}
       on:migrateProject={(e) => handleMigrateProject(e.detail.name)}
       on:deleteLegacyProject={(e) => handleDeleteLegacyProject(e.detail.name)}
+      on:deleteWorkspace={(e) => handleDeleteWorkspace(e.detail.name)}
       on:forkThread={(e) => fork(e.detail.id)}
       on:deleteThread={(e) => handleDeleteThread(e.detail.id)}
       on:killRun={(e) => killSession(e.detail.id)}
@@ -1367,6 +1391,9 @@
     </div>
     <!-- Central Stage (expand control lives inline in the titlebar) -->
     <div class="stage-col">
+    <!-- In full view the deck covers this row and carries the window
+         controls itself, so rendering it would only show through as a seam. -->
+    {#if !rbFull}
     <Titlebar
       title={showSettings ? "Settings" : hubView?.kind === "new-workspace" ? "New workspace" : hubView?.kind === "new-project" ? "New project" : curWorkspace || "Inbox"}
       subtitle={showSettings ? settingsSection : hubView ? "" : activeMeta ? activeMeta.title : !activeThreadId ? "new draft" : ""}
@@ -1376,6 +1403,7 @@
       on:expand={() => (sidebarOpen = true)}
       on:togglePanel={() => toggleRightBar()}
     />
+    {/if}
     <main class="stage-container" class:settings-mode={showSettings}>
       {#if showSettings}
         <!-- Settings stage: main screen becomes the section (T3-style) -->
@@ -1474,9 +1502,9 @@
         on:openArtifact={(e) => showArtifact(e.detail.artifact)}
         on:pickFile={pickDocFile}
         on:openProject={(e) => openProject(e.detail.workspace, e.detail.slug)}
-        on:newProject={(e) => openNewProjectWizard(e.detail.workspace)}
+        on:newProject={(e) => { rbFull = false; openNewProjectWizard(e.detail.workspace); }}
         on:closeProject={() => (dockProject = null)}
-        on:openSession={(e) => openThread(e.detail.id)}
+        on:openSession={(e) => { rbFull = false; openThread(e.detail.id); }}
         on:openDraft={(e) => { selectedDoc = e.detail.doc; selectedArtifact = null; openRightBar("docs"); }}
         on:error={(e) => toast(e.detail.text, true)}
       />
@@ -1656,9 +1684,13 @@
       transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease, visibility 0s linear 260ms;
     }
   }
-  /* Full view: the deck covers the whole body (below the titlebar) for
-     reading projects and artifacts. Esc, Ctrl+Shift+F, or the button exits;
-     closing the deck resets it (see the rightBarOpen guard). */
+  /* Full view: the deck takes the whole window for reading projects and
+     artifacts. Esc, Ctrl+Shift+F, or the button exits; closing the deck
+     resets it (see the rightBarOpen guard). Full bleed from `top: 0` and the
+     titlebar steps aside entirely — leaving a 38px strip above only showed
+     the stage breadcrumb and sidebar chrome peeking out under the reading
+     view, which reads as a mistake. The deck header carries the window
+     controls instead, so nothing is lost by covering it. */
   .rb-wrap.full {
     position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 30;
     width: auto; margin-right: 0; opacity: 1; visibility: visible;

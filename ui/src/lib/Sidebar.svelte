@@ -27,6 +27,7 @@
     filterWorkspace: { name: string | null };
     migrateProject: { name: string };
     deleteLegacyProject: { name: string };
+    deleteWorkspace: { name: string };
     openSettings: void;
     reportIssue: void;
     openUpdates: void;
@@ -75,11 +76,15 @@
 
   function pickFilter(name: string | null) {
     legConfirm = null;
+    wsConfirm = null;
     dispatch("filterWorkspace", { name });
   }
 
   /** Two-step legacy delete: first click arms, second click fires. */
   let legConfirm: string | null = null;
+  /** Same two steps for hub workspaces. Arming one disarms the other, so
+      there is never a primed delete on a row you are no longer looking at. */
+  let wsConfirm: string | null = null;
 
   // Running threads have their own top section, so exclude them from buckets to avoid duplicates
   $: idleScopedThreads = scopedThreads.filter((t) => t.status !== "active" && t.status !== "queued");
@@ -338,13 +343,21 @@
         <span class="ws-count">{keyCount("default")}</span>
       </button>
       {#each hubNames as w (w)}
-        <button class="ws-row" class:on={sideFilter === w} on:click={() => pickFilter(w)} title="Filter to {w} — its projects show in the side dock">
-          <span class="ws-name">{displayName(w)}</span>
-          <span class="ws-count">{keyCount(w)}</span>
-        </button>
+        <div class="ws-row split" class:on={sideFilter === w}>
+          <button class="ws-pick" on:click={() => pickFilter(w)} title="Filter to {w} — its projects show in the side dock">
+            <span class="ws-name">{displayName(w)}</span>
+            <span class="ws-count">{keyCount(w)}</span>
+          </button>
+          <button class="ws-act danger" class:armed={wsConfirm === w}
+            title={wsConfirm === w ? `Click again to delete ${w}, its projects and its chats` : `Delete workspace ${w}`}
+            on:click|stopPropagation={() => {
+              if (wsConfirm !== w) { wsConfirm = w; legConfirm = null; }
+              else { wsConfirm = null; dispatch("deleteWorkspace", { name: w }); }
+            }}>{wsConfirm === w ? "sure?" : "✕"}</button>
+        </div>
       {/each}
       {#each legacyProjects as name (name)}
-        <div class="ws-row legacy" class:on={sideFilter === name}>
+        <div class="ws-row legacy split" class:on={sideFilter === name}>
           <button class="ws-pick" on:click={() => pickFilter(name)} title="Legacy project — move it to workspaces to use projects">
             <span class="ws-name">{name}</span>
             <span class="tag">legacy</span>
@@ -355,7 +368,7 @@
           <button class="ws-act danger" class:armed={legConfirm === name}
             title={legConfirm === name ? `Click again to delete ${name} and its chats` : `Delete ${name}`}
             on:click|stopPropagation={() => {
-              if (legConfirm !== name) legConfirm = name;
+              if (legConfirm !== name) { legConfirm = name; wsConfirm = null; }
               else { legConfirm = null; dispatch("deleteLegacyProject", { name }); }
             }}>{legConfirm === name ? "sure?" : "✕"}</button>
         </div>
@@ -558,8 +571,11 @@
     flex: none; font-size: 10px; color: var(--warn);
     border: 1px solid var(--warn-line); border-radius: 5px; padding: 0 5px;
   }
-  .ws-row.legacy { padding: 0 0 0 8px; }
-  .ws-row.legacy .ws-pick {
+  /* A row that carries its own buttons gives up its padding to the pick, so
+     the hit target still spans the row and the ✕ sits flush at the end.
+     Hub and legacy rows share this; "All chats" and "Inbox" stay plain. */
+  .ws-row.split { padding: 0 0 0 8px; }
+  .ws-row.split .ws-pick {
     flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
     background: transparent; border: none; border-radius: 7px 0 0 7px; color: inherit;
     font: inherit; font-size: 13px; padding: 6px 0; cursor: pointer; text-align: left;
