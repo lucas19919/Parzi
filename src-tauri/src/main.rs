@@ -71,6 +71,11 @@ enum UiEvent {
         tokens_out: u64,
         cost_usd: f64,
     },
+    Context {
+        session: String,
+        used: u64,
+        limit: u64,
+    },
     Approval {
         key: String,
         call: ToolCallView,
@@ -349,6 +354,11 @@ fn ui_from_run(session: String, ev: RunEvent) -> Option<UiEvent> {
             tokens_out,
             cost_usd,
         },
+        RunEvent::Context { used, limit } => UiEvent::Context {
+            session,
+            used,
+            limit,
+        },
         // GuiApprover emits its own UiEvent::Approval; a lease transfer
         // that also notifies ApprovalRequest must not draw a second card.
         RunEvent::ApprovalRequest { .. } => return None,
@@ -442,6 +452,20 @@ async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, R
 #[tauri::command]
 async fn kill_run(state: State<'_, AppState>, id: String) -> Result<(), String> {
     state.orch.kill(&id).await.map_err(|e| e.to_string())
+}
+
+/// Summarize a thread into a checkpoint; later messages read from there.
+#[tauri::command]
+async fn compact_thread(
+    state: State<'_, AppState>,
+    id: String,
+    focus: Option<String>,
+) -> Result<String, String> {
+    state
+        .orch
+        .compact(&id, focus.as_deref().unwrap_or(""))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -2059,6 +2083,7 @@ fn main() {
             get_thread,
             send_message,
             kill_run,
+            compact_thread,
             fork_thread,
             create_subsession,
             reparent_thread,

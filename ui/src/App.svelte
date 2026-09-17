@@ -53,6 +53,16 @@
   let liveReasoning = "";
   let liveTokens = 0;
   let liveCost = 0;
+  /** Context meter: the thread's last measured fill, against the window of
+      the model that answered (or, before any answer, the picked model). */
+  let compacting = false;
+  $: pickedWindow = (() => {
+    const [provider, id] = model.includes("/") ? model.split(/\/(.*)/s) : ["", ""];
+    const row = models.find((r) => r.provider === provider);
+    return row?.models.find((m) => m.id === id)?.context_limit ?? 0;
+  })();
+  $: contextUsed = activeMeta?.context_tokens ?? 0;
+  $: contextLimit = activeMeta?.context_limit || pickedWindow;
   /** Two-track streaming: assistant text flows into `live`, while tool
       status flows into `liveTools` + the "Now:" line (derived in Thread).
       Both reset whenever the transcript reloads. */
@@ -209,6 +219,7 @@
       if (step !== "stage") openRightBar("project");
     }
     else if (screen === "chats") hubView = null;
+    else if (screen === "thread" && step) openThread(step);
   }
 
   async function browseWsFolder() {
@@ -426,8 +437,33 @@
     toast("Plan mode — the model plans, it does not touch the tree");
   }
 
+  /** Summarize the open thread into a checkpoint. `focus` steers the summary
+      (`/compact keep the API design`). */
+  async function compactThread(focus = "") {
+    if (!activeThreadId) return toast("Open a chat to compact it", true);
+    if (liveRun === activeThreadId) return toast("Wait for the run to finish, then compact", true);
+    if (compacting) return;
+    const id = activeThreadId;
+    compacting = true;
+    try {
+      await api.compactThread(id, focus);
+      if (activeThreadId === id) await refreshEvents();
+      toast("Conversation compacted");
+    } catch (e) {
+      toast(String(e), true);
+    } finally {
+      compacting = false;
+    }
+  }
+
   async function send() {
     const rawPrompt = input.trim();
+    const compactCmd = /^\/compact(?:\s+([\s\S]*))?$/.exec(rawPrompt);
+    if (compactCmd) {
+      input = "";
+      await compactThread(compactCmd[1]?.trim() ?? "");
+      return;
+    }
     if (!rawPrompt || sending || liveRun || !model) return;
     sending = true;
     input = "";
@@ -578,6 +614,9 @@
       case "clear":
         newThread();
         break;
+      case "compact":
+        compactThread();
+        break;
       case "plan":
         openPlanner();
         break;
@@ -613,7 +652,7 @@
         openSettings("models");
         break;
       case "help":
-        toast("/plan /auto /model /effort /new /clear /fork /subsession /kill /doctor");
+        toast("/plan /auto /model /effort /new /clear /compact /fork /subsession /kill /doctor");
         break;
     }
   }
@@ -967,6 +1006,8 @@
     else if (e.kind === "usage") {
       liveTokens += e.tokens_in + e.tokens_out;
       liveCost += e.cost_usd;
+    } else if (e.kind === "context") {
+      if (activeMeta) activeMeta = { ...activeMeta, context_tokens: e.used, context_limit: e.limit };
     } else if (e.kind === "done" || e.kind === "error") {
       if (e.kind === "error") toast(e.error, true);
       liveRun = null;
@@ -1334,6 +1375,9 @@
             projectRoot={currentRoot}
             {branch}
             tokens={liveTokens}
+            {contextUsed}
+            {contextLimit}
+            {compacting}
             {models}
             on:send={send}
             on:stop={stopRun}

@@ -98,6 +98,8 @@ impl SessionStore {
             tokens_in: 0,
             tokens_out: 0,
             cost_usd: 0.0,
+            context_tokens: 0,
+            context_limit: 0,
             cwd: String::new(),
             created: now,
             updated: now,
@@ -332,6 +334,17 @@ impl SessionStore {
         self.write_meta(&meta)?;
         self.mark_md_dirty(id);
         Ok(())
+    }
+
+    /// How full the context window is after the latest request. A `limit`
+    /// of 0 keeps the one already recorded.
+    pub fn set_context(&self, id: &str, tokens: u64, limit: u64) -> Result<()> {
+        let mut meta = self.get(id)?;
+        meta.context_tokens = tokens;
+        if limit > 0 {
+            meta.context_limit = limit;
+        }
+        self.write_meta(&meta)
     }
 
     fn write_meta(&self, meta: &SessionMeta) -> Result<()> {

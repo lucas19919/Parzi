@@ -29,6 +29,20 @@
   export let workspace = "";
   /** Sent chats keep their workspace: the pill shows it but does not open. */
   export let workspaceLocked = false;
+  /** Context window fill of this chat (tokens the model saw last request). */
+  export let contextUsed = 0;
+  /** The model's window; 0 hides the meter. */
+  export let contextLimit = 0;
+  /** A compaction is running: the meter spins and does not click. */
+  export let compacting = false;
+
+  $: contextPct = contextLimit > 0 ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : 0;
+  const RING = 2 * Math.PI * 6;
+  function kTokens(n: number): string {
+    if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+    return String(n);
+  }
 
   const dispatch = createEventDispatcher<{
     send: void;
@@ -418,6 +432,7 @@
       { name: "/effort", hint: "cycle effort", run: () => dispatch("command", { name: "effort", arg: "" }) },
       { name: "/new", hint: "new thread", run: () => dispatch("command", { name: "new", arg: "" }) },
       { name: "/clear", hint: "clean thread, same lane", run: () => dispatch("command", { name: "clear", arg: "" }) },
+      { name: "/compact", hint: "summarize to free context", run: () => dispatch("command", { name: "compact", arg: "" }) },
       { name: "/fork", hint: "branch this thread", run: () => dispatch("command", { name: "fork", arg: "" }) },
       { name: "/subsession", hint: "spawn a child subsession", run: () => dispatch("command", { name: "subsession", arg: "" }) },
       { name: "/kill", hint: "stop the run", run: () => dispatch("command", { name: "kill", arg: "" }) },
@@ -864,6 +879,33 @@
 
       <span class="spacer" />
 
+      {#if contextLimit > 0 && (contextUsed > 0 || compacting)}
+        <button
+          class="ctx"
+          class:warn={contextPct >= 70}
+          class:bad={contextPct >= 90}
+          class:busy={compacting}
+          disabled={compacting || streaming}
+          title={compacting
+            ? "Compacting the conversation…"
+            : `Context ${contextPct}% full: ${kTokens(contextUsed)} of ${kTokens(contextLimit)} tokens.\nClick to compact; it also happens on its own near the limit.`}
+          on:click={() => dispatch("command", { name: "compact", arg: "" })}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <circle class="ctx-track" cx="8" cy="8" r="6" />
+            <circle
+              class="ctx-fill"
+              cx="8"
+              cy="8"
+              r="6"
+              stroke-dasharray={RING}
+              stroke-dashoffset={compacting ? RING * 0.7 : RING * (1 - contextPct / 100)}
+            />
+          </svg>
+          <span>{contextPct}%</span>
+        </button>
+      {/if}
+
       <button class="icon-btn" title="Attach files" on:click={pickFiles}>
         <Icon d={I.clip} size={15} />
       </button>
@@ -1137,6 +1179,22 @@
   .ctl:hover .ctl-glyph, .ctl.open .ctl-glyph { color: var(--text); }
   .vdiv { width: 1px; height: 16px; background: var(--line-2); margin: 0 5px; flex: none; }
   .spacer { flex: 1 1 auto; min-width: 4px; }
+
+  .ctx {
+    height: 28px; flex: none; display: inline-flex; align-items: center; gap: 5px;
+    padding: 0 8px; border: none; border-radius: var(--radius-pill); background: transparent;
+    color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; cursor: pointer;
+    --ctx: var(--text-3);
+  }
+  .ctx:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+  .ctx:disabled { cursor: default; }
+  .ctx.warn { --ctx: var(--warn); color: var(--warn); }
+  .ctx.bad { --ctx: var(--bad); color: var(--bad); }
+  .ctx svg { transform: rotate(-90deg); }
+  .ctx.busy svg { animation: ctx-spin 0.9s linear infinite; }
+  .ctx-track { fill: none; stroke: var(--line-3); stroke-width: 2; }
+  .ctx-fill { fill: none; stroke: var(--ctx); stroke-width: 2; stroke-linecap: round; transition: stroke-dashoffset 0.4s ease; }
+  @keyframes ctx-spin { to { transform: rotate(270deg); } }
 
   .icon-btn {
     width: 32px; height: 32px; flex: none; display: inline-flex; align-items: center; justify-content: center;

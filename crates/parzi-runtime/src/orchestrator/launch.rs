@@ -200,6 +200,63 @@ impl Orchestrator {
         Self::launch(self.pump_parts(), q).await
     }
 
+    /// Compact a thread on request: the thread's model summarizes it (falling
+    /// over like a run would), the summary lands as a `Checkpoint`, and the
+    /// next message is read from there. Refused while the thread is running.
+    pub async fn compact(&self, id: &str, focus: &str) -> Result<String> {
+        {
+            let mut h = self.handles.lock().await;
+            h.retain(|_, handle| !handle._task.is_finished());
+            if h.contains_key(id) {
+                return Err(ParziError::Store(
+                    "this thread is running; compact it once the run ends".into(),
+                ));
+            }
+        }
+        let meta = self.store.get(id)?;
+        let events = self.store.events(id)?;
+        if !parzi_core::context::compactable(&events) {
+            return Err(ParziError::Store("nothing to compact yet".into()));
+        }
+        let mut last = ParziError::Store("no working provider for this thread's model".into());
+        for slot in self.slots_for(&meta.model, "low")? {
+            if matches!(
+                slot.provider.auth_status(),
+                parzi_providers::AuthStatus::Missing(_)
+            ) {
+                continue;
+            }
+            let limit = AgentRun::lookup_context_limit(&slot.provider_id, &slot.model_id);
+            match crate::compact::summarize(
+                slot.provider.as_ref(),
+                &slot.model_id,
+                &events,
+                focus,
+                limit,
+                id,
+            )
+            .await
+            {
+                Ok(summary) => {
+                    self.store.append(
+                        id,
+                        &Event::Checkpoint {
+                            summary: summary.clone(),
+                        },
+                    )?;
+                    let used = parzi_core::context::ContextBuilder::estimate(&summary);
+                    self.store.set_context(id, used, limit)?;
+                    let _ = self
+                        .bus
+                        .send((id.to_string(), RunEvent::Context { used, limit }));
+                    return Ok(summary);
+                }
+                Err(e) => last = e,
+            }
+        }
+        Err(last)
+    }
+
     /// Build the provider chain: `auto` expands via the smart router,
     /// an explicit spec is a single slot. Never empty on success.
     fn slots_for(

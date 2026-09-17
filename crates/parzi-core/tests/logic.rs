@@ -206,6 +206,8 @@ fn purge_cascade_kills_descendants_at_any_depth() {
         tokens_in: 0,
         tokens_out: 0,
         cost_usd: 0.0,
+        context_tokens: 0,
+        context_limit: 0,
         cwd: "".into(),
         created: Utc::now(),
         updated: Utc::now(),

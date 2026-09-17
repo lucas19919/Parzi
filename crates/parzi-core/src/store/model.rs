@@ -47,6 +47,15 @@ pub struct SessionMeta {
     pub tokens_out: u64,
     #[serde(default)]
     pub cost_usd: f64,
+    /// How full the context window is: the tokens the model saw on the latest
+    /// request plus its reply. Not a spend total (that is `tokens_in` /
+    /// `tokens_out`). Drops after a compaction.
+    #[serde(default)]
+    pub context_tokens: u64,
+    /// The window `context_tokens` is measured against, from the catalog
+    /// entry of the model that answered. 0 = not measured yet.
+    #[serde(default)]
+    pub context_limit: u64,
     #[serde(default)]
     pub cwd: String,
     pub created: DateTime<Utc>,

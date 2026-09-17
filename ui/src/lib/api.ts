@@ -12,6 +12,10 @@ export interface SessionMeta {
   tokens_in: number;
   tokens_out: number;
   cost_usd: number;
+  /** How full the context window is: tokens of the latest request + reply. */
+  context_tokens?: number;
+  /** Window of the model that answered; 0/absent = not measured yet. */
+  context_limit?: number;
   cwd: string;
   /** Hierarchy link for teamwork subsessions. Absent/null = top-level. */
   parent_id?: string | null;
@@ -70,6 +74,7 @@ export type UiEvent =
   | { kind: "tool_result"; session: string; id: string; name: string; ok: boolean; ms: number }
   | { kind: "notice"; session: string; text: string }
   | { kind: "usage"; session: string; tokens_in: number; tokens_out: number; cost_usd: number }
+  | { kind: "context"; session: string; used: number; limit: number }
   | { kind: "approval"; key: string; call: { id: string; name: string; args: unknown; lane: string } }
   | { kind: "subsession_created"; parent_id: string; subsession: SessionMeta }
   | { kind: "done"; session: string; turns: number }
@@ -342,6 +347,9 @@ export const api = {
   togglePin: (id: string, pinned: boolean) =>
     invoke<void>("toggle_pin", { id, pinned }),
   killRun: (id: string) => invoke<void>("kill_run", { id }),
+  /** Summarize a thread into a checkpoint; returns the summary. */
+  compactThread: (id: string, focus?: string) =>
+    invoke<string>("compact_thread", { id, focus: focus ?? null }),
   forkThread: (id: string, at?: number) =>
     invoke<SessionMeta>("fork_thread", { id, at: at ?? null }),
   approveTool: (key: string, allow: boolean) =>

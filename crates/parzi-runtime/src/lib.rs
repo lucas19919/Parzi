@@ -2,6 +2,7 @@
 
 pub mod board_tools;
 pub mod circuit_breaker;
+pub mod compact;
 pub mod context_micro;
 pub mod doctor;
 pub mod git_checkpoints;

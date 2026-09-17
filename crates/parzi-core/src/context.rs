@@ -323,7 +323,10 @@ impl ContextBuilder {
                 }),
                 Event::Checkpoint { summary } => Some(ChatMessage {
                     role: Role::System,
-                    content: format!("[checkpoint] {summary}"),
+                    content: format!(
+                        "[checkpoint] The conversation before this point was compacted. \
+                         Summary of it:\n\n{summary}"
+                    ),
                     images: vec![],
                 }),
                 // H-5: an inter-session message is the only System event the
@@ -412,6 +415,40 @@ impl ContextBuilder {
         out.extend(events[cut..].iter().cloned());
         out
     }
+}
+
+/// Asked of the model when a thread is compacted. Its answer becomes the
+/// `Checkpoint` the rest of the thread is read from.
+pub const COMPACT_PROMPT: &str = "Compact this conversation so the work can continue from \
+your summary alone; everything above it will be dropped from your context.\n\n\
+Write a dense summary with these sections:\n\
+1. Goal: what the person wants, in their words where it matters.\n\
+2. Decisions and constraints: what was agreed, ruled out, or asked for.\n\
+3. State of the work: files touched (paths), what changed, what was verified.\n\
+4. Open threads: errors not fixed, questions not answered.\n\
+5. Next step: exactly what you were about to do.\n\n\
+Keep exact names, paths, commands and numbers. No preamble.";
+
+/// The part of a thread a request is built from: the latest `Checkpoint`
+/// and everything after it. A thread never compacted is read whole.
+pub fn since_checkpoint(events: &[Event]) -> &[Event] {
+    match events
+        .iter()
+        .rposition(|e| matches!(e, Event::Checkpoint { .. }))
+    {
+        Some(i) => &events[i..],
+        None => events,
+    }
+}
+
+/// Whether a thread has enough since its last checkpoint to be worth
+/// compacting: at least one exchange beyond what a checkpoint already holds.
+pub fn compactable(events: &[Event]) -> bool {
+    since_checkpoint(events)
+        .iter()
+        .filter(|e| matches!(e, Event::User { .. } | Event::Assistant { .. } | Event::ToolResult { .. }))
+        .count()
+        >= 2
 }
 
 fn head(s: &str) -> String {

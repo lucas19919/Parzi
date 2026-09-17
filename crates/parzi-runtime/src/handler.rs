@@ -47,6 +47,12 @@ pub enum RunEvent {
         tokens_out: u64,
         cost_usd: f64,
     },
+    /// How full the context window is: after every request, and after a
+    /// compaction (which drops `used` to the summary's size).
+    Context {
+        used: u64,
+        limit: u64,
+    },
     ApprovalRequest {
         call: ToolCallInfo,
     },
@@ -345,6 +351,62 @@ impl AgentRun {
         true
     }
 
+    /// Context window from the catalog. A model the catalog does not know
+    /// gets 128k, which every current model has.
+    pub fn lookup_context_limit(provider_id: &str, model: &str) -> u64 {
+        all_catalog(provider_id)
+            .into_iter()
+            .find(|m| m.id == model && m.context_limit > 0)
+            .map_or(128_000, |m| u64::from(m.context_limit))
+    }
+
+    /// Before a step: a thread near the top of its window is compacted first,
+    /// so the request fits and the model keeps the gist instead of losing the
+    /// oldest turns silently. A failed compaction is said and the step goes on.
+    async fn auto_compact(&self, slot: &ProviderSlot, limit: u64) {
+        let Ok(meta) = self.store.get(&self.session_id) else {
+            return;
+        };
+        if !crate::compact::should_compact(meta.context_tokens, limit, self.max_tokens) {
+            return;
+        }
+        let Ok(events) = self.store.events(&self.session_id) else {
+            return;
+        };
+        if !parzi_core::context::compactable(&events) {
+            return;
+        }
+        let pct = meta.context_tokens * 100 / limit.max(1);
+        self.emit(RunEvent::Notice {
+            text: format!("Context {pct}% full, compacting the conversation"),
+        });
+        let summary = tokio::select! {
+            biased;
+            () = self.cancel.cancelled() => return,
+            r = crate::compact::summarize(
+                slot.provider.as_ref(),
+                &slot.model_id,
+                &events,
+                "",
+                limit,
+                &self.session_id,
+            ) => r,
+        };
+        match summary {
+            Ok(summary) => {
+                let used = ContextBuilder::estimate(&summary);
+                let _ = self
+                    .store
+                    .append(&self.session_id, &Event::Checkpoint { summary });
+                let _ = self.store.set_context(&self.session_id, used, limit);
+                self.emit(RunEvent::Context { used, limit });
+            }
+            Err(e) => self.emit(RunEvent::Notice {
+                text: format!("Compaction failed ({e}); the oldest turns drop instead"),
+            }),
+        }
+    }
+
     /// Capability overlay: does this model take image attachments?
     pub fn lookup_vision(provider_id: &str, model: &str) -> bool {
         for m in all_catalog(provider_id) {
@@ -483,7 +545,9 @@ impl AgentRun {
             }
             let turns = self.steps.fetch_add(1, Ordering::Relaxed) + 1;
 
-            let mut ctx = self.assemble()?;
+            let limit = Self::lookup_context_limit(&slot.provider_id, &slot.model_id);
+            self.auto_compact(slot, limit).await;
+            let mut ctx = self.assemble(limit)?;
             // No-vision model with images attached: strip the bytes (they
             // would 400) and say so once, instead of failing the run.
             if !Self::lookup_vision(&slot.provider_id, &slot.model_id)
@@ -529,6 +593,8 @@ impl AgentRun {
             let mut text = String::new();
             let mut reasoning = String::new();
             let mut calls: Vec<(String, String, serde_json::Value)> = vec![];
+            // This request's own usage: what the window holds after it.
+            let mut step_tokens = 0u64;
             loop {
                 // R-1: a kill must land inside the stream, not after it. The
                 // provider's sender sees a closed channel when `rx` drops.
@@ -560,6 +626,7 @@ impl AgentRun {
                         tokens_in,
                         tokens_out,
                     }) => {
+                        step_tokens = step_tokens.saturating_add(tokens_in + tokens_out);
                         let cost = Self::cost_for(slot, tokens_in, tokens_out);
                         let _ = self
                             .store
@@ -597,6 +664,15 @@ impl AgentRun {
                         return Ok(RunEnd::Done);
                     }
                 }
+            }
+            if step_tokens > 0 {
+                let _ = self
+                    .store
+                    .set_context(&self.session_id, step_tokens, limit);
+                self.emit(RunEvent::Context {
+                    used: step_tokens,
+                    limit,
+                });
             }
             if !reasoning.trim().is_empty() {
                 let _ = self.store.append(
@@ -715,16 +791,13 @@ impl AgentRun {
         );
     }
 
-    fn assemble(&self) -> Result<AssembledContext> {
+    /// The request for this step: the thread from its latest checkpoint on,
+    /// filled newest-first under the model's window. The chars/4 estimate
+    /// runs low on code, so it gets a tenth of headroom.
+    fn assemble(&self, context_limit: u64) -> Result<AssembledContext> {
         let events = self.store.events(&self.session_id)?;
-        // Compact past 96 events down to a digest + last 20. Cheap, no LLM needed.
-        let history = if events.len() > 96 {
-            ContextBuilder::compact(&events, 20)
-        } else {
-            events
-        };
-        // TODO: picks model limit from catalog; 128k default is safe for v0.1.
-        let limit = 100_000u64;
+        let history = parzi_core::context::since_checkpoint(&events).to_vec();
+        let limit = crate::compact::usable_window(context_limit, self.max_tokens) * 9 / 10;
         Ok(ContextBuilder {
             system_parts: self.system_parts.clone(),
             history,

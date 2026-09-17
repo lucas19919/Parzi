@@ -358,6 +358,9 @@ async fn cmd_send(p: SendParams) -> Result<()> {
             } => {
                 eprintln!("\n[usage] {tokens_in} in / {tokens_out} out (${cost_usd:.4})")
             }
+            RunEvent::Context { used, limit } => {
+                eprintln!("[context] {used} / {limit} tokens")
+            }
             RunEvent::ApprovalRequest { .. } => {} // CliApprover prompts on stderr; event is observability only
             RunEvent::Notice { text } => eprintln!("\n[router] {text}"),
             RunEvent::RouteTransition {

@@ -366,7 +366,15 @@
         <div class="think-body">{item.text}</div>
       </details>
     {:else if item.kind === "checkpoint"}
-      <div class="tool-line">◆ checkpoint: {item.text.slice(0, 200)}</div>
+      <!-- A compaction: the model reads the thread from this summary on. -->
+      <details class="think">
+        <summary>
+          <span class="think-rail" />
+          <span>Conversation compacted</span>
+          <span class="think-meta">the agent continues from this summary</span>
+        </summary>
+        <div class="think-body">{item.text}</div>
+      </details>
     {:else if item.kind === "system"}
       <div class="tool-line">ⓘ {item.text.slice(0, 300)}</div>
     {:else if item.kind === "route"}
