@@ -26,7 +26,8 @@ use crate::Orchestrator;
 
 pub use dispatch::{approve, dispatch_lane, Dispatched};
 pub use files::{
-    capsule, capsule_ids, drafts, journal, plan, sessions, write_plan, Draft, Sessions, SYSTEM_ACTOR,
+    capsule, capsule_ids, drafts, journal, plan, sessions, write_plan, Draft, Sessions,
+    SYSTEM_ACTOR,
 };
 pub use tools::{execute_project_tool, is_project_tool, project_defs, project_defs_for};
 
@@ -235,7 +236,10 @@ pub fn toggle_task(workspace: &str, slug: &str, task_id: &str, done: bool) -> Re
             &who,
             Kind::Note,
             Some(task_id),
-            &format!("task {task_id} marked {}", if done { "done" } else { "pending" }),
+            &format!(
+                "task {task_id} marked {}",
+                if done { "done" } else { "pending" }
+            ),
         );
     }
     Ok(plan)

@@ -666,9 +666,7 @@ impl AgentRun {
                 }
             }
             if step_tokens > 0 {
-                let _ = self
-                    .store
-                    .set_context(&self.session_id, step_tokens, limit);
+                let _ = self.store.set_context(&self.session_id, step_tokens, limit);
                 self.emit(RunEvent::Context {
                     used: step_tokens,
                     limit,

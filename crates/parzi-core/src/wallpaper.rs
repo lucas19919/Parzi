@@ -121,8 +121,11 @@ pub fn bytes_size(bytes: &[u8]) -> Result<(u32, u32)> {
         .with_guessed_format()
         .map_err(|e| ParziError::Config(format!("unreadable image: {e}")))?;
     r.limits(header_limits());
-    r.into_dimensions()
-        .map_err(|e| ParziError::Config(format!("not a picture Parzi can read (png, jpg or webp): {e}")))
+    r.into_dimensions().map_err(|e| {
+        ParziError::Config(format!(
+            "not a picture Parzi can read (png, jpg or webp): {e}"
+        ))
+    })
 }
 
 /// Largest size that fits inside `max_w`×`max_h` (itself capped) keeping the

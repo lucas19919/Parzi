@@ -446,7 +446,12 @@ pub fn since_checkpoint(events: &[Event]) -> &[Event] {
 pub fn compactable(events: &[Event]) -> bool {
     since_checkpoint(events)
         .iter()
-        .filter(|e| matches!(e, Event::User { .. } | Event::Assistant { .. } | Event::ToolResult { .. }))
+        .filter(|e| {
+            matches!(
+                e,
+                Event::User { .. } | Event::Assistant { .. } | Event::ToolResult { .. }
+            )
+        })
         .count()
         >= 2
 }

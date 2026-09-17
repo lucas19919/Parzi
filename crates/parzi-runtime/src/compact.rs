@@ -45,7 +45,10 @@ pub async fn summarize(
     .assemble(budget);
     let mut ask = COMPACT_PROMPT.to_string();
     if !focus.trim().is_empty() {
-        ask.push_str(&format!("\n\nThe person asks you to focus on: {}", focus.trim()));
+        ask.push_str(&format!(
+            "\n\nThe person asks you to focus on: {}",
+            focus.trim()
+        ));
     }
     ctx.messages.push(ChatMessage {
         role: Role::User,
