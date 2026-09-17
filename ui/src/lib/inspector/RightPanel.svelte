@@ -8,6 +8,10 @@
   export let tab: "project" | "docs" = "project";
   export let width = 420;
   export let autoReveal = true;
+  /** Full view: the deck covers the whole body for reading. */
+  export let full = false;
+  /** Project selected in the dock; the panel boots its home itself. */
+  export let selected: { workspace: string; slug: string } | null = null;
 
   // Docs tab
   export let artifact: InspectorArtifact | null = null;
@@ -30,6 +34,7 @@
     tab: { tab: "project" | "docs" };
     resize: { width: number };
     autoReveal: { on: boolean };
+    toggleFull: void;
     openDoc: { entry: DocEntry };
     openTranscript: void;
     openArtifact: { artifact: InspectorArtifact };
@@ -37,6 +42,11 @@
     openProject: { workspace: string; slug: string };
     newProject: { workspace: string };
     closeProject: void;
+    renameProject: { workspace: string; slug: string; title: string };
+    deleteProject: { workspace: string; slug: string };
+    openSession: { id: string };
+    openDraft: { doc: InspectorDoc };
+    error: { text: string };
   }>();
 
   /** The Project tab exists while a project is open or a workspace is picked. */
@@ -76,9 +86,11 @@
 </script>
 
 <aside class="deck" class:dragging aria-label="Inspector deck">
+  {#if !full}
   <div class="grip" role="slider" aria-orientation="vertical" aria-label="Inspector width" tabindex="0"
     aria-valuemin={MIN_W} aria-valuemax={MAX_W} aria-valuenow={width}
     on:pointerdown={onGripDown} on:pointermove={onGripMove} on:pointerup={onGripUp} on:pointercancel={onGripUp} on:keydown={onGripKey} />
+  {/if}
 
   <header class="head">
     <div class="tabs" role="tablist">
@@ -101,6 +113,10 @@
       aria-pressed={autoReveal} on:click={() => dispatch("autoReveal", { on: !autoReveal })}>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" /></svg>
     </button>
+    <button class="hb" class:on={full} title={full ? "Exit full view (Esc)" : "Full view (Ctrl+Shift+F)"}
+      aria-pressed={full} on:click={() => dispatch("toggleFull")}>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" /></svg>
+    </button>
     <button class="hb" title="Close inspector (Ctrl+\)" on:click={() => dispatch("close")}>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
     </button>
@@ -108,8 +124,9 @@
 
   <div class="content">
     {#if shown === "project"}
-      <ProjectPanel {workspace} {projects}
-        on:openProject on:newProject on:closeProject />
+      <ProjectPanel {workspace} {projects} {selected}
+        on:openProject on:newProject on:closeProject on:renameProject on:deleteProject
+        on:openSession on:openDraft on:error />
     {:else}
       <DocReader
         {artifact} {artifacts} {doc} {docs} loading={docLoading} hasThread={!!activeThreadId}

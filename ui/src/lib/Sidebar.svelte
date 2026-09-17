@@ -12,6 +12,10 @@
   export let activeThreadId: string | null = null;
   /** Bumped by the app after a wizard finishes, to re-read the hub rows. */
   export let hubTick = 0;
+  /** Antigravity-style filter: null = all chats, else one workspace/inbox key. */
+  export let sideFilter: string | null = null;
+  /** Legacy `~/.parzi/projects` names that are not hub workspaces yet. */
+  export let legacyProjects: string[] = [];
 
   const dispatch = createEventDispatcher<{
     selectThread: { id: string };
@@ -20,6 +24,9 @@
     forkThread: { id: string };
     deleteThread: { id: string };
     killRun: { id: string };
+    filterWorkspace: { name: string | null };
+    migrateProject: { name: string };
+    deleteLegacyProject: { name: string };
     openSettings: void;
     reportIssue: void;
     openUpdates: void;
@@ -50,12 +57,29 @@
   $: byUpdated = (a: SessionMeta, b: SessionMeta) =>
     +new Date(b.updated) - +new Date(a.updated);
 
-  $: chatThreads = threads.filter((t) => isChatThread(t.project, projectSlugs));
+  // Role sessions (header, orchestrator, coders) carry the project slug and
+  // stay out of the list — except the one on the stage, which is always shown.
+  $: chatThreads = threads.filter((t) => t.id === activeThreadId || isChatThread(t.project, projectSlugs));
 
+  // Antigravity-style workspace filter: running work always floats on top
+  // (never hide a live run), the rest follows the selected workspace.
   // Live running chats float to the top. Coder lanes belong on the workspace.
   $: runningThreads = chatThreads.filter((t) => t.status === "active" || t.status === "queued");
+  $: scopedThreads = sideFilter === null
+    ? chatThreads
+    : chatThreads.filter((t) => (t.project || "default") === sideFilter);
 
-  $: scopedThreads = chatThreads;
+  function keyCount(key: string): number {
+    return chatThreads.filter((t) => (t.project || "default") === key).length;
+  }
+
+  function pickFilter(name: string | null) {
+    legConfirm = null;
+    dispatch("filterWorkspace", { name });
+  }
+
+  /** Two-step legacy delete: first click arms, second click fires. */
+  let legConfirm: string | null = null;
 
   // Running threads have their own top section, so exclude them from buckets to avoid duplicates
   $: idleScopedThreads = scopedThreads.filter((t) => t.status !== "active" && t.status !== "queued");
@@ -303,6 +327,41 @@
   </div>
 
   <div class="sb-scroll">
+    <div class="proj-head"><span>Workspace</span></div>
+    <div class="ws-filter">
+      <button class="ws-row" class:on={sideFilter === null} on:click={() => pickFilter(null)} title="All chats">
+        <span class="ws-name">All chats</span>
+        <span class="ws-count">{chatThreads.length}</span>
+      </button>
+      <button class="ws-row" class:on={sideFilter === "default"} on:click={() => pickFilter("default")} title="Inbox — chats without a workspace">
+        <span class="ws-name">Inbox</span>
+        <span class="ws-count">{keyCount("default")}</span>
+      </button>
+      {#each hubNames as w (w)}
+        <button class="ws-row" class:on={sideFilter === w} on:click={() => pickFilter(w)} title="Filter to {w} — its projects show in the side dock">
+          <span class="ws-name">{displayName(w)}</span>
+          <span class="ws-count">{keyCount(w)}</span>
+        </button>
+      {/each}
+      {#each legacyProjects as name (name)}
+        <div class="ws-row legacy" class:on={sideFilter === name}>
+          <button class="ws-pick" on:click={() => pickFilter(name)} title="Legacy project — move it to workspaces to use projects">
+            <span class="ws-name">{name}</span>
+            <span class="tag">legacy</span>
+            <span class="ws-count">{keyCount(name)}</span>
+          </button>
+          <button class="ws-act" title="Move {name} to workspaces (chats keep working)"
+            on:click|stopPropagation={() => dispatch("migrateProject", { name })}>→</button>
+          <button class="ws-act danger" class:armed={legConfirm === name}
+            title={legConfirm === name ? `Click again to delete ${name} and its chats` : `Delete ${name}`}
+            on:click|stopPropagation={() => {
+              if (legConfirm !== name) legConfirm = name;
+              else { legConfirm = null; dispatch("deleteLegacyProject", { name }); }
+            }}>{legConfirm === name ? "sure?" : "✕"}</button>
+        </div>
+      {/each}
+    </div>
+
     {#if runningThreads.length}
       <div class="proj-head running-head">
         <span class="pulse-dot" />
@@ -480,6 +539,40 @@
     box-shadow: 0 0 6px var(--accent-glow, var(--accent));
   }
   .sb-scroll { flex: 1; overflow-y: auto; padding: 2px 10px 8px; display: flex; flex-direction: column; }
+
+  .ws-filter { display: flex; flex-direction: column; gap: 1px; padding-bottom: 2px; }
+  .ws-row {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: transparent; border: none; border-radius: 7px; color: var(--text-2);
+    font: inherit; font-size: 13px; padding: 6px 8px; cursor: pointer; text-align: left;
+  }
+  .ws-row:hover { background: var(--surface-2); color: var(--text); }
+  .ws-row.on { background: var(--surface-2); color: var(--text); }
+  .ws-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ws-row.on .ws-name { font-weight: 600; }
+  .ws-count {
+    flex: none; font-family: var(--parzi-mono); font-size: 10.5px; color: var(--text-4);
+    font-variant-numeric: tabular-nums;
+  }
+  .ws-row .tag {
+    flex: none; font-size: 10px; color: var(--warn);
+    border: 1px solid var(--warn-line); border-radius: 5px; padding: 0 5px;
+  }
+  .ws-row.legacy { padding: 0 0 0 8px; }
+  .ws-row.legacy .ws-pick {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+    background: transparent; border: none; border-radius: 7px 0 0 7px; color: inherit;
+    font: inherit; font-size: 13px; padding: 6px 0; cursor: pointer; text-align: left;
+  }
+  .ws-act {
+    flex: none; min-width: 24px; height: 24px; padding: 0 4px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: none; border-radius: 6px;
+    color: var(--text-4); font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .ws-act:hover { color: var(--text); background: var(--surface-3); }
+  .ws-act.danger:hover, .ws-act.danger.armed { color: var(--bad); background: var(--bad-soft); }
+  .ws-act.armed { font-size: 10px; font-weight: 600; }
 
 
   .running-head {

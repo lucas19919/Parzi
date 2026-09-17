@@ -17,7 +17,6 @@
   import SettingsNav from "./lib/SettingsNav.svelte";
   import NewWorkspace from "./lib/workspace/NewWorkspace.svelte";
   import NewProject from "./lib/workspace/NewProject.svelte";
-  import ProjectDeck from "./lib/deck/ProjectDeck.svelte";
   import { ensureModels, modelRows } from "./lib/modelStore";
   import { applyThemeCss } from "./lib/theme";
   import { coalesce, changesThreadList } from "./lib/threadList";
@@ -97,36 +96,13 @@
     }
   }
   let sidebarOpen = true;
-  // New-workspace popout (centered over the stage, not crammed in the sidebar).
-  let showNewWs = false;
-  let wsName = "";
-  let wsRoot = "";
-  let pickingWsFolder = false;
-  $: wsFolderLabel = (() => {
-    const p = wsRoot.trim();
-    if (!p) return "";
-    return p.split(/[\\/]/).filter(Boolean).pop() || p;
-  })();
 
-  function openNewWs() {
-    wsName = "";
-    wsRoot = "";
-    showNewWs = true;
-  }
-
-  function closeNewWs() {
-    showNewWs = false;
-    wsName = "";
-    wsRoot = "";
-  }
-
-  /* ---------- hub: the two wizards and the project deck (PLAN.md §8) ----------
-     One stage at a time: a wizard or a deck takes the whole middle column,
+  /* ---------- hub: the two wizards (PLAN.md §8) ----------
+     One stage at a time: a wizard takes the whole middle column,
      so nothing streams behind a modal and Escape always means "back out". */
   type HubView =
     | { kind: "new-workspace"; step: string }
-    | { kind: "new-project"; workspace: string; step: string }
-    | { kind: "deck"; workspace: string; slug: string };
+    | { kind: "new-project"; workspace: string; step: string };
   let hubView: HubView | null = null;
   /** Bumped after a wizard writes, so the sidebar re-reads the workspaces. */
   let hubTick = 0;
@@ -152,17 +128,132 @@
     wsRoots = Object.fromEntries(pairs);
   }
   $: if (hubTick >= 0) void loadWorkspaces();
-  /** The workspace the stage is in: the open project's, else the chat's. */
-  $: curWorkspace = hubView?.kind === "deck" ? hubView.workspace : wsNames.includes(curProject) ? curProject : "";
-  $: if (hubTick >= 0) void loadWsProjects(curWorkspace);
+  /** The workspace the stage is in: the chat's, when it is a hub workspace. */
+  $: curWorkspace = wsNames.includes(curProject) ? curProject : "";
+  /** Antigravity-style sidebar filter: null = all chats. The side dock shows
+      projects only for a selected hub workspace; anything else hides them. */
+  let sideFilter: string | null = null;
+  $: legacyNames = projects.map((p) => p.name).filter((n) => n && n !== "default");
+  $: panelWs = sideFilter
+    ? (wsNames.includes(sideFilter) ? sideFilter : "")
+    : curWorkspace;
+  $: if (hubTick >= 0) void loadWsProjects(panelWs);
   async function loadWsProjects(name: string) {
     wsProjects = name ? await deck.list(name).catch(() => []) : [];
   }
 
-  /** Pick the workspace a draft chat will belong to; the typed prompt stays. */
+  /** Project selected in the side dock. Project work lives there
+      exclusively — the old full-stage deck is gone. */
+  let dockProject: { workspace: string; slug: string } | null = null;
+  $: if (dockProject && dockProject.workspace !== panelWs) dockProject = null;
+
+  /** Pick the workspace a draft chat will belong to; the typed prompt stays.
+      A sent thread keeps its workspace, so switching with one open parks it
+      and opens a fresh draft instead of moving it. Blocked mid-run: the live
+      tail belongs to the old thread. */
   async function selectWorkspace(name: string) {
-    curProject = name || "default";
+    const target = name || "default";
+    if (liveRun) {
+      toast("Wait for the run to finish before switching workspaces", true);
+      return;
+    }
+    if ((activeThreadId || events.length) && target !== curProject) {
+      const keepInput = input;
+      const keepAttach = attachments;
+      newThread();
+      input = keepInput;
+      attachments = keepAttach;
+      curProject = target;
+      await refreshBranch();
+      projectRoster = null;
+      projectPlan = "";
+      try {
+        projectRoster = await api.getProjectRoster(target);
+      } catch {}
+      try {
+        projectPlan = await api.getProjectPlan(target);
+      } catch {}
+      toast(`New draft in ${displayName(target)}`);
+      return;
+    }
+    curProject = target;
     await refreshBranch();
+  }
+
+  /** Move a legacy `~/.parzi/projects` entry into workspaces. The chat key
+      stays the name, so sessions keep working — only the directory moves. */
+  async function handleMigrateProject(name: string) {
+    try {
+      await hub.migrateWorkspace(name);
+      hubTick += 1;
+      await loadProjects();
+      await loadThreads();
+      sideFilter = name;
+      toast(`Moved ${name} to workspaces`);
+    } catch (e) {
+      toast(String(e), true);
+    }
+  }
+
+  async function handleDeleteLegacyProject(name: string) {
+    if (sideFilter === name) sideFilter = null;
+    await handleDeleteProject(name);
+  }
+
+  /** New chat adopts the sidebar filter: filtering to a workspace and
+      hitting New chat drafts there instead of in the composer's project. */
+  function handleNewThread() {
+    if (sideFilter) void startDraftInProject(sideFilter);
+    else newThread();
+  }
+
+  /** Rename a deck project's title (the slug never moves, so sessions keep working). */
+  async function handleRenameDeckProject(workspace: string, slug: string, title: string) {
+    try {
+      await deck.rename(workspace, slug, title);
+      hubTick += 1;
+      toast("Project renamed");
+    } catch (e) {
+      toast(String(e), true);
+    }
+  }
+
+  /** Delete a deck project and its role sessions; deselect it in the dock. */
+  async function handleDeleteDeckProject(workspace: string, slug: string) {
+    try {
+      await deck.remove(workspace, slug);
+      hubTick += 1;
+      if (dockProject && dockProject.workspace === workspace && dockProject.slug === slug) {
+        dockProject = null;
+      }
+      await loadThreads();
+      toast("Project deleted");
+    } catch (e) {
+      toast(String(e), true);
+    }
+  }
+
+  /** A hub workspace was deleted from the picker: drop its dock selection
+      and any thread selection in it, and re-read threads (its sessions are gone). */
+  async function handleWorkspaceDeleted(name: string) {
+    hubTick += 1;
+    if (dockProject && dockProject.workspace === name) dockProject = null;
+    if (curProject === name) {
+      curProject = "default";
+      if (activeThreadId || events.length) newThread();
+      await refreshBranch();
+    }
+    await loadThreads();
+    if (liveRun && !threads.some((t) => t.id === liveRun)) {
+      liveRun = null;
+      clearLive();
+    }
+    if (activeThreadId && !threads.some((t) => t.id === activeThreadId)) {
+      activeThreadId = null;
+      activeMeta = null;
+      events = [];
+    }
+    toast(`Workspace ${name} deleted`);
   }
 
   function openNewWorkspaceWizard(step = "") {
@@ -175,14 +266,11 @@
     hubView = { kind: "new-project", workspace, step };
   }
 
-  /** The deck for one project — the stage the whole hub flow ends on. */
-
+  /** Select a project in the side dock and reveal it. */
   function openProject(workspace: string, slug: string) {
-    activeThreadId = null;
-    activeMeta = null;
-    events = [];
+    dockProject = { workspace, slug };
     showSettings = false;
-    hubView = { kind: "deck", workspace, slug };
+    openRightBar("project");
   }
 
   function closeHubView() {
@@ -190,10 +278,9 @@
   }
 
   /**
-   * Screenshot aid: `PARZI_UI_STATE=new-workspace:repos` (or `new-project:roles`,
-   * or a `deck:*` fixture) opens that screen at launch, so the verifier can
-   * capture every step without sending input. Same sources the deck's
-   * fixtures read, host first.
+   * Screenshot aid: `PARZI_UI_STATE=new-workspace:repos` (or `new-project:roles`)
+   * opens that screen at launch, so the verifier can capture every step
+   * without sending input.
    */
   async function applyUiState() {
     let state = "";
@@ -209,46 +296,12 @@
     const [screen, step = ""] = state.split(":");
     if (screen === "new-workspace") openNewWorkspaceWizard(step);
     else if (screen === "new-project") openNewProjectWizard("", step);
-    else if (screen === "deck") {
-      hubView = { kind: "deck", workspace: "acme", slug: "checkout-flow" };
-      // `deck:stage` is the conversation alone; every other deck state shows the panel.
-      if (step !== "stage") openRightBar("project");
-    }
     else if (screen === "chats") hubView = null;
     else if (screen === "thread" && step) openThread(step);
     // `menu:model|effort|perm|ws` opens a composer menu (no input reaches WebView2).
     else if (screen === "menu" && step) {
       setTimeout(() => document.querySelector<HTMLButtonElement>(`.${step}-zone button`)?.click(), 1500);
     }
-  }
-
-  async function browseWsFolder() {
-    if (pickingWsFolder) return;
-    pickingWsFolder = true;
-    try {
-      const picked = await openDialog({
-        directory: true,
-        multiple: false,
-        title: "Choose workspace folder",
-        defaultPath: wsRoot.trim() || undefined,
-      });
-      if (typeof picked === "string" && picked) wsRoot = picked;
-    } catch {
-      // Native picker unavailable — workspace is still created without a root.
-    } finally {
-      pickingWsFolder = false;
-    }
-  }
-
-  async function submitNewWs() {
-    const name = wsName.trim();
-    if (!name) return;
-    closeNewWs();
-    await handleCreateProject(name, wsRoot.trim());
-  }
-
-  function focusWsName(node: HTMLInputElement) {
-    node.focus();
   }
 
   const displayName = (n: string) => (n === "default" ? "Inbox" : n);
@@ -402,24 +455,6 @@
     approval = null;
     input = "";
     attachments = [];
-  }
-
-  async function newThreadInProject(name: string) {
-    await startDraftInProject(name);
-    toast(`New draft in ${displayName(name)} — pick a project anytime before sending`);
-  }
-
-  async function handleCreateProject(name: string, root: string) {
-    name = name.trim();
-    if (!name) return;
-    try {
-      await api.createProject(name, root.trim());
-      await loadProjects();
-      await startDraftInProject(name);
-      toast(`Workspace ${name} created — draft ready`);
-    } catch (e) {
-      toast(String(e), true);
-    }
   }
 
   function openPlanner() {
@@ -727,6 +762,9 @@
   let rightBarTab: RightTab = rbSaved.tab === "docs" ? "docs" : "project";
   let rightBarWidth = Math.min(680, Math.max(340, Number(rbSaved.width) || 420));
   let autoReveal = rbSaved.auto ?? true;
+  /** Full view: the inspector deck covers the whole body for reading. */
+  let rbFull = false;
+  $: if (!rightBarOpen) rbFull = false;
   let selectedArtifact: InspectorArtifact | null = null;
   let selectedDoc: InspectorDoc | null = null;
   let projectDocs: DocEntry[] = [];
@@ -900,6 +938,13 @@
     liveBase += liveBuf;
     live = liveBase;
     liveBuf = "";
+    // Stick to the bottom while streaming, but only when the reader was
+    // already there — never yank them away from history they scrolled to.
+    if (scrollEl && scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 160) {
+      tick().then(() => {
+        if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
+      });
+    }
   }
   function pushLive(text: string, session: string) {
     if (!liveBuf) {
@@ -1063,7 +1108,7 @@
 
   $: palActions = [
     { section: "Actions", label: "New chat", sub: "start a new conversation", run: () => { palette = false; newThread(); } },
-    { section: "Actions", label: "New project", sub: "workspace", run: () => { palette = false; openNewWs(); } },
+    { section: "Actions", label: "New workspace", sub: "hub wizard", run: () => { palette = false; openNewWorkspaceWizard(); } },
     { section: "Actions", label: "Plan mode", sub: "no edits", run: () => { palette = false; openPlanner(); } },
     { section: "Actions", label: "Settings", sub: "models · connectors · skills", run: () => openSettings() },
     { section: "Actions", label: "Report issue", sub: "github", run: () => openSettings("system", "report-issue") },
@@ -1150,6 +1195,12 @@
       toggleRightBar();
       return;
     }
+    // Full deck view for reading projects and artifacts.
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      if (rightBarOpen) rbFull = !rbFull;
+      return;
+    }
     if (e.key === "F11") {
       e.preventDefault();
       import("@tauri-apps/api/window").then(({ getCurrentWindow }) => {
@@ -1168,10 +1219,10 @@
       e.preventDefault();
       palAll[palIndex]?.run();
     } else if (e.key === "Escape") {
-      if (showNewWs) closeNewWs();
-      else if (palette) palette = false;
+      if (palette) palette = false;
       else if (hubView) closeHubView();
       else if (showSettings) showSettings = false;
+      else if (rbFull) rbFull = false;
       else if (rightBarOpen && rbEl && rbEl.contains(document.activeElement)) rightBarOpen = false;
       else if (liveRun) stopRun();
     }
@@ -1249,9 +1300,14 @@
       {threads}
       {activeThreadId}
       {hubTick}
+      sideFilter={sideFilter}
+      legacyProjects={legacyNames}
       on:selectThread={(e) => openThread(e.detail.id)}
       on:newSubsession={(e) => newSubsession(e.detail.id)}
-      on:newThread={newThread}
+      on:newThread={handleNewThread}
+      on:filterWorkspace={(e) => (sideFilter = e.detail.name)}
+      on:migrateProject={(e) => handleMigrateProject(e.detail.name)}
+      on:deleteLegacyProject={(e) => handleDeleteLegacyProject(e.detail.name)}
       on:forkThread={(e) => fork(e.detail.id)}
       on:deleteThread={(e) => handleDeleteThread(e.detail.id)}
       on:killRun={(e) => killSession(e.detail.id)}
@@ -1267,7 +1323,7 @@
     <!-- Central Stage (expand control lives inline in the titlebar) -->
     <div class="stage-col">
     <Titlebar
-      title={showSettings ? "Settings" : hubView?.kind === "new-workspace" ? "New workspace" : hubView?.kind === "new-project" ? "New project" : hubView?.kind === "deck" ? `${hubView.workspace} / ${hubView.slug}` : curWorkspace || "Inbox"}
+      title={showSettings ? "Settings" : hubView?.kind === "new-workspace" ? "New workspace" : hubView?.kind === "new-project" ? "New project" : curWorkspace || "Inbox"}
       subtitle={showSettings ? settingsSection : hubView ? "" : activeMeta ? activeMeta.title : !activeThreadId ? "new draft" : ""}
       showExpand={!sidebarOpen}
       panelOpen={rightBarOpen}
@@ -1296,16 +1352,6 @@
             initialStep={hubView.step}
             on:cancel={closeHubView}
             on:created={(e) => { hubTick += 1; openProject(e.detail.workspace, e.detail.slug); }}
-          />
-        </div>
-      {:else if hubView?.kind === "deck"}
-        <div class="stage-fill">
-          <ProjectDeck
-            workspace={hubView.workspace}
-            slug={hubView.slug}
-            on:openDoc={(e) => { selectedDoc = e.detail.doc; selectedArtifact = null; openRightBar("docs"); }}
-            on:error={(e) => toast(e.detail.text, true)}
-            on:openPanel={() => toggleRightBar("project")}
           />
         </div>
       {:else}
@@ -1346,8 +1392,10 @@
             on:openPlanner={openPlanner}
             workspaces={wsNames}
             workspace={curWorkspace}
-            workspaceLocked={!!activeThreadId}
+            workspaceFixed={!!activeThreadId}
             on:workspaceChange={(e) => selectWorkspace(e.detail.workspace)}
+            on:workspaceDeleted={(e) => handleWorkspaceDeleted(e.detail.workspace)}
+            on:error={(e) => toast(e.detail.text, true)}
             on:newWorkspace={() => openNewWorkspaceWizard()}
           />
         </div>
@@ -1355,20 +1403,23 @@
     </main>
     </div>
     <!-- Right inspector deck: docked split, collapses to zero width -->
-    <div class="rb-wrap" class:closed={!rightBarOpen} style="--rb-w: {rightBarWidth}px" bind:this={rbEl}>
+    <div class="rb-wrap" class:closed={!rightBarOpen} class:full={rbFull} style="--rb-w: {rightBarWidth}px" bind:this={rbEl}>
       <RightPanel
         tab={rightBarTab}
         width={rightBarWidth}
         {autoReveal}
+        full={rbFull}
         artifact={selectedArtifact}
         artifacts={threadArtifacts}
         doc={selectedDoc}
         docs={projectDocs}
         {docLoading}
         {activeThreadId}
-        workspace={curWorkspace}
+        workspace={panelWs}
         projects={wsProjects}
+        selected={dockProject}
         on:close={() => (rightBarOpen = false)}
+        on:toggleFull={() => (rbFull = !rbFull)}
         on:tab={(e) => (rightBarTab = e.detail.tab)}
         on:resize={(e) => (rightBarWidth = e.detail.width)}
         on:autoReveal={(e) => (autoReveal = e.detail.on)}
@@ -1378,12 +1429,14 @@
         on:pickFile={pickDocFile}
         on:openProject={(e) => openProject(e.detail.workspace, e.detail.slug)}
         on:newProject={(e) => openNewProjectWizard(e.detail.workspace)}
-        on:closeProject={() => { hubView = null; }}
+        on:closeProject={() => (dockProject = null)}
+        on:openSession={(e) => openThread(e.detail.id)}
+        on:openDraft={(e) => { selectedDoc = e.detail.doc; selectedArtifact = null; openRightBar("docs"); }}
+        on:error={(e) => toast(e.detail.text, true)}
       />
     </div>
   </div>
 
-  <!-- New Workspace Modal -->
   <!-- Toast Notification Stack -->
   <div class="toast-stack">
     {#each toasts as t (t.id)}
@@ -1393,40 +1446,6 @@
     {/each}
   </div>
 
-
-  <!-- New Workspace Popout (centered over the backdrop) -->
-  {#if showNewWs}
-    <div class="ws-backdrop" transition:fade={{ duration: 140 }} on:click={closeNewWs}>
-      <div class="ws-modal" on:click|stopPropagation>
-        <div class="ws-head">
-          <span>New workspace</span>
-          <button class="ws-x" title="Cancel (Esc)" on:click={closeNewWs}>
-            <Icon d="M18 6L6 18M6 6l12 12" size={12} />
-          </button>
-        </div>
-        <input
-          class="ws-name"
-          placeholder="Name — e.g. acme"
-          bind:value={wsName}
-          use:focusWsName
-          on:keydown={(e) => { if (e.key === "Enter") submitNewWs(); }}
-        />
-        <button
-          class="ws-folder"
-          on:click={browseWsFolder}
-          disabled={pickingWsFolder}
-          title={wsRoot.trim() || "Choose a workspace folder (optional)"}
-        >
-          <Icon d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" size={13} />
-          <span class="ws-folder-label">{wsFolderLabel || "Folder (optional)"}</span>
-        </button>
-        <div class="ws-foot">
-          <span class="hint">Enter to create · Esc to cancel</span>
-          <button class="ws-create" on:click={submitNewWs} disabled={!wsName.trim()}>Create</button>
-        </div>
-      </div>
-    </div>
-  {/if}
 
   {#if palette}
     <div class="palette-wrap" transition:fade={{ duration: 120 }}>
@@ -1591,6 +1610,16 @@
       transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), opacity 200ms ease, visibility 0s linear 260ms;
     }
   }
+  /* Full view: the deck covers the whole body (below the titlebar) for
+     reading projects and artifacts. Esc, Ctrl+Shift+F, or the button exits;
+     closing the deck resets it (see the rightBarOpen guard). */
+  .rb-wrap.full {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 30;
+    width: auto; margin-right: 0; opacity: 1; visibility: visible;
+    background: var(--parzi-sidebar);
+    border-left: none;
+    box-shadow: none;
+  }
   .stage-container {
     flex: 1;
     display: flex;
@@ -1609,15 +1638,21 @@
     align-items: stretch;
     padding: 8px 32px 48px;
   }
-  .stage-fill { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .omnibar-slot {
     z-index: 6; display: flex; justify-content: center; width: 100%;
+    /* The docked composer floats over the thread: only the card itself
+       takes pointer events, so clicks on the margins reach the transcript
+       instead of dying on an invisible full-width strip. */
+    pointer-events: none;
     transition:
       top 520ms var(--ease-spring),
       bottom 520ms var(--ease-spring),
       transform 520ms var(--ease-spring),
       width 520ms var(--ease-spring),
       padding 520ms var(--ease-spring);
+  }
+  .omnibar-slot :global(.ob) {
+    pointer-events: auto;
   }
   .omnibar-slot.hero {
     position: absolute; left: 50%; top: 46%;
@@ -1673,58 +1708,4 @@
     border-color: var(--bad-line);
     color: var(--bad);
   }
-
-  /* New-workspace popout */
-  .ws-backdrop {
-    position: fixed; inset: 0; z-index: 250;
-    display: flex; align-items: center; justify-content: center;
-    background: rgba(5, 5, 8, 0.72);
-  }
-  .ws-modal {
-    width: 340px; max-width: calc(100vw - 48px);
-    display: flex; flex-direction: column; gap: 10px;
-    padding: 16px 16px 12px;
-    background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 94%, transparent), color-mix(in srgb, var(--parzi-sidebar) 88%, transparent));
-    backdrop-filter: blur(20px) saturate(1.25);
-    -webkit-backdrop-filter: blur(20px) saturate(1.25);
-    border: 1px solid var(--line-2);
-    border-top-color: var(--line-hi);
-    border-radius: 14px;
-    box-shadow: var(--menu-shadow);
-  }
-  .ws-head {
-    display: flex; align-items: center; justify-content: space-between;
-    font-size: 13px; font-weight: 600; color: var(--text);
-  }
-  .ws-x {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 24px; height: 24px; background: transparent; border: none;
-    border-radius: 6px; color: var(--text-3); cursor: pointer;
-  }
-  .ws-x:hover { background: var(--surface-3); color: var(--text); }
-  .ws-name {
-    background: var(--input); border: 1px solid var(--line-3);
-    border-radius: 8px; color: var(--text); font: inherit; font-size: 13px;
-    padding: 9px 11px; outline: none; width: 100%; box-sizing: border-box;
-  }
-  .ws-name::placeholder { color: var(--text-4); }
-  .ws-name:focus { border-color: var(--accent-line) !important; background: var(--surface-2); box-shadow: none; }
-  .ws-folder {
-    display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box;
-    background: transparent; border: 1px dashed var(--line-3);
-    border-radius: 8px; color: var(--text-3); font: inherit; font-size: 12.5px;
-    padding: 8px 11px; cursor: pointer; text-align: left;
-  }
-  .ws-folder:hover:not(:disabled) { color: var(--text-2); border-color: var(--text-4); background: var(--surface-1); }
-  .ws-folder:disabled { opacity: 0.5; cursor: default; }
-  .ws-folder-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ws-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .ws-foot .hint { font-size: 10.5px; color: var(--text-4); }
-  .ws-create {
-    background: var(--accent); border: 1px solid transparent;
-    color: var(--accent-ink); font: inherit; font-size: 12.5px; font-weight: 600;
-    padding: 7px 18px; cursor: pointer; border-radius: 8px;
-  }
-  .ws-create:hover:not(:disabled) { filter: brightness(1.08); }
-  .ws-create:disabled { opacity: 0.4; cursor: default; }
 </style>

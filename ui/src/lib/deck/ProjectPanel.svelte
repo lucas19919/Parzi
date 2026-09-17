@@ -4,19 +4,237 @@
    * projects. A project open: its lanes and settings. The conversation owns
    * the stage; data and actions for an open project come from the deck's store.
    */
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, onDestroy } from "svelte";
   import SettingsTab from "./SettingsTab.svelte";
-  import { laneNames, projectPanel, restingState, type DeckApproval, type TaskLive } from "./state";
-  import type { Plan, Project, Task } from "../api";
+  import {
+    deckDrafts, etagOf, laneNames, projectPanel, restingState, taskStates,
+    type DeckApproval, type TaskLive,
+  } from "./state";
+  import {
+    api, deck, onRunEvent,
+    type AuditResult, type Draft, type InspectorDoc, type JournalLine,
+    type Plan, type Project, type ProjectOpen, type Task, type UiEvent,
+  } from "../api";
 
   export let workspace = "";
   export let projects: Project[] = [];
+  /** Project selected in the dock: the panel boots its home itself, so the
+      old full-stage deck is gone — project work lives here exclusively. */
+  export let selected: { workspace: string; slug: string } | null = null;
 
   const dispatch = createEventDispatcher<{
     openProject: { workspace: string; slug: string };
     newProject: { workspace: string };
     closeProject: void;
+    renameProject: { workspace: string; slug: string; title: string };
+    deleteProject: { workspace: string; slug: string };
+    openSession: { id: string };
+    openDraft: { doc: InspectorDoc };
+    error: { text: string };
   }>();
+
+  const POLL_MS = 2000;
+
+  let open: ProjectOpen | null = null;
+  let plan: Plan = { sprints: [] };
+  let journal: JournalLine[] = [];
+  let drafts: Draft[] = [];
+  let audit: AuditResult | null = null;
+  let auditing = "";
+  let approving = false;
+  /** The `critical` transfer cards waiting for a person (same gate as tool
+      approvals; anything else the global handler owns). */
+  let approvals: Record<string, DeckApproval> = {};
+  let bootError = "";
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let unlisten: (() => void) | null = null;
+  let loadedKey = "";
+  let tags = { project: "", plan: "", journal: "", drafts: "" };
+
+  $: live = taskStates(plan, journal);
+  $: if (selected) void bootHome(selected);
+  else stopHome();
+
+  // The home publishes exactly what it used to when the stage deck owned it:
+  // lanes/settings read the store, drafts feed the Docs tab's quick tabs.
+  $: projectPanel.set(
+    selected && open
+      ? {
+          project: open.project, plan, live, approvals, drafts, audit, auditing, approving,
+          actions: {
+            audit: (d) => void runAudit(d),
+            approve: () => void approvePlan(),
+            answer: (key, allow) => void answerApproval(key, allow),
+            save: (p) => void saveProject(p),
+            openDraft,
+          },
+        }
+      : null,
+  );
+  $: deckDrafts.set(drafts.map((d) => ({ label: d.name.replace(/\.md$/, ""), path: d.path })));
+
+  async function bootHome(sel: { workspace: string; slug: string }) {
+    const key = `${sel.workspace}/${sel.slug}`;
+    if (key === loadedKey) return;
+    stopHome();
+    loadedKey = key;
+    section = "lanes";
+    try {
+      open = await deck.open(sel.workspace, sel.slug);
+      await refresh();
+      unlisten = await onRunEvent(onHomeEvent);
+      timer = setInterval(() => {
+        if (typeof document !== "undefined" && document.hidden) return;
+        void refresh();
+      }, POLL_MS);
+    } catch (e) {
+      bootError = String(e);
+      dispatch("error", { text: bootError });
+    }
+  }
+
+  function stopHome() {
+    if (timer) clearInterval(timer);
+    timer = null;
+    if (unlisten) unlisten();
+    unlisten = null;
+    loadedKey = "";
+    open = null;
+    plan = { sprints: [] };
+    journal = [];
+    drafts = [];
+    audit = null;
+    auditing = "";
+    approving = false;
+    approvals = {};
+    bootError = "";
+    projectPanel.set(null);
+    deckDrafts.set([]);
+  }
+
+  onDestroy(stopHome);
+
+  /** One poll round; each command is independent, a missing one is not fatal. */
+  async function refresh() {
+    if (!selected || !open) return;
+    const { workspace: ws, slug } = selected;
+    const [p, pl, jr, dr] = await Promise.allSettled([
+      deck.get(ws, slug),
+      deck.plan(ws, slug),
+      deck.journal(ws, slug),
+      deck.drafts(ws, slug),
+    ]);
+    if (p.status === "fulfilled") assign("project", p.value, (v) => (open = open && { ...open, project: v }));
+    if (pl.status === "fulfilled") assign("plan", pl.value, (v) => (plan = v));
+    if (jr.status === "fulfilled") assign("journal", jr.value, (v) => (journal = v));
+    if (dr.status === "fulfilled") assign("drafts", dr.value, (v) => (drafts = v));
+  }
+
+  function assign<T>(key: keyof typeof tags, value: T, set: (v: T) => void) {
+    const tag = etagOf(value);
+    if (tags[key] === tag) return;
+    tags[key] = tag;
+    set(value);
+  }
+
+  async function runAudit(d: Draft) {
+    if (!selected || !open) return;
+    auditing = d.name;
+    try {
+      audit = await deck.audit(selected.workspace, selected.slug, d.name);
+      await refresh();
+    } catch (err) {
+      dispatch("error", { text: String(err) });
+    } finally {
+      auditing = "";
+    }
+  }
+
+  async function approvePlan() {
+    if (!selected) return;
+    approving = true;
+    try {
+      audit = null;
+      await deck.approve(selected.workspace, selected.slug);
+      await refresh();
+    } catch (err) {
+      dispatch("error", { text: String(err) });
+    } finally {
+      approving = false;
+    }
+  }
+
+  /** Transfer cards answer through the same gate a tool approval does. */
+  async function answerApproval(key: string, allow: boolean) {
+    const { [approvalTask(key)]: _gone, ...rest } = approvals;
+    approvals = rest;
+    try {
+      await api.approveTool(key, allow);
+    } catch (err) {
+      dispatch("error", { text: String(err) });
+    }
+  }
+
+  function approvalTask(key: string): string {
+    return Object.keys(approvals).find((t) => approvals[t].key === key) ?? "";
+  }
+
+  function onHomeEvent(ev: UiEvent) {
+    if (ev.kind === "approval") {
+      const args = (ev.call.args ?? {}) as Record<string, unknown>;
+      const task = String(args.task ?? args.for_task ?? args.for ?? "");
+      if (!task) return; // Not a project transfer: the global handler owns it.
+      approvals = {
+        ...approvals,
+        [task]: {
+          key: ev.key,
+          task,
+          lane: ev.call.lane,
+          name: ev.call.name,
+          detail: JSON.stringify(args, null, 2).slice(0, 1200),
+        },
+      };
+      return;
+    }
+    if (!("session" in ev) || !open) return;
+    if (ev.session !== open.header_session && ev.session !== open.orchestrator_session) return;
+    if (ev.kind === "done" || ev.kind === "error") void refresh();
+  }
+
+  async function saveProject(next: Project) {
+    try {
+      await deck.save(next);
+      await refresh();
+    } catch (err) {
+      dispatch("error", { text: String(err) });
+    }
+  }
+
+  function openDraft(d: Draft) {
+    dispatch("openDraft", { doc: { title: d.title || d.name, content: d.content, path: d.path } });
+  }
+
+  function openSession(id: string) {
+    if (id) dispatch("openSession", { id });
+  }
+
+  /** Inline rename + two-step delete for the workspace's project list. */
+  let renamingSlug: string | null = null;
+  let renameDraft = "";
+  let delConfirm: string | null = null;
+
+  function focusRename(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
+
+  function commitRename(proj: Project) {
+    const title = renameDraft.trim();
+    renamingSlug = null;
+    if (title && title !== (proj.title || proj.slug)) {
+      dispatch("renameProject", { workspace, slug: proj.slug, title });
+    }
+  }
 
   type LaneState = "running" | "blocked" | "done" | "idle";
   interface LaneRow {
@@ -70,7 +288,7 @@
   const LABEL: Record<LaneState, string> = { running: "running", blocked: "blocked", done: "done", idle: "free" };
 </script>
 
-{#if p}
+{#if selected && p}
   <div class="panel">
     <button class="back" on:click={() => dispatch("closeProject")}>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6" /></svg>
@@ -79,6 +297,12 @@
     <div class="head">
       <span class="title" title={p.project.title}>{p.project.title}</span>
       <span class="status">{p.project.status}</span>
+    </div>
+    <div class="discuss">
+      <button class="btn" disabled={!open} on:click={() => openSession(open?.header_session ?? "")}
+        title="Open the header's session as a chat on the stage">Discuss with header</button>
+      <button class="btn" disabled={!open?.orchestrator_session} on:click={() => openSession(open?.orchestrator_session ?? "")}
+        title={open?.orchestrator_session ? "Open the orchestrator's session as a chat on the stage" : "The orchestrator starts with the first audit"}>Discuss with orchestrator</button>
     </div>
 
     <div class="seg" role="tablist">
@@ -157,6 +381,10 @@
       {/if}
     </div>
   </div>
+{:else if selected}
+  <div class="panel">
+    <div class="body"><p class="empty">{bootError || "Opening project…"}</p></div>
+  </div>
 {:else if workspace}
   <div class="panel">
     <div class="head">
@@ -165,10 +393,30 @@
     </div>
     <div class="body">
       {#each projects as proj (proj.slug)}
-        <button class="proj" on:click={() => dispatch("openProject", { workspace, slug: proj.slug })}>
-          <span class="p-title">{proj.title || proj.slug}</span>
-          <span class="p-status">{String(proj.status).toLowerCase()}</span>
-        </button>
+        <div class="proj-row">
+          {#if renamingSlug === proj.slug}
+            <input class="rename" bind:value={renameDraft} use:focusRename
+              on:keydown={(e) => {
+                if (e.key === "Enter") commitRename(proj);
+                else if (e.key === "Escape") renamingSlug = null;
+              }} />
+            <button class="mini-btn" title="Save" on:click={() => commitRename(proj)}>✓</button>
+            <button class="mini-btn" title="Cancel" on:click={() => (renamingSlug = null)}>✕</button>
+          {:else}
+            <button class="proj" on:click={() => dispatch("openProject", { workspace, slug: proj.slug })}>
+              <span class="p-title">{proj.title || proj.slug}</span>
+              <span class="p-status">{String(proj.status).toLowerCase()}</span>
+            </button>
+            <button class="mini-btn" title="Rename {proj.title || proj.slug}"
+              on:click={() => { renamingSlug = proj.slug; renameDraft = proj.title || proj.slug; delConfirm = null; }}>✎</button>
+            <button class="mini-btn danger" class:armed={delConfirm === proj.slug}
+              title={delConfirm === proj.slug ? "Click again to delete it and its role sessions" : `Delete ${proj.title || proj.slug}`}
+              on:click={() => {
+                if (delConfirm !== proj.slug) delConfirm = proj.slug;
+                else { delConfirm = null; dispatch("deleteProject", { workspace, slug: proj.slug }); }
+              }}>{delConfirm === proj.slug ? "sure?" : "✕"}</button>
+          {/if}
+        </div>
       {:else}
         <p class="empty">No projects in {workspace} yet.</p>
       {/each}
@@ -185,6 +433,18 @@
     color: var(--text-3); font: inherit; font-size: 11.5px; cursor: pointer;
   }
   .back:hover { color: var(--text); background: var(--surface-1); }
+  .proj-row { display: flex; align-items: center; gap: 4px; }
+  .proj-row .proj { flex: 1; min-width: 0; }
+  .proj-row .rename { flex: 1; min-width: 0; }
+  .mini-btn {
+    flex: none; min-width: 26px; height: 26px; padding: 0 4px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: none; border-radius: 6px;
+    color: var(--text-4); font: inherit; font-size: 12px; cursor: pointer;
+  }
+  .mini-btn:hover { color: var(--text); background: var(--surface-2); }
+  .mini-btn.danger:hover, .mini-btn.danger.armed { color: var(--bad); background: var(--bad-soft); }
+  .mini-btn.armed { font-size: 10px; font-weight: 600; }
   .proj {
     display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
     padding: 9px 10px; border-radius: var(--radius-2); background: var(--surface-1);
@@ -199,6 +459,7 @@
   }
   .new:hover { color: var(--text); }
   .head { display: flex; align-items: baseline; gap: 8px; padding: 14px 14px 10px; min-width: 0; }
+  .discuss { display: flex; gap: 6px; padding: 0 14px 10px; }
   .title { font-size: 14px; font-weight: 650; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .status { font-size: 11px; color: var(--text-4); flex: none; }
 

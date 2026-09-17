@@ -4,9 +4,8 @@
  * in `derive.ts` (pure, unit-tested) and are re-exported here so the deck
  * components have one import.
  */
-import { invoke } from "@tauri-apps/api/core";
 import { writable } from "svelte/store";
-import { deck, type AuditResult, type Draft, type Plan, type Project } from "../api";
+import type { AuditResult, Draft, Plan, Project } from "../api";
 import type { TaskLive } from "./derive";
 
 export {
@@ -63,17 +62,3 @@ export const projectPanel = writable<ProjectPanelState | null>(null);
  * (DocReader lists them as quick tabs). Empty when no project is open.
  */
 export const deckDrafts = writable<{ label: string; path: string }[]>([]);
-
-/** Legacy mount (ProjectMainPage) knows a slug only: find its workspace. */
-export async function resolveWorkspace(slug: string): Promise<string> {
-  const names = await invoke<string[]>("workspace_list");
-  for (const ws of names) {
-    try {
-      const projects = await deck.list(ws);
-      if (projects.some((p) => p.slug === slug)) return ws;
-    } catch {
-      // A workspace that fails to list is not this project's workspace.
-    }
-  }
-  return names[0] ?? "";
-}

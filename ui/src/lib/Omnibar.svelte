@@ -6,7 +6,7 @@
   import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
   import { portal } from "./portal";
-  import { api } from "./api";
+  import { api, hub } from "./api";
   import { updateProviderRow } from "./modelStore";
   import type { ModelRow } from "./api";
 
@@ -28,8 +28,9 @@
   export let workspaces: string[] = [];
   /** Workspace this chat belongs to ("" = none). */
   export let workspace = "";
-  /** Sent chats keep their workspace: the pill shows it but does not open. */
-  export let workspaceLocked = false;
+  /** A thread is already open in this workspace: its home is fixed, so
+      picking another workspace starts a new draft there instead of moving it. */
+  export let workspaceFixed = false;
   /** Context window fill of this chat (tokens the model saw last request). */
   export let contextUsed = 0;
   /** The model's window; 0 hides the meter. */
@@ -53,6 +54,8 @@
     openPlanner: void;
     permissionChange: { permission: string };
     workspaceChange: { workspace: string };
+    workspaceDeleted: { workspace: string };
+    error: { text: string };
     newWorkspace: void;
   }>();
 
@@ -583,7 +586,6 @@
   }
 
   function toggleWs() {
-    if (workspaceLocked) return;
     wsOpen = !wsOpen;
     if (wsOpen) {
       showModelPicker = false;
@@ -596,7 +598,31 @@
 
   function pickWorkspace(name: string) {
     wsOpen = false;
+    wsConfirm = null;
     if (name !== workspace) dispatch("workspaceChange", { workspace: name });
+  }
+
+  /** Two-step workspace delete: first click arms, second click fires. */
+  let wsConfirm: string | null = null;
+  let wsDeleting = false;
+  $: if (!wsOpen) wsConfirm = null;
+  async function deleteWorkspace(name: string) {
+    if (wsDeleting) return;
+    if (wsConfirm !== name) {
+      wsConfirm = name;
+      return;
+    }
+    wsConfirm = null;
+    wsDeleting = true;
+    try {
+      await hub.deleteWorkspace(name);
+      wsOpen = false;
+      dispatch("workspaceDeleted", { workspace: name });
+    } catch (e) {
+      dispatch("error", { text: String(e) });
+    } finally {
+      wsDeleting = false;
+    }
   }
 
   function togglePerm() {
@@ -872,11 +898,11 @@
       {#if workspaces.length || workspace}
         <span class="vdiv" />
         <div class="ws-zone ctl-zone">
-          <button bind:this={wsBtn} class="ctl" class:open={wsOpen} class:locked={workspaceLocked} on:click|stopPropagation={toggleWs}
-            title={workspaceLocked ? `This chat belongs to ${workspace || "no workspace"}` : "Workspace for this chat"}>
+          <button bind:this={wsBtn} class="ctl" class:open={wsOpen} on:click|stopPropagation={toggleWs}
+            title={workspaceFixed ? `This chat stays in ${workspace || "Inbox"} — picking another starts a new draft` : "Workspace for this chat"}>
             <span class="ctl-glyph"><Icon d={I.folder} size={13} /></span>
             <span class="truncate">{workspace || "No workspace"}</span>
-            {#if !workspaceLocked}<span class="chev"><Icon d={I.chevD} size={11} /></span>{/if}
+            <span class="chev"><Icon d={I.chevD} size={11} /></span>
           </button>
         </div>
       {/if}
@@ -1058,16 +1084,26 @@
 
     {#if wsOpen}
       <div use:portal class="pop ws-pop from-right" class:from-top={wsBelow} style={wsPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
+        {#if workspaceFixed}
+          <div class="ws-note">This chat stays in {workspace || "Inbox"}. Picking another starts a new draft.</div>
+        {/if}
         <button class="opt-row" class:on={!workspace} on:click={() => pickWorkspace("")}>
           <span class="meta"><span class="nm">No workspace</span></span>
           {#if !workspace}<span class="tick"><Icon d={I.check} size={12} /></span>{/if}
         </button>
         {#each workspaces as w (w)}
-          <button class="opt-row" class:on={workspace === w} on:click={() => pickWorkspace(w)}>
-            <span class="p-ico"><Icon d={I.folder} size={13} /></span>
-            <span class="meta"><span class="nm">{w}</span></span>
-            {#if workspace === w}<span class="tick"><Icon d={I.check} size={12} /></span>{/if}
-          </button>
+          <div class="ws-row">
+            <button class="opt-row ws-pick" class:on={workspace === w} on:click={() => pickWorkspace(w)}>
+              <span class="p-ico"><Icon d={I.folder} size={13} /></span>
+              <span class="meta"><span class="nm">{w}</span></span>
+              {#if workspace === w}<span class="tick"><Icon d={I.check} size={12} /></span>{/if}
+            </button>
+            <button class="ws-del" class:armed={wsConfirm === w} disabled={wsDeleting}
+              title={wsConfirm === w ? `Click again to delete ${w} and its chats` : `Delete workspace ${w}`}
+              on:click|stopPropagation={() => deleteWorkspace(w)}>
+              {#if wsConfirm === w}sure?{:else}<Icon d={I.close} size={10} />{/if}
+            </button>
+          </div>
         {/each}
         <button class="opt-row new-ws" on:click={() => { wsOpen = false; dispatch("newWorkspace"); }}>
           <span class="p-ico"><Icon d={I.plus} size={13} /></span>
@@ -1265,7 +1301,17 @@
   .effort-pop { width: 300px; max-width: calc(100vw - 16px); padding: 5px; overflow-y: auto; }
   .ws-pop { width: 240px; max-width: calc(100vw - 16px); padding: 5px; overflow-y: auto; }
   .ws-pop .new-ws { color: var(--text-3); border-top: 1px solid var(--line-2); border-radius: 0 0 7px 7px; margin-top: 3px; }
-  .ctl.locked { cursor: default; }
+  .ws-note { font-size: 11px; color: var(--text-3); line-height: 1.45; padding: 6px 8px 4px; }
+  .ws-row { display: flex; align-items: center; gap: 2px; }
+  .ws-row .ws-pick { width: auto; flex: 1; min-width: 0; }
+  .ws-del {
+    flex: none; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: none; border-radius: 6px; color: var(--text-4); cursor: pointer;
+    font: inherit; font-size: 11px; line-height: 1; padding: 0;
+  }
+  .ws-del:hover:not(:disabled) { color: var(--bad); background: var(--bad-soft); }
+  .ws-del.armed { color: var(--bad); background: var(--bad-soft); width: auto; padding: 0 8px; font-weight: 600; }
+  .ws-del:disabled { opacity: 0.5; cursor: default; }
   .perm-pop { width: 320px; max-width: calc(100vw - 16px); padding: 5px; overflow-y: auto; }
 
   .pop-search {

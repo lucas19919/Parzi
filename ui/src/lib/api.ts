@@ -384,6 +384,8 @@ export const api = {
   listPacks: () => invoke<string[]>("list_packs"),
   listPackInfos: () => invoke<PackInfo[]>("list_pack_infos"),
   deletePack: (name: string) => invoke<void>("delete_pack", { name }),
+  renamePack: (old: string, name: string) => invoke<void>("rename_pack", { old, new: name }),
+  deleteBackground: (name: string) => invoke<string>("delete_background", { name }),
   getUserCss: () => invoke<string>("get_user_css"),
   saveUserCss: (css: string) => invoke<string>("save_user_css", { css }),
   savePack: (name: string) => invoke<void>("save_pack", { name }),
@@ -510,6 +512,12 @@ export const hub = {
     invoke<Workspace>("workspace_create", { name, kind }),
   addRepos: (workspace: string, repos: RepoRef[]) =>
     invoke<Workspace>("workspace_add_repos", { workspace, repos }),
+  /** Delete a hub workspace, its deck projects' role sessions and its chats. */
+  deleteWorkspace: (workspace: string) =>
+    invoke<number>("workspace_delete", { workspace }),
+  /** Move a legacy `~/.parzi/projects/<name>` into a hub workspace of the same name. */
+  migrateWorkspace: (name: string) =>
+    invoke<Workspace>("workspace_migrate", { name }),
   /** Round 1's syncer is the workspace's own git repo (§1.1). */
   syncWorkspace: (workspace: string) =>
     invoke<SyncReport>("workspace_sync", { workspace }),
@@ -695,6 +703,12 @@ export const deck = {
   save: (project: Project) => invoke<Project>("project_save", { project }),
   list: (workspace: string) =>
     invoke<Project[]>("project_list", { workspace }),
+  /** Rename a project's title (the slug never moves). */
+  rename: (workspace: string, slug: string, title: string) =>
+    invoke<Project>("project_rename", { workspace, slug, title }),
+  /** Delete a deck project and its role sessions. */
+  remove: (workspace: string, slug: string) =>
+    invoke<number>("project_delete", { workspace, slug }),
   drafts: (workspace: string, slug: string) =>
     invoke<Draft[]>("project_drafts", { workspace, slug }),
   /** Send one draft to the orchestrator: writes PLAN.md, returns the summary. */

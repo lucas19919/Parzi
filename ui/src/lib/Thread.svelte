@@ -323,7 +323,7 @@
     {#if item.kind === "user"}
       {@const sentImgs = attachedImages(item.text)}
       <div class="msg-row user">
-        <div class="user-bubble">{stripMarker(item.text)}</div>
+        <div class="user-bubble msg">{@html renderMarkdown(stripMarker(item.text))}</div>
         {#if sentImgs.length}
           <div class="sent-imgs">
             {#each sentImgs as im}
@@ -447,7 +447,10 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
-    padding: 16px 24px 120px;
+    /* The omnibar docks as a floating overlay (~115px single-line, more
+       with attachments or a grown textarea): keep this clearance above the
+       tallest common composer so the last lines never slide underneath it. */
+    padding: 16px 24px 190px;
     max-width: 820px;
     margin: 0 auto;
     width: 100%;
@@ -470,7 +473,24 @@
     font-size: 13.5px;
     line-height: 1.5;
     max-width: 80%;
+    min-width: 0;
+    overflow-wrap: break-word;
     word-break: break-word;
+  }
+  /* User prompts render as markdown now (same pipeline as assistant
+     messages; `{@html}` nodes are invisible to Svelte's scope analysis, so
+     these stay `:global` — plain selectors would warn as unused). */
+  .user-bubble :global(h1), .user-bubble :global(h2),
+  .user-bubble :global(h3), .user-bubble :global(h4) {
+    margin: 0.5em 0 0.3em;
+    font-size: 1.02em;
+  }
+  .user-bubble :global(ul), .user-bubble :global(ol) {
+    margin: 0.4em 0;
+    padding-left: 20px;
+  }
+  .user-bubble :global(.codeblock) {
+    margin: 0.5em 0;
   }
   .sent-imgs {
     display: flex;
