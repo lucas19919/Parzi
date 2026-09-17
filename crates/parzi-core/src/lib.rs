@@ -15,6 +15,7 @@ pub mod project;
 pub mod prompts;
 pub mod status;
 pub mod store;
+pub mod system;
 pub mod theme;
 pub mod wallpaper;
 pub mod widgets;

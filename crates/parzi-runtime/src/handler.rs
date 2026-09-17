@@ -1330,6 +1330,22 @@ pub fn system_parts(cfg: &ParziConfig, project: &str, lane: &str) -> Vec<String>
             }
         }
     }
+    // Standing instructions, Claude-style: global SYSTEM.md, then the
+    // workspace file when this chat lives in a hub workspace. Legacy
+    // project/lane SYSTEM.md already landed above via the scan; deck goals
+    // live in PROJECT.md on the role side. Knowledge stays last: specific,
+    // earned memory beats standing instruction.
+    for inst in parzi_core::system::for_chat(project) {
+        parts.push(format!(
+            "# {} instructions\n\n{}",
+            if inst.scope == "user" {
+                "Global".to_string()
+            } else {
+                format!("Workspace {}", inst.scope)
+            },
+            inst.text
+        ));
+    }
     if let Some(knowledge) = lanes::read_knowledge(project) {
         let capped = if knowledge.len() > 4_000 {
             format!("{}\n…(earlier knowledge truncated)", &knowledge[..4_000])

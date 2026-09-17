@@ -16,10 +16,12 @@ const JOURNAL_TAIL: usize = 40;
 /// Bytes kept per whole-file part (PROJECT.md, PLAN.md, KNOWLEDGE.md).
 const FILE_CAP: usize = 24_000;
 
-/// Header: the workspace digest, PROJECT.md, KNOWLEDGE.md, STATUS.md, the
-/// capsules and the journal tail. All of it computed, none of it generated.
+/// Header: the workspace digest, standing instructions, PROJECT.md,
+/// KNOWLEDGE.md, STATUS.md, the capsules and the journal tail. All of it
+/// computed, none of it generated.
 pub fn header(ctx: &RoleCtx) -> Vec<ContextPart> {
     let mut parts = workspace_digest(&ctx.workspace);
+    parts.extend(instructions(ctx));
     parts.extend(file_part("project", project_file(ctx, "PROJECT.md")));
     parts.extend(file_part("knowledge", project_file(ctx, "KNOWLEDGE.md")));
     parts.push(ContextPart::new("status", status_text(ctx)));
@@ -28,10 +30,11 @@ pub fn header(ctx: &RoleCtx) -> Vec<ContextPart> {
     parts
 }
 
-/// Orchestrator: PROJECT.md, every draft, the current PLAN.md, the capsules
-/// and STATUS.md. The draft it is auditing is named in its dispatch message.
+/// Orchestrator: standing instructions, PROJECT.md, every draft, the
+/// current PLAN.md, the capsules and STATUS.md. The draft it is auditing is
+/// named in its dispatch message.
 pub fn orchestrator(ctx: &RoleCtx) -> Vec<ContextPart> {
-    let mut parts = vec![];
+    let mut parts: Vec<ContextPart> = instructions(ctx).collect();
     parts.extend(file_part("project", project_file(ctx, "PROJECT.md")));
     for draft in files::drafts(&ctx.workspace, &ctx.slug).unwrap_or_default() {
         parts.push(ContextPart::new(
@@ -73,6 +76,25 @@ pub fn coder(ctx: &RoleCtx) -> Vec<ContextPart> {
 }
 
 // ------------------------------------------------------------ file pieces
+
+/// Standing instructions for a deck role run: global, then the workspace
+/// file. The coder stays minimal on purpose — task scope only, nothing
+/// about the project at large — so it does not call this.
+fn instructions(ctx: &RoleCtx) -> impl Iterator<Item = ContextPart> {
+    parzi_core::system::for_role(&ctx.workspace)
+        .into_iter()
+        .map(|inst| {
+            let whose = if inst.scope == "user" {
+                "Global".to_string()
+            } else {
+                format!("Workspace {}", inst.scope)
+            };
+            ContextPart::new(
+                &format!("instructions:{}", inst.scope),
+                format!("# {whose} instructions\n\n{}", inst.text),
+            )
+        })
+}
 
 fn project_file(ctx: &RoleCtx, name: &str) -> PathBuf {
     project::dir(&ctx.workspace, &ctx.slug).join(name)

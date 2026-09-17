@@ -70,4 +70,19 @@ how many sessions went with them.
 `PLAN.md` grammar, `workspace.toml`, `KNOWLEDGE.md` — all plain text under
 `~/.parzi`, readable and writable by anything.
 
+## Standing instructions (Claude-style memory, Parzi-shaped)
+
+Three scopes, auto-loaded into context, capped at 8 KB each. Missing files
+are normal — most scopes have none:
+
+| Scope | File | Applies to |
+| --- | --- | --- |
+| You, everywhere | `~/.parzi/SYSTEM.md` | every chat and role run |
+| Workspace | `~/.parzi/workspaces/<name>/SYSTEM.md` | chats in that workspace, its header/orchestrator runs |
+| Project / lane (legacy) | `projects/<name>/SYSTEM.md`, `lanes/<l>/SYSTEM.md` | chats via the existing scan pass |
+
+Keep them short (under ~200 lines); longer files cap with a note. Deck
+projects carry their goal in `PROJECT.md` instead. Coders stay task-scoped
+on purpose — instructions stop at header/orchestrator level.
+
 License: MIT.
