@@ -3,7 +3,7 @@
   // and loads only its own data, so opening settings is instant and a hung
   // provider/MCP probe can never block the other tabs.
   import GeneralSection from "./settings/GeneralSection.svelte";
-  import ModelsSection from "./settings/ModelsSection.svelte";
+  import ProvidersSection from "./settings/ProvidersSection.svelte";
   import AppearanceSection from "./settings/AppearanceSection.svelte";
   import ConnectorsSection from "./settings/ConnectorsSection.svelte";
   import AgentToolsSection from "./settings/AgentToolsSection.svelte";
@@ -21,7 +21,7 @@
   function normalizeTab(t: string): string {
     if (["general", "application"].includes(t)) return "general";
     if (t === "appearance") return "appearance";
-    if (t === "models") return "models";
+    if (t === "providers") return "providers";
     if (t === "connectors") return "connectors";
     if (t === "tools") return "tools";
     if (t === "skills") return "skills";
@@ -47,8 +47,8 @@
   <div class="settings-content-scroll">
     {#if activeTab === "general"}
       <GeneralSection {notify} />
-    {:else if activeTab === "models"}
-      <ModelsSection {notify} />
+    {:else if activeTab === "providers"}
+      <ProvidersSection {notify} />
     {:else if activeTab === "appearance"}
       <AppearanceSection {notify} />
     {:else if activeTab === "connectors"}

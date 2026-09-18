@@ -1,96 +1,149 @@
-//! parzi-providers: one trait, thin natives. Five providers, one bar:
-//! claude · codex · antigravity · opencode · xai. Adding a vendor = one file
-//! plus one line in `PROVIDERS`.
+//! parzi-providers: Parzi drives each vendor's own agent — Claude Code, the
+//! Codex app-server, and the ACP agents (OpenCode, Grok, Antigravity,
+//! Cursor) — the way t3code does. No model API is called from here and no
+//! vendor credential passes through Parzi: every provider signs in,
+//! refreshes and bills through its own program.
 
-pub mod anthropic;
-pub mod antigravity;
-pub mod antigravity_oauth;
-pub mod catalog;
+pub mod acp;
 pub mod claude;
 pub mod codex;
-pub mod compat_providers;
 /// GitHub: the workspace wizard's credential, repo listing and clone-or-map.
 pub mod github;
-pub mod images;
-pub mod openai_compat;
-pub mod opencode;
-mod opencode_wire;
-pub mod router;
+mod jsonrpc;
+pub mod process;
 pub mod types;
 
-pub use types::{
-    desanitize_tool, sanitize_tool, AuthStatus, Billing, ChatReq, EventRx, EventTx, Model,
-    Provider, ProviderHealth, StreamEvent, ToolDef,
-};
+use std::sync::Arc;
 
+use base64::Engine as _;
 use parzi_core::config::ParziConfig;
 
-/// The whole roster, in picker order. Every surface (picker, settings,
-/// doctor, CLI, health) iterates this list, so it can never disagree.
-pub const PROVIDERS: &[&str] = &["claude", "codex", "antigravity", "opencode", "xai"];
+pub use types::{
+    now_secs, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
+    PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus, State, ToolServer,
+    TurnEnd, TurnSpec, UsageWindow,
+};
 
-/// Display name per provider id.
+/// The roster, in picker order. Every surface (picker, settings, doctor,
+/// CLI) iterates this list, so they can never disagree.
+pub const PROVIDERS: &[&str] = &[
+    "claude",
+    "codex",
+    "opencode",
+    "grok",
+    "antigravity",
+    "cursor",
+];
+
 pub fn display_name(id: &str) -> &'static str {
     match canonical_id(id) {
         Some("claude") => "Claude",
         Some("codex") => "Codex",
-        Some("antigravity") => "Antigravity",
         Some("opencode") => "OpenCode",
-        Some("xai") => "Grok",
+        Some("grok") => "Grok",
+        Some("antigravity") => "Antigravity",
+        Some("cursor") => "Cursor",
         _ => "Unknown",
     }
 }
 
-/// Map legacy / alias ids onto the roster. Old sessions and configs still
-/// say `claude-code` or `anthropic`; both are the `claude` adapter now.
+/// Map old ids onto the roster. Threads and configs written before the
+/// vendor-agent switch still say `claude-code`, `anthropic`, `openai` or `xai`.
 pub fn canonical_id(id: &str) -> Option<&'static str> {
     match id {
         "claude" | "claude-code" | "anthropic" => Some("claude"),
         "codex" | "openai" => Some("codex"),
+        "opencode" => Some("opencode"),
+        "grok" | "xai" | "grok-cli" => Some("grok"),
         "antigravity" => Some("antigravity"),
-        "opencode" => Some("opencode"),
-        "xai" | "grok" | "grok-cli" => Some("xai"),
+        "cursor" => Some("cursor"),
         _ => None,
     }
 }
 
-/// Keyring entry that holds the *API key* for a provider (subscription
-/// tokens live under other names and are never written by Settings).
-/// None = provider takes no key (antigravity is OAuth only).
-pub fn key_entry(provider: &str) -> Option<&'static str> {
-    match canonical_id(provider)? {
-        "claude" => Some("anthropic"),
-        "codex" => Some("openai"),
-        "xai" => Some("xai"),
-        "opencode" => Some("opencode"),
-        _ => None,
-    }
+/// Split a `provider/model` spec. The model may itself contain `/`
+/// (OpenCode's `anthropic/claude-sonnet-4-5`): only the first `/` splits.
+/// `None` when the provider is not on the roster.
+pub fn split_spec(spec: &str) -> Option<(&'static str, Option<String>)> {
+    let (p, m) = match spec.split_once('/') {
+        Some((p, m)) => (p, Some(m.trim().to_string()).filter(|m| !m.is_empty())),
+        None => (spec, None),
+    };
+    Some((canonical_id(p.trim())?, m))
 }
 
-/// Build the adapter for a router id. `base_url` from config overrides default.
-pub fn provider(
-    router_id: &str,
-    cfg: &ParziConfig,
-) -> Result<Box<dyn Provider>, parzi_core::error::ParziError> {
-    let id = canonical_id(router_id).ok_or_else(|| {
-        parzi_core::error::ParziError::Provider(
-            router_id.into(),
-            "unknown provider (Parzi routes claude, codex, antigravity, opencode, xai)".into(),
-        )
-    })?;
-    let entry = cfg
+/// The driver for a roster id, pointed at the configured program (or the
+/// vendor's usual name on PATH).
+pub fn provider(id: &str, cfg: &ParziConfig) -> Option<Arc<dyn Provider>> {
+    let id = canonical_id(id)?;
+    let binary = cfg
         .providers
         .get(id)
-        .or_else(|| cfg.providers.get(router_id));
-    let base = entry.and_then(|e| e.base_url.clone());
-    let refresh = cfg.catalog_refresh;
-    let boxed: Box<dyn Provider> = match id {
-        "claude" => Box::new(claude::claude()),
-        "codex" => Box::new(codex::Codex::new(base)),
-        "antigravity" => Box::new(antigravity::Antigravity::new()),
-        "opencode" => Box::new(opencode::opencode(base, refresh)),
-        "xai" => Box::new(compat_providers::xai(base, refresh)),
-        _ => unreachable!("canonical_id only returns roster ids"),
+        .map(|e| e.binary.clone())
+        .unwrap_or_default();
+    Some(match id {
+        claude::ID => Arc::new(claude::Claude::new(&binary)),
+        codex::ID => Arc::new(codex::Codex::new(&binary)),
+        other => Arc::new(acp::Acp::new(acp::agent(other)?, &binary)),
+    })
+}
+
+/// A local image as (media type, base64). `None` for anything that is not
+/// a readable png/jpeg/gif/webp under 20 MiB.
+pub(crate) fn image_base64(path: &std::path::Path) -> Option<(String, String)> {
+    const MAX: u64 = 20 * 1024 * 1024;
+    let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
+    let media = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => return None,
     };
-    Ok(boxed)
+    if std::fs::metadata(path).ok()?.len() > MAX {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    Some((
+        media.to_string(),
+        base64::engine::general_purpose::STANDARD.encode(bytes),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn specs_split_on_the_first_slash_only() {
+        assert_eq!(
+            split_spec("claude/opus[1m]"),
+            Some(("claude", Some("opus[1m]".into())))
+        );
+        assert_eq!(
+            split_spec("opencode/anthropic/claude-sonnet-4-5"),
+            Some(("opencode", Some("anthropic/claude-sonnet-4-5".into())))
+        );
+        assert_eq!(split_spec("codex"), Some(("codex", None)));
+        assert_eq!(
+            split_spec("xai/grok-4"),
+            Some(("grok", Some("grok-4".into())))
+        );
+        assert_eq!(
+            split_spec("claude-code/sonnet"),
+            Some(("claude", Some("sonnet".into())))
+        );
+        assert_eq!(split_spec("ollama/llama3"), None);
+        assert_eq!(split_spec("auto"), None);
+    }
+
+    #[test]
+    fn every_roster_id_builds_a_driver() {
+        let cfg = ParziConfig::default();
+        for id in PROVIDERS {
+            let p = provider(id, &cfg).unwrap_or_else(|| panic!("{id}"));
+            assert_eq!(p.id(), *id);
+            assert_ne!(display_name(id), "Unknown");
+        }
+    }
 }

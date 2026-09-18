@@ -13,12 +13,12 @@ pub mod hub;
 pub mod naming;
 pub mod requests;
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::tools::ToolDef;
 use parzi_core::lease::Answer;
-use parzi_core::project::normalize_path;
-use parzi_providers::ToolDef;
+use parzi_core::project::{normalize_path, path_key};
 
 use crate::tools::ToolExecutor;
 
@@ -117,55 +117,48 @@ pub fn lease_defs() -> Vec<ToolDef> {
 }
 
 impl ToolExecutor {
-    /// PLAN §4 enforcement, called before every tool runs. `Some((false, msg))`
-    /// refuses the call; `None` lets it through. Every path a tool is about to
-    /// write is checked — `tools::write_path_args` is the list, so a new write
-    /// tool is gated the day it is added — and reads are never blocked.
-    pub(crate) async fn lease_gate(
-        &self,
-        name: &str,
-        args: &serde_json::Value,
-    ) -> Option<(bool, String)> {
+    /// PLAN §4, before an agent edits: every worktree-relative path it is
+    /// about to write is checked, and the first refusal wins. Reads never
+    /// reach this gate.
+    pub(crate) async fn lease_gate_paths(&self, paths: &[String]) -> Option<String> {
         let ctx = self.leases.as_ref()?;
-        for key in crate::tools::write_path_args(name) {
-            let Some(path) = args.get(*key).and_then(|v| v.as_str()) else {
-                continue;
-            };
-            if let Some(refusal) = ctx.hub.gate_write(&ctx.run, path).await {
-                return Some(refusal);
+        for path in paths {
+            if let Some((false, why)) = ctx.hub.gate_write(&ctx.run, path).await {
+                return Some(why);
             }
         }
         None
     }
 
-    /// `shell.exec`'s half of the gate: the command owns a whole worktree, so
-    /// what it wrote is only knowable afterwards. Fingerprint before, run,
-    /// fingerprint after, and hold what moved to the same rule (§4).
-    pub(crate) async fn lease_audit_shell<F>(&self, run_it: F) -> (bool, String)
-    where
-        F: std::future::Future<Output = (bool, String)>,
-    {
-        let Some(ctx) = self.leases.as_ref() else {
-            return run_it.await;
-        };
-        let backup = backup_files(&self.cwd, &ctx.hub.foreign_files(&ctx.run, &self.cwd).await);
-        let before = audit::snapshot(&self.cwd).await;
-        let out = run_it.await;
-        let Some(before) = before else { return out };
-        let Some(after) = audit::snapshot(&self.cwd).await else {
-            return out;
-        };
-        let changed = audit::changed(&before, &after);
+    /// Before an agent's shell command: what it writes is only knowable
+    /// afterwards, so back up the files other lanes hold and fingerprint the
+    /// worktree now. `None` = this run is not in the lease layer.
+    pub(crate) async fn shell_audit_start(&self) -> Option<ShellAudit> {
+        let ctx = self.leases.as_ref()?;
+        let (foreign, listed) = ctx.hub.foreign_files(&ctx.run, &self.cwd).await;
+        let backup = backup_files(&self.cwd, &foreign, listed);
+        let before = audit::snapshot(&self.cwd).await?;
+        Some(ShellAudit { backup, before })
+    }
+
+    /// After it: whatever moved inside a file another lane holds is put
+    /// back, and the refusal (naming the holder) comes back for the agent.
+    pub(crate) async fn shell_audit_finish(&self, audit: ShellAudit) -> Option<String> {
+        let ctx = self.leases.as_ref()?;
+        let after = audit::snapshot(&self.cwd).await?;
+        let changed = audit::changed(&audit.before, &after);
         if changed.is_empty() {
-            return out;
+            return None;
         }
-        match ctx.hub.audit_writes(&ctx.run, &changed).await {
-            Some((refusal, hits)) => {
-                restore_files(&self.cwd, &backup, &hits);
-                (false, format!("{refusal}\n\n{}", out.1))
-            }
-            None => out,
+        let (refusal, hits) = ctx.hub.audit_writes(&ctx.run, &changed).await?;
+        let left = restore_files(&self.cwd, &audit.backup, &hits);
+        if left.is_empty() {
+            return Some(refusal);
         }
+        Some(format!(
+            "{refusal}; could not put back: {} — tell the holder",
+            left.join(", ")
+        ))
     }
 
     /// Execute one `lease.*` tool. Every action is journalled by the hub.
@@ -269,32 +262,60 @@ impl ToolExecutor {
     }
 }
 
-/// Bytes of each foreign-held file, taken before `shell.exec`. `None` means
-/// the path did not exist, so a violation that created it is undone by delete.
-fn backup_files(cwd: &str, rels: &[String]) -> HashMap<String, Option<Vec<u8>>> {
-    rels.iter()
-        .map(|rel| {
-            (
-                rel.clone(),
-                std::fs::read(std::path::Path::new(cwd).join(rel)).ok(),
-            )
-        })
-        .collect()
+/// A shell command's before-picture: held files' bytes and the worktree's
+/// fingerprint.
+pub(crate) struct ShellAudit {
+    backup: Backup,
+    before: audit::Snapshot,
 }
 
-/// Put a held file back the way it was, or delete it if the command created it.
-fn restore_files(cwd: &str, backup: &HashMap<String, Option<Vec<u8>>>, hits: &[String]) {
+/// Another lane's files as they were before `shell.exec`, by path key (a
+/// lease and the disk may spell a name in different case).
+struct Backup {
+    /// Each file's bytes, or `None` for a named file that did not exist. A
+    /// file that could not be read has no entry.
+    files: HashMap<String, Option<Vec<u8>>>,
+    /// Every file in the worktree, when it was walked: a changed file that
+    /// is not in it was created by the command.
+    listed: Option<HashSet<String>>,
+}
+
+fn backup_files(cwd: &str, rels: &[String], listed: Option<Vec<String>>) -> Backup {
+    let files = rels
+        .iter()
+        .filter_map(|rel| {
+            let bytes = match std::fs::read(std::path::Path::new(cwd).join(rel)) {
+                Ok(b) => Some(b),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(_) => return None,
+            };
+            Some((path_key(rel), bytes))
+        })
+        .collect();
+    let listed = listed.map(|all| all.iter().map(|rel| path_key(rel)).collect());
+    Backup { files, listed }
+}
+
+/// Put each held file back the way it was, or delete it when the command
+/// created it. A file with no copy that may have existed before is left as
+/// it is. Returns the files that could not be put back.
+fn restore_files(cwd: &str, backup: &Backup, hits: &[String]) -> Vec<String> {
+    let remove = |path: &std::path::Path| std::fs::remove_file(path).is_ok() || !path.exists();
+    let mut left = vec![];
     for rel in hits {
         let path = std::path::Path::new(cwd).join(rel);
-        match backup.get(rel) {
-            Some(Some(bytes)) => {
-                let _ = std::fs::write(&path, bytes);
-            }
-            _ => {
-                let _ = std::fs::remove_file(&path);
-            }
+        let key = path_key(rel);
+        let restored = match backup.files.get(&key) {
+            Some(Some(bytes)) => std::fs::write(&path, bytes).is_ok(),
+            Some(None) => remove(&path),
+            None if backup.listed.as_ref().is_some_and(|l| !l.contains(&key)) => remove(&path),
+            None => false,
+        };
+        if !restored {
+            left.push(rel.clone());
         }
     }
+    left
 }
 
 /// `["src/a.rs"]` + repo `api` → `{"api/src/a.rs"}`. Paths that already carry
@@ -321,6 +342,7 @@ fn qualify(paths: Option<&serde_json::Value>, repo: &str) -> BTreeSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use parzi_core::project::PATHS_IGNORE_CASE;
 
     #[test]
     fn qualify_prefixes_once() {
@@ -345,5 +367,53 @@ mod tests {
             assert!(lease_defs().iter().any(|d| d.name == n), "no def for {n}");
         }
         assert!(!is_lease_tool("fs.write"));
+    }
+
+    /// The undo never deletes a file it has no copy of unless the walk
+    /// before the command proves the file did not exist.
+    #[test]
+    fn a_file_with_no_copy_is_never_deleted() {
+        let dir = std::env::temp_dir().join(format!("parzi-restore-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cwd = dir.to_str().unwrap();
+        std::fs::write(dir.join("kept.rs"), "was here").unwrap();
+        std::fs::write(dir.join("made.rs"), "new").unwrap();
+        // The walk saw kept.rs (unreadable then, or claimed while the command
+        // ran: no copy) and not made.rs.
+        let backup = Backup {
+            files: HashMap::new(),
+            listed: Some([path_key("kept.rs")].into_iter().collect()),
+        };
+        let hits = ["kept.rs".to_string(), "made.rs".to_string()];
+        assert_eq!(
+            restore_files(cwd, &backup, &hits),
+            vec!["kept.rs".to_string()]
+        );
+        assert!(dir.join("kept.rs").exists(), "it may have existed: left");
+        assert!(
+            !dir.join("made.rs").exists(),
+            "the command made it: removed"
+        );
+
+        std::fs::write(dir.join("made.rs"), "new").unwrap();
+        let blind = Backup {
+            files: HashMap::new(),
+            listed: None,
+        };
+        assert_eq!(restore_files(cwd, &blind, &hits[1..]).len(), 1);
+        assert!(dir.join("made.rs").exists(), "no listing, no delete");
+
+        // A copy taken under the lease's spelling restores the disk's.
+        std::fs::write(dir.join("Held.rs"), "old").unwrap();
+        let copy = backup_files(cwd, &["Held.rs".to_string()], None);
+        std::fs::write(dir.join("Held.rs"), "overwritten").unwrap();
+        let disk = if PATHS_IGNORE_CASE {
+            "held.rs"
+        } else {
+            "Held.rs"
+        };
+        assert!(restore_files(cwd, &copy, &[disk.to_string()]).is_empty());
+        assert_eq!(std::fs::read_to_string(dir.join("Held.rs")).unwrap(), "old");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

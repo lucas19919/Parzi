@@ -85,6 +85,7 @@ mod tests {
                 lane: "api".into(),
             },
             paths: ["api/src/routes.rs".to_string()].into_iter().collect(),
+            given: Default::default(),
             granted_at: now(),
             last_seen: now(),
             ttl_secs: 90,

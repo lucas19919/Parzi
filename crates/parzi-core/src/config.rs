@@ -5,13 +5,15 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ParziError, Result};
 use crate::{atomic_write, paths};
 
-pub const CONFIG_VERSION: u32 = 1;
+/// v2: providers are vendor programs Parzi drives (Claude Code, Codex, the
+/// ACP agents), not HTTP endpoints. v1 files migrate on load.
+pub const CONFIG_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParziConfig {
     pub version: u32,
-    #[serde(default = "default_provider")]
-    pub default_provider: String,
+    /// Per-provider settings, by roster id. A provider with no entry is on,
+    /// found on PATH, and starts on its vendor's default model.
     #[serde(default)]
     pub providers: HashMap<String, ProviderEntry>,
     #[serde(default)]
@@ -25,9 +27,6 @@ pub struct ParziConfig {
     /// R-4: the spend a single run may cost before it pauses. Unset = no cap.
     #[serde(default)]
     pub budget: Budget,
-    /// Kill-switch for catalog disk-cache refresh (t3code Manifest discipline).
-    #[serde(default = "default_true")]
-    pub catalog_refresh: bool,
     /// Starred model specs (`provider/model`) — picker favorites, Ctrl+1..5.
     #[serde(default)]
     pub favorite_models: Vec<String>,
@@ -35,36 +34,30 @@ pub struct ParziConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingConfig {
-    /// Adaptive: an explicit pick hops to the next routable provider on
-    /// 429/overload. Strict: halt instead.
-    #[serde(default = "default_true")]
-    pub auto_failover: bool,
-    /// Provider order for Smart Auto and for failover slots. Only signed-in
-    /// subscriptions are taken from it (keys need `keys_in_auto`).
-    /// Old configs called this `preferred_subscriptions`; both names load.
-    #[serde(default = "default_auto_order", alias = "preferred_subscriptions")]
-    pub auto_order: Vec<String>,
-    /// Let API-key providers join Smart Auto and failover after the
-    /// subscriptions. Off by default: keys are explicit-pick only.
-    #[serde(default)]
-    pub keys_in_auto: bool,
+    /// Smart Auto starts a new thread on the first ready provider in this
+    /// order. A started thread stays on its provider.
+    #[serde(default = "default_order", alias = "auto_order")]
+    pub order: Vec<String>,
 }
 
-fn default_auto_order() -> Vec<String> {
-    vec![
-        "claude".into(),
-        "codex".into(),
-        "antigravity".into(),
-        "opencode".into(),
+fn default_order() -> Vec<String> {
+    [
+        "claude",
+        "codex",
+        "opencode",
+        "grok",
+        "antigravity",
+        "cursor",
     ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect()
 }
 
 impl Default for RoutingConfig {
     fn default() -> Self {
         Self {
-            auto_failover: true,
-            auto_order: default_auto_order(),
-            keys_in_auto: false,
+            order: default_order(),
         }
     }
 }
@@ -118,10 +111,25 @@ impl Budget {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderEntry {
-    #[serde(default)]
+    /// Off = the picker and Smart Auto leave this provider out.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// The vendor program. Empty = its usual name, found on PATH.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub binary: String,
+    /// The model a new thread starts on. Empty = the vendor's own default.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub default_model: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base_url: Option<String>,
+}
+
+impl Default for ProviderEntry {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            binary: String::new(),
+            default_model: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -203,9 +211,6 @@ pub struct OrchLimits {
     pub queue_when_busy: bool,
 }
 
-fn default_provider() -> String {
-    "claude".into()
-}
 fn default_mode() -> String {
     "ask".into()
 }
@@ -225,31 +230,11 @@ fn default_idle_kill() -> u64 {
     60
 }
 
-/// Bundled default model per roster provider.
-pub const PROVIDER_DEFAULTS: &[(&str, &str)] = &[
-    ("claude", "claude-opus-5"),
-    ("codex", "gpt-5.5"),
-    ("antigravity", "gemini-3.8-flash-medium"),
-    ("opencode", "kimi-k3"),
-    ("xai", "grok-4"),
-];
-
 impl Default for ParziConfig {
     fn default() -> Self {
-        let mut providers = HashMap::new();
-        for (id, model) in PROVIDER_DEFAULTS {
-            providers.insert(
-                id.to_string(),
-                ProviderEntry {
-                    default_model: (*model).into(),
-                    base_url: None,
-                },
-            );
-        }
         Self {
             version: CONFIG_VERSION,
-            default_provider: default_provider(),
-            providers,
+            providers: HashMap::new(),
             lanes: LaneDefaults {
                 default_mode: default_mode(),
                 default_allowed_tools: vec![],
@@ -263,7 +248,6 @@ impl Default for ParziConfig {
             },
             routing: RoutingConfig::default(),
             budget: Budget::default(),
-            catalog_refresh: true,
             favorite_models: vec![],
         }
     }
@@ -298,7 +282,7 @@ impl ParziConfig {
     }
 
     fn check_version(&self) -> Result<()> {
-        if self.version != CONFIG_VERSION {
+        if self.version != 1 && self.version != CONFIG_VERSION {
             return Err(ParziError::Config(format!(
                 "config version {} unsupported (want {}); delete {} to regenerate",
                 self.version,
@@ -309,78 +293,55 @@ impl ParziConfig {
         Ok(())
     }
 
-    /// In-place upgrades within config v1: fold the retired provider ids
-    /// (`anthropic`/`claude-code` → `claude`, `openai` → `codex`,
-    /// `grok*` → `xai`), drop entries for providers Parzi no longer routes,
-    /// and make sure every roster provider has a default model.
+    /// Bring an older file up to v2. v1 named HTTP adapters and their model
+    /// catalog: provider ids fold onto the roster, and model defaults and
+    /// favourites are dropped, because vendor programs name models their
+    /// own way. v2 files only get their ids folded.
     pub fn migrate(&mut self) {
         let alias = |id: &str| -> Option<&'static str> {
             match id {
                 "claude" | "claude-code" | "anthropic" => Some("claude"),
                 "codex" | "openai" => Some("codex"),
-                "antigravity" => Some("antigravity"),
                 "opencode" => Some("opencode"),
-                "xai" | "grok" | "grok-cli" => Some("xai"),
+                "grok" | "xai" | "grok-cli" => Some("grok"),
+                "antigravity" => Some("antigravity"),
+                "cursor" => Some("cursor"),
                 _ => None,
             }
         };
+        let from_v1 = self.version < CONFIG_VERSION;
         let old = std::mem::take(&mut self.providers);
-        for (id, entry) in old {
+        for (id, mut entry) in old {
             let Some(canon) = alias(&id) else { continue };
+            if from_v1 {
+                entry = ProviderEntry::default();
+            }
             // A canonical entry wins over an alias entry for the same slot.
             if id == canon || !self.providers.contains_key(canon) {
-                let mut e = entry;
-                if let Some((_, m)) = PROVIDER_DEFAULTS.iter().find(|(p, _)| *p == canon) {
-                    // Retired ids for the folded providers get the new default.
-                    if id != canon {
-                        e.default_model = (*m).into();
-                    }
-                }
-                self.providers.insert(canon.to_string(), e);
+                self.providers.insert(canon.to_string(), entry);
             }
         }
-        for (id, model) in PROVIDER_DEFAULTS {
-            self.providers
-                .entry(id.to_string())
-                .or_insert(ProviderEntry {
-                    default_model: (*model).into(),
-                    base_url: None,
-                });
-        }
-        // Retired opencode placeholder (pre-Zen adapter): point at the flagship.
-        if let Some(e) = self.providers.get_mut("opencode") {
-            if e.default_model == "opencode-default" {
-                e.default_model = "kimi-k3".into();
-            }
-        }
-        self.default_provider = alias(&self.default_provider)
-            .unwrap_or("claude")
-            .to_string();
         let mut order: Vec<String> = vec![];
-        for p in self.routing.auto_order.iter().filter_map(|p| alias(p)) {
+        for p in self.routing.order.iter().filter_map(|p| alias(p)) {
             if !order.iter().any(|x| x == p) {
                 order.push(p.to_string());
             }
         }
-        if order.is_empty() {
-            order = default_auto_order();
+        for p in default_order() {
+            if !order.contains(&p) {
+                order.push(p);
+            }
         }
-        self.routing.auto_order = order;
-        self.favorite_models
-            .retain(|f| f.split_once('/').is_some_and(|(p, _)| alias(p).is_some()));
+        self.routing.order = order;
+        if from_v1 {
+            self.favorite_models.clear();
+        }
+        self.version = CONFIG_VERSION;
     }
 
-    /// Split `provider/model` router strings. Provider defaults from config.
-    pub fn resolve_model(&self, spec: &str) -> (String, String) {
-        match spec.split_once('/') {
-            Some((p, m)) => (p.to_string(), m.to_string()),
-            None => (
-                self.default_provider.clone(),
-                self.providers
-                    .get(&self.default_provider)
-                    .map_or_else(|| spec.to_string(), |e| e.default_model.clone()),
-            ),
-        }
+    /// The entry for a roster id, or the defaults when it has none.
+    pub fn provider(&self, id: &str) -> ProviderEntry {
+        self.providers.get(id).cloned().unwrap_or_default()
     }
 }
 
@@ -389,47 +350,79 @@ mod tests {
     use super::*;
 
     #[test]
-    fn migrate_folds_retired_provider_ids() {
+    fn a_v1_file_moves_to_v2() {
         let toml_text = r#"
 version = 1
 default_provider = "anthropic"
+catalog_refresh = true
+favorite_models = ["claude/claude-opus-5"]
 [providers.anthropic]
 default_model = "claude-sonnet-4"
-[providers.claude-code]
-default_model = "sonnet"
+[providers.xai]
+default_model = "grok-4"
+base_url = "https://api.x.ai/v1"
 [providers.ollama]
 default_model = "llama3.1"
-[providers.t3]
-default_model = "kimi-k2.5"
 [routing]
 auto_failover = true
-preferred_subscriptions = ["antigravity", "codex", "claude-code", "t3", "opencode"]
+keys_in_auto = false
+auto_order = ["antigravity", "codex", "claude-code", "t3", "opencode"]
 "#;
         let mut cfg: ParziConfig = toml::from_str(toml_text).unwrap();
+        cfg.check_version().unwrap();
         cfg.migrate();
-        assert_eq!(cfg.default_provider, "claude");
+        assert_eq!(cfg.version, CONFIG_VERSION);
         assert!(cfg.providers.contains_key("claude"));
+        assert!(cfg.providers.contains_key("grok"));
         assert!(!cfg.providers.contains_key("anthropic"));
-        assert!(!cfg.providers.contains_key("claude-code"));
         assert!(!cfg.providers.contains_key("ollama"));
-        assert!(!cfg.providers.contains_key("t3"));
-        assert!(cfg.providers.contains_key("xai"));
-        assert_eq!(cfg.providers["claude"].default_model, "claude-opus-5");
+        // v1 model ids named the old HTTP catalog: gone, vendor default instead.
+        assert_eq!(cfg.provider("claude").default_model, "");
+        assert!(cfg.provider("grok").enabled);
+        assert!(cfg.favorite_models.is_empty());
         assert_eq!(
-            cfg.routing.auto_order,
-            vec!["antigravity", "codex", "claude", "opencode"]
+            cfg.routing.order,
+            vec![
+                "antigravity",
+                "codex",
+                "claude",
+                "opencode",
+                "grok",
+                "cursor"
+            ]
         );
-        assert!(!cfg.routing.keys_in_auto);
+        let saved = toml::to_string(&cfg).unwrap();
+        for gone in [
+            "default_provider",
+            "catalog_refresh",
+            "auto_failover",
+            "keys_in_auto",
+            "base_url",
+        ] {
+            assert!(!saved.contains(gone), "{gone} survived: {saved}");
+        }
     }
 
     #[test]
-    fn default_roster_is_five_providers() {
-        let cfg = ParziConfig::default();
-        assert_eq!(cfg.providers.len(), 5);
-        assert_eq!(cfg.default_provider, "claude");
-        assert_eq!(
-            cfg.routing.auto_order,
-            vec!["claude", "codex", "antigravity", "opencode"]
-        );
+    fn a_v2_file_keeps_its_choices() {
+        let toml_text = r#"
+version = 2
+favorite_models = ["claude/opus"]
+[providers.claude]
+default_model = "opus"
+binary = "~/bin/claude"
+[providers.cursor]
+enabled = false
+[routing]
+order = ["codex", "claude"]
+"#;
+        let mut cfg: ParziConfig = toml::from_str(toml_text).unwrap();
+        cfg.migrate();
+        assert_eq!(cfg.provider("claude").default_model, "opus");
+        assert_eq!(cfg.provider("claude").binary, "~/bin/claude");
+        assert!(!cfg.provider("cursor").enabled);
+        assert!(cfg.provider("codex").enabled, "no entry = on");
+        assert_eq!(cfg.favorite_models, vec!["claude/opus"]);
+        assert_eq!(&cfg.routing.order[..2], ["codex", "claude"]);
     }
 }

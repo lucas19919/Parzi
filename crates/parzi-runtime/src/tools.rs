@@ -1,12 +1,20 @@
-//! Unified tools: local Rust fns + MCP servers behind one executor.
-//! Lane allowlists decide what runs. Approvals pause the handler, never the tool.
-
-use parzi_core::error::{ParziError, Result};
-use parzi_providers::ToolDef;
+//! Parzi's own tools (widgets, teamwork, plans, knowledge, leases) plus the
+//! connectors a lane allows, behind one executor. Vendor agents reach them
+//! over MCP; their own file and shell tools are theirs, and only their
+//! permission requests pass through Parzi (see `toolhost`). Lane allowlists
+//! decide what runs. Approvals pause the run, never the tool.
 
 use crate::board_tools::{board_defs, is_board_tool};
 use crate::lease_tools::{is_lease_tool, lease_defs, LeaseCtx};
 use crate::mcp::McpManager;
+
+/// One tool as an agent sees it: name, description, JSON schema.
+#[derive(Debug, Clone)]
+pub struct ToolDef {
+    pub name: String,
+    pub description: String,
+    pub schema: serde_json::Value,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalMode {
@@ -82,7 +90,7 @@ impl ToolExecutor {
     /// Per-tool approval override for MCP tools (`auto`|`ask`|`deny`).
     /// Local/ui/session/plan/lane tools have no per-tool override: None = lane mode wins.
     pub fn approval_override(&self, name: &str) -> Option<ApprovalMode> {
-        if is_local(name)
+        if is_vendor_category(name)
             || is_ui_tool(name)
             || is_session_tool(name)
             || is_plan_tool(name)
@@ -102,8 +110,7 @@ impl ToolExecutor {
     }
 
     pub fn defs(&self) -> Vec<ToolDef> {
-        let mut d = local_defs();
-        d.extend(ui_defs());
+        let mut d = ui_defs();
         d.extend(session_defs());
         // Only a lane that is in the lease layer sees `lease.*` / `board.*`:
         // a plain thread has no task to check out and no board to read.
@@ -114,7 +121,7 @@ impl ToolExecutor {
         d
     }
 
-    /// Local + always-on defs plus the currently-exposed MCP tools that also
+    /// Parzi's own defs plus the currently-exposed MCP tools that also
     /// pass the lane allowlist. Best-effort: an unreachable server contributes
     /// nothing instead of failing the run. Call once per run start.
     pub async fn defs_with_mcp(&self) -> Vec<ToolDef> {
@@ -132,7 +139,7 @@ impl ToolExecutor {
             for t in tools {
                 let q = t.qualified();
                 if self.is_allowed(&q) {
-                    d.push(t.to_provider_def());
+                    d.push(t.to_def());
                 }
             }
         }
@@ -142,11 +149,6 @@ impl ToolExecutor {
     pub async fn execute(&self, name: &str, args: &serde_json::Value) -> (bool, String) {
         if !self.is_allowed(name) {
             return (false, format!("tool `{name}` is not allowed in this lane"));
-        }
-        // PLAN §4: the lease gate sits in front of every write, before the
-        // fs sandbox resolves the path. Reads never reach it.
-        if let Some(refusal) = self.lease_gate(name, args).await {
-            return refusal;
         }
         if is_lease_tool(name) {
             return self.execute_lease_tool(name, args).await;
@@ -160,11 +162,12 @@ impl ToolExecutor {
         if is_knowledge_tool(name) {
             return execute_knowledge_tool(name, args).await;
         }
-        if let Some((server, tool)) = name.split_once('.').filter(|_| name.contains('.')) {
-            // MCP names are `server.tool`; local names are `fs.read` style too,
-            // so try local first, then MCP.
-            if is_local(name) {
-                return self.run_local(name, args).await;
+        if let Some((server, tool)) = name.split_once('.') {
+            if is_vendor_category(name) {
+                return (
+                    false,
+                    format!("`{name}` is the agent's own tool now, not Parzi's"),
+                );
             }
             if is_ui_tool(name) || is_session_tool(name) || is_lane_tool(name) {
                 return (false, format!("tool `{name}` is handled by the agent loop"));
@@ -184,88 +187,18 @@ impl ToolExecutor {
             }
             return self.mcp.call_tool(server, tool, args.clone()).await;
         }
-        if is_local(name) {
-            return self.run_local(name, args).await;
-        }
         (false, format!("unknown tool `{name}`"))
     }
-
-    /// The local tools, with PLAN §4's after-the-fact gate around
-    /// `shell.exec`: its writes cannot be resolved before it runs, so the
-    /// worktree is fingerprinted around the command instead.
-    async fn run_local(&self, name: &str, args: &serde_json::Value) -> (bool, String) {
-        let call = execute_local(name, args, &self.cwd);
-        if name != "shell.exec" {
-            return call.await;
-        }
-        self.lease_audit_shell(call).await
-    }
 }
 
-/// The argument names carrying a path a tool is about to **write**. PLAN §4
-/// gates every one of them before `resolve` turns it into a real path, so a
-/// local tool that writes is gated the moment it is listed here. `shell.exec`
-/// cannot be listed — what it writes is knowable only afterwards, which is
-/// what `lease_tools::audit` is for.
-pub(crate) fn write_path_args(name: &str) -> &'static [&'static str] {
-    match name {
-        "fs.write" => &["path"],
-        _ => &[],
-    }
-}
-
-fn is_local(name: &str) -> bool {
+/// The agent's own file and shell tools, by the names lane allowlists have
+/// always used: `fs.read` covers reads and searches, `fs.write` edits,
+/// `shell.exec` commands. Parzi no longer runs these itself; a lane that
+/// lists tools and leaves one out refuses the matching vendor action.
+pub fn is_vendor_category(name: &str) -> bool {
     matches!(name, "fs.read" | "fs.write" | "fs.list" | "shell.exec")
 }
 
-pub fn local_defs() -> Vec<ToolDef> {
-    vec![
-        ToolDef {
-            name: "fs.read".into(),
-            description: "Read a text file relative to the lane cwd.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {"path": {"type": "string"}},
-                "required": ["path"],
-            }),
-        },
-        ToolDef {
-            name: "fs.write".into(),
-            description: "Write (create/overwrite) a text file relative to the lane cwd.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "content": {"type": "string"},
-                },
-                "required": ["path", "content"],
-            }),
-        },
-        ToolDef {
-            name: "fs.list".into(),
-            description: "List directory entries relative to the lane cwd.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {"path": {"type": "string"}},
-            }),
-        },
-        ToolDef {
-            name: "shell.exec".into(),
-            description: "Run a shell command in the lane cwd. Prefer fs.* for files.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "cmd": {"type": "string"},
-                    "timeout_ms": {"type": "number"},
-                },
-                "required": ["cmd"],
-            }),
-        },
-    ]
-}
-
-/// Agent-facing UI tools. Handled by the handler (appends widget events),
-/// declared here so every provider advertises the same surface.
 pub fn ui_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
@@ -493,22 +426,17 @@ pub fn builtin_tools() -> Vec<BuiltinTool> {
         BuiltinTool {
             name: "fs.read",
             group: "Files",
-            blurb: "Read files in the project",
+            blurb: "The agent reads and searches files",
         },
         BuiltinTool {
             name: "fs.write",
             group: "Files",
-            blurb: "Create and overwrite files",
-        },
-        BuiltinTool {
-            name: "fs.list",
-            group: "Files",
-            blurb: "Browse directories",
+            blurb: "The agent edits and creates files",
         },
         BuiltinTool {
             name: "shell.exec",
             group: "Shell",
-            blurb: "Run shell commands in the repo",
+            blurb: "The agent runs shell commands",
         },
         BuiltinTool {
             name: "session.spawn",
@@ -610,14 +538,77 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
     ]
     .iter()
     .find_map(|k| str_arg(k));
+    // A shell command arrives as a string (Claude) or an argv list (Codex).
+    let command = || match args.get("command") {
+        Some(serde_json::Value::Array(parts)) => parts
+            .iter()
+            .filter_map(|p| p.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
+        Some(v) => v.as_str().unwrap_or_default().to_string(),
+        None => str_arg("cmd").unwrap_or_default(),
+    };
+    let parzi = display_name(name);
+    if parzi != name {
+        return humanize_tool_call(&parzi, args);
+    }
     match name {
+        // The agents' own tools (Claude Code, Codex).
+        "Bash" | "shell" => format!("Running `{}`", one_line(&command(), 60)),
+        "Read" => format!(
+            "Reading {}",
+            str_arg("file_path").unwrap_or_else(|| "a file".into())
+        ),
+        "Edit" | "MultiEdit" => format!(
+            "Editing {}",
+            str_arg("file_path").unwrap_or_else(|| "a file".into())
+        ),
+        "Write" => format!(
+            "Writing {}",
+            str_arg("file_path").unwrap_or_else(|| "a file".into())
+        ),
+        "NotebookEdit" => format!(
+            "Editing {}",
+            str_arg("notebook_path").unwrap_or_else(|| "a notebook".into())
+        ),
+        "Glob" => format!(
+            "Finding {}",
+            str_arg("pattern").unwrap_or_else(|| "files".into())
+        ),
+        "Grep" => format!(
+            "Searching for {}",
+            one_line(&str_arg("pattern").unwrap_or_default(), 60)
+        ),
+        "WebFetch" => format!(
+            "Fetching {}",
+            str_arg("url").unwrap_or_else(|| "a page".into())
+        ),
+        "WebSearch" | "web_search" => format!(
+            "Searching the web: {}",
+            one_line(&str_arg("query").unwrap_or_default(), 60)
+        ),
+        "Task" | "Agent" => format!(
+            "Delegating: {}",
+            one_line(
+                &str_arg("description").unwrap_or_else(|| "a subtask".into()),
+                60
+            )
+        ),
+        "TodoWrite" => "Updating the todo list".into(),
+        "edit" => match args.get("paths").and_then(|p| p.as_array()) {
+            Some(paths) if paths.len() > 1 => format!(
+                "Editing {} and {} more",
+                paths[0].as_str().unwrap_or("a file"),
+                paths.len() - 1
+            ),
+            Some(paths) if !paths.is_empty() => {
+                format!("Editing {}", paths[0].as_str().unwrap_or("a file"))
+            }
+            _ => "Editing files".into(),
+        },
         "fs.read" => format!("Reading {}", str_arg("path").unwrap_or_else(|| "?".into())),
         "fs.write" => format!("Writing {}", str_arg("path").unwrap_or_else(|| "?".into())),
-        "fs.list" => format!("Listing {}", str_arg("path").unwrap_or_else(|| ".".into())),
-        "shell.exec" => format!(
-            "Running `{}`",
-            one_line(&str_arg("cmd").unwrap_or_default(), 60)
-        ),
+        "shell.exec" => format!("Running `{}`", one_line(&command(), 60)),
         "session.spawn" => format!(
             "Delegating: {}",
             one_line(&str_arg("title").unwrap_or_else(|| "subsession".into()), 60)
@@ -698,6 +689,45 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
     }
 }
 
+/// Parzi's namespaces: a tool name is `<namespace>.<name>`.
+const NAMESPACES: &[&str] = &[
+    "ui",
+    "session",
+    "plan",
+    "lane",
+    "knowledge",
+    "lease",
+    "board",
+    "project",
+];
+
+/// The name a tool travels under over MCP: dots are not allowed in tool
+/// names by every vendor, so `ui.show_widget` goes out as `ui_show_widget`.
+pub fn to_mcp(name: &str) -> String {
+    name.replace('.', "_")
+}
+
+/// Back from `to_mcp` for Parzi's own namespaces (`ui_show_widget` →
+/// `ui.show_widget`). Connector names come back unchanged.
+pub fn from_mcp(tool: &str) -> String {
+    for ns in NAMESPACES {
+        if let Some(rest) = tool.strip_prefix(ns).and_then(|r| r.strip_prefix('_')) {
+            return format!("{ns}.{rest}");
+        }
+    }
+    tool.to_string()
+}
+
+/// Parzi's own name for a tool an agent reports under its MCP name —
+/// Claude says `mcp__parzi__ui_show_widget`, Codex `parzi.ui_show_widget`,
+/// OpenCode `parzi_ui_show_widget`. Any other name comes back unchanged.
+pub fn display_name(name: &str) -> String {
+    name.strip_prefix("mcp__parzi__")
+        .or_else(|| name.strip_prefix("parzi."))
+        .or_else(|| name.strip_prefix("parzi_"))
+        .map_or_else(|| name.to_string(), from_mcp)
+}
+
 /// First line of `s`, capped at `n` chars (no newlines leak into status lines).
 fn one_line(s: &str, n: usize) -> String {
     let first = s.lines().next().unwrap_or("").trim();
@@ -724,12 +754,12 @@ mod tests {
 
     #[test]
     fn catalog_covers_every_advertised_tool_exactly_once() {
-        // session_defs carries session.* + plan.* + lane.dispatch + knowledge.*.
-        let names: Vec<String> = local_defs()
-            .into_iter()
-            .chain(ui_defs())
-            .chain(session_defs())
-            .map(|d| d.name)
+        // session_defs carries session.* + plan.* + lane.dispatch + knowledge.*;
+        // the three vendor categories name the agents' own tools.
+        let names: Vec<String> = ["fs.read", "fs.write", "shell.exec"]
+            .iter()
+            .map(|n| (*n).to_string())
+            .chain(ui_defs().into_iter().chain(session_defs()).map(|d| d.name))
             .collect();
         let catalog = builtin_tools();
         for n in &names {
@@ -772,96 +802,6 @@ mod tests {
         // Status lines stay single-line.
         assert!(!humanize_tool_call("shell.exec", &j(r#"{"cmd":"a\nb"}"#)).contains('\n'));
     }
-}
-
-/// Resolve `path` strictly inside `cwd`. Rejects absolute / rooted / drive-
-/// relative / UNC / verbatim paths, `..` escapes, empty cwd, and symlinked
-/// escapes via canonicalization. Used by every fs.* tool.
-fn resolve(cwd: &str, path: &str) -> Result<std::path::PathBuf> {
-    use std::path::{Component, Path};
-    if cwd.trim().is_empty() {
-        return Err(ParziError::Tool("fs".into(), "lane cwd is not set".into()));
-    }
-    let req = Path::new(path);
-    // Any absolute / prefix / root component in the *request* is rejected
-    // outright: `base.join(absolute)` would discard the base on all platforms.
-    for c in req.components() {
-        match c {
-            Component::Prefix(_) | Component::RootDir => {
-                return Err(ParziError::Tool(
-                    "fs".into(),
-                    format!("absolute path not allowed: {path}"),
-                ));
-            }
-            _ => {}
-        }
-    }
-    // Windows drive-relative (`C:foo`) and verbatim (`\\?\`) arrive as
-    // Normal + Prefix or are caught above; also reject explicit UNC prefixes,
-    // backslash-rooted, and NUL bytes that confuse later joins.
-    if path.contains('\0')
-        || path.starts_with(r"\\")
-        || path.starts_with("//")
-        || path.starts_with(r"\")
-        || path.starts_with('/')
-    {
-        return Err(ParziError::Tool(
-            "fs".into(),
-            format!("absolute path not allowed: {path}"),
-        ));
-    }
-    if path.len() >= 2 && path.as_bytes()[1] == b':' {
-        return Err(ParziError::Tool(
-            "fs".into(),
-            format!("absolute path not allowed: {path}"),
-        ));
-    }
-    // Lexical containment counted over the *request* only: `..` must never
-    // climb above the lane root, no matter how deep the base is.
-    let mut depth = 0i32;
-    for c in req.components() {
-        match c {
-            Component::ParentDir => {
-                depth -= 1;
-                if depth < 0 {
-                    return Err(ParziError::Tool(
-                        "fs".into(),
-                        format!("path escapes lane root: {path}"),
-                    ));
-                }
-            }
-            Component::Normal(_) => depth += 1,
-            Component::CurDir => {}
-            _ => {}
-        }
-    }
-    let base = std::path::PathBuf::from(cwd);
-    let joined = base.join(req);
-    // Canonicalize to catch symlink / junction escapes. For not-yet-existing
-    // targets (fs.write creates parents), walk up to the nearest existing
-    // ancestor and require it to stay under the canonical root.
-    let canon_base = base.canonicalize().unwrap_or(base.clone());
-    let mut probe: Option<&Path> = Some(&joined);
-    let mut canon_probe: Option<std::path::PathBuf> = None;
-    while let Some(p) = probe {
-        if let Ok(c) = p.canonicalize() {
-            canon_probe = Some(c);
-            break;
-        }
-        probe = p.parent();
-    }
-    if let Some(canon) = canon_probe {
-        if !canon.starts_with(&canon_base) {
-            return Err(ParziError::Tool(
-                "fs".into(),
-                format!("path escapes lane root: {path}"),
-            ));
-        }
-    } else {
-        // Nothing on disk canonicalizes (fresh tree): fall back to the
-        // lexical guarantee above, which already rejected every escape.
-    }
-    Ok(joined)
 }
 
 async fn execute_plan_tool(name: &str, args: &serde_json::Value) -> (bool, String) {
@@ -940,133 +880,5 @@ async fn execute_knowledge_tool(name: &str, args: &serde_json::Value) -> (bool, 
             }
         }
         _ => (false, format!("unknown knowledge tool `{name}`")),
-    }
-}
-
-async fn execute_local(name: &str, args: &serde_json::Value, cwd: &str) -> (bool, String) {
-    match name {
-        "fs.read" => {
-            let p = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
-            match resolve(cwd, p) {
-                Ok(full) => match tokio::fs::read_to_string(&full).await {
-                    Ok(t) => {
-                        let cut: String = t.chars().take(24_000).collect();
-                        (true, cut)
-                    }
-                    Err(e) => (false, format!("read failed: {e}")),
-                },
-                Err(e) => (false, e.to_string()),
-            }
-        }
-        "fs.write" => {
-            let p = args.get("path").and_then(|p| p.as_str()).unwrap_or("");
-            let content = args.get("content").and_then(|c| c.as_str()).unwrap_or("");
-            match resolve(cwd, p) {
-                Ok(full) => {
-                    if let Some(parent) = full.parent() {
-                        if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                            return (false, format!("mkdir failed: {e}"));
-                        }
-                    }
-                    match tokio::fs::write(&full, content).await {
-                        Ok(()) => (true, format!("wrote {} bytes", content.len())),
-                        Err(e) => (false, format!("write failed: {e}")),
-                    }
-                }
-                Err(e) => (false, e.to_string()),
-            }
-        }
-        "fs.list" => {
-            let p = args.get("path").and_then(|p| p.as_str()).unwrap_or(".");
-            match resolve(cwd, p) {
-                Ok(full) => match tokio::fs::read_dir(&full).await {
-                    Ok(mut rd) => {
-                        let mut out = String::new();
-                        while let Ok(Some(e)) = rd.next_entry().await {
-                            let ft = e
-                                .file_type()
-                                .await
-                                .map(|t| if t.is_dir() { "d" } else { "f" })
-                                .unwrap_or("?");
-                            out.push_str(&format!("{ft} {}\n", e.file_name().to_string_lossy()));
-                            if out.len() > 12_000 {
-                                out.push_str("…(truncated)\n");
-                                break;
-                            }
-                        }
-                        (true, out)
-                    }
-                    Err(e) => (false, format!("list failed: {e}")),
-                },
-                Err(e) => (false, e.to_string()),
-            }
-        }
-        "shell.exec" => {
-            let cmd = args.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
-            if cmd.trim().is_empty() {
-                return (false, "empty command".into());
-            }
-            if cwd.trim().is_empty() {
-                return (false, "lane cwd is not set".into());
-            }
-            let timeout_ms = args
-                .get("timeout_ms")
-                .and_then(|n| n.as_u64())
-                .unwrap_or(30_000)
-                .min(120_000);
-            let mut c = if cfg!(windows) {
-                let mut c = tokio::process::Command::new("cmd");
-                c.arg("/C").arg(cmd);
-                c
-            } else {
-                let mut c = tokio::process::Command::new("sh");
-                c.arg("-c").arg(cmd);
-                c
-            };
-            c.current_dir(cwd);
-            // H-6: children never inherit provider keys or other secrets.
-            c.env_clear();
-            for (k, v) in [
-                ("PATH", std::env::var("PATH").unwrap_or_default()),
-                (
-                    "SYSTEMROOT",
-                    std::env::var("SYSTEMROOT").unwrap_or_default(),
-                ),
-                ("TEMP", std::env::var("TEMP").unwrap_or_default()),
-                ("TMP", std::env::var("TMP").unwrap_or_default()),
-                ("TMPDIR", std::env::var("TMPDIR").unwrap_or_default()),
-                ("HOME", std::env::var("HOME").unwrap_or_default()),
-                ("APPDATA", std::env::var("APPDATA").unwrap_or_default()),
-                (
-                    "USERPROFILE",
-                    std::env::var("USERPROFILE").unwrap_or_default(),
-                ),
-                ("LANG", std::env::var("LANG").unwrap_or_default()),
-                ("LC_ALL", std::env::var("LC_ALL").unwrap_or_default()),
-            ] {
-                if !v.is_empty() {
-                    c.env(k, v);
-                }
-            }
-            c.stdin(std::process::Stdio::null());
-            c.kill_on_drop(true);
-            c.stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-            match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), c.output())
-                .await
-            {
-                Ok(Ok(o)) => {
-                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
-                    if !o.status.success() {
-                        s.push_str(&String::from_utf8_lossy(&o.stderr));
-                    }
-                    let cut: String = s.chars().take(8_000).collect();
-                    (o.status.success(), cut)
-                }
-                Ok(Err(e)) => (false, format!("spawn failed: {e}")),
-                Err(_) => (false, format!("timed out after {timeout_ms}ms")),
-            }
-        }
-        _ => (false, format!("unknown local tool `{name}`")),
     }
 }

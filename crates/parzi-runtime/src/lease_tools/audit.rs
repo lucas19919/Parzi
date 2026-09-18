@@ -12,8 +12,6 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
-use parzi_core::project::glob_match;
-
 /// Give up on a non-git worktree past this many files: the walk would then
 /// cost more than the audit is worth, and a half-taken snapshot would report
 /// changes that never happened.
@@ -39,16 +37,11 @@ pub(crate) async fn snapshot(cwd: &str) -> Option<Snapshot> {
     tokio::task::spawn_blocking(move || walk(&dir)).await.ok()?
 }
 
-/// Worktree-relative files under `cwd` that match a claimed glob. Used to
-/// snapshot another lane's files before `shell.exec` rewrites them.
-pub(crate) fn files_matching(cwd: &str, pattern: &str) -> Vec<String> {
-    let Some(snap) = walk(cwd) else {
-        return vec![];
-    };
-    snap.keys()
-        .filter(|p| glob_match(pattern, p))
-        .cloned()
-        .collect()
+/// Every file in the worktree, worktree-relative: where another lane holds
+/// a folder or a glob, its files are found here before `shell.exec` runs,
+/// and the listing proves which files existed. `None` past the walk limit.
+pub(crate) fn files(cwd: &str) -> Option<Vec<String>> {
+    walk(cwd).map(|snap| snap.into_keys().collect())
 }
 
 /// Every path that appeared, vanished, or has a different fingerprint.

@@ -1,375 +1,993 @@
-//! `codex` adapter: OpenAI Responses API behind whichever credential wins.
-//!
-//! Resolution order (first hit decides the billing class):
-//! 1. keyring `codex` — a ChatGPT access token pasted by hand      → subscription
-//! 2. `~/.codex/auth.json` `tokens.access_token` (+ `account_id`)
-//!    written by `codex login`; read-only, never written            → subscription
-//! 3. keyring `openai` / `OPENAI_API_KEY`                          → api key
-//!
-//! A subscription token is not valid on `api.openai.com`; it talks to the
-//! ChatGPT Codex backend instead (same Responses wire shape, plus the
-//! `chatgpt-account-id` header and `store: false`).
+//! Codex, driven over its own app-server (JSON-RPC on stdio) — the protocol
+//! OpenAI's IDE extensions and t3code speak. Codex keeps its ChatGPT
+//! sign-in fresh by itself; Parzi never reads `~/.codex/auth.json`.
 
-use futures::StreamExt;
-use parzi_core::context::Role;
-use parzi_core::error::{ParziError, Result};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
+use serde_json::{json, Value};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+
+use crate::jsonrpc::{Incoming, Peer, RpcError};
+use crate::process::{self, Proc, STOP_GRACE};
 use crate::types::{
-    desanitize_tool, env_key, keyring_get, read_json_file, sanitize_tool, AuthStatus, Billing,
-    ChatReq, EventRx, Model, Provider, StreamEvent,
+    tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate, PermissionRequest,
+    Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd, TurnSpec, UsageWindow,
 };
 
-const API_BASE: &str = "https://api.openai.com/v1";
-const CHATGPT_BASE: &str = "https://chatgpt.com/backend-api/codex";
-
-/// ChatGPT sign-in catalogue churns: ids dead on the subscription path ride
-/// the current flagship instead, so old threads/configs keep working.
-/// (Verified 2026-09-14: gpt-5.3-codex/gpt-5.2 already deprecated there;
-///
-/// retired gpt-5.4* never resolve on this path.)
-fn subscription_model(model: &str) -> &str {
-    match model {
-        "gpt-5.3-codex" | "gpt-5-codex" | "gpt-5.4" | "gpt-5.4-mini" | "gpt-5.2" => "gpt-5.5",
-        _ => model,
-    }
-}
-
-/// Inverse: ChatGPT-only ids (terra/luna) are unknown on api.openai.com,
-/// so the key path falls back to API-served coding models.
-fn api_model(model: &str) -> &str {
-    match model {
-        "gpt-5.6-terra" => "gpt-5.5",
-        "gpt-5.6-luna" => "gpt-5.3-codex",
-        _ => model,
-    }
-}
+pub const ID: &str = "codex";
+const INSTALL_HINT: &str = "Install Codex (`npm i -g @openai/codex`) or set its path in Settings.";
+const LOGIN_HINT: &str = "Run `codex login` in a terminal, then check again.";
 
 pub struct Codex {
-    pub token: Option<String>,
-    pub billing: Billing,
-    /// ChatGPT account id (subscription path only).
-    pub account_id: Option<String>,
-    pub base_url: String,
-}
-
-struct CliSignIn {
-    access: String,
-    account_id: Option<String>,
-}
-
-fn cli_sign_in() -> Option<CliSignIn> {
-    let v = read_json_file(&dirs::home_dir()?.join(".codex/auth.json"))?;
-    let toks = v.get("tokens")?;
-    let access = toks
-        .get("access_token")
-        .and_then(|t| t.as_str())
-        .filter(|t| !t.trim().is_empty())?
-        .to_string();
-    Some(CliSignIn {
-        access,
-        account_id: toks
-            .get("account_id")
-            .and_then(|a| a.as_str())
-            .map(|a| a.to_string()),
-    })
+    binary: String,
 }
 
 impl Codex {
-    pub fn new(base_url: Option<String>) -> Self {
-        if let Some(t) = keyring_get("codex") {
-            return Self {
-                token: Some(t),
-                billing: Billing::Subscription,
-                account_id: None,
-                base_url: base_url.unwrap_or_else(|| CHATGPT_BASE.into()),
-            };
-        }
-        if let Some(s) = cli_sign_in() {
-            return Self {
-                token: Some(s.access),
-                billing: Billing::Subscription,
-                account_id: s.account_id,
-                base_url: base_url.unwrap_or_else(|| CHATGPT_BASE.into()),
-            };
-        }
-        let key = keyring_get("openai").or_else(|| env_key("OPENAI_API_KEY"));
-        let billing = if key.is_some() {
-            Billing::ApiKey
-        } else {
-            Billing::None
-        };
+    pub fn new(binary: &str) -> Self {
         Self {
-            token: key,
-            billing,
-            account_id: None,
-            base_url: base_url.unwrap_or_else(|| API_BASE.into()),
+            binary: binary.to_string(),
         }
     }
+
+    fn program(&self) -> Option<PathBuf> {
+        process::resolve(if self.binary.trim().is_empty() {
+            "codex"
+        } else {
+            &self.binary
+        })
+    }
+}
+
+/// A started app-server with the initialize handshake done.
+struct Server {
+    proc: Proc,
+    peer: Arc<Peer>,
+    incoming: mpsc::UnboundedReceiver<Incoming>,
+    version: Option<String>,
+}
+
+async fn open(program: &Path, cwd: &Path) -> Result<Server, ProviderError> {
+    let mut proc = Proc::spawn(program, &["app-server".to_string()], cwd, &[])
+        .map_err(|e| ProviderError::process(format!("could not start Codex: {e}")))?;
+    let (Some(stdin), Some(stdout)) = (proc.child.stdin.take(), proc.child.stdout.take()) else {
+        proc.kill().await;
+        return Err(ProviderError::process("Codex started without stdio"));
+    };
+    let (peer, incoming) = Peer::start(stdout, stdin);
+    let init = peer
+        .request_within(
+            "initialize",
+            json!({"clientInfo": {"name": "parzi", "title": "Parzi", "version": env!("CARGO_PKG_VERSION")}}),
+            Duration::from_secs(30),
+        )
+        .await;
+    let init = match init {
+        Ok(v) => v,
+        Err(e) => {
+            let err = ProviderError::process(format!(
+                "Codex app-server did not start: {e} {}",
+                tail(&proc.stderr(), 400)
+            ));
+            proc.kill().await;
+            return Err(err);
+        }
+    };
+    let _ = peer.notify("initialized", Value::Null).await;
+    // userAgent reads `codex_cli_rs/0.51.0 (…)`: the version follows the slash.
+    let version = init
+        .get("userAgent")
+        .and_then(Value::as_str)
+        .and_then(|ua| ua.split('/').nth(1))
+        .and_then(|rest| rest.split_whitespace().next())
+        .map(str::to_string);
+    Ok(Server {
+        proc,
+        peer,
+        incoming,
+        version,
+    })
 }
 
 #[async_trait::async_trait]
 impl Provider for Codex {
     fn id(&self) -> &'static str {
-        "codex"
+        ID
     }
 
-    async fn models(&self) -> Result<Vec<Model>> {
-        Ok(crate::catalog::codex())
+    /// `untrusted` approvals: every patch and every command not known to
+    /// be read-only is an approval request (see [`APPROVAL`]).
+    fn gated(&self) -> bool {
+        true
     }
 
-    fn billing(&self) -> Billing {
-        self.billing
-    }
-
-    fn account_label(&self) -> Option<String> {
-        match self.billing {
-            Billing::Subscription => Some("ChatGPT / Codex".into()),
-            _ => None,
-        }
-    }
-
-    async fn chat_stream(&self, req: ChatReq) -> Result<EventRx> {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let key = self.token.clone().ok_or_else(|| {
-            ParziError::Provider("codex".into(), "missing Codex credentials".into())
-        })?;
-        let subscription = self.billing == Billing::Subscription;
-        let model = if subscription {
-            subscription_model(&req.model)
-        } else {
-            api_model(&req.model)
-        }
-        .to_string();
-        let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
-        let input: Vec<serde_json::Value> = req
-            .messages
-            .iter()
-            .map(|m| {
-                let role = match m.role {
-                    Role::Assistant => "assistant",
-                    _ => "user",
-                };
-                serde_json::json!({"role": role, "content": crate::images::responses_content(&m.content, &m.images)})
-            })
-            .collect();
-        let tools: Vec<serde_json::Value> = req
-            .tools
-            .iter()
-            .map(|t| {
-                serde_json::json!({
-                    // Dots 400 (`^[a-zA-Z0-9_-]{1,64}$`); mapped back on receipt.
-                    "type": "function", "name": sanitize_tool(&t.name),
-                    "description": t.description, "parameters": t.schema,
-                })
-            })
-            .collect();
-        // Native reasoning effort (Responses API). Extra/ultra ride xhigh.
-        let reasoning_effort = match req.effort.as_str() {
-            "low" => "low",
-            "medium" | "med" => "medium",
-            "high" => "high",
-            "extra" | "ultra" => "xhigh",
-            _ => "medium",
+    async fn status(&self) -> ProviderStatus {
+        let Some(program) = self.program() else {
+            return ProviderStatus::new(ID, State::NotInstalled, INSTALL_HINT);
         };
-        let mut body = serde_json::json!({
-            "model": model, "input": input, "tools": tools,
-            "stream": true,
-            "reasoning": {"effort": reasoning_effort, "summary": "auto"},
-            "instructions": req.system,
-        });
-        let defs = req.tools.clone();
-        if subscription {
-            // ChatGPT backend: stateless only; output cap is the plan's.
-            body["store"] = serde_json::Value::Bool(false);
-        } else {
-            body["max_output_tokens"] = serde_json::json!(req.max_tokens);
-        }
-        let account_id = self.account_id.clone();
-        tokio::spawn(async move {
-            let mut headers = reqwest::header::HeaderMap::new();
-            if subscription {
-                if let Some(acct) = account_id.as_deref().and_then(|a| a.parse().ok()) {
-                    headers.insert("chatgpt-account-id", acct);
-                }
-                if let Ok(v) = "responses=experimental".parse() {
-                    headers.insert("OpenAI-Beta", v);
-                }
-                if let Ok(v) = "codex_cli_rs".parse() {
-                    headers.insert("originator", v);
-                }
-            }
-            let client = match reqwest::Client::builder()
-                .default_headers(headers)
-                .timeout(std::time::Duration::from_secs(180))
-                .build()
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = tx.send(Err(ParziError::Provider("codex".into(), e.to_string())));
-                    return;
-                }
-            };
-            let resp = match client.post(&url).bearer_auth(&key).json(&body).send().await {
-                Ok(r) => r,
-                Err(e) => {
-                    let _ = tx.send(Err(ParziError::Provider(
-                        "codex".into(),
-                        format!("request: {e}"),
-                    )));
-                    return;
-                }
-            };
-            if !resp.status().is_success() {
-                let code = resp.status();
-                let retry = resp
-                    .headers()
-                    .get(reqwest::header::RETRY_AFTER)
-                    .and_then(|v| v.to_str().ok())
-                    .map(|r| format!(" (retry after {r})"))
-                    .unwrap_or_default();
-                let text = resp.text().await.unwrap_or_default();
-                let short: String = text.chars().take(300).collect();
-                let _ = tx.send(Err(ParziError::Provider(
-                    "codex".into(),
-                    format!("http {code}{retry}: {short}"),
-                )));
-                return;
-            }
-            let mut arg_buf = String::new();
-            let mut fn_name = String::new();
-            let mut call_id = String::new();
-            let mut buf = String::new();
-            let mut stream = resp.bytes_stream();
-            while let Some(chunk) = stream.next().await {
-                let chunk = match chunk {
-                    Ok(c) => c,
-                    Err(e) => {
-                        let _ = tx.send(Err(ParziError::Provider(
-                            "codex".into(),
-                            format!("stream: {e}"),
-                        )));
-                        return;
-                    }
-                };
-                buf.push_str(&String::from_utf8_lossy(&chunk));
-                while let Some(pos) = buf.find('\n') {
-                    let line = buf[..pos].trim().to_string();
-                    buf.drain(..=pos);
-                    let data = match line.strip_prefix("data:") {
-                        Some(d) => d.trim(),
-                        None => continue,
-                    };
-                    if data == "[DONE]" {
-                        continue;
-                    }
-                    let v: serde_json::Value = match serde_json::from_str(data) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-                    let typ = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                    match typ {
-                        "response.output_text.delta" => {
-                            if let Some(t) = v.get("delta").and_then(|d| d.as_str()) {
-                                let _ = tx.send(Ok(StreamEvent::Text(t.to_string())));
-                            }
-                        }
-                        "response.reasoning_summary_text.delta" => {
-                            if let Some(t) = v.get("delta").and_then(|d| d.as_str()) {
-                                let _ = tx.send(Ok(StreamEvent::Reasoning(t.to_string())));
-                            }
-                        }
-                        "response.function_call_arguments.delta" => {
-                            if let Some(d) = v.get("delta").and_then(|d| d.as_str()) {
-                                arg_buf.push_str(d);
-                            }
-                        }
-                        "response.output_item.done" => {
-                            if let Some(item) = v.get("item") {
-                                if item.get("type").and_then(|t| t.as_str())
-                                    == Some("function_call")
-                                {
-                                    fn_name = item
-                                        .get("name")
-                                        .and_then(|n| n.as_str())
-                                        .unwrap_or("")
-                                        .into();
-                                    call_id = item
-                                        .get("call_id")
-                                        .and_then(|n| n.as_str())
-                                        .unwrap_or("call_0")
-                                        .into();
-                                    arg_buf = item
-                                        .get("arguments")
-                                        .and_then(|a| a.as_str())
-                                        .unwrap_or("")
-                                        .into();
-                                }
-                            }
-                        }
-                        "response.completed" => {
-                            if let Some(u) = v.get("response").and_then(|r| r.get("usage")) {
-                                let pin =
-                                    u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                                let pout =
-                                    u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-                                let _ = tx.send(Ok(StreamEvent::Usage {
-                                    tokens_in: pin,
-                                    tokens_out: pout,
-                                }));
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            if !fn_name.is_empty() {
-                let args = serde_json::from_str(&arg_buf).unwrap_or(serde_json::Value::Null);
-                let name = desanitize_tool(&defs, &fn_name);
-                let _ = tx.send(Ok(StreamEvent::ToolCall {
-                    id: call_id,
-                    name,
-                    args,
-                }));
-            }
-        });
-        Ok(rx)
+        let mut server = match open(&program, &std::env::temp_dir()).await {
+            Ok(s) => s,
+            Err(e) => return ProviderStatus::new(ID, State::Error, e.message),
+        };
+        let status = probe(&server.peer, server.version.clone()).await;
+        server.proc.kill().await;
+        drop(server.incoming);
+        status
     }
 
-    fn auth_status(&self) -> AuthStatus {
-        match &self.token {
-            Some(_) => AuthStatus::Ok,
-            None => AuthStatus::Missing(
-                "sign in with the Codex CLI (`codex login`) or add an OpenAI API key".into(),
-            ),
+    async fn run_turn(
+        &self,
+        spec: TurnSpec,
+        gate: Arc<dyn PermissionGate>,
+        events: EventTx,
+        cancel: CancellationToken,
+    ) -> Result<TurnEnd, ProviderError> {
+        let program = self.program().ok_or_else(|| {
+            ProviderError::process(format!("Codex is not installed. {INSTALL_HINT}"))
+        })?;
+        let mut server = open(&program, &spec.cwd).await?;
+        let outcome = drive(
+            &server.peer,
+            &mut server.incoming,
+            &spec,
+            gate,
+            &events,
+            &cancel,
+        )
+        .await;
+        let outcome = match outcome {
+            Err(e) if e.class == ErrorClass::Process => Err(ProviderError::process(format!(
+                "{} {}",
+                e.message,
+                tail(&server.proc.stderr(), 600)
+            ))),
+            other => other,
+        };
+        server.proc.kill().await;
+        outcome
+    }
+}
+
+async fn probe(peer: &Peer, version: Option<String>) -> ProviderStatus {
+    let limit = Duration::from_secs(20);
+    let account = match peer.request_within("account/read", json!({}), limit).await {
+        Ok(v) => v,
+        Err(e) => {
+            let mut s =
+                ProviderStatus::new(ID, State::Error, format!("Codex account check failed: {e}"));
+            s.version = version;
+            return s;
+        }
+    };
+    let signed_in = account.get("account").is_some_and(|a| !a.is_null());
+    if !signed_in && account.get("requiresOpenaiAuth").and_then(Value::as_bool) == Some(true) {
+        let mut s = ProviderStatus::new(ID, State::SignedOut, LOGIN_HINT);
+        s.version = version;
+        return s;
+    }
+    let mut s = ProviderStatus::new(ID, State::Ready, "");
+    s.version = version;
+    s.account = account.get("account").and_then(account_label);
+    s.models = list_models(peer).await;
+    if account.pointer("/account/type").and_then(Value::as_str) != Some("apiKey") {
+        if let Ok(r) = peer
+            .request_within("account/rateLimits/read", Value::Null, limit)
+            .await
+        {
+            s.usage = windows(r.get("rateLimits").unwrap_or(&Value::Null));
+        }
+    }
+    s
+}
+
+fn account_label(a: &Value) -> Option<String> {
+    match a.get("type").and_then(Value::as_str)? {
+        "chatgpt" => Some(match a.get("planType").and_then(Value::as_str) {
+            Some(plan) if !plan.is_empty() => format!("ChatGPT {}", title_case(plan)),
+            _ => "ChatGPT".to_string(),
+        }),
+        "apiKey" => Some("API key".into()),
+        other => Some(title_case(other)),
+    }
+}
+
+fn title_case(s: &str) -> String {
+    let mut c = s.chars();
+    c.next()
+        .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+        .unwrap_or_default()
+}
+
+async fn list_models(peer: &Peer) -> Vec<ModelInfo> {
+    let mut out = vec![];
+    let mut cursor: Option<String> = None;
+    for _ in 0..5 {
+        let params = match &cursor {
+            Some(c) => json!({"cursor": c}),
+            None => json!({}),
+        };
+        let Ok(page) = peer
+            .request_within("model/list", params, Duration::from_secs(20))
+            .await
+        else {
+            break;
+        };
+        for m in page
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if m.get("hidden").and_then(Value::as_bool) == Some(true) {
+                continue;
+            }
+            let Some(id) = m
+                .get("model")
+                .or_else(|| m.get("id"))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            out.push(ModelInfo {
+                id: id.to_string(),
+                name: m
+                    .get("displayName")
+                    .and_then(Value::as_str)
+                    .unwrap_or(id)
+                    .to_string(),
+                is_default: m.get("isDefault").and_then(Value::as_bool).unwrap_or(false),
+                efforts: m
+                    .get("supportedReasoningEfforts")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|e| e.get("reasoningEffort").and_then(Value::as_str))
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            });
+        }
+        cursor = page
+            .get("nextCursor")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    out
+}
+
+/// Plan windows from a rate-limit snapshot (`primary` / `secondary`).
+fn windows(snapshot: &Value) -> Vec<UsageWindow> {
+    let mut out = vec![];
+    for key in ["primary", "secondary"] {
+        let Some(w) = snapshot.get(key).filter(|w| !w.is_null()) else {
+            continue;
+        };
+        let Some(used) = w.get("usedPercent").and_then(Value::as_f64) else {
+            continue;
+        };
+        let mins = w.get("windowDurationMins").and_then(Value::as_u64);
+        let label = match mins {
+            Some(m) if m <= 6 * 60 => "Session".to_string(),
+            Some(m) if m >= 6 * 24 * 60 => "Weekly".to_string(),
+            Some(m) => format!("{} h", m / 60),
+            None => title_case(key),
+        };
+        out.push(UsageWindow {
+            label,
+            used_percent: used.clamp(0.0, 100.0),
+            resets_at: w.get("resetsAt").and_then(Value::as_u64),
+        });
+    }
+    out
+}
+
+/// Codex's most-asking setup, whatever the lane allows: `untrusted` asks
+/// before every patch and every command it does not know to be read-only,
+/// and the read-only sandbox holds the commands it runs without asking.
+/// Parzi's gate answers each request with the lane's own rules.
+const APPROVAL: &str = "untrusted";
+const SANDBOX: &str = "read-only";
+
+fn thread_id(v: &Value) -> Option<String> {
+    v.pointer("/thread/id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// Parzi's effort pill in Codex's words: its top two pills are Codex's top
+/// one. Codex's own words pass through.
+fn effort(e: &str) -> &str {
+    match e {
+        "extra" | "ultra" | "max" => "xhigh",
+        other => other,
+    }
+}
+
+/// Open (or resume) the thread and run one turn on it. Split from
+/// `run_turn` so the wire is testable without a real `codex`.
+async fn drive(
+    peer: &Arc<Peer>,
+    incoming: &mut mpsc::UnboundedReceiver<Incoming>,
+    spec: &TurnSpec,
+    gate: Arc<dyn PermissionGate>,
+    events: &EventTx,
+    cancel: &CancellationToken,
+) -> Result<TurnEnd, ProviderError> {
+    let mut thread = json!({
+        "cwd": spec.cwd.display().to_string(),
+        "approvalPolicy": APPROVAL,
+        "sandbox": SANDBOX,
+    });
+    if let Some(m) = spec.model.as_deref().filter(|m| !m.is_empty()) {
+        thread["model"] = json!(m);
+    }
+    if let Some(i) = spec
+        .instructions
+        .as_deref()
+        .filter(|i| !i.trim().is_empty())
+    {
+        thread["developerInstructions"] = json!(i);
+    }
+    if let Some(t) = &spec.tools {
+        // The secret rides in the URL path, so no header is needed.
+        thread["config"] = json!({"mcp_servers": {t.name.clone(): {"url": t.url}}});
+    }
+    let limit = Duration::from_secs(60);
+    let resume = spec
+        .resume
+        .as_ref()
+        .and_then(|r| r.get("thread_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let tid = match resume {
+        Some(tid) => {
+            let mut p = thread.clone();
+            p["threadId"] = json!(tid);
+            match peer.request_within("thread/resume", p, limit).await {
+                Ok(v) => thread_id(&v).unwrap_or(tid),
+                // The server answered and refused the thread: it no longer
+                // has it. The run starts a new one and hands it the history.
+                Err(e) if e.code != RpcError::CLOSED && e.code != RpcError::TIMEOUT => {
+                    return Err(ProviderError::new(
+                        ErrorClass::SessionLost,
+                        format!("Codex could not resume the conversation: {e}"),
+                    ));
+                }
+                Err(e) => return Err(rpc_failure(e)),
+            }
+        }
+        None => start_thread(peer, thread, limit).await?,
+    };
+    let _ = events.send(ProviderEvent::Session {
+        resume: json!({"thread_id": tid}),
+    });
+    let mut input = vec![json!({"type": "text", "text": spec.prompt})];
+    for p in &spec.images {
+        input.push(json!({"type": "localImage", "path": p.display().to_string()}));
+    }
+    let mut turn = json!({
+        "threadId": tid,
+        "input": input,
+        "approvalPolicy": APPROVAL,
+        "sandboxPolicy": {"type": "readOnly"},
+    });
+    if let Some(m) = spec.model.as_deref().filter(|m| !m.is_empty()) {
+        turn["model"] = json!(m);
+    }
+    if let Some(e) = spec.effort.as_deref().filter(|e| !e.is_empty()) {
+        turn["effort"] = json!(effort(e));
+    }
+    let started = peer
+        .request_within("turn/start", turn, limit)
+        .await
+        .map_err(rpc_failure)?;
+    let turn_id = started
+        .pointer("/turn/id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let mut st = Turn {
+        thread: tid,
+        turn: turn_id,
+        file_paths: HashMap::new(),
+        last_error: None,
+        interrupting: false,
+    };
+    let mut stop_by: Option<tokio::time::Instant> = None;
+    loop {
+        let msg = tokio::select! {
+            () = cancel.cancelled(), if !st.interrupting => {
+                st.interrupting = true;
+                stop_by = Some(tokio::time::Instant::now() + STOP_GRACE);
+                let (p, params) = (peer.clone(), json!({"threadId": st.thread, "turnId": st.turn}));
+                tokio::spawn(async move {
+                    let _ = p.request_within("turn/interrupt", params, STOP_GRACE).await;
+                });
+                continue;
+            }
+            () = sleep_until(stop_by) => return Ok(TurnEnd::Interrupted),
+            msg = incoming.recv() => msg,
+        };
+        let Some(msg) = msg else {
+            if st.interrupting {
+                return Ok(TurnEnd::Interrupted);
+            }
+            return Err(ProviderError::process(
+                "Codex exited before the turn finished.",
+            ));
+        };
+        match msg {
+            Incoming::Notification { method, params } => {
+                if let Some(end) = st.notification(&method, &params, events)? {
+                    return Ok(end);
+                }
+            }
+            Incoming::Request { id, method, params } => {
+                let (peer, gate) = (peer.clone(), gate.clone());
+                let paths = params
+                    .get("itemId")
+                    .and_then(Value::as_str)
+                    .and_then(|i| st.file_paths.get(i).cloned())
+                    .unwrap_or_default();
+                // A person may take minutes: never block the stream on it.
+                tokio::spawn(async move { answer(&peer, id, &method, params, paths, gate).await });
+            }
+            Incoming::Raw(_) => {}
         }
     }
 }
 
+async fn start_thread(
+    peer: &Peer,
+    params: Value,
+    limit: Duration,
+) -> Result<String, ProviderError> {
+    let v = peer
+        .request_within("thread/start", params, limit)
+        .await
+        .map_err(rpc_failure)?;
+    thread_id(&v).ok_or_else(|| {
+        ProviderError::new(ErrorClass::Unknown, "Codex started a thread without an id")
+    })
+}
+
+fn rpc_failure(e: RpcError) -> ProviderError {
+    if e.code == RpcError::CLOSED || e.code == RpcError::TIMEOUT {
+        return ProviderError::process(e.message);
+    }
+    ProviderError::new(
+        ErrorClass::Unknown,
+        format!("Codex refused the request: {e}"),
+    )
+}
+
+async fn sleep_until(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(d) => tokio::time::sleep_until(d).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Answer one of Codex's own requests.
+async fn answer(
+    peer: &Peer,
+    id: Value,
+    method: &str,
+    params: Value,
+    paths: Vec<String>,
+    gate: Arc<dyn PermissionGate>,
+) {
+    match method {
+        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
+            let command = params.get("command").and_then(Value::as_str).unwrap_or("");
+            let (tool, title) = if method.contains("commandExecution") {
+                ("shell", format!("Run `{command}`"))
+            } else if paths.is_empty() {
+                ("edit", "Edit files".to_string())
+            } else {
+                ("edit", format!("Edit {}", paths.join(", ")))
+            };
+            let request = PermissionRequest {
+                id: params
+                    .get("itemId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                tool: tool.to_string(),
+                title,
+                input: params.clone(),
+                paths,
+            };
+            let decision = match gate.decide(request).await {
+                PermissionDecision::Allow => "accept",
+                PermissionDecision::AllowAlways => "acceptForSession",
+                PermissionDecision::Deny(_) => "decline",
+            };
+            let _ = peer.respond(id, json!({"decision": decision})).await;
+        }
+        "mcpServer/elicitation/request" => {
+            let _ = peer.respond(id, json!({"action": "decline"})).await;
+        }
+        _ => {
+            let _ = peer
+                .respond_error(id, -32601, &format!("Parzi does not handle {method}"))
+                .await;
+        }
+    }
+}
+
+struct Turn {
+    thread: String,
+    turn: String,
+    /// fileChange item id → the files it touches (for the lease gate).
+    file_paths: HashMap<String, Vec<String>>,
+    last_error: Option<ProviderError>,
+    interrupting: bool,
+}
+
+impl Turn {
+    fn ours(&self, params: &Value) -> bool {
+        params
+            .get("threadId")
+            .and_then(Value::as_str)
+            .is_none_or(|t| t == self.thread)
+    }
+
+    fn notification(
+        &mut self,
+        method: &str,
+        p: &Value,
+        events: &EventTx,
+    ) -> Result<Option<TurnEnd>, ProviderError> {
+        if !self.ours(p) {
+            return Ok(None);
+        }
+        let s = |k: &str| p.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+        match method {
+            "item/agentMessage/delta" => {
+                let _ = events.send(ProviderEvent::TextDelta(s("delta")));
+            }
+            "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
+                let _ = events.send(ProviderEvent::ReasoningDelta(s("delta")));
+            }
+            "item/started" => {
+                if let Some(item) = p.get("item") {
+                    self.item_started(item, events);
+                }
+            }
+            "item/completed" => {
+                if let Some(item) = p.get("item") {
+                    item_completed(item, events);
+                }
+            }
+            "thread/tokenUsage/updated" => {
+                let u = p.get("tokenUsage").unwrap_or(&Value::Null);
+                let n = |path: &str| u.pointer(path).and_then(Value::as_u64).unwrap_or(0);
+                let (input, output) = (n("/last/inputTokens"), n("/last/outputTokens"));
+                let _ = events.send(ProviderEvent::Usage {
+                    input,
+                    output,
+                    cost_usd: None,
+                });
+                if let Some(limit) = u.get("modelContextWindow").and_then(Value::as_u64) {
+                    let _ = events.send(ProviderEvent::Context {
+                        used: input + output,
+                        limit,
+                    });
+                }
+            }
+            "account/rateLimits/updated" => {
+                let w = windows(p.get("rateLimits").unwrap_or(&Value::Null));
+                if !w.is_empty() {
+                    let _ = events.send(ProviderEvent::Limits(w));
+                }
+            }
+            "model/rerouted" => {
+                let _ = events.send(ProviderEvent::Notice(format!(
+                    "Codex switched from {} to {}",
+                    s("fromModel"),
+                    s("toModel")
+                )));
+            }
+            "error" => {
+                let err = turn_error(p.get("error").unwrap_or(&Value::Null));
+                if p.get("willRetry").and_then(Value::as_bool) == Some(true) {
+                    let _ = events.send(ProviderEvent::Notice(format!("Codex is retrying: {err}")));
+                } else {
+                    self.last_error = Some(err);
+                }
+            }
+            "turn/completed" => {
+                let turn = p.get("turn").unwrap_or(&Value::Null);
+                let id = turn.get("id").and_then(Value::as_str).unwrap_or("");
+                if !self.turn.is_empty() && !id.is_empty() && id != self.turn {
+                    return Ok(None);
+                }
+                return match turn.get("status").and_then(Value::as_str).unwrap_or("") {
+                    "interrupted" => Ok(Some(TurnEnd::Interrupted)),
+                    "failed" => Err(match turn.get("error").filter(|e| !e.is_null()) {
+                        Some(e) => turn_error(e),
+                        None => self.last_error.take().unwrap_or_else(|| {
+                            ProviderError::new(
+                                ErrorClass::Unknown,
+                                "Codex ended the turn as failed",
+                            )
+                        }),
+                    }),
+                    _ if self.interrupting => Ok(Some(TurnEnd::Interrupted)),
+                    _ => Ok(Some(TurnEnd::Completed)),
+                };
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn item_started(&mut self, item: &Value, events: &EventTx) {
+        let id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let (name, input) = match item.get("type").and_then(Value::as_str).unwrap_or("") {
+            "commandExecution" => (
+                "shell".to_string(),
+                json!({"command": item.get("command"), "cwd": item.get("cwd")}),
+            ),
+            "fileChange" => {
+                let paths: Vec<String> = item
+                    .get("changes")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|c| c.get("path").and_then(Value::as_str).map(str::to_string))
+                    .collect();
+                self.file_paths.insert(id.clone(), paths.clone());
+                ("edit".to_string(), json!({"paths": paths}))
+            }
+            "mcpToolCall" => (
+                format!(
+                    "{}.{}",
+                    item.get("server").and_then(Value::as_str).unwrap_or("mcp"),
+                    item.get("tool").and_then(Value::as_str).unwrap_or("tool")
+                ),
+                item.get("arguments").cloned().unwrap_or(Value::Null),
+            ),
+            "webSearch" => (
+                "web_search".to_string(),
+                json!({"query": item.get("query")}),
+            ),
+            _ => return,
+        };
+        let _ = events.send(ProviderEvent::ToolStarted { id, name, input });
+    }
+}
+
+fn item_completed(item: &Value, events: &EventTx) {
+    let id = item
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let status = item
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("completed");
+    let finished = |name: &str, ok: bool, output: String| {
+        let _ = events.send(ProviderEvent::ToolFinished {
+            id: id.clone(),
+            name: name.to_string(),
+            ok,
+            output,
+        });
+    };
+    match item.get("type").and_then(Value::as_str).unwrap_or("") {
+        "agentMessage" => {
+            let text = item.get("text").and_then(Value::as_str).unwrap_or("");
+            if !text.trim().is_empty() {
+                let _ = events.send(ProviderEvent::Message(text.to_string()));
+            }
+        }
+        "reasoning" => {
+            let mut parts = vec![];
+            for key in ["summary", "content"] {
+                for p in item
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(t) = p.as_str().or_else(|| p.get("text").and_then(Value::as_str)) {
+                        parts.push(t.to_string());
+                    }
+                }
+            }
+            let text = parts.join("\n\n");
+            if !text.trim().is_empty() {
+                let _ = events.send(ProviderEvent::Reasoning(text));
+            }
+        }
+        "commandExecution" => {
+            let exit = item.get("exitCode").and_then(Value::as_i64);
+            finished(
+                "shell",
+                status == "completed" && exit.is_none_or(|c| c == 0),
+                item.get("aggregatedOutput")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            );
+        }
+        "fileChange" => {
+            let paths: Vec<&str> = item
+                .get("changes")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|c| c.get("path").and_then(Value::as_str))
+                .collect();
+            finished("edit", status == "completed", paths.join("\n"));
+        }
+        "mcpToolCall" => {
+            let ok = status == "completed" && item.get("error").is_none_or(Value::is_null);
+            let output = match item.get("error").filter(|e| !e.is_null()) {
+                Some(e) => e
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("error")
+                    .to_string(),
+                None => item
+                    .pointer("/result/content")
+                    .and_then(Value::as_array)
+                    .map(|parts| {
+                        parts
+                            .iter()
+                            .filter_map(|p| p.get("text").and_then(Value::as_str))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                    .unwrap_or_default(),
+            };
+            let name = format!(
+                "{}.{}",
+                item.get("server").and_then(Value::as_str).unwrap_or("mcp"),
+                item.get("tool").and_then(Value::as_str).unwrap_or("tool")
+            );
+            finished(&name, ok, output);
+        }
+        "webSearch" => finished("web_search", true, String::new()),
+        _ => {}
+    }
+}
+
+/// A turn error, classed by Codex's own `codexErrorInfo`.
+fn turn_error(e: &Value) -> ProviderError {
+    let message = e
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("Codex reported an error")
+        .to_string();
+    let info = e.get("codexErrorInfo").unwrap_or(&Value::Null);
+    // A plain variant is a string; one with data is a one-key object.
+    let kind = info
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| info.as_object().and_then(|o| o.keys().next().cloned()))
+        .unwrap_or_default();
+    let class = match kind.as_str() {
+        "unauthorized" => ErrorClass::Auth,
+        "usageLimitExceeded" | "rateLimitExceeded" | "sessionBudgetExceeded" => {
+            ErrorClass::RateLimit
+        }
+        "serverOverloaded" | "internalServerError" => ErrorClass::Overloaded,
+        "contextWindowExceeded" => ErrorClass::ContextOverflow,
+        "badRequest" => ErrorClass::BadRequest,
+        "httpConnectionFailed"
+        | "responseStreamConnectionFailed"
+        | "responseStreamDisconnected" => ErrorClass::Overloaded,
+        _ => ErrorClass::Unknown,
+    };
+    ProviderError::new(class, message)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{api_model, subscription_model};
+    use super::*;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     #[test]
-    fn dead_subscription_ids_ride_the_flagship() {
-        for dead in [
-            "gpt-5.3-codex",
-            "gpt-5-codex",
-            "gpt-5.4",
-            "gpt-5.4-mini",
-            "gpt-5.2",
-        ] {
-            assert_eq!(subscription_model(dead), "gpt-5.5", "{dead}");
-        }
-        for live in ["gpt-5.5", "gpt-5.6-terra", "gpt-5.6-luna"] {
-            assert_eq!(subscription_model(live), live);
+    fn the_effort_pill_speaks_codex() {
+        assert_eq!(effort("ultra"), "xhigh");
+        assert_eq!(effort("extra"), "xhigh");
+        assert_eq!(
+            effort("minimal"),
+            "minimal",
+            "Codex's own word passes through"
+        );
+    }
+
+    struct Gate(PermissionDecision, std::sync::Mutex<Vec<PermissionRequest>>);
+
+    #[async_trait::async_trait]
+    impl PermissionGate for Gate {
+        async fn decide(&self, r: PermissionRequest) -> PermissionDecision {
+            self.1.lock().unwrap().push(r);
+            self.0.clone()
         }
     }
 
+    fn spec() -> TurnSpec {
+        TurnSpec {
+            session_id: "s".into(),
+            cwd: std::env::temp_dir(),
+            model: Some("gpt-5.5".into()),
+            effort: Some("high".into()),
+            instructions: Some("be brief".into()),
+            resume: None,
+            prompt: "hi".into(),
+            images: vec![],
+            tools: None,
+        }
+    }
+
+    async fn send(w: &mut (impl AsyncWriteExt + Unpin), v: Value) {
+        w.write_all(format!("{v}\n").as_bytes()).await.unwrap();
+    }
+
+    async fn read(
+        lines: &mut tokio::io::Lines<BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>>,
+    ) -> Value {
+        serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_turn_maps_items_asks_for_edits_and_ends() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let start = read(&mut lines).await;
+            assert_eq!(start["method"], "thread/start");
+            assert_eq!(start["params"]["approvalPolicy"], "untrusted");
+            assert_eq!(start["params"]["developerInstructions"], "be brief");
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": start["id"], "result": {"thread": {"id": "th1"}}}),
+            )
+            .await;
+            let turn = read(&mut lines).await;
+            assert_eq!(turn["method"], "turn/start");
+            assert_eq!(turn["params"]["effort"], "high");
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": turn["id"], "result": {"turn": {"id": "tu1"}}}),
+            )
+            .await;
+            send(&mut w, json!({"jsonrpc": "2.0", "method": "item/started", "params": {"threadId": "th1", "item": {"type": "fileChange", "id": "f1", "changes": [{"path": "src/a.rs"}]}}})).await;
+            send(&mut w, json!({"jsonrpc": "2.0", "id": 77, "method": "item/fileChange/requestApproval", "params": {"threadId": "th1", "turnId": "tu1", "itemId": "f1"}})).await;
+            let approval = read(&mut lines).await;
+            assert_eq!(approval["id"], 77);
+            assert_eq!(approval["result"]["decision"], "accept");
+            send(&mut w, json!({"jsonrpc": "2.0", "method": "item/completed", "params": {"threadId": "th1", "item": {"type": "fileChange", "id": "f1", "status": "completed", "changes": [{"path": "src/a.rs"}]}}})).await;
+            send(&mut w, json!({"jsonrpc": "2.0", "method": "item/started", "params": {"threadId": "th1", "item": {"type": "commandExecution", "id": "c1", "command": "cargo test"}}})).await;
+            send(&mut w, json!({"jsonrpc": "2.0", "method": "item/completed", "params": {"threadId": "th1", "item": {"type": "commandExecution", "id": "c1", "status": "completed", "exitCode": 1, "aggregatedOutput": "1 failed"}}})).await;
+            send(&mut w, json!({"jsonrpc": "2.0", "method": "item/agentMessage/delta", "params": {"threadId": "th1", "delta": "Do"}})).await;
+            send(&mut w, json!({"jsonrpc": "2.0", "method": "item/completed", "params": {"threadId": "th1", "item": {"type": "agentMessage", "id": "m1", "text": "Done."}}})).await;
+            send(&mut w, json!({"jsonrpc": "2.0", "method": "thread/tokenUsage/updated", "params": {"threadId": "th1", "tokenUsage": {"last": {"inputTokens": 100, "outputTokens": 20}, "modelContextWindow": 272000}}})).await;
+            send(&mut w, json!({"jsonrpc": "2.0", "method": "account/rateLimits/updated", "params": {"rateLimits": {"primary": {"usedPercent": 12, "windowDurationMins": 300, "resetsAt": 1_800_000_000u64}, "secondary": {"usedPercent": 40, "windowDurationMins": 10080}}}})).await;
+            send(&mut w, json!({"jsonrpc": "2.0", "method": "turn/completed", "params": {"threadId": "th1", "turn": {"id": "tu1", "status": "completed"}}})).await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start(r, w);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &spec(),
+            gate.clone(),
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(end, TurnEnd::Completed);
+        server.await.unwrap();
+        let asked = gate.1.lock().unwrap().clone();
+        assert_eq!(asked.len(), 1);
+        assert_eq!(
+            asked[0].paths,
+            vec!["src/a.rs".to_string()],
+            "lease gate sees the file"
+        );
+        drop(tx);
+        let mut got = vec![];
+        while let Some(e) = rx.recv().await {
+            got.push(e);
+        }
+        assert!(got.contains(&ProviderEvent::Session {
+            resume: json!({"thread_id": "th1"})
+        }));
+        assert!(got.contains(&ProviderEvent::Message("Done.".into())));
+        assert!(got.iter().any(|e| matches!(e, ProviderEvent::ToolFinished { id, ok: false, output, .. } if id == "c1" && output == "1 failed")));
+        assert!(got.contains(&ProviderEvent::Context {
+            used: 120,
+            limit: 272_000
+        }));
+        let limits = got
+            .iter()
+            .find_map(|e| match e {
+                ProviderEvent::Limits(w) => Some(w.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            (limits[0].label.as_str(), limits[1].label.as_str()),
+            ("Session", "Weekly")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_turn_is_classed_by_codex_error_info() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let start: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": start["id"], "result": {"thread": {"id": "th1"}}}),
+            )
+            .await;
+            let turn: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": turn["id"], "result": {"turn": {"id": "tu1"}}}),
+            )
+            .await;
+            send(&mut w, json!({"jsonrpc": "2.0", "method": "turn/completed", "params": {"threadId": "th1", "turn": {"id": "tu1", "status": "failed", "error": {"message": "You've hit your usage limit.", "codexErrorInfo": "usageLimitExceeded"}}}})).await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start(r, w);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let err = drive(
+            &peer,
+            &mut incoming,
+            &spec(),
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.class, ErrorClass::RateLimit);
+        assert_eq!(err.message, "You've hit your usage limit.");
+        server.await.unwrap();
+    }
+
     #[test]
-    fn chatgpt_only_ids_fall_back_on_the_key_path() {
-        assert_eq!(api_model("gpt-5.6-terra"), "gpt-5.5");
-        assert_eq!(api_model("gpt-5.6-luna"), "gpt-5.3-codex");
-        assert_eq!(api_model("gpt-5.5"), "gpt-5.5");
-        assert_eq!(api_model("gpt-5.3-codex"), "gpt-5.3-codex");
+    fn error_info_with_data_is_still_classed() {
+        let e = turn_error(
+            &json!({"message": "stream dropped", "codexErrorInfo": {"responseStreamConnectionFailed": {"httpStatusCode": 502}}}),
+        );
+        assert_eq!(e.class, ErrorClass::Overloaded);
+        let e = turn_error(&json!({"message": "401", "codexErrorInfo": "unauthorized"}));
+        assert_eq!(e.class, ErrorClass::Auth);
     }
 }

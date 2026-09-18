@@ -1,5 +1,6 @@
 //! `parzi doctor`: one function, used by CLI and GUI About alike.
-//! Never prints secret values — presence only.
+//! Providers are asked where they stand by their own programs; no secret
+//! is ever read or printed.
 
 use parzi_core::config::ParziConfig;
 use parzi_core::paths;
@@ -42,7 +43,7 @@ impl Doctor {
         out.push(self.check_dirs());
         out.push(self.check_config());
         out.push(self.check_theme());
-        out.extend(self.check_providers());
+        out.extend(self.check_providers().await);
         out.extend(self.check_routing());
         out.extend(self.check_mcp().await);
         out.push(self.check_webview());
@@ -57,7 +58,7 @@ impl Doctor {
         out.push(self.check_dirs());
         out.push(self.check_config());
         out.push(self.check_theme());
-        out.extend(self.check_providers());
+        out.extend(self.check_providers().await);
         out.extend(self.check_routing());
         out.push(self.check_webview());
         out
@@ -89,64 +90,50 @@ impl Doctor {
         }
     }
 
-    fn check_providers(&self) -> Vec<Check> {
-        let mut out = vec![];
-        for id in parzi_providers::PROVIDERS.iter().copied() {
-            let p = match parzi_providers::provider(id, &self.cfg) {
-                Ok(p) => p,
-                Err(e) => {
-                    out.push(Check::fail(&format!("auth:{id}"), e.to_string()));
-                    continue;
+    /// Each provider, as its own program reports it. A provider switched off
+    /// or not installed is not a failure: it is simply not in use.
+    async fn check_providers(&self) -> Vec<Check> {
+        use parzi_providers::State;
+        let board = crate::status::StatusBoard::in_memory();
+        let statuses = board
+            .refresh(&self.cfg, &[], &crate::status::roster_source())
+            .await;
+        statuses
+            .into_iter()
+            .map(|s| {
+                let name = format!("provider:{}", s.provider);
+                let version = s
+                    .version
+                    .as_deref()
+                    .map(|v| format!(" v{v}"))
+                    .unwrap_or_default();
+                match s.state {
+                    State::Ready => Check::ok(
+                        &name,
+                        format!(
+                            "ready{version} · {}",
+                            s.account.unwrap_or_else(|| "signed in".into())
+                        ),
+                    ),
+                    State::Unchecked => {
+                        Check::ok(&name, format!("installed{version} · {}", s.hint))
+                    }
+                    State::NotInstalled | State::Disabled => Check::ok(&name, s.hint),
+                    State::SignedOut | State::Error => Check::fail(&name, s.hint),
                 }
-            };
-            match p.auth_status() {
-                parzi_providers::AuthStatus::Ok => {
-                    out.push(Check::ok(&format!("auth:{id}"), "credential present"))
-                }
-                parzi_providers::AuthStatus::Missing(h) => {
-                    out.push(Check::fail(&format!("auth:{id}"), format!("missing — {h}")))
-                }
-                parzi_providers::AuthStatus::Expired(h) => {
-                    out.push(Check::fail(&format!("auth:{id}"), format!("expired — {h}")))
-                }
-            }
-        }
-        out
+            })
+            .collect()
     }
 
-    /// Static routing preview: failover mode plus the ordered chains an
-    /// `auto` run and the default explicit pick would walk. Informational
-    /// only — live cooldowns live in-process (see `parzi health`).
+    /// Smart Auto's order: where a new thread starts.
     fn check_routing(&self) -> Vec<Check> {
-        let mut out = vec![];
-        let mode = if self.cfg.routing.auto_failover {
-            "adaptive — explicit picks hop tiers on 429/overload"
-        } else {
-            "strict — 429s halt, no cross-provider hop"
-        };
-        out.push(Check::ok("routing:failover", mode));
-        let auto: Vec<String> = parzi_providers::router::auto_chain("medium", &self.cfg)
-            .into_iter()
-            .map(|r| r.provider)
-            .collect();
-        out.push(Check::ok("routing:chain:auto", auto.join(" -> ")));
-        let p = self.cfg.default_provider.clone();
-        let m = self
-            .cfg
-            .providers
-            .get(&p)
-            .map(|e| e.default_model.clone())
-            .unwrap_or_default();
-        let explicit: Vec<String> =
-            parzi_providers::router::tier_fallback_chain(&p, &m, "medium", &self.cfg)
-                .into_iter()
-                .map(|r| r.provider)
-                .collect();
-        out.push(Check::ok(
-            &format!("routing:chain:{p}"),
-            explicit.join(" -> "),
-        ));
-        out
+        vec![Check::ok(
+            "routing:smart-auto",
+            format!(
+                "new threads start on the first ready provider of: {}",
+                self.cfg.routing.order.join(" → ")
+            ),
+        )]
     }
 
     async fn check_mcp(&self) -> Vec<Check> {

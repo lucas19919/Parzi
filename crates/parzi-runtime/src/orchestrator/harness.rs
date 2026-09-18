@@ -140,6 +140,7 @@ impl HarnessBridge for Pump {
             approver: None,
             workspace_project: run_project(caller_id),
             prompt_recorded: false,
+            inbox_from: None,
             // Agent-spawned children run under policy, never a chat intent.
             mode_override: None,
         };
@@ -193,13 +194,16 @@ impl HarnessBridge for Pump {
         let target = self.in_scope(caller_id, session_id)?;
         let caller = self.store.get(caller_id)?;
         let msg = inter::from_caller(&caller, kind, message);
-        inter::deliver(&self.store, session_id, &msg)?;
-        // B4: prune first — a finished target must take a continuation run,
-        // not an append-to-dead-run.
-        let still_live = {
+        // Delivered under the lock a run takes for its last look: the
+        // message is either read by the live run or finds the session free
+        // and starts one (see `SessionSlot`). B4: prune first — a finished
+        // target must take a continuation run, not an append-to-dead-run.
+        let (at, still_live) = {
             let mut h = self.handles.lock().await;
-            h.retain(|_, handle| !handle._task.is_finished());
-            h.contains_key(session_id)
+            h.retain(|_, handle| !handle.finished());
+            let at = self.store.events(session_id)?.len();
+            inter::deliver(&self.store, session_id, &msg)?;
+            (at, h.contains_key(session_id))
         };
         if still_live {
             if !wait {
@@ -225,7 +229,9 @@ impl HarnessBridge for Pump {
             project: target.project.clone(),
             lane: target.lane.clone(),
             model_spec: target.model.clone(),
-            prompt: msg.summary(),
+            // The vendor gets the message in its untrusted wrapping; the
+            // transcript already holds it as data (H-5).
+            prompt: msg.render(),
             cwd: target.cwd.clone(),
             effort: "medium".into(),
             attachments: vec![],
@@ -235,6 +241,7 @@ impl HarnessBridge for Pump {
             // the run must not also write it as a user turn (H-5).
             prompt_recorded: true,
             mode_override: None,
+            inbox_from: Some(at),
         };
         let launched = self.dispatch(q).await;
         if !wait {
@@ -301,14 +308,7 @@ impl HarnessBridge for Pump {
                 } => {
                     format!("artifact: {title} ({id} v{version})\n")
                 }
-                Event::RouteTransition {
-                    from_provider,
-                    to_provider,
-                    reason,
-                    ..
-                } => {
-                    format!("route: {from_provider} -> {to_provider} ({reason})\n")
-                }
+                Event::Error { message, .. } => format!("error: {}\n", truncate(message, 300)),
             };
             tail_text.push_str(&line);
             if tail_text.len() > 8_000 {

@@ -1,10 +1,20 @@
 //! Store I/O gates (E5, C-2, C-5, C-6): append-through reads, tolerant
 //! parsing, the lazily rendered `session.md` and the `list()` index.
-//!
-//! Like `logic.rs` these run against the ambient `PARZI_HOME`; the gate sets
-//! it to a temp dir so nothing lands in the real `~/.parzi`.
 
 use parzi_core::store::{Event, SessionStatus, SessionStore};
+
+/// The store in a home of this test binary's own, so a local `cargo test`
+/// never writes sessions into the real `~/.parzi`.
+fn open() -> SessionStore {
+    static HOME: std::sync::Once = std::sync::Once::new();
+    HOME.call_once(|| {
+        let dir = std::env::temp_dir().join(format!("parzi-test-store-io-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("PARZI_HOME", &dir);
+    });
+    SessionStore::open().unwrap()
+}
 
 fn user(t: &str) -> Event {
     Event::User { text: t.into() }
@@ -19,7 +29,7 @@ fn events_file(id: &str) -> std::path::PathBuf {
 
 #[test]
 fn append_through_keeps_reads_in_sync() {
-    let store = SessionStore::open().unwrap();
+    let store = open();
     let s = store.create("append", "t-append", "lane", "m").unwrap();
     for i in 0..5 {
         store.append(&s.id, &user(&format!("m{i}"))).unwrap();
@@ -34,13 +44,13 @@ fn append_through_keeps_reads_in_sync() {
 
 #[test]
 fn another_writer_is_picked_up_by_the_tail_read() {
-    let a = SessionStore::open().unwrap();
+    let a = open();
     let s = a.create("two writers", "t-two", "lane", "m").unwrap();
     a.append(&s.id, &user("from a")).unwrap();
     assert_eq!(a.events(&s.id).unwrap().len(), 1);
 
     // A second store (think: CLI next to the GUI) appends behind our back.
-    let b = SessionStore::open().unwrap();
+    let b = open();
     b.append(&s.id, &user("from b")).unwrap();
 
     let evs = a.events(&s.id).unwrap();
@@ -51,7 +61,7 @@ fn another_writer_is_picked_up_by_the_tail_read() {
 #[test]
 fn a_bad_line_does_not_brick_the_transcript() {
     use std::io::Write;
-    let store = SessionStore::open().unwrap();
+    let store = open();
     let s = store.create("torn", "t-torn", "lane", "m").unwrap();
     store.append(&s.id, &user("before")).unwrap();
     {
@@ -74,7 +84,7 @@ fn a_bad_line_does_not_brick_the_transcript() {
 #[test]
 fn fork_keeps_lines_this_build_cannot_parse() {
     use std::io::Write;
-    let store = SessionStore::open().unwrap();
+    let store = open();
     let s = store.create("fork src", "t-fork", "lane", "m").unwrap();
     store.append(&s.id, &user("one")).unwrap();
     {
@@ -95,7 +105,7 @@ fn fork_keeps_lines_this_build_cannot_parse() {
 
 #[test]
 fn session_md_is_lazy_and_closes_the_widget_fence() {
-    let store = SessionStore::open().unwrap();
+    let store = open();
     let s = store.create("md", "t-md", "lane", "m").unwrap();
     let md_path = parzi_core::paths::sessions_dir()
         .unwrap()
@@ -139,7 +149,7 @@ fn session_md_is_lazy_and_closes_the_widget_fence() {
 
 #[test]
 fn transcript_md_renders_on_read() {
-    let store = SessionStore::open().unwrap();
+    let store = open();
     let s = store.create("read", "t-read", "lane", "m").unwrap();
     store.append(&s.id, &user("only on read")).unwrap();
     let md = store.transcript_md(&s.id).unwrap();
@@ -156,7 +166,7 @@ fn transcript_md_renders_on_read() {
 
 #[test]
 fn list_sees_a_title_change_through_the_index() {
-    let store = SessionStore::open().unwrap();
+    let store = open();
     let s = store.create("before", "t-list", "lane", "m").unwrap();
     let find = |st: &SessionStore| -> String {
         st.list()
@@ -187,7 +197,7 @@ fn list_sees_a_title_change_through_the_index() {
 
 #[test]
 fn appends_do_not_rewrite_meta_but_list_stays_ordered() {
-    let store = SessionStore::open().unwrap();
+    let store = open();
     let s = store.create("coalesce", "t-coalesce", "lane", "m").unwrap();
     let meta_path = parzi_core::paths::sessions_dir()
         .unwrap()
@@ -212,7 +222,7 @@ fn appends_do_not_rewrite_meta_but_list_stays_ordered() {
 
 #[test]
 fn the_event_cache_is_bounded_and_keeps_unflushed_runs() {
-    let store = SessionStore::open().unwrap();
+    let store = open();
     // One session that stays mid-turn: appended to, never flushed.
     let live = store.create("live", "t-cap-live", "lane", "m").unwrap();
     store.append(&live.id, &user("half a turn")).unwrap();

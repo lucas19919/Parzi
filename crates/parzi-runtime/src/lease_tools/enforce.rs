@@ -10,7 +10,7 @@
 
 use parzi_core::journal::JournalKind;
 use parzi_core::lease::{Holder, Lease};
-use parzi_core::project::{self, glob_match, normalize_path};
+use parzi_core::project::{self, normalize_path};
 
 use crate::handler::RunEvent;
 
@@ -45,7 +45,7 @@ impl LeaseHub {
         // has checked a task out: before the first claim there is no scope to
         // be outside of.
         let mine = self.leases_of(&holder).await;
-        if mine.is_empty() || mine.iter().any(|l| covers(l, &key)) {
+        if mine.is_empty() || mine.iter().any(|l| l.in_scope(&key)) {
             return None;
         }
         let task = mine.first().map(|l| l.task.clone());
@@ -106,39 +106,48 @@ impl LeaseHub {
         Some((text, rels))
     }
 
-    /// Worktree-relative paths another lane currently holds, expanded from
-    /// claimed globs against `cwd`. Used to snapshot those files *before*
-    /// `shell.exec` so a violation can be undone.
-    pub async fn foreign_files(&self, run: &str, cwd: &str) -> Vec<String> {
-        let Some((holder, repo)) = ({
+    /// Worktree-relative files another lane holds right now: plain paths as
+    /// named, and the worktree's files for a folder, a glob or a whole repo.
+    /// Used to back those files up *before* `shell.exec`, so a violation can
+    /// be undone. The second half is every file in the worktree when it was
+    /// walked: what existed before the command.
+    pub async fn foreign_files(&self, run: &str, cwd: &str) -> (Vec<String>, Option<Vec<String>>) {
+        let Some((holder, Some(repo))) = ({
             let runs = self.runs.lock().await;
             runs.get(run).map(|e| (e.holder.clone(), e.repo.clone()))
         }) else {
-            return vec![];
+            return (vec![], None);
         };
-        let patterns = {
+        let foreign: Vec<Lease> = {
             let mut t = self.table.lock().await;
             t.expire(now());
             t.leases()
                 .filter(|l| !same_holder(&l.holder, &holder))
-                .flat_map(|l| l.paths.iter().cloned())
-                .collect::<Vec<_>>()
+                .cloned()
+                .collect()
         };
         let mut out = Vec::new();
-        for p in patterns {
-            let rel = strip_repo(&p, repo.as_deref());
-            if rel.is_empty() {
-                continue;
-            }
-            if rel.contains(['*', '?']) {
-                out.extend(super::audit::files_matching(cwd, &rel));
+        let mut walk = false;
+        for rel in foreign
+            .iter()
+            .flat_map(|l| l.paths.iter())
+            .map(|p| strip_repo(p, Some(repo.as_str())))
+        {
+            if rel.is_empty()
+                || rel.contains(['*', '?'])
+                || std::path::Path::new(cwd).join(&rel).is_dir()
+            {
+                walk = true;
             } else {
                 out.push(rel);
             }
         }
+        let listed = if walk { super::audit::files(cwd) } else { None };
+        out.extend(listed.iter().flatten().cloned());
+        out.retain(|rel| foreign.iter().any(|l| l.holds(&format!("{repo}/{rel}"))));
         out.sort();
         out.dedup();
-        out
+        (out, listed)
     }
 
     /// The live lease covering `key` when it belongs to another lane — the one
@@ -196,12 +205,6 @@ impl LeaseHub {
     }
 }
 
-/// Does this lease's claimed scope cover `path`? A claim is concrete paths or
-/// the globs the plan wrote, so both spellings have to match.
-fn covers(lease: &Lease, path: &str) -> bool {
-    lease.paths.iter().any(|p| glob_match(p, path))
-}
-
 /// Lease keys are `<repo>/<rel>`. The worktree is one repo, so the backup
 /// walks `<rel>`. A path that does not start with this run's repo is left
 /// alone — it is not in this worktree.
@@ -240,11 +243,17 @@ mod tests {
             task: TaskId("TSK-8".into()),
             holder: Holder::default(),
             paths: ["api/src/checkout/**".to_string()].into_iter().collect(),
+            given: Default::default(),
             granted_at: now(),
             last_seen: now(),
             ttl_secs: 90,
         };
-        assert!(covers(&lease, "api/src/checkout/session.rs"));
-        assert!(!covers(&lease, "api/src/payments/intent.rs"));
+        assert!(lease.in_scope("api/src/checkout/session.rs"));
+        assert_eq!(
+            lease.in_scope("API/src/checkout/session.rs"),
+            parzi_core::project::PATHS_IGNORE_CASE,
+            "case counts only where the file system counts it"
+        );
+        assert!(!lease.in_scope("api/src/payments/intent.rs"));
     }
 }

@@ -340,7 +340,7 @@ impl ContextBuilder {
                 Event::Widget { .. }
                 | Event::Artifact { .. }
                 | Event::Reasoning { .. }
-                | Event::RouteTransition { .. } => None,
+                | Event::Error { .. } => None,
             };
             if let Some(m) = msg {
                 let cost = Self::estimate(&m.content);
@@ -405,9 +405,7 @@ impl ContextBuilder {
                     Some(m) => format!("- inter: {}\n", m.summary()),
                     None => continue,
                 },
-                Event::Widget { .. } | Event::Reasoning { .. } | Event::RouteTransition { .. } => {
-                    continue
-                }
+                Event::Widget { .. } | Event::Reasoning { .. } | Event::Error { .. } => continue,
             };
             digest.push_str(&line);
         }

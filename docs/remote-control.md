@@ -13,9 +13,10 @@ of two things that exist, not a new system.
 
 ## V1 — SSH + git (ships now)
 
-Provision the VM once: install the `parzi` CLI, `parzi init`, `parzi login
-<provider>` (or reuse subscriptions). Agents that file issues from there
-need a GitHub token, same as here.
+Provision the VM once: install the `parzi` CLI, `parzi init`, then install
+the agents you want there and sign in with each agent's own program;
+`parzi providers` confirms what the VM can run. Agents that file issues from
+there need a GitHub token, same as here.
 
 ```json
 { "mcpServers": { "parzi-vm": {

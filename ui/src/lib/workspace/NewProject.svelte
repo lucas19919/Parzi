@@ -1,8 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
   import { hub, type Roster, type Workspace } from "../api";
-  import { ensureModels, modelRows } from "../modelStore";
-  import ModelRolePicker, { defaultRoster } from "./ModelRolePicker.svelte";
+  import { board, ensureBoard } from "../providerStore";
+  import ModelRolePicker from "./ModelRolePicker.svelte";
   import RepoPicker, { type PickItem } from "./RepoPicker.svelte";
 
   export let workspace = "";
@@ -26,6 +26,7 @@
   let ws: Workspace | null = null;
   let title = "";
   let pickedRepos: string[] = [];
+  /** Every role starts on Smart Auto: the first ready agent in your order. */
   let roster: Roster = { header: "", orchestrator: "", coder: "" };
   let loading = true;
   let creating = false;
@@ -43,9 +44,7 @@
     } finally {
       loading = false;
     }
-    try {
-      roster = defaultRoster(await ensureModels());
-    } catch {}
+    void ensureBoard().catch(() => {});
   });
 
   async function loadWorkspace() {
@@ -172,9 +171,9 @@
           <div class="msg">{workspace} has no repos yet — add some to the workspace first.</div>
         {/if}
       {:else if step === "roles"}
-        <ModelRolePicker label="Header" rows={$modelRows} bind:value={roster.header} />
-        <ModelRolePicker label="Orchestrator" rows={$modelRows} bind:value={roster.orchestrator} />
-        <ModelRolePicker label="Coder" rows={$modelRows} bind:value={roster.coder} />
+        <ModelRolePicker label="Header" board={$board} bind:value={roster.header} />
+        <ModelRolePicker label="Orchestrator" board={$board} bind:value={roster.orchestrator} />
+        <ModelRolePicker label="Coder" board={$board} bind:value={roster.coder} />
       {/if}
 
       {#if err}<div class="err">{err}</div>{/if}

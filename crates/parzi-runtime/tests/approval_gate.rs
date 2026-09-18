@@ -1,76 +1,29 @@
-//! B1: Ask mode must wait for the human. A slow approver (500ms) that
-//! answers Allow must still let the tool run exactly once — not instant-deny.
-//! B4: sequential completed runs must release their slot.
+//! B1: Ask mode waits for the human — a slow approver that answers Allow
+//! lets the action happen exactly once, never an instant deny. B4: finished
+//! runs release their slot. H-5: Parzi's session tools obey the lane
+//! allowlist. And the agent's own actions pass the same gate.
+
+mod common;
 
 use std::collections::HashMap;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc,
-};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
+use common::*;
 use parzi_core::config::ParziConfig;
-use parzi_core::store::SessionStore;
-use parzi_providers::{AuthStatus, ChatReq, EventRx, Model, Provider, StreamEvent};
-use parzi_runtime::handler::{AgentRun, ProviderSlot, RunEvent};
+use parzi_core::store::{Event, SessionStatus};
+use parzi_providers::{PermissionDecision, PermissionGate, PermissionRequest, TurnEnd};
+use parzi_runtime::handler::RunSink;
 use parzi_runtime::mcp::McpManager;
-use parzi_runtime::tools::{Approval, Approver, ToolCallInfo, ToolExecutor};
-use parzi_runtime::Orchestrator;
-use tokio::sync::mpsc;
+use parzi_runtime::toolhost::{ToolHost, ToolHostParts};
+use parzi_runtime::tools::{Approval, ApprovalMode, Approver, ToolCallInfo, ToolExecutor};
+use serde_json::json;
 
-/// Hermetic home for this test binary: no test session ever touches the
-/// real ~/.parzi (and the sidebar) again. Called first in every test; the
-/// Once makes parallel tests share one temp home safely.
-static TEST_HOME_INIT: std::sync::Once = std::sync::Once::new();
-
-fn test_home() {
-    TEST_HOME_INIT.call_once(|| {
-        let dir = std::env::temp_dir().join(format!("parzi-test-approval-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::env::set_var("PARZI_HOME", &dir);
-    });
-}
-
-/// Provider that emits one fs.write tool call, then ends.
-struct ToolCallProvider;
-
-#[async_trait::async_trait]
-impl Provider for ToolCallProvider {
-    fn id(&self) -> &'static str {
-        "toolcall"
-    }
-    async fn models(&self) -> Result<Vec<Model>, parzi_core::error::ParziError> {
-        Ok(vec![])
-    }
-    async fn chat_stream(&self, req: ChatReq) -> Result<EventRx, parzi_core::error::ParziError> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        // First turn: one tool call. Second turn (after result): plain text.
-        let calls_so_far = req
-            .messages
-            .iter()
-            .filter(|m| m.content.contains("[tool:"))
-            .count();
-        if calls_so_far == 0 && !req.tools.is_empty() {
-            let _ = tx.send(Ok(StreamEvent::ToolCall {
-                id: "t1".into(),
-                name: "fs.write".into(),
-                args: serde_json::json!({"path": "gate.txt", "content": "hello"}),
-            }));
-        } else {
-            let _ = tx.send(Ok(StreamEvent::Text("done".into())));
-        }
-        Ok(rx)
-    }
-    fn auth_status(&self) -> AuthStatus {
-        AuthStatus::Ok
-    }
-}
-
-/// Slow human: answers Allow after 500ms.
-struct SlowAllow;
+struct SlowAllow(AtomicUsize);
 #[async_trait::async_trait]
 impl Approver for SlowAllow {
     async fn approve(&self, _call: &ToolCallInfo) -> Approval {
+        self.0.fetch_add(1, Ordering::SeqCst);
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         Approval::Allow
     }
@@ -84,183 +37,134 @@ impl Approver for DenyAll {
     }
 }
 
-#[allow(dead_code)]
-fn tool_factory(
-    _id: &str,
-    _cfg: &ParziConfig,
-) -> Result<Box<dyn Provider>, parzi_core::error::ParziError> {
-    Ok(Box::new(ToolCallProvider))
+struct Allow;
+#[async_trait::async_trait]
+impl Approver for Allow {
+    async fn approve(&self, _call: &ToolCallInfo) -> Approval {
+        Approval::Allow
+    }
+}
+
+/// An agent that asks to write `gate.txt`, writes it only when allowed,
+/// and says what happened.
+fn writer() -> Arc<Fake> {
+    Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            let path = a.spec.cwd.join("gate.txt");
+            let input = json!({"file_path": path.display().to_string(), "content": "hello"});
+            let decision = a
+                .ask("Write", input.clone(), &[&path.display().to_string()])
+                .await;
+            let (ok, _) = a
+                .own_tool("w1", "Write", input, || async {
+                    match decision {
+                        PermissionDecision::Allow | PermissionDecision::AllowAlways => {
+                            std::fs::write(&path, "hello").unwrap();
+                            (true, "written".to_string())
+                        }
+                        PermissionDecision::Deny(why) => (false, format!("denied: {why}")),
+                    }
+                })
+                .await;
+            a.say(if ok { "done" } else { "could not write" });
+            Ok(TurnEnd::Completed)
+        }),
+    )
 }
 
 #[tokio::test]
-async fn ask_mode_waits_for_slow_approver() {
-    test_home();
+async fn ask_mode_waits_for_a_slow_approver_and_deny_denies() {
+    home("approval");
     let dir = std::env::temp_dir().join(format!("parzi-gate-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let cwd = dir.to_string_lossy().to_string();
-
-    let store = SessionStore::open().unwrap();
-    let meta = store.create("gate", "t", "", "toolcall/m").unwrap();
-    let sid = meta.id.clone();
-
-    let tools = Arc::new(ToolExecutor {
-        cwd: cwd.clone(),
-        mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
-        allowed: vec!["fs.write".into()],
-        leases: None,
-    });
-    let slots = vec![ProviderSlot {
-        provider_id: "toolcall".into(),
-        provider: Box::new(ToolCallProvider),
-        model_id: "m".into(),
-        price_in: 0.0,
-        price_out: 0.0,
-        reason: "test",
-    }];
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    // Drain events so emit() never blocks.
-    tokio::spawn(async move { while rx.recv().await.is_some() {} });
-    let run = AgentRun::new(
-        sid.clone(),
-        slots,
-        vec![],
-        "test".into(),
-        parzi_runtime::tools::ApprovalMode::Ask,
-        false,
-        4,
-        4096,
-        vec![],
-        "low".into(),
-        store.clone(),
-        tools,
-        Arc::new(SlowAllow),
-        tx,
-        tokio_util::sync::CancellationToken::new(),
-    );
-    let t0 = std::time::Instant::now();
-    run.run("write the file").await.unwrap();
-    let elapsed = t0.elapsed();
-    // Must have waited ~500ms for the human, then run the tool.
-    assert!(
-        elapsed >= std::time::Duration::from_millis(400),
-        "ask returned instantly: {elapsed:?}"
-    );
-    let written = std::fs::read_to_string(dir.join("gate.txt")).unwrap_or_default();
-    assert_eq!(written, "hello", "slow Allow must still execute the tool");
-
-    // Deny path still denies.
-    let sid2 = store.create("gate2", "t", "", "toolcall/m").unwrap().id;
-    let tools2 = Arc::new(ToolExecutor {
-        cwd: cwd.clone(),
-        mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
-        allowed: vec!["fs.write".into()],
-        leases: None,
-    });
-    let slots2 = vec![ProviderSlot {
-        provider_id: "toolcall".into(),
-        provider: Box::new(ToolCallProvider),
-        model_id: "m".into(),
-        price_in: 0.0,
-        price_out: 0.0,
-        reason: "test",
-    }];
-    let (tx2, mut rx2) = mpsc::unbounded_channel::<RunEvent>();
-    tokio::spawn(async move { while rx2.recv().await.is_some() {} });
-    let run2 = AgentRun::new(
-        sid2.clone(),
-        slots2,
-        vec![],
-        "test".into(),
-        parzi_runtime::tools::ApprovalMode::Ask,
-        false,
-        4,
-        4096,
-        vec![],
-        "low".into(),
-        store.clone(),
-        tools2,
-        Arc::new(DenyAll),
-        tx2,
-        tokio_util::sync::CancellationToken::new(),
-    );
-    run2.run("write the file").await.unwrap();
-    // Second run wrote the same path again only if denied it would NOT overwrite with new content;
-    // instead check transcript has a denial ToolResult.
-    let events = store.events(&sid2).unwrap();
-    let denied = events.iter().any(|e| matches!(
-        e,
-        parzi_core::store::Event::ToolResult { ok: false, output, .. } if output.contains("denied")
-    ));
-    assert!(
-        denied,
-        "Deny approver must produce a denial, got {events:?}"
-    );
-
-    let _ = std::fs::remove_dir_all(&dir);
-    if let Ok(d) = parzi_core::paths::sessions_dir() {
-        let _ = std::fs::remove_dir_all(d.join(&sid));
-        let _ = std::fs::remove_dir_all(d.join(&sid2));
-    }
-}
-
-/// B4: max_concurrent sequential completed runs → none queues; a second
-/// message to a finished thread succeeds.
-#[tokio::test]
-async fn sequential_completed_runs_release_slots() {
-    test_home();
-    struct Answer;
-    #[async_trait::async_trait]
-    impl Provider for Answer {
-        fn id(&self) -> &'static str {
-            "answer"
-        }
-        async fn models(&self) -> Result<Vec<Model>, parzi_core::error::ParziError> {
-            Ok(vec![])
-        }
-        async fn chat_stream(
-            &self,
-            _req: ChatReq,
-        ) -> Result<EventRx, parzi_core::error::ParziError> {
-            let (tx, rx) = mpsc::unbounded_channel();
-            let _ = tx.send(Ok(StreamEvent::Text("hi".into())));
-            Ok(rx)
-        }
-        fn auth_status(&self) -> AuthStatus {
-            AuthStatus::Ok
-        }
-    }
-    static COUNT: AtomicUsize = AtomicUsize::new(0);
-    let factory = Arc::new(
-        |_id: &str,
-         _cfg: &ParziConfig|
-         -> Result<Box<dyn Provider>, parzi_core::error::ParziError> {
-            COUNT.fetch_add(1, Ordering::SeqCst);
-            Ok(Box::new(Answer))
-        },
-    );
+    let cwd = dir.display().to_string();
     let mut cfg = ParziConfig::default();
-    cfg.orchestrator.max_concurrent = 1;
-    cfg.orchestrator.queue_when_busy = true;
-    let store = SessionStore::open().unwrap();
-    let orch = Orchestrator::new(cfg, store.clone()).with_factory(factory);
-    let pump = std::sync::Arc::new(orch);
-    let p2 = pump.clone();
-    tokio::spawn(async move { p2.pump_loop().await });
+    cfg.lanes.default_mode = "ask".into();
+    let (orch, store) = orch_with(cfg, &[writer()]);
 
-    struct Allow;
-    #[async_trait::async_trait]
-    impl Approver for Allow {
-        async fn approve(&self, _c: &ToolCallInfo) -> Approval {
-            Approval::Allow
-        }
-    }
-    // Two sequential top-level runs: neither may queue.
-    let (m1, rx1) = pump
+    let slow = Arc::new(SlowAllow(AtomicUsize::new(0)));
+    let t0 = std::time::Instant::now();
+    let (meta, _rx) = orch
         .spawn(
             "t",
             "",
-            "answer/m",
+            "claude",
+            "write the file",
+            Some(slow.clone()),
+            &cwd,
+            "low",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap();
+    let done = settle(&store, &meta.id).await;
+    assert_eq!(done.status, SessionStatus::Done);
+    assert!(
+        t0.elapsed() >= std::time::Duration::from_millis(400),
+        "asked instantly"
+    );
+    assert_eq!(
+        slow.0.load(Ordering::SeqCst),
+        1,
+        "the person was asked once"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("gate.txt")).unwrap(),
+        "hello"
+    );
+
+    std::fs::remove_file(dir.join("gate.txt")).unwrap();
+    let (meta, _rx) = orch
+        .spawn(
+            "t",
+            "",
+            "claude",
+            "write the file",
+            Some(Arc::new(DenyAll)),
+            &cwd,
+            "low",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap();
+    settle(&store, &meta.id).await;
+    assert!(
+        !dir.join("gate.txt").exists(),
+        "a denial must stop the write"
+    );
+    let denied = events(&store, &meta.id).iter().any(
+        |e| matches!(e, Event::ToolResult { ok: false, output, .. } if output.contains("denied")),
+    );
+    assert!(denied, "the transcript shows the denial");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// B4: sequential finished runs never queue, and a finished thread takes a
+/// second message.
+#[tokio::test]
+async fn sequential_completed_runs_release_slots() {
+    home("approval");
+    let answer = Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            a.say("hi");
+            Ok(TurnEnd::Completed)
+        }),
+    );
+    let mut cfg = ParziConfig::default();
+    cfg.orchestrator.max_concurrent = 1;
+    let (orch, store) = orch_with(cfg, &[answer]);
+    let p = orch.clone();
+    tokio::spawn(async move { p.pump_loop().await });
+    let (m1, _) = orch
+        .spawn(
+            "t",
+            "",
+            "claude",
             "first",
             Some(Arc::new(Allow)),
             "",
@@ -270,18 +174,12 @@ async fn sequential_completed_runs_release_slots() {
         )
         .await
         .unwrap();
-    drop(rx1);
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-    assert_ne!(
-        format!("{:?}", store.get(&m1.id).unwrap().status),
-        "Queued",
-        "first sequential run must not queue"
-    );
-    let (m2, rx2) = pump
+    assert_ne!(settle(&store, &m1.id).await.status, SessionStatus::Queued);
+    let (m2, _) = orch
         .spawn(
             "t",
             "",
-            "answer/m",
+            "claude",
             "second",
             Some(Arc::new(Allow)),
             "",
@@ -291,15 +189,8 @@ async fn sequential_completed_runs_release_slots() {
         )
         .await
         .unwrap();
-    drop(rx2);
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-    assert_ne!(
-        format!("{:?}", store.get(&m2.id).unwrap().status),
-        "Queued",
-        "second sequential run must not queue after first finished"
-    );
-    // Second message to the finished first thread must succeed (not "is active").
-    let rx = pump
+    assert_eq!(settle(&store, &m2.id).await.status, SessionStatus::Done);
+    let again = orch
         .send_to(
             &m1.id,
             "follow up",
@@ -312,115 +203,148 @@ async fn sequential_completed_runs_release_slots() {
         )
         .await;
     assert!(
-        rx.is_ok(),
-        "second message to finished thread must succeed: {rx:?}"
+        again.is_ok(),
+        "a finished thread takes a second message: {again:?}"
     );
+}
 
-    if let Ok(d) = parzi_core::paths::sessions_dir() {
-        let _ = std::fs::remove_dir_all(d.join(&m1.id));
-        let _ = std::fs::remove_dir_all(d.join(&m2.id));
+fn host(allowed: Vec<String>, mode: ApprovalMode) -> ToolHost {
+    let store = parzi_core::store::SessionStore::open().unwrap();
+    let meta = store.create("gate", "t", "", "claude").unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    ToolHost::new(ToolHostParts {
+        session_id: meta.id.clone(),
+        lane: "test".into(),
+        mode,
+        edits_auto: false,
+        store,
+        tools: Arc::new(ToolExecutor {
+            cwd: std::env::temp_dir().display().to_string(),
+            mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
+            allowed,
+            leases: None,
+        }),
+        approver: Arc::new(Allow),
+        harness: Some(Arc::new(NoHarness)),
+        role: None,
+        sink: RunSink::new(&meta.id, tx, None),
+        cancel: tokio_util::sync::CancellationToken::new(),
+    })
+}
+
+struct NoHarness;
+#[async_trait::async_trait]
+impl parzi_runtime::handler::HarnessBridge for NoHarness {
+    async fn spawn_session(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: bool,
+        _: Option<String>,
+        _: Option<String>,
+        _: bool,
+    ) -> parzi_core::error::Result<String> {
+        Ok("spawned".into())
+    }
+    async fn send_message(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: parzi_core::context::InterKind,
+        _: bool,
+    ) -> parzi_core::error::Result<String> {
+        Ok("sent".into())
+    }
+    async fn read_session(
+        &self,
+        _: &str,
+        _: &str,
+        _: Option<usize>,
+    ) -> parzi_core::error::Result<String> {
+        Ok("read".into())
+    }
+    async fn list_sessions(&self, _: &str, _: bool) -> parzi_core::error::Result<String> {
+        Ok("[]".into())
     }
 }
 
-/// H-5: `session.*` used to skip the lane allowlist ("reads are free"), so a
-/// lane with session tools removed could still read other sessions. They are
-/// tools like any other now: not allowed, not run.
+/// H-5: a lane without `session.*` cannot list other sessions.
 #[tokio::test]
 async fn session_tools_obey_the_lane_allowlist() {
-    test_home();
-    /// One `session.list_sessions` call, then plain text.
-    struct SessionCaller;
-    #[async_trait::async_trait]
-    impl Provider for SessionCaller {
-        fn id(&self) -> &'static str {
-            "sessioncaller"
-        }
-        async fn models(&self) -> Result<Vec<Model>, parzi_core::error::ParziError> {
-            Ok(vec![])
-        }
-        async fn chat_stream(
-            &self,
-            req: ChatReq,
-        ) -> Result<EventRx, parzi_core::error::ParziError> {
-            let (tx, rx) = mpsc::unbounded_channel();
-            let called = req
-                .messages
-                .iter()
-                .any(|m| m.content.contains("[tool:session.list_sessions"));
-            if called {
-                let _ = tx.send(Ok(StreamEvent::Text("done".into())));
-            } else {
-                let _ = tx.send(Ok(StreamEvent::ToolCall {
-                    id: "s1".into(),
-                    name: "session.list_sessions".into(),
-                    args: serde_json::json!({}),
-                }));
-            }
-            Ok(rx)
-        }
-        fn auth_status(&self) -> AuthStatus {
-            AuthStatus::Ok
-        }
-    }
-    struct Allow;
-    #[async_trait::async_trait]
-    impl Approver for Allow {
-        async fn approve(&self, _c: &ToolCallInfo) -> Approval {
-            Approval::Allow
-        }
-    }
+    home("approval");
+    let without = host(vec!["plan.read".into()], ApprovalMode::Auto);
+    let (ok, out) = without.call("session.list_sessions", &json!({})).await;
+    assert!(!ok, "not in the allowlist, not run: {out}");
+    let with = host(vec!["session.*".into()], ApprovalMode::Auto);
+    let (ok, out) = with.call("session.list_sessions", &json!({})).await;
+    assert!(ok, "{out}");
+}
 
-    let store = SessionStore::open().unwrap();
-    let sid = store
-        .create("locked", "t", "", "sessioncaller/m")
-        .unwrap()
-        .id;
-    let tools = Arc::new(ToolExecutor {
-        cwd: String::new(),
-        mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
-        // No session.* here: the lane is not allowed to inspect other threads.
-        allowed: vec!["fs.read".into()],
-        leases: None,
-    });
-    let (tx, mut rx) = mpsc::unbounded_channel::<RunEvent>();
-    tokio::spawn(async move { while rx.recv().await.is_some() {} });
-    let run = AgentRun::new(
-        sid.clone(),
-        vec![ProviderSlot {
-            provider_id: "sessioncaller".into(),
-            provider: Box::new(SessionCaller),
-            model_id: "m".into(),
-            price_in: 0.0,
-            price_out: 0.0,
-            reason: "test",
-        }],
-        vec![],
-        "test".into(),
-        // Auto mode: only the allowlist can stop this call.
-        parzi_runtime::tools::ApprovalMode::Auto,
-        false,
-        4,
-        4096,
-        vec![],
-        "low".into(),
-        store.clone(),
-        tools,
-        Arc::new(Allow),
-        tx,
-        tokio_util::sync::CancellationToken::new(),
+fn request(tool: &str) -> PermissionRequest {
+    PermissionRequest {
+        id: "r1".into(),
+        tool: tool.into(),
+        title: tool.into(),
+        input: json!({"command": "ls"}),
+        paths: vec![],
+    }
+}
+
+/// The agent's own actions: a lane that lists file and shell kinds refuses
+/// the kinds it leaves out; a lane that lists none leaves them to the mode;
+/// lockdown lets reads through and nothing else.
+#[tokio::test]
+async fn the_agents_own_actions_pass_the_lane_and_the_mode() {
+    home("approval");
+    let reads_only = host(
+        vec!["fs.read".into(), "ui.show_widget".into()],
+        ApprovalMode::Auto,
     );
-    run.run("who else is running?").await.unwrap();
+    assert!(matches!(
+        reads_only.decide(request("Bash")).await,
+        PermissionDecision::Deny(_)
+    ));
+    assert_eq!(
+        reads_only.decide(request("Grep")).await,
+        PermissionDecision::Allow
+    );
+    let no_kinds = host(vec!["session.*".into()], ApprovalMode::Auto);
+    assert_eq!(
+        no_kinds.decide(request("Bash")).await,
+        PermissionDecision::Allow
+    );
+    let locked = host(vec!["*".into()], ApprovalMode::Deny);
+    assert!(matches!(
+        locked.decide(request("Edit")).await,
+        PermissionDecision::Deny(_)
+    ));
+    assert_eq!(
+        locked.decide(request("Read")).await,
+        PermissionDecision::Allow
+    );
+    // Parzi's own tools pass Parzi's gate when they run, so the vendor's
+    // permission ask for them is waved through, even locked down.
+    assert_eq!(
+        locked.decide(request("mcp__parzi__ui_show_widget")).await,
+        PermissionDecision::Allow
+    );
+}
 
-    let denied = store.events(&sid).unwrap().iter().any(|e| {
-        matches!(
-            e,
-            parzi_core::store::Event::ToolResult { name, ok: false, output, .. }
-                if name == "session.list_sessions" && output.contains("denied")
-        )
-    });
-    assert!(denied, "session.* must be refused when the lane forbids it");
-
-    if let Ok(d) = parzi_core::paths::sessions_dir() {
-        let _ = std::fs::remove_dir_all(d.join(&sid));
-    }
+/// Markdown with an ASCII-box diagram renders as a dead console window: the
+/// render tool refuses it and names the tools that draw it properly.
+#[tokio::test]
+async fn markdown_with_an_ascii_diagram_is_refused() {
+    home("approval");
+    let h = host(vec![], ApprovalMode::Auto);
+    let boxes = "```ascii\n+------+------+\n|  api |  web |\n+------+------+\n```";
+    let (ok, out) = h
+        .call("ui.show_markdown", &json!({"markdown": boxes}))
+        .await;
+    assert!(!ok && out.contains("ui.show_diagram"), "{out}");
+    let (ok, out) = h
+        .call("ui.show_markdown", &json!({"markdown": "Plain **text**."}))
+        .await;
+    assert!(ok, "{out}");
 }

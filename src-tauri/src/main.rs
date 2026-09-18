@@ -9,6 +9,7 @@ use std::sync::Arc;
 use parzi_core::config::ParziConfig;
 use parzi_core::store::{Event, SessionMeta, SessionStore};
 use parzi_core::theme::Theme;
+use parzi_providers::ProviderStatus;
 use parzi_runtime::handler::RunEvent;
 use parzi_runtime::tools::{Approval, Approver, ToolCallInfo};
 use parzi_runtime::Orchestrator;
@@ -57,13 +58,6 @@ enum UiEvent {
     Notice {
         session: String,
         text: String,
-    },
-    RouteTransition {
-        session: String,
-        from_provider: String,
-        to_provider: String,
-        reason: String,
-        cooldown_secs: Option<u64>,
     },
     Usage {
         session: String,
@@ -157,13 +151,6 @@ async fn toggle_favorite(spec: String) -> Result<Vec<String>, String> {
     }
     cfg.save().map_err(|e| e.to_string())?;
     Ok(cfg.favorite_models)
-}
-
-#[tauri::command]
-async fn effort_options(
-    provider: String,
-) -> Result<Vec<parzi_providers::router::EffortOption>, String> {
-    Ok(parzi_providers::router::effort_options(&provider))
 }
 
 #[tauri::command]
@@ -336,18 +323,6 @@ fn ui_from_run(session: String, ev: RunEvent) -> Option<UiEvent> {
             ms,
         },
         RunEvent::Notice { text } => UiEvent::Notice { session, text },
-        RunEvent::RouteTransition {
-            from_provider,
-            to_provider,
-            reason,
-            cooldown_secs,
-        } => UiEvent::RouteTransition {
-            session,
-            from_provider,
-            to_provider,
-            reason,
-            cooldown_secs,
-        },
         RunEvent::Usage {
             tokens_in,
             tokens_out,
@@ -668,159 +643,36 @@ async fn approve_tool(state: State<'_, AppState>, key: String, allow: bool) -> R
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct ModelRow {
-    provider: String,
-    /// ok | missing | expired
-    auth: String,
-    /// subscription | api_key | none — class of the credential that won.
-    billing: String,
-    /// What to do when not signed in, or the plan label when signed in.
-    hint: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    account: Option<String>,
-    /// Whether Settings can store an API key for this provider.
-    takes_key: bool,
-    models: Vec<parzi_providers::Model>,
-}
-
-/// One provider's picker row: auth status + catalog (live pull when the
-/// config allows it, otherwise disk cache, otherwise static). Never fails —
-/// an unknown id reports `missing` so the UI can show a hint, not a crash.
-async fn model_row_for(id: &str, cfg: ParziConfig) -> ModelRow {
-    let takes_key = parzi_providers::key_entry(id).is_some();
-    match parzi_providers::provider(id, &cfg) {
-        Err(e) => ModelRow {
-            provider: id.into(),
-            auth: "missing".into(),
-            billing: "none".into(),
-            hint: e.to_string(),
-            account: None,
-            takes_key,
-            models: vec![],
-        },
-        Ok(p) => {
-            let (auth, hint) = match p.auth_status() {
-                parzi_providers::AuthStatus::Ok => ("ok", String::new()),
-                parzi_providers::AuthStatus::Missing(h) => ("missing", h),
-                parzi_providers::AuthStatus::Expired(h) => ("expired", h),
-            };
-            // Live pulls can hang on network: bound each provider.
-            let mut models = tokio::time::timeout(std::time::Duration::from_secs(10), p.models())
-                .await
-                .ok()
-                .and_then(|r| r.ok())
-                .unwrap_or_default();
-            parzi_providers::catalog::sort_models(&mut models);
-            ModelRow {
-                provider: id.into(),
-                auth: auth.into(),
-                billing: p.billing().as_str().into(),
-                hint,
-                account: p.account_label(),
-                takes_key,
-                models,
-            }
-        }
-    }
-}
-
-#[tauri::command]
-async fn get_models(
-    state: State<'_, AppState>,
-    refresh: Option<bool>,
-) -> Result<Vec<ModelRow>, String> {
-    // Fast path (default): auth status + cached/static catalog, no network.
-    // Full refresh (`refresh: true`): live /models pulls, providers queried
-    // concurrently with a per-provider timeout so one hung vendor can't
-    // stall settings.
-    let mut cfg = state.orch.config();
-    if refresh != Some(true) {
-        cfg.catalog_refresh = false;
-    }
-    let mut set = tokio::task::JoinSet::new();
-    for id in parzi_providers::PROVIDERS.iter().copied() {
-        let cfg = cfg.clone();
-        set.spawn(async move { model_row_for(id, cfg).await });
-    }
-    let mut out = vec![];
-    while let Some(row) = set.join_next().await {
-        if let Ok(row) = row {
-            out.push(row);
-        }
-    }
-    // Fixed roster order (picker, settings, sidebar all agree). Auth state
-    // is shown per row, never used to reshuffle — a provider stays where
-    // the user expects it whether or not it is signed in today.
-    out.sort_by_key(|r| {
+/// The board in roster order, so picker, settings and sidebar agree. A
+/// provider stays where the person expects it whether or not it is ready.
+fn in_roster_order(mut all: Vec<ProviderStatus>) -> Vec<ProviderStatus> {
+    all.sort_by_key(|s| {
         parzi_providers::PROVIDERS
             .iter()
-            .position(|p| *p == r.provider)
+            .position(|p| *p == s.provider)
             .unwrap_or(usize::MAX)
     });
-    Ok(out)
+    all
 }
 
-/// Live catalog for exactly one provider (the model picker's second step).
-/// Forces a `/models` pull (loopback servers like `opencode serve` answer
-/// without auth), so opening e.g. OpenCode always shows what is served
-/// right now — Big Pickle, Muse, whatever landed upstream. Times out
-/// like the bulk path; unknown ids are rejected up front.
+/// Where each agent stood when its own program was last asked. Instant:
+/// the board is kept on disk between launches.
 #[tauri::command]
-async fn refresh_provider(
+async fn provider_statuses(state: State<'_, AppState>) -> Result<Vec<ProviderStatus>, String> {
+    Ok(in_roster_order(state.orch.provider_statuses()))
+}
+
+/// Ask the agents' own programs again (`ids` empty = all). Spends no quota;
+/// the slowest vendor sets the pace, so the UI calls this in the background.
+#[tauri::command]
+async fn refresh_providers(
+    app: AppHandle,
     state: State<'_, AppState>,
-    provider: String,
-) -> Result<ModelRow, String> {
-    let id = parzi_providers::canonical_id(provider.trim()).ok_or_else(|| {
-        "unknown provider (Parzi routes claude, codex, antigravity, opencode, xai)".to_string()
-    })?;
-    let mut cfg = state.orch.config();
-    cfg.catalog_refresh = true;
-    tokio::time::timeout(std::time::Duration::from_secs(15), model_row_for(id, cfg))
-        .await
-        .map_err(|_| format!("{id} took too long — check the connection"))
-}
-
-#[tauri::command]
-async fn get_provider_health(
-    state: State<'_, AppState>,
-) -> Result<Vec<parzi_providers::ProviderHealth>, String> {
-    Ok(state.orch.provider_health())
-}
-
-#[tauri::command]
-async fn reset_circuit_breaker(
-    state: State<'_, AppState>,
-    provider: Option<String>,
-) -> Result<(), String> {
-    state.orch.reset_circuit_breaker(provider.as_deref());
-    Ok(())
-}
-
-/// Store an API key for a roster provider. The keyring entry name is the
-/// provider's key slot (`claude` → `anthropic`, `codex` → `openai`), so
-/// subscription tokens under other names are never overwritten.
-#[tauri::command]
-async fn save_key(provider: String, value: String) -> Result<(), String> {
-    let slot = parzi_providers::key_entry(&provider)
-        .ok_or_else(|| format!("{provider} takes no API key"))?;
-    let value = value.trim();
-    if value.is_empty() {
-        return Err("empty key".into());
-    }
-    let entry = keyring::Entry::new("parzi", slot).map_err(|e| e.to_string())?;
-    entry.set_password(value).map_err(|e| e.to_string())
-}
-
-/// Remove a stored API key (subscription sign-ins are untouched).
-#[tauri::command]
-async fn delete_key(provider: String) -> Result<(), String> {
-    let slot = parzi_providers::key_entry(&provider)
-        .ok_or_else(|| format!("{provider} takes no API key"))?;
-    if let Ok(e) = keyring::Entry::new("parzi", slot) {
-        let _ = e.delete_credential();
-    }
-    Ok(())
+    ids: Option<Vec<String>>,
+) -> Result<Vec<ProviderStatus>, String> {
+    let all = in_roster_order(state.orch.refresh_providers(&ids.unwrap_or_default()).await);
+    let _ = app.emit("parzi://providers", &all);
+    Ok(all)
 }
 
 #[tauri::command]
@@ -875,15 +727,19 @@ async fn save_config(
     if cfg.version != parzi_core::config::CONFIG_VERSION {
         return Err("config version mismatch — reload settings".into());
     }
-    check_base_urls(&cfg)?;
-    // H-2: a changed MCP command/args runs with user privileges on every
-    // agent turn from the next launch on. New or edited connectors get a
-    // native confirm; removals (fewer capabilities) save silently.
+    // H-2: a changed MCP command/args, or a changed agent program, runs
+    // with user privileges on every agent turn from the next launch on.
+    // New or edited ones get a native confirm; removals (fewer
+    // capabilities) save silently.
     let old = ParziConfig::load().unwrap_or_default();
-    let changed = mcp_command_changes(&old, &cfg);
+    let mut changed: Vec<String> = mcp_command_changes(&old, &cfg)
+        .into_iter()
+        .map(|s| format!("connector {s}"))
+        .collect();
+    changed.extend(binary_changes(&old, &cfg));
     if !changed.is_empty() {
         let msg = format!(
-            "Connector command changed: {}. A malicious command runs with your user account on every agent turn. Save anyway?",
+            "Changed: {}. A malicious program runs with your user account on every agent turn. Save anyway?",
             changed.join(", ")
         );
         let allow = tokio::task::spawn_blocking(move || {
@@ -896,7 +752,7 @@ async fn save_config(
         .await
         .map_err(|e| e.to_string())?;
         if !allow {
-            return Err("connector change cancelled".into());
+            return Err("change cancelled".into());
         }
     }
     cfg.save().map_err(|e| e.to_string())?;
@@ -905,38 +761,21 @@ async fn save_config(
     Ok(())
 }
 
-/// H-2: provider `base_url` overrides must be https, or http on loopback
-/// only — otherwise a bearer token rides to an arbitrary host.
-fn check_base_urls(cfg: &ParziConfig) -> Result<(), String> {
-    for (id, entry) in &cfg.providers {
-        let Some(url) = entry
-            .base_url
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        else {
-            continue;
-        };
-        let lower = url.to_lowercase();
-        if let Some(_rest) = lower.strip_prefix("https://") {
-            continue;
-        }
-        if let Some(rest) = lower.strip_prefix("http://") {
-            let host = rest.split(['/', '?', '#']).next().unwrap_or("");
-            let host = host.strip_prefix('[').unwrap_or(host);
-            let host = host.split(']').next().unwrap_or(host);
-            let host = match host.rsplit_once(':') {
-                Some((h, port)) if port.chars().all(|c| c.is_ascii_digit()) => h,
-                _ => host,
-            };
-            if host == "localhost" || host == "::1" || host.starts_with("127.") {
-                continue;
-            }
-            return Err(format!("provider {id}: plain http is loopback-only"));
-        }
-        return Err(format!("provider {id}: base_url must be http(s)"));
-    }
-    Ok(())
+/// Agents whose program path was set or edited between two configs, as
+/// "claude → C:\…\claude.exe". Clearing a path (back to PATH) is silent.
+/// Pure and unit-tested.
+fn binary_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
+    let mut out: Vec<String> = new
+        .providers
+        .iter()
+        .filter_map(|(id, entry)| {
+            let path = Some(entry.binary.trim()).filter(|p| !p.is_empty())?;
+            let before = old.providers.get(id).map(|e| e.binary.trim());
+            (before != Some(path)).then(|| format!("{id} → {path}"))
+        })
+        .collect();
+    out.sort();
+    out
 }
 
 /// Names of MCP servers whose `command`/`args` were added or edited between
@@ -1795,7 +1634,9 @@ fn file_roots() -> Vec<std::path::PathBuf> {
             continue;
         };
         for repo in ws.repos {
-            let Some(path) = repo.local_path else { continue };
+            let Some(path) = repo.local_path else {
+                continue;
+            };
             if path.as_os_str().is_empty() {
                 continue;
             }
@@ -2050,42 +1891,49 @@ async fn migrate_tasks(project: String) -> Result<usize, String> {
     parzi_core::lanes::migrate_tasks_to_lanes(&project).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-async fn login_antigravity() -> Result<String, String> {
-    let url = parzi_providers::antigravity_oauth::auth_url();
-    parzi_providers::antigravity_oauth::open_browser(&url);
+/// How long a day's log is kept.
+const LOG_DAYS: u64 = 7;
 
-    let code = parzi_providers::antigravity_oauth::wait_for_code(300)
-        .await
-        .map_err(|e| e.to_string())?;
-    let toks = parzi_providers::antigravity_oauth::exchange_code(&code)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    keyring::Entry::new("parzi", "antigravity")
-        .map_err(|e| e.to_string())?
-        .set_password(&toks.access)
-        .map_err(|e| e.to_string())?;
-    if let Some(r) = toks.refresh {
-        keyring::Entry::new("parzi", "antigravity-refresh")
-            .map_err(|e| e.to_string())?
-            .set_password(&r)
-            .map_err(|e| e.to_string())?;
+/// A desktop app has no console: runs, failed turns and warnings go to
+/// `~/.parzi/logs/parzi-<date>.log`, one file a day, a week kept. Without a
+/// home to write to the app runs unlogged rather than not at all.
+fn init_log() {
+    let Ok(dir) = parzi_core::paths::parzi_dir().map(|d| d.join("logs")) else {
+        return;
+    };
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
     }
-    Ok("Signed in with Google".to_string())
-}
-
-#[tauri::command]
-async fn logout_antigravity() -> Result<(), String> {
-    for entry in ["antigravity", "antigravity-refresh", "antigravity-session"] {
-        if let Ok(e) = keyring::Entry::new("parzi", entry) {
-            let _ = e.delete_credential();
+    let week = std::time::Duration::from_secs(LOG_DAYS * 24 * 60 * 60);
+    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let old = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age > week);
+        let ours = entry.file_name().to_string_lossy().starts_with("parzi-");
+        if old && ours {
+            let _ = std::fs::remove_file(entry.path());
         }
     }
-    Ok(())
+    let name = format!("parzi-{}.log", chrono::Local::now().format("%Y-%m-%d"));
+    let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(name))
+    else {
+        return;
+    };
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .with_ansi(false)
+        .with_writer(std::sync::Mutex::new(file))
+        .init();
 }
 
 fn main() {
+    init_log();
     // E9: Tauri's default runtime is one worker per hardware thread (16 here,
     // 27 threads in the process at idle). The host only moves IPC and I/O —
     // every CPU-bound step already runs under spawn_blocking — so three
@@ -2124,6 +1972,15 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 forward_host_bus(bus_app, bus_rx).await;
             });
+            // Each agent's own program is asked once at start, in the
+            // background: the picker shows the last known board at once and
+            // the fresh one when it lands.
+            let board = o.clone();
+            let board_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let all = in_roster_order(board.refresh_providers(&[]).await);
+                let _ = board_app.emit("parzi://providers", &all);
+            });
             // Long-lived queue pump + boot kick for sessions left Queued.
             // R-5: runs that were still queued when the app closed are put
             // back on the queue first — their prompts live next to the
@@ -2145,8 +2002,6 @@ fn main() {
             window_maximize,
             window_close,
             window_start_dragging,
-            login_antigravity,
-            logout_antigravity,
             migrate_tasks,
             list_threads,
             get_thread,
@@ -2175,14 +2030,9 @@ fn main() {
             delete_project,
             git_branch,
             approve_tool,
-            get_models,
-            refresh_provider,
-            get_provider_health,
-            reset_circuit_breaker,
-            save_key,
-            delete_key,
+            provider_statuses,
+            refresh_providers,
             toggle_favorite,
-            effort_options,
             get_theme_css,
             save_theme,
             get_theme,
@@ -2307,26 +2157,42 @@ mod tests {
     }
 
     #[test]
-    fn base_url_policy_https_or_loopback() {
-        let mut cfg = ParziConfig::default();
-        cfg.providers.insert(
-            "x".into(),
-            parzi_core::config::ProviderEntry {
-                default_model: "m".into(),
-                base_url: Some("https://api.example.com/v1".into()),
-            },
+    fn a_set_or_edited_agent_program_is_confirmed() {
+        let with = |path: &str| {
+            let mut cfg = ParziConfig::default();
+            cfg.providers.insert(
+                "claude".into(),
+                parzi_core::config::ProviderEntry {
+                    binary: path.to_string(),
+                    ..Default::default()
+                },
+            );
+            cfg
+        };
+        let none = with("");
+        let set = with(r"C:\tools\claude.exe");
+        assert_eq!(
+            binary_changes(&none, &set),
+            vec![r"claude → C:\tools\claude.exe".to_string()]
         );
-        assert!(check_base_urls(&cfg).is_ok());
-        cfg.providers.get_mut("x").unwrap().base_url = Some("http://127.0.0.1:8080/v1".into());
-        assert!(check_base_urls(&cfg).is_ok());
-        cfg.providers.get_mut("x").unwrap().base_url = Some("http://localhost:9000".into());
-        assert!(check_base_urls(&cfg).is_ok());
-        cfg.providers.get_mut("x").unwrap().base_url = Some("http://192.168.1.5/v1".into());
-        assert!(check_base_urls(&cfg).is_err());
-        cfg.providers.get_mut("x").unwrap().base_url = Some("ftp://x/y".into());
-        assert!(check_base_urls(&cfg).is_err());
-        cfg.providers.get_mut("x").unwrap().base_url = None;
-        assert!(check_base_urls(&cfg).is_ok());
+        assert!(
+            binary_changes(&set, &set).is_empty(),
+            "an identical resave is silent"
+        );
+        assert_eq!(binary_changes(&set, &with(r"C:\evil\claude.exe")).len(), 1);
+        assert!(
+            binary_changes(&set, &none).is_empty(),
+            "back to PATH does not prompt"
+        );
+        assert!(
+            binary_changes(&none, &with("  ")).is_empty(),
+            "blank is no path"
+        );
+        assert_eq!(
+            binary_changes(&ParziConfig::default(), &set).len(),
+            1,
+            "a provider the old file never named"
+        );
     }
 
     #[test]

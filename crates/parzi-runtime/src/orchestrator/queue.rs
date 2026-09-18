@@ -12,14 +12,15 @@ use parzi_core::store::{Event, SessionMeta, SessionStatus, SessionStore};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex, Notify};
 
-use crate::circuit_breaker::CircuitBreaker;
 use crate::handler::{RunEvent, RunEventBus};
 use crate::lease_tools::LeaseHub;
 use crate::mcp::McpManager;
+use crate::mcp_host::McpHost;
 use crate::roles::RoleBinding;
+use crate::status::{ProviderSource, StatusBoard};
 use crate::tools::Approver;
 
-use super::{Handle, Orchestrator, ProviderFactory};
+use super::{Handle, Orchestrator};
 
 /// The note a run that hit its budget leaves behind (R-4).
 pub const BUDGET_NOTE: &str = "budget_exceeded";
@@ -40,6 +41,18 @@ struct RunSidecar {
     /// The project role this session runs as (§1.2), if it is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     role: Option<RoleBinding>,
+    /// The vendor conversation this thread continues.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<VendorSession>,
+}
+
+/// A thread's conversation on the vendor's side: which provider holds it,
+/// and the handle that provider gave for resuming it. A thread that has one
+/// stays on that provider.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VendorSession {
+    pub provider: String,
+    pub resume: serde_json::Value,
 }
 
 impl RunSidecar {
@@ -48,6 +61,7 @@ impl RunSidecar {
             && self.project.is_none()
             && self.note.is_none()
             && self.role.is_none()
+            && self.session.is_none()
     }
 }
 
@@ -69,6 +83,8 @@ struct PersistedRun {
     /// Chat intent survives restarts like the prompt does.
     #[serde(default)]
     mode_override: Option<String>,
+    #[serde(default)]
+    inbox_from: Option<usize>,
 }
 
 /// H-7: only a valid uuid ever becomes a path segment.
@@ -161,6 +177,23 @@ pub fn run_role(session_id: &str) -> Option<RoleBinding> {
     load_sidecar(session_id).role
 }
 
+/// Record the vendor conversation a thread continues. `None` forgets it
+/// (a fork starts its own).
+pub fn set_run_session(session_id: &str, session: Option<VendorSession>) {
+    let mut sidecar = load_sidecar(session_id);
+    if sidecar.session == session {
+        return;
+    }
+    sidecar.session = session;
+    save_sidecar(session_id, &sidecar);
+}
+
+/// The vendor conversation a thread continues, if it has one.
+#[must_use]
+pub fn run_session(session_id: &str) -> Option<VendorSession> {
+    load_sidecar(session_id).session
+}
+
 /// A run waiting for a slot. Pumped headless (transcript persists, no live
 /// channel) with AutoApprover; lane Ask mode still logs denials visibly.
 pub(super) struct QueuedRun {
@@ -184,6 +217,10 @@ pub(super) struct QueuedRun {
     /// The opening turn is already in the transcript (queued at enqueue, or
     /// an inter-session message): the run must not append it again.
     pub(super) prompt_recorded: bool,
+    /// Started by a message from another session: that message's place in
+    /// the transcript. The first turn answers every unread message from
+    /// there, so a sender that raced this launch is answered too.
+    pub(super) inbox_from: Option<usize>,
 }
 
 impl QueuedRun {
@@ -198,6 +235,7 @@ impl QueuedRun {
             workspace_project: self.workspace_project.clone(),
             prompt_recorded: self.prompt_recorded,
             mode_override: self.mode_override.clone(),
+            inbox_from: self.inbox_from,
         }
     }
 
@@ -215,6 +253,7 @@ impl QueuedRun {
             workspace_project: p.workspace_project,
             prompt_recorded: p.prompt_recorded,
             mode_override: p.mode_override,
+            inbox_from: p.inbox_from,
         }
     }
 }
@@ -227,18 +266,38 @@ pub(super) struct Pump {
     pub(super) queue: Arc<Mutex<VecDeque<QueuedRun>>>,
     pub(super) notify: Arc<Notify>,
     pub(super) cfg: std::sync::Arc<std::sync::RwLock<ParziConfig>>,
-    pub(super) factory: ProviderFactory,
+    pub(super) source: ProviderSource,
     pub(super) mcp: Arc<McpManager>,
     pub(super) store: SessionStore,
     pub(super) handles: Arc<Mutex<HashMap<String, Handle>>>,
-    pub(super) circuit_breaker: Arc<CircuitBreaker>,
+    pub(super) status: Arc<StatusBoard>,
+    pub(super) tools_server: Arc<tokio::sync::OnceCell<Option<Arc<McpHost>>>>,
     pub(super) bus: RunEventBus,
     pub(super) leases: Arc<LeaseHub>,
+    pub(super) marks: super::ReadMarks,
 }
 
 impl Pump {
     pub(super) fn cfg_snapshot(&self) -> ParziConfig {
         self.cfg.read().map(|c| c.clone()).unwrap_or_default()
+    }
+
+    /// The endpoint Parzi's tools are served on, started with the first
+    /// run. `None` when no local port could be bound: runs then go on
+    /// without Parzi's tools rather than not at all.
+    pub(super) async fn tools_server(&self) -> Option<Arc<McpHost>> {
+        self.tools_server
+            .get_or_init(|| async {
+                match McpHost::start().await {
+                    Ok(h) => Some(h),
+                    Err(e) => {
+                        tracing::warn!("Parzi tool server did not start: {e}");
+                        None
+                    }
+                }
+            })
+            .await
+            .clone()
     }
 
     /// Park a run: persist it (R-5 — a restart must not lose the prompt),
@@ -364,6 +423,7 @@ impl Orchestrator {
                 // budget (R-4).
                 workspace_project: run_project(parent_id),
                 prompt_recorded: false,
+                inbox_from: None,
                 // No chat intent carried over: children run under policy.
                 // (B2: harness-spawned children must never silently run as Auto.)
                 mode_override: None,
@@ -373,7 +433,7 @@ impl Orchestrator {
             }
             let live = {
                 let mut h = self.handles.lock().await;
-                h.retain(|_, handle| !handle._task.is_finished());
+                h.retain(|_, handle| !handle.finished());
                 h.len()
             };
             let snap = self.config();
@@ -399,7 +459,7 @@ impl Orchestrator {
     /// that hasn't self-removed yet never blocks a new run.
     async fn live_count(p: &Pump) -> usize {
         let mut h = p.handles.lock().await;
-        h.retain(|_, handle| !handle._task.is_finished());
+        h.retain(|_, handle| !handle.finished());
         h.len()
     }
 
@@ -408,11 +468,19 @@ impl Orchestrator {
         loop {
             let next = {
                 let max = p.cfg_snapshot().orchestrator.max_concurrent.max(1);
-                let live = Self::live_count(&p).await;
-                if live >= max {
-                    return;
-                }
-                p.queue.lock().await.pop_front()
+                let busy: std::collections::HashSet<String> = {
+                    let mut h = p.handles.lock().await;
+                    h.retain(|_, handle| !handle.finished());
+                    if h.len() >= max {
+                        return;
+                    }
+                    h.keys().cloned().collect()
+                };
+                // A session with a run of its own keeps its queued turn until
+                // that run ends; the end of the run wakes the pump again.
+                let mut queue = p.queue.lock().await;
+                let at = queue.iter().position(|r| !busy.contains(&r.session_id));
+                at.and_then(|i| queue.remove(i))
             };
             let Some(q) = next else { return };
             let killed = match p.store.get(&q.session_id) {

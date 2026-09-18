@@ -5,10 +5,10 @@
 //! capsule — validated like a widget, written to `capsules/<TSK>.json` *and*
 //! appended to the session as an artifact, so it survives on both truths.
 
+use crate::tools::ToolDef;
 use parzi_core::error::{ParziError, Result};
 use parzi_core::journal::JournalKind;
 use parzi_core::store::Event;
-use parzi_providers::ToolDef;
 
 use crate::lease_tools::{held_by, task_id, task_str, LeaseCtx};
 use crate::tools::ToolExecutor;

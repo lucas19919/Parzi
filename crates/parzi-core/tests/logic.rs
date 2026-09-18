@@ -157,6 +157,11 @@ fn session_meta_parent_id_defaults_to_none_for_legacy_files() {
 #[test]
 fn subsession_hierarchy_lists_and_reparents() {
     use parzi_core::store::SessionStore;
+    // The only test here that writes: a home of its own, never ~/.parzi.
+    let dir = std::env::temp_dir().join(format!("parzi-test-logic-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::env::set_var("PARZI_HOME", &dir);
     let store = SessionStore::open().unwrap();
     let parent = store.create("team-parent", "t", "", "m").unwrap();
     assert_eq!(parent.parent_id, None);

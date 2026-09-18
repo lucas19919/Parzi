@@ -4,7 +4,7 @@
   import { cubicOut } from "svelte/easing";
   import {
     api, hub, deck, onRunEvent,
-    type SessionMeta, type ChatEvent, type ModelRow, type UiEvent,
+    type SessionMeta, type ChatEvent, type UiEvent,
     type ProjectView, type ProjectRoster, type Project, type InspectorArtifact, type InspectorDoc, type DocEntry, type SwarmNode
   } from "./lib/api";
   import RightPanel from "./lib/inspector/RightPanel.svelte";
@@ -17,7 +17,8 @@
   import SettingsNav from "./lib/SettingsNav.svelte";
   import NewWorkspace from "./lib/workspace/NewWorkspace.svelte";
   import NewProject from "./lib/workspace/NewProject.svelte";
-  import { ensureModels, modelRows } from "./lib/modelStore";
+  import { board, ensureBoard } from "./lib/providerStore";
+  import { PILL, allRows, effortLabel, effortsFor, isUsable, nameOf } from "./lib/providerRows";
   import { applyThemeCss } from "./lib/theme";
   import { coalesce, changesThreadList } from "./lib/threadList";
   import { checkForUpdates, checkForUpdatesSoon } from "./lib/updateStore";
@@ -29,12 +30,7 @@
 
   let bg = "";
   let threads: SessionMeta[] = [];
-  let models: ModelRow[] = [];
   let projects: ProjectView[] = [];
-  // Shared catalog: startup populates, Settings > Models reuses live.
-  modelRows.subscribe((v) => {
-    models = v;
-  });
 
   let curProject = "default";
   let projectRoster: ProjectRoster | null = null;
@@ -49,18 +45,16 @@
   let liveTokens = 0;
   let liveCost = 0;
   let compacting = false;
-  $: pickedWindow = (() => {
-    const [provider, id] = model.includes("/") ? model.split(/\/(.*)/s) : ["", ""];
-    const row = models.find((r) => r.provider === provider);
-    return row?.models.find((m) => m.id === id)?.context_limit ?? 0;
-  })();
+  // The window is what the agent reported on its last turn; before one,
+  // the meter stays hidden rather than guess.
   $: contextUsed = activeMeta?.context_tokens ?? 0;
-  $: contextLimit = activeMeta?.context_limit || pickedWindow;
+  $: contextLimit = activeMeta?.context_limit ?? 0;
 
   let liveTools: { id: string; name: string; label: string; running: boolean; ok: boolean; ms: number }[] = [];
   let input = "";
   let model = "auto";
-  let effort: "low" | "medium" | "high" | "extra" | "ultra" = "medium";
+  /** Parzi's pill, or the chosen model's own word for it. */
+  let effort = "medium";
   let permission = "full";
 
   function pillMode(): string {
@@ -140,7 +134,6 @@
       A sent thread keeps its workspace, so switching with one open parks it
       and opens a fresh draft instead of moving it. Blocked mid-run: the live
       tail belongs to the old thread. */
-  const EFFORT_IDS = ["low", "medium", "high", "extra", "ultra"] as const;
 
   /** Adopt a hub workspace's composer defaults, but only where the composer
       is still on app defaults — never clobber an explicit pick. */
@@ -161,10 +154,10 @@
     const wantEffort = (ws.defaults?.effort ?? "").trim();
     if (
       wantEffort &&
-      (EFFORT_IDS as readonly string[]).includes(wantEffort) &&
+      PILL.includes(wantEffort) &&
       effort === "medium"
     ) {
-      effort = wantEffort as typeof effort;
+      effort = wantEffort;
       took.push(wantEffort);
     }
     if (took.length) toast(`${displayName(name)} defaults: ${took.join(" · ")}`);
@@ -337,9 +330,6 @@
     }
     newThread();
   }
-  let modelMenu = false;
-  let modelQuery = "";
-
   let sending = false;
   let liveRun: string | null = null;
   let approval: { key: string; call: { id: string; name: string; args: unknown; lane: string } } | null = null;
@@ -642,11 +632,14 @@
         toast("Smart Auto routing on");
         break;
       case "effort": {
-        const order = ["low", "medium", "high", "extra", "ultra"] as const;
-        // Legacy "med" (old defaults) still resolves.
-        const cur = (effort as string) === "med" ? "medium" : effort;
-        effort = order[(order.indexOf(cur) + 1) % order.length] ?? "medium";
-        toast(`effort: ${effort}`);
+        // The levels the chosen model takes, in its agent's words.
+        const order = effortsFor(model, $board);
+        if (!order.length) {
+          toast("this agent sets its own effort");
+          break;
+        }
+        effort = order[(order.indexOf(effort) + 1) % order.length];
+        toast(`effort: ${effortLabel(effort)}`);
         break;
       }
         break;
@@ -666,7 +659,7 @@
         openSettings("system");
         break;
       case "keys":
-        openSettings("models");
+        openSettings("providers");
         break;
       case "help":
         toast("/plan /auto /model /effort /new /clear /compact /fork /subsession /kill /doctor");
@@ -1010,27 +1003,7 @@
     }
   }
 
-  $: allModelOptions = (() => {
-    const list: { provider: string; id: string; label: string; auth: string }[] = [];
-    for (const r of models) {
-      for (const m of r.models) {
-        list.push({
-          provider: r.provider,
-          id: `${r.provider}/${m.id}`,
-          label: m.name || m.id,
-          auth: r.auth,
-        });
-      }
-    }
-    return list;
-  })();
-
-  $: filteredModelOptions = allModelOptions.filter(
-    (m) =>
-      !modelQuery.trim() ||
-      m.label.toLowerCase().includes(modelQuery.toLowerCase()) ||
-      m.provider.toLowerCase().includes(modelQuery.toLowerCase())
-  );
+  $: allModelOptions = allRows($board);
 
   // Command palette (Ctrl+K): actions + threads + models. Semantic buttons,
   // arrow/enter nav, Esc unwinds. Restores the pre-rewrite global shortcut.
@@ -1060,7 +1033,7 @@
     { section: "Actions", label: "New chat", sub: "start a new conversation", run: () => { palette = false; newThread(); } },
     { section: "Actions", label: "New workspace", sub: "hub wizard", run: () => { palette = false; openNewWorkspaceWizard(); } },
     { section: "Actions", label: "Plan mode", sub: "no edits", run: () => { palette = false; openPlanner(); } },
-    { section: "Actions", label: "Settings", sub: "models · connectors · skills", run: () => openSettings() },
+    { section: "Actions", label: "Settings", sub: "providers · connectors · skills", run: () => openSettings() },
     { section: "Actions", label: "Report issue", sub: "github", run: () => openSettings("system", "report-issue") },
     { section: "Actions", label: "Check for updates", sub: "stable channel", run: () => { palette = false; openSettings("system", "app-updates"); void checkForUpdates(true); } },
     ...(liveRun
@@ -1093,7 +1066,7 @@
       (o) =>
         !palQuery ||
         o.label.toLowerCase().includes(palQuery.toLowerCase()) ||
-        o.id.toLowerCase().includes(palQuery.toLowerCase())
+        o.value.toLowerCase().includes(palQuery.toLowerCase())
     )
     .slice(0, 6)
     .map(
@@ -1101,15 +1074,15 @@
         ({
           section: "Models",
           label: o.label,
-          sub: o.id,
+          sub: o.value,
           run: () => {
             palette = false;
-            if (o.auth !== "ok") {
-              toast(`${o.provider} needs a key — opening settings`, true);
-              openSettings("models");
+            if (!o.usable) {
+              toast(`${nameOf(o.provider)} is not ready — opening settings`, true);
+              openSettings("providers");
               return;
             }
-            model = o.id;
+            model = o.value;
           },
         }) as PalItem
     );
@@ -1207,7 +1180,7 @@
       applyThemeCss(await api.getThemeCss());
 
       bg = await api.backgroundUrl();
-      await ensureModels(false);
+      await ensureBoard();
       await loadProjects();
       await loadThreads();
       await onRunEvent(onEvent);
@@ -1236,7 +1209,7 @@
     <div class="sb-pane" in:fly={{ x: -12, ...smooth }} out:fly={{ x: -8, ...smoothFast }}>
     <SettingsNav
       activeSection={settingsSection}
-      authedCount={models.filter((m) => m.auth === "ok").length}
+      authedCount={$board.filter(isUsable).length}
       on:select={(e) => { settingsSection = e.detail.id; }}
       on:back={() => (showSettings = false)}
     />
@@ -1333,7 +1306,7 @@
             {contextUsed}
             {contextLimit}
             {compacting}
-            {models}
+            board={$board}
             on:send={send}
             on:stop={stopRun}
             on:modelChange={(e) => (model = e.detail.model)}

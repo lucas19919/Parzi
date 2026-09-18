@@ -15,18 +15,17 @@ pub fn is_critical(project: &Project, path: &str) -> bool {
 /// Minimal glob: `**` spans any number of path segments (including none),
 /// `*` any run inside one segment, `?` one character. A pattern with no
 /// wildcard also matches everything under it, so `src/payments` covers
-/// `src/payments/intent.rs`. No glob crate is in the lockfile and the
-/// sandbox does prefix work by hand, so this stays local and tested.
+/// `src/payments/intent.rs`. Where the file system ignores case, so does
+/// the match. No glob crate is in the lockfile and the sandbox does prefix
+/// work by hand, so this stays local and tested.
 #[must_use]
 pub fn glob_match(pattern: &str, path: &str) -> bool {
-    let pat = normalize_path(pattern);
-    let target = normalize_path(path);
+    let pat = path_key(pattern);
+    let target = path_key(path);
     if !pat.contains(['*', '?']) {
         return pat == target || target.starts_with(&format!("{pat}/"));
     }
-    let pat_segs: Vec<&str> = pat.split('/').filter(|s| !s.is_empty()).collect();
-    let path_segs: Vec<&str> = target.split('/').filter(|s| !s.is_empty()).collect();
-    match_segments(&pat_segs, &path_segs)
+    match_segments(&segments(&pat), &segments(&target))
 }
 
 /// Repo-prefixed, `/`-separated, no leading or trailing slash. Leases and
@@ -40,7 +39,30 @@ pub fn normalize_path(p: &str) -> String {
         .to_string()
 }
 
-fn match_segments(pat: &[&str], segs: &[&str]) -> bool {
+/// Windows and macOS file systems ignore case by default: `Src/A.rs` and
+/// `src/a.rs` are one file there, so every path comparison ignores it too.
+/// (Unicode normalisation, which macOS also ignores, is not folded.)
+pub const PATHS_IGNORE_CASE: bool = cfg!(any(windows, target_os = "macos"));
+
+/// A path the way comparisons see it: normalised, and lower-cased where
+/// the file system ignores case. For comparing only, never for showing.
+#[must_use]
+pub fn path_key(p: &str) -> String {
+    let n = normalize_path(p);
+    if PATHS_IGNORE_CASE {
+        n.to_lowercase()
+    } else {
+        n
+    }
+}
+
+/// The segments of a normalised path or pattern.
+pub(crate) fn segments(key: &str) -> Vec<&str> {
+    key.split('/').filter(|s| !s.is_empty()).collect()
+}
+
+/// Does the pattern match exactly these segments, `**` spanning any number?
+pub(crate) fn match_segments(pat: &[&str], segs: &[&str]) -> bool {
     match pat.split_first() {
         None => segs.is_empty(),
         Some((&"**", rest)) => (0..=segs.len()).any(|i| match_segments(rest, &segs[i..])),

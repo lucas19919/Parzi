@@ -1,5 +1,5 @@
 //! parzi CLI: the potato path and the interop surface for other harnesses.
-//! list/show/export/send/fork/kill/doctor/models/health. Zero webview deps.
+//! list/show/export/send/fork/kill/doctor/providers. Zero webview deps.
 
 use std::sync::Arc;
 
@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 use parzi_core::config::ParziConfig;
 use parzi_core::paths;
 use parzi_core::store::{SessionMeta, SessionStore};
+use parzi_providers::State;
 use parzi_runtime::tools::{Approval, Approver, AutoApprover, ToolCallInfo};
 use parzi_runtime::{handler::RunEvent, Orchestrator};
 
@@ -45,8 +46,11 @@ enum Cmd {
         project: Option<String>,
         #[arg(long)]
         lane: Option<String>,
+        /// Agent and model: `claude`, `claude/opus`, `codex/gpt-5.5`,
+        /// `opencode/<provider>/<model>`… Default: Smart Auto picks the agent.
         #[arg(long)]
         model: Option<String>,
+        /// The folder the agent works in. Default: the current directory.
         #[arg(long)]
         cwd: Option<String>,
         /// Auto-approve tool calls (default prompts on a terminal).
@@ -55,7 +59,8 @@ enum Cmd {
         /// Attach files as context (repeatable).
         #[arg(long)]
         attach: Vec<String>,
-        /// Reasoning effort: low | med | high.
+        /// Reasoning effort: low | medium | high | extra | ultra, or the
+        /// agent's own word for it (`xhigh`, `max`).
         #[arg(long, default_value = "medium")]
         effort: String,
     },
@@ -67,24 +72,20 @@ enum Cmd {
     },
     /// Cancel a live run and mark it killed.
     Kill { id: String },
-    /// Health checks: config, keys (presence only), MCP, webview.
+    /// Health checks: config, agents, Smart Auto order, MCP, webview.
     Doctor {
         #[arg(long)]
         json: bool,
     },
-    /// List known models per provider.
-    Models { provider: Option<String> },
-    /// Live provider health: auth, tier, account, active cooldowns.
-    Health {
+    /// Where each agent stands, asked of its own program: installed, signed
+    /// in, plan usage, models. Spends no quota. Sign-in happens in the
+    /// agent's own program; the hint says how.
+    Providers {
+        /// Only this one: claude, codex, opencode, grok, antigravity, cursor.
+        provider: Option<String>,
         #[arg(long)]
         json: bool,
     },
-    /// Clear rate-limit cooldowns (one provider, or all when omitted).
-    ResetCooldowns { provider: Option<String> },
-    /// Sign in with a subscription provider (antigravity: Google OAuth).
-    Login { provider: String },
-    /// Sign out (deletes stored tokens).
-    Logout { provider: String },
     /// Manage cumulative project knowledge (KNOWLEDGE.md).
     Knowledge {
         project: String,
@@ -191,7 +192,7 @@ impl Approver for CliApprover {
 }
 
 // E9: the CLI is one command, one run — a worker per hardware thread buys
-// nothing. Blocking work (stdin prompts, keyring) already uses spawn_blocking.
+// nothing. Blocking work (stdin prompts) already uses spawn_blocking.
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -239,11 +240,7 @@ async fn main() -> Result<()> {
         Cmd::Fork { id, at } => cmd_fork(&id, at),
         Cmd::Kill { id } => cmd_kill(&id).await,
         Cmd::Doctor { json } => cmd_doctor(json).await,
-        Cmd::Models { provider } => cmd_models(provider.as_deref()),
-        Cmd::Health { json } => cmd_health(json),
-        Cmd::ResetCooldowns { provider } => cmd_reset_cooldowns(provider.as_deref()),
-        Cmd::Login { provider } => cmd_login(&provider).await,
-        Cmd::Logout { provider } => cmd_logout(&provider),
+        Cmd::Providers { provider, json } => cmd_providers(provider.as_deref(), json).await,
         Cmd::Knowledge { project, note } => cmd_knowledge(&project, note.as_deref()),
         Cmd::Plan { project, action } => cmd_plan(&project, action).await,
         Cmd::Review {
@@ -356,11 +353,12 @@ async fn cmd_send(p: SendParams) -> Result<()> {
     } else {
         Arc::new(CliApprover { yes })
     };
-    let cwd = cwd.unwrap_or_default();
-    let base = if cwd.trim().is_empty() {
-        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-    } else {
-        std::path::PathBuf::from(&cwd)
+    // A new thread works where the command was run; a continued one keeps
+    // its own folder. `--cwd` overrides both.
+    let explicit = cwd.filter(|c| !c.trim().is_empty());
+    let base = match &explicit {
+        Some(c) => std::path::PathBuf::from(c),
+        None => std::env::current_dir().context("reading the current directory")?,
     };
     let attachments = parzi_core::context::read_attachments(&base, &attach);
     let mut rx = if target == "new" {
@@ -368,10 +366,10 @@ async fn cmd_send(p: SendParams) -> Result<()> {
             .spawn(
                 &project.unwrap_or_else(|| "default".into()),
                 &lane.unwrap_or_default(),
-                &model.unwrap_or_else(|| cfg.default_provider.clone()),
+                &model.unwrap_or_else(|| "auto".into()),
                 &message,
                 Some(approver),
-                &cwd,
+                &base.display().to_string(),
                 &effort,
                 attachments,
                 None,
@@ -386,7 +384,7 @@ async fn cmd_send(p: SendParams) -> Result<()> {
             &id,
             &message,
             Some(approver),
-            &cwd,
+            explicit.as_deref().unwrap_or(""),
             &effort,
             attachments,
             None,
@@ -397,7 +395,11 @@ async fn cmd_send(p: SendParams) -> Result<()> {
     };
     while let Some(ev) = rx.recv().await {
         match ev {
-            RunEvent::Text(t) => print!("{t}"),
+            RunEvent::Text(t) => {
+                use std::io::Write;
+                print!("{t}");
+                let _ = std::io::stdout().flush();
+            }
             RunEvent::ToolCall { name, label, .. } => eprintln!("\n[tool] {name} — {label}"),
             RunEvent::ToolResult { name, ok, ms, .. } => {
                 eprintln!("[result] {name} ok={ok} {ms}ms")
@@ -413,15 +415,7 @@ async fn cmd_send(p: SendParams) -> Result<()> {
                 eprintln!("[context] {used} / {limit} tokens")
             }
             RunEvent::ApprovalRequest { .. } => {} // CliApprover prompts on stderr; event is observability only
-            RunEvent::Notice { text } => eprintln!("\n[router] {text}"),
-            RunEvent::RouteTransition {
-                from_provider,
-                to_provider,
-                reason,
-                ..
-            } => {
-                eprintln!("\n[router] {from_provider} -> {to_provider} ({reason})")
-            }
+            RunEvent::Notice { text } => eprintln!("\n[notice] {text}"),
             RunEvent::Reasoning { text } => {
                 use std::io::Write;
                 let _ = write!(std::io::stderr(), "{text}");
@@ -485,140 +479,78 @@ async fn cmd_doctor(json: bool) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_login(provider: &str) -> Result<()> {
-    if provider != "antigravity" {
-        anyhow::bail!("login supports: antigravity (API keys go in Settings > Models)");
-    }
-    eprintln!("opt-in notice: unofficial Google OAuth path; bans have been reported.");
-    eprintln!("Use an account you can afford to lose. Continue? [y/N] ");
-    {
-        use std::io::Write;
-        let _ = std::io::stderr().flush();
-        let mut s = String::new();
-        std::io::stdin().read_line(&mut s)?;
-        if !s.trim().eq_ignore_ascii_case("y") {
-            anyhow::bail!("aborted");
-        }
-    }
-    let url = parzi_providers::antigravity_oauth::auth_url();
-    println!("opening:\n{url}\n");
-    parzi_providers::antigravity_oauth::open_browser(&url);
-    eprintln!("waiting for Google callback on localhost:51121 (5 min)…");
-    let code = parzi_providers::antigravity_oauth::wait_for_code(300)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    let toks = parzi_providers::antigravity_oauth::exchange_code(&code)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    keyring::Entry::new("parzi", "antigravity")
-        .map_err(|e| anyhow::anyhow!("{e}"))?
-        .set_password(&toks.access)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    if let Some(r) = toks.refresh {
-        keyring::Entry::new("parzi", "antigravity-refresh")
-            .map_err(|e| anyhow::anyhow!("{e}"))?
-            .set_password(&r)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
-    }
-    println!("signed in with Google. `parzi doctor` should show auth:antigravity ok.");
-    Ok(())
-}
-
-fn cmd_logout(provider: &str) -> Result<()> {
-    for entry in ["", "-refresh", "-session"] {
-        let name = format!("{provider}{entry}");
-        if let Ok(e) = keyring::Entry::new("parzi", &name) {
-            let _ = e.delete_credential();
-        }
-    }
-    println!("signed out of {provider} (stored tokens deleted).");
-    Ok(())
-}
-
-fn cmd_models(provider: Option<&str>) -> Result<()> {
-    let (cfg, _) = boot()?;
-    let ids: Vec<&str> = match provider {
-        Some(p) => vec![p],
-        None => parzi_providers::PROVIDERS.to_vec(),
-    };
-    for id in ids {
-        match parzi_providers::provider(id, &cfg) {
-            Ok(p) => {
-                let status = match p.auth_status() {
-                    parzi_providers::AuthStatus::Ok => "auth:ok",
-                    parzi_providers::AuthStatus::Missing(_) => "auth:missing",
-                    parzi_providers::AuthStatus::Expired(_) => "auth:expired",
-                };
-                println!("{id} [{status}]");
-                for m in crate_models(id) {
-                    println!(
-                        "  {}  ctx={}  ${}/${} per 1M",
-                        m.id, m.context_limit, m.price_in, m.price_out
-                    );
-                }
-            }
-            Err(e) => println!("{id} error: {e}"),
-        }
-    }
-    Ok(())
-}
-
-fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-fn cmd_health(json: bool) -> Result<()> {
+/// Ask each agent's own program where it stands, now.
+async fn cmd_providers(only: Option<&str>, json: bool) -> Result<()> {
     let (cfg, store) = boot()?;
-    let orch = Orchestrator::new(cfg, store);
-    let health = orch.provider_health();
+    let ids = match only {
+        Some(p) => {
+            let id = parzi_providers::canonical_id(p).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "unknown provider `{p}` (one of: {})",
+                    parzi_providers::PROVIDERS.join(", ")
+                )
+            })?;
+            vec![id.to_string()]
+        }
+        None => vec![],
+    };
+    let mut all = Orchestrator::new(cfg, store).refresh_providers(&ids).await;
+    // The board answers with every provider it knows; show what was asked.
+    all.retain(|s| ids.is_empty() || ids.contains(&s.provider));
+    all.sort_by_key(|s| {
+        parzi_providers::PROVIDERS
+            .iter()
+            .position(|p| *p == s.provider)
+    });
     if json {
-        println!("{}", serde_json::to_string_pretty(&health)?);
+        println!("{}", serde_json::to_string_pretty(&all)?);
         return Ok(());
     }
-    let snap = orch.config();
-    println!(
-        "routing: auto_failover={} keys_in_auto={} order=[{}]",
-        snap.routing.auto_failover,
-        snap.routing.keys_in_auto,
-        parzi_providers::router::auto_order(&snap).join(",")
-    );
-    for h in &health {
-        let cool = h.cooldown_until.map(|u| u.saturating_sub(now_secs()));
-        let cool_s = cool.map(|s| format!(" cooldown={s}s")).unwrap_or_default();
-        let acct = h
-            .active_account
-            .as_ref()
-            .map(|a| format!(" acct={a}"))
-            .unwrap_or_default();
-        let err = h
-            .last_error
-            .as_ref()
-            .map(|e| format!(" err={e}"))
-            .unwrap_or_default();
+    for s in &all {
+        let state = match s.state {
+            State::Ready => "ready",
+            State::SignedOut => "signed out",
+            State::NotInstalled => "not installed",
+            State::Disabled => "switched off",
+            State::Error => "error",
+            State::Unchecked => "installed, sign-in unchecked",
+        };
+        let about: Vec<&str> = [s.version.as_deref(), s.account.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect();
         println!(
-            "{:12} {:12} tier={:<12}{}{}{}",
-            h.provider, h.status, h.tier, acct, cool_s, err
+            "{:<12} {state}{}",
+            parzi_providers::display_name(&s.provider),
+            if about.is_empty() {
+                String::new()
+            } else {
+                format!(" — {}", about.join(" · "))
+            }
         );
+        if !s.gated {
+            println!(
+                "             can change files without asking Parzi: leases and the folder \
+                 fence cannot stop it, and read-only lanes refuse it"
+            );
+        }
+        if !s.hint.is_empty() {
+            println!("             {}", s.hint);
+        }
+        for w in &s.usage {
+            println!("             {}: {:.0}% used", w.label, w.used_percent);
+        }
+        for m in &s.models {
+            let efforts = if m.efforts.is_empty() {
+                String::new()
+            } else {
+                format!("  [{}]", m.efforts.join(" "))
+            };
+            let default = if m.is_default { "  (default)" } else { "" };
+            println!("             {}/{}{default}{efforts}", s.provider, m.id);
+        }
     }
     Ok(())
-}
-
-fn cmd_reset_cooldowns(provider: Option<&str>) -> Result<()> {
-    let (cfg, store) = boot()?;
-    let orch = Orchestrator::new(cfg, store);
-    orch.reset_circuit_breaker(provider);
-    match provider {
-        Some(p) => println!("cooldown cleared for {p}"),
-        None => println!("all cooldowns cleared"),
-    }
-    Ok(())
-}
-
-fn crate_models(id: &str) -> Vec<parzi_providers::Model> {
-    parzi_providers::catalog::for_provider(id)
 }
 
 fn short(id: &str) -> &str {
@@ -880,50 +812,60 @@ async fn cmd_plan(project: &str, action: PlanAction) -> Result<()> {
                     .orchestrator
                     .model
                     .filter(|m| !m.trim().is_empty())
-                    .unwrap_or_else(|| cfg.default_provider.clone());
+                    .unwrap_or_else(|| "auto".into());
 
                 let root = parzi_core::lanes::lane_root(project, &target_lane).unwrap_or_default();
-                let mut session_cwd = root.clone();
                 let approver: Arc<dyn Approver> = if yes {
                     Arc::new(AutoApprover)
                 } else {
                     Arc::new(CliApprover { yes })
                 };
 
-                let (meta, mut rx) = orch
-                    .spawn(
+                // The session exists first, so an isolated task's worktree is
+                // named for it and the agent starts inside it — an agent's
+                // folder is fixed once it runs.
+                let meta = store
+                    .create(&task.title, project, &target_lane, &model)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                let mut session_cwd = root.clone();
+                if task.worktree
+                    && !root.is_empty()
+                    && parzi_runtime::git_worktree::is_git_repo(&root)
+                {
+                    let wt = parzi_runtime::git_worktree::create_worktree(
+                        &root,
                         project,
                         &target_lane,
-                        &model,
+                        &meta.id,
+                    )
+                    .map_err(|e| anyhow::anyhow!("isolated worktree for `{}`: {e}", task.title))?;
+                    session_cwd = wt.to_string_lossy().to_string();
+                    println!("isolated worktree: {session_cwd}");
+                }
+                store
+                    .set_cwd(&meta.id, &session_cwd)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                let mut rx = orch
+                    .send_to(
+                        &meta.id,
                         &prompt,
                         Some(approver),
                         &session_cwd,
                         "medium",
                         vec![],
                         None,
+                        None,
                     )
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-                if task.worktree
-                    && !root.is_empty()
-                    && parzi_runtime::git_worktree::is_git_repo(&root)
-                {
-                    if let Ok(wt) = parzi_runtime::git_worktree::create_worktree(
-                        &root,
-                        project,
-                        &target_lane,
-                        &meta.id,
-                    ) {
-                        session_cwd = wt.to_string_lossy().to_string();
-                        let _ = store.set_cwd(&meta.id, &session_cwd);
-                        println!("isolated worktree: {session_cwd}");
-                    }
-                }
-
                 while let Some(event) = rx.recv().await {
                     match event {
-                        RunEvent::Text(t) => print!("{t}"),
+                        RunEvent::Text(t) => {
+                            use std::io::Write;
+                            print!("{t}");
+                            let _ = std::io::stdout().flush();
+                        }
                         RunEvent::ToolCall { name, label, .. } => {
                             eprintln!("[tool: {name} — {label}]")
                         }

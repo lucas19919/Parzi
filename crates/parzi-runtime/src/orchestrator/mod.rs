@@ -11,7 +11,8 @@ mod launch;
 mod queue;
 
 pub use queue::{
-    run_note, run_project, run_role, set_run_note, set_run_project, set_run_role, BUDGET_NOTE,
+    run_note, run_project, run_role, run_session, set_run_note, set_run_project, set_run_role,
+    set_run_session, VendorSession, BUDGET_NOTE,
 };
 
 use std::collections::{HashMap, VecDeque};
@@ -23,11 +24,12 @@ use parzi_core::store::{SessionMeta, SessionStatus, SessionStore};
 use tokio::sync::{broadcast, mpsc, Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
-use crate::circuit_breaker::CircuitBreaker;
 use crate::handler::{HarnessBridge, RunEvent, RunEventBus};
 use crate::lease_tools::LeaseHub;
 use crate::mcp::McpManager;
+use crate::mcp_host::McpHost;
 use crate::roles::{Role, RoleBinding, RoleCtx};
+use crate::status::{roster_source, ProviderSource, StatusBoard};
 use crate::tools::{ApprovalMode, Approver};
 
 use queue::{clear_queued, Pump, QueuedRun};
@@ -35,41 +37,17 @@ use queue::{clear_queued, Pump, QueuedRun};
 /// How many events the host bus keeps for a slow subscriber before it lags.
 const BUS_CAPACITY: usize = 4_096;
 
-/// Effort pill → output budget. Single place both CLI and GUI derive from.
-/// Legacy `"med"` still resolves to medium.
-pub fn effort_tokens(effort: &str) -> u32 {
-    match effort {
-        "low" => 4_096,
-        "medium" | "med" => 16_384,
-        "high" => 65_536,
-        "extra" => 131_072,
-        "ultra" => 262_144,
-        _ => 16_384,
-    }
-}
-
+/// The effort a run asks its agent for: Parzi's pill names, or a vendor's
+/// own (`minimal`, `xhigh`, `max`) as its model list reports them. The
+/// driver translates the pill; anything unknown is medium. Legacy `"med"`
+/// is medium.
 pub fn normalize_effort(effort: &str) -> String {
-    match effort {
-        "low" | "medium" | "high" | "extra" | "ultra" => effort.to_string(),
-        "med" => "medium".to_string(),
+    match effort.trim() {
+        e @ ("minimal" | "low" | "medium" | "high" | "extra" | "ultra" | "xhigh" | "max") => {
+            e.to_string()
+        }
         _ => "medium".to_string(),
     }
-}
-
-/// Sticky Smart Auto: when the request is `auto` but the thread already runs
-/// on a resolved `provider/model` (persisted after the previous auto turn),
-/// stay on it — the explicit+failover path keeps the hop safety. A fresh
-/// `auto` on an unresolved thread (or a stored `auto`) stays fully adaptive.
-pub fn sticky_spec(requested: &str, stored: &str) -> String {
-    let autoish = requested == "auto" || requested.starts_with("auto/");
-    if autoish {
-        if let Some((p, _)) = stored.split_once('/') {
-            if parzi_providers::canonical_id(p).is_some() {
-                return stored.to_string();
-            }
-        }
-    }
-    requested.to_string()
 }
 
 #[derive(Debug, Clone)]
@@ -83,23 +61,77 @@ pub struct RunInfo {
     pub cost_usd: f64,
 }
 
+/// A session's run as the orchestrator holds it.
 struct Handle {
+    /// Which run of the session this is: a run's cleanup only ever removes
+    /// its own handle, never a newer run's.
+    id: u64,
     cancel: CancellationToken,
-    _task: tokio::task::JoinHandle<()>,
+    /// `None` while a launch is still building the run: the session is
+    /// claimed already, so a second launch or a sender sees it live.
+    task: Option<tokio::task::JoinHandle<()>>,
 }
 
-/// Provider construction seam. Default is the registry; tests inject hangs.
-pub type ProviderFactory = Arc<
-    dyn Fn(&str, &ParziConfig) -> parzi_core::error::Result<Box<dyn parzi_providers::Provider>>
-        + Send
-        + Sync,
->;
+impl Handle {
+    fn finished(&self) -> bool {
+        self.task
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)
+    }
+}
 
-fn default_factory(
-    id: &str,
-    cfg: &ParziConfig,
-) -> parzi_core::error::Result<Box<dyn parzi_providers::Provider>> {
-    parzi_providers::provider(id, cfg)
+/// Run ids: unique for the life of the process.
+fn next_run_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Per session: the transcript index up to which messages from other
+/// sessions have been handed to its agent.
+type ReadMarks = Arc<std::sync::Mutex<HashMap<String, usize>>>;
+
+/// One run's hold on its session, for the end of the run. Messages from
+/// other sessions are delivered under the same lock, so a message is either
+/// seen by the run's last look or finds the session free and starts a run
+/// of its own: never both, never neither.
+pub(crate) struct SessionSlot {
+    handles: Arc<Mutex<HashMap<String, Handle>>>,
+    marks: ReadMarks,
+    sid: String,
+    id: u64,
+}
+
+impl SessionSlot {
+    /// Where this session's messages were last read up to, if a run did.
+    pub(crate) fn read_mark(&self) -> Option<usize> {
+        self.marks.lock().ok()?.get(&self.sid).copied()
+    }
+
+    pub(crate) fn set_read_mark(&self, at: usize) {
+        if let Ok(mut m) = self.marks.lock() {
+            m.insert(self.sid.clone(), at);
+        }
+    }
+
+    /// Under the delivery lock: `look` returns the messages that arrived
+    /// and the index it read up to. Nothing new: `on_quiet` settles the
+    /// session and the run lets go of it before any sender can look.
+    pub(crate) async fn last_look<L, Q>(&self, look: L, on_quiet: Q) -> (Vec<String>, usize)
+    where
+        L: FnOnce() -> (Vec<String>, usize),
+        Q: FnOnce(),
+    {
+        let mut h = self.handles.lock().await;
+        let (fresh, upto) = look();
+        self.set_read_mark(upto);
+        if fresh.is_empty() {
+            on_quiet();
+            if h.get(&self.sid).is_some_and(|x| x.id == self.id) {
+                h.remove(&self.sid);
+            }
+        }
+        (fresh, upto)
+    }
 }
 
 pub struct Orchestrator {
@@ -109,12 +141,17 @@ pub struct Orchestrator {
     handles: Arc<Mutex<HashMap<String, Handle>>>,
     queue: Arc<Mutex<VecDeque<QueuedRun>>>,
     notify: Arc<Notify>,
-    factory: ProviderFactory,
-    circuit_breaker: Arc<CircuitBreaker>,
+    /// Where runs get their provider: the roster, or a test's fakes.
+    source: ProviderSource,
+    /// Where each provider stands; Smart Auto and Settings read it.
+    status: Arc<StatusBoard>,
+    /// The MCP endpoint Parzi's tools are served on, started lazily.
+    tools_server: Arc<tokio::sync::OnceCell<Option<Arc<McpHost>>>>,
     bus: RunEventBus,
     /// PLAN §4: one lease table per process, shared by every lane that runs
     /// in it. Round 1 is hub-less, so this *is* the hub.
     leases: Arc<LeaseHub>,
+    marks: ReadMarks,
 }
 
 impl Orchestrator {
@@ -131,10 +168,12 @@ impl Orchestrator {
             handles: Arc::new(Mutex::new(HashMap::new())),
             queue: Arc::new(Mutex::new(VecDeque::new())),
             notify: Arc::new(Notify::new()),
-            factory: Arc::new(default_factory),
-            circuit_breaker: Arc::new(CircuitBreaker::new()),
+            source: roster_source(),
+            status: Arc::new(StatusBoard::load()),
+            tools_server: Arc::new(tokio::sync::OnceCell::new()),
             leases: Arc::new(LeaseHub::new().with_bus(bus.clone())),
             bus,
+            marks: ReadMarks::default(),
         }
     }
 
@@ -145,8 +184,17 @@ impl Orchestrator {
         self.leases.clone()
     }
 
-    pub fn with_factory(mut self, factory: ProviderFactory) -> Self {
-        self.factory = factory;
+    /// Runs get their providers from `source` (tests inject fakes).
+    #[must_use]
+    pub fn with_source(mut self, source: ProviderSource) -> Self {
+        self.source = source;
+        self
+    }
+
+    /// A status board other than the one on disk (tests).
+    #[must_use]
+    pub fn with_status(mut self, status: Arc<StatusBoard>) -> Self {
+        self.status = status;
         self
     }
 
@@ -155,13 +203,15 @@ impl Orchestrator {
             queue: self.queue.clone(),
             notify: self.notify.clone(),
             cfg: self.cfg.clone(),
-            factory: self.factory.clone(),
+            source: self.source.clone(),
             mcp: self.mcp.clone(),
             store: self.store.clone(),
             handles: self.handles.clone(),
-            circuit_breaker: self.circuit_breaker.clone(),
+            status: self.status.clone(),
+            tools_server: self.tools_server.clone(),
             bus: self.bus.clone(),
             leases: self.leases.clone(),
+            marks: self.marks.clone(),
         }
     }
 
@@ -357,55 +407,53 @@ impl Orchestrator {
         set_run_project(session_id, Some((workspace.to_string(), slug.to_string())));
     }
 
-    /// Live provider health for the Omnibar dots + Settings quota panel.
-    /// Merges each provider's auth/tier state with circuit-breaker cooldowns.
-    pub fn provider_health(&self) -> Vec<parzi_providers::ProviderHealth> {
-        let snap = self.config();
-        let mut out = vec![];
-        for id in parzi_providers::PROVIDERS.iter().copied() {
-            let mut h = match (self.factory)(id, &snap) {
-                Ok(p) => p.health(),
-                Err(e) => parzi_providers::ProviderHealth {
-                    provider: id.to_string(),
-                    status: "missing".to_string(),
-                    cooldown_until: None,
-                    last_error: Some(e.to_string()),
-                    active_account: None,
-                    tier: "none".to_string(),
-                },
-            };
-            if let Some(rem) = self.circuit_breaker.cooldown_remaining(id) {
-                h.status = "rate_limited".to_string();
-                h.cooldown_until = Some(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs() + rem)
-                        .unwrap_or(0),
-                );
-                if h.last_error.is_none() {
-                    h.last_error = self.circuit_breaker.last_error(id);
-                }
-            } else if let Some(err) = self.circuit_breaker.last_error(id) {
-                if h.last_error.is_none() {
-                    h.last_error = Some(err);
-                }
-            }
-            out.push(h);
-        }
-        out
+    /// Where each provider stands, as last checked (no probe).
+    pub fn provider_statuses(&self) -> Vec<parzi_providers::ProviderStatus> {
+        self.with_gates(self.status.all())
     }
 
-    /// Clear cooldowns (one provider or all). Used by Settings retry buttons.
-    pub fn reset_circuit_breaker(&self, provider: Option<&str>) {
-        self.circuit_breaker.reset(provider);
+    /// Ask the providers where they stand now (`ids` empty = all). Each
+    /// probe runs the vendor's own program and spends no quota.
+    pub async fn refresh_providers(&self, ids: &[String]) -> Vec<parzi_providers::ProviderStatus> {
+        let cfg = self.config();
+        let all = self.status.refresh(&cfg, ids, &self.source).await;
+        self.with_gates(all)
+    }
+
+    /// Whether every change an agent makes reaches Parzi's gate is its
+    /// driver's to say, checked or not: a probe cannot tell, and a status
+    /// saved by an older Parzi does not say.
+    fn with_gates(
+        &self,
+        mut all: Vec<parzi_providers::ProviderStatus>,
+    ) -> Vec<parzi_providers::ProviderStatus> {
+        let cfg = self.config();
+        for s in &mut all {
+            if let Some(p) = (self.source)(&s.provider, &cfg) {
+                s.gated = p.gated();
+            }
+        }
+        all
     }
 
     pub async fn kill(&self, id: &str) -> Result<()> {
         if let Some(h) = self.handles.lock().await.remove(id) {
             h.cancel.cancel();
-            // R-1 backstop: the run loop may be stuck in a provider stream;
-            // abort the driver task so the slot frees even then.
-            h._task.abort();
+            if let Some(task) = h.task {
+                // The provider gets its stop grace to end the turn and close
+                // the vendor program with everything it started, plus the
+                // time that closing takes.
+                let by = tokio::time::Instant::now()
+                    + parzi_providers::process::STOP_GRACE
+                    + std::time::Duration::from_secs(2);
+                while !task.is_finished() && tokio::time::Instant::now() < by {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+                // R-1 backstop: a run stuck anyway is aborted, so the slot
+                // frees; its end guard lets go of its leases and dropping
+                // the vendor program kills its tree.
+                task.abort();
+            }
         }
         // Dequeue anything waiting for this session too — in memory and on
         // disk, so a restart does not resurrect a killed run (R-5).
@@ -433,24 +481,5 @@ impl Orchestrator {
     fn lane_policy(&self, project: &str, lane: &str) -> (ApprovalMode, Vec<String>) {
         let snap = self.config();
         Self::lane_policy_for(&snap, project, lane)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sticky_auto_holds_the_resolved_route() {
-        assert_eq!(sticky_spec("auto", "opencode/kimi-k3"), "opencode/kimi-k3");
-        assert_eq!(
-            sticky_spec("auto", "claude-code/claude-opus-5"),
-            "claude-code/claude-opus-5"
-        );
-        // Unresolved threads stay adaptive; explicit picks always win.
-        assert_eq!(sticky_spec("auto", "auto"), "auto");
-        assert_eq!(sticky_spec("auto", "something"), "auto");
-        assert_eq!(sticky_spec("xai/grok-4", "opencode/kimi-k3"), "xai/grok-4");
-        assert_eq!(sticky_spec("auto", "ollama/llama3.1"), "auto");
     }
 }

@@ -1,240 +1,301 @@
-//! Shared provider types. One shape for every adapter.
+//! One shape for every provider. Parzi does not call model APIs: it drives
+//! the vendor's own agent program and sees each turn as a stream of
+//! [`ProviderEvent`]s, the way t3code does.
 
-use parzi_core::context::ChatMessage;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct Model {
-    pub id: String,
-    /// Friendly display name ("Claude Opus 5"). Falls back to id.
-    pub name: String,
-    pub context_limit: u32,
-    pub output_limit: u32,
-    /// USD per 1M tokens at API-key rates. Subscription runs bill 0 (the
-    /// orchestrator zeroes prices when the live credential is a subscription).
-    pub price_in: f64,
-    pub price_out: f64,
-    /// Capability overlay (t3code ModelManifest pattern, simplified).
-    #[serde(default = "true_bool")]
-    pub tools: bool,
-    #[serde(default)]
-    pub vision: bool,
-    #[serde(default)]
-    pub legacy: bool,
-    #[serde(default)]
-    pub is_default: bool,
-    /// Family grouping for the picker (effort variants collapse into one row).
-    /// Defaults to the model id (singleton family).
-    #[serde(default)]
-    pub family: String,
-    #[serde(default)]
-    pub family_name: String,
-    /// Effort variant within the family: low | medium | high. None = single.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
-}
-
-fn true_bool() -> bool {
-    true
-}
-
-impl Model {
-    pub fn vision(mut self) -> Self {
-        self.vision = true;
-        self
-    }
-    pub fn no_tools(mut self) -> Self {
-        self.tools = false;
-        self
-    }
-    pub fn legacy(mut self) -> Self {
-        self.legacy = true;
-        self
-    }
-    pub fn default(mut self) -> Self {
-        self.is_default = true;
-        self
-    }
-    pub fn family(mut self, family: &str, family_name: &str) -> Self {
-        self.family = family.into();
-        self.family_name = family_name.into();
-        self
-    }
-    pub fn variant(mut self, variant: &str) -> Self {
-        self.variant = Some(variant.into());
-        self
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ToolDef {
-    pub name: String,
-    pub description: String,
-    pub schema: serde_json::Value,
-}
-
-#[derive(Debug, Clone)]
-pub struct ChatReq {
-    pub model: String,
-    pub system: String,
-    pub messages: Vec<ChatMessage>,
-    pub tools: Vec<ToolDef>,
-    pub max_tokens: u32,
-    /// low | med | high. Each adapter maps it to its native knob
-    /// (effort, reasoning level, variant) or to the output budget.
-    pub effort: String,
-    /// Stable Parzi session id. Backends with per-conversation routing or
-    /// prompt caching (opencode Zen) key off this; empty falls back to a
-    /// per-request id (works, caches poorly).
-    pub session: String,
-}
-
-#[derive(Debug, Clone)]
-pub enum StreamEvent {
-    Text(String),
-    /// Model reasoning (thought parts). Rendered in a collapsible rail,
-    /// never sent back as context.
-    Reasoning(String),
-    ToolCall {
-        id: String,
-        name: String,
-        args: serde_json::Value,
-    },
-    Usage {
-        tokens_in: u64,
-        tokens_out: u64,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub enum AuthStatus {
-    Ok,
-    Missing(String),
-    Expired(String),
-}
-
-/// How the *resolved* credential bills. Decided per adapter at build time
-/// from whichever credential actually won, so the router never has to
-/// guess from the provider id: a Claude adapter holding an OAuth token is a
-/// subscription, the same adapter holding `ANTHROPIC_API_KEY` is a key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// What a failure was. Adapters decide it from the vendor's own error
+/// fields (status codes, error types), never by searching message text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Billing {
-    /// Flat-rate plan (Claude Max/Pro, ChatGPT/Codex, Antigravity, opencode).
-    Subscription,
-    /// Pay-per-token key. Explicit pick only unless `routing.keys_in_auto`.
-    ApiKey,
-    /// Nothing resolved.
-    None,
+pub enum ErrorClass {
+    /// Not signed in, token rejected, account blocked.
+    Auth,
+    /// A plan window or rate limit is used up.
+    RateLimit,
+    /// The vendor is overloaded or down.
+    Overloaded,
+    /// The conversation no longer fits the model.
+    ContextOverflow,
+    /// The request itself was refused as malformed.
+    BadRequest,
+    /// The vendor program is missing, would not start, or died.
+    Process,
+    /// The vendor no longer has the conversation it was asked to resume.
+    /// The run starts a new one and hands it the thread so far.
+    SessionLost,
+    /// Anything the vendor did not classify.
+    Unknown,
 }
 
-impl Billing {
+impl ErrorClass {
     pub fn as_str(self) -> &'static str {
         match self {
-            Billing::Subscription => "subscription",
-            Billing::ApiKey => "api_key",
-            Billing::None => "none",
+            Self::Auth => "auth",
+            Self::RateLimit => "rate_limit",
+            Self::Overloaded => "overloaded",
+            Self::ContextOverflow => "context_overflow",
+            Self::BadRequest => "bad_request",
+            Self::Process => "process",
+            Self::SessionLost => "session_lost",
+            Self::Unknown => "unknown",
         }
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ProviderHealth {
-    pub provider: String,
-    pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cooldown_until: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_error: Option<String>,
-    /// Human label of the signed-in plan/account when known ("Claude Max").
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub active_account: Option<String>,
-    /// `Billing::as_str()` of the resolved credential.
-    pub tier: String,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderError {
+    pub class: ErrorClass,
+    /// The vendor's own words, trimmed. Shown to the person as-is.
+    pub message: String,
 }
 
-pub type EventTx = mpsc::UnboundedSender<parzi_core::error::Result<StreamEvent>>;
-pub type EventRx = mpsc::UnboundedReceiver<parzi_core::error::Result<StreamEvent>>;
+impl ProviderError {
+    pub fn new(class: ErrorClass, message: impl Into<String>) -> Self {
+        Self {
+            class,
+            message: message.into(),
+        }
+    }
+
+    pub fn process(message: impl Into<String>) -> Self {
+        Self::new(ErrorClass::Process, message)
+    }
+}
+
+impl std::fmt::Display for ProviderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ProviderError {}
+
+/// Where a provider stands right now, as its own program reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum State {
+    Ready,
+    SignedOut,
+    NotInstalled,
+    Disabled,
+    Error,
+    /// Installed, but the program offers no way to check sign-in without
+    /// starting a session. The first turn tells.
+    Unchecked,
+}
+
+/// One plan window ("Session", "Weekly") and how much of it is used.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UsageWindow {
+    pub label: String,
+    pub used_percent: f64,
+    /// Unix seconds when the window resets, when the vendor says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<u64>,
+}
+
+impl UsageWindow {
+    /// Used up at `now`: at 100% and not yet past the reset the vendor named.
+    #[must_use]
+    pub fn spent(&self, now: u64) -> bool {
+        self.used_percent >= 100.0 && self.resets_at.is_none_or(|t| t > now)
+    }
+
+    /// Still true at `now` by the vendor's own clock. A window with no reset
+    /// time is only as good as the check that reported it.
+    #[must_use]
+    pub fn current(&self, now: u64) -> bool {
+        self.resets_at.is_some_and(|t| t > now)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelInfo {
+    /// What the vendor program takes as its model argument.
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub is_default: bool,
+    /// Effort levels this model accepts, in the vendor's own words. Empty =
+    /// the vendor has no effort knob for it.
+    #[serde(default)]
+    pub efforts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderStatus {
+    pub provider: String,
+    pub state: State,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Signed-in plan or account ("Claude Max", "ChatGPT Plus").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
+    /// What to do next when not ready, or the probe's own message.
+    #[serde(default)]
+    pub hint: String,
+    #[serde(default)]
+    pub usage: Vec<UsageWindow>,
+    #[serde(default)]
+    pub models: Vec<ModelInfo>,
+    /// Every change the agent makes arrives at Parzi's gate first
+    /// ([`Provider::gated`]). Filled from the driver whenever statuses leave
+    /// the runtime (`Orchestrator::provider_statuses`), never by a probe.
+    #[serde(default)]
+    pub gated: bool,
+    /// Unix seconds of this probe.
+    pub checked_at: u64,
+}
+
+impl ProviderStatus {
+    pub fn new(provider: &str, state: State, hint: impl Into<String>) -> Self {
+        Self {
+            provider: provider.to_string(),
+            state,
+            version: None,
+            account: None,
+            hint: hint.into(),
+            usage: vec![],
+            models: vec![],
+            gated: false,
+            checked_at: now_secs(),
+        }
+    }
+}
+
+/// Parzi's own tools, served over MCP for this one turn.
+#[derive(Debug, Clone)]
+pub struct ToolServer {
+    /// MCP server name the agent sees (`parzi`).
+    pub name: String,
+    /// Streamable-HTTP endpoint. The path carries the per-run secret.
+    pub url: String,
+    /// Same secret, for vendors that send it as a bearer header.
+    pub token: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TurnSpec {
+    /// Parzi's session id, for logs and for a fresh vendor session id.
+    pub session_id: String,
+    pub cwd: PathBuf,
+    /// Vendor model argument. `None` = the vendor's default.
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    /// Parzi's standing instructions (lane, workspace, role, knowledge).
+    pub instructions: Option<String>,
+    /// From a previous turn's [`ProviderEvent::Session`]. `None` = new session.
+    pub resume: Option<serde_json::Value>,
+    pub prompt: String,
+    /// Local image files that ride with the prompt.
+    pub images: Vec<PathBuf>,
+    pub tools: Option<ToolServer>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProviderEvent {
+    /// The vendor's handle for resuming this conversation on the next turn.
+    Session {
+        resume: serde_json::Value,
+    },
+    TextDelta(String),
+    ReasoningDelta(String),
+    /// A finished assistant message: the text that goes in the transcript.
+    Message(String),
+    /// A finished reasoning block.
+    Reasoning(String),
+    ToolStarted {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolFinished {
+        id: String,
+        name: String,
+        ok: bool,
+        output: String,
+    },
+    /// Tokens this turn spent so far, as increments.
+    Usage {
+        input: u64,
+        output: u64,
+        cost_usd: Option<f64>,
+    },
+    /// How full the model's window is.
+    Context {
+        used: u64,
+        limit: u64,
+    },
+    /// Plan windows, as the vendor just reported them.
+    Limits(Vec<UsageWindow>),
+    /// Something worth a line in the thread (a retry, a reroute).
+    Notice(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnEnd {
+    Completed,
+    Interrupted,
+}
+
+/// An action the vendor wants to take and Parzi has to allow.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PermissionRequest {
+    pub id: String,
+    /// The vendor's tool name ("Bash", "Edit", "commandExecution", …).
+    pub tool: String,
+    /// One line for the approval card.
+    pub title: String,
+    pub input: serde_json::Value,
+    /// Files the action writes, when the vendor says. The lease gate reads it.
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PermissionDecision {
+    Allow,
+    /// Allow, and let the vendor stop asking for this kind in this session.
+    AllowAlways,
+    Deny(String),
+}
+
+#[async_trait::async_trait]
+pub trait PermissionGate: Send + Sync {
+    async fn decide(&self, request: PermissionRequest) -> PermissionDecision;
+}
+
+pub type EventTx = mpsc::UnboundedSender<ProviderEvent>;
 
 #[async_trait::async_trait]
 pub trait Provider: Send + Sync {
     fn id(&self) -> &'static str;
-    async fn models(&self) -> parzi_core::error::Result<Vec<Model>>;
-    /// Streams events on a channel. Closes (drops tx) when done.
-    async fn chat_stream(&self, req: ChatReq) -> parzi_core::error::Result<EventRx>;
-    fn auth_status(&self) -> AuthStatus;
-    /// Billing class of the credential this adapter resolved. Adapters that
-    /// can hold either kind override this; the default is the conservative
-    /// answer (a key), so an unknown adapter never sneaks into auto routing.
-    fn billing(&self) -> Billing {
-        match self.auth_status() {
-            AuthStatus::Ok | AuthStatus::Expired(_) => Billing::ApiKey,
-            AuthStatus::Missing(_) => Billing::None,
-        }
-    }
-    /// Plan/account label for the UI ("Claude Max", "ChatGPT"). None = unknown.
-    fn account_label(&self) -> Option<String> {
-        None
-    }
-    fn health(&self) -> ProviderHealth {
-        let (status, err) = match self.auth_status() {
-            AuthStatus::Ok => ("ok".to_string(), None),
-            AuthStatus::Missing(m) => ("missing".to_string(), Some(m)),
-            AuthStatus::Expired(e) => ("expired".to_string(), Some(e)),
-        };
-        ProviderHealth {
-            provider: self.id().to_string(),
-            status,
-            cooldown_until: None,
-            last_error: err,
-            active_account: self.account_label(),
-            tier: self.billing().as_str().to_string(),
-        }
-    }
-}
 
-/// Read a credential file. Returns None on any failure — never logs contents.
-pub fn read_json_file(path: &std::path::Path) -> Option<serde_json::Value> {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-}
+    /// Every change the agent makes (edits, commands, fetches) arrives as a
+    /// [`PermissionRequest`] before it happens, because the driver runs the
+    /// agent in its most-asking mode with nothing pre-approved. `false`: the
+    /// agent applies some changes on its own, so leases and the folder fence
+    /// cannot stop them and a read-only lane cannot run on it. No default:
+    /// every driver says which it is.
+    fn gated(&self) -> bool;
 
-/// Best-effort token scrape from a CLI credential file (read-only).
-/// Shape-drift proof: recursive search for token-like keys. Never logs values.
-pub fn find_token(v: &serde_json::Value) -> Option<String> {
-    match v {
-        serde_json::Value::Object(map) => {
-            for (k, val) in map {
-                if let serde_json::Value::String(s) = val {
-                    let kl = k.to_lowercase();
-                    if (kl.contains("token")
-                        || kl.contains("api_key")
-                        || kl == "key"
-                        || kl == "apikey")
-                        && s.trim().len() > 10
-                    {
-                        return Some(s.clone());
-                    }
-                }
-            }
-            map.values().find_map(find_token)
-        }
-        serde_json::Value::Array(a) => a.iter().find_map(find_token),
-        _ => None,
-    }
-}
+    /// Ask the vendor program where it stands. Never spends quota.
+    async fn status(&self) -> ProviderStatus;
 
-/// OS keyring lookup. Any failure (headless, locked) degrades to None.
-pub fn keyring_get(provider: &str) -> Option<String> {
-    keyring::Entry::new("parzi", provider)
-        .ok()
-        .and_then(|e| e.get_password().ok())
-        .filter(|s| !s.trim().is_empty())
-}
-
-pub fn env_key(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|s| !s.trim().is_empty())
+    /// Run one turn to its end. Events stream on `events`; the returned
+    /// error is the turn's failure as the vendor classified it.
+    async fn run_turn(
+        &self,
+        spec: TurnSpec,
+        gate: Arc<dyn PermissionGate>,
+        events: EventTx,
+        cancel: CancellationToken,
+    ) -> Result<TurnEnd, ProviderError>;
 }
 
 /// Seconds since the Unix epoch (0 on clock failure).
@@ -245,23 +306,13 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Tool-name sanitizer. Anthropic, OpenAI (+ every OpenAI-compatible
-/// gateway) and Zen all require `^[a-zA-Z0-9_-]{1,64}$`; Parzi tools are
-/// dotted (`fs.read`), which 400s everywhere except Gemini. Sanitize on
-/// send, map back on receipt with [`desanitize_tool`].
-pub fn sanitize_tool(name: &str) -> String {
-    name.replace('.', "_")
-}
-
-/// Reverse of [`sanitize_tool`]: exact match first (an MCP tool may natively
-/// carry underscores), else the tool whose sanitized form equals the returned
-/// name, else passthrough.
-pub fn desanitize_tool(defs: &[ToolDef], name: &str) -> String {
-    if defs.iter().any(|d| d.name == name) {
-        return name.to_string();
+/// Last `max` characters of a vendor's stderr, for a failure message.
+pub(crate) fn tail(text: &str, max: usize) -> String {
+    let t = text.trim();
+    let n = t.chars().count();
+    if n <= max {
+        return t.to_string();
     }
-    defs.iter()
-        .find(|d| sanitize_tool(&d.name) == name)
-        .map(|d| d.name.clone())
-        .unwrap_or_else(|| name.to_string())
+    let skip = n - max;
+    format!("…{}", t.chars().skip(skip).collect::<String>())
 }

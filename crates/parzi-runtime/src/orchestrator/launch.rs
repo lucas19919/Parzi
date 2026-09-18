@@ -1,5 +1,5 @@
-//! From a queued run to a live one: the provider chain it will talk to, the
-//! lane policy it runs under, the tools it is armed with, and the driver task
+//! From a queued run to a live one: the provider it goes to, the lane
+//! policy it runs under, the tools it is armed with, and the driver task
 //! that owns it until it ends.
 
 use std::sync::Arc;
@@ -10,14 +10,19 @@ use parzi_core::store::{Event, SessionMeta, SessionStatus};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::handler::{system_parts, AgentRun, HarnessBridge, RunEvent};
-use crate::lease_tools::LeaseCtx;
+use crate::board_tools::board_defs;
+use crate::handler::{system_parts, HarnessBridge, RunEvent, RunSink};
+use crate::lease_tools::{lease_defs, LeaseCtx};
+use crate::run::{EngineRun, EngineRunParts};
+use crate::toolhost::{ToolHost, ToolHostParts};
 use crate::tools::{ApprovalMode, Approver, DenyApprover, ToolExecutor};
+use parzi_providers::display_name;
 
 use super::queue::{
-    clear_queued, run_project, run_role, set_run_note, set_run_project, Pump, QueuedRun,
+    clear_queued, run_project, run_role, run_session, set_run_note, set_run_project, Pump,
+    QueuedRun,
 };
-use super::{effort_tokens, normalize_effort, sticky_spec, Handle, Orchestrator, ProviderFactory};
+use super::{next_run_id, normalize_effort, Handle, Orchestrator, SessionSlot};
 
 /// R-4: what a run may spend — the tighter of the machine's config budget and
 /// the project's `budget:` line. A project the store cannot read (deleted,
@@ -37,7 +42,6 @@ fn budget_for(cfg: &ParziConfig, project: Option<&(String, String)>) -> Budget {
 
 impl Orchestrator {
     /// Spawn a run. Returns the session id + live event channel.
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     pub async fn spawn(
         &self,
@@ -85,7 +89,7 @@ impl Orchestrator {
         // B4: prune finished tasks before measuring capacity.
         let live = {
             let mut h = self.handles.lock().await;
-            h.retain(|_, handle| !handle._task.is_finished());
+            h.retain(|_, handle| !handle.finished());
             h.len()
         };
         let effort = normalize_effort(effort);
@@ -117,6 +121,7 @@ impl Orchestrator {
             approver,
             workspace_project,
             prompt_recorded: false,
+            inbox_from: None,
             mode_override,
         };
         let snap = self.config();
@@ -154,7 +159,7 @@ impl Orchestrator {
         // second message to a completed thread succeeds.
         {
             let mut h = self.handles.lock().await;
-            h.retain(|_, handle| !handle._task.is_finished());
+            h.retain(|_, handle| !handle.finished());
             if h.contains_key(id) {
                 return Err(ParziError::Store(format!(
                     "run {id} is active; kill it first"
@@ -162,13 +167,12 @@ impl Orchestrator {
             }
         }
         let meta = self.store.get(id)?;
-        // Per-message model switch: the thread follows the newly picked model.
-        // A requested `auto` sticks to the previously resolved route.
-        let requested = model_override.unwrap_or_else(|| meta.model.clone());
-        let spec = sticky_spec(&requested, &meta.model);
-        if spec != meta.model {
-            self.store.set_model(id, &spec)?;
-        }
+        // Per-message model switch: the thread follows the newly picked
+        // model. Routing (launch) refuses a switch to another provider once
+        // the vendor holds the thread's conversation.
+        let spec = model_override
+            .filter(|m| !m.trim().is_empty())
+            .unwrap_or_else(|| meta.model.clone());
         let effort = normalize_effort(effort);
         let q = QueuedRun {
             session_id: id.to_string(),
@@ -186,11 +190,12 @@ impl Orchestrator {
             approver,
             workspace_project: run_project(id),
             prompt_recorded: false,
+            inbox_from: None,
             mode_override,
         };
         let live = {
             let mut h = self.handles.lock().await;
-            h.retain(|_, handle| !handle._task.is_finished());
+            h.retain(|_, handle| !handle.finished());
             h.len()
         };
         let snap = self.config();
@@ -207,158 +212,86 @@ impl Orchestrator {
         Self::launch(self.pump_parts(), q).await
     }
 
-    /// Compact a thread on request: the thread's model summarizes it (falling
-    /// over like a run would), the summary lands as a `Checkpoint`, and the
-    /// next message is read from there. Refused while the thread is running.
+    /// Compact a thread on request. The vendor holds the conversation, so
+    /// the vendor compacts it: Claude Code and OpenCode take `/compact` as
+    /// a turn; the others compact on their own as the window fills.
     pub async fn compact(&self, id: &str, focus: &str) -> Result<String> {
-        {
-            let mut h = self.handles.lock().await;
-            h.retain(|_, handle| !handle._task.is_finished());
-            if h.contains_key(id) {
-                return Err(ParziError::Store(
-                    "this thread is running; compact it once the run ends".into(),
-                ));
-            }
+        let provider = run_session(id).map(|s| s.provider).ok_or_else(|| {
+            ParziError::Store("nothing to compact yet: this thread has no conversation".into())
+        })?;
+        if !matches!(provider.as_str(), "claude" | "opencode") {
+            return Err(ParziError::Store(format!(
+                "{} compacts its conversation on its own",
+                display_name(&provider)
+            )));
         }
-        let meta = self.store.get(id)?;
-        let events = self.store.events(id)?;
-        if !parzi_core::context::compactable(&events) {
-            return Err(ParziError::Store("nothing to compact yet".into()));
-        }
-        let mut last = ParziError::Store("no working provider for this thread's model".into());
-        for slot in self.slots_for(&meta.model, "low")? {
-            if matches!(
-                slot.provider.auth_status(),
-                parzi_providers::AuthStatus::Missing(_)
-            ) {
-                continue;
-            }
-            let limit = AgentRun::lookup_context_limit(&slot.provider_id, &slot.model_id);
-            match crate::compact::summarize(
-                slot.provider.as_ref(),
-                &slot.model_id,
-                &events,
-                focus,
-                limit,
+        let prompt = format!("/compact {}", focus.trim()).trim_end().to_string();
+        let _rx = self
+            .send_to(
                 id,
+                &prompt,
+                Some(Arc::new(DenyApprover)),
+                "",
+                "medium",
+                vec![],
+                None,
+                None,
             )
-            .await
-            {
-                Ok(summary) => {
-                    self.store.append(
-                        id,
-                        &Event::Checkpoint {
-                            summary: summary.clone(),
-                        },
-                    )?;
-                    let used = parzi_core::context::ContextBuilder::estimate(&summary);
-                    self.store.set_context(id, used, limit)?;
-                    let _ = self
-                        .bus
-                        .send((id.to_string(), RunEvent::Context { used, limit }));
-                    return Ok(summary);
-                }
-                Err(e) => last = e,
-            }
-        }
-        Err(last)
+            .await?;
+        Ok(format!(
+            "{} is compacting the conversation",
+            display_name(&provider)
+        ))
     }
 
-    /// Build the provider chain: `auto` expands via the smart router,
-    /// an explicit spec is a single slot. Never empty on success.
-    fn slots_for(
-        &self,
-        model_spec: &str,
-        effort: &str,
-    ) -> Result<Vec<crate::handler::ProviderSlot>> {
-        let snap = self.config();
-        Self::slots_for_static(&snap, &self.factory, model_spec, effort)
-    }
-
-    fn slots_for_static(
+    /// Where a run goes: `(provider, model)`. A spec names a provider (and
+    /// maybe a model); `auto` lets Smart Auto pick for a new thread. A
+    /// thread whose conversation lives on a provider stays on it: the
+    /// vendor holds the history, so another provider would start blind.
+    async fn route(
+        p: &Pump,
         cfg: &ParziConfig,
-        factory: &ProviderFactory,
-        model_spec: &str,
-        effort: &str,
-    ) -> Result<Vec<crate::handler::ProviderSlot>> {
-        use crate::handler::ProviderSlot;
-        // Catalog prices are API-key rates; a subscription credential bills
-        // flat, so its slot costs 0 and the cost meter stays honest.
-        let priced = |provider: &dyn parzi_providers::Provider, pid: &str, mid: &str| {
-            if provider.billing() == parzi_providers::Billing::Subscription {
-                (0.0, 0.0)
-            } else {
-                AgentRun::lookup_price(pid, mid)
+        session_id: &str,
+        spec: &str,
+    ) -> Result<(String, Option<String>)> {
+        let bound = run_session(session_id).map(|s| s.provider);
+        let auto = spec.trim().is_empty() || spec == "auto" || spec.starts_with("auto/");
+        let (provider, model) = match parzi_providers::split_spec(spec) {
+            Some((id, model)) => (id.to_string(), model),
+            None if auto => match &bound {
+                Some(b) => (b.clone(), None),
+                None => {
+                    let id = p.status.pick(cfg, &p.source).await.ok_or_else(|| {
+                        ParziError::Store(
+                            "Smart Auto found no provider that is ready. Sign in to one                              (Settings → Providers) or pick one."
+                                .into(),
+                        )
+                    })?;
+                    (id, None)
+                }
+            },
+            None => {
+                return Err(ParziError::Store(format!(
+                    "`{spec}` is not a provider Parzi runs (claude, codex, opencode, grok, antigravity, cursor)"
+                )))
             }
         };
-        if model_spec == "auto" || model_spec.starts_with("auto/") {
-            let mut slots = vec![];
-            for route in parzi_providers::router::auto_chain(effort, cfg) {
-                let provider = factory(&route.provider, cfg)?;
-                let (price_in, price_out) =
-                    priced(provider.as_ref(), &route.provider, &route.model);
-                slots.push(ProviderSlot {
-                    provider_id: route.provider,
-                    provider,
-                    model_id: route.model,
-                    price_in,
-                    price_out,
-                    reason: route.reason,
-                });
-            }
-            if slots.is_empty() {
-                return Err(ParziError::Store(
-                    "Smart Auto has nothing to route: sign in to a subscription (Claude Code, \
-                     Codex, Google/Antigravity or opencode serve) or pick a model with a key"
-                        .into(),
-                ));
-            }
-            return Ok(slots);
+        if let Some(b) = bound.filter(|b| *b != provider) {
+            return Err(ParziError::Store(format!(
+                "This thread's conversation lives on {}. Start a new thread to use {}.",
+                display_name(&b),
+                display_name(&provider)
+            )));
         }
-        let (provider_id, model_id) = cfg.resolve_model(model_spec);
-        // Old threads still say `claude-code/…` or `anthropic/…`.
-        let provider_id = parzi_providers::canonical_id(&provider_id)
-            .map(str::to_string)
-            .unwrap_or(provider_id);
-        // Adaptive failover (default): expand an explicit pick into a
-        // tier-preserving chain so a 429 hops instead of killing the turn.
-        // Strict mode (auto_failover=false): single slot, 429s halt.
-        if cfg.routing.auto_failover {
-            let mut slots = vec![];
-            for route in
-                parzi_providers::router::tier_fallback_chain(&provider_id, &model_id, effort, cfg)
-            {
-                match factory(&route.provider, cfg) {
-                    Ok(provider) => {
-                        let (price_in, price_out) =
-                            priced(provider.as_ref(), &route.provider, &route.model);
-                        slots.push(ProviderSlot {
-                            provider_id: route.provider,
-                            provider,
-                            model_id: route.model,
-                            price_in,
-                            price_out,
-                            reason: route.reason,
-                        });
-                    }
-                    Err(_) => continue,
-                }
-            }
-            if slots.is_empty() {
-                return Err(ParziError::Store("router found nothing usable".into()));
-            }
-            return Ok(slots);
+        let entry = cfg.provider(&provider);
+        if !entry.enabled {
+            return Err(ParziError::Store(format!(
+                "{} is switched off in Settings → Providers.",
+                display_name(&provider)
+            )));
         }
-        let provider = factory(&provider_id, cfg)?;
-        let (price_in, price_out) = priced(provider.as_ref(), &provider_id, &model_id);
-        Ok(vec![ProviderSlot {
-            provider_id,
-            provider,
-            model_id,
-            price_in,
-            price_out,
-            reason: "explicit pick",
-        }])
+        let model = model.or_else(|| Some(entry.default_model).filter(|m| !m.trim().is_empty()));
+        Ok((provider, model))
     }
 
     pub(super) fn lane_policy_for(
@@ -453,17 +386,54 @@ impl Orchestrator {
         }
     }
 
-    /// Build + launch a run for an existing session. Inserts the handle and
-    /// spawns the driver, which releases the handle and pumps the queue when
-    /// this run finishes. B4: handles are always removed on completion so the
-    /// concurrency cap counts live runs only.
+    /// Build + launch a run for an existing session. The session is claimed
+    /// first, so a second launch or a message sent meanwhile sees it live;
+    /// the driver lets go of it when the run ends (`RunEnd`). B4: handles are
+    /// always removed on completion so the concurrency cap counts live runs
+    /// only.
     pub(super) async fn launch(p: Pump, q: QueuedRun) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
         let sid = q.session_id.clone();
         // The parked copy has served its purpose the moment we try to start.
         clear_queued(&sid);
-        match Self::launch_inner(p.clone(), q).await {
+        let cancel = CancellationToken::new();
+        let claim = {
+            let mut h = p.handles.lock().await;
+            h.retain(|_, handle| !handle.finished());
+            if h.contains_key(&sid) {
+                None
+            } else {
+                let id = next_run_id();
+                h.insert(
+                    sid.clone(),
+                    Handle {
+                        id,
+                        cancel: cancel.clone(),
+                        task: None,
+                    },
+                );
+                // Messages already in the transcript belong to this run's
+                // opening (or were answered before); later ones are its news.
+                let seen = p.store.events(&sid).map_or(0, |e| e.len());
+                Some((id, seen))
+            }
+        };
+        let Some((id, seen)) = claim else {
+            // The session has a live run. A message from another session is
+            // read by that run; a person's turn waits behind it.
+            if q.inbox_from.is_none() {
+                p.enqueue(q).await;
+            }
+            return Ok(Self::closed_rx());
+        };
+        match Self::launch_inner(p.clone(), q, id, cancel, seen).await {
             Ok(rx) => Ok(rx),
             Err(e) => {
+                {
+                    let mut h = p.handles.lock().await;
+                    if h.get(&sid).is_some_and(|x| x.id == id) {
+                        h.remove(&sid);
+                    }
+                }
                 // R-5: a launch that fails must not leave the session sitting
                 // `Queued` forever with nobody to tell. Park it Idle, say so
                 // in the transcript, and put the error on the host bus —
@@ -481,18 +451,35 @@ impl Orchestrator {
         }
     }
 
-    async fn launch_inner(p: Pump, q: QueuedRun) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
+    async fn launch_inner(
+        p: Pump,
+        q: QueuedRun,
+        id: u64,
+        cancel: CancellationToken,
+        seen: usize,
+    ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
         let snap = p.cfg_snapshot();
-        let slots = Self::slots_for_static(&snap, &p.factory, &q.model_spec, &q.effort)?;
-        // Persist the resolved route so the next `auto` turn sticks to it
-        // (failover still hops on 429/overload within each run).
-        if (q.model_spec == "auto" || q.model_spec.starts_with("auto/")) && !slots.is_empty() {
-            let first = &slots[0];
-            p.store.set_model(
-                &q.session_id,
-                &format!("{}/{}", first.provider_id, first.model_id),
-            )?;
+        let (provider_id, model) = Self::route(&p, &snap, &q.session_id, &q.model_spec).await?;
+        let provider = (p.source)(&provider_id, &snap).ok_or_else(|| {
+            ParziError::Store(format!("{provider_id} is not on this build's roster"))
+        })?;
+        // The thread shows where it runs.
+        let shown = match &model {
+            Some(m) => format!("{provider_id}/{m}"),
+            None => provider_id.clone(),
+        };
+        if p.store.get(&q.session_id)?.model != shown {
+            p.store.set_model(&q.session_id, &shown)?;
         }
+        // R-7: a thread with no folder gets its own empty one, never the
+        // directory Parzi was started from.
+        let cwd = if q.cwd.trim().is_empty() {
+            let dir = parzi_core::paths::scratch_dir(&q.session_id)?;
+            std::fs::create_dir_all(&dir)?;
+            dir.display().to_string()
+        } else {
+            q.cwd.clone()
+        };
         // §1.2: a run that is a project role is briefed and armed by its role,
         // not by the lane's SYSTEM.md. The lane still decides the approval
         // mode — a machine's Ask/Deny is never lifted by a project.
@@ -506,7 +493,7 @@ impl Orchestrator {
             }
         }
         // Chat intent (the composer's permission pill): tightens, never lifts.
-        // "edits" rides as Ask with file writes pre-approved.
+        // "edits" rides as Ask with file edits pre-approved.
         let mut edits_auto = false;
         if let Some(o) = q.mode_override.as_deref() {
             mode = Self::restrict_mode(mode, ApprovalMode::parse(o));
@@ -526,85 +513,145 @@ impl Orchestrator {
             .holder_of_run(&q.session_id)
             .await
             .map(|_| LeaseCtx::new(p.leases.clone(), &q.session_id));
+        // What it is offered it may call: the names come from the same defs.
+        if lease_ctx.is_some() {
+            for d in lease_defs().into_iter().chain(board_defs()) {
+                if !allowed.contains(&d.name) {
+                    allowed.push(d.name);
+                }
+            }
+        }
         let tools = Arc::new(ToolExecutor {
-            cwd: q.cwd.clone(),
+            cwd: cwd.clone(),
             mcp: p.mcp.clone(),
             allowed,
             leases: lease_ctx,
         });
         let (tx, rx) = mpsc::unbounded_channel();
-        let cancel = CancellationToken::new();
+        // R-5: every event also goes to the host bus (the caller's `rx` only
+        // exists for direct calls).
+        let sink = RunSink::new(&q.session_id, tx, Some(p.bus.clone()));
         // Every run gets the teamwork bridge so agents can spawn subsessions
         // and message across sessions with `session.*` tools.
         let bridge: Arc<dyn HarnessBridge> = Arc::new(p.clone());
-        let run = AgentRun::new(
-            q.session_id.clone(),
-            slots,
-            match &role {
-                Some(binding) => binding.brief(),
-                None => system_parts(&snap, &q.project, &q.lane),
-            },
-            q.lane.clone(),
+        let mut instructions = match &role {
+            Some(binding) => binding.brief(),
+            None => system_parts(&snap, &q.project, &q.lane),
+        };
+        // Path-scoped rules: the attachments they match ride with the prompt.
+        let files: Vec<&str> = q.attachments.iter().map(|a| a.path.as_str()).collect();
+        for r in parzi_core::rules::matching(&q.project, &files) {
+            instructions.push(format!("# Path rule ({})\n\n{}", r.name, r.body));
+        }
+        // A read-only lane runs only on an agent that asks before every
+        // change: on any other, the lockdown is a promise Parzi cannot keep.
+        if mode == ApprovalMode::Deny && !provider.gated() {
+            return Err(ParziError::Validation(format!(
+                "this lane is read-only, and {} applies some changes without asking Parzi \
+                 first; pick another agent for it",
+                display_name(&provider_id)
+            )));
+        }
+        let host = Arc::new(ToolHost::new(ToolHostParts {
+            session_id: q.session_id.clone(),
+            lane: q.lane.clone(),
             mode,
             edits_auto,
-            snap.lanes.max_steps,
-            effort_tokens(&q.effort),
-            q.attachments.clone(),
-            q.effort.clone(),
-            p.store.clone(),
+            store: p.store.clone(),
             tools,
             // B2: harness-spawned children must never silently run as Auto.
             // No approver carried over = deny by default; explicit callers
             // (GUI/CLI) always pass Some(...).
-            q.approver.clone().unwrap_or_else(|| Arc::new(DenyApprover)),
-            tx,
-            cancel.clone(),
-        )
-        .with_circuit_breaker(p.circuit_breaker.clone())
-        .with_harness(bridge)
-        // R-4 / R-5: the run's spend cap, and the host bus every event is
-        // mirrored to (the caller's `rx` above only exists for direct calls).
-        .with_budget(budget_for(&snap, q.workspace_project.as_ref()))
-        .with_bus(p.bus.clone())
-        .with_prompt_recorded(q.prompt_recorded)
-        .with_role(role);
+            approver: q.approver.clone().unwrap_or_else(|| Arc::new(DenyApprover)),
+            harness: Some(bridge),
+            role,
+            sink: sink.clone(),
+            cancel: cancel.clone(),
+        }));
+        let run = EngineRun::new(EngineRunParts {
+            session_id: q.session_id.clone(),
+            provider_id,
+            provider,
+            model,
+            effort: Some(q.effort.clone()).filter(|e| !e.is_empty()),
+            instructions: instructions.join("\n\n---\n\n"),
+            cwd: cwd.clone(),
+            attachments: q.attachments.clone(),
+            store: p.store.clone(),
+            host,
+            mcp: p.tools_server().await,
+            status: p.status.clone(),
+            sink,
+            cancel: cancel.clone(),
+            budget: budget_for(&snap, q.workspace_project.as_ref()),
+            prompt_recorded: q.prompt_recorded,
+            slot: SessionSlot {
+                handles: p.handles.clone(),
+                marks: p.marks.clone(),
+                sid: q.session_id.clone(),
+                id,
+            },
+            seen,
+            inbox_from: q.inbox_from,
+        });
         // A run that starts again is no longer paused: clear the stop note.
         set_run_note(&q.session_id, None);
         p.store.set_status(&q.session_id, SessionStatus::Active)?;
-        let parts = p.clone();
-        let handles = p.handles.clone();
-        let handles_task = handles.clone();
-        let sid = q.session_id.clone();
-        let sid_task = sid.clone();
+        let end = RunEnd {
+            parts: p.clone(),
+            sid: q.session_id.clone(),
+            id,
+        };
         let prompt = q.prompt.clone();
-        let store = p.store.clone();
         let task = tokio::spawn(async move {
-            if let Err(e) = run.run(&prompt).await {
-                let _ = store.append(
-                    &sid_task,
-                    &parzi_core::store::Event::System {
-                        text: format!("run failed: {e}"),
-                    },
-                );
+            let _end = end;
+            // A failure is already in the transcript as an error event.
+            let _ = run.run(&prompt).await;
+        });
+        // A kill while the run was being built removed the claim and
+        // cancelled its token: the run then ends at once, on its own.
+        if let Some(h) = p.handles.lock().await.get_mut(&q.session_id) {
+            if h.id == id {
+                h.task = Some(task);
             }
-            // B4: release the slot before waking the pump. Finished runs must
-            // not pin `max_concurrent` forever.
-            handles_task.lock().await.remove(&sid_task);
+        }
+        Ok(rx)
+    }
+}
+
+/// Whatever ends a run — its own end, or an abort after a kill — its hold
+/// on the session goes: the handle (only its own, never a newer run's), the
+/// files it leased (unless a newer run of the session holds them now), and
+/// a wake-up for the queue.
+struct RunEnd {
+    parts: Pump,
+    sid: String,
+    id: u64,
+}
+
+impl Drop for RunEnd {
+    fn drop(&mut self) {
+        let (p, sid, id) = (self.parts.clone(), std::mem::take(&mut self.sid), self.id);
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        rt.spawn(async move {
+            let newer = {
+                let mut h = p.handles.lock().await;
+                if h.get(&sid).is_some_and(|x| x.id == id) {
+                    h.remove(&sid);
+                }
+                h.contains_key(&sid)
+            };
             // PLAN §15.6: a lane that ended — cleanly or not — stops holding
             // files now. Only a crashed *process* waits for the TTL.
-            parts.leases.unregister(&sid_task).await;
+            if !newer {
+                p.leases.unregister(&sid).await;
+            }
             // Sync wake-up only: awaiting pump() here would close a
             // launch→driver→pump→launch await cycle that Send cannot prove.
-            parts.notify.notify_one();
+            p.notify.notify_one();
         });
-        handles.lock().await.insert(
-            sid,
-            Handle {
-                cancel,
-                _task: task,
-            },
-        );
-        Ok(rx)
     }
 }
 

@@ -123,7 +123,7 @@ fn push_requests(out: &mut String, leases: &LeaseTable) {
     let mut any = false;
     for req in leases.pending() {
         any = true;
-        let held = leases.holder_of(&req.path).map_or_else(
+        let held = leases.meeting(&req.path).first().map_or_else(
             || "free".to_string(),
             |l| format!("{} · {}", l.holder, l.task),
         );

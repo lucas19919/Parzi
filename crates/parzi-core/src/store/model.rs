@@ -112,11 +112,11 @@ pub enum Event {
     Reasoning {
         text: String,
     },
-    RouteTransition {
-        from_provider: String,
-        to_provider: String,
-        reason: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        cooldown_secs: Option<u64>,
+    /// A run failed. The provider's own words, and its class (`auth`,
+    /// `rate_limit`, …) — kept in the thread so a failure outlives the toast.
+    Error {
+        message: String,
+        #[serde(default)]
+        class: String,
     },
 }

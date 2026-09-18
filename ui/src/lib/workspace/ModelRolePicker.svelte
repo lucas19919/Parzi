@@ -1,21 +1,15 @@
-<script lang="ts" context="module">
-  // The roster rules are pure and unit-tested, so they live next door in
-  // `roster.ts`; this block only re-exports them for the wizard's import.
-  export { candidates, defaultRoster } from "./roster";
-</script>
-
 <script lang="ts">
-  import type { ModelRow } from "../api";
+  import type { ProviderStatus } from "../api";
   import ModelPicker from "../ModelPicker.svelte";
 
   export let label = "";
-  export let rows: ModelRow[] = [];
+  export let board: ProviderStatus[] = [];
   export let value = "";
 </script>
 
 <div class="role">
   <div class="lab">{label}</div>
-  <ModelPicker {label} models={rows} bind:value />
+  <ModelPicker {label} {board} bind:value />
 </div>
 
 <style>

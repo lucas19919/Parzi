@@ -26,7 +26,7 @@
   const SECTIONS = [
     { id: "general", label: "General", icon: I.sliders },
     { id: "appearance", label: "Appearance", icon: I.eye },
-    { id: "models", label: "Models", icon: I.box },
+    { id: "providers", label: "Providers", icon: I.box },
     { id: "connectors", label: "Connectors", icon: I.plug },
     { id: "tools", label: "Agent tools", icon: I.tools },
     { id: "skills", label: "Skills", icon: I.spark },
@@ -61,7 +61,7 @@
     {#each visible as s}
       <button class="nav-row" class:on={s.id === activeSection} on:click={() => dispatch("select", { id: s.id })}>
         <Icon d={s.icon} size={13} /><span>{s.label}</span>
-        {#if s.id === "models" && authedCount > 0}
+        {#if s.id === "providers" && authedCount > 0}
           <span class="count-ok">{authedCount}</span>
         {/if}
       </button>

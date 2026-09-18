@@ -10,7 +10,8 @@
 mod critical;
 mod grammar;
 
-pub use critical::{glob_match, is_critical, normalize_path};
+pub use critical::{glob_match, is_critical, normalize_path, path_key, PATHS_IGNORE_CASE};
+pub(crate) use critical::{match_segments, segments};
 pub use grammar::parse;
 pub(crate) use grammar::strip_version;
 

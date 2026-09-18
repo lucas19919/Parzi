@@ -5,23 +5,28 @@
 //! request for a `critical:` path that only a person can answer.
 //!
 //! `project_flow.rs` proves the happy path; this proves §4. Everything runs
-//! through the real tool surface with a scripted provider: no network, no
-//! model, no repo outside the temp dir.
+//! through the real tool surface with a scripted agent that works the way a
+//! vendor's does: its own edits ask Parzi's gate, Parzi's tools go over MCP.
+//! No network, no model, no repo outside the temp dir.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+mod common;
+
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use common::{home, orch_with, script, Agent, Fake};
 use parzi_core::config::ParziConfig;
-use parzi_core::error::Result;
 use parzi_core::project::{self, Project, Roster, Status};
 use parzi_core::store::{Event, SessionStatus, SessionStore};
 use parzi_core::workspace::{self, RepoRef, Workspace};
-use parzi_providers::{AuthStatus, ChatReq, EventRx, Model, Provider, StreamEvent};
+use parzi_providers::{PermissionDecision, TurnEnd};
+use parzi_runtime::inter;
 use parzi_runtime::project_flow;
 use parzi_runtime::roles::Role;
 use parzi_runtime::tools::{Approval, Approver, ToolCallInfo};
 use parzi_runtime::Orchestrator;
+use serde_json::json;
 use tokio::sync::Semaphore;
 
 const WORKSPACE: &str = "acme-e2e";
@@ -53,9 +58,9 @@ fn web_start() -> &'static Semaphore {
     G.get_or_init(|| Semaphore::new(0))
 }
 
-/// `api` waits here while it holds its files and nobody has asked for one —
-/// a real coder would be working; this one would otherwise spin its whole
-/// step budget in a few milliseconds and finish before web ever collided.
+/// `api`'s first turn holds its files here — a real coder would be working —
+/// until the test has seen the request land in its transcript. The request
+/// is then `api`'s next turn.
 fn api_idle() -> &'static Semaphore {
     static G: std::sync::OnceLock<Semaphore> = std::sync::OnceLock::new();
     G.get_or_init(|| Semaphore::new(0))
@@ -68,34 +73,13 @@ fn api_handoff() -> &'static Semaphore {
     G.get_or_init(|| Semaphore::new(0))
 }
 
-/// How many turns `api` spent before the request showed up in its context.
-fn api_polls() -> &'static AtomicUsize {
-    static P: std::sync::OnceLock<AtomicUsize> = std::sync::OnceLock::new();
-    P.get_or_init(|| AtomicUsize::new(0))
-}
+/// `api` answers one request; any later turn only takes note.
+static API_ANSWERED: AtomicBool = AtomicBool::new(false);
 
-// ------------------------------------------------------------------ provider
+// --------------------------------------------------------------------- agent
 
-/// One scripted provider for all three roles. It reads which role and which
-/// task it is out of the system prompt (the role binding puts them there) and
-/// what it has already done out of its own transcript — the same two things a
-/// real model has.
-struct ScriptProvider;
-
-fn transcript(req: &ChatReq) -> String {
-    req.messages
-        .iter()
-        .map(|m| m.content.as_str())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn calls(t: &str, tool: &str) -> usize {
-    t.matches(&format!("[tool:{tool}")).count()
-}
-
-/// Every `req-N` the lane can see. A holder learns the id the same way a model
-/// would: from the inter-session message the hub delivered into its context.
+/// Every `req-N` in `t`. A holder learns the id the same way a model would:
+/// from the inter-session message the hub delivered into its context.
 fn request_ids(t: &str) -> Vec<String> {
     let bytes = t.as_bytes();
     let mut out: Vec<String> = vec![];
@@ -117,16 +101,8 @@ fn request_ids(t: &str) -> Vec<String> {
     out
 }
 
-fn call(id: &str, name: &str, args: serde_json::Value) -> StreamEvent {
-    StreamEvent::ToolCall {
-        id: id.into(),
-        name: name.into(),
-        args,
-    }
-}
-
 fn capsule(task: &str, lane: &str) -> serde_json::Value {
-    serde_json::json!({
+    json!({
         "task": task,
         "capsule": {
             "task": task,
@@ -140,152 +116,131 @@ fn capsule(task: &str, lane: &str) -> serde_json::Value {
     })
 }
 
-#[async_trait::async_trait]
-impl Provider for ScriptProvider {
-    fn id(&self) -> &'static str {
-        "script"
-    }
-    async fn models(&self) -> Result<Vec<Model>> {
-        Ok(vec![])
-    }
-    async fn chat_stream(&self, req: ChatReq) -> Result<EventRx> {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let t = transcript(&req);
-        let sys = req.system.clone();
-
-        if sys.contains("You are the header of project") {
-            let ev = if calls(&t, "project.draft_plan") == 0 {
-                call(
-                    "h1",
+/// One agent for all three roles. It reads which role and which lane it is
+/// out of its standing instructions (the role binding puts them there) and
+/// what to do out of its prompt — the same two things a real agent has.
+fn scripted() -> Arc<Fake> {
+    Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            let sys = a.spec.instructions.clone().unwrap_or_default();
+            if sys.contains("You are the header of project") {
+                a.parzi(
                     "project.draft_plan",
-                    serde_json::json!({
+                    json!({
                         "title": "Checkout, roughly",
                         "body": "- an API for the checkout session\n- a page to run it from",
                     }),
                 )
-            } else {
-                StreamEvent::Text("Saved the rough plan; send it to the orchestrator.".into())
-            };
-            drop(tx.send(Ok(ev)));
-            return Ok(rx);
-        }
-
-        if sys.contains("You are the orchestrator of project") {
-            let ev = if calls(&t, "project.audit") == 0 {
-                call(
-                    "o1",
+                .await;
+                a.say("Saved the rough plan; send it to the orchestrator.");
+            } else if sys.contains("You are the orchestrator of project") {
+                a.parzi(
                     "project.audit",
-                    serde_json::json!({
+                    json!({
                         "plan": PLAN_TEXT,
                         "summary": "Two lanes, one sprint.\n\
                                     api owns the endpoint and the route table.\n\
                                     web owns the page and will have to ask for routes.rs.",
                     }),
                 )
+                .await;
+                a.say("Plan written.");
+            } else if sys.contains("Your lane is `api`") {
+                api_turn(&a).await;
             } else {
-                StreamEvent::Text("Plan written.".into())
-            };
-            drop(tx.send(Ok(ev)));
-            return Ok(rx);
-        }
-
-        let ev = if sys.contains("`TSK-1`") {
-            api_turn(&t).await
-        } else {
-            web_turn(&t).await
-        };
-        drop(tx.send(Ok(ev)));
-        Ok(rx)
-    }
-    fn auth_status(&self) -> AuthStatus {
-        AuthStatus::Ok
-    }
+                web_turn(&a).await;
+            }
+            Ok(TurnEnd::Completed)
+        }),
+    )
 }
 
-/// Lane `api`: check the task out, answer the one request that reaches it,
-/// then hand off — but only once the test says the guarded file has settled.
-async fn api_turn(t: &str) -> StreamEvent {
-    if calls(t, "lease.claim") == 0 {
-        return call(
-            "a1",
+/// Lane `api`: check the task out and hold it; the request that reaches it
+/// is its next turn, and it grants it — then it hands off, but only once the
+/// test says the guarded file has settled.
+async fn api_turn(a: &Agent) {
+    if a.spec.prompt.contains("task TSK-1 ") {
+        a.parzi(
             "lease.claim",
-            serde_json::json!({
+            json!({
                 "task": "TSK-1",
                 "paths": ["app/src/api/**", format!("app/{CONTESTED}"), format!("app/{GUARDED}")],
             }),
-        );
-    }
-    if calls(t, "lease.grant") == 0 {
-        if let Some(id) = request_ids(t).first() {
-            return call("a2", "lease.grant", serde_json::json!({ "request_id": id }));
-        }
-        // Nothing has been asked of it yet: keep holding, do a turn's worth of
-        // work, and let the hub put the request into the next context.
+        )
+        .await;
         drop(api_idle().acquire().await);
-        api_polls().fetch_add(1, Ordering::SeqCst);
-        return call("a-poll", "fs.list", serde_json::json!({ "path": "src" }));
+        a.say("holding the route table");
+        return;
     }
-    if calls(t, "board.handoff") == 0 {
-        drop(api_handoff().acquire().await);
-        return call("a3", "board.handoff", capsule("TSK-1", "api"));
+    let Some(id) = request_ids(&a.spec.prompt).into_iter().next() else {
+        a.say("noted");
+        return;
+    };
+    if API_ANSWERED.swap(true, Ordering::SeqCst) {
+        a.say("noted");
+        return;
     }
-    StreamEvent::Text("api done".into())
+    a.parzi("lease.grant", json!({ "request_id": id })).await;
+    drop(api_handoff().acquire().await);
+    a.parzi("board.handoff", capsule("TSK-1", "api")).await;
+    a.say("api done");
 }
 
 /// Lane `web`: claim, walk into the collision, ask for the file, write it,
 /// then ask for the guarded one — which is not the holder's to give.
-async fn web_turn(t: &str) -> StreamEvent {
-    let writes = calls(t, "fs.write");
-    let requests = calls(t, "lease.request");
-    if calls(t, "lease.claim") == 0 {
-        drop(web_start().acquire().await);
-        return call(
-            "w1",
-            "lease.claim",
-            serde_json::json!({ "task": "TSK-2", "paths": ["app/src/web/**"] }),
-        );
-    }
-    if writes == 0 {
-        // The collision: routes.rs belongs to lane api right now.
-        return call(
-            "w2",
-            "fs.write",
-            serde_json::json!({ "path": CONTESTED, "content": "// web was here\n" }),
-        );
-    }
-    if requests == 0 {
-        return call(
-            "w3",
-            "lease.request",
-            serde_json::json!({
-                "path": CONTESTED,
-                "for_task": "TSK-2",
-                "reason": "the checkout route has to be registered somewhere",
-            }),
-        );
-    }
-    if writes == 1 {
-        return call(
-            "w4",
-            "fs.write",
-            serde_json::json!({ "path": CONTESTED, "content": "// checkout route\n" }),
-        );
-    }
-    if requests == 1 {
-        return call(
-            "w5",
-            "lease.request",
-            serde_json::json!({
-                "path": GUARDED,
-                "for_task": "TSK-2",
-                "reason": "the form needs the payment intent shape",
-            }),
-        );
-    }
-    if calls(t, "board.handoff") == 0 {
-        return call("w6", "board.handoff", capsule("TSK-2", "web"));
-    }
-    StreamEvent::Text("web done".into())
+async fn web_turn(a: &Agent) {
+    drop(web_start().acquire().await);
+    a.parzi(
+        "lease.claim",
+        json!({ "task": "TSK-2", "paths": ["app/src/web/**"] }),
+    )
+    .await;
+    // The collision: routes.rs belongs to lane api right now.
+    write_contested(a, "w-write-1", "// web was here\n").await;
+    a.parzi(
+        "lease.request",
+        json!({
+            "path": CONTESTED,
+            "for_task": "TSK-2",
+            "reason": "the checkout route has to be registered somewhere",
+        }),
+    )
+    .await;
+    write_contested(a, "w-write-2", "// checkout route\n").await;
+    a.parzi(
+        "lease.request",
+        json!({
+            "path": GUARDED,
+            "for_task": "TSK-2",
+            "reason": "the form needs the payment intent shape",
+        }),
+    )
+    .await;
+    a.parzi("board.handoff", capsule("TSK-2", "web")).await;
+    a.say("web done");
+}
+
+/// The agent's own write, the way Claude Code makes one: announce the tool,
+/// ask Parzi's gate with the absolute path, write only when allowed.
+async fn write_contested(a: &Agent, id: &str, body: &str) {
+    let file = a.spec.cwd.join(CONTESTED);
+    let input = json!({ "file_path": file, "content": body });
+    a.own_tool(id, "Write", input.clone(), || async {
+        match a
+            .ask("Write", input.clone(), &[&file.display().to_string()])
+            .await
+        {
+            PermissionDecision::Deny(why) => (false, why),
+            PermissionDecision::Allow | PermissionDecision::AllowAlways => {
+                match std::fs::write(&file, body) {
+                    Ok(()) => (true, format!("wrote {}", file.display())),
+                    Err(e) => (false, e.to_string()),
+                }
+            }
+        }
+    })
+    .await;
 }
 
 // -------------------------------------------------------------------- humans
@@ -305,17 +260,6 @@ impl Approver for Watching {
 }
 
 // --------------------------------------------------------------------- world
-
-fn test_home() -> std::path::PathBuf {
-    static INIT: std::sync::Once = std::sync::Once::new();
-    let dir = std::env::temp_dir().join(format!("parzi-test-e2e-{}", std::process::id()));
-    INIT.call_once(|| {
-        drop(std::fs::remove_dir_all(&dir));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::env::set_var("PARZI_HOME", &dir);
-    });
-    dir
-}
 
 fn git(repo: &std::path::Path, args: &[&str]) {
     let out = std::process::Command::new("git")
@@ -354,8 +298,7 @@ fn tiny_repo(home: &std::path::Path) -> std::path::PathBuf {
 }
 
 fn seed() -> Arc<Orchestrator> {
-    let home = test_home();
-    let repo = tiny_repo(&home);
+    let repo = tiny_repo(&home("e2e"));
     workspace::create(Workspace {
         repos: vec![RepoRef {
             name: "app".into(),
@@ -372,9 +315,9 @@ fn seed() -> Arc<Orchestrator> {
         workspace: WORKSPACE.into(),
         repos: vec!["app".into()],
         roster: Roster {
-            header: "script/head".into(),
-            orchestrator: "script/orch".into(),
-            coder: "script/coder".into(),
+            header: "claude/head".into(),
+            orchestrator: "claude/orch".into(),
+            coder: "claude/coder".into(),
         },
         status: Status::Drafting,
         critical: vec!["app/src/payments/**".to_string()],
@@ -385,12 +328,7 @@ fn seed() -> Arc<Orchestrator> {
 
     let mut cfg = ParziConfig::default();
     cfg.orchestrator.max_concurrent = 4;
-    let store = SessionStore::open().unwrap();
-    Arc::new(
-        Orchestrator::new(cfg, store).with_factory(Arc::new(|_id: &str, _c: &ParziConfig| {
-            Ok(Box::new(ScriptProvider) as Box<dyn Provider>)
-        })),
-    )
+    orch_with(cfg, &[scripted()]).0
 }
 
 /// Poll until `f` says yes, or give up after `secs` — every wait in this test
@@ -493,7 +431,8 @@ async fn a_project_goes_from_a_question_to_two_lanes_trading_one_file() {
     let approving = t.elapsed();
 
     // 5. The collision. `api` checks its files out first; only then is `web`
-    //    allowed to walk into one of them.
+    //    allowed to walk into one of them — and its agent's own write is
+    //    refused at Parzi's gate, naming the holder.
     let t = Instant::now();
     let hub = orch.leases();
     let key = format!("app/{CONTESTED}");
@@ -512,7 +451,7 @@ async fn a_project_goes_from_a_question_to_two_lanes_trading_one_file() {
     until(30, "web to be refused the file api holds", || {
         let (store, run) = (store.clone(), web.session_id.clone());
         async move {
-            result_in(&store, &run, "fs.write", |ok, out| {
+            result_in(&store, &run, "Write", |ok, out| {
                 !ok && out.contains("lane api") && out.contains("TSK-1")
             })
         }
@@ -520,15 +459,19 @@ async fn a_project_goes_from_a_question_to_two_lanes_trading_one_file() {
     .await;
     let colliding = t.elapsed();
 
-    // 6. The ask. `web` requests the file; the request reaches `api` as an
-    //    inter-session message, `api` grants it, and the file is web's.
+    // 6. The ask. `web` requests the file; the request lands in `api`'s
+    //    transcript as an inter-session message, becomes `api`'s next turn,
+    //    `api` grants it, and the file is web's.
     let t = Instant::now();
-    until(30, "the request to reach the holder", || {
-        let (hub, run) = (hub.clone(), api.session_id.clone());
-        async move { !hub.open_requests_for(&run).await.is_empty() }
+    until(30, "the request to reach the holder's transcript", || {
+        let (store, run) = (store.clone(), api.session_id.clone());
+        async move {
+            inter::inbox(&store, &run)
+                .is_ok_and(|m| m.iter().any(|m| m.kind == inter::InterKind::LeaseRequest))
+        }
     })
     .await;
-    api_idle().add_permits(4);
+    api_idle().add_permits(1);
     until(60, "the route table to change hands", || {
         let (store, run) = (store.clone(), web.session_id.clone());
         async move {
@@ -540,7 +483,7 @@ async fn a_project_goes_from_a_question_to_two_lanes_trading_one_file() {
     .await;
     until(30, "web to write the file it was given", || {
         let (store, run) = (store.clone(), web.session_id.clone());
-        async move { result_in(&store, &run, "fs.write", |ok, _| ok) }
+        async move { result_in(&store, &run, "Write", |ok, _| ok) }
     })
     .await;
     assert_eq!(
@@ -580,7 +523,7 @@ async fn a_project_goes_from_a_question_to_two_lanes_trading_one_file() {
         .cloned()
         .collect();
     assert_eq!(transfers.len(), 1, "exactly one card, for the guarded file");
-    assert_eq!(transfers[0].args["critical"], serde_json::json!(true));
+    assert_eq!(transfers[0].args["critical"], json!(true));
     assert!(
         transfers[0].args["path"]
             .as_str()
@@ -589,7 +532,7 @@ async fn a_project_goes_from_a_question_to_two_lanes_trading_one_file() {
         "the card names the file: {:?}",
         transfers[0].args
     );
-    assert_eq!(transfers[0].args["from_lane"], serde_json::json!("api"));
+    assert_eq!(transfers[0].args["from_lane"], json!("api"));
     let escalating = t.elapsed();
 
     // 8. Both lanes end with a capsule; `api` only lets go once the guarded
@@ -658,8 +601,7 @@ async fn a_project_goes_from_a_question_to_two_lanes_trading_one_file() {
          grant      {granting:>10.1?}\n  \
          critical   {escalating:>10.1?}\n  \
          handoffs   {finishing:>10.1?}\n  \
-         total      {:>10.1?}   (api polled {} turns)\n",
+         total      {:>10.1?}\n",
         t0.elapsed(),
-        api_polls().load(Ordering::SeqCst),
     );
 }

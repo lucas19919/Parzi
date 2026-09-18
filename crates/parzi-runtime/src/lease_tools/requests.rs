@@ -15,7 +15,7 @@ use crate::inter::{self, InterKind, InterSessionMessage};
 use crate::tools::{Approval, ToolCallInfo};
 
 use super::hub::LeaseHub;
-use super::naming::{same_holder, tool_err};
+use super::naming::{held_by, same_holder, tool_err};
 
 /// What a `lease.request` ended as.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,13 +45,32 @@ impl LeaseHub {
             .await
             .ok_or_else(|| tool_err("this run has no lease identity"))?;
         let path = normalize_path(path);
-        let current = self
-            .holder_of_path(&path)
-            .await
-            .ok_or_else(|| tool_err(&format!("{path} is free — claim it with lease.claim")))?;
-        if same_holder(&current.holder, &holder) {
-            return Err(tool_err(&format!("you already hold {path}")));
-        }
+        let meeting = self.meeting_path(&path).await;
+        let (mine, theirs): (Vec<Lease>, Vec<Lease>) = meeting
+            .into_iter()
+            .partition(|l| same_holder(&l.holder, &holder));
+        // A grant moves the path out of every lease it meets, so it can only
+        // be asked of one lane: one holder, one answer.
+        let current = match theirs.first() {
+            Some(first)
+                if theirs
+                    .iter()
+                    .any(|l| !same_holder(&l.holder, &first.holder)) =>
+            {
+                let names: Vec<String> = theirs.iter().map(held_by).collect();
+                return Err(tool_err(&format!(
+                    "{path} spans files held by {} — ask each lane for its own part",
+                    names.join(" and ")
+                )));
+            }
+            Some(first) => first.clone(),
+            None if mine.is_empty() => {
+                return Err(tool_err(&format!(
+                    "{path} is free — claim it with lease.claim"
+                )))
+            }
+            None => return Err(tool_err(&format!("you already hold {path}"))),
+        };
         // Bound first: the table lock must not be held across the journal
         // write below.
         let convene = self.table.lock().await.should_convene(&path, for_task);
