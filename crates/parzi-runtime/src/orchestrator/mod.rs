@@ -37,23 +37,15 @@ use queue::{clear_queued, Pump, QueuedRun};
 /// How many events the host bus keeps for a slow subscriber before it lags.
 const BUS_CAPACITY: usize = 4_096;
 
-/// Effort pill → output budget. Single place both CLI and GUI derive from.
-/// Legacy `"med"` still resolves to medium.
-pub fn effort_tokens(effort: &str) -> u32 {
-    match effort {
-        "low" => 4_096,
-        "medium" | "med" => 16_384,
-        "high" => 65_536,
-        "extra" => 131_072,
-        "ultra" => 262_144,
-        _ => 16_384,
-    }
-}
-
+/// The effort a run asks its agent for: Parzi's pill names, or a vendor's
+/// own (`minimal`, `xhigh`, `max`) as its model list reports them. The
+/// driver translates the pill; anything unknown is medium. Legacy `"med"`
+/// is medium.
 pub fn normalize_effort(effort: &str) -> String {
-    match effort {
-        "low" | "medium" | "high" | "extra" | "ultra" => effort.to_string(),
-        "med" => "medium".to_string(),
+    match effort.trim() {
+        e @ ("minimal" | "low" | "medium" | "high" | "extra" | "ultra" | "xhigh" | "max") => {
+            e.to_string()
+        }
         _ => "medium".to_string(),
     }
 }

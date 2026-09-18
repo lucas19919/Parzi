@@ -282,6 +282,15 @@ fn thread_id(v: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Parzi's effort pill in Codex's words: its top two pills are Codex's top
+/// one. Codex's own words pass through.
+fn effort(e: &str) -> &str {
+    match e {
+        "extra" | "ultra" | "max" => "xhigh",
+        other => other,
+    }
+}
+
 /// Open (or resume) the thread and run one turn on it. Split from
 /// `run_turn` so the wire is testable without a real `codex`.
 async fn drive(
@@ -348,7 +357,7 @@ async fn drive(
         turn["model"] = json!(m);
     }
     if let Some(e) = spec.effort.as_deref().filter(|e| !e.is_empty()) {
-        turn["effort"] = json!(e);
+        turn["effort"] = json!(effort(e));
     }
     let started = peer
         .request_within("turn/start", turn, limit)
@@ -728,6 +737,13 @@ fn turn_error(e: &Value) -> ProviderError {
 mod tests {
     use super::*;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    #[test]
+    fn the_effort_pill_speaks_codex() {
+        assert_eq!(effort("ultra"), "xhigh");
+        assert_eq!(effort("extra"), "xhigh");
+        assert_eq!(effort("minimal"), "minimal", "Codex's own word passes through");
+    }
 
     struct Gate(PermissionDecision, std::sync::Mutex<Vec<PermissionRequest>>);
 

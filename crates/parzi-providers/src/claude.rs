@@ -263,6 +263,15 @@ fn permission_mode(access: Access) -> &'static str {
     }
 }
 
+/// Parzi's effort pill in Claude Code's words; its own words pass through.
+fn effort(e: &str) -> &str {
+    match e {
+        "extra" => "xhigh",
+        "ultra" => "max",
+        other => other,
+    }
+}
+
 fn turn_args(spec: &TurnSpec, files: &TurnFiles) -> Vec<String> {
     let mut a: Vec<String> = [
         "-p",
@@ -286,7 +295,7 @@ fn turn_args(spec: &TurnSpec, files: &TurnFiles) -> Vec<String> {
     }
     if let Some(e) = spec.effort.as_deref().filter(|e| !e.is_empty()) {
         a.push("--effort".into());
-        a.push(e.to_string());
+        a.push(effort(e).to_string());
     }
     match spec.resume.as_ref().and_then(resume_id) {
         Some(id) => a.push(format!("--resume={id}")),
@@ -461,6 +470,10 @@ struct TurnState {
     counted_messages: HashSet<String>,
     last_context: Option<u64>,
     interrupting: bool,
+    /// Signed in with a plan, not a key (`apiKeySource: "none"`): the
+    /// CLI's dollar figure is what the tokens would cost on the API, and
+    /// nobody pays it.
+    on_plan: bool,
 }
 
 /// Run one turn over an already-started CLI's stdio. Split from
@@ -576,6 +589,7 @@ async fn handle(
         }
         "system" => match v.get("subtype").and_then(Value::as_str).unwrap_or("") {
             "init" => {
+                st.on_plan = v.get("apiKeySource").and_then(Value::as_str) == Some("none");
                 if let Some(id) = v.get("session_id").and_then(Value::as_str) {
                     let _ = events.send(ProviderEvent::Session {
                         resume: json!({"session_id": id}),
@@ -775,7 +789,7 @@ fn usage_window(info: &Value) -> Option<UsageWindow> {
 }
 
 fn finish(v: &Value, st: &TurnState, events: &EventTx) -> Result<TurnEnd, ProviderError> {
-    if let Some(cost) = v.get("total_cost_usd").and_then(Value::as_f64) {
+    if let Some(cost) = v.get("total_cost_usd").and_then(Value::as_f64).filter(|_| !st.on_plan) {
         let _ = events.send(ProviderEvent::Usage {
             input: 0,
             output: 0,
@@ -934,8 +948,41 @@ mod tests {
         assert!(got.iter().any(|e| matches!(e, ProviderEvent::ToolFinished { id, ok: false, .. } if id == "t2")));
         let usage: Vec<_> = got.iter().filter(|e| matches!(e, ProviderEvent::Usage { cost_usd: None, .. })).collect();
         assert_eq!(usage.len(), 1, "one API call counted once");
+        assert!(
+            got.contains(&ProviderEvent::Usage { input: 0, output: 0, cost_usd: Some(0.01) }),
+            "a turn on a key costs what the CLI says"
+        );
         assert!(got.iter().any(|e| matches!(e, ProviderEvent::Limits(w) if w[0].label == "Session" && (w[0].used_percent - 37.0).abs() < 0.01)));
         assert!(got.contains(&ProviderEvent::Context { used: 15, limit: 200_000 }));
+    }
+
+    /// On a plan the CLI still prints what the turn would have cost on the
+    /// API. Nobody pays that, so no cost is reported.
+    #[tokio::test]
+    async fn a_turn_on_a_plan_costs_nothing() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let script = vec![
+            json!({"type": "system", "subtype": "init", "session_id": "s", "apiKeySource": "none"}),
+            json!({"type": "result", "subtype": "success", "is_error": false, "total_cost_usd": 0.0128}),
+        ];
+        let cli = tokio::spawn(fake_cli(theirs, script));
+        let (r, w) = tokio::io::split(ours);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
+        drive(r, w, &spec(), gate, &tx, &CancellationToken::new()).await.unwrap();
+        cli.await.unwrap();
+        drop(tx);
+        while let Some(e) = rx.recv().await {
+            assert!(!matches!(e, ProviderEvent::Usage { cost_usd: Some(_), .. }), "{e:?}");
+        }
+    }
+
+    #[test]
+    fn the_effort_pill_speaks_claude() {
+        assert_eq!(effort("extra"), "xhigh");
+        assert_eq!(effort("ultra"), "max");
+        assert_eq!(effort("high"), "high");
+        assert_eq!(effort("max"), "max", "Claude's own word passes through");
     }
 
     #[tokio::test]
