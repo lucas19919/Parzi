@@ -161,10 +161,14 @@ impl StatusBoard {
         }
         while let Some(done) = set.join_next().await {
             if let Ok(mut s) = done {
-                // Keep plan windows a run saw when the probe itself has none.
+                // Keep plan windows a run saw when the probe itself has none,
+                // as long as the vendor's own reset time says they still
+                // hold: one that has reset, or never said when it would, must
+                // not keep a provider used up for good.
                 if s.usage.is_empty() {
                     if let Some(old) = self.get(&s.provider) {
-                        s.usage = old.usage;
+                        let now = parzi_providers::now_secs();
+                        s.usage = old.usage.into_iter().filter(|w| w.current(now)).collect();
                     }
                 }
                 self.put(s);
@@ -193,7 +197,7 @@ impl StatusBoard {
             }
             let Some(s) = self.get(id) else { continue };
             let usable = matches!(s.state, State::Ready | State::Unchecked);
-            let spent = s.usage.iter().any(|w| w.used_percent >= 100.0);
+            let spent = s.usage.iter().any(|w| w.spent(now));
             if usable && !spent {
                 return Some(id.to_string());
             }
@@ -220,11 +224,14 @@ mod tests {
         }
         async fn status(&self) -> ProviderStatus {
             let mut s = ProviderStatus::new(self.0, self.1, "");
-            s.usage = vec![UsageWindow {
-                label: "Session".into(),
-                used_percent: self.2,
-                resets_at: None,
-            }];
+            // Below zero: a vendor whose check reports no plan windows.
+            if self.2 >= 0.0 {
+                s.usage = vec![UsageWindow {
+                    label: "Session".into(),
+                    used_percent: self.2,
+                    resets_at: None,
+                }];
+            }
             s
         }
         async fn run_turn(
@@ -304,5 +311,51 @@ mod tests {
         let s = board.get("opencode").unwrap();
         assert_eq!(s.usage.len(), 2);
         assert!((s.usage[0].used_percent - 55.0).abs() < 1e-9);
+    }
+
+    /// A window a run reported as used up blocks Smart Auto only until the
+    /// vendor's reset time; one that never said when it resets lasts until
+    /// the next check.
+    #[tokio::test]
+    async fn a_used_up_window_stops_counting_once_it_has_reset() {
+        let board = StatusBoard::in_memory();
+        let quiet: ProviderSource = Arc::new(
+            |id: &str, _cfg: &ParziConfig| -> Option<Arc<dyn Provider>> {
+                Some(Arc::new(Fixed(
+                    parzi_providers::canonical_id(id)?,
+                    State::Ready,
+                    -1.0,
+                )))
+            },
+        );
+        let mut cfg = ParziConfig::default();
+        cfg.routing.order = vec!["claude".into()];
+        board.refresh(&cfg, &["claude".into()], &quiet).await;
+        let now = parzi_providers::now_secs();
+        let spent = |resets_at| UsageWindow {
+            label: "Session".into(),
+            used_percent: 100.0,
+            resets_at,
+        };
+        board.update_usage("claude", &[spent(Some(now + 3600))]);
+        assert_eq!(
+            board.pick(&cfg, &quiet).await,
+            None,
+            "used up until it resets"
+        );
+        board.update_usage("claude", &[spent(Some(now - 1))]);
+        assert_eq!(
+            board.pick(&cfg, &quiet).await.as_deref(),
+            Some("claude"),
+            "past its reset, the window is open again"
+        );
+        board.update_usage("claude", &[spent(None)]);
+        assert_eq!(board.pick(&cfg, &quiet).await, None);
+        board.refresh(&cfg, &["claude".into()], &quiet).await;
+        assert!(
+            board.get("claude").unwrap().usage.is_empty(),
+            "a check that reports nothing does not carry a window with no reset time"
+        );
+        assert_eq!(board.pick(&cfg, &quiet).await.as_deref(), Some("claude"));
     }
 }

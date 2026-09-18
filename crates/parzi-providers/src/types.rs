@@ -100,6 +100,21 @@ pub struct UsageWindow {
     pub resets_at: Option<u64>,
 }
 
+impl UsageWindow {
+    /// Used up at `now`: at 100% and not yet past the reset the vendor named.
+    #[must_use]
+    pub fn spent(&self, now: u64) -> bool {
+        self.used_percent >= 100.0 && self.resets_at.is_none_or(|t| t > now)
+    }
+
+    /// Still true at `now` by the vendor's own clock. A window with no reset
+    /// time is only as good as the check that reported it.
+    #[must_use]
+    pub fn current(&self, now: u64) -> bool {
+        self.resets_at.is_some_and(|t| t > now)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelInfo {
     /// What the vendor program takes as its model argument.
