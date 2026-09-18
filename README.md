@@ -1,7 +1,9 @@
 # Parzi — lean agent harness (Rust + Tauri)
 
-Sidebar, stage, glass omni-bar. Projects > lanes > threads. Five providers, one bar:
-Claude, Codex, Antigravity, OpenCode, Grok — subscriptions first, keys only when you say so.
+Sidebar, stage, glass omni-bar. Projects > lanes > threads. Six agents, one bar:
+Claude Code, Codex, OpenCode, Grok, Antigravity and Cursor. Parzi drives each
+vendor's own agent on your own sign-in; Parzi's tools reach the agent over MCP,
+and every action the agent takes passes Parzi's approval gate.
 
 - `PLAN.md` — frozen architecture
 - `LOOP.md` — how it gets built (gates, phases)
@@ -36,6 +38,31 @@ cargo build -p parzi-cli
 
 GUI: `cd ui; npm install; npm run build`, then `cargo tauri dev` in `src-tauri`
 (requires `cargo install tauri-cli --locked`).
+
+## Agents
+
+Install an agent and sign in with its own program; Parzi picks it up. It
+never stores keys or tokens.
+
+| Agent | Program | Parzi talks to it over |
+| --- | --- | --- |
+| Claude Code | `claude` | the Agent SDK's stdio control protocol |
+| Codex | `codex` | `codex app-server` (JSON-RPC) |
+| OpenCode | `opencode` | ACP (`opencode acp`) |
+| Grok | `grok` | ACP (`grok agent stdio`) |
+| Antigravity | `agy_acp_server` (T3 Code installs it) | ACP |
+| Cursor | `cursor-agent` | ACP (`cursor-agent acp`) |
+
+`parzi providers` (or Settings › Providers) asks each program where it
+stands: installed, signed in, plan usage, models and their effort levels. It
+spends no quota. Smart Auto starts a new thread on the first ready agent in
+your order; a started thread stays with its agent. A turn that fails says so
+in the thread, in the vendor's own words.
+
+An agent may read anywhere, but a write outside the thread's folder, or to a
+file it does not name, is never approved on your behalf: you are asked, and a
+run with nobody to ask is refused. The desktop app logs to
+`~/.parzi/logs/parzi-<date>.log`.
 
 Default background: none (a solid stage). Drop any image into
 `~/.parzi/backgrounds/` and pick it under Settings › Appearance.
@@ -122,7 +149,7 @@ A workspace can set the composer's starting pick for new drafts in
 
 ```toml
 [defaults]
-model = "claude/opus"   # provider/family, or "auto"
+model = "claude/opus"   # agent/model, or "auto"
 effort = "high"          # low | medium | high | extra | ultra
 ```
 
