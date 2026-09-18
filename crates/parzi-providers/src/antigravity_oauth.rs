@@ -17,7 +17,7 @@ pub const SCOPES: &str = "https://www.googleapis.com/auth/cloud-platform \
     https://www.googleapis.com/auth/experimentsandconfigs";
 pub const REDIRECT_URI: &str = "http://localhost:51121/oauth-callback";
 /// MUST track Google's supported Antigravity versions or requests get rejected.
-pub const AG_VERSION: &str = "1.15.8";
+pub const AG_VERSION: &str = "2.14.0";
 const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 
 pub struct Tokens {

@@ -249,3 +249,133 @@ async fn strict_mode_single_slot_halts_on_429() {
         let _ = std::fs::remove_dir_all(dir.join(&meta.id));
     }
 }
+
+/// Provider that fails on authentication (403 forbidden / license rejected).
+struct AuthFailingProvider;
+
+#[async_trait::async_trait]
+impl Provider for AuthFailingProvider {
+    fn id(&self) -> &'static str {
+        "antigravity"
+    }
+    async fn models(&self) -> Result<Vec<Model>> {
+        Ok(vec![])
+    }
+    async fn chat_stream(&self, _req: ChatReq) -> Result<EventRx> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let _ = tx.send(Err(ParziError::Provider(
+            "antigravity".into(),
+            "auth rejected after refresh (403): You do not have a valid license of this product."
+                .into(),
+        )));
+        Ok(rx)
+    }
+    fn auth_status(&self) -> AuthStatus {
+        AuthStatus::Ok
+    }
+}
+
+#[tokio::test]
+async fn auth_failure_hops_with_route_transition_when_fallback_available() {
+    test_home();
+    let store = SessionStore::open().unwrap();
+    let meta = store.create("auth-hop", "t", "", "auto").unwrap();
+    let sid = meta.id.clone();
+
+    let tools = Arc::new(ToolExecutor {
+        cwd: String::new(),
+        mcp: Arc::new(McpManager::new(std::collections::HashMap::new(), 60)),
+        allowed: vec![],
+        leases: None,
+    });
+    let slots = vec![
+        ProviderSlot {
+            provider_id: "antigravity".into(),
+            provider: Box::new(AuthFailingProvider),
+            model_id: "gemini-3.8-flash-medium".into(),
+            price_in: 0.0,
+            price_out: 0.0,
+            reason: "subscription",
+        },
+        ProviderSlot {
+            provider_id: "good".into(),
+            provider: Box::new(GoodProvider { id: "good" }),
+            model_id: "good-model".into(),
+            price_in: 0.0,
+            price_out: 0.0,
+            reason: "fallback",
+        },
+    ];
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let run = AgentRun::new(
+        sid.clone(),
+        slots,
+        vec![],
+        "test".into(),
+        parzi_runtime::tools::ApprovalMode::Auto,
+        false,
+        4,
+        4096,
+        vec![],
+        "low".into(),
+        store.clone(),
+        tools,
+        Arc::new(DenyAll),
+        tx,
+        tokio_util::sync::CancellationToken::new(),
+    );
+
+    let run_handle = tokio::spawn(async move {
+        run.run("hello").await.unwrap();
+    });
+    let mut hop: Option<(String, String, String)> = None;
+    let mut done = false;
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                RunEvent::RouteTransition {
+                    from_provider,
+                    to_provider,
+                    reason,
+                    ..
+                } => {
+                    hop = Some((from_provider, to_provider, reason));
+                }
+                RunEvent::Done { .. } => {
+                    done = true;
+                    break;
+                }
+                RunEvent::Error(e) => {
+                    panic!("run should hop on auth failure when fallback exists, not die: {e}")
+                }
+                _ => {}
+            }
+        }
+    })
+    .await;
+    let _ = run_handle.await;
+    assert!(outcome.is_ok(), "run did not finish within 60s");
+    assert!(done, "expected Done after failover hop");
+
+    let (from, to, reason) = hop.expect("expected a RouteTransition live event");
+    assert_eq!(from, "antigravity");
+    assert_eq!(to, "good");
+    assert!(
+        reason.contains("auth rejected"),
+        "unexpected reason: {reason}"
+    );
+
+    let events = store.events(&meta.id).unwrap();
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::RouteTransition { from_provider, to_provider, .. }
+                if from_provider == "antigravity" && to_provider == "good"
+        )),
+        "transcript missing RouteTransition for auth failure"
+    );
+
+    if let Ok(dir) = parzi_core::paths::sessions_dir() {
+        let _ = std::fs::remove_dir_all(dir.join(&meta.id));
+    }
+}

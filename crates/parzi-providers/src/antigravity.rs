@@ -22,10 +22,27 @@ use crate::types::{
     StreamEvent,
 };
 
+pub fn is_valid_gcp_project(id: &str) -> bool {
+    let len = id.len();
+    if !(6..=30).contains(&len) {
+        return false;
+    }
+    let bytes = id.as_bytes();
+    if !bytes[0].is_ascii_lowercase() {
+        return false;
+    }
+    if bytes[len - 1] == b'-' {
+        return false;
+    }
+    bytes
+        .iter()
+        .all(|&b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
 const HOSTS: &[&str] = &[
-    "https://daily-cloudcode-pa.sandbox.googleapis.com",
-    "https://autopush-cloudcode-pa.sandbox.googleapis.com",
     "https://cloudcode-pa.googleapis.com",
+    "https://autopush-cloudcode-pa.sandbox.googleapis.com",
+    "https://daily-cloudcode-pa.sandbox.googleapis.com",
 ];
 
 pub struct Antigravity {
@@ -40,7 +57,9 @@ impl Antigravity {
             keyring_get("antigravity").or_else(|| env_key("ANTIGRAVITY_ACCESS_TOKEN"));
         let refresh_token =
             keyring_get("antigravity-refresh").or_else(|| env_key("ANTIGRAVITY_REFRESH_TOKEN"));
-        let project_id = env_key("ANTIGRAVITY_PROJECT_ID").or_else(|| first_account_project());
+        let project_id = env_key("ANTIGRAVITY_PROJECT_ID")
+            .filter(|p| is_valid_gcp_project(p))
+            .or_else(|| first_account_project());
         Self {
             access_token,
             refresh_token,
@@ -296,7 +315,17 @@ impl Provider for Antigravity {
                                     Ok(resp) => stream_response(resp, tx.clone()).await,
                                     Err(fail) => {
                                         let msg = if fail.code == 401 || fail.code == 403 {
-                                            format!("auth rejected after refresh ({})", fail.code)
+                                            if fail.detail.is_empty() {
+                                                format!(
+                                                    "auth rejected after refresh ({})",
+                                                    fail.code
+                                                )
+                                            } else {
+                                                format!(
+                                                    "auth rejected after refresh ({}): {}",
+                                                    fail.code, fail.detail
+                                                )
+                                            }
                                         } else {
                                             fail_message(&fail)
                                         };
@@ -339,7 +368,13 @@ impl Provider for Antigravity {
     }
 
     fn account_label(&self) -> Option<String> {
-        self.project_id.clone().map(|p| format!("Google ({p})"))
+        if let Some(ref p) = self.project_id {
+            Some(format!("Google ({p})"))
+        } else if self.access_token.is_some() || self.refresh_token.is_some() {
+            Some("Google".into())
+        } else {
+            None
+        }
     }
 
     fn auth_status(&self) -> AuthStatus {
@@ -406,13 +441,6 @@ async fn post_once(
             Ok(resp) if resp.status().is_success() => return Ok(resp),
             Ok(resp) => {
                 let code = resp.status().as_u16();
-                if code == 401 || code == 403 {
-                    return Err(PostFail {
-                        code,
-                        retry_after: None,
-                        detail: String::new(),
-                    });
-                }
                 let retry_after = resp
                     .headers()
                     .get(reqwest::header::RETRY_AFTER)
@@ -423,10 +451,17 @@ async fn post_once(
                     .await
                     .unwrap_or_default()
                     .chars()
-                    .take(200)
+                    .take(300)
                     .collect::<String>()
                     .trim()
                     .to_string();
+                if code == 401 || code == 403 {
+                    return Err(PostFail {
+                        code,
+                        retry_after,
+                        detail,
+                    });
+                }
                 // A real status is always more informative than a transport error.
                 last = Some(PostFail {
                     code,
@@ -579,5 +614,28 @@ mod tests {
         let msg = fail_message(&fail(0, None, "connection refused"));
         assert!(msg.contains("endpoints unreachable"), "{msg}");
         assert!(!is_retriable(&msg));
+    }
+
+    #[test]
+    fn gcp_project_id_validation() {
+        use super::is_valid_gcp_project;
+        assert!(is_valid_gcp_project("rising-fact-p41fc"));
+        assert!(is_valid_gcp_project("my-project-123"));
+        assert!(is_valid_gcp_project("google-cloud-1"));
+        // IDE session UUIDs must be rejected:
+        assert!(!is_valid_gcp_project(
+            "631b5b70-d7c9-4cb5-90fa-0cc4c3a29ca5"
+        ));
+        assert!(!is_valid_gcp_project(
+            "783307f2-fdae-41da-a1f0-491d433f4c3c"
+        ));
+        // Too short / too long:
+        assert!(!is_valid_gcp_project("abc"));
+        assert!(!is_valid_gcp_project(
+            "a-very-long-project-id-exceeding-thirty-chars"
+        ));
+        // Starts with digit or ends with hyphen:
+        assert!(!is_valid_gcp_project("1project"));
+        assert!(!is_valid_gcp_project("project-"));
     }
 }

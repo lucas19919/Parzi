@@ -440,9 +440,10 @@ impl AgentRun {
         self.store
             .set_status(&self.session_id, SessionStatus::Active)?;
         for (i, slot) in self.slots.iter().enumerate() {
+            let has_next = i + 1 < self.slots.len();
             // If circuit breaker is set and this provider is in cooldown, skip it if there's a subsequent slot
             if let Some(ref cb) = self.circuit_breaker {
-                if !cb.is_available(&slot.provider_id) && i + 1 < self.slots.len() {
+                if !cb.is_available(&slot.provider_id) && has_next {
                     let rem = cb.cooldown_remaining(&slot.provider_id).unwrap_or(0);
                     let reason = format!("cooldown active ({}s left)", rem);
                     let next = &self.slots[i + 1];
@@ -465,19 +466,24 @@ impl AgentRun {
                 }
             }
 
-            match self.run_attempt(slot).await {
+            match self.run_attempt(slot, has_next).await {
                 Ok(RunEnd::Done) => {
                     if let Some(ref cb) = self.circuit_breaker {
                         cb.record_success(&slot.provider_id);
                     }
                     return Ok(());
                 }
-                Ok(RunEnd::Retryable(reason)) => {
-                    let cd = parzi_providers::router::parse_cooldown_secs(&reason);
+                Ok(RunEnd::Retryable(err_msg)) => {
+                    let cd = parzi_providers::router::parse_cooldown_secs(&err_msg);
+                    let reason = retry_reason(&err_msg);
                     if let Some(ref cb) = self.circuit_breaker {
-                        cb.record_rate_limit(&slot.provider_id, cd.unwrap_or(60), &reason);
+                        if let Some(secs) = cd {
+                            cb.record_rate_limit(&slot.provider_id, secs, &err_msg);
+                        } else {
+                            cb.record_failure(&slot.provider_id, &err_msg);
+                        }
                     }
-                    if i + 1 < self.slots.len() {
+                    if has_next {
                         let next = &self.slots[i + 1];
                         let msg = format!(
                             "Switched to {}/{} ({})",
@@ -500,14 +506,36 @@ impl AgentRun {
                         });
                         self.emit(RunEvent::Notice { text: msg });
                     } else {
-                        self.emit(RunEvent::Error(reason.clone()));
+                        self.emit(RunEvent::Error(err_msg.clone()));
                         self.finish(SessionStatus::Idle).await;
-                        return Err(ParziError::Provider(slot.provider.id().into(), reason));
+                        return Err(ParziError::Provider(slot.provider.id().into(), err_msg));
                     }
                 }
                 Err(e) => {
                     if let Some(ref cb) = self.circuit_breaker {
                         cb.record_failure(&slot.provider_id, &e.to_string());
+                    }
+                    if has_next {
+                        let next = &self.slots[i + 1];
+                        let msg =
+                            format!("Switched to {}/{} ({})", next.provider_id, next.model_id, e);
+                        let _ = self.store.append(
+                            &self.session_id,
+                            &Event::RouteTransition {
+                                from_provider: slot.provider_id.clone(),
+                                to_provider: next.provider_id.clone(),
+                                reason: e.to_string(),
+                                cooldown_secs: None,
+                            },
+                        );
+                        self.emit(RunEvent::RouteTransition {
+                            from_provider: slot.provider_id.clone(),
+                            to_provider: next.provider_id.clone(),
+                            reason: e.to_string(),
+                            cooldown_secs: None,
+                        });
+                        self.emit(RunEvent::Notice { text: msg });
+                        continue;
                     }
                     return Err(e);
                 }
@@ -517,8 +545,8 @@ impl AgentRun {
     }
 
     /// One provider attempt. Done = run over (any outcome). Retryable = the
-    /// router may try the next slot (rate limits / overloads only).
-    async fn run_attempt(&self, slot: &ProviderSlot) -> Result<RunEnd> {
+    /// router may try the next slot (rate limits / overloads / auth failovers).
+    async fn run_attempt(&self, slot: &ProviderSlot, has_next: bool) -> Result<RunEnd> {
         if matches!(slot.provider.auth_status(), AuthStatus::Missing(_)) {
             return Ok(RunEnd::Retryable("provider not authenticated".into()));
         }
@@ -590,8 +618,8 @@ impl AgentRun {
                 Ok(rx) => rx,
                 Err(e) => {
                     let msg = e.to_string();
-                    if parzi_providers::router::is_retriable(&msg) {
-                        return Ok(RunEnd::Retryable(retry_reason(&msg)));
+                    if parzi_providers::router::is_retriable(&msg) || has_next {
+                        return Ok(RunEnd::Retryable(msg));
                     }
                     self.emit(RunEvent::Error(msg.clone()));
                     self.finish(SessionStatus::Idle).await;
@@ -656,7 +684,9 @@ impl AgentRun {
                     }
                     Err(e) => {
                         let msg = e.to_string();
-                        if parzi_providers::router::is_retriable(&msg) {
+                        if parzi_providers::router::is_retriable(&msg)
+                            || (has_next && text.trim().is_empty())
+                        {
                             if !text.trim().is_empty() {
                                 let _ = self.store.append(
                                     &self.session_id,
@@ -666,7 +696,7 @@ impl AgentRun {
                                     },
                                 );
                             }
-                            return Ok(RunEnd::Retryable(retry_reason(&msg)));
+                            return Ok(RunEnd::Retryable(msg));
                         }
                         self.emit(RunEvent::Error(msg));
                         self.finish(SessionStatus::Idle).await;
@@ -1336,6 +1366,16 @@ fn retry_reason(err: &str) -> String {
         || e.contains("capacity")
     {
         "backend overloaded".to_string()
+    } else if e.contains("401")
+        || e.contains("403")
+        || e.contains("auth")
+        || e.contains("license")
+        || e.contains("token")
+        || e.contains("permission")
+    {
+        "auth rejected".to_string()
+    } else if e.contains("quota") || e.contains("usage limit") || e.contains("monthly limit") {
+        "quota exceeded".to_string()
     } else {
         "provider error".to_string()
     }
