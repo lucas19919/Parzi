@@ -75,16 +75,9 @@ pub(crate) fn session_md(meta: &SessionMeta, events: &[Event]) -> String {
             Event::Reasoning { text } => {
                 md.push_str(&format!("> reasoning:\n>\n> {text}\n\n"));
             }
-            Event::RouteTransition {
-                from_provider,
-                to_provider,
-                reason,
-                cooldown_secs,
-            } => {
-                let cd = cooldown_secs.map_or(String::new(), |s| format!(" (cooldown: {s}s)"));
-                md.push_str(&format!(
-                    "> route: {from_provider} -> {to_provider} ({reason}{cd})\n\n"
-                ));
+            Event::Error { message, class } => {
+                let class = if class.is_empty() { "error" } else { class.as_str() };
+                md.push_str(&format!("> **{class}:** {message}\n\n"));
             }
         }
     }

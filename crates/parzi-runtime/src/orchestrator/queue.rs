@@ -12,14 +12,15 @@ use parzi_core::store::{Event, SessionMeta, SessionStatus, SessionStore};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex, Notify};
 
-use crate::circuit_breaker::CircuitBreaker;
 use crate::handler::{RunEvent, RunEventBus};
 use crate::lease_tools::LeaseHub;
 use crate::mcp::McpManager;
+use crate::mcp_host::McpHost;
+use crate::status::{ProviderSource, StatusBoard};
 use crate::roles::RoleBinding;
 use crate::tools::Approver;
 
-use super::{Handle, Orchestrator, ProviderFactory};
+use super::{Handle, Orchestrator};
 
 /// The note a run that hit its budget leaves behind (R-4).
 pub const BUDGET_NOTE: &str = "budget_exceeded";
@@ -40,6 +41,18 @@ struct RunSidecar {
     /// The project role this session runs as (§1.2), if it is one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     role: Option<RoleBinding>,
+    /// The vendor conversation this thread continues.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<VendorSession>,
+}
+
+/// A thread's conversation on the vendor's side: which provider holds it,
+/// and the handle that provider gave for resuming it. A thread that has one
+/// stays on that provider.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VendorSession {
+    pub provider: String,
+    pub resume: serde_json::Value,
 }
 
 impl RunSidecar {
@@ -48,6 +61,7 @@ impl RunSidecar {
             && self.project.is_none()
             && self.note.is_none()
             && self.role.is_none()
+            && self.session.is_none()
     }
 }
 
@@ -161,6 +175,23 @@ pub fn run_role(session_id: &str) -> Option<RoleBinding> {
     load_sidecar(session_id).role
 }
 
+/// Record the vendor conversation a thread continues. `None` forgets it
+/// (a fork starts its own).
+pub fn set_run_session(session_id: &str, session: Option<VendorSession>) {
+    let mut sidecar = load_sidecar(session_id);
+    if sidecar.session == session {
+        return;
+    }
+    sidecar.session = session;
+    save_sidecar(session_id, &sidecar);
+}
+
+/// The vendor conversation a thread continues, if it has one.
+#[must_use]
+pub fn run_session(session_id: &str) -> Option<VendorSession> {
+    load_sidecar(session_id).session
+}
+
 /// A run waiting for a slot. Pumped headless (transcript persists, no live
 /// channel) with AutoApprover; lane Ask mode still logs denials visibly.
 pub(super) struct QueuedRun {
@@ -227,11 +258,12 @@ pub(super) struct Pump {
     pub(super) queue: Arc<Mutex<VecDeque<QueuedRun>>>,
     pub(super) notify: Arc<Notify>,
     pub(super) cfg: std::sync::Arc<std::sync::RwLock<ParziConfig>>,
-    pub(super) factory: ProviderFactory,
+    pub(super) source: ProviderSource,
     pub(super) mcp: Arc<McpManager>,
     pub(super) store: SessionStore,
     pub(super) handles: Arc<Mutex<HashMap<String, Handle>>>,
-    pub(super) circuit_breaker: Arc<CircuitBreaker>,
+    pub(super) status: Arc<StatusBoard>,
+    pub(super) tools_server: Arc<tokio::sync::OnceCell<Option<Arc<McpHost>>>>,
     pub(super) bus: RunEventBus,
     pub(super) leases: Arc<LeaseHub>,
 }
@@ -239,6 +271,24 @@ pub(super) struct Pump {
 impl Pump {
     pub(super) fn cfg_snapshot(&self) -> ParziConfig {
         self.cfg.read().map(|c| c.clone()).unwrap_or_default()
+    }
+
+    /// The endpoint Parzi's tools are served on, started with the first
+    /// run. `None` when no local port could be bound: runs then go on
+    /// without Parzi's tools rather than not at all.
+    pub(super) async fn tools_server(&self) -> Option<Arc<McpHost>> {
+        self.tools_server
+            .get_or_init(|| async {
+                match McpHost::start().await {
+                    Ok(h) => Some(h),
+                    Err(e) => {
+                        tracing::warn!("Parzi tool server did not start: {e}");
+                        None
+                    }
+                }
+            })
+            .await
+            .clone()
     }
 
     /// Park a run: persist it (R-5 — a restart must not lose the prompt),

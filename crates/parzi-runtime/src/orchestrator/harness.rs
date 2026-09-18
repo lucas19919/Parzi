@@ -225,7 +225,9 @@ impl HarnessBridge for Pump {
             project: target.project.clone(),
             lane: target.lane.clone(),
             model_spec: target.model.clone(),
-            prompt: msg.summary(),
+            // The vendor gets the message in its untrusted wrapping; the
+            // transcript already holds it as data (H-5).
+            prompt: msg.render(),
             cwd: target.cwd.clone(),
             effort: "medium".into(),
             attachments: vec![],
@@ -301,14 +303,7 @@ impl HarnessBridge for Pump {
                 } => {
                     format!("artifact: {title} ({id} v{version})\n")
                 }
-                Event::RouteTransition {
-                    from_provider,
-                    to_provider,
-                    reason,
-                    ..
-                } => {
-                    format!("route: {from_provider} -> {to_provider} ({reason})\n")
-                }
+                Event::Error { message, .. } => format!("error: {}\n", truncate(message, 300)),
             };
             tail_text.push_str(&line);
             if tail_text.len() > 8_000 {

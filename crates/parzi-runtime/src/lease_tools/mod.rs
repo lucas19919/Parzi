@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use parzi_core::lease::Answer;
 use parzi_core::project::normalize_path;
-use parzi_providers::ToolDef;
+use crate::tools::ToolDef;
 
 use crate::tools::ToolExecutor;
 
@@ -117,55 +117,41 @@ pub fn lease_defs() -> Vec<ToolDef> {
 }
 
 impl ToolExecutor {
-    /// PLAN §4 enforcement, called before every tool runs. `Some((false, msg))`
-    /// refuses the call; `None` lets it through. Every path a tool is about to
-    /// write is checked — `tools::write_path_args` is the list, so a new write
-    /// tool is gated the day it is added — and reads are never blocked.
-    pub(crate) async fn lease_gate(
-        &self,
-        name: &str,
-        args: &serde_json::Value,
-    ) -> Option<(bool, String)> {
+    /// PLAN §4, before an agent edits: every worktree-relative path it is
+    /// about to write is checked, and the first refusal wins. Reads never
+    /// reach this gate.
+    pub(crate) async fn lease_gate_paths(&self, paths: &[String]) -> Option<String> {
         let ctx = self.leases.as_ref()?;
-        for key in crate::tools::write_path_args(name) {
-            let Some(path) = args.get(*key).and_then(|v| v.as_str()) else {
-                continue;
-            };
-            if let Some(refusal) = ctx.hub.gate_write(&ctx.run, path).await {
-                return Some(refusal);
+        for path in paths {
+            if let Some((false, why)) = ctx.hub.gate_write(&ctx.run, path).await {
+                return Some(why);
             }
         }
         None
     }
 
-    /// `shell.exec`'s half of the gate: the command owns a whole worktree, so
-    /// what it wrote is only knowable afterwards. Fingerprint before, run,
-    /// fingerprint after, and hold what moved to the same rule (§4).
-    pub(crate) async fn lease_audit_shell<F>(&self, run_it: F) -> (bool, String)
-    where
-        F: std::future::Future<Output = (bool, String)>,
-    {
-        let Some(ctx) = self.leases.as_ref() else {
-            return run_it.await;
-        };
+    /// Before an agent's shell command: what it writes is only knowable
+    /// afterwards, so back up the files other lanes hold and fingerprint the
+    /// worktree now. `None` = this run is not in the lease layer.
+    pub(crate) async fn shell_audit_start(&self) -> Option<ShellAudit> {
+        let ctx = self.leases.as_ref()?;
         let backup = backup_files(&self.cwd, &ctx.hub.foreign_files(&ctx.run, &self.cwd).await);
-        let before = audit::snapshot(&self.cwd).await;
-        let out = run_it.await;
-        let Some(before) = before else { return out };
-        let Some(after) = audit::snapshot(&self.cwd).await else {
-            return out;
-        };
-        let changed = audit::changed(&before, &after);
+        let before = audit::snapshot(&self.cwd).await?;
+        Some(ShellAudit { backup, before })
+    }
+
+    /// After it: whatever moved inside a file another lane holds is put
+    /// back, and the refusal (naming the holder) comes back for the agent.
+    pub(crate) async fn shell_audit_finish(&self, audit: ShellAudit) -> Option<String> {
+        let ctx = self.leases.as_ref()?;
+        let after = audit::snapshot(&self.cwd).await?;
+        let changed = audit::changed(&audit.before, &after);
         if changed.is_empty() {
-            return out;
+            return None;
         }
-        match ctx.hub.audit_writes(&ctx.run, &changed).await {
-            Some((refusal, hits)) => {
-                restore_files(&self.cwd, &backup, &hits);
-                (false, format!("{refusal}\n\n{}", out.1))
-            }
-            None => out,
-        }
+        let (refusal, hits) = ctx.hub.audit_writes(&ctx.run, &changed).await?;
+        restore_files(&self.cwd, &audit.backup, &hits);
+        Some(refusal)
     }
 
     /// Execute one `lease.*` tool. Every action is journalled by the hub.
@@ -267,6 +253,13 @@ impl ToolExecutor {
             .await
             .ok_or_else(|| "this lane has no repo bound; pass `repo`".to_string())
     }
+}
+
+/// A shell command's before-picture: held files' bytes and the worktree's
+/// fingerprint.
+pub(crate) struct ShellAudit {
+    backup: HashMap<String, Option<Vec<u8>>>,
+    before: audit::Snapshot,
 }
 
 /// Bytes of each foreign-held file, taken before `shell.exec`. `None` means

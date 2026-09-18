@@ -1,8 +1,7 @@
-//! parzi-runtime: handler loop, orchestrator, tools, MCP, plugins, doctor.
+//! parzi-runtime: runs of vendor agents (`run`), Parzi's tools and the gate
+//! (`toolhost`, `mcp_host`), the orchestrator, plugins, doctor.
 
 pub mod board_tools;
-pub mod circuit_breaker;
-pub mod compact;
 pub mod context_micro;
 pub mod doctor;
 pub mod git_checkpoints;
@@ -12,15 +11,17 @@ pub mod hooks;
 pub mod inter;
 pub mod lease_tools;
 pub mod mcp;
+pub mod mcp_host;
 pub mod orchestrator;
 pub mod plugins;
 pub mod project_flow;
 pub mod roles;
+pub mod run;
+pub mod status;
 pub mod sync_timer;
+pub mod toolhost;
 pub mod tools;
 
-pub use circuit_breaker::CircuitBreaker;
-pub use handler::AgentRun;
 pub use orchestrator::Orchestrator;
 
 pub fn version() -> &'static str {

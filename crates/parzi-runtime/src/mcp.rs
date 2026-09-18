@@ -36,8 +36,8 @@ impl McpTool {
         format!("{}.{}", self.server, self.name)
     }
 
-    pub fn to_provider_def(&self) -> parzi_providers::ToolDef {
-        parzi_providers::ToolDef {
+    pub fn to_def(&self) -> crate::tools::ToolDef {
+        crate::tools::ToolDef {
             name: self.qualified(),
             description: self.description.clone(),
             schema: self.schema.clone(),

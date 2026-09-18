@@ -8,7 +8,7 @@
 use parzi_core::error::{ParziError, Result};
 use parzi_core::journal::JournalKind;
 use parzi_core::store::Event;
-use parzi_providers::ToolDef;
+use crate::tools::ToolDef;
 
 use crate::lease_tools::{held_by, task_id, task_str, LeaseCtx};
 use crate::tools::ToolExecutor;

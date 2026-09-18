@@ -241,6 +241,7 @@ impl Provider for Acp {
             status.version = conn
                 .init
                 .pointer("/agentInfo/version")
+                .or_else(|| conn.init.pointer("/_meta/agentVersion"))
                 .and_then(Value::as_str)
                 .map(str::to_string);
             conn.proc.kill().await;

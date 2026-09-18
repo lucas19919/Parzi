@@ -635,6 +635,10 @@ async fn handle(
                         }
                     }
                     Some("tool_use") => {
+                        // Words said before a tool call come before it in the thread.
+                        if !text.trim().is_empty() {
+                            let _ = events.send(ProviderEvent::Message(std::mem::take(&mut text)));
+                        }
                         let id = block.get("id").and_then(Value::as_str).unwrap_or("").to_string();
                         let name = block.get("name").and_then(Value::as_str).unwrap_or("tool").to_string();
                         st.tool_names.insert(id.clone(), name.clone());

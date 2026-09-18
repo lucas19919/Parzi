@@ -11,7 +11,8 @@ mod launch;
 mod queue;
 
 pub use queue::{
-    run_note, run_project, run_role, set_run_note, set_run_project, set_run_role, BUDGET_NOTE,
+    run_note, run_project, run_role, run_session, set_run_note, set_run_project, set_run_role,
+    set_run_session, VendorSession, BUDGET_NOTE,
 };
 
 use std::collections::{HashMap, VecDeque};
@@ -23,10 +24,11 @@ use parzi_core::store::{SessionMeta, SessionStatus, SessionStore};
 use tokio::sync::{broadcast, mpsc, Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 
-use crate::circuit_breaker::CircuitBreaker;
 use crate::handler::{HarnessBridge, RunEvent, RunEventBus};
 use crate::lease_tools::LeaseHub;
 use crate::mcp::McpManager;
+use crate::mcp_host::McpHost;
+use crate::status::{roster_source, ProviderSource, StatusBoard};
 use crate::roles::{Role, RoleBinding, RoleCtx};
 use crate::tools::{ApprovalMode, Approver};
 
@@ -56,22 +58,6 @@ pub fn normalize_effort(effort: &str) -> String {
     }
 }
 
-/// Sticky Smart Auto: when the request is `auto` but the thread already runs
-/// on a resolved `provider/model` (persisted after the previous auto turn),
-/// stay on it — the explicit+failover path keeps the hop safety. A fresh
-/// `auto` on an unresolved thread (or a stored `auto`) stays fully adaptive.
-pub fn sticky_spec(requested: &str, stored: &str) -> String {
-    let autoish = requested == "auto" || requested.starts_with("auto/");
-    if autoish {
-        if let Some((p, _)) = stored.split_once('/') {
-            if parzi_providers::canonical_id(p).is_some() {
-                return stored.to_string();
-            }
-        }
-    }
-    requested.to_string()
-}
-
 #[derive(Debug, Clone)]
 pub struct RunInfo {
     pub id: String,
@@ -88,20 +74,6 @@ struct Handle {
     _task: tokio::task::JoinHandle<()>,
 }
 
-/// Provider construction seam. Default is the registry; tests inject hangs.
-pub type ProviderFactory = Arc<
-    dyn Fn(&str, &ParziConfig) -> parzi_core::error::Result<Box<dyn parzi_providers::Provider>>
-        + Send
-        + Sync,
->;
-
-fn default_factory(
-    id: &str,
-    cfg: &ParziConfig,
-) -> parzi_core::error::Result<Box<dyn parzi_providers::Provider>> {
-    parzi_providers::provider(id, cfg)
-}
-
 pub struct Orchestrator {
     cfg: std::sync::Arc<std::sync::RwLock<ParziConfig>>,
     store: SessionStore,
@@ -109,8 +81,12 @@ pub struct Orchestrator {
     handles: Arc<Mutex<HashMap<String, Handle>>>,
     queue: Arc<Mutex<VecDeque<QueuedRun>>>,
     notify: Arc<Notify>,
-    factory: ProviderFactory,
-    circuit_breaker: Arc<CircuitBreaker>,
+    /// Where runs get their provider: the roster, or a test's fakes.
+    source: ProviderSource,
+    /// Where each provider stands; Smart Auto and Settings read it.
+    status: Arc<StatusBoard>,
+    /// The MCP endpoint Parzi's tools are served on, started lazily.
+    tools_server: Arc<tokio::sync::OnceCell<Option<Arc<McpHost>>>>,
     bus: RunEventBus,
     /// PLAN §4: one lease table per process, shared by every lane that runs
     /// in it. Round 1 is hub-less, so this *is* the hub.
@@ -131,8 +107,9 @@ impl Orchestrator {
             handles: Arc::new(Mutex::new(HashMap::new())),
             queue: Arc::new(Mutex::new(VecDeque::new())),
             notify: Arc::new(Notify::new()),
-            factory: Arc::new(default_factory),
-            circuit_breaker: Arc::new(CircuitBreaker::new()),
+            source: roster_source(),
+            status: Arc::new(StatusBoard::load()),
+            tools_server: Arc::new(tokio::sync::OnceCell::new()),
             leases: Arc::new(LeaseHub::new().with_bus(bus.clone())),
             bus,
         }
@@ -145,8 +122,17 @@ impl Orchestrator {
         self.leases.clone()
     }
 
-    pub fn with_factory(mut self, factory: ProviderFactory) -> Self {
-        self.factory = factory;
+    /// Runs get their providers from `source` (tests inject fakes).
+    #[must_use]
+    pub fn with_source(mut self, source: ProviderSource) -> Self {
+        self.source = source;
+        self
+    }
+
+    /// A status board other than the one on disk (tests).
+    #[must_use]
+    pub fn with_status(mut self, status: Arc<StatusBoard>) -> Self {
+        self.status = status;
         self
     }
 
@@ -155,11 +141,12 @@ impl Orchestrator {
             queue: self.queue.clone(),
             notify: self.notify.clone(),
             cfg: self.cfg.clone(),
-            factory: self.factory.clone(),
+            source: self.source.clone(),
             mcp: self.mcp.clone(),
             store: self.store.clone(),
             handles: self.handles.clone(),
-            circuit_breaker: self.circuit_breaker.clone(),
+            status: self.status.clone(),
+            tools_server: self.tools_server.clone(),
             bus: self.bus.clone(),
             leases: self.leases.clone(),
         }
@@ -357,54 +344,30 @@ impl Orchestrator {
         set_run_project(session_id, Some((workspace.to_string(), slug.to_string())));
     }
 
-    /// Live provider health for the Omnibar dots + Settings quota panel.
-    /// Merges each provider's auth/tier state with circuit-breaker cooldowns.
-    pub fn provider_health(&self) -> Vec<parzi_providers::ProviderHealth> {
-        let snap = self.config();
-        let mut out = vec![];
-        for id in parzi_providers::PROVIDERS.iter().copied() {
-            let mut h = match (self.factory)(id, &snap) {
-                Ok(p) => p.health(),
-                Err(e) => parzi_providers::ProviderHealth {
-                    provider: id.to_string(),
-                    status: "missing".to_string(),
-                    cooldown_until: None,
-                    last_error: Some(e.to_string()),
-                    active_account: None,
-                    tier: "none".to_string(),
-                },
-            };
-            if let Some(rem) = self.circuit_breaker.cooldown_remaining(id) {
-                h.status = "rate_limited".to_string();
-                h.cooldown_until = Some(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs() + rem)
-                        .unwrap_or(0),
-                );
-                if h.last_error.is_none() {
-                    h.last_error = self.circuit_breaker.last_error(id);
-                }
-            } else if let Some(err) = self.circuit_breaker.last_error(id) {
-                if h.last_error.is_none() {
-                    h.last_error = Some(err);
-                }
-            }
-            out.push(h);
-        }
-        out
+    /// Where each provider stands, as last checked (no probe).
+    pub fn provider_statuses(&self) -> Vec<parzi_providers::ProviderStatus> {
+        self.status.all()
     }
 
-    /// Clear cooldowns (one provider or all). Used by Settings retry buttons.
-    pub fn reset_circuit_breaker(&self, provider: Option<&str>) {
-        self.circuit_breaker.reset(provider);
+    /// Ask the providers where they stand now (`ids` empty = all). Each
+    /// probe runs the vendor's own program and spends no quota.
+    pub async fn refresh_providers(&self, ids: &[String]) -> Vec<parzi_providers::ProviderStatus> {
+        let cfg = self.config();
+        self.status.refresh(&cfg, ids, &self.source).await
     }
 
     pub async fn kill(&self, id: &str) -> Result<()> {
         if let Some(h) = self.handles.lock().await.remove(id) {
             h.cancel.cancel();
-            // R-1 backstop: the run loop may be stuck in a provider stream;
-            // abort the driver task so the slot frees even then.
+            // The provider gets a moment to stop its turn and close the
+            // vendor program with everything it started.
+            for _ in 0..30 {
+                if h._task.is_finished() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            // R-1 backstop: a run stuck anyway is aborted, so the slot frees.
             h._task.abort();
         }
         // Dequeue anything waiting for this session too — in memory and on
@@ -433,24 +396,5 @@ impl Orchestrator {
     fn lane_policy(&self, project: &str, lane: &str) -> (ApprovalMode, Vec<String>) {
         let snap = self.config();
         Self::lane_policy_for(&snap, project, lane)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sticky_auto_holds_the_resolved_route() {
-        assert_eq!(sticky_spec("auto", "opencode/kimi-k3"), "opencode/kimi-k3");
-        assert_eq!(
-            sticky_spec("auto", "claude-code/claude-opus-5"),
-            "claude-code/claude-opus-5"
-        );
-        // Unresolved threads stay adaptive; explicit picks always win.
-        assert_eq!(sticky_spec("auto", "auto"), "auto");
-        assert_eq!(sticky_spec("auto", "something"), "auto");
-        assert_eq!(sticky_spec("xai/grok-4", "opencode/kimi-k3"), "xai/grok-4");
-        assert_eq!(sticky_spec("auto", "ollama/llama3.1"), "auto");
     }
 }

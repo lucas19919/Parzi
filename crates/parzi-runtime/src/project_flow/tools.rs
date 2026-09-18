@@ -8,7 +8,7 @@
 use parzi_core::journal::Kind;
 use parzi_core::plan::{parse_plan_v1, Plan};
 use parzi_core::project::{self, Status};
-use parzi_providers::ToolDef;
+use crate::tools::ToolDef;
 use serde_json::Value;
 
 use super::files;
