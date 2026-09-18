@@ -27,6 +27,12 @@ pub fn user_css_path() -> Result<PathBuf> {
     Ok(parzi_dir()?.join("user.css"))
 }
 
+/// Where a thread with no folder works: its own empty directory, so an
+/// agent never starts in whatever directory Parzi was launched from.
+pub fn scratch_dir(session_id: &str) -> Result<PathBuf> {
+    Ok(parzi_dir()?.join("scratch").join(session_id))
+}
+
 pub fn projects_dir() -> Result<PathBuf> {
     Ok(parzi_dir()?.join("projects"))
 }

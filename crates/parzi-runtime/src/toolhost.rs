@@ -68,26 +68,60 @@ fn category(tool: &str) -> Option<&'static str> {
     }
 }
 
-/// `path` relative to `cwd`, with forward slashes, when it is inside it.
-/// Relative paths are taken as already relative. Windows compares without
-/// case, as the file system does.
+/// `path` relative to `cwd`, with forward slashes, when it names a file
+/// inside it. Relative paths are taken from `cwd`; `..` is resolved on the
+/// text, so a climb out is outside. Anything rooted — a drive, `\foo`,
+/// `C:foo`, a share, a verbatim path — must start with `cwd`. Windows
+/// compares without case, as the file system does. No `cwd`, no inside.
 fn worktree_relative(cwd: &str, path: &str) -> Option<String> {
     let norm = |s: &str| s.replace('\\', "/").trim_end_matches('/').to_string();
-    let p = norm(path);
-    if !Path::new(path).is_absolute() {
-        return Some(p.trim_start_matches("./").to_string());
-    }
     let base = norm(cwd);
     if base.is_empty() {
         return None;
     }
-    let (pc, bc) = if cfg!(windows) {
-        (p.to_lowercase(), base.to_lowercase())
-    } else {
-        (p.clone(), base.clone())
+    let p = norm(path);
+    let rooted = {
+        let raw = Path::new(path);
+        raw.has_root()
+            || p.starts_with('/')
+            || matches!(raw.components().next(), Some(std::path::Component::Prefix(_)))
     };
-    let rest = pc.strip_prefix(&bc)?.strip_prefix('/')?;
-    Some(p[p.len() - rest.len()..].to_string())
+    let rel = if rooted {
+        let (pc, bc) = if cfg!(windows) {
+            (p.to_lowercase(), base.to_lowercase())
+        } else {
+            (p.clone(), base.clone())
+        };
+        let rest = pc.strip_prefix(&bc)?.strip_prefix('/')?;
+        p[p.len() - rest.len()..].to_string()
+    } else {
+        p
+    };
+    let mut parts: Vec<&str> = vec![];
+    for seg in rel.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            s => parts.push(s),
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+/// The files a write names: the request's paths, or the file field of its
+/// input when an agent sent none.
+fn write_targets(req: &PermissionRequest) -> Vec<String> {
+    if !req.paths.is_empty() {
+        return req.paths.clone();
+    }
+    ["file_path", "filePath", "notebook_path", "path"]
+        .iter()
+        .filter_map(|k| req.input.get(*k).and_then(Value::as_str))
+        .map(str::to_string)
+        .take(1)
+        .collect()
 }
 
 impl ToolHost {
@@ -233,13 +267,20 @@ impl ToolHost {
                 return PermissionDecision::Deny(format!("this lane does not allow {k}"));
             }
         }
+        // A write outside the worktree, or to a file nobody named, is never
+        // approved on the lane's behalf: a person decides, and a run with
+        // nobody to ask is refused. Reads go anywhere, as under Codex's
+        // workspace sandbox.
+        let mut outside = false;
         if kind == Some("fs.write") {
-            let rel: Vec<String> = req
-                .paths
+            let targets = write_targets(req);
+            let rel: Vec<Option<String>> = targets
                 .iter()
-                .filter_map(|p| worktree_relative(&self.p.tools.cwd, p))
+                .map(|p| worktree_relative(&self.p.tools.cwd, p))
                 .collect();
-            if let Some(why) = self.p.tools.lease_gate_paths(&rel).await {
+            outside = targets.is_empty() || rel.iter().any(Option::is_none);
+            let inside: Vec<String> = rel.into_iter().flatten().collect();
+            if let Some(why) = self.p.tools.lease_gate_paths(&inside).await {
                 return PermissionDecision::Deny(why);
             }
         }
@@ -253,12 +294,17 @@ impl ToolHost {
             return PermissionDecision::Deny(format!("blocked by a workspace hook: {reason}"));
         }
         let allowed = match self.p.mode {
-            ApprovalMode::Auto => true,
-            ApprovalMode::Ask if self.p.edits_auto && kind == Some("fs.write") => true,
+            ApprovalMode::Auto if !outside => true,
+            ApprovalMode::Ask if self.p.edits_auto && kind == Some("fs.write") && !outside => true,
             _ => {
                 let mut args = req.input.clone();
                 if let Value::Object(o) = &mut args {
-                    o.entry("title").or_insert_with(|| Value::String(req.title.clone()));
+                    if outside {
+                        let title = format!("{} — outside this lane's folder", req.title);
+                        o.insert("title".into(), Value::String(title));
+                    } else {
+                        o.entry("title").or_insert_with(|| Value::String(req.title.clone()));
+                    }
                 }
                 self.ask(&req.id, &req.tool, &args).await
             }
@@ -522,10 +568,38 @@ mod tests {
         let rel = worktree_relative(cwd, inside).unwrap();
         assert!(rel.eq_ignore_ascii_case("src/a.rs"), "{rel}");
         assert_eq!(worktree_relative(cwd, "src/b.rs").as_deref(), Some("src/b.rs"));
+        assert_eq!(worktree_relative(cwd, "./src/../src/c.rs").as_deref(), Some("src/c.rs"));
         let outside = if cfg!(windows) { r"C:\other\x.rs" } else { "/other/x.rs" };
         assert_eq!(worktree_relative(cwd, outside), None);
         // A sibling that merely shares the prefix is outside too.
         let sibling = if cfg!(windows) { r"C:\repo2\x.rs" } else { "/repo2/x.rs" };
         assert_eq!(worktree_relative(cwd, sibling), None);
+        assert_eq!(worktree_relative("", "src/a.rs"), None, "no folder, no inside");
+        assert_eq!(worktree_relative(cwd, "src/.."), None, "the folder is not a file");
+    }
+
+    /// B3's escape table, now for the agent's own writes: absolute, rooted,
+    /// drive-relative, UNC, verbatim and deep `..` climbs are all outside.
+    #[test]
+    fn escapes_are_outside() {
+        let cwd = if cfg!(windows) { r"C:\repo" } else { "/repo" };
+        let mut table = vec![
+            r"\foo",
+            "/etc/passwd",
+            r"\\server\share\x",
+            "//server/share/x",
+            r"\\?\C:\x",
+            r"\\?\C:\repo\x",
+            "../../secret",
+            "sub/../../..",
+            "a/../../../../etc",
+        ];
+        // Drive letters only mean something where there are drives.
+        if cfg!(windows) {
+            table.extend([r"C:\Windows\System32\x", "C:foo", r"C:\repo\..\secret"]);
+        }
+        for evil in table {
+            assert_eq!(worktree_relative(cwd, evil), None, "{evil} must be outside");
+        }
     }
 }

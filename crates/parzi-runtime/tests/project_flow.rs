@@ -1,20 +1,24 @@
-//! H1 end to end on one machine, with a scripted provider: the header drafts
+//! H1 end to end on one machine, with a scripted agent: the header drafts
 //! a rough plan, the orchestrator audits it into PLAN.md, a person approves,
 //! and sprint 1's two lanes check their tasks out with file leases and end
 //! with capsules. No network, no real model, no real repo.
 
+mod common;
+
 use std::sync::Arc;
 
+use common::{home, orch_with, script, Agent, Fake};
 use parzi_core::config::ParziConfig;
 use parzi_core::error::{ParziError, Result};
 use parzi_core::project::{self, Project, Roster, Status};
-use parzi_core::store::{SessionStatus, SessionStore};
+use parzi_core::store::SessionStatus;
 use parzi_core::workspace::{self, Kind, RepoRef, Workspace};
-use parzi_providers::{AuthStatus, ChatReq, EventRx, Model, Provider, StreamEvent};
+use parzi_providers::TurnEnd;
 use parzi_runtime::project_flow;
 use parzi_runtime::roles::Role;
 use parzi_runtime::tools::{Approval, Approver, ToolCallInfo};
 use parzi_runtime::Orchestrator;
+use serde_json::json;
 use tokio::sync::Semaphore;
 
 const WORKSPACE: &str = "acme";
@@ -41,112 +45,71 @@ fn gate() -> &'static Semaphore {
     GATE.get_or_init(|| Semaphore::new(0))
 }
 
-/// One provider for all three roles: it reads which role it is out of the
-/// system prompt (the role binding writes it there) and how far along the run
-/// is from the tool results already in the transcript.
-struct ScriptProvider;
-
-#[async_trait::async_trait]
-impl Provider for ScriptProvider {
-    fn id(&self) -> &'static str {
-        "script"
-    }
-    async fn models(&self) -> Result<Vec<Model>> {
-        Ok(vec![])
-    }
-    async fn chat_stream(&self, req: ChatReq) -> Result<EventRx> {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let step = req
-            .messages
-            .iter()
-            .filter(|m| m.content.contains("[tool:"))
-            .count();
-        let sys = req.system.clone();
-        let call = |id: &str, name: &str, args: serde_json::Value| StreamEvent::ToolCall {
-            id: id.into(),
-            name: name.into(),
-            args,
-        };
-        if sys.contains("You are the header of project") {
-            let ev = if step == 0 {
-                call(
-                    "h1",
+/// One agent for all three roles. It reads which role it is out of its
+/// standing instructions (the role binding writes them there) and does the
+/// role's whole job in one turn, calling Parzi's tools over MCP the way a
+/// vendor agent does.
+fn scripted() -> Arc<Fake> {
+    Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            let sys = a.spec.instructions.clone().unwrap_or_default();
+            if sys.contains("You are the header of project") {
+                a.parzi(
                     "project.draft_plan",
-                    serde_json::json!({
+                    json!({
                         "title": "Checkout, roughly",
                         "body": "- an API for the checkout session\n- a page to run it from",
                     }),
                 )
-            } else {
-                StreamEvent::Text("Saved the rough plan; send it to the orchestrator.".into())
-            };
-            let _ = tx.send(Ok(ev));
-            return Ok(rx);
-        }
-        if sys.contains("You are the orchestrator of project") {
-            let ev = if step == 0 {
-                call(
-                    "o1",
+                .await;
+                a.say("Saved the rough plan; send it to the orchestrator.");
+                return Ok(TurnEnd::Completed);
+            }
+            if sys.contains("You are the orchestrator of project") {
+                a.parzi(
                     "project.audit",
-                    serde_json::json!({
+                    json!({
                         "plan": PLAN_TEXT,
                         "summary": "Two lanes, one sprint.\napi owns src/api, web owns src/web.\nNo overlap, so both start now.",
                     }),
                 )
-            } else {
-                StreamEvent::Text("Plan written.".into())
-            };
-            let _ = tx.send(Ok(ev));
-            return Ok(rx);
-        }
-        // Coder: claim first, then park at the gate, then hand off.
-        let task = if sys.contains("`TSK-1`") {
-            "TSK-1"
-        } else {
-            "TSK-2"
-        };
-        let scope = if task == "TSK-1" { "api" } else { "web" };
-        let ev = match step {
-            0 => call(
-                "c1",
-                "lease.claim",
-                serde_json::json!({
-                    "task": task,
-                    "paths": [format!("app/src/{scope}/**")],
-                }),
-            ),
-            1 => {
-                let permit = gate().acquire().await;
-                drop(permit);
-                call(
-                    "c2",
-                    "board.handoff",
-                    serde_json::json!({
-                        "task": task,
-                        "capsule": {
-                            "task": task,
-                            "summary": format!("{scope} lane done"),
-                            "touched_files": [format!("src/{scope}/mod.rs")],
-                            "exported_symbols": [format!("{scope}::run")],
-                            "verification": "cargo test passed (0 failed)",
-                            "invariants": ["scope is not shared"],
-                            "gotchas": [],
-                        },
-                    }),
-                )
+                .await;
+                a.say("Plan written.");
+                return Ok(TurnEnd::Completed);
             }
-            _ => StreamEvent::Text("done".into()),
-        };
-        let _ = tx.send(Ok(ev));
-        Ok(rx)
-    }
-    fn auth_status(&self) -> AuthStatus {
-        AuthStatus::Ok
-    }
-}
-
-fn script_factory(_id: &str, _cfg: &ParziConfig) -> Result<Box<dyn Provider>> {
-    Ok(Box::new(ScriptProvider))
+            // Coder: claim first, then park at the gate, then hand off.
+            let (task, scope) = if a.spec.prompt.contains("task TSK-1 ") {
+                ("TSK-1", "api")
+            } else {
+                ("TSK-2", "web")
+            };
+            a.parzi(
+                "lease.claim",
+                json!({"task": task, "paths": [format!("app/src/{scope}/**")]}),
+            )
+            .await;
+            drop(gate().acquire().await);
+            a.parzi(
+                "board.handoff",
+                json!({
+                    "task": task,
+                    "capsule": {
+                        "task": task,
+                        "summary": format!("{scope} lane done"),
+                        "touched_files": [format!("src/{scope}/mod.rs")],
+                        "exported_symbols": [format!("{scope}::run")],
+                        "verification": "cargo test passed (0 failed)",
+                        "invariants": ["scope is not shared"],
+                        "gotchas": [],
+                    },
+                }),
+            )
+            .await;
+            a.say("done");
+            Ok(TurnEnd::Completed)
+        }),
+    )
 }
 
 /// Ask mode is the default; the flow's tools are approved for this test the
@@ -161,18 +124,6 @@ impl Approver for AllowAll {
 
 fn approver() -> Option<Arc<dyn Approver>> {
     Some(Arc::new(AllowAll))
-}
-
-/// Hermetic home + a tiny fake repo. Never touches the real ~/.parzi.
-fn test_home() -> std::path::PathBuf {
-    static INIT: std::sync::Once = std::sync::Once::new();
-    let dir = std::env::temp_dir().join(format!("parzi-test-flow-{}", std::process::id()));
-    INIT.call_once(|| {
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::env::set_var("PARZI_HOME", &dir);
-    });
-    dir
 }
 
 fn fake_repo(home: &std::path::Path) -> std::path::PathBuf {
@@ -190,8 +141,7 @@ fn fake_repo(home: &std::path::Path) -> std::path::PathBuf {
 }
 
 fn seed() -> Arc<Orchestrator> {
-    let home = test_home();
-    let repo = fake_repo(&home);
+    let repo = fake_repo(&home("flow"));
     workspace::create(Workspace {
         name: WORKSPACE.into(),
         kind: Kind::Solo,
@@ -212,9 +162,9 @@ fn seed() -> Arc<Orchestrator> {
         workspace: WORKSPACE.into(),
         repos: vec!["app".into()],
         roster: Roster {
-            header: "script/head".into(),
-            orchestrator: "script/orch".into(),
-            coder: "script/coder".into(),
+            header: "claude/head".into(),
+            orchestrator: "claude/orch".into(),
+            coder: "claude/coder".into(),
         },
         status: Status::Drafting,
         why: "People cannot pay.".into(),
@@ -224,8 +174,7 @@ fn seed() -> Arc<Orchestrator> {
 
     let mut cfg = ParziConfig::default();
     cfg.orchestrator.max_concurrent = 4;
-    let store = SessionStore::open().unwrap();
-    Arc::new(Orchestrator::new(cfg, store).with_factory(Arc::new(script_factory)))
+    orch_with(cfg, &[scripted()]).0
 }
 
 async fn settle(orch: &Arc<Orchestrator>, asked: project_flow::Asked) -> Result<SessionStatus> {

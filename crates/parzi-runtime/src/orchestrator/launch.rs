@@ -410,6 +410,15 @@ impl Orchestrator {
         if p.store.get(&q.session_id)?.model != shown {
             p.store.set_model(&q.session_id, &shown)?;
         }
+        // R-7: a thread with no folder gets its own empty one, never the
+        // directory Parzi was started from.
+        let cwd = if q.cwd.trim().is_empty() {
+            let dir = parzi_core::paths::scratch_dir(&q.session_id)?;
+            std::fs::create_dir_all(&dir)?;
+            dir.display().to_string()
+        } else {
+            q.cwd.clone()
+        };
         // §1.2: a run that is a project role is briefed and armed by its role,
         // not by the lane's SYSTEM.md. The lane still decides the approval
         // mode — a machine's Ask/Deny is never lifted by a project.
@@ -452,7 +461,7 @@ impl Orchestrator {
             }
         }
         let tools = Arc::new(ToolExecutor {
-            cwd: q.cwd.clone(),
+            cwd: cwd.clone(),
             mcp: p.mcp.clone(),
             allowed,
             leases: lease_ctx,
@@ -510,7 +519,7 @@ impl Orchestrator {
 ---
 
 "),
-            cwd: q.cwd.clone(),
+            cwd: cwd.clone(),
             attachments: q.attachments.clone(),
             store: p.store.clone(),
             host,

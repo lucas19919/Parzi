@@ -1,10 +1,19 @@
-//! Runtime gates: allowlists deny by default; ui tools always advertised.
+//! Runtime gates: allowlists deny by default, and an agent's own writes are
+//! fenced to its lane's folder.
+
+mod common;
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
+use parzi_core::store::SessionStore;
+use parzi_providers::{PermissionDecision, PermissionGate, PermissionRequest};
+use parzi_runtime::handler::RunSink;
 use parzi_runtime::mcp::McpManager;
-use parzi_runtime::tools::{ApprovalMode, ToolExecutor};
+use parzi_runtime::toolhost::{ToolHost, ToolHostParts};
+use parzi_runtime::tools::{Approval, ApprovalMode, Approver, ToolCallInfo, ToolExecutor};
+use tokio_util::sync::CancellationToken;
 
 fn exec(allowed: &[&str]) -> ToolExecutor {
     ToolExecutor {
@@ -40,85 +49,123 @@ fn mode_parses() {
     assert_eq!(ApprovalMode::parse("bogus"), ApprovalMode::Ask);
 }
 
+
 #[tokio::test]
 async fn disallowed_tool_fails_closed() {
     let e = exec(&[]);
-    let (ok, _) = e
-        .execute("fs.read", &serde_json::json!({"path": "x"}))
-        .await;
-    assert!(!ok);
     let (ok, _) = e.execute("evil.tool", &serde_json::json!({})).await;
     assert!(!ok);
 }
 
-#[tokio::test]
-async fn path_escape_rejected() {
-    let e = exec(&["fs.read"]);
-    let (ok, msg) = e
-        .execute("fs.read", &serde_json::json!({"path": "../../secret"}))
-        .await;
-    assert!(!ok, "{msg}");
+/// Remembers the cards it was shown and answers them all the same way.
+struct Person {
+    answer: Approval,
+    seen: Mutex<Vec<ToolCallInfo>>,
 }
 
-fn exec_in(cwd: &str, allowed: &[&str]) -> ToolExecutor {
-    ToolExecutor {
-        cwd: cwd.to_string(),
-        mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
-        allowed: allowed.iter().map(|s| s.to_string()).collect(),
-        leases: None,
+#[async_trait::async_trait]
+impl Approver for Person {
+    async fn approve(&self, call: &ToolCallInfo) -> Approval {
+        self.seen.lock().unwrap().push(call.clone());
+        self.answer
     }
 }
 
-/// B3 sandbox table: absolute, rooted, drive-relative, UNC, verbatim,
-/// deep `..` climbs and empty cwd must all fail closed.
+/// The gate an agent in `folder` asks, in `mode`, with `person` to ask.
+fn gate(folder: &Path, mode: ApprovalMode, edits_auto: bool, person: Arc<Person>) -> ToolHost {
+    common::home("allowlist");
+    let store = SessionStore::open().unwrap();
+    let sid = store.create("gate", "", "", "claude/m").unwrap().id;
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    ToolHost::new(ToolHostParts {
+        session_id: sid.clone(),
+        lane: String::new(),
+        mode,
+        edits_auto,
+        store,
+        tools: Arc::new(ToolExecutor {
+            cwd: folder.display().to_string(),
+            mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
+            allowed: vec!["*".into()],
+            leases: None,
+        }),
+        approver: person,
+        harness: None,
+        role: None,
+        sink: RunSink::new(&sid, tx, None),
+        cancel: CancellationToken::new(),
+    })
+}
+
+async fn ask(host: &ToolHost, tool: &str, paths: &[&str]) -> PermissionDecision {
+    host.decide(PermissionRequest {
+        id: format!("req-{}", uuid::Uuid::new_v4()),
+        tool: tool.into(),
+        title: tool.into(),
+        input: serde_json::json!({}),
+        paths: paths.iter().map(|p| (*p).to_string()).collect(),
+    })
+    .await
+}
+
+fn nobody() -> Arc<Person> {
+    Arc::new(Person {
+        answer: Approval::Deny,
+        seen: Mutex::new(vec![]),
+    })
+}
+
+/// B3 where the agent's own writes now pass: an Auto lane writes inside its
+/// folder without asking; outside it, or to a file nobody named, a person
+/// decides — and a run with nobody to ask is refused. Reads are not fenced.
 #[tokio::test]
-async fn sandbox_table_rejects_escapes() {
-    let dir = std::env::temp_dir().join(format!("parzi-sandbox-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("sub")).unwrap();
-    let cwd = dir.to_string_lossy().to_string();
-    let e = exec_in(&cwd, &["fs.read", "fs.write", "fs.list"]);
-    for evil in [
-        "C:\\Windows\\System32\\x",
-        "\\foo",
-        "/etc/passwd",
-        "C:foo",
-        "\\\\server\\share\\x",
-        "//server/share/x",
-        "\\\\?\\C:\\x",
-        "../../secret",
-        "sub/../../..",
-        "a/../../../../etc",
-    ] {
-        let (ok, _) = e
-            .execute("fs.read", &serde_json::json!({"path": evil}))
-            .await;
-        assert!(!ok, "must reject {evil}");
-        let (ok, _) = e
-            .execute(
-                "fs.write",
-                &serde_json::json!({"path": evil, "content": "x"}),
-            )
-            .await;
-        assert!(!ok, "must reject write {evil}");
+async fn writes_outside_the_folder_need_a_person() {
+    let folder = std::env::temp_dir().join(format!("parzi-fence-{}", std::process::id()));
+    std::fs::create_dir_all(folder.join("src")).unwrap();
+    let inside = folder.join("src").join("a.rs");
+    let inside = inside.to_str().unwrap();
+    let host = gate(&folder, ApprovalMode::Auto, false, nobody());
+
+    assert_eq!(ask(&host, "Write", &[inside]).await, PermissionDecision::Allow);
+    assert_eq!(ask(&host, "Edit", &["src/a.rs"]).await, PermissionDecision::Allow);
+    let elsewhere = std::env::temp_dir().join("elsewhere.rs");
+    for evil in ["../../secret", "src/../../x", elsewhere.to_str().unwrap()] {
+        assert!(
+            matches!(ask(&host, "Write", &[evil]).await, PermissionDecision::Deny(_)),
+            "{evil} must not be written on the lane's say-so"
+        );
     }
-    // Empty cwd refuses (R-7): no silent fallback to the process cwd.
-    let no_cwd = exec(&["fs.read"]);
-    let (ok, _) = no_cwd
-        .execute("fs.read", &serde_json::json!({"path": "x"}))
-        .await;
-    assert!(!ok);
-    let no_cwd_shell = exec(&["shell.exec"]);
-    let (ok, _) = no_cwd_shell
-        .execute("shell.exec", &serde_json::json!({"cmd": "echo hi"}))
-        .await;
-    // shell.exec without cwd fails closed too.
-    assert!(!ok);
-    // Legit relative paths still work.
-    std::fs::write(dir.join("sub").join("ok.txt"), "hello").unwrap();
-    let (ok, out) = e
-        .execute("fs.read", &serde_json::json!({"path": "sub/ok.txt"}))
-        .await;
-    assert!(ok, "{out}");
-    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        matches!(ask(&host, "edit", &[]).await, PermissionDecision::Deny(_)),
+        "an edit that names no file is not approved blind"
+    );
+    assert_eq!(
+        ask(&host, "Read", &[elsewhere.to_str().unwrap()]).await,
+        PermissionDecision::Allow,
+        "reads are not fenced"
+    );
+
+    // The composer's "edits" pill pre-approves edits inside the folder only.
+    let host = gate(&folder, ApprovalMode::Ask, true, nobody());
+    assert_eq!(ask(&host, "Edit", &["src/a.rs"]).await, PermissionDecision::Allow);
+    assert!(matches!(
+        ask(&host, "Edit", &["../x"]).await,
+        PermissionDecision::Deny(_)
+    ));
+
+    // With a person there, the card says why it came.
+    let person = Arc::new(Person {
+        answer: Approval::Allow,
+        seen: Mutex::new(vec![]),
+    });
+    let host = gate(&folder, ApprovalMode::Auto, false, person.clone());
+    assert_eq!(ask(&host, "Write", &["../x"]).await, PermissionDecision::Allow);
+    let cards = person.seen.lock().unwrap().clone();
+    assert_eq!(cards.len(), 1, "one card, for the write outside");
+    assert!(
+        cards[0].args["title"].as_str().unwrap_or("").contains("outside"),
+        "{:?}",
+        cards[0].args
+    );
+    let _ = std::fs::remove_dir_all(&folder);
 }

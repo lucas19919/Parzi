@@ -227,14 +227,9 @@ impl EngineRun {
 
     async fn turn(&self, text: &str) -> Outcome {
         let registration = self.p.mcp.as_ref().map(|m| m.register(self.p.host.clone()));
-        let cwd = if self.p.cwd.is_empty() {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-        } else {
-            PathBuf::from(&self.p.cwd)
-        };
         let spec = TurnSpec {
             session_id: self.p.session_id.clone(),
-            cwd,
+            cwd: PathBuf::from(&self.p.cwd),
             model: self.p.model.clone(),
             effort: self.p.effort.clone(),
             access: self.p.access,
