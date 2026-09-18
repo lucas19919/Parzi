@@ -152,8 +152,22 @@ impl Proc {
 
     /// Kill the program and everything it started.
     pub async fn kill(&mut self) {
+        self.kill_tree();
+        let _ = self.child.start_kill();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), self.child.wait()).await;
+    }
+
+    /// The program and every process under it, found by parent id: the
+    /// vendor's own shell commands, dev servers and MCP servers die with it.
+    /// Only while the child is not yet reaped, so its id is still its own.
+    /// A child that already exited has left its children to the system,
+    /// where no parent id leads to them any more.
+    fn kill_tree(&mut self) {
+        let Some(pid) = self.child.id() else {
+            return;
+        };
         #[cfg(windows)]
-        if let Some(pid) = self.child.id() {
+        {
             use std::os::windows::process::CommandExt as _;
             let _ = std::process::Command::new("taskkill")
                 .args(["/PID", &pid.to_string(), "/T", "/F"])
@@ -162,10 +176,64 @@ impl Proc {
                 .stderr(Stdio::null())
                 .status();
         }
-        let _ = self.child.start_kill();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), self.child.wait()).await;
+        #[cfg(unix)]
+        {
+            let tree = descendants(pid);
+            if !tree.is_empty() {
+                let _ = std::process::Command::new("kill")
+                    .arg("-KILL")
+                    .args(tree.iter().map(u32::to_string))
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
     }
 }
+
+/// A run dropped mid-turn (aborted, or its task cancelled) still takes the
+/// vendor's whole tree down, not only the program itself.
+impl Drop for Proc {
+    fn drop(&mut self) {
+        self.kill_tree();
+    }
+}
+
+/// Every process under `root`, from one `ps` listing of parent ids.
+#[cfg(unix)]
+fn descendants(root: u32) -> Vec<u32> {
+    let Ok(out) = std::process::Command::new("ps")
+        .args(["-A", "-o", "pid=,ppid="])
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return vec![];
+    };
+    let mut children: std::collections::HashMap<u32, Vec<u32>> = Default::default();
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let mut it = line.split_whitespace().map(str::parse::<u32>);
+        if let (Some(Ok(pid)), Some(Ok(ppid))) = (it.next(), it.next()) {
+            children.entry(ppid).or_default().push(pid);
+        }
+    }
+    let mut tree = vec![];
+    let mut next = vec![root];
+    while let Some(p) = next.pop() {
+        for &c in children.get(&p).into_iter().flatten() {
+            if c != root && !tree.contains(&c) {
+                tree.push(c);
+                next.push(c);
+            }
+        }
+    }
+    tree
+}
+
+/// How long a vendor gets to end a turn it was asked to stop before Parzi
+/// stops waiting. Shorter than the orchestrator's wait on a killed run (5 s),
+/// so a stopped turn always ends through its driver, which then kills the
+/// program's whole tree.
+pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// First line of `program args…` (a `--version` call), within 15 s.
 pub async fn first_line(program: &Path, args: &[&str]) -> Option<String> {
@@ -239,5 +307,79 @@ mod tests {
     fn a_missing_program_is_not_installed() {
         assert!(resolve("parzi-no-such-program-xyz").is_none());
         assert!(resolve("").is_none());
+    }
+
+    /// A run dropped mid-turn takes down what its vendor started, not only
+    /// the vendor program itself.
+    #[tokio::test]
+    async fn dropping_a_program_kills_what_it_started() {
+        let dir = std::env::temp_dir().join(format!("parzi-tree-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pidfile = dir.join("child.pid");
+        #[cfg(windows)]
+        let (program, script) = (
+            PathBuf::from("powershell"),
+            vec![
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                format!(
+                    "$p = Start-Process -PassThru -WindowStyle Hidden ping -ArgumentList '-n','60','127.0.0.1'; \
+                     Set-Content -Path '{}' -Value $p.Id; Wait-Process -Id $p.Id",
+                    pidfile.display()
+                ),
+            ],
+        );
+        #[cfg(unix)]
+        let (program, script) = (
+            PathBuf::from("sh"),
+            vec![
+                "-c".to_string(),
+                format!("sleep 60 & echo $! > '{}'; wait", pidfile.display()),
+            ],
+        );
+        let proc = Proc::spawn(&program, &script, &dir, &[]).unwrap();
+        let mut pid = None;
+        for _ in 0..150 {
+            pid = std::fs::read_to_string(&pidfile)
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok());
+            if pid.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let pid = pid.expect("the program started its own child");
+        assert!(alive(pid), "the child runs while its parent does");
+        drop(proc);
+        let mut gone = false;
+        for _ in 0..50 {
+            if !alive(pid) {
+                gone = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(gone, "process {pid} outlived the program that started it");
+    }
+
+    fn alive(pid: u32) -> bool {
+        #[cfg(windows)]
+        {
+            let out = std::process::Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+                .output()
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .unwrap_or_default();
+            out.contains(&format!("\"{pid}\""))
+        }
+        #[cfg(unix)]
+        {
+            std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        }
     }
 }

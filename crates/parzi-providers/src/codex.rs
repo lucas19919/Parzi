@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::jsonrpc::{Incoming, Peer, RpcError};
-use crate::process::{self, Proc};
+use crate::process::{self, Proc, STOP_GRACE};
 use crate::types::{
     tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate, PermissionRequest,
     Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd, TurnSpec, UsageWindow,
@@ -405,10 +405,10 @@ async fn drive(
         let msg = tokio::select! {
             () = cancel.cancelled(), if !st.interrupting => {
                 st.interrupting = true;
-                stop_by = Some(tokio::time::Instant::now() + Duration::from_secs(10));
+                stop_by = Some(tokio::time::Instant::now() + STOP_GRACE);
                 let (p, params) = (peer.clone(), json!({"threadId": st.thread, "turnId": st.turn}));
                 tokio::spawn(async move {
-                    let _ = p.request_within("turn/interrupt", params, Duration::from_secs(10)).await;
+                    let _ = p.request_within("turn/interrupt", params, STOP_GRACE).await;
                 });
                 continue;
             }

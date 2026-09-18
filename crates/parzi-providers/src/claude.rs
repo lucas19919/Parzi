@@ -14,7 +14,7 @@ use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_util::sync::CancellationToken;
 
-use crate::process::{self, Proc};
+use crate::process::{self, Proc, STOP_GRACE};
 use crate::types::{
     tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate, PermissionRequest,
     Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd, TurnSpec, UsageWindow,
@@ -520,9 +520,6 @@ struct TurnState {
     /// Claude Code said `system/init`: the conversation loaded.
     saw_init: bool,
 }
-
-/// A stopped turn gets this long to wind down before the CLI is killed.
-const STOP_GRACE: Duration = Duration::from_secs(3);
 
 /// Run one turn over an already-started CLI's stdio. Split from
 /// `run_turn` so the wire is testable without a real `claude`.

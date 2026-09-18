@@ -423,16 +423,18 @@ impl Orchestrator {
         if let Some(h) = self.handles.lock().await.remove(id) {
             h.cancel.cancel();
             if let Some(task) = h.task {
-                // The provider gets its stop grace (3 s) to end the turn and
-                // close the vendor program with everything it started.
-                for _ in 0..50 {
-                    if task.is_finished() {
-                        break;
-                    }
+                // The provider gets its stop grace to end the turn and close
+                // the vendor program with everything it started, plus the
+                // time that closing takes.
+                let by = tokio::time::Instant::now()
+                    + parzi_providers::process::STOP_GRACE
+                    + std::time::Duration::from_secs(2);
+                while !task.is_finished() && tokio::time::Instant::now() < by {
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
                 // R-1 backstop: a run stuck anyway is aborted, so the slot
-                // frees; its end guard still lets go of its leases.
+                // frees; its end guard lets go of its leases and dropping
+                // the vendor program kills its tree.
                 task.abort();
             }
         }
