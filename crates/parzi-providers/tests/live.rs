@@ -132,6 +132,28 @@ async fn opencode_answers_a_turn() {
         .any(|e| matches!(e, ProviderEvent::Message(m) if m.to_lowercase().contains("pong"))));
 }
 
+/// Parzi runs Claude Code with no settings, which also drops the repo's
+/// CLAUDE.md; the driver hands that text over itself.
+#[tokio::test]
+#[ignore = "spends a few tokens of the Claude plan"]
+async fn claude_reads_the_repos_claude_md() {
+    let cwd = folder("claude-md");
+    std::fs::write(
+        cwd.join("CLAUDE.md"),
+        "The project code word is PELICAN-42.\n",
+    )
+    .unwrap();
+    let gate = Arc::new(Refuse::default());
+    let ask = "What is the project code word from the repository's instructions? \
+               Reply with the code word only, or NONE.";
+    let (end, events) = one_turn("claude", Some("haiku"), cwd, ask, gate).await;
+    show("claude", &end, &events);
+    assert_eq!(end.unwrap(), TurnEnd::Completed);
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, ProviderEvent::Message(m) if m.contains("PELICAN-42"))));
+}
+
 const WRITE: &str = "Create a file named gate-check.txt in the current directory containing \
                      the word hello. If you are not allowed, reply with the word refused.";
 

@@ -258,13 +258,20 @@ impl TurnFiles {
             instructions: None,
             mcp: None,
         };
-        if let Some(text) = spec
-            .instructions
-            .as_deref()
-            .filter(|t| !t.trim().is_empty())
-        {
+        let text: Vec<String> = [
+            spec.instructions
+                .as_deref()
+                .filter(|t| !t.trim().is_empty())
+                .map(str::to_string),
+            claude_md(&spec.cwd),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if !text.is_empty() {
             let p = dir.join("instructions.md");
-            std::fs::write(&p, text).map_err(|e| ProviderError::process(e.to_string()))?;
+            std::fs::write(&p, text.join("\n\n---\n\n"))
+                .map_err(|e| ProviderError::process(e.to_string()))?;
             files.instructions = Some(p);
         }
         if let Some(t) = &spec.tools {
@@ -284,6 +291,49 @@ impl TurnFiles {
     fn remove(&self) {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
+}
+
+/// The repo's own instructions, which `--setting-sources=` also turns off:
+/// every `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md` in the folder
+/// and the folders above it, outermost first, as Claude Code would read
+/// them. Parzi hands over the text; the settings stay off. The home
+/// folder's `.claude/CLAUDE.md` is the person's own Claude Code memory, not
+/// the repo's, and `@path` imports are not followed. Capped, with the cut
+/// said.
+fn claude_md(cwd: &Path) -> Option<String> {
+    const NAMES: [&str; 3] = ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"];
+    const MAX_CHARS: usize = 40_000;
+    let home = dirs::home_dir();
+    let mut dirs: Vec<&Path> = cwd.ancestors().collect();
+    dirs.reverse();
+    let mut out = String::new();
+    for dir in dirs {
+        for name in NAMES {
+            if name == ".claude/CLAUDE.md" && home.as_deref() == Some(dir) {
+                continue;
+            }
+            let path = dir.join(name);
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            if text.trim().is_empty() {
+                continue;
+            }
+            out.push_str(&format!(
+                "Contents of {} (the repository's instructions):\n\n{}\n\n",
+                path.display(),
+                text.trim()
+            ));
+        }
+    }
+    if out.is_empty() {
+        return None;
+    }
+    if out.chars().count() > MAX_CHARS {
+        out = out.chars().take(MAX_CHARS).collect();
+        out.push_str("\n…(the rest of the CLAUDE.md files was cut)");
+    }
+    Some(out.trim_end().to_string())
 }
 
 /// Parzi's effort pill in Claude Code's words; its own words pass through.
@@ -1326,5 +1376,35 @@ mod tests {
         assert_eq!(m.len(), 2);
         assert!(m[0].is_default);
         assert_eq!(m[1].efforts.len(), 5);
+    }
+
+    /// Settings stay off, but the repo's CLAUDE.md files still reach Claude
+    /// Code, outermost first, and nothing that is not Claude's.
+    #[test]
+    fn a_repo_s_claude_md_files_ride_along_outermost_first() {
+        let root = std::env::temp_dir().join(format!("parzi-claudemd-{}", std::process::id()));
+        let app = root.join("app");
+        std::fs::create_dir_all(app.join(".claude")).unwrap();
+        std::fs::write(root.join("CLAUDE.md"), "outer rule").unwrap();
+        std::fs::write(app.join(".claude").join("CLAUDE.md"), "inner rule").unwrap();
+        std::fs::write(app.join("CLAUDE.local.md"), "local rule").unwrap();
+        std::fs::write(app.join("AGENTS.md"), "not for Claude").unwrap();
+        let text = claude_md(&app).expect("the files are found");
+        let at = |s: &str| {
+            text.find(s)
+                .unwrap_or_else(|| panic!("{s} missing: {text}"))
+        };
+        assert!(at("outer rule") < at("inner rule") && at("inner rule") < at("local rule"));
+        assert!(!text.contains("not for Claude"));
+        let spec = TurnSpec {
+            instructions: Some("parzi brief".into()),
+            cwd: app.clone(),
+            ..spec()
+        };
+        let files = TurnFiles::write(&spec).unwrap();
+        let written = std::fs::read_to_string(files.instructions.as_ref().unwrap()).unwrap();
+        files.remove();
+        assert!(written.starts_with("parzi brief") && written.contains("outer rule"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
