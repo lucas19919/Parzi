@@ -379,3 +379,101 @@ async fn auth_failure_hops_with_route_transition_when_fallback_available() {
         let _ = std::fs::remove_dir_all(dir.join(&meta.id));
     }
 }
+
+/// Provider that fails with a non-failover error (bad request):
+/// must stay terminal even when a fallback slot exists.
+struct BadRequestProvider;
+
+#[async_trait::async_trait]
+impl Provider for BadRequestProvider {
+    fn id(&self) -> &'static str {
+        "bad"
+    }
+    async fn models(&self) -> Result<Vec<Model>> {
+        Ok(vec![])
+    }
+    async fn chat_stream(&self, _req: ChatReq) -> Result<EventRx> {
+        Err(ParziError::Provider(
+            "bad".into(),
+            "http 400: bad request".into(),
+        ))
+    }
+    fn auth_status(&self) -> AuthStatus {
+        AuthStatus::Ok
+    }
+}
+
+#[tokio::test]
+async fn bad_request_stays_terminal_with_fallback_available() {
+    test_home();
+    let store = SessionStore::open().unwrap();
+    let meta = store.create("bad-stays", "t", "", "auto").unwrap();
+    let sid = meta.id.clone();
+
+    let tools = Arc::new(ToolExecutor {
+        cwd: String::new(),
+        mcp: Arc::new(McpManager::new(std::collections::HashMap::new(), 60)),
+        allowed: vec![],
+        leases: None,
+    });
+    let slots = vec![
+        ProviderSlot {
+            provider_id: "bad".into(),
+            provider: Box::new(BadRequestProvider),
+            model_id: "bad-model".into(),
+            price_in: 0.0,
+            price_out: 0.0,
+            reason: "explicit pick",
+        },
+        ProviderSlot {
+            provider_id: "good".into(),
+            provider: Box::new(GoodProvider { id: "good" }),
+            model_id: "good-model".into(),
+            price_in: 0.0,
+            price_out: 0.0,
+            reason: "fallback",
+        },
+    ];
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let run = AgentRun::new(
+        sid.clone(),
+        slots,
+        vec![],
+        "test".into(),
+        parzi_runtime::tools::ApprovalMode::Auto,
+        false,
+        4,
+        4096,
+        vec![],
+        "low".into(),
+        store.clone(),
+        tools,
+        Arc::new(DenyAll),
+        tx,
+        tokio_util::sync::CancellationToken::new(),
+    );
+
+    let run_handle = tokio::spawn(async move {
+        let _ = run.run("hello").await;
+    });
+    let mut hopped = false;
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                RunEvent::RouteTransition { .. } => {
+                    hopped = true;
+                }
+                RunEvent::Done { .. } | RunEvent::Error(_) => break,
+                _ => {}
+            }
+        }
+    })
+    .await;
+    let _ = run_handle.await;
+    assert!(outcome.is_ok(), "run did not finish within 60s");
+    assert!(!hopped, "400 must not hop to the fallback slot");
+
+    if let Ok(dir) = parzi_core::paths::sessions_dir() {
+        let _ = std::fs::remove_dir_all(dir.join(&meta.id));
+    }
+}

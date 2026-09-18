@@ -206,10 +206,29 @@ pub fn system_prompt(role: Role, ctx: &RoleCtx) -> String {
     if let Some(task) = &ctx.task {
         binding.push_str(&format!(" Your task is `{task}` and nothing else."));
     }
+    let mut tools = role_tools(role);
+    // The launcher always arms role runs with the ui.* render tools too;
+    // name them here so the model actually uses them instead of ASCII art.
+    for u in ["ui.show_markdown", "ui.show_widget", "ui.show_diagram"] {
+        if !tools.iter().any(|t| t == u) {
+            tools.push(u.into());
+        }
+    }
     binding.push_str(&format!(
         " Tools you may call: {}. Anything else is not yours.",
-        role_tools(role).join(", ")
+        tools.join(", ")
     ));
+    // Role output lands in .md files the dock renders live. ASCII boxes in
+    // ```console/```ascii/```diagram fences render as dead console windows —
+    // never emit them. Structured data goes in ```parzi-widget JSON fences,
+    // diagrams in ```parzi-diagram JSON fences ({{\"diagram\":1,\"nodes\":[{{\"id\":\"a\"}}],\"edges\":[]}}),
+    // which the Docs dock renders as live cards. PROJECT.md/PLAN.md/drafts
+    // stay prose plus checklists.
+    binding.push_str(
+        " Rendering: never draw architecture/flow/component diagrams or charts with ASCII/box-drawing \
+         characters (+---|etc) in markdown fences; use ui.show_diagram / ui.show_widget in chat, or \
+         ```parzi-widget / ```parzi-diagram JSON fences in markdown docs.",
+    );
     format!("{}\n\n{binding}", base.trim_end())
 }
 

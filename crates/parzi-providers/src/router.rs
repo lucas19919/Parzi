@@ -171,10 +171,12 @@ pub fn parse_cooldown_secs(err: &str) -> Option<u64> {
 }
 
 /// True for errors worth failing over: rate limits and overloaded backends.
-/// Auth errors, bad requests, and context overflows must NOT fail over
-/// (the next provider would fail the same way or mask a real problem).
+/// Bad requests and context overflows must NOT fail over (the next provider
+/// would fail the same way or mask a real problem).
 /// Quota/cap errors DO fail over: a spent monthly cap on one subscription
 /// should hop to the next (or to the free tier), not kill the turn.
+/// Auth errors are NOT retriable here — they hop only via `should_failover`
+/// when a fallback slot exists.
 pub fn is_retriable(err: &str) -> bool {
     let e = err.to_lowercase();
     e.contains("429")
@@ -201,6 +203,29 @@ pub fn is_retriable(err: &str) -> bool {
         // internal fallback (antigravity) pin other transport failures
         // as stay-put, and that decision stands.
         || e.contains("error sending request")
+}
+
+/// Auth rejections worth one hop when a fallback slot exists:
+/// expired OAuth, rejected license, missing sign-in. Narrow on purpose —
+/// bare "token" or "auth" alone would also match config errors that a
+/// second provider cannot fix.
+pub fn is_auth_failover(err: &str) -> bool {
+    let e = err.to_lowercase();
+    e.contains("401")
+        || e.contains("403")
+        || e.contains("auth rejected")
+        || e.contains("license")
+        || e.contains("token expired")
+        || e.contains("permission")
+        || e.contains("not authenticated")
+}
+
+/// Failover gate used by the handler: retriable errors always hop;
+/// auth rejections hop only when another slot exists. Anything else
+/// (400/context-overflow/config) stays terminal even with slots left,
+/// so one bad turn never burns two providers.
+pub fn should_failover(err: &str, has_next: bool) -> bool {
+    is_retriable(err) || (has_next && is_auth_failover(err))
 }
 
 // ---------------------------------------------------------------------------
@@ -277,5 +302,41 @@ pub fn effort_options(provider: &str) -> Vec<EffortOption> {
             opt("extra", "Extra", "128k output"),
             opt("ultra", "Ultra", "256k output"),
         ],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_auth_failover, is_retriable, should_failover};
+
+    #[test]
+    fn auth_hops_only_with_fallback() {
+        let msg = "auth rejected after refresh (403): You do not have a valid license";
+        assert!(!is_retriable(msg));
+        assert!(is_auth_failover(msg));
+        assert!(should_failover(msg, true));
+        assert!(!should_failover(msg, false));
+    }
+
+    #[test]
+    fn bad_request_never_hops() {
+        for m in [
+            "http 400: bad request",
+            "context overflow: window too small",
+            "invalid API key format in config",
+        ] {
+            assert!(!is_retriable(m), "{m}");
+            assert!(!is_auth_failover(m), "{m}");
+            assert!(!should_failover(m, true), "{m}");
+            assert!(!should_failover(m, false), "{m}");
+        }
+    }
+
+    #[test]
+    fn rate_limit_hops_even_single_slot() {
+        let msg = "http 429: rate limited (retry after 45)";
+        assert!(is_retriable(msg));
+        assert!(should_failover(msg, true));
+        assert!(should_failover(msg, false));
     }
 }

@@ -114,13 +114,13 @@ impl Default for Antigravity {
 }
 
 /// Best-effort project id from the accounts file (read-only).
+/// IDE session UUIDs are filtered: they are not GCP projects and 403.
 fn first_account_project() -> Option<String> {
     let v = read_json_file(&dirs::home_dir()?.join(".config/opencode/antigravity-accounts.json"))?;
-    v.get("accounts")?
-        .as_array()?
-        .iter()
-        .filter_map(|a| a.get("projectId")?.as_str().map(str::to_string))
-        .next()
+    v.get("accounts")?.as_array()?.iter().find_map(|a| {
+        let p = a.get("projectId")?.as_str()?;
+        is_valid_gcp_project(p).then(|| p.to_string())
+    })
 }
 
 /// JSON Schema allowlist for Antigravity's strict validator.
