@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -13,14 +14,14 @@ use parzi_core::context::{AttachedFile, InterSessionMessage};
 use parzi_core::error::{ParziError, Result};
 use parzi_core::store::{Event, SessionStatus, SessionStore};
 use parzi_providers::{
-    Access, PermissionGate, Provider, ProviderError, ProviderEvent, TurnEnd, TurnSpec,
+    ErrorClass, PermissionGate, Provider, ProviderError, ProviderEvent, TurnEnd, TurnSpec,
 };
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::handler::{user_event_text, RunEvent, RunSink};
 use crate::mcp_host::McpHost;
-use crate::orchestrator::{set_run_session, VendorSession};
+use crate::orchestrator::{set_run_session, SessionSlot, VendorSession};
 use crate::status::StatusBoard;
 use crate::toolhost::ToolHost;
 use crate::tools::{display_name, humanize_tool_call};
@@ -39,7 +40,6 @@ pub struct EngineRunParts {
     pub provider: Arc<dyn Provider>,
     pub model: Option<String>,
     pub effort: Option<String>,
-    pub access: Access,
     /// Standing instructions, already joined.
     pub instructions: String,
     pub cwd: String,
@@ -56,6 +56,12 @@ pub struct EngineRunParts {
     /// The opening turn is already in the transcript (queued at enqueue, or
     /// a message from another session): do not write a second User turn.
     pub prompt_recorded: bool,
+    /// This run's hold on its session, for its last look for messages.
+    pub(crate) slot: SessionSlot,
+    /// The transcript's length when the launch claimed the session.
+    pub seen: usize,
+    /// Started by a message from another session: where it landed.
+    pub inbox_from: Option<usize>,
 }
 
 pub struct EngineRun {
@@ -63,6 +69,8 @@ pub struct EngineRun {
     /// The vendor's handle for this thread's conversation.
     resume: std::sync::Mutex<Option<Value>>,
     spent: std::sync::Mutex<(u64, f64)>,
+    /// The agent put a dollar figure on some of this run.
+    cost_seen: AtomicBool,
 }
 
 enum Outcome {
@@ -91,11 +99,13 @@ impl EngineRun {
             p,
             resume: std::sync::Mutex::new(resume),
             spent: std::sync::Mutex::new((0, 0.0)),
+            cost_seen: AtomicBool::new(false),
         }
     }
 
     pub async fn run(&self, prompt: &str) -> Result<()> {
         let sid = self.p.session_id.clone();
+        let name = parzi_providers::display_name(&self.p.provider_id);
         if !self.p.prompt_recorded {
             let text = user_event_text(prompt, &self.p.attachments);
             self.p.store.append(&sid, &Event::User { text })?;
@@ -108,9 +118,41 @@ impl EngineRun {
             cwd = %self.p.cwd,
             "run started"
         );
-        let mut seen = self.p.store.events(&sid)?.len();
-        let mut text = self.opening(prompt);
+        if !self.p.provider.gated() {
+            self.note_once(format!(
+                "{name} applies some changes without asking Parzi first, so file leases and \
+                 the folder fence cannot stop them."
+            ));
+        }
+        // Everything before the launch claimed the session is either this
+        // run's opening or was answered already; later messages are news.
+        let mut seen = self.p.seen;
+        // This turn's own words, and what goes to the agent with them.
+        let mut input = match self.p.inbox_from {
+            // Started by a message from another session: every one not yet
+            // handed to the agent, from there on, is this turn, so a sender
+            // that raced the launch is answered too.
+            Some(from) => {
+                let start = self.p.slot.read_mark().unwrap_or(from);
+                let (msgs, upto) = self.inbox(start, Some(seen));
+                self.p.slot.set_read_mark(upto);
+                if msgs.is_empty() {
+                    prompt.to_string()
+                } else {
+                    msgs.join(
+                        "
+
+",
+                    )
+                }
+            }
+            None => prompt.to_string(),
+        };
+        let mut text = self.opening(&input);
         let mut turns = 0u32;
+        let mut released = false;
+        let mut restarted = false;
+        let mut cap_noted = false;
         loop {
             turns += 1;
             // R-4: every turn costs, so the cap is checked before one is bought.
@@ -128,6 +170,19 @@ impl EngineRun {
                 Outcome::Paused(reason) => {
                     self.pause_for_budget(&reason).await;
                     return Ok(());
+                }
+                // The agent no longer has the conversation: once, start a
+                // new one and hand it the thread so far.
+                Outcome::Failed(e) if e.class == ErrorClass::SessionLost && !restarted => {
+                    restarted = true;
+                    tracing::info!(session = %sid, "vendor conversation lost: {}", e.message);
+                    self.forget_session();
+                    self.note(format!(
+                        "{name} no longer had this conversation; it goes on in a new one, \
+                         handed the thread so far."
+                    ));
+                    text = self.opening(&input);
+                    continue;
                 }
                 Outcome::Failed(e) => {
                     tracing::warn!(
@@ -149,26 +204,94 @@ impl EngineRun {
                     return Err(ParziError::Provider(self.p.provider_id.clone(), e.message));
                 }
             }
+            if !cap_noted
+                && self.p.budget.max_cost_usd.is_some()
+                && !self.cost_seen.load(Ordering::Relaxed)
+            {
+                cap_noted = true;
+                self.note(format!(
+                    "{name} reports no dollar cost for this run (a plan, or no price), so the \
+                     dollar cap cannot stop it. The token cap still does."
+                ));
+            }
             // H-5: messages other sessions sent while this turn ran are the
-            // next turn, as the untrusted data they are.
-            let events = self.p.store.events(&sid).unwrap_or_default();
-            let fresh: Vec<String> = events[seen.min(events.len())..]
-                .iter()
-                .filter_map(|e| match e {
-                    Event::System { text } => InterSessionMessage::decode(text).map(|m| m.render()),
-                    _ => None,
-                })
-                .collect();
-            seen = events.len();
-            if fresh.is_empty() || turns >= MAX_TURNS {
+            // next turn, as the untrusted data they are. Looked for under
+            // the lock senders deliver under: with none, the run settles and
+            // lets go of the session before any sender can see it live.
+            let (fresh, upto) = self
+                .p
+                .slot
+                .last_look(
+                    || self.inbox(seen, None),
+                    || self.settle(SessionStatus::Done),
+                )
+                .await;
+            seen = upto;
+            if fresh.is_empty() {
+                released = true;
                 break;
             }
-            text = fresh.join("\n\n");
+            if turns >= MAX_TURNS {
+                self.note(format!(
+                    "Stopped after {MAX_TURNS} turns in one run: {} message(s) from other \
+                     sessions are left unanswered. Send a message to continue.",
+                    fresh.len()
+                ));
+                break;
+            }
+            input = fresh.join("\n\n");
+            text = input.clone();
         }
-        self.finish(SessionStatus::Done).await;
+        if !released {
+            self.finish(SessionStatus::Done).await;
+        }
         tracing::info!(session = %sid, turns, "run done");
         self.p.sink.emit(RunEvent::Done { turns });
         Ok(())
+    }
+
+    /// Messages from other sessions in the transcript from index `from` to
+    /// `until` (or the end), as the untrusted data they are, and the index
+    /// read up to.
+    fn inbox(&self, from: usize, until: Option<usize>) -> (Vec<String>, usize) {
+        let events = self.p.store.events(&self.p.session_id).unwrap_or_default();
+        let end = until.map_or(events.len(), |u| u.min(events.len()));
+        let msgs = events[from.min(end)..end]
+            .iter()
+            .filter_map(|e| match e {
+                Event::System { text } => InterSessionMessage::decode(text).map(|m| m.render()),
+                _ => None,
+            })
+            .collect();
+        (msgs, end)
+    }
+
+    /// The vendor's conversation is gone: the next turn opens a new one.
+    fn forget_session(&self) {
+        if let Ok(mut r) = self.resume.lock() {
+            *r = None;
+        }
+        set_run_session(&self.p.session_id, None);
+    }
+
+    /// Say something in the thread: kept in the transcript, shown live.
+    fn note(&self, text: String) {
+        let _ = self
+            .p
+            .store
+            .append(&self.p.session_id, &Event::System { text: text.clone() });
+        self.p.sink.emit(RunEvent::Notice { text });
+    }
+
+    /// A note the thread needs once, not on every run.
+    fn note_once(&self, text: String) {
+        let said = self.p.store.events(&self.p.session_id).is_ok_and(|evs| {
+            evs.iter()
+                .any(|e| matches!(e, Event::System { text: t } if *t == text))
+        });
+        if !said {
+            self.note(text);
+        }
     }
 
     /// The first turn's text: earlier conversation when the vendor has none
@@ -256,7 +379,6 @@ impl EngineRun {
             cwd: PathBuf::from(&self.p.cwd),
             model: self.p.model.clone(),
             effort: self.p.effort.clone(),
-            access: self.p.access,
             instructions: Some(self.p.instructions.clone()).filter(|i| !i.trim().is_empty()),
             resume: self.resume.lock().ok().and_then(|r| r.clone()),
             prompt: text.to_string(),
@@ -413,6 +535,9 @@ impl EngineRun {
                 output,
                 cost_usd,
             } => {
+                if cost_usd.is_some() {
+                    self.cost_seen.store(true, Ordering::Relaxed);
+                }
                 let cost = cost_usd.unwrap_or(0.0);
                 let _ = self.p.store.add_usage(sid, input, output, cost);
                 self.p.sink.emit(RunEvent::Usage {
@@ -436,13 +561,7 @@ impl EngineRun {
             ProviderEvent::Limits(windows) => {
                 self.p.status.update_usage(&self.p.provider_id, &windows);
             }
-            ProviderEvent::Notice(text) => {
-                let _ = self
-                    .p
-                    .store
-                    .append(sid, &Event::System { text: text.clone() });
-                self.p.sink.emit(RunEvent::Notice { text });
-            }
+            ProviderEvent::Notice(text) => self.note(text),
         }
         None
     }
@@ -478,6 +597,10 @@ impl EngineRun {
     /// R-1: a killed run stays killed. Whatever the run wanted to write, a
     /// cancelled token (or a session already marked Killed) wins.
     async fn finish(&self, status: SessionStatus) {
+        self.settle(status);
+    }
+
+    fn settle(&self, status: SessionStatus) {
         let killed = self.p.cancel.is_cancelled()
             || matches!(
                 self.p.store.get(&self.p.session_id).map(|m| m.status),

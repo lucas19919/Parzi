@@ -16,13 +16,13 @@ use crate::lease_tools::{lease_defs, LeaseCtx};
 use crate::run::{EngineRun, EngineRunParts};
 use crate::toolhost::{ToolHost, ToolHostParts};
 use crate::tools::{ApprovalMode, Approver, DenyApprover, ToolExecutor};
-use parzi_providers::{display_name, Access};
+use parzi_providers::display_name;
 
 use super::queue::{
     clear_queued, run_project, run_role, run_session, set_run_note, set_run_project, Pump,
     QueuedRun,
 };
-use super::{normalize_effort, Handle, Orchestrator};
+use super::{next_run_id, normalize_effort, Handle, Orchestrator, SessionSlot};
 
 /// R-4: what a run may spend — the tighter of the machine's config budget and
 /// the project's `budget:` line. A project the store cannot read (deleted,
@@ -42,7 +42,6 @@ fn budget_for(cfg: &ParziConfig, project: Option<&(String, String)>) -> Budget {
 
 impl Orchestrator {
     /// Spawn a run. Returns the session id + live event channel.
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     pub async fn spawn(
         &self,
@@ -90,7 +89,7 @@ impl Orchestrator {
         // B4: prune finished tasks before measuring capacity.
         let live = {
             let mut h = self.handles.lock().await;
-            h.retain(|_, handle| !handle._task.is_finished());
+            h.retain(|_, handle| !handle.finished());
             h.len()
         };
         let effort = normalize_effort(effort);
@@ -122,6 +121,7 @@ impl Orchestrator {
             approver,
             workspace_project,
             prompt_recorded: false,
+            inbox_from: None,
             mode_override,
         };
         let snap = self.config();
@@ -159,7 +159,7 @@ impl Orchestrator {
         // second message to a completed thread succeeds.
         {
             let mut h = self.handles.lock().await;
-            h.retain(|_, handle| !handle._task.is_finished());
+            h.retain(|_, handle| !handle.finished());
             if h.contains_key(id) {
                 return Err(ParziError::Store(format!(
                     "run {id} is active; kill it first"
@@ -190,11 +190,12 @@ impl Orchestrator {
             approver,
             workspace_project: run_project(id),
             prompt_recorded: false,
+            inbox_from: None,
             mode_override,
         };
         let live = {
             let mut h = self.handles.lock().await;
-            h.retain(|_, handle| !handle._task.is_finished());
+            h.retain(|_, handle| !handle.finished());
             h.len()
         };
         let snap = self.config();
@@ -385,17 +386,54 @@ impl Orchestrator {
         }
     }
 
-    /// Build + launch a run for an existing session. Inserts the handle and
-    /// spawns the driver, which releases the handle and pumps the queue when
-    /// this run finishes. B4: handles are always removed on completion so the
-    /// concurrency cap counts live runs only.
+    /// Build + launch a run for an existing session. The session is claimed
+    /// first, so a second launch or a message sent meanwhile sees it live;
+    /// the driver lets go of it when the run ends (`RunEnd`). B4: handles are
+    /// always removed on completion so the concurrency cap counts live runs
+    /// only.
     pub(super) async fn launch(p: Pump, q: QueuedRun) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
         let sid = q.session_id.clone();
         // The parked copy has served its purpose the moment we try to start.
         clear_queued(&sid);
-        match Self::launch_inner(p.clone(), q).await {
+        let cancel = CancellationToken::new();
+        let claim = {
+            let mut h = p.handles.lock().await;
+            h.retain(|_, handle| !handle.finished());
+            if h.contains_key(&sid) {
+                None
+            } else {
+                let id = next_run_id();
+                h.insert(
+                    sid.clone(),
+                    Handle {
+                        id,
+                        cancel: cancel.clone(),
+                        task: None,
+                    },
+                );
+                // Messages already in the transcript belong to this run's
+                // opening (or were answered before); later ones are its news.
+                let seen = p.store.events(&sid).map_or(0, |e| e.len());
+                Some((id, seen))
+            }
+        };
+        let Some((id, seen)) = claim else {
+            // The session has a live run. A message from another session is
+            // read by that run; a person's turn waits behind it.
+            if q.inbox_from.is_none() {
+                p.enqueue(q).await;
+            }
+            return Ok(Self::closed_rx());
+        };
+        match Self::launch_inner(p.clone(), q, id, cancel, seen).await {
             Ok(rx) => Ok(rx),
             Err(e) => {
+                {
+                    let mut h = p.handles.lock().await;
+                    if h.get(&sid).is_some_and(|x| x.id == id) {
+                        h.remove(&sid);
+                    }
+                }
                 // R-5: a launch that fails must not leave the session sitting
                 // `Queued` forever with nobody to tell. Park it Idle, say so
                 // in the transcript, and put the error on the host bus —
@@ -413,7 +451,13 @@ impl Orchestrator {
         }
     }
 
-    async fn launch_inner(p: Pump, q: QueuedRun) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
+    async fn launch_inner(
+        p: Pump,
+        q: QueuedRun,
+        id: u64,
+        cancel: CancellationToken,
+        seen: usize,
+    ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
         let snap = p.cfg_snapshot();
         let (provider_id, model) = Self::route(&p, &snap, &q.session_id, &q.model_spec).await?;
         let provider = (p.source)(&provider_id, &snap).ok_or_else(|| {
@@ -484,7 +528,6 @@ impl Orchestrator {
             leases: lease_ctx,
         });
         let (tx, rx) = mpsc::unbounded_channel();
-        let cancel = CancellationToken::new();
         // R-5: every event also goes to the host bus (the caller's `rx` only
         // exists for direct calls).
         let sink = RunSink::new(&q.session_id, tx, Some(p.bus.clone()));
@@ -498,19 +541,17 @@ impl Orchestrator {
         // Path-scoped rules: the attachments they match ride with the prompt.
         let files: Vec<&str> = q.attachments.iter().map(|a| a.path.as_str()).collect();
         for r in parzi_core::rules::matching(&q.project, &files) {
-            instructions.push(format!(
-                "# Path rule ({})
-
-{}",
-                r.name, r.body
-            ));
+            instructions.push(format!("# Path rule ({})\n\n{}", r.name, r.body));
         }
-        let access = match mode {
-            ApprovalMode::Deny => Access::ReadOnly,
-            ApprovalMode::Ask if edits_auto => Access::Edits,
-            ApprovalMode::Ask => Access::Ask,
-            ApprovalMode::Auto => Access::Auto,
-        };
+        // A read-only lane runs only on an agent that asks before every
+        // change: on any other, the lockdown is a promise Parzi cannot keep.
+        if mode == ApprovalMode::Deny && !provider.gated() {
+            return Err(ParziError::Validation(format!(
+                "this lane is read-only, and {} applies some changes without asking Parzi \
+                 first; pick another agent for it",
+                display_name(&provider_id)
+            )));
+        }
         let host = Arc::new(ToolHost::new(ToolHostParts {
             session_id: q.session_id.clone(),
             lane: q.lane.clone(),
@@ -533,14 +574,7 @@ impl Orchestrator {
             provider,
             model,
             effort: Some(q.effort.clone()).filter(|e| !e.is_empty()),
-            access,
-            instructions: instructions.join(
-                "
-
----
-
-",
-            ),
+            instructions: instructions.join("\n\n---\n\n"),
             cwd: cwd.clone(),
             attachments: q.attachments.clone(),
             store: p.store.clone(),
@@ -551,37 +585,73 @@ impl Orchestrator {
             cancel: cancel.clone(),
             budget: budget_for(&snap, q.workspace_project.as_ref()),
             prompt_recorded: q.prompt_recorded,
+            slot: SessionSlot {
+                handles: p.handles.clone(),
+                marks: p.marks.clone(),
+                sid: q.session_id.clone(),
+                id,
+            },
+            seen,
+            inbox_from: q.inbox_from,
         });
         // A run that starts again is no longer paused: clear the stop note.
         set_run_note(&q.session_id, None);
         p.store.set_status(&q.session_id, SessionStatus::Active)?;
-        let parts = p.clone();
-        let handles = p.handles.clone();
-        let handles_task = handles.clone();
-        let sid = q.session_id.clone();
-        let sid_task = sid.clone();
+        let end = RunEnd {
+            parts: p.clone(),
+            sid: q.session_id.clone(),
+            id,
+        };
         let prompt = q.prompt.clone();
         let task = tokio::spawn(async move {
+            let _end = end;
             // A failure is already in the transcript as an error event.
             let _ = run.run(&prompt).await;
-            // B4: release the slot before waking the pump. Finished runs must
-            // not pin `max_concurrent` forever.
-            handles_task.lock().await.remove(&sid_task);
+        });
+        // A kill while the run was being built removed the claim and
+        // cancelled its token: the run then ends at once, on its own.
+        if let Some(h) = p.handles.lock().await.get_mut(&q.session_id) {
+            if h.id == id {
+                h.task = Some(task);
+            }
+        }
+        Ok(rx)
+    }
+}
+
+/// Whatever ends a run — its own end, or an abort after a kill — its hold
+/// on the session goes: the handle (only its own, never a newer run's), the
+/// files it leased (unless a newer run of the session holds them now), and
+/// a wake-up for the queue.
+struct RunEnd {
+    parts: Pump,
+    sid: String,
+    id: u64,
+}
+
+impl Drop for RunEnd {
+    fn drop(&mut self) {
+        let (p, sid, id) = (self.parts.clone(), std::mem::take(&mut self.sid), self.id);
+        let Ok(rt) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        rt.spawn(async move {
+            let newer = {
+                let mut h = p.handles.lock().await;
+                if h.get(&sid).is_some_and(|x| x.id == id) {
+                    h.remove(&sid);
+                }
+                h.contains_key(&sid)
+            };
             // PLAN §15.6: a lane that ended — cleanly or not — stops holding
             // files now. Only a crashed *process* waits for the TTL.
-            parts.leases.unregister(&sid_task).await;
+            if !newer {
+                p.leases.unregister(&sid).await;
+            }
             // Sync wake-up only: awaiting pump() here would close a
             // launch→driver→pump→launch await cycle that Send cannot prove.
-            parts.notify.notify_one();
+            p.notify.notify_one();
         });
-        handles.lock().await.insert(
-            sid,
-            Handle {
-                cancel,
-                _task: task,
-            },
-        );
-        Ok(rx)
     }
 }
 

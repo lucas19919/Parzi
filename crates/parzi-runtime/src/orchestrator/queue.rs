@@ -83,6 +83,8 @@ struct PersistedRun {
     /// Chat intent survives restarts like the prompt does.
     #[serde(default)]
     mode_override: Option<String>,
+    #[serde(default)]
+    inbox_from: Option<usize>,
 }
 
 /// H-7: only a valid uuid ever becomes a path segment.
@@ -215,6 +217,10 @@ pub(super) struct QueuedRun {
     /// The opening turn is already in the transcript (queued at enqueue, or
     /// an inter-session message): the run must not append it again.
     pub(super) prompt_recorded: bool,
+    /// Started by a message from another session: that message's place in
+    /// the transcript. The first turn answers every unread message from
+    /// there, so a sender that raced this launch is answered too.
+    pub(super) inbox_from: Option<usize>,
 }
 
 impl QueuedRun {
@@ -229,6 +235,7 @@ impl QueuedRun {
             workspace_project: self.workspace_project.clone(),
             prompt_recorded: self.prompt_recorded,
             mode_override: self.mode_override.clone(),
+            inbox_from: self.inbox_from,
         }
     }
 
@@ -246,6 +253,7 @@ impl QueuedRun {
             workspace_project: p.workspace_project,
             prompt_recorded: p.prompt_recorded,
             mode_override: p.mode_override,
+            inbox_from: p.inbox_from,
         }
     }
 }
@@ -266,6 +274,7 @@ pub(super) struct Pump {
     pub(super) tools_server: Arc<tokio::sync::OnceCell<Option<Arc<McpHost>>>>,
     pub(super) bus: RunEventBus,
     pub(super) leases: Arc<LeaseHub>,
+    pub(super) marks: super::ReadMarks,
 }
 
 impl Pump {
@@ -414,6 +423,7 @@ impl Orchestrator {
                 // budget (R-4).
                 workspace_project: run_project(parent_id),
                 prompt_recorded: false,
+                inbox_from: None,
                 // No chat intent carried over: children run under policy.
                 // (B2: harness-spawned children must never silently run as Auto.)
                 mode_override: None,
@@ -423,7 +433,7 @@ impl Orchestrator {
             }
             let live = {
                 let mut h = self.handles.lock().await;
-                h.retain(|_, handle| !handle._task.is_finished());
+                h.retain(|_, handle| !handle.finished());
                 h.len()
             };
             let snap = self.config();
@@ -449,7 +459,7 @@ impl Orchestrator {
     /// that hasn't self-removed yet never blocks a new run.
     async fn live_count(p: &Pump) -> usize {
         let mut h = p.handles.lock().await;
-        h.retain(|_, handle| !handle._task.is_finished());
+        h.retain(|_, handle| !handle.finished());
         h.len()
     }
 
@@ -458,11 +468,19 @@ impl Orchestrator {
         loop {
             let next = {
                 let max = p.cfg_snapshot().orchestrator.max_concurrent.max(1);
-                let live = Self::live_count(&p).await;
-                if live >= max {
-                    return;
-                }
-                p.queue.lock().await.pop_front()
+                let busy: std::collections::HashSet<String> = {
+                    let mut h = p.handles.lock().await;
+                    h.retain(|_, handle| !handle.finished());
+                    if h.len() >= max {
+                        return;
+                    }
+                    h.keys().cloned().collect()
+                };
+                // A session with a run of its own keeps its queued turn until
+                // that run ends; the end of the run wakes the pump again.
+                let mut queue = p.queue.lock().await;
+                let at = queue.iter().position(|r| !busy.contains(&r.session_id));
+                at.and_then(|i| queue.remove(i))
             };
             let Some(q) = next else { return };
             let killed = match p.store.get(&q.session_id) {

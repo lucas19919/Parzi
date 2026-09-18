@@ -57,6 +57,8 @@ pub struct Fake {
     pub id: &'static str,
     pub script: Script,
     pub turns: Arc<Mutex<Vec<TurnSpec>>>,
+    /// Plays an agent that asks before every change (the usual case).
+    pub gated: bool,
 }
 
 impl Fake {
@@ -65,6 +67,17 @@ impl Fake {
             id,
             script,
             turns: Arc::default(),
+            gated: true,
+        })
+    }
+
+    /// An agent that applies some changes without asking Parzi first.
+    pub fn ungated(id: &'static str, script: Script) -> Arc<Self> {
+        Arc::new(Self {
+            id,
+            script,
+            turns: Arc::default(),
+            gated: false,
         })
     }
 
@@ -77,6 +90,9 @@ impl Fake {
 impl Provider for Fake {
     fn id(&self) -> &'static str {
         self.id
+    }
+    fn gated(&self) -> bool {
+        self.gated
     }
     async fn status(&self) -> ProviderStatus {
         ProviderStatus::new(self.id, State::Ready, "")

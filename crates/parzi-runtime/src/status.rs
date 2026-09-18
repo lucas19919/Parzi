@@ -131,24 +131,32 @@ impl StatusBoard {
             let Some(canon) = parzi_providers::canonical_id(&id) else {
                 continue;
             };
-            if !cfg.provider(canon).enabled {
-                self.put(ProviderStatus::new(
-                    canon,
-                    State::Disabled,
-                    "Switched off in Settings.",
-                ));
-                continue;
-            }
             let Some(provider) = source(canon, cfg) else {
                 continue;
             };
+            if !cfg.provider(canon).enabled {
+                let mut off =
+                    ProviderStatus::new(canon, State::Disabled, "Switched off in Settings.");
+                off.gated = provider.gated();
+                self.put(off);
+                continue;
+            }
             set.spawn(async move {
                 // One slow vendor must not hold the rest.
-                tokio::time::timeout(std::time::Duration::from_secs(90), provider.status())
-                    .await
-                    .unwrap_or_else(|_| {
-                        ProviderStatus::new(canon, State::Error, "The status check took over 90 s.")
-                    })
+                let mut s =
+                    tokio::time::timeout(std::time::Duration::from_secs(90), provider.status())
+                        .await
+                        .unwrap_or_else(|_| {
+                            ProviderStatus::new(
+                                canon,
+                                State::Error,
+                                "The status check took over 90 s.",
+                            )
+                        });
+                // What Parzi can promise about the agent is the driver's to
+                // say, not the probe's.
+                s.gated = provider.gated();
+                s
             });
         }
         while let Some(done) = set.join_next().await {
@@ -206,6 +214,9 @@ mod tests {
     impl Provider for Fixed {
         fn id(&self) -> &'static str {
             self.0
+        }
+        fn gated(&self) -> bool {
+            true
         }
         async fn status(&self) -> ProviderStatus {
             let mut s = ProviderStatus::new(self.0, self.1, "");

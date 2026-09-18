@@ -37,8 +37,24 @@ impl RpcError {
 }
 
 impl std::fmt::Display for RpcError {
+    /// The message and, when the peer sent one, the reason in `data`: ACP
+    /// agents put the real cause there under a generic "Internal error".
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
+        f.write_str(&self.message)?;
+        let detail = match &self.data {
+            None | Some(Value::Null) => return Ok(()),
+            Some(Value::String(s)) => s.trim().to_string(),
+            Some(v) => v
+                .get("message")
+                .or_else(|| v.get("details"))
+                .and_then(Value::as_str)
+                .map_or_else(|| v.to_string(), str::to_string),
+        };
+        if detail.is_empty() || detail == self.message {
+            return Ok(());
+        }
+        let short: String = detail.chars().take(400).collect();
+        write!(f, ": {short}")
     }
 }
 

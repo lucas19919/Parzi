@@ -26,6 +26,9 @@ pub enum ErrorClass {
     BadRequest,
     /// The vendor program is missing, would not start, or died.
     Process,
+    /// The vendor no longer has the conversation it was asked to resume.
+    /// The run starts a new one and hands it the thread so far.
+    SessionLost,
     /// Anything the vendor did not classify.
     Unknown,
 }
@@ -39,6 +42,7 @@ impl ErrorClass {
             Self::ContextOverflow => "context_overflow",
             Self::BadRequest => "bad_request",
             Self::Process => "process",
+            Self::SessionLost => "session_lost",
             Self::Unknown => "unknown",
         }
     }
@@ -125,6 +129,10 @@ pub struct ProviderStatus {
     pub usage: Vec<UsageWindow>,
     #[serde(default)]
     pub models: Vec<ModelInfo>,
+    /// Every change the agent makes arrives at Parzi's gate first
+    /// ([`Provider::gated`]). The status board fills it in.
+    #[serde(default)]
+    pub gated: bool,
     /// Unix seconds of this probe.
     pub checked_at: u64,
 }
@@ -139,23 +147,10 @@ impl ProviderStatus {
             hint: hint.into(),
             usage: vec![],
             models: vec![],
+            gated: false,
             checked_at: now_secs(),
         }
     }
-}
-
-/// What the vendor may do without asking Parzi first. Every action outside
-/// it arrives as a [`PermissionRequest`] and Parzi's own gate decides.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Access {
-    /// Read and answer only; every change is refused.
-    ReadOnly,
-    /// Every change asks.
-    Ask,
-    /// File edits inside the workspace run; commands ask.
-    Edits,
-    /// The vendor's own normal mode; Parzi still sees what it asks.
-    Auto,
 }
 
 /// Parzi's own tools, served over MCP for this one turn.
@@ -177,7 +172,6 @@ pub struct TurnSpec {
     /// Vendor model argument. `None` = the vendor's default.
     pub model: Option<String>,
     pub effort: Option<String>,
-    pub access: Access,
     /// Parzi's standing instructions (lane, workspace, role, knowledge).
     pub instructions: Option<String>,
     /// From a previous turn's [`ProviderEvent::Session`]. `None` = new session.
@@ -265,6 +259,14 @@ pub type EventTx = mpsc::UnboundedSender<ProviderEvent>;
 #[async_trait::async_trait]
 pub trait Provider: Send + Sync {
     fn id(&self) -> &'static str;
+
+    /// Every change the agent makes (edits, commands, fetches) arrives as a
+    /// [`PermissionRequest`] before it happens, because the driver runs the
+    /// agent in its most-asking mode with nothing pre-approved. `false`: the
+    /// agent applies some changes on its own, so leases and the folder fence
+    /// cannot stop them and a read-only lane cannot run on it. No default:
+    /// every driver says which it is.
+    fn gated(&self) -> bool;
 
     /// Ask the vendor program where it stands. Never spends quota.
     async fn status(&self) -> ProviderStatus;

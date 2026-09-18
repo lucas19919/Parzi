@@ -19,7 +19,7 @@ use base64::Engine as _;
 use parzi_core::config::ParziConfig;
 
 pub use types::{
-    now_secs, Access, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
+    now_secs, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
     PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus, State, ToolServer,
     TurnEnd, TurnSpec, UsageWindow,
 };

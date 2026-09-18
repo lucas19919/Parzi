@@ -16,9 +16,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::process::{self, Proc};
 use crate::types::{
-    tail, Access, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
-    PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd,
-    TurnSpec, UsageWindow,
+    tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate, PermissionRequest,
+    Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd, TurnSpec, UsageWindow,
 };
 
 pub const ID: &str = "claude";
@@ -51,6 +50,12 @@ impl Claude {
 impl Provider for Claude {
     fn id(&self) -> &'static str {
         ID
+    }
+
+    /// `default` mode with no settings loaded: every edit, command and
+    /// fetch is a `can_use_tool` request (see `turn_args`).
+    fn gated(&self) -> bool {
+        true
     }
 
     async fn status(&self) -> ProviderStatus {
@@ -219,6 +224,19 @@ async fn handshake(program: &Path) -> Result<Value, ProviderError> {
     init
 }
 
+/// A new directory only this user can open: the MCP config inside carries
+/// the run's secret. (Windows temp folders are per-user already.) Fails if
+/// the path exists, so nobody can prepare it in advance.
+fn private_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        std::fs::DirBuilder::new().mode(0o700).create(dir)
+    }
+    #[cfg(not(unix))]
+    std::fs::DirBuilder::new().create(dir)
+}
+
 /// Temporary files a turn hands to the CLI by path: long instructions and
 /// the MCP config (which carries this run's secret) stay off the command
 /// line, where Windows would cap them and anyone could read them.
@@ -230,10 +248,10 @@ struct TurnFiles {
 
 impl TurnFiles {
     fn write(spec: &TurnSpec) -> Result<Self, ProviderError> {
-        let dir = std::env::temp_dir()
-            .join("parzi-turns")
-            .join(uuid::Uuid::new_v4().to_string());
-        std::fs::create_dir_all(&dir)
+        let root = std::env::temp_dir().join("parzi-turns");
+        let dir = root.join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir_all(&root)
+            .and_then(|()| private_dir(&dir))
             .map_err(|e| ProviderError::process(format!("turn scratch dir: {e}")))?;
         let mut files = Self {
             dir: dir.clone(),
@@ -268,14 +286,6 @@ impl TurnFiles {
     }
 }
 
-fn permission_mode(access: Access) -> &'static str {
-    match access {
-        // Every change asks; Parzi's gate refuses or asks the person.
-        Access::ReadOnly | Access::Ask | Access::Auto => "default",
-        Access::Edits => "acceptEdits",
-    }
-}
-
 /// Parzi's effort pill in Claude Code's words; its own words pass through.
 fn effort(e: &str) -> &str {
     match e {
@@ -285,6 +295,10 @@ fn effort(e: &str) -> &str {
     }
 }
 
+/// Every change Claude Code makes asks first (`default` mode), and nothing is
+/// pre-approved behind Parzi's back: no user or project settings (their
+/// `permissions.allow` rules and hooks would answer before Parzi is asked,
+/// and a repo could grant itself commands), and no MCP servers but Parzi's.
 fn turn_args(spec: &TurnSpec, files: &TurnFiles) -> Vec<String> {
     let mut a: Vec<String> = [
         "-p",
@@ -297,7 +311,9 @@ fn turn_args(spec: &TurnSpec, files: &TurnFiles) -> Vec<String> {
         "--permission-prompt-tool",
         "stdio",
         "--permission-mode",
-        permission_mode(spec.access),
+        "default",
+        "--setting-sources=",
+        "--strict-mcp-config",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -381,7 +397,7 @@ impl Link {
                     break;
                 }
             }
-            reading.fail_all("Claude Code exited");
+            reading.fail_all();
         });
         (link, rx)
     }
@@ -461,11 +477,11 @@ impl Link {
         let _ = waiter.send(outcome);
     }
 
-    fn fail_all(&self, why: &str) {
+    /// The CLI is gone: every open control request ends as a process
+    /// failure, so the turn's error carries Claude Code's own stderr.
+    fn fail_all(&self) {
         if let Ok(mut w) = self.waiters.lock() {
-            for (_, waiter) in w.drain() {
-                let _ = waiter.send(Err(why.to_string()));
-            }
+            w.clear();
         }
     }
 
@@ -499,7 +515,14 @@ struct TurnState {
     /// CLI's dollar figure is what the tokens would cost on the API, and
     /// nobody pays it.
     on_plan: bool,
+    /// This turn asked to resume an earlier conversation.
+    resuming: bool,
+    /// Claude Code said `system/init`: the conversation loaded.
+    saw_init: bool,
 }
+
+/// A stopped turn gets this long to wind down before the CLI is killed.
+const STOP_GRACE: Duration = Duration::from_secs(3);
 
 /// Run one turn over an already-started CLI's stdio. Split from
 /// `run_turn` so the wire is testable without a real `claude`.
@@ -516,12 +539,40 @@ where
     W: AsyncWrite + Send + Unpin + 'static,
 {
     let (link, mut incoming) = Link::start(reader, writer);
-    link.control(
+    let mut st = TurnState {
+        resuming: spec.resume.as_ref().and_then(resume_id).is_some(),
+        ..TurnState::default()
+    };
+    // A conversation Claude Code no longer has ends before `initialize` is
+    // answered, as a `result`: read it instead of calling it a crash.
+    let init = link.control(
         json!({"subtype": "initialize", "hooks": null}),
         Duration::from_secs(90),
-    )
-    .await?;
-    let content = user_content(&spec.prompt, &spec.images);
+    );
+    tokio::pin!(init);
+    loop {
+        tokio::select! {
+            // What the CLI already said comes first: its last words before
+            // exiting explain the exit.
+            biased;
+            Some(v) = incoming.recv() => {
+                if let Some(end) = handle(&v, &mut st, &link, &gate, events).await? {
+                    return Ok(end);
+                }
+            }
+            r = &mut init => {
+                r?;
+                break;
+            }
+        }
+    }
+    let (content, unreadable) = user_content(&spec.prompt, &spec.images);
+    for p in unreadable {
+        let _ = events.send(ProviderEvent::Notice(format!(
+            "{} was not sent: Claude Code takes PNG, JPEG, GIF or WebP images",
+            p.display()
+        )));
+    }
     link.send(&json!({
         "type": "user",
         "message": {"role": "user", "content": content},
@@ -529,16 +580,15 @@ where
         "session_id": "default",
     }))
     .await?;
-    let mut st = TurnState::default();
     let mut stop_by: Option<tokio::time::Instant> = None;
     loop {
         let msg = tokio::select! {
             () = cancel.cancelled(), if !st.interrupting => {
                 st.interrupting = true;
-                stop_by = Some(tokio::time::Instant::now() + Duration::from_secs(10));
+                stop_by = Some(tokio::time::Instant::now() + STOP_GRACE);
                 let l = link.clone();
                 tokio::spawn(async move {
-                    let _ = l.control(json!({"subtype": "interrupt"}), Duration::from_secs(10)).await;
+                    let _ = l.control(json!({"subtype": "interrupt"}), STOP_GRACE).await;
                 });
                 continue;
             }
@@ -571,20 +621,23 @@ async fn sleep_until(deadline: Option<tokio::time::Instant>) {
     }
 }
 
-fn user_content(prompt: &str, images: &[PathBuf]) -> Value {
+/// The prompt as Claude Code takes it, and the images it could not take.
+fn user_content(prompt: &str, images: &[PathBuf]) -> (Value, Vec<PathBuf>) {
     if images.is_empty() {
-        return json!(prompt);
+        return (json!(prompt), vec![]);
     }
     let mut blocks = vec![json!({"type": "text", "text": prompt})];
+    let mut unreadable = vec![];
     for p in images {
-        if let Some((media_type, data)) = crate::image_base64(p) {
-            blocks.push(json!({
+        match crate::image_base64(p) {
+            Some((media_type, data)) => blocks.push(json!({
                 "type": "image",
                 "source": {"type": "base64", "media_type": media_type, "data": data},
-            }));
+            })),
+            None => unreadable.push(p.clone()),
         }
     }
-    Value::Array(blocks)
+    (Value::Array(blocks), unreadable)
 }
 
 /// One stdout message. `Some(end)` = the turn is over.
@@ -596,9 +649,10 @@ async fn handle(
     events: &EventTx,
 ) -> Result<Option<TurnEnd>, ProviderError> {
     let kind = v.get("type").and_then(Value::as_str).unwrap_or("");
-    // Subagent traffic carries its parent tool call; the thread shows the
-    // main conversation, and the subagent's result arrives as that tool's
-    // result.
+    // Subagent traffic carries its parent tool call. Its words stay out of
+    // the thread (its answer arrives as that tool's result), but its tool
+    // calls and tokens count like the main conversation's: its commands
+    // pass the same gate and lease audit, and it spends the same budget.
     let main = v.get("parent_tool_use_id").is_none_or(Value::is_null);
     match kind {
         "control_request" => {
@@ -630,6 +684,7 @@ async fn handle(
         }
         "system" => match v.get("subtype").and_then(Value::as_str).unwrap_or("") {
             "init" => {
+                st.saw_init = true;
                 st.on_plan = v.get("apiKeySource").and_then(Value::as_str) == Some("none");
                 if let Some(id) = v.get("session_id").and_then(Value::as_str) {
                     let _ = events.send(ProviderEvent::Session {
@@ -672,7 +727,7 @@ async fn handle(
                 }
             }
         }
-        "assistant" if main => {
+        "assistant" => {
             let msg = v.get("message").unwrap_or(&Value::Null);
             let mut text = String::new();
             for block in msg
@@ -682,12 +737,12 @@ async fn handle(
                 .flatten()
             {
                 match block.get("type").and_then(Value::as_str) {
-                    Some("text") => {
+                    Some("text") if main => {
                         if let Some(t) = block.get("text").and_then(Value::as_str) {
                             text.push_str(t);
                         }
                     }
-                    Some("thinking") => {
+                    Some("thinking") if main => {
                         if let Some(t) = block.get("thinking").and_then(Value::as_str) {
                             if !t.trim().is_empty() {
                                 let _ = events.send(ProviderEvent::Reasoning(t.to_string()));
@@ -736,7 +791,10 @@ async fn handle(
                         + n("cache_creation_input_tokens")
                         + n("cache_read_input_tokens");
                     let output = n("output_tokens");
-                    st.last_context = Some(input + output);
+                    // The meter is the main conversation's window.
+                    if main {
+                        st.last_context = Some(input + output);
+                    }
                     let _ = events.send(ProviderEvent::Usage {
                         input,
                         output,
@@ -745,7 +803,7 @@ async fn handle(
                 }
             }
         }
-        "user" if main => {
+        "user" => {
             let msg = v.get("message").unwrap_or(&Value::Null);
             for block in msg
                 .get("content")
@@ -910,15 +968,6 @@ fn finish(v: &Value, st: &TurnState, events: &EventTx) -> Result<TurnEnd, Provid
     if st.interrupting {
         return Ok(TurnEnd::Interrupted);
     }
-    let status = v.get("api_error_status").and_then(Value::as_u64);
-    let class = match status {
-        Some(401 | 403) => ErrorClass::Auth,
-        Some(429) => ErrorClass::RateLimit,
-        Some(413) => ErrorClass::ContextOverflow,
-        Some(400) => ErrorClass::BadRequest,
-        Some(500..=599) => ErrorClass::Overloaded,
-        _ => ErrorClass::Unknown,
-    };
     let mut message = v
         .get("result")
         .and_then(Value::as_str)
@@ -937,6 +986,21 @@ fn finish(v: &Value, st: &TurnState, events: &EventTx) -> Result<TurnEnd, Provid
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| format!("Claude Code ended the turn with `{subtype}`"));
     }
+    // Asked to resume, and the turn ended before the conversation loaded:
+    // Claude Code no longer has it (verified live: `error_during_execution`
+    // with no `init`, the reason in `errors`).
+    if st.resuming && !st.saw_init && subtype == "error_during_execution" {
+        return Err(ProviderError::new(ErrorClass::SessionLost, message));
+    }
+    let status = v.get("api_error_status").and_then(Value::as_u64);
+    let class = match status {
+        Some(401 | 403) => ErrorClass::Auth,
+        Some(429) => ErrorClass::RateLimit,
+        Some(413) => ErrorClass::ContextOverflow,
+        Some(400) => ErrorClass::BadRequest,
+        Some(500..=599) => ErrorClass::Overloaded,
+        _ => ErrorClass::Unknown,
+    };
     if let Some(code) = status {
         message = format!("{message} (HTTP {code})");
     }
@@ -964,7 +1028,6 @@ mod tests {
             cwd: std::env::temp_dir(),
             model: None,
             effort: None,
-            access: Access::Ask,
             instructions: None,
             resume: None,
             prompt: "hi".into(),
@@ -1140,6 +1203,120 @@ mod tests {
         let (r, _) = permission_request(&req);
         assert!(r.paths.is_empty());
         assert_eq!(r.title, "Run `rm -rf target`");
+    }
+
+    /// A subagent's words stay out of the thread, but its commands and its
+    /// tokens count: they pass the same gate and lease audit, and spend the
+    /// same budget.
+    #[tokio::test]
+    async fn a_subagents_tools_and_tokens_count_but_its_words_do_not() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let script = vec![
+            json!({"type": "system", "subtype": "init", "session_id": "s"}),
+            json!({"type": "assistant", "parent_tool_use_id": "task-1", "message": {"id": "sub-1", "content": [
+                {"type": "text", "text": "subagent musing"},
+                {"type": "tool_use", "id": "t9", "name": "Bash", "input": {"command": "echo x > held.rs"}}
+            ], "usage": {"input_tokens": 7, "output_tokens": 3}}}),
+            json!({"type": "user", "parent_tool_use_id": "task-1", "message": {"content": [
+                {"type": "tool_result", "tool_use_id": "t9", "content": "done"}
+            ]}}),
+            json!({"type": "result", "subtype": "success", "is_error": false}),
+        ];
+        let cli = tokio::spawn(fake_cli(theirs, script));
+        let (r, w) = tokio::io::split(ours);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
+        drive(r, w, &spec(), gate, &tx, &CancellationToken::new())
+            .await
+            .unwrap();
+        cli.await.unwrap();
+        drop(tx);
+        let mut got = vec![];
+        while let Some(e) = rx.recv().await {
+            got.push(e);
+        }
+        assert!(got
+            .iter()
+            .any(|e| matches!(e, ProviderEvent::ToolStarted { id, .. } if id == "t9")));
+        assert!(got
+            .iter()
+            .any(|e| matches!(e, ProviderEvent::ToolFinished { id, .. } if id == "t9")));
+        assert!(got.contains(&ProviderEvent::Usage {
+            input: 7,
+            output: 3,
+            cost_usd: None
+        }));
+        assert!(
+            !got.iter()
+                .any(|e| matches!(e, ProviderEvent::Message(t) if t.contains("musing"))),
+            "{got:?}"
+        );
+    }
+
+    /// Verified live: resuming a conversation Claude Code no longer has ends
+    /// before `initialize` is answered, with `error_during_execution` and
+    /// the reason in `errors`.
+    #[tokio::test]
+    async fn a_conversation_claude_no_longer_has_is_session_lost() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let cli = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let _initialize = lines.next_line().await;
+            let lost = json!({"type": "result", "subtype": "error_during_execution", "is_error": true,
+                "num_turns": 0, "errors": ["No conversation found with session ID: gone"]});
+            w.write_all(format!("{lost}\n").as_bytes()).await.unwrap();
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
+        let mut s = spec();
+        s.resume = Some(json!({"session_id": "gone"}));
+        let err = drive(r, w, &s, gate, &tx, &CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert_eq!(err.class, ErrorClass::SessionLost);
+        assert!(err.message.contains("No conversation found"), "{err}");
+        cli.await.unwrap();
+    }
+
+    /// A CLI that dies before answering `initialize` is a process failure,
+    /// so the caller adds Claude Code's own stderr to the message.
+    #[tokio::test]
+    async fn a_cli_that_dies_at_start_is_a_process_failure() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let cli = tokio::spawn(async move {
+            let (r, _w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let _initialize = lines.next_line().await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
+        let err = drive(r, w, &spec(), gate, &tx, &CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert_eq!(err.class, ErrorClass::Process, "{err}");
+        cli.await.unwrap();
+    }
+
+    /// Nothing is approved behind Parzi's back: the most-asking mode, no
+    /// user or project settings, no MCP servers but Parzi's.
+    #[test]
+    fn a_turn_starts_claude_with_nothing_pre_approved() {
+        let files = TurnFiles {
+            dir: std::env::temp_dir(),
+            instructions: None,
+            mcp: None,
+        };
+        let args = turn_args(&spec(), &files);
+        let has = |a: &str| args.iter().any(|x| x == a);
+        let mode = args.iter().position(|x| x == "--permission-mode").unwrap();
+        assert_eq!(args[mode + 1], "default");
+        assert!(
+            has("--setting-sources=") && has("--strict-mcp-config"),
+            "{args:?}"
+        );
     }
 
     #[test]

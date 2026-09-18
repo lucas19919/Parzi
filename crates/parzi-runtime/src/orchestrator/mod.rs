@@ -61,9 +61,77 @@ pub struct RunInfo {
     pub cost_usd: f64,
 }
 
+/// A session's run as the orchestrator holds it.
 struct Handle {
+    /// Which run of the session this is: a run's cleanup only ever removes
+    /// its own handle, never a newer run's.
+    id: u64,
     cancel: CancellationToken,
-    _task: tokio::task::JoinHandle<()>,
+    /// `None` while a launch is still building the run: the session is
+    /// claimed already, so a second launch or a sender sees it live.
+    task: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Handle {
+    fn finished(&self) -> bool {
+        self.task
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)
+    }
+}
+
+/// Run ids: unique for the life of the process.
+fn next_run_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Per session: the transcript index up to which messages from other
+/// sessions have been handed to its agent.
+type ReadMarks = Arc<std::sync::Mutex<HashMap<String, usize>>>;
+
+/// One run's hold on its session, for the end of the run. Messages from
+/// other sessions are delivered under the same lock, so a message is either
+/// seen by the run's last look or finds the session free and starts a run
+/// of its own: never both, never neither.
+pub(crate) struct SessionSlot {
+    handles: Arc<Mutex<HashMap<String, Handle>>>,
+    marks: ReadMarks,
+    sid: String,
+    id: u64,
+}
+
+impl SessionSlot {
+    /// Where this session's messages were last read up to, if a run did.
+    pub(crate) fn read_mark(&self) -> Option<usize> {
+        self.marks.lock().ok()?.get(&self.sid).copied()
+    }
+
+    pub(crate) fn set_read_mark(&self, at: usize) {
+        if let Ok(mut m) = self.marks.lock() {
+            m.insert(self.sid.clone(), at);
+        }
+    }
+
+    /// Under the delivery lock: `look` returns the messages that arrived
+    /// and the index it read up to. Nothing new: `on_quiet` settles the
+    /// session and the run lets go of it before any sender can look.
+    pub(crate) async fn last_look<L, Q>(&self, look: L, on_quiet: Q) -> (Vec<String>, usize)
+    where
+        L: FnOnce() -> (Vec<String>, usize),
+        Q: FnOnce(),
+    {
+        let mut h = self.handles.lock().await;
+        let (fresh, upto) = look();
+        self.set_read_mark(upto);
+        if fresh.is_empty() {
+            on_quiet();
+            if h.get(&self.sid).is_some_and(|x| x.id == self.id) {
+                h.remove(&self.sid);
+            }
+        }
+        (fresh, upto)
+    }
 }
 
 pub struct Orchestrator {
@@ -83,6 +151,7 @@ pub struct Orchestrator {
     /// PLAN §4: one lease table per process, shared by every lane that runs
     /// in it. Round 1 is hub-less, so this *is* the hub.
     leases: Arc<LeaseHub>,
+    marks: ReadMarks,
 }
 
 impl Orchestrator {
@@ -104,6 +173,7 @@ impl Orchestrator {
             tools_server: Arc::new(tokio::sync::OnceCell::new()),
             leases: Arc::new(LeaseHub::new().with_bus(bus.clone())),
             bus,
+            marks: ReadMarks::default(),
         }
     }
 
@@ -141,6 +211,7 @@ impl Orchestrator {
             tools_server: self.tools_server.clone(),
             bus: self.bus.clone(),
             leases: self.leases.clone(),
+            marks: self.marks.clone(),
         }
     }
 
@@ -351,16 +422,19 @@ impl Orchestrator {
     pub async fn kill(&self, id: &str) -> Result<()> {
         if let Some(h) = self.handles.lock().await.remove(id) {
             h.cancel.cancel();
-            // The provider gets a moment to stop its turn and close the
-            // vendor program with everything it started.
-            for _ in 0..30 {
-                if h._task.is_finished() {
-                    break;
+            if let Some(task) = h.task {
+                // The provider gets its stop grace (3 s) to end the turn and
+                // close the vendor program with everything it started.
+                for _ in 0..50 {
+                    if task.is_finished() {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                // R-1 backstop: a run stuck anyway is aborted, so the slot
+                // frees; its end guard still lets go of its leases.
+                task.abort();
             }
-            // R-1 backstop: a run stuck anyway is aborted, so the slot frees.
-            h._task.abort();
         }
         // Dequeue anything waiting for this session too — in memory and on
         // disk, so a restart does not resurrect a killed run (R-5).

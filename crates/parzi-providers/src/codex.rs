@@ -14,9 +14,8 @@ use tokio_util::sync::CancellationToken;
 use crate::jsonrpc::{Incoming, Peer, RpcError};
 use crate::process::{self, Proc};
 use crate::types::{
-    tail, Access, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
-    PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd,
-    TurnSpec, UsageWindow,
+    tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate, PermissionRequest,
+    Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd, TurnSpec, UsageWindow,
 };
 
 pub const ID: &str = "codex";
@@ -97,6 +96,12 @@ async fn open(program: &Path, cwd: &Path) -> Result<Server, ProviderError> {
 impl Provider for Codex {
     fn id(&self) -> &'static str {
         ID
+    }
+
+    /// `untrusted` approvals: every patch and every command not known to
+    /// be read-only is an approval request (see [`APPROVAL`]).
+    fn gated(&self) -> bool {
+        true
     }
 
     async fn status(&self) -> ProviderStatus {
@@ -283,18 +288,12 @@ fn windows(snapshot: &Value) -> Vec<UsageWindow> {
     out
 }
 
-/// (approval policy, thread sandbox, turn sandbox policy) for an access
-/// level. Mirrors t3code: every action outside the sandbox asks Parzi.
-fn access_config(access: Access) -> (&'static str, &'static str, Value) {
-    match access {
-        Access::ReadOnly | Access::Ask => ("untrusted", "read-only", json!({"type": "readOnly"})),
-        Access::Edits | Access::Auto => (
-            "on-request",
-            "workspace-write",
-            json!({"type": "workspaceWrite"}),
-        ),
-    }
-}
+/// Codex's most-asking setup, whatever the lane allows: `untrusted` asks
+/// before every patch and every command it does not know to be read-only,
+/// and the read-only sandbox holds the commands it runs without asking.
+/// Parzi's gate answers each request with the lane's own rules.
+const APPROVAL: &str = "untrusted";
+const SANDBOX: &str = "read-only";
 
 fn thread_id(v: &Value) -> Option<String> {
     v.pointer("/thread/id")
@@ -321,11 +320,10 @@ async fn drive(
     events: &EventTx,
     cancel: &CancellationToken,
 ) -> Result<TurnEnd, ProviderError> {
-    let (approval, sandbox, sandbox_policy) = access_config(spec.access);
     let mut thread = json!({
         "cwd": spec.cwd.display().to_string(),
-        "approvalPolicy": approval,
-        "sandbox": sandbox,
+        "approvalPolicy": APPROVAL,
+        "sandbox": SANDBOX,
     });
     if let Some(m) = spec.model.as_deref().filter(|m| !m.is_empty()) {
         thread["model"] = json!(m);
@@ -354,12 +352,15 @@ async fn drive(
             p["threadId"] = json!(tid);
             match peer.request_within("thread/resume", p, limit).await {
                 Ok(v) => thread_id(&v).unwrap_or(tid),
-                Err(e) => {
-                    let _ = events.send(ProviderEvent::Notice(format!(
-                        "Codex could not resume the earlier conversation ({e}); starting a new one"
-                    )));
-                    start_thread(peer, thread, limit).await?
+                // The server answered and refused the thread: it no longer
+                // has it. The run starts a new one and hands it the history.
+                Err(e) if e.code != RpcError::CLOSED && e.code != RpcError::TIMEOUT => {
+                    return Err(ProviderError::new(
+                        ErrorClass::SessionLost,
+                        format!("Codex could not resume the conversation: {e}"),
+                    ));
                 }
+                Err(e) => return Err(rpc_failure(e)),
             }
         }
         None => start_thread(peer, thread, limit).await?,
@@ -374,8 +375,8 @@ async fn drive(
     let mut turn = json!({
         "threadId": tid,
         "input": input,
-        "approvalPolicy": approval,
-        "sandboxPolicy": sandbox_policy,
+        "approvalPolicy": APPROVAL,
+        "sandboxPolicy": {"type": "readOnly"},
     });
     if let Some(m) = spec.model.as_deref().filter(|m| !m.is_empty()) {
         turn["model"] = json!(m);
@@ -463,7 +464,7 @@ fn rpc_failure(e: RpcError) -> ProviderError {
     }
     ProviderError::new(
         ErrorClass::Unknown,
-        format!("Codex refused the request: {}", e.message),
+        format!("Codex refused the request: {e}"),
     )
 }
 
@@ -828,7 +829,6 @@ mod tests {
             cwd: std::env::temp_dir(),
             model: Some("gpt-5.5".into()),
             effort: Some("high".into()),
-            access: Access::Ask,
             instructions: Some("be brief".into()),
             resume: None,
             prompt: "hi".into(),

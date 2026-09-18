@@ -15,9 +15,8 @@ use tokio_util::sync::CancellationToken;
 use crate::jsonrpc::{Incoming, Peer, RpcError};
 use crate::process::{self, Proc};
 use crate::types::{
-    tail, Access, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
-    PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd,
-    TurnSpec,
+    tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate, PermissionRequest,
+    Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd, TurnSpec,
 };
 
 /// ACP's "authentication required" error code.
@@ -30,11 +29,15 @@ pub struct Agent {
     pub name: &'static str,
     /// Program name on PATH when no path is configured.
     program: &'static str,
-    args: fn(Access) -> Vec<String>,
+    /// The agent in its most-asking mode: Parzi's gate answers for the lane.
+    args: &'static [&'static str],
     /// Extra environment, from the resolved program's location.
     env: fn(&Path) -> Vec<(String, String)>,
     /// Where the program lives when it is not on PATH.
     locate: fn() -> Option<PathBuf>,
+    /// Every change the agent makes arrives as `session/request_permission`
+    /// ([`Provider::gated`]). Only claimed where the setup makes it so.
+    gated: bool,
     install_hint: &'static str,
     login_hint: &'static str,
     probe: Probe,
@@ -55,6 +58,32 @@ fn no_env(_: &Path) -> Vec<(String, String)> {
     vec![]
 }
 
+/// OpenCode lets edits and commands run unasked by default. Its
+/// `OPENCODE_PERMISSION` is merged over every config file, and with project
+/// config off a repo's own `opencode.json` cannot grant itself anything.
+fn opencode_env(_: &Path) -> Vec<(String, String)> {
+    vec![
+        (
+            "OPENCODE_PERMISSION".into(),
+            r#"{"edit":"ask","bash":"ask","webfetch":"ask","external_directory":"ask"}"#.into(),
+        ),
+        ("OPENCODE_DISABLE_PROJECT_CONFIG".into(), "1".into()),
+    ]
+}
+
+/// Google's agent needs its harness binary, which ships beside it.
+fn antigravity_env(program: &Path) -> Vec<(String, String)> {
+    let harness = program.with_file_name(if cfg!(windows) {
+        "localharness_external.exe"
+    } else {
+        "localharness_external"
+    });
+    vec![(
+        "ANTIGRAVITY_HARNESS_PATH".into(),
+        harness.display().to_string(),
+    )]
+}
+
 fn nowhere() -> Option<PathBuf> {
     None
 }
@@ -65,9 +94,10 @@ pub fn agent(id: &str) -> Option<Agent> {
             id: "opencode",
             name: "OpenCode",
             program: "opencode",
-            args: |_| vec!["acp".into()],
-            env: no_env,
+            args: &["acp"],
+            env: opencode_env,
             locate: nowhere,
+            gated: true,
             install_hint: "Install OpenCode (`npm i -g opencode-ai`) or set its path in Settings.",
             login_hint: "Run `opencode auth login` in a terminal, then check again.",
             probe: Probe::OpencodeModels,
@@ -76,13 +106,13 @@ pub fn agent(id: &str) -> Option<Agent> {
             id: "grok",
             name: "Grok",
             program: "grok",
-            // Grok's own modes; every action outside them asks Parzi.
-            args: |access| {
-                let mode = if access == Access::Edits { "acceptEdits" } else { "default" };
-                vec!["--permission-mode".into(), mode.into(), "agent".into(), "stdio".into()]
-            },
+            args: &["--permission-mode", "default", "agent", "stdio"],
             env: no_env,
             locate: nowhere,
+            // `default` asks, but Grok also applies allow rules from its own
+            // and the folder's config, with no switch to skip them, and it
+            // has not yet been seen asking live (its plan was used up).
+            gated: false,
             install_hint: "Install the Grok CLI or set its path in Settings.",
             login_hint: "Sign in with the Grok CLI (`grok`) in a terminal, then check again.",
             probe: Probe::GrokModels,
@@ -91,19 +121,12 @@ pub fn agent(id: &str) -> Option<Agent> {
             id: "antigravity",
             name: "Antigravity",
             program: "agy_acp_server",
-            args: |_| vec![],
-            env: |program| {
-                let harness = program.with_file_name(if cfg!(windows) {
-                    "localharness_external.exe"
-                } else {
-                    "localharness_external"
-                });
-                vec![(
-                    "ANTIGRAVITY_HARNESS_PATH".into(),
-                    harness.display().to_string(),
-                )]
-            },
+            args: &[],
+            env: antigravity_env,
             locate: t3_antigravity,
+            // Not yet seen asking before an edit: until it is, leases and
+            // the folder fence cannot promise to stop it.
+            gated: false,
             install_hint: "Install Google's Antigravity agent (T3 Code downloads it) or set the path to agy_acp_server in Settings.",
             // The agent keeps its Google sign-in under ~/.gemini, whichever
             // client started it.
@@ -114,9 +137,11 @@ pub fn agent(id: &str) -> Option<Agent> {
             id: "cursor",
             name: "Cursor",
             program: "cursor-agent",
-            args: |_| vec!["acp".into()],
+            args: &["acp"],
             env: no_env,
             locate: nowhere,
+            // Not yet seen asking before an edit (not installed here).
+            gated: false,
             install_hint: "Install Cursor's CLI (`cursor-agent`) or set its path in Settings.",
             login_hint: "Run `cursor-agent login` in a terminal, then check again.",
             probe: Probe::None,
@@ -173,13 +198,8 @@ impl Acp {
         process::resolve(self.agent.program).or_else(self.agent.locate)
     }
 
-    async fn open(
-        &self,
-        program: &Path,
-        access: Access,
-        cwd: &Path,
-    ) -> Result<Conn, ProviderError> {
-        let args = (self.agent.args)(access);
+    async fn open(&self, program: &Path, cwd: &Path) -> Result<Conn, ProviderError> {
+        let args: Vec<String> = self.agent.args.iter().map(|a| (*a).to_string()).collect();
         let env = (self.agent.env)(program);
         let mut proc = Proc::spawn(program, &args, cwd, &env).map_err(|e| {
             ProviderError::process(format!("could not start {}: {e}", self.agent.name))
@@ -239,6 +259,10 @@ impl Provider for Acp {
         self.agent.id
     }
 
+    fn gated(&self) -> bool {
+        self.agent.gated
+    }
+
     async fn status(&self) -> ProviderStatus {
         let id = self.agent.id;
         let Some(program) = self.program() else {
@@ -254,10 +278,7 @@ impl Provider for Acp {
             ),
         };
         // The agent's own version, from a handshake that opens no session.
-        if let Ok(mut conn) = self
-            .open(&program, Access::Ask, &std::env::temp_dir())
-            .await
-        {
+        if let Ok(mut conn) = self.open(&program, &std::env::temp_dir()).await {
             status.version = conn
                 .init
                 .pointer("/agentInfo/version")
@@ -282,7 +303,7 @@ impl Provider for Acp {
                 self.agent.name, self.agent.install_hint
             ))
         })?;
-        let mut conn = self.open(&program, spec.access, &spec.cwd).await?;
+        let mut conn = self.open(&program, &spec.cwd).await?;
         let outcome = drive(
             &conn.peer,
             &mut conn.incoming,
@@ -385,11 +406,14 @@ fn grok_read(out: &str, agent: Agent) -> ProviderStatus {
     )
 }
 
-/// Pick the option that carries a decision.
+/// Pick the option that carries a decision. An allow is always one action,
+/// never a standing grant: that would let later actions skip Parzi's gate.
+/// An agent that offers no one-time allow is refused.
 fn option_for(options: &[Value], decision: &PermissionDecision) -> Option<String> {
     let prefer: &[&str] = match decision {
-        PermissionDecision::Allow => &["allow_once", "allow_always"],
-        PermissionDecision::AllowAlways => &["allow_always", "allow_once"],
+        PermissionDecision::Allow | PermissionDecision::AllowAlways => {
+            &["allow_once", "reject_once", "reject_always"]
+        }
         PermissionDecision::Deny(_) => &["reject_once", "reject_always"],
     };
     prefer.iter().find_map(|kind| {
@@ -441,11 +465,8 @@ fn rpc_failure(agent: Agent, e: RpcError) -> ProviderError {
             ErrorClass::Auth,
             format!("{} is not signed in. {}", agent.name, agent.login_hint),
         ),
-        RpcError::CLOSED | RpcError::TIMEOUT => ProviderError::process(e.message),
-        _ => ProviderError::new(
-            ErrorClass::Unknown,
-            format!("{}: {}", agent.name, e.message),
-        ),
+        RpcError::CLOSED | RpcError::TIMEOUT => ProviderError::process(e.to_string()),
+        _ => ProviderError::new(ErrorClass::Unknown, format!("{}: {e}", agent.name)),
     }
 }
 
@@ -500,34 +521,33 @@ async fn drive(
     let mut fresh = true;
     let mut session = Value::Null;
     let mut sid = String::new();
-    if let Some(id) = earlier {
-        if can_resume {
-            match peer
-                .request_within(
-                    "session/resume",
-                    json!({"sessionId": id, "cwd": cwd, "mcpServers": mcp_servers}),
-                    limit,
-                )
-                .await
-            {
-                Ok(v) => {
-                    session = v;
-                    sid = id;
-                    fresh = false;
-                }
-                Err(e) if e.code == AUTH_REQUIRED => return Err(rpc_failure(agent, e)),
-                Err(e) => {
-                    let _ = events.send(ProviderEvent::Notice(format!(
-                        "{} could not resume the earlier conversation ({e}); starting a new one",
-                        agent.name
-                    )));
-                }
+    // An agent that cannot resume is never handed a cursor, so every turn
+    // of the thread reaches it as a new session with the history.
+    if let Some(id) = earlier.filter(|_| can_resume) {
+        match peer
+            .request_within(
+                "session/resume",
+                json!({"sessionId": id, "cwd": cwd, "mcpServers": mcp_servers}),
+                limit,
+            )
+            .await
+        {
+            Ok(v) => {
+                session = v;
+                sid = id;
+                fresh = false;
             }
-        } else {
-            let _ = events.send(ProviderEvent::Notice(format!(
-                "{} cannot resume conversations; starting a new one",
-                agent.name
-            )));
+            Err(e) if matches!(e.code, AUTH_REQUIRED | RpcError::CLOSED | RpcError::TIMEOUT) => {
+                return Err(rpc_failure(agent, e));
+            }
+            // The agent answered and refused: it no longer has the
+            // conversation. The run starts a new one with the history.
+            Err(e) => {
+                return Err(ProviderError::new(
+                    ErrorClass::SessionLost,
+                    format!("{} could not resume the conversation: {e}", agent.name),
+                ));
+            }
         }
     }
     if fresh {
@@ -550,9 +570,11 @@ async fn drive(
                 )
             })?;
     }
-    let _ = events.send(ProviderEvent::Session {
-        resume: json!({"session_id": sid}),
-    });
+    if can_resume {
+        let _ = events.send(ProviderEvent::Session {
+            resume: json!({"session_id": sid}),
+        });
+    }
     if let Some(model) = spec.model.as_deref().filter(|m| !m.is_empty()) {
         select_model(peer, &session, &sid, model, agent, events).await;
     }
@@ -571,8 +593,16 @@ async fn drive(
     let mut prompt = vec![json!({"type": "text", "text": text})];
     if images_ok {
         for p in &spec.images {
-            if let Some((mime, data)) = crate::image_base64(p) {
-                prompt.push(json!({"type": "image", "mimeType": mime, "data": data}));
+            match crate::image_base64(p) {
+                Some((mime, data)) => {
+                    prompt.push(json!({"type": "image", "mimeType": mime, "data": data}));
+                }
+                None => {
+                    let _ = events.send(ProviderEvent::Notice(format!(
+                        "{} was not sent: only PNG, JPEG, GIF or WebP images go",
+                        p.display()
+                    )));
+                }
             }
         }
     } else if !spec.images.is_empty() {
@@ -630,7 +660,7 @@ async fn drive(
                         continue;
                     }
                     let u = params.get("update").unwrap_or(&Value::Null);
-                    update(u, &sid, &mut buffers, &mut tool_names, &mut last_cost, events);
+                    update(u, &sid, can_resume, &mut buffers, &mut tool_names, &mut last_cost, events);
                 }
                 Incoming::Request { id, method, params } => {
                     if method == "session/request_permission" {
@@ -706,6 +736,10 @@ async fn select_model(
         .await
         .map(|_| ())
     } else {
+        let _ = events.send(ProviderEvent::Notice(format!(
+            "{} offers no model choice here: it runs its own, not {model}",
+            agent.name
+        )));
         Ok(())
     };
     if let Err(e) = result {
@@ -719,6 +753,7 @@ async fn select_model(
 fn update(
     u: &Value,
     sid: &str,
+    resumable: bool,
     buffers: &mut Buffers,
     tool_names: &mut HashMap<String, String>,
     last_cost: &mut Option<f64>,
@@ -788,9 +823,11 @@ fn update(
                         cost_usd: Some(delta),
                     });
                 }
-                let _ = events.send(ProviderEvent::Session {
-                    resume: json!({"session_id": sid, "cost": total}),
-                });
+                if resumable {
+                    let _ = events.send(ProviderEvent::Session {
+                        resume: json!({"session_id": sid, "cost": total}),
+                    });
+                }
             }
         }
         _ => {}
@@ -819,14 +856,22 @@ fn finish_tool(u: &Value, id: &str, name: &str, events: &EventTx) {
 
 async fn permission(peer: &Peer, id: Value, params: &Value, gate: Arc<dyn PermissionGate>) {
     let call = params.get("toolCall").unwrap_or(&Value::Null);
-    let kind = call.get("kind").and_then(Value::as_str).unwrap_or("other");
-    let paths: Vec<String> = if matches!(kind, "edit" | "delete" | "move") {
-        call.get("locations")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|l| l.get("path").and_then(Value::as_str).map(str::to_string))
-            .collect()
+    let locations: Vec<String> = call
+        .get("locations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|l| l.get("path").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    // An action that names files but no kind is taken for an edit, so the
+    // folder fence and the leases see it rather than an unknown "other".
+    let kind = match call.get("kind").and_then(Value::as_str) {
+        Some(k) => k,
+        None if !locations.is_empty() => "edit",
+        None => "other",
+    };
+    let paths = if matches!(kind, "edit" | "delete" | "move") {
+        locations
     } else {
         vec![]
     };
@@ -887,7 +932,6 @@ mod tests {
             cwd: std::env::temp_dir(),
             model: Some("opencode/big-pickle".into()),
             effort: None,
-            access: Access::Ask,
             instructions: Some("stay in scope".into()),
             resume,
             prompt: "hi".into(),
