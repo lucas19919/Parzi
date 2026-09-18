@@ -160,7 +160,11 @@ async fn claude_reads_the_repos_claude_md() {
 #[ignore = "spends a free OpenCode model's quota"]
 async fn opencode_reads_the_repos_agents_md() {
     let cwd = folder("opencode-md");
-    std::fs::write(cwd.join("AGENTS.md"), "The project code word is HERON-17.\n").unwrap();
+    std::fs::write(
+        cwd.join("AGENTS.md"),
+        "The project code word is HERON-17.\n",
+    )
+    .unwrap();
     let gate = Arc::new(Refuse::default());
     let ask = "What is the project code word from the repository's instructions? \
                Reply with the code word only, or NONE.";
