@@ -1,39 +1,35 @@
 //! PLAN §4 on one machine: two lanes, one file, and every way that ends.
 //!
-//! Everything here goes through the real tool surface (`ToolExecutor::execute`)
+//! The lease tools go through the real tool surface (`ToolExecutor::execute`)
 //! with the real hub, so a rename in the tool names breaks these tests — which
-//! is the point. The one end-to-end case drives an `AgentRun` with a scripted
-//! provider, to prove the tools reach a model at all.
+//! is the point. The agent's own edits and commands go through the gate a
+//! vendor agent asks before it acts (`ToolHost`), and the end-to-end case
+//! drives a run whose scripted agent calls the lease tools over MCP.
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+mod common;
+
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use common::*;
 use parzi_core::journal;
 use parzi_core::lease::Holder;
 use parzi_core::project::{self, Project, Status};
 use parzi_core::store::{Event, SessionStore};
 use parzi_core::workspace::{self, RepoRef, Workspace};
-use parzi_providers::{AuthStatus, ChatReq, EventRx, Model, Provider, StreamEvent};
-use parzi_runtime::handler::{AgentRun, ProviderSlot, RunEvent};
+use parzi_providers::{PermissionDecision, PermissionGate, PermissionRequest, TurnEnd};
+use parzi_runtime::handler::{RunEvent, RunSink};
 use parzi_runtime::inter::{self, InterKind};
 use parzi_runtime::lease_tools::{LeaseCtx, LeaseHub};
 use parzi_runtime::mcp::McpManager;
-use parzi_runtime::tools::{Approval, ApprovalMode, Approver, ToolCallInfo, ToolExecutor};
+use parzi_runtime::toolhost::{ToolHost, ToolHostParts};
+use parzi_runtime::tools::{
+    to_mcp, Approval, ApprovalMode, Approver, AutoApprover, ToolCallInfo, ToolExecutor,
+};
+use serde_json::json;
 use tokio::sync::mpsc;
-
-/// Hermetic home for this test binary: no test ever touches the real ~/.parzi.
-static TEST_HOME_INIT: std::sync::Once = std::sync::Once::new();
-
-fn test_home() {
-    TEST_HOME_INIT.call_once(|| {
-        let dir = std::env::temp_dir().join(format!("parzi-test-leases-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::env::set_var("PARZI_HOME", &dir);
-    });
-}
+use tokio_util::sync::CancellationToken;
 
 /// An approver that remembers what it was shown — the approval card a
 /// `critical` transfer must raise.
@@ -50,10 +46,11 @@ impl Approver for Recording {
     }
 }
 
-/// One lane as the test drives it: its executor, its run id, and the events
-/// the handler would have shown a person.
+/// One lane as the test drives it: its tools, the gate its agent asks, its
+/// run id, and the events the app would have shown a person.
 struct Lane {
-    tools: ToolExecutor,
+    tools: Arc<ToolExecutor>,
+    host: ToolHost,
     run: String,
     notices: mpsc::UnboundedReceiver<RunEvent>,
 }
@@ -61,6 +58,20 @@ struct Lane {
 impl Lane {
     async fn call(&self, name: &str, args: serde_json::Value) -> (bool, String) {
         self.tools.execute(name, &args).await
+    }
+
+    /// Ask the gate before touching `file`, as a vendor agent does before
+    /// one of its own edits or reads. Vendors name files absolutely.
+    async fn ask(&self, tool: &str, file: &Path) -> PermissionDecision {
+        self.host
+            .decide(PermissionRequest {
+                id: format!("req-{}", uuid::Uuid::new_v4()),
+                tool: tool.into(),
+                title: tool.into(),
+                input: json!({"file_path": file}),
+                paths: vec![file.display().to_string()],
+            })
+            .await
     }
 
     /// Every event the lane was sent so far, without blocking.
@@ -81,10 +92,16 @@ struct World {
     cwd: std::path::PathBuf,
 }
 
-/// A workspace with one repo, a project with one `critical:` glob, and a hub
+/// A workspace with one repo, a project with its `critical:` globs, and a hub
 /// whose "no answer" timeout is short enough to test.
 fn world(tag: &str, critical: &[&str]) -> World {
-    test_home();
+    home("leases");
+    let hub = LeaseHub::new().with_answer_timeout(Duration::from_millis(250));
+    world_on(tag, critical, Arc::new(hub), SessionStore::open().unwrap())
+}
+
+fn world_on(tag: &str, critical: &[&str], hub: Arc<LeaseHub>, store: SessionStore) -> World {
+    home("leases");
     let name = format!("ws-{tag}");
     let cwd = std::env::temp_dir().join(format!("parzi-lease-{}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cwd);
@@ -112,8 +129,8 @@ fn world(tag: &str, critical: &[&str]) -> World {
     };
     project::save(&project).unwrap();
     World {
-        hub: Arc::new(LeaseHub::new().with_answer_timeout(Duration::from_millis(250))),
-        store: SessionStore::open().unwrap(),
+        hub,
+        store,
         workspace: name,
         slug: "checkout".into(),
         cwd,
@@ -122,11 +139,12 @@ fn world(tag: &str, critical: &[&str]) -> World {
 
 impl World {
     /// Register one lane on the hub, exactly as `project_flow` does before it
-    /// dispatches a coder run.
+    /// dispatches a coder run. The lane's approval mode is Auto, so the lease
+    /// layer is the only thing that can refuse.
     async fn lane(&self, lane: &str, approver: Option<Arc<dyn Approver>>) -> Lane {
         let run = self
             .store
-            .create(&self.slug, lane, "", "scripted/m")
+            .create(lane, &self.slug, lane, "claude/m")
             .unwrap()
             .id;
         let (tx, notices) = mpsc::unbounded_channel();
@@ -139,7 +157,7 @@ impl World {
                     run: Some(run.clone()),
                     lane: lane.to_string(),
                 },
-                Some(tx),
+                Some(tx.clone()),
                 approver,
                 Some(self.store.clone()),
             )
@@ -148,13 +166,28 @@ impl World {
             .bind_project(&run, &self.workspace, &self.slug)
             .await;
         self.hub.bind_repo(&run, "api").await;
+        let tools = Arc::new(ToolExecutor {
+            cwd: self.cwd.to_string_lossy().to_string(),
+            mcp: Arc::new(McpManager::new(std::collections::HashMap::new(), 60)),
+            allowed: vec!["*".into()],
+            leases: Some(LeaseCtx::new(self.hub.clone(), &run)),
+        });
+        let host = ToolHost::new(ToolHostParts {
+            session_id: run.clone(),
+            lane: lane.to_string(),
+            mode: ApprovalMode::Auto,
+            edits_auto: false,
+            store: self.store.clone(),
+            tools: tools.clone(),
+            approver: Arc::new(AutoApprover),
+            harness: None,
+            role: None,
+            sink: RunSink::new(&run, tx, None),
+            cancel: CancellationToken::new(),
+        });
         Lane {
-            tools: ToolExecutor {
-                cwd: self.cwd.to_string_lossy().to_string(),
-                mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
-                allowed: vec!["*".into()],
-                leases: Some(LeaseCtx::new(self.hub.clone(), &run)),
-            },
+            tools,
+            host,
             run,
             notices,
         }
@@ -181,7 +214,7 @@ impl World {
 }
 
 fn claim(task: &str, paths: &[&str]) -> serde_json::Value {
-    serde_json::json!({"task": task, "paths": paths})
+    json!({"task": task, "paths": paths})
 }
 
 #[tokio::test]
@@ -214,29 +247,19 @@ async fn a_write_into_a_held_file_is_refused_and_a_read_is_not() {
     let w = world("gate", &[]);
     let api = w.lane("api", None).await;
     let web = w.lane("web", None).await;
-    std::fs::write(w.cwd.join("src/routes.rs"), "fn main() {}").unwrap();
-
     api.call("lease.claim", claim("TSK-8", &["src/routes.rs"]))
         .await;
 
-    let (ok, msg) = web
-        .call(
-            "fs.write",
-            serde_json::json!({"path": "src/routes.rs", "content": "mine now"}),
-        )
-        .await;
-    assert!(!ok, "a write into another lane's file must fail");
-    assert!(msg.contains("lane api"), "name the holder: {msg}");
+    let file = w.cwd.join("src/routes.rs");
+    match web.ask("Edit", &file).await {
+        PermissionDecision::Deny(why) => assert!(why.contains("lane api"), "name the holder: {why}"),
+        other => panic!("an edit of another lane's file must be refused: {other:?}"),
+    }
     assert_eq!(
-        std::fs::read_to_string(w.cwd.join("src/routes.rs")).unwrap(),
-        "fn main() {}",
-        "the file must be untouched"
+        web.ask("Read", &file).await,
+        PermissionDecision::Allow,
+        "reads are never blocked by a lease"
     );
-
-    let (ok, _) = web
-        .call("fs.read", serde_json::json!({"path": "src/routes.rs"}))
-        .await;
-    assert!(ok, "reads are never blocked by a lease");
 }
 
 #[tokio::test]
@@ -248,21 +271,30 @@ async fn a_shell_write_into_a_held_file_is_refused_and_undone() {
     api.call("lease.claim", claim("TSK-8", &["src/routes.rs"]))
         .await;
 
-    let cmd = if cfg!(windows) {
-        "echo mine>src\\routes.rs"
-    } else {
-        "printf mine > src/routes.rs"
-    };
-    let (ok, msg) = web
-        .call("shell.exec", serde_json::json!({"cmd": cmd}))
+    // A command cannot say what it will write: the gate lets it run, and
+    // the lease layer looks at the worktree once it is done.
+    let asked = web
+        .host
+        .decide(PermissionRequest {
+            id: "sh-1".into(),
+            tool: "Bash".into(),
+            title: "echo mine > src/routes.rs".into(),
+            input: json!({"command": "echo mine > src/routes.rs"}),
+            paths: vec![],
+        })
         .await;
+    assert_eq!(asked, PermissionDecision::Allow);
+    web.host.tool_started("sh-1", "Bash").await;
+    std::fs::write(w.cwd.join("src/routes.rs"), "mine").unwrap();
+
+    let refusal = web
+        .host
+        .tool_finished("sh-1")
+        .await
+        .expect("a command that wrote into a held file is refused");
     assert!(
-        !ok,
-        "shell.exec must not keep a write into a held file: {msg}"
-    );
-    assert!(
-        msg.contains("lane api") && msg.contains("lease_violation"),
-        "the refusal must name the holder: {msg}"
+        refusal.contains("lane api") && refusal.contains("lease_violation"),
+        "the refusal must name the holder: {refusal}"
     );
     assert_eq!(
         std::fs::read_to_string(w.cwd.join("src/routes.rs")).unwrap(),
@@ -273,59 +305,22 @@ async fn a_shell_write_into_a_held_file_is_refused_and_undone() {
 
 #[tokio::test]
 async fn a_scope_notice_reaches_the_host_bus() {
-    test_home();
+    home("leases");
     let (bus, _) = tokio::sync::broadcast::channel(16);
     let mut rx = bus.subscribe();
-    let w = {
-        let name = format!("ws-bus-{}", std::process::id());
-        let cwd = std::env::temp_dir().join(format!("parzi-lease-bus-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&cwd);
-        std::fs::create_dir_all(cwd.join("src")).unwrap();
-        workspace::create(Workspace {
-            name: name.clone(),
-            repos: vec![RepoRef {
-                name: "api".into(),
-                remote: "git@example.com:acme/api.git".into(),
-                default_branch: "main".into(),
-                local_path: Some(cwd.clone()),
-            }],
-            ..Workspace::solo(&name)
-        })
-        .unwrap();
-        let project = Project {
-            slug: "checkout".into(),
-            title: "Checkout flow".into(),
-            workspace: name.clone(),
-            repos: vec!["api".into()],
-            status: Status::Running,
-            why: "so a person can pay".into(),
-            ..Project::default()
-        };
-        project::save(&project).unwrap();
-        World {
-            hub: Arc::new(
-                LeaseHub::new()
-                    .with_answer_timeout(Duration::from_millis(250))
-                    .with_bus(bus),
-            ),
-            store: SessionStore::open().unwrap(),
-            workspace: name,
-            slug: "checkout".into(),
-            cwd,
-        }
-    };
+    let hub = LeaseHub::new()
+        .with_answer_timeout(Duration::from_millis(250))
+        .with_bus(bus);
+    let w = world_on("bus", &[], Arc::new(hub), SessionStore::open().unwrap());
     let api = w.lane("api", None).await;
-    std::fs::write(w.cwd.join("src/page.rs"), "page").unwrap();
-    std::fs::write(w.cwd.join("src/other.rs"), "other").unwrap();
     api.call("lease.claim", claim("TSK-8", &["src/page.rs"]))
         .await;
-    let (ok, _) = api
-        .call(
-            "fs.write",
-            serde_json::json!({"path": "src/other.rs", "content": "creep"}),
-        )
-        .await;
-    assert!(ok, "scope creep is allowed (and noticed) unless strict");
+
+    assert_eq!(
+        api.ask("Write", &w.cwd.join("src/other.rs")).await,
+        PermissionDecision::Allow,
+        "scope creep is allowed (and noticed) unless strict"
+    );
     let (_sid, ev) = tokio::time::timeout(Duration::from_secs(1), rx.recv())
         .await
         .expect("the host bus must hear the notice")
@@ -542,13 +537,11 @@ async fn a_write_outside_the_scope_is_noticed_not_refused() {
     api.call("lease.claim", claim("TSK-8", &["src/routes.rs"]))
         .await;
 
-    let (ok, _) = api
-        .call(
-            "fs.write",
-            serde_json::json!({"path": "src/elsewhere.rs", "content": "// stray"}),
-        )
-        .await;
-    assert!(ok, "creep is allowed — this is a notice, not a wall");
+    assert_eq!(
+        api.ask("Write", &w.cwd.join("src/elsewhere.rs")).await,
+        PermissionDecision::Allow,
+        "creep is allowed — this is a notice, not a wall"
+    );
     assert!(
         api.drain()
             .iter()
@@ -573,15 +566,10 @@ async fn strict_mode_refuses_the_creep() {
     api.call("lease.claim", claim("TSK-8", &["src/routes.rs"]))
         .await;
 
-    let (ok, msg) = api
-        .call(
-            "fs.write",
-            serde_json::json!({"path": "src/elsewhere.rs", "content": "// stray"}),
-        )
-        .await;
-    assert!(!ok, "strict workspaces refuse: {msg}");
-    assert!(msg.contains("strict"), "say which rule bit: {msg}");
-    assert!(!w.cwd.join("src/elsewhere.rs").exists());
+    match api.ask("Write", &w.cwd.join("src/elsewhere.rs")).await {
+        PermissionDecision::Deny(why) => assert!(why.contains("strict"), "say which rule bit: {why}"),
+        other => panic!("strict workspaces refuse: {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -649,91 +637,52 @@ async fn a_capsule_without_a_verification_line_is_not_a_handoff() {
     );
 }
 
-/// The scripted provider for the end-to-end case: claim a file another lane
-/// holds, then stop. One turn per tool result.
-struct ScriptedCoder {
-    turns: Arc<AtomicUsize>,
-}
-
-#[async_trait::async_trait]
-impl Provider for ScriptedCoder {
-    fn id(&self) -> &'static str {
-        "scripted"
-    }
-    async fn models(&self) -> Result<Vec<Model>, parzi_core::error::ParziError> {
-        Ok(vec![])
-    }
-    async fn chat_stream(&self, _req: ChatReq) -> Result<EventRx, parzi_core::error::ParziError> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        if self.turns.fetch_add(1, Ordering::SeqCst) == 0 {
-            tx.send(Ok(StreamEvent::ToolCall {
-                id: "c1".into(),
-                name: "lease.claim".into(),
-                args: claim("TSK-9", &["src/routes.rs"]),
-            }))
-            .unwrap();
-        } else {
-            tx.send(Ok(StreamEvent::Text("blocked, asking instead".into())))
-                .unwrap();
-        }
-        Ok(rx)
-    }
-    fn auth_status(&self) -> AuthStatus {
-        AuthStatus::Ok
-    }
-}
-
+/// End to end: the agent of a project lane is offered the lease and board
+/// tools over MCP, and a claim on a file another lane holds comes back
+/// refused — in its own transcript, naming the holder.
 #[tokio::test]
 async fn a_real_run_sees_the_lease_tools_and_the_collision() {
-    let w = world("run", &[]);
+    home("leases");
+    let coder = Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            let names = a.tool_names().await;
+            let offered = [to_mcp("lease.claim"), to_mcp("board.handoff")]
+                .iter()
+                .all(|t| names.contains(t));
+            let (ok, out) = a
+                .parzi("lease.claim", claim("TSK-9", &["src/routes.rs"]))
+                .await;
+            a.say(&format!("offered={offered} ok={ok}: {out}"));
+            Ok(TurnEnd::Completed)
+        }),
+    );
+    let (orch, store) = orch(&[coder]);
+    let w = world_on("run", &[], orch.leases(), store.clone());
     let api = w.lane("api", None).await;
     let web = w.lane("web", None).await;
     api.call("lease.claim", claim("TSK-8", &["src/routes.rs"]))
         .await;
 
-    let tools = Arc::new(web.tools);
-    assert!(
-        tools.defs().iter().any(|d| d.name == "lease.claim")
-            && tools.defs().iter().any(|d| d.name == "board.handoff"),
-        "a project lane is offered the lease and board tools"
+    drop(
+        orch.send_to(&web.run, "do TSK-9", None, "", "low", vec![], None, None)
+            .await
+            .unwrap(),
     );
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    tokio::spawn(async move { while rx.recv().await.is_some() {} });
-    let run = AgentRun::new(
-        web.run.clone(),
-        vec![ProviderSlot {
-            provider_id: "scripted".into(),
-            provider: Box::new(ScriptedCoder {
-                turns: Arc::new(AtomicUsize::new(0)),
-            }),
-            model_id: "m".into(),
-            price_in: 0.0,
-            price_out: 0.0,
-            reason: "test",
-        }],
-        vec![],
-        "web".into(),
-        ApprovalMode::Auto,
-        false,
-        4,
-        4096,
-        vec![],
-        "low".into(),
-        w.store.clone(),
-        tools,
-        Arc::new(parzi_runtime::tools::AutoApprover),
-        tx,
-        tokio_util::sync::CancellationToken::new(),
-    );
-    run.run("do TSK-9").await.unwrap();
+    settle(&store, &web.run).await;
 
-    let refused = w.store.events(&web.run).unwrap().into_iter().any(|e| {
+    let reply = last_reply(&store, &web.run);
+    assert!(
+        reply.contains("offered=true"),
+        "a project lane is offered the lease and board tools: {reply}"
+    );
+    let refused = events(&store, &web.run).into_iter().any(|e| {
         matches!(e, Event::ToolResult { name, ok, output, .. }
             if name == "lease.claim" && !ok && output.contains("lane api"))
     });
     assert!(
         refused,
-        "the run was told, in its own transcript, who holds it"
+        "the run was told, in its own transcript, who holds it: {reply}"
     );
 }
 

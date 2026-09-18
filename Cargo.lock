@@ -1454,6 +1454,7 @@ dependencies = [
  "hyper-util",
  "parzi-core",
  "parzi-providers",
+ "reqwest",
  "serde",
  "serde_json",
  "tempfile",

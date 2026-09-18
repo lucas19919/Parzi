@@ -11,7 +11,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::handler::{system_parts, HarnessBridge, RunEvent, RunSink};
-use crate::lease_tools::LeaseCtx;
+use crate::board_tools::board_defs;
+use crate::lease_tools::{lease_defs, LeaseCtx};
 use crate::run::{EngineRun, EngineRunParts};
 use crate::toolhost::{ToolHost, ToolHostParts};
 use crate::tools::{ApprovalMode, Approver, DenyApprover, ToolExecutor};
@@ -442,6 +443,14 @@ impl Orchestrator {
             .holder_of_run(&q.session_id)
             .await
             .map(|_| LeaseCtx::new(p.leases.clone(), &q.session_id));
+        // What it is offered it may call: the names come from the same defs.
+        if lease_ctx.is_some() {
+            for d in lease_defs().into_iter().chain(board_defs()) {
+                if !allowed.contains(&d.name) {
+                    allowed.push(d.name);
+                }
+            }
+        }
         let tools = Arc::new(ToolExecutor {
             cwd: q.cwd.clone(),
             mcp: p.mcp.clone(),
