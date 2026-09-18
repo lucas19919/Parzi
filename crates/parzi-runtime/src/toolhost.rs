@@ -223,8 +223,13 @@ impl ToolHost {
             return PermissionDecision::Deny("this lane is locked down: read-only".into());
         }
         if let Some(k) = kind {
-            // A lane that names its tools and leaves this kind out refuses it.
-            if !self.p.tools.allowed.is_empty() && !self.p.tools.is_allowed(k) {
+            // A lane that lists file or shell kinds and leaves this one out
+            // refuses it. Parzi adds its own tool names to every lane, so
+            // only the kinds say whether the lane meant to restrict these.
+            let lists_kinds = self.p.tools.allowed.iter().any(|a| {
+                crate::tools::is_vendor_category(a) || a == "fs.*" || a == "shell.*"
+            });
+            if lists_kinds && !self.p.tools.is_allowed(k) {
                 return PermissionDecision::Deny(format!("this lane does not allow {k}"));
             }
         }

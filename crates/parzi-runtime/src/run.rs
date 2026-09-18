@@ -106,6 +106,11 @@ impl EngineRun {
         let mut turns = 0u32;
         loop {
             turns += 1;
+            // R-4: every turn costs, so the cap is checked before one is bought.
+            if let Some(reason) = self.budget_hit() {
+                self.pause_for_budget(&reason).await;
+                return Ok(());
+            }
             match self.turn(&text).await {
                 Outcome::Completed => {}
                 Outcome::Interrupted => {
@@ -401,6 +406,15 @@ impl EngineRun {
             }
         }
         None
+    }
+
+    /// The reason this run must pause, or `None` while inside the budget.
+    fn budget_hit(&self) -> Option<String> {
+        if self.p.budget.is_unlimited() {
+            return None;
+        }
+        let (tokens, cost) = self.spent.lock().ok().map(|s| *s)?;
+        self.p.budget.exceeded(tokens, cost)
     }
 
     /// Budget stop: say it in the timeline, mark the session, park it Idle.
