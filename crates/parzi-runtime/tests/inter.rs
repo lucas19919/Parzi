@@ -137,6 +137,84 @@ async fn a_message_during_a_turn_is_the_next_turn() {
     assert!(prompts[1].contains("status please") && prompts[1].contains("untrusted"));
 }
 
+/// Eight sessions message one idle target at the same moment: every message
+/// reaches its agent exactly once, whether it started a run, raced one's
+/// launch or arrived during a turn, and the target never runs two turns at
+/// a time.
+#[tokio::test]
+async fn messages_sent_at_once_each_arrive_exactly_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    home("inter");
+    let busy = Arc::new(AtomicUsize::new(0));
+    let most = Arc::new(AtomicUsize::new(0));
+    let (b, m) = (busy.clone(), most.clone());
+    let fake = Fake::new(
+        "claude",
+        script(move |a: Agent| {
+            let (b, m) = (b.clone(), m.clone());
+            async move {
+                m.fetch_max(b.fetch_add(1, SeqCst) + 1, SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+                b.fetch_sub(1, SeqCst);
+                a.say("noted");
+                Ok(TurnEnd::Completed)
+            }
+        }),
+    );
+    let (orch, store) = orch(std::slice::from_ref(&fake));
+    let target = store
+        .create("web lane", "checkout", "web", "claude/m")
+        .unwrap();
+    let mut sends = vec![];
+    for i in 0..8 {
+        let caller = store
+            .create(
+                &format!("lane {i}"),
+                "checkout",
+                &format!("l{i}"),
+                "claude/m",
+            )
+            .unwrap();
+        let (harness, to) = (orch.harness(), target.id.clone());
+        sends.push(tokio::spawn(async move {
+            harness
+                .send_message(
+                    &caller.id,
+                    &to,
+                    &format!("note-{i}."),
+                    InterKind::Text,
+                    false,
+                )
+                .await
+                .unwrap();
+        }));
+    }
+    for s in sends {
+        s.await.unwrap();
+    }
+    let told = |i: usize| {
+        fake.seen()
+            .iter()
+            .map(|t| t.prompt.matches(&format!("note-{i}.")).count())
+            .sum::<usize>()
+    };
+    for _ in 0..200 {
+        if (0..8).all(|i| told(i) > 0) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    settle(&store, &target.id).await;
+    for i in 0..8 {
+        assert_eq!(told(i), 1, "note-{i} must reach the agent exactly once");
+    }
+    assert_eq!(
+        most.load(SeqCst),
+        1,
+        "never two turns of one session at once"
+    );
+}
+
 /// H-5 scoping: `session.read_session` and `session.send_message` stop at
 /// the project boundary.
 #[tokio::test]

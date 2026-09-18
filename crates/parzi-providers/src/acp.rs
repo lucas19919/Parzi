@@ -1164,4 +1164,33 @@ mod tests {
         assert_eq!(odd.state, State::Error);
         assert!(odd.hint.contains("network unreachable"), "{}", odd.hint);
     }
+
+    /// Parzi's allow is one action: a standing grant would let the agent's
+    /// later actions skip the gate, and an agent that offers only that is
+    /// refused.
+    #[test]
+    fn an_allow_is_one_action_and_never_a_standing_grant() {
+        let always = json!({"optionId": "always", "kind": "allow_always", "name": "Always"});
+        let once = json!({"optionId": "once", "kind": "allow_once", "name": "Once"});
+        let no = json!({"optionId": "no", "kind": "reject_once", "name": "No"});
+        let all = [always.clone(), once, no.clone()];
+        assert_eq!(
+            option_for(&all, &PermissionDecision::Allow).as_deref(),
+            Some("once")
+        );
+        assert_eq!(
+            option_for(&all, &PermissionDecision::AllowAlways).as_deref(),
+            Some("once")
+        );
+        assert_eq!(
+            option_for(&all, &PermissionDecision::Deny("no".into())).as_deref(),
+            Some("no")
+        );
+        let standing_only = [always.clone(), no];
+        assert_eq!(
+            option_for(&standing_only, &PermissionDecision::Allow).as_deref(),
+            Some("no")
+        );
+        assert_eq!(option_for(&[always], &PermissionDecision::Allow), None);
+    }
 }
