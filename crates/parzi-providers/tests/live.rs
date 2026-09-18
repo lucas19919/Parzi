@@ -154,6 +154,24 @@ async fn claude_reads_the_repos_claude_md() {
         .any(|e| matches!(e, ProviderEvent::Message(m) if m.contains("PELICAN-42"))));
 }
 
+/// OpenCode runs with its project config off (a repo's opencode.json could
+/// grant itself permissions), but it still reads the repo's AGENTS.md.
+#[tokio::test]
+#[ignore = "spends a free OpenCode model's quota"]
+async fn opencode_reads_the_repos_agents_md() {
+    let cwd = folder("opencode-md");
+    std::fs::write(cwd.join("AGENTS.md"), "The project code word is HERON-17.\n").unwrap();
+    let gate = Arc::new(Refuse::default());
+    let ask = "What is the project code word from the repository's instructions? \
+               Reply with the code word only, or NONE.";
+    let (end, events) = one_turn("opencode", Some("opencode/big-pickle"), cwd, ask, gate).await;
+    show("opencode", &end, &events);
+    assert_eq!(end.unwrap(), TurnEnd::Completed);
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, ProviderEvent::Message(m) if m.contains("HERON-17"))));
+}
+
 const WRITE: &str = "Create a file named gate-check.txt in the current directory containing \
                      the word hello. If you are not allowed, reply with the word refused.";
 
