@@ -146,9 +146,9 @@ fn tool_defs() -> Value {
                 "message": s("The prompt"),
                 "project": s("Chat key: a workspace name or \"default\""),
                 "lane": s("Lane within the project (default \"\")"),
-                "model": s("provider/model, family, or \"auto\" (default \"auto\")"),
-                "effort": s("low | medium | high | extra | ultra (default \"medium\")"),
-                "cwd": s("Working directory for tools (default the caller cwd)"),
+                "model": s("Agent and model: claude, claude/opus, codex/gpt-5.5, opencode/<provider>/<model>… or \"auto\" (default) for Smart Auto"),
+                "effort": s("low | medium | high | extra | ultra, or the agent's own word (default \"medium\")"),
+                "cwd": s("The folder the agent works in (default: where this server runs; a continued session keeps its own)"),
                 "attach": strlist("Workspace-relative files to attach as context"),
                 "auto_approve": b("Approve tool calls without asking (default true; the transport is non-interactive, false is refused)", true),
                 "mode": s("Run mode floor for this send: \"auto\" (default) or \"deny\" for a read-only run. \"ask\" is refused: nothing can answer. Workspace policy still floors both."),
@@ -229,13 +229,11 @@ fn tool_defs() -> Value {
         t("plan_status",
             "The living plan markdown of a legacy project (plus parsed tasks when it parses).",
             obj(json!({ "project": s("Project key") }), &["project"])),
-        t("doctor", "Health checks: config, keys (presence only), MCP, providers.",
+        t("doctor", "Health checks: config, agents, Smart Auto order, MCP.",
             obj(json!({}), &[])),
-        t("models",
-            "Known models per provider with context limits, prices and auth state.",
-            obj(json!({ "provider": s("One provider id, or omit for all") }), &[])),
-        t("provider_health", "Live provider health: status, tier, account, cooldowns.",
-            obj(json!({}), &[])),
+        t("providers",
+            "Where each agent stands, asked of its own program: installed, signed in, plan usage, models with their effort levels. Spends no quota.",
+            obj(json!({ "provider": s("One of claude, codex, opencode, grok, antigravity, cursor; omit for all") }), &[])),
         t("report_issue",
             "File an issue on Parzi itself (lucas19919/Parzi, labelled agent-report). ONLY for Parzi bugs, annoyances or feature requests you actually hit — never for the user's own project. Confirm with the user first unless they asked you to file. One issue per distinct problem, with a real title (10+ chars) and what-happened plus what-you-expected (40+ chars). Needs GitHub auth: the stored token or gh's.",
             obj(json!({
@@ -461,12 +459,7 @@ async fn dispatch_misc(name: &str, args: &Value, client: &str) -> Option<Result<
             })(),
         ),
         "doctor" => Some(tool_doctor().await),
-        "models" => Some(tool_models(args)),
-        "provider_health" => Some((|| {
-            let (cfg, store) = boot()?;
-            let health = Orchestrator::new(cfg, store).provider_health();
-            Ok(json!(health))
-        })()),
+        "providers" => Some(tool_providers(args).await),
         "report_issue" => Some(tool_report_issue(args.clone(), client).await),
         _ => None,
     }
@@ -521,41 +514,18 @@ async fn tool_doctor() -> Result<Value, String> {
     Ok(json!(checks))
 }
 
-fn tool_models(args: &Value) -> Result<Value, String> {
-    let (cfg, _) = boot()?;
-    let ids: Vec<String> = match s_arg(args, "provider") {
-        Some(p) => vec![p],
-        None => parzi_providers::PROVIDERS
-            .iter()
-            .map(ToString::to_string)
-            .collect(),
+/// Each agent's own program, asked now. Spends no quota.
+async fn tool_providers(args: &Value) -> Result<Value, String> {
+    let (cfg, store) = boot()?;
+    let ids = match s_arg(args, "provider") {
+        Some(p) => vec![parzi_providers::canonical_id(&p)
+            .ok_or_else(|| format!("unknown provider `{p}`"))?
+            .to_string()],
+        None => vec![],
     };
-    let mut out = Vec::new();
-    for id in ids {
-        match parzi_providers::provider(&id, &cfg) {
-            Ok(p) => {
-                let auth = match p.auth_status() {
-                    parzi_providers::AuthStatus::Ok => "ok",
-                    parzi_providers::AuthStatus::Missing(_) => "missing",
-                    parzi_providers::AuthStatus::Expired(_) => "expired",
-                };
-                let models: Vec<_> = parzi_providers::catalog::for_provider(&id)
-                    .into_iter()
-                    .map(|m| {
-                        json!({
-                            "id": m.id,
-                            "context_limit": m.context_limit,
-                            "price_in": m.price_in,
-                            "price_out": m.price_out,
-                        })
-                    })
-                    .collect();
-                out.push(json!({ "provider": id, "auth": auth, "models": models }));
-            }
-            Err(e) => out.push(json!({ "provider": id, "error": e.to_string() })),
-        }
-    }
-    Ok(json!(out))
+    let mut all = Orchestrator::new(cfg, store).refresh_providers(&ids).await;
+    all.retain(|s| ids.is_empty() || ids.contains(&s.provider));
+    Ok(json!(all))
 }
 
 /// stdout stays silent in here: the transcript accumulates and goes home in
@@ -572,11 +542,14 @@ async fn tool_send(args: Value) -> Result<Value, String> {
     let orch = Orchestrator::new(cfg.clone(), store);
     orch.recover().ok();
     let approver: Arc<dyn Approver> = Arc::new(AutoApprover);
-    let cwd = s_arg(&args, "cwd").unwrap_or_else(|| ".".into());
-    let base = if cwd.trim().is_empty() || cwd == "." {
-        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
-    } else {
-        std::path::PathBuf::from(&cwd)
+    // A new thread works where this server runs; a continued one keeps its
+    // own folder. `cwd` overrides both.
+    let explicit = s_arg(&args, "cwd").filter(|c| !c.trim().is_empty() && c != ".");
+    let base = match &explicit {
+        Some(c) => std::path::PathBuf::from(c),
+        None => {
+            std::env::current_dir().map_err(|e| format!("reading the current directory: {e}"))?
+        }
     };
     let attachments = parzi_core::context::read_attachments(&base, &arr_arg(&args, "attach"));
     let effort = s_arg(&args, "effort").unwrap_or_else(|| "medium".into());
@@ -601,7 +574,7 @@ async fn tool_send(args: Value) -> Result<Value, String> {
                 &model,
                 &message,
                 Some(approver),
-                &cwd,
+                &base.display().to_string(),
                 &effort,
                 attachments,
                 mode_override.clone(),
@@ -617,7 +590,7 @@ async fn tool_send(args: Value) -> Result<Value, String> {
                 &id,
                 &message,
                 Some(approver),
-                &cwd,
+                explicit.as_deref().unwrap_or(""),
                 &effort,
                 attachments,
                 None,

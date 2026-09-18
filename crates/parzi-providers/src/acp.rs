@@ -105,7 +105,9 @@ pub fn agent(id: &str) -> Option<Agent> {
             },
             locate: t3_antigravity,
             install_hint: "Install Google's Antigravity agent (T3 Code downloads it) or set the path to agy_acp_server in Settings.",
-            login_hint: "Sign in with Google from Settings → Providers.",
+            // The agent keeps its Google sign-in under ~/.gemini, whichever
+            // client started it.
+            login_hint: "Sign in with Google in T3 Code's Antigravity settings, then check again.",
             probe: Probe::None,
         },
         "cursor" => Agent {
@@ -318,15 +320,20 @@ async fn opencode_status(program: &Path, agent: Agent) -> ProviderStatus {
 }
 
 async fn grok_status(program: &Path, agent: Agent) -> ProviderStatus {
-    let Some(out) = process::output(program, &["models"], 60).await else {
-        return ProviderStatus::new(agent.id, State::Error, "`grok models` gave no answer.");
-    };
-    let lower = out.to_lowercase();
-    if lower.contains("not logged in") || lower.contains("not authenticated") {
-        return ProviderStatus::new(agent.id, State::SignedOut, agent.login_hint);
+    match process::output(program, &["models"], 60).await {
+        Some(out) => grok_read(&out, agent),
+        None => ProviderStatus::new(agent.id, State::Error, "`grok models` gave no answer."),
     }
+}
+
+/// What `grok models` said. Listed models or "you are logged in" is ready —
+/// checked first, because a sign-in refresh can print a "not logged in"
+/// line on its way to succeeding. Anything unrecognised is an error in
+/// Grok's own words, never a guess.
+fn grok_read(out: &str, agent: Agent) -> ProviderStatus {
+    let lower = out.to_lowercase();
     let mut s = ProviderStatus::new(agent.id, State::Ready, "");
-    if lower.contains("logged in") {
+    if lower.contains("you are logged in") {
         s.account = Some("Grok account".into());
     }
     for line in out.lines().map(str::trim) {
@@ -344,7 +351,17 @@ async fn grok_status(program: &Path, agent: Agent) -> ProviderStatus {
             });
         }
     }
-    s
+    if s.account.is_some() || !s.models.is_empty() {
+        return s;
+    }
+    if lower.contains("not logged in") || lower.contains("not authenticated") {
+        return ProviderStatus::new(agent.id, State::SignedOut, agent.login_hint);
+    }
+    ProviderStatus::new(
+        agent.id,
+        State::Error,
+        format!("`grok models` said: {}", tail(out.trim(), 300)),
+    )
 }
 
 /// Pick the option that carries a decision.
@@ -934,15 +951,22 @@ mod tests {
 
     #[test]
     fn grok_models_output_reads_sign_in_and_models() {
+        let grok = agent("grok").unwrap();
+        // Verbatim from grok 1.0.34.
         let out = "You are logged in with grok.com.\n\nDefault model: grok-4.6\n\nAvailable models:\n  * grok-4.6 (default)\n  - grok-4.5\n";
-        let lower = out.to_lowercase();
-        assert!(lower.contains("logged in"));
-        let ids: Vec<&str> = out
-            .lines()
-            .map(str::trim)
-            .filter_map(|l| l.strip_prefix("* ").or_else(|| l.strip_prefix("- ")))
-            .filter_map(|r| r.split_whitespace().next())
-            .collect();
-        assert_eq!(ids, vec!["grok-4.6", "grok-4.5"]);
+        let s = grok_read(out, grok);
+        assert_eq!(s.state, State::Ready);
+        let ids: Vec<(&str, bool)> = s.models.iter().map(|m| (m.id.as_str(), m.is_default)).collect();
+        assert_eq!(ids, vec![("grok-4.6", true), ("grok-4.5", false)]);
+
+        let refreshed = format!("Token expired, not logged in; refreshing…\n{out}");
+        assert_eq!(grok_read(&refreshed, grok).state, State::Ready, "a refresh on the way is not a sign-out");
+        assert_eq!(
+            grok_read("You are not logged in. Run `grok login`.\n", grok).state,
+            State::SignedOut
+        );
+        let odd = grok_read("error: network unreachable\n", grok);
+        assert_eq!(odd.state, State::Error);
+        assert!(odd.hint.contains("network unreachable"), "{}", odd.hint);
     }
 }
