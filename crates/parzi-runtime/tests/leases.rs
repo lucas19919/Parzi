@@ -305,6 +305,78 @@ async fn a_shell_write_into_a_held_file_is_refused_and_undone() {
     );
 }
 
+/// A coder claims its task's scope, which the plan writes as a glob: every
+/// file under it is held, in whatever case the other lane spells it where
+/// the file system ignores case.
+#[tokio::test]
+async fn a_folder_lease_refuses_writes_anywhere_inside_it() {
+    let w = world("glob-gate", &[]);
+    let api = w.lane("api", None).await;
+    let web = w.lane("web", None).await;
+    let (ok, msg) = api
+        .call("lease.claim", claim("TSK-8", &["src/payments/**"]))
+        .await;
+    assert!(ok, "{msg}");
+
+    let deep = w.cwd.join("src/payments/adapters/stripe.rs");
+    match web.ask("Write", &deep).await {
+        PermissionDecision::Deny(why) => assert!(why.contains("lane api"), "{why}"),
+        other => panic!("a write under a held folder must be refused: {other:?}"),
+    }
+    if parzi_core::project::PATHS_IGNORE_CASE {
+        let shouted = w.cwd.join("SRC/Payments/intent.rs");
+        assert!(
+            matches!(web.ask("Edit", &shouted).await, PermissionDecision::Deny(_)),
+            "one file in two spellings is still one file"
+        );
+    }
+    assert_eq!(
+        web.ask("Write", &w.cwd.join("src/checkout.rs")).await,
+        PermissionDecision::Allow,
+        "outside the folder is free"
+    );
+}
+
+/// The command's changes are undone file by file, in the spelling the disk
+/// has, and a file that had no copy taken is never deleted.
+#[tokio::test]
+async fn a_shell_write_under_a_held_folder_is_undone() {
+    let w = world("glob-shell", &[]);
+    let api = w.lane("api", None).await;
+    let web = w.lane("web", None).await;
+    std::fs::create_dir_all(w.cwd.join("src/payments")).unwrap();
+    std::fs::write(w.cwd.join("src/payments/intent.rs"), "held").unwrap();
+    api.call("lease.claim", claim("TSK-8", &["src/payments"]))
+        .await;
+
+    let asked = web
+        .host
+        .decide(PermissionRequest {
+            id: "sh-2".into(),
+            tool: "Bash".into(),
+            title: "sed -i s/held/mine/ src/payments/intent.rs".into(),
+            input: json!({"command": "sed -i s/held/mine/ src/payments/intent.rs"}),
+            paths: vec![],
+        })
+        .await;
+    assert_eq!(asked, PermissionDecision::Allow);
+    web.host.tool_started("sh-2", "Bash").await;
+    std::fs::write(w.cwd.join("src/payments/intent.rs"), "mine").unwrap();
+    std::fs::write(w.cwd.join("src/payments/new.rs"), "created").unwrap();
+
+    let refusal = web.host.tool_finished("sh-2").await.expect("refused");
+    assert!(refusal.contains("lane api"), "{refusal}");
+    assert_eq!(
+        std::fs::read_to_string(w.cwd.join("src/payments/intent.rs")).unwrap(),
+        "held",
+        "the held file is put back"
+    );
+    assert!(
+        !w.cwd.join("src/payments/new.rs").exists(),
+        "a file the command created in the held folder is removed"
+    );
+}
+
 #[tokio::test]
 async fn a_scope_notice_reaches_the_host_bus() {
     home("leases");

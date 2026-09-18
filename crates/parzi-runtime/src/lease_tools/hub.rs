@@ -259,11 +259,19 @@ impl LeaseHub {
         }
     }
 
-    /// The lease covering `path`, if any (expired ones swept first).
+    /// The lease holding the file `path`, if any (expired ones swept first).
     pub async fn holder_of_path(&self, path: &str) -> Option<Lease> {
         let mut t = self.table.lock().await;
         t.expire(now());
         t.holder_of(path).cloned()
+    }
+
+    /// Every lease that could hold something `path` names — a file, a
+    /// folder or a glob (expired ones swept first).
+    pub(super) async fn meeting_path(&self, path: &str) -> Vec<Lease> {
+        let mut t = self.table.lock().await;
+        t.expire(now());
+        t.meeting(path).into_iter().cloned().collect()
     }
 
     /// Every live lease, for the board and the deck.
