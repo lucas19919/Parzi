@@ -41,7 +41,7 @@
     "licenseFile": "../LICENSE",
     "category": "DeveloperTool",
     "shortDescription": "Lean multi-model agent harness",
-    "longDescription": "Parzi routes Claude, Codex, Antigravity, OpenCode and Grok through one elegant harness.",
+    "longDescription": "Parzi runs Claude Code, Codex, OpenCode, Grok, Antigravity and Cursor through one harness, on your own sign-ins.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
