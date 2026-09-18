@@ -69,7 +69,17 @@ async fn token_budget_pauses_the_run_and_marks_it() {
     };
     let (orch, store) = orch_with(cfg, &[spender()]);
     let (meta, mut rx) = orch
-        .spawn("t", "", "claude", "spend it", Some(Arc::new(Allow)), "", "low", vec![], None)
+        .spawn(
+            "t",
+            "",
+            "claude",
+            "spend it",
+            Some(Arc::new(Allow)),
+            "",
+            "low",
+            vec![],
+            None,
+        )
         .await
         .unwrap();
     let mut notices = vec![];
@@ -121,7 +131,7 @@ async fn project_budget_is_read_from_project_md() {
     std::fs::create_dir_all(parzi_core::project::dir("budgets", "spent")).unwrap();
     parzi_core::project::save(&project).unwrap();
     let fake = spender();
-    let (orch, store) = orch(&[fake.clone()]);
+    let (orch, store) = orch(std::slice::from_ref(&fake));
     let (meta, mut rx) = orch
         .spawn_in_project(
             Some(("budgets".into(), "spent".into())),

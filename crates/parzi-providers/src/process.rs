@@ -226,7 +226,11 @@ mod tests {
         let got = follow_npm_shim(&shim).expect("shim followed");
         assert!(got.ends_with(Path::new("node_modules/tool/bin/tool.exe")));
         // A shim that runs node has no native target: the shim itself runs.
-        std::fs::write(&shim, "\"%_prog%\" \"%dp0%\\node_modules\\tool\\cli.js\" %*\r\n").unwrap();
+        std::fs::write(
+            &shim,
+            "\"%_prog%\" \"%dp0%\\node_modules\\tool\\cli.js\" %*\r\n",
+        )
+        .unwrap();
         assert!(follow_npm_shim(&shim).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }

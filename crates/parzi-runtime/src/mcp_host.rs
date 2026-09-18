@@ -134,7 +134,11 @@ fn token_of(req: &Request<Incoming>) -> Option<String> {
 }
 
 async fn handle(req: Request<Incoming>, runs: Runs) -> Result<Response<Full<Bytes>>, Infallible> {
-    if let Some(origin) = req.headers().get(hyper::header::ORIGIN).and_then(|o| o.to_str().ok()) {
+    if let Some(origin) = req
+        .headers()
+        .get(hyper::header::ORIGIN)
+        .and_then(|o| o.to_str().ok())
+    {
         let local = ["http://127.0.0.1", "http://localhost", "http://[::1]"]
             .iter()
             .any(|p| origin.starts_with(p));

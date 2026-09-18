@@ -28,8 +28,8 @@ use crate::handler::{HarnessBridge, RunEvent, RunEventBus};
 use crate::lease_tools::LeaseHub;
 use crate::mcp::McpManager;
 use crate::mcp_host::McpHost;
-use crate::status::{roster_source, ProviderSource, StatusBoard};
 use crate::roles::{Role, RoleBinding, RoleCtx};
+use crate::status::{roster_source, ProviderSource, StatusBoard};
 use crate::tools::{ApprovalMode, Approver};
 
 use queue::{clear_queued, Pump, QueuedRun};

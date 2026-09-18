@@ -37,8 +37,11 @@ pub fn home(tag: &str) -> PathBuf {
     DIR.lock().unwrap().clone().unwrap()
 }
 
-pub type Script =
-    Arc<dyn Fn(Agent) -> Pin<Box<dyn Future<Output = Result<TurnEnd, ProviderError>> + Send>> + Send + Sync>;
+pub type Script = Arc<
+    dyn Fn(Agent) -> Pin<Box<dyn Future<Output = Result<TurnEnd, ProviderError>> + Send>>
+        + Send
+        + Sync,
+>;
 
 /// Wrap an async closure as a script.
 pub fn script<F, Fut>(f: F) -> Script
@@ -140,7 +143,13 @@ impl Agent {
 
     /// One of the agent's own tools, start to finish, reported to Parzi.
     /// `permit` is the permission request id when the gate was asked first.
-    pub async fn own_tool<F, Fut>(&self, id: &str, name: &str, input: Value, act: F) -> (bool, String)
+    pub async fn own_tool<F, Fut>(
+        &self,
+        id: &str,
+        name: &str,
+        input: Value,
+        act: F,
+    ) -> (bool, String)
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = (bool, String)>,
@@ -194,7 +203,11 @@ impl Agent {
 }
 
 pub async fn mcp(spec: &TurnSpec, method: &str, params: Value) -> Value {
-    let url = &spec.tools.as_ref().expect("this turn offers Parzi's tools").url;
+    let url = &spec
+        .tools
+        .as_ref()
+        .expect("this turn offers Parzi's tools")
+        .url;
     reqwest::Client::new()
         .post(url)
         .json(&json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}))
@@ -207,7 +220,12 @@ pub async fn mcp(spec: &TurnSpec, method: &str, params: Value) -> Value {
 }
 
 pub async fn mcp_call(spec: &TurnSpec, tool: &str, args: Value) -> (bool, String) {
-    let v = mcp(spec, "tools/call", json!({"name": to_mcp(tool), "arguments": args})).await;
+    let v = mcp(
+        spec,
+        "tools/call",
+        json!({"name": to_mcp(tool), "arguments": args}),
+    )
+    .await;
     let r = &v["result"];
     let text = r["content"][0]["text"].as_str().unwrap_or("").to_string();
     (!r["isError"].as_bool().unwrap_or(true), text)
@@ -216,12 +234,14 @@ pub async fn mcp_call(spec: &TurnSpec, tool: &str, args: Value) -> (bool, String
 /// A source with these fakes under roster ids; anything else is unknown.
 pub fn source(fakes: &[Arc<Fake>]) -> ProviderSource {
     let fakes: Vec<Arc<Fake>> = fakes.to_vec();
-    Arc::new(move |id: &str, _cfg: &ParziConfig| -> Option<Arc<dyn Provider>> {
-        fakes
-            .iter()
-            .find(|f| f.id == id)
-            .map(|f| f.clone() as Arc<dyn Provider>)
-    })
+    Arc::new(
+        move |id: &str, _cfg: &ParziConfig| -> Option<Arc<dyn Provider>> {
+            fakes
+                .iter()
+                .find(|f| f.id == id)
+                .map(|f| f.clone() as Arc<dyn Provider>)
+        },
+    )
 }
 
 pub fn orch_with(cfg: ParziConfig, fakes: &[Arc<Fake>]) -> (Arc<Orchestrator>, SessionStore) {
@@ -267,10 +287,10 @@ pub fn events(store: &SessionStore, id: &str) -> Vec<Event> {
 pub fn last_reply(store: &SessionStore, id: &str) -> String {
     events(store, id)
         .into_iter()
-        .filter_map(|e| match e {
+        .rev()
+        .find_map(|e| match e {
             Event::Assistant { text, .. } => Some(text),
             _ => None,
         })
-        .last()
         .unwrap_or_default()
 }

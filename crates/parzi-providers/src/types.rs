@@ -191,7 +191,9 @@ pub struct TurnSpec {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProviderEvent {
     /// The vendor's handle for resuming this conversation on the next turn.
-    Session { resume: serde_json::Value },
+    Session {
+        resume: serde_json::Value,
+    },
     TextDelta(String),
     ReasoningDelta(String),
     /// A finished assistant message: the text that goes in the transcript.
@@ -216,7 +218,10 @@ pub enum ProviderEvent {
         cost_usd: Option<f64>,
     },
     /// How full the model's window is.
-    Context { used: u64, limit: u64 },
+    Context {
+        used: u64,
+        limit: u64,
+    },
     /// Plan windows, as the vendor just reported them.
     Limits(Vec<UsageWindow>),
     /// Something worth a line in the thread (a retry, a reroute).

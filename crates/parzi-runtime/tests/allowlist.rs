@@ -49,7 +49,6 @@ fn mode_parses() {
     assert_eq!(ApprovalMode::parse("bogus"), ApprovalMode::Ask);
 }
 
-
 #[tokio::test]
 async fn disallowed_tool_fails_closed() {
     let e = exec(&[]);
@@ -126,12 +125,21 @@ async fn writes_outside_the_folder_need_a_person() {
     let inside = inside.to_str().unwrap();
     let host = gate(&folder, ApprovalMode::Auto, false, nobody());
 
-    assert_eq!(ask(&host, "Write", &[inside]).await, PermissionDecision::Allow);
-    assert_eq!(ask(&host, "Edit", &["src/a.rs"]).await, PermissionDecision::Allow);
+    assert_eq!(
+        ask(&host, "Write", &[inside]).await,
+        PermissionDecision::Allow
+    );
+    assert_eq!(
+        ask(&host, "Edit", &["src/a.rs"]).await,
+        PermissionDecision::Allow
+    );
     let elsewhere = std::env::temp_dir().join("elsewhere.rs");
     for evil in ["../../secret", "src/../../x", elsewhere.to_str().unwrap()] {
         assert!(
-            matches!(ask(&host, "Write", &[evil]).await, PermissionDecision::Deny(_)),
+            matches!(
+                ask(&host, "Write", &[evil]).await,
+                PermissionDecision::Deny(_)
+            ),
             "{evil} must not be written on the lane's say-so"
         );
     }
@@ -147,7 +155,10 @@ async fn writes_outside_the_folder_need_a_person() {
 
     // The composer's "edits" pill pre-approves edits inside the folder only.
     let host = gate(&folder, ApprovalMode::Ask, true, nobody());
-    assert_eq!(ask(&host, "Edit", &["src/a.rs"]).await, PermissionDecision::Allow);
+    assert_eq!(
+        ask(&host, "Edit", &["src/a.rs"]).await,
+        PermissionDecision::Allow
+    );
     assert!(matches!(
         ask(&host, "Edit", &["../x"]).await,
         PermissionDecision::Deny(_)
@@ -159,11 +170,17 @@ async fn writes_outside_the_folder_need_a_person() {
         seen: Mutex::new(vec![]),
     });
     let host = gate(&folder, ApprovalMode::Auto, false, person.clone());
-    assert_eq!(ask(&host, "Write", &["../x"]).await, PermissionDecision::Allow);
+    assert_eq!(
+        ask(&host, "Write", &["../x"]).await,
+        PermissionDecision::Allow
+    );
     let cards = person.seen.lock().unwrap().clone();
     assert_eq!(cards.len(), 1, "one card, for the write outside");
     assert!(
-        cards[0].args["title"].as_str().unwrap_or("").contains("outside"),
+        cards[0].args["title"]
+            .as_str()
+            .unwrap_or("")
+            .contains("outside"),
         "{:?}",
         cards[0].args
     );

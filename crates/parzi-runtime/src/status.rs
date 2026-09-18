@@ -26,7 +26,9 @@ pub struct StatusBoard {
 }
 
 fn file() -> Option<std::path::PathBuf> {
-    parzi_core::paths::parzi_dir().ok().map(|d| d.join("providers.json"))
+    parzi_core::paths::parzi_dir()
+        .ok()
+        .map(|d| d.join("providers.json"))
 }
 
 impl StatusBoard {
@@ -110,25 +112,43 @@ impl StatusBoard {
 
     /// Probe `ids` (all when empty) side by side. A provider switched off in
     /// Settings is reported as such without starting anything.
-    pub async fn refresh(&self, cfg: &ParziConfig, ids: &[String], source: &ProviderSource) -> Vec<ProviderStatus> {
+    pub async fn refresh(
+        &self,
+        cfg: &ParziConfig,
+        ids: &[String],
+        source: &ProviderSource,
+    ) -> Vec<ProviderStatus> {
         let ids: Vec<String> = if ids.is_empty() {
-            parzi_providers::PROVIDERS.iter().map(|s| (*s).to_string()).collect()
+            parzi_providers::PROVIDERS
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect()
         } else {
             ids.to_vec()
         };
         let mut set = tokio::task::JoinSet::new();
         for id in ids {
-            let Some(canon) = parzi_providers::canonical_id(&id) else { continue };
+            let Some(canon) = parzi_providers::canonical_id(&id) else {
+                continue;
+            };
             if !cfg.provider(canon).enabled {
-                self.put(ProviderStatus::new(canon, State::Disabled, "Switched off in Settings."));
+                self.put(ProviderStatus::new(
+                    canon,
+                    State::Disabled,
+                    "Switched off in Settings.",
+                ));
                 continue;
             }
-            let Some(provider) = source(canon, cfg) else { continue };
+            let Some(provider) = source(canon, cfg) else {
+                continue;
+            };
             set.spawn(async move {
                 // One slow vendor must not hold the rest.
                 tokio::time::timeout(std::time::Duration::from_secs(90), provider.status())
                     .await
-                    .unwrap_or_else(|_| ProviderStatus::new(canon, State::Error, "The status check took over 90 s."))
+                    .unwrap_or_else(|_| {
+                        ProviderStatus::new(canon, State::Error, "The status check took over 90 s.")
+                    })
             });
         }
         while let Some(done) = set.join_next().await {
@@ -151,7 +171,9 @@ impl StatusBoard {
     pub async fn pick(&self, cfg: &ParziConfig, source: &ProviderSource) -> Option<String> {
         let now = parzi_providers::now_secs();
         for id in &cfg.routing.order {
-            let Some(id) = parzi_providers::canonical_id(id) else { continue };
+            let Some(id) = parzi_providers::canonical_id(id) else {
+                continue;
+            };
             if !cfg.provider(id).enabled {
                 continue;
             }
@@ -175,9 +197,7 @@ impl StatusBoard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use parzi_providers::{
-        EventTx, PermissionGate, ProviderError, TurnEnd, TurnSpec,
-    };
+    use parzi_providers::{EventTx, PermissionGate, ProviderError, TurnEnd, TurnSpec};
     use tokio_util::sync::CancellationToken;
 
     struct Fixed(&'static str, State, f64);
@@ -208,14 +228,20 @@ mod tests {
     }
 
     fn source() -> ProviderSource {
-        Arc::new(|id: &str, _cfg: &ParziConfig| -> Option<Arc<dyn Provider>> {
-            Some(match id {
-                "claude" => Arc::new(Fixed("claude", State::Ready, 100.0)),
-                "codex" => Arc::new(Fixed("codex", State::SignedOut, 0.0)),
-                "opencode" => Arc::new(Fixed("opencode", State::Ready, 12.0)),
-                other => Arc::new(Fixed(parzi_providers::canonical_id(other)?, State::NotInstalled, 0.0)),
-            })
-        })
+        Arc::new(
+            |id: &str, _cfg: &ParziConfig| -> Option<Arc<dyn Provider>> {
+                Some(match id {
+                    "claude" => Arc::new(Fixed("claude", State::Ready, 100.0)),
+                    "codex" => Arc::new(Fixed("codex", State::SignedOut, 0.0)),
+                    "opencode" => Arc::new(Fixed("opencode", State::Ready, 12.0)),
+                    other => Arc::new(Fixed(
+                        parzi_providers::canonical_id(other)?,
+                        State::NotInstalled,
+                        0.0,
+                    )),
+                })
+            },
+        )
     }
 
     #[tokio::test]
@@ -223,21 +249,47 @@ mod tests {
         let board = StatusBoard::in_memory();
         let cfg = ParziConfig::default();
         // claude's session window is at 100%, codex is signed out.
-        assert_eq!(board.pick(&cfg, &source()).await.as_deref(), Some("opencode"));
+        assert_eq!(
+            board.pick(&cfg, &source()).await.as_deref(),
+            Some("opencode")
+        );
         let mut off = cfg.clone();
         off.providers.insert(
             "opencode".into(),
-            parzi_core::config::ProviderEntry { enabled: false, ..Default::default() },
+            parzi_core::config::ProviderEntry {
+                enabled: false,
+                ..Default::default()
+            },
         );
-        assert_eq!(board.pick(&off, &source()).await, None, "nothing else is ready");
+        assert_eq!(
+            board.pick(&off, &source()).await,
+            None,
+            "nothing else is ready"
+        );
     }
 
     #[tokio::test]
     async fn a_run_s_windows_merge_into_the_probe() {
         let board = StatusBoard::in_memory();
-        board.refresh(&ParziConfig::default(), &["opencode".into()], &source()).await;
-        board.update_usage("opencode", &[UsageWindow { label: "Session".into(), used_percent: 55.0, resets_at: Some(1) }]);
-        board.update_usage("opencode", &[UsageWindow { label: "Weekly".into(), used_percent: 5.0, resets_at: None }]);
+        board
+            .refresh(&ParziConfig::default(), &["opencode".into()], &source())
+            .await;
+        board.update_usage(
+            "opencode",
+            &[UsageWindow {
+                label: "Session".into(),
+                used_percent: 55.0,
+                resets_at: Some(1),
+            }],
+        );
+        board.update_usage(
+            "opencode",
+            &[UsageWindow {
+                label: "Weekly".into(),
+                used_percent: 5.0,
+                resets_at: None,
+            }],
+        );
         let s = board.get("opencode").unwrap();
         assert_eq!(s.usage.len(), 2);
         assert!((s.usage[0].used_percent - 55.0).abs() < 1e-9);

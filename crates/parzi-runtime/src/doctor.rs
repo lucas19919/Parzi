@@ -102,13 +102,22 @@ impl Doctor {
             .into_iter()
             .map(|s| {
                 let name = format!("provider:{}", s.provider);
-                let version = s.version.as_deref().map(|v| format!(" v{v}")).unwrap_or_default();
+                let version = s
+                    .version
+                    .as_deref()
+                    .map(|v| format!(" v{v}"))
+                    .unwrap_or_default();
                 match s.state {
                     State::Ready => Check::ok(
                         &name,
-                        format!("ready{version} · {}", s.account.unwrap_or_else(|| "signed in".into())),
+                        format!(
+                            "ready{version} · {}",
+                            s.account.unwrap_or_else(|| "signed in".into())
+                        ),
                     ),
-                    State::Unchecked => Check::ok(&name, format!("installed{version} · {}", s.hint)),
+                    State::Unchecked => {
+                        Check::ok(&name, format!("installed{version} · {}", s.hint))
+                    }
                     State::NotInstalled | State::Disabled => Check::ok(&name, s.hint),
                     State::SignedOut | State::Error => Check::fail(&name, s.hint),
                 }

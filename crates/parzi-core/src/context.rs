@@ -405,9 +405,7 @@ impl ContextBuilder {
                     Some(m) => format!("- inter: {}\n", m.summary()),
                     None => continue,
                 },
-                Event::Widget { .. } | Event::Reasoning { .. } | Event::Error { .. } => {
-                    continue
-                }
+                Event::Widget { .. } | Event::Reasoning { .. } | Event::Error { .. } => continue,
             };
             digest.push_str(&line);
         }

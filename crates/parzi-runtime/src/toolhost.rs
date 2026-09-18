@@ -84,7 +84,10 @@ fn worktree_relative(cwd: &str, path: &str) -> Option<String> {
         let raw = Path::new(path);
         raw.has_root()
             || p.starts_with('/')
-            || matches!(raw.components().next(), Some(std::path::Component::Prefix(_)))
+            || matches!(
+                raw.components().next(),
+                Some(std::path::Component::Prefix(_))
+            )
     };
     let rel = if rooted {
         let (pc, bc) = if cfg!(windows) {
@@ -161,7 +164,8 @@ impl ToolHost {
         if is_ui_tool(name) {
             return self.execute_ui_tool(name, args);
         }
-        let (denied, warnings) = crate::hooks::pre_tool(&self.p.store, &self.p.session_id, name, args).await;
+        let (denied, warnings) =
+            crate::hooks::pre_tool(&self.p.store, &self.p.session_id, name, args).await;
         for w in warnings {
             self.p.sink.emit(RunEvent::Notice { text: w });
         }
@@ -169,7 +173,9 @@ impl ToolHost {
             return (false, format!("blocked by a workspace hook: {reason}"));
         }
         let (ok, output) = self.execute_inner(&id, name, args).await;
-        for n in crate::hooks::post_tool(&self.p.store, &self.p.session_id, name, args, ok, &output).await {
+        for n in crate::hooks::post_tool(&self.p.store, &self.p.session_id, name, args, ok, &output)
+            .await
+        {
             self.p.sink.emit(RunEvent::Notice { text: n });
         }
         (ok, output)
@@ -179,23 +185,37 @@ impl ToolHost {
         if is_session_tool(name) {
             // H-5: session tools are tools: the same gate as everything else.
             if !self.approved(id, name, args).await {
-                return (false, format!("tool `{name}` denied (lane mode / approver)"));
+                return (
+                    false,
+                    format!("tool `{name}` denied (lane mode / approver)"),
+                );
             }
             return self.execute_session_tool(name, args).await;
         }
         if is_lane_tool(name) {
             if !self.approved(id, name, args).await {
-                return (false, format!("tool `{name}` denied (lane mode / approver)"));
+                return (
+                    false,
+                    format!("tool `{name}` denied (lane mode / approver)"),
+                );
             }
             return self.execute_lane_tool(name, args).await;
         }
         if !self.approved(id, name, args).await {
-            return (false, format!("tool `{name}` denied (lane mode / approver)"));
+            return (
+                false,
+                format!("tool `{name}` denied (lane mode / approver)"),
+            );
         }
         // `project.*` belongs to the run's role, not to the lane cwd.
         if let Some(binding) = &self.p.role {
             if crate::project_flow::is_project_tool(name) {
-                return crate::project_flow::execute_project_tool(binding.role, &binding.ctx, name, args);
+                return crate::project_flow::execute_project_tool(
+                    binding.role,
+                    &binding.ctx,
+                    name,
+                    args,
+                );
             }
         }
         self.p.tools.execute(name, args).await
@@ -234,7 +254,9 @@ impl ToolHost {
         };
         // Single approval path: the Approver is the gate. The event is for
         // observers; a slow human really does block here.
-        self.p.sink.emit(RunEvent::ApprovalRequest { call: info.clone() });
+        self.p
+            .sink
+            .emit(RunEvent::ApprovalRequest { call: info.clone() });
         tokio::select! {
             () = self.p.cancel.cancelled() => false,
             r = self.p.approver.approve(&info) => matches!(r, Approval::Allow),
@@ -260,9 +282,12 @@ impl ToolHost {
             // A lane that lists file or shell kinds and leaves this one out
             // refuses it. Parzi adds its own tool names to every lane, so
             // only the kinds say whether the lane meant to restrict these.
-            let lists_kinds = self.p.tools.allowed.iter().any(|a| {
-                crate::tools::is_vendor_category(a) || a == "fs.*" || a == "shell.*"
-            });
+            let lists_kinds = self
+                .p
+                .tools
+                .allowed
+                .iter()
+                .any(|a| crate::tools::is_vendor_category(a) || a == "fs.*" || a == "shell.*");
             if lists_kinds && !self.p.tools.is_allowed(k) {
                 return PermissionDecision::Deny(format!("this lane does not allow {k}"));
             }
@@ -303,7 +328,8 @@ impl ToolHost {
                         let title = format!("{} — outside this lane's folder", req.title);
                         o.insert("title".into(), Value::String(title));
                     } else {
-                        o.entry("title").or_insert_with(|| Value::String(req.title.clone()));
+                        o.entry("title")
+                            .or_insert_with(|| Value::String(req.title.clone()));
                     }
                 }
                 self.ask(&req.id, &req.tool, &args).await
@@ -376,7 +402,10 @@ impl ToolHost {
                 let target = str_arg("session_id").unwrap_or_default();
                 let message = str_arg("message").unwrap_or_default();
                 if target.trim().is_empty() || message.trim().is_empty() {
-                    return (false, "session.send_message needs `session_id` + `message`".into());
+                    return (
+                        false,
+                        "session.send_message needs `session_id` + `message`".into(),
+                    );
                 }
                 let kind = InterKind::parse(&str_arg("kind").unwrap_or_default());
                 bridge
@@ -444,7 +473,15 @@ impl ToolHost {
             }
         }
         match bridge
-            .spawn_session(&self.p.session_id, &title, &prompt, true, role_model, lane, wait)
+            .spawn_session(
+                &self.p.session_id,
+                &title,
+                &prompt,
+                true,
+                role_model,
+                lane,
+                wait,
+            )
             .await
         {
             Ok(text) => {
@@ -504,7 +541,10 @@ impl ToolHost {
         let mut candidate = artifacts::validate_artifact(args).map_err(|e| e.to_string())?;
         let existing = self.existing_artifacts();
         if artifacts::is_same_content(&candidate.id, &candidate.content, &existing) {
-            return Ok(format!("artifact {} unchanged (no new version)", candidate.id));
+            return Ok(format!(
+                "artifact {} unchanged (no new version)",
+                candidate.id
+            ));
         }
         candidate.version = artifacts::next_version(&candidate.id, &existing);
         let payload = serde_json::to_value(&candidate).map_err(|e| e.to_string())?;
@@ -521,7 +561,10 @@ impl ToolHost {
                 },
             )
             .map_err(|e| e.to_string())?;
-        Ok(format!("rendered artifact {} v{}", candidate.id, candidate.version))
+        Ok(format!(
+            "rendered artifact {} v{}",
+            candidate.id, candidate.version
+        ))
     }
 
     fn existing_artifacts(&self) -> Vec<artifacts::ArtifactV1> {
@@ -567,15 +610,37 @@ mod tests {
         };
         let rel = worktree_relative(cwd, inside).unwrap();
         assert!(rel.eq_ignore_ascii_case("src/a.rs"), "{rel}");
-        assert_eq!(worktree_relative(cwd, "src/b.rs").as_deref(), Some("src/b.rs"));
-        assert_eq!(worktree_relative(cwd, "./src/../src/c.rs").as_deref(), Some("src/c.rs"));
-        let outside = if cfg!(windows) { r"C:\other\x.rs" } else { "/other/x.rs" };
+        assert_eq!(
+            worktree_relative(cwd, "src/b.rs").as_deref(),
+            Some("src/b.rs")
+        );
+        assert_eq!(
+            worktree_relative(cwd, "./src/../src/c.rs").as_deref(),
+            Some("src/c.rs")
+        );
+        let outside = if cfg!(windows) {
+            r"C:\other\x.rs"
+        } else {
+            "/other/x.rs"
+        };
         assert_eq!(worktree_relative(cwd, outside), None);
         // A sibling that merely shares the prefix is outside too.
-        let sibling = if cfg!(windows) { r"C:\repo2\x.rs" } else { "/repo2/x.rs" };
+        let sibling = if cfg!(windows) {
+            r"C:\repo2\x.rs"
+        } else {
+            "/repo2/x.rs"
+        };
         assert_eq!(worktree_relative(cwd, sibling), None);
-        assert_eq!(worktree_relative("", "src/a.rs"), None, "no folder, no inside");
-        assert_eq!(worktree_relative(cwd, "src/.."), None, "the folder is not a file");
+        assert_eq!(
+            worktree_relative("", "src/a.rs"),
+            None,
+            "no folder, no inside"
+        );
+        assert_eq!(
+            worktree_relative(cwd, "src/.."),
+            None,
+            "the folder is not a file"
+        );
     }
 
     /// B3's escape table, now for the agent's own writes: absolute, rooted,

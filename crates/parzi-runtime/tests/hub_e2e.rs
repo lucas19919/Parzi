@@ -227,7 +227,10 @@ async fn write_contested(a: &Agent, id: &str, body: &str) {
     let file = a.spec.cwd.join(CONTESTED);
     let input = json!({ "file_path": file, "content": body });
     a.own_tool(id, "Write", input.clone(), || async {
-        match a.ask("Write", input.clone(), &[&file.display().to_string()]).await {
+        match a
+            .ask("Write", input.clone(), &[&file.display().to_string()])
+            .await
+        {
             PermissionDecision::Deny(why) => (false, why),
             PermissionDecision::Allow | PermissionDecision::AllowAlways => {
                 match std::fs::write(&file, body) {
@@ -463,9 +466,8 @@ async fn a_project_goes_from_a_question_to_two_lanes_trading_one_file() {
     until(30, "the request to reach the holder's transcript", || {
         let (store, run) = (store.clone(), api.session_id.clone());
         async move {
-            inter::inbox(&store, &run).is_ok_and(|m| {
-                m.iter().any(|m| m.kind == inter::InterKind::LeaseRequest)
-            })
+            inter::inbox(&store, &run)
+                .is_ok_and(|m| m.iter().any(|m| m.kind == inter::InterKind::LeaseRequest))
         }
     })
     .await;

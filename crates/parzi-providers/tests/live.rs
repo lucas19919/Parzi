@@ -7,8 +7,7 @@ use std::sync::Arc;
 
 use parzi_core::config::ParziConfig;
 use parzi_providers::{
-    Access, PermissionDecision, PermissionGate, PermissionRequest, ProviderEvent, TurnEnd,
-    TurnSpec,
+    Access, PermissionDecision, PermissionGate, PermissionRequest, ProviderEvent, TurnEnd, TurnSpec,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -41,7 +40,13 @@ async fn every_provider_reports_where_it_stands() {
     }
 }
 
-async fn one_turn(id: &str, model: Option<&str>) -> (Result<TurnEnd, parzi_providers::ProviderError>, Vec<ProviderEvent>) {
+async fn one_turn(
+    id: &str,
+    model: Option<&str>,
+) -> (
+    Result<TurnEnd, parzi_providers::ProviderError>,
+    Vec<ProviderEvent>,
+) {
     let cfg = ParziConfig::default();
     let p = parzi_providers::provider(id, &cfg).unwrap();
     let cwd = std::env::temp_dir().join("parzi-live-check");
@@ -85,8 +90,12 @@ async fn claude_answers_a_turn() {
     let (end, events) = one_turn("claude", Some("haiku")).await;
     show("claude", &end, &events);
     assert_eq!(end.unwrap(), TurnEnd::Completed);
-    assert!(events.iter().any(|e| matches!(e, ProviderEvent::Session { .. })));
-    assert!(events.iter().any(|e| matches!(e, ProviderEvent::Message(m) if m.to_lowercase().contains("pong"))));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, ProviderEvent::Session { .. })));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, ProviderEvent::Message(m) if m.to_lowercase().contains("pong"))));
 }
 
 #[tokio::test]
@@ -95,5 +104,7 @@ async fn opencode_answers_a_turn() {
     let (end, events) = one_turn("opencode", Some("opencode/big-pickle")).await;
     show("opencode", &end, &events);
     assert_eq!(end.unwrap(), TurnEnd::Completed);
-    assert!(events.iter().any(|e| matches!(e, ProviderEvent::Message(m) if m.to_lowercase().contains("pong"))));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, ProviderEvent::Message(m) if m.to_lowercase().contains("pong"))));
 }

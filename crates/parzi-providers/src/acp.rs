@@ -141,9 +141,14 @@ fn t3_antigravity() -> Option<PathBuf> {
         .join("tools")
         .join("antigravity-acp")
         .join(platform);
-    let active: Value = serde_json::from_str(&std::fs::read_to_string(base.join("active.json")).ok()?).ok()?;
+    let active: Value =
+        serde_json::from_str(&std::fs::read_to_string(base.join("active.json")).ok()?).ok()?;
     let release = active.get("releaseId")?.as_str()?;
-    let exe = if cfg!(windows) { "agy_acp_server.exe" } else { "agy_acp_server" };
+    let exe = if cfg!(windows) {
+        "agy_acp_server.exe"
+    } else {
+        "agy_acp_server"
+    };
     let path = base.join("versions").join(release).join(exe);
     path.is_file().then_some(path)
 }
@@ -168,14 +173,24 @@ impl Acp {
         process::resolve(self.agent.program).or_else(self.agent.locate)
     }
 
-    async fn open(&self, program: &Path, access: Access, cwd: &Path) -> Result<Conn, ProviderError> {
+    async fn open(
+        &self,
+        program: &Path,
+        access: Access,
+        cwd: &Path,
+    ) -> Result<Conn, ProviderError> {
         let args = (self.agent.args)(access);
         let env = (self.agent.env)(program);
-        let mut proc = Proc::spawn(program, &args, cwd, &env)
-            .map_err(|e| ProviderError::process(format!("could not start {}: {e}", self.agent.name)))?;
-        let (Some(stdin), Some(stdout)) = (proc.child.stdin.take(), proc.child.stdout.take()) else {
+        let mut proc = Proc::spawn(program, &args, cwd, &env).map_err(|e| {
+            ProviderError::process(format!("could not start {}: {e}", self.agent.name))
+        })?;
+        let (Some(stdin), Some(stdout)) = (proc.child.stdin.take(), proc.child.stdout.take())
+        else {
             proc.kill().await;
-            return Err(ProviderError::process(format!("{} started without stdio", self.agent.name)));
+            return Err(ProviderError::process(format!(
+                "{} started without stdio",
+                self.agent.name
+            )));
         };
         let (peer, incoming) = Peer::start(stdout, stdin);
         let init = peer
@@ -239,7 +254,10 @@ impl Provider for Acp {
             ),
         };
         // The agent's own version, from a handshake that opens no session.
-        if let Ok(mut conn) = self.open(&program, Access::Ask, &std::env::temp_dir()).await {
+        if let Ok(mut conn) = self
+            .open(&program, Access::Ask, &std::env::temp_dir())
+            .await
+        {
             status.version = conn
                 .init
                 .pointer("/agentInfo/version")
@@ -307,7 +325,10 @@ async fn opencode_status(program: &Path, agent: Agent) -> ProviderStatus {
     if models.is_empty() {
         return ProviderStatus::new(agent.id, State::SignedOut, agent.login_hint);
     }
-    let mut providers: Vec<&str> = models.iter().filter_map(|m| m.id.split('/').next()).collect();
+    let mut providers: Vec<&str> = models
+        .iter()
+        .filter_map(|m| m.id.split('/').next())
+        .collect();
     providers.dedup();
     let mut s = ProviderStatus::new(agent.id, State::Ready, "");
     s.account = Some(format!(
@@ -421,7 +442,10 @@ fn rpc_failure(agent: Agent, e: RpcError) -> ProviderError {
             format!("{} is not signed in. {}", agent.name, agent.login_hint),
         ),
         RpcError::CLOSED | RpcError::TIMEOUT => ProviderError::process(e.message),
-        _ => ProviderError::new(ErrorClass::Unknown, format!("{}: {}", agent.name, e.message)),
+        _ => ProviderError::new(
+            ErrorClass::Unknown,
+            format!("{}: {}", agent.name, e.message),
+        ),
     }
 }
 
@@ -438,9 +462,17 @@ async fn drive(
     cancel: &CancellationToken,
 ) -> Result<TurnEnd, ProviderError> {
     let caps = init.get("agentCapabilities").unwrap_or(&Value::Null);
-    let http_mcp = caps.pointer("/mcpCapabilities/http").and_then(Value::as_bool) == Some(true);
-    let can_resume = caps.pointer("/sessionCapabilities/resume").is_some_and(|v| !v.is_null());
-    let images_ok = caps.pointer("/promptCapabilities/image").and_then(Value::as_bool) == Some(true);
+    let http_mcp = caps
+        .pointer("/mcpCapabilities/http")
+        .and_then(Value::as_bool)
+        == Some(true);
+    let can_resume = caps
+        .pointer("/sessionCapabilities/resume")
+        .is_some_and(|v| !v.is_null());
+    let images_ok = caps
+        .pointer("/promptCapabilities/image")
+        .and_then(Value::as_bool)
+        == Some(true);
     let mcp_servers = match &spec.tools {
         Some(t) if http_mcp => json!([{
             "type": "http",
@@ -500,14 +532,23 @@ async fn drive(
     }
     if fresh {
         session = peer
-            .request_within("session/new", json!({"cwd": cwd, "mcpServers": mcp_servers}), limit)
+            .request_within(
+                "session/new",
+                json!({"cwd": cwd, "mcpServers": mcp_servers}),
+                limit,
+            )
             .await
             .map_err(|e| rpc_failure(agent, e))?;
         sid = session
             .get("sessionId")
             .and_then(Value::as_str)
             .map(str::to_string)
-            .ok_or_else(|| ProviderError::new(ErrorClass::Unknown, format!("{} opened a session without an id", agent.name)))?;
+            .ok_or_else(|| {
+                ProviderError::new(
+                    ErrorClass::Unknown,
+                    format!("{} opened a session without an id", agent.name),
+                )
+            })?;
     }
     let _ = events.send(ProviderEvent::Session {
         resume: json!({"session_id": sid}),
@@ -519,7 +560,11 @@ async fn drive(
     // the head of its first prompt; a resumed one already has them.
     let mut text = spec.prompt.clone();
     if fresh {
-        if let Some(i) = spec.instructions.as_deref().filter(|i| !i.trim().is_empty()) {
+        if let Some(i) = spec
+            .instructions
+            .as_deref()
+            .filter(|i| !i.trim().is_empty())
+        {
             text = format!("<instructions>\n{i}\n</instructions>\n\n{text}");
         }
     }
@@ -531,7 +576,10 @@ async fn drive(
             }
         }
     } else if !spec.images.is_empty() {
-        let _ = events.send(ProviderEvent::Notice(format!("{} takes no images; sent text only", agent.name)));
+        let _ = events.send(ProviderEvent::Notice(format!(
+            "{} takes no images; sent text only",
+            agent.name
+        )));
     }
     let (done_tx, mut done_rx) = tokio::sync::oneshot::channel();
     {
@@ -560,77 +608,87 @@ async fn drive(
         // first, so the last chunks of a turn are never dropped. A closed
         // stream is switched off, or it would win every round.
         tokio::select! {
-            biased;
-            () = cancel.cancelled(), if !interrupting => {
-                interrupting = true;
-                stop_by = Some(tokio::time::Instant::now() + Duration::from_secs(10));
-                let _ = peer.notify("session/cancel", json!({"sessionId": sid})).await;
-            }
-            () = sleep_until(stop_by) => {
-                buffers.flush(events);
-                return Ok(TurnEnd::Interrupted);
-            }
-            msg = incoming.recv(), if open => {
-                let Some(msg) = msg else {
-                    // The reader ended; the prompt answer (an error) is next.
-                    open = false;
-                    continue;
-                };
-                match msg {
-                    Incoming::Notification { method, params } if method == "session/update" => {
-                        if params.get("sessionId").and_then(Value::as_str).is_some_and(|s| s != sid) {
-                            continue;
-                        }
-                        let u = params.get("update").unwrap_or(&Value::Null);
-                        update(u, &sid, &mut buffers, &mut tool_names, &mut last_cost, events);
+        biased;
+        () = cancel.cancelled(), if !interrupting => {
+            interrupting = true;
+            stop_by = Some(tokio::time::Instant::now() + Duration::from_secs(10));
+            let _ = peer.notify("session/cancel", json!({"sessionId": sid})).await;
+        }
+        () = sleep_until(stop_by) => {
+            buffers.flush(events);
+            return Ok(TurnEnd::Interrupted);
+        }
+        msg = incoming.recv(), if open => {
+            let Some(msg) = msg else {
+                // The reader ended; the prompt answer (an error) is next.
+                open = false;
+                continue;
+            };
+            match msg {
+                Incoming::Notification { method, params } if method == "session/update" => {
+                    if params.get("sessionId").and_then(Value::as_str).is_some_and(|s| s != sid) {
+                        continue;
                     }
-                    Incoming::Request { id, method, params } => {
-                        if method == "session/request_permission" {
-                            let (peer, gate) = (peer.clone(), gate.clone());
-                            tokio::spawn(async move { permission(&peer, id, &params, gate).await });
-                        } else {
-                            let _ = peer.respond_error(id, -32601, &format!("Parzi does not offer {method}")).await;
-                        }
-                    }
-                    _ => {}
+                    let u = params.get("update").unwrap_or(&Value::Null);
+                    update(u, &sid, &mut buffers, &mut tool_names, &mut last_cost, events);
                 }
-            }
-            done = &mut done_rx => {
-                buffers.flush(events);
-                let answer = done.unwrap_or_else(|_| Err(RpcError { code: RpcError::CLOSED, message: format!("{} exited before the turn finished", agent.name), data: None }));
-                let answer = match answer {
-                    Ok(v) => v,
-                    Err(_) if interrupting => return Ok(TurnEnd::Interrupted),
-                    Err(e) => return Err(rpc_failure(agent, e)),
-                };
-                if let Some(u) = answer.get("usage").filter(|u| !u.is_null()) {
-                    let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
-                    let _ = events.send(ProviderEvent::Usage { input: n("inputTokens"), output: n("outputTokens"), cost_usd: None });
+                Incoming::Request { id, method, params } => {
+                    if method == "session/request_permission" {
+                        let (peer, gate) = (peer.clone(), gate.clone());
+                        tokio::spawn(async move { permission(&peer, id, &params, gate).await });
+                    } else {
+                        let _ = peer.respond_error(id, -32601, &format!("Parzi does not offer {method}")).await;
+                    }
                 }
-                return match answer.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn") {
-                    "cancelled" => Ok(TurnEnd::Interrupted),
-                    "refusal" => Err(ProviderError::new(ErrorClass::BadRequest, format!("{} refused to continue", agent.name))),
-                    "max_tokens" => {
-                        let _ = events.send(ProviderEvent::Notice(format!("{} hit its output limit", agent.name)));
-                        Ok(TurnEnd::Completed)
-                    }
-                    "max_turn_requests" => {
-                        let _ = events.send(ProviderEvent::Notice(format!("{} hit its step limit", agent.name)));
-                        Ok(TurnEnd::Completed)
-                    }
-                    _ if interrupting => Ok(TurnEnd::Interrupted),
-                    _ => Ok(TurnEnd::Completed),
-                };
-            }        }
+                _ => {}
+            }
+        }
+        done = &mut done_rx => {
+            buffers.flush(events);
+            let answer = done.unwrap_or_else(|_| Err(RpcError { code: RpcError::CLOSED, message: format!("{} exited before the turn finished", agent.name), data: None }));
+            let answer = match answer {
+                Ok(v) => v,
+                Err(_) if interrupting => return Ok(TurnEnd::Interrupted),
+                Err(e) => return Err(rpc_failure(agent, e)),
+            };
+            if let Some(u) = answer.get("usage").filter(|u| !u.is_null()) {
+                let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+                let _ = events.send(ProviderEvent::Usage { input: n("inputTokens"), output: n("outputTokens"), cost_usd: None });
+            }
+            return match answer.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn") {
+                "cancelled" => Ok(TurnEnd::Interrupted),
+                "refusal" => Err(ProviderError::new(ErrorClass::BadRequest, format!("{} refused to continue", agent.name))),
+                "max_tokens" => {
+                    let _ = events.send(ProviderEvent::Notice(format!("{} hit its output limit", agent.name)));
+                    Ok(TurnEnd::Completed)
+                }
+                "max_turn_requests" => {
+                    let _ = events.send(ProviderEvent::Notice(format!("{} hit its step limit", agent.name)));
+                    Ok(TurnEnd::Completed)
+                }
+                _ if interrupting => Ok(TurnEnd::Interrupted),
+                _ => Ok(TurnEnd::Completed),
+            };
+        }        }
     }
 }
 
-async fn select_model(peer: &Peer, session: &Value, sid: &str, model: &str, agent: Agent, events: &EventTx) {
+async fn select_model(
+    peer: &Peer,
+    session: &Value,
+    sid: &str,
+    model: &str,
+    agent: Agent,
+    events: &EventTx,
+) {
     let limit = Duration::from_secs(30);
     let has_model_option = session
         .get("configOptions")
         .and_then(Value::as_array)
-        .is_some_and(|opts| opts.iter().any(|o| o.get("id").and_then(Value::as_str) == Some("model")));
+        .is_some_and(|opts| {
+            opts.iter()
+                .any(|o| o.get("id").and_then(Value::as_str) == Some("model"))
+        });
     let result = if has_model_option {
         peer.request_within(
             "session/set_config_option",
@@ -640,9 +698,13 @@ async fn select_model(peer: &Peer, session: &Value, sid: &str, model: &str, agen
         .await
         .map(|_| ())
     } else if session.get("models").is_some_and(|m| !m.is_null()) {
-        peer.request_within("session/set_model", json!({"sessionId": sid, "modelId": model}), limit)
-            .await
-            .map(|_| ())
+        peer.request_within(
+            "session/set_model",
+            json!({"sessionId": sid, "modelId": model}),
+            limit,
+        )
+        .await
+        .map(|_| ())
     } else {
         Ok(())
     };
@@ -676,7 +738,11 @@ fn update(
         }
         "tool_call" => {
             buffers.flush(events);
-            let id = u.get("toolCallId").and_then(Value::as_str).unwrap_or("").to_string();
+            let id = u
+                .get("toolCallId")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             let name = u
                 .get("title")
                 .or_else(|| u.get("kind"))
@@ -692,8 +758,15 @@ fn update(
             finish_tool(u, &id, &name, events);
         }
         "tool_call_update" => {
-            let id = u.get("toolCallId").and_then(Value::as_str).unwrap_or("").to_string();
-            let name = tool_names.get(&id).cloned().unwrap_or_else(|| "tool".into());
+            let id = u
+                .get("toolCallId")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let name = tool_names
+                .get(&id)
+                .cloned()
+                .unwrap_or_else(|| "tool".into());
             finish_tool(u, &id, &name, events);
         }
         "usage_update" => {
@@ -709,7 +782,11 @@ fn update(
                 let delta = total - last_cost.unwrap_or(total);
                 *last_cost = Some(total);
                 if delta > 0.0 {
-                    let _ = events.send(ProviderEvent::Usage { input: 0, output: 0, cost_usd: Some(delta) });
+                    let _ = events.send(ProviderEvent::Usage {
+                        input: 0,
+                        output: 0,
+                        cost_usd: Some(delta),
+                    });
                 }
                 let _ = events.send(ProviderEvent::Session {
                     resume: json!({"session_id": sid, "cost": total}),
@@ -754,7 +831,11 @@ async fn permission(peer: &Peer, id: Value, params: &Value, gate: Arc<dyn Permis
         vec![]
     };
     let request = PermissionRequest {
-        id: call.get("toolCallId").and_then(Value::as_str).unwrap_or("").to_string(),
+        id: call
+            .get("toolCallId")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
         tool: kind.to_string(),
         title: call
             .get("title")
@@ -819,7 +900,9 @@ mod tests {
         }
     }
 
-    async fn read(lines: &mut tokio::io::Lines<BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>>) -> Value {
+    async fn read(
+        lines: &mut tokio::io::Lines<BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>>,
+    ) -> Value {
         serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap()
     }
 
@@ -850,7 +933,11 @@ mod tests {
             let model = read(&mut lines).await;
             assert_eq!(model["method"], "session/set_config_option");
             assert_eq!(model["params"]["value"], "opencode/big-pickle");
-            send(&mut w, json!({"jsonrpc": "2.0", "id": model["id"], "result": {}})).await;
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": model["id"], "result": {}}),
+            )
+            .await;
             let prompt = read(&mut lines).await;
             assert_eq!(prompt["method"], "session/prompt");
             let text = prompt["params"]["prompt"][0]["text"].as_str().unwrap();
@@ -871,15 +958,31 @@ mod tests {
             send(&mut w, update(json!({"sessionUpdate": "tool_call_update", "toolCallId": "c1", "status": "failed", "content": [{"type": "content", "content": {"type": "text", "text": "denied"}}]}))).await;
             send(&mut w, update(json!({"sessionUpdate": "usage_update", "used": 900, "size": 200000, "cost": {"amount": 0.02, "currency": "USD"}}))).await;
             send(&mut w, update(json!({"sessionUpdate": "usage_update", "used": 950, "size": 200000, "cost": {"amount": 0.05, "currency": "USD"}}))).await;
-            send(&mut w, json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn"}})).await;
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn"}}),
+            )
+            .await;
         });
         let (r, w) = tokio::io::split(ours);
         let (peer, mut incoming) = Peer::start(r, w);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let gate = Arc::new(Gate(PermissionDecision::Deny("lease held".into()), std::sync::Mutex::new(vec![])));
-        let end = drive(&peer, &mut incoming, &init(), agent("opencode").unwrap(), &spec(None), gate.clone(), &tx, &CancellationToken::new())
-            .await
-            .unwrap();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Deny("lease held".into()),
+            std::sync::Mutex::new(vec![]),
+        ));
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent("opencode").unwrap(),
+            &spec(None),
+            gate.clone(),
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         assert_eq!(end, TurnEnd::Completed);
         server.await.unwrap();
         assert_eq!(gate.1.lock().unwrap()[0].paths, vec!["a.rs".to_string()]);
@@ -888,16 +991,28 @@ mod tests {
         while let Some(e) = rx.recv().await {
             got.push(e);
         }
-        assert!(got.contains(&ProviderEvent::Session { resume: json!({"session_id": "S1"}) }));
+        assert!(got.contains(&ProviderEvent::Session {
+            resume: json!({"session_id": "S1"})
+        }));
         assert!(got.contains(&ProviderEvent::Reasoning("plan".into())));
         assert!(got.contains(&ProviderEvent::Message("Editing".into())));
         assert!(got.iter().any(|e| matches!(e, ProviderEvent::ToolFinished { id, ok: false, output, .. } if id == "c1" && output == "denied")));
         let cost: f64 = got
             .iter()
-            .filter_map(|e| match e { ProviderEvent::Usage { cost_usd: Some(c), .. } => Some(*c), _ => None })
+            .filter_map(|e| match e {
+                ProviderEvent::Usage {
+                    cost_usd: Some(c), ..
+                } => Some(*c),
+                _ => None,
+            })
             .sum();
-        assert!((cost - 0.05).abs() < 1e-9, "a new session bills from zero: {cost}");
-        assert!(got.contains(&ProviderEvent::Session { resume: json!({"session_id": "S1", "cost": 0.05}) }));
+        assert!(
+            (cost - 0.05).abs() < 1e-9,
+            "a new session bills from zero: {cost}"
+        );
+        assert!(got.contains(&ProviderEvent::Session {
+            resume: json!({"session_id": "S1", "cost": 0.05})
+        }));
     }
 
     #[tokio::test]
@@ -909,7 +1024,11 @@ mod tests {
             let resume = read(&mut lines).await;
             assert_eq!(resume["method"], "session/resume");
             assert_eq!(resume["params"]["sessionId"], "S0");
-            send(&mut w, json!({"jsonrpc": "2.0", "id": resume["id"], "result": {}})).await;
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": resume["id"], "result": {}}),
+            )
+            .await;
             let prompt = read(&mut lines).await;
             assert_eq!(prompt["params"]["sessionId"], "S0");
             assert_eq!(prompt["params"]["prompt"][0]["text"], "hi");
@@ -918,12 +1037,24 @@ mod tests {
         let (r, w) = tokio::io::split(ours);
         let (peer, mut incoming) = Peer::start(r, w);
         let (tx, _rx) = mpsc::unbounded_channel();
-        let gate = Arc::new(Gate(PermissionDecision::Allow, std::sync::Mutex::new(vec![])));
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
         let mut s = spec(Some(json!({"session_id": "S0"})));
         s.model = None;
-        let end = drive(&peer, &mut incoming, &init(), agent("opencode").unwrap(), &s, gate, &tx, &CancellationToken::new())
-            .await
-            .unwrap();
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent("opencode").unwrap(),
+            &s,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         assert_eq!(end, TurnEnd::Interrupted);
         server.await.unwrap();
     }
@@ -940,10 +1071,22 @@ mod tests {
         let (r, w) = tokio::io::split(ours);
         let (peer, mut incoming) = Peer::start(r, w);
         let (tx, _rx) = mpsc::unbounded_channel();
-        let gate = Arc::new(Gate(PermissionDecision::Allow, std::sync::Mutex::new(vec![])));
-        let err = drive(&peer, &mut incoming, &init(), agent("grok").unwrap(), &spec(None), gate, &tx, &CancellationToken::new())
-            .await
-            .unwrap_err();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let err = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent("grok").unwrap(),
+            &spec(None),
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err.class, ErrorClass::Auth);
         assert!(err.message.contains("Grok"), "{err}");
         server.await.unwrap();
@@ -956,11 +1099,19 @@ mod tests {
         let out = "You are logged in with grok.com.\n\nDefault model: grok-4.6\n\nAvailable models:\n  * grok-4.6 (default)\n  - grok-4.5\n";
         let s = grok_read(out, grok);
         assert_eq!(s.state, State::Ready);
-        let ids: Vec<(&str, bool)> = s.models.iter().map(|m| (m.id.as_str(), m.is_default)).collect();
+        let ids: Vec<(&str, bool)> = s
+            .models
+            .iter()
+            .map(|m| (m.id.as_str(), m.is_default))
+            .collect();
         assert_eq!(ids, vec![("grok-4.6", true), ("grok-4.5", false)]);
 
         let refreshed = format!("Token expired, not logged in; refreshing…\n{out}");
-        assert_eq!(grok_read(&refreshed, grok).state, State::Ready, "a refresh on the way is not a sign-out");
+        assert_eq!(
+            grok_read(&refreshed, grok).state,
+            State::Ready,
+            "a refresh on the way is not a sign-out"
+        );
         assert_eq!(
             grok_read("You are not logged in. Run `grok login`.\n", grok).state,
             State::SignedOut

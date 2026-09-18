@@ -26,7 +26,14 @@ pub use types::{
 
 /// The roster, in picker order. Every surface (picker, settings, doctor,
 /// CLI) iterates this list, so they can never disagree.
-pub const PROVIDERS: &[&str] = &["claude", "codex", "opencode", "grok", "antigravity", "cursor"];
+pub const PROVIDERS: &[&str] = &[
+    "claude",
+    "codex",
+    "opencode",
+    "grok",
+    "antigravity",
+    "cursor",
+];
 
 pub fn display_name(id: &str) -> &'static str {
     match canonical_id(id) {
@@ -109,14 +116,23 @@ mod tests {
 
     #[test]
     fn specs_split_on_the_first_slash_only() {
-        assert_eq!(split_spec("claude/opus[1m]"), Some(("claude", Some("opus[1m]".into()))));
+        assert_eq!(
+            split_spec("claude/opus[1m]"),
+            Some(("claude", Some("opus[1m]".into())))
+        );
         assert_eq!(
             split_spec("opencode/anthropic/claude-sonnet-4-5"),
             Some(("opencode", Some("anthropic/claude-sonnet-4-5".into())))
         );
         assert_eq!(split_spec("codex"), Some(("codex", None)));
-        assert_eq!(split_spec("xai/grok-4"), Some(("grok", Some("grok-4".into()))));
-        assert_eq!(split_spec("claude-code/sonnet"), Some(("claude", Some("sonnet".into()))));
+        assert_eq!(
+            split_spec("xai/grok-4"),
+            Some(("grok", Some("grok-4".into())))
+        );
+        assert_eq!(
+            split_spec("claude-code/sonnet"),
+            Some(("claude", Some("sonnet".into())))
+        );
         assert_eq!(split_spec("ollama/llama3"), None);
         assert_eq!(split_spec("auto"), None);
     }

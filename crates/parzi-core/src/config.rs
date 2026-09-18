@@ -41,10 +41,17 @@ pub struct RoutingConfig {
 }
 
 fn default_order() -> Vec<String> {
-    ["claude", "codex", "opencode", "grok", "antigravity", "cursor"]
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect()
+    [
+        "claude",
+        "codex",
+        "opencode",
+        "grok",
+        "antigravity",
+        "cursor",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect()
 }
 
 impl Default for RoutingConfig {
@@ -375,10 +382,23 @@ auto_order = ["antigravity", "codex", "claude-code", "t3", "opencode"]
         assert!(cfg.favorite_models.is_empty());
         assert_eq!(
             cfg.routing.order,
-            vec!["antigravity", "codex", "claude", "opencode", "grok", "cursor"]
+            vec![
+                "antigravity",
+                "codex",
+                "claude",
+                "opencode",
+                "grok",
+                "cursor"
+            ]
         );
         let saved = toml::to_string(&cfg).unwrap();
-        for gone in ["default_provider", "catalog_refresh", "auto_failover", "keys_in_auto", "base_url"] {
+        for gone in [
+            "default_provider",
+            "catalog_refresh",
+            "auto_failover",
+            "keys_in_auto",
+            "base_url",
+        ] {
             assert!(!saved.contains(gone), "{gone} survived: {saved}");
         }
     }

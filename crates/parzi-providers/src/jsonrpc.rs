@@ -44,8 +44,15 @@ impl std::fmt::Display for RpcError {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Incoming {
-    Notification { method: String, params: Value },
-    Request { id: Value, method: String, params: Value },
+    Notification {
+        method: String,
+        params: Value,
+    },
+    Request {
+        id: Value,
+        method: String,
+        params: Value,
+    },
     /// A stdout line that is not JSON-RPC (some agents print sign-in links).
     Raw(String),
 }
@@ -235,7 +242,8 @@ mod tests {
         let (sr, mut sw) = tokio::io::split(server_io);
         let server = tokio::spawn(async move {
             let mut lines = BufReader::new(sr).lines();
-            let req: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            let req: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
             assert_eq!(req["method"], "initialize");
             // A notification, a request of its own, a stray line, then the answer.
             sw.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"note\",\"params\":{\"a\":1}}\n")
@@ -246,19 +254,26 @@ mod tests {
                 .unwrap();
             sw.write_all(b"Open this link to sign in\n").await.unwrap();
             let answer = json!({"jsonrpc": "2.0", "id": req["id"], "result": {"ok": true}});
-            sw.write_all(format!("{answer}\n").as_bytes()).await.unwrap();
-            let reply: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            sw.write_all(format!("{answer}\n").as_bytes())
+                .await
+                .unwrap();
+            let reply: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
             assert_eq!(reply["id"], "x");
             assert_eq!(reply["result"]["granted"], true);
         });
         let result = peer.request("initialize", json!({})).await.unwrap();
         assert_eq!(result["ok"], true);
-        assert!(matches!(incoming.recv().await, Some(Incoming::Notification { method, .. }) if method == "note"));
+        assert!(
+            matches!(incoming.recv().await, Some(Incoming::Notification { method, .. }) if method == "note")
+        );
         let Some(Incoming::Request { id, method, .. }) = incoming.recv().await else {
             panic!("expected the peer's request");
         };
         assert_eq!(method, "ask");
-        assert!(matches!(incoming.recv().await, Some(Incoming::Raw(line)) if line.contains("sign in")));
+        assert!(
+            matches!(incoming.recv().await, Some(Incoming::Raw(line)) if line.contains("sign in"))
+        );
         peer.respond(id, json!({"granted": true})).await.unwrap();
         server.await.unwrap();
     }
@@ -279,7 +294,8 @@ mod tests {
         let (cr, cw) = tokio::io::split(client_io);
         let (_peer, mut incoming) = Peer::start(cr, cw);
         let (_sr, mut sw) = tokio::io::split(server_io);
-        let line = "{\"jsonrpc\":\"2.0\",\"method\":\"t\",\"params\":{\"s\":\"Grüße\"}}\n".as_bytes();
+        let line =
+            "{\"jsonrpc\":\"2.0\",\"method\":\"t\",\"params\":{\"s\":\"Grüße\"}}\n".as_bytes();
         let cut = line.iter().position(|&b| b == 0xC3).unwrap() + 1;
         sw.write_all(&line[..cut]).await.unwrap();
         sw.flush().await.unwrap();

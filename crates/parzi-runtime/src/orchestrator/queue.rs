@@ -16,8 +16,8 @@ use crate::handler::{RunEvent, RunEventBus};
 use crate::lease_tools::LeaseHub;
 use crate::mcp::McpManager;
 use crate::mcp_host::McpHost;
-use crate::status::{ProviderSource, StatusBoard};
 use crate::roles::RoleBinding;
+use crate::status::{ProviderSource, StatusBoard};
 use crate::tools::Approver;
 
 use super::{Handle, Orchestrator};

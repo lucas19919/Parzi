@@ -10,8 +10,8 @@ use parzi_core::store::{Event, SessionMeta, SessionStatus};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::handler::{system_parts, HarnessBridge, RunEvent, RunSink};
 use crate::board_tools::board_defs;
+use crate::handler::{system_parts, HarnessBridge, RunEvent, RunSink};
 use crate::lease_tools::{lease_defs, LeaseCtx};
 use crate::run::{EngineRun, EngineRunParts};
 use crate::toolhost::{ToolHost, ToolHostParts};
@@ -226,16 +226,33 @@ impl Orchestrator {
         }
         let prompt = format!("/compact {}", focus.trim()).trim_end().to_string();
         let _rx = self
-            .send_to(id, &prompt, Some(Arc::new(DenyApprover)), "", "medium", vec![], None, None)
+            .send_to(
+                id,
+                &prompt,
+                Some(Arc::new(DenyApprover)),
+                "",
+                "medium",
+                vec![],
+                None,
+                None,
+            )
             .await?;
-        Ok(format!("{} is compacting the conversation", display_name(&provider)))
+        Ok(format!(
+            "{} is compacting the conversation",
+            display_name(&provider)
+        ))
     }
 
     /// Where a run goes: `(provider, model)`. A spec names a provider (and
     /// maybe a model); `auto` lets Smart Auto pick for a new thread. A
     /// thread whose conversation lives on a provider stays on it: the
     /// vendor holds the history, so another provider would start blind.
-    async fn route(p: &Pump, cfg: &ParziConfig, session_id: &str, spec: &str) -> Result<(String, Option<String>)> {
+    async fn route(
+        p: &Pump,
+        cfg: &ParziConfig,
+        session_id: &str,
+        spec: &str,
+    ) -> Result<(String, Option<String>)> {
         let bound = run_session(session_id).map(|s| s.provider);
         let auto = spec.trim().is_empty() || spec == "auto" || spec.starts_with("auto/");
         let (provider, model) = match parzi_providers::split_spec(spec) {
@@ -481,9 +498,12 @@ impl Orchestrator {
         // Path-scoped rules: the attachments they match ride with the prompt.
         let files: Vec<&str> = q.attachments.iter().map(|a| a.path.as_str()).collect();
         for r in parzi_core::rules::matching(&q.project, &files) {
-            instructions.push(format!("# Path rule ({})
+            instructions.push(format!(
+                "# Path rule ({})
 
-{}", r.name, r.body));
+{}",
+                r.name, r.body
+            ));
         }
         let access = match mode {
             ApprovalMode::Deny => Access::ReadOnly,
@@ -514,11 +534,13 @@ impl Orchestrator {
             model,
             effort: Some(q.effort.clone()).filter(|e| !e.is_empty()),
             access,
-            instructions: instructions.join("
+            instructions: instructions.join(
+                "
 
 ---
 
-"),
+",
+            ),
             cwd: cwd.clone(),
             attachments: q.attachments.clone(),
             store: p.store.clone(),

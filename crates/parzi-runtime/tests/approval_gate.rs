@@ -53,7 +53,9 @@ fn writer() -> Arc<Fake> {
         script(|a: Agent| async move {
             let path = a.spec.cwd.join("gate.txt");
             let input = json!({"file_path": path.display().to_string(), "content": "hello"});
-            let decision = a.ask("Write", input.clone(), &[&path.display().to_string()]).await;
+            let decision = a
+                .ask("Write", input.clone(), &[&path.display().to_string()])
+                .await;
             let (ok, _) = a
                 .own_tool("w1", "Write", input, || async {
                     match decision {
@@ -85,25 +87,58 @@ async fn ask_mode_waits_for_a_slow_approver_and_deny_denies() {
     let slow = Arc::new(SlowAllow(AtomicUsize::new(0)));
     let t0 = std::time::Instant::now();
     let (meta, _rx) = orch
-        .spawn("t", "", "claude", "write the file", Some(slow.clone()), &cwd, "low", vec![], None)
+        .spawn(
+            "t",
+            "",
+            "claude",
+            "write the file",
+            Some(slow.clone()),
+            &cwd,
+            "low",
+            vec![],
+            None,
+        )
         .await
         .unwrap();
     let done = settle(&store, &meta.id).await;
     assert_eq!(done.status, SessionStatus::Done);
-    assert!(t0.elapsed() >= std::time::Duration::from_millis(400), "asked instantly");
-    assert_eq!(slow.0.load(Ordering::SeqCst), 1, "the person was asked once");
-    assert_eq!(std::fs::read_to_string(dir.join("gate.txt")).unwrap(), "hello");
+    assert!(
+        t0.elapsed() >= std::time::Duration::from_millis(400),
+        "asked instantly"
+    );
+    assert_eq!(
+        slow.0.load(Ordering::SeqCst),
+        1,
+        "the person was asked once"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("gate.txt")).unwrap(),
+        "hello"
+    );
 
     std::fs::remove_file(dir.join("gate.txt")).unwrap();
     let (meta, _rx) = orch
-        .spawn("t", "", "claude", "write the file", Some(Arc::new(DenyAll)), &cwd, "low", vec![], None)
+        .spawn(
+            "t",
+            "",
+            "claude",
+            "write the file",
+            Some(Arc::new(DenyAll)),
+            &cwd,
+            "low",
+            vec![],
+            None,
+        )
         .await
         .unwrap();
     settle(&store, &meta.id).await;
-    assert!(!dir.join("gate.txt").exists(), "a denial must stop the write");
-    let denied = events(&store, &meta.id).iter().any(|e| {
-        matches!(e, Event::ToolResult { ok: false, output, .. } if output.contains("denied"))
-    });
+    assert!(
+        !dir.join("gate.txt").exists(),
+        "a denial must stop the write"
+    );
+    let denied = events(&store, &meta.id).iter().any(
+        |e| matches!(e, Event::ToolResult { ok: false, output, .. } if output.contains("denied")),
+    );
     assert!(denied, "the transcript shows the denial");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -126,19 +161,51 @@ async fn sequential_completed_runs_release_slots() {
     let p = orch.clone();
     tokio::spawn(async move { p.pump_loop().await });
     let (m1, _) = orch
-        .spawn("t", "", "claude", "first", Some(Arc::new(Allow)), "", "low", vec![], None)
+        .spawn(
+            "t",
+            "",
+            "claude",
+            "first",
+            Some(Arc::new(Allow)),
+            "",
+            "low",
+            vec![],
+            None,
+        )
         .await
         .unwrap();
     assert_ne!(settle(&store, &m1.id).await.status, SessionStatus::Queued);
     let (m2, _) = orch
-        .spawn("t", "", "claude", "second", Some(Arc::new(Allow)), "", "low", vec![], None)
+        .spawn(
+            "t",
+            "",
+            "claude",
+            "second",
+            Some(Arc::new(Allow)),
+            "",
+            "low",
+            vec![],
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(settle(&store, &m2.id).await.status, SessionStatus::Done);
     let again = orch
-        .send_to(&m1.id, "follow up", Some(Arc::new(Allow)), "", "low", vec![], None, None)
+        .send_to(
+            &m1.id,
+            "follow up",
+            Some(Arc::new(Allow)),
+            "",
+            "low",
+            vec![],
+            None,
+            None,
+        )
         .await;
-    assert!(again.is_ok(), "a finished thread takes a second message: {again:?}");
+    assert!(
+        again.is_ok(),
+        "a finished thread takes a second message: {again:?}"
+    );
 }
 
 fn host(allowed: Vec<String>, mode: ApprovalMode) -> ToolHost {
@@ -168,13 +235,34 @@ fn host(allowed: Vec<String>, mode: ApprovalMode) -> ToolHost {
 struct NoHarness;
 #[async_trait::async_trait]
 impl parzi_runtime::handler::HarnessBridge for NoHarness {
-    async fn spawn_session(&self, _: &str, _: &str, _: &str, _: bool, _: Option<String>, _: Option<String>, _: bool) -> parzi_core::error::Result<String> {
+    async fn spawn_session(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: bool,
+        _: Option<String>,
+        _: Option<String>,
+        _: bool,
+    ) -> parzi_core::error::Result<String> {
         Ok("spawned".into())
     }
-    async fn send_message(&self, _: &str, _: &str, _: &str, _: parzi_core::context::InterKind, _: bool) -> parzi_core::error::Result<String> {
+    async fn send_message(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: parzi_core::context::InterKind,
+        _: bool,
+    ) -> parzi_core::error::Result<String> {
         Ok("sent".into())
     }
-    async fn read_session(&self, _: &str, _: &str, _: Option<usize>) -> parzi_core::error::Result<String> {
+    async fn read_session(
+        &self,
+        _: &str,
+        _: &str,
+        _: Option<usize>,
+    ) -> parzi_core::error::Result<String> {
         Ok("read".into())
     }
     async fn list_sessions(&self, _: &str, _: bool) -> parzi_core::error::Result<String> {
@@ -210,15 +298,36 @@ fn request(tool: &str) -> PermissionRequest {
 #[tokio::test]
 async fn the_agents_own_actions_pass_the_lane_and_the_mode() {
     home("approval");
-    let reads_only = host(vec!["fs.read".into(), "ui.show_widget".into()], ApprovalMode::Auto);
-    assert!(matches!(reads_only.decide(request("Bash")).await, PermissionDecision::Deny(_)));
-    assert_eq!(reads_only.decide(request("Grep")).await, PermissionDecision::Allow);
+    let reads_only = host(
+        vec!["fs.read".into(), "ui.show_widget".into()],
+        ApprovalMode::Auto,
+    );
+    assert!(matches!(
+        reads_only.decide(request("Bash")).await,
+        PermissionDecision::Deny(_)
+    ));
+    assert_eq!(
+        reads_only.decide(request("Grep")).await,
+        PermissionDecision::Allow
+    );
     let no_kinds = host(vec!["session.*".into()], ApprovalMode::Auto);
-    assert_eq!(no_kinds.decide(request("Bash")).await, PermissionDecision::Allow);
+    assert_eq!(
+        no_kinds.decide(request("Bash")).await,
+        PermissionDecision::Allow
+    );
     let locked = host(vec!["*".into()], ApprovalMode::Deny);
-    assert!(matches!(locked.decide(request("Edit")).await, PermissionDecision::Deny(_)));
-    assert_eq!(locked.decide(request("Read")).await, PermissionDecision::Allow);
+    assert!(matches!(
+        locked.decide(request("Edit")).await,
+        PermissionDecision::Deny(_)
+    ));
+    assert_eq!(
+        locked.decide(request("Read")).await,
+        PermissionDecision::Allow
+    );
     // Parzi's own tools pass Parzi's gate when they run, so the vendor's
     // permission ask for them is waved through, even locked down.
-    assert_eq!(locked.decide(request("mcp__parzi__ui_show_widget")).await, PermissionDecision::Allow);
+    assert_eq!(
+        locked.decide(request("mcp__parzi__ui_show_widget")).await,
+        PermissionDecision::Allow
+    );
 }

@@ -252,7 +252,9 @@ async fn a_write_into_a_held_file_is_refused_and_a_read_is_not() {
 
     let file = w.cwd.join("src/routes.rs");
     match web.ask("Edit", &file).await {
-        PermissionDecision::Deny(why) => assert!(why.contains("lane api"), "name the holder: {why}"),
+        PermissionDecision::Deny(why) => {
+            assert!(why.contains("lane api"), "name the holder: {why}")
+        }
         other => panic!("an edit of another lane's file must be refused: {other:?}"),
     }
     assert_eq!(
@@ -567,7 +569,9 @@ async fn strict_mode_refuses_the_creep() {
         .await;
 
     match api.ask("Write", &w.cwd.join("src/elsewhere.rs")).await {
-        PermissionDecision::Deny(why) => assert!(why.contains("strict"), "say which rule bit: {why}"),
+        PermissionDecision::Deny(why) => {
+            assert!(why.contains("strict"), "say which rule bit: {why}")
+        }
         other => panic!("strict workspaces refuse: {other:?}"),
     }
 }

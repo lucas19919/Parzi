@@ -13,7 +13,9 @@ use parzi_core::store::Event;
 use parzi_providers::TurnEnd;
 use parzi_runtime::inter::{InterKind, InterSessionMessage};
 use parzi_runtime::mcp::McpManager;
-use parzi_runtime::tools::{is_session_tool, session_defs, Approval, Approver, ToolCallInfo, ToolExecutor};
+use parzi_runtime::tools::{
+    is_session_tool, session_defs, Approval, Approver, ToolCallInfo, ToolExecutor,
+};
 use serde_json::{json, Value};
 
 struct Allow;
@@ -46,7 +48,13 @@ fn hang() -> Arc<Fake> {
     )
 }
 
-fn team(max: usize, fake: Arc<Fake>) -> (Arc<parzi_runtime::Orchestrator>, parzi_core::store::SessionStore) {
+fn team(
+    max: usize,
+    fake: Arc<Fake>,
+) -> (
+    Arc<parzi_runtime::Orchestrator>,
+    parzi_core::store::SessionStore,
+) {
     home("teamwork");
     let mut cfg = ParziConfig::default();
     cfg.orchestrator.max_concurrent = max;
@@ -89,18 +97,41 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
     let parent = store.create("boss", "t", "", "claude/model").unwrap();
     let h = orch.harness();
     let sub_id = id_of(
-        &h.spawn_session(&parent.id, "research", "look into x", true, None, None, false)
-            .await
-            .unwrap(),
+        &h.spawn_session(
+            &parent.id,
+            "research",
+            "look into x",
+            true,
+            None,
+            None,
+            false,
+        )
+        .await
+        .unwrap(),
     );
     // Default model: the parent's.
     assert_eq!(store.get(&sub_id).unwrap().model, "claude/model");
-    assert_eq!(store.get(&sub_id).unwrap().parent_id.as_deref(), Some(parent.id.as_str()));
-    assert!(store.list_children(&parent.id).unwrap().iter().any(|m| m.id == sub_id));
+    assert_eq!(
+        store.get(&sub_id).unwrap().parent_id.as_deref(),
+        Some(parent.id.as_str())
+    );
+    assert!(store
+        .list_children(&parent.id)
+        .unwrap()
+        .iter()
+        .any(|m| m.id == sub_id));
     let full_id = id_of(
-        &h.spawn_session(&parent.id, "side quest", "do y", false, Some("claude/other".into()), None, false)
-            .await
-            .unwrap(),
+        &h.spawn_session(
+            &parent.id,
+            "side quest",
+            "do y",
+            false,
+            Some("claude/other".into()),
+            None,
+            false,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(store.get(&full_id).unwrap().parent_id, None);
     orch.kill(&sub_id).await.ok();
@@ -113,15 +144,25 @@ async fn spawn_wait_collects_child_reply() {
     let parent = store.create("boss", "t", "", "claude/model").unwrap();
     let out = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        orch.harness()
-            .spawn_session(&parent.id, "research", "look into x", true, None, None, true),
+        orch.harness().spawn_session(
+            &parent.id,
+            "research",
+            "look into x",
+            true,
+            None,
+            None,
+            true,
+        ),
     )
     .await
     .expect("spawn wait timed out")
     .unwrap();
     let v: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(v["status"], "done");
-    assert!(v["response"].as_str().unwrap().contains("teamwork reply"), "{out}");
+    assert!(
+        v["response"].as_str().unwrap().contains("teamwork reply"),
+        "{out}"
+    );
 }
 
 /// End to end: an agent delegates with `session.spawn` over MCP, waits,
@@ -137,7 +178,10 @@ async fn an_agent_delegates_over_mcp_and_gets_the_answer() {
                 return Ok(TurnEnd::Completed);
             }
             let (ok, out) = a
-                .parzi("session.spawn", json!({"title": "research", "prompt": "look into x", "wait": true}))
+                .parzi(
+                    "session.spawn",
+                    json!({"title": "research", "prompt": "look into x", "wait": true}),
+                )
                 .await;
             a.say(&format!("parent heard: ok={ok} {out}"));
             Ok(TurnEnd::Completed)
@@ -145,12 +189,25 @@ async fn an_agent_delegates_over_mcp_and_gets_the_answer() {
     );
     let (orch, store) = orch(&[fake]);
     let (meta, _rx) = orch
-        .spawn("t", "", "claude", "delegate the research", Some(Arc::new(Allow)), "", "low", vec![], None)
+        .spawn(
+            "t",
+            "",
+            "claude",
+            "delegate the research",
+            Some(Arc::new(Allow)),
+            "",
+            "low",
+            vec![],
+            None,
+        )
         .await
         .unwrap();
     settle(&store, &meta.id).await;
     let reply = last_reply(&store, &meta.id);
-    assert!(reply.contains("ok=true") && reply.contains("child found x"), "{reply}");
+    assert!(
+        reply.contains("ok=true") && reply.contains("child found x"),
+        "{reply}"
+    );
     let children = store.list_children(&meta.id).unwrap();
     assert_eq!(children.len(), 1, "the child nests under the parent");
     // The call shows in the parent's thread under Parzi's own name.
@@ -167,14 +224,22 @@ async fn send_message_continues_target_and_can_wait() {
     let target = store.create("worker", "t", "", "claude/model").unwrap();
     let out = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        orch.harness()
-            .send_message(&parent.id, &target.id, "follow up please", InterKind::Text, true),
+        orch.harness().send_message(
+            &parent.id,
+            &target.id,
+            "follow up please",
+            InterKind::Text,
+            true,
+        ),
     )
     .await
     .expect("send_message wait timed out")
     .unwrap();
     let v: Value = serde_json::from_str(&out).unwrap();
-    assert!(v["response"].as_str().unwrap().contains("teamwork reply"), "{out}");
+    assert!(
+        v["response"].as_str().unwrap().contains("teamwork reply"),
+        "{out}"
+    );
     // H-5: in the transcript as typed data, never as a user turn…
     let evs = events(&store, &target.id);
     assert!(evs.iter().any(|e| matches!(
@@ -186,7 +251,10 @@ async fn send_message_continues_target_and_can_wait() {
         .any(|e| matches!(e, Event::User { text } if text.contains("follow up please"))));
     // …and to the agent in its untrusted wrapping.
     let prompt = fake.seen().last().unwrap().prompt.clone();
-    assert!(prompt.contains("follow up please") && prompt.contains("untrusted"), "{prompt}");
+    assert!(
+        prompt.contains("follow up please") && prompt.contains("untrusted"),
+        "{prompt}"
+    );
 }
 
 #[tokio::test]
@@ -195,14 +263,30 @@ async fn read_and_list_inspect_sessions() {
     let parent = store.create("boss", "t", "", "claude/model").unwrap();
     let h = orch.harness();
     let sub_id = id_of(
-        &h.spawn_session(&parent.id, "research", "look into x", true, None, None, false)
-            .await
-            .unwrap(),
+        &h.spawn_session(
+            &parent.id,
+            "research",
+            "look into x",
+            true,
+            None,
+            None,
+            false,
+        )
+        .await
+        .unwrap(),
     );
     let read = h.read_session(&parent.id, &sub_id, Some(10)).await.unwrap();
     assert!(read.contains("research"), "{read}");
-    assert!(h.list_sessions(&parent.id, true).await.unwrap().contains(&sub_id));
-    assert!(h.list_sessions(&parent.id, false).await.unwrap().contains(&parent.id));
+    assert!(h
+        .list_sessions(&parent.id, true)
+        .await
+        .unwrap()
+        .contains(&sub_id));
+    assert!(h
+        .list_sessions(&parent.id, false)
+        .await
+        .unwrap()
+        .contains(&parent.id));
     orch.kill(&sub_id).await.ok();
 }
 

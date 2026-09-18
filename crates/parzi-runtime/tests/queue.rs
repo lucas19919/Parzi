@@ -39,9 +39,25 @@ async fn busy_spawn_queues_then_pump_starts_it() {
     let (orch, store) = orch_with(capped(1, true), &[hang()]);
     let pump = orch.clone();
     tokio::spawn(async move { pump.pump_loop().await });
-    let (first, _rx) = orch.spawn("t", "", "claude", "first", None, "", "medium", vec![], None).await.unwrap();
+    let (first, _rx) = orch
+        .spawn("t", "", "claude", "first", None, "", "medium", vec![], None)
+        .await
+        .unwrap();
     assert!(wait_status(&store, &first.id, SessionStatus::Active).await);
-    let (second, _rx2) = orch.spawn("t", "", "claude", "second", None, "", "medium", vec![], None).await.unwrap();
+    let (second, _rx2) = orch
+        .spawn(
+            "t",
+            "",
+            "claude",
+            "second",
+            None,
+            "",
+            "medium",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap();
     assert!(wait_status(&store, &second.id, SessionStatus::Queued).await);
     orch.kill(&first.id).await.unwrap();
     assert!(
@@ -55,9 +71,22 @@ async fn busy_spawn_queues_then_pump_starts_it() {
 async fn queue_reject_mode_errors_loudly() {
     home("queue");
     let (orch, _store) = orch_with(capped(1, false), &[hang()]);
-    let (first, _rx) = orch.spawn("t", "", "claude", "first", None, "", "medium", vec![], None).await.unwrap();
+    let (first, _rx) = orch
+        .spawn("t", "", "claude", "first", None, "", "medium", vec![], None)
+        .await
+        .unwrap();
     let err = orch
-        .spawn("t", "", "claude", "second", None, "", "medium", vec![], None)
+        .spawn(
+            "t",
+            "",
+            "claude",
+            "second",
+            None,
+            "",
+            "medium",
+            vec![],
+            None,
+        )
         .await
         .unwrap_err();
     assert!(err.to_string().contains("busy"), "{err}");
@@ -70,11 +99,24 @@ async fn queue_reject_mode_errors_loudly() {
 async fn queued_run_survives_a_restart() {
     home("queue");
     let fake = hang();
-    let (orch, store) = orch_with(capped(1, true), &[fake.clone()]);
-    let (first, _rx) = orch.spawn("t", "", "claude", "first", None, "", "medium", vec![], None).await.unwrap();
+    let (orch, store) = orch_with(capped(1, true), std::slice::from_ref(&fake));
+    let (first, _rx) = orch
+        .spawn("t", "", "claude", "first", None, "", "medium", vec![], None)
+        .await
+        .unwrap();
     assert!(wait_status(&store, &first.id, SessionStatus::Active).await);
     let (second, _rx2) = orch
-        .spawn("t", "", "claude", "queued work", None, "", "medium", vec![], None)
+        .spawn(
+            "t",
+            "",
+            "claude",
+            "queued work",
+            None,
+            "",
+            "medium",
+            vec![],
+            None,
+        )
         .await
         .unwrap();
     assert!(wait_status(&store, &second.id, SessionStatus::Queued).await);
@@ -136,7 +178,9 @@ async fn kill_mid_stream_stops_within_one_event_and_stays_killed() {
                 if a.cancel.is_cancelled() {
                     return Ok(TurnEnd::Interrupted);
                 }
-                let _ = a.events.send(parzi_providers::ProviderEvent::TextDelta("tick ".into()));
+                let _ = a
+                    .events
+                    .send(parzi_providers::ProviderEvent::TextDelta("tick ".into()));
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         }),
@@ -152,14 +196,30 @@ async fn kill_mid_stream_stops_within_one_event_and_stays_killed() {
             }
         }
     });
-    let (meta, _rx) = orch.spawn("t", "", "claude", "stream on", None, "", "medium", vec![], None).await.unwrap();
+    let (meta, _rx) = orch
+        .spawn(
+            "t",
+            "",
+            "claude",
+            "stream on",
+            None,
+            "",
+            "medium",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap();
     assert!(wait_status(&store, &meta.id, SessionStatus::Active).await);
     tokio::time::sleep(Duration::from_millis(200)).await;
     orch.kill(&meta.id).await.unwrap();
     let at_kill = counter.load(Ordering::SeqCst);
     tokio::time::sleep(Duration::from_millis(400)).await;
     let after = counter.load(Ordering::SeqCst);
-    assert!(after <= at_kill + 1, "the stream stops within one event: {at_kill} → {after}");
+    assert!(
+        after <= at_kill + 1,
+        "the stream stops within one event: {at_kill} → {after}"
+    );
     assert_eq!(store.get(&meta.id).unwrap().status, SessionStatus::Killed);
     // What streamed before the stop is kept.
     assert!(events(&store, &meta.id)
@@ -172,5 +232,7 @@ async fn kill_mid_stream_stops_within_one_event_and_stays_killed() {
 #[test]
 fn an_empty_source_has_no_providers() {
     let src = source(&[]);
-    assert!(src("claude", &ParziConfig::default()).map(|p: Arc<dyn Provider>| p.id()).is_none());
+    assert!(src("claude", &ParziConfig::default())
+        .map(|p: Arc<dyn Provider>| p.id())
+        .is_none());
 }

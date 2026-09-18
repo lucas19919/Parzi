@@ -69,7 +69,11 @@ pub struct RunSink {
 }
 
 impl RunSink {
-    pub fn new(session_id: &str, sink: mpsc::UnboundedSender<RunEvent>, bus: Option<RunEventBus>) -> Self {
+    pub fn new(
+        session_id: &str,
+        sink: mpsc::UnboundedSender<RunEvent>,
+        bus: Option<RunEventBus>,
+    ) -> Self {
         Self {
             session_id: session_id.to_string(),
             sink,

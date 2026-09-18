@@ -76,7 +76,11 @@ pub(crate) fn session_md(meta: &SessionMeta, events: &[Event]) -> String {
                 md.push_str(&format!("> reasoning:\n>\n> {text}\n\n"));
             }
             Event::Error { message, class } => {
-                let class = if class.is_empty() { "error" } else { class.as_str() };
+                let class = if class.is_empty() {
+                    "error"
+                } else {
+                    class.as_str()
+                };
                 md.push_str(&format!("> **{class}:** {message}\n\n"));
             }
         }

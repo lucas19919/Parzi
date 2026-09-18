@@ -20,8 +20,7 @@ use crate::types::{
 };
 
 pub const ID: &str = "codex";
-const INSTALL_HINT: &str =
-    "Install Codex (`npm i -g @openai/codex`) or set its path in Settings.";
+const INSTALL_HINT: &str = "Install Codex (`npm i -g @openai/codex`) or set its path in Settings.";
 const LOGIN_HINT: &str = "Run `codex login` in a terminal, then check again.";
 
 pub struct Codex {
@@ -121,11 +120,19 @@ impl Provider for Codex {
         events: EventTx,
         cancel: CancellationToken,
     ) -> Result<TurnEnd, ProviderError> {
-        let program = self
-            .program()
-            .ok_or_else(|| ProviderError::process(format!("Codex is not installed. {INSTALL_HINT}")))?;
+        let program = self.program().ok_or_else(|| {
+            ProviderError::process(format!("Codex is not installed. {INSTALL_HINT}"))
+        })?;
         let mut server = open(&program, &spec.cwd).await?;
-        let outcome = drive(&server.peer, &mut server.incoming, &spec, gate, &events, &cancel).await;
+        let outcome = drive(
+            &server.peer,
+            &mut server.incoming,
+            &spec,
+            gate,
+            &events,
+            &cancel,
+        )
+        .await;
         let outcome = match outcome {
             Err(e) if e.class == ErrorClass::Process => Err(ProviderError::process(format!(
                 "{} {}",
@@ -144,7 +151,8 @@ async fn probe(peer: &Peer, version: Option<String>) -> ProviderStatus {
     let account = match peer.request_within("account/read", json!({}), limit).await {
         Ok(v) => v,
         Err(e) => {
-            let mut s = ProviderStatus::new(ID, State::Error, format!("Codex account check failed: {e}"));
+            let mut s =
+                ProviderStatus::new(ID, State::Error, format!("Codex account check failed: {e}"));
             s.version = version;
             return s;
         }
@@ -160,7 +168,10 @@ async fn probe(peer: &Peer, version: Option<String>) -> ProviderStatus {
     s.account = account.get("account").and_then(account_label);
     s.models = list_models(peer).await;
     if account.pointer("/account/type").and_then(Value::as_str) != Some("apiKey") {
-        if let Ok(r) = peer.request_within("account/rateLimits/read", Value::Null, limit).await {
+        if let Ok(r) = peer
+            .request_within("account/rateLimits/read", Value::Null, limit)
+            .await
+        {
             s.usage = windows(r.get("rateLimits").unwrap_or(&Value::Null));
         }
     }
@@ -199,11 +210,20 @@ async fn list_models(peer: &Peer) -> Vec<ModelInfo> {
         else {
             break;
         };
-        for m in page.get("data").and_then(Value::as_array).into_iter().flatten() {
+        for m in page
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             if m.get("hidden").and_then(Value::as_bool) == Some(true) {
                 continue;
             }
-            let Some(id) = m.get("model").or_else(|| m.get("id")).and_then(Value::as_str) else {
+            let Some(id) = m
+                .get("model")
+                .or_else(|| m.get("id"))
+                .and_then(Value::as_str)
+            else {
                 continue;
             };
             out.push(ModelInfo {
@@ -310,7 +330,11 @@ async fn drive(
     if let Some(m) = spec.model.as_deref().filter(|m| !m.is_empty()) {
         thread["model"] = json!(m);
     }
-    if let Some(i) = spec.instructions.as_deref().filter(|i| !i.trim().is_empty()) {
+    if let Some(i) = spec
+        .instructions
+        .as_deref()
+        .filter(|i| !i.trim().is_empty())
+    {
         thread["developerInstructions"] = json!(i);
     }
     if let Some(t) = &spec.tools {
@@ -394,7 +418,9 @@ async fn drive(
             if st.interrupting {
                 return Ok(TurnEnd::Interrupted);
             }
-            return Err(ProviderError::process("Codex exited before the turn finished."));
+            return Err(ProviderError::process(
+                "Codex exited before the turn finished.",
+            ));
         };
         match msg {
             Incoming::Notification { method, params } => {
@@ -417,19 +443,28 @@ async fn drive(
     }
 }
 
-async fn start_thread(peer: &Peer, params: Value, limit: Duration) -> Result<String, ProviderError> {
+async fn start_thread(
+    peer: &Peer,
+    params: Value,
+    limit: Duration,
+) -> Result<String, ProviderError> {
     let v = peer
         .request_within("thread/start", params, limit)
         .await
         .map_err(rpc_failure)?;
-    thread_id(&v).ok_or_else(|| ProviderError::new(ErrorClass::Unknown, "Codex started a thread without an id"))
+    thread_id(&v).ok_or_else(|| {
+        ProviderError::new(ErrorClass::Unknown, "Codex started a thread without an id")
+    })
 }
 
 fn rpc_failure(e: RpcError) -> ProviderError {
     if e.code == RpcError::CLOSED || e.code == RpcError::TIMEOUT {
         return ProviderError::process(e.message);
     }
-    ProviderError::new(ErrorClass::Unknown, format!("Codex refused the request: {}", e.message))
+    ProviderError::new(
+        ErrorClass::Unknown,
+        format!("Codex refused the request: {}", e.message),
+    )
 }
 
 async fn sleep_until(deadline: Option<tokio::time::Instant>) {
@@ -579,7 +614,10 @@ impl Turn {
                     "failed" => Err(match turn.get("error").filter(|e| !e.is_null()) {
                         Some(e) => turn_error(e),
                         None => self.last_error.take().unwrap_or_else(|| {
-                            ProviderError::new(ErrorClass::Unknown, "Codex ended the turn as failed")
+                            ProviderError::new(
+                                ErrorClass::Unknown,
+                                "Codex ended the turn as failed",
+                            )
                         }),
                     }),
                     _ if self.interrupting => Ok(Some(TurnEnd::Interrupted)),
@@ -592,7 +630,11 @@ impl Turn {
     }
 
     fn item_started(&mut self, item: &Value, events: &EventTx) {
-        let id = item.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+        let id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
         let (name, input) = match item.get("type").and_then(Value::as_str).unwrap_or("") {
             "commandExecution" => (
                 "shell".to_string(),
@@ -617,7 +659,10 @@ impl Turn {
                 ),
                 item.get("arguments").cloned().unwrap_or(Value::Null),
             ),
-            "webSearch" => ("web_search".to_string(), json!({"query": item.get("query")})),
+            "webSearch" => (
+                "web_search".to_string(),
+                json!({"query": item.get("query")}),
+            ),
             _ => return,
         };
         let _ = events.send(ProviderEvent::ToolStarted { id, name, input });
@@ -625,8 +670,15 @@ impl Turn {
 }
 
 fn item_completed(item: &Value, events: &EventTx) {
-    let id = item.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-    let status = item.get("status").and_then(Value::as_str).unwrap_or("completed");
+    let id = item
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let status = item
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("completed");
     let finished = |name: &str, ok: bool, output: String| {
         let _ = events.send(ProviderEvent::ToolFinished {
             id: id.clone(),
@@ -645,7 +697,12 @@ fn item_completed(item: &Value, events: &EventTx) {
         "reasoning" => {
             let mut parts = vec![];
             for key in ["summary", "content"] {
-                for p in item.get(key).and_then(Value::as_array).into_iter().flatten() {
+                for p in item
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
                     if let Some(t) = p.as_str().or_else(|| p.get("text").and_then(Value::as_str)) {
                         parts.push(t.to_string());
                     }
@@ -680,7 +737,11 @@ fn item_completed(item: &Value, events: &EventTx) {
         "mcpToolCall" => {
             let ok = status == "completed" && item.get("error").is_none_or(Value::is_null);
             let output = match item.get("error").filter(|e| !e.is_null()) {
-                Some(e) => e.get("message").and_then(Value::as_str).unwrap_or("error").to_string(),
+                Some(e) => e
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("error")
+                    .to_string(),
                 None => item
                     .pointer("/result/content")
                     .and_then(Value::as_array)
@@ -721,13 +782,15 @@ fn turn_error(e: &Value) -> ProviderError {
         .unwrap_or_default();
     let class = match kind.as_str() {
         "unauthorized" => ErrorClass::Auth,
-        "usageLimitExceeded" | "rateLimitExceeded" | "sessionBudgetExceeded" => ErrorClass::RateLimit,
+        "usageLimitExceeded" | "rateLimitExceeded" | "sessionBudgetExceeded" => {
+            ErrorClass::RateLimit
+        }
         "serverOverloaded" | "internalServerError" => ErrorClass::Overloaded,
         "contextWindowExceeded" => ErrorClass::ContextOverflow,
         "badRequest" => ErrorClass::BadRequest,
-        "httpConnectionFailed" | "responseStreamConnectionFailed" | "responseStreamDisconnected" => {
-            ErrorClass::Overloaded
-        }
+        "httpConnectionFailed"
+        | "responseStreamConnectionFailed"
+        | "responseStreamDisconnected" => ErrorClass::Overloaded,
         _ => ErrorClass::Unknown,
     };
     ProviderError::new(class, message)
@@ -742,7 +805,11 @@ mod tests {
     fn the_effort_pill_speaks_codex() {
         assert_eq!(effort("ultra"), "xhigh");
         assert_eq!(effort("extra"), "xhigh");
-        assert_eq!(effort("minimal"), "minimal", "Codex's own word passes through");
+        assert_eq!(
+            effort("minimal"),
+            "minimal",
+            "Codex's own word passes through"
+        );
     }
 
     struct Gate(PermissionDecision, std::sync::Mutex<Vec<PermissionRequest>>);
@@ -790,11 +857,19 @@ mod tests {
             assert_eq!(start["method"], "thread/start");
             assert_eq!(start["params"]["approvalPolicy"], "untrusted");
             assert_eq!(start["params"]["developerInstructions"], "be brief");
-            send(&mut w, json!({"jsonrpc": "2.0", "id": start["id"], "result": {"thread": {"id": "th1"}}})).await;
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": start["id"], "result": {"thread": {"id": "th1"}}}),
+            )
+            .await;
             let turn = read(&mut lines).await;
             assert_eq!(turn["method"], "turn/start");
             assert_eq!(turn["params"]["effort"], "high");
-            send(&mut w, json!({"jsonrpc": "2.0", "id": turn["id"], "result": {"turn": {"id": "tu1"}}})).await;
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": turn["id"], "result": {"turn": {"id": "tu1"}}}),
+            )
+            .await;
             send(&mut w, json!({"jsonrpc": "2.0", "method": "item/started", "params": {"threadId": "th1", "item": {"type": "fileChange", "id": "f1", "changes": [{"path": "src/a.rs"}]}}})).await;
             send(&mut w, json!({"jsonrpc": "2.0", "id": 77, "method": "item/fileChange/requestApproval", "params": {"threadId": "th1", "turnId": "tu1", "itemId": "f1"}})).await;
             let approval = read(&mut lines).await;
@@ -812,26 +887,54 @@ mod tests {
         let (r, w) = tokio::io::split(ours);
         let (peer, mut incoming) = Peer::start(r, w);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let gate = Arc::new(Gate(PermissionDecision::Allow, std::sync::Mutex::new(vec![])));
-        let end = drive(&peer, &mut incoming, &spec(), gate.clone(), &tx, &CancellationToken::new())
-            .await
-            .unwrap();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &spec(),
+            gate.clone(),
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         assert_eq!(end, TurnEnd::Completed);
         server.await.unwrap();
         let asked = gate.1.lock().unwrap().clone();
         assert_eq!(asked.len(), 1);
-        assert_eq!(asked[0].paths, vec!["src/a.rs".to_string()], "lease gate sees the file");
+        assert_eq!(
+            asked[0].paths,
+            vec!["src/a.rs".to_string()],
+            "lease gate sees the file"
+        );
         drop(tx);
         let mut got = vec![];
         while let Some(e) = rx.recv().await {
             got.push(e);
         }
-        assert!(got.contains(&ProviderEvent::Session { resume: json!({"thread_id": "th1"}) }));
+        assert!(got.contains(&ProviderEvent::Session {
+            resume: json!({"thread_id": "th1"})
+        }));
         assert!(got.contains(&ProviderEvent::Message("Done.".into())));
         assert!(got.iter().any(|e| matches!(e, ProviderEvent::ToolFinished { id, ok: false, output, .. } if id == "c1" && output == "1 failed")));
-        assert!(got.contains(&ProviderEvent::Context { used: 120, limit: 272_000 }));
-        let limits = got.iter().find_map(|e| match e { ProviderEvent::Limits(w) => Some(w.clone()), _ => None }).unwrap();
-        assert_eq!((limits[0].label.as_str(), limits[1].label.as_str()), ("Session", "Weekly"));
+        assert!(got.contains(&ProviderEvent::Context {
+            used: 120,
+            limit: 272_000
+        }));
+        let limits = got
+            .iter()
+            .find_map(|e| match e {
+                ProviderEvent::Limits(w) => Some(w.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            (limits[0].label.as_str(), limits[1].label.as_str()),
+            ("Session", "Weekly")
+        );
     }
 
     #[tokio::test]
@@ -840,19 +943,39 @@ mod tests {
         let server = tokio::spawn(async move {
             let (r, mut w) = tokio::io::split(theirs);
             let mut lines = BufReader::new(r).lines();
-            let start: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
-            send(&mut w, json!({"jsonrpc": "2.0", "id": start["id"], "result": {"thread": {"id": "th1"}}})).await;
-            let turn: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
-            send(&mut w, json!({"jsonrpc": "2.0", "id": turn["id"], "result": {"turn": {"id": "tu1"}}})).await;
+            let start: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": start["id"], "result": {"thread": {"id": "th1"}}}),
+            )
+            .await;
+            let turn: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": turn["id"], "result": {"turn": {"id": "tu1"}}}),
+            )
+            .await;
             send(&mut w, json!({"jsonrpc": "2.0", "method": "turn/completed", "params": {"threadId": "th1", "turn": {"id": "tu1", "status": "failed", "error": {"message": "You've hit your usage limit.", "codexErrorInfo": "usageLimitExceeded"}}}})).await;
         });
         let (r, w) = tokio::io::split(ours);
         let (peer, mut incoming) = Peer::start(r, w);
         let (tx, _rx) = mpsc::unbounded_channel();
-        let gate = Arc::new(Gate(PermissionDecision::Allow, std::sync::Mutex::new(vec![])));
-        let err = drive(&peer, &mut incoming, &spec(), gate, &tx, &CancellationToken::new())
-            .await
-            .unwrap_err();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let err = drive(
+            &peer,
+            &mut incoming,
+            &spec(),
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err.class, ErrorClass::RateLimit);
         assert_eq!(err.message, "You've hit your usage limit.");
         server.await.unwrap();
@@ -860,7 +983,9 @@ mod tests {
 
     #[test]
     fn error_info_with_data_is_still_classed() {
-        let e = turn_error(&json!({"message": "stream dropped", "codexErrorInfo": {"responseStreamConnectionFailed": {"httpStatusCode": 502}}}));
+        let e = turn_error(
+            &json!({"message": "stream dropped", "codexErrorInfo": {"responseStreamConnectionFailed": {"httpStatusCode": 502}}}),
+        );
         assert_eq!(e.class, ErrorClass::Overloaded);
         let e = turn_error(&json!({"message": "401", "codexErrorInfo": "unauthorized"}));
         assert_eq!(e.class, ErrorClass::Auth);

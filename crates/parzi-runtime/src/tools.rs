@@ -164,7 +164,10 @@ impl ToolExecutor {
         }
         if let Some((server, tool)) = name.split_once('.') {
             if is_vendor_category(name) {
-                return (false, format!("`{name}` is the agent's own tool now, not Parzi's"));
+                return (
+                    false,
+                    format!("`{name}` is the agent's own tool now, not Parzi's"),
+                );
             }
             if is_ui_tool(name) || is_session_tool(name) || is_lane_tool(name) {
                 return (false, format!("tool `{name}` is handled by the agent loop"));
@@ -552,15 +555,45 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
     match name {
         // The agents' own tools (Claude Code, Codex).
         "Bash" | "shell" => format!("Running `{}`", one_line(&command(), 60)),
-        "Read" => format!("Reading {}", str_arg("file_path").unwrap_or_else(|| "a file".into())),
-        "Edit" | "MultiEdit" => format!("Editing {}", str_arg("file_path").unwrap_or_else(|| "a file".into())),
-        "Write" => format!("Writing {}", str_arg("file_path").unwrap_or_else(|| "a file".into())),
-        "NotebookEdit" => format!("Editing {}", str_arg("notebook_path").unwrap_or_else(|| "a notebook".into())),
-        "Glob" => format!("Finding {}", str_arg("pattern").unwrap_or_else(|| "files".into())),
-        "Grep" => format!("Searching for {}", one_line(&str_arg("pattern").unwrap_or_default(), 60)),
-        "WebFetch" => format!("Fetching {}", str_arg("url").unwrap_or_else(|| "a page".into())),
-        "WebSearch" | "web_search" => format!("Searching the web: {}", one_line(&str_arg("query").unwrap_or_default(), 60)),
-        "Task" | "Agent" => format!("Delegating: {}", one_line(&str_arg("description").unwrap_or_else(|| "a subtask".into()), 60)),
+        "Read" => format!(
+            "Reading {}",
+            str_arg("file_path").unwrap_or_else(|| "a file".into())
+        ),
+        "Edit" | "MultiEdit" => format!(
+            "Editing {}",
+            str_arg("file_path").unwrap_or_else(|| "a file".into())
+        ),
+        "Write" => format!(
+            "Writing {}",
+            str_arg("file_path").unwrap_or_else(|| "a file".into())
+        ),
+        "NotebookEdit" => format!(
+            "Editing {}",
+            str_arg("notebook_path").unwrap_or_else(|| "a notebook".into())
+        ),
+        "Glob" => format!(
+            "Finding {}",
+            str_arg("pattern").unwrap_or_else(|| "files".into())
+        ),
+        "Grep" => format!(
+            "Searching for {}",
+            one_line(&str_arg("pattern").unwrap_or_default(), 60)
+        ),
+        "WebFetch" => format!(
+            "Fetching {}",
+            str_arg("url").unwrap_or_else(|| "a page".into())
+        ),
+        "WebSearch" | "web_search" => format!(
+            "Searching the web: {}",
+            one_line(&str_arg("query").unwrap_or_default(), 60)
+        ),
+        "Task" | "Agent" => format!(
+            "Delegating: {}",
+            one_line(
+                &str_arg("description").unwrap_or_else(|| "a subtask".into()),
+                60
+            )
+        ),
         "TodoWrite" => "Updating the todo list".into(),
         "edit" => match args.get("paths").and_then(|p| p.as_array()) {
             Some(paths) if paths.len() > 1 => format!(
@@ -658,7 +691,14 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
 
 /// Parzi's namespaces: a tool name is `<namespace>.<name>`.
 const NAMESPACES: &[&str] = &[
-    "ui", "session", "plan", "lane", "knowledge", "lease", "board", "project",
+    "ui",
+    "session",
+    "plan",
+    "lane",
+    "knowledge",
+    "lease",
+    "board",
+    "project",
 ];
 
 /// The name a tool travels under over MCP: dots are not allowed in tool

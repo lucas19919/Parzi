@@ -93,9 +93,9 @@ impl Provider for Claude {
         events: EventTx,
         cancel: CancellationToken,
     ) -> Result<TurnEnd, ProviderError> {
-        let program = self
-            .program()
-            .ok_or_else(|| ProviderError::process(format!("Claude Code is not installed. {INSTALL_HINT}")))?;
+        let program = self.program().ok_or_else(|| {
+            ProviderError::process(format!("Claude Code is not installed. {INSTALL_HINT}"))
+        })?;
         let scratch = TurnFiles::write(&spec)?;
         let args = turn_args(&spec, &scratch);
         let mut proc = Proc::spawn(&program, &args, &spec.cwd, &[])
@@ -160,7 +160,12 @@ fn models_from_init(init: &Value) -> Vec<ModelInfo> {
             let efforts = m
                 .get("supportedEffortLevels")
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
                 .unwrap_or_default();
             Some(ModelInfo {
                 is_default: id == "default",
@@ -204,7 +209,10 @@ async fn handshake(program: &Path) -> Result<Value, ProviderError> {
         }
     });
     let init = link
-        .control(json!({"subtype": "initialize", "hooks": null}), Duration::from_secs(45))
+        .control(
+            json!({"subtype": "initialize", "hooks": null}),
+            Duration::from_secs(45),
+        )
         .await;
     pump.abort();
     proc.kill().await;
@@ -232,7 +240,11 @@ impl TurnFiles {
             instructions: None,
             mcp: None,
         };
-        if let Some(text) = spec.instructions.as_deref().filter(|t| !t.trim().is_empty()) {
+        if let Some(text) = spec
+            .instructions
+            .as_deref()
+            .filter(|t| !t.trim().is_empty())
+        {
             let p = dir.join("instructions.md");
             std::fs::write(&p, text).map_err(|e| ProviderError::process(e.to_string()))?;
             files.instructions = Some(p);
@@ -244,7 +256,8 @@ impl TurnFiles {
                 "headers": {"Authorization": format!("Bearer {}", t.token)},
             }}});
             let p = dir.join("mcp.json");
-            std::fs::write(&p, cfg.to_string()).map_err(|e| ProviderError::process(e.to_string()))?;
+            std::fs::write(&p, cfg.to_string())
+                .map_err(|e| ProviderError::process(e.to_string()))?;
             files.mcp = Some(p);
         }
         Ok(files)
@@ -289,7 +302,11 @@ fn turn_args(spec: &TurnSpec, files: &TurnFiles) -> Vec<String> {
     .iter()
     .map(|s| s.to_string())
     .collect();
-    if let Some(m) = spec.model.as_deref().filter(|m| !m.is_empty() && *m != "default") {
+    if let Some(m) = spec
+        .model
+        .as_deref()
+        .filter(|m| !m.is_empty() && *m != "default")
+    {
         a.push("--model".into());
         a.push(m.to_string());
     }
@@ -393,7 +410,10 @@ impl Link {
 
     async fn control(&self, request: Value, limit: Duration) -> Result<Value, ProviderError> {
         let n = self.counter.fetch_add(1, Ordering::Relaxed) + 1;
-        let id = format!("req_{n}_{}", &uuid::Uuid::new_v4().simple().to_string()[..8]);
+        let id = format!(
+            "req_{n}_{}",
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        );
         let subtype = request
             .get("subtype")
             .and_then(Value::as_str)
@@ -407,8 +427,13 @@ impl Link {
             .await?;
         match tokio::time::timeout(limit, rx).await {
             Ok(Ok(Ok(v))) => Ok(v),
-            Ok(Ok(Err(e))) => Err(ProviderError::new(ErrorClass::Unknown, format!("Claude Code refused {subtype}: {e}"))),
-            Ok(Err(_)) => Err(ProviderError::process(format!("Claude Code exited during {subtype}"))),
+            Ok(Ok(Err(e))) => Err(ProviderError::new(
+                ErrorClass::Unknown,
+                format!("Claude Code refused {subtype}: {e}"),
+            )),
+            Ok(Err(_)) => Err(ProviderError::process(format!(
+                "Claude Code exited during {subtype}"
+            ))),
             Err(_) => Err(ProviderError::process(format!(
                 "Claude Code did not answer {subtype} within {}s",
                 limit.as_secs()
@@ -491,8 +516,11 @@ where
     W: AsyncWrite + Send + Unpin + 'static,
 {
     let (link, mut incoming) = Link::start(reader, writer);
-    link.control(json!({"subtype": "initialize", "hooks": null}), Duration::from_secs(90))
-        .await?;
+    link.control(
+        json!({"subtype": "initialize", "hooks": null}),
+        Duration::from_secs(90),
+    )
+    .await?;
     let content = user_content(&spec.prompt, &spec.images);
     link.send(&json!({
         "type": "user",
@@ -521,11 +549,17 @@ where
             if st.interrupting {
                 return Ok(TurnEnd::Interrupted);
             }
-            return Err(ProviderError::process("Claude Code exited before the turn finished."));
+            return Err(ProviderError::process(
+                "Claude Code exited before the turn finished.",
+            ));
         };
         if let Some(end) = handle(&v, &mut st, &link, &gate, events).await? {
             link.close().await;
-            return Ok(if st.interrupting { TurnEnd::Interrupted } else { end });
+            return Ok(if st.interrupting {
+                TurnEnd::Interrupted
+            } else {
+                end
+            });
         }
     }
 }
@@ -568,7 +602,11 @@ async fn handle(
     let main = v.get("parent_tool_use_id").is_none_or(Value::is_null);
     match kind {
         "control_request" => {
-            let request_id = v.get("request_id").and_then(Value::as_str).unwrap_or("").to_string();
+            let request_id = v
+                .get("request_id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             let req = v.get("request").cloned().unwrap_or(Value::Null);
             if req.get("subtype").and_then(Value::as_str) == Some("can_use_tool") {
                 let (link, gate) = (link.clone(), gate.clone());
@@ -579,12 +617,15 @@ async fn handle(
                         PermissionDecision::Allow | PermissionDecision::AllowAlways => {
                             json!({"behavior": "allow", "updatedInput": input})
                         }
-                        PermissionDecision::Deny(why) => json!({"behavior": "deny", "message": why}),
+                        PermissionDecision::Deny(why) => {
+                            json!({"behavior": "deny", "message": why})
+                        }
                     };
                     link.answer(&request_id, response).await;
                 });
             } else {
-                link.answer_error(&request_id, "not supported by Parzi").await;
+                link.answer_error(&request_id, "not supported by Parzi")
+                    .await;
             }
         }
         "system" => match v.get("subtype").and_then(Value::as_str).unwrap_or("") {
@@ -634,7 +675,12 @@ async fn handle(
         "assistant" if main => {
             let msg = v.get("message").unwrap_or(&Value::Null);
             let mut text = String::new();
-            for block in msg.get("content").and_then(Value::as_array).into_iter().flatten() {
+            for block in msg
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 match block.get("type").and_then(Value::as_str) {
                     Some("text") => {
                         if let Some(t) = block.get("text").and_then(Value::as_str) {
@@ -653,8 +699,16 @@ async fn handle(
                         if !text.trim().is_empty() {
                             let _ = events.send(ProviderEvent::Message(std::mem::take(&mut text)));
                         }
-                        let id = block.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-                        let name = block.get("name").and_then(Value::as_str).unwrap_or("tool").to_string();
+                        let id = block
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        let name = block
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("tool")
+                            .to_string();
                         st.tool_names.insert(id.clone(), name.clone());
                         let _ = events.send(ProviderEvent::ToolStarted {
                             id,
@@ -670,11 +724,17 @@ async fn handle(
             }
             // One API call can arrive split over several messages that share
             // its id and usage: count each call once.
-            let mid = msg.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+            let mid = msg
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             if let Some(u) = msg.get("usage") {
                 if mid.is_empty() || st.counted_messages.insert(mid) {
                     let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
-                    let input = n("input_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens");
+                    let input = n("input_tokens")
+                        + n("cache_creation_input_tokens")
+                        + n("cache_read_input_tokens");
                     let output = n("output_tokens");
                     st.last_context = Some(input + output);
                     let _ = events.send(ProviderEvent::Usage {
@@ -687,14 +747,30 @@ async fn handle(
         }
         "user" if main => {
             let msg = v.get("message").unwrap_or(&Value::Null);
-            for block in msg.get("content").and_then(Value::as_array).into_iter().flatten() {
+            for block in msg
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 if block.get("type").and_then(Value::as_str) != Some("tool_result") {
                     continue;
                 }
-                let id = block.get("tool_use_id").and_then(Value::as_str).unwrap_or("").to_string();
-                let name = st.tool_names.get(&id).cloned().unwrap_or_else(|| "tool".into());
+                let id = block
+                    .get("tool_use_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let name = st
+                    .tool_names
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| "tool".into());
                 let _ = events.send(ProviderEvent::ToolFinished {
-                    ok: !block.get("is_error").and_then(Value::as_bool).unwrap_or(false),
+                    ok: !block
+                        .get("is_error")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
                     output: result_text(block.get("content")),
                     id,
                     name,
@@ -720,7 +796,11 @@ async fn handle(
 }
 
 fn permission_request(req: &Value) -> (PermissionRequest, Value) {
-    let tool = req.get("tool_name").and_then(Value::as_str).unwrap_or("tool").to_string();
+    let tool = req
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or("tool")
+        .to_string();
     let input = req.get("input").cloned().unwrap_or(Value::Null);
     let title = req
         .get("title")
@@ -732,7 +812,12 @@ fn permission_request(req: &Value) -> (PermissionRequest, Value) {
         .iter()
         .filter_map(|k| input.get(*k).and_then(Value::as_str))
         .map(str::to_string)
-        .filter(|_| matches!(tool.as_str(), "Edit" | "MultiEdit" | "Write" | "NotebookEdit"))
+        .filter(|_| {
+            matches!(
+                tool.as_str(),
+                "Edit" | "MultiEdit" | "Write" | "NotebookEdit"
+            )
+        })
         .collect();
     let request = PermissionRequest {
         id: req
@@ -789,7 +874,11 @@ fn usage_window(info: &Value) -> Option<UsageWindow> {
 }
 
 fn finish(v: &Value, st: &TurnState, events: &EventTx) -> Result<TurnEnd, ProviderError> {
-    if let Some(cost) = v.get("total_cost_usd").and_then(Value::as_f64).filter(|_| !st.on_plan) {
+    if let Some(cost) = v
+        .get("total_cost_usd")
+        .and_then(Value::as_f64)
+        .filter(|_| !st.on_plan)
+    {
         let _ = events.send(ProviderEvent::Usage {
             input: 0,
             output: 0,
@@ -839,7 +928,12 @@ fn finish(v: &Value, st: &TurnState, events: &EventTx) -> Result<TurnEnd, Provid
         message = v
             .get("errors")
             .and_then(Value::as_array)
-            .map(|e| e.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("; "))
+            .map(|e| {
+                e.iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            })
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| format!("Claude Code ended the turn with `{subtype}`"));
     }
@@ -881,10 +975,7 @@ mod tests {
 
     /// Plays the CLI side: answers initialize, checks the prompt, asks one
     /// permission, then streams a turn with two tool calls and a result.
-    async fn fake_cli(
-        io: tokio::io::DuplexStream,
-        script: Vec<Value>,
-    ) -> Vec<Value> {
+    async fn fake_cli(io: tokio::io::DuplexStream, script: Vec<Value>) -> Vec<Value> {
         let (r, mut w) = tokio::io::split(io);
         let mut lines = BufReader::new(r).lines();
         let mut seen = vec![];
@@ -898,7 +989,9 @@ mod tests {
             let is_permission = msg["type"] == "control_request";
             w.write_all(format!("{msg}\n").as_bytes()).await.unwrap();
             if is_permission {
-                seen.push(serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap());
+                seen.push(
+                    serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap(),
+                );
             }
         }
         seen
@@ -929,7 +1022,9 @@ mod tests {
         let (r, w) = tokio::io::split(ours);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
-        let end = drive(r, w, &spec(), gate, &tx, &CancellationToken::new()).await.unwrap();
+        let end = drive(r, w, &spec(), gate, &tx, &CancellationToken::new())
+            .await
+            .unwrap();
         assert_eq!(end, TurnEnd::Completed);
         let seen = cli.await.unwrap();
         assert_eq!(seen[0]["request"]["subtype"], "initialize");
@@ -941,19 +1036,36 @@ mod tests {
         while let Some(e) = rx.recv().await {
             got.push(e);
         }
-        let started: Vec<_> = got.iter().filter(|e| matches!(e, ProviderEvent::ToolStarted { .. })).collect();
+        let started: Vec<_> = got
+            .iter()
+            .filter(|e| matches!(e, ProviderEvent::ToolStarted { .. }))
+            .collect();
         assert_eq!(started.len(), 2, "both tool calls: {got:?}");
-        assert!(got.contains(&ProviderEvent::Session { resume: json!({"session_id": "sess-1"}) }));
+        assert!(got.contains(&ProviderEvent::Session {
+            resume: json!({"session_id": "sess-1"})
+        }));
         assert!(got.contains(&ProviderEvent::Message("Grüße".into())));
-        assert!(got.iter().any(|e| matches!(e, ProviderEvent::ToolFinished { id, ok: false, .. } if id == "t2")));
-        let usage: Vec<_> = got.iter().filter(|e| matches!(e, ProviderEvent::Usage { cost_usd: None, .. })).collect();
+        assert!(got
+            .iter()
+            .any(|e| matches!(e, ProviderEvent::ToolFinished { id, ok: false, .. } if id == "t2")));
+        let usage: Vec<_> = got
+            .iter()
+            .filter(|e| matches!(e, ProviderEvent::Usage { cost_usd: None, .. }))
+            .collect();
         assert_eq!(usage.len(), 1, "one API call counted once");
         assert!(
-            got.contains(&ProviderEvent::Usage { input: 0, output: 0, cost_usd: Some(0.01) }),
+            got.contains(&ProviderEvent::Usage {
+                input: 0,
+                output: 0,
+                cost_usd: Some(0.01)
+            }),
             "a turn on a key costs what the CLI says"
         );
         assert!(got.iter().any(|e| matches!(e, ProviderEvent::Limits(w) if w[0].label == "Session" && (w[0].used_percent - 37.0).abs() < 0.01)));
-        assert!(got.contains(&ProviderEvent::Context { used: 15, limit: 200_000 }));
+        assert!(got.contains(&ProviderEvent::Context {
+            used: 15,
+            limit: 200_000
+        }));
     }
 
     /// On a plan the CLI still prints what the turn would have cost on the
@@ -969,11 +1081,22 @@ mod tests {
         let (r, w) = tokio::io::split(ours);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
-        drive(r, w, &spec(), gate, &tx, &CancellationToken::new()).await.unwrap();
+        drive(r, w, &spec(), gate, &tx, &CancellationToken::new())
+            .await
+            .unwrap();
         cli.await.unwrap();
         drop(tx);
         while let Some(e) = rx.recv().await {
-            assert!(!matches!(e, ProviderEvent::Usage { cost_usd: Some(_), .. }), "{e:?}");
+            assert!(
+                !matches!(
+                    e,
+                    ProviderEvent::Usage {
+                        cost_usd: Some(_),
+                        ..
+                    }
+                ),
+                "{e:?}"
+            );
         }
     }
 
@@ -996,9 +1119,14 @@ mod tests {
         let (r, w) = tokio::io::split(ours);
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
-        let err = drive(r, w, &spec(), gate, &tx, &CancellationToken::new()).await.unwrap_err();
+        let err = drive(r, w, &spec(), gate, &tx, &CancellationToken::new())
+            .await
+            .unwrap_err();
         assert_eq!(err.class, ErrorClass::Auth);
-        assert!(err.message.contains("Invalid API key") && err.message.contains("401"), "{err}");
+        assert!(
+            err.message.contains("Invalid API key") && err.message.contains("401"),
+            "{err}"
+        );
         cli.await.unwrap();
     }
 
