@@ -1,6 +1,9 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
-  import { renderMarkdown } from "../md";
+  import { renderMarkdown, splitSegments } from "../md";
+  import Widget from "../widgets/Widget.svelte";
+  import Diagram from "../widgets/Diagram.svelte";
+  import ArtifactCard from "../widgets/ArtifactCard.svelte";
   import { deckDrafts } from "../deck/state";
   import type { InspectorArtifact, InspectorDoc, DocEntry } from "../api";
 
@@ -54,13 +57,16 @@
   // Preview HTML: markdown renders as prose; live pages (html/svg) render
   // in a sandboxed iframe (see showRender); code/diff render through the
   // fenced-block pipeline so highlighting and diff tinting match the thread.
+  // Markdown preview splits ```parzi-widget / ```parzi-diagram /
+  // ```parzi-artifact fences out for component rendering, like the thread.
   $: html = (() => {
     if (!content) return "";
     if (view === "raw") return renderMarkdown("```" + (isMarkdown ? "markdown" : lang || "text") + "\n" + content.slice(0, 200000) + "\n```");
-    if (isMarkdown) return renderMarkdown(content);
+    if (isMarkdown) return "";
     if (canRender) return "";
     return renderMarkdown("```" + (lang || "text") + "\n" + content.slice(0, 200000) + "\n```");
   })();
+  $: docSegments = isMarkdown && view === "preview" && content ? splitSegments(content) : [];
 
   /** Table of contents from markdown headings (preview of markdown only). */
   $: toc = (() => {
@@ -78,7 +84,10 @@
   })();
 
   // Rendered headings get positional ids so the TOC can jump to them.
-  $: if (body && html) tagHeadings();
+  $: if (body && (html || docSegments.length)) tagHeadings();
+  function openSegArtifact(e: CustomEvent<{ artifact: InspectorArtifact }>) {
+    dispatch("openArtifact", { artifact: e.detail.artifact });
+  }
   async function tagHeadings() {
     await tick();
     if (!body) return;
@@ -224,6 +233,18 @@
       <div class="body" bind:this={body} on:click={onBodyClick}>
         {#if showRender && artifact}
           <iframe class="render" title={artifact.title} sandbox="allow-scripts" srcdoc={artifact.content}></iframe>
+        {:else if isMarkdown && view === "preview"}
+          {#each docSegments as seg (seg.kind + ":" + String(seg.body).slice(0, 64))}
+            {#if seg.kind === "md"}
+              <div class="prose">{@html renderMarkdown(String(seg.body))}</div>
+            {:else if seg.kind === "widget"}
+              <div class="seg-widget"><Widget data={seg.body} /></div>
+            {:else if seg.kind === "diagram"}
+              <div class="seg-widget"><Diagram data={seg.body} /></div>
+            {:else}
+              <div class="seg-widget"><ArtifactCard data={seg.body} on:openInDeck={openSegArtifact} /></div>
+            {/if}
+          {/each}
         {:else}
           <div class="prose" class:code={!isMarkdown || view === "raw"}>{@html html}</div>
         {/if}
@@ -314,6 +335,8 @@
   .toc-row.l3 { padding-left: 16px; font-size: 10.5px; }
   .toc-row.l4 { padding-left: 22px; font-size: 10.5px; opacity: 0.8; }
   .body { flex: 1; min-width: 0; overflow: auto; padding: 12px 14px 40px; user-select: text; display: flex; flex-direction: column; }
+  .seg-widget { margin: 0 0 10px; }
+  .seg-widget:last-child { margin-bottom: 0; }
   .render {
     flex: 1; width: 100%; min-height: 480px; border: 1px solid var(--line-2);
     border-radius: 8px; background: transparent;

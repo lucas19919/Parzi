@@ -203,7 +203,7 @@ pub fn ui_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "ui.show_markdown".into(),
-            description: "Render rich markdown in the thread.".into(),
+            description: "Render rich markdown in the thread. Never include ASCII/box-drawing diagrams or charts (+---|etc) in ```console/```ascii/```diagram fences — call ui.show_diagram for diagrams and ui.show_widget for tables/charts/kanban instead.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {"markdown": {"type": "string"}},

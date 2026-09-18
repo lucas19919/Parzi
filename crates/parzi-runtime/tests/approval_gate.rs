@@ -331,3 +331,20 @@ async fn the_agents_own_actions_pass_the_lane_and_the_mode() {
         PermissionDecision::Allow
     );
 }
+
+/// Markdown with an ASCII-box diagram renders as a dead console window: the
+/// render tool refuses it and names the tools that draw it properly.
+#[tokio::test]
+async fn markdown_with_an_ascii_diagram_is_refused() {
+    home("approval");
+    let h = host(vec![], ApprovalMode::Auto);
+    let boxes = "```ascii\n+------+------+\n|  api |  web |\n+------+------+\n```";
+    let (ok, out) = h
+        .call("ui.show_markdown", &json!({"markdown": boxes}))
+        .await;
+    assert!(!ok && out.contains("ui.show_diagram"), "{out}");
+    let (ok, out) = h
+        .call("ui.show_markdown", &json!({"markdown": "Plain **text**."}))
+        .await;
+    assert!(ok, "{out}");
+}

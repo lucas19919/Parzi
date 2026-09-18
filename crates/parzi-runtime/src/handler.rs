@@ -211,3 +211,81 @@ pub fn system_parts(cfg: &ParziConfig, project: &str, lane: &str) -> Vec<String>
     }
     parts
 }
+
+/// Fence language of a suspected ASCII/box-drawing diagram inside markdown,
+/// if any. Narrow on purpose: only `ascii`/`diagram`/`console`/`terminal`/
+/// `tree`/`log` fences are inspected, so real code fences (rust, python,
+/// bash …) never trip it. A fence counts when it holds box-drawing
+/// characters or two-plus ASCII-box lines (`+--`, `|--`, `-->` and kin).
+pub(crate) fn ascii_diagram_fence(md: &str) -> Option<String> {
+    const SUSPECT: &[&str] = &["ascii", "diagram", "console", "terminal", "tree", "log"];
+    const BOX_CHARS: &[char] = &[
+        '─', '│', '┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼', '═', '║', '╔', '╗', '╚', '╝',
+    ];
+    let mut rest = md;
+    while let Some(start) = rest.find("```") {
+        let after = &rest[start + 3..];
+        let lang_end = after.find('\n').unwrap_or(after.len());
+        let lang = after[..lang_end]
+            .trim()
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let body_start = start + 3 + lang_end + usize::from(lang_end < after.len());
+        let Some(close_rel) = rest[body_start..].find("```") else {
+            break;
+        };
+        let body = &rest[body_start..body_start + close_rel];
+        if SUSPECT.contains(&lang.as_str()) {
+            let has_box = body.chars().any(|c| BOX_CHARS.contains(&c));
+            let mut ascii_box_lines = 0;
+            for line in body.lines() {
+                let t = line.trim();
+                if t.len() < 4 {
+                    continue;
+                }
+                let bytes = t.as_bytes();
+                let box_like = (bytes[0] == b'+' || bytes[0] == b'|')
+                    && t.chars()
+                        .filter(|c| *c == '-' || *c == '+' || *c == '|')
+                        .count()
+                        >= 3;
+                let arrow = t.contains("-->") || t.contains("==>") || t.contains("--|");
+                if box_like || arrow {
+                    ascii_box_lines += 1;
+                }
+            }
+            if has_box || ascii_box_lines >= 2 {
+                return Some(lang);
+            }
+        }
+        rest = &rest[body_start + close_rel + 3..];
+    }
+    None
+}
+
+#[cfg(test)]
+mod ascii_fence_tests {
+    use super::ascii_diagram_fence;
+
+    #[test]
+    fn flags_box_drawing_console_fence() {
+        let md = "flow:\n```console\n┌───┐\n│ a │──▶│ b │\n└───┘\n```\n";
+        assert_eq!(ascii_diagram_fence(md).as_deref(), Some("console"));
+    }
+
+    #[test]
+    fn flags_ascii_boxes() {
+        let md = "```ascii\n+------+------+\n|  api |  web |\n+------+------+\n```";
+        assert_eq!(ascii_diagram_fence(md).as_deref(), Some("ascii"));
+    }
+
+    #[test]
+    fn ignores_real_code_and_prose() {
+        let md = "```rust\nfn main() { println!(\"hi -->\"); }\n```\n\nplain `-->` prose";
+        assert_eq!(ascii_diagram_fence(md), None);
+        let md2 = "```console\n$ cargo test\nok\n```";
+        assert_eq!(ascii_diagram_fence(md2), None);
+    }
+}

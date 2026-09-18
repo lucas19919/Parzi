@@ -580,6 +580,15 @@ impl ToolHost {
         match name {
             "ui.show_markdown" => {
                 let md = args.get("markdown").and_then(|m| m.as_str()).unwrap_or("");
+                if let Some(lang) = crate::handler::ascii_diagram_fence(md) {
+                    return (
+                        false,
+                        format!(
+                            "rejected: ASCII/box-drawing diagram in ```{lang} fence renders as a dead console window — \
+                             call ui.show_diagram with nodes[]/edges[] for diagrams, ui.show_widget for charts/tables, never ASCII boxes"
+                        ),
+                    );
+                }
                 let payload = serde_json::json!({"widget": 1, "type": "markdown", "text": md});
                 match widgets::validate_widget(&payload) {
                     Ok(_) => widget("parzi-widget", payload),
