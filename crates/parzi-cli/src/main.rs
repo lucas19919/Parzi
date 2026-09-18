@@ -528,6 +528,12 @@ async fn cmd_providers(only: Option<&str>, json: bool) -> Result<()> {
                 format!(" — {}", about.join(" · "))
             }
         );
+        if !s.gated {
+            println!(
+                "             can change files without asking Parzi: leases and the folder \
+                 fence cannot stop it, and read-only lanes refuse it"
+            );
+        }
         if !s.hint.is_empty() {
             println!("             {}", s.hint);
         }

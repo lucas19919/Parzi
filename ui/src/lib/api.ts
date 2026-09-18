@@ -74,6 +74,9 @@ export interface ProviderStatus {
   hint: string;
   usage: UsageWindow[];
   models: ProviderModel[];
+  /** Every change the agent makes waits for Parzi's gate. False: it can
+   *  act unasked, so leases and the folder fence cannot stop it. */
+  gated: boolean;
   /** Unix seconds of the check. */
   checked_at: number;
 }

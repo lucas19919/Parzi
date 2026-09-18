@@ -145,7 +145,8 @@ pub struct ProviderStatus {
     #[serde(default)]
     pub models: Vec<ModelInfo>,
     /// Every change the agent makes arrives at Parzi's gate first
-    /// ([`Provider::gated`]). The status board fills it in.
+    /// ([`Provider::gated`]). Filled from the driver whenever statuses leave
+    /// the runtime (`Orchestrator::provider_statuses`), never by a probe.
     #[serde(default)]
     pub gated: bool,
     /// Unix seconds of this probe.

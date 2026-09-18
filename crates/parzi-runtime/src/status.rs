@@ -135,28 +135,20 @@ impl StatusBoard {
                 continue;
             };
             if !cfg.provider(canon).enabled {
-                let mut off =
-                    ProviderStatus::new(canon, State::Disabled, "Switched off in Settings.");
-                off.gated = provider.gated();
-                self.put(off);
+                self.put(ProviderStatus::new(
+                    canon,
+                    State::Disabled,
+                    "Switched off in Settings.",
+                ));
                 continue;
             }
             set.spawn(async move {
                 // One slow vendor must not hold the rest.
-                let mut s =
-                    tokio::time::timeout(std::time::Duration::from_secs(90), provider.status())
-                        .await
-                        .unwrap_or_else(|_| {
-                            ProviderStatus::new(
-                                canon,
-                                State::Error,
-                                "The status check took over 90 s.",
-                            )
-                        });
-                // What Parzi can promise about the agent is the driver's to
-                // say, not the probe's.
-                s.gated = provider.gated();
-                s
+                tokio::time::timeout(std::time::Duration::from_secs(90), provider.status())
+                    .await
+                    .unwrap_or_else(|_| {
+                        ProviderStatus::new(canon, State::Error, "The status check took over 90 s.")
+                    })
             });
         }
         while let Some(done) = set.join_next().await {

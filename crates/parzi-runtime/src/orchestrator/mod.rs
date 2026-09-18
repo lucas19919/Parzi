@@ -409,14 +409,31 @@ impl Orchestrator {
 
     /// Where each provider stands, as last checked (no probe).
     pub fn provider_statuses(&self) -> Vec<parzi_providers::ProviderStatus> {
-        self.status.all()
+        self.with_gates(self.status.all())
     }
 
     /// Ask the providers where they stand now (`ids` empty = all). Each
     /// probe runs the vendor's own program and spends no quota.
     pub async fn refresh_providers(&self, ids: &[String]) -> Vec<parzi_providers::ProviderStatus> {
         let cfg = self.config();
-        self.status.refresh(&cfg, ids, &self.source).await
+        let all = self.status.refresh(&cfg, ids, &self.source).await;
+        self.with_gates(all)
+    }
+
+    /// Whether every change an agent makes reaches Parzi's gate is its
+    /// driver's to say, checked or not: a probe cannot tell, and a status
+    /// saved by an older Parzi does not say.
+    fn with_gates(
+        &self,
+        mut all: Vec<parzi_providers::ProviderStatus>,
+    ) -> Vec<parzi_providers::ProviderStatus> {
+        let cfg = self.config();
+        for s in &mut all {
+            if let Some(p) = (self.source)(&s.provider, &cfg) {
+                s.gated = p.gated();
+            }
+        }
+        all
     }
 
     pub async fn kill(&self, id: &str) -> Result<()> {

@@ -287,6 +287,13 @@
               <div class="provider-how">{p.hint}</div>
             {/if}
 
+            {#if p && !p.gated}
+              <div class="provider-ungated" title="Parzi's own gate only sees what the agent asks about.">
+                Can change files without asking Parzi: file leases and the folder fence cannot stop it,
+                and read-only lanes refuse it.
+              </div>
+            {/if}
+
             {#if p?.usage?.length}
               <div class="usage">
                 {#each p.usage as w (w.label)}
@@ -405,6 +412,10 @@
   .provider-sub { font-size: 11.5px; color: var(--text-3); }
   .version { font-size: 10.5px; color: var(--text-4); font-family: var(--parzi-mono), ui-monospace, monospace; }
   .provider-how { font-size: 12px; color: var(--text-2); line-height: 1.45; }
+  .provider-ungated {
+    font-size: 12px; line-height: 1.45; color: var(--warn);
+    background: var(--warn-soft); border: 1px solid var(--warn-line); border-radius: 6px; padding: 6px 9px;
+  }
   .head-spacer { flex: 1; }
   .def-tag {
     font-size: 10.5px; color: var(--accent-text); font-family: var(--parzi-mono), ui-monospace, monospace;
