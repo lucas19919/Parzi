@@ -3,7 +3,8 @@
 Sidebar, stage, glass omni-bar. Projects > lanes > threads. Six agents, one bar:
 Claude Code, Codex, OpenCode, Grok, Antigravity and Cursor. Parzi drives each
 vendor's own agent on your own sign-in; Parzi's tools reach the agent over MCP,
-and every action the agent takes passes Parzi's approval gate.
+and every action the agent asks about passes Parzi's approval gate. Which
+agents ask about every change is in the table under [Agents](#agents).
 
 - `PLAN.md` — frozen architecture
 - `LOOP.md` — how it gets built (gates, phases)
@@ -44,14 +45,24 @@ GUI: `cd ui; npm install; npm run build`, then `cargo tauri dev` in `src-tauri`
 Install an agent and sign in with its own program; Parzi picks it up. It
 never stores keys or tokens.
 
-| Agent | Program | Parzi talks to it over |
-| --- | --- | --- |
-| Claude Code | `claude` | the Agent SDK's stdio control protocol |
-| Codex | `codex` | `codex app-server` (JSON-RPC) |
-| OpenCode | `opencode` | ACP (`opencode acp`) |
-| Grok | `grok` | ACP (`grok agent stdio`) |
-| Antigravity | `agy_acp_server` (T3 Code installs it) | ACP |
-| Cursor | `cursor-agent` | ACP (`cursor-agent acp`) |
+| Agent | Program | Parzi talks to it over | Asks Parzi before every change |
+| --- | --- | --- | --- |
+| Claude Code | `claude` | the Agent SDK's stdio control protocol | yes |
+| Codex | `codex` | `codex app-server` (JSON-RPC) | yes |
+| OpenCode | `opencode` | ACP (`opencode acp`) | yes |
+| Grok | `grok` | ACP (`grok agent stdio`) | no |
+| Antigravity | `agy_acp_server` (T3 Code installs it) | ACP | no |
+| Cursor | `cursor-agent` | ACP (`cursor-agent acp`) | no |
+
+Parzi starts every agent in its most-asking mode and answers for the lane
+itself: Auto, Ask, edits-only or read-only. Claude Code runs without user or
+project settings, so no permission rule or hook in them answers before
+Parzi; Parzi hands it the repo's `CLAUDE.md` files itself. Codex runs with
+approval on every action and a read-only sandbox. OpenCode asks on every
+edit, command and fetch and ignores the repo's `opencode.json`; it still
+reads `AGENTS.md`. An agent marked *no* can change files without asking:
+Settings and `parzi providers` say so, its thread says so once, file leases
+and the folder fence cannot stop it, and a read-only lane refuses it.
 
 `parzi providers` (or Settings › Providers) asks each program where it
 stands: installed, signed in, plan usage, models and their effort levels. It
@@ -61,8 +72,9 @@ in the thread, in the vendor's own words.
 
 An agent may read anywhere, but a write outside the thread's folder, or to a
 file it does not name, is never approved on your behalf: you are asked, and a
-run with nobody to ask is refused. The desktop app logs to
-`~/.parzi/logs/parzi-<date>.log`.
+run with nobody to ask is refused. The folder is judged the way the file
+system resolves it: a link inside it that points elsewhere is outside. The
+desktop app logs to `~/.parzi/logs/parzi-<date>.log`.
 
 Default background: none (a solid stage). Drop any image into
 `~/.parzi/backgrounds/` and pick it under Settings › Appearance.

@@ -116,17 +116,20 @@ session checks out its sprint's tasks one at a time, in `[after:]` order.
 ## 4. Checkout, leases, and asking for a file
 
 **Checkout.** When a lane session starts a task it sends `lease.claim {task,
-paths}` — the scope globs resolved to concrete repo-relative paths in its
-worktree. The hub grants when no active lease intersects, else answers
-`Held {by: lane api / TSK-8, since}`. A lease lives while its heartbeat does
-(TTL 90 s) and ends with the task.
+paths}` — the task's scope as the plan wrote it, repo-prefixed. A path holds
+itself and everything under it; a glob holds every path it matches and
+everything under those; case is ignored where the file system ignores it
+(Windows, macOS). The hub grants when no active lease could hold a file the
+claim could (a plain path might be a folder, so the check leans to asking),
+else answers `Held {by: lane api / TSK-8, since}`. A lease lives while its
+heartbeat does (TTL 90 s) and ends with the task.
 
 **Asking.** If lane *web* needs `src/routes.rs` that lane *api* holds:
 
 ```
 web  → hub → api's session:  lease.request {path, for: TSK-9, reason}
 api's session answers (a tool call in its own run, with its own context):
-        lease.grant   → path moves (or is shared read-only) to web; both journals record it
+        lease.grant   → path moves to web (out of a claimed folder, only that path); both journals record it
         lease.deny    → web gets the refusal and its reason
         (no answer in 120 s) → treated as deny
 ```
@@ -141,11 +144,15 @@ api's session answers (a tool call in its own run, with its own context):
   edit, so it is visible and reversible. "Convene" is one orchestrator turn, not
   a group chat.
 
-**Enforcement.** `parzi_runtime::tools::resolve()` — the function that applies
-the fs sandbox — checks the local lease table on every write: a path held by
-another lane is a tool error naming the holder; a path outside the lane's own
+**Enforcement.** Every edit the agent asks about passes Parzi's gate
+(`parzi_runtime::toolhost`), which checks the local lease table: a file held
+by another lane is refused, naming the holder; a file outside the lane's own
 scope is allowed with a `Notice` and a `scope_creep` mark on the card
-(`lease_mode = "strict"` in `workspace.toml` makes it a refusal). Humans are
+(`lease_mode = "strict"` in `workspace.toml` makes it a refusal). A shell
+command cannot say what it will write, so the worktree is compared before and
+after it: a change to another lane's file is refused and put back from a
+copy taken before the command. An agent that does not ask before every change
+(see the README's agent table) is outside this promise. Humans are
 stopped at the commit: `parzi hook install` puts a pre-commit hook in each repo
 that refuses a commit touching a held file, naming the holder; `--no-verify`
 overrides and the hub logs it.
