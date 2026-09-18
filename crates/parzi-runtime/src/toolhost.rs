@@ -69,36 +69,63 @@ fn category(tool: &str) -> Option<&'static str> {
 }
 
 /// `path` relative to `cwd`, with forward slashes, when it names a file
-/// inside it. Relative paths are taken from `cwd`; `..` is resolved on the
-/// text, so a climb out is outside. Anything rooted — a drive, `\foo`,
-/// `C:foo`, a share, a verbatim path — must start with `cwd`. Windows
-/// compares without case, as the file system does. No `cwd`, no inside.
+/// inside it as the file system will resolve it, not only as it reads. Two
+/// passes: the text ([`relative_text`]), then the disk: the deepest part of
+/// the path that exists is resolved through links, junctions and short
+/// names and must still be inside `cwd`, resolved the same way. The answer
+/// is spelled as resolved, so a link inside the folder is leased by where
+/// it points. No `cwd`, or one that cannot be resolved: no inside.
 fn worktree_relative(cwd: &str, path: &str) -> Option<String> {
-    let norm = |s: &str| s.replace('\\', "/").trim_end_matches('/').to_string();
-    let base = norm(cwd);
-    if base.is_empty() {
+    let rel = relative_text(cwd, path)?;
+    let root = std::fs::canonicalize(cwd).ok()?;
+    let parts: Vec<&str> = rel.split('/').collect();
+    let mut here = root.clone();
+    let mut known = 0;
+    for seg in &parts {
+        let next = here.join(seg);
+        // A dangling link exists too; it just does not resolve below.
+        if std::fs::symlink_metadata(&next).is_err() {
+            break;
+        }
+        here = next;
+        known += 1;
+    }
+    let real = std::fs::canonicalize(&here).ok()?;
+    let mut out: Vec<String> = real
+        .strip_prefix(&root)
+        .ok()?
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    out.extend(parts[known..].iter().map(|s| (*s).to_string()));
+    (!out.is_empty()).then(|| out.join("/"))
+}
+
+/// The text pass of [`worktree_relative`]. Relative paths are taken from
+/// `cwd`; `..` is resolved on the text, so a climb out is outside. Anything
+/// rooted — a drive, `\foo`, `C:foo`, a share, a verbatim path — must start
+/// with `cwd`, without case where the file system ignores it. Whatever a
+/// shell or Windows would read differently from the text is outside too: a
+/// leading `~`, surrounding spaces, and on Windows a `:` inside a name (a
+/// stream), a name ending in a dot or a space, or a device name.
+fn relative_text(cwd: &str, path: &str) -> Option<String> {
+    let base = cwd.trim().replace('\\', "/");
+    let base = base.trim_end_matches('/');
+    if base.is_empty() || path.is_empty() || path.trim() != path || path.starts_with('~') {
         return None;
     }
-    let p = norm(path);
-    let rooted = {
-        let raw = Path::new(path);
-        raw.has_root()
-            || p.starts_with('/')
-            || matches!(
-                raw.components().next(),
-                Some(std::path::Component::Prefix(_))
-            )
-    };
+    let p = path.replace('\\', "/");
+    let raw = Path::new(path);
+    let rooted = raw.has_root()
+        || p.starts_with('/')
+        || matches!(
+            raw.components().next(),
+            Some(std::path::Component::Prefix(_))
+        );
     let rel = if rooted {
-        let (pc, bc) = if cfg!(windows) {
-            (p.to_lowercase(), base.to_lowercase())
-        } else {
-            (p.clone(), base.clone())
-        };
-        let rest = pc.strip_prefix(&bc)?.strip_prefix('/')?;
-        p[p.len() - rest.len()..].to_string()
+        strip_prefix_fold(&p, base)?.strip_prefix('/')?
     } else {
-        p
+        p.as_str()
     };
     let mut parts: Vec<&str> = vec![];
     for seg in rel.split('/') {
@@ -107,10 +134,49 @@ fn worktree_relative(cwd: &str, path: &str) -> Option<String> {
             ".." => {
                 parts.pop()?;
             }
+            s if cfg!(windows) && !windows_plain_name(s) => return None,
             s => parts.push(s),
         }
     }
     (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+/// `s` without the leading `prefix`, compared without case where the file
+/// system ignores it. The rest keeps its own spelling.
+fn strip_prefix_fold<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    let mut rest = s.char_indices();
+    for want in prefix.chars() {
+        let (_, got) = rest.next()?;
+        let same = want == got
+            || (parzi_core::project::PATHS_IGNORE_CASE
+                && want.to_lowercase().eq(got.to_lowercase()));
+        if !same {
+            return None;
+        }
+    }
+    Some(rest.next().map_or("", |(i, _)| &s[i..]))
+}
+
+/// A name Windows keeps as written: no stream (`a.rs:x`), no trailing dot
+/// or space (Windows drops them, so `.. ` climbs), and not a device.
+fn windows_plain_name(seg: &str) -> bool {
+    const DEVICES: [&str; 6] = ["con", "prn", "aux", "nul", "conin$", "conout$"];
+    let stem = seg
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim_end()
+        .to_lowercase();
+    let port = |p: &str| {
+        stem.strip_prefix(p).is_some_and(|n| {
+            n.chars().count() == 1 && n.chars().all(|c| c.is_ascii_digit() || "¹²³".contains(c))
+        })
+    };
+    !seg.contains(':')
+        && !seg.ends_with(['.', ' '])
+        && !DEVICES.contains(&stem.as_str())
+        && !port("com")
+        && !port("lpt")
 }
 
 /// The files a write names: the request's paths, or the file field of its
@@ -608,14 +674,11 @@ mod tests {
         } else {
             ("/repo", "/repo/src/a.rs")
         };
-        let rel = worktree_relative(cwd, inside).unwrap();
+        let rel = relative_text(cwd, inside).unwrap();
         assert!(rel.eq_ignore_ascii_case("src/a.rs"), "{rel}");
+        assert_eq!(relative_text(cwd, "src/b.rs").as_deref(), Some("src/b.rs"));
         assert_eq!(
-            worktree_relative(cwd, "src/b.rs").as_deref(),
-            Some("src/b.rs")
-        );
-        assert_eq!(
-            worktree_relative(cwd, "./src/../src/c.rs").as_deref(),
+            relative_text(cwd, "./src/../src/c.rs").as_deref(),
             Some("src/c.rs")
         );
         let outside = if cfg!(windows) {
@@ -623,28 +686,33 @@ mod tests {
         } else {
             "/other/x.rs"
         };
-        assert_eq!(worktree_relative(cwd, outside), None);
+        assert_eq!(relative_text(cwd, outside), None);
         // A sibling that merely shares the prefix is outside too.
         let sibling = if cfg!(windows) {
             r"C:\repo2\x.rs"
         } else {
             "/repo2/x.rs"
         };
-        assert_eq!(worktree_relative(cwd, sibling), None);
+        assert_eq!(relative_text(cwd, sibling), None);
+        assert_eq!(relative_text("", "src/a.rs"), None, "no folder, no inside");
         assert_eq!(
-            worktree_relative("", "src/a.rs"),
-            None,
-            "no folder, no inside"
-        );
-        assert_eq!(
-            worktree_relative(cwd, "src/.."),
+            relative_text(cwd, "src/.."),
             None,
             "the folder is not a file"
         );
+        // Case folding never cuts a name in half, whatever it lower-cases to.
+        let odd = if cfg!(windows) {
+            r"C:\İrepo"
+        } else {
+            "/İrepo"
+        };
+        assert_eq!(relative_text(odd, "x.rs").as_deref(), Some("x.rs"));
+        assert_eq!(relative_text(cwd, "src/İ.rs").as_deref(), Some("src/İ.rs"));
     }
 
     /// B3's escape table, now for the agent's own writes: absolute, rooted,
-    /// drive-relative, UNC, verbatim and deep `..` climbs are all outside.
+    /// drive-relative, UNC, verbatim and deep `..` climbs are all outside,
+    /// and so is whatever a shell or Windows reads differently from the text.
     #[test]
     fn escapes_are_outside() {
         let cwd = if cfg!(windows) { r"C:\repo" } else { "/repo" };
@@ -658,13 +726,88 @@ mod tests {
             "../../secret",
             "sub/../../..",
             "a/../../../../etc",
+            "~/.ssh/authorized_keys",
+            "~root/x",
+            " src/a.rs",
+            "src/a.rs ",
+            "",
         ];
-        // Drive letters only mean something where there are drives.
+        // Drive letters, streams and dropped dots only mean something where
+        // Windows reads the path.
         if cfg!(windows) {
-            table.extend([r"C:\Windows\System32\x", "C:foo", r"C:\repo\..\secret"]);
+            table.extend([
+                r"C:\Windows\System32\x",
+                "C:foo",
+                r"C:\repo\..\secret",
+                "src/a.rs:hidden",
+                "src/a.rs::$DATA",
+                "src/.. /../x",
+                "src/a.rs.",
+                "src/NUL",
+                "src/con.txt",
+                "COM1",
+                "lpt9.log",
+            ]);
         }
         for evil in table {
-            assert_eq!(worktree_relative(cwd, evil), None, "{evil} must be outside");
+            assert_eq!(relative_text(cwd, evil), None, "{evil:?} must be outside");
+        }
+    }
+
+    /// The disk pass: a link inside the folder that points outside it is
+    /// outside, one that points inside is leased by its target, and a file
+    /// that does not exist yet is judged by the folders that do.
+    #[test]
+    fn links_are_judged_by_where_they_point() {
+        let base = std::env::temp_dir().join(format!("parzi-fence-{}", std::process::id()));
+        let (repo, away) = (base.join("repo"), base.join("away"));
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(&away).unwrap();
+        let cwd = repo.to_str().unwrap();
+        assert_eq!(
+            worktree_relative(cwd, "src/new/deep.rs").as_deref(),
+            Some("src/new/deep.rs")
+        );
+        let inside = repo.join("src").join("a.rs");
+        assert_eq!(
+            worktree_relative(cwd, inside.to_str().unwrap()).as_deref(),
+            Some("src/a.rs")
+        );
+        let linked =
+            link_dir(&away, &repo.join("out")) && link_dir(&repo.join("src"), &repo.join("alias"));
+        assert!(
+            linked,
+            "the test needs a directory link (a junction on Windows)"
+        );
+        assert_eq!(
+            worktree_relative(cwd, "out/x.rs"),
+            None,
+            "a link out is out"
+        );
+        assert_eq!(
+            worktree_relative(cwd, "alias/x.rs").as_deref(),
+            Some("src/x.rs"),
+            "a link in is leased where it points"
+        );
+        assert_eq!(worktree_relative("/no/such/folder", "x.rs"), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn link_dir(target: &std::path::Path, link: &std::path::Path) -> bool {
+        #[cfg(windows)]
+        {
+            // A junction needs no privilege, unlike a symlink.
+            std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .stdout(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        }
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
         }
     }
 }
