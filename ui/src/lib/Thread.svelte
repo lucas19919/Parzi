@@ -11,6 +11,17 @@
   import type { ChatEvent, InspectorArtifact } from "./api";
   import { api } from "./api";
 
+  /** A failed turn's class, in words. The vendor's own message follows. */
+  const ERROR_WORDS: Record<string, string> = {
+    auth: "Not signed in",
+    rate_limit: "Plan limit reached",
+    overloaded: "The service is overloaded",
+    context_overflow: "The conversation is too long",
+    bad_request: "The agent refused the request",
+    process: "The agent's program stopped",
+    unknown: "The turn failed",
+  };
+
   export let events: ChatEvent[] = [];
   export let liveText = "";
   export let liveReasoning = "";
@@ -133,7 +144,7 @@
     | { key: string; kind: "reasoning"; text: string }
     | { key: string; kind: "checkpoint"; text: string }
     | { key: string; kind: "system"; text: string }
-    | { key: string; kind: "route"; text: string }
+    | { key: string; kind: "error"; class: string; message: string }
     | { key: string; kind: "widget"; fence: string; payload: unknown }
     | { key: string; kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
     | {
@@ -175,9 +186,8 @@
         out.push({ key, kind: "checkpoint", text: e.summary });
       } else if (e.kind === "system") {
         out.push({ key, kind: "system", text: e.text });
-      } else if (e.kind === "route_transition") {
-        const cd = e.cooldown_secs ? ` (cooldown: ${e.cooldown_secs}s)` : "";
-        out.push({ key, kind: "route", text: `${e.from_provider} → ${e.to_provider} (${e.reason}${cd})` });
+      } else if (e.kind === "error") {
+        out.push({ key, kind: "error", class: e.class, message: e.message });
       } else if (e.kind === "widget") {
         out.push({ key, kind: "widget", fence: e.fence, payload: e.payload });
       } else if (e.kind === "artifact") {
@@ -360,8 +370,11 @@
       </details>
     {:else if item.kind === "system"}
       <div class="tool-line">ⓘ {item.text.slice(0, 300)}</div>
-    {:else if item.kind === "route"}
-      <div class="tool-line route">⇄ {item.text.slice(0, 300)}</div>
+    {:else if item.kind === "error"}
+      <div class="turn-error" role="alert">
+        <span class="err-class">{ERROR_WORDS[item.class] ?? "The turn failed"}</span>
+        <span class="err-msg">{item.message}</span>
+      </div>
     {:else if item.kind === "widget"}
       {#if item.fence === "parzi-diagram"}
         <Diagram data={item.payload} />
@@ -542,8 +555,24 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .tool-line.route {
-    color: var(--accent);
+  .turn-error {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+    background: color-mix(in srgb, var(--bad) 8%, transparent);
+    font-size: 12px;
+  }
+  .err-class {
+    color: var(--bad);
+    font-weight: 600;
+  }
+  .err-msg {
+    color: var(--text-2);
+    white-space: pre-wrap;
+    word-break: break-word;
   }
   .think {
     background: var(--input);

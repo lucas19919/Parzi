@@ -32,39 +32,50 @@ export type ChatEvent =
   | { kind: "tool_result"; id: string; name: string; ok: boolean; output: string; ms: number }
   | { kind: "widget"; fence: string; payload: unknown }
   | { kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
-  | { kind: "route_transition"; from_provider: string; to_provider: string; reason: string; cooldown_secs?: number | null }
+  /** A turn that failed, in the vendor's words. `class`: auth, rate_limit,
+      overloaded, context_overflow, bad_request, process or unknown. */
+  | { kind: "error"; message: string; class: string }
   | { kind: "checkpoint"; summary: string };
 
-export interface ModelInfo {
-  id: string;
-  name: string;
-  context_limit: number;
-  output_limit: number;
-  price_in: number;
-  price_out: number;
-  tools: boolean;
-  vision: boolean;
-  legacy: boolean;
-  is_default: boolean;
-  family: string;
-  family_name: string;
-  variant: string | null;
+/** Where an agent stands, as its own program reported it. */
+export type ProviderState =
+  | "ready"
+  | "signed_out"
+  | "not_installed"
+  | "disabled"
+  | "error"
+  /** Installed; sign-in shows on the first turn. */
+  | "unchecked";
+
+/** One plan window ("Session", "Weekly") and how much of it is used. */
+export interface UsageWindow {
+  label: string;
+  used_percent: number;
+  /** Unix seconds, when the vendor says. */
+  resets_at?: number;
 }
 
-export type Billing = "subscription" | "api_key" | "none";
+export interface ProviderModel {
+  /** What the agent takes as its model argument. */
+  id: string;
+  name: string;
+  is_default: boolean;
+  /** Effort levels in the agent's own words; empty = no effort knob. */
+  efforts: string[];
+}
 
-export interface ModelRow {
+export interface ProviderStatus {
   provider: string;
-  auth: "ok" | "missing" | "expired";
-  /** Class of the credential that won: a plan, a pay-per-token key, or nothing. */
-  billing: Billing;
-  /** Sign-in hint when missing/expired; empty when ok. */
+  state: ProviderState;
+  version?: string;
+  /** Signed-in plan or account ("Claude Max"). */
+  account?: string;
+  /** What to do next when not ready, or the check's own message. */
   hint: string;
-  /** Plan label when signed in ("Claude Max", "ChatGPT / Codex"). */
-  account?: string | null;
-  /** Settings may store an API key for this provider. */
-  takes_key: boolean;
-  models: ModelInfo[];
+  usage: UsageWindow[];
+  models: ProviderModel[];
+  /** Unix seconds of the check. */
+  checked_at: number;
 }
 
 export type UiEvent =
@@ -129,22 +140,24 @@ export interface SkillInstallReport {
   skipped: string[];
 }
 
-export interface EffortOption {
-  id: string;
-  label: string;
-  hint: string;
+export interface ProviderEntry {
+  /** Off = the picker and Smart Auto leave this agent out. */
+  enabled: boolean;
+  /** The agent's program; absent = its usual name on PATH. */
+  binary?: string;
+  /** The model a new thread starts on; absent = the agent's own default. */
+  default_model?: string;
 }
 
 export interface ParziConfig {
   version: number;
-  default_provider: string;
-  providers: Record<string, { default_model: string; base_url?: string }>;
+  providers: Record<string, ProviderEntry>;
   lanes: { default_mode: string; default_allowed_tools: string[]; max_steps: number };
   mcp: { servers: Record<string, unknown> };
   orchestrator: { max_concurrent: number; mcp_idle_kill_secs: number; queue_when_busy: boolean };
-  routing: { auto_failover: boolean; auto_order: string[]; keys_in_auto: boolean };
+  /** Smart Auto starts a new thread on the first ready agent in this order. */
+  routing: { order: string[] };
   budget?: { max_cost_usd: number | null; max_tokens: number | null };
-  catalog_refresh: boolean;
   favorite_models: string[];
 }
 
@@ -271,8 +284,6 @@ export const api = {
   windowMaximize: () => invoke<boolean>("window_maximize"),
   windowClose: () => invoke<void>("window_close"),
   windowStartDragging: () => invoke<void>("window_start_dragging"),
-  loginAntigravity: () => invoke<string>("login_antigravity"),
-  logoutAntigravity: () => invoke<void>("logout_antigravity"),
   migrateTasks: (project: string) => invoke<number>("migrate_tasks", { project }),
   listThreads: () => invoke<SessionMeta[]>("list_threads"),
   getThread: (id: string) =>
@@ -358,16 +369,13 @@ export const api = {
     invoke<SessionMeta>("fork_thread", { id, at: at ?? null }),
   approveTool: (key: string, allow: boolean) =>
     invoke<void>("approve_tool", { key, allow }),
-  getModels: (refresh?: boolean) =>
-    invoke<ModelRow[]>("get_models", { refresh: refresh ?? null }),
-  /** Live catalog for one provider (pick a provider, then its models). */
-  refreshProvider: (provider: string) =>
-    invoke<ModelRow>("refresh_provider", { provider }),
-  saveKey: (provider: string, value: string) =>
-    invoke<void>("save_key", { provider, value }),
-  deleteKey: (provider: string) => invoke<void>("delete_key", { provider }),
+  /** Where each agent stood when last asked. Instant. */
+  providerStatuses: () => invoke<ProviderStatus[]>("provider_statuses"),
+  /** Ask the agents' own programs again (none named = all). Slow: the
+      slowest vendor sets the pace. Spends no quota. */
+  refreshProviders: (ids?: string[]) =>
+    invoke<ProviderStatus[]>("refresh_providers", { ids: ids ?? null }),
   toggleFavorite: (spec: string) => invoke<string[]>("toggle_favorite", { spec }),
-  effortOptions: (provider: string) => invoke<EffortOption[]>("effort_options", { provider }),
   getThemeCss: () => invoke<string>("get_theme_css"),
   getTheme: () => invoke<Theme>("get_theme"),
   resetTheme: () => invoke<void>("reset_theme"),
@@ -441,6 +449,11 @@ export const api = {
 
 export function onRunEvent(cb: (e: UiEvent) => void) {
   return listen<UiEvent>("parzi://run-event", (ev) => cb(ev.payload));
+}
+
+/** A fresh provider board, whoever asked for it (start-up, Settings). */
+export function onProviders(cb: (board: ProviderStatus[]) => void) {
+  return listen<ProviderStatus[]>("parzi://providers", (ev) => cb(ev.payload));
 }
 
 /* ---------- hub (workspaces, GitHub, project creation — PLAN.md §1, §2) ---------- */

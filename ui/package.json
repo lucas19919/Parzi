@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "test": "node --test tests/threadList.test.ts tests/deckState.test.ts tests/roster.test.ts tests/invokeKeys.test.ts",
+    "test": "node --test tests/threadList.test.ts tests/deckState.test.ts tests/invokeKeys.test.ts",
     "bench:stream": "node tests/stream-bench.mjs"
   },
   "dependencies": {

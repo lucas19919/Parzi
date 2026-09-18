@@ -6,20 +6,24 @@
   import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
   import { portal } from "./portal";
-  import { api, hub } from "./api";
-  import { updateProviderRow } from "./modelStore";
-  import type { ModelRow } from "./api";
+  import { api, hub, type ProviderStatus } from "./api";
+  import { ageOf, checking, refreshBoard } from "./providerStore";
+  import {
+    AUTO_ROW, PROVIDER_ORDER, allRows, effortHint, effortLabel as effortWord, effortsFor,
+    fitEffort, isUsable, nameOf, rowSub, shownOf, type PickRow,
+  } from "./providerRows";
 
   export let input = "";
   export let model = "";
-  export let effort: "low" | "medium" | "high" | "extra" | "ultra" = "medium";
+  /** Parzi's pill (low…ultra) or the chosen model's own word for it. */
+  export let effort = "medium";
   export let streaming = false;
   export let currentProject = "default";
   export let currentTask: string | null = null;
   export let currentSubfolder: string | null = null;
   export let branch = "";
   export let tokens = 0;
-  export let models: ModelRow[] = [];
+  export let board: ProviderStatus[] = [];
   export let projectRoot = "";
   export let attachments: string[] = [];
   export let mode: "chat" | "plan" | "build" = "chat";
@@ -90,9 +94,6 @@
   let showModelPicker = false;
   /** Left-rail selection: a roster provider id, or "__fav" for starred. */
   let railSel = "";
-  /** Provider with a live catalog pull in flight (cached rows stay visible). */
-  let refreshingProvider: string | null = null;
-  const refreshedAt = new Map<string, number>();
   let effortOpen = false;
   let permOpen = false;
   let wsOpen = false;
@@ -117,198 +118,53 @@
   let slashOpen = false;
   let slashIndex = 0;
 
-  /** Roster, in picker order. Mirrors the backend `PROVIDERS` list. */
-  const PROVIDER_ORDER = ["claude", "codex", "antigravity", "opencode", "xai"];
-  const PROVIDER_NAME: Record<string, string> = {
-    claude: "Claude",
-    codex: "Codex",
-    antigravity: "Antigravity",
-    opencode: "OpenCode",
-    xai: "Grok",
-  };
+  /** An agent asked less than this long ago is not asked again on open. */
+  const FRESH_SECS = 300;
 
-
-  interface FamRow {
-    provider: string;
-    auth: string;
-    billing: string;
-    family: string;
-    label: string;
-    value: string;
-    legacy: boolean;
-  }
-
-  /** Collapsed families: one row per (provider, family), variant follows effort. */
-  $: allFams = (() => {
-    const seen = new Map<string, FamRow>();
-    for (const r of models) {
-      for (const m of r.models) {
-        const family = m.family || m.id;
-        const key = `${r.provider}/${family}`;
-        if (!seen.has(key)) {
-          seen.set(key, {
-            provider: r.provider,
-            auth: r.auth,
-            billing: r.billing ?? "none",
-            family,
-            label: m.family_name || m.name || m.id,
-            value: `${r.provider}/${family}`,
-            legacy: !!m.legacy,
-          });
-        }
-      }
-    }
-    return [...seen.values()];
-  })();
-
+  $: rows = allRows(board);
   $: q = modelQuery.trim().toLowerCase();
 
-  function matches(row: FamRow): boolean {
+  function matches(row: PickRow): boolean {
     if (!q) return true;
     return (
       row.label.toLowerCase().includes(q) ||
-      row.provider.toLowerCase().includes(q) ||
-      (PROVIDER_NAME[row.provider] ?? "").toLowerCase().includes(q) ||
-      row.family.toLowerCase().includes(q)
+      row.value.toLowerCase().includes(q) ||
+      nameOf(row.provider).toLowerCase().includes(q)
     );
   }
 
-  /** Short status for a provider header. */
-  function statusOf(r: ModelRow): { label: string; kind: "sub" | "key" | "off" | "expired" } {
-    if (r.auth === "expired") return { label: "Expired", kind: "expired" };
-    if (r.auth !== "ok") return { label: "Sign in", kind: "off" };
-    if (r.billing === "subscription") return { label: r.account || "Subscription", kind: "sub" };
-    return { label: "API key", kind: "key" };
-  }
-
-  /** Synthetic picker row: Smart Auto routes across signed-in providers. */
-  const AUTO_ROW: FamRow = {
-    provider: "auto",
-    auth: "ok",
-    billing: "none",
-    family: "auto",
-    label: "Smart Auto",
-    value: "auto",
-    legacy: false,
-  };
-
-  $: mainItems = ((): FamRow[] => {
-    if (q) return [AUTO_ROW, ...allFams].filter(matches);
+  $: mainItems = ((): PickRow[] => {
+    if (q) return [AUTO_ROW, ...rows].filter(matches);
     if (railSel === "__auto") return [AUTO_ROW];
     if (railSel === "__fav") return [...favRows];
     if (!railSel) return [];
-    return allFams.filter((r) => r.provider === railSel);
+    return rows.filter((r) => r.provider === railSel);
   })();
   $: if (modelIndex >= mainItems.length && mainItems.length) modelIndex = 0;
 
-  $: activeModelInfo = (() => {
-    for (const r of models) {
-      for (const m of r.models) {
-        if (`${r.provider}/${m.id}` === model || m.id === model) {
-          return { provider: r.provider, name: m.name || m.id, auth: r.auth };
-        }
-      }
-    }
-    if (model === "auto") return { provider: "auto", name: "Smart Auto", auth: "ok" };
-    const [p, ...rest] = model.split("/");
-    return { provider: p || "other", name: rest.join("/") || model || "Select model", auth: "ok" };
-  })();
-
-  $: activeFamilyLabel = (() => {
-    const [p, ...rest] = model.split("/");
-    const fam = rest.join("/");
-    for (const r of models) {
-      if (r.provider !== p) continue;
-      for (const m of r.models) {
-        if (m.id === fam || (m.family && `${m.family}` === fam)) {
-          return { name: m.family_name || m.name || m.id, tier: "" };
-        }
-      }
-    }
-    return { name: activeModelInfo.name, tier: "" };
-  })();
-
-  interface EffortOpt {
-    id: string;
-    label: string;
-    hint: string;
-  }
+  $: shown = shownOf(model, board);
+  $: railStatus = board.find((b) => b.provider === railSel);
 
   let favorites: string[] = [];
-  let effortOpts: EffortOpt[] = [
-    { id: "low", label: "Low", hint: "4k output" },
-    { id: "medium", label: "Medium", hint: "16k output" },
-    { id: "high", label: "High", hint: "64k output" },
-    { id: "extra", label: "Extra", hint: "128k output" },
-    { id: "ultra", label: "Ultra", hint: "256k output" },
-  ];
-  const effortCache = new Map<string, EffortOpt[]>();
-
   $: favRows = favorites
-    .map((v) => allFams.find((r) => r.value === v))
-    .filter((r): r is FamRow => !!r);
-  $: effortLabel = effortOpts.find((o) => o.id === effort)?.label ?? effort;
+    .map((v) => rows.find((r) => r.value === v))
+    .filter((r): r is PickRow => !!r);
+
+  /** What the chosen model takes, in its agent's words; empty = no knob. */
+  $: efforts = effortsFor(model, board);
+  $: fitTo(efforts);
+  $: effortText = efforts.length ? effortWord(effort) : "";
   $: modeLabel = mode === "chat" ? "Chat" : mode === "plan" ? "Plan" : "Build";
   $: permTitle = PERMS.find((p) => p.id === permission)?.title ?? "Full access";
 
-  $: variantFor = (row: FamRow) => {
-    const fam = row.family;
-    if (fam.startsWith("gemini-3.8-flash") || fam.startsWith("gemini-3.7-flash") || fam.startsWith("gemini-3.6-flash")) {
-      // Only low/medium/high variants exist: upper rungs ride high.
-      return effort === "low" ? "low" : effort === "medium" ? "medium" : "high";
-    }
-    if (fam === "gemini-3.1-pro") return effort === "low" ? "low" : "high";
-    return "";
-  };
-
-  /** Second line of a picker row: provider · plan, plus variant/legacy. */
-  function planSub(row: FamRow): string {
-    if (row.provider === "auto") return "Routes across your signed-in providers";
-    const parts: string[] = [PROVIDER_NAME[row.provider] ?? row.provider];
-    const pr = models.find((r) => r.provider === row.provider);
-    const plan =
-      pr?.account ||
-      (pr?.billing === "subscription"
-        ? "Subscription"
-        : pr?.billing === "api_key"
-          ? "API key"
-          : "");
-    if (plan) parts.push(plan);
-    const v = variantFor(row);
-    if (v) parts.push(`${v} variant`);
-    if (row.legacy) parts.push("legacy");
-    return parts.join(" · ");
+  /** Keep the effort when the new model takes it; otherwise the closest fit. */
+  function fitTo(list: string[]) {
+    const next = fitEffort(effort, list);
+    if (next !== effort) effort = next;
   }
-
-  async function refreshEffort(provider: string) {
-    if (effortCache.has(provider)) {
-      applyEffortOpts(effortCache.get(provider)!);
-      return;
-    }
-    try {
-      const opts = await api.effortOptions(provider);
-      effortCache.set(provider, opts);
-      applyEffortOpts(opts);
-    } catch {
-      /* keep defaults offline */
-    }
-  }
-
-  function applyEffortOpts(opts: EffortOpt[]) {
-    if (!opts.length) return;
-    effortOpts = opts;
-    if (!opts.some((o) => o.id === effort)) {
-      setEffort(opts[0].id);
-    }
-  }
-
-  type EffortId = "low" | "medium" | "high" | "extra" | "ultra";
-  const EFFORT_IDS: EffortId[] = ["low", "medium", "high", "extra", "ultra"];
 
   function setEffort(id: string) {
-    // Legacy "med" still resolves (old defaults, queued runs).
-    const norm = id === "med" ? "medium" : id;
-    if ((EFFORT_IDS as string[]).includes(norm)) effort = norm as typeof effort;
+    effort = id;
   }
 
   function setMode(m: "chat" | "plan" | "build") {
@@ -330,15 +186,12 @@
   function selectModel(id: string) {
     model = id;
     showModelPicker = false;
-    refreshEffort(id.split("/")[0]);
     dispatch("modelChange", { model: id });
   }
 
-  function pickFamily(row: FamRow) {
-    // Keyless `opencode serve` answers on loopback without credentials, so
-    // its models stay pickable: a dead server fails honestly at send time.
-    const openServe = row.provider === "opencode";
-    if (row.auth !== "ok" && !openServe) {
+  /** An agent that cannot start a turn opens its Settings card instead. */
+  function pickRow(row: PickRow) {
+    if (!row.usable) {
       dispatch("command", { name: "keys", arg: row.provider });
       showModelPicker = false;
       return;
@@ -495,22 +348,14 @@
   function providerOfModel(m: string): string | null {
     const [p] = m.split("/");
     if (m === "auto" || !p) return null;
-    return PROVIDER_ORDER.includes(p) && models.some((r) => r.provider === p) ? p : null;
+    return PROVIDER_ORDER.includes(p) && board.some((r) => r.provider === p) ? p : null;
   }
 
-  /** Live catalog for one provider; cached rows stay visible meanwhile. */
-  async function refreshProviderRow(p: string) {
-    const last = refreshedAt.get(p) ?? 0;
-    if (Date.now() - last < 45_000) return;
-    refreshedAt.set(p, Date.now());
-    refreshingProvider = p;
-    try {
-      updateProviderRow(await api.refreshProvider(p));
-    } catch {
-      /* picker never blocks on network */
-    } finally {
-      if (refreshingProvider === p) refreshingProvider = null;
-    }
+  /** Ask the agent again when its answer is old; the menu never waits. */
+  function freshen(p: string) {
+    if (!p || p.startsWith("__")) return;
+    if (ageOf(board.find((b) => b.provider === p)) < FRESH_SECS) return;
+    void refreshBoard([p]).catch(() => {});
   }
 
   /** Rail switch: the model pane updates to the right, cursor stays put. */
@@ -518,7 +363,7 @@
     railSel = p;
     modelQuery = "";
     modelIndex = 0;
-    if (p && p !== "__fav") void refreshProviderRow(p);
+    freshen(p);
     setTimeout(() => searchInputEl?.focus(), 30);
   }
 
@@ -534,9 +379,9 @@
       model === "auto"
         ? "__auto"
         : (providerOfModel(model) ??
-          PROVIDER_ORDER.find((p) => models.some((r) => r.provider === p)) ??
+          PROVIDER_ORDER.find((p) => board.some((r) => r.provider === p)) ??
           "");
-    if (railSel) void refreshProviderRow(railSel);
+    freshen(railSel);
     placePop(modelBtn, "model");
     api
       .getConfig()
@@ -544,7 +389,6 @@
         favorites = c.favorite_models ?? [];
       })
       .catch(() => {});
-    refreshEffort(activeModelInfo.provider);
     setTimeout(() => searchInputEl?.focus(), 30);
   }
 
@@ -564,7 +408,6 @@
       closeInlinePops();
       wsOpen = false;
       placePop(effortBtn, "effort");
-      refreshEffort(activeModelInfo.provider);
     }
   }
 
@@ -623,7 +466,7 @@
     if (e.ctrlKey && ["1", "2", "3", "4", "5"].includes(e.key)) {
       e.preventDefault();
       const row = mainItems[Number(e.key) - 1];
-      if (row) pickFamily(row);
+      if (row) pickRow(row);
       return;
     }
     if (e.key === "ArrowDown") {
@@ -636,7 +479,7 @@
       e.preventDefault();
       e.stopPropagation();
       const row = mainItems[modelIndex];
-      if (row) pickFamily(row);
+      if (row) pickRow(row);
     } else if (e.key === "Escape") {
       showModelPicker = false;
     }
@@ -844,12 +687,14 @@
     <div class="controls">
       <div class="model-zone ctl-zone">
         <button bind:this={modelBtn} class="ctl" class:open={showModelPicker} on:click|stopPropagation={togglePicker} title="Model — open picker">
-          {#if hasMark(activeModelInfo.provider)}
-            <ProviderLogo provider={activeModelInfo.provider} size={13} />
+          {#if shown.provider === "auto"}
+            <span class="ctl-glyph"><Icon d={I.spark} size={13} /></span>
+          {:else if hasMark(shown.provider)}
+            <ProviderLogo provider={shown.provider} size={13} />
           {:else}
             <span class="ctl-glyph"><Icon d={I.model} size={13} /></span>
           {/if}
-          <span class="truncate">{activeFamilyLabel.name}</span>
+          <span class="truncate">{shown.name}</span>
           <span class="chev"><Icon d={I.chevD} size={11} /></span>
         </button>
       </div>
@@ -858,7 +703,7 @@
 
       <div class="effort-zone ctl-zone">
         <button bind:this={effortBtn} class="ctl" class:open={effortOpen} on:click|stopPropagation={toggleEffort} title="Effort and mode">
-          <span class="truncate">{effortLabel} · {modeLabel}</span>
+          <span class="truncate">{effortText ? `${effortText} · ${modeLabel}` : modeLabel}</span>
           <span class="chev"><Icon d={I.chevD} size={11} /></span>
         </button>
       </div>
@@ -935,12 +780,12 @@
           <Icon d={I.search} size={13} />
           <input
             bind:this={searchInputEl}
-            placeholder={q ? "Search all models..." : railSel === "__fav" ? "Starred models" : railSel === "__auto" ? "Smart Auto routing" : `Search ${(PROVIDER_NAME[railSel] ?? railSel)} models...`}
+            placeholder={q ? "Search all models..." : railSel === "__fav" ? "Starred models" : railSel === "__auto" ? "Smart Auto routing" : `Search ${nameOf(railSel)} models...`}
             bind:value={modelQuery}
             on:keydown={onModelKey}
           />
-          {#if refreshingProvider && refreshingProvider === railSel}
-            <span class="spin" title="Refreshing live catalog" />
+          {#if $checking.has(railSel) || $checking.has("*")}
+            <span class="spin" title="Asking the agent" />
           {/if}
         </div>
         <div class="pick-body">
@@ -964,15 +809,14 @@
               </button>
             {/if}
             {#each PROVIDER_ORDER as p}
-              {@const pr = models.find((r) => r.provider === p)}
+              {@const pr = board.find((r) => r.provider === p)}
               {#if pr}
-                {@const st = statusOf(pr)}
                 <button
                   class="rail-row"
                   class:on={railSel === p}
-                  class:dim={st.kind === "off" || st.kind === "expired"}
+                  class:dim={!isUsable(pr)}
                   on:click={() => selectRail(p)}
-                  title={st.kind === "off" || st.kind === "expired" ? `${PROVIDER_NAME[p] ?? p} — ${pr.hint || "Not signed in"}` : (PROVIDER_NAME[p] ?? p)}
+                  title={isUsable(pr) ? nameOf(p) : `${nameOf(p)} — ${pr.hint}`}
                 >
                   {#if hasMark(p)}
                     <ProviderLogo provider={p} size={18} />
@@ -984,23 +828,20 @@
             {/each}
           </div>
           <div class="model-list">
-            {#if railSel !== "__fav"}
-              {@const pr = models.find((r) => r.provider === railSel)}
-              {@const st = pr ? statusOf(pr) : null}
-              {#if pr && st && (st.kind === "off" || st.kind === "expired")}
-                <div class="prov-head">
-                  <button
-                    class="signin"
-                    on:click={() => { dispatch("command", { name: "keys", arg: pr.provider }); showModelPicker = false; }}
-                  >{pr.hint || "Sign in"}</button>
-                </div>
-              {/if}
+            {#if !q && railStatus && !isUsable(railStatus)}
+              <div class="prov-head">
+                <button
+                  class="signin"
+                  title="Open this agent in Settings"
+                  on:click={() => { dispatch("command", { name: "keys", arg: railStatus?.provider ?? "" }); showModelPicker = false; }}
+                >{railStatus.hint || "Not available"}</button>
+              </div>
             {/if}
             {#each mainItems as row, i (row.value)}
               <button
                 class="mrow"
                 class:on={row.value === model || i === modelIndex}
-                on:click={() => pickFamily(row)}
+                on:click={() => pickRow(row)}
                 on:mousemove={() => (modelIndex = i)}
               >
                 {#if q && hasMark(row.provider)}
@@ -1008,11 +849,11 @@
                 {/if}
                 <span class="meta">
                   <span class="nm">{row.label}</span>
-                  <span class="sub">{planSub(row)}</span>
+                  <span class="sub">{rowSub(row, board)}</span>
                 </span>
                 {#if i < 5}<kbd class="kbd">Ctrl+{i + 1}</kbd>{/if}
-                {#if row.auth !== "ok" && row.provider !== "opencode"}
-                  <span class="nokey">{row.auth === "expired" ? "expired" : "sign in"}</span>
+                {#if !row.usable}
+                  <span class="nokey">unavailable</span>
                 {/if}
                 {#if row.provider !== "auto"}
                 <span
@@ -1029,11 +870,11 @@
             {/each}
             {#if mainItems.length === 0}
               <div class="empty">
-                {refreshingProvider === railSel
-                  ? "Fetching live catalog…"
+                {$checking.has(railSel) || $checking.has("*")
+                  ? "Asking the agent…"
                   : q
                     ? "No matching models found"
-                    : "No models available — open Settings › Models"}
+                    : "No models available — open Settings › Providers"}
               </div>
             {/if}
           </div>
@@ -1043,13 +884,15 @@
 
     {#if effortOpen}
       <div use:portal class="pop effort-pop from-left" class:from-top={effortBelow} style={effortPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
-        <div class="sec-h">Effort</div>
-        {#each effortOpts as opt}
-          <button class="opt-row" class:on={effort === opt.id} on:click={() => setEffort(opt.id)}>
-            <span class="meta"><span class="nm">{opt.label}</span><span class="sub">{opt.hint}</span></span>
-            {#if effort === opt.id}<span class="tick"><Icon d={I.check} size={12} /></span>{/if}
-          </button>
-        {/each}
+        {#if efforts.length}
+          <div class="sec-h">Effort</div>
+          {#each efforts as e}
+            <button class="opt-row" class:on={effort === e} on:click={() => setEffort(e)}>
+              <span class="meta"><span class="nm">{effortWord(e)}</span><span class="sub">{effortHint(e)}</span></span>
+              {#if effort === e}<span class="tick"><Icon d={I.check} size={12} /></span>{/if}
+            </button>
+          {/each}
+        {/if}
         <div class="sec-h">Mode</div>
         {#each MODES as m}
           <button class="opt-row" class:on={mode === m.id} on:click={() => setMode(m.id)}>

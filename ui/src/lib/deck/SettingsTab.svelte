@@ -2,12 +2,12 @@
   import { createEventDispatcher } from "svelte";
   import { PROJECT_STATUSES, type Project } from "../api";
   import { onMount } from "svelte";
-  import { ensureModels, modelRows } from "../modelStore";
+  import { board, ensureBoard } from "../providerStore";
   import ModelPicker from "../ModelPicker.svelte";
 
   export let project: Project;
 
-  onMount(() => { void ensureModels(false); });
+  onMount(() => { void ensureBoard().catch(() => {}); });
 
   const dispatch = createEventDispatcher<{ save: { project: Project } }>();
 
@@ -60,15 +60,15 @@
 
   <div class="fld">
     <span>Header</span>
-    <ModelPicker label="Header" models={$modelRows} bind:value={draft.roster.header} />
+    <ModelPicker label="Header" board={$board} bind:value={draft.roster.header} />
   </div>
   <div class="fld">
     <span>Orchestrator</span>
-    <ModelPicker label="Orchestrator" models={$modelRows} bind:value={draft.roster.orchestrator} />
+    <ModelPicker label="Orchestrator" board={$board} bind:value={draft.roster.orchestrator} />
   </div>
   <div class="fld">
     <span>Coder</span>
-    <ModelPicker label="Coder" models={$modelRows} bind:value={draft.roster.coder} />
+    <ModelPicker label="Coder" board={$board} bind:value={draft.roster.coder} />
   </div>
 
   <label class="fld">

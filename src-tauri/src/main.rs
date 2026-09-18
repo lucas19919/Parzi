@@ -671,7 +671,7 @@ async fn refresh_providers(
     ids: Option<Vec<String>>,
 ) -> Result<Vec<ProviderStatus>, String> {
     let all = in_roster_order(state.orch.refresh_providers(&ids.unwrap_or_default()).await);
-    let _ = app.emit("providers", &all);
+    let _ = app.emit("parzi://providers", &all);
     Ok(all)
 }
 
@@ -1979,7 +1979,7 @@ fn main() {
             let board_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let all = in_roster_order(board.refresh_providers(&[]).await);
-                let _ = board_app.emit("providers", &all);
+                let _ = board_app.emit("parzi://providers", &all);
             });
             // Long-lived queue pump + boot kick for sessions left Queued.
             // R-5: runs that were still queued when the app closed are put
