@@ -101,6 +101,13 @@ impl EngineRun {
             self.p.store.append(&sid, &Event::User { text })?;
         }
         self.p.store.set_status(&sid, SessionStatus::Active)?;
+        tracing::info!(
+            session = %sid,
+            provider = %self.p.provider_id,
+            model = self.p.model.as_deref().unwrap_or("default"),
+            cwd = %self.p.cwd,
+            "run started"
+        );
         let mut seen = self.p.store.events(&sid)?.len();
         let mut text = self.opening(prompt);
         let mut turns = 0u32;
@@ -123,6 +130,13 @@ impl EngineRun {
                     return Ok(());
                 }
                 Outcome::Failed(e) => {
+                    tracing::warn!(
+                        session = %sid,
+                        provider = %self.p.provider_id,
+                        class = e.class.as_str(),
+                        "turn failed: {}",
+                        e.message
+                    );
                     let _ = self.p.store.append(
                         &sid,
                         &Event::Error {
@@ -152,6 +166,7 @@ impl EngineRun {
             text = fresh.join("\n\n");
         }
         self.finish(SessionStatus::Done).await;
+        tracing::info!(session = %sid, turns, "run done");
         self.p.sink.emit(RunEvent::Done { turns });
         Ok(())
     }
@@ -168,7 +183,10 @@ impl EngineRun {
             }
         }
         for a in self.p.attachments.iter().filter(|a| !a.is_image()) {
-            parts.push(format!("<file path=\"{}\">\n{}\n</file>", a.path, a.snippet));
+            parts.push(format!(
+                "<file path=\"{}\">\n{}\n</file>",
+                a.path, a.snippet
+            ));
         }
         parts.push(prompt.to_string());
         parts.join("\n\n")
@@ -183,7 +201,9 @@ impl EngineRun {
             .filter_map(|e| match e {
                 Event::User { text } => Some(format!("user: {text}")),
                 Event::Assistant { text, .. } => Some(format!("assistant: {text}")),
-                Event::Checkpoint { summary } => Some(format!("summary of earlier turns: {summary}")),
+                Event::Checkpoint { summary } => {
+                    Some(format!("summary of earlier turns: {summary}"))
+                }
                 _ => None,
             })
             .collect();
@@ -220,7 +240,11 @@ impl EngineRun {
             .filter(|a| a.is_image())
             .map(|a| {
                 let p = PathBuf::from(&a.path);
-                if p.is_absolute() { p } else { base.join(p) }
+                if p.is_absolute() {
+                    p
+                } else {
+                    base.join(p)
+                }
             })
             .collect()
     }
@@ -346,17 +370,25 @@ impl EngineRun {
                         args: input,
                     },
                 );
-                self.p.sink.emit(RunEvent::ToolCall { id, name: shown, label });
+                self.p.sink.emit(RunEvent::ToolCall {
+                    id,
+                    name: shown,
+                    label,
+                });
             }
-            ProviderEvent::ToolFinished { id, name, ok, output } => {
+            ProviderEvent::ToolFinished {
+                id,
+                name,
+                ok,
+                output,
+            } => {
                 let (ok, output) = match self.p.host.tool_finished(&id).await {
                     Some(refusal) => (false, format!("{refusal}\n\n{output}")),
                     None => (ok, output),
                 };
-                let ms = turn
-                    .started
-                    .remove(&id)
-                    .map_or(0, |t| t.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
+                let ms = turn.started.remove(&id).map_or(0, |t| {
+                    t.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+                });
                 let shown = display_name(&name);
                 let output: String = output.chars().take(OUTPUT_CHARS).collect();
                 let _ = self.p.store.append(
@@ -369,9 +401,18 @@ impl EngineRun {
                         ms,
                     },
                 );
-                self.p.sink.emit(RunEvent::ToolResult { id, name: shown, ok, ms });
+                self.p.sink.emit(RunEvent::ToolResult {
+                    id,
+                    name: shown,
+                    ok,
+                    ms,
+                });
             }
-            ProviderEvent::Usage { input, output, cost_usd } => {
+            ProviderEvent::Usage {
+                input,
+                output,
+                cost_usd,
+            } => {
                 let cost = cost_usd.unwrap_or(0.0);
                 let _ = self.p.store.add_usage(sid, input, output, cost);
                 self.p.sink.emit(RunEvent::Usage {
@@ -396,7 +437,10 @@ impl EngineRun {
                 self.p.status.update_usage(&self.p.provider_id, &windows);
             }
             ProviderEvent::Notice(text) => {
-                let _ = self.p.store.append(sid, &Event::System { text: text.clone() });
+                let _ = self
+                    .p
+                    .store
+                    .append(sid, &Event::System { text: text.clone() });
                 self.p.sink.emit(RunEvent::Notice { text });
             }
         }
@@ -423,7 +467,10 @@ impl EngineRun {
             .p
             .store
             .append(&self.p.session_id, &Event::System { text: text.clone() });
-        crate::orchestrator::set_run_note(&self.p.session_id, Some(crate::orchestrator::BUDGET_NOTE));
+        crate::orchestrator::set_run_note(
+            &self.p.session_id,
+            Some(crate::orchestrator::BUDGET_NOTE),
+        );
         self.p.sink.emit(RunEvent::Notice { text });
         self.finish(SessionStatus::Idle).await;
     }
@@ -436,7 +483,11 @@ impl EngineRun {
                 self.p.store.get(&self.p.session_id).map(|m| m.status),
                 Ok(SessionStatus::Killed)
             );
-        let status = if killed { SessionStatus::Killed } else { status };
+        let status = if killed {
+            SessionStatus::Killed
+        } else {
+            status
+        };
         let _ = self.p.store.set_status(&self.p.session_id, status);
     }
 }

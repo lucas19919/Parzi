@@ -20,11 +20,13 @@ tokio-util = "0.7"
 parzi-core = { path = "../crates/parzi-core" }
 parzi-providers = { path = "../crates/parzi-providers" }
 parzi-runtime = { path = "../crates/parzi-runtime" }
-keyring = "4"
 uuid = { version = "1", features = ["v4"] }
-# The shell logs the same way the crates it drives do (R-5 queue recovery).
-# Already in the tree through parzi-core/-runtime, so nothing new is pulled.
+# The shell logs the same way the crates it drives do (R-5 queue recovery),
+# into a daily file under ~/.parzi/logs. The writer is the CLI's and the
+# date crate parzi-core's, so nothing new enters the tree.
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+chrono = "0.4"
 anyhow = "1"
 async-trait = "0.1"
 base64 = "0.22"
