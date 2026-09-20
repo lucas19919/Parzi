@@ -9,12 +9,9 @@
   export let title = "Parzi";
   export let subtitle = "";
   export let showExpand = false;
-  export let panelOpen = false;
-  export let agentLive = 0;
 
   const dispatch = createEventDispatcher<{
     expand: void;
-    togglePanel: void;
   }>();
 
   const I = WIN_ICON;
@@ -56,17 +53,6 @@
       {/key}
     </span>
   </div>
-  <div class="deck-controls">
-    <button class="deck-toggle" class:on={panelOpen} title={panelOpen ? "Collapse inspector (Ctrl+\\)" : "Expand inspector (Ctrl+\\)"}
-      aria-pressed={panelOpen} on:click={() => dispatch("togglePanel")}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="4" y="5" width="16" height="14" rx="2" />
-        <path d="M15 5v14" />
-        {#if panelOpen}<rect x="15" y="5" width="5" height="14" rx="1" fill="currentColor" stroke="none" opacity="0.55" />{/if}
-      </svg>
-      {#if agentLive > 0}<span class="deck-ind live" />{/if}
-    </button>
-  </div>
   <div class="window-controls">
     <button class="win-btn" title="Minimize" on:click={handleMin} tabindex="-1">
       <Icon d={I.min} size={12} />
@@ -91,7 +77,9 @@
     z-index: 100;
     user-select: none;
     -webkit-app-region: drag;
-    padding: 0 8px 0 16px;
+    /* Reserve the pinned window cluster so titles never slide under it. */
+    padding: 0 104px 0 16px;
+    box-sizing: border-box;
   }
   .drag-zone {
     flex: 1;
@@ -134,27 +122,12 @@
   .title-crumb .sub {
     color: var(--text-3);
   }
-  .deck-controls {
-    display: flex; align-items: center; gap: 2px; margin-right: 6px; padding-right: 8px;
-    border-right: 1px solid var(--line-2);
-    -webkit-app-region: no-drag;
-  }
-  .deck-ind {
-    position: absolute; top: 3px; right: 3px;
-    width: 5px; height: 5px; border-radius: 50%; background: var(--ok);
-    box-shadow: 0 0 6px var(--ok-line); animation: deck-pulse 2s ease-in-out infinite;
-  }
-  @keyframes deck-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-  .deck-toggle {
-    position: relative;
-    width: 26px; height: 24px; display: inline-flex; align-items: center; justify-content: center;
-    background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 0;
-    color: var(--text-3); cursor: pointer;
-    transition: background 0.12s ease, color 0.12s ease;
-  }
-  .deck-toggle:hover { background: var(--surface-2); color: var(--text); }
-  .deck-toggle.on { color: var(--text); }
   .window-controls {
+    /* Glued to the window corner: sidebar/dock widths animate, this never moves. */
+    position: fixed;
+    top: 5px;
+    right: 8px;
+    z-index: 200;
     display: flex;
     align-items: center;
     gap: 2px;

@@ -292,9 +292,6 @@ export interface SwarmNode {
 
 export const api = {
   appVersion: () => invoke<string>("app_version"),
-  windowMinimize: () => invoke<void>("window_minimize"),
-  windowMaximize: () => invoke<boolean>("window_maximize"),
-  windowClose: () => invoke<void>("window_close"),
   windowStartDragging: () => invoke<void>("window_start_dragging"),
   migrateTasks: (project: string) => invoke<number>("migrate_tasks", { project }),
   listThreads: () => invoke<SessionMeta[]>("list_threads"),

@@ -174,10 +174,10 @@
   .grip:focus-visible { outline: none; }
 
   .head {
-    display: flex; align-items: center; gap: 2px; height: 32px; flex: none; padding: 0 6px 0 8px;
+    display: flex; align-items: center; gap: 2px; height: 32px; flex: none; padding: 0 104px 0 8px;
     border-bottom: 1px solid var(--line-2);
   }
-  .head.chrome { -webkit-app-region: drag; user-select: none; }
+  .head.chrome { -webkit-app-region: drag; user-select: none; padding: 0 8px; }
   .head.chrome button { -webkit-app-region: no-drag; }
   .win-sep {
     width: 1px; height: 16px; margin: 0 4px; flex: none;

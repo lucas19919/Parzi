@@ -79,14 +79,6 @@
     flex: none;
     border-radius: 50%;
     background: var(--accent);
-    animation: pulse 1s infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 0.3; transform: scale(0.9); }
-    50% { opacity: 1; transform: scale(1.1); }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .activity-dot { animation: none; }
   }
   .activity-text {
     overflow: hidden;

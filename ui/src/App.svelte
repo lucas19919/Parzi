@@ -332,6 +332,12 @@
   }
   let sending = false;
   let liveRun: string | null = null;
+  /** Wallpaper only on a fresh draft: any open thread, pending send,
+      settings or wizard fades the stage to near-flat for readability. */
+  let inThread = false;
+  let isBlurredStage = false;
+  $: inThread = !!activeThreadId || sending || events.length > 0;
+  $: isBlurredStage = inThread || showSettings || !!hubView;
   let approval: { key: string; call: { id: string; name: string; args: unknown; lane: string } } | null = null;
   let toasts: { id: number; text: string; err: boolean }[] = [];
   let toastSeq = 0;
@@ -668,8 +674,17 @@
   }
 
   async function stopRun() {    if (liveRun) {
+      const id = liveRun;
       try {
-        await api.killRun(liveRun);
+        await api.killRun(id);
+        // The kill now emits a terminal event too, but the composer must
+        // never wait on it: a dropped event used to wedge Stop forever.
+        if (liveRun === id) {
+          liveRun = null;
+          clearLive();
+          if (activeThreadId) await refreshEvents();
+          await loadThreads();
+        }
         toast("Agent stopped");
       } catch (e) {
         toast(String(e), true);
@@ -680,6 +695,11 @@
   async function killSession(id: string) {
     try {
       await api.killRun(id);
+      if (liveRun === id) {
+        liveRun = null;
+        clearLive();
+        if (activeThreadId) await refreshEvents();
+      }
       toast("Run stopped");
       await loadThreads();
     } catch (e) {
@@ -1278,9 +1298,10 @@
 
 <div class="parzi-app-shell">
   <!-- Dynamic Background Wallpaper & Moody Atmosphere Grade -->
-  <div class="background-backdrop">
+  <div class="background-backdrop" class:blurred-stage={isBlurredStage}>
     {#if bg}<img src={bg} alt="" class="bg-img" />{/if}
     <div class="bg-overlay" />
+    <div class="bg-stage-wash" />
   </div>
 
   <div class="app-body">
@@ -1327,10 +1348,7 @@
       title={showSettings ? "Settings" : hubView?.kind === "new-workspace" ? "New workspace" : hubView?.kind === "new-project" ? "New project" : curWorkspace || "Inbox"}
       subtitle={showSettings ? settingsSection : hubView ? "" : activeMeta ? activeMeta.title : !activeThreadId ? "new draft" : ""}
       showExpand={!sidebarOpen}
-      panelOpen={rightBarOpen}
-      agentLive={liveAgentCount}
       on:expand={() => (sidebarOpen = true)}
-      on:togglePanel={() => toggleRightBar()}
     />
     {/if}
     <main class="stage-container" class:settings-mode={showSettings}>
@@ -1357,7 +1375,7 @@
         </div>
       {:else}
         {#if activeThreadId}
-          <div class="stage-scroll" bind:this={scrollEl}>
+          <div class="stage-scroll" bind:this={scrollEl} in:fade={{ duration: 220, delay: 100 }} out:fade={{ duration: 140 }}>
             <Thread {events} liveText={live} liveReasoning={liveReasoning} {liveTools} {approval} streaming={!!liveRun}
               {parentTitle} subsessions={childSubs} projectRoot={currentRoot}
               on:goParent={() => { if (activeMeta?.parent_id) openThread(activeMeta.parent_id); }}
@@ -1537,6 +1555,18 @@
     height: 100%;
     object-fit: cover;
     opacity: 0.92;
+    filter: blur(var(--parzi-bg-blur, 0px));
+    transform: scale(1);
+    transition:
+      filter 700ms cubic-bezier(0.16, 1, 0.3, 1),
+      opacity 700ms cubic-bezier(0.16, 1, 0.3, 1),
+      transform 700ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .background-backdrop.blurred-stage .bg-img {
+    filter: blur(calc(var(--parzi-bg-blur, 0px) + 24px));
+    transform: scale(1.06);
+    opacity: 0.15;
+    will-change: filter, opacity, transform;
   }
   .bg-overlay {
     position: absolute;
@@ -1545,6 +1575,17 @@
       radial-gradient(ellipse at 50% 10%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 60%),
       radial-gradient(ellipse at 55% 42%, transparent 30%, rgba(0, 0, 0, var(--parzi-vignette)) 100%),
       color-mix(in srgb, var(--stage) var(--parzi-bg-dim-pct), transparent);
+  }
+  .bg-stage-wash {
+    position: absolute;
+    inset: 0;
+    background: var(--stage);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 700ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .background-backdrop.blurred-stage .bg-stage-wash {
+    opacity: 0.88;
   }
   .app-body {
     flex: 1;
@@ -1653,7 +1694,11 @@
     padding: 0 0 8px;
   }
   @media (prefers-reduced-motion: reduce) {
-    .omnibar-slot { transition: none; }
+    .omnibar-slot,
+    .bg-img,
+    .bg-stage-wash {
+      transition: none !important;
+    }
   }
   .home-hero-stage {
     flex: 1;
@@ -1680,6 +1725,8 @@
   }
   .toast-item {
     background: var(--menu);
+    backdrop-filter: blur(14px) saturate(1.2);
+    -webkit-backdrop-filter: blur(14px) saturate(1.2);
     border: 1px solid var(--line-3);
     color: var(--text);
     font-size: 12px;

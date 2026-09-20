@@ -89,6 +89,48 @@ fn widget_markdown_validates_and_chart_caps_hold() {
 }
 
 #[test]
+fn widget_shapes_reject_malformed_payloads() {
+    use parzi_core::widgets::validate_widget as v;
+    assert!(v(&serde_json::json!({"widget": 1, "type": "progress", "value": "lots"})).is_err());
+    assert!(v(&serde_json::json!({"widget": 1, "type": "progress", "value": 0.7})).is_ok());
+    assert!(v(&serde_json::json!({"widget": 1, "type": "list", "items": 5})).is_err());
+    assert!(v(&serde_json::json!({"widget": 1, "type": "list", "items": ["a"]})).is_ok());
+    assert!(v(&serde_json::json!({"widget": 1, "type": "table", "rows": {}})).is_err());
+    assert!(v(&serde_json::json!({"widget": 1, "type": "table", "columns": "x"})).is_err());
+    assert!(v(&serde_json::json!({"widget": 1, "type": "chart-bar", "points": [1, "x"]})).is_err());
+    assert!(
+        v(&serde_json::json!({"widget": 1, "type": "chart-bar", "points": [1, 2.5, null]})).is_ok()
+    );
+    assert!(
+        v(&serde_json::json!({"widget": 1, "type": "kanban", "columns": [{"cards": 1}]})).is_err()
+    );
+    assert!(v(&serde_json::json!({"widget": 1, "type": "kanban", "columns": [{"title": "t", "cards": ["a"]}]})).is_ok());
+    let huge = "x".repeat(70_000);
+    assert!(v(&serde_json::json!({"widget": 1, "type": "markdown", "text": huge})).is_err());
+}
+
+#[test]
+fn diagram_rejects_dupes_and_dangling_edges() {
+    use parzi_core::widgets::validate_diagram as v;
+    let dupe = serde_json::json!({
+        "diagram": 1, "nodes": [{"id": "a"}, {"id": "a"}],
+        "edges": [],
+    });
+    assert!(v(&dupe).is_err());
+    let dangling = serde_json::json!({
+        "diagram": 1, "nodes": [{"id": "a"}],
+        "edges": [{"from": "a", "to": "ghost"}],
+    });
+    assert!(v(&dangling).is_err());
+    let long = "y".repeat(200);
+    let label = serde_json::json!({
+        "diagram": 1, "nodes": [{"id": "a", "label": long}],
+        "edges": [],
+    });
+    assert!(v(&label).is_err());
+}
+
+#[test]
 fn artifact_validation_versions_and_dedups() {
     use parzi_core::artifacts::{is_same_content, next_version, slugify_id, validate_artifact};
     assert_eq!(slugify_id("Hello World!"), "hello-world");

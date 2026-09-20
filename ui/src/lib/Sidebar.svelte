@@ -646,14 +646,12 @@
   .ws-act.danger:hover, .ws-act.danger.armed { color: var(--bad); background: var(--bad-soft); }
   .arm-text { font-size: 10px; font-weight: 600; }
 
-  /* Calm running indicator: a small spinner, no glow, no pulse. */
+  /* Running indicator: a small static ring, no glow, no pulse. */
   .run-spin {
     width: 9px; height: 9px; border-radius: 50%; flex: none;
     border: 1.6px solid var(--info-line);
     border-top-color: var(--info);
-    animation: sbspin 0.9s linear infinite;
   }
-  @keyframes sbspin { to { transform: rotate(360deg); } }
 
   .proj-head {
     display: flex; align-items: center; gap: 5px; justify-content: flex-start;

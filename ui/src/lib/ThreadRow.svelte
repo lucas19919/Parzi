@@ -284,11 +284,8 @@
   .spin {
     flex: none;
     width: 9px; height: 9px; border-radius: 50%;
-    border: 1.6px solid var(--info-line);
-    border-top-color: var(--info);
-    animation: t3rot 0.9s linear infinite;
+    border: 1.6px solid var(--info-line); border-top-color: var(--info);
   }
-  @keyframes t3rot { to { transform: rotate(360deg); } }
   .st-working { flex: none; color: var(--info); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .st-queue { flex: none; color: var(--warn); white-space: nowrap; }
   .st-rel { flex: none; color: var(--text-4); font-variant-numeric: tabular-nums; white-space: nowrap; }

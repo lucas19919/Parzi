@@ -439,6 +439,7 @@ impl Orchestrator {
     pub async fn kill(&self, id: &str) -> Result<()> {
         if let Some(h) = self.handles.lock().await.remove(id) {
             h.cancel.cancel();
+            let mut alive = true;
             if let Some(task) = h.task {
                 // The provider gets its stop grace to end the turn and close
                 // the vendor program with everything it started, plus the
@@ -452,7 +453,18 @@ impl Orchestrator {
                 // R-1 backstop: a run stuck anyway is aborted, so the slot
                 // frees; its end guard lets go of its leases and dropping
                 // the vendor program kills its tree.
+                alive = !task.is_finished();
                 task.abort();
+            }
+            // An aborted task never emits: say so on its behalf, with the
+            // same message the graceful cancel path sends. Without this the
+            // UI waits for an event that never comes and the composer wedges
+            // on Stop. Only for runs that were actually alive: a finished
+            // run already said its piece.
+            if alive {
+                let _ = self
+                    .bus
+                    .send((id.to_string(), RunEvent::Error("cancelled".into())));
             }
         }
         // Dequeue anything waiting for this session too — in memory and on

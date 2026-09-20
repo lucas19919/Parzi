@@ -510,14 +510,8 @@
     display: inline-block; width: 7px; height: 1em; margin-left: 2px;
     vertical-align: text-bottom; border-radius: 1px;
     background: var(--accent); box-shadow: 0 0 10px var(--accent-glow), 0 0 2px var(--accent);
-    animation: beacon 1.1s var(--ease-spring) infinite;
-  }
-  @keyframes beacon {
-    0%, 100% { opacity: 1; filter: brightness(1.15); }
-    50% { opacity: 0.35; filter: brightness(0.85); }
   }
   @media (prefers-reduced-motion: reduce) {
-    .stream-caret { animation: none; }
     .live-head.fade { opacity: 1; filter: none; }
   }
   .copy-btn {
@@ -621,11 +615,6 @@
     height: 6px;
     border-radius: 50%;
     background: var(--accent);
-    animation: pulse 1s infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 0.3; transform: scale(0.9); }
-    50% { opacity: 1; transform: scale(1.1); }
   }
   .approval-card {
     background: var(--warn-soft);

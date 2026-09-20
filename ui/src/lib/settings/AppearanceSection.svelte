@@ -60,6 +60,7 @@
       theme = t;
       packs = p;
       backgrounds = b;
+      lastBlur = t.background.blur;
       syncPercents();
     } catch (e) {
       err = String(e);
@@ -86,6 +87,9 @@
 
   // ---- edit pipeline -------------------------------------------------------
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Blur baked into the wallpaper at last render; the slider only takes
+      effect through a re-render. */
+  let lastBlur = 0;
   function touch() {
     if (!theme) return;
     theme = theme;
@@ -99,6 +103,10 @@
     try {
       await api.saveTheme(theme);
       applyThemeCss(await api.getThemeCss());
+      if (theme.background.blur !== lastBlur) {
+        lastBlur = theme.background.blur;
+        await refreshBackground();
+      }
     } catch (e) {
       notify(`Save failed: ${e}`);
       // Never leave a preview the disk state doesn't match: fall back to
@@ -126,11 +134,18 @@
       theme = await api.getTheme();
       // Packs can ship art: re-read the gallery or the new picture has no
       // thumbnail and the wallpaper highlight cannot move to it.
-      backgrounds = await api.listBackgroundUrls();
       syncPercents();
-      await refreshBackground();
-      if (theme.background.auto_accent && theme.background.image) await sampleAccent(true);
+      lastBlur = theme.background.blur;
       notify(`Theme: ${titleCase(p.name)}`);
+      const [b] = await Promise.all([api.listBackgroundUrls(), refreshBackground()]);
+      backgrounds = b;
+      if (theme.background.auto_accent && theme.background.image) {
+        try {
+          await sampleAccent(true);
+        } catch (e) {
+          notify(`Theme applied; accent sampling failed: ${e}`);
+        }
+      }
     } catch (e) {
       notify(`Could not apply theme: ${e}`);
     }
@@ -200,9 +215,16 @@
       applyThemeCss(await api.setBackground(name));
       theme = await api.getTheme();
       syncPercents();
+      lastBlur = theme.background.blur;
+      notify(name ? `Wallpaper: ${name}` : "Wallpaper off");
       await refreshBackground();
-      if (name && theme.background.auto_accent) await sampleAccent(true);
-      else notify(name ? `Wallpaper: ${name}` : "Wallpaper off");
+      if (name && theme.background.auto_accent) {
+        try {
+          await sampleAccent(true);
+        } catch (e) {
+          notify(`Wallpaper set; accent sampling failed: ${e}`);
+        }
+      }
     } catch (e) {
       notify(`Could not set wallpaper: ${e}`);
     }

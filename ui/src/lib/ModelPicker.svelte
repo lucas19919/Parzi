@@ -311,9 +311,7 @@
   .spin {
     flex: none; width: 11px; height: 11px; border-radius: 50%;
     border: 1.6px solid var(--line-3); border-top-color: var(--text-2);
-    animation: spin 0.9s linear infinite;
   }
-  @keyframes spin { to { transform: rotate(360deg); } }
   .body { display: flex; flex: 1; min-height: 0; }
   .rail {
     flex: none; width: 54px; display: flex; flex-direction: column; gap: 2px;

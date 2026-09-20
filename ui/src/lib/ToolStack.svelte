@@ -143,12 +143,12 @@
 
 <style>
   .tool-stack {
-    background: var(--surface-1);
-    border: 1px solid var(--line-2);
-    border-radius: 8px;
-    padding: 3px;
-    max-width: fit-content;
-    min-width: 280px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 0;
+    max-width: none;
+    min-width: 0;
   }
   .stack-head {
     display: flex;
@@ -190,30 +190,31 @@
   .stack-body {
     display: flex;
     flex-direction: column;
-    gap: 3px;
-    padding: 3px;
+    gap: 2px;
+    padding: 0;
   }
   .tool-card {
     display: flex;
     align-items: center;
     gap: 8px;
-    background: var(--surface-1);
-    border: 1px solid var(--line-2);
-    border-radius: 8px;
-    padding: 6px 10px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    padding: 4px 0;
     font-size: 12px;
-    max-width: fit-content;
+    max-width: none;
   }
   .tool-card.row {
     max-width: none;
   }
   .stack-body .tool-card {
-    background: var(--surface-2);
+    background: transparent;
   }
   .tool-card.bad {
-    border-color: var(--bad-line);
-    background: var(--bad-soft);
+    border: none;
+    background: transparent;
   }
+  .tool-card.bad .tool-label { color: var(--bad); }
   .tool-ico {
     display: flex;
     align-items: center;
@@ -235,7 +236,7 @@
     flex: none;
   }
   .tool-pill {
-    background: var(--surface-2);
+    background: transparent;
     border: none;
     border-radius: 4px;
     padding: 2px 6px;
@@ -246,15 +247,15 @@
     flex: none;
   }
   .stack-body .tool-pill {
-    background: var(--surface-3);
+    background: transparent;
   }
   .tool-pill.ok {
     color: var(--ok);
-    background: var(--ok-soft);
+    background: transparent;
   }
   .tool-pill.bad {
     color: var(--bad);
-    background: var(--bad-soft);
+    background: transparent;
   }
   .tool-pill.run {
     display: inline-flex;
@@ -268,14 +269,9 @@
     height: 6px;
     border-radius: 50%;
     background: var(--accent);
-    animation: pulse 1s infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 0.3; transform: scale(0.9); }
-    50% { opacity: 1; transform: scale(1.1); }
   }
   .tool-card.running {
-    border-color: var(--accent-mid);
+    border: none;
   }
   .tool-caret {
     background: transparent;

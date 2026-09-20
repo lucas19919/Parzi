@@ -383,8 +383,7 @@
   .clone.bad { background: var(--bad-soft); color: var(--bad); }
   .c-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-4); flex: none; }
   .c-dot.ok { background: var(--ok); }
-  .c-dot.spin { background: var(--accent); animation: pulse 1.4s ease-in-out infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .c-dot.spin { background: var(--accent); }
   .c-name { font-weight: 550; color: var(--text); }
   .c-line {
     flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

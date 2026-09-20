@@ -1094,10 +1094,8 @@
   .ctx.warn { --ctx: var(--warn); color: var(--warn); }
   .ctx.bad { --ctx: var(--bad); color: var(--bad); }
   .ctx svg { transform: rotate(-90deg); }
-  .ctx.busy svg { animation: ctx-spin 0.9s linear infinite; }
   .ctx-track { fill: none; stroke: var(--line-3); stroke-width: 2; }
   .ctx-fill { fill: none; stroke: var(--ctx); stroke-width: 2; stroke-linecap: round; transition: stroke-dashoffset 0.4s ease; }
-  @keyframes ctx-spin { to { transform: rotate(270deg); } }
 
   .icon-btn {
     width: 32px; height: 32px; flex: none; display: inline-flex; align-items: center; justify-content: center;
@@ -1134,18 +1132,18 @@
   .pop.from-top { transform-origin: top left; }
   .pop.from-top.from-right { transform-origin: top right; }
   .model-pop {
-    width: 440px; max-width: calc(100vw - 16px);
-    height: 430px; max-height: calc(100vh - 120px);
+    width: 380px; max-width: calc(100vw - 16px);
+    height: 380px; max-height: calc(100vh - 120px);
     display: flex; flex-direction: column;
   }
   .pick-body { display: flex; flex: 1; min-height: 0; }
   .prov-rail {
-    flex: none; width: 54px; display: flex; flex-direction: column; gap: 2px;
-    padding: 6px 5px; overflow-y: auto; border-right: 1px solid var(--line-2);
+    flex: none; width: 46px; display: flex; flex-direction: column; gap: 2px;
+    padding: 5px 4px; overflow-y: auto; border-right: 1px solid var(--line-2);
   }
   .rail-row {
-    display: flex; align-items: center; justify-content: center; width: 100%; height: 36px; flex: none;
-    background: transparent; border: none; border-radius: 8px; color: var(--text-2);
+    display: flex; align-items: center; justify-content: center; width: 100%; height: 32px; flex: none;
+    background: transparent; border: none; border-radius: 7px; color: var(--text-2);
     padding: 0; cursor: pointer;
   }
   .rail-row:hover { background: var(--surface-2); color: var(--text); }
@@ -1182,13 +1180,11 @@
   }
   .pop-search input::placeholder { color: var(--text-4); }
 
-  .model-list { flex: 1; min-width: 0; min-height: 0; max-height: 380px; overflow-y: auto; padding: 5px; display: flex; flex-direction: column; gap: 1px; }
+  .model-list { flex: 1; min-width: 0; min-height: 0; max-height: 330px; overflow-y: auto; padding: 4px; display: flex; flex-direction: column; gap: 1px; }
   .spin {
     flex: none; width: 11px; height: 11px; border-radius: 50%;
     border: 1.6px solid var(--line-3); border-top-color: var(--text-2);
-    animation: obspin 0.9s linear infinite;
   }
-  @keyframes obspin { to { transform: rotate(360deg); } }
   .prov-head {
     display: flex; align-items: center; gap: 8px; width: 100%;
     padding: 6px 8px 4px; color: var(--text-2);

@@ -1,4 +1,6 @@
-/** Window controls and dragging for frameless Tauri window. */
+/** Window controls and dragging for frameless Tauri window. Controls go
+    straight to the webview API; dragging goes through the shell command
+    (it carries the Tauri window) with the same fallback. */
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { api } from "./api";
@@ -10,27 +12,15 @@ export const WIN_ICON = {
 };
 
 export async function windowMinimize() {
-  try {
-    await api.windowMinimize();
-  } catch {
-    await getCurrentWindow().minimize();
-  }
+  await getCurrentWindow().minimize();
 }
 
 export async function windowMaximize() {
-  try {
-    await api.windowMaximize();
-  } catch {
-    await getCurrentWindow().toggleMaximize();
-  }
+  await getCurrentWindow().toggleMaximize();
 }
 
 export async function windowClose() {
-  try {
-    await api.windowClose();
-  } catch {
-    await getCurrentWindow().close();
-  }
+  await getCurrentWindow().close();
 }
 
 /** Drag the window from a chrome surface. Ignores clicks on buttons. */

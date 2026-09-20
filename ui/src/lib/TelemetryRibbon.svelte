@@ -62,37 +62,29 @@
   }
   .chip {
     flex: none; display: inline-flex; align-items: center; gap: 6px;
-    background: var(--surface-1); border: 1px solid var(--line-2);
-    border-radius: var(--radius-pill); padding: 4px 10px;
-    font-size: 11.5px; color: var(--text-2);
+    background: transparent; border: none;
+    border-radius: 0; padding: 2px 2px;
+    font-size: 11.5px; color: var(--text-3);
   }
-  .chip.run { border-color: var(--accent-line); color: var(--text); }
-  .chip.bad { border-color: var(--bad-line); color: var(--bad); }
+  .chip.run { border: none; color: var(--text); }
+  .chip.bad { border: none; color: var(--bad); }
   .nm { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tm { font-variant-numeric: tabular-nums; color: var(--text-4); }
   .cap {
     display: inline-flex; align-items: center; gap: 8px; align-self: flex-start;
-    background: var(--surface-1); border: 1px solid var(--line-2);
-    border-radius: var(--radius-pill); padding: 5px 12px;
-    color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer;
+    background: transparent; border: none;
+    border-radius: 0; padding: 2px 0;
+    color: var(--text-3); font: inherit; font-size: 12px; cursor: pointer;
   }
-  .cap:hover { color: var(--text); border-color: var(--line-3); }
+  .cap:hover { color: var(--text); border: none; }
   .dot {
     width: 7px; height: 7px; border-radius: 50%; background: var(--text-4); flex: none;
   }
   .dot.live {
     background: var(--accent); box-shadow: 0 0 8px var(--accent-glow);
-    animation: pulse 1.6s var(--ease-spring) infinite;
   }
   .fold {
     flex: none; background: none; border: none; color: var(--text-4);
     font: inherit; font-size: 11px; cursor: pointer;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.45; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .dot.live { animation: none; }
   }
 </style>
