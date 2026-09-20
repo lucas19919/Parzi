@@ -110,6 +110,24 @@ fn widget_shapes_reject_malformed_payloads() {
 }
 
 #[test]
+fn widget_series_validate_per_series() {
+    use parzi_core::widgets::validate_widget as v;
+    let multi = serde_json::json!({"widget": 1, "type": "chart-line",
+        "series": [{"name": "a", "points": [1, 2]}, {"name": "b", "points": [3]}]});
+    assert!(v(&multi).is_ok());
+    let noshape = serde_json::json!({"widget": 1, "type": "chart-bar",
+        "series": [{"name": "a"}]});
+    assert!(v(&noshape).is_err());
+    let badnum = serde_json::json!({"widget": 1, "type": "chart-bar",
+        "series": [{"points": [1, "x"]}]});
+    assert!(v(&badnum).is_err());
+    let many: Vec<_> = (0..9)
+        .map(|i| serde_json::json!({"name": i, "points": [1]}))
+        .collect();
+    assert!(v(&serde_json::json!({"widget": 1, "type": "chart-line", "series": many})).is_err());
+}
+
+#[test]
 fn diagram_rejects_dupes_and_dangling_edges() {
     use parzi_core::widgets::validate_diagram as v;
     let dupe = serde_json::json!({
@@ -128,6 +146,48 @@ fn diagram_rejects_dupes_and_dangling_edges() {
         "edges": [],
     });
     assert!(v(&label).is_err());
+}
+
+#[test]
+fn diagram_advanced_shapes_validate() {
+    use parzi_core::widgets::validate_diagram as v;
+    let arch = serde_json::json!({
+        "diagram": 1, "direction": "LR",
+        "nodes": [
+            {"id": "ui", "label": "Web app", "shape": "actor"},
+            {"id": "api", "label": "API", "sub": "gateway", "color": "accent"},
+            {"id": "db", "label": "Postgres", "shape": "db", "color": "info"},
+            {"id": "cache?", "label": "Cache?", "shape": "diamond"}
+        ],
+        "edges": [
+            {"from": "ui", "to": "api", "label": "https"},
+            {"from": "api", "to": "db", "label": "sql", "style": "thick", "color": "info"},
+            {"from": "api", "to": "cache?", "label": "maybe", "style": "dotted"}
+        ],
+        "groups": [{"id": "backend", "label": "Backend", "nodes": ["api", "db"]}],
+    });
+    assert!(v(&arch).is_ok());
+    let bad_shape = serde_json::json!({
+        "diagram": 1, "nodes": [{"id": "a", "shape": "pyramid"}],
+        "edges": [],
+    });
+    assert!(v(&bad_shape).is_err());
+    let bad_color = serde_json::json!({
+        "diagram": 1, "nodes": [{"id": "a", "color": "chartreuse"}],
+        "edges": [],
+    });
+    assert!(v(&bad_color).is_err());
+    let bad_style = serde_json::json!({
+        "diagram": 1, "nodes": [{"id": "a"}, {"id": "b"}],
+        "edges": [{"from": "a", "to": "b", "style": "wiggly"}],
+    });
+    assert!(v(&bad_style).is_err());
+    let bad_group = serde_json::json!({
+        "diagram": 1, "nodes": [{"id": "a"}],
+        "edges": [],
+        "groups": [{"id": "g", "nodes": ["ghost"]}],
+    });
+    assert!(v(&bad_group).is_err());
 }
 
 #[test]

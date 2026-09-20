@@ -23,6 +23,18 @@
   const bad = !content.trim();
   let expanded = false;
   let copied = false;
+  /** Live pages render sandboxed; opaque origin, no IPC, like the deck. */
+  $: canRender = (kind === "html" || kind === "svg") && !!content.trim();
+  let showCode = false;
+  /** SVG scales to its own aspect instead of a fixed box (HTML reflows). */
+  $: svgRatio = (() => {
+    if (kind !== "svg") return "";
+    const w = /<svg[^>]*\bwidth="(\d+(?:\.\d+)?)"/i.exec(content)?.[1];
+    const h = /<svg[^>]*\bheight="(\d+(?:\.\d+)?)"/i.exec(content)?.[1];
+    const wn = w ? Number(w) : 0;
+    const hn = h ? Number(h) : 0;
+    return wn > 0 && hn > 0 ? `${wn} / ${hn}` : "";
+  })();
 
   function copy() {
     navigator.clipboard.writeText(content);
@@ -82,6 +94,11 @@
     <pre class="art-source">{JSON.stringify(d, null, 2)?.slice(0, 4000)}</pre>
   {:else if kind === "markdown"}
     <div class="art-md">{@html renderMarkdown(content)}</div>
+  {:else if canRender && !showCode}
+    <iframe class="art-render" {title} sandbox="allow-scripts" srcdoc={content}></iframe>
+    <div class="art-foot">
+      <button class="expand-btn" on:click={() => (showCode = true)}>show source</button>
+    </div>
   {:else}
     <div class="art-code" class:clamped={!expanded && lines > 30}>
       {@html renderMarkdown("```" + (language || kind) + "\n" + content.slice(0, 60000) + "\n```")}
@@ -90,6 +107,9 @@
       <button class="expand-btn" on:click={() => (expanded = !expanded)}>
         {expanded ? "collapse" : `show full (${lines} lines)`}
       </button>
+    {/if}
+    {#if canRender && showCode}
+      <button class="expand-btn" on:click={() => (showCode = false)}>show preview</button>
     {/if}
   {/if}
 </div>
@@ -138,6 +158,8 @@
   .mini-btn.deck { color: var(--accent); background: var(--accent-soft); white-space: nowrap; }
   .mini-btn.deck:hover { background: var(--accent-mid); color: var(--text); }
   .art-md { padding: 12px 14px; font-size: 13px; }
+  .art-render { width: 100%; min-height: 320px; border: none; background: transparent; }
+  .art-foot { border-top: 1px solid var(--line-2); }
   .art-code { font-size: 11.5px; }
   .art-code.clamped :global(.codeblock.clamped) { max-height: 420px; }
   .art-error { padding: 8px 12px; font-size: 11px; color: var(--bad); }

@@ -137,6 +137,7 @@
     const key = artifact ? `a:${artifact.id}@${artifact.version}` : doc ? `d:${doc.path ?? doc.title}` : "";
     if (key !== lastKey) {
       lastKey = key;
+      view = "preview";
       if (body) body.scrollTop = 0;
     }
   }

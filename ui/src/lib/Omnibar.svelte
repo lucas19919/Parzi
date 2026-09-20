@@ -26,7 +26,6 @@
   export let board: ProviderStatus[] = [];
   export let projectRoot = "";
   export let attachments: string[] = [];
-  export let mode: "chat" | "plan" | "build" = "chat";
   export let permission: string = "full";
   export let workspaces: string[] = [];
   export let workspace = "";
@@ -54,7 +53,6 @@
     stop: void;
     modelChange: { model: string };
     command: { name: string; arg: string };
-    openPlanner: void;
     permissionChange: { permission: string };
     workspaceChange: { workspace: string };
     workspaceDeleted: { workspace: string };

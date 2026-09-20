@@ -61,7 +61,6 @@
     if (permission === "supervised" || permission === "edits") return permission;
     return "auto";
   }
-  let mode: "chat" | "plan" | "build" = "chat";
   let curLane = "";
   let attachments: string[] = [];
 
@@ -459,9 +458,12 @@
     attachments = [];
   }
 
-  function openPlanner() {
-    mode = "plan";
-    toast("Plan mode — the model plans, it does not touch the tree");
+  /** /plan without a mode maze: the plan-only prefix goes into the draft
+      where it stays visible and editable, then sends like anything else. */
+  const PLAN_PREFIX = "Plan only — do not edit files or run commands. Output the plan:\n\n";
+  function insertPlanPrefix() {
+    palette = false;
+    if (!input.startsWith(PLAN_PREFIX)) input = PLAN_PREFIX + input;
   }
 
   async function compactThread(focus = "") {
@@ -495,10 +497,7 @@
     const files = [...attachments];
     attachments = [];
     const cwd = currentRoot;
-    let prompt = rawPrompt;
-    if (mode === "plan") {
-      prompt = "Plan only — do not edit files or run commands. Output the plan:\n\n" + rawPrompt;
-    }
+    const prompt = rawPrompt;
 
     const optimisticUser = { kind: "user", text: rawPrompt } as ChatEvent;
     events = [...events, optimisticUser];
@@ -631,7 +630,7 @@
         compactThread();
         break;
       case "plan":
-        openPlanner();
+        insertPlanPrefix();
         break;
       case "auto":
         model = "auto";
@@ -1132,7 +1131,7 @@
   $: palActions = [
     { section: "Actions", label: "New chat", sub: "start a new conversation", run: () => { palette = false; newThread(); } },
     { section: "Actions", label: "New workspace", sub: "hub wizard", run: () => { palette = false; openNewWorkspaceWizard(); } },
-    { section: "Actions", label: "Plan mode", sub: "no edits", run: () => { palette = false; openPlanner(); } },
+    { section: "Actions", label: "Plan prefix", sub: "insert plan-only prompt", run: () => insertPlanPrefix() },
     { section: "Actions", label: "Settings", sub: "providers · connectors · skills", run: () => openSettings() },
     { section: "Actions", label: "Report issue", sub: "github", run: () => openSettings("system", "report-issue") },
     { section: "Actions", label: "Check for updates", sub: "stable channel", run: () => { palette = false; openSettings("system", "app-updates"); void checkForUpdates(true); } },
@@ -1146,9 +1145,14 @@
         ]
       : []),
   ] as PalItem[];
-  $: palThreads = threads
-    .filter((t) => !palQuery || t.title.toLowerCase().includes(palQuery.toLowerCase()))
-    .slice(0, 8)
+  /** Palette scope prefixes: `t:` threads, `m:` models, `a:` actions. */
+  $: palScope = (/^(t|m|a):\s*/i.exec(palQuery)?.[1] ?? "").toLowerCase();
+  $: palNeedle = palQuery.replace(/^(t|m|a):\s*/i, "").toLowerCase();
+  $: palThreads = (palScope && palScope !== "t")
+    ? []
+    : threads
+        .filter((t) => !palNeedle || t.title.toLowerCase().includes(palNeedle))
+        .slice(0, 8)
     .map(
       (t) =>
         ({
@@ -1161,14 +1165,16 @@
           },
         }) as PalItem
     );
-  $: palModels = allModelOptions
-    .filter(
-      (o) =>
-        !palQuery ||
-        o.label.toLowerCase().includes(palQuery.toLowerCase()) ||
-        o.value.toLowerCase().includes(palQuery.toLowerCase())
-    )
-    .slice(0, 6)
+  $: palModels = (palScope && palScope !== "m")
+    ? []
+    : allModelOptions
+        .filter(
+          (o) =>
+            !palNeedle ||
+            o.label.toLowerCase().includes(palNeedle) ||
+            o.value.toLowerCase().includes(palNeedle)
+        )
+        .slice(0, 6)
     .map(
       (o) =>
         ({
@@ -1186,7 +1192,16 @@
           },
         }) as PalItem
     );
-  $: palAll = [...palActions, ...palThreads, ...palModels];
+  $: palShownActions =
+    palScope && palScope !== "a"
+      ? []
+      : palActions.filter(
+          (a) =>
+            !palNeedle ||
+            a.label.toLowerCase().includes(palNeedle) ||
+            a.sub.toLowerCase().includes(palNeedle),
+        );
+  $: palAll = [...palShownActions, ...palThreads, ...palModels];
   $: if (palIndex >= palAll.length && palAll.length) palIndex = 0;
 
   function onGlobalKey(e: KeyboardEvent) {
@@ -1391,7 +1406,6 @@
             bind:input
             bind:model
             bind:effort
-            bind:mode
             bind:permission
             bind:attachments
             streaming={!!liveRun}
@@ -1409,7 +1423,6 @@
             on:stop={stopRun}
             on:modelChange={(e) => (model = e.detail.model)}
             on:command={(e) => handleBarCommand(e.detail.name)}
-            on:openPlanner={openPlanner}
             workspaces={wsNames}
             workspace={curWorkspace}
             workspaceFixed={!!activeThreadId}
@@ -1478,11 +1491,11 @@
     <div class="palette-wrap" transition:fade={{ duration: 120 }}>
       <div class="palette" on:click|stopPropagation>
         <div class="menu-search">
-          <input placeholder="Type a command, thread, or model…" bind:value={palQuery}
+          <input placeholder="Type a command, thread, or model… (t: m: a: scope)" bind:value={palQuery}
             on:input={() => (palIndex = 0)} />
         </div>
         <div class="menu-list">
-          {#each palActions as a, i}
+          {#each palShownActions as a, i}
             {#if i === 0}<div class="menu-provider">Actions</div>{/if}
             <button class="mrow" class:on={i === palIndex} on:click={() => a.run()} on:mousemove={() => (palIndex = i)}>
               <span class="m-name">{a.label}</span><span class="act-hint">{a.sub}</span>
@@ -1491,8 +1504,8 @@
           {#if palThreads.length}
             <div class="menu-provider">Threads</div>
             {#each palThreads as t, i}
-              <button class="mrow" class:on={palActions.length + i === palIndex}
-                on:click={() => t.run()} on:mousemove={() => (palIndex = palActions.length + i)}>
+              <button class="mrow" class:on={palShownActions.length + i === palIndex}
+                on:click={() => t.run()} on:mousemove={() => (palIndex = palShownActions.length + i)}>
                 <span class="m-name">{t.label}</span><span class="act-hint">{t.sub}</span>
               </button>
             {/each}
@@ -1500,8 +1513,8 @@
           {#if palModels.length}
             <div class="menu-provider">Models</div>
             {#each palModels as m, i}
-              <button class="mrow" class:on={palActions.length + palThreads.length + i === palIndex}
-                on:click={() => m.run()} on:mousemove={() => (palIndex = palActions.length + palThreads.length + i)}>
+              <button class="mrow" class:on={palShownActions.length + palThreads.length + i === palIndex}
+                on:click={() => m.run()} on:mousemove={() => (palIndex = palShownActions.length + palThreads.length + i)}>
                 <span class="m-name">{m.label}</span><span class="act-hint">{m.sub}</span>
               </button>
             {/each}

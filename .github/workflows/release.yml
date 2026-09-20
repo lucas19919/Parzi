@@ -5,14 +5,17 @@ name: Release
 # per platform (Windows: NSIS .exe + MSI; macOS: unsigned universal .dmg for
 # Apple Silicon + Intel — deliberately no Apple signing, see the Gatekeeper
 # note in the release body), signs the updater artifacts with
-# TAURI_SIGNING_PRIVATE_KEY, and opens a DRAFT release with latest.json.
-# Publish the draft and installed Parzi copies will offer the update.
+# TAURI_SIGNING_PRIVATE_KEY, and PUBLISHES the release with latest.json.
+# The repo is public so the updater endpoint resolves; installed Parzi
+# copies offer the update. No Authenticode/notarization by decision:
+# SmartScreen/Gatekeeper ask once (see body), no signing budget spent.
+#
+# Tags only: manual dispatch once cut a release named after a branch.
 
 on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 jobs:
   release:
@@ -59,7 +62,7 @@ jobs:
           releaseBody: |
             ## Parzi ${{ github.ref_name }}
 
-            One harness, five providers — Claude, Codex, Antigravity, OpenCode, Grok.
+            One harness, six providers — Claude, Codex, Antigravity, OpenCode, Grok, Cursor.
 
             ### Download
 
@@ -80,7 +83,7 @@ jobs:
             Parzi checks for new versions on launch and offers them in the app — no manual reinstalls.
 
             > Your threads and settings live in `~/.parzi` and are never touched by updates or reinstalls.
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
 

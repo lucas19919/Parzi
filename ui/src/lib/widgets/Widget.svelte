@@ -1,5 +1,7 @@
 <script lang="ts">
   import { renderMarkdown } from "../md";
+  import Icon from "../Icon.svelte";
+  import Zoomable from "./Zoomable.svelte";
 
   export let data: any;
   const d = data && typeof data === "object" ? data : {};
@@ -16,11 +18,34 @@
     String(col?.title ?? col?.id ?? "col");
   const known = ["stat", "progress", "list", "table", "chart-line", "chart-bar", "kanban", "markdown"];
   const bad = !known.includes(type);
+  $: isChart = type === "chart-line" || type === "chart-bar";
   $: pts = Array.isArray(d.points)
     ? (d.points as number[]).map(Number).filter((n) => Number.isFinite(n)).slice(0, 200)
     : Array.isArray(d.payload?.points)
       ? (d.payload.points as number[]).map(Number).filter((n) => Number.isFinite(n)).slice(0, 200)
       : [];
+  /** Multi-series form: {series:[{name, points[]}]}; falls back to one. */
+  $: ser = ((): { name: string; points: number[] }[] => {
+    const raw = d.series ?? d.payload?.series;
+    if (!Array.isArray(raw)) return [{ name: "", points: pts }];
+    const out = raw
+      .filter((s: any) => s && typeof s === "object")
+      .slice(0, 8)
+      .map((s: any) => ({
+        name: String(s.name ?? ""),
+        points: (Array.isArray(s.points) ? s.points : [])
+          .map(Number)
+          .filter((n: number) => Number.isFinite(n))
+          .slice(0, 200),
+      }))
+      .filter((s: { points: number[] }) => s.points.length);
+    return out.length ? out : [{ name: "", points: pts }];
+  })();
+  $: all = ser.flatMap((s) => s.points);
+  $: maxLen = Math.max(1, ...ser.map((s) => s.points.length));
+  $: SER_INK = ["var(--accent)", "var(--ok)", "var(--info)", "var(--warn)", "var(--bad)"];
+  $: serInk = (i: number): string => SER_INK[i % SER_INK.length];
+  $: showLegend = ser.length > 1 && ser.some((s) => s.name);
   $: xlabels = (() => {
     const raw = d.labels ?? d.payload?.labels;
     if (!Array.isArray(raw)) return [] as string[];
@@ -30,15 +55,15 @@
   $: ylabel = String(d.ylabel ?? d.payload?.ylabel ?? "");
   // Plot geometry with margins for ticks and axis labels. Zero is always
   // in range so bars grow from a true baseline and negatives stay on-canvas.
-  $: plo = pts.length
+  $: plo = all.length
     ? (() => {
-        const lo = Math.min(0, ...pts);
-        const hi = Math.max(0, ...pts);
+        const lo = Math.min(0, ...all);
+        const hi = Math.max(0, ...all);
         const span = hi - lo || 1;
         const W = 320, H = 124, L = 36, R = 8, T = 8, B = 20;
         const y = (v: number) => T + (1 - (v - lo) / span) * (H - T - B);
-        const x = (i: number) => L + (pts.length === 1 ? (W - L - R) / 2 : (i / (pts.length - 1)) * (W - L - R));
-        const bw = (W - L - R) / Math.max(1, pts.length);
+        const x = (i: number) => L + (maxLen === 1 ? (W - L - R) / 2 : (i / (maxLen - 1)) * (W - L - R));
+        const bw = (W - L - R) / Math.max(1, maxLen);
         const ticks = [0, 1, 2, 3].map((i) => lo + (span * i) / 3);
         return { lo, hi, span, W, H, L, R, T, B, y, x, bw, ticks };
       })()
@@ -51,22 +76,55 @@
     if (a >= 1) return String(+v.toFixed(1));
     return String(+v.toFixed(2));
   };
-  $: xshown = pts.length
-    ? pts.map((_, i) => i).filter((i) => i % Math.ceil(pts.length / 6) === 0 || i === pts.length - 1)
+  $: xshown = maxLen
+    ? ser[0].points.map((_, i) => i).filter((i) => i % Math.ceil(maxLen / 6) === 0 || i === maxLen - 1)
     : [];
   $: xtext = (i: number): string =>
     (xlabels[i] ?? String(i + 1)).slice(0, 10);
+
+  let plotEl: SVGSVGElement | null = null;
+  function slug(s: string): string {
+    const t = s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+    return t || "chart";
+  }
+  function download(url: string, name: string) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  function dlCsv() {
+    const head = ["x", ...ser.map((s) => s.name || "value")];
+    const lines = [head.join(",")];
+    for (let i = 0; i < maxLen; i++) {
+      lines.push([xlabels[i] ?? String(i + 1), ...ser.map((s) => (i < s.points.length ? String(s.points[i]) : ""))].join(","));
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    download(URL.createObjectURL(blob), `${slug(title)}.csv`);
+  }
+  function dlSvg() {
+    if (!plotEl) return;
+    const clone = plotEl.cloneNode(true) as SVGSVGElement;
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" });
+    download(URL.createObjectURL(blob), `${slug(title)}.svg`);
+  }
   $: shownRows = rows.slice(0, 50);
   $: truncated = rows.length - shownRows.length;
   $: kanbanCols = arr(d.columns);
 </script>
 
+<Zoomable enabled={isChart} let:open let:toggle>
 <div class="widget-card" class:bad>
   <div class="w-head">
     <span class="w-kind">{bad ? "widget" : type}</span>
     {#if title}<span class="w-title">{title}</span>{/if}
-    {#if type === "table" && rows.length}<span class="w-meta">{rows.length} rows</span>{/if}
-    {#if (type === "chart-line" || type === "chart-bar") && pts.length}<span class="w-meta">{pts.length} pts</span>{/if}
+    {#if isChart}
+      <button class="xbtn zoom" on:click={toggle} title={open ? "Close zoomed view" : "Zoom chart"}>
+        <Icon d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" size={11} />
+      </button>
+    {/if}
   </div>
   {#if bad}
     <div class="w-error">Couldn't render widget type "{type}" — showing source.</div>
@@ -98,10 +156,23 @@
       {#if truncated > 0}<div class="w-sub">{truncated} more rows truncated (max 50)</div>{/if}
     {/if}
   {:else if type === "chart-line" || type === "chart-bar"}
-    {#if !pts.length || !plo}
+    {#if !all.length || !plo}
       <div class="w-empty">no data points</div>
     {:else}
-      <svg width="100%" viewBox="0 0 {plo.W} {plo.H}" preserveAspectRatio="xMidYMid meet" role="img" class="plot">
+      {#if showLegend}
+        <div class="legend">
+          {#each ser as s, si}
+            {#if s.name}<span class="leg"><i style={`background:${serInk(si)}`} />{s.name}</span>{/if}
+          {/each}
+        </div>
+      {/if}
+      {#if open}
+        <div class="xbar">
+          <button class="xbtn" on:click={dlCsv} title="Download CSV">csv</button>
+          <button class="xbtn" on:click={dlSvg} title="Download SVG">svg</button>
+        </div>
+      {/if}
+      <svg bind:this={plotEl} width="100%" viewBox="0 0 {plo.W} {plo.H}" preserveAspectRatio="xMidYMid meet" role="img" class="plot">
         {#each plo.ticks as t}
           <line x1={plo.L} y1={plo.y(t)} x2={plo.W - plo.R} y2={plo.y(t)}
             stroke="var(--line-2)" stroke-width="1" />
@@ -112,23 +183,29 @@
             stroke="var(--line-3)" stroke-width="1" />
         {/if}
         {#if type === "chart-line"}
-          <polyline
-            fill="none" stroke="var(--accent)" stroke-width="2"
-            points={pts.map((p, i) => `${plo.x(i)},${plo.y(p)}`).join(" ")} />
-          {#each pts as p, i}
-            <circle cx={plo.x(i)} cy={plo.y(p)} r="2.5" fill="var(--accent)" class="dot">
-              <title>{xtext(i)}: {p}</title>
-            </circle>
+          {#each ser as s, si}
+            <polyline
+              fill="none" stroke={serInk(si)} stroke-width="2"
+              points={s.points.map((p, i) => `${plo.x(i)},${plo.y(p)}`).join(" ")} />
+            {#each s.points as p, i}
+              <circle cx={plo.x(i)} cy={plo.y(p)} r="2.5" fill={serInk(si)} class="dot">
+                <title>{s.name ? `${s.name} · ` : ""}{xtext(i)}: {p}</title>
+              </circle>
+            {/each}
           {/each}
         {:else}
-          {#each pts as p, i}
-            {@const bx = plo.L + i * plo.bw}
-            {@const by = plo.y(Math.max(0, p))}
-            {@const bh = Math.abs(plo.y(p) - plo.y(0))}
-            <rect x={bx + 2} y={by} width={Math.max(2, plo.bw - 4)} height={Math.max(2, bh)}
-              fill="var(--accent)" rx="2" class="bar">
-              <title>{xtext(i)}: {p}</title>
-            </rect>
+          {#each ser as s, si}
+            {#each s.points as p, i}
+              {@const n = ser.length}
+              {@const w = plo.bw / n}
+              {@const bx = plo.L + i * plo.bw + si * w}
+              {@const by = plo.y(Math.max(0, p))}
+              {@const bh = Math.abs(plo.y(p) - plo.y(0))}
+              <rect x={bx + 1} y={by} width={Math.max(2, w - 2)} height={Math.max(2, bh)}
+                fill={serInk(si)} rx="2" class="bar">
+                <title>{s.name ? `${s.name} · ` : ""}{xtext(i)}: {p}</title>
+              </rect>
+            {/each}
           {/each}
         {/if}
         {#each xshown as i}
@@ -156,6 +233,7 @@
     {/if}
   {/if}
 </div>
+</Zoomable>
 
 <style>
   .widget-card {
@@ -174,7 +252,7 @@
   .w-head { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 11px; }
   .w-kind { font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 10px; color: var(--text-4); }
   .w-title { font-weight: 600; color: var(--text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .w-meta { font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 10px; color: var(--text-4); margin-left: auto; }
+  .xbar { display: flex; gap: 2px; padding: 2px 0 4px; }
   .w-error { padding: 8px 12px; font-size: 11px; color: var(--bad); }
   .w-source { margin: 0 12px; padding: 8px; font-size: 10px; overflow: auto; background: var(--input); border-radius: 6px; }
   .w-sub { padding: 4px 0; font-size: 11px; color: var(--text-3); }
@@ -187,6 +265,16 @@
   .table-wrap { overflow-x: auto; margin: 8px 0 0; border-radius: 8px; border: 1px solid var(--line-2); }
   .plot .dot, .plot .bar { transition: opacity 120ms ease; }
   .plot .dot:hover, .plot .bar:hover { opacity: 0.75; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 2px 0 4px; }
+  .leg { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-3); }
+  .leg i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+  .xbtn {
+    background: transparent; border: none; border-radius: 4px;
+    color: var(--text-4); font-family: var(--parzi-mono), ui-monospace, monospace;
+    font-size: 10px; padding: 2px 6px; cursor: pointer; flex: none;
+  }
+  .xbtn:hover { color: var(--text); background: var(--surface-1); }
+  .xbtn.zoom { display: inline-flex; align-items: center; }
   table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
   th, td { padding: 6px 10px; border-bottom: 1px solid var(--line-2); text-align: left; }
   th { color: var(--text-3); font-weight: 600; background: var(--surface-1); }

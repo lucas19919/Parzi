@@ -185,8 +185,7 @@ fn managed_context_parts(project: &str) -> Vec<String> {
     for e in entries.flatten().take(32) {
         let ws = e.file_name().to_string_lossy().to_string();
         if parzi_core::project::dir(&ws, name).is_dir() {
-            let text =
-                parzi_core::context_store::injection_text(&home, &ws, Some(name), BUDGET);
+            let text = parzi_core::context_store::injection_text(&home, &ws, Some(name), BUDGET);
             return if text.is_empty() {
                 Vec::new()
             } else {
@@ -199,7 +198,8 @@ fn managed_context_parts(project: &str) -> Vec<String> {
 
 /// Layered standing instructions: Parzi's brief, project and lane
 /// SYSTEM.md, global and workspace instructions, then earned knowledge.
-pub fn system_parts(cfg: &ParziConfig, project: &str, lane: &str) -> Vec<String> {    let _ = cfg;
+pub fn system_parts(cfg: &ParziConfig, project: &str, lane: &str) -> Vec<String> {
+    let _ = cfg;
     let mut parts = vec![if lane.is_empty() {
         PARZI_BRIEF.to_string()
     } else {
@@ -243,7 +243,8 @@ pub fn system_parts(cfg: &ParziConfig, project: &str, lane: &str) -> Vec<String>
     for part in managed_context_parts(project) {
         parts.push(part);
     }
-    if let Some(knowledge) = lanes::read_knowledge(project) {        let capped: String = if knowledge.chars().count() > 4_000 {
+    if let Some(knowledge) = lanes::read_knowledge(project) {
+        let capped: String = if knowledge.chars().count() > 4_000 {
             format!(
                 "{}\n…(earlier knowledge truncated)",
                 knowledge.chars().take(4_000).collect::<String>()
