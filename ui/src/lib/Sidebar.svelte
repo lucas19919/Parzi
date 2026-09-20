@@ -42,6 +42,10 @@
     edit: "M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z",
     close: "M18 6L6 18M6 6l12 12",
     chevronLeft: "M15 18l-6-6 6-6",
+    chevronDown: "M6 9l6 6 6-6",
+    check: "M20 6 9 17l-5-5",
+    arrowRight: "M5 12h14M12 5l7 7-7 7",
+    pin: "M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z",
   };
 
   const displayName = (n: string) => (n === "default" ? "Inbox" : n);
@@ -68,11 +72,61 @@
   function pickFilter(name: string | null) {
     legConfirm = null;
     wsConfirm = null;
+    wsMenu = null;
     dispatch("filterWorkspace", { name });
   }
 
   let legConfirm: string | null = null;
   let wsConfirm: string | null = null;
+
+  /** Compact workspace picker menu (portal). Null when closed. */
+  let wsMenu: { x: number; y: number } | null = null;
+
+  $: scopeLabel =
+    sideFilter === null ? "All chats" : sideFilter === "default" ? "Inbox" : displayName(sideFilter);
+  $: scopeCount =
+    sideFilter === null ? chatThreads.length : keyCount(sideFilter);
+
+  function toggleWsMenu(e: MouseEvent) {
+    e.stopPropagation();
+    ctx = null;
+    if (wsMenu) {
+      wsMenu = null;
+      return;
+    }
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    wsMenu = {
+      x: Math.min(r.left, window.innerWidth - 248),
+      y: Math.min(r.bottom + 4, window.innerHeight - 320),
+    };
+  }
+
+  function wsDelete(kind: "ws" | "leg", name: string) {
+    if (kind === "ws") {
+      if (wsConfirm !== name) {
+        wsConfirm = name;
+        legConfirm = null;
+        return;
+      }
+      wsConfirm = null;
+      wsMenu = null;
+      dispatch("deleteWorkspace", { name });
+    } else {
+      if (legConfirm !== name) {
+        legConfirm = name;
+        wsConfirm = null;
+        return;
+      }
+      legConfirm = null;
+      wsMenu = null;
+      dispatch("deleteLegacyProject", { name });
+    }
+  }
+
+  function wsMigrate(name: string) {
+    wsMenu = null;
+    dispatch("migrateProject", { name });
+  }
 
   $: idleScopedThreads = scopedThreads.filter((t) => t.status !== "active" && t.status !== "queued");
   $: pinned = idleScopedThreads.filter((t) => t.pinned).sort(byUpdated);
@@ -285,8 +339,8 @@
 </script>
 
 <svelte:window
-  on:click={() => (ctx = null)}
-  on:keydown={(e) => { if (e.key === "Escape") ctx = null; }}
+  on:click={() => { ctx = null; wsMenu = null; legConfirm = null; wsConfirm = null; }}
+  on:keydown={(e) => { if (e.key === "Escape") { ctx = null; wsMenu = null; } }}
 />
 
 <aside class="sb">
@@ -308,60 +362,22 @@
   </div>
 
   <div class="sb-scroll">
-    <div class="proj-head"><span>Workspace</span></div>
-    <div class="ws-filter">
-      <button class="ws-row" class:on={sideFilter === null} on:click={() => pickFilter(null)} title="All chats">
-        <span class="ws-name">All chats</span>
-        <span class="ws-count">{chatThreads.length}</span>
-      </button>
-      <button class="ws-row" class:on={sideFilter === "default"} on:click={() => pickFilter("default")} title="Inbox — chats without a workspace">
-        <span class="ws-name">Inbox</span>
-        <span class="ws-count">{keyCount("default")}</span>
-      </button>
-      {#each hubNames as w (w)}
-        <div class="ws-row split" class:on={sideFilter === w}>
-          <button class="ws-pick" on:click={() => pickFilter(w)} title="Filter to {w} — its projects show in the side dock">
-            <span class="ws-name">{displayName(w)}</span>
-            <span class="ws-count">{keyCount(w)}</span>
-          </button>
-          <button class="ws-act danger" class:armed={wsConfirm === w}
-            title={wsConfirm === w ? `Click again to delete ${w}, its projects and its chats` : `Delete workspace ${w}`}
-            on:click|stopPropagation={() => {
-              if (wsConfirm !== w) { wsConfirm = w; legConfirm = null; }
-              else { wsConfirm = null; dispatch("deleteWorkspace", { name: w }); }
-            }}>{wsConfirm === w ? "sure?" : "✕"}</button>
-        </div>
-      {/each}
-      {#each legacyProjects as name (name)}
-        <div class="ws-row legacy split" class:on={sideFilter === name}>
-          <button class="ws-pick" on:click={() => pickFilter(name)} title="Legacy project — move it to workspaces to use projects">
-            <span class="ws-name">{name}</span>
-            <span class="tag">legacy</span>
-            <span class="ws-count">{keyCount(name)}</span>
-          </button>
-          <button class="ws-act" title="Move {name} to workspaces (chats keep working)"
-            on:click|stopPropagation={() => dispatch("migrateProject", { name })}>→</button>
-          <button class="ws-act danger" class:armed={legConfirm === name}
-            title={legConfirm === name ? `Click again to delete ${name} and its chats` : `Delete ${name}`}
-            on:click|stopPropagation={() => {
-              if (legConfirm !== name) { legConfirm = name; wsConfirm = null; }
-              else { legConfirm = null; dispatch("deleteLegacyProject", { name }); }
-            }}>{legConfirm === name ? "sure?" : "✕"}</button>
-        </div>
-      {/each}
-    </div>
+    <button class="ws-picker" on:click={toggleWsMenu} title="Workspace scope">
+      <span class="ws-picker-label">{scopeLabel}</span>
+      <span class="ws-count">{scopeCount}</span>
+      <Icon d={I.chevronDown} size={13} />
+    </button>
 
     {#if runningThreads.length}
-      <div class="proj-head running-head">
-        <span class="pulse-dot" />
-        <span>Running ({runningThreads.length})</span>
-      </div>
-      {#each runningThreads as t (t.id)}
+      <div class="proj-head">
+        <span class="run-spin" title="working" />
+        <span>Active ({runningThreads.length})</span>
+      </div>      {#each runningThreads as t (t.id)}
         <ThreadRow
           {t} depth={0} active={t.id === activeThreadId}
           renaming={renamingId === t.id} bind:renameDraft={renameTitle}
           branch=""
-          showProject={t.project && t.project !== "default" ? t.project : ""}
+          showProject={sideFilter === null && t.project && t.project !== "default" ? t.project : ""}
           on:select={(e) => select(e.detail.id)}
           on:togglePin={(e) => togglePin(e.detail.id)}
           on:startRename={(e) => { ctx = null; startRename(e.detail.id); }}
@@ -370,20 +386,20 @@
           on:killRun={(e) => dispatch("killRun", { id: e.detail.id })}
           on:newSubsession={(e) => dispatch("newSubsession", { id: e.detail.id })}
           on:fork={(e) => dispatch("forkThread", { id: e.detail.id })}
-          on:deleteRequest={(e) => openThreadCtx(e.detail.id, window.innerWidth - 260, 220)}
+          on:deleteThread={(e) => dispatch("deleteThread", { id: e.detail.id })}
           on:contextMenu={(e) => openThreadCtx(e.detail.id, e.detail.x, e.detail.y)}
         />
       {/each}
     {/if}
 
     {#if pinned.length}
-      <div class="proj-head"><span>★ Pinned</span></div>
+      <div class="proj-head"><span class="head-icon"><Icon d={I.pin} size={11} /></span><span>Pinned</span></div>
       {#each pinned as t (t.id)}
         <ThreadRow
           {t} depth={0} active={t.id === activeThreadId}
           renaming={renamingId === t.id} bind:renameDraft={renameTitle}
           branch=""
-          showProject={t.project && t.project !== "default" ? t.project : ""}
+          showProject={sideFilter === null && t.project && t.project !== "default" ? t.project : ""}
           on:select={(e) => select(e.detail.id)}
           on:togglePin={(e) => togglePin(e.detail.id)}
           on:startRename={(e) => { ctx = null; startRename(e.detail.id); }}
@@ -392,7 +408,7 @@
           on:killRun={(e) => dispatch("killRun", { id: e.detail.id })}
           on:newSubsession={(e) => dispatch("newSubsession", { id: e.detail.id })}
           on:fork={(e) => dispatch("forkThread", { id: e.detail.id })}
-          on:deleteRequest={(e) => openThreadCtx(e.detail.id, window.innerWidth - 260, 220)}
+          on:deleteThread={(e) => dispatch("deleteThread", { id: e.detail.id })}
           on:contextMenu={(e) => openThreadCtx(e.detail.id, e.detail.x, e.detail.y)}
         />
       {/each}
@@ -405,7 +421,7 @@
           {t} depth={depthOf(t)} active={t.id === activeThreadId}
           renaming={renamingId === t.id} bind:renameDraft={renameTitle}
           branch=""
-          showProject={t.project && t.project !== "default" ? t.project : ""}
+          showProject={sideFilter === null && t.project && t.project !== "default" ? t.project : ""}
           on:select={(e) => select(e.detail.id)}
           on:togglePin={(e) => togglePin(e.detail.id)}
           on:startRename={(e) => { ctx = null; startRename(e.detail.id); }}
@@ -414,7 +430,7 @@
           on:killRun={(e) => dispatch("killRun", { id: e.detail.id })}
           on:newSubsession={(e) => dispatch("newSubsession", { id: e.detail.id })}
           on:fork={(e) => dispatch("forkThread", { id: e.detail.id })}
-          on:deleteRequest={(e) => openThreadCtx(e.detail.id, window.innerWidth - 260, 220)}
+          on:deleteThread={(e) => dispatch("deleteThread", { id: e.detail.id })}
           on:contextMenu={(e) => openThreadCtx(e.detail.id, e.detail.x, e.detail.y)}
         />
       {/each}
@@ -469,12 +485,73 @@
         Delete{ctx.count > 0 ? ` (+${ctx.count} subsession${ctx.count === 1 ? "" : "s"})` : ""}
       </button>
     {:else}
-      <div class="ctx-title danger-text">Delete “{ctx.title}”?</div>
-      <div class="ctx-note">{ctx.count > 0 ? `${ctx.count + 1} sessions go away, including subsessions.` : "The transcript is removed from disk."} This can't be undone.</div>
+      <div class="ctx-title danger-text">Delete{ctx.count > 0 ? ` ${ctx.count + 1} sessions` : ` “${ctx.title}”`}?</div>
+      <div class="ctx-note">{ctx.count > 0 ? "Sessions go away, including subsessions." : "The transcript is removed from disk."} This can't be undone.</div>
       <div class="ctx-actions">
         <button class="btn ghost" on:click={() => (ctx = null)}>Cancel</button>
         <button class="btn danger-solid" on:click={ctxConfirmDeleteThread}>Delete</button>
       </div>
+    {/if}
+  </div>
+{/if}
+
+{#if wsMenu}
+  <!-- Compact workspace picker: scope filter + workspace management. -->
+  <div
+    use:portal
+    class="ctx-menu ws-menu"
+    style="left:{wsMenu.x}px;top:{wsMenu.y}px;"
+    on:click|stopPropagation
+    on:contextmenu|preventDefault|stopPropagation
+    on:keydown={(e) => { if (e.key === "Escape") wsMenu = null; }}
+  >
+    <div class="ctx-title">Workspace</div>
+    <button class="menu-item" class:on={sideFilter === null} on:click={() => pickFilter(null)}>
+      <span class="ws-name">All chats</span>
+      <span class="ws-count">{chatThreads.length}</span>
+      {#if sideFilter === null}<span class="ws-check"><Icon d={I.check} size={13} /></span>{/if}
+    </button>
+    <button class="menu-item" class:on={sideFilter === "default"} on:click={() => pickFilter("default")}>
+      <span class="ws-name">Inbox</span>
+      <span class="ws-count">{keyCount("default")}</span>
+      {#if sideFilter === "default"}<span class="ws-check"><Icon d={I.check} size={13} /></span>{/if}
+    </button>
+    {#if hubNames.length}
+      <div class="menu-sep" />
+      {#each hubNames as w (w)}
+        <div class="menu-item split" class:on={sideFilter === w}>
+          <button class="ws-pick" on:click={() => pickFilter(w)} title="Filter to {w}">
+            <span class="ws-name">{displayName(w)}</span>
+            <span class="ws-count">{keyCount(w)}</span>
+            {#if sideFilter === w}<span class="ws-check"><Icon d={I.check} size={13} /></span>{/if}
+          </button>
+          <button class="ws-act danger" class:armed={wsConfirm === w}
+            title={wsConfirm === w ? `Click again to delete ${w}, its projects and its chats` : `Delete workspace ${w}`}
+            on:click|stopPropagation={() => wsDelete("ws", w)}>
+            {#if wsConfirm === w}<span class="arm-text">Sure?</span>{:else}<Icon d={I.close} size={12} />{/if}
+          </button>
+        </div>
+      {/each}
+    {/if}
+    {#if legacyProjects.length}
+      <div class="menu-sep" />
+      {#each legacyProjects as name (name)}
+        <div class="menu-item split" class:on={sideFilter === name}>
+          <button class="ws-pick" on:click={() => pickFilter(name)} title="Legacy project">
+            <span class="ws-name">{name}</span>
+            <span class="tag">legacy</span>
+            <span class="ws-count">{keyCount(name)}</span>
+            {#if sideFilter === name}<span class="ws-check"><Icon d={I.check} size={13} /></span>{/if}
+          </button>
+          <button class="ws-act" title="Move {name} to workspaces (chats keep working)"
+            on:click|stopPropagation={() => wsMigrate(name)}><Icon d={I.arrowRight} size={12} /></button>
+          <button class="ws-act danger" class:armed={legConfirm === name}
+            title={legConfirm === name ? `Click again to delete ${name} and its chats` : `Delete ${name}`}
+            on:click|stopPropagation={() => wsDelete("leg", name)}>
+            {#if legConfirm === name}<span class="arm-text">Sure?</span>{:else}<Icon d={I.close} size={12} />{/if}
+          </button>
+        </div>
+      {/each}
     {/if}
   </div>
 {/if}
@@ -493,7 +570,8 @@
   }
   .sb-wordmark {
     flex: 1; min-width: 0;
-    font-family: "Instrument Serif", Georgia, serif; font-style: italic; font-size: 17px;
+    font-family: var(--parzi-font, Inter, system-ui, sans-serif);
+    font-weight: 600; font-size: 15px; letter-spacing: 0.01em;
     color: var(--text); padding: 0 2px; user-select: none;
   }
   .sb-mark { width: 22px; height: 22px; border-radius: 6px; flex: none; }
@@ -523,65 +601,66 @@
   .icon-btn.upd { position: relative; }
   .icon-btn.upd.has-update { color: var(--accent); }
   .upd-dot {
-    position: absolute; top: 3px; right: 3px; width: 7px; height: 7px;
+    position: absolute; top: 4px; right: 4px; width: 6px; height: 6px;
     border-radius: 50%; background: var(--accent);
-    box-shadow: 0 0 6px var(--accent-glow, var(--accent));
   }
   .sb-scroll { flex: 1; overflow-y: auto; padding: 2px 10px 8px; display: flex; flex-direction: column; }
 
-  .ws-filter { display: flex; flex-direction: column; gap: 1px; padding-bottom: 2px; }
-  .ws-row {
+  /* Compact workspace picker: one row; the list lives in the portal menu. */
+  .ws-picker {
     display: flex; align-items: center; gap: 8px; width: 100%;
     background: transparent; border: none; border-radius: 7px; color: var(--text-2);
-    font: inherit; font-size: 13px; padding: 6px 8px; cursor: pointer; text-align: left;
+    font: inherit; font-size: 13px; padding: 6px 8px; margin-bottom: 2px;
+    cursor: pointer; text-align: left;
   }
-  .ws-row:hover { background: var(--surface-2); color: var(--text); }
-  .ws-row.on { background: var(--surface-2); color: var(--text); }
-  .ws-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ws-row.on .ws-name { font-weight: 600; }
+  .ws-picker:hover { background: var(--surface-2); color: var(--text); }
+  .ws-picker-label {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-weight: 600;
+  }
   .ws-count {
     flex: none; font-family: var(--parzi-mono); font-size: 10.5px; color: var(--text-4);
     font-variant-numeric: tabular-nums;
   }
-  .ws-row .tag {
+  .ws-menu { width: 236px; }
+  .ws-menu .menu-item.on { color: var(--text); }
+  .ws-menu .menu-item.split { padding: 0 2px 0 0; }
+  .ws-menu .ws-pick {
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+    background: transparent; border: none; border-radius: 6px; color: inherit;
+    font: inherit; padding: 7px 0 7px 9px; cursor: pointer; text-align: left;
+  }
+  .ws-menu .tag {
     flex: none; font-size: 10px; color: var(--warn);
     border: 1px solid var(--warn-line); border-radius: 5px; padding: 0 5px;
   }
-  .ws-row.split { padding: 0 0 0 8px; }
-  .ws-row.split .ws-pick {
-    flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
-    background: transparent; border: none; border-radius: 7px 0 0 7px; color: inherit;
-    font: inherit; font-size: 13px; padding: 6px 0; cursor: pointer; text-align: left;
-  }
+  .ws-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ws-check { display: inline-flex; flex: none; color: var(--accent-text); }
   .ws-act {
     flex: none; min-width: 24px; height: 24px; padding: 0 4px;
     display: inline-flex; align-items: center; justify-content: center;
     background: transparent; border: none; border-radius: 6px;
-    color: var(--text-4); font: inherit; font-size: 12px; cursor: pointer;
+    color: var(--text-4); cursor: pointer;
   }
   .ws-act:hover { color: var(--text); background: var(--surface-3); }
   .ws-act.danger:hover, .ws-act.danger.armed { color: var(--bad); background: var(--bad-soft); }
-  .ws-act.armed { font-size: 10px; font-weight: 600; }
+  .arm-text { font-size: 10px; font-weight: 600; }
 
-
-  .running-head {
-    display: flex; align-items: center; gap: 6px;
-    color: var(--ok); font-weight: 600;
+  /* Calm running indicator: a small spinner, no glow, no pulse. */
+  .run-spin {
+    width: 9px; height: 9px; border-radius: 50%; flex: none;
+    border: 1.6px solid var(--info-line);
+    border-top-color: var(--info);
+    animation: sbspin 0.9s linear infinite;
   }
-  .pulse-dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--ok); box-shadow: 0 0 6px var(--ok);
-    animation: pulse-ring 1.8s ease-in-out infinite; flex: none;
-  }
-  @keyframes pulse-ring {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.45; transform: scale(0.85); }
-  }
+  @keyframes sbspin { to { transform: rotate(360deg); } }
 
   .proj-head {
-    display: flex; align-items: center; justify-content: space-between;
-    font-size: 11px; color: var(--text-3); padding: 10px 4px 4px;
+    display: flex; align-items: center; gap: 5px; justify-content: flex-start;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--text-3); padding: 12px 4px 4px;
   }
+  .head-icon { display: inline-flex; }
   .empty-state { font-size: 12px; color: var(--text-4); padding: 12px 8px; text-align: center; }
   .more-row {
     background: transparent; border: none; color: var(--text-3); font: inherit; font-size: 12px;
@@ -619,13 +698,13 @@
   .menu-item.danger:hover { background: var(--bad-soft); color: var(--bad); }
   .menu-sep { height: 1px; background: var(--line-2); margin: 4px 6px; }
   .danger-text { color: var(--bad); }
-  .ctx-actions { display: flex; gap: 6px; justify-content: flex-end; padding: 2px 4px 4px; }
+  .ctx-actions { display: flex; flex-direction: column; gap: 6px; padding: 4px 5px 5px; }
   .btn {
     font: inherit; font-size: 12px; font-weight: 600; border-radius: 7px;
-    padding: 6px 12px; cursor: pointer; border: 1px solid transparent;
+    padding: 6px 12px; cursor: pointer; border: 1px solid transparent; width: 100%;
   }
   .btn.ghost { background: transparent; border-color: var(--line-3); color: var(--text-2); }
   .btn.ghost:hover { background: var(--surface-2); color: var(--text); }
-  .btn.danger-solid { background: var(--bad); color: #fff; }
+  .btn.danger-solid { background: var(--bad); color: #fff; order: -1; padding: 8px 12px; }
   .btn.danger-solid:hover { filter: brightness(1.08); }
 </style>

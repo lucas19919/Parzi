@@ -28,7 +28,7 @@
     killRun: { id: string };
     newSubsession: { id: string };
     fork: { id: string };
-    deleteRequest: { id: string };
+    deleteThread: { id: string };
     contextMenu: { id: string; x: number; y: number };
   }>();
 
@@ -74,8 +74,21 @@
     return `${Math.floor(s / 86400)}d`;
   }
 
-  /** Dim suffix: lane first, branch when it adds info. Never the project — the group header already says it. */
-  $: subLine = [t.lane || "", branch || ""].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(" · ");
+  /** Dim suffix: the git branch, when it adds info. The lane is internal
+      runtime plumbing — never shown. Never the project — the group
+      header already says it. */
+  $: subLine = (branch || "").trim();
+
+  /** Crisp 13px stroke icons for disclosure, branch marks and the hover rail. */
+  const P = {
+    chevR: "M9 18l6-6-6-6",
+    chevD: "M6 9l6 6 6-6",
+    sub: "M15 10l5 5-5 5M4 4v7a4 4 0 0 0 4 4h12",
+    pin: "M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z",
+    pencil: "M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z",
+    trash: "M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6",
+    x: "M18 6 6 18M6 6l12 12",
+  };
 
   function autofocus(node: HTMLInputElement) {
     node.focus();
@@ -100,6 +113,29 @@
     e.preventDefault();
     e.stopPropagation();
     dispatch("contextMenu", { id: t.id, x: e.clientX, y: e.clientY });
+  }
+
+  /** Rail delete arms in place: first click asks, second deletes. No popup. */
+  let armDelete = false;
+  let armTimer: ReturnType<typeof setTimeout> | null = null;
+  function disarm() {
+    armDelete = false;
+    if (armTimer) {
+      clearTimeout(armTimer);
+      armTimer = null;
+    }
+  }
+  onDestroy(disarm);
+  function onDel(e: Event) {
+    e.stopPropagation();
+    if (armDelete) {
+      disarm();
+      dispatch("deleteThread", { id: t.id });
+      return;
+    }
+    armDelete = true;
+    if (armTimer) clearTimeout(armTimer);
+    armTimer = setTimeout(disarm, 3000);
   }
 </script>
 
@@ -127,9 +163,9 @@
         title={shut ? "Expand subsessions" : "Collapse subsessions"}
         on:click|stopPropagation={() => dispatch("toggleTree", { id: t.id })}
         on:keydown={(e) => { if (e.key === "Enter") dispatch("toggleTree", { id: t.id }); e.stopPropagation(); }}
-      >{shut ? "▸" : "▾"}</span>
+      ><Icon d={shut ? P.chevR : P.chevD} size={12} /></span>
     {:else if depth > 0}
-      <span class="branch" title="Subsession">↳</span>
+      <span class="branch" title="Subsession"><Icon d={P.sub} size={12} /></span>
     {/if}
     {#if renaming}
       <input
@@ -162,10 +198,8 @@
       <span class="st-auto" title="Smart Auto"><Icon d="M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4Z" size={12} /></span>
     {:else if hasMark(prov)}
       <span class="prov-logo" title={t.model}><ProviderLogo provider={prov} size={13} muted /></span>
-    {:else}
-      <span class="prov-logo" title={t.model || "model"}><Icon d="M4 4h16v16H4z" size={11} /></span>
     {/if}
-    {#if t.pinned}<span class="st-pin" title="Pinned">★</span>{/if}
+    {#if t.pinned}<span class="st-pin" title="Pinned"><Icon d={P.pin} size={10} /></span>{/if}
   </div>
   <span class="t3-hover" data-act>
     {#if t.status === "active" || t.status === "queued"}
@@ -175,30 +209,32 @@
         title="Stop run"
         class="stop"
         on:click|stopPropagation={() => dispatch("killRun", { id: t.id })}
-        on:keydown={(e) => e.key === "Enter" && dispatch("killRun", { id: t.id })}>✕</span
+        on:keydown={(e) => e.key === "Enter" && dispatch("killRun", { id: t.id })}><Icon d={P.x} size={13} /></span
       >
     {/if}
     <span
       role="button"
       tabindex="0"
       title={t.pinned ? "Unpin" : "Pin"}
+      class:is-pinned={t.pinned}
       on:click|stopPropagation={() => dispatch("togglePin", { id: t.id })}
-      on:keydown={(e) => e.key === "Enter" && dispatch("togglePin", { id: t.id })}>{t.pinned ? "★" : "☆"}</span
+      on:keydown={(e) => e.key === "Enter" && dispatch("togglePin", { id: t.id })}><Icon d={P.pin} size={13} /></span
     >
     <span
       role="button"
       tabindex="0"
       title="Rename"
       on:click|stopPropagation={() => dispatch("startRename", { id: t.id })}
-      on:keydown={(e) => e.key === "Enter" && dispatch("startRename", { id: t.id })}>✎</span
+      on:keydown={(e) => e.key === "Enter" && dispatch("startRename", { id: t.id })}><Icon d={P.pencil} size={13} /></span
     >
     <span
       role="button"
       tabindex="0"
-      title="Delete thread"
+      title={armDelete ? "Click again to delete this thread" : "Delete thread"}
       class="del"
-      on:click|stopPropagation={() => dispatch("deleteRequest", { id: t.id })}
-      on:keydown={(e) => e.key === "Enter" && dispatch("deleteRequest", { id: t.id })}>🗑</span
+      class:armed={armDelete}
+      on:click|stopPropagation={onDel}
+      on:keydown={(e) => e.key === "Enter" && onDel(e)}>{#if armDelete}<span class="arm-text">sure?</span>{:else}<Icon d={P.trash} size={13} />{/if}</span
     >
   </span>
 </div>
@@ -208,20 +244,19 @@
      already names the project, so the row never repeats it. */
   .t3 {
     position: relative;
-    display: flex; flex-direction: column; gap: 1px; width: 100%;
+    display: flex; flex-direction: column; gap: 3px; width: 100%;
     box-sizing: border-box;
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 9px;
+    border-radius: 10px;
     color: var(--text-2);
-    font: inherit; padding: 6px 9px 6px 10px;
+    font: inherit; padding: 10px 12px 10px 13px;
     cursor: pointer; text-align: left; outline: none;
   }
   .t3:hover { background: var(--surface-2); }
   .t3.on {
     background: var(--surface-3);
-    border-color: var(--line-3);
-    box-shadow: inset 2px 0 0 var(--accent);
+    box-shadow: inset 2.5px 0 0 var(--accent);
     color: var(--text);
   }
   .t3:focus-visible { box-shadow: 0 0 0 1.5px var(--accent); }
@@ -259,21 +294,31 @@
   .st-rel { flex: none; color: var(--text-4); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .st-proj {
     flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    color: var(--text-3); border: 1px solid var(--line-2); border-radius: 5px; padding: 0 5px;
+    color: var(--text-4);
   }
   .st-lane {
     flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     color: var(--text-4); font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 10.5px;
   }
-  .st-auto { display: inline-flex; flex: none; color: var(--accent-text); opacity: 0.85; }
-  .st-pin { flex: none; color: var(--text-3); font-size: 10px; }
-  .prov-logo { display: inline-flex; flex: none; color: var(--text-3); }
+  .st-auto { display: none; }
+  .st-pin { display: inline-flex; flex: none; color: var(--text-3); }
+  /* Row marks stay monochrome and quiet: visible on hover, focus or
+     selection; full colour lives in the Omnibar, Titlebar and Inspector. */
+  .prov-logo { display: none; }
+  .t3:hover .prov-logo, .t3:focus-within .prov-logo, .t3.on .prov-logo { display: inline-flex; flex: none; color: var(--text-3); }
+  .t3:hover .st-auto, .t3:focus-within .st-auto, .t3.on .st-auto { display: inline-flex; flex: none; color: var(--accent-text); }
+  .prov-logo :global(svg) { filter: grayscale(1); opacity: 0.75; }
   .disclosure {
-    flex: none; width: 16px; margin-left: -4px; text-align: center;
-    color: var(--text-3); font-size: 10px; cursor: pointer; border-radius: 4px;
+    flex: none; width: 16px; margin-left: -4px;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--text-3); cursor: pointer; border-radius: 4px;
   }
   .disclosure:hover { color: var(--text); background: var(--surface-3); }
-  .branch { flex: none; color: var(--text-4); font-size: 11px; width: 12px; margin-left: -2px; text-align: center; }
+  .branch {
+    flex: none; width: 12px; margin-left: -2px;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--text-4);
+  }
   .kid-badge {
     flex: none; font-size: 10px; color: var(--text-3);
     border: 1px solid var(--line-3);
@@ -289,10 +334,14 @@
   }
   .t3:hover .t3-hover, .t3:focus-within .t3-hover { display: inline-flex; }
   .t3-hover span {
-    display: inline-flex; align-items: center; height: 20px; padding: 0 6px;
-    border-radius: 5px; cursor: pointer; font-size: 11px; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 20px; min-width: 24px; padding: 0 5px;
+    border-radius: 5px; cursor: pointer; line-height: 1;
   }
   .t3-hover span:hover { background: var(--surface-3); color: var(--text); }
+  .t3-hover span.is-pinned { color: var(--accent-text); }
+  .t3-hover .del.armed, .t3-hover .del.armed:hover { background: var(--bad); color: #fff; }
+  .arm-text { font-size: 11px; font-weight: 600; white-space: nowrap; }
   .t3-hover .stop:hover { background: var(--bad-soft); color: var(--bad); }
   .t3-hover .del:hover { background: var(--bad-soft); color: var(--bad); }
   .rename {

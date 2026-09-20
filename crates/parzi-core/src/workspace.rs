@@ -158,7 +158,7 @@ pub fn workspace_file(name: &str) -> PathBuf {
 /// Directory-name sanitiser for the infallible `dir`: keeps `[A-Za-z0-9_-]`,
 /// folds everything else to `_`, caps at 64 chars. No separators, no dots —
 /// the result can never escape `workspaces/`.
-fn sanitize(name: &str) -> String {
+pub(crate) fn sanitize(name: &str) -> String {
     let mut out: String = name
         .trim()
         .chars()

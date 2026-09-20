@@ -1705,57 +1705,9 @@ async fn list_project_docs(project: String, root: String) -> Result<Vec<DocEntry
     if root.is_empty() {
         return Ok(out);
     }
-    const SKIP: &[&str] = &[
-        ".git",
-        "node_modules",
-        "target",
-        "dist",
-        ".venv",
-        "__pycache__",
-    ];
-    const FIRST: &[&str] = &[
-        "PLAN.md",
-        "README.md",
-        "AGENTS.md",
-        "CLAUDE.md",
-        "PROGRESS.md",
-        "TODO.md",
-    ];
-    let root_path = std::path::PathBuf::from(root);
-    let mut found: Vec<(String, String)> = vec![];
-    let mut stack = vec![(root_path.clone(), 0u8)];
-    while let Some((dir, depth)) = stack.pop() {
-        if depth > 2 || found.len() >= 80 {
-            continue;
-        }
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || SKIP.contains(&name.as_str()) {
-                continue;
-            }
-            let p = e.path();
-            if p.is_dir() {
-                stack.push((p, depth + 1));
-            } else if name.to_lowercase().ends_with(".md") {
-                if let Ok(rel) = p.strip_prefix(&root_path) {
-                    let label = rel.to_string_lossy().replace('\\', "/");
-                    found.push((label, p.to_string_lossy().to_string()));
-                }
-            }
-        }
-    }
-    found.sort_by(|a, b| {
-        let ra = FIRST.iter().position(|f| *f == a.0).unwrap_or(FIRST.len());
-        let rb = FIRST.iter().position(|f| *f == b.0).unwrap_or(FIRST.len());
-        ra.cmp(&rb)
-            .then_with(|| a.0.matches('/').count().cmp(&b.0.matches('/').count()))
-            .then_with(|| a.0.cmp(&b.0))
-    });
-    for (label, path) in found {
+    for (label, path) in
+        parzi_core::docs::scan_root(std::path::Path::new(root))
+    {
         out.push(DocEntry {
             label,
             path,
@@ -1763,6 +1715,111 @@ async fn list_project_docs(project: String, root: String) -> Result<Vec<DocEntry
         });
     }
     Ok(out)
+}
+
+/// Managed context: the workspace set plus the deck project's set.
+/// Thin over core; curation lives in the dock, injection in the handler.
+#[derive(serde::Serialize)]
+struct ContextItem {
+    name: String,
+    tier: parzi_core::context_store::Tier,
+    scope: parzi_core::context_store::Scope,
+    source: String,
+    bytes: u64,
+}
+
+fn context_home() -> Result<std::path::PathBuf, String> {
+    parzi_core::paths::parzi_dir().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn list_context(
+    workspace: String,
+    slug: Option<String>,
+) -> Result<Vec<ContextItem>, String> {
+    let home = context_home()?;
+    parzi_core::context_store::list(&home, workspace.trim(), slug.as_deref())
+        .map(|docs| {
+            docs.into_iter()
+                .map(|d| {
+                    let bytes = d.content.len() as u64;
+                    ContextItem {
+                        name: d.name,
+                        tier: d.tier,
+                        scope: d.scope,
+                        source: String::new(),
+                        bytes,
+                    }
+                })
+                .collect()
+        })
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn read_context_file(
+    workspace: String,
+    slug: Option<String>,
+    name: String,
+) -> Result<String, String> {
+    let home = context_home()?;
+    parzi_core::context_store::list(&home, workspace.trim(), slug.as_deref())
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|d| d.name == name)
+        .map(|d| d.content)
+        .ok_or_else(|| "unknown context file".to_string())
+}
+
+#[tauri::command]
+async fn add_context(
+    workspace: String,
+    slug: Option<String>,
+    title: String,
+    content: String,
+    tier: String,
+    source: String,
+) -> Result<String, String> {
+    let home = context_home()?;
+    let tier = match tier.trim() {
+        "pinned" => parzi_core::context_store::Tier::Pinned,
+        "auto" => parzi_core::context_store::Tier::Auto,
+        _ => parzi_core::context_store::Tier::Curated,
+    };
+    parzi_core::context_store::add(
+        &home,
+        workspace.trim(),
+        slug.as_deref(),
+        title.trim(),
+        &content,
+        tier,
+        source.trim(),
+    )
+    .map(|d| d.name)
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn set_context_pinned(
+    workspace: String,
+    slug: Option<String>,
+    name: String,
+    pinned: bool,
+) -> Result<(), String> {
+    let home = context_home()?;
+    parzi_core::context_store::set_pinned(&home, workspace.trim(), slug.as_deref(), &name, pinned)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn remove_context(
+    workspace: String,
+    slug: Option<String>,
+    name: String,
+) -> Result<(), String> {
+    let home = context_home()?;
+    parzi_core::context_store::remove(&home, workspace.trim(), slug.as_deref(), &name)
+        .map_err(|e| e.to_string())
 }
 
 /// Settings → Context: bounded text write for project memory files.
@@ -2079,6 +2136,11 @@ fn main() {
             skill_commands,
             save_skill_commands,
             list_project_docs,
+            list_context,
+            read_context_file,
+            add_context,
+            set_context_pinned,
+            remove_context,
             // hub (PLAN.md): workspaces, GitHub, projects, the deck's reads.
             hub_cmds::workspace_list,
             hub_cmds::workspace_create,

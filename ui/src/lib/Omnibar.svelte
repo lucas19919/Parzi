@@ -6,7 +6,7 @@
   import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
   import { portal } from "./portal";
-  import { api, hub, type ProviderStatus } from "./api";
+  import { api, hub, type Project, type ProviderStatus } from "./api";
   import { ageOf, checking, refreshBoard } from "./providerStore";
   import {
     AUTO_ROW, PROVIDER_ORDER, allRows, effortHint, effortLabel as effortWord, effortsFor,
@@ -31,6 +31,9 @@
   export let workspaces: string[] = [];
   export let workspace = "";
   export let workspaceFixed = false;
+  /** Deck projects of the workspace; a project lives in a workspace. */
+  export let deckProjects: Project[] = [];
+  export let selectedProject: { workspace: string; slug: string } | null = null;
   /** Context window fill of this chat (tokens the model saw last request). */
   export let contextUsed = 0;
   /** The model's window; 0 hides the meter. */
@@ -55,6 +58,7 @@
     permissionChange: { permission: string };
     workspaceChange: { workspace: string };
     workspaceDeleted: { workspace: string };
+    openProject: { workspace: string; slug: string };
     error: { text: string };
     newWorkspace: void;
   }>();
@@ -84,33 +88,27 @@
     { id: "full", title: "Full access", desc: "Allow commands and edits without prompts.", icon: I.unlock },
   ];
 
-  const MODES: { id: "chat" | "plan" | "build"; title: string; desc: string }[] = [
-    { id: "chat", title: "Chat", desc: "Ask and edit freely." },
-    { id: "plan", title: "Plan", desc: "Plan only — no edits or commands." },
-    { id: "build", title: "Build", desc: "Ship it — full execution." },
-  ];
-
   let textareaEl: HTMLTextAreaElement | null = null;
   let showModelPicker = false;
   /** Left-rail selection: a roster provider id, or "__fav" for starred. */
   let railSel = "";
-  let effortOpen = false;
   let permOpen = false;
   let wsOpen = false;
+  let projOpen = false;
   let modelQuery = "";
   let searchInputEl: HTMLInputElement | null = null;
   let modelIndex = 0;
   let modelBtn: HTMLButtonElement | null = null;
-  let effortBtn: HTMLButtonElement | null = null;
   let permBtn: HTMLButtonElement | null = null;
   let wsBtn: HTMLButtonElement | null = null;
+  let projBtn: HTMLButtonElement | null = null;
   let wsPopStyle = "";
   let wsBelow = false;
+  let projPopStyle = "";
+  let projBelow = false;
   let modelPopStyle = "";
-  let effortPopStyle = "";
   let permPopStyle = "";
   let modelBelow = false;
-  let effortBelow = false;
   let permBelow = false;
   let atOpen = false;
   let atItems: string[] = [];
@@ -153,9 +151,16 @@
   /** What the chosen model takes, in its agent's words; empty = no knob. */
   $: efforts = effortsFor(model, board);
   $: fitTo(efforts);
-  $: effortText = efforts.length ? effortWord(effort) : "";
-  $: modeLabel = mode === "chat" ? "Chat" : mode === "plan" ? "Plan" : "Build";
+  $: effortIdx = Math.max(0, efforts.indexOf(effort));
   $: permTitle = PERMS.find((p) => p.id === permission)?.title ?? "Full access";
+  /** Display name of the open project; the sidebar owns project management. */
+  $: projName = currentProject === "default" || !currentProject ? "Inbox" : currentProject;
+  /** Projects of the open workspace, and the selected one's title. */
+  $: wsDeck = deckProjects.filter((p) => !workspace || p.workspace === workspace);
+  $: selDeck = selectedProject
+    ? deckProjects.find((p) => p.workspace === selectedProject.workspace && p.slug === selectedProject.slug) ?? null
+    : null;
+  $: projLabel = selDeck ? selDeck.title || selDeck.slug : "No project";
 
   /** Keep the effort when the new model takes it; otherwise the closest fit. */
   function fitTo(list: string[]) {
@@ -165,11 +170,6 @@
 
   function setEffort(id: string) {
     effort = id;
-  }
-
-  function setMode(m: "chat" | "plan" | "build") {
-    mode = m;
-    effortOpen = false;
   }
 
   function setPermission(id: string) {
@@ -215,9 +215,9 @@
       }
     } else if (e.key === "Escape") {
       if (showModelPicker) showModelPicker = false;
-      else if (effortOpen) effortOpen = false;
       else if (permOpen) permOpen = false;
       else if (wsOpen) wsOpen = false;
+      else if (projOpen) projOpen = false;
       else if (slashOpen) slashOpen = false;
       else if (atOpen) atOpen = false;
     } else if (slashOpen && e.key === "ArrowDown") {
@@ -296,9 +296,9 @@
     cmd.run();
   }
 
-  const POP_W = { model: 440, effort: 300, perm: 320, ws: 240 };
+  const POP_W = { model: 440, perm: 320, ws: 240, proj: 240 };
 
-  function placePop(btn: HTMLButtonElement | null, which: "model" | "effort" | "perm" | "ws") {
+  function placePop(btn: HTMLButtonElement | null, which: "model" | "perm" | "ws" | "proj") {
     if (!btn || typeof window === "undefined") return;
     const r = btn.getBoundingClientRect();
     const w = POP_W[which];
@@ -320,12 +320,12 @@
     if (which === "model") {
       modelPopStyle = style;
       modelBelow = below;
-    } else if (which === "effort") {
-      effortPopStyle = style;
-      effortBelow = below;
     } else if (which === "ws") {
       wsPopStyle = style;
       wsBelow = below;
+    } else if (which === "proj") {
+      projPopStyle = style;
+      projBelow = below;
     } else {
       permPopStyle = style;
       permBelow = below;
@@ -334,9 +334,9 @@
 
   function repositionPops() {
     if (showModelPicker) placePop(modelBtn, "model");
-    if (effortOpen) placePop(effortBtn, "effort");
     if (permOpen) placePop(permBtn, "perm");
     if (wsOpen) placePop(wsBtn, "ws");
+    if (projOpen) placePop(projBtn, "proj");
   }
 
   function closeInlinePops() {
@@ -369,9 +369,9 @@
 
   function openModelPicker() {
     showModelPicker = true;
-    effortOpen = false;
     permOpen = false;
     wsOpen = false;
+    projOpen = false;
     closeInlinePops();
     modelQuery = "";
     modelIndex = 0;
@@ -400,26 +400,31 @@
     openModelPicker();
   }
 
-  function toggleEffort() {
-    effortOpen = !effortOpen;
-    if (effortOpen) {
-      showModelPicker = false;
-      permOpen = false;
-      closeInlinePops();
-      wsOpen = false;
-      placePop(effortBtn, "effort");
-    }
-  }
-
   function toggleWs() {
     wsOpen = !wsOpen;
     if (wsOpen) {
       showModelPicker = false;
-      effortOpen = false;
       permOpen = false;
+      projOpen = false;
       closeInlinePops();
       placePop(wsBtn, "ws");
     }
+  }
+
+  function toggleProj() {
+    projOpen = !projOpen;
+    if (projOpen) {
+      showModelPicker = false;
+      permOpen = false;
+      wsOpen = false;
+      closeInlinePops();
+      placePop(projBtn, "proj");
+    }
+  }
+
+  function pickDeckProject(p: Project) {
+    projOpen = false;
+    dispatch("openProject", { workspace: p.workspace, slug: p.slug });
   }
 
   function pickWorkspace(name: string) {
@@ -455,9 +460,8 @@
     permOpen = !permOpen;
     if (permOpen) {
       showModelPicker = false;
-      effortOpen = false;
-      closeInlinePops();
       wsOpen = false;
+      projOpen = false;
       placePop(permBtn, "perm");
     }
   }
@@ -488,9 +492,9 @@
   function onWindowClick(e: MouseEvent) {
     const el = e.target as HTMLElement;
     if (showModelPicker && !el.closest(".model-zone") && !el.closest(".pop")) showModelPicker = false;
-    if (effortOpen && !el.closest(".effort-zone") && !el.closest(".pop")) effortOpen = false;
     if (permOpen && !el.closest(".perm-zone") && !el.closest(".pop")) permOpen = false;
     if (wsOpen && !el.closest(".ws-zone") && !el.closest(".pop")) wsOpen = false;
+    if (projOpen && !el.closest(".proj-zone") && !el.closest(".pop")) projOpen = false;
     if (slashOpen && !el.closest(".slash-pop")) slashOpen = false;
     if (atOpen && !el.closest(".at-popup")) atOpen = false;
   }
@@ -625,6 +629,31 @@
 <svelte:window on:click={onWindowClick} on:keydown={handleKeydown} on:resize={repositionPops} />
 
 <div class="ob">
+  <!-- Scope floats above the bar: workspace picker + current project. -->
+  {#if workspaces.length || workspace || wsDeck.length || selDeck}
+    <div class="scope-row">
+      {#if workspaces.length || workspace}
+        <div class="ws-zone">
+          <button bind:this={wsBtn} class="scope-chip" class:open={wsOpen} on:click|stopPropagation={toggleWs}
+            title={workspaceFixed ? `This chat stays in ${workspace || "Inbox"} — picking another starts a new draft` : "Workspace for this chat"}>
+            <span class="chip-glyph"><Icon d={I.folder} size={12} /></span>
+            <span class="truncate">{workspace || "No workspace"}</span>
+            <span class="chev"><Icon d={I.chevD} size={10} /></span>
+          </button>
+        </div>
+      {/if}
+      {#if wsDeck.length || selDeck}
+        <div class="proj-zone">
+          <button bind:this={projBtn} class="scope-chip" class:open={projOpen} on:click|stopPropagation={toggleProj}
+            title="Project in this workspace">
+            <span class="chip-glyph"><Icon d={I.file} size={12} /></span>
+            <span class="truncate">{projLabel}</span>
+            <span class="chev"><Icon d={I.chevD} size={10} /></span>
+          </button>
+        </div>
+      {/if}
+    </div>
+  {/if}
   <div
     class="ob-card"
     role="group"
@@ -695,17 +724,23 @@
             <span class="ctl-glyph"><Icon d={I.model} size={13} /></span>
           {/if}
           <span class="truncate">{shown.name}</span>
-          <span class="chev"><Icon d={I.chevD} size={11} /></span>
+          <span class="chev"><Icon d={I.chevD} size={10} /></span>
         </button>
       </div>
 
       <span class="vdiv" />
 
-      <div class="effort-zone ctl-zone">
-        <button bind:this={effortBtn} class="ctl" class:open={effortOpen} on:click|stopPropagation={toggleEffort} title="Effort and mode">
-          <span class="truncate">{effortText ? `${effortText} · ${modeLabel}` : modeLabel}</span>
-          <span class="chev"><Icon d={I.chevD} size={11} /></span>
-        </button>
+      <div class="bars-zone" role="group" aria-label="Effort">
+        {#if efforts.length}
+          {#each efforts as e, i}
+            <button class="bar-bit" class:lit={i <= effortIdx} on:click={() => setEffort(e)}
+              title={`${effortWord(e)}${effortHint(e) ? ` — ${effortHint(e)}` : ""}`} aria-pressed={effort === e}>
+              <span />
+            </button>
+          {/each}
+        {:else}
+          <span class="bars-none" title="This agent sets its own effort">–</span>
+        {/if}
       </div>
 
       <span class="vdiv" />
@@ -714,21 +749,9 @@
         <button bind:this={permBtn} class="ctl" class:open={permOpen} on:click|stopPropagation={togglePerm} title="Permission policy">
           <span class="ctl-glyph"><Icon d={I.lock} size={13} /></span>
           <span class="truncate">{permTitle}</span>
-          <span class="chev"><Icon d={I.chevD} size={11} /></span>
+          <span class="chev"><Icon d={I.chevD} size={10} /></span>
         </button>
       </div>
-
-      {#if workspaces.length || workspace}
-        <span class="vdiv" />
-        <div class="ws-zone ctl-zone">
-          <button bind:this={wsBtn} class="ctl" class:open={wsOpen} on:click|stopPropagation={toggleWs}
-            title={workspaceFixed ? `This chat stays in ${workspace || "Inbox"} — picking another starts a new draft` : "Workspace for this chat"}>
-            <span class="ctl-glyph"><Icon d={I.folder} size={13} /></span>
-            <span class="truncate">{workspace || "No workspace"}</span>
-            <span class="chev"><Icon d={I.chevD} size={11} /></span>
-          </button>
-        </div>
-      {/if}
 
       <span class="spacer" />
 
@@ -882,27 +905,6 @@
       </div>
     {/if}
 
-    {#if effortOpen}
-      <div use:portal class="pop effort-pop from-left" class:from-top={effortBelow} style={effortPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
-        {#if efforts.length}
-          <div class="sec-h">Effort</div>
-          {#each efforts as e}
-            <button class="opt-row" class:on={effort === e} on:click={() => setEffort(e)}>
-              <span class="meta"><span class="nm">{effortWord(e)}</span><span class="sub">{effortHint(e)}</span></span>
-              {#if effort === e}<span class="tick"><Icon d={I.check} size={12} /></span>{/if}
-            </button>
-          {/each}
-        {/if}
-        <div class="sec-h">Mode</div>
-        {#each MODES as m}
-          <button class="opt-row" class:on={mode === m.id} on:click={() => setMode(m.id)}>
-            <span class="meta"><span class="nm">{m.title}</span><span class="sub">{m.desc}</span></span>
-            {#if mode === m.id}<span class="tick"><Icon d={I.check} size={12} /></span>{/if}
-          </button>
-        {/each}
-      </div>
-    {/if}
-
     {#if wsOpen}
       <div use:portal class="pop ws-pop from-right" class:from-top={wsBelow} style={wsPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
         {#if workspaceFixed}
@@ -933,6 +935,21 @@
       </div>
     {/if}
 
+    {#if projOpen}
+      <div use:portal class="pop proj-pop from-right" class:from-top={projBelow} style={projPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
+        {#each wsDeck as p (p.workspace + "/" + p.slug)}
+          <button class="opt-row" class:on={selectedProject?.workspace === p.workspace && selectedProject?.slug === p.slug} on:click={() => pickDeckProject(p)}>
+            <span class="p-ico"><Icon d={I.file} size={13} /></span>
+            <span class="meta"><span class="nm">{p.title || p.slug}</span><span class="sub">{p.slug}</span></span>
+            {#if selectedProject?.workspace === p.workspace && selectedProject?.slug === p.slug}<span class="tick"><Icon d={I.check} size={12} /></span>{/if}
+          </button>
+        {/each}
+        {#if !wsDeck.length}
+          <div class="empty">No projects in this workspace yet</div>
+        {/if}
+      </div>
+    {/if}
+
     {#if permOpen}
       <div use:portal class="pop perm-pop from-right" class:from-top={permBelow} style={permPopStyle} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
         {#each PERMS as p}
@@ -947,6 +964,21 @@
 
 <style>
   .ob { position: relative; width: 100%; max-width: 720px; margin: 0 auto; min-width: 0; }
+  /* Scope floats above the bar, right-aligned: quiet labeled pills. */
+  .scope-row { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-bottom: 6px; min-width: 0; }
+  .scope-chip {
+    display: inline-flex; align-items: center; gap: 6px; max-width: 200px; min-width: 0;
+    background: color-mix(in srgb, var(--parzi-sidebar) 62%, transparent);
+    backdrop-filter: blur(10px) saturate(1.2);
+    -webkit-backdrop-filter: blur(10px) saturate(1.2);
+    border: 1px solid var(--line-2); border-radius: var(--radius-pill);
+    color: var(--text-3); font: inherit; font-size: 11px; padding: 3px 9px; cursor: pointer;
+  }
+  .scope-chip:hover { color: var(--text); background: var(--surface-2); }
+  .scope-chip.open { color: var(--text); border-color: var(--accent-line); }
+  .scope-chip .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .scope-chip .chev { display: inline-flex; flex: none; color: var(--text-4); }
+  .chip-glyph { display: inline-flex; flex: none; color: var(--text-4); }
   .ob-card {
     position: relative;
     background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 88%, transparent), color-mix(in srgb, var(--parzi-sidebar) 78%, transparent));
@@ -1025,19 +1057,30 @@
   .controls { display: flex; align-items: center; gap: 2px; min-width: 0; flex-wrap: wrap; row-gap: 4px; }
   .ctl-zone { position: static; min-width: 0; flex: 0 1 auto; display: flex; }
   .ctl {
-    display: inline-flex; align-items: center; gap: 7px; max-width: 180px; min-width: 0; flex: 1 1 auto;
+    display: inline-flex; align-items: center; gap: 6px; max-width: 180px; min-width: 0; flex: 1 1 auto;
+    height: 28px;
     background: transparent; border: none; border-radius: 7px; color: var(--text-3);
-    font: inherit; font-size: 12.5px; padding: 6px 8px; cursor: pointer; text-align: left;
+    font: inherit; font-size: 12px; padding: 0 7px; cursor: pointer; text-align: left;
     overflow: hidden;
   }
   .ctl:hover { background: var(--surface-2); color: var(--text); }
   .ctl.open { background: var(--surface-3); color: var(--text); }
   .ctl .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ctl .chev { color: var(--text-3); display: inline-flex; flex: none; }
-  .ctl:hover .chev, .ctl.open .chev { color: var(--text-2); }
-  .ctl-glyph { display: inline-flex; color: var(--text-3); flex: none; }
-  .ctl:hover .ctl-glyph, .ctl.open .ctl-glyph { color: var(--text); }
+  .ctl .chev { color: var(--text-4); display: inline-flex; flex: none; }
+  .ctl:hover .chev, .ctl.open .chev { color: var(--text-3); }
+  .ctl-glyph { display: inline-flex; color: var(--text-4); flex: none; }
+  .ctl:hover .ctl-glyph, .ctl.open .ctl-glyph { color: var(--text-2); }
   .vdiv { width: 1px; height: 16px; background: var(--line-2); margin: 0 5px; flex: none; }
+  /* Effort as uniform ticks: click the level you want. */
+  .bars-zone { display: flex; align-items: center; flex: none; padding: 0 7px; height: 28px; }
+  .bars-zone .bar-bit {
+    background: transparent; border: none; cursor: pointer; padding: 0 2px;
+    display: flex; align-items: center; height: 28px;
+  }
+  .bars-zone .bar-bit span { width: 4px; height: 14px; border-radius: 2px; background: var(--surface-3); transition: background 100ms ease; }
+  .bars-zone .bar-bit.lit span { background: var(--text-2); }
+  .bars-zone .bar-bit:hover span { background: var(--text); }
+  .bars-none { color: var(--text-4); font-size: 12px; padding: 0 6px; cursor: default; }
   .spacer { flex: 1 1 auto; min-width: 4px; }
 
   .ctx {
@@ -1114,8 +1157,7 @@
   .rail-star { flex: none; color: var(--warn); font-size: 15px; line-height: 1; }
   .model-pop .model-list { border: none; padding: 5px 5px 5px 4px; max-height: none; }
   .m-initial.sm { width: 20px; height: 20px; font-size: 10px; border-radius: 6px; }
-  .effort-pop { width: 300px; max-width: calc(100vw - 16px); padding: 5px; overflow-y: auto; }
-  .ws-pop { width: 240px; max-width: calc(100vw - 16px); padding: 5px; overflow-y: auto; }
+  .ws-pop, .proj-pop { width: 240px; max-width: calc(100vw - 16px); padding: 5px; overflow-y: auto; }
   .ws-pop .new-ws { color: var(--text-3); border-top: 1px solid var(--line-2); border-radius: 0 0 7px 7px; margin-top: 3px; }
   .ws-note { font-size: 11px; color: var(--text-3); line-height: 1.45; padding: 6px 8px 4px; }
   .ws-row { display: flex; align-items: center; gap: 2px; }
@@ -1160,7 +1202,6 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .signin:hover { filter: brightness(1.06); }
-  .sec-h { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-3); padding: 8px 8px 4px; }
   .mrow, .opt-row {
     display: flex; align-items: center; gap: 9px; width: 100%;
     background: transparent; border: none; border-radius: 7px; color: var(--text-2);

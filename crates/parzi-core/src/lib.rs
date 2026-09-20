@@ -5,6 +5,8 @@ pub mod artifacts;
 pub mod capsule;
 pub mod config;
 pub mod context;
+pub mod context_store;
+pub mod docs;
 pub mod error;
 pub mod hooks;
 pub mod journal;

@@ -266,6 +266,15 @@ export interface DocEntry {
   source: "system" | "root";
 }
 
+/** One managed context file from `list_context`. */
+export interface ContextItem {
+  name: string;
+  tier: "pinned" | "curated" | "auto";
+  scope: "workspace" | "project";
+  source: string;
+  bytes: number;
+}
+
 /** One agent in the swarm graph (root thread or subsession). */
 export interface SwarmNode {
   id: string;
@@ -448,6 +457,16 @@ export const api = {
     invoke<void>("save_skill_commands", { name, commands }),
   listProjectDocs: (project: string, root: string) =>
     invoke<DocEntry[]>("list_project_docs", { project, root }),
+  listContext: (workspace: string, slug?: string | null) =>
+    invoke<ContextItem[]>("list_context", { workspace, slug: slug ?? null }),
+  readContextFile: (workspace: string, slug: string | null | undefined, name: string) =>
+    invoke<string>("read_context_file", { workspace, slug: slug ?? null, name }),
+  addContext: (workspace: string, slug: string | null | undefined, title: string, content: string, tier: string, source: string) =>
+    invoke<string>("add_context", { workspace, slug: slug ?? null, title, content, tier, source }),
+  setContextPinned: (workspace: string, slug: string | null | undefined, name: string, pinned: boolean) =>
+    invoke<void>("set_context_pinned", { workspace, slug: slug ?? null, name, pinned }),
+  removeContext: (workspace: string, slug: string | null | undefined, name: string) =>
+    invoke<void>("remove_context", { workspace, slug: slug ?? null, name }),
 };
 
 export function onRunEvent(cb: (e: UiEvent) => void) {

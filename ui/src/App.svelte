@@ -5,7 +5,7 @@
   import {
     api, hub, deck, onRunEvent,
     type SessionMeta, type ChatEvent, type UiEvent,
-    type ProjectView, type ProjectRoster, type Project, type InspectorArtifact, type InspectorDoc, type DocEntry, type SwarmNode
+    type ProjectView, type ProjectRoster, type Project, type InspectorArtifact, type InspectorDoc, type DocEntry, type ContextItem, type SwarmNode
   } from "./lib/api";
   import RightPanel from "./lib/inspector/RightPanel.svelte";
 
@@ -88,7 +88,7 @@
       })();
     }
   }
-  let sidebarOpen = true;
+  let sidebarOpen = false;
 
   type HubView =
     | { kind: "new-workspace"; step: string }
@@ -688,6 +688,7 @@
   }
 
   async function handleDeleteThread(id: string) {
+    const wasActive = activeThreadId === id;
     try {
       const n = await api.deleteThread(id);
       if (liveRun === id) {
@@ -702,6 +703,12 @@
         events = [];
       }
       await loadThreads();
+      // Deleting the open thread falls to the next most recent one instead
+      // of blanking the stage; deleting a background thread changes nothing.
+      if (wasActive) {
+        const next = [...threads].sort((a, b) => +new Date(b.updated) - +new Date(a.updated))[0];
+        if (next) await openThread(next.id);
+      }
       // Deleting a parent drops its open child too: clear a stale selection.
       if (activeThreadId && !threads.some((t) => t.id === activeThreadId)) {
         activeThreadId = null;
@@ -803,7 +810,78 @@
   function showArtifact(a: InspectorArtifact) {
     selectedArtifact = a;
     selectedDoc = null;
+    contextDoc = null;
     openRightBar("docs");
+  }
+
+  /** Managed context (workspace + project manifest) for the dock. */
+  let contextItems: ContextItem[] = [];
+  let contextDoc: { workspace: string; slug: string | null; name: string; tier: string } | null = null;
+
+  async function loadContext() {
+    if (!panelWs) {
+      contextItems = [];
+      return;
+    }
+    try {
+      contextItems = await api.listContext(panelWs, dockProject?.slug ?? null);
+    } catch {
+      contextItems = [];
+    }
+  }
+  $: if (rightBarOpen && (panelWs || dockProject)) void loadContext();
+
+  async function openContextDoc(item: ContextItem) {
+    if (!panelWs) return;
+    docLoading = true;
+    try {
+      const content = await api.readContextFile(panelWs, dockProject?.slug ?? null, item.name);
+      selectedDoc = { title: item.name, content };
+      selectedArtifact = null;
+      contextDoc = { workspace: panelWs, slug: dockProject?.slug ?? null, name: item.name, tier: item.tier };
+      openRightBar("docs");
+    } catch (e) {
+      toast(String(e), true);
+    } finally {
+      docLoading = false;
+    }
+  }
+
+  async function toggleContextPin() {
+    if (!contextDoc) return;
+    try {
+      await api.setContextPinned(contextDoc.workspace, contextDoc.slug, contextDoc.name, contextDoc.tier !== "pinned");
+      await loadContext();
+      const hit = contextItems.find((c) => c.name === (contextDoc as { name: string }).name);
+      contextDoc = contextDoc && hit ? { ...contextDoc, tier: hit.tier } : contextDoc;
+      toast(contextDoc?.tier === "pinned" ? "pinned — always loads" : "unpinned");
+    } catch (e) {
+      toast(String(e), true);
+    }
+  }
+
+  async function removeContextDoc() {
+    if (!contextDoc) return;
+    try {
+      await api.removeContext(contextDoc.workspace, contextDoc.slug, contextDoc.name);
+      contextDoc = null;
+      selectedDoc = null;
+      await loadContext();
+      toast("removed from context");
+    } catch (e) {
+      toast(String(e), true);
+    }
+  }
+
+  async function promoteToContext() {
+    if (!panelWs || !selectedDoc || !selectedDoc.content.trim()) return;
+    try {
+      await api.addContext(panelWs, dockProject?.slug ?? null, selectedDoc.title, selectedDoc.content, "curated", "dock");
+      await loadContext();
+      toast("copied into context");
+    } catch (e) {
+      toast(String(e), true);
+    }
   }
 
   async function openProjectDoc(entry: DocEntry) {
@@ -812,6 +890,7 @@
       const content = await api.readTextFile(entry.path);
       selectedDoc = { title: entry.label, content, path: entry.path };
       selectedArtifact = null;
+      contextDoc = null;
       openRightBar("docs");
     } catch (e) {
       toast(String(e), true);
@@ -827,6 +906,7 @@
       const [, , md] = await api.getThread(activeThreadId);
       selectedDoc = { title: "session.md", content: md || "_Transcript is empty._" };
       selectedArtifact = null;
+      contextDoc = null;
       openRightBar("docs");
     } catch (e) {
       toast(String(e), true);
@@ -1315,6 +1395,9 @@
             workspaces={wsNames}
             workspace={curWorkspace}
             workspaceFixed={!!activeThreadId}
+            deckProjects={wsProjects}
+            selectedProject={dockProject}
+            on:openProject={(e) => openProject(e.detail.workspace, e.detail.slug)}
             on:workspaceChange={(e) => selectWorkspace(e.detail.workspace)}
             on:workspaceDeleted={(e) => handleWorkspaceDeleted(e.detail.workspace)}
             on:error={(e) => toast(e.detail.text, true)}
@@ -1329,13 +1412,14 @@
       <RightPanel
         tab={rightBarTab}
         width={rightBarWidth}
-        {autoReveal}
         full={rbFull}
         artifact={selectedArtifact}
         artifacts={threadArtifacts}
         doc={selectedDoc}
         docs={projectDocs}
         {docLoading}
+        {contextItems}
+        {contextDoc}
         {activeThreadId}
         workspace={panelWs}
         projects={wsProjects}
@@ -1344,16 +1428,19 @@
         on:toggleFull={() => (rbFull = !rbFull)}
         on:tab={(e) => (rightBarTab = e.detail.tab)}
         on:resize={(e) => (rightBarWidth = e.detail.width)}
-        on:autoReveal={(e) => (autoReveal = e.detail.on)}
         on:openDoc={(e) => openProjectDoc(e.detail.entry)}
         on:openTranscript={openTranscript}
         on:openArtifact={(e) => showArtifact(e.detail.artifact)}
+        on:openContext={(e) => openContextDoc(e.detail.item)}
+        on:toggleContextPin={toggleContextPin}
+        on:removeContextDoc={removeContextDoc}
+        on:promoteToContext={promoteToContext}
         on:pickFile={pickDocFile}
         on:openProject={(e) => openProject(e.detail.workspace, e.detail.slug)}
         on:newProject={(e) => { rbFull = false; openNewProjectWizard(e.detail.workspace); }}
         on:closeProject={() => (dockProject = null)}
         on:openSession={(e) => { rbFull = false; openThread(e.detail.id); }}
-        on:openDraft={(e) => { selectedDoc = e.detail.doc; selectedArtifact = null; openRightBar("docs"); }}
+        on:openDraft={(e) => { selectedDoc = e.detail.doc; selectedArtifact = null; contextDoc = null; openRightBar("docs"); }}
         on:error={(e) => toast(e.detail.text, true)}
       />
     </div>

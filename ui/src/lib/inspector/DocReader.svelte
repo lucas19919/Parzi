@@ -5,7 +5,7 @@
   import Diagram from "../widgets/Diagram.svelte";
   import ArtifactCard from "../widgets/ArtifactCard.svelte";
   import { deckDrafts } from "../deck/state";
-  import type { InspectorArtifact, InspectorDoc, DocEntry } from "../api";
+  import type { InspectorArtifact, InspectorDoc, DocEntry, ContextItem } from "../api";
 
   /** Artifact currently shown (null = document mode / empty). */
   export let artifact: InspectorArtifact | null = null;
@@ -15,6 +15,10 @@
   export let doc: InspectorDoc | null = null;
   /** Quick-tab candidates (SYSTEM.md, PLAN.md, …). */
   export let docs: DocEntry[] = [];
+  /** Managed context entries (workspace + project manifest). */
+  export let contextItems: ContextItem[] = [];
+  /** Set when the open document is a context file (enables pin/remove). */
+  export let contextDoc: { name: string; tier: string } | null = null;
   /** True when a thread is open — enables the transcript tab. */
   export let hasThread = false;
   export let loading = false;
@@ -23,6 +27,10 @@
     openDoc: { entry: DocEntry };
     openTranscript: void;
     openArtifact: { artifact: InspectorArtifact };
+    openContext: { item: ContextItem };
+    toggleContextPin: void;
+    removeContextDoc: void;
+    promoteToContext: void;
     pickFile: void;
   }>();
 
@@ -34,7 +42,8 @@
   $: mode = artifact ? "artifact" : doc ? "doc" : "empty";
   $: content = artifact ? artifact.content : doc ? doc.content : "";
   $: title = artifact ? artifact.title : doc ? doc.title : "";
-  $: lines = content ? content.split("\n").length : 0;
+  /** Parent folder of the open file: the visible file root. */
+  $: rootName = doc?.path ? (doc.path.split(/[\\/]/).filter(Boolean).slice(0, -1).pop() ?? "") : "";
   $: isMarkdown = artifact ? artifact.kind === "markdown" : true;
   $: lang = artifact ? (artifact.language || (artifact.kind === "diff" ? "diff" : artifact.kind === "code" ? "" : artifact.kind)) : "markdown";
   /** HTML/SVG artifacts preview as a live page, not as code. Sandboxed with
@@ -104,22 +113,6 @@
     setTimeout(() => (copied = false), 1200);
   }
 
-  function download() {
-    let name: string;
-    if (artifact) {
-      const ext = artifact.kind === "code" && artifact.language ? artifact.language : artifact.kind === "markdown" ? "md" : artifact.kind === "svg" ? "svg" : artifact.kind === "html" ? "html" : artifact.kind === "diff" ? "diff" : "txt";
-      name = `${artifact.id}-v${artifact.version}.${ext}`;
-    } else {
-      name = (doc?.path?.split(/[\\/]/).pop() || doc?.title || "document").replace(/[^\w.-]+/g, "_") + (doc?.path ? "" : ".md");
-    }
-    const blob = new Blob([content], { type: "text/plain" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-  }
-
   function pickVersion(e: Event) {
     const v = Number((e.target as HTMLSelectElement).value);
     const hit = versions.find((a) => a.version === v);
@@ -150,8 +143,15 @@
 </script>
 
 <div class="reader">
-  <!-- One tab row: project docs, transcript, artifacts, file picker -->
+  <!-- Context folder: the managed workspace/project set, then workspace files -->
   <div class="quick">
+    {#if contextItems.length}<span class="qgroup">Context</span>{/if}
+    {#each contextItems as c (c.scope + "/" + c.name)}
+      <button class="qt ctx" class:on={contextDoc?.name === c.name && !artifact} title={`${c.tier} · ${c.scope}`} on:click={() => dispatch("openContext", { item: c })}>
+        {c.name}
+      </button>
+    {/each}
+    {#if quickDocs.length}<span class="qgroup">Files</span>{/if}
     {#each quickDocs as d (d.path)}
       <button class="qt" class:on={doc?.path === d.path} title={d.path} on:click={() => dispatch("openDoc", { entry: d })}>
         {d.label}
@@ -168,6 +168,7 @@
         </button>
       {/each}
     {/if}
+    {#if hasThread || docFamilies.length}<span class="qgroup">Thread</span>{/if}
     {#if hasThread}
       <button class="qt" class:on={doc?.title === "session.md"} title="Formatted transcript of this thread" on:click={() => dispatch("openTranscript")}>session.md</button>
     {/if}
@@ -193,31 +194,29 @@
       {/if}
     </div>
   {:else}
-    <!-- Sticky document toolbar -->
+    <!-- Sticky document toolbar: title + file root, version, Preview/Raw, copy. -->
     <div class="bar">
       <span class="bar-title" title={artifact ? artifact.id : doc?.path ?? ""}>{title}</span>
-      {#if artifact}
-        <span class="badge">{artifact.kind}{artifact.language ? ` · ${artifact.language}` : ""}</span>
-        {#if versions.length > 1}
-          <select class="ver" value={String(artifact.version)} on:change={pickVersion} title="Version">
-            {#each versions as v (v.version)}
-              <option value={String(v.version)}>v{v.version}</option>
-            {/each}
-          </select>
-        {:else}
-          <span class="badge ver-badge">v{artifact.version}</span>
-        {/if}
-      {:else if doc?.path}
-        <span class="badge">markdown</span>
+      {#if rootName}<span class="bar-root" title={doc?.path ?? ""}>{rootName}</span>{/if}
+      {#if contextDoc && !artifact}
+        <button class="mini" class:on={contextDoc.tier === "pinned"} on:click={() => dispatch("toggleContextPin")}
+          title="Pinned context always loads into runs">{contextDoc.tier === "pinned" ? "pinned" : "pin"}</button>
+        <button class="mini danger" on:click={() => dispatch("removeContextDoc")} title="Remove from context">remove</button>
+      {:else if doc?.path && !artifact}
+        <button class="mini" on:click={() => dispatch("promoteToContext")} title="Copy this file into workspace context">+ context</button>
+      {:else if artifact && versions.length > 1}
+        <select class="ver" value={String(artifact.version)} on:change={pickVersion} title="Version">
+          {#each versions as v (v.version)}
+            <option value={String(v.version)}>v{v.version}</option>
+          {/each}
+        </select>
       {/if}
-      <span class="badge dim">{lines} lines</span>
       <span class="spacer" />
       <div class="seg" role="tablist">
         <button class="seg-btn" class:on={view === "preview"} on:click={() => (view = "preview")}>Preview</button>
         <button class="seg-btn" class:on={view === "raw"} on:click={() => (view = "raw")}>Raw</button>
       </div>
       <button class="mini" on:click={copy}>{copied ? "copied" : "copy"}</button>
-      <button class="mini" on:click={download}>save</button>
     </div>
 
     <div class="split">
@@ -256,19 +255,20 @@
 <style>
   .reader { display: flex; flex-direction: column; min-height: 0; height: 100%; }
   .quick {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
-    padding: 8px 10px 4px; flex: none;
+    display: flex; flex-wrap: nowrap; align-items: center; gap: 2px;
+    padding: 6px 8px 2px; flex: none; overflow-x: auto;
   }
   .qt {
-    background: var(--surface-1); border: 1px solid transparent;
-    border-radius: var(--radius-pill); color: var(--text-3);
-    font: inherit; font-size: 11px; padding: 3px 9px; cursor: pointer; max-width: 160px;
+    background: transparent; border: none;
+    border-radius: 5px; color: var(--text-4);
+    font: inherit; font-size: 11px; padding: 3px 7px; cursor: pointer; max-width: 160px; flex: none;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     display: inline-flex; align-items: center; gap: 4px;
   }
-  .qt:hover { color: var(--text); background: var(--surface-2); }
-  .qt.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--text); }
-  .qt.more, .qt.pick { color: var(--text-4); background: transparent; border-style: dashed; border-color: var(--line-2); }
+  .qt:hover { color: var(--text-2); }
+  .qt.on { background: transparent; color: var(--text); font-weight: 600; }
+  .qt.more { color: var(--text-4); }
+  .qt.pick { color: var(--text-4); background: transparent; border: 1px dashed var(--line-2); border-radius: var(--radius-pill); }
   .qt.art.on { border-color: var(--accent-line); }
   /* Group label before the open project's rough plans (deck). */
   .qgroup { font-size: 10px; color: var(--text-4); letter-spacing: 0.4px; padding: 0 2px 0 6px; }
@@ -283,22 +283,19 @@
 
   .bar {
     display: flex; align-items: center; gap: 6px; flex: none;
-    padding: 6px 10px; margin: 4px 8px 0;
-    background: var(--surface-1);
-    border: 1px solid var(--line-2);
-    border-radius: var(--radius-3);
+    padding: 4px 8px; margin: 4px 8px 0;
+    background: transparent;
+    border-bottom: 1px solid var(--line-2);
     font-size: 12px;
   }
   .bar-title {
     font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis;
     white-space: nowrap; min-width: 0; flex: 0 1 auto;
   }
-  .badge {
-    font-family: var(--parzi-mono); font-size: 10px; color: var(--text-3);
-    background: var(--surface-2); border-radius: 4px; padding: 2px 6px; white-space: nowrap; flex: none;
+  .bar-root {
+    font-family: var(--parzi-mono); font-size: 10px; color: var(--text-4);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none; max-width: 140px;
   }
-  .badge.dim { opacity: 0.7; }
-  .ver-badge { color: var(--accent); }
   .ver {
     font-family: var(--parzi-mono); font-size: 10px; color: var(--accent);
     background: var(--surface-2); border: none; border-radius: 4px; padding: 2px 4px; cursor: pointer;
@@ -318,6 +315,8 @@
     color: var(--text-3); font: inherit; font-size: 10px; padding: 3px 8px; cursor: pointer; flex: none;
   }
   .mini:hover { color: var(--text); background: var(--surface-3); }
+  .mini.on { color: var(--accent-text); }
+  .mini.danger:hover { color: var(--bad); background: var(--bad-soft); }
 
   .split { flex: 1; display: flex; min-height: 0; }
   .toc {
