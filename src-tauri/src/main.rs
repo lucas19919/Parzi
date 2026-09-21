@@ -1840,11 +1840,6 @@ fn window_start_dragging(window: tauri::Window) -> Result<(), String> {
     window.start_dragging().map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-async fn migrate_tasks(project: String) -> Result<usize, String> {
-    parzi_core::lanes::migrate_tasks_to_lanes(&project).map_err(|e| e.to_string())
-}
-
 /// How long a day's log is kept.
 const LOG_DAYS: u64 = 7;
 
@@ -1956,7 +1951,6 @@ fn main() {
             window_maximize,
             window_close,
             window_start_dragging,
-            migrate_tasks,
             list_threads,
             get_thread,
             send_message,

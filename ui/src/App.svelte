@@ -5,7 +5,7 @@
   import {
     api, hub, deck, onRunEvent,
     type SessionMeta, type ChatEvent, type UiEvent,
-    type ProjectView, type ProjectRoster, type Project, type InspectorArtifact, type InspectorDoc, type DocEntry, type ContextItem, type ContextRef, type SwarmNode
+    type ProjectView, type ProjectRoster, type Project, type InspectorArtifact, type InspectorDoc, type DocEntry, type ContextItem, type ContextRef
   } from "./lib/api";
   import RightPanel from "./lib/inspector/RightPanel.svelte";
 
@@ -960,35 +960,6 @@
   }
   $: if (curProject || currentRoot) loadProjectDocs();
 
-  $: swarmNodes = (() => {
-    if (!activeThreadId) return [] as SwarmNode[];
-    const byId = new Map(threads.map((t) => [t.id, t]));
-    let root = byId.get(activeThreadId);
-    if (!root) return [] as SwarmNode[];
-    const guard = new Set<string>();
-    while (root.parent_id && byId.has(root.parent_id) && !guard.has(root.id)) {
-      guard.add(root.id);
-      root = byId.get(root.parent_id)!;
-    }
-    const out: SwarmNode[] = [];
-    const walk = (t: SessionMeta, depth: number) => {
-      if (out.some((n) => n.id === t.id) || out.length > 120) return;
-      out.push({
-        id: t.id, title: t.title, lane: t.lane, model: t.model, status: t.status,
-        tokens: t.tokens_in + t.tokens_out, cost: t.cost_usd,
-        parentId: depth === 0 ? null : t.parent_id ?? null, depth,
-        tool: sessionTools[t.id] ?? null,
-      });
-      threads
-        .filter((c) => c.parent_id === t.id)
-        .sort((a, b) => +new Date(a.created) - +new Date(b.created))
-        .forEach((c) => walk(c, depth + 1));
-    };
-    walk(root, 0);
-    return out;
-  })();
-  $: liveAgentCount = swarmNodes.filter((n) => n.status === "active" || n.status === "queued").length;
-
   async function refreshEvents() {
     if (!activeThreadId) return;
     try {
@@ -1365,7 +1336,9 @@
       title={showSettings ? "Settings" : hubView?.kind === "new-workspace" ? "New workspace" : hubView?.kind === "new-project" ? "New project" : curWorkspace || "Inbox"}
       subtitle={showSettings ? settingsSection : hubView ? "" : activeMeta ? activeMeta.title : !activeThreadId ? "new draft" : ""}
       showExpand={!sidebarOpen}
+      panelOpen={rightBarOpen}
       on:expand={() => (sidebarOpen = true)}
+      on:togglePanel={() => toggleRightBar()}
     />
     {/if}
     <main class="stage-container" class:settings-mode={showSettings}>
@@ -1412,8 +1385,6 @@
             bind:attachments
             streaming={!!liveRun}
             currentProject={curProject}
-            currentTask={null}
-            currentSubfolder={null}
             projectRoot={currentRoot}
             {branch}
             tokens={liveTokens}

@@ -325,11 +325,10 @@ kbd {
 .msg-row { display: flex; gap: 10px; align-items: flex-start; }
 .msg-row.user { justify-content: flex-end; }
 .user-bubble {
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-line);
-  border-top-color: color-mix(in srgb, var(--accent-line) 70%, var(--line-hi));
-  border-radius: 14px 14px 4px 14px; padding: 9px 14px; max-width: 85%;
-  color: var(--text); white-space: pre-wrap;
+  background: transparent;
+  border: none;
+  border-radius: 0; padding: 2px 0; max-width: 100%;
+  color: var(--text); white-space: pre-wrap; text-align: right;
 }
 .msg-body { flex: 1; min-width: 0; color: color-mix(in srgb, var(--text) 92%, transparent); }
 .msg-body strong { color: var(--text); }

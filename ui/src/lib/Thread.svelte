@@ -49,8 +49,6 @@
     openSubsession: { id: string };
     /** Artifact card asked to be read in the right inspector deck. */
     openArtifact: { artifact: InspectorArtifact };
-    /** Team banner asked for the swarm view. */
-    inspectSwarm: void;
   }>();
 
   function toDeck(e: CustomEvent<{ artifact: InspectorArtifact }>) {
@@ -302,7 +300,6 @@
     <div class="team-banner">
       <div class="team-head">
         <span>Team subsessions</span>
-        <button class="team-inspect" title="Open the swarm view in the inspector deck" on:click|stopPropagation={() => dispatch("inspectSwarm")}>Inspect swarm ↗</button>
       </div>
       {#each subsessions as s (s.id)}
         <button class="team-row" on:click={() => dispatch("openSubsession", { id: s.id })} title="Open subsession">
@@ -641,12 +638,7 @@
     background: var(--accent-soft); border: 1px solid var(--accent-mid);
     border-radius: 10px;
   }
-  .team-head { font-size: 11px; color: var(--text-3); padding: 0 4px 4px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .team-inspect {
-    background: transparent; border: none; border-radius: 5px; color: var(--accent);
-    font: inherit; font-size: 11px; padding: 1px 6px; cursor: pointer; white-space: nowrap;
-  }
-  .team-inspect:hover { background: var(--accent-soft); color: var(--text); }
+  .team-head { font-size: 11px; color: var(--text-3); padding: 0 4px 4px; }
   .team-row {
     display: flex; align-items: center; gap: 8px; width: 100%;
     background: transparent; border: none; border-radius: 7px; color: var(--text-2);

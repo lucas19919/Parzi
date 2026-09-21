@@ -48,3 +48,34 @@ test("invoke argument keys are camelCase", async () => {
   assert.ok(seen > 20, `expected to scan the command calls, saw ${seen}`);
   assert.deepEqual(bad, []);
 });
+
+test("every invoke has a backend command", async () => {
+  const { readFile, readdir } = await import("node:fs/promises");
+  const { join, dirname } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const shell = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "src-tauri", "src");
+  const cmds = new Set();
+  async function walk(dir) {
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) await walk(p);
+      else if (e.name.endsWith(".rs")) {
+        const src = await readFile(p, "utf8");
+        const fnRe = /#\[tauri::command\][\s\S]{0,400}?(?:pub\s+)?(?:async\s+)?fn\s+([a-z0-9_]+)/g;
+        let m;
+        while ((m = fnRe.exec(src))) cmds.add(m[1]);
+      }
+    }
+  }
+  await walk(shell);
+  const api = await readFile(new URL("../src/lib/api.ts", import.meta.url), "utf8");
+  const call = /invoke<[^(]*>\(\s*"([a-z0-9_]+)"\s*(?:,|\))/g;
+  const missing = [];
+  let seen = 0;
+  for (let m; (m = call.exec(api)); ) {
+    seen++;
+    if (!cmds.has(m[1])) missing.push(m[1]);
+  }
+  assert.ok(seen > 20, `expected to scan the command calls, saw ${seen}`);
+  assert.deepEqual(missing, []);
+});

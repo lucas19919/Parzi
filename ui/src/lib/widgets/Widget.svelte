@@ -1,6 +1,7 @@
 <script lang="ts">
   import { renderMarkdown } from "../md";
   import Zoomable from "./Zoomable.svelte";
+  import EChart from "./EChart.svelte";
 
   export let data: any;
   const d = data && typeof data === "object" ? data : {};
@@ -15,7 +16,7 @@
   const cardOf = (col: any): any[] => (col && typeof col === "object" ? arr(col.cards) : []);
   const colName = (col: any): string =>
     String(col?.title ?? col?.id ?? "col");
-  const known = ["stat", "progress", "list", "table", "chart-line", "chart-bar", "kanban", "markdown"];
+  const known = ["stat", "progress", "list", "table", "chart-line", "chart-bar", "histogram", "scatter", "kanban", "markdown"];
   const bad = !known.includes(type);
   $: isChart = type === "chart-line" || type === "chart-bar";
   $: pts = Array.isArray(d.points)
@@ -40,11 +41,116 @@
       .filter((s: { points: number[] }) => s.points.length);
     return out.length ? out : [{ name: "", points: pts }];
   })();
-  $: all = ser.flatMap((s) => s.points);
-  $: maxLen = Math.max(1, ...ser.map((s) => s.points.length));
-  $: SER_INK = ["var(--accent)", "var(--ok)", "var(--info)", "var(--warn)", "var(--bad)"];
-  $: serInk = (i: number): string => SER_INK[i % SER_INK.length];
-  $: showLegend = ser.length > 1 && ser.some((s) => s.name);
+  $: all = plotSer.flatMap((s) => s.points);
+  $: maxLen = Math.max(1, ...plotSer.map((s) => s.points.length));
+  function cssVar(n: string, fb: string): string {
+    try {
+      return getComputedStyle(document.documentElement).getPropertyValue(n).trim() || fb;
+    } catch {
+      return fb;
+    }
+  }
+  $: INK = [
+    cssVar("--accent", "#7C8CFF"),
+    cssVar("--ok", "#22c55e"),
+    cssVar("--info", "#5eb1ff"),
+    cssVar("--warn", "#f59e0b"),
+    cssVar("--bad", "#ef4444"),
+  ];
+  $: serInk = (i: number): string => INK[i % INK.length];
+  $: showLegend = plotSer.length > 1 && plotSer.some((s) => s.name);
+  $: axisCommon = {
+    axisLine: { lineStyle: { color: cssVar("--line-2", "#333") } },
+    axisTick: { show: false },
+    axisLabel: { color: cssVar("--text-4", "#999"), fontSize: 10 },
+    splitLine: { lineStyle: { color: cssVar("--line-2", "#333") } },
+  };
+  $: tipStyle = {
+    backgroundColor: cssVar("--parzi-bar", "#14141a"),
+    borderColor: cssVar("--line-2", "#333"),
+    borderWidth: 1,
+    textStyle: { color: cssVar("--text", "#eee"), fontSize: 11 },
+  };
+  /** ECharts option for line/bar/histogram from the normalized series. */
+  $: chartOpt = !all.length
+    ? null
+    : {
+          animation: false,
+          grid: { left: 6, right: 10, top: 12, bottom: 2, containLabel: true },
+          tooltip: { trigger: "axis", ...tipStyle },
+          dataZoom: [{ type: "inside", xAxisIndex: 0 }],
+          xAxis: {
+            type: "category",
+            data: Array.from({ length: maxLen }, (_, i) => plotLabels[i] ?? String(i + 1)),
+            name: xlabel,
+            nameLocation: "middle",
+            nameGap: 22,
+            nameTextStyle: { color: cssVar("--text-4", "#999"), fontSize: 10 },
+            ...axisCommon,
+          },
+          yAxis: {
+            type: "value",
+            name: ylabel,
+            nameTextStyle: { color: cssVar("--text-4", "#999"), fontSize: 10 },
+            ...axisCommon,
+          },
+          series: [
+            ...plotSer.map((s, si) => ({
+              name: s.name || (plotSer.length > 1 ? `series ${si + 1}` : "value"),
+              type: plotType === "chart-line" ? "line" : "bar",
+              data: s.points,
+              color: INK[si % INK.length],
+              ...(plotType === "chart-line"
+                ? { showSymbol: false, symbolSize: 6, lineStyle: { width: 2 } }
+                : { barMaxWidth: 26 }),
+            })),
+            ...(trend
+              ? [
+                  {
+                    name: "trend",
+                    type: "line",
+                    data: Array.from({ length: trend.n }, (_, i) => trend.m * i + trend.b),
+                    color: cssVar("--text-3", "#999"),
+                    lineStyle: { width: 1.5, type: "dashed" },
+                    showSymbol: false,
+                  },
+                ]
+              : []),
+          ],
+        };
+  /** ECharts option for scatter (both axes fit the data). */
+  $: scatterOpt = scSer.some((s) => s.points.length)
+      ? {
+          animation: false,
+          grid: { left: 6, right: 10, top: 12, bottom: 2, containLabel: true },
+          tooltip: { ...tipStyle },
+          dataZoom: [{ type: "inside" }, { type: "inside", orient: "vertical" }],
+          xAxis: {
+            type: "value",
+            name: xlabel,
+            nameLocation: "middle",
+            nameGap: 22,
+            nameTextStyle: { color: cssVar("--text-4", "#999"), fontSize: 10 },
+            ...axisCommon,
+          },
+          yAxis: {
+            type: "value",
+            scale: true,
+            name: ylabel,
+            nameTextStyle: { color: cssVar("--text-4", "#999"), fontSize: 10 },
+            ...axisCommon,
+          },
+          series: scSer
+            .filter((s) => s.points.length)
+            .map((s, si) => ({
+              name: s.name || `series ${si + 1}`,
+              type: "scatter",
+              data: s.points,
+              color: INK[si % INK.length],
+              symbolSize: 7,
+            })),
+        }
+      : null;
   $: xlabels = (() => {
     const raw = d.labels ?? d.payload?.labels;
     if (!Array.isArray(raw)) return [] as string[];
@@ -52,36 +158,93 @@
   })();
   $: xlabel = String(d.xlabel ?? d.payload?.xlabel ?? "");
   $: ylabel = String(d.ylabel ?? d.payload?.ylabel ?? "");
-  // Plot geometry with margins for ticks and axis labels. Zero is always
-  // in range so bars grow from a true baseline and negatives stay on-canvas.
-  $: plo = all.length
-    ? (() => {
-        const lo = Math.min(0, ...all);
-        const hi = Math.max(0, ...all);
-        const span = hi - lo || 1;
-        const W = 320, H = 124, L = 36, R = 8, T = 8, B = 20;
-        const y = (v: number) => T + (1 - (v - lo) / span) * (H - T - B);
-        const x = (i: number) => L + (maxLen === 1 ? (W - L - R) / 2 : (i / (maxLen - 1)) * (W - L - R));
-        const bw = (W - L - R) / Math.max(1, maxLen);
-        const ticks = [0, 1, 2, 3].map((i) => lo + (span * i) / 3);
-        return { lo, hi, span, W, H, L, R, T, B, y, x, bw, ticks };
-      })()
-    : null;
-  $: fmtTick = (v: number): string => {
+  function fmtTick(v: number): string {
     const a = Math.abs(v);
     if (a >= 1_000_000) return `${+(v / 1_000_000).toFixed(1)}M`;
     if (a >= 10_000) return `${Math.round(v / 1000)}k`;
     if (a >= 100) return String(Math.round(v));
     if (a >= 1) return String(+v.toFixed(1));
     return String(+v.toFixed(2));
-  };
-  $: xshown = maxLen
-    ? ser[0].points.map((_, i) => i).filter((i) => i % Math.ceil(maxLen / 6) === 0 || i === maxLen - 1)
-    : [];
-  $: xtext = (i: number): string =>
-    (xlabels[i] ?? String(i + 1)).slice(0, 10);
+  }
 
-  let plotEl: SVGSVGElement | null = null;
+  /** Histogram bins raw values into counts; renders through the bar plot. */
+  function binValues(vals: number[], nb: number) {
+    if (!vals.length) return { counts: [] as number[], labels: [] as string[] };
+    let lo = Math.min(...vals);
+    let hi = Math.max(...vals);
+    if (lo === hi) {
+      lo -= 0.5;
+      hi += 0.5;
+    }
+    const k = Math.min(24, Math.max(2, nb || Math.ceil(Math.sqrt(vals.length))));
+    const w = (hi - lo) / k;
+    const counts = new Array(k).fill(0) as number[];
+    for (const v of vals) counts[Math.min(k - 1, Math.floor((v - lo) / w))]++;
+    return { counts, labels: counts.map((_, i) => fmtTick(lo + w * i)) };
+  }
+  $: histVals = (() => {
+    const raw = d.values ?? d.payload?.values;
+    if (!Array.isArray(raw)) return [] as number[];
+    return raw.map(Number).filter((n: number) => Number.isFinite(n)).slice(0, 2000);
+  })();
+  $: histBins = Math.round(Number(d.bins ?? d.payload?.bins ?? 0)) || 0;
+  $: hist = type === "histogram" ? binValues(histVals, histBins) : null;
+  $: plotSer = hist ? [{ name: "", points: hist.counts }] : ser;
+  $: plotLabels = hist ? hist.labels : xlabels;
+  $: plotType = type === "histogram" ? "chart-bar" : type;
+
+  /** Scatter pairs (and per-series pairs); both axes fit the data. */
+  $: scSer = (() => {
+    const toPairs = (v: unknown): [number, number][] => {
+      if (!Array.isArray(v)) return [];
+      const out: [number, number][] = [];
+      for (const p of (v as unknown[]).slice(0, 200)) {
+        if (Array.isArray(p) && p.length === 2) {
+          const x = Number(p[0]);
+          const y = Number(p[1]);
+          if (Number.isFinite(x) && Number.isFinite(y)) out.push([x, y]);
+        }
+      }
+      return out;
+    };
+    const raw = d.series ?? d.payload?.series;
+    if (Array.isArray(raw)) {
+      const out = raw
+        .filter((s: any) => s && typeof s === "object")
+        .slice(0, 8)
+        .map((s: any) => ({ name: String(s.name ?? ""), points: toPairs(s.points) }))
+        .filter((s: { points: [number, number][] }) => s.points.length);
+      if (out.length) return out;
+    }
+    return [{ name: "", points: toPairs(d.points ?? d.payload?.points) }];
+  })();
+
+  /** Least-squares trend for the first line series (chart-line + trend). */
+  $: trend =
+    type === "chart-line" && (d.trend ?? d.payload?.trend) && ser[0]?.points.length > 1
+      ? (() => {
+          const ys = ser[0].points;
+          const n = ys.length;
+          let sx = 0, sy = 0, sxx = 0, sxy = 0;
+          ys.forEach((y, i) => {
+            sx += i;
+            sy += y;
+            sxx += i * i;
+            sxy += i * y;
+          });
+          const den = n * sxx - sx * sx;
+          if (!den) return null;
+          const m = (n * sxy - sx * sy) / den;
+          return { m, b: (sy - m * sx) / n, n };
+        })()
+      : null;
+  $: trendEq = trend
+    ? `y = ${fmtTick(trend.m)}·x ${trend.b < 0 ? "−" : "+"} ${fmtTick(Math.abs(trend.b))}`
+    : "";
+
+  type EchRef = { snapshot: () => string | null } | null;
+  let echLine: EchRef = null;
+  let echScatter: EchRef = null;
   function slug(s: string): string {
     const t = s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
     return t || "chart";
@@ -94,20 +257,26 @@
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
   function dlCsv() {
-    const head = ["x", ...ser.map((s) => s.name || "value")];
+    if (type === "scatter") {
+      const lines = ["series,x,y"];
+      for (const s of scSer) {
+        for (const p of s.points) lines.push([s.name || "value", String(p[0]), String(p[1])].join(","));
+      }
+      const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+      download(URL.createObjectURL(blob), `${slug(title)}.csv`);
+      return;
+    }
+    const head = ["x", ...plotSer.map((s) => s.name || "value")];
     const lines = [head.join(",")];
     for (let i = 0; i < maxLen; i++) {
-      lines.push([xlabels[i] ?? String(i + 1), ...ser.map((s) => (i < s.points.length ? String(s.points[i]) : ""))].join(","));
+      lines.push([plotLabels[i] ?? String(i + 1), ...plotSer.map((s) => (i < s.points.length ? String(s.points[i]) : ""))].join(","));
     }
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
     download(URL.createObjectURL(blob), `${slug(title)}.csv`);
   }
   function dlSvg() {
-    if (!plotEl) return;
-    const clone = plotEl.cloneNode(true) as SVGSVGElement;
-    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-    const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: "image/svg+xml" });
-    download(URL.createObjectURL(blob), `${slug(title)}.svg`);
+    const url = (type === "scatter" ? echScatter : echLine)?.snapshot();
+    if (url) download(url, `${slug(title)}.svg`);
   }
   $: shownRows = rows.slice(0, 50);
   $: truncated = rows.length - shownRows.length;
@@ -149,13 +318,38 @@
       </div>
       {#if truncated > 0}<div class="w-sub">{truncated} more rows truncated (max 50)</div>{/if}
     {/if}
-  {:else if type === "chart-line" || type === "chart-bar"}
-    {#if !all.length || !plo}
+  {:else if type === "chart-line" || type === "chart-bar" || type === "histogram"}
+    {#if !chartOpt}
       <div class="w-empty">no data points</div>
     {:else}
       {#if showLegend}
         <div class="legend">
-          {#each ser as s, si}
+          {#each plotSer as s, si}
+            {#if s.name}<span class="leg"><i style={`background:${serInk(si)}`} />{s.name}</span>{/if}
+          {/each}
+          {#if trend}<span class="leg trend-leg"><i class="trend-sw" />{trendEq}</span>{/if}
+        </div>
+      {:else if trend}
+        <div class="legend"><span class="leg trend-leg"><i class="trend-sw" />{trendEq}</span></div>
+      {/if}
+      {#if open}
+        <div class="xbar">
+          <button class="xbtn" on:click={dlCsv} title="Download CSV">csv</button>
+          <button class="xbtn" on:click={dlSvg} title="Download SVG">svg</button>
+        </div>
+      {/if}
+      <div class="ezoom" role="button" tabindex="0" aria-label="Zoom chart"
+        on:click={() => toggle()} on:keydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}>
+        <EChart bind:this={echLine} option={chartOpt} height={open ? 420 : 260} />
+      </div>
+    {/if}
+  {:else if type === "scatter"}
+    {#if !scatterOpt}
+      <div class="w-empty">no data points</div>
+    {:else}
+      {#if scSer.length > 1 && scSer.some((s) => s.name)}
+        <div class="legend">
+          {#each scSer as s, si}
             {#if s.name}<span class="leg"><i style={`background:${serInk(si)}`} />{s.name}</span>{/if}
           {/each}
         </div>
@@ -166,52 +360,10 @@
           <button class="xbtn" on:click={dlSvg} title="Download SVG">svg</button>
         </div>
       {/if}
-      <svg bind:this={plotEl} width="100%" viewBox="0 0 {plo.W} {plo.H}" preserveAspectRatio="xMidYMid meet" role="img" class="plot" class:zoomed={open}
-        aria-label="Zoom chart" on:click={() => toggle()}>
-        {#each plo.ticks as t}
-          <line x1={plo.L} y1={plo.y(t)} x2={plo.W - plo.R} y2={plo.y(t)}
-            stroke="var(--line-2)" stroke-width="1" />
-          <text x={plo.L - 5} y={plo.y(t) + 3.5} fill="var(--text-4)" font-size="9" text-anchor="end">{fmtTick(t)}</text>
-        {/each}
-        {#if plo.lo < 0 && plo.hi > 0}
-          <line x1={plo.L} y1={plo.y(0)} x2={plo.W - plo.R} y2={plo.y(0)}
-            stroke="var(--line-3)" stroke-width="1" />
-        {/if}
-        {#if type === "chart-line"}
-          {#each ser as s, si}
-            <polyline
-              fill="none" stroke={serInk(si)} stroke-width="2"
-              points={s.points.map((p, i) => `${plo.x(i)},${plo.y(p)}`).join(" ")} />
-            {#each s.points as p, i}
-              <circle cx={plo.x(i)} cy={plo.y(p)} r="2.5" fill={serInk(si)} class="dot">
-                <title>{s.name ? `${s.name} · ` : ""}{xtext(i)}: {p}</title>
-              </circle>
-            {/each}
-          {/each}
-        {:else}
-          {#each ser as s, si}
-            {#each s.points as p, i}
-              {@const n = ser.length}
-              {@const w = plo.bw / n}
-              {@const bx = plo.L + i * plo.bw + si * w}
-              {@const by = plo.y(Math.max(0, p))}
-              {@const bh = Math.abs(plo.y(p) - plo.y(0))}
-              <rect x={bx + 1} y={by} width={Math.max(2, w - 2)} height={Math.max(2, bh)}
-                fill={serInk(si)} rx="2" class="bar">
-                <title>{s.name ? `${s.name} · ` : ""}{xtext(i)}: {p}</title>
-              </rect>
-            {/each}
-          {/each}
-        {/if}
-        {#each xshown as i}
-          <text x={type === "chart-line" ? plo.x(i) : plo.L + i * plo.bw + plo.bw / 2} y={plo.H - 16}
-            fill="var(--text-4)" font-size="9" text-anchor="middle">{xtext(i)}</text>
-        {/each}
-        {#if ylabel}<text x="10" y={plo.T + 30} fill="var(--text-4)" font-size="9" text-anchor="middle"
-          transform="rotate(-90 10 {plo.T + 30})">{ylabel.slice(0, 24)}</text>{/if}
-        {#if xlabel}<text x={(plo.L + plo.W - plo.R) / 2} y={plo.H - 4} fill="var(--text-4)"
-          font-size="9" text-anchor="middle">{xlabel.slice(0, 32)}</text>{/if}
-      </svg>
+      <div class="ezoom" role="button" tabindex="0" aria-label="Zoom chart"
+        on:click={() => toggle()} on:keydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}>
+        <EChart bind:this={echScatter} option={scatterOpt} height={open ? 420 : 260} />
+      </div>
     {/if}
   {:else if type === "kanban"}
     {#if !kanbanCols.length}
@@ -258,13 +410,13 @@
   .progress-track { margin: 8px 0 4px; height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
   .progress-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 300ms ease; }
   .table-wrap { overflow-x: auto; margin: 8px 0 0; border-radius: 8px; border: 1px solid var(--line-2); }
-  .plot .dot, .plot .bar { transition: opacity 120ms ease; }
-  .plot .dot:hover, .plot .bar:hover { opacity: 0.75; }
-  .plot { cursor: zoom-in; }
-  .plot.zoomed { cursor: zoom-out; }
+  .ezoom { cursor: zoom-in; border-radius: 8px; }
+  .ezoom:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 2px 0 4px; }
   .leg { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-3); }
   .leg i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+  .leg.trend-leg { color: var(--text-4); }
+  .trend-sw { width: 14px !important; height: 0 !important; border-radius: 0 !important; border-top: 2px dashed var(--text-3); }
   .xbtn {
     background: transparent; border: none; border-radius: 4px;
     color: var(--text-4); font-family: var(--parzi-mono), ui-monospace, monospace;

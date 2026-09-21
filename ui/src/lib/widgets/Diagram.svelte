@@ -308,9 +308,10 @@
       <button class="dz-btn" on:click={() => zoom(0.8)} title="Zoom out">−</button>
       <button class="dz-btn wide" on:click={resetView} title="Reset view">reset</button>
     </div>
-    <svg bind:this={svgEl} width="100%" viewBox={isSeq && seq ? `0 0 ${seq.W} ${seq.H}` : `0 0 ${W} ${H}`} role="img" class:zoomed={open}
+    <svg bind:this={svgEl} width="100%" viewBox={isSeq && seq ? `0 0 ${seq.W} ${seq.H}` : `0 0 ${W} ${H}`} role="button" tabindex="0" class:zoomed={open}
       aria-label="Zoom diagram" use:wheel
-      on:pointerdown={panStart} on:pointermove={panMove} on:pointerup={(e) => { panEnd(); if (!moved && e.button === 0) toggle(); }} on:pointerleave={panEnd}>
+      on:pointerdown={panStart} on:pointermove={panMove} on:pointerup={(e) => { panEnd(); if (!moved && e.button === 0) toggle(); }} on:pointerleave={panEnd}
+      on:keydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}>
       <defs>
         {#each MARKS as [id, fill]}
           <marker id={`dz-${id}`} viewBox="0 0 10 10" refX="8" refY="5"

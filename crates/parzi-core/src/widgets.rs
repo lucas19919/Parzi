@@ -12,6 +12,8 @@ const WIDGET_TYPES: &[&str] = &[
     "table",
     "chart-line",
     "chart-bar",
+    "histogram",
+    "scatter",
     "kanban",
     "markdown",
 ];
@@ -222,6 +224,101 @@ pub fn validate_widget(v: &serde_json::Value) -> Result<WidgetV1> {
                     return Err(ParziError::Validation(
                         "chart points must be numbers".into(),
                     ));
+                }
+            }
+        }
+        "histogram" => {
+            if let Some(values) = shape(&w, "values") {
+                let arr = values.as_array().ok_or_else(|| {
+                    ParziError::Validation("histogram values must be an array".into())
+                })?;
+                if arr.len() > MAX_POINTS * 10 {
+                    return Err(ParziError::Validation(format!(
+                        "histogram values exceed max {}",
+                        MAX_POINTS * 10
+                    )));
+                }
+                if !valid_numbers(arr) {
+                    return Err(ParziError::Validation(
+                        "histogram values must be numbers".into(),
+                    ));
+                }
+            }
+            if let Some(bins) = shape(&w, "bins") {
+                let n = bins.as_u64().ok_or_else(|| {
+                    ParziError::Validation("histogram bins must be an integer".into())
+                })?;
+                if !(2..=50).contains(&n) {
+                    return Err(ParziError::Validation(
+                        "histogram bins out of range 2..=50".into(),
+                    ));
+                }
+            }
+        }
+        "scatter" => {
+            let check_pairs = |key: &str| -> Result<()> {
+                if let Some(points) = shape(&w, key) {
+                    let arr = points.as_array().ok_or_else(|| {
+                        ParziError::Validation("scatter points must be [x, y] pairs".into())
+                    })?;
+                    if arr.len() > MAX_POINTS {
+                        return Err(ParziError::Validation(format!(
+                            "scatter points {} exceed max {MAX_POINTS}",
+                            arr.len()
+                        )));
+                    }
+                    for p in arr {
+                        let pair = p.as_array().ok_or_else(|| {
+                            ParziError::Validation("scatter points must be [x, y] pairs".into())
+                        })?;
+                        if pair.len() != 2
+                            || !pair
+                                .iter()
+                                .all(|v| v.is_number() && v.as_f64().is_some_and(f64::is_finite))
+                        {
+                            return Err(ParziError::Validation(
+                                "scatter points must be finite [x, y] numbers".into(),
+                            ));
+                        }
+                    }
+                }
+                Ok(())
+            };
+            check_pairs("points")?;
+            if let Some(series) = shape(&w, "series") {
+                let arr = series.as_array().ok_or_else(|| {
+                    ParziError::Validation("scatter series must be an array".into())
+                })?;
+                if arr.len() > MAX_SERIES {
+                    return Err(ParziError::Validation(format!(
+                        "scatter series {} exceed max {MAX_SERIES}",
+                        arr.len()
+                    )));
+                }
+                for s in arr {
+                    let pts = s.get("points").and_then(|p| p.as_array()).ok_or_else(|| {
+                        ParziError::Validation("scatter series need a points array".into())
+                    })?;
+                    if pts.len() > MAX_POINTS {
+                        return Err(ParziError::Validation(format!(
+                            "scatter points {} exceed max {MAX_POINTS}",
+                            pts.len()
+                        )));
+                    }
+                    for p in pts {
+                        let pair = p.as_array().ok_or_else(|| {
+                            ParziError::Validation("scatter points must be [x, y] pairs".into())
+                        })?;
+                        if pair.len() != 2
+                            || !pair
+                                .iter()
+                                .all(|v| v.is_number() && v.as_f64().is_some_and(f64::is_finite))
+                        {
+                            return Err(ParziError::Validation(
+                                "scatter points must be finite [x, y] numbers".into(),
+                            ));
+                        }
+                    }
                 }
             }
         }

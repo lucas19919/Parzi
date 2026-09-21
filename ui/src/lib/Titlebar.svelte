@@ -8,9 +8,11 @@
   export let title = "Parzi";
   export let subtitle = "";
   export let showExpand = false;
+  export let panelOpen = false;
 
   const dispatch = createEventDispatcher<{
     expand: void;
+    togglePanel: void;
   }>();
 
   const I = WIN_ICON;
@@ -51,6 +53,15 @@
         <span class="crumb-swap" in:fade={{ duration: 160 }}><b>{title}</b>{#if subtitle}<span class="sep">/</span><span class="sub">{subtitle}</span>{/if}</span>
       {/key}
     </span>
+  </div>
+  <div class="deck-controls">
+    <button class="deck-toggle" class:on={panelOpen} title={panelOpen ? "Collapse inspector (Ctrl+\\)" : "Expand inspector (Ctrl+\\)"}
+      aria-pressed={panelOpen} on:click={() => dispatch("togglePanel")}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="4" y="5" width="16" height="14" rx="2" />
+        <path d="M15 5v14" />
+      </svg>
+    </button>
   </div>
   <div class="window-controls">
     <button class="win-btn" title="Minimize" on:click={handleMin} tabindex="-1">
@@ -121,6 +132,18 @@
   .title-crumb .sub {
     color: var(--text-3);
   }
+  .deck-controls {
+    display: flex; align-items: center;
+    -webkit-app-region: no-drag;
+  }
+  .deck-toggle {
+    width: 26px; height: 24px; display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: 1px solid transparent; border-radius: 7px; padding: 0;
+    color: var(--text-3); cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .deck-toggle:hover { background: var(--surface-2); color: var(--text); }
+  .deck-toggle.on { color: var(--text); }
   .window-controls {
     /* Glued to the window corner: sidebar/dock widths animate, this never moves. */
     position: fixed;

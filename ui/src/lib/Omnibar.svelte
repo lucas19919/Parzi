@@ -19,8 +19,6 @@
   export let effort = "medium";
   export let streaming = false;
   export let currentProject = "default";
-  export let currentTask: string | null = null;
-  export let currentSubfolder: string | null = null;
   export let branch = "";
   export let tokens = 0;
   export let board: ProviderStatus[] = [];
@@ -151,8 +149,6 @@
   $: fitTo(efforts);
   $: effortIdx = Math.max(0, efforts.indexOf(effort));
   $: permTitle = PERMS.find((p) => p.id === permission)?.title ?? "Full access";
-  /** Display name of the open project; the sidebar owns project management. */
-  $: projName = currentProject === "default" || !currentProject ? "Inbox" : currentProject;
   /** Projects of the open workspace, and the selected one's title. */
   $: wsDeck = deckProjects.filter((p) => !workspace || p.workspace === workspace);
   $: selDeck = selectedProject
@@ -657,7 +653,7 @@
     aria-label="Message composer — drop images to attach"
     on:dragover|preventDefault
     on:drop|preventDefault={onDropFiles}
-    title={`${currentProject}${currentTask ? ` / ${currentTask}` : ""}${currentSubfolder ? ` (${currentSubfolder})` : ""}${branch ? ` ⎇ ${branch}` : ""}${tokens > 0 ? ` · ${tokens} tok` : ""}`}
+    title={`${currentProject}${branch ? ` ⎇ ${branch}` : ""}${tokens > 0 ? ` · ${tokens} tok` : ""}`}
   >
     {#if attachments.length}
       <div class="attach-grid" transition:slide={{ duration: 160, easing: cubicOut }}>

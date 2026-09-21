@@ -344,3 +344,20 @@ fn theme_emits_css_vars_with_eva_default() {
     assert!(css.contains("--parzi-accent:#7C8CFF"));
     assert!(css.contains("--parzi-glass-blur:18px"));
 }
+
+#[test]
+fn widget_histogram_and_scatter_validate() {
+    use parzi_core::widgets::validate_widget as v;
+    let h = serde_json::json!({"widget": 1, "type": "histogram", "title": "lat", "values": [1, 2, 2, 3], "bins": 2});
+    assert!(v(&h).is_ok());
+    let bad = serde_json::json!({"widget": 1, "type": "histogram", "values": ["a"]});
+    assert!(v(&bad).is_err());
+    let bins = serde_json::json!({"widget": 1, "type": "histogram", "values": [1], "bins": 99});
+    assert!(v(&bins).is_err());
+    let s = serde_json::json!({"widget": 1, "type": "scatter", "points": [[1, 2], [3, 4]]});
+    assert!(v(&s).is_ok());
+    let flat = serde_json::json!({"widget": 1, "type": "scatter", "points": [1, 2]});
+    assert!(v(&flat).is_err());
+    let nan = serde_json::json!({"widget": 1, "type": "scatter", "points": [[1, 2], [3]]});
+    assert!(v(&nan).is_err());
+}

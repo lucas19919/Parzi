@@ -281,25 +281,9 @@ export interface ContextItem {
   bytes: number;
 }
 
-/** One agent in the swarm graph (root thread or subsession). */
-export interface SwarmNode {
-  id: string;
-  title: string;
-  lane: string;
-  model: string;
-  status: SessionMeta["status"];
-  tokens: number;
-  cost: number;
-  parentId: string | null;
-  depth: number;
-  /** Last tool this session called, when known. */
-  tool?: { name: string; since: number; running: boolean } | null;
-}
-
 export const api = {
   appVersion: () => invoke<string>("app_version"),
   windowStartDragging: () => invoke<void>("window_start_dragging"),
-  migrateTasks: (project: string) => invoke<number>("migrate_tasks", { project }),
   listThreads: () => invoke<SessionMeta[]>("list_threads"),
   getThread: (id: string) =>
     invoke<[SessionMeta, ChatEvent[], string]>("get_thread", { id }),
