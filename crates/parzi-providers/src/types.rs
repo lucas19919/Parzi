@@ -1,6 +1,6 @@
 //! One shape for every provider. Parzi does not call model APIs: it drives
 //! the vendor's own agent program and sees each turn as a stream of
-//! [`ProviderEvent`]s, the way t3code does.
+//! [`ProviderEvent`]s.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -208,7 +208,6 @@ pub enum ProviderEvent {
     ReasoningDelta(String),
     /// A finished assistant message: the text that goes in the transcript.
     Message(String),
-    /// A finished reasoning block.
     Reasoning(String),
     ToolStarted {
         id: String,
@@ -227,7 +226,6 @@ pub enum ProviderEvent {
         output: u64,
         cost_usd: Option<f64>,
     },
-    /// How full the model's window is.
     Context {
         used: u64,
         limit: u64,
@@ -306,7 +304,6 @@ pub fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Last `max` characters of a vendor's stderr, for a failure message.
 pub(crate) fn tail(text: &str, max: usize) -> String {
     let t = text.trim();
     let n = t.chars().count();

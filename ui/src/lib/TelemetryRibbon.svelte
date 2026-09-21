@@ -81,7 +81,7 @@
     width: 7px; height: 7px; border-radius: 50%; background: var(--text-4); flex: none;
   }
   .dot.live {
-    background: var(--accent); box-shadow: 0 0 8px var(--accent-glow);
+    background: var(--accent);
   }
   .fold {
     flex: none; background: none; border: none; color: var(--text-4);

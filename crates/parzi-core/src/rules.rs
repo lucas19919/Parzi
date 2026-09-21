@@ -33,7 +33,6 @@ pub const RULE_CAP: usize = 8_000;
 /// configuration — first 32 by file name win, and the count is reported.
 pub const RULE_MAX_FILES: usize = 32;
 
-/// One parsed rule file.
 pub struct Rule {
     /// File name, for headings and diagnostics.
     pub name: String,

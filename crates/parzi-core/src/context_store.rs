@@ -50,10 +50,22 @@ pub struct ManifestFile {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ManifestRef {
+    pub label: String,
+    pub path: String,
+    #[serde(default)]
+    pub kind: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Manifest {
     version: u8,
     #[serde(default)]
     files: Vec<ManifestFile>,
+    /// Pinned references to canonical docs (plans, specs): read live, never
+    /// copied, so plans cannot sprawl or go stale.
+    #[serde(default)]
+    refs: Vec<ManifestRef>,
 }
 
 impl Default for Manifest {
@@ -61,6 +73,7 @@ impl Default for Manifest {
         Self {
             version: 1,
             files: Vec::new(),
+            refs: Vec::new(),
         }
     }
 }
@@ -71,6 +84,137 @@ pub struct ContextDoc {
     pub tier: Tier,
     pub scope: Scope,
     pub content: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct ContextRef {
+    pub label: String,
+    pub path: String,
+    pub kind: String,
+}
+
+fn ws_root(home: &Path, workspace: &str) -> PathBuf {
+    home.join("workspaces")
+        .join(crate::workspace::sanitize(workspace))
+}
+
+/// Resolve a ref path against the workspace root. Refuses escapes, missing
+/// files, oversized files and non-markdown: a ref is a pointer, not storage.
+fn resolve_ref(home: &Path, workspace: &str, rel: &str) -> Option<PathBuf> {
+    let root = ws_root(home, workspace);
+    let clean = rel.trim().replace('\\', "/");
+    if clean.is_empty() || clean.len() > 128 {
+        return None;
+    }
+    if clean.split('/').any(|c| {
+        c.is_empty()
+            || c == "."
+            || c == ".."
+            || c.len() > 64
+            || !c
+                .chars()
+                .all(|x| x.is_ascii_alphanumeric() || "-_. ".contains(x))
+    }) {
+        return None;
+    }
+    if !clean.to_lowercase().ends_with(".md") {
+        return None;
+    }
+    let abs = root.join(&clean);
+    let meta = std::fs::symlink_metadata(&abs).ok()?;
+    if !meta.is_file() || meta.len() > MAX_FILE_BYTES {
+        return None;
+    }
+    Some(abs)
+}
+
+/// Live canonical docs pinned by reference. Missing or invalid targets are
+/// skipped, never fatal.
+pub fn list_refs(home: &Path, workspace: &str, slug: Option<&str>) -> Vec<ContextRef> {
+    if workspace.trim().is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut push_set = |dir: PathBuf| {
+        let m = read_manifest(&dir);
+        for r in m.refs {
+            if !seen.insert(r.path.clone()) {
+                continue;
+            }
+            if resolve_ref(home, workspace, &r.path).is_some() {
+                out.push(ContextRef {
+                    label: if r.label.trim().is_empty() {
+                        r.path.clone()
+                    } else {
+                        r.label.clone()
+                    },
+                    path: ws_root(home, workspace)
+                        .join(&r.path)
+                        .to_string_lossy()
+                        .to_string(),
+                    kind: if r.kind.trim().is_empty() {
+                        "doc".to_string()
+                    } else {
+                        r.kind.clone()
+                    },
+                });
+            }
+        }
+    };
+    push_set(ws_dir(home, workspace));
+    if let Some(s) = slug {
+        if !s.trim().is_empty() {
+            push_set(proj_dir(home, workspace, s));
+        }
+    }
+    out
+}
+
+pub fn add_ref(
+    home: &Path,
+    workspace: &str,
+    slug: Option<&str>,
+    label: &str,
+    path: &str,
+    kind: &str,
+) -> Result<()> {
+    if workspace.trim().is_empty() {
+        return Err(ParziError::Config("workspace is required".into()));
+    }
+    if resolve_ref(home, workspace, path).is_none() {
+        return Err(ParziError::Config("ref target missing or unsafe".into()));
+    }
+    let dir = match slug {
+        Some(s) if !s.trim().is_empty() => proj_dir(home, workspace, s),
+        _ => ws_dir(home, workspace),
+    };
+    std::fs::create_dir_all(&dir)?;
+    let mut m = read_manifest(&dir);
+    let rel = path.trim().replace('\\', "/");
+    if m.refs.iter().any(|r| r.path == rel) {
+        return Err(ParziError::Config("ref already pinned".into()));
+    }
+    m.refs.push(ManifestRef {
+        label: label.trim().chars().take(48).collect(),
+        path: rel,
+        kind: kind.trim().chars().take(16).collect(),
+    });
+    write_manifest(&dir, &m)
+}
+
+pub fn remove_ref(home: &Path, workspace: &str, slug: Option<&str>, path: &str) -> Result<()> {
+    let dir = match slug {
+        Some(s) if !s.trim().is_empty() => proj_dir(home, workspace, s),
+        _ => ws_dir(home, workspace),
+    };
+    let mut m = read_manifest(&dir);
+    let rel = path.trim().replace('\\', "/");
+    let Some(pos) = m.refs.iter().position(|r| r.path == rel) else {
+        return Err(ParziError::Config("unknown ref".into()));
+    };
+    m.refs.remove(pos);
+    write_manifest(&dir, &m)
 }
 
 fn now_unix() -> i64 {
@@ -385,8 +529,6 @@ fn write_one(home: &Path, op: &NewFile) -> Result<ContextDoc> {
     })
 }
 
-/// Add or replace one context file.
-///
 /// # Errors
 ///
 /// Rejects blank workspaces, unsafe names, empty or oversized content,
@@ -403,6 +545,19 @@ pub fn add(
     if workspace.trim().is_empty() {
         return Err(ParziError::Config("workspace is required".into()));
     }
+    // Anti-overlap: one fact, one home. A file identical to a pinned plan
+    // is rejected — reference the plan instead of copying it.
+    let digest = hash_bytes(content.as_bytes());
+    for r in list_refs(home, workspace, slug) {
+        if std::fs::read(&r.path)
+            .map(|b| hash_bytes(&b) == digest)
+            .unwrap_or(false)
+        {
+            return Err(ParziError::Config(
+                "duplicates a pinned plan — reference it instead".into(),
+            ));
+        }
+    }
     write_one(
         home,
         &NewFile {
@@ -417,8 +572,6 @@ pub fn add(
     )
 }
 
-/// Flip a curated file to pinned (always loads) or back.
-///
 /// # Errors
 ///
 /// Rejects unknown files; `auto` files cannot be pinned.
@@ -447,8 +600,6 @@ pub fn set_pinned(
     write_manifest(&dir, &m)
 }
 
-/// Drop one context file and its manifest row.
-///
 /// # Errors
 ///
 /// Rejects unknown files.
@@ -470,11 +621,36 @@ pub fn remove(home: &Path, workspace: &str, slug: Option<&str>, name: &str) -> R
 
 #[must_use]
 pub fn injection_text(home: &Path, workspace: &str, slug: Option<&str>, budget: usize) -> String {
-    let Ok(docs) = list(home, workspace, slug) else {
-        return String::new();
-    };
     let mut out = String::new();
     let mut used = 0usize;
+    // Pinned plans first: canonical docs, read live.
+    for r in list_refs(home, workspace, slug) {
+        let Ok(content) = std::fs::read_to_string(&r.path) else {
+            continue;
+        };
+        if content.trim().is_empty() {
+            continue;
+        }
+        let head = format!("# Plan ({}, {})\n\n", r.kind, r.label);
+        let room = budget.saturating_sub(used);
+        let take = content
+            .chars()
+            .take(room.saturating_sub(head.len()))
+            .collect::<String>();
+        if take.trim().is_empty() {
+            continue;
+        }
+        out.push_str(&head);
+        out.push_str(&take);
+        out.push_str("\n\n");
+        used += head.len() + take.len();
+        if used >= budget {
+            return out;
+        }
+    }
+    let Ok(docs) = list(home, workspace, slug) else {
+        return out;
+    };
     for d in docs {
         let scope = match d.scope {
             Scope::Workspace => "workspace",

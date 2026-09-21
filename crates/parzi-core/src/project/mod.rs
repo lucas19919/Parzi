@@ -180,7 +180,7 @@ pub fn save(project: &Project) -> Result<()> {
     crate::atomic_write(&project_file(&project.workspace, &clean), text.as_bytes())
 }
 
-/// Every project slug in a workspace, sorted. Missing tree = none.
+/// Missing tree = none.
 #[must_use]
 pub fn list(workspace: &str) -> Vec<String> {
     let root = workspace::dir(workspace).join("projects");

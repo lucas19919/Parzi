@@ -114,7 +114,6 @@ impl HarnessBridge for Pump {
         } else {
             title.chars().take(80).collect()
         };
-        // Recommended default: inherit the parent's active model.
         let model_spec = model.unwrap_or_else(|| caller.model.clone());
         let lane_name = lane.unwrap_or_else(|| caller.lane.clone());
         let parent = if is_subsession { Some(caller_id) } else { None };
@@ -141,7 +140,6 @@ impl HarnessBridge for Pump {
             workspace_project: run_project(caller_id),
             prompt_recorded: false,
             inbox_from: None,
-            // Agent-spawned children run under policy, never a chat intent.
             mode_override: None,
         };
         if q.workspace_project.is_some() {

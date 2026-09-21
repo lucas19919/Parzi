@@ -23,7 +23,7 @@ use crate::tools::Approver;
 use super::naming::{held_by, join, now, same_holder, tool_err};
 use super::requests::Pending;
 
-/// No answer in this long is a denial (PLAN §4). Tests shorten it.
+/// No answer in this long is a denial (PLAN §4).
 pub const ANSWER_TIMEOUT_SECS: u64 = 120;
 
 /// Which project a run works in. Set by whoever dispatches the lane; without

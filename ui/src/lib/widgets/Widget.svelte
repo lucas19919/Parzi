@@ -1,6 +1,5 @@
 <script lang="ts">
   import { renderMarkdown } from "../md";
-  import Icon from "../Icon.svelte";
   import Zoomable from "./Zoomable.svelte";
 
   export let data: any;
@@ -120,11 +119,6 @@
   <div class="w-head">
     <span class="w-kind">{bad ? "widget" : type}</span>
     {#if title}<span class="w-title">{title}</span>{/if}
-    {#if isChart}
-      <button class="xbtn zoom" on:click={toggle} title={open ? "Close zoomed view" : "Zoom chart"}>
-        <Icon d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" size={11} />
-      </button>
-    {/if}
   </div>
   {#if bad}
     <div class="w-error">Couldn't render widget type "{type}" — showing source.</div>
@@ -172,7 +166,8 @@
           <button class="xbtn" on:click={dlSvg} title="Download SVG">svg</button>
         </div>
       {/if}
-      <svg bind:this={plotEl} width="100%" viewBox="0 0 {plo.W} {plo.H}" preserveAspectRatio="xMidYMid meet" role="img" class="plot">
+      <svg bind:this={plotEl} width="100%" viewBox="0 0 {plo.W} {plo.H}" preserveAspectRatio="xMidYMid meet" role="img" class="plot" class:zoomed={open}
+        aria-label="Zoom chart" on:click={() => toggle()}>
         {#each plo.ticks as t}
           <line x1={plo.L} y1={plo.y(t)} x2={plo.W - plo.R} y2={plo.y(t)}
             stroke="var(--line-2)" stroke-width="1" />
@@ -265,6 +260,8 @@
   .table-wrap { overflow-x: auto; margin: 8px 0 0; border-radius: 8px; border: 1px solid var(--line-2); }
   .plot .dot, .plot .bar { transition: opacity 120ms ease; }
   .plot .dot:hover, .plot .bar:hover { opacity: 0.75; }
+  .plot { cursor: zoom-in; }
+  .plot.zoomed { cursor: zoom-out; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 2px 0 4px; }
   .leg { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-3); }
   .leg i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
@@ -274,7 +271,6 @@
     font-size: 10px; padding: 2px 6px; cursor: pointer; flex: none;
   }
   .xbtn:hover { color: var(--text); background: var(--surface-1); }
-  .xbtn.zoom { display: inline-flex; align-items: center; }
   table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
   th, td { padding: 6px 10px; border-bottom: 1px solid var(--line-2); text-align: left; }
   th { color: var(--text-3); font-weight: 600; background: var(--surface-1); }

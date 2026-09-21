@@ -58,12 +58,10 @@ pub(super) fn git(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(out.stdout)
 }
 
-/// True when `dir` is inside a git repository.
 pub fn is_repo(dir: &Path) -> bool {
     run_git(dir, &["rev-parse", "--is-inside-work-tree"]).is_ok_and(|o| o.ok)
 }
 
-/// The `origin` URL, when one is configured.
 pub fn remote_url(dir: &Path) -> Option<String> {
     run_git(dir, &["remote", "get-url", "origin"])
         .ok()
@@ -104,7 +102,6 @@ pub(super) fn ensure_identity(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Paths git itself calls unmerged.
 pub(super) fn unmerged_paths(dir: &Path) -> Result<Vec<String>> {
     let out = run_git(dir, &["diff", "--name-only", "--diff-filter=U"])?;
     if !out.ok {
@@ -177,7 +174,6 @@ pub(super) fn merge_in_progress(dir: &Path) -> bool {
 
 /// exit 1 = there are staged differences, exit 0 = none.
 pub(super) fn has_staged_changes(dir: &Path) -> Result<bool> {
-    // exit 1 = there are staged differences, exit 0 = none.
     Ok(!run_git(dir, &["diff", "--cached", "--quiet"])?.ok)
 }
 

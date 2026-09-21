@@ -165,7 +165,6 @@ impl Doctor {
 
     #[cfg(windows)]
     fn check_webview(&self) -> Check {
-        // Best-effort: read Edge/WebView2 version from the registry.
         let key = reg_key_version();
         match key {
             Some(v) => Check::ok("webview2", format!("Edge/WebView2 {v}")),

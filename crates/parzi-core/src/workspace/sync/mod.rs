@@ -169,7 +169,6 @@ pub fn pull(ws: &Workspace) -> Result<SyncReport> {
     Ok(report)
 }
 
-/// Directory-level `pull`.
 pub fn pull_at(dir: &Path) -> Result<SyncReport> {
     require_repo(dir)?;
     let mut report = SyncReport::default();
@@ -232,7 +231,6 @@ pub fn commit_and_push(ws: &Workspace, message: &str) -> Result<SyncReport> {
     Ok(report)
 }
 
-/// Directory-level `commit_and_push`.
 pub fn commit_and_push_at(dir: &Path, message: &str) -> Result<SyncReport> {
     require_repo(dir)?;
     let mut report = commit_at(dir, message)?;
@@ -312,7 +310,6 @@ pub fn sync_now(ws: &Workspace, message: &str) -> Result<SyncReport> {
     Ok(report)
 }
 
-/// Directory-level `sync_now`.
 pub fn sync_now_at(dir: &Path, message: &str) -> Result<SyncReport> {
     require_repo(dir)?;
     let mut report = commit_at(dir, message)?;

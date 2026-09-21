@@ -225,7 +225,6 @@ impl InterSessionMessage {
         )
     }
 
-    /// One digest line for compaction.
     pub fn summary(&self) -> String {
         format!(
             "{} from {} ({}): {}",
@@ -383,8 +382,7 @@ impl ContextBuilder {
     }
 
     /// Digest-based compaction: keep the newest `keep_last` events raw,
-    /// fold older ones into one Checkpoint. LLM summarization plugs in later
-    /// behind this same signature.
+    /// fold older ones into one Checkpoint.
     pub fn compact(events: &[Event], keep_last: usize) -> Vec<Event> {
         if events.len() <= keep_last {
             return events.to_vec();

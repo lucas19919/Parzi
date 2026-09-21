@@ -96,7 +96,6 @@ fn clone_argv(url: &str, dest: &Path) -> Vec<String> {
     ]
 }
 
-/// Keep a token out of anything we emit or log.
 fn redact(line: &str, tok: &str) -> String {
     if tok.is_empty() {
         return line.to_string();

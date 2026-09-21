@@ -56,7 +56,6 @@ pub fn path_key(p: &str) -> String {
     }
 }
 
-/// The segments of a normalised path or pattern.
 pub(crate) fn segments(key: &str) -> Vec<&str> {
     key.split('/').filter(|s| !s.is_empty()).collect()
 }

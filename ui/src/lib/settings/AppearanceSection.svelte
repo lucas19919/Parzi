@@ -360,7 +360,6 @@
     <button class="sbtn" on:click={load}>Retry</button>
   </div>
 {:else}
-  <!-- Theme -->
   <section class="pref-section">
     <h3 class="section-title">Theme</h3>
     <p class="section-desc">A theme sets the seven colours and the glass. Your wallpaper stays.</p>
@@ -410,7 +409,6 @@
     </div>
   </section>
 
-  <!-- Wallpaper -->
   <section class="pref-section">
     <div class="section-head-with-action">
       <div>
@@ -462,7 +460,6 @@
     </div>
   </section>
 
-  <!-- Accent -->
   <section class="pref-section">
     <h3 class="section-title">Accent</h3>
     <p class="section-desc">The one colour with a job: selection, focus, the send button.</p>
@@ -484,7 +481,6 @@
     </div>
   </section>
 
-  <!-- Colours -->
   <section class="pref-section">
     <h3 class="section-title">Colours</h3>
     <p class="section-desc">Everything else derives from these six. Edit them, or leave them to the theme.</p>
@@ -498,7 +494,6 @@
     </div>
   </section>
 
-  <!-- Type -->
   <section class="pref-section">
     <h3 class="section-title">Type</h3>
     <p class="section-desc">Any installed font. Inter and JetBrains Mono ship with Parzi.</p>
@@ -524,7 +519,6 @@
     <datalist id="parzi-mono-fonts">{#each MONO_FONTS as f}<option value={f} />{/each}</datalist>
   </section>
 
-  <!-- Glass -->
   <section class="pref-section">
     <h3 class="section-title">Glass</h3>
     <p class="section-desc">The composer, menus and the command palette.</p>
@@ -564,9 +558,6 @@
       />
     </div>
   </section>
-
-  <!-- Hackers: `~/.parzi/user.css` still loads last and wins — there is
-       just no editor for it here anymore. -->
 
   <div class="actions-row-end">
     <button class="sbtn" on:click={resetAppearance}>Reset appearance</button>
@@ -635,7 +626,6 @@
   .text::placeholder { color: var(--text-4); }
   .text:focus { border-color: var(--accent-line) !important; box-shadow: none; }
 
-  /* Wallpaper gallery. */
   .walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 10px; }
   .wall {
     display: flex; flex-direction: column; gap: 6px; padding: 5px;

@@ -35,7 +35,6 @@ pub use tools::{execute_project_tool, is_project_tool, project_defs, project_def
 /// timeout. The run keeps going; PLAN.md is written atomically or not at all.
 const AUDIT_WAIT_SECS: u64 = 300;
 
-/// A project with its header session ready to be talked to.
 #[derive(Debug, Clone)]
 pub struct Opened {
     pub project: Project,
@@ -44,13 +43,11 @@ pub struct Opened {
     pub status: String,
 }
 
-/// A question sent to a role: the session it went to, and the live events.
 pub struct Asked {
     pub session_id: String,
     pub events: mpsc::UnboundedReceiver<RunEvent>,
 }
 
-/// What an audit turn produced.
 #[derive(Debug, Clone)]
 pub struct Audited {
     pub session_id: String,

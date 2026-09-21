@@ -175,7 +175,6 @@
     items: SessionMeta[];
   }
 
-  // Flat T3-style list: time buckets.
   $: groups = ((): Group[] => {
     const list = idleScopedThreads.filter((t) => !t.pinned).sort(byUpdated);
     const day = 86400000;
@@ -463,7 +462,6 @@
 </aside>
 
 {#if ctx}
-  <!-- Real right-click menu: threads, with two-step delete. -->
   <div
     use:portal
     class="ctx-menu"
@@ -496,7 +494,6 @@
 {/if}
 
 {#if wsMenu}
-  <!-- Compact workspace picker: scope filter + workspace management. -->
   <div
     use:portal
     class="ctx-menu ws-menu"
@@ -671,7 +668,6 @@
     border-top: 1px solid var(--line-2);
   }
 
-  /* Right-click menu */
   .ctx-menu {
     position: fixed; z-index: 400; width: 220px;
     padding: 5px; display: flex; flex-direction: column; gap: 1px;

@@ -5,18 +5,19 @@
   import Diagram from "../widgets/Diagram.svelte";
   import ArtifactCard from "../widgets/ArtifactCard.svelte";
   import { deckDrafts } from "../deck/state";
-  import type { InspectorArtifact, InspectorDoc, DocEntry, ContextItem } from "../api";
+  import type { InspectorArtifact, InspectorDoc, DocEntry, ContextItem, ContextRef } from "../api";
 
   /** Artifact currently shown (null = document mode / empty). */
   export let artifact: InspectorArtifact | null = null;
   /** Every artifact version of the active thread; used for the version menu. */
   export let artifacts: InspectorArtifact[] = [];
-  /** Project document currently shown. */
   export let doc: InspectorDoc | null = null;
   /** Quick-tab candidates (SYSTEM.md, PLAN.md, …). */
   export let docs: DocEntry[] = [];
   /** Managed context entries (workspace + project manifest). */
   export let contextItems: ContextItem[] = [];
+  /** Pinned plan/doc references (read live, never copied). */
+  export let contextRefs: ContextRef[] = [];
   /** Set when the open document is a context file (enables pin/remove). */
   export let contextDoc: { name: string; tier: string } | null = null;
   /** True when a thread is open — enables the transcript tab. */
@@ -92,7 +93,6 @@
     return out;
   })();
 
-  // Rendered headings get positional ids so the TOC can jump to them.
   $: if (body && (html || docSegments.length)) tagHeadings();
   function openSegArtifact(e: CustomEvent<{ artifact: InspectorArtifact }>) {
     dispatch("openArtifact", { artifact: e.detail.artifact });
@@ -113,6 +113,11 @@
     setTimeout(() => (copied = false), 1200);
   }
 
+  /** Pinned plans open through the regular file opener (read live). */
+  function refEntry(r: ContextRef): DocEntry {
+    return { label: r.label, path: r.path, source: "root" };
+  }
+
   function pickVersion(e: Event) {
     const v = Number((e.target as HTMLSelectElement).value);
     const hit = versions.find((a) => a.version === v);
@@ -131,7 +136,6 @@
     }
   }
 
-  // Reset scroll + view when the document changes.
   let lastKey = "";
   $: {
     const key = artifact ? `a:${artifact.id}@${artifact.version}` : doc ? `d:${doc.path ?? doc.title}` : "";
@@ -144,8 +148,13 @@
 </script>
 
 <div class="reader">
-  <!-- Context folder: the managed workspace/project set, then workspace files -->
   <div class="quick">
+    {#if contextRefs.length}<span class="qgroup">Plans</span>{/if}
+    {#each contextRefs as r (r.path)}
+      <button class="qt ref" title={`${r.kind} · live reference`} on:click={() => dispatch("openDoc", { entry: refEntry(r) })}>
+        {r.label}
+      </button>
+    {/each}
     {#if contextItems.length}<span class="qgroup">Context</span>{/if}
     {#each contextItems as c (c.scope + "/" + c.name)}
       <button class="qt ctx" class:on={contextDoc?.name === c.name && !artifact} title={`${c.tier} · ${c.scope}`} on:click={() => dispatch("openContext", { item: c })}>
@@ -195,7 +204,6 @@
       {/if}
     </div>
   {:else}
-    <!-- Sticky document toolbar: title + file root, version, Preview/Raw, copy. -->
     <div class="bar">
       <span class="bar-title" title={artifact ? artifact.id : doc?.path ?? ""}>{title}</span>
       {#if rootName}<span class="bar-root" title={doc?.path ?? ""}>{rootName}</span>{/if}
@@ -271,7 +279,6 @@
   .qt.more { color: var(--text-4); }
   .qt.pick { color: var(--text-4); background: transparent; border: 1px dashed var(--line-2); border-radius: var(--radius-pill); }
   .qt.art.on { border-color: var(--accent-line); }
-  /* Group label before the open project's rough plans (deck). */
   .qgroup { font-size: 10px; color: var(--text-4); letter-spacing: 0.4px; padding: 0 2px 0 6px; }
   .qt.draft { font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 10.5px; }
 

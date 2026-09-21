@@ -412,7 +412,6 @@ fn check_pack_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Sorted pack names present on disk.
 pub fn list_packs() -> Result<Vec<String>> {
     let root = themes_dir()?;
     let mut out = vec![];
@@ -588,7 +587,7 @@ pub fn apply_pack(name: &str) -> Result<Theme> {
 }
 
 // ---------------------------------------------------------------------------
-// Saved background images. Guarded reads (t3code discipline): small regular
+// Saved background images. Guarded reads: small regular
 // files with image extensions only; anything else is skipped, never fatal.
 // ---------------------------------------------------------------------------
 
@@ -628,7 +627,6 @@ pub fn delete_background(name: &str) -> Result<Theme> {
     Ok(theme)
 }
 
-/// Sorted names of saved background images.
 pub fn list_backgrounds() -> Result<Vec<String>> {
     let root = paths::backgrounds_dir()?;
     let mut out = vec![];
@@ -722,7 +720,6 @@ pub fn import_background(name: &str, bytes: &[u8]) -> Result<String> {
     Ok(file)
 }
 
-/// Copy an outside image into saved backgrounds. Returns its saved name.
 pub fn upload_background(src: &str) -> Result<String> {
     let src_p = std::path::PathBuf::from(src);
     if !is_bg_file(&src_p) {
@@ -747,7 +744,6 @@ pub fn upload_background(src: &str) -> Result<String> {
 // follows the mood of the picture. Zero new runtime deps beyond `image`.
 // ---------------------------------------------------------------------------
 
-/// Colors derived from wallpaper art.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Palette {
     /// Most vivid tone — the glow accent.
@@ -780,7 +776,6 @@ pub fn extract_palette(path: &std::path::Path) -> Result<Palette> {
     if pixels.is_empty() {
         return Err(ParziError::Config("empty image".into()));
     }
-    // Mean tone.
     let (mut sr, mut sg, mut sb) = (0u64, 0u64, 0u64);
     // 4-bit buckets: (count, r_sum, g_sum, b_sum).
     #[allow(clippy::type_complexity)]

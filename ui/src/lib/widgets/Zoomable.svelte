@@ -1,15 +1,22 @@
 <script lang="ts">
   /** Fullscreen zoom shell for graphs: the same element, restyled fixed.
       Backdrop click or the caller's toggle button closes it. */
+  import { createEventDispatcher } from "svelte";
+  const dispatch = createEventDispatcher<{ change: { open: boolean } }>();
   export let enabled = false;
   let open = false;
+  function set(v: boolean) {
+    if (!enabled && v) return;
+    open = v;
+    dispatch("change", { open });
+  }
   function toggle() {
-    if (enabled) open = !open;
+    set(!open);
   }
 </script>
 
 {#if open}
-  <button class="zback" aria-label="Close zoomed view" on:click={() => (open = false)} />
+  <button class="zback" aria-label="Close zoomed view" on:click={() => set(false)} />
 {/if}
 <div class="zwrap" class:open>
   <slot {open} {toggle} />

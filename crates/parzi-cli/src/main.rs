@@ -479,7 +479,6 @@ async fn cmd_doctor(json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Ask each agent's own program where it stands, now.
 async fn cmd_providers(only: Option<&str>, json: bool) -> Result<()> {
     let (cfg, store) = boot()?;
     let ids = match only {
@@ -887,7 +886,6 @@ async fn cmd_plan(project: &str, action: PlanAction) -> Result<()> {
                 // E8/R-2: this loop builds one orchestrator per task; each
                 // must take its MCP children with it.
                 orch.mcp().shutdown().await;
-                // Mark task complete in living plan
                 let _ = parzi_core::plan::set_task_status(project, &task.title, true);
                 completed += 1;
                 println!(">>> Task marked done in PLAN.md: {}", task.title);

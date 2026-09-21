@@ -109,7 +109,6 @@ fn build(ws: &Workspace) -> Vec<ContextPart> {
     parts
 }
 
-/// First `n` lines of a file, if it is there and readable.
 fn read_head(path: &Path, n: usize) -> Option<String> {
     let raw = std::fs::read_to_string(path).ok()?;
     let mut out: String = raw.lines().take(n).collect::<Vec<_>>().join("\n");
@@ -119,7 +118,6 @@ fn read_head(path: &Path, n: usize) -> Option<String> {
     Some(out)
 }
 
-/// Sorted two-level listing with the usual noise skipped.
 fn tree(root: &Path, depth: usize) -> String {
     const SKIP: &[&str] = &[
         ".git",

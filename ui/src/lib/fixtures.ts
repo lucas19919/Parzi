@@ -3,8 +3,6 @@
  * launches with `PARZI_UI_STATE=new-workspace:init` (every repo ready) or
  * `new-workspace:init-failed` (one clone that did not work), and the wizard
  * draws that clone map without a network, a daemon or a single write.
- *
- * The project deck's own fixtures live beside it, in `deck/fixtures.ts`.
  */
 
 import type { RepoRef } from "./api";

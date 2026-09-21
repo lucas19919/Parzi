@@ -13,7 +13,7 @@
   export let active = false;
   export let renaming = false;
   export let renameDraft = "";
-  /** Git branch of the thread's project (dim suffix, T3-style). */
+  /** Git branch of the thread's project (dim suffix). */
   export let branch = "";
   /** Set when the row is shown outside its workspace group (filter results). */
   export let showProject = "";
@@ -79,7 +79,6 @@
       header already says it. */
   $: subLine = (branch || "").trim();
 
-  /** Crisp 13px stroke icons for disclosure, branch marks and the hover rail. */
   const P = {
     chevR: "M9 18l6-6-6-6",
     chevD: "M6 9l6 6 6-6",

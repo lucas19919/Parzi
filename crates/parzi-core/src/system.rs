@@ -21,7 +21,6 @@ use crate::{lanes, paths, workspace};
 /// short. Anything longer is capped with a note, not silently swallowed.
 pub const SYSTEM_CAP: usize = 8_000;
 
-/// One scope's instructions, ready to render under a heading.
 pub struct ScopedSystem {
     /// `user` or the workspace name. Rendered, never interpolated into a path.
     pub scope: String,

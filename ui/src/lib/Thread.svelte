@@ -509,7 +509,7 @@
   .stream-caret {
     display: inline-block; width: 7px; height: 1em; margin-left: 2px;
     vertical-align: text-bottom; border-radius: 1px;
-    background: var(--accent); box-shadow: 0 0 10px var(--accent-glow), 0 0 2px var(--accent);
+    background: var(--accent);
   }
   @media (prefers-reduced-motion: reduce) {
     .live-head.fade { opacity: 1; filter: none; }
@@ -654,7 +654,7 @@
   }
   .team-row:hover { background: var(--surface-2); color: var(--text); }
   .team-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--text-4); }
-  .team-dot.live { background: var(--ok); box-shadow: 0 0 8px var(--ok-line); }
+  .team-dot.live { background: var(--ok); }
   .team-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .team-state { font-size: 11px; color: var(--text-3); font-family: var(--parzi-mono), ui-monospace, monospace; flex: none; }
   .approval-card pre {

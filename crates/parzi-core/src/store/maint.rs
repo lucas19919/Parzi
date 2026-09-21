@@ -1,5 +1,5 @@
 //! Session maintenance: forking a transcript and removing sessions (with
-//! their subsession subtrees). Split out of `mod.rs` to keep it readable.
+//! their subsession subtrees).
 
 use std::collections::HashSet;
 

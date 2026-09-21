@@ -310,7 +310,7 @@ async fn dispatch(name: &str, args: Value, client: &str) -> Result<Value, String
     }
 }
 
-/// Session tools. Returns `None` when `name` is not one of ours.
+/// Session tools.
 async fn dispatch_session(name: &str, args: &Value) -> Option<Result<Value, String>> {
     match name {
         "session_send" => Some(tool_send(args.clone()).await),
@@ -357,7 +357,7 @@ async fn tool_kill(args: Value) -> Result<Value, String> {
     Ok(json!({ "killed": id }))
 }
 
-/// Workspace tools. Returns `None` when `name` is not one of ours.
+/// Workspace tools.
 async fn dispatch_workspace(name: &str, args: &Value) -> Option<Result<Value, String>> {
     match name {
         "workspace_list" => Some(Ok(json!(parzi_core::workspace::list()))),
@@ -392,7 +392,7 @@ async fn dispatch_workspace(name: &str, args: &Value) -> Option<Result<Value, St
     }
 }
 
-/// Deck project tools. Returns `None` when `name` is not one of ours.
+/// Deck project tools.
 async fn dispatch_project(name: &str, args: &Value) -> Option<Result<Value, String>> {
     match name {
         "project_list" => Some((|| {
@@ -615,7 +615,6 @@ async fn tool_send(args: Value) -> Result<Value, String> {
     }))
 }
 
-/// What one drained run said: transcript, turns and usage.
 struct RunOutcome {
     text: String,
     turns: u32,

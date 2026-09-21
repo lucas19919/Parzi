@@ -223,9 +223,6 @@ pub fn system_parts(cfg: &ParziConfig, project: &str, lane: &str) -> Vec<String>
             }
         }
     }
-    // Standing instructions, Claude-style: global SYSTEM.md, then the
-    // workspace file when this chat lives in a hub workspace. Knowledge
-    // stays last: specific, earned memory beats standing instruction.
     for inst in parzi_core::system::for_chat(project) {
         parts.push(format!(
             "# {} instructions\n\n{}",

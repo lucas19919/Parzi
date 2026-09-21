@@ -173,7 +173,6 @@ pub struct McpServerCfg {
 }
 
 impl McpServerCfg {
-    /// Is `tool` (short name) exposed by this server at all?
     pub fn is_tool_exposed(&self, tool: &str) -> bool {
         if !self.enabled {
             return false;
@@ -339,7 +338,6 @@ impl ParziConfig {
         self.version = CONFIG_VERSION;
     }
 
-    /// The entry for a roster id, or the defaults when it has none.
     pub fn provider(&self, id: &str) -> ProviderEntry {
         self.providers.get(id).cloned().unwrap_or_default()
     }

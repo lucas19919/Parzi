@@ -5,7 +5,7 @@
   import {
     api, hub, deck, onRunEvent,
     type SessionMeta, type ChatEvent, type UiEvent,
-    type ProjectView, type ProjectRoster, type Project, type InspectorArtifact, type InspectorDoc, type DocEntry, type ContextItem, type SwarmNode
+    type ProjectView, type ProjectRoster, type Project, type InspectorArtifact, type InspectorDoc, type DocEntry, type ContextItem, type ContextRef, type SwarmNode
   } from "./lib/api";
   import RightPanel from "./lib/inspector/RightPanel.svelte";
 
@@ -22,7 +22,6 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce, changesThreadList } from "./lib/threadList";
   import { checkForUpdates, checkForUpdatesSoon } from "./lib/updateStore";
-  import Icon from "./lib/Icon.svelte";
 
   const RM = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const smooth = RM ? { duration: 0 } : { duration: 200, easing: cubicOut };
@@ -458,7 +457,7 @@
     attachments = [];
   }
 
-  /** /plan without a mode maze: the plan-only prefix goes into the draft
+  /** /plan prefix goes into the draft
       where it stays visible and editable, then sends like anything else. */
   const PLAN_PREFIX = "Plan only — do not edit files or run commands. Output the plan:\n\n";
   function insertPlanPrefix() {
@@ -637,7 +636,6 @@
         toast("Smart Auto routing on");
         break;
       case "effort": {
-        // The levels the chosen model takes, in its agent's words.
         const order = effortsFor(model, $board);
         if (!order.length) {
           toast("this agent sets its own effort");
@@ -835,17 +833,25 @@
 
   /** Managed context (workspace + project manifest) for the dock. */
   let contextItems: ContextItem[] = [];
+  let contextRefs: ContextRef[] = [];
   let contextDoc: { workspace: string; slug: string | null; name: string; tier: string } | null = null;
 
   async function loadContext() {
     if (!panelWs) {
       contextItems = [];
+      contextRefs = [];
       return;
     }
     try {
-      contextItems = await api.listContext(panelWs, dockProject?.slug ?? null);
+      const [items, refs] = await Promise.all([
+        api.listContext(panelWs, dockProject?.slug ?? null),
+        api.listContextRefs(panelWs, dockProject?.slug ?? null),
+      ]);
+      contextItems = items;
+      contextRefs = refs;
     } catch {
       contextItems = [];
+      contextRefs = [];
     }
   }
   $: if (rightBarOpen && (panelWs || dockProject)) void loadContext();
@@ -1104,8 +1110,6 @@
 
   $: allModelOptions = allRows($board);
 
-  // Command palette (Ctrl+K): actions + threads + models. Semantic buttons,
-  // arrow/enter nav, Esc unwinds. Restores the pre-rewrite global shortcut.
   let palette = false;
   let palQuery = "";
   let palIndex = 0;
@@ -1233,7 +1237,6 @@
       toggleRightBar();
       return;
     }
-    // Full deck view for reading projects and artifacts.
     if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "f") {
       e.preventDefault();
       if (rightBarOpen) rbFull = !rbFull;
@@ -1312,7 +1315,6 @@
 </script>
 
 <div class="parzi-app-shell">
-  <!-- Dynamic Background Wallpaper & Moody Atmosphere Grade -->
   <div class="background-backdrop" class:blurred-stage={isBlurredStage}>
     {#if bg}<img src={bg} alt="" class="bg-img" />{/if}
     <div class="bg-overlay" />
@@ -1438,7 +1440,6 @@
       {/if}
     </main>
     </div>
-    <!-- Right inspector deck: docked split, collapses to zero width -->
     <div class="rb-wrap" class:closed={!rightBarOpen} class:full={rbFull} style="--rb-w: {rightBarWidth}px" bind:this={rbEl}>
       <RightPanel
         tab={rightBarTab}
@@ -1450,6 +1451,7 @@
         docs={projectDocs}
         {docLoading}
         {contextItems}
+        {contextRefs}
         {contextDoc}
         {activeThreadId}
         workspace={panelWs}
@@ -1477,7 +1479,6 @@
     </div>
   </div>
 
-  <!-- Toast Notification Stack -->
   <div class="toast-stack">
     {#each toasts as t (t.id)}
       <div class="toast-item" class:error-toast={t.err} transition:fade|local={{ duration: 140 }}>

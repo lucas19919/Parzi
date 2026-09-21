@@ -8,7 +8,6 @@ use crate::board_tools::{board_defs, is_board_tool};
 use crate::lease_tools::{is_lease_tool, lease_defs, LeaseCtx};
 use crate::mcp::McpManager;
 
-/// One tool as an agent sees it: name, description, JSON schema.
 #[derive(Debug, Clone)]
 pub struct ToolDef {
     pub name: String,
@@ -212,7 +211,7 @@ pub fn ui_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "ui.show_widget".into(),
-            description: "Render a rich widget card (table, chart, kanban, progress, stat, list, markdown). Prefer this over ASCII tables/boxes. Types: stat{title,text,sub} progress{title,value 0..1} list{title,items[]} table{title,columns[],rows[][]} chart-line/chart-bar{title,points[number[]]} kanban{columns[{title,cards[]}]} markdown{title,text}. Example: {\"widget\":1,\"type\":\"table\",\"title\":\"Endpoints\",\"columns\":[\"Route\",\"Method\"],\"rows\":[[\"/api\",\"GET\"]]}.".into(),
+            description: "Render a rich widget card (table, chart, kanban, progress, stat, list, markdown). Prefer this over ASCII tables/boxes. Types: stat{title,text,sub} progress{title,value 0..1} list{title,items[]} table{title,columns[],rows[][]} chart-line/chart-bar{title,points[number[]] | series[{name,points[]}], labels?, xlabel?, ylabel?} kanban{columns[{title,cards[]}]} markdown{title,text}. Example: {\"widget\":1,\"type\":\"table\",\"title\":\"Endpoints\",\"columns\":[\"Route\",\"Method\"],\"rows\":[[\"/api\",\"GET\"]]}.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -233,14 +232,17 @@ pub fn ui_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "ui.show_diagram".into(),
-            description: "Render an architecture/flow diagram as SVG nodes+edges. ALWAYS use this for architecture, data flow, sequence, or component diagrams — never ASCII boxes (+---|etc), which break on narrow screens. Example: {\"diagram\":1,\"title\":\"API flow\",\"nodes\":[{\"id\":\"ui\",\"label\":\"UI\"},{\"id\":\"api\",\"label\":\"API\"}],\"edges\":[{\"from\":\"ui\",\"to\":\"api\",\"label\":\"POST\"}]}. Max 200 nodes / 400 edges.".into(),
+            description: "Render an architecture/flow diagram as SVG nodes+edges. ALWAYS use this for architecture, data flow, sequence, or component diagrams — never ASCII boxes (+---|etc), which break on narrow screens. Nodes: {id, label, sub?, color?: accent|ok|warn|bad|info, shape?: flow|db|diamond|actor}. Decisions are diamond nodes with yes/no edge labels. Group related nodes: groups:[{id,label,nodes:[ids]}]. Edges: {from,to,label?,color?,style?:solid|dashed|dotted|thick}. Layouts: flow (direction LR|TB) or sequence (layout:\"sequence\", edges in message order). Example: {\"diagram\":1,\"title\":\"API flow\",\"nodes\":[{\"id\":\"ui\",\"label\":\"UI\"},{\"id\":\"ok?\",\"label\":\"Cached?\",\"shape\":\"diamond\"},{\"id\":\"db\",\"label\":\"Postgres\",\"shape\":\"db\",\"color\":\"info\"}],\"edges\":[{\"from\":\"ui\",\"to\":\"ok?\"},{\"from\":\"ok?\",\"to\":\"db\",\"label\":\"no\"}]}. Max 200 nodes / 400 edges.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "diagram": {"type": "number", "const": 1},
                     "title": {"type": "string"},
-                    "nodes": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "label": {"type": "string"}}, "required": ["id"]}},
-                    "edges": {"type": "array", "items": {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "label": {"type": "string"}}, "required": ["from", "to"]}},
+                    "direction": {"type": "string", "enum": ["LR", "TB"]},
+                    "layout": {"type": "string", "enum": ["flow", "sequence"]},
+                    "nodes": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "label": {"type": "string"}, "sub": {"type": "string"}, "color": {"type": "string", "enum": ["accent","ok","warn","bad","info"]}, "shape": {"type": "string", "enum": ["flow","db","diamond","actor"]}}, "required": ["id"]}},
+                    "edges": {"type": "array", "items": {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "label": {"type": "string"}, "color": {"type": "string", "enum": ["accent","ok","warn","bad","info"]}, "style": {"type": "string", "enum": ["solid","dashed","dotted","thick"]}}, "required": ["from", "to"]}},
+                    "groups": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "label": {"type": "string"}, "nodes": {"type": "array", "items": {"type": "string"}}}, "required": ["id", "nodes"]}},
                 },
                 "required": ["diagram", "nodes", "edges"],
             }),
@@ -728,7 +730,6 @@ pub fn display_name(name: &str) -> String {
         .map_or_else(|| name.to_string(), from_mcp)
 }
 
-/// First line of `s`, capped at `n` chars (no newlines leak into status lines).
 fn one_line(s: &str, n: usize) -> String {
     let first = s.lines().next().unwrap_or("").trim();
     let cut: String = first.chars().take(n).collect();

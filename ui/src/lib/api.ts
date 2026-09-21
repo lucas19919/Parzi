@@ -266,6 +266,12 @@ export interface DocEntry {
   source: "system" | "root";
 }
 
+/** One pinned plan/doc reference from `list_context_refs`. */
+export interface ContextRef {
+  label: string;
+  path: string;
+  kind: string;
+}
 /** One managed context file from `list_context`. */
 export interface ContextItem {
   name: string;
@@ -464,6 +470,12 @@ export const api = {
     invoke<void>("set_context_pinned", { workspace, slug: slug ?? null, name, pinned }),
   removeContext: (workspace: string, slug: string | null | undefined, name: string) =>
     invoke<void>("remove_context", { workspace, slug: slug ?? null, name }),
+  listContextRefs: (workspace: string, slug?: string | null) =>
+    invoke<ContextRef[]>("list_context_refs", { workspace, slug: slug ?? null }),
+  addContextRef: (workspace: string, slug: string | null | undefined, label: string, path: string, kind: string) =>
+    invoke<void>("add_context_ref", { workspace, slug: slug ?? null, label, path, kind }),
+  removeContextRef: (workspace: string, slug: string | null | undefined, path: string) =>
+    invoke<void>("remove_context_ref", { workspace, slug: slug ?? null, path }),
 };
 
 export function onRunEvent(cb: (e: UiEvent) => void) {

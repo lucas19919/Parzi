@@ -17,7 +17,6 @@
   /** Preselects the workspace in the Context tab. */
   export let currentProject = "default";
 
-  // Map legacy/deep tabs to the consolidated categories
   function normalizeTab(t: string): string {
     if (["general", "application"].includes(t)) return "general";
     if (t === "appearance") return "appearance";
@@ -42,8 +41,6 @@
 </script>
 
 <div class="settings-root">
-  <!-- Content Scroll Area (navigation lives in the sidebar).
-       Sections mount only when active: their onMount fetches just their tab. -->
   <div class="settings-content-scroll">
     {#if activeTab === "general"}
       <GeneralSection {notify} />
@@ -64,7 +61,6 @@
     {/if}
   </div>
 
-  <!-- Sync Toast -->
   {#if statusMsg}
     <div class="sync-toast">
       <span class="toast-dot" /><span>{statusMsg}</span>
@@ -84,7 +80,6 @@
     user-select: none;
   }
 
-  /* Content Scroll */
   .settings-content-scroll {
     flex: 1;
     overflow-y: auto;
@@ -116,6 +111,5 @@
   .toast-dot {
     width: 7px; height: 7px; border-radius: 50%; flex: none;
     background: var(--accent);
-    box-shadow: 0 0 8px var(--accent-glow);
   }
 </style>

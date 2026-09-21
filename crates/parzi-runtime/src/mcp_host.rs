@@ -81,7 +81,6 @@ impl McpHost {
         Ok(host)
     }
 
-    /// Open an endpoint for one run's tools.
     pub fn register(&self, host: Arc<ToolHost>) -> Registration {
         let token = format!(
             "{}{}",

@@ -627,7 +627,6 @@
 <svelte:window on:click={onWindowClick} on:keydown={handleKeydown} on:resize={repositionPops} />
 
 <div class="ob">
-  <!-- Scope floats above the bar: workspace picker + current project. -->
   {#if workspaces.length || workspace || wsDeck.length || selDeck}
     <div class="scope-row">
       {#if workspaces.length || workspace}
@@ -962,7 +961,6 @@
 
 <style>
   .ob { position: relative; width: 100%; max-width: 720px; margin: 0 auto; min-width: 0; }
-  /* Scope floats above the bar, right-aligned: quiet labeled pills. */
   .scope-row { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-bottom: 6px; min-width: 0; }
   .scope-chip {
     display: inline-flex; align-items: center; gap: 6px; max-width: 200px; min-width: 0;
@@ -1069,7 +1067,6 @@
   .ctl-glyph { display: inline-flex; color: var(--text-4); flex: none; }
   .ctl:hover .ctl-glyph, .ctl.open .ctl-glyph { color: var(--text-2); }
   .vdiv { width: 1px; height: 16px; background: var(--line-2); margin: 0 5px; flex: none; }
-  /* Effort as uniform ticks: click the level you want. */
   .bars-zone { display: flex; align-items: center; flex: none; padding: 0 7px; height: 28px; }
   .bars-zone .bar-bit {
     background: transparent; border: none; cursor: pointer; padding: 0 2px;
@@ -1130,7 +1127,7 @@
   .pop.from-top { transform-origin: top left; }
   .pop.from-top.from-right { transform-origin: top right; }
   .model-pop {
-    width: 380px; max-width: calc(100vw - 16px);
+    width: 340px; max-width: calc(100vw - 16px);
     height: 380px; max-height: calc(100vh - 120px);
     display: flex; flex-direction: column;
   }
@@ -1153,7 +1150,7 @@
   .rail-star { flex: none; color: var(--warn); font-size: 15px; line-height: 1; }
   .model-pop .model-list { border: none; padding: 5px 5px 5px 4px; max-height: none; }
   .m-initial.sm { width: 20px; height: 20px; font-size: 10px; border-radius: 6px; }
-  .ws-pop, .proj-pop { width: 240px; max-width: calc(100vw - 16px); padding: 5px; overflow-y: auto; }
+  .ws-pop, .proj-pop { width: 340px; max-width: calc(100vw - 16px); padding: 5px; overflow-y: auto; max-height: 400px; }
   .ws-pop .new-ws { color: var(--text-3); border-top: 1px solid var(--line-2); border-radius: 0 0 7px 7px; margin-top: 3px; }
   .ws-note { font-size: 11px; color: var(--text-3); line-height: 1.45; padding: 6px 8px 4px; }
   .ws-row { display: flex; align-items: center; gap: 2px; }
@@ -1166,7 +1163,7 @@
   .ws-del:hover:not(:disabled) { color: var(--bad); background: var(--bad-soft); }
   .ws-del.armed { color: var(--bad); background: var(--bad-soft); width: auto; padding: 0 8px; font-weight: 600; }
   .ws-del:disabled { opacity: 0.5; cursor: default; }
-  .perm-pop { width: 320px; max-width: calc(100vw - 16px); padding: 5px; overflow-y: auto; }
+  .perm-pop { width: 340px; max-width: calc(100vw - 16px); padding: 5px; overflow-y: auto; max-height: 400px; }
 
   .pop-search {
     display: flex; align-items: center; gap: 8px; padding: 8px 10px; flex: none;

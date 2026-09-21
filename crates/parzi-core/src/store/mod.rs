@@ -74,8 +74,6 @@ impl SessionStore {
         self.create_with_parent(title, project, lane, model, None)
     }
 
-    /// Create a session, optionally nested under a parent session.
-    /// `parent_id = Some(..)` makes a subsession; `None` is a top-level session.
     /// Supports arbitrary depth (subsessions may spawn sub-subsessions).
     pub fn create_with_parent(
         &self,
@@ -373,7 +371,6 @@ impl SessionStore {
     }
 }
 
-/// Read `path` from byte `from` to the end.
 fn read_from(path: &std::path::Path, from: u64) -> Result<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
     let mut f = std::fs::File::open(path)?;

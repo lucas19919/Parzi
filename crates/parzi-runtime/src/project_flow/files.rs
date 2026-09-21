@@ -215,7 +215,6 @@ pub fn note(
     )
 }
 
-/// The last `n` journal lines, oldest first.
 #[must_use]
 pub fn journal(workspace: &str, slug: &str, n: usize) -> Vec<JournalLine> {
     journal::tail(workspace, slug, n)

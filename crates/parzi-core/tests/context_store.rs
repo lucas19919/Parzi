@@ -124,3 +124,24 @@ fn injection_orders_pinned_first_within_budget() {
     let tiny = context_store::injection_text(&home, "acme", None, 10);
     assert!(tiny.is_empty() || !tiny.contains("pinned body"));
 }
+
+#[test]
+fn refs_pin_live_plans_and_block_overlap() {
+    let (_tmp, home) = home();
+    let ws = home.join("workspaces").join("acme");
+    std::fs::create_dir_all(ws.join("projects").join("shop")).expect("proj dir");
+    std::fs::write(ws.join("projects").join("shop").join("PLAN.md"), "# Shop plan").expect("plan");
+    context_store::add_ref(&home, "acme", Some("shop"), "Shop plan", "projects/shop/PLAN.md", "plan").expect("add ref");
+    let refs = context_store::list_refs(&home, "acme", Some("shop"));
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0].kind, "plan");
+    assert!(context_store::add_ref(&home, "acme", Some("shop"), "dup", "projects/shop/PLAN.md", "plan").is_err());
+    assert!(context_store::add_ref(&home, "acme", None, "evil", "../x.md", "plan").is_err());
+    assert!(context_store::add_ref(&home, "acme", None, "missing", "nope.md", "plan").is_err());
+    assert!(context_store::add(&home, "acme", Some("shop"), "copy", "# Shop plan", context_store::Tier::Curated, "test").is_err());
+    let text = context_store::injection_text(&home, "acme", Some("shop"), 10_000);
+    let plan = text.find("Shop plan").expect("plan injected");
+    assert!(text[..plan].contains("# Plan"));
+    context_store::remove_ref(&home, "acme", Some("shop"), "projects/shop/PLAN.md").expect("remove");
+    assert!(context_store::list_refs(&home, "acme", Some("shop")).is_empty());
+}

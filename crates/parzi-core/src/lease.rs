@@ -144,7 +144,6 @@ fn contains(outer: &str, inner: &str) -> bool {
     !root.is_empty() && covers(outer, &root.join("/"))
 }
 
-/// The answer to `lease.claim`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Claim {
     Granted,
@@ -434,7 +433,6 @@ impl LeaseTable {
         self.leases.is_empty()
     }
 
-    /// How often this task has already asked for this path.
     #[must_use]
     pub fn request_count(&self, path: &str, task: &TaskId) -> usize {
         let p = path_key(path);

@@ -766,7 +766,6 @@ async fn save_config(
 
 /// Agents whose program path was set or edited between two configs, as
 /// "claude → C:\…\claude.exe". Clearing a path (back to PATH) is silent.
-/// Pure and unit-tested.
 fn binary_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
     let mut out: Vec<String> = new
         .providers
@@ -782,7 +781,7 @@ fn binary_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
 }
 
 /// Names of MCP servers whose `command`/`args` were added or edited between
-/// two configs. Pure and unit-tested.
+/// two configs.
 fn mcp_command_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
     let mut out = vec![];
     for (name, srv) in &new.mcp.servers {
@@ -1540,7 +1539,7 @@ async fn read_text_file(path: String) -> Result<String, String> {
 }
 
 /// Lexical `.`/`..` normalization without touching disk (floors at the
-/// prefix/root, matching OS semantics). Pure and unit-tested.
+/// prefix/root, matching OS semantics).
 fn normalize_lexical(p: &std::path::Path) -> std::path::PathBuf {
     use std::path::Component;
     let mut out = std::path::PathBuf::new();
@@ -2039,6 +2038,9 @@ fn main() {
             context_cmds::add_context,
             context_cmds::set_context_pinned,
             context_cmds::remove_context,
+            context_cmds::list_context_refs,
+            context_cmds::add_context_ref,
+            context_cmds::remove_context_ref,
             // hub (PLAN.md): workspaces, GitHub, projects, the deck's reads.
             hub_cmds::workspace_list,
             hub_cmds::workspace_create,

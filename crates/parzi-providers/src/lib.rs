@@ -1,6 +1,6 @@
 //! parzi-providers: Parzi drives each vendor's own agent — Claude Code, the
 //! Codex app-server, and the ACP agents (OpenCode, Grok, Antigravity,
-//! Cursor) — the way t3code does. No model API is called from here and no
+//! Cursor). No model API is called from here and no
 //! vendor credential passes through Parzi: every provider signs in,
 //! refreshes and bills through its own program.
 

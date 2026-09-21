@@ -17,6 +17,60 @@ fn context_home() -> Result<std::path::PathBuf, String> {
     parzi_core::paths::parzi_dir().map_err(|e| e.to_string())
 }
 
+#[derive(serde::Serialize)]
+pub struct ContextRefView {
+    label: String,
+    path: String,
+    kind: String,
+}
+
+#[tauri::command]
+pub async fn list_context_refs(
+    workspace: String,
+    slug: Option<String>,
+) -> Result<Vec<ContextRefView>, String> {
+    let home = context_home()?;
+    Ok(parzi_core::context_store::list_refs(&home, workspace.trim(), slug.as_deref())
+        .into_iter()
+        .map(|r| ContextRefView {
+            label: r.label,
+            path: r.path,
+            kind: r.kind,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn add_context_ref(
+    workspace: String,
+    slug: Option<String>,
+    label: String,
+    path: String,
+    kind: String,
+) -> Result<(), String> {
+    let home = context_home()?;
+    parzi_core::context_store::add_ref(
+        &home,
+        workspace.trim(),
+        slug.as_deref(),
+        label.trim(),
+        path.trim(),
+        kind.trim(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn remove_context_ref(
+    workspace: String,
+    slug: Option<String>,
+    path: String,
+) -> Result<(), String> {
+    let home = context_home()?;
+    parzi_core::context_store::remove_ref(&home, workspace.trim(), slug.as_deref(), path.trim())
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn list_context(
     workspace: String,

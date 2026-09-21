@@ -41,7 +41,6 @@ fn budget_for(cfg: &ParziConfig, project: Option<&(String, String)>) -> Budget {
 }
 
 impl Orchestrator {
-    /// Spawn a run. Returns the session id + live event channel.
     #[allow(clippy::too_many_arguments)]
     pub async fn spawn(
         &self,
@@ -142,7 +141,6 @@ impl Orchestrator {
         Ok((meta, rx))
     }
 
-    /// Continue an existing session with a new user message.
     #[allow(clippy::too_many_arguments)]
     pub async fn send_to(
         &self,
@@ -393,7 +391,6 @@ impl Orchestrator {
     /// only.
     pub(super) async fn launch(p: Pump, q: QueuedRun) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
         let sid = q.session_id.clone();
-        // The parked copy has served its purpose the moment we try to start.
         clear_queued(&sid);
         let cancel = CancellationToken::new();
         let claim = {
@@ -463,7 +460,6 @@ impl Orchestrator {
         let provider = (p.source)(&provider_id, &snap).ok_or_else(|| {
             ParziError::Store(format!("{provider_id} is not on this build's roster"))
         })?;
-        // The thread shows where it runs.
         let shown = match &model {
             Some(m) => format!("{provider_id}/{m}"),
             None => provider_id.clone(),
@@ -594,7 +590,6 @@ impl Orchestrator {
             seen,
             inbox_from: q.inbox_from,
         });
-        // A run that starts again is no longer paused: clear the stop note.
         set_run_note(&q.session_id, None);
         p.store.set_status(&q.session_id, SessionStatus::Active)?;
         let end = RunEnd {

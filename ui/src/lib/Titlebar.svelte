@@ -1,7 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
   import { fade } from "svelte/transition";
-  import { api } from "./api";
   import Icon from "./Icon.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { WIN_ICON, startWindowDrag, windowClose, windowMaximize, windowMinimize } from "./windowChrome";

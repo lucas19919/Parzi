@@ -129,7 +129,6 @@ impl Provider for Claude {
     }
 }
 
-/// Plan label from `claude auth status`.
 fn account_label(auth: &Value) -> String {
     match auth.get("subscriptionType").and_then(Value::as_str) {
         Some("max") => "Claude Max".into(),
@@ -554,7 +553,6 @@ impl Link {
     }
 }
 
-/// Everything one turn needs to keep between messages.
 #[derive(Default)]
 struct TurnState {
     tool_names: HashMap<String, String>,
@@ -565,7 +563,6 @@ struct TurnState {
     /// CLI's dollar figure is what the tokens would cost on the API, and
     /// nobody pays it.
     on_plan: bool,
-    /// This turn asked to resume an earlier conversation.
     resuming: bool,
     /// Claude Code said `system/init`: the conversation loaded.
     saw_init: bool,

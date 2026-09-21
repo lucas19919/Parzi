@@ -19,7 +19,6 @@ use crate::roles::Role;
 use crate::tools::Approver;
 use crate::Orchestrator;
 
-/// One lane started by `approve` or `dispatch_lane`.
 #[derive(Debug, Clone, Serialize)]
 pub struct Dispatched {
     pub lane: String,
@@ -68,9 +67,6 @@ pub async fn approve(
         };
         let cwd = task_cwd(workspace, &project, task, &lane.name)?;
         let prompt = coder_prompt(task, &lane.name);
-        // The session first, then its lease identity, and only then the run:
-        // a coder whose first action is `lease.claim` must already be somebody
-        // the lease table knows.
         let meta = orch.role_session(
             workspace,
             slug,
@@ -130,7 +126,6 @@ pub async fn approve(
     Ok(out)
 }
 
-/// Start an agent on a specific lane or task.
 pub async fn dispatch_lane(
     orch: &Arc<Orchestrator>,
     workspace: &str,

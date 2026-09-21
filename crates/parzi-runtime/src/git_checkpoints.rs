@@ -1,4 +1,4 @@
-//! T3-style turn checkpoints: shadow git commits under
+//! Turn checkpoints: shadow git commits under
 //! `refs/parzi/checkpoints/<session>/<turn>` for risk-free rollbacks.
 //! Never touches the user's active branch — all writes go to detached shadow
 //! refs via `git hash-object` / `git update-ref` plumbing.
@@ -46,14 +46,10 @@ pub fn create_checkpoint(repo: &str, session_id: &str, turn: u32) -> Result<Stri
             ));
         }
     }
-    // Stage nothing: build a tree object from the index + worktree via
-    // `git stash create`-like plumbing without touching refs/HEAD.
-    // Simplest portable path: `git add -A -N` intent + `git write-tree`?
     // We avoid mutating the index: use `git diff` content hashed directly.
     let diff = git(repo, &["diff", "--no-color", "--no-ext-diff", "HEAD", "--"])?;
     let status = git(repo, &["status", "--porcelain=v1", "--"])?;
     let body = format!("parzi checkpoint {session_id} turn {turn}\n\n{status}\n{diff}\n");
-    // hash-object -w -t blob
     let mut child = std::process::Command::new("git")
         .arg("-C")
         .arg(repo)
@@ -78,7 +74,6 @@ pub fn create_checkpoint(repo: &str, session_id: &str, turn: u32) -> Result<Stri
             "hash-object failed".into(),
         ));
     }
-    // commit-tree <head-tree> -m <msg> — parent = HEAD when available.
     let head_tree = git(repo, &["rev-parse", "HEAD^{tree}"])
         .unwrap_or_else(|_| "4b825dc642cb6eb9a060e54bf8d69288fbee4904".into());
     let head_commit = git(repo, &["rev-parse", "--verify", "HEAD"]).ok();

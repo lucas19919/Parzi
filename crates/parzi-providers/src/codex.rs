@@ -1,5 +1,5 @@
 //! Codex, driven over its own app-server (JSON-RPC on stdio) — the protocol
-//! OpenAI's IDE extensions and t3code speak. Codex keeps its ChatGPT
+//! OpenAI's IDE extensions speak. Codex keeps its ChatGPT
 //! sign-in fresh by itself; Parzi never reads `~/.codex/auth.json`.
 
 use std::collections::HashMap;
@@ -42,7 +42,6 @@ impl Codex {
     }
 }
 
-/// A started app-server with the initialize handshake done.
 struct Server {
     proc: Proc,
     peer: Arc<Peer>,
@@ -475,7 +474,6 @@ async fn sleep_until(deadline: Option<tokio::time::Instant>) {
     }
 }
 
-/// Answer one of Codex's own requests.
 async fn answer(
     peer: &Peer,
     id: Value,

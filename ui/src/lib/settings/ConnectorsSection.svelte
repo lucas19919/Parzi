@@ -201,7 +201,6 @@
   async function installPreset(p: McpPreset) {
     if (installing) return;
     const inp = presetInput(p.id);
-    // Validate required fields before touching config.
     if (p.argField?.required && !inp.arg.trim()) {
       notify(`${p.label}: ${p.argField.label} is required`);
       presetInputs = { ...presetInputs, [p.id]: { ...inp, open: true } };
@@ -521,7 +520,6 @@
     <div class="skel" />
   </div>
 {:else}
-  <!-- Lane policy and built-in tools live under Agent tools now. -->
   <div class="pref-section">
     <div>
       <h3 class="section-title">Permissions moved</h3>
@@ -529,7 +527,6 @@
     </div>
   </div>
 
-  <!-- Installed connectors with tool browsers -->
   <div class="pref-section">
     <div class="section-head-with-action">
       <div>
@@ -660,7 +657,6 @@
     {/each}
   </div>
 
-  <!-- One-click standard connectors -->
   <div class="pref-section">
     <h3 class="section-title">Standard connectors</h3>
     <p class="section-desc">One-click installs. Keys stay in your local config — never logged. Community picks are labelled.</p>
@@ -725,7 +721,6 @@
     {/if}
   </div>
 
-  <!-- Custom: paste anything or manual -->
   <div class="pref-section">
     <h3 class="section-title">Custom connector</h3>
     <p class="section-desc">Paste the config from any MCP's README — or a bare <span class="mono">npx …</span> line. Name and settings are detected automatically.</p>

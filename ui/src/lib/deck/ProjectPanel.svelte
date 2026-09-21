@@ -18,8 +18,6 @@
 
   export let workspace = "";
   export let projects: Project[] = [];
-  /** Project selected in the dock: the panel boots its home itself, so the
-      old full-stage deck is gone — project work lives here exclusively. */
   export let selected: { workspace: string; slug: string } | null = null;
 
   const dispatch = createEventDispatcher<{
@@ -164,7 +162,6 @@
     }
   }
 
-  /** Transfer cards answer through the same gate a tool approval does. */
   async function answerApproval(key: string, allow: boolean) {
     const { [approvalTask(key)]: _gone, ...rest } = approvals;
     approvals = rest;
@@ -218,7 +215,6 @@
     if (id) dispatch("openSession", { id });
   }
 
-  /** Inline rename + two-step delete for the workspace's project list. */
   let renamingSlug: string | null = null;
   let renameDraft = "";
   let delConfirm: string | null = null;

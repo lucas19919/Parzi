@@ -24,7 +24,6 @@ pub fn is_project_tool(name: &str) -> bool {
     )
 }
 
-/// Every project tool, for the shell's tool catalogue.
 #[must_use]
 pub fn project_defs() -> Vec<ToolDef> {
     vec![
@@ -72,8 +71,8 @@ pub fn project_defs_for(role: Role) -> Vec<ToolDef> {
         .collect()
 }
 
-/// Run one project tool for a role run. Sync work behind an async call site:
-/// every branch is a file read or an atomic write, the same as `fs.*`.
+/// Sync work behind an async call site: every branch is a file read or an
+/// atomic write, the same as `fs.*`.
 #[must_use]
 pub fn execute_project_tool(role: Role, ctx: &RoleCtx, name: &str, args: &Value) -> (bool, String) {
     if !role_tools(role).iter().any(|t| t == name) {

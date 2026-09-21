@@ -11,7 +11,7 @@
     windowMaximize,
     windowMinimize,
   } from "../windowChrome";
-  import type { DocEntry, InspectorArtifact, InspectorDoc, Project, ContextItem } from "../api";
+  import type { DocEntry, InspectorArtifact, InspectorDoc, Project, ContextItem, ContextRef } from "../api";
 
   export let tab: "project" | "docs" = "project";
   export let width = 420;
@@ -24,6 +24,7 @@
   export let docs: DocEntry[] = [];
   export let docLoading = false;
   export let contextItems: ContextItem[] = [];
+  export let contextRefs: ContextRef[] = [];
   export let contextDoc: { name: string; tier: string } | null = null;
 
   export let activeThreadId: string | null = null;
@@ -98,8 +99,6 @@
     on:pointerdown={onGripDown} on:pointermove={onGripMove} on:pointerup={onGripUp} on:pointercancel={onGripUp} on:keydown={onGripKey} />
   {/if}
 
-  <!-- Slim top row: Projects / Docs tabs plus view controls. The open
-       file below it is the only other chrome. -->
   <header class="head" class:chrome={full} role="toolbar" aria-label="Inspector"
     data-tauri-drag-region={full ? "" : undefined} on:mousedown={full ? startWindowDrag : undefined}>
     <div class="tabs" role="tablist">
@@ -145,7 +144,7 @@
     {:else}
       <DocReader
         {artifact} {artifacts} {doc} {docs} loading={docLoading} hasThread={!!activeThreadId}
-        {contextItems} {contextDoc}
+        {contextItems} {contextRefs} {contextDoc}
         on:openDoc on:openTranscript on:openArtifact on:pickFile
         on:openContext on:toggleContextPin on:removeContextDoc on:promoteToContext
       />

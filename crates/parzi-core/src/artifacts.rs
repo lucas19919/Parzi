@@ -131,7 +131,7 @@ pub fn validate_artifact(v: &serde_json::Value) -> Result<ArtifactV1> {
     Ok(a)
 }
 
-/// Next version for `id` given existing versions (pure, tested).
+/// Next version for `id` given existing versions.
 pub fn next_version(id: &str, existing: &[ArtifactV1]) -> u32 {
     let slug = slugify_id(id);
     let max = existing

@@ -439,7 +439,6 @@ fn text_of(content: &Value) -> String {
     }
 }
 
-/// Words the transcript keeps between chunks.
 #[derive(Default)]
 struct Buffers {
     message: String,
@@ -470,7 +469,6 @@ fn rpc_failure(agent: Agent, e: RpcError) -> ProviderError {
     }
 }
 
-/// Open (or resume) a session on an initialized agent and run one prompt.
 #[allow(clippy::too_many_arguments)]
 async fn drive(
     peer: &Arc<Peer>,

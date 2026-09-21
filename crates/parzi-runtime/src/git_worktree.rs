@@ -28,12 +28,10 @@ fn git(cwd: &str, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// Checks if a directory is a valid git repository.
 pub fn is_git_repo(path: &str) -> bool {
     git(path, &["rev-parse", "--is-inside-work-tree"]).is_ok()
 }
 
-/// Branch name generated for a session's isolated worktree.
 pub fn session_branch(lane: &str, session_id: &str) -> String {
     let clean_lane = if lane.trim().is_empty() {
         "default"
@@ -43,7 +41,6 @@ pub fn session_branch(lane: &str, session_id: &str) -> String {
     format!("parzi/{clean_lane}/{session_id}")
 }
 
-/// Create an isolated worktree for a session off `HEAD`.
 /// Returns the absolute path to the created worktree directory.
 pub fn create_worktree(repo: &str, project: &str, lane: &str, session_id: &str) -> Result<PathBuf> {
     for c in ["..", "/", "\\", " ", "\n", "\r", "\t"] {
@@ -79,7 +76,6 @@ pub fn create_worktree(repo: &str, project: &str, lane: &str, session_id: &str) 
     Ok(dest)
 }
 
-/// Generate consolidated diff of changes made in the worktree against HEAD.
 pub fn worktree_diff(worktree_path: &Path) -> Result<String> {
     let wt = worktree_path.to_string_lossy();
     let diff = git(&wt, &["diff", "--no-color", "HEAD"])?;
@@ -97,14 +93,12 @@ pub fn worktree_diff(worktree_path: &Path) -> Result<String> {
     Ok(out)
 }
 
-/// Merge or apply the session branch back into the main repo working directory.
 pub fn apply_worktree(repo: &str, lane: &str, session_id: &str) -> Result<String> {
     let branch = session_branch(lane, session_id);
     // Squash merge so changes arrive as staged edits ready for commit/review
     git(repo, &["merge", "--no-commit", "--squash", &branch])
 }
 
-/// Remove a worktree and optionally delete its branch.
 pub fn remove_worktree(
     repo: &str,
     worktree_path: &Path,

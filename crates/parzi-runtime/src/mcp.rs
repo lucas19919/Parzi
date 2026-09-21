@@ -1,10 +1,9 @@
 //! Minimal native MCP client (STDIO, newline-delimited JSON-RPC).
-//! No heavy framework: spawn -> initialize -> tools/list (cached) -> tools/call.
+//! No heavy framework on purpose: spawn -> initialize -> tools/list (cached)
+//! -> tools/call (fewer deps, same protocol, deterministic behavior).
 //! Servers start lazily on first use, hold one lock each, and die on an idle
 //! timer or on `shutdown()` — with their process tree, so no `npx` child
 //! outlives the app.
-//! (Deviates from PLAN.md's rmcp pin on purpose: fewer deps, same protocol,
-//! deterministic behavior. See PROGRESS.md.)
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -584,7 +583,7 @@ impl McpManager {
         Ok(text)
     }
 
-    /// Stop a server now (used by kill/health flows).
+    /// Stop a server now.
     pub async fn stop(&self, name: &str) {
         let slot = self.slots.lock().await.get(name).cloned();
         if let Some(slot) = slot {

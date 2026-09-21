@@ -97,8 +97,8 @@ fn seed_default_background(_root: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-/// Ship built-in packs (t3code environment-theme discipline: invalid files
-/// are skipped, never fatal). Never overwrites user packs.
+/// Ship built-in packs (invalid files are skipped, never fatal).
+/// Never overwrites user packs.
 fn seed_builtin_packs(root: &std::path::Path) -> Result<()> {
     let packs: &[(&str, &str)] = &[
         (

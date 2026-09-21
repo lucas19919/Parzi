@@ -25,7 +25,6 @@ pub const TICK: Duration = Duration::from_secs(10);
 /// capsules, not a code tree; the cap keeps a stray checkout from costing.
 const POLL_ENTRY_CAP: usize = 4000;
 
-/// What one workspace needs on this tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Work {
     /// Nothing to do.
@@ -110,7 +109,6 @@ impl SyncTimer {
         });
     }
 
-    /// Nobody is looking at this workspace any more.
     pub fn close(&self, workspace: &str) {
         self.inner.with(workspace, |s| s.open = false);
     }

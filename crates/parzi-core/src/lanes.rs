@@ -361,7 +361,6 @@ pub fn migrate_tasks_to_lanes(project: &str) -> Result<usize> {
     Ok(made)
 }
 
-/// Read cumulative knowledge for a project (`projects/<p>/KNOWLEDGE.md`).
 pub fn read_knowledge(project: &str) -> Option<String> {
     let clean = safe_name(project).ok()?;
     let path = paths::project_knowledge_path(&clean).ok()?;

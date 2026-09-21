@@ -31,7 +31,6 @@ pub const HOOK_TIMEOUT_DEFAULT: u64 = 5;
 /// Hard cap so a junk drawer of hooks cannot stall every tool call.
 pub const HOOK_MAX_ENTRIES: usize = 16;
 
-/// One hook entry.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookDef {
     /// Exact name (`shell.exec`), family prefix (`fs.*`), or `*`.
@@ -55,7 +54,6 @@ impl HookDef {
         }
     }
 
-    /// Does this hook watch `tool`?
     #[must_use]
     pub fn matches(&self, tool: &str) -> bool {
         let m = self.r#match.trim();
@@ -69,7 +67,6 @@ impl HookDef {
     }
 }
 
-/// Both hook points of one file.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookSet {
     #[serde(default)]

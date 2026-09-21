@@ -80,7 +80,6 @@ enum Outcome {
     Failed(ProviderError),
 }
 
-/// What a turn keeps between provider events.
 #[derive(Default)]
 struct Turn {
     /// The last finished message: written once we know if it ends the turn.
@@ -283,7 +282,6 @@ impl EngineRun {
         self.p.sink.emit(RunEvent::Notice { text });
     }
 
-    /// A note the thread needs once, not on every run.
     fn note_once(&self, text: String) {
         let said = self.p.store.events(&self.p.session_id).is_ok_and(|evs| {
             evs.iter()

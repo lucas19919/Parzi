@@ -89,7 +89,6 @@ pub fn scan() -> Result<Vec<Plugin>> {
     Ok(out)
 }
 
-/// All slash commands from enabled `commands` packs.
 pub fn slash_commands() -> Result<Vec<SlashCommand>> {
     let mut out = vec![];
     for p in scan()?
@@ -298,7 +297,6 @@ pub fn themes() -> Result<Vec<(String, std::path::PathBuf)>> {
         .collect())
 }
 
-/// Lowercase, dash-separated version of a free-typed name.
 fn sanitize_pack_name(raw: &str) -> Result<String> {
     let cand: String = raw
         .to_lowercase()
@@ -553,7 +551,6 @@ fn install_skill_dir(src: &std::path::Path) -> std::result::Result<String, Strin
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "skill".into());
-    // Already a Parzi pack → copy as-is (known kinds only).
     if src.join("parzi-plugin.toml").is_file() {
         let text = std::fs::read_to_string(src.join("parzi-plugin.toml"))
             .map_err(|e| format!("{fallback} — can't read manifest: {e}"))?;
@@ -575,7 +572,6 @@ fn install_skill_dir(src: &std::path::Path) -> std::result::Result<String, Strin
         copy_dir(src, &dst).map_err(|e| format!("{} — copy failed: {e}", mf.plugin.name))?;
         return Ok(mf.plugin.name);
     }
-    // Bare commands.toml → wrap with a manifest, copy everything.
     if src.join("commands.toml").is_file() {
         let text = std::fs::read_to_string(src.join("commands.toml"))
             .map_err(|e| format!("{fallback} — can't read commands.toml: {e}"))?;
@@ -600,7 +596,6 @@ fn install_skill_dir(src: &std::path::Path) -> std::result::Result<String, Strin
             .map_err(|e| format!("{name} — can't write manifest: {e}"))?;
         return Ok(name);
     }
-    // SKILL.md → convert to one slash command.
     let md = ["SKILL.md", "skill.md"]
         .into_iter()
         .map(|f| src.join(f))
@@ -619,7 +614,6 @@ fn install_skill_dir(src: &std::path::Path) -> std::result::Result<String, Strin
     Ok(name)
 }
 
-/// Clone a skill library and install every skill folder inside.
 /// Blocking (runs a `git` subprocess) — callers should spawn_blocking.
 pub fn install_skill_from_git(url: &str) -> Result<SkillInstallReport> {
     let url = normalize_git_url(url)?;
@@ -676,7 +670,6 @@ pub fn install_skill_from_git(url: &str) -> Result<SkillInstallReport> {
     Ok(report)
 }
 
-/// Remove a skill pack entirely (the folder goes away).
 pub fn delete_skill(name: &str) -> Result<()> {
     let dir = pack_dir(name)?;
     let plugin = scan()?

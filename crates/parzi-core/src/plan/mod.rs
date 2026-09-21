@@ -233,7 +233,6 @@ pub fn set_task_status(project: &str, title_match: &str, done: bool) -> Result<b
     Ok(changed)
 }
 
-/// Find the first pending task in a project's living plan.
 pub fn next_pending_task(project: &str) -> Option<PlanTask> {
     let plan_text = read_plan(project).ok()?;
     let parsed = parse_plan(&plan_text);

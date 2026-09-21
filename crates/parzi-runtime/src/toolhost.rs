@@ -611,7 +611,6 @@ impl ToolHost {
         }
     }
 
-    /// Validate + version + dedup + append an artifact.
     fn store_artifact(&self, args: &Value) -> std::result::Result<String, String> {
         let mut candidate = artifacts::validate_artifact(args).map_err(|e| e.to_string())?;
         let existing = self.existing_artifacts();

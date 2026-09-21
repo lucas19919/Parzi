@@ -27,7 +27,6 @@ const MAX_PAGES: usize = 10;
 /// GitHub's own rule for a login: 1–39 of `[A-Za-z0-9-]`.
 const MAX_LOGIN: usize = 39;
 
-/// One organisation the signed-in user belongs to.
 #[derive(Debug, Clone, Serialize)]
 pub struct Org {
     pub login: String,
@@ -89,7 +88,6 @@ fn client() -> &'static reqwest::Client {
     })
 }
 
-/// The stored token, if the keyring has one.
 #[must_use]
 pub fn token() -> Option<String> {
     keyring::Entry::new(SERVICE, ACCOUNT)

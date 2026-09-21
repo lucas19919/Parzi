@@ -92,7 +92,6 @@ fn follow_npm_shim(path: &Path) -> Option<PathBuf> {
     None
 }
 
-/// A running vendor program with piped stdio and the tail of its stderr.
 pub struct Proc {
     pub child: Child,
     stderr: Arc<Mutex<String>>,
@@ -256,7 +255,6 @@ pub async fn first_line(program: &Path, args: &[&str]) -> Option<String> {
         .map(str::to_string)
 }
 
-/// All of stdout+stderr of `program args…`, within `secs`.
 pub async fn output(program: &Path, args: &[&str], secs: u64) -> Option<String> {
     let mut cmd = Command::new(program);
     cmd.args(args)

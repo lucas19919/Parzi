@@ -113,7 +113,6 @@
     }
   }
 
-  /** Refresh the doc list without dropping the open editor. */
   async function loadDocsKeepSelection() {
     const proj = projects.find((p) => p.name === sel);
     try {
