@@ -30,7 +30,7 @@ mod context_cmds;
 
 struct AppState {
     orch: Arc<Orchestrator>,
-    pending: Arc<Mutex<HashMap<String, oneshot::Sender<Approval>>>>,
+    pending: Arc<Mutex<HashMap<String, (String, oneshot::Sender<Approval>)>>>,
     app: AppHandle,
 }
 
@@ -75,6 +75,7 @@ enum UiEvent {
     },
     Approval {
         key: String,
+        session: String,
         call: ToolCallView,
     },
     SubsessionCreated {
@@ -97,12 +98,13 @@ struct ToolCallView {
     name: String,
     args: serde_json::Value,
     lane: String,
+    session: String,
 }
 
 /// GUI approver: emits an approval event, waits for `approve_tool` (120s cap).
 struct GuiApprover {
     app: AppHandle,
-    pending: Arc<Mutex<HashMap<String, oneshot::Sender<Approval>>>>,
+    pending: Arc<Mutex<HashMap<String, (String, oneshot::Sender<Approval>)>>>,
 }
 
 #[async_trait::async_trait]
@@ -110,17 +112,22 @@ impl Approver for GuiApprover {
     async fn approve(&self, call: &ToolCallInfo) -> Approval {
         let key = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(key.clone(), tx);
+        self.pending
+            .lock()
+            .await
+            .insert(key.clone(), (call.session.clone(), tx));
         let view = ToolCallView {
             id: call.id.clone(),
             name: call.name.clone(),
             args: call.args.clone(),
             lane: call.lane.clone(),
+            session: call.session.clone(),
         };
         let _ = self.app.emit(
             "parzi://run-event",
             UiEvent::Approval {
                 key: key.clone(),
+                session: call.session.clone(),
                 call: view,
             },
         );
@@ -133,9 +140,46 @@ impl Approver for GuiApprover {
     }
 }
 
-fn boot() -> anyhow::Result<(ParziConfig, SessionStore)> {
+fn boot() -> anyhow::Result<(ParziConfig, SessionStore, Option<String>)> {
     parzi_core::paths::ensure_dirs()?;
-    Ok((ParziConfig::load()?, SessionStore::open()?))
+    let (cfg, note) = load_or_recover()?;
+    Ok((cfg, SessionStore::open()?, note))
+}
+
+/// A corrupt config.toml no longer kills the app behind a blank window:
+/// the broken file is set aside (never deleted) and defaults boot instead.
+/// Returns the note for the post-boot dialog, if any.
+fn load_or_recover() -> anyhow::Result<(ParziConfig, Option<String>)> {
+    match ParziConfig::load() {
+        Ok(cfg) => Ok((cfg, None)),
+        Err(e) => {
+            let path = parzi_core::paths::config_path()?;
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let broken = path.with_extension(format!("broken-{stamp}.toml"));
+            let _ = std::fs::rename(&path, &broken);
+            if path.exists() {
+                // Couldn't set the broken file aside: boot defaults but do
+                // not overwrite the evidence.
+                let note = format!("config.toml was unreadable ({e}) and could not be moved aside; defaults loaded, your file left untouched.");
+                tracing::warn!("{note}");
+                return Ok((ParziConfig::default(), Some(note)));
+            }
+            let cfg = ParziConfig::default();
+            let _ = cfg.save();
+            let note = format!(
+                "config.toml was unreadable ({e}) and was set aside as {}. Defaults loaded.",
+                broken
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            );
+            tracing::warn!("{note}");
+            Ok((cfg, Some(note)))
+        }
+    }
 }
 
 #[tauri::command]
@@ -631,10 +675,13 @@ async fn list_builtin_tools() -> Result<Vec<BuiltinToolView>, String> {
 }
 
 #[tauri::command]
-async fn approve_tool(state: State<'_, AppState>, key: String, allow: bool) -> Result<(), String> {
-    let tx = state.pending.lock().await.remove(&key);
-    match tx {
-        Some(tx) => {
+async fn approve_tool(state: State<'_, AppState>, key: String, session: String, allow: bool) -> Result<(), String> {
+    let entry = state.pending.lock().await.remove(&key);
+    match entry {
+        Some((bound, tx)) => {
+            if bound != session {
+                return Err("approval is for another session".into());
+            }
             let _ = tx.send(if allow {
                 Approval::Allow
             } else {
@@ -1140,10 +1187,8 @@ async fn background_file(name: String) -> Result<String, String> {
     let p = parzi_core::paths::backgrounds_dir()
         .map_err(|e| e.to_string())?
         .join(&name);
-    if !p.exists() {
-        return Err("background not found".into());
-    }
-    Ok(p.to_string_lossy().to_string())
+    checked_background(p).ok_or_else(|| "background not found".to_string())
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 /// Derive UI colors from wallpaper art. `name`: a saved background, or omit
@@ -1378,16 +1423,7 @@ async fn get_worktree_diff(
     lane: String,
     session_id: String,
 ) -> Result<String, String> {
-    let clean_lane = if lane.trim().is_empty() {
-        "default"
-    } else {
-        lane.trim()
-    };
-    let wt_path = parzi_core::paths::worktrees_dir()
-        .map_err(|e| e.to_string())?
-        .join(project)
-        .join(clean_lane)
-        .join(session_id);
+    let wt_path = worktree_path(&project, &lane, &session_id)?;
     if !wt_path.exists() {
         return Ok(String::new());
     }
@@ -1407,6 +1443,9 @@ async fn apply_worktree(
     };
     let root = parzi_core::lanes::lane_root(&project, clean_lane)
         .ok_or_else(|| "project root not configured".to_string())?;
+    // The session still has to name a real worktree: validated, then unused
+    // except as proof the caller addresses one.
+    worktree_path(&project, &lane, &session_id)?;
     parzi_runtime::git_worktree::apply_worktree(&root, clean_lane, &session_id)
         .map_err(|e| e.to_string())
 }
@@ -1416,11 +1455,15 @@ async fn list_checkpoints(
     repo: String,
     session_id: String,
 ) -> Result<Vec<parzi_runtime::git_checkpoints::CheckpointView>, String> {
+    let repo = confined_path(&repo)?.to_string_lossy().to_string();
+    uuid::Uuid::parse_str(session_id.trim()).map_err(|_| "bad session id".to_string())?;
     parzi_runtime::git_checkpoints::list_checkpoints(&repo, &session_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn restore_checkpoint(repo: String, session_id: String, turn: u32) -> Result<(), String> {
+    let repo = confined_path(&repo)?.to_string_lossy().to_string();
+    uuid::Uuid::parse_str(session_id.trim()).map_err(|_| "bad session id".to_string())?;
     parzi_runtime::git_checkpoints::restore_checkpoint(&repo, &session_id, turn)
         .map_err(|e| e.to_string())
 }
@@ -1431,6 +1474,7 @@ async fn git_branch(cwd: String) -> Result<String, String> {
     if cwd.is_empty() {
         return Ok(String::new());
     }
+    let cwd = confined_path(&cwd)?;
     let out = tokio::process::Command::new("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(&cwd)
@@ -1447,6 +1491,7 @@ async fn list_files(root: String, query: String) -> Result<Vec<String>, String> 
     if root.is_empty() {
         return Ok(vec![]);
     }
+    let root_path = confined_path(&root)?;
     const SKIP: &[&str] = &[
         ".git",
         "node_modules",
@@ -1457,7 +1502,7 @@ async fn list_files(root: String, query: String) -> Result<Vec<String>, String> 
     ];
     let q = query.to_lowercase();
     let mut out = vec![];
-    let mut stack = vec![(std::path::PathBuf::from(&root), 0u8)];
+    let mut stack = vec![(root_path.clone(), 0u8)];
     while let Some((dir, depth)) = stack.pop() {
         if depth > 4 || out.len() >= 200 {
             continue;
@@ -1474,7 +1519,7 @@ async fn list_files(root: String, query: String) -> Result<Vec<String>, String> 
             let p = e.path();
             if p.is_dir() {
                 stack.push((p, depth + 1));
-            } else if let Ok(rel) = p.strip_prefix(&root) {
+            } else if let Ok(rel) = p.strip_prefix(&root_path) {
                 let s = rel.to_string_lossy().replace('\\', "/");
                 if q.is_empty() || s.to_lowercase().contains(&q) {
                     out.push(s);
@@ -1650,8 +1695,7 @@ fn file_roots() -> Vec<std::path::PathBuf> {
 
 /// Gate for shell-side file access: absolute path, lexically normalized,
 /// canonicalized, and required to sit under `file_roots()` or `PICKED_FILES`.
-fn confined_path(raw: &str) -> Result<std::path::PathBuf, String> {
-    let p = std::path::PathBuf::from(raw.trim());
+fn confined_path(raw: &str) -> Result<std::path::PathBuf, String> {    let p = std::path::PathBuf::from(raw.trim());
     if p.as_os_str().is_empty() {
         return Err("empty path".into());
     }
@@ -1674,6 +1718,33 @@ fn confined_path(raw: &str) -> Result<std::path::PathBuf, String> {
     } else {
         Err("that location is outside the workspace — use Open file to pick it".into())
     }
+}
+
+/// One path segment of a derived tree path: no separators, no dot-dots.
+/// Looser than `safe_name` on purpose — legacy project names carry spaces
+/// and dots — but nothing that can climb out of its parent.
+fn path_segment(s: &str) -> Result<String, String> {
+    let t = s.trim();
+    if t.is_empty() || t.len() > 64 || t == "." || t == ".." || t.contains(['/', '\\']) {
+        return Err("bad path segment".into());
+    }
+    Ok(t.to_string())
+}
+
+/// `worktrees/<project>/<lane>/<session-id>`, validated segment by segment.
+/// Session ids are UUIDs; anything else never names a worktree.
+fn worktree_path(project: &str, lane: &str, session_id: &str) -> Result<std::path::PathBuf, String> {
+    let lane = if lane.trim().is_empty() {
+        "default".to_string()
+    } else {
+        path_segment(lane)?
+    };
+    let sid = uuid::Uuid::parse_str(session_id.trim()).map_err(|_| "bad session id".to_string())?;
+    Ok(parzi_core::paths::worktrees_dir()
+        .map_err(|e| e.to_string())?
+        .join(path_segment(project)?)
+        .join(lane)
+        .join(sid.to_string()))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1707,8 +1778,9 @@ async fn list_project_docs(project: String, root: String) -> Result<Vec<DocEntry
     if root.is_empty() {
         return Ok(out);
     }
+    let root_path = confined_path(root)?;
     for (label, path) in
-        parzi_core::docs::scan_root(std::path::Path::new(root))
+        parzi_core::docs::scan_root(&root_path)
     {
         out.push(DocEntry {
             label,
@@ -1777,33 +1849,40 @@ async fn save_skill_commands(
     parzi_runtime::plugins::save_commands(name.trim(), &commands).map_err(|e| e.to_string())
 }
 
-/// Report-an-issue flow: open a URL in the system browser. Allowlisted to
-/// the project's own GitHub pages so this can never become an open redirect.
+/// Report-an-issue flow: open a URL in the system browser. The URL is
+/// parsed in core (exact host + path scope, no shell metachars) and opened
+/// with a single argv — never through a shell — so this can never become
+/// an open redirect or an injection.
 #[tauri::command]
 async fn open_external_url(url: String) -> Result<(), String> {
-    const ALLOW: &[&str] = &[
-        "https://github.com/lucas19919/Parzi/",
-        "https://github.com/parzi/parzi/",
-    ];
-    if url.len() > 8192
-        || url.chars().any(char::is_whitespace)
-        || !ALLOW.iter().any(|base| url.starts_with(base))
-    {
-        return Err("that link isn't allowed".into());
-    }
+    parzi_core::urls::check_external_url(&url)?;
+    open_url_native(&url)
+}
+
+/// User-confirmed browser open from a clicked markdown link. Shape-checked
+/// in core; the per-click confirmation happened in the UI before this call.
+#[tauri::command]
+async fn open_confirmed_url(url: String) -> Result<(), String> {
+    parzi_core::urls::check_open_url(&url)?;
+    open_url_native(&url)
+}
+
+fn open_url_native(url: &str) -> Result<(), String> {
+    // rundll32 with one argv: cmd.exe metacharacters (& | ^ %) in the URL
+    // are data, never syntax.
     #[cfg(target_os = "windows")]
-    let status = std::process::Command::new("cmd")
-        .args(["/C", "start", "", &url])
+    let status = std::process::Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", url])
         .status()
         .map_err(|e| e.to_string())?;
     #[cfg(target_os = "macos")]
     let status = std::process::Command::new("open")
-        .arg(&url)
+        .arg(url)
         .status()
         .map_err(|e| e.to_string())?;
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let status = std::process::Command::new("xdg-open")
-        .arg(&url)
+        .arg(url)
         .status()
         .map_err(|e| e.to_string())?;
     if status.success() {
@@ -1883,6 +1962,23 @@ fn init_log() {
 
 fn main() {
     init_log();
+    // A panic under windows_subsystem would otherwise vanish with the
+    // window: leave the message in today's log file, best effort.
+    std::panic::set_hook(Box::new(|info| {
+        let msg = format!("panic: {info}");
+        eprintln!("{msg}");
+        if let Ok(dir) = parzi_core::paths::parzi_dir().map(|d| d.join("logs")) {
+            let name = chrono::Local::now().format("parzi-%Y-%m-%d.log").to_string();
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join(name))
+            {
+                use std::io::Write as _;
+                let _ = writeln!(f, "{msg}");
+            }
+        }
+    }));
     // E9: Tauri's default runtime is one worker per hardware thread (16 here,
     // 27 threads in the process at idle). The host only moves IPC and I/O —
     // every CPU-bound step already runs under spawn_blocking — so three
@@ -1894,14 +1990,23 @@ fn main() {
         .build()
         .expect("tokio runtime");
     tauri::async_runtime::set(rt.handle().clone());
-    let (cfg, store) = boot().expect("parzi home");
+    let (cfg, store, recovered) = boot().expect("parzi home");
     let orch = Arc::new(Orchestrator::new(cfg, store));
     orch.recover().ok();
-    let pending: Arc<Mutex<HashMap<String, oneshot::Sender<Approval>>>> =
+    let pending: Arc<Mutex<HashMap<String, (String, oneshot::Sender<Approval>)>>> =
         Arc::new(Mutex::new(HashMap::new()));
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // One orchestrator per home: a second launch focuses the running
+        // window instead of recovering its runs and double-serving the queue.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .setup(move |app| {
             let o = orch.clone();
             app.manage(AppState {
@@ -1909,6 +2014,20 @@ fn main() {
                 pending,
                 app: app.handle().clone(),
             });
+            if let Some(note) = recovered {
+                // A recovered config deserves a face, not just a log line.
+                // Blocking call on a blocking thread: never on an async worker.
+                let h = app.handle().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+                    let _ = h
+                        .dialog()
+                        .message(note)
+                        .title("Parzi settings recovered")
+                        .buttons(MessageDialogButtons::Ok)
+                        .blocking_show();
+                });
+            }
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
                 dwm::round_window_corners(&w);
@@ -2017,6 +2136,7 @@ fn main() {
             install_skill_from_git,
             delete_skill,
             open_external_url,
+            open_confirmed_url,
             read_text_file,
             pick_text_file,
             write_text_file,

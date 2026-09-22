@@ -21,6 +21,7 @@ pub mod status;
 pub mod store;
 pub mod system;
 pub mod theme;
+pub mod urls;
 pub mod wallpaper;
 pub mod widgets;
 pub mod workspace;

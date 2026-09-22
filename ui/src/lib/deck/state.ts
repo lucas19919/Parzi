@@ -26,6 +26,7 @@ export type { TaskLive, TaskState } from "./derive";
  */
 export interface DeckApproval {
   key: string;
+  session: string;
   task: string;
   lane: string;
   name: string;

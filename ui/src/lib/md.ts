@@ -247,6 +247,13 @@ const MD_CACHE_MAX = 400;
 /** `cache` is false for the streaming tail: its source string changes on every
     flush, so caching it would evict every finished message within one answer
     (400 entries, ~270 flushes for a 4 000-token reply). */
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName === "A") {
+    node.setAttribute("target", "_blank");
+    node.setAttribute("rel", "noopener noreferrer");
+  }
+});
+
 export function renderMarkdown(src: string, cache = true): string {
   if (DEV) mdStats.renders++;
   if (cache) {

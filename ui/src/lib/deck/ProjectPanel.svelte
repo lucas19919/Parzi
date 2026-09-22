@@ -163,10 +163,12 @@
   }
 
   async function answerApproval(key: string, allow: boolean) {
-    const { [approvalTask(key)]: _gone, ...rest } = approvals;
+    const task = approvalTask(key);
+    const session = task ? approvals[task]?.session ?? "" : "";
+    const { [task]: _gone, ...rest } = approvals;
     approvals = rest;
     try {
-      await api.approveTool(key, allow);
+      await api.approveTool(key, session, allow);
     } catch (err) {
       dispatch("error", { text: String(err) });
     }
@@ -185,6 +187,7 @@
         ...approvals,
         [task]: {
           key: ev.key,
+          session: ev.session,
           task,
           lane: ev.call.lane,
           name: ev.call.name,

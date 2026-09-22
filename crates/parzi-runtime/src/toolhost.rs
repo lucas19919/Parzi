@@ -317,6 +317,7 @@ impl ToolHost {
             name: name.into(),
             args: args.clone(),
             lane: self.p.lane.clone(),
+            session: self.p.session_id.clone(),
         };
         // Single approval path: the Approver is the gate. The event is for
         // observers; a slow human really does block here.

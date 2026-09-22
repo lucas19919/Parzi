@@ -215,6 +215,7 @@ impl LeaseHub {
                 "critical": true,
             }),
             lane: current.holder.lane.clone(),
+            session: holder_run.clone().unwrap_or_else(|| run.to_string()),
         };
         // The card belongs where a person is watching the holder; fall back to
         // the asking run, so a transfer is never granted with nobody asked.

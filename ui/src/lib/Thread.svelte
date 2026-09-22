@@ -2,6 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
+  import { handleLinkClick } from "./links";
   import { renderMarkdown, splitSegments, LiveMarkdown } from "./md";
   import Widget from "./widgets/Widget.svelte";
   import Diagram from "./widgets/Diagram.svelte";
@@ -36,7 +37,11 @@
   /** Status track: live tool calls with backend humanized labels. */
   export let liveTools: LiveTool[] = [];
   export let streaming = false;
-  export let approval: { key: string; call: { id: string; name: string; args: unknown; lane: string } } | null = null;
+  export let approval: {
+    key: string;
+    session: string;
+    call: { id: string; name: string; args: unknown; lane: string; session: string };
+  } | null = null;
   /** Set when this thread is a subsession: title of the parent session. */
   export let parentTitle: string | null = null;
   /** Workspace root: resolves `[attached: …]` image markers to previews. */
@@ -49,6 +54,8 @@
     openSubsession: { id: string };
     /** Artifact card asked to be read in the right inspector deck. */
     openArtifact: { artifact: InspectorArtifact };
+    /** Approval answered: the parent drops the card for that session. */
+    voted: { key: string };
   }>();
 
   function toDeck(e: CustomEvent<{ artifact: InspectorArtifact }>) {
@@ -77,11 +84,16 @@
 
   async function vote(allow: boolean) {
     if (!approval) return;
-    await api.approveTool(approval.key, allow);
-    approval = null;
+    const { key, session } = approval;
+    try {
+      await api.approveTool(key, session, allow);
+    } finally {
+      dispatch("voted", { key });
+    }
   }
 
-  function onThreadClick(e: MouseEvent) {
+  async function onThreadClick(e: MouseEvent) {
+    if (await handleLinkClick(e)) return;
     const el = e.target as HTMLElement;
     const copyBtn = el.closest("[data-copy]") as HTMLElement | null;
     if (copyBtn) {

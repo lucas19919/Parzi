@@ -38,6 +38,8 @@ pub struct ToolCallInfo {
     pub name: String,
     pub args: serde_json::Value,
     pub lane: String,
+    /// Owning run: cards render on this session and votes bind to it.
+    pub session: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

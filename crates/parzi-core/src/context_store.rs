@@ -130,6 +130,7 @@ fn resolve_ref(home: &Path, workspace: &str, rel: &str) -> Option<PathBuf> {
 
 /// Live canonical docs pinned by reference. Missing or invalid targets are
 /// skipped, never fatal.
+#[must_use]
 pub fn list_refs(home: &Path, workspace: &str, slug: Option<&str>) -> Vec<ContextRef> {
     if workspace.trim().is_empty() {
         return Vec::new();
@@ -137,7 +138,7 @@ pub fn list_refs(home: &Path, workspace: &str, slug: Option<&str>) -> Vec<Contex
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut push_set = |dir: PathBuf| {
-        let m = read_manifest(&dir);
+        let (m, _) = read_manifest(&dir);
         for r in m.refs {
             if !seen.insert(r.path.clone()) {
                 continue;
@@ -171,6 +172,11 @@ pub fn list_refs(home: &Path, workspace: &str, slug: Option<&str>) -> Vec<Contex
     out
 }
 
+/// Pin a live reference to a canonical doc.
+///
+/// # Errors
+///
+/// Rejects blank workspaces, missing or unsafe targets, and duplicates.
 pub fn add_ref(
     home: &Path,
     workspace: &str,
@@ -190,25 +196,39 @@ pub fn add_ref(
         _ => ws_dir(home, workspace),
     };
     std::fs::create_dir_all(&dir)?;
-    let mut m = read_manifest(&dir);
+    let (mut m, loaded_ok) = read_manifest(&dir);
+    if !loaded_ok {
+        repair(&dir, &mut m);
+    }
     let rel = path.trim().replace('\\', "/");
     if m.refs.iter().any(|r| r.path == rel) {
         return Err(ParziError::Config("ref already pinned".into()));
     }
     m.refs.push(ManifestRef {
-        label: label.trim().chars().take(48).collect(),
+        label: sanitize_label(label, 48),
         path: rel,
-        kind: kind.trim().chars().take(16).collect(),
+        kind: sanitize_label(kind, 16),
     });
     write_manifest(&dir, &m)
 }
 
+/// Drop a pinned reference. The target file is untouched.
+///
+/// # Errors
+///
+/// Rejects blank workspaces and unknown refs.
 pub fn remove_ref(home: &Path, workspace: &str, slug: Option<&str>, path: &str) -> Result<()> {
+    if workspace.trim().is_empty() {
+        return Err(ParziError::Config("workspace is required".into()));
+    }
     let dir = match slug {
         Some(s) if !s.trim().is_empty() => proj_dir(home, workspace, s),
         _ => ws_dir(home, workspace),
     };
-    let mut m = read_manifest(&dir);
+    let (mut m, loaded_ok) = read_manifest(&dir);
+    if !loaded_ok {
+        repair(&dir, &mut m);
+    }
     let rel = path.trim().replace('\\', "/");
     let Some(pos) = m.refs.iter().position(|r| r.path == rel) else {
         return Err(ParziError::Config("unknown ref".into()));
@@ -264,19 +284,67 @@ fn sanitize_file(name: &str) -> Option<String> {
     Some(format!("{stem}.md"))
 }
 
-fn read_manifest(dir: &Path) -> Manifest {
+fn sanitize_label(s: &str, max: usize) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || "-_.,:;!?()[]'\" ".contains(*c))
+        .take(max)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+fn read_manifest(dir: &Path) -> (Manifest, bool) {
     let raw = std::fs::read_to_string(dir.join("manifest.toml")).unwrap_or_default();
     if raw.is_empty() {
-        return Manifest::default();
+        return (Manifest::default(), !dir.join("manifest.toml").exists());
     }
-    toml::from_str(&raw).unwrap_or_default()
+    match toml::from_str(&raw) {
+        Ok(m) => (m, true),
+        Err(_) => (Manifest::default(), false),
+    }
 }
+
+/// A corrupt or missing manifest must never orphan files: adopt any
+/// well-named `.md` on disk as curated so nothing silently disappears.
+fn repair(dir: &Path, m: &mut Manifest) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        let Some(clean) = sanitize_file(&name) else {
+            continue;
+        };
+        if clean != name || m.files.iter().any(|f| f.name == clean) {
+            continue;
+        }
+        let bytes = e.metadata().map_or(0, |x| x.len());
+        m.files.push(ManifestFile {
+            name: clean,
+            tier: Tier::Curated,
+            source: "recovered".into(),
+            bytes,
+            updated: now_unix(),
+        });
+    }
+}
+
+static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn write_manifest(dir: &Path, m: &Manifest) -> Result<()> {
     std::fs::create_dir_all(dir)?;
     let body = toml::to_string(m).map_err(ParziError::TomlSer)?;
-    let tmp = dir.join(format!("manifest.{}.tmp", std::process::id()));
-    std::fs::write(&tmp, body)?;
+    let unique = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = dir.join(format!(
+        "manifest.{}.{}.{}.tmp",
+        std::process::id(),
+        now_unix(),
+        unique
+    ));
+    std::fs::write(&tmp, &body)?;
+    let f = std::fs::File::open(&tmp)?;
+    let _ = f.sync_all();
+    drop(f);
     std::fs::rename(&tmp, dir.join("manifest.toml"))?;
     Ok(())
 }
@@ -302,18 +370,14 @@ fn prune_expired(dir: &Path, m: &mut Manifest, now: i64) {
 }
 
 fn enforce_caps(dir: &Path, m: &mut Manifest, max_files: usize, max_bytes: u64) {
+    // Oldest, least-pinned first. Pinned entries never drop: if only pinned
+    // entries remain and the set is still over budget, the set stays over
+    // and the next add fails loudly instead of eating pinned memory.
     m.files.sort_by_key(|f| (f.tier.rank(), f.updated));
     while m.files.len() > max_files || total_bytes(m) > max_bytes {
-        let pos =
-            m.files
-                .iter()
-                .rposition(|f| f.tier != Tier::Pinned)
-                .or(if m.files.len() > max_files {
-                    Some(0)
-                } else {
-                    None
-                });
-        let Some(i) = pos else { break };
+        let Some(i) = m.files.iter().position(|f| f.tier != Tier::Pinned) else {
+            break;
+        };
         let gone = m.files.remove(i);
         let _ = std::fs::remove_file(dir.join(&gone.name));
     }
@@ -341,7 +405,10 @@ fn read_set(dir: &Path, scope: Scope, max_files: usize, max_bytes: u64, out: &mu
     if !dir.is_dir() {
         return;
     }
-    let mut m = read_manifest(dir);
+    let (mut m, loaded_ok) = read_manifest(dir);
+    if !loaded_ok {
+        repair(dir, &mut m);
+    }
     prune_expired(dir, &mut m, now_unix());
     enforce_caps(dir, &mut m, max_files, max_bytes);
     let mut files = m.files.clone();
@@ -361,7 +428,9 @@ fn read_set(dir: &Path, scope: Scope, max_files: usize, max_bytes: u64, out: &mu
             content,
         });
     }
-    let _ = write_manifest(dir, &m);
+    if loaded_ok {
+        let _ = write_manifest(dir, &m);
+    }
 }
 
 fn seed_workspace(home: &Path, workspace: &str) {
@@ -457,9 +526,10 @@ fn duplicate_of(dir: &Path, m: &Manifest, clean: &str, digest: u64) -> bool {
 }
 
 fn upsert_entry(m: &mut Manifest, clean: &str, tier: Tier, source: &str, bytes: u64, now: i64) {
+    // Re-adding keeps the existing tier: tiers move only through set_pinned,
+    // so `auto` cannot be promoted (or `pinned` demoted) by a rewrite.
     match m.files.iter_mut().find(|f| f.name == clean) {
         Some(f) => {
-            f.tier = tier;
             f.source = source.to_string();
             f.bytes = bytes;
             f.updated = now;
@@ -499,7 +569,10 @@ fn write_one(home: &Path, op: &NewFile) -> Result<ContextDoc> {
     }
     let (dir, scope, max_files, max_bytes) = target_set(home, op.workspace, op.slug);
     std::fs::create_dir_all(&dir)?;
-    let mut m = read_manifest(&dir);
+    let (mut m, loaded_ok) = read_manifest(&dir);
+    if !loaded_ok {
+        repair(&dir, &mut m);
+    }
     if duplicate_of(&dir, &m, &clean, hash_bytes(bytes)) {
         return Err(ParziError::Config("identical context file exists".into()));
     }
@@ -549,10 +622,7 @@ pub fn add(
     // is rejected — reference the plan instead of copying it.
     let digest = hash_bytes(content.as_bytes());
     for r in list_refs(home, workspace, slug) {
-        if std::fs::read(&r.path)
-            .map(|b| hash_bytes(&b) == digest)
-            .unwrap_or(false)
-        {
+        if std::fs::read(&r.path).is_ok_and(|b| hash_bytes(&b) == digest) {
             return Err(ParziError::Config(
                 "duplicates a pinned plan — reference it instead".into(),
             ));
@@ -582,13 +652,19 @@ pub fn set_pinned(
     name: &str,
     pinned: bool,
 ) -> Result<()> {
+    if workspace.trim().is_empty() {
+        return Err(ParziError::Config("workspace is required".into()));
+    }
     let clean =
         sanitize_file(name).ok_or_else(|| ParziError::Config("unknown context file".into()))?;
     let dir = match slug {
         Some(s) if !s.trim().is_empty() => proj_dir(home, workspace, s),
         _ => ws_dir(home, workspace),
     };
-    let mut m = read_manifest(&dir);
+    let (mut m, loaded_ok) = read_manifest(&dir);
+    if !loaded_ok {
+        repair(&dir, &mut m);
+    }
     let Some(f) = m.files.iter_mut().find(|f| f.name == clean) else {
         return Err(ParziError::Config("unknown context file".into()));
     };
@@ -604,13 +680,19 @@ pub fn set_pinned(
 ///
 /// Rejects unknown files.
 pub fn remove(home: &Path, workspace: &str, slug: Option<&str>, name: &str) -> Result<()> {
+    if workspace.trim().is_empty() {
+        return Err(ParziError::Config("workspace is required".into()));
+    }
     let clean =
         sanitize_file(name).ok_or_else(|| ParziError::Config("unknown context file".into()))?;
     let dir = match slug {
         Some(s) if !s.trim().is_empty() => proj_dir(home, workspace, s),
         _ => ws_dir(home, workspace),
     };
-    let mut m = read_manifest(&dir);
+    let (mut m, loaded_ok) = read_manifest(&dir);
+    if !loaded_ok {
+        repair(&dir, &mut m);
+    }
     let Some(pos) = m.files.iter().position(|f| f.name == clean) else {
         return Err(ParziError::Config("unknown context file".into()));
     };
@@ -620,6 +702,8 @@ pub fn remove(home: &Path, workspace: &str, slug: Option<&str>, name: &str) -> R
 }
 
 #[must_use]
+/// Compose the injectable text: pinned plans first, then pinned files,
+/// then curated. `budget` counts characters.
 pub fn injection_text(home: &Path, workspace: &str, slug: Option<&str>, budget: usize) -> String {
     let mut out = String::new();
     let mut used = 0usize;
@@ -635,7 +719,7 @@ pub fn injection_text(home: &Path, workspace: &str, slug: Option<&str>, budget: 
         let room = budget.saturating_sub(used);
         let take = content
             .chars()
-            .take(room.saturating_sub(head.len()))
+            .take(room.saturating_sub(head.chars().count()))
             .collect::<String>();
         if take.trim().is_empty() {
             continue;
@@ -643,7 +727,7 @@ pub fn injection_text(home: &Path, workspace: &str, slug: Option<&str>, budget: 
         out.push_str(&head);
         out.push_str(&take);
         out.push_str("\n\n");
-        used += head.len() + take.len();
+        used += head.chars().count() + take.chars().count();
         if used >= budget {
             return out;
         }
@@ -661,7 +745,7 @@ pub fn injection_text(home: &Path, workspace: &str, slug: Option<&str>, budget: 
         let take = d
             .content
             .chars()
-            .take(room.saturating_sub(head.len()))
+            .take(room.saturating_sub(head.chars().count()))
             .collect::<String>();
         if take.trim().is_empty() {
             continue;
@@ -669,7 +753,7 @@ pub fn injection_text(home: &Path, workspace: &str, slug: Option<&str>, budget: 
         out.push_str(&head);
         out.push_str(&take);
         out.push_str("\n\n");
-        used += head.len() + take.len();
+        used += head.chars().count() + take.chars().count();
         if used >= budget {
             break;
         }

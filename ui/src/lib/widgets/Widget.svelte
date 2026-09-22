@@ -1,5 +1,6 @@
 <script lang="ts">
   import { renderMarkdown } from "../md";
+  import { handleLinkClick } from "../links";
   import Zoomable from "./Zoomable.svelte";
   import EChart from "./EChart.svelte";
 
@@ -299,7 +300,8 @@
     <div class="progress-track"><div class="progress-fill" style="width:{Math.min(100, Math.max(0, Math.round(value * 100)))}%" /></div>
     <div class="w-sub">{Math.min(100, Math.max(0, Math.round(value * 100)))}%</div>
   {:else if type === "markdown"}
-    <div class="w-md">{@html renderMarkdown(text)}</div>
+    <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
+    <div class="w-md" on:click={(e) => void handleLinkClick(e)}>{@html renderMarkdown(text)}</div>
   {:else if type === "list"}
     {#if !items.length}
       <div class="w-empty">empty list</div>

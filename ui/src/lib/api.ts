@@ -89,7 +89,7 @@ export type UiEvent =
   | { kind: "notice"; session: string; text: string }
   | { kind: "usage"; session: string; tokens_in: number; tokens_out: number; cost_usd: number }
   | { kind: "context"; session: string; used: number; limit: number }
-  | { kind: "approval"; key: string; call: { id: string; name: string; args: unknown; lane: string } }
+  | { kind: "approval"; key: string; session: string; call: { id: string; name: string; args: unknown; lane: string; session: string } }
   | { kind: "subsession_created"; parent_id: string; subsession: SessionMeta }
   | { kind: "done"; session: string; turns: number }
   | { kind: "error"; session: string; error: string };
@@ -284,6 +284,7 @@ export interface ContextItem {
 export const api = {
   appVersion: () => invoke<string>("app_version"),
   windowStartDragging: () => invoke<void>("window_start_dragging"),
+  openConfirmedUrl: (url: string) => invoke<void>("open_confirmed_url", { url }),
   listThreads: () => invoke<SessionMeta[]>("list_threads"),
   getThread: (id: string) =>
     invoke<[SessionMeta, ChatEvent[], string]>("get_thread", { id }),
@@ -366,8 +367,8 @@ export const api = {
     invoke<string>("compact_thread", { id, focus: focus ?? null }),
   forkThread: (id: string, at?: number) =>
     invoke<SessionMeta>("fork_thread", { id, at: at ?? null }),
-  approveTool: (key: string, allow: boolean) =>
-    invoke<void>("approve_tool", { key, allow }),
+  approveTool: (key: string, session: string, allow: boolean) =>
+    invoke<void>("approve_tool", { key, session, allow }),
   /** Where each agent stood when last asked. Instant. */
   providerStatuses: () => invoke<ProviderStatus[]>("provider_statuses"),
   /** Ask the agents' own programs again (none named = all). Slow: the

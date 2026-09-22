@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { renderMarkdown } from "../md";
+  import { handleLinkClick } from "../links";
   import type { InspectorArtifact } from "../api";
 
   const dispatch = createEventDispatcher<{ openInDeck: { artifact: InspectorArtifact } }>();
@@ -93,7 +94,8 @@
     <div class="art-error">Couldn't render artifact — showing source.</div>
     <pre class="art-source">{JSON.stringify(d, null, 2)?.slice(0, 4000)}</pre>
   {:else if kind === "markdown"}
-    <div class="art-md">{@html renderMarkdown(content)}</div>
+    <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
+    <div class="art-md" on:click={(e) => void handleLinkClick(e)}>{@html renderMarkdown(content)}</div>
   {:else if canRender && !showCode}
     <iframe class="art-render" {title} sandbox="allow-scripts" srcdoc={content}></iframe>
     <div class="art-foot">

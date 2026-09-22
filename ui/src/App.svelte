@@ -98,17 +98,20 @@
   let wsProjects: Project[] = [];
 
   async function loadWorkspaces() {
+    const my = ++dataSeq;
     try {
       wsNames = await hub.workspaces();
     } catch {
       wsNames = [];
     }
+    if (my !== dataSeq) return;
     const pairs = await Promise.all(
       wsNames.map(async (n) => {
         const w = await hub.workspace(n).catch(() => null);
         return [n, w?.repos.find((r) => r.local_path)?.local_path ?? ""] as const;
       }),
     );
+    if (my !== dataSeq) return;
     wsRoots = Object.fromEntries(pairs);
   }
   $: if (hubTick >= 0) void loadWorkspaces();
@@ -122,7 +125,9 @@
     : curWorkspace;
   $: if (hubTick >= 0) void loadWsProjects(panelWs);
   async function loadWsProjects(name: string) {
-    wsProjects = name ? await deck.list(name).catch(() => []) : [];
+    const projs = name ? await deck.list(name).catch(() => []) : [];
+    if (panelWs !== name) return;
+    wsProjects = projs;
   }
 
   let dockProject: { workspace: string; slug: string } | null = null;
@@ -336,7 +341,15 @@
   let isBlurredStage = false;
   $: inThread = !!activeThreadId || sending || events.length > 0;
   $: isBlurredStage = inThread || showSettings || !!hubView;
-  let approval: { key: string; call: { id: string; name: string; args: unknown; lane: string } } | null = null;
+  interface ApprovalCard {
+    key: string;
+    session: string;
+    call: { id: string; name: string; args: unknown; lane: string; session: string };
+  }
+  /** One card per session: concurrent runs never overwrite each other, and
+      switching threads shows the right card. */
+  let approvals: ApprovalCard[] = [];
+  $: activeApproval = approvals.find((a) => a.session === activeThreadId) ?? null;
   let toasts: { id: number; text: string; err: boolean }[] = [];
   let toastSeq = 0;
   let scrollEl: HTMLElement | null = null;
@@ -414,15 +427,22 @@
     }
   }
 
+  /** Generation counters: navigation bumps navSeq, background loaders bump
+      dataSeq, so a slow fetch that resolves after the user moved on is
+      dropped instead of painting the wrong thread, doc, or workspace. */
+  let navSeq = 0;
+  let dataSeq = 0;
+
   async function openThread(id: string, keepLive = false) {
+    const my = ++navSeq;
     hubView = null;
     activeThreadId = id;
     if (!keepLive) clearLive();
     liveTokens = 0;
     liveCost = 0;
-    approval = null;
     try {
       const [meta, ev] = await api.getThread(id);
+      if (my !== navSeq || activeThreadId !== id) return;
       activeMeta = meta;
       events = ev;
       curProject = meta.project || "default";
@@ -431,6 +451,7 @@
         model = meta.model;
       }
     } catch (e) {
+      if (my !== navSeq || activeThreadId !== id) return;
       toast(String(e), true);
     }
     if (keepLive) clearLive();
@@ -452,7 +473,6 @@
     liveTokens = 0;
     liveCost = 0;
     liveTools = [];
-    approval = null;
     input = "";
     attachments = [];
   }
@@ -491,6 +511,7 @@
       return;
     }
     if (!rawPrompt || sending || liveRun || !model) return;
+    const my = navSeq;
     sending = true;
     input = "";
     const files = [...attachments];
@@ -513,6 +534,10 @@
         attachments: files,
         mode: pillMode(),
       });
+      if (my !== navSeq) {
+        await loadThreads();
+        return;
+      }
       activeThreadId = sid;
       liveRun = sid;
       live = "";
@@ -521,6 +546,7 @@
       await loadThreads();
       try {
         const [meta, ev] = await api.getThread(sid);
+        if (my !== navSeq) return;
         activeMeta = meta;
         events = ev;
         curProject = meta.project || curProject;
@@ -842,11 +868,15 @@
       contextRefs = [];
       return;
     }
+    const my = ++dataSeq;
+    const ws = panelWs;
+    const slug = dockProject?.slug ?? null;
     try {
       const [items, refs] = await Promise.all([
-        api.listContext(panelWs, dockProject?.slug ?? null),
-        api.listContextRefs(panelWs, dockProject?.slug ?? null),
+        api.listContext(ws, slug),
+        api.listContextRefs(ws, slug),
       ]);
+      if (my !== dataSeq || panelWs !== ws || (dockProject?.slug ?? null) !== slug) return;
       contextItems = items;
       contextRefs = refs;
     } catch {
@@ -858,12 +888,16 @@
 
   async function openContextDoc(item: ContextItem) {
     if (!panelWs) return;
+    const my = ++dataSeq;
+    const ws = panelWs;
+    const slug = dockProject?.slug ?? null;
     docLoading = true;
     try {
-      const content = await api.readContextFile(panelWs, dockProject?.slug ?? null, item.name);
+      const content = await api.readContextFile(ws, slug, item.name);
+      if (my !== dataSeq) return;
       selectedDoc = { title: item.name, content };
       selectedArtifact = null;
-      contextDoc = { workspace: panelWs, slug: dockProject?.slug ?? null, name: item.name, tier: item.tier };
+      contextDoc = { workspace: ws, slug, name: item.name, tier: item.tier };
       openRightBar("docs");
     } catch (e) {
       toast(String(e), true);
@@ -910,33 +944,40 @@
   }
 
   async function openProjectDoc(entry: DocEntry) {
+    const my = ++dataSeq;
     docLoading = true;
     try {
       const content = await api.readTextFile(entry.path);
+      if (my !== dataSeq) return;
       selectedDoc = { title: entry.label, content, path: entry.path };
       selectedArtifact = null;
       contextDoc = null;
       openRightBar("docs");
     } catch (e) {
+      if (my !== dataSeq) return;
       toast(String(e), true);
     } finally {
-      docLoading = false;
+      if (my === dataSeq) docLoading = false;
     }
   }
 
   async function openTranscript() {
     if (!activeThreadId) return;
+    const my = ++dataSeq;
+    const id = activeThreadId;
     docLoading = true;
     try {
-      const [, , md] = await api.getThread(activeThreadId);
+      const [, , md] = await api.getThread(id);
+      if (my !== dataSeq) return;
       selectedDoc = { title: "session.md", content: md || "_Transcript is empty._" };
       selectedArtifact = null;
       contextDoc = null;
       openRightBar("docs");
     } catch (e) {
+      if (my !== dataSeq) return;
       toast(String(e), true);
     } finally {
-      docLoading = false;
+      if (my === dataSeq) docLoading = false;
     }
   }
 
@@ -962,8 +1003,11 @@
 
   async function refreshEvents() {
     if (!activeThreadId) return;
+    const my = ++dataSeq;
+    const id = activeThreadId;
     try {
-      const [meta, ev] = await api.getThread(activeThreadId);
+      const [meta, ev] = await api.getThread(id);
+      if (my !== dataSeq || activeThreadId !== id) return;
       activeMeta = meta;
       events = ev;
     } catch {}
@@ -1012,7 +1056,10 @@
 
   function onEvent(e: UiEvent) {
     if (e.kind === "approval") {
-      approval = { key: e.key, call: e.call };
+      approvals = [
+        ...approvals.filter((a) => a.key !== e.key),
+        { key: e.key, session: e.session, call: e.call },
+      ];
       return;
     }
     if (e.kind === "subsession_created") {
@@ -1049,6 +1096,7 @@
       if (liveRun === e.session) {
         liveRun = null;
       }
+      approvals = approvals.filter((a) => a.session !== e.session);
     }
     if (e.session !== activeThreadId) {
       const first = !listedRuns.has(e.session);
@@ -1249,6 +1297,10 @@
     document.addEventListener("parzi:bg", (e) => {
       bg = (e as CustomEvent<string>).detail;
     });
+    document.addEventListener("parzi:toast", (e) => {
+      const d = (e as CustomEvent<{ text: string; err?: boolean }>).detail;
+      if (d?.text) toast(d.text, !!d.err);
+    });
 
     // Transparent frameless window: keep the 10px corner radius only while
     // floating — a maximized window must go square to meet the screen edges.
@@ -1366,12 +1418,13 @@
       {:else}
         {#if activeThreadId}
           <div class="stage-scroll" bind:this={scrollEl} in:fade={{ duration: 220, delay: 100 }} out:fade={{ duration: 140 }}>
-            <Thread {events} liveText={live} liveReasoning={liveReasoning} {liveTools} {approval} streaming={!!liveRun}
+            <Thread {events} liveText={live} liveReasoning={liveReasoning} {liveTools} approval={activeApproval} streaming={!!liveRun}
               {parentTitle} subsessions={childSubs} projectRoot={currentRoot}
               on:goParent={() => { if (activeMeta?.parent_id) openThread(activeMeta.parent_id); }}
               on:openSubsession={(e) => openThread(e.detail.id)}
               on:openArtifact={(e) => showArtifact(e.detail.artifact)}
- />
+              on:voted={(e) => { approvals = approvals.filter((a) => a.key !== e.detail.key); }}
+  />
           </div>
         {:else}
           <div class="home-hero-stage"></div>

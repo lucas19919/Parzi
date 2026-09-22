@@ -188,6 +188,16 @@ fn diagram_advanced_shapes_validate() {
         "groups": [{"id": "g", "nodes": ["ghost"]}],
     });
     assert!(v(&bad_group).is_err());
+    let filled = serde_json::json!({
+        "diagram": 1, "nodes": [{"id": "a", "fill": "info"}],
+        "edges": [],
+    });
+    assert!(v(&filled).is_ok());
+    let bad_fill = serde_json::json!({
+        "diagram": 1, "nodes": [{"id": "a", "fill": "mauve"}],
+        "edges": [],
+    });
+    assert!(v(&bad_fill).is_err());
 }
 
 #[test]
@@ -360,4 +370,23 @@ fn widget_histogram_and_scatter_validate() {
     assert!(v(&flat).is_err());
     let nan = serde_json::json!({"widget": 1, "type": "scatter", "points": [[1, 2], [3]]});
     assert!(v(&nan).is_err());
+}
+
+#[test]
+fn external_url_gate() {
+    use parzi_core::urls::check_external_url as check;
+    assert!(check("https://github.com/lucas19919/Parzi/issues").is_ok());
+    assert!(check("https://github.com/parzi/parzi/releases").is_ok());
+    assert!(check("https://github.com/lucas19919/Parzi/issues/new?title=x&body=y").is_ok());
+    assert!(check("https://GITHUB.COM/lucas19919/Parzi/").is_ok());
+    assert!(check("https://github.com/lucas19919/Parzi/x|calc").is_err());
+    assert!(check("https://github.com/lucas19919/Parzi/x;calc").is_err());
+    assert!(check("https://github.com@evil.example/lucas19919/Parzi/").is_err());
+    assert!(check("https://github.com:443/lucas19919/Parzi/").is_err());
+    assert!(check("https://github.com/lucas19919/Parzi.evil/").is_err());
+    assert!(check("https://evil.example/lucas19919/Parzi/").is_err());
+    assert!(check("http://github.com/lucas19919/Parzi/").is_err());
+    assert!(check("https://github.com/lucas19919/Parzi/a b").is_err());
+    assert!(check("https://github.com/other/repo").is_err());
+    assert!(check("").is_err());
 }

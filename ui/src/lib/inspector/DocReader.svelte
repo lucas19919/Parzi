@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
   import { renderMarkdown, splitSegments } from "../md";
+  import { handleLinkClick } from "../links";
   import Widget from "../widgets/Widget.svelte";
   import Diagram from "../widgets/Diagram.svelte";
   import ArtifactCard from "../widgets/ArtifactCard.svelte";
@@ -125,7 +126,8 @@
   }
 
   /** Fenced-block chrome (copy / expand) rendered by md.ts is inert HTML; wire it here. */
-  function onBodyClick(e: MouseEvent) {
+  async function onBodyClick(e: MouseEvent) {
+    if (await handleLinkClick(e)) return;
     const el = e.target as HTMLElement;
     const copyBtn = el.closest("[data-copy]") as HTMLElement | null;
     if (copyBtn) {

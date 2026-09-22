@@ -46,6 +46,117 @@ fn valid_numbers(arr: &[serde_json::Value]) -> bool {
     })
 }
 
+fn check_number_list(arr: &[serde_json::Value], what: &str, max: usize) -> Result<()> {
+    if arr.len() > max {
+        return Err(ParziError::Validation(format!(
+            "{what} {n} exceed max {max}",
+            n = arr.len()
+        )));
+    }
+    if !valid_numbers(arr) {
+        return Err(ParziError::Validation(format!("{what} must be numbers")));
+    }
+    Ok(())
+}
+
+fn check_cartesian(w: &WidgetV1) -> Result<()> {
+    if let Some(series) = shape(w, "series") {
+        let arr = series
+            .as_array()
+            .ok_or_else(|| ParziError::Validation("chart series must be an array".into()))?;
+        if arr.len() > MAX_SERIES {
+            return Err(ParziError::Validation(format!(
+                "chart series {} exceed max {MAX_SERIES}",
+                arr.len()
+            )));
+        }
+        for s in arr {
+            let pts = s
+                .get("points")
+                .and_then(|p| p.as_array())
+                .ok_or_else(|| ParziError::Validation("chart series need a points array".into()))?;
+            check_number_list(pts, "chart points", MAX_POINTS)?;
+        }
+    } else if let Some(points) = shape(w, "points") {
+        let arr = points
+            .as_array()
+            .ok_or_else(|| ParziError::Validation("chart points must be an array".into()))?;
+        check_number_list(arr, "chart points", MAX_POINTS)?;
+    }
+    Ok(())
+}
+
+fn check_histogram(w: &WidgetV1) -> Result<()> {
+    if let Some(values) = shape(w, "values") {
+        let arr = values
+            .as_array()
+            .ok_or_else(|| ParziError::Validation("histogram values must be an array".into()))?;
+        check_number_list(arr, "histogram values", MAX_POINTS * 10)?;
+    }
+    if let Some(bins) = shape(w, "bins") {
+        let n = bins
+            .as_u64()
+            .ok_or_else(|| ParziError::Validation("histogram bins must be an integer".into()))?;
+        if !(2..=50).contains(&n) {
+            return Err(ParziError::Validation(
+                "histogram bins out of range 2..=50".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn check_pair_list(arr: &[serde_json::Value]) -> Result<()> {
+    if arr.len() > MAX_POINTS {
+        return Err(ParziError::Validation(format!(
+            "scatter points {} exceed max {MAX_POINTS}",
+            arr.len()
+        )));
+    }
+    for p in arr {
+        let pair = p
+            .as_array()
+            .ok_or_else(|| ParziError::Validation("scatter points must be [x, y] pairs".into()))?;
+        if pair.len() != 2
+            || !pair
+                .iter()
+                .all(|v| v.is_number() && v.as_f64().is_some_and(f64::is_finite))
+        {
+            return Err(ParziError::Validation(
+                "scatter points must be finite [x, y] numbers".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn check_scatter(w: &WidgetV1) -> Result<()> {
+    if let Some(points) = shape(w, "points") {
+        let arr = points
+            .as_array()
+            .ok_or_else(|| ParziError::Validation("scatter points must be [x, y] pairs".into()))?;
+        check_pair_list(arr)?;
+    }
+    if let Some(series) = shape(w, "series") {
+        let arr = series
+            .as_array()
+            .ok_or_else(|| ParziError::Validation("scatter series must be an array".into()))?;
+        if arr.len() > MAX_SERIES {
+            return Err(ParziError::Validation(format!(
+                "scatter series {} exceed max {MAX_SERIES}",
+                arr.len()
+            )));
+        }
+        for s in arr {
+            let pts = s.get("points").and_then(|p| p.as_array()).ok_or_else(|| {
+                ParziError::Validation("scatter series need a points array".into())
+            })?;
+            check_pair_list(pts)?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WidgetV1 {
     pub widget: u64,
@@ -72,6 +183,8 @@ pub struct DiagramNode {
     pub color: String,
     #[serde(default)]
     pub shape: String,
+    #[serde(default)]
+    pub fill: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,12 +225,13 @@ pub struct DiagramV1 {
 
 /// Schema-checked in core so CLI + GUI + other harnesses agree.
 /// Invalid payloads fail safe: callers render a plain code block instead.
+///
+/// # Errors
+///
+/// Rejects wrong versions, unknown types, oversized payloads and malformed
+/// per-type shapes.
 pub fn validate_widget(v: &serde_json::Value) -> Result<WidgetV1> {
-    if serde_json::to_string(v)
-        .map(|s| s.len())
-        .unwrap_or(usize::MAX)
-        > MAX_TOTAL_BYTES
-    {
+    if serde_json::to_string(v).map_or(usize::MAX, |s| s.len()) > MAX_TOTAL_BYTES {
         return Err(ParziError::Validation(format!(
             "widget exceeds {MAX_TOTAL_BYTES} bytes"
         )));
@@ -136,9 +250,14 @@ pub fn validate_widget(v: &serde_json::Value) -> Result<WidgetV1> {
             w.kind
         )));
     }
+    check_kind(&w)?;
+    Ok(w)
+}
+
+fn check_kind(w: &WidgetV1) -> Result<()> {
     match w.kind.as_str() {
         "progress" => {
-            if let Some(val) = shape(&w, "value") {
+            if let Some(val) = shape(w, "value") {
                 if !val.is_number() || !val.as_f64().is_some_and(f64::is_finite) {
                     return Err(ParziError::Validation(
                         "progress value must be a finite number".into(),
@@ -147,14 +266,14 @@ pub fn validate_widget(v: &serde_json::Value) -> Result<WidgetV1> {
             }
         }
         "list" => {
-            if let Some(items) = shape(&w, "items").or_else(|| shape(&w, "list")) {
+            if let Some(items) = shape(w, "items").or_else(|| shape(w, "list")) {
                 if !items.is_array() {
                     return Err(ParziError::Validation("list items must be an array".into()));
                 }
             }
         }
         "table" => {
-            if let Some(rows) = shape(&w, "rows") {
+            if let Some(rows) = shape(w, "rows") {
                 if !rows.is_array() {
                     return Err(ParziError::Validation("table rows must be an array".into()));
                 }
@@ -164,7 +283,7 @@ pub fn validate_widget(v: &serde_json::Value) -> Result<WidgetV1> {
                     )));
                 }
             }
-            if let Some(cols) = shape(&w, "columns") {
+            if let Some(cols) = shape(w, "columns") {
                 if !cols.is_array() {
                     return Err(ParziError::Validation(
                         "table columns must be an array".into(),
@@ -173,7 +292,7 @@ pub fn validate_widget(v: &serde_json::Value) -> Result<WidgetV1> {
             }
         }
         "markdown" => {
-            let text = shape(&w, "text").and_then(|t| t.as_str()).unwrap_or("");
+            let text = shape(w, "text").and_then(|t| t.as_str()).unwrap_or("");
             if text.trim().is_empty() {
                 return Err(ParziError::Validation("markdown widget is empty".into()));
             }
@@ -183,147 +302,11 @@ pub fn validate_widget(v: &serde_json::Value) -> Result<WidgetV1> {
                 ));
             }
         }
-        "chart-line" | "chart-bar" => {
-            if let Some(series) = shape(&w, "series") {
-                let arr = series.as_array().ok_or_else(|| {
-                    ParziError::Validation("chart series must be an array".into())
-                })?;
-                if arr.len() > MAX_SERIES {
-                    return Err(ParziError::Validation(format!(
-                        "chart series {} exceed max {MAX_SERIES}",
-                        arr.len()
-                    )));
-                }
-                for s in arr {
-                    let pts = s.get("points").and_then(|p| p.as_array()).ok_or_else(|| {
-                        ParziError::Validation("chart series need a points array".into())
-                    })?;
-                    if pts.len() > MAX_POINTS {
-                        return Err(ParziError::Validation(format!(
-                            "chart points {} exceed max {MAX_POINTS}",
-                            pts.len()
-                        )));
-                    }
-                    if !valid_numbers(pts) {
-                        return Err(ParziError::Validation(
-                            "chart points must be numbers".into(),
-                        ));
-                    }
-                }
-            } else if let Some(points) = shape(&w, "points") {
-                let arr = points.as_array().ok_or_else(|| {
-                    ParziError::Validation("chart points must be an array".into())
-                })?;
-                if arr.len() > MAX_POINTS {
-                    return Err(ParziError::Validation(format!(
-                        "chart points {} exceed max {MAX_POINTS}",
-                        arr.len()
-                    )));
-                }
-                if !valid_numbers(arr) {
-                    return Err(ParziError::Validation(
-                        "chart points must be numbers".into(),
-                    ));
-                }
-            }
-        }
-        "histogram" => {
-            if let Some(values) = shape(&w, "values") {
-                let arr = values.as_array().ok_or_else(|| {
-                    ParziError::Validation("histogram values must be an array".into())
-                })?;
-                if arr.len() > MAX_POINTS * 10 {
-                    return Err(ParziError::Validation(format!(
-                        "histogram values exceed max {}",
-                        MAX_POINTS * 10
-                    )));
-                }
-                if !valid_numbers(arr) {
-                    return Err(ParziError::Validation(
-                        "histogram values must be numbers".into(),
-                    ));
-                }
-            }
-            if let Some(bins) = shape(&w, "bins") {
-                let n = bins.as_u64().ok_or_else(|| {
-                    ParziError::Validation("histogram bins must be an integer".into())
-                })?;
-                if !(2..=50).contains(&n) {
-                    return Err(ParziError::Validation(
-                        "histogram bins out of range 2..=50".into(),
-                    ));
-                }
-            }
-        }
-        "scatter" => {
-            let check_pairs = |key: &str| -> Result<()> {
-                if let Some(points) = shape(&w, key) {
-                    let arr = points.as_array().ok_or_else(|| {
-                        ParziError::Validation("scatter points must be [x, y] pairs".into())
-                    })?;
-                    if arr.len() > MAX_POINTS {
-                        return Err(ParziError::Validation(format!(
-                            "scatter points {} exceed max {MAX_POINTS}",
-                            arr.len()
-                        )));
-                    }
-                    for p in arr {
-                        let pair = p.as_array().ok_or_else(|| {
-                            ParziError::Validation("scatter points must be [x, y] pairs".into())
-                        })?;
-                        if pair.len() != 2
-                            || !pair
-                                .iter()
-                                .all(|v| v.is_number() && v.as_f64().is_some_and(f64::is_finite))
-                        {
-                            return Err(ParziError::Validation(
-                                "scatter points must be finite [x, y] numbers".into(),
-                            ));
-                        }
-                    }
-                }
-                Ok(())
-            };
-            check_pairs("points")?;
-            if let Some(series) = shape(&w, "series") {
-                let arr = series.as_array().ok_or_else(|| {
-                    ParziError::Validation("scatter series must be an array".into())
-                })?;
-                if arr.len() > MAX_SERIES {
-                    return Err(ParziError::Validation(format!(
-                        "scatter series {} exceed max {MAX_SERIES}",
-                        arr.len()
-                    )));
-                }
-                for s in arr {
-                    let pts = s.get("points").and_then(|p| p.as_array()).ok_or_else(|| {
-                        ParziError::Validation("scatter series need a points array".into())
-                    })?;
-                    if pts.len() > MAX_POINTS {
-                        return Err(ParziError::Validation(format!(
-                            "scatter points {} exceed max {MAX_POINTS}",
-                            pts.len()
-                        )));
-                    }
-                    for p in pts {
-                        let pair = p.as_array().ok_or_else(|| {
-                            ParziError::Validation("scatter points must be [x, y] pairs".into())
-                        })?;
-                        if pair.len() != 2
-                            || !pair
-                                .iter()
-                                .all(|v| v.is_number() && v.as_f64().is_some_and(f64::is_finite))
-                        {
-                            return Err(ParziError::Validation(
-                                "scatter points must be finite [x, y] numbers".into(),
-                            ));
-                        }
-                    }
-                }
-            }
-        }
+        "chart-line" | "chart-bar" => check_cartesian(w)?,
+        "histogram" => check_histogram(w)?,
+        "scatter" => check_scatter(w)?,
         "kanban" => {
-            if let Some(cols) = shape(&w, "columns") {
+            if let Some(cols) = shape(w, "columns") {
                 let cols = cols.as_array().ok_or_else(|| {
                     ParziError::Validation("kanban columns must be an array".into())
                 })?;
@@ -340,15 +323,18 @@ pub fn validate_widget(v: &serde_json::Value) -> Result<WidgetV1> {
         }
         _ => {}
     }
-    Ok(w)
+    Ok(())
 }
 
+/// Schema-checked in core so CLI + GUI + other harnesses agree.
+///
+/// # Errors
+///
+/// Rejects wrong versions, oversized payloads, duplicate or empty node ids,
+/// dangling edges, overlong labels, unknown colors/shapes/styles and bad
+/// group references.
 pub fn validate_diagram(v: &serde_json::Value) -> Result<DiagramV1> {
-    if serde_json::to_string(v)
-        .map(|s| s.len())
-        .unwrap_or(usize::MAX)
-        > MAX_TOTAL_BYTES
-    {
+    if serde_json::to_string(v).map_or(usize::MAX, |s| s.len()) > MAX_TOTAL_BYTES {
         return Err(ParziError::Validation(format!(
             "diagram exceeds {MAX_TOTAL_BYTES} bytes"
         )));
@@ -374,7 +360,14 @@ pub fn validate_diagram(v: &serde_json::Value) -> Result<DiagramV1> {
         )));
     }
     let mut ids = std::collections::HashSet::new();
-    for n in &d.nodes {
+    check_nodes(&d.nodes, &mut ids)?;
+    check_edges(&d.edges, &ids)?;
+    check_groups(&d.groups, &ids)?;
+    Ok(d)
+}
+
+fn check_nodes(nodes: &[DiagramNode], ids: &mut std::collections::HashSet<String>) -> Result<()> {
+    for n in nodes {
         if n.id.trim().is_empty() || !ids.insert(n.id.clone()) {
             return Err(ParziError::Validation(
                 "diagram node ids must be unique and non-empty".into(),
@@ -393,6 +386,12 @@ pub fn validate_diagram(v: &serde_json::Value) -> Result<DiagramV1> {
                 n.color
             )));
         }
+        if !n.fill.trim().is_empty() && !NODE_COLORS.contains(&n.fill.as_str()) {
+            return Err(ParziError::Validation(format!(
+                "unknown node fill `{}`",
+                n.fill
+            )));
+        }
         if !n.shape.trim().is_empty() && !NODE_SHAPES.contains(&n.shape.as_str()) {
             return Err(ParziError::Validation(format!(
                 "unknown node shape `{}`",
@@ -400,7 +399,11 @@ pub fn validate_diagram(v: &serde_json::Value) -> Result<DiagramV1> {
             )));
         }
     }
-    for e in &d.edges {
+    Ok(())
+}
+
+fn check_edges(edges: &[DiagramEdge], ids: &std::collections::HashSet<String>) -> Result<()> {
+    for e in edges {
         if !ids.contains(&e.from) || !ids.contains(&e.to) {
             return Err(ParziError::Validation(format!(
                 "diagram edge references unknown node: {} -> {}",
@@ -425,12 +428,16 @@ pub fn validate_diagram(v: &serde_json::Value) -> Result<DiagramV1> {
             )));
         }
     }
-    if d.groups.len() > MAX_GROUPS {
+    Ok(())
+}
+
+fn check_groups(groups: &[DiagramGroup], ids: &std::collections::HashSet<String>) -> Result<()> {
+    if groups.len() > MAX_GROUPS {
         return Err(ParziError::Validation(format!(
             "diagram groups exceed max {MAX_GROUPS}"
         )));
     }
-    for g in &d.groups {
+    for g in groups {
         if g.id.trim().is_empty() {
             return Err(ParziError::Validation(
                 "diagram groups need a non-empty id".into(),
@@ -448,5 +455,5 @@ pub fn validate_diagram(v: &serde_json::Value) -> Result<DiagramV1> {
             )));
         }
     }
-    Ok(d)
+    Ok(())
 }

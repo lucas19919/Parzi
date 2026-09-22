@@ -130,18 +130,139 @@ fn refs_pin_live_plans_and_block_overlap() {
     let (_tmp, home) = home();
     let ws = home.join("workspaces").join("acme");
     std::fs::create_dir_all(ws.join("projects").join("shop")).expect("proj dir");
-    std::fs::write(ws.join("projects").join("shop").join("PLAN.md"), "# Shop plan").expect("plan");
-    context_store::add_ref(&home, "acme", Some("shop"), "Shop plan", "projects/shop/PLAN.md", "plan").expect("add ref");
+    std::fs::write(
+        ws.join("projects").join("shop").join("PLAN.md"),
+        "# Shop plan",
+    )
+    .expect("plan");
+    context_store::add_ref(
+        &home,
+        "acme",
+        Some("shop"),
+        "Shop plan",
+        "projects/shop/PLAN.md",
+        "plan",
+    )
+    .expect("add ref");
     let refs = context_store::list_refs(&home, "acme", Some("shop"));
     assert_eq!(refs.len(), 1);
     assert_eq!(refs[0].kind, "plan");
-    assert!(context_store::add_ref(&home, "acme", Some("shop"), "dup", "projects/shop/PLAN.md", "plan").is_err());
+    assert!(context_store::add_ref(
+        &home,
+        "acme",
+        Some("shop"),
+        "dup",
+        "projects/shop/PLAN.md",
+        "plan"
+    )
+    .is_err());
     assert!(context_store::add_ref(&home, "acme", None, "evil", "../x.md", "plan").is_err());
     assert!(context_store::add_ref(&home, "acme", None, "missing", "nope.md", "plan").is_err());
-    assert!(context_store::add(&home, "acme", Some("shop"), "copy", "# Shop plan", context_store::Tier::Curated, "test").is_err());
+    assert!(context_store::add(
+        &home,
+        "acme",
+        Some("shop"),
+        "copy",
+        "# Shop plan",
+        context_store::Tier::Curated,
+        "test"
+    )
+    .is_err());
     let text = context_store::injection_text(&home, "acme", Some("shop"), 10_000);
     let plan = text.find("Shop plan").expect("plan injected");
     assert!(text[..plan].contains("# Plan"));
-    context_store::remove_ref(&home, "acme", Some("shop"), "projects/shop/PLAN.md").expect("remove");
+    context_store::remove_ref(&home, "acme", Some("shop"), "projects/shop/PLAN.md")
+        .expect("remove");
     assert!(context_store::list_refs(&home, "acme", Some("shop")).is_empty());
+}
+
+#[test]
+fn eviction_drops_oldest_unpinned_first() {
+    let (_tmp, home) = home();
+    for i in 0..34 {
+        context_store::add(
+            &home,
+            "acme",
+            None,
+            &format!("f{i:02}"),
+            "x",
+            context_store::Tier::Curated,
+            "test",
+        )
+        .expect("add");
+    }
+    let docs = context_store::list(&home, "acme", None).expect("list");
+    assert_eq!(docs.len(), 32);
+    let names: Vec<&str> = docs.iter().map(|d| d.name.as_str()).collect();
+    assert!(!names.contains(&"f00.md"));
+    assert!(!names.contains(&"f01.md"));
+    assert!(names.contains(&"f33.md"));
+    context_store::set_pinned(&home, "acme", None, "f02.md", true).expect("pin");
+    context_store::add(
+        &home,
+        "acme",
+        None,
+        "newbie",
+        "y",
+        context_store::Tier::Curated,
+        "test",
+    )
+    .expect("add");
+    let docs = context_store::list(&home, "acme", None).expect("list");
+    let names: Vec<&str> = docs.iter().map(|d| d.name.as_str()).collect();
+    assert!(names.contains(&"f02.md"));
+    assert!(names.contains(&"newbie.md"));
+}
+
+#[test]
+fn corrupt_manifest_repairs_instead_of_wiping() {
+    let (_tmp, home) = home();
+    let dir = home.join("workspaces").join("acme").join("context");
+    std::fs::create_dir_all(&dir).expect("ctx dir");
+    std::fs::write(dir.join("kept.md"), "keep me").expect("orphan");
+    std::fs::write(dir.join("manifest.toml"), "[[[broken").expect("corrupt");
+    let docs = context_store::list(&home, "acme", None).expect("list");
+    assert!(docs.iter().any(|d| d.name == "kept.md"));
+}
+
+#[test]
+fn readd_keeps_tier_and_labels_stay_printable() {
+    let (_tmp, home) = home();
+    context_store::add(
+        &home,
+        "acme",
+        None,
+        "n",
+        "v1",
+        context_store::Tier::Auto,
+        "test",
+    )
+    .expect("add");
+    context_store::add(
+        &home,
+        "acme",
+        None,
+        "n",
+        "v2",
+        context_store::Tier::Pinned,
+        "test",
+    )
+    .expect("re-add");
+    let docs = context_store::list(&home, "acme", None).expect("list");
+    assert_eq!(docs[0].tier, context_store::Tier::Auto);
+    let ws = home.join("workspaces").join("acme");
+    std::fs::create_dir_all(ws.join("projects").join("s")).expect("proj");
+    std::fs::write(ws.join("projects").join("s").join("PLAN.md"), "p").expect("plan");
+    context_store::add_ref(
+        &home,
+        "acme",
+        Some("s"),
+        "a\nb",
+        "projects/s/PLAN.md",
+        "pl\nan",
+    )
+    .expect("ref");
+    let refs = context_store::list_refs(&home, "acme", Some("s"));
+    assert_eq!(refs[0].label, "ab");
+    assert_eq!(refs[0].kind, "plan");
 }

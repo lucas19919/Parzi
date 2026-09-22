@@ -20,6 +20,7 @@ const FIRST: &[&str] = &[
 
 /// Markdown files under a workspace root (depth ≤ 2, well-known names
 /// first). Pure scan: no config, no writes, no filtering by trust.
+#[must_use]
 pub fn scan_root(root: &Path) -> Vec<(String, String)> {
     let mut found: Vec<(String, String)> = vec![];
     let mut stack = vec![(root.to_path_buf(), 0u8)];
@@ -27,9 +28,8 @@ pub fn scan_root(root: &Path) -> Vec<(String, String)> {
         if depth > 2 || found.len() >= 80 {
             continue;
         }
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(e) => e,
-            Err(_) => continue,
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
         };
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();

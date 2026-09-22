@@ -4,7 +4,7 @@
   const rawNodes: any[] = Array.isArray(data?.nodes) ? data.nodes : [];
   const rawEdges: any[] = Array.isArray(data?.edges) ? data.edges : [];
   // Normalize so malformed payloads degrade to the error card, never throw.
-  const nodes: { id: string; label: string; color: string; shape: string; sub: string }[] = rawNodes
+  const nodes: { id: string; label: string; color: string; shape: string; sub: string; fill: string }[] = rawNodes
     .filter((n) => n && (typeof n.id === "string" || typeof n.id === "number") && String(n.id).trim())
     .map((n) => ({
       id: String(n.id),
@@ -12,6 +12,7 @@
       color: typeof n.color === "string" ? n.color.toLowerCase() : "",
       shape: typeof n.shape === "string" ? n.shape.toLowerCase() : "",
       sub: typeof n.sub === "string" || typeof n.sub === "number" ? String(n.sub) : "",
+      fill: typeof n.fill === "string" ? n.fill.toLowerCase() : "",
     }));
   const edges: { from: string; to: string; label: string; color: string; style: string }[] = rawEdges
     .filter((e) => e && (typeof e.from === "string" || typeof e.from === "number") && (typeof e.to === "string" || typeof e.to === "number"))
@@ -49,6 +50,15 @@
     info: "var(--info)",
   };
   const inkOf = (c: string): string | null => INK[c] ?? null;
+  /** Pastel body + ink border for a fill key; null keeps the neutral card. */
+  const fillOf = (c: string): { fill: string; border: string } | null => {
+    const ink = INK[c];
+    if (!ink) return null;
+    return {
+      fill: `color-mix(in srgb, ${ink} 16%, var(--surface-1))`,
+      border: ink,
+    };
+  };
   const short = (s: string, n: number): string =>
     s.length > n ? s.slice(0, n - 1) + "…" : s;
 
@@ -137,6 +147,7 @@
     });
   });
 
+  // Group containers from placed members, with room for the inside label.
   $: boxes = groups
     .map((g) => {
       const pts = g.nodes
@@ -144,7 +155,7 @@
         .filter((p): p is { x: number; y: number } => !!p);
       if (!pts.length) return null;
       const x0 = Math.min(...pts.map((p) => p.x)) - 10;
-      const y0 = Math.min(...pts.map((p) => p.y)) - 10;
+      const y0 = Math.min(...pts.map((p) => p.y)) - 30;
       const x1 = Math.max(...pts.map((p) => p.x + CW)) + 10;
       const y1 = Math.max(...pts.map((p) => p.y + CH)) + 10;
       return { id: g.id, label: g.label || g.id, x0, y0, x1, y1 };
@@ -361,7 +372,7 @@
       {#each boxes as bx (bx.id)}
         <rect x={bx.x0} y={bx.y0} width={bx.x1 - bx.x0} height={bx.y1 - bx.y0} rx="12"
           fill="transparent" stroke="var(--line-2)" stroke-width="1" stroke-dasharray="5 4" />
-        <text x={bx.x0 + 8} y={bx.y0 - 6} fill="var(--text-4)" font-size="11">{short(bx.label, 32)}</text>
+        <text x={bx.x0 + 10} y={bx.y0 + 18} fill="var(--text-4)" font-size="10.5">{short(bx.label, 36)}</text>
       {/each}
       {#each edges as e}
         {@const a = pos.get(e.from)}
@@ -380,49 +391,48 @@
       {#each nodes as n}
         {@const p = pos.get(n.id)}
         {#if p}
-          {@const ink = inkOf(n.color)}
-          {@const stroke = ink ?? "var(--line)"}
+          {@const fb = fillOf(n.fill || n.color)}
+          {@const body = fb?.fill ?? "var(--surface-1)"}
+          {@const stroke = fb?.border ?? "var(--line)"}
+          {@const sw = fb ? 2 : 1.5}
           {#if n.shape === "diamond"}
             <polygon
               points={`${p.x + CW / 2},${p.y} ${p.x + CW},${p.y + CH / 2} ${p.x + CW / 2},${p.y + CH} ${p.x},${p.y + CH / 2}`}
-              fill="var(--surface-1)" {stroke} stroke-width={ink ? 2 : 1.5} stroke-linejoin="round" />
+              fill={body} {stroke} stroke-width={sw} stroke-linejoin="round" />
             <text x={p.x + CW / 2} y={p.y + CH / 2 + 4} fill="var(--text)" font-size="12" text-anchor="middle">
               {short(n.label || n.id, 14)}<title>{n.label || n.id}</title>
             </text>
           {:else if n.shape === "db"}
             <path
               d={`M ${p.x} ${p.y + 10} L ${p.x} ${p.y + CH - 10} A ${CW / 2} 10 0 0 0 ${p.x + CW} ${p.y + CH - 10} L ${p.x + CW} ${p.y + 10}`}
-              fill="var(--surface-1)" {stroke} stroke-width={ink ? 2 : 1.5} />
+              fill={body} {stroke} stroke-width={sw} />
             <ellipse cx={p.x + CW / 2} cy={p.y + 10} rx={CW / 2} ry={10}
-              fill="none" {stroke} stroke-width={ink ? 2 : 1.5} />
+              fill={body} {stroke} stroke-width={sw} />
             <text x={p.x + CW / 2} y={p.y + CH / 2 + 8} fill="var(--text)" font-size="12" text-anchor="middle">
               {short(n.label || n.id, 18)}<title>{n.label || n.id}</title>
             </text>
           {:else if n.shape === "actor"}
             {@const cx = p.x + 26}
-            <circle cx={cx} cy={p.y + 13} r={7} fill="none" stroke={stroke} stroke-width={ink ? 2 : 1.5} />
-            <line x1={cx} y1={p.y + 20} x2={cx} y2={p.y + 37} stroke={stroke} stroke-width={ink ? 2 : 1.5} />
-            <line x1={cx - 10} y1={p.y + 25} x2={cx + 10} y2={p.y + 25} stroke={stroke} stroke-width={ink ? 2 : 1.5} />
-            <line x1={cx} y1={p.y + 37} x2={cx - 8} y2={p.y + 48} stroke={stroke} stroke-width={ink ? 2 : 1.5} />
-            <line x1={cx} y1={p.y + 37} x2={cx + 8} y2={p.y + 48} stroke={stroke} stroke-width={ink ? 2 : 1.5} />
+            <circle cx={cx} cy={p.y + 13} r={7} fill="none" stroke={stroke} stroke-width={sw} />
+            <line x1={cx} y1={p.y + 20} x2={cx} y2={p.y + 37} stroke={stroke} stroke-width={sw} />
+            <line x1={cx - 10} y1={p.y + 25} x2={cx + 10} y2={p.y + 25} stroke={stroke} stroke-width={sw} />
+            <line x1={cx} y1={p.y + 37} x2={cx - 8} y2={p.y + 48} stroke={stroke} stroke-width={sw} />
+            <line x1={cx} y1={p.y + 37} x2={cx + 8} y2={p.y + 48} stroke={stroke} stroke-width={sw} />
             <text x={p.x + 44} y={p.y + CH / 2 + 4} fill="var(--text)" font-size="12">
               {short(n.label || n.id, 16)}<title>{n.label || n.id}</title>
             </text>
           {:else}
             <rect x={p.x} y={p.y} width={CW} height={CH} rx="10"
-              fill="var(--surface-1)" stroke={stroke} stroke-width={ink ? 2 : 1.5} />
-            {#if ink}
-              <rect x={p.x} y={p.y + 10} width={3} height={CH - 20} rx="1.5" fill={ink} />
-            {/if}
+              fill={body} {stroke} stroke-width={sw} />
             {#if n.sub}
-              <text x={p.x + (ink ? 16 : 12)} y={p.y + CH / 2 - 1} fill="var(--text)" font-size="12">
+              <text x={p.x + 12} y={p.y + CH / 2 - 1} fill="var(--text)" font-size="12">
                 {short(n.label || n.id, 20)}<title>{n.label || n.id}</title>
               </text>
-              <text x={p.x + (ink ? 16 : 12)} y={p.y + CH / 2 + 13} fill="var(--text-4)" font-size="10">
+              <text x={p.x + 12} y={p.y + CH / 2 + 13} fill="var(--text-4)" font-size="10">
                 {short(n.sub, 24)}<title>{n.sub}</title>
               </text>
             {:else}
-              <text x={p.x + (ink ? 16 : 12)} y={p.y + CH / 2 + 5} fill="var(--text)" font-size="13">
+              <text x={p.x + 12} y={p.y + CH / 2 + 5} fill="var(--text)" font-size="13">
                 {short(n.label || n.id, 20)}<title>{n.label || n.id}</title>
               </text>
             {/if}
