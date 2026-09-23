@@ -16,6 +16,39 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// Bytes of stderr kept for a failure message.
 const STDERR_KEEP: usize = 16 * 1024;
 
+/// `<PARZI_HOME>/tmp/<agent>`, created, with the unpack folders earlier runs
+/// left behind removed. `None` when the folder cannot be made (the agent
+/// then keeps the system TEMP).
+pub fn private_temp(agent: &str) -> Option<PathBuf> {
+    let dir = parzi_core::paths::parzi_dir().ok()?.join("tmp").join(agent);
+    std::fs::create_dir_all(&dir).ok()?;
+    sweep_unpack_dirs(&dir);
+    Some(dir)
+}
+
+/// Remove `_MEI*` folders no running program holds. A running PyInstaller
+/// program has DLLs loaded from its folder, and Windows refuses to rename a
+/// folder with loaded files, so a folder that renames is abandoned: only
+/// then is it deleted. Elsewhere nothing locks, so nothing is touched.
+pub fn sweep_unpack_dirs(dir: &Path) {
+    if !cfg!(windows) {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if !name.starts_with("_MEI") || !e.path().is_dir() {
+            continue;
+        }
+        let dead = dir.join(format!("_gone{}", &name[4..]));
+        if std::fs::rename(e.path(), &dead).is_ok() {
+            let _ = std::fs::remove_dir_all(&dead);
+        }
+    }
+}
+
 /// The program to run for `program` (a bare name searched on PATH, or a
 /// path, `~` allowed). `None` = not installed.
 pub fn resolve(program: &str) -> Option<PathBuf> {
@@ -359,6 +392,35 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(&dir);
         assert!(gone, "process {pid} outlived the program that started it");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn sweep_removes_abandoned_unpack_dirs_and_keeps_held_ones() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        let dir = std::env::temp_dir().join(format!("parzi-sweep-{}", uuid::Uuid::new_v4()));
+        let gone = dir.join("_MEI1111");
+        let held = dir.join("_MEI2222");
+        let other = dir.join("keep-me");
+        for d in [&gone, &held, &other] {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("x.pyd"), b"x").unwrap();
+        }
+        // Held the way a loaded DLL is: no sharing at all.
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(held.join("x.pyd"))
+            .unwrap();
+        sweep_unpack_dirs(&dir);
+        assert!(!gone.exists(), "abandoned unpack folder was kept");
+        assert!(held.join("x.pyd").exists(), "a folder in use was touched");
+        assert!(
+            other.exists(),
+            "a folder that is not an unpack folder was touched"
+        );
+        drop(lock);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn alive(pid: u32) -> bool {

@@ -78,10 +78,20 @@ fn antigravity_env(program: &Path) -> Vec<(String, String)> {
     } else {
         "localharness_external"
     });
-    vec![(
+    let mut env = vec![(
         "ANTIGRAVITY_HARNESS_PATH".into(),
         harness.display().to_string(),
-    )]
+    )];
+    // It is a PyInstaller build: every start unpacks ~1.2 GB into a `_MEI*`
+    // folder in TEMP that only a clean exit removes, and Parzi stops it with
+    // a tree kill. Give it a TEMP of its own and clear, on each start, what
+    // earlier runs left there.
+    if let Some(tmp) = crate::process::private_temp("antigravity") {
+        let tmp = tmp.display().to_string();
+        env.push(("TEMP".into(), tmp.clone()));
+        env.push(("TMP".into(), tmp));
+    }
+    env
 }
 
 fn nowhere() -> Option<PathBuf> {
