@@ -201,6 +201,23 @@
     showSettings = false;
   }
 
+  let omniMode: "agent" | "web" = "agent";
+
+  function handleOmniBrowse(e: CustomEvent<{ url: string }>) {
+    const targetUrl = e.detail.url;
+    const cur = tabs.find((t) => t.id === activeTabId);
+    const domain = targetUrl.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "").slice(0, 24);
+    if (cur && cur.kind === "harness" && !cur.sessionId && events.length === 0) {
+      cur.kind = "browser";
+      cur.badge = "B";
+      cur.url = targetUrl;
+      cur.title = domain || "Web Browser";
+      tabs = [...tabs];
+    } else {
+      handleNewBrowserTab(targetUrl);
+    }
+  }
+
   function handleOpenSession(id: string) {
     const existing = tabs.find((t) => t.sessionId === id);
     if (existing) {
@@ -845,6 +862,7 @@
             bind:effort
             bind:permission
             bind:attachments
+            bind:mode={omniMode}
             streaming={!!liveRun}
             currentProject={curProject}
             projectRoot={currentRoot}
@@ -855,6 +873,7 @@
             {compacting}
             board={$board}
             on:send={send}
+            on:browse={handleOmniBrowse}
             on:stop={stopRun}
             on:modelChange={(e) => (model = e.detail.model)}
             workspaces={wsNames}
@@ -955,6 +974,17 @@
     border-top-right-radius: 12px;
     margin: 8px 8px 0 8px;
     overflow: hidden;
+    animation: stageEnter 450ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes stageEnter {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
   .session-subheader {
     height: 42px;
@@ -1117,33 +1147,29 @@
     border-bottom: none;
   }
   .omnibar-slot {
+    position: absolute;
+    left: 50%;
     z-index: 20;
     display: flex;
     justify-content: center;
     width: 100%;
     pointer-events: none;
     transition:
-      top 480ms cubic-bezier(0.16, 1, 0.3, 1),
-      bottom 480ms cubic-bezier(0.16, 1, 0.3, 1),
-      transform 480ms cubic-bezier(0.16, 1, 0.3, 1),
-      width 480ms cubic-bezier(0.16, 1, 0.3, 1);
+      bottom 700ms cubic-bezier(0.16, 1, 0.3, 1),
+      transform 700ms cubic-bezier(0.16, 1, 0.3, 1),
+      width 500ms ease;
   }
   .omnibar-slot :global(.ob) {
     pointer-events: auto;
   }
   .omnibar-slot.hero {
-    position: absolute;
-    left: 50%;
-    top: 48%;
-    transform: translate(-50%, -50%);
+    bottom: 46%;
+    transform: translate(-50%, 50%);
     width: min(720px, 90%);
     padding: 0;
   }
   .omnibar-slot.dock {
-    position: absolute;
-    left: 50%;
     bottom: 14px;
-    top: auto;
     transform: translate(-50%, 0);
     width: min(740px, calc(100% - 40px));
     padding: 0;

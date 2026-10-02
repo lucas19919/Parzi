@@ -15,6 +15,7 @@
 
   export let input = "";
   export let model = "";
+  export let mode: "agent" | "web" = "agent";
   /** Parzi's pill (low…ultra) or the chosen model's own word for it. */
   export let effort = "medium";
   export let streaming = false;
@@ -46,8 +47,48 @@
     return String(n);
   }
 
+  function isUrlLike(text: string): boolean {
+    const t = text.trim();
+    if (!t) return false;
+    if (/^https?:\/\//i.test(t)) return true;
+    if (/^localhost(:\d+)?([/?#].*)?$/i.test(t)) return true;
+    if (/^[\w-]+(\.[\w-]+)+([/?#].*)?$/i.test(t) && !t.includes(" ")) return true;
+    return false;
+  }
+
+  $: detectedWeb = isUrlLike(input);
+  $: effectiveMode = detectedWeb ? "web" : mode;
+
+  function toggleMode() {
+    mode = mode === "agent" ? "web" : "agent";
+    dispatch("modeChange", { mode });
+  }
+
+  function resolveWebUrl(raw: string): string {
+    let t = raw.trim();
+    if (!t) return "https://duckduckgo.com";
+    if (/^https?:\/\//i.test(t)) return t;
+    if (t.startsWith("localhost")) return "http://" + t;
+    if (t.includes(".") && !t.includes(" ")) return "https://" + t;
+    return `https://duckduckgo.com/?q=${encodeURIComponent(t)}`;
+  }
+
+  function submitAction() {
+    if (streaming) return;
+    const text = input.trim();
+    if (!text) return;
+    if (effectiveMode === "web") {
+      dispatch("browse", { url: resolveWebUrl(text) });
+      input = "";
+    } else {
+      dispatch("send");
+    }
+  }
+
   const dispatch = createEventDispatcher<{
     send: void;
+    browse: { url: string };
+    modeChange: { mode: "agent" | "web" };
     stop: void;
     modelChange: { model: string };
     command: { name: string; arg: string };
@@ -205,8 +246,11 @@
       } else if (atOpen && atItems.length) {
         pickAt(atItems[atIndex] ?? atItems[0]);
       } else if (!streaming && input.trim()) {
-        dispatch("send");
+        submitAction();
       }
+    } else if (e.key === "Tab" && !input.trim() && !slashOpen && !atOpen && !showModelPicker && !permOpen && !wsOpen && !projOpen) {
+      e.preventDefault();
+      toggleMode();
     } else if (e.key === "Escape") {
       if (showModelPicker) showModelPicker = false;
       else if (permOpen) permOpen = false;
@@ -681,7 +725,11 @@
     <textarea
       bind:this={textareaEl}
       rows="1"
-      placeholder={streaming ? "Working… Esc to stop" : "Message"}
+      placeholder={streaming
+        ? "Working… Esc to stop"
+        : effectiveMode === "web"
+        ? "Search duckduckgo.com or enter URL (e.g. github.com)..."
+        : "Ask anything, / for commands, @ for context..."}
       bind:value={input}
       on:input={handleInput}
       on:paste={onPaste}
@@ -707,6 +755,30 @@
     {/if}
 
     <div class="controls">
+      <!-- Mode Switcher Pill (Agent vs Web) -->
+      <div class="mode-zone ctl-zone">
+        <button
+          class="ctl mode-ctl"
+          class:active-web={effectiveMode === "web"}
+          on:click|stopPropagation={toggleMode}
+          title="Switch mode: Agent or Web Browser (Tab when empty)"
+        >
+          {#if effectiveMode === "web"}
+            <span class="ctl-glyph web-icon">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"/></svg>
+            </span>
+            <span class="mode-text">Web</span>
+          {:else}
+            <span class="ctl-glyph agent-icon">
+              <Icon d={I.spark} size={12} />
+            </span>
+            <span class="mode-text">Agent</span>
+          {/if}
+        </button>
+      </div>
+
+      <span class="vdiv" />
+
       <div class="model-zone ctl-zone">
         <button bind:this={modelBtn} class="ctl" class:open={showModelPicker} on:click|stopPropagation={togglePicker} title="Model — open picker">
           {#if shown.provider === "auto"}
@@ -783,8 +855,19 @@
           <Icon d={I.stop} size={11} />
         </button>
       {:else}
-        <button class="go" class:ready={!!input.trim()} title="Send (Enter)" disabled={!input.trim()} on:click={() => dispatch("send")}>
-          <Icon d={I.sendUp} size={14} />
+        <button
+          class="go"
+          class:ready={!!input.trim()}
+          class:web-go={effectiveMode === "web"}
+          title={effectiveMode === "web" ? "Browse to URL or Search (Enter)" : "Send (Enter)"}
+          disabled={!input.trim()}
+          on:click={submitAction}
+        >
+          {#if effectiveMode === "web"}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          {:else}
+            <Icon d={I.sendUp} size={14} />
+          {/if}
         </button>
       {/if}
     </div>
@@ -1060,6 +1143,29 @@
   .ctl .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ctl .chev { color: var(--text-4); display: inline-flex; flex: none; }
   .ctl:hover .chev, .ctl.open .chev { color: var(--text-3); }
+  .mode-ctl {
+    padding: 0 8px;
+    font-weight: 500;
+    transition: background 0.12s ease, color 0.12s ease;
+  }
+  .mode-ctl.active-web {
+    color: #93c5fd;
+    background: rgba(59, 130, 246, 0.14);
+  }
+  .mode-ctl.active-web:hover {
+    background: rgba(59, 130, 246, 0.22);
+    color: #bfdbfe;
+  }
+  .web-icon {
+    color: #60a5fa;
+    display: inline-flex;
+    align-items: center;
+  }
+  .agent-icon {
+    color: var(--accent-text);
+    display: inline-flex;
+    align-items: center;
+  }
   .ctl-glyph { display: inline-flex; color: var(--text-4); flex: none; }
   .ctl:hover .ctl-glyph, .ctl.open .ctl-glyph { color: var(--text-2); }
   .vdiv { width: 1px; height: 16px; background: var(--line-2); margin: 0 5px; flex: none; }
@@ -1107,6 +1213,8 @@
   .go:active:not(:disabled) { transform: scale(0.94); }
   .go:disabled { opacity: 0.35; cursor: default; }
   .go.stop { background: var(--bad); border-color: transparent; color: var(--stage); }
+  .go.web-go.ready:not(:disabled) { background: #2563eb; border-color: transparent; color: #ffffff; }
+  .go.web-go.ready:hover:not(:disabled) { background: #1d4ed8; color: #ffffff; filter: brightness(1.08); }
 
   .pop {
     position: fixed; z-index: 60;
