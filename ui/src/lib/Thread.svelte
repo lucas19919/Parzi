@@ -326,7 +326,12 @@
     {#if item.kind === "user"}
       {@const sentImgs = attachedImages(item.text)}
       <div class="msg-row user">
-        <div class="user-bubble msg">{@html renderMarkdown(stripMarker(item.text))}</div>
+        <div class="user-bubble-line">
+          <button class="copy-btn user-copy" on:click={() => copy(stripMarker(item.text), i)}>
+            {copied === i ? "copied" : "copy"}
+          </button>
+          <div class="user-bubble msg">{@html renderMarkdown(stripMarker(item.text))}</div>
+        </div>
         {#if sentImgs.length}
           <div class="sent-imgs">
             {#each sentImgs as im}
@@ -336,9 +341,6 @@
             {/each}
           </div>
         {/if}
-        <button class="copy-btn" on:click={() => copy(stripMarker(item.text), i)}>
-          {copied === i ? "copied" : "copy"}
-        </button>
       </div>
     {:else if item.kind === "assistant"}
       <div class="msg-row">
@@ -466,18 +468,28 @@
   .msg-row.user {
     align-items: flex-end;
   }
+  .user-bubble-line {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 85%;
+    justify-content: flex-end;
+  }
   .user-bubble {
     background: #27272a;
     border: 1px solid #3f3f46;
     color: #f4f4f5;
-    padding: 8px 14px;
-    border-radius: 12px 12px 2px 12px;
+    padding: 8px 16px;
+    border-radius: 9999px;
     font-size: 13.5px;
     line-height: 1.5;
-    max-width: 80%;
+    max-width: 100%;
     min-width: 0;
     overflow-wrap: break-word;
     word-break: break-word;
+  }
+  .user-bubble:has(p + p, pre, ul, ol, blockquote) {
+    border-radius: 18px;
   }
   .user-bubble :global(h1), .user-bubble :global(h2),
   .user-bubble :global(h3), .user-bubble :global(h4) {
@@ -539,6 +551,13 @@
   }
   .msg-row:hover .copy-btn {
     opacity: 1;
+  }
+  .user-bubble-line .copy-btn.user-copy {
+    position: static;
+    top: auto;
+    right: auto;
+    margin: 0;
+    flex-shrink: 0;
   }
   .live-status {
     display: inline-flex;
