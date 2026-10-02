@@ -125,9 +125,8 @@
     align-items: center;
     gap: 6px;
     padding: 6px 12px;
-    background: rgba(16, 18, 23, 0.7);
-    border-bottom: 1px solid var(--line-3, rgba(255, 255, 255, 0.07));
-    backdrop-filter: blur(12px);
+    background: #18181b;
+    border-bottom: 1px solid #27272a;
   }
   .nav-btn {
     width: 26px;

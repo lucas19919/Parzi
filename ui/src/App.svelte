@@ -788,9 +788,6 @@
                 {#if branch}<span class="sub-branch">⎇ {branch}</span>{/if}
               </div>
               <div class="sub-right">
-                {#if liveRun}
-                  <span class="live-dot" title="Generating…" />
-                {/if}
                 <button class="sub-circle-btn" title="Status">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
                     <circle cx="12" cy="12" r="9" />
@@ -1035,18 +1032,6 @@
     background: #27272a;
     color: #f4f4f5;
   }
-  .live-dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #10b981;
-    box-shadow: 0 0 6px #10b981;
-    animation: pulse 1.2s ease infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.4; transform: scale(0.85); }
-  }
   .session-actions-menu {
     position: relative;
   }
@@ -1280,10 +1265,8 @@
     pointer-events: none;
   }
   .toast-item {
-    background: var(--menu, #14151a);
-    backdrop-filter: blur(14px) saturate(1.2);
-    -webkit-backdrop-filter: blur(14px) saturate(1.2);
-    border: 1px solid var(--line-3, rgba(255, 255, 255, 0.1));
+    background: #18181b;
+    border: 1px solid #27272a;
     color: var(--text);
     font-size: 12px;
     padding: 8px 14px;

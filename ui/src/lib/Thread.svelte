@@ -398,8 +398,8 @@
   {/each}
 
   {#if streaming && nowText}
-    <div class="now-pill" transition:fade|local={spring}>
-      <span class="streaming-dot" /><span>{nowText}</span>
+    <div class="live-status" transition:fade|local={spring}>
+      <span>{nowText}</span>
     </div>
   {/if}
 
@@ -434,7 +434,7 @@
   {/if}
 
   {#if streaming && !liveText && !liveReasoning && !liveTools.length && !nowText}
-    <div class="streaming-row"><span class="streaming-dot" /><span>writing…</span></div>
+    <div class="live-status"><span>writing…</span></div>
   {/if}
 
   {#if approval}
@@ -467,11 +467,11 @@
     align-items: flex-end;
   }
   .user-bubble {
-    background: var(--accent-soft);
-    border: 1px solid var(--accent-mid);
-    color: var(--text);
-    padding: 10px 16px;
-    border-radius: 14px 14px 2px 14px;
+    background: #27272a;
+    border: 1px solid #3f3f46;
+    color: #f4f4f5;
+    padding: 8px 14px;
+    border-radius: 12px 12px 2px 12px;
     font-size: 13.5px;
     line-height: 1.5;
     max-width: 80%;
@@ -516,9 +516,9 @@
   .live-head.fade { opacity: 0.72; filter: saturate(0.92); }
   .live-tail { color: var(--text); }
   .stream-caret {
-    display: inline-block; width: 7px; height: 1em; margin-left: 2px;
+    display: inline-block; width: 6px; height: 1em; margin-left: 2px;
     vertical-align: text-bottom; border-radius: 1px;
-    background: var(--accent);
+    background: var(--text-3);
   }
   @media (prefers-reduced-motion: reduce) {
     .live-head.fade { opacity: 1; filter: none; }
@@ -540,23 +540,14 @@
   .msg-row:hover .copy-btn {
     opacity: 1;
   }
-  .now-pill {
+  .live-status {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
     align-self: flex-start;
-    background: var(--accent-soft);
-    border: 1px solid var(--accent-mid);
-    border-radius: 999px;
-    padding: 5px 12px;
+    color: var(--text-3);
     font-size: 12px;
-    color: var(--text);
-    max-width: 100%;
-  }
-  .now-pill span:last-child {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    padding: 4px 0;
+    user-select: none;
   }
   .turn-error {
     display: flex;
@@ -611,19 +602,6 @@
     color: var(--text-2);
     white-space: pre-wrap;
     word-break: break-word;
-  }
-  .streaming-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: var(--text-3);
-  }
-  .streaming-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
   }
   .approval-card {
     background: var(--warn-soft);

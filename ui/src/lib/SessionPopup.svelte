@@ -222,9 +222,7 @@
     position: fixed;
     inset: 0;
     z-index: 1000;
-    background: rgba(0, 0, 0, 0.65);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
+    background: rgba(0, 0, 0, 0.7);
     display: flex;
     justify-content: center;
     padding-top: 14vh;
@@ -232,8 +230,8 @@
   .popup-box {
     width: min(580px, 92vw);
     max-height: 480px;
-    background: var(--menu, #14161d);
-    border: 1px solid var(--line-2, rgba(255, 255, 255, 0.12));
+    background: #18181b;
+    border: 1px solid #27272a;
     border-radius: 12px;
     box-shadow: 0 24px 50px rgba(0, 0, 0, 0.6);
     display: flex;

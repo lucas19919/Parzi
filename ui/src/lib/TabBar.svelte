@@ -34,7 +34,7 @@
     if (tab.title.toLowerCase().includes("work") || tab.sessionId?.startsWith("ws-")) {
       return { text: "W", bg: "#27272a", color: "#e4e4e7" };
     }
-    return { text: "I", bg: "#451a03", color: "#fef08a", dot: true };
+    return { text: "I", bg: "#27272a", color: "#e4e4e7" };
   }
 </script>
 
@@ -60,9 +60,6 @@
             </svg>
           {:else}
             {badge.text}
-          {/if}
-          {#if badge.dot}
-            <span class="badge-dot" />
           {/if}
         </span>
         <span class="tab-title">{tab.title || "New session"}</span>
@@ -156,16 +153,6 @@
     font-weight: 700;
     flex-shrink: 0;
     line-height: 1;
-  }
-  .badge-dot {
-    position: absolute;
-    top: -2px;
-    right: -2px;
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: #2dd4bf;
-    border: 1px solid #0d0d0f;
   }
   .tab-title {
     overflow: hidden;

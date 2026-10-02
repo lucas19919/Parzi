@@ -292,11 +292,9 @@
     position: fixed; z-index: 80; width: 440px; max-width: calc(100vw - 16px);
     height: 430px; max-height: calc(100vh - 120px);
     display: flex; flex-direction: column;
-    background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 92%, transparent), color-mix(in srgb, var(--parzi-sidebar) 84%, transparent));
-    backdrop-filter: blur(16px) saturate(1.25);
-    -webkit-backdrop-filter: blur(16px) saturate(1.25);
-    border: 1px solid var(--line-2); border-top-color: var(--line-hi); border-radius: var(--glass-radius);
-    box-shadow: var(--menu-shadow); overflow: hidden; transform-origin: bottom left;
+    background: #18181b;
+    border: 1px solid #27272a; border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6); overflow: hidden; transform-origin: bottom left;
   }
   .pop.from-top { transform-origin: top left; }
   .search {
