@@ -2,15 +2,14 @@
   import { createEventDispatcher, onMount } from "svelte";
   import TabBar from "./TabBar.svelte";
   import type { Tab } from "./tabTypes";
-  import Icon from "./Icon.svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { WIN_ICON, startWindowDrag, windowClose, windowMaximize, windowMinimize } from "./windowChrome";
+  import { startWindowDrag, windowClose, windowMaximize, windowMinimize } from "./windowChrome";
 
   export let tabs: Tab[] = [];
   export let activeTabId: string | null = null;
-  export let hasUpdate = false;
 
   let menuOpen = false;
+  let isMaximized = false;
 
   const dispatch = createEventDispatcher<{
     selectTab: { id: string };
@@ -23,13 +22,12 @@
     togglePanel: void;
   }>();
 
-  const I = WIN_ICON;
-
   async function syncChrome() {
     try {
       const w = getCurrentWindow();
       const full = await w.isFullscreen().catch(() => false);
       const max = full ? false : await w.isMaximized().catch(() => false);
+      isMaximized = Boolean(full || max);
       document.documentElement.classList.toggle("is-full", full || max);
       document.documentElement.classList.toggle("parzi-maximized", full || max);
     } catch {}
@@ -123,42 +121,30 @@
     />
   </div>
 
-  <!-- Right Cluster (Exact OpenCode items: Download/Update, Panel toggle, Window controls) -->
+  <!-- Right Cluster (Frameless Window Controls) -->
   <div class="right-cluster">
-    <!-- Download / Update Status Icon -->
-    <button
-      class="icon-btn download-btn"
-      title={hasUpdate ? "Update available" : "Updates and downloads"}
-      on:click={() => dispatch("checkUpdates")}
-    >
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-        <circle cx="12" cy="12" r="9.5" stroke="#166534" fill="#052e16" />
-        <path d="M12 7.5v9M8.5 13l3.5 3.5 3.5-3.5" stroke="#22c55e" stroke-width="2.2" />
-      </svg>
-    </button>
-
-    <!-- Panel / Sidebar toggle button (OpenCode icon) -->
-    <button
-      class="icon-btn panel-btn"
-      title="Toggle panel"
-      on:click={() => dispatch("togglePanel")}
-    >
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="3" width="18" height="18" rx="3" stroke="#71717a" />
-        <path d="M15 3v18" stroke="#71717a" />
-      </svg>
-    </button>
-
-    <!-- Window controls -->
     <div class="window-controls">
       <button class="win-btn" title="Minimize" on:click={handleMin} tabindex="-1">
-        <Icon d={I.min} size={11} />
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          <line x1="0" y1="5" x2="10" y2="5" stroke="currentColor" stroke-width="1" />
+        </svg>
       </button>
-      <button class="win-btn" title="Maximize / Restore" on:click={handleMax} tabindex="-1">
-        <Icon d={I.max} size={11} />
+      <button class="win-btn" title={isMaximized ? "Restore" : "Maximize"} on:click={handleMax} tabindex="-1">
+        {#if isMaximized}
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <path d="M2.5 2V0.5h7V7.5H8M0.5 2.5h7v7h-7z" fill="none" stroke="currentColor" stroke-width="1" />
+          </svg>
+        {:else}
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1" />
+          </svg>
+        {/if}
       </button>
       <button class="win-btn close" title="Close" on:click={handleClose} tabindex="-1">
-        <Icon d={I.close} size={11} />
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          <line x1="1" y1="1" x2="9" y2="9" stroke="currentColor" stroke-width="1.1" />
+          <line x1="9" y1="1" x2="1" y2="9" stroke="currentColor" stroke-width="1.1" />
+        </svg>
       </button>
     </div>
   </div>
@@ -175,7 +161,7 @@
     z-index: 100;
     user-select: none;
     -webkit-app-region: drag;
-    padding: 0 10px 0 10px;
+    padding: 0 0 0 10px;
     box-sizing: border-box;
     background: #0d0d0f;
     border-bottom: none;
@@ -215,37 +201,37 @@
   }
   .right-cluster {
     display: flex;
-    align-items: center;
-    gap: 4px;
+    align-items: stretch;
+    height: 100%;
     flex-shrink: 0;
     -webkit-app-region: no-drag;
   }
   .window-controls {
     display: flex;
-    align-items: center;
-    gap: 2px;
-    margin-left: 6px;
+    align-items: stretch;
+    height: 100%;
     -webkit-app-region: no-drag;
   }
   .win-btn {
-    width: 28px;
-    height: 26px;
+    width: 44px;
+    height: 100%;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     background: transparent;
     border: none;
-    border-radius: 5px;
-    color: #71717a;
+    border-radius: 0;
+    color: #a1a1aa;
     cursor: pointer;
-    transition: background 0.1s ease, color 0.1s ease;
+    padding: 0;
+    transition: background 0.12s ease, color 0.12s ease;
   }
   .win-btn:hover {
-    background: #27272a;
+    background: rgba(255, 255, 255, 0.08);
     color: #f4f4f5;
   }
   .win-btn.close:hover {
-    background: #ef4444;
+    background: #e81123;
     color: #ffffff;
   }
   .dropdown-menu {
@@ -282,14 +268,6 @@
   }
   .menu-item:hover {
     background: #27272a;
-  }
-  .mi-icon {
-    width: 16px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 12px;
-    color: #a1a1aa;
   }
   .mi-label {
     flex: 1;

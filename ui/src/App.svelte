@@ -712,14 +712,12 @@
   <TopBar
     {tabs}
     {activeTabId}
-    {hasUpdate}
     on:selectTab={(e) => handleSelectTab(e.detail.id)}
     on:closeTab={(e) => handleCloseTab(e.detail.id)}
     on:newTab={handleNewTab}
     on:home={() => handleSelectTab(tabs[0].id)}
     on:openSettings={() => openSettings("general")}
     on:openSessionPopup={() => (showSessionPopup = true)}
-    on:checkUpdates={() => { openSettings("system"); void checkForUpdates(true); }}
   />
 
   <div class="app-body">
