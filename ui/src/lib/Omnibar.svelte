@@ -47,18 +47,6 @@
     return String(n);
   }
 
-  function isUrlLike(text: string): boolean {
-    const t = text.trim();
-    if (!t) return false;
-    if (/^https?:\/\//i.test(t)) return true;
-    if (/^localhost(:\d+)?([/?#].*)?$/i.test(t)) return true;
-    if (/^[\w-]+(\.[\w-]+)+([/?#].*)?$/i.test(t) && !t.includes(" ")) return true;
-    return false;
-  }
-
-  $: detectedWeb = isUrlLike(input);
-  $: effectiveMode = detectedWeb ? "web" : mode;
-
   function toggleMode() {
     mode = mode === "agent" ? "web" : "agent";
     dispatch("modeChange", { mode });
@@ -77,7 +65,7 @@
     if (streaming) return;
     const text = input.trim();
     if (!text) return;
-    if (effectiveMode === "web") {
+    if (mode === "web") {
       dispatch("browse", { url: resolveWebUrl(text) });
       input = "";
     } else {
@@ -248,7 +236,7 @@
       } else if (!streaming && input.trim()) {
         submitAction();
       }
-    } else if (e.key === "Tab" && !input.trim() && !slashOpen && !atOpen && !showModelPicker && !permOpen && !wsOpen && !projOpen) {
+    } else if (e.key === "Tab" && !slashOpen && !atOpen && !showModelPicker && !permOpen && !wsOpen && !projOpen) {
       e.preventDefault();
       toggleMode();
     } else if (e.key === "Escape") {
@@ -727,9 +715,9 @@
       rows="1"
       placeholder={streaming
         ? "Working… Esc to stop"
-        : effectiveMode === "web"
-        ? "Search duckduckgo.com or enter URL (e.g. github.com)..."
-        : "Ask anything, / for commands, @ for context..."}
+        : mode === "web"
+        ? "Search web or enter URL (e.g. github.com)... (Tab to switch)"
+        : "Ask agent, / for commands, @ for context... (Tab to switch)"}
       bind:value={input}
       on:input={handleInput}
       on:paste={onPaste}
@@ -755,68 +743,76 @@
     {/if}
 
     <div class="controls">
-      <!-- Mode Switcher Pill (Agent vs Web) -->
+      <!-- Mode Indicator Pill with Tab Quick Toggle -->
       <div class="mode-zone ctl-zone">
         <button
           class="ctl mode-ctl"
-          class:active-web={effectiveMode === "web"}
+          class:active-web={mode === "web"}
           on:click|stopPropagation={toggleMode}
-          title="Switch mode: Agent or Web Browser (Tab when empty)"
+          title="Switch mode: Agent or Web Browser (Press Tab)"
         >
-          {#if effectiveMode === "web"}
+          {#if mode === "web"}
             <span class="ctl-glyph web-icon">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"/></svg>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"/></svg>
             </span>
-            <span class="mode-text">Web</span>
+            <span class="mode-text">Web Browser</span>
+            <span class="tab-badge">Tab</span>
           {:else}
             <span class="ctl-glyph agent-icon">
-              <Icon d={I.spark} size={12} />
+              <Icon d={I.spark} size={13} />
             </span>
-            <span class="mode-text">Agent</span>
+            <span class="mode-text">Agent Harness</span>
+            <span class="tab-badge">Tab</span>
           {/if}
         </button>
       </div>
 
       <span class="vdiv" />
 
-      <div class="model-zone ctl-zone">
-        <button bind:this={modelBtn} class="ctl" class:open={showModelPicker} on:click|stopPropagation={togglePicker} title="Model — open picker">
-          {#if shown.provider === "auto"}
-            <span class="ctl-glyph"><Icon d={I.spark} size={13} /></span>
-          {:else if hasMark(shown.provider)}
-            <ProviderLogo provider={shown.provider} size={13} />
+      {#if mode === "agent"}
+        <div class="model-zone ctl-zone">
+          <button bind:this={modelBtn} class="ctl" class:open={showModelPicker} on:click|stopPropagation={togglePicker} title="Model — open picker">
+            {#if shown.provider === "auto"}
+              <span class="ctl-glyph"><Icon d={I.spark} size={13} /></span>
+            {:else if hasMark(shown.provider)}
+              <ProviderLogo provider={shown.provider} size={13} />
+            {:else}
+              <span class="ctl-glyph"><Icon d={I.model} size={13} /></span>
+            {/if}
+            <span class="truncate">{shown.name}</span>
+            <span class="chev"><Icon d={I.chevD} size={10} /></span>
+          </button>
+        </div>
+
+        <span class="vdiv" />
+
+        <div class="bars-zone" role="group" aria-label="Effort">
+          {#if efforts.length}
+            {#each efforts as e, i}
+              <button class="bar-bit" class:lit={i <= effortIdx} on:click={() => setEffort(e)}
+                title={`${effortWord(e)}${effortHint(e) ? ` — ${effortHint(e)}` : ""}`} aria-pressed={effort === e}>
+                <span />
+              </button>
+            {/each}
           {:else}
-            <span class="ctl-glyph"><Icon d={I.model} size={13} /></span>
+            <span class="bars-none" title="This agent sets its own effort">–</span>
           {/if}
-          <span class="truncate">{shown.name}</span>
-          <span class="chev"><Icon d={I.chevD} size={10} /></span>
-        </button>
-      </div>
+        </div>
 
-      <span class="vdiv" />
+        <span class="vdiv" />
 
-      <div class="bars-zone" role="group" aria-label="Effort">
-        {#if efforts.length}
-          {#each efforts as e, i}
-            <button class="bar-bit" class:lit={i <= effortIdx} on:click={() => setEffort(e)}
-              title={`${effortWord(e)}${effortHint(e) ? ` — ${effortHint(e)}` : ""}`} aria-pressed={effort === e}>
-              <span />
-            </button>
-          {/each}
-        {:else}
-          <span class="bars-none" title="This agent sets its own effort">–</span>
-        {/if}
-      </div>
-
-      <span class="vdiv" />
-
-      <div class="perm-zone ctl-zone">
-        <button bind:this={permBtn} class="ctl" class:open={permOpen} on:click|stopPropagation={togglePerm} title="Permission policy">
-          <span class="ctl-glyph"><Icon d={I.lock} size={13} /></span>
-          <span class="truncate">{permTitle}</span>
-          <span class="chev"><Icon d={I.chevD} size={10} /></span>
-        </button>
-      </div>
+        <div class="perm-zone ctl-zone">
+          <button bind:this={permBtn} class="ctl" class:open={permOpen} on:click|stopPropagation={togglePerm} title="Permission policy">
+            <span class="ctl-glyph"><Icon d={I.lock} size={13} /></span>
+            <span class="truncate">{permTitle}</span>
+            <span class="chev"><Icon d={I.chevD} size={10} /></span>
+          </button>
+        </div>
+      {:else}
+        <div class="web-zone ctl-zone">
+          <span class="web-hint-pill">DuckDuckGo Search · Direct URL</span>
+        </div>
+      {/if}
 
       <span class="spacer" />
 
@@ -858,12 +854,12 @@
         <button
           class="go"
           class:ready={!!input.trim()}
-          class:web-go={effectiveMode === "web"}
-          title={effectiveMode === "web" ? "Browse to URL or Search (Enter)" : "Send (Enter)"}
+          class:web-go={mode === "web"}
+          title={mode === "web" ? "Browse to URL or Search (Enter)" : "Send to Agent (Enter)"}
           disabled={!input.trim()}
           on:click={submitAction}
         >
-          {#if effectiveMode === "web"}
+          {#if mode === "web"}
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
           {:else}
             <Icon d={I.sendUp} size={14} />
@@ -1165,6 +1161,27 @@
     color: var(--accent-text);
     display: inline-flex;
     align-items: center;
+  }
+  .tab-badge {
+    font-size: 10px;
+    font-family: var(--parzi-mono, monospace);
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-3);
+    padding: 1px 4px;
+    border-radius: 4px;
+    margin-left: 2px;
+  }
+  .mode-ctl.active-web .tab-badge {
+    background: rgba(59, 130, 246, 0.2);
+    color: #93c5fd;
+  }
+  .web-hint-pill {
+    font-size: 11px;
+    color: var(--text-4);
+    display: inline-flex;
+    align-items: center;
+    padding: 0 6px;
+    user-select: none;
   }
   .ctl-glyph { display: inline-flex; color: var(--text-4); flex: none; }
   .ctl:hover .ctl-glyph, .ctl.open .ctl-glyph { color: var(--text-2); }
