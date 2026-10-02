@@ -195,6 +195,12 @@
     effort = id;
   }
 
+  function cycleEffort() {
+    if (!efforts.length) return;
+    const nextIdx = (effortIdx + 1) % efforts.length;
+    setEffort(efforts[nextIdx]);
+  }
+
   function setPermission(id: string) {
     permission = id;
     permOpen = false;
@@ -716,8 +722,8 @@
       placeholder={streaming
         ? "Working… Esc to stop"
         : mode === "web"
-        ? "Search web or enter URL (e.g. github.com)... (Tab to switch)"
-        : "Ask agent, / for commands, @ for context... (Tab to switch)"}
+        ? "Search web or enter URL..."
+        : "Ask anything, / for commands, @ for context..."}
       bind:value={input}
       on:input={handleInput}
       on:paste={onPaste}
@@ -751,59 +757,30 @@
           on:click|stopPropagation={toggleMode}
           title="Switch mode: Agent or Web Browser (Press Tab)"
         >
-          {#if mode === "web"}
-            <span class="ctl-glyph web-icon">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1 4-10z"/></svg>
-            </span>
-            <span class="mode-text">Web Browser</span>
-            <span class="tab-badge">Tab</span>
-          {:else}
-            <span class="ctl-glyph agent-icon">
-              <Icon d={I.spark} size={13} />
-            </span>
-            <span class="mode-text">Agent Harness</span>
-            <span class="tab-badge">Tab</span>
-          {/if}
+          <span class="mode-text">{mode === "web" ? "Web Browser" : "Agent Harness"}</span>
+          <span class="tab-badge">Tab</span>
         </button>
       </div>
-
-      <span class="vdiv" />
 
       {#if mode === "agent"}
         <div class="model-zone ctl-zone">
           <button bind:this={modelBtn} class="ctl" class:open={showModelPicker} on:click|stopPropagation={togglePicker} title="Model — open picker">
-            {#if shown.provider === "auto"}
-              <span class="ctl-glyph"><Icon d={I.spark} size={13} /></span>
-            {:else if hasMark(shown.provider)}
-              <ProviderLogo provider={shown.provider} size={13} />
-            {:else}
-              <span class="ctl-glyph"><Icon d={I.model} size={13} /></span>
-            {/if}
             <span class="truncate">{shown.name}</span>
             <span class="chev"><Icon d={I.chevD} size={10} /></span>
           </button>
         </div>
 
-        <span class="vdiv" />
-
-        <div class="bars-zone" role="group" aria-label="Effort">
-          {#if efforts.length}
-            {#each efforts as e, i}
-              <button class="bar-bit" class:lit={i <= effortIdx} on:click={() => setEffort(e)}
-                title={`${effortWord(e)}${effortHint(e) ? ` — ${effortHint(e)}` : ""}`} aria-pressed={effort === e}>
-                <span />
-              </button>
-            {/each}
-          {:else}
-            <span class="bars-none" title="This agent sets its own effort">–</span>
-          {/if}
-        </div>
-
-        <span class="vdiv" />
+        {#if efforts.length}
+          <div class="effort-zone ctl-zone">
+            <button class="ctl" on:click={cycleEffort} title={`Effort: ${effortWord(effort)}${effortHint(effort) ? ` — ${effortHint(effort)}` : ""} (click to change)`}>
+              <span class="truncate">{effortWord(effort)}</span>
+              <span class="chev"><Icon d={I.chevD} size={10} /></span>
+            </button>
+          </div>
+        {/if}
 
         <div class="perm-zone ctl-zone">
           <button bind:this={permBtn} class="ctl" class:open={permOpen} on:click|stopPropagation={togglePerm} title="Permission policy">
-            <span class="ctl-glyph"><Icon d={I.lock} size={13} /></span>
             <span class="truncate">{permTitle}</span>
             <span class="chev"><Icon d={I.chevD} size={10} /></span>
           </button>
@@ -1052,28 +1029,25 @@
   .chip-glyph { display: inline-flex; flex: none; color: var(--text-4); }
   .ob-card {
     position: relative;
-    background: linear-gradient(180deg, color-mix(in srgb, var(--parzi-sidebar) 88%, transparent), color-mix(in srgb, var(--parzi-sidebar) 78%, transparent));
-    backdrop-filter: blur(14px) saturate(1.2);
-    -webkit-backdrop-filter: blur(14px) saturate(1.2);
-    border: 1px solid var(--line-2);
-    border-top-color: var(--line-hi);
-    border-radius: var(--glass-radius);
-    box-shadow: var(--glass-shadow);
-    padding: 14px 14px 10px;
+    background: #18181b;
+    border: 1px solid #27272a;
+    border-radius: 12px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+    padding: 12px 14px 10px;
     color: var(--text-2);
     min-width: 0;
     overflow: hidden;
     box-sizing: border-box;
+    transition: border-color 140ms ease;
   }
   .ob-card textarea {
     width: 100%; background: transparent; border: none; outline: none; resize: none;
-    color: var(--text); font: inherit; font-size: 14px; line-height: 1.55;
-    min-height: 26px; max-height: 180px; padding: 2px 4px 10px; box-sizing: border-box;
+    color: var(--text); font: inherit; font-size: 13.5px; line-height: 1.5;
+    min-height: 24px; max-height: 180px; padding: 2px 2px 8px; box-sizing: border-box;
   }
   .ob-card textarea::placeholder { color: var(--text-4); }
   .ob-card textarea:focus { border-color: transparent !important; box-shadow: none !important; }
-  .ob-card { transition: border-color 140ms ease; }
-  .ob-card:focus-within { border-color: var(--line-3); }
+  .ob-card:focus-within { border-color: #3f3f46; }
 
   .attach-grid { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; overflow: hidden; }
   .thumb {
@@ -1125,42 +1099,43 @@
   .slash-pop .h { margin-left: auto; font-size: 11px; color: var(--text-3); }
   .at-popup button { font-family: var(--parzi-mono); font-size: 12px; }
 
-  .controls { display: flex; align-items: center; gap: 2px; min-width: 0; flex-wrap: wrap; row-gap: 4px; }
+  .controls { display: flex; align-items: center; gap: 5px; min-width: 0; flex-wrap: wrap; row-gap: 4px; }
   .ctl-zone { position: static; min-width: 0; flex: 0 1 auto; display: flex; }
   .ctl {
-    display: inline-flex; align-items: center; gap: 6px; max-width: 180px; min-width: 0; flex: 1 1 auto;
-    height: 28px;
-    background: transparent; border: none; border-radius: 7px; color: var(--text-3);
+    display: inline-flex; align-items: center; gap: 4px; max-width: 180px; min-width: 0; flex: 1 1 auto;
+    height: 26px;
+    background: transparent; border: 1px solid transparent; border-radius: 6px; color: var(--text-3);
     font: inherit; font-size: 12px; padding: 0 7px; cursor: pointer; text-align: left;
     overflow: hidden;
+    transition: background 0.12s ease, color 0.12s ease;
   }
   .ctl:hover { background: var(--surface-2); color: var(--text); }
   .ctl.open { background: var(--surface-3); color: var(--text); }
   .ctl .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ctl .chev { color: var(--text-4); display: inline-flex; flex: none; }
+  .ctl .chev { color: var(--text-4); display: inline-flex; flex: none; font-size: 10px; }
   .ctl:hover .chev, .ctl.open .chev { color: var(--text-3); }
   .mode-ctl {
     padding: 0 8px;
     font-weight: 500;
-    transition: background 0.12s ease, color 0.12s ease;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 6px;
+    transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  }
+  .mode-ctl:hover {
+    background: rgba(255, 255, 255, 0.07);
+    color: var(--text-1);
+    border-color: rgba(255, 255, 255, 0.14);
   }
   .mode-ctl.active-web {
     color: #93c5fd;
-    background: rgba(59, 130, 246, 0.14);
+    background: rgba(59, 130, 246, 0.12);
+    border-color: rgba(59, 130, 246, 0.25);
   }
   .mode-ctl.active-web:hover {
-    background: rgba(59, 130, 246, 0.22);
+    background: rgba(59, 130, 246, 0.18);
     color: #bfdbfe;
-  }
-  .web-icon {
-    color: #60a5fa;
-    display: inline-flex;
-    align-items: center;
-  }
-  .agent-icon {
-    color: var(--accent-text);
-    display: inline-flex;
-    align-items: center;
+    border-color: rgba(59, 130, 246, 0.35);
   }
   .tab-badge {
     font-size: 10px;
@@ -1169,36 +1144,24 @@
     color: var(--text-3);
     padding: 1px 4px;
     border-radius: 4px;
-    margin-left: 2px;
+    margin-left: 4px;
   }
   .mode-ctl.active-web .tab-badge {
     background: rgba(59, 130, 246, 0.2);
-    color: #93c5fd;
+    color: #bfdbfe;
   }
   .web-hint-pill {
-    font-size: 11px;
+    font-size: 11.5px;
     color: var(--text-4);
     display: inline-flex;
     align-items: center;
     padding: 0 6px;
     user-select: none;
   }
-  .ctl-glyph { display: inline-flex; color: var(--text-4); flex: none; }
-  .ctl:hover .ctl-glyph, .ctl.open .ctl-glyph { color: var(--text-2); }
-  .vdiv { width: 1px; height: 16px; background: var(--line-2); margin: 0 5px; flex: none; }
-  .bars-zone { display: flex; align-items: center; flex: none; padding: 0 7px; height: 28px; }
-  .bars-zone .bar-bit {
-    background: transparent; border: none; cursor: pointer; padding: 0 2px;
-    display: flex; align-items: center; height: 28px;
-  }
-  .bars-zone .bar-bit span { width: 4px; height: 14px; border-radius: 2px; background: var(--surface-3); transition: background 100ms ease; }
-  .bars-zone .bar-bit.lit span { background: var(--text-2); }
-  .bars-zone .bar-bit:hover span { background: var(--text); }
-  .bars-none { color: var(--text-4); font-size: 12px; padding: 0 6px; cursor: default; }
   .spacer { flex: 1 1 auto; min-width: 4px; }
 
   .ctx {
-    height: 28px; flex: none; display: inline-flex; align-items: center; gap: 5px;
+    height: 26px; flex: none; display: inline-flex; align-items: center; gap: 5px;
     padding: 0 8px; border: none; border-radius: var(--radius-pill); background: transparent;
     color: var(--text-3); font-size: 11px; font-variant-numeric: tabular-nums; cursor: pointer;
     --ctx: var(--text-3);
@@ -1212,22 +1175,23 @@
   .ctx-fill { fill: none; stroke: var(--ctx); stroke-width: 2; stroke-linecap: round; transition: stroke-dashoffset 0.4s ease; }
 
   .icon-btn {
-    width: 32px; height: 32px; flex: none; display: inline-flex; align-items: center; justify-content: center;
-    background: transparent; border: none; border-radius: 50%; color: var(--text-3); cursor: pointer;
+    width: 28px; height: 28px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: none; border-radius: 6px; color: var(--text-4); cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
   }
   .icon-btn:hover { background: var(--surface-2); color: var(--text); }
 
   .go {
-    width: 32px; height: 32px; flex: none; border-radius: 50%;
+    width: 28px; height: 28px; flex: none; border-radius: 7px;
     display: inline-flex; align-items: center; justify-content: center;
     background: var(--surface-2); border: 1px solid var(--line-3);
-    color: var(--text-2); cursor: pointer; padding: 0;
-    box-shadow: none;
+    color: var(--text-3); cursor: pointer; padding: 0;
+    transition: background 0.12s ease, color 0.12s ease, transform 0.08s ease;
   }
   .go:hover:not(:disabled) { background: var(--surface-3); color: var(--text); }
   .go.ready:not(:disabled) { background: var(--accent); border-color: transparent; color: var(--accent-ink); }
   .go.ready:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); filter: brightness(1.08); }
-  .go:active:not(:disabled) { transform: scale(0.94); }
+  .go:active:not(:disabled) { transform: scale(0.95); }
   .go:disabled { opacity: 0.35; cursor: default; }
   .go.stop { background: var(--bad); border-color: transparent; color: var(--stage); }
   .go.web-go.ready:not(:disabled) { background: #2563eb; border-color: transparent; color: #ffffff; }
@@ -1360,6 +1324,5 @@
   @media (max-width: 560px) {
     .ob-card { padding: 12px 10px 8px; }
     .ctl { max-width: 128px; font-size: 12px; padding: 6px 6px; gap: 5px; }
-    .vdiv { margin: 0 2px; }
   }
 </style>
