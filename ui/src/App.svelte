@@ -955,7 +955,7 @@
     border-bottom: none;
     border-top-left-radius: 12px;
     border-top-right-radius: 12px;
-    margin: 0 8px 0 8px;
+    margin: 8px 8px 0 8px;
     overflow: hidden;
   }
   .session-subheader {
@@ -1110,11 +1110,10 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    width: 100%;
-    height: 100%;
+    min-height: 0;
     border-top-left-radius: 12px;
     border-top-right-radius: 12px;
-    margin: 0 8px;
+    margin: 8px 8px 0 8px;
     overflow: hidden;
     border: 1px solid #27272a;
     border-bottom: none;

@@ -106,17 +106,15 @@
       {/if}
     </div>
 
-    <!-- Home Button (Grid / 4 squares matching OpenCode) -->
+    <!-- Home Button (House icon) -->
     <button
       class="icon-btn home-btn"
       title="Home (New session draft)"
       on:click={() => dispatch("home")}
     >
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="3" width="7" height="7" rx="1.5" />
-        <rect x="14" y="3" width="7" height="7" rx="1.5" />
-        <rect x="14" y="14" width="7" height="7" rx="1.5" />
-        <rect x="3" y="14" width="7" height="7" rx="1.5" />
+        <path d="M3 10.5L12 3l9 7.5V20a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+        <polyline points="9 22 9 12 15 12 15 22" />
       </svg>
     </button>
 
@@ -138,9 +136,9 @@
       title={hasUpdate ? "Update available" : "Updates and downloads"}
       on:click={() => dispatch("checkUpdates")}
     >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-        <circle cx="12" cy="12" r="9" stroke="#10b981" fill="#10b98122" />
-        <path d="M12 8v8M8 12l4 4 4-4" stroke="#10b981" />
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <circle cx="12" cy="12" r="9.5" stroke="#166534" fill="#052e16" />
+        <path d="M12 7.5v9M8.5 13l3.5 3.5 3.5-3.5" stroke="#22c55e" stroke-width="2.2" />
       </svg>
     </button>
 
@@ -150,9 +148,9 @@
       title="Toggle panel"
       on:click={() => dispatch("togglePanel")}
     >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="3" width="18" height="18" rx="2" />
-        <path d="M15 3v18" />
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="3" stroke="#71717a" />
+        <path d="M15 3v18" stroke="#71717a" />
       </svg>
     </button>
 
@@ -185,7 +183,7 @@
     padding: 0 10px 0 10px;
     box-sizing: border-box;
     background: #0d0d0f;
-    border-bottom: 1px solid #1f1f23;
+    border-bottom: none;
   }
   .left-cluster {
     display: flex;

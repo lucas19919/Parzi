@@ -95,11 +95,14 @@
     align-items: center;
     gap: 4px;
     overflow-x: auto;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
+    overflow-y: hidden;
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
   }
   .tabs-scroll::-webkit-scrollbar {
-    display: none;
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
   }
   .tab-chip {
     display: inline-flex;
