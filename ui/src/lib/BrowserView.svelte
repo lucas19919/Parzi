@@ -64,7 +64,9 @@
     </button>
 
     <form class="url-form" on:submit|preventDefault={onSubmit}>
-      <span class="url-scheme">🔒</span>
+      <span class="url-scheme">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      </span>
       <input
         type="text"
         bind:value={inputUrl}
@@ -94,7 +96,13 @@
     {:else}
       <div class="blank-stage">
         <div class="blank-card">
-          <div class="blank-icon">🌐</div>
+          <div class="blank-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="2" y1="12" x2="22" y2="12" />
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+            </svg>
+          </div>
           <h3>Web Browser</h3>
           <p>Enter a URL in the address bar above or search via the omnibar to explore the web alongside your agent harness.</p>
         </div>

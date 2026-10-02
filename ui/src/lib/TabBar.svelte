@@ -24,17 +24,17 @@
     dispatch("newTab");
   }
 
-  function getBadge(tab: Tab): { text: string; bg: string; color: string; dot?: boolean } {
-    if (tab.badge) {
-      return { text: tab.badge, bg: tab.badgeColor || "#2e2e34", color: "#f4f4f5" };
+  function getBadge(tab: Tab): { text: string; isGlobe?: boolean; bg: string; color: string; dot?: boolean } {
+    if (tab.kind === "browser" || tab.badge === "🌐") {
+      return { text: "", isGlobe: true, bg: "#1f242d", color: "#93c5fd" };
     }
-    if (tab.kind === "browser") {
-      return { text: "🌐", bg: "#1e293b", color: "#38bdf8" };
+    if (tab.badge) {
+      return { text: tab.badge, bg: tab.badgeColor || "#27272a", color: "#e4e4e7" };
     }
     if (tab.title.toLowerCase().includes("work") || tab.sessionId?.startsWith("ws-")) {
-      return { text: "W", bg: "#2e2e34", color: "#f4f4f5" };
+      return { text: "W", bg: "#27272a", color: "#e4e4e7" };
     }
-    return { text: "I", bg: "#78350f", color: "#fde68a", dot: true };
+    return { text: "I", bg: "#451a03", color: "#fef08a", dot: true };
   }
 </script>
 
@@ -52,7 +52,15 @@
         on:click={() => onTabClick(tab.id)}
       >
         <span class="tab-badge" style="background: {badge.bg}; color: {badge.color}">
-          {badge.text}
+          {#if badge.isGlobe}
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="2" y1="12" x2="22" y2="12" />
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+            </svg>
+          {:else}
+            {badge.text}
+          {/if}
           {#if badge.dot}
             <span class="badge-dot" />
           {/if}
@@ -89,6 +97,8 @@
     max-width: calc(100vw - 320px);
     overflow: hidden;
     -webkit-app-region: no-drag;
+    flex-shrink: 1;
+    min-width: 0;
   }
   .tabs-scroll {
     display: flex;
@@ -98,6 +108,8 @@
     overflow-y: hidden;
     scrollbar-width: none !important;
     -ms-overflow-style: none !important;
+    flex: 0 1 auto;
+    min-width: 0;
   }
   .tabs-scroll::-webkit-scrollbar {
     display: none !important;

@@ -193,7 +193,7 @@
       id: newId,
       kind: "browser",
       title: "Web Browser",
-      badge: "🌐",
+      badge: "B",
       url: initialUrl,
     };
     tabs = [...tabs, newTabItem];
@@ -792,20 +792,20 @@
                   {#if sessionMenuOpen}
                     <div class="sub-dropdown" role="menu">
                       <button class="menu-item" on:click={handleRenameSession}>
-                        <span class="mi-icon">✏️</span>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
                         <span>Rename session</span>
                       </button>
                       <button class="menu-item" on:click={() => { sessionMenuOpen = false; if (activeThreadId) fork(activeThreadId); }}>
-                        <span class="mi-icon">🔀</span>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 9v6"/><circle cx="18" cy="9" r="3"/><path d="M6 9a9 9 0 0 1 9 9"/></svg>
                         <span>Fork session</span>
                       </button>
                       <button class="menu-item" on:click={handleCopyId}>
-                        <span class="mi-icon">📋</span>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                         <span>Copy Session ID</span>
                       </button>
                       <div class="menu-sep" />
                       <button class="menu-item danger" on:click={() => { sessionMenuOpen = false; if (activeThreadId) handleDeleteThread(activeThreadId); }}>
-                        <span class="mi-icon">🗑️</span>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                         <span>Delete session</span>
                       </button>
                     </div>

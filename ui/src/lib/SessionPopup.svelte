@@ -51,7 +51,7 @@
     ];
     for (const c of cmds) {
       if (!q || c.title.toLowerCase().includes(q) || c.sub.toLowerCase().includes(q)) {
-        items.push({ ...c, section: "commands", badge: "⚡", badgeBg: "rgba(124, 140, 255, 0.15)", badgeColor: "#7c8cff" });
+        items.push({ ...c, section: "commands", badge: ">", badgeBg: "rgba(124, 140, 255, 0.15)", badgeColor: "#7c8cff" });
       }
     }
 
@@ -63,7 +63,7 @@
           section: "tabs",
           title: tab.title || "Untitled Tab",
           sub: tab.id === activeTabId ? "Active tab" : "Switch to tab",
-          badge: tab.badge || (tab.kind === "browser" ? "🌐" : "T"),
+          badge: tab.badge && tab.badge !== "🌐" ? tab.badge : (tab.kind === "browser" ? "B" : "T"),
           badgeBg: tab.badgeColor || "rgba(255, 255, 255, 0.1)",
           badgeColor: "#ffffff",
           onSelect: () => dispatch("selectTab", { id: tab.id }),
