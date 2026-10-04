@@ -1,13 +1,8 @@
-//! `session.md`: the human-readable view other harnesses can read without
-//! tooling. Rendered lazily (on read and at run end), never per append.
-
 use super::cache::count_write;
 use super::model::{Event, SessionMeta};
 use super::SessionStore;
 use crate::error::Result;
 
-/// Whole-session markdown. Pure, so it stays unit-testable and the caller
-/// decides when it is worth the write.
 pub(crate) fn session_md(meta: &SessionMeta, events: &[Event]) -> String {
     let parent_line = meta
         .parent_id
@@ -37,8 +32,6 @@ pub(crate) fn session_md(meta: &SessionMeta, events: &[Event]) -> String {
                     "result({name}, ok={ok}):\n\n```\n{output}\n```\n\n"
                 ));
             }
-            // C-5: the fence is opened *and* closed — everything after the
-            // first widget used to live inside one never-ending code block.
             Event::Widget { fence, payload } => {
                 md.push_str(&format!(
                     "```{fence}\n{}\n```\n\n",
@@ -89,12 +82,8 @@ pub(crate) fn session_md(meta: &SessionMeta, events: &[Event]) -> String {
 }
 
 impl SessionStore {
-    /// `session.md`, re-rendered first when the transcript moved on. This is
-    /// the read path other harnesses should use instead of the raw file.
     pub fn transcript_md(&self, id: &str) -> Result<String> {
         let meta = self.get(id)?;
-        // Strict: a transcript we cannot read must not overwrite the rendered
-        // view with an empty one (on Windows a scanner can hold the file).
         let events = self.events(id)?;
         let md = session_md(&meta, &events);
         let path = self.dir(id).join("session.md");
@@ -112,8 +101,6 @@ impl SessionStore {
         Ok(md)
     }
 
-    /// Turn boundary: push the coalesced `updated` stamp and re-render
-    /// `session.md`. A no-op when nothing was appended since the last call.
     pub fn flush(&self, id: &str) -> Result<()> {
         let (pending, dirty) = {
             let c = self.cache();

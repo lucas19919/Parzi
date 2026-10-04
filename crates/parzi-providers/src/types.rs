@@ -1,7 +1,3 @@
-//! One shape for every provider. Parzi does not call model APIs: it drives
-//! the vendor's own agent program and sees each turn as a stream of
-//! [`ProviderEvent`]s.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -9,27 +5,16 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-/// What a failure was. Adapters decide it from the vendor's own error
-/// fields (status codes, error types), never by searching message text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorClass {
-    /// Not signed in, token rejected, account blocked.
     Auth,
-    /// A plan window or rate limit is used up.
     RateLimit,
-    /// The vendor is overloaded or down.
     Overloaded,
-    /// The conversation no longer fits the model.
     ContextOverflow,
-    /// The request itself was refused as malformed.
     BadRequest,
-    /// The vendor program is missing, would not start, or died.
     Process,
-    /// The vendor no longer has the conversation it was asked to resume.
-    /// The run starts a new one and hands it the thread so far.
     SessionLost,
-    /// Anything the vendor did not classify.
     Unknown,
 }
 
@@ -51,7 +36,6 @@ impl ErrorClass {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderError {
     pub class: ErrorClass,
-    /// The vendor's own words, trimmed. Shown to the person as-is.
     pub message: String,
 }
 
@@ -76,7 +60,6 @@ impl std::fmt::Display for ProviderError {
 
 impl std::error::Error for ProviderError {}
 
-/// Where a provider stands right now, as its own program reports it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum State {
@@ -85,30 +68,23 @@ pub enum State {
     NotInstalled,
     Disabled,
     Error,
-    /// Installed, but the program offers no way to check sign-in without
-    /// starting a session. The first turn tells.
     Unchecked,
 }
 
-/// One plan window ("Session", "Weekly") and how much of it is used.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UsageWindow {
     pub label: String,
     pub used_percent: f64,
-    /// Unix seconds when the window resets, when the vendor says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resets_at: Option<u64>,
 }
 
 impl UsageWindow {
-    /// Used up at `now`: at 100% and not yet past the reset the vendor named.
     #[must_use]
     pub fn spent(&self, now: u64) -> bool {
         self.used_percent >= 100.0 && self.resets_at.is_none_or(|t| t > now)
     }
 
-    /// Still true at `now` by the vendor's own clock. A window with no reset
-    /// time is only as good as the check that reported it.
     #[must_use]
     pub fn current(&self, now: u64) -> bool {
         self.resets_at.is_some_and(|t| t > now)
@@ -117,13 +93,10 @@ impl UsageWindow {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelInfo {
-    /// What the vendor program takes as its model argument.
     pub id: String,
     pub name: String,
     #[serde(default)]
     pub is_default: bool,
-    /// Effort levels this model accepts, in the vendor's own words. Empty =
-    /// the vendor has no effort knob for it.
     #[serde(default)]
     pub efforts: Vec<String>,
 }
@@ -134,22 +107,16 @@ pub struct ProviderStatus {
     pub state: State,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    /// Signed-in plan or account ("Claude Max", "ChatGPT Plus").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
-    /// What to do next when not ready, or the probe's own message.
     #[serde(default)]
     pub hint: String,
     #[serde(default)]
     pub usage: Vec<UsageWindow>,
     #[serde(default)]
     pub models: Vec<ModelInfo>,
-    /// Every change the agent makes arrives at Parzi's gate first
-    /// ([`Provider::gated`]). Filled from the driver whenever statuses leave
-    /// the runtime (`Orchestrator::provider_statuses`), never by a probe.
     #[serde(default)]
     pub gated: bool,
-    /// Unix seconds of this probe.
     pub checked_at: u64,
 }
 
@@ -169,44 +136,33 @@ impl ProviderStatus {
     }
 }
 
-/// Parzi's own tools, served over MCP for this one turn.
 #[derive(Debug, Clone)]
 pub struct ToolServer {
-    /// MCP server name the agent sees (`parzi`).
     pub name: String,
-    /// Streamable-HTTP endpoint. The path carries the per-run secret.
     pub url: String,
-    /// Same secret, for vendors that send it as a bearer header.
     pub token: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct TurnSpec {
-    /// Parzi's session id, for logs and for a fresh vendor session id.
     pub session_id: String,
     pub cwd: PathBuf,
-    /// Vendor model argument. `None` = the vendor's default.
     pub model: Option<String>,
     pub effort: Option<String>,
-    /// Parzi's standing instructions (lane, workspace, role, knowledge).
     pub instructions: Option<String>,
-    /// From a previous turn's [`ProviderEvent::Session`]. `None` = new session.
     pub resume: Option<serde_json::Value>,
     pub prompt: String,
-    /// Local image files that ride with the prompt.
     pub images: Vec<PathBuf>,
     pub tools: Option<ToolServer>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProviderEvent {
-    /// The vendor's handle for resuming this conversation on the next turn.
     Session {
         resume: serde_json::Value,
     },
     TextDelta(String),
     ReasoningDelta(String),
-    /// A finished assistant message: the text that goes in the transcript.
     Message(String),
     Reasoning(String),
     ToolStarted {
@@ -220,7 +176,6 @@ pub enum ProviderEvent {
         ok: bool,
         output: String,
     },
-    /// Tokens this turn spent so far, as increments.
     Usage {
         input: u64,
         output: u64,
@@ -230,9 +185,7 @@ pub enum ProviderEvent {
         used: u64,
         limit: u64,
     },
-    /// Plan windows, as the vendor just reported them.
     Limits(Vec<UsageWindow>),
-    /// Something worth a line in the thread (a retry, a reroute).
     Notice(String),
 }
 
@@ -242,23 +195,18 @@ pub enum TurnEnd {
     Interrupted,
 }
 
-/// An action the vendor wants to take and Parzi has to allow.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PermissionRequest {
     pub id: String,
-    /// The vendor's tool name ("Bash", "Edit", "commandExecution", …).
     pub tool: String,
-    /// One line for the approval card.
     pub title: String,
     pub input: serde_json::Value,
-    /// Files the action writes, when the vendor says. The lease gate reads it.
     pub paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermissionDecision {
     Allow,
-    /// Allow, and let the vendor stop asking for this kind in this session.
     AllowAlways,
     Deny(String),
 }
@@ -274,19 +222,10 @@ pub type EventTx = mpsc::UnboundedSender<ProviderEvent>;
 pub trait Provider: Send + Sync {
     fn id(&self) -> &'static str;
 
-    /// Every change the agent makes (edits, commands, fetches) arrives as a
-    /// [`PermissionRequest`] before it happens, because the driver runs the
-    /// agent in its most-asking mode with nothing pre-approved. `false`: the
-    /// agent applies some changes on its own, so leases and the folder fence
-    /// cannot stop them and a read-only lane cannot run on it. No default:
-    /// every driver says which it is.
     fn gated(&self) -> bool;
 
-    /// Ask the vendor program where it stands. Never spends quota.
     async fn status(&self) -> ProviderStatus;
 
-    /// Run one turn to its end. Events stream on `events`; the returned
-    /// error is the turn's failure as the vendor classified it.
     async fn run_turn(
         &self,
         spec: TurnSpec,
@@ -296,7 +235,6 @@ pub trait Provider: Send + Sync {
     ) -> Result<TurnEnd, ProviderError>;
 }
 
-/// Seconds since the Unix epoch (0 on clock failure).
 pub fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

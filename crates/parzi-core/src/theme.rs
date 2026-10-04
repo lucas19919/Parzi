@@ -3,12 +3,6 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ParziError, Result};
 use crate::{atomic_write, paths};
 
-/// Everything the UI renders derives from this file. `user.css` loads last
-/// and wins over generated variables — real CSS stays possible.
-///
-/// The UI never reads these values directly: `to_css_vars` emits them as
-/// `--parzi-*` inputs and `ui/src/theme.css` derives every role token
-/// (text ramp, surfaces, lines, accent tints) from those inputs.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Theme {
     #[serde(default)]
@@ -53,17 +47,14 @@ pub struct ColorTheme {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackgroundTheme {
-    /// Relative to ~/.parzi. Default: empty (solid stage, no image).
     #[serde(default = "d_bg_image")]
     pub image: String,
     #[serde(default = "d_dim")]
     pub dim: f64,
     #[serde(default = "d_vignette")]
     pub vignette: f64,
-    /// Slight photo blur for mood (px). Static layer, no per-frame cost.
     #[serde(default = "d_bg_blur")]
     pub blur: f64,
-    /// When true, picking a wallpaper re-derives the accent from its colors.
     #[serde(default)]
     pub auto_accent: bool,
 }
@@ -192,8 +183,6 @@ impl Theme {
         Ok(toml::from_str(&std::fs::read_to_string(&path)?)?)
     }
 
-    /// Persist with floats clamped and rounded to two decimals so the TOML
-    /// stays legible (no `0.6000000238` from float noise).
     pub fn save(&self) -> Result<()> {
         let t = self.normalized();
         atomic_write(&paths::theme_path()?, toml::to_string(&t)?.as_bytes())
@@ -212,44 +201,25 @@ impl Theme {
         t
     }
 
-    /// Emit the CSS inputs the UI consumes. `user.css` overrides these.
-    ///
-    /// Percent twins (`*-pct`) exist because `color-mix()` wants a
-    /// percentage while `rgba()` alpha wants a number; both stay in sync here.
-    /// `--parzi-accent-ink` is the text colour that reads on the accent.
     pub fn to_css_vars(&self) -> String {
         let t = self.normalized();
         let c = &t.colors;
         let b = &t.background;
-        let g = &t.glass;
         format!(
-            ":root{{--parzi-font:{};--parzi-font-size:{}px;--parzi-mono:{};--parzi-mono-size:{}px;\
-            --parzi-sidebar:{};--parzi-stage:{};--parzi-bar:{};--parzi-border:{};\
-            --parzi-accent:{};--parzi-accent-ink:{};--parzi-text:{};--parzi-text-dim:{};\
-            --parzi-bg-dim:{};--parzi-bg-dim-pct:{};--parzi-vignette:{};--parzi-bg-blur:{}px;\
-            --parzi-glass-opacity:{};--parzi-glass-opacity-pct:{};--parzi-glass-radius:{}px;\
-            --parzi-glass-blur:{}px;--parzi-glass-shadow:{};}}\n",
+            ":root{{--font:{};--font-size:{}px;--mono:{};--mono-size:{}px;\
+            --bg:{};--text:{};--muted:{};--accent:{};\
+            --bg-dim:{};--vignette:{};--bg-blur:{}px;}}\n",
             css_font_list(&t.font.family),
             t.font.size,
             css_font_list(&t.font.mono),
             t.font.mono_size,
-            css_value(&c.sidebar),
             css_value(&c.stage),
-            css_value(&c.bar),
-            css_value(&c.border),
-            css_value(&c.accent),
-            accent_ink(&c.accent),
             css_value(&c.text),
             css_value(&c.text_dim),
+            css_value(&c.accent),
             num(b.dim),
-            pct(b.dim),
             num(b.vignette),
             num(b.blur),
-            num(g.opacity),
-            pct(g.opacity),
-            g.radius,
-            g.blur_px,
-            if g.shadow { 1 } else { 0 },
         )
     }
 }
@@ -258,7 +228,6 @@ fn round2(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
 }
 
-/// `0.66` → "0.66", `1.0` → "1", `0.5` → "0.5".
 fn num(v: f64) -> String {
     let s = format!("{v:.2}");
     let s = s.trim_end_matches('0').trim_end_matches('.');
@@ -269,12 +238,6 @@ fn num(v: f64) -> String {
     }
 }
 
-fn pct(v: f64) -> String {
-    format!("{}%", (v.clamp(0.0, 1.0) * 100.0).round() as u32)
-}
-
-/// Colour strings are the user's own, but keep them from escaping the
-/// declaration they live in.
 fn css_value(s: &str) -> String {
     s.chars()
         .filter(|c| !matches!(c, ';' | '{' | '}' | '\n'))
@@ -295,9 +258,6 @@ const GENERIC_FAMILIES: &[&str] = &[
     "inherit",
 ];
 
-/// "JetBrains Mono, monospace" → `"JetBrains Mono", monospace`. Family names
-/// get quoted, generic keywords stay bare, empty input falls back to inherit.
-/// Mirrored in `ui/src/lib/theme.ts` so live previews match the saved CSS.
 pub fn css_font_list(s: &str) -> String {
     let parts: Vec<String> = s
         .split(',')
@@ -318,50 +278,6 @@ pub fn css_font_list(s: &str) -> String {
     }
 }
 
-fn parse_hex(s: &str) -> Option<[u8; 3]> {
-    let h = s.trim().trim_start_matches('#');
-    if !h.is_ascii() {
-        return None;
-    }
-    let h: String = match h.len() {
-        3 => h.chars().flat_map(|c| [c, c]).collect(),
-        6 | 8 => h[..6].to_string(),
-        _ => return None,
-    };
-    let v = u32::from_str_radix(&h, 16).ok()?;
-    Some([(v >> 16) as u8, ((v >> 8) & 0xff) as u8, (v & 0xff) as u8])
-}
-
-/// Text colour that reads on the accent: near-black on bright accents,
-/// white on deep ones (WCAG relative luminance, break-even at 0.179).
-pub fn accent_ink(hex: &str) -> &'static str {
-    match parse_hex(hex) {
-        Some([r, g, b]) => {
-            let lin = |c: u8| {
-                let c = c as f64 / 255.0;
-                if c <= 0.03928 {
-                    c / 12.92
-                } else {
-                    ((c + 0.055) / 1.055).powf(2.4)
-                }
-            };
-            let l = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-            if l > 0.179 {
-                "#0B0D12"
-            } else {
-                "#FFFFFF"
-            }
-        }
-        None => "#0B0D12",
-    }
-}
-
-// ---------------------------------------------------------------------------
-// user.css: loads after the generated variables and wins.
-// ---------------------------------------------------------------------------
-
-const USER_CSS_MAX: usize = 64 * 1024;
-
 pub fn read_user_css() -> Result<String> {
     let p = paths::user_css_path()?;
     if p.exists() {
@@ -371,28 +287,6 @@ pub fn read_user_css() -> Result<String> {
     }
 }
 
-/// Empty input removes the file so the theme is the only source again.
-pub fn write_user_css(css: &str) -> Result<()> {
-    if css.len() > USER_CSS_MAX {
-        return Err(ParziError::Config("user.css: 64 KB max".into()));
-    }
-    let p = paths::user_css_path()?;
-    if css.trim().is_empty() {
-        if p.exists() {
-            std::fs::remove_file(p)?;
-        }
-        return Ok(());
-    }
-    atomic_write(&p, css.as_bytes())
-}
-
-// ---------------------------------------------------------------------------
-// Appearance packs: named, savable, switchable themes.
-// `~/.parzi/themes/<pack>/` holds theme.toml + optional art + user.css.
-// ---------------------------------------------------------------------------
-
-/// Shipped packs, in display order. They re-seed when missing and can't be
-/// deleted from the UI; user packs sort after them.
 pub const BUILTIN_PACKS: &[&str] = &["ember", "midnight", "grey", "light"];
 
 pub fn themes_dir() -> Result<std::path::PathBuf> {
@@ -426,14 +320,11 @@ pub fn list_packs() -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// What the theme picker shows for a pack: real colours from its file, not a
-/// hardcoded preview table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackInfo {
     pub name: String,
     pub builtin: bool,
     pub colors: ColorTheme,
-    /// Ships its own wallpaper (applying it changes the picture).
     pub has_art: bool,
 }
 
@@ -453,8 +344,6 @@ fn pack_art(dir: &std::path::Path) -> Vec<String> {
     names
 }
 
-/// Built-ins first in shipped order, then user packs alphabetically.
-/// Unparsable packs are skipped, never fatal.
 pub fn list_pack_infos() -> Result<Vec<PackInfo>> {
     let root = themes_dir()?;
     let mut out = vec![];
@@ -484,7 +373,6 @@ pub fn list_pack_infos() -> Result<Vec<PackInfo>> {
     Ok(out)
 }
 
-/// Snapshot current theme + background + user.css into a pack. Overwrites.
 pub fn save_pack(name: &str) -> Result<()> {
     check_pack_name(name)?;
     let dir = themes_dir()?.join(name);
@@ -509,8 +397,6 @@ pub fn save_pack(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Rename a user pack. Built-ins stay (they would re-seed anyway); the live
-/// theme is untouched — renaming is library housekeeping, not applying.
 pub fn rename_pack(old: &str, new: &str) -> Result<()> {
     check_pack_name(old)?;
     check_pack_name(new)?;
@@ -534,7 +420,6 @@ pub fn rename_pack(old: &str, new: &str) -> Result<()> {
     Ok(())
 }
 
-/// Remove a user pack. Built-ins stay (they would re-seed anyway).
 pub fn delete_pack(name: &str) -> Result<()> {
     check_pack_name(name)?;
     if BUILTIN_PACKS.contains(&name) {
@@ -550,18 +435,12 @@ pub fn delete_pack(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Apply a pack: its colours, type and glass become the live theme.
-///
-/// Wallpaper rule: a pack that ships art (or names an existing saved
-/// background) switches the picture; a pack without art keeps the wallpaper
-/// you already chose. `auto_accent` is a user preference and survives too.
 pub fn apply_pack(name: &str) -> Result<Theme> {
     check_pack_name(name)?;
     let dir = themes_dir()?.join(name);
     let mut theme: Theme = toml::from_str(&std::fs::read_to_string(dir.join("theme.toml"))?)?;
     let current = Theme::load().unwrap_or_default();
 
-    // Copy shipped art next to the live backgrounds (never overwrite).
     let art = pack_art(&dir);
     for fname in &art {
         let dest = paths::backgrounds_dir()?.join(fname);
@@ -586,11 +465,6 @@ pub fn apply_pack(name: &str) -> Result<Theme> {
     Ok(theme)
 }
 
-// ---------------------------------------------------------------------------
-// Saved background images. Guarded reads: small regular
-// files with image extensions only; anything else is skipped, never fatal.
-// ---------------------------------------------------------------------------
-
 const BG_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp"];
 const BG_MAX_BYTES: u64 = 20 * 1024 * 1024;
 
@@ -609,8 +483,6 @@ fn is_bg_file(p: &std::path::Path) -> bool {
     }
 }
 
-/// Delete a saved background image. When it is the live wallpaper the theme
-/// falls back to a solid stage instead of pointing at a missing file.
 pub fn delete_background(name: &str) -> Result<Theme> {
     if name.trim().is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
         return Err(ParziError::Config("bad background name".into()));
@@ -641,7 +513,6 @@ pub fn list_backgrounds() -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// Point the live theme at a saved background (or "" for solid).
 pub fn set_background(name: &str) -> Result<Theme> {
     if !name.is_empty() {
         if name.contains('/') || name.contains('\\') || name.contains("..") {
@@ -651,8 +522,6 @@ pub fn set_background(name: &str) -> Result<Theme> {
         if !is_bg_file(&p) {
             return Err(ParziError::Config(format!("background not found: {name}")));
         }
-        // Refuse here, where a person is choosing, rather than at paint time
-        // (the renderer would have to decode it to find out).
         crate::wallpaper::check_source(&p)?;
     }
     let mut theme = Theme::load()?;
@@ -665,10 +534,6 @@ pub fn set_background(name: &str) -> Result<Theme> {
     Ok(theme)
 }
 
-/// Save picked image bytes into saved backgrounds and return the name it was
-/// stored under. The name is sanitized here, once, so the UI selects exactly
-/// the file that exists. A picture over the edge or byte cap is shrunk to a
-/// JPEG instead of refused.
 pub fn import_background(name: &str, bytes: &[u8]) -> Result<String> {
     let path = std::path::Path::new(name);
     let ext = path
@@ -707,8 +572,6 @@ pub fn import_background(name: &str, bytes: &[u8]) -> Result<String> {
 
     let dir = paths::backgrounds_dir()?;
     std::fs::create_dir_all(&dir)?;
-    // Never silently overwrite a different picture that sanitized to the
-    // same name: sunsets stay sunsets, the newcomer gets a suffix.
     let mut file = format!("{stem}.{ext}");
     for n in 2.. {
         if !dir.join(&file).exists() {
@@ -720,37 +583,10 @@ pub fn import_background(name: &str, bytes: &[u8]) -> Result<String> {
     Ok(file)
 }
 
-pub fn upload_background(src: &str) -> Result<String> {
-    let src_p = std::path::PathBuf::from(src);
-    if !is_bg_file(&src_p) {
-        return Err(ParziError::Config(
-            "not a usable image (png/jpg/webp, ≤20MB)".into(),
-        ));
-    }
-    crate::wallpaper::check_source(&src_p)?;
-    let name = src_p
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "background.png".into());
-    let dest = paths::backgrounds_dir()?.join(&name);
-    if !dest.exists() {
-        std::fs::copy(&src_p, &dest)?;
-    }
-    Ok(name)
-}
-
-// ---------------------------------------------------------------------------
-// Wallpaper color sync: derive UI colors from background art so the accent
-// follows the mood of the picture. Zero new runtime deps beyond `image`.
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Palette {
-    /// Most vivid tone — the glow accent.
     pub accent: String,
-    /// Mean tone — washes and gradients.
     pub average: String,
-    /// Darkened average — sidebar/stage pairing.
     pub deep: String,
 }
 
@@ -758,11 +594,7 @@ fn hex(r: u8, g: u8, b: u8) -> String {
     format!("#{r:02X}{g:02X}{b:02X}")
 }
 
-/// Sample `path` down to a thumbnail grid and derive UI colors. Near-black
-/// buckets are ignored; when the art is near-monochrome the accent falls
-/// back to the default indigo instead of a muddy gray.
 pub fn extract_palette(path: &std::path::Path) -> Result<Palette> {
-    // Decoder limits, not `image::open`'s defaults (AUDIT C-7).
     let mut reader = image::ImageReader::open(path)
         .map_err(|e| ParziError::Config(format!("unreadable image: {e}")))?
         .with_guessed_format()
@@ -777,7 +609,6 @@ pub fn extract_palette(path: &std::path::Path) -> Result<Palette> {
         return Err(ParziError::Config("empty image".into()));
     }
     let (mut sr, mut sg, mut sb) = (0u64, 0u64, 0u64);
-    // 4-bit buckets: (count, r_sum, g_sum, b_sum).
     #[allow(clippy::type_complexity)]
     let mut buckets: std::collections::HashMap<(u8, u8, u8), (u64, u64, u64, u64)> =
         std::collections::HashMap::new();
@@ -794,7 +625,6 @@ pub fn extract_palette(path: &std::path::Path) -> Result<Palette> {
     }
     let n = pixels.len() as u64;
     let avg = [(sr / n) as u8, (sg / n) as u8, (sb / n) as u8];
-    // Most vivid bucket wins, weighted by coverage.
     let mut best: Option<([u8; 3], f32)> = None;
     for (_, (count, r_sum, g_sum, b_sum)) in &buckets {
         let (r, g, b) = (
@@ -805,7 +635,7 @@ pub fn extract_palette(path: &std::path::Path) -> Result<Palette> {
         let mx = r.max(g).max(b);
         let mn = r.min(g).min(b);
         if mx < 0.08 {
-            continue; // near-black reads as mud, never as accent.
+            continue;
         }
         let sat = if mx > 0.0 { (mx - mn) / mx } else { 0.0 };
         let score = *count as f32 * sat * (0.3 + 0.7 * mx);
@@ -814,7 +644,6 @@ pub fn extract_palette(path: &std::path::Path) -> Result<Palette> {
             best = Some((rgb, score));
         }
     }
-    // Saturation guard: monochrome art keeps the default indigo accent.
     let accent = match best {
         Some((rgb, _)) => {
             let (r, g, b) = (rgb[0] as f32, rgb[1] as f32, rgb[2] as f32);
@@ -859,27 +688,16 @@ mod css_tests {
     }
 
     #[test]
-    fn accent_ink_flips_on_luminance() {
-        assert_eq!(accent_ink("#7C8CFF"), "#0B0D12");
-        assert_eq!(accent_ink("#fff"), "#0B0D12");
-        assert_eq!(accent_ink("#1E1B4B"), "#FFFFFF");
-        assert_eq!(accent_ink("junk"), "#0B0D12");
-    }
-
-    #[test]
-    fn css_vars_carry_percent_twins_and_shadow_flag() {
+    fn css_vars_carry_only_what_the_ui_reads() {
         let css = Theme::default().to_css_vars();
-        assert!(css.contains("--parzi-font:\"Inter\""));
-        assert!(css.contains("--parzi-bg-dim:0.66;--parzi-bg-dim-pct:66%"));
-        assert!(css.contains("--parzi-glass-opacity:0.85;--parzi-glass-opacity-pct:85%"));
-        assert!(css.contains("--parzi-glass-shadow:1"));
-        assert!(css.contains("--parzi-accent-ink:#0B0D12"));
+        assert!(css.contains("--font:\"Inter\""));
+        assert!(css.contains("--bg-dim:0.66"));
+        assert!(css.contains("--accent:#7C8CFF"));
+        assert!(!css.contains("glass"));
+        assert!(!css.contains("--parzi-"));
         let mut t = Theme::default();
-        t.glass.shadow = false;
         t.background.dim = 1.0;
-        let css = t.to_css_vars();
-        assert!(css.contains("--parzi-glass-shadow:0"));
-        assert!(css.contains("--parzi-bg-dim:1;--parzi-bg-dim-pct:100%"));
+        assert!(t.to_css_vars().contains("--bg-dim:1;"));
     }
 
     #[test]

@@ -10,13 +10,13 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "custom-protocol"] }
+tauri = { version = "2", features = ["protocol-asset", "custom-protocol", "unstable"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 tokio-util = "0.7"
 parzi-core = { path = "../crates/parzi-core" }
 parzi-providers = { path = "../crates/parzi-providers" }
@@ -31,12 +31,19 @@ chrono = "0.4"
 anyhow = "1"
 async-trait = "0.1"
 base64 = "0.22"
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # E12: native Windows 11 rounded corners, so the window can stay opaque
 # instead of paying for a per-pixel-alpha composition surface. Same 0.61 the
 # Tauri stack already links, so no new crates enter the tree.
 [target."cfg(windows)".dependencies]
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+webview2-com = "0.38"
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 # S-8: the GUI ships to users — same release profile and lint gates as the
 # workspace crates (opt-level z, LTO, strip, unsafe forbid).
@@ -48,10 +55,10 @@ codegen-units = 1
 
 [lints.rust]
 # `deny`, not `forbid`: `forbid` cannot be lifted anywhere inside the crate —
-# not even by a scoped `#![allow]` in one module — and the app needs exactly
-# one dwmapi FFI call. So: `deny` here, and the only `#![allow(unsafe_code)]`
-# sits in src/dwm.rs, which contains nothing but that call. Every other file
-# stays unsafe-free, and adding unsafe anywhere else is a build error.
+# not even by a scoped `#![allow]` in one module — and the app needs Win32
+# calls for the window corners and the page webview. So: `deny` here, and the
+# only `#![allow(unsafe_code)]` sits in src/dwm.rs. Every other file stays
+# unsafe-free, and adding unsafe anywhere else is a build error.
 unsafe_code = "deny"
 
 [lints.clippy]

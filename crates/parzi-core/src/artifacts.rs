@@ -51,7 +51,6 @@ fn default_version() -> u32 {
     1
 }
 
-/// Slug rule shared with lane/task ids: `[a-z0-9-]{1,64}`.
 pub fn slugify_id(raw: &str) -> String {
     let slug: String = raw
         .to_lowercase()
@@ -131,7 +130,6 @@ pub fn validate_artifact(v: &serde_json::Value) -> Result<ArtifactV1> {
     Ok(a)
 }
 
-/// Next version for `id` given existing versions.
 pub fn next_version(id: &str, existing: &[ArtifactV1]) -> u32 {
     let slug = slugify_id(id);
     let max = existing
@@ -143,7 +141,6 @@ pub fn next_version(id: &str, existing: &[ArtifactV1]) -> u32 {
     max + 1
 }
 
-/// Content-hash dedup: same id + same content => no new version.
 pub fn is_same_content(id: &str, content: &str, existing: &[ArtifactV1]) -> bool {
     let slug = slugify_id(id);
     existing

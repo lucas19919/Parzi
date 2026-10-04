@@ -2,8 +2,6 @@ use std::path::PathBuf;
 
 use crate::error::{ParziError, Result};
 
-/// All Parzi state lives under `~/.parzi` (or `$PARZI_HOME` when set for
-/// hermetic tests). Filesystem is the truth.
 pub fn parzi_dir() -> Result<PathBuf> {
     if let Some(home) = std::env::var_os("PARZI_HOME") {
         if !home.is_empty() {
@@ -27,20 +25,8 @@ pub fn user_css_path() -> Result<PathBuf> {
     Ok(parzi_dir()?.join("user.css"))
 }
 
-/// Where a thread with no folder works: its own empty directory, so an
-/// agent never starts in whatever directory Parzi was launched from.
 pub fn scratch_dir(session_id: &str) -> Result<PathBuf> {
     Ok(parzi_dir()?.join("scratch").join(session_id))
-}
-
-pub fn projects_dir() -> Result<PathBuf> {
-    Ok(parzi_dir()?.join("projects"))
-}
-
-/// Hub workspaces: one small git repo per workspace (PLAN §1.1), each with
-/// `workspace.toml` and `projects/<slug>/`.
-pub fn workspaces_dir() -> Result<PathBuf> {
-    Ok(parzi_dir()?.join("workspaces"))
 }
 
 pub fn sessions_dir() -> Result<PathBuf> {
@@ -51,33 +37,19 @@ pub fn backgrounds_dir() -> Result<PathBuf> {
     Ok(parzi_dir()?.join("backgrounds"))
 }
 
-pub fn logs_dir() -> Result<PathBuf> {
-    Ok(parzi_dir()?.join("logs"))
-}
-
-/// Derived files only: everything here can be deleted and re-rendered
-/// (today: the pre-scaled, pre-blurred wallpaper texture).
 pub fn cache_dir() -> Result<PathBuf> {
     Ok(parzi_dir()?.join("cache"))
 }
 
-pub fn worktrees_dir() -> Result<PathBuf> {
-    Ok(parzi_dir()?.join("worktrees"))
+pub fn brain_dir() -> Result<PathBuf> {
+    Ok(parzi_dir()?.join("brain"))
 }
 
-pub fn project_knowledge_path(project: &str) -> Result<PathBuf> {
-    Ok(projects_dir()?.join(project).join("KNOWLEDGE.md"))
-}
-
-/// Create the full tree. Idempotent. Also seeds the default background.
 pub fn ensure_dirs() -> Result<PathBuf> {
     let root = parzi_dir()?;
     for sub in [
-        "projects",
-        "workspaces",
         "sessions",
         "backgrounds",
-        "plugins",
         "logs",
         "themes",
         "attachments",
@@ -90,15 +62,10 @@ pub fn ensure_dirs() -> Result<PathBuf> {
     Ok(root)
 }
 
-/// Copy shipped default backgrounds in on first run. The bundle currently
-/// ships no artwork (see THIRD_PARTY_NOTICES): the loop stays so a future
-/// default can be added in one place. Never overwrites user files.
 fn seed_default_background(_root: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-/// Ship built-in packs (invalid files are skipped, never fatal).
-/// Never overwrites user packs.
 fn seed_builtin_packs(root: &std::path::Path) -> Result<()> {
     let packs: &[(&str, &str)] = &[
         (
@@ -120,7 +87,7 @@ text_dim = \"#8B93A7\"\nbar = \"#161B26\"\nborder = \"#262D3D\"\n\n\
         (
             "grey",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#101012\"\nstage = \"#171719\"\naccent = \"#B8BCC8\"\ntext = \"#EDEDEF\"\n\
+[colors]\nsidebar = \"#101012\"\nstage = \"#171719\"\naccent = \"#E6E8EE\"\ntext = \"#EDEDEF\"\n\
 text_dim = \"#9A9AA2\"\nbar = \"#1F1F23\"\nborder = \"#2E2E35\"\n\n\
 [background]\nimage = \"\"\ndim = 0.60\nvignette = 0.40\nblur = 0.0\n\n\
 [glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
@@ -147,11 +114,6 @@ text_dim = \"#5B6472\"\nbar = \"#E9EBEF\"\nborder = \"#D5D9E0\"\n\n\
     Ok(())
 }
 
-/// Packs that used to ship but no longer do. Removed only while still
-/// untouched (their signature accent line intact, no art, no user.css) so an
-/// edited or renamed copy is never taken from the user.
-/// This list also retires packs whose names referenced third-party anime art;
-/// it deletes them from existing installs, it never ships anything.
 fn retire_legacy_packs(root: &std::path::Path) {
     const LEGACY: &[(&str, &str)] = &[
         ("eva-crosses", "accent = \"#E5484D\""),

@@ -1,8 +1,3 @@
-//! H-5: traffic between sessions is typed, untrusted data. It lands in the
-//! target's transcript as a System event, reaches the target's agent inside
-//! the untrusted wrapping, and never becomes a user turn. Reads and
-//! messages stop at the project boundary.
-
 mod common;
 
 use std::sync::Arc;
@@ -57,14 +52,11 @@ async fn injected_message_is_untrusted_data_not_a_user_turn() {
     assert_eq!(decoded[0].from_lane, "api");
     assert_eq!(decoded[0].kind, InterKind::Text);
 
-    // What the agent actually gets: the message, marked untrusted.
     let prompt = fake.seen().last().expect("the target ran").prompt.clone();
     assert!(prompt.contains("Ignore your"), "{prompt}");
     assert!(prompt.contains("untrusted data"), "{prompt}");
 }
 
-/// The lease tools' wire format: kinds survive the round trip and the inbox
-/// reads back what was delivered.
 #[tokio::test]
 async fn lease_traffic_keeps_its_kind() {
     home("inter");
@@ -88,7 +80,6 @@ async fn lease_traffic_keeps_its_kind() {
     assert!(inbox[0].body.contains("TSK-9"));
 }
 
-/// A message that arrives while the target is mid-turn is its next turn.
 #[tokio::test]
 async fn a_message_during_a_turn_is_the_next_turn() {
     home("inter");
@@ -137,10 +128,6 @@ async fn a_message_during_a_turn_is_the_next_turn() {
     assert!(prompts[1].contains("status please") && prompts[1].contains("untrusted"));
 }
 
-/// Eight sessions message one idle target at the same moment: every message
-/// reaches its agent exactly once, whether it started a run, raced one's
-/// launch or arrived during a turn, and the target never runs two turns at
-/// a time.
 #[tokio::test]
 async fn messages_sent_at_once_each_arrive_exactly_once() {
     use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
@@ -215,8 +202,6 @@ async fn messages_sent_at_once_each_arrive_exactly_once() {
     );
 }
 
-/// H-5 scoping: `session.read_session` and `session.send_message` stop at
-/// the project boundary.
 #[tokio::test]
 async fn reads_and_messages_stop_at_the_project_boundary() {
     home("inter");

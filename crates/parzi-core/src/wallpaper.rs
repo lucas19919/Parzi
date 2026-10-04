@@ -1,31 +1,13 @@
-//! Pre-rendered wallpaper textures.
-//!
-//! The stage used to be handed `theme.background.image` itself, so the
-//! compositor held a texture the size of whatever file the user picked (a 4K
-//! photo is 33 MB of RGBA for a 1920×1200 screen), and since the compositor
-//! diet dropped the CSS `filter` from `.bg-img`, `background.blur` stopped
-//! doing anything at all.
-//!
-//! Both are fixed by rendering once, here: decode with limits → downscale to
-//! the display (hard-capped) → blur → write `bg-<key>.{webp,jpg}` into the
-//! cache. The key covers everything that changes the picture, so a new blur
-//! or a new screen size renders a new file and the old one is swept.
-
 use std::path::{Path, PathBuf};
 
 use image::{imageops, ImageReader};
 
 use crate::error::{ParziError, Result};
 
-/// Long edge we refuse rather than decode: an 8K JPEG is ~130 MB of pixels
-/// before we get the chance to shrink it.
 pub const MAX_SOURCE_EDGE: u32 = 4096;
-/// Nothing on a desk needs more than this, whatever the panel reports.
 pub const CAP_W: u32 = 2560;
 pub const CAP_H: u32 = 1600;
 
-/// Decoder limits for every wallpaper read (AUDIT C-7: `image::open` ran with
-/// defaults, so a crafted file could ask for an arbitrary allocation).
 pub fn limits() -> image::Limits {
     let mut l = image::Limits::default();
     l.max_image_width = Some(MAX_SOURCE_EDGE);
@@ -34,9 +16,6 @@ pub fn limits() -> image::Limits {
     l
 }
 
-/// Dimensions come out of the header and allocate no pixels, so the size
-/// caps stay off while reading them: we want to *name* an oversized picture,
-/// not to fail it with "exceeds limit".
 fn header_limits() -> image::Limits {
     let mut l = image::Limits::default();
     l.max_alloc = Some(64 * 1024 * 1024);
@@ -52,15 +31,12 @@ fn open(path: &Path, l: image::Limits) -> Result<ImageReader<std::io::BufReader<
     Ok(r)
 }
 
-/// Pixel size from the header alone — no decode, no allocation.
 pub fn source_size(path: &Path) -> Result<(u32, u32)> {
     open(path, header_limits())?
         .into_dimensions()
         .map_err(|e| ParziError::Config(format!("unreadable image: {e}")))
 }
 
-/// Refuse a source we will not decode. Called when a wallpaper is chosen so
-/// the message lands on the person picking it, not on a blank stage.
 pub fn check_source(path: &Path) -> Result<()> {
     let (w, h) = source_size(path)?;
     if w.max(h) > MAX_SOURCE_EDGE {
@@ -71,17 +47,9 @@ pub fn check_source(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Longest edge a picture may have on the way *in*. Wallpapers straight off
-/// the web are routinely 5K–8K; refusing them left "Add image…" doing nothing
-/// useful, so import decodes them once under these looser limits and stores a
-/// copy that fits `MAX_SOURCE_EDGE`.
 const IMPORT_MAX_EDGE: u32 = 12_000;
-/// What an imported copy is shrunk to: a 4K panel's long edge.
 const IMPORT_TARGET_EDGE: u32 = 3840;
 
-/// Re-encode `bytes` as a JPEG no longer than `IMPORT_TARGET_EDGE` on its long
-/// edge. For pictures over the source cap or the byte cap; everything else is
-/// stored as given.
 pub fn shrink_for_import(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut r = ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
@@ -115,7 +83,6 @@ pub fn shrink_for_import(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Pixel size from a header in memory — no decode, no allocation.
 pub fn bytes_size(bytes: &[u8]) -> Result<(u32, u32)> {
     let mut r = ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
@@ -128,9 +95,6 @@ pub fn bytes_size(bytes: &[u8]) -> Result<(u32, u32)> {
     })
 }
 
-/// Largest size that fits inside `max_w`×`max_h` (itself capped) keeping the
-/// aspect ratio. Never upscales: a small picture stays small and CSS `cover`
-/// stretches it, which is cheaper than storing the stretch.
 pub fn fit(src_w: u32, src_h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
     let (sw, sh) = (src_w.max(1), src_h.max(1));
     let (mw, mh) = (max_w.clamp(1, CAP_W), max_h.clamp(1, CAP_H));
@@ -144,10 +108,6 @@ pub fn fit(src_w: u32, src_h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
     )
 }
 
-/// CSS `blur(Npx)` is a Gaussian with σ = N *CSS* pixels, so on a 150 %
-/// display it was σ = 1.5N device pixels. The cached texture is stretched
-/// across `screen_w` device pixels, so one of its pixels covers
-/// `screen_w / out_w` of them and σ shrinks by the same ratio.
 pub fn blur_sigma(blur: f64, scale: f64, out_w: u32, screen_w: u32) -> f32 {
     if blur <= 0.0 || out_w == 0 || screen_w == 0 {
         return 0.0;
@@ -156,8 +116,6 @@ pub fn blur_sigma(blur: f64, scale: f64, out_w: u32, screen_w: u32) -> f32 {
     (device * out_w as f64 / screen_w as f64).max(0.0) as f32
 }
 
-/// FNV-1a over everything that changes the picture. This names a cache file,
-/// it is not a security boundary, so no hashing dependency is worth adding.
 fn fnv1a(bytes: &[u8], mut h: u64) -> u64 {
     for b in bytes {
         h ^= *b as u64;
@@ -166,8 +124,6 @@ fn fnv1a(bytes: &[u8], mut h: u64) -> u64 {
     h
 }
 
-/// Cache key: source identity (path + mtime + length) and every render
-/// parameter. Change the blur or move to a bigger screen and the key moves.
 pub fn cache_key(src: &Path, mtime: u64, len: u64, sigma: f32, out_w: u32, out_h: u32) -> String {
     let mut h = fnv1a(src.to_string_lossy().as_bytes(), 0xcbf2_9ce4_8422_2325);
     for n in [
@@ -182,10 +138,6 @@ pub fn cache_key(src: &Path, mtime: u64, len: u64, sigma: f32, out_w: u32, out_h
     format!("{h:016x}")
 }
 
-/// Blurred output is flat, so lossless WebP holds it in a couple of hundred
-/// KB with no banding. An untouched photo is not flat and `image` ships no
-/// *lossy* WebP encoder, so that case goes out as JPEG q85 rather than as a
-/// ten-megabyte VP8L file.
 pub fn cache_name(key: &str, sigma: f32) -> String {
     if sigma > 0.0 {
         format!("bg-{key}.webp")
@@ -202,8 +154,6 @@ fn mtime_secs(m: &std::fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
-/// Render `src` for a `screen_w`×`screen_h` display at `scale`, or return the
-/// cached file when one already matches. The warm path is two `stat` calls.
 pub fn prepare(
     src: &Path,
     cache_dir: &Path,
@@ -245,8 +195,6 @@ pub fn prepare(
         rgb = imageops::fast_blur(&rgb, sigma);
     }
 
-    // Unique tmp name + rename: a second window asking at the same moment
-    // must never read a half-written texture (core report C-5's rule).
     let tmp = cache_dir.join(format!("{key}.{}.tmp", std::process::id()));
     let write = (|| -> Result<()> {
         let mut w = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
@@ -266,9 +214,6 @@ pub fn prepare(
             )
         };
         r.map_err(|e| ParziError::Config(format!("cannot encode wallpaper: {e}")))?;
-        // Same rule as `store::cache::atomic_write_sync`: flush the buffer and
-        // `sync_all` before the rename, or a crash can leave a cache file whose
-        // name promises bytes that never reached the disk.
         w.into_inner()
             .map_err(|e| ParziError::Config(format!("cannot write wallpaper: {e}")))?
             .sync_all()?;
@@ -286,14 +231,8 @@ pub fn prepare(
     Ok(dest)
 }
 
-/// A `.tmp` younger than this may be another instance rendering right now.
 const TMP_GRACE_SECS: u64 = 600;
 
-/// One wallpaper is live at a time, so the cache is one file. Anything else
-/// named `bg-*` is a previous blur, screen or picture and goes. A `.tmp` is
-/// only swept once it is older than `TMP_GRACE_SECS`: a second window can be
-/// half-way through writing one, and deleting it under that writer turns its
-/// render into an error.
 pub fn sweep(cache_dir: &Path, keep: &Path) {
     let Ok(entries) = std::fs::read_dir(cache_dir) else {
         return;
@@ -326,27 +265,18 @@ mod tests {
 
     #[test]
     fn fit_shrinks_to_the_screen_and_never_grows() {
-        // 4K source on a 1920×1200 panel: width-bound.
         assert_eq!(fit(3840, 2160, 1920, 1200), (1920, 1080));
-        // Already smaller than the screen: untouched.
         assert_eq!(fit(1280, 720, 1920, 1200), (1280, 720));
-        // Tall source on a wide screen: height-bound.
         assert_eq!(fit(2000, 4000, 1920, 1200), (600, 1200));
-        // The cap wins over an absurd screen.
         assert_eq!(fit(4000, 4000, 7680, 4320), (1600, 1600));
-        // Degenerate inputs stay legal.
         assert_eq!(fit(0, 0, 0, 0), (1, 1));
     }
 
     #[test]
     fn sigma_follows_dpi_and_the_downscale() {
-        // No blur asked for, no blur applied.
         assert_eq!(blur_sigma(0.0, 1.5, 1920, 1920), 0.0);
-        // Texture at screen size on a 150 % display: σ = 1.5 × CSS px.
         assert_eq!(blur_sigma(8.0, 1.5, 1920, 1920), 12.0);
-        // Texture at half the screen: σ halves with it.
         assert_eq!(blur_sigma(8.0, 1.5, 960, 1920), 6.0);
-        // Nothing to scale against.
         assert_eq!(blur_sigma(8.0, 1.5, 0, 1920), 0.0);
     }
 
@@ -355,10 +285,10 @@ mod tests {
         let p = Path::new("/home/x/.parzi/backgrounds/a.jpg");
         let base = cache_key(p, 100, 2000, 3.0, 1920, 1080);
         assert_eq!(base, cache_key(p, 100, 2000, 3.0, 1920, 1080));
-        assert_ne!(base, cache_key(p, 101, 2000, 3.0, 1920, 1080)); // touched
-        assert_ne!(base, cache_key(p, 100, 2001, 3.0, 1920, 1080)); // rewritten
-        assert_ne!(base, cache_key(p, 100, 2000, 4.0, 1920, 1080)); // blur
-        assert_ne!(base, cache_key(p, 100, 2000, 3.0, 2560, 1080)); // screen
+        assert_ne!(base, cache_key(p, 101, 2000, 3.0, 1920, 1080));
+        assert_ne!(base, cache_key(p, 100, 2001, 3.0, 1920, 1080));
+        assert_ne!(base, cache_key(p, 100, 2000, 4.0, 1920, 1080));
+        assert_ne!(base, cache_key(p, 100, 2000, 3.0, 2560, 1080));
         assert_ne!(
             base,
             cache_key(Path::new("/home/x/b.jpg"), 100, 2000, 3.0, 1920, 1080)
@@ -400,13 +330,11 @@ mod tests {
         assert_eq!(a.extension().unwrap(), "webp");
         assert_eq!(source_size(&a).unwrap(), (1200, 600));
 
-        // Warm call returns the same file without rewriting it.
         let before = std::fs::metadata(&a).unwrap().len();
         let b = prepare(&src, &cache, 6.0, 1200, 800, 1.0).unwrap();
         assert_eq!(a, b);
         assert_eq!(std::fs::metadata(&b).unwrap().len(), before);
 
-        // A different blur is a different file, and the old one is swept.
         let c = prepare(&src, &cache, 0.0, 1200, 800, 1.0).unwrap();
         assert_ne!(a, c);
         assert_eq!(c.extension().unwrap(), "jpg");
@@ -422,7 +350,6 @@ mod tests {
         let keep = cache.join("bg-keep.jpg");
         std::fs::write(&keep, b"x").unwrap();
         std::fs::write(cache.join("bg-old.jpg"), b"x").unwrap();
-        // Another instance is writing this one right now.
         let tmp = cache.join("bg-other.99.tmp");
         std::fs::write(&tmp, b"half").unwrap();
 
@@ -440,7 +367,6 @@ mod tests {
         let err = check_source(&src).unwrap_err().to_string();
         assert!(err.contains("4096"), "{err}");
         assert!(prepare(&src, &dir.path().join("cache"), 0.0, 1920, 1200, 1.0).is_err());
-        // A source at the limit is fine.
         let ok = dir.path().join("edge.png");
         png(&ok, MAX_SOURCE_EDGE, 16);
         assert!(check_source(&ok).is_ok());

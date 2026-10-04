@@ -1,8 +1,3 @@
-//! Claude Code, driven the way Anthropic's own Agent SDK drives it: the
-//! installed `claude` binary in stream-json mode, with approvals answered
-//! over its stdio control channel (`--permission-prompt-tool stdio`). The
-//! sign-in stays inside Claude Code; Parzi never reads a Claude token.
-
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,7 +25,6 @@ pub struct Claude {
 }
 
 impl Claude {
-    /// `binary` is the configured path, or empty for `claude` on PATH.
     pub fn new(binary: &str) -> Self {
         Self {
             binary: binary.to_string(),
@@ -52,8 +46,6 @@ impl Provider for Claude {
         ID
     }
 
-    /// `default` mode with no settings loaded: every edit, command and
-    /// fetch is a `can_use_tool` request (see `turn_args`).
     fn gated(&self) -> bool {
         true
     }
@@ -120,8 +112,6 @@ impl Provider for Claude {
             ))),
             other => other,
         };
-        // The CLI exits once stdin closes after a result; give it a moment,
-        // then make sure nothing it started outlives the turn.
         let _ = tokio::time::timeout(Duration::from_secs(5), proc.child.wait()).await;
         proc.kill().await;
         scratch.remove();
@@ -181,9 +171,6 @@ fn models_from_init(init: &Value) -> Vec<ModelInfo> {
         .collect()
 }
 
-/// Start Claude Code, ask for its initialize answer (models, account), and
-/// stop it. No prompt is written, so no request reaches Anthropic. User
-/// settings are skipped so the probe never runs anyone's hooks.
 async fn handshake(program: &Path) -> Result<Value, ProviderError> {
     let args: Vec<String> = [
         "-p",
@@ -223,9 +210,6 @@ async fn handshake(program: &Path) -> Result<Value, ProviderError> {
     init
 }
 
-/// A new directory only this user can open: the MCP config inside carries
-/// the run's secret. (Windows temp folders are per-user already.) Fails if
-/// the path exists, so nobody can prepare it in advance.
 fn private_dir(dir: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -236,9 +220,6 @@ fn private_dir(dir: &Path) -> std::io::Result<()> {
     std::fs::DirBuilder::new().create(dir)
 }
 
-/// Temporary files a turn hands to the CLI by path: long instructions and
-/// the MCP config (which carries this run's secret) stay off the command
-/// line, where Windows would cap them and anyone could read them.
 struct TurnFiles {
     dir: PathBuf,
     instructions: Option<PathBuf>,
@@ -292,13 +273,6 @@ impl TurnFiles {
     }
 }
 
-/// The repo's own instructions, which `--setting-sources=` also turns off:
-/// every `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md` in the folder
-/// and the folders above it, outermost first, as Claude Code would read
-/// them. Parzi hands over the text; the settings stay off. The home
-/// folder's `.claude/CLAUDE.md` is the person's own Claude Code memory, not
-/// the repo's, and `@path` imports are not followed. Capped, with the cut
-/// said.
 fn claude_md(cwd: &Path) -> Option<String> {
     const NAMES: [&str; 3] = ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"];
     const MAX_CHARS: usize = 40_000;
@@ -335,7 +309,6 @@ fn claude_md(cwd: &Path) -> Option<String> {
     Some(out.trim_end().to_string())
 }
 
-/// Parzi's effort pill in Claude Code's words; its own words pass through.
 fn effort(e: &str) -> &str {
     match e {
         "extra" => "xhigh",
@@ -344,10 +317,6 @@ fn effort(e: &str) -> &str {
     }
 }
 
-/// Every change Claude Code makes asks first (`default` mode), and nothing is
-/// pre-approved behind Parzi's back: no user or project settings (their
-/// `permissions.allow` rules and hooks would answer before Parzi is asked,
-/// and a repo could grant itself commands), and no MCP servers but Parzi's.
 fn turn_args(spec: &TurnSpec, files: &TurnFiles) -> Vec<String> {
     let mut a: Vec<String> = [
         "-p",
@@ -390,8 +359,6 @@ fn turn_args(spec: &TurnSpec, files: &TurnFiles) -> Vec<String> {
     if let (Some(p), Some(t)) = (&files.mcp, &spec.tools) {
         a.push("--mcp-config".into());
         a.push(p.display().to_string());
-        // Parzi's own tools pass Parzi's gate when they run; Claude Code
-        // asking first would make the person approve twice.
         a.push("--allowedTools".into());
         a.push(format!("mcp__{}", t.name));
     }
@@ -405,10 +372,7 @@ fn resume_id(v: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Stdio control channel: our control requests and their answers, plus the
-/// stream of everything else the CLI prints.
 struct Link {
-    /// `None` once closed: dropping the pipe is what tells the CLI to exit.
     stdin: Mutex<Option<Box<dyn AsyncWrite + Send + Unpin>>>,
     waiters: std::sync::Mutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>,
     counter: AtomicU64,
@@ -466,7 +430,6 @@ impl Link {
             .map_err(|e| ProviderError::process(format!("writing to Claude Code: {e}")))
     }
 
-    /// Close stdin: the CLI finishes the turn it has and exits.
     async fn close(&self) {
         if let Some(mut w) = self.stdin.lock().await.take() {
             let _ = w.shutdown().await;
@@ -526,8 +489,6 @@ impl Link {
         let _ = waiter.send(outcome);
     }
 
-    /// The CLI is gone: every open control request ends as a process
-    /// failure, so the turn's error carries Claude Code's own stderr.
     fn fail_all(&self) {
         if let Ok(mut w) = self.waiters.lock() {
             w.clear();
@@ -559,17 +520,11 @@ struct TurnState {
     counted_messages: HashSet<String>,
     last_context: Option<u64>,
     interrupting: bool,
-    /// Signed in with a plan, not a key (`apiKeySource: "none"`): the
-    /// CLI's dollar figure is what the tokens would cost on the API, and
-    /// nobody pays it.
     on_plan: bool,
     resuming: bool,
-    /// Claude Code said `system/init`: the conversation loaded.
     saw_init: bool,
 }
 
-/// Run one turn over an already-started CLI's stdio. Split from
-/// `run_turn` so the wire is testable without a real `claude`.
 async fn drive<R, W>(
     reader: R,
     writer: W,
@@ -587,8 +542,6 @@ where
         resuming: spec.resume.as_ref().and_then(resume_id).is_some(),
         ..TurnState::default()
     };
-    // A conversation Claude Code no longer has ends before `initialize` is
-    // answered, as a `result`: read it instead of calling it a crash.
     let init = link.control(
         json!({"subtype": "initialize", "hooks": null}),
         Duration::from_secs(90),
@@ -596,8 +549,6 @@ where
     tokio::pin!(init);
     loop {
         tokio::select! {
-            // What the CLI already said comes first: its last words before
-            // exiting explain the exit.
             biased;
             Some(v) = incoming.recv() => {
                 if let Some(end) = handle(&v, &mut st, &link, &gate, events).await? {
@@ -665,7 +616,6 @@ async fn sleep_until(deadline: Option<tokio::time::Instant>) {
     }
 }
 
-/// The prompt as Claude Code takes it, and the images it could not take.
 fn user_content(prompt: &str, images: &[PathBuf]) -> (Value, Vec<PathBuf>) {
     if images.is_empty() {
         return (json!(prompt), vec![]);
@@ -684,7 +634,6 @@ fn user_content(prompt: &str, images: &[PathBuf]) -> (Value, Vec<PathBuf>) {
     (Value::Array(blocks), unreadable)
 }
 
-/// One stdout message. `Some(end)` = the turn is over.
 async fn handle(
     v: &Value,
     st: &mut TurnState,
@@ -693,10 +642,6 @@ async fn handle(
     events: &EventTx,
 ) -> Result<Option<TurnEnd>, ProviderError> {
     let kind = v.get("type").and_then(Value::as_str).unwrap_or("");
-    // Subagent traffic carries its parent tool call. Its words stay out of
-    // the thread (its answer arrives as that tool's result), but its tool
-    // calls and tokens count like the main conversation's: its commands
-    // pass the same gate and lease audit, and it spends the same budget.
     let main = v.get("parent_tool_use_id").is_none_or(Value::is_null);
     match kind {
         "control_request" => {
@@ -708,7 +653,6 @@ async fn handle(
             let req = v.get("request").cloned().unwrap_or(Value::Null);
             if req.get("subtype").and_then(Value::as_str) == Some("can_use_tool") {
                 let (link, gate) = (link.clone(), gate.clone());
-                // A person may take minutes: never block the stream on it.
                 tokio::spawn(async move {
                     let (request, input) = permission_request(&req);
                     let response = match gate.decide(request).await {
@@ -794,7 +738,6 @@ async fn handle(
                         }
                     }
                     Some("tool_use") => {
-                        // Words said before a tool call come before it in the thread.
                         if !text.trim().is_empty() {
                             let _ = events.send(ProviderEvent::Message(std::mem::take(&mut text)));
                         }
@@ -821,8 +764,6 @@ async fn handle(
             if !text.trim().is_empty() {
                 let _ = events.send(ProviderEvent::Message(text));
             }
-            // One API call can arrive split over several messages that share
-            // its id and usage: count each call once.
             let mid = msg
                 .get("id")
                 .and_then(Value::as_str)
@@ -835,7 +776,6 @@ async fn handle(
                         + n("cache_creation_input_tokens")
                         + n("cache_read_input_tokens");
                     let output = n("output_tokens");
-                    // The meter is the main conversation's window.
                     if main {
                         st.last_context = Some(input + output);
                     }
@@ -1030,9 +970,6 @@ fn finish(v: &Value, st: &TurnState, events: &EventTx) -> Result<TurnEnd, Provid
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| format!("Claude Code ended the turn with `{subtype}`"));
     }
-    // Asked to resume, and the turn ended before the conversation loaded:
-    // Claude Code no longer has it (verified live: `error_during_execution`
-    // with no `init`, the reason in `errors`).
     if st.resuming && !st.saw_init && subtype == "error_during_execution" {
         return Err(ProviderError::new(ErrorClass::SessionLost, message));
     }
@@ -1080,8 +1017,6 @@ mod tests {
         }
     }
 
-    /// Plays the CLI side: answers initialize, checks the prompt, asks one
-    /// permission, then streams a turn with two tool calls and a result.
     async fn fake_cli(io: tokio::io::DuplexStream, script: Vec<Value>) -> Vec<Value> {
         let (r, mut w) = tokio::io::split(io);
         let mut lines = BufReader::new(r).lines();
@@ -1175,8 +1110,6 @@ mod tests {
         }));
     }
 
-    /// On a plan the CLI still prints what the turn would have cost on the
-    /// API. Nobody pays that, so no cost is reported.
     #[tokio::test]
     async fn a_turn_on_a_plan_costs_nothing() {
         let (ours, theirs) = tokio::io::duplex(1 << 16);
@@ -1249,9 +1182,6 @@ mod tests {
         assert_eq!(r.title, "Run `rm -rf target`");
     }
 
-    /// A subagent's words stay out of the thread, but its commands and its
-    /// tokens count: they pass the same gate and lease audit, and spend the
-    /// same budget.
     #[tokio::test]
     async fn a_subagents_tools_and_tokens_count_but_its_words_do_not() {
         let (ours, theirs) = tokio::io::duplex(1 << 16);
@@ -1297,9 +1227,6 @@ mod tests {
         );
     }
 
-    /// Verified live: resuming a conversation Claude Code no longer has ends
-    /// before `initialize` is answered, with `error_during_execution` and
-    /// the reason in `errors`.
     #[tokio::test]
     async fn a_conversation_claude_no_longer_has_is_session_lost() {
         let (ours, theirs) = tokio::io::duplex(1 << 16);
@@ -1324,8 +1251,6 @@ mod tests {
         cli.await.unwrap();
     }
 
-    /// A CLI that dies before answering `initialize` is a process failure,
-    /// so the caller adds Claude Code's own stderr to the message.
     #[tokio::test]
     async fn a_cli_that_dies_at_start_is_a_process_failure() {
         let (ours, theirs) = tokio::io::duplex(1 << 16);
@@ -1344,8 +1269,6 @@ mod tests {
         cli.await.unwrap();
     }
 
-    /// Nothing is approved behind Parzi's back: the most-asking mode, no
-    /// user or project settings, no MCP servers but Parzi's.
     #[test]
     fn a_turn_starts_claude_with_nothing_pre_approved() {
         let files = TurnFiles {
@@ -1375,8 +1298,6 @@ mod tests {
         assert_eq!(m[1].efforts.len(), 5);
     }
 
-    /// Settings stay off, but the repo's CLAUDE.md files still reach Claude
-    /// Code, outermost first, and nothing that is not Claude's.
     #[test]
     fn a_repo_s_claude_md_files_ride_along_outermost_first() {
         let root = std::env::temp_dir().join(format!("parzi-claudemd-{}", std::process::id()));

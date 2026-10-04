@@ -1,10 +1,8 @@
 <script lang="ts">
   import { PROVIDER_MARKS } from "./providerMarks";
 
-  /** Provider id, e.g. "claude", "codex", "xai". Unknown ids render nothing. */
   export let provider: string;
   export let size = 14;
-  /** Dimmed ink for secondary placements (thread rows, overviews). */
   export let muted = false;
 
   $: mark = PROVIDER_MARKS[provider];

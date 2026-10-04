@@ -6,67 +6,90 @@
 
 ## Product
 
-Lean Rust agent harness. Dark, retro-glass, vibey. Wallpaper art + grain,
-glass composer, frosted menus. Local-first, keyboard-first, silent failures
-are bugs — every action toasts success or error.
+Lean Rust agent harness and browser. Dark, matte, quiet. Local-first,
+keyboard-first; silent failures are bugs, so every action toasts success or
+error.
 
 ## Tokens (`ui/src/theme.css` `:root`)
 
-Two layers. **Inputs** `--parzi-*` are emitted from `~/.parzi/theme.toml` by
-`Theme::to_css_vars()` (seven colours, type, wallpaper grade, glass); the
-defaults in `theme.css` only cover a missing file. **Role tokens** are derived
-from the inputs with `color-mix` and are the only thing a component may use.
-No hex, no `rgba()`, no `var(--parzi-x, #fallback)` inside a `<style>` block.
-`user.css` loads last and may override any token.
+Ten colours, nothing else. `theme.toml` sets four of them (background, text,
+muted, accent) through `Theme::to_css_vars()`; `--panel`, `--line` and
+`--faint` are mixed from those. Components use only these names. No hex or
+`rgba()` colours in a `<style>` block (shadows, diff tints and the Windows
+close-button red excepted). `user.css` loads last and may override any token.
+Charts read tokens through `resolveColor()` in `lib/theme.ts`.
 
-| Role | Tokens | Use |
-|---|---|---|
-| text | `--text` `--text-2` `--text-3` `--text-4` | primary · secondary · muted · faint (never below 11px) |
-| surfaces | `--stage` `--sidebar` `--panel` `--menu` | window ground · sidebar wash · glass (composer, palette; opacity from theme) · popovers |
-| raised | `--surface-1` `--surface-2` `--surface-3` `--input` `--code` | card · hover · selected · text fields · code blocks |
-| lines | `--line` `--line-2` `--line-3` `--line-hi` | theme border · hairline · strong · top-edge light |
-| accent | `--accent` `--accent-ink` `--accent-soft` `--accent-mid` `--accent-line` `--accent-glow` `--accent-text` | one filled action per surface; ink is the text that reads on it |
-| status | `--ok` `--warn` `--bad` `--info` (+ `-soft`, `-line`) | colour means state, never decoration |
-| glass | `--glass-blur` `--glass-radius` `--glass-shadow` `--menu-shadow` | shadows collapse to 0 when the theme turns them off |
-| radius | `--radius-1..4` (6/8/10/12) · `--radius-pill` | never mix other radii |
-| type | `--parzi-font` `--parzi-font-size` `--parzi-mono` `--parzi-mono-size` | Inter + JetBrains Mono ship; Instrument Serif italic for the wordmark |
-| spacing | 4 / 8 / 12 / 16 / 24 scale | no magic numbers |
-| motion | `--ease-spring`, `--ease-snap`, `--dur-pop` 180ms, `--dur-lift` 140ms | springs, not tweens |
+| Token | Role |
+|---|---|
+| `--bg` | window background, inputs, code |
+| `--panel` | raised surfaces: cards, composer, menus, popovers |
+| `--line` | borders, dividers, hover and selected fills |
+| `--text` | primary text |
+| `--muted` | secondary text and icons |
+| `--faint` | placeholders, hints, disabled |
+| `--accent` | the one colour with a job: focus, selection, primary action |
+| `--ok` `--warn` `--bad` | state only, never decoration |
 
-Appearance UI (`settings/AppearanceSection.svelte`): edits preview through
+Non-colour tokens: `--font` `--font-size` `--mono` `--mono-size` (type),
+`--bg-dim` `--bg-blur` `--vignette` (wallpaper), `--radius` (8px)
+`--radius-lg` (12px), `--shadow`. Pills use `999px`; motion is `140ms ease`.
+
+Appearance UI (`settings/AppearanceSection.svelte`) edits the four input
+colours, type and the wallpaper grade. Edits preview through
 inline vars (`lib/theme.ts` `previewTheme`), persist after 400 ms, then the
 authoritative stylesheet from Rust replaces the preview (`applyThemeCss`
 always clears inline vars). Theme packs live in `~/.parzi/themes/<slug>/`;
 a pack without art keeps the current wallpaper.
 
-## Glass discipline (performance is a feature)
+## Layout
 
-- Real `backdrop-filter` lives ONLY on: composer bar, model/project menus,
-  toasts, approval card. Sidebar is translucent solid, never blurred.
-- Grain overlay: plain opacity, NEVER `mix-blend-mode` (killed dragging once).
-- Static layers (wallpaper, grain, halftone) cost zero per frame. Keep them static.
-- Release profile stays lean; UI bundle warnings get fixed, not ignored.
+- Top bar (38px): menu, home, tabs, window controls. The bar is the drag region.
+- Tabs are sessions, pages or the brain. Drag reorders them (pointer events,
+  not HTML5 drag, which WebView2 hands to the file-drop handler);
+  Ctrl+Shift+←/→ moves the focused tab. A session tab shows the thread card
+  and the docked composer; an empty draft shows the composer centred.
+- Each page tab owns a native WebView2 child that stays alive while hidden,
+  so switching tabs never reloads. It fills everything under the 40px toolbar
+  (back, forward, reload, address, pin); F11 or a page's own fullscreen hides
+  all chrome. Any HTML overlay above it (top menu, switcher, popovers)
+  registers in `lib/overlay.ts` so the page hides while the overlay is open.
+- An empty session tab is Home: the composer with pinned (or most visited)
+  sites and recent sessions under it. New tab and the Home button land here.
+- Switcher (Ctrl+P / Ctrl+K): actions, open tabs, sessions. Settings is a full
+  pane (Ctrl+,).
 
 ## Components (states: default / hover / active / focus-visible / disabled)
 
-- Sidebar rows (grid: dot · main · actions), active = accent gradient + 3px
-  neon inset strip. Hover rail: pin ★ · rename · fork · kill.
-- Pills 28px: default / hover top-edge brightening / active scale(.96).
-- Model menu 420px: search-first, ⚡ Smart Auto row, provider sections with
-  status dots, tier mono, no-key routes to key settings, full arrow+enter nav.
-- Composer: micro-header (workspace · branch · tokens) + textarea + pill row
-  (+ · project · model · effort · send jewel). Stop = red square, Esc works.
-- Thread: user glass bubbles right, tool micro-cards (running pulse / ✓ms /
-  ✗ms + accordion), reasoning rail (accent left bar, collapsed when done),
-  code blocks (ext badge + lines + copy + gutter + diff tint + 30-line clamp).
-- Palette (Ctrl+K): actions + threads + models, toast-only notices.
-- Toasts: every save/apply/failover/error. No silent failures, ever.
+- Brain is a folder tree, kept simple. Folders: All sessions, each project,
+  Not used; each shows its tokens per session. Notes sit inside; a pin marks
+  "always in full". Drag a note onto a folder to move it, Ctrl+drag to copy
+  (pointer events, not HTML5 drag). Clicking a folder shows its token total
+  and the exact text the agent gets; clicking a note shows one header row
+  (title, "Always include in full", Read/Edit, Open in Obsidian, Open file,
+  Delete) and the note. No chips, no footer. Reloads on window focus.
+- Composer: one box (attachments, textarea, send), then a quiet row: attach,
+  Agent (robot) / Web (globe) mode (Tab), permissions, project (+ notes count, git branch) on the
+  left; model, effort, context ring on the right. The project chip opens a
+  picker (projects, make this folder a project, new project from a folder, no
+  project); it never opens a bare folder dialog. Send fills with the accent
+  once there is text. `/` opens commands, `@` lists files. Esc stops a run.
+- Buttons: `.btn` is a raised neutral (hover brightens fill and border);
+  `.btn.primary` is the accent with an inner highlight and a soft accent glow,
+  lifting 1px on hover. Every button presses (scale 0.97). Disabled is 45%.
+- Model picker: provider rail, search, starred, Smart Auto, Ctrl+1..5.
+- Popovers go through `lib/popover.ts` (portal, placement, outside click, Esc).
+- Thread: user pill bubbles right, tool stacks (running / ok / failed with
+  output), reasoning rail, code blocks (ext badge, lines, copy, gutter, diff
+  tint, 30-line clamp), per-message copy under the message.
+- Icons come from `lib/icons.ts` through `Icon.svelte`; no inline SVG paths
+  in components except the window controls.
+- Toasts (`lib/toast.ts`): every save, apply and failure. No silent failures.
 
 ## Accessibility (non-negotiable)
 
 - SVG icons only — no emoji-as-icon (⚡-style glyphs render as emoji on mobile).
-- Semantic elements: real `<button>` for leaf actions; `div role=button` only
-  when nesting forbids buttons (thread rows contain inputs/actions).
+- Semantic elements: real `<button>` for leaf actions; `role=tab`/`role=button`
+  on a div only when nesting forbids buttons (a tab contains its close button).
 - `transition:fade|local` inside `{#each}` blocks — never global list transitions.
 - `cursor: pointer` on all clickables; visible `:focus-visible` rings.
 - `prefers-reduced-motion: reduce` kills animation (state stays correct).
@@ -77,6 +100,7 @@ a pack without art keeps the current wallpaper.
 ## Anti-patterns (instant reject in review)
 
 - New `backdrop-filter` surfaces without a perf note.
+- Dead controls: every visible button and command has a handler.
 - Hardcoded hex where a token exists; new radii/spacing off-scale.
 - Silent catch blocks in UI code; missing toast on failure paths.
 - `unwrap()` in Rust outside tests; secrets in logs; unbounded lists

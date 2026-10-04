@@ -1,7 +1,3 @@
-//! From a queued run to a live one: the provider it goes to, the lane
-//! policy it runs under, the tools it is armed with, and the driver task
-//! that owns it until it ends.
-
 use std::sync::Arc;
 
 use parzi_core::config::{Budget, ParziConfig};
@@ -10,34 +6,17 @@ use parzi_core::store::{Event, SessionMeta, SessionStatus};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::board_tools::board_defs;
 use crate::handler::{system_parts, HarnessBridge, RunEvent, RunSink};
-use crate::lease_tools::{lease_defs, LeaseCtx};
 use crate::run::{EngineRun, EngineRunParts};
 use crate::toolhost::{ToolHost, ToolHostParts};
 use crate::tools::{ApprovalMode, Approver, DenyApprover, ToolExecutor};
 use parzi_providers::display_name;
 
-use super::queue::{
-    clear_queued, run_project, run_role, run_session, set_run_note, set_run_project, Pump,
-    QueuedRun,
-};
+use super::queue::{clear_queued, run_session, set_run_note, Pump, QueuedRun};
 use super::{next_run_id, normalize_effort, Handle, Orchestrator, SessionSlot};
 
-/// R-4: what a run may spend — the tighter of the machine's config budget and
-/// the project's `budget:` line. A project the store cannot read (deleted,
-/// mid-write) simply does not tighten anything.
-fn budget_for(cfg: &ParziConfig, project: Option<&(String, String)>) -> Budget {
-    let mut budget = cfg.budget;
-    if let Some((workspace, slug)) = project {
-        if let Ok(p) = parzi_core::project::load(workspace, slug) {
-            budget = budget.tightest(Budget {
-                max_cost_usd: p.budget_usd,
-                max_tokens: None,
-            });
-        }
-    }
-    budget
+fn budget_for(cfg: &ParziConfig) -> Budget {
+    cfg.budget
 }
 
 impl Orchestrator {
@@ -54,38 +33,6 @@ impl Orchestrator {
         attachments: Vec<parzi_core::context::AttachedFile>,
         mode_override: Option<String>,
     ) -> Result<(SessionMeta, mpsc::UnboundedReceiver<RunEvent>)> {
-        self.spawn_in_project(
-            None,
-            project,
-            lane,
-            model_spec,
-            prompt,
-            approver,
-            cwd,
-            effort,
-            attachments,
-            mode_override,
-        )
-        .await
-    }
-
-    /// `spawn`, bound to a hub project `(workspace, slug)`: the run then also
-    /// honours that project's `budget:` (R-4).
-    #[allow(clippy::too_many_arguments)]
-    pub async fn spawn_in_project(
-        &self,
-        workspace_project: Option<(String, String)>,
-        project: &str,
-        lane: &str,
-        model_spec: &str,
-        prompt: &str,
-        approver: Option<Arc<dyn Approver>>,
-        cwd: &str,
-        effort: &str,
-        attachments: Vec<parzi_core::context::AttachedFile>,
-        mode_override: Option<String>,
-    ) -> Result<(SessionMeta, mpsc::UnboundedReceiver<RunEvent>)> {
-        // B4: prune finished tasks before measuring capacity.
         let live = {
             let mut h = self.handles.lock().await;
             h.retain(|_, handle| !handle.finished());
@@ -101,11 +48,8 @@ impl Orchestrator {
             .collect();
 
         let mut meta = self.store.create(&title, project, lane, model_spec)?;
-        meta.cwd = cwd.to_string();
-        // R-4: remember the project on the session, so its later turns keep
-        // the project budget without every caller repeating it.
-        if workspace_project.is_some() {
-            set_run_project(&meta.id, workspace_project.clone());
+        if !cwd.trim().is_empty() {
+            self.store.set_cwd(&meta.id, cwd)?;
         }
 
         let q = QueuedRun {
@@ -118,7 +62,6 @@ impl Orchestrator {
             effort,
             attachments,
             approver,
-            workspace_project,
             prompt_recorded: false,
             inbox_from: None,
             mode_override,
@@ -153,8 +96,6 @@ impl Orchestrator {
         model_override: Option<String>,
         mode_override: Option<String>,
     ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
-        // B4: a finished run must not block its own session. Prune first so a
-        // second message to a completed thread succeeds.
         {
             let mut h = self.handles.lock().await;
             h.retain(|_, handle| !handle.finished());
@@ -165,9 +106,6 @@ impl Orchestrator {
             }
         }
         let meta = self.store.get(id)?;
-        // Per-message model switch: the thread follows the newly picked
-        // model. Routing (launch) refuses a switch to another provider once
-        // the vendor holds the thread's conversation.
         let spec = model_override
             .filter(|m| !m.trim().is_empty())
             .unwrap_or_else(|| meta.model.clone());
@@ -186,7 +124,6 @@ impl Orchestrator {
             effort,
             attachments,
             approver,
-            workspace_project: run_project(id),
             prompt_recorded: false,
             inbox_from: None,
             mode_override,
@@ -210,9 +147,6 @@ impl Orchestrator {
         Self::launch(self.pump_parts(), q).await
     }
 
-    /// Compact a thread on request. The vendor holds the conversation, so
-    /// the vendor compacts it: Claude Code and OpenCode take `/compact` as
-    /// a turn; the others compact on their own as the window fills.
     pub async fn compact(&self, id: &str, focus: &str) -> Result<String> {
         let provider = run_session(id).map(|s| s.provider).ok_or_else(|| {
             ParziError::Store("nothing to compact yet: this thread has no conversation".into())
@@ -242,10 +176,6 @@ impl Orchestrator {
         ))
     }
 
-    /// Where a run goes: `(provider, model)`. A spec names a provider (and
-    /// maybe a model); `auto` lets Smart Auto pick for a new thread. A
-    /// thread whose conversation lives on a provider stays on it: the
-    /// vendor holds the history, so another provider would start blind.
     async fn route(
         p: &Pump,
         cfg: &ParziConfig,
@@ -292,77 +222,27 @@ impl Orchestrator {
         Ok((provider, model))
     }
 
-    pub(super) fn lane_policy_for(
-        cfg: &ParziConfig,
-        project: &str,
-        lane: &str,
-    ) -> (ApprovalMode, Vec<String>) {
-        let mut mode = ApprovalMode::parse(&cfg.lanes.default_mode);
+    pub(super) fn lane_policy_for(cfg: &ParziConfig) -> (ApprovalMode, Vec<String>) {
+        let mode = ApprovalMode::parse(&cfg.lanes.default_mode);
         let mut allowed = cfg.lanes.default_allowed_tools.clone();
-        if let Ok(scan) = parzi_core::lanes::scan_projects() {
-            for (p, lane_list) in scan {
-                if p.name != project {
-                    continue;
-                }
-                mode = ApprovalMode::parse(
-                    &p.defaults
-                        .mode
-                        .clone()
-                        .unwrap_or_else(|| cfg.lanes.default_mode.clone()),
-                );
-                if !p.defaults.allowed_tools.is_empty() {
-                    allowed.clone_from(&p.defaults.allowed_tools);
-                }
-                for l in lane_list {
-                    if l.name == lane {
-                        mode = ApprovalMode::parse(&l.mode);
-                        if !l.allowed_tools.is_empty() {
-                            allowed.clone_from(&l.allowed_tools);
-                        }
-                    }
-                }
-            }
-        }
-        // Hub-workspace floor: workspace.toml [policy] mode. Deck slugs are
-        // not workspaces, so role runs are floored by their workspace at the
-        // launch site instead (a slug cannot smuggle itself out from under
-        // its workspace's lockdown by being the project key).
-        if parzi_core::workspace::load(project).is_ok() {
-            if let Some(floor) = Self::workspace_policy_mode(project) {
-                mode = Self::restrict_mode(mode, floor);
-            }
-        }
-        // UI tools are always available: rendering is not execution.
-        for u in ["ui.show_markdown", "ui.show_widget", "ui.show_diagram"] {
+        for u in [
+            "ui.show_markdown",
+            "ui.show_artifact",
+            "browser.open",
+            "browser.tabs",
+            "browser.read",
+            "brain.search",
+            "brain.read",
+            "brain.list",
+            "brain.write",
+        ] {
             if !allowed.contains(&u.to_string()) {
                 allowed.push(u.into());
-            }
-        }
-        // Teamwork harness tools are first-class: agents can delegate to
-        // subsessions and message across sessions by default. Spawning and
-        // messaging still pause for approval in lane Ask mode (handler gate).
-        // Plan + lane-dispatch tools ship with the project workspace.
-        for s in [
-            "session.spawn",
-            "session.send_message",
-            "session.read_session",
-            "session.list_sessions",
-            "plan.read",
-            "plan.update",
-            "lane.dispatch",
-            "knowledge.read",
-            "knowledge.record",
-        ] {
-            if !allowed.contains(&s.to_string()) {
-                allowed.push(s.into());
             }
         }
         (mode, allowed)
     }
 
-    /// Most restrictive wins: Deny beats everything, Ask beats Auto. Used
-    /// for workspace floors and chat overrides alike — nothing ever lifts a
-    /// stricter setting, it can only tighten.
     pub(super) fn restrict_mode(a: ApprovalMode, b: ApprovalMode) -> ApprovalMode {
         use ApprovalMode::{Ask, Auto, Deny};
         match (a, b) {
@@ -372,23 +252,6 @@ impl Orchestrator {
         }
     }
 
-    /// The `[policy] mode` of a hub workspace, if it states one. Unknown
-    /// words parse to Ask (fail closed, like every other name gate).
-    pub(super) fn workspace_policy_mode(workspace: &str) -> Option<ApprovalMode> {
-        let ws = parzi_core::workspace::load(workspace).ok()?;
-        let m = ws.policy.mode.trim();
-        if m.is_empty() {
-            None
-        } else {
-            Some(ApprovalMode::parse(m))
-        }
-    }
-
-    /// Build + launch a run for an existing session. The session is claimed
-    /// first, so a second launch or a message sent meanwhile sees it live;
-    /// the driver lets go of it when the run ends (`RunEnd`). B4: handles are
-    /// always removed on completion so the concurrency cap counts live runs
-    /// only.
     pub(super) async fn launch(p: Pump, q: QueuedRun) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
         let sid = q.session_id.clone();
         clear_queued(&sid);
@@ -408,15 +271,11 @@ impl Orchestrator {
                         task: None,
                     },
                 );
-                // Messages already in the transcript belong to this run's
-                // opening (or were answered before); later ones are its news.
                 let seen = p.store.events(&sid).map_or(0, |e| e.len());
                 Some((id, seen))
             }
         };
         let Some((id, seen)) = claim else {
-            // The session has a live run. A message from another session is
-            // read by that run; a person's turn waits behind it.
             if q.inbox_from.is_none() {
                 p.enqueue(q).await;
             }
@@ -431,10 +290,6 @@ impl Orchestrator {
                         h.remove(&sid);
                     }
                 }
-                // R-5: a launch that fails must not leave the session sitting
-                // `Queued` forever with nobody to tell. Park it Idle, say so
-                // in the transcript, and put the error on the host bus —
-                // queued runs have no per-run receiver to fail into.
                 p.store.set_status(&sid, SessionStatus::Idle)?;
                 p.store.append(
                     &sid,
@@ -467,8 +322,6 @@ impl Orchestrator {
         if p.store.get(&q.session_id)?.model != shown {
             p.store.set_model(&q.session_id, &shown)?;
         }
-        // R-7: a thread with no folder gets its own empty one, never the
-        // directory Parzi was started from.
         let cwd = if q.cwd.trim().is_empty() {
             let dir = parzi_core::paths::scratch_dir(&q.session_id)?;
             std::fs::create_dir_all(&dir)?;
@@ -476,71 +329,21 @@ impl Orchestrator {
         } else {
             q.cwd.clone()
         };
-        // §1.2: a run that is a project role is briefed and armed by its role,
-        // not by the lane's SYSTEM.md. The lane still decides the approval
-        // mode — a machine's Ask/Deny is never lifted by a project.
-        let role = run_role(&q.session_id);
-        let (mut mode, mut allowed) = Self::lane_policy_for(&snap, &q.project, &q.lane);
-        // Deck roles file under their slug, so the floor above missed them:
-        // a role run honours its workspace's policy, never less.
-        if let Some(binding) = &role {
-            if let Some(floor) = Self::workspace_policy_mode(&binding.ctx.workspace) {
-                mode = Self::restrict_mode(mode, floor);
-            }
-        }
-        // Chat intent (the composer's permission pill): tightens, never lifts.
-        // "edits" rides as Ask with file edits pre-approved.
+        let (mut mode, allowed) = Self::lane_policy_for(&snap);
         let mut edits_auto = false;
         if let Some(o) = q.mode_override.as_deref() {
             mode = Self::restrict_mode(mode, ApprovalMode::parse(o));
             edits_auto = o.trim() == "edits";
         }
-        if let Some(binding) = &role {
-            allowed = binding.tools();
-            for u in ["ui.show_markdown", "ui.show_widget", "ui.show_diagram"] {
-                allowed.push(u.into());
-            }
-        }
-        // A run the lease layer knows (a project lane, registered with its
-        // holder before dispatch) gets the lease + board tools and the write
-        // gate; an ordinary thread gets neither.
-        let lease_ctx = p
-            .leases
-            .holder_of_run(&q.session_id)
-            .await
-            .map(|_| LeaseCtx::new(p.leases.clone(), &q.session_id));
-        // What it is offered it may call: the names come from the same defs.
-        if lease_ctx.is_some() {
-            for d in lease_defs().into_iter().chain(board_defs()) {
-                if !allowed.contains(&d.name) {
-                    allowed.push(d.name);
-                }
-            }
-        }
         let tools = Arc::new(ToolExecutor {
             cwd: cwd.clone(),
             mcp: p.mcp.clone(),
             allowed,
-            leases: lease_ctx,
         });
         let (tx, rx) = mpsc::unbounded_channel();
-        // R-5: every event also goes to the host bus (the caller's `rx` only
-        // exists for direct calls).
         let sink = RunSink::new(&q.session_id, tx, Some(p.bus.clone()));
-        // Every run gets the teamwork bridge so agents can spawn subsessions
-        // and message across sessions with `session.*` tools.
         let bridge: Arc<dyn HarnessBridge> = Arc::new(p.clone());
-        let mut instructions = match &role {
-            Some(binding) => binding.brief(),
-            None => system_parts(&snap, &q.project, &q.lane),
-        };
-        // Path-scoped rules: the attachments they match ride with the prompt.
-        let files: Vec<&str> = q.attachments.iter().map(|a| a.path.as_str()).collect();
-        for r in parzi_core::rules::matching(&q.project, &files) {
-            instructions.push(format!("# Path rule ({})\n\n{}", r.name, r.body));
-        }
-        // A read-only lane runs only on an agent that asks before every
-        // change: on any other, the lockdown is a promise Parzi cannot keep.
+        let instructions = system_parts(&q.lane, &cwd);
         if mode == ApprovalMode::Deny && !provider.gated() {
             return Err(ParziError::Validation(format!(
                 "this lane is read-only, and {} applies some changes without asking Parzi \
@@ -555,12 +358,8 @@ impl Orchestrator {
             edits_auto,
             store: p.store.clone(),
             tools,
-            // B2: harness-spawned children must never silently run as Auto.
-            // No approver carried over = deny by default; explicit callers
-            // (GUI/CLI) always pass Some(...).
             approver: q.approver.clone().unwrap_or_else(|| Arc::new(DenyApprover)),
             harness: Some(bridge),
-            role,
             sink: sink.clone(),
             cancel: cancel.clone(),
         }));
@@ -579,7 +378,7 @@ impl Orchestrator {
             status: p.status.clone(),
             sink,
             cancel: cancel.clone(),
-            budget: budget_for(&snap, q.workspace_project.as_ref()),
+            budget: budget_for(&snap),
             prompt_recorded: q.prompt_recorded,
             slot: SessionSlot {
                 handles: p.handles.clone(),
@@ -600,11 +399,8 @@ impl Orchestrator {
         let prompt = q.prompt.clone();
         let task = tokio::spawn(async move {
             let _end = end;
-            // A failure is already in the transcript as an error event.
             let _ = run.run(&prompt).await;
         });
-        // A kill while the run was being built removed the claim and
-        // cancelled its token: the run then ends at once, on its own.
         if let Some(h) = p.handles.lock().await.get_mut(&q.session_id) {
             if h.id == id {
                 h.task = Some(task);
@@ -614,10 +410,6 @@ impl Orchestrator {
     }
 }
 
-/// Whatever ends a run — its own end, or an abort after a kill — its hold
-/// on the session goes: the handle (only its own, never a newer run's), the
-/// files it leased (unless a newer run of the session holds them now), and
-/// a wake-up for the queue.
 struct RunEnd {
     parts: Pump,
     sid: String,
@@ -631,20 +423,12 @@ impl Drop for RunEnd {
             return;
         };
         rt.spawn(async move {
-            let newer = {
+            {
                 let mut h = p.handles.lock().await;
                 if h.get(&sid).is_some_and(|x| x.id == id) {
                     h.remove(&sid);
                 }
-                h.contains_key(&sid)
-            };
-            // PLAN §15.6: a lane that ended — cleanly or not — stops holding
-            // files now. Only a crashed *process* waits for the TTL.
-            if !newer {
-                p.leases.unregister(&sid).await;
             }
-            // Sync wake-up only: awaiting pump() here would close a
-            // launch→driver→pump→launch await cycle that Send cannot prove.
             p.notify.notify_one();
         });
     }
@@ -655,17 +439,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lane_policy_equips_session_harness_tools() {
+    fn lane_policy_offers_the_page_and_not_the_crew() {
         let cfg = ParziConfig::default();
-        let (_mode, allowed) = Orchestrator::lane_policy_for(&cfg, "default", "");
+        let (_mode, allowed) = Orchestrator::lane_policy_for(&cfg);
         for t in [
-            "session.spawn",
-            "session.send_message",
-            "session.read_session",
-            "session.list_sessions",
+            "browser.open",
+            "browser.tabs",
+            "browser.read",
+            "ui.show_artifact",
+            "brain.search",
+            "brain.write",
         ] {
             assert!(allowed.iter().any(|a| a == t), "lane missing {t}");
         }
+        assert!(allowed.iter().all(|a| a != "session.spawn"));
     }
 
     #[test]

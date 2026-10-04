@@ -1,14 +1,6 @@
-//! parzi-providers: Parzi drives each vendor's own agent — Claude Code, the
-//! Codex app-server, and the ACP agents (OpenCode, Grok, Antigravity,
-//! Cursor). No model API is called from here and no
-//! vendor credential passes through Parzi: every provider signs in,
-//! refreshes and bills through its own program.
-
 pub mod acp;
 pub mod claude;
 pub mod codex;
-/// GitHub: the workspace wizard's credential, repo listing and clone-or-map.
-pub mod github;
 mod jsonrpc;
 pub mod process;
 pub mod types;
@@ -24,8 +16,6 @@ pub use types::{
     TurnEnd, TurnSpec, UsageWindow,
 };
 
-/// The roster, in picker order. Every surface (picker, settings, doctor,
-/// CLI) iterates this list, so they can never disagree.
 pub const PROVIDERS: &[&str] = &[
     "claude",
     "codex",
@@ -47,8 +37,6 @@ pub fn display_name(id: &str) -> &'static str {
     }
 }
 
-/// Map old ids onto the roster. Threads and configs written before the
-/// vendor-agent switch still say `claude-code`, `anthropic`, `openai` or `xai`.
 pub fn canonical_id(id: &str) -> Option<&'static str> {
     match id {
         "claude" | "claude-code" | "anthropic" => Some("claude"),
@@ -61,9 +49,6 @@ pub fn canonical_id(id: &str) -> Option<&'static str> {
     }
 }
 
-/// Split a `provider/model` spec. The model may itself contain `/`
-/// (OpenCode's `anthropic/claude-sonnet-4-5`): only the first `/` splits.
-/// `None` when the provider is not on the roster.
 pub fn split_spec(spec: &str) -> Option<(&'static str, Option<String>)> {
     let (p, m) = match spec.split_once('/') {
         Some((p, m)) => (p, Some(m.trim().to_string()).filter(|m| !m.is_empty())),
@@ -72,8 +57,6 @@ pub fn split_spec(spec: &str) -> Option<(&'static str, Option<String>)> {
     Some((canonical_id(p.trim())?, m))
 }
 
-/// The driver for a roster id, pointed at the configured program (or the
-/// vendor's usual name on PATH).
 pub fn provider(id: &str, cfg: &ParziConfig) -> Option<Arc<dyn Provider>> {
     let id = canonical_id(id)?;
     let binary = cfg
@@ -88,8 +71,6 @@ pub fn provider(id: &str, cfg: &ParziConfig) -> Option<Arc<dyn Provider>> {
     })
 }
 
-/// A local image as (media type, base64). `None` for anything that is not
-/// a readable png/jpeg/gif/webp under 20 MiB.
 pub(crate) fn image_base64(path: &std::path::Path) -> Option<(String, String)> {
     const MAX: u64 = 20 * 1024 * 1024;
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();

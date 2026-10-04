@@ -1,13 +1,9 @@
-//! R-4: a run stops at its spend cap, says why, and stays available (Idle)
-//! instead of being killed — §15.6 "lanes pause, the header explains".
-
 mod common;
 
 use std::sync::Arc;
 
 use common::*;
 use parzi_core::config::{Budget, ParziConfig};
-use parzi_core::project::{Project, Roster, Status};
 use parzi_core::store::{Event, SessionStatus};
 use parzi_providers::TurnEnd;
 use parzi_runtime::handler::RunEvent;
@@ -22,7 +18,6 @@ impl Approver for Allow {
     }
 }
 
-/// Reports 1 000 tokens (and a cent) per step and works until stopped.
 fn spender() -> Arc<Fake> {
     Fake::new(
         "claude",
@@ -41,18 +36,11 @@ fn spender() -> Arc<Fake> {
 }
 
 #[test]
-fn tightest_budget_wins_and_reports_the_reason() {
-    let config = Budget {
-        max_cost_usd: Some(10.0),
-        max_tokens: None,
-    };
-    let project = Budget {
+fn budget_reports_the_reason() {
+    let both = Budget {
         max_cost_usd: Some(2.0),
         max_tokens: Some(5_000),
     };
-    let both = config.tightest(project);
-    assert_eq!(both.max_cost_usd, Some(2.0));
-    assert_eq!(both.max_tokens, Some(5_000));
     assert!(Budget::default().is_unlimited());
     assert!(Budget::default().exceeded(1_000_000, 500.0).is_none());
     assert!(both.exceeded(5_000, 0.0).unwrap().contains("token budget"));
@@ -104,57 +92,4 @@ async fn token_budget_pauses_the_run_and_marks_it() {
         "the run stopped near the cap, not after it: {}",
         spent.tokens_in + spent.tokens_out
     );
-}
-
-/// A run dispatched for a project honours that project's `budget:` line —
-/// with nothing left, the first turn is never bought.
-#[tokio::test]
-async fn project_budget_is_read_from_project_md() {
-    home("budget");
-    let project = Project {
-        slug: "spent".into(),
-        title: "Spent".into(),
-        workspace: "budgets".into(),
-        repos: vec![],
-        roster: Roster {
-            header: "claude".into(),
-            orchestrator: "claude".into(),
-            coder: "claude".into(),
-        },
-        budget_usd: Some(0.0),
-        status: Status::Running,
-        critical: vec![],
-        why: "prove the cap".into(),
-        what: vec![],
-        constraints: vec![],
-    };
-    std::fs::create_dir_all(parzi_core::project::dir("budgets", "spent")).unwrap();
-    parzi_core::project::save(&project).unwrap();
-    let fake = spender();
-    let (orch, store) = orch(std::slice::from_ref(&fake));
-    let (meta, mut rx) = orch
-        .spawn_in_project(
-            Some(("budgets".into(), "spent".into())),
-            "t",
-            "",
-            "claude",
-            "do the work",
-            Some(Arc::new(Allow)),
-            "",
-            "low",
-            vec![],
-            None,
-        )
-        .await
-        .unwrap();
-    let mut paused = false;
-    while let Some(ev) = rx.recv().await {
-        if let RunEvent::Notice { text } = ev {
-            paused |= text.contains("cost budget");
-        }
-    }
-    assert!(paused, "a project with no budget left pauses its lane");
-    assert_eq!(settle(&store, &meta.id).await.status, SessionStatus::Idle);
-    assert_eq!(run_note(&meta.id).as_deref(), Some(BUDGET_NOTE));
-    assert!(fake.seen().is_empty(), "no turn was bought");
 }

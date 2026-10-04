@@ -12,12 +12,9 @@ export interface SessionMeta {
   tokens_in: number;
   tokens_out: number;
   cost_usd: number;
-  /** How full the context window is: tokens of the latest request + reply. */
   context_tokens?: number;
-  /** Window of the model that answered; 0/absent = not measured yet. */
   context_limit?: number;
   cwd: string;
-  /** Hierarchy link for teamwork subsessions. Absent/null = top-level. */
   parent_id?: string | null;
   created: string;
   updated: string;
@@ -32,35 +29,21 @@ export type ChatEvent =
   | { kind: "tool_result"; id: string; name: string; ok: boolean; output: string; ms: number }
   | { kind: "widget"; fence: string; payload: unknown }
   | { kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
-  /** A turn that failed, in the vendor's words. `class`: auth, rate_limit,
-      overloaded, context_overflow, bad_request, process or unknown. */
   | { kind: "error"; message: string; class: string }
   | { kind: "checkpoint"; summary: string };
 
-/** Where an agent stands, as its own program reported it. */
-export type ProviderState =
-  | "ready"
-  | "signed_out"
-  | "not_installed"
-  | "disabled"
-  | "error"
-  /** Installed; sign-in shows on the first turn. */
-  | "unchecked";
+export type ProviderState = "ready" | "signed_out" | "not_installed" | "disabled" | "error" | "unchecked";
 
-/** One plan window ("Session", "Weekly") and how much of it is used. */
 export interface UsageWindow {
   label: string;
   used_percent: number;
-  /** Unix seconds, when the vendor says. */
   resets_at?: number;
 }
 
 export interface ProviderModel {
-  /** What the agent takes as its model argument. */
   id: string;
   name: string;
   is_default: boolean;
-  /** Effort levels in the agent's own words; empty = no effort knob. */
   efforts: string[];
 }
 
@@ -68,17 +51,20 @@ export interface ProviderStatus {
   provider: string;
   state: ProviderState;
   version?: string;
-  /** Signed-in plan or account ("Claude Max"). */
   account?: string;
-  /** What to do next when not ready, or the check's own message. */
   hint: string;
   usage: UsageWindow[];
   models: ProviderModel[];
-  /** Every change the agent makes waits for Parzi's gate. False: it can
-   *  act unasked, so leases and the folder fence cannot stop it. */
   gated: boolean;
-  /** Unix seconds of the check. */
   checked_at: number;
+}
+
+export interface ApprovalCall {
+  id: string;
+  name: string;
+  args: unknown;
+  lane: string;
+  session: string;
 }
 
 export type UiEvent =
@@ -89,8 +75,7 @@ export type UiEvent =
   | { kind: "notice"; session: string; text: string }
   | { kind: "usage"; session: string; tokens_in: number; tokens_out: number; cost_usd: number }
   | { kind: "context"; session: string; used: number; limit: number }
-  | { kind: "approval"; key: string; session: string; call: { id: string; name: string; args: unknown; lane: string; session: string } }
-  | { kind: "subsession_created"; parent_id: string; subsession: SessionMeta }
+  | { kind: "approval"; key: string; session: string; call: ApprovalCall }
   | { kind: "done"; session: string; turns: number }
   | { kind: "error"; session: string; error: string };
 
@@ -100,55 +85,9 @@ export interface Check {
   detail: string;
 }
 
-export interface McpToolView {
-  name: string;
-  qualified: string;
-  description: string;
-  exposed: boolean;
-  mode: string | null;
-}
-
-export interface McpServerTools {
-  server: string;
-  ok: boolean;
-  error: string | null;
-  tools: McpToolView[];
-}
-
-export interface PluginView {
-  name: string;
-  version: string;
-  kind: string;
-  enabled: boolean;
-  /** Slash-command count for `commands` packs (0 otherwise). */
-  commands: number;
-}
-
-/** One slash command inside a `commands` skill pack. */
-export interface SkillCommand {
-  name: string;
-  description: string;
-  prompt: string;
-}
-
-/** What paste-installing one skill produced. */
-export interface InstalledSkill {
-  name: string;
-  commands: number;
-}
-
-/** Result of pulling a skill library: installed names + "name — reason" skips. */
-export interface SkillInstallReport {
-  installed: string[];
-  skipped: string[];
-}
-
 export interface ProviderEntry {
-  /** Off = the picker and Smart Auto leave this agent out. */
   enabled: boolean;
-  /** The agent's program; absent = its usual name on PATH. */
   binary?: string;
-  /** The model a new thread starts on; absent = the agent's own default. */
   default_model?: string;
 }
 
@@ -158,7 +97,6 @@ export interface ParziConfig {
   lanes: { default_mode: string; default_allowed_tools: string[]; max_steps: number };
   mcp: { servers: Record<string, unknown> };
   orchestrator: { max_concurrent: number; mcp_idle_kill_secs: number; queue_when_busy: boolean };
-  /** Smart Auto starts a new thread on the first ready agent in this order. */
   routing: { order: string[] };
   budget?: { max_cost_usd: number | null; max_tokens: number | null };
   favorite_models: string[];
@@ -182,7 +120,6 @@ export interface BackgroundFile {
   url: string;
 }
 
-/** A saved theme pack with its real colours (no hardcoded preview table). */
 export interface PackInfo {
   name: string;
   builtin: boolean;
@@ -190,600 +127,249 @@ export interface PackInfo {
   has_art: boolean;
 }
 
-export interface LaneView {
-  name: string;
+export interface SendArgs {
+  sessionId?: string | null;
+  model: string;
+  prompt: string;
+  cwd: string;
+  effort: string;
+  attachments: string[];
   mode: string;
-  model: string | null;
-  root: string | null;
-  allowed_tools: string[];
-  isolated_worktree?: boolean;
-}
-
-export interface AgentRoleConfig {
-  model?: string | null;
-  effort?: string | null;
-  system_prompt?: string | null;
-  temperature?: number | null;
-}
-
-export interface ProjectRoster {
-  header: AgentRoleConfig;
-  orchestrator: AgentRoleConfig;
-  implementation: AgentRoleConfig;
-}
-
-export interface PlanItem {
-  title: string;
-  status: "Pending" | "InProgress" | "Done";
-  lane?: string | null;
-  line: number;
-}
-
-export interface CheckpointView {
-  session_id: string;
-  turn: number;
-  hash: string;
-  created: string;
-}
-
-/** One built-in (non-connector) agent tool with its settings group. */
-export interface BuiltinTool {
-  name: string;
-  group: string;
-  blurb: string;
-}
-
-export interface ProjectView {
-  name: string;
-  root: string | null;
-  has_system: boolean;
-  lanes: LaneView[];
-}
-
-/* ---------- Inspector deck (right bar) ---------- */
-
-/** Normalised `ui.show_artifact` payload as shown in the Docs tab. */
-export interface InspectorArtifact {
-  id: string;
-  title: string;
-  kind: string;
-  language: string;
-  content: string;
-  version: number;
-}
-
-/** A markdown document opened in the Docs tab (project file or transcript). */
-export interface InspectorDoc {
-  title: string;
-  content: string;
-  path?: string;
-}
-
-/** Quick-tab candidate returned by `list_project_docs`. */
-export interface DocEntry {
-  label: string;
-  path: string;
-  source: "system" | "root";
-}
-
-/** One pinned plan/doc reference from `list_context_refs`. */
-export interface ContextRef {
-  label: string;
-  path: string;
-  kind: string;
-}
-/** One managed context file from `list_context`. */
-export interface ContextItem {
-  name: string;
-  tier: "pinned" | "curated" | "auto";
-  scope: "workspace" | "project";
-  source: string;
-  bytes: number;
 }
 
 export const api = {
   appVersion: () => invoke<string>("app_version"),
   windowStartDragging: () => invoke<void>("window_start_dragging"),
   openConfirmedUrl: (url: string) => invoke<void>("open_confirmed_url", { url }),
+
   listThreads: () => invoke<SessionMeta[]>("list_threads"),
-  getThread: (id: string) =>
-    invoke<[SessionMeta, ChatEvent[], string]>("get_thread", { id }),
-  sendMessage: (args: {
-    sessionId?: string;
-    project: string;
-    lane: string;
-    model: string;
-    prompt: string;
-    cwd: string;
-    effort?: string;
-    attachments?: string[];
-    parentId?: string;
-    /** Chat intent for this run: ask | edits | auto. Tightens, never lifts
-        the workspace floor. Omitted = auto. */
-    mode?: string;
-  }) =>
+  getThread: (id: string) => invoke<[SessionMeta, ChatEvent[], string]>("get_thread", { id }),
+  sendMessage: (a: SendArgs) =>
     invoke<string>("send_message", {
-      sessionId: args.sessionId ?? null,
-      project: args.project,
-      lane: args.lane,
-      model: args.model,
-      prompt: args.prompt,
-      cwd: args.cwd,
-      effort: args.effort ?? null,
-      attachments: args.attachments ?? [],
-      parentId: args.parentId ?? null,
-      mode: args.mode ?? null,
+      sessionId: a.sessionId ?? null,
+      project: "default",
+      lane: "",
+      model: a.model,
+      prompt: a.prompt,
+      cwd: a.cwd,
+      effort: a.effort,
+      attachments: a.attachments,
+      mode: a.mode,
     }),
-  createSubsession: (args: {
-    parentId: string;
-    title?: string;
-    prompt?: string;
-    model?: string;
-  }) =>
-    invoke<SessionMeta>("create_subsession", {
-      parentId: args.parentId,
-      title: args.title ?? "",
-      prompt: args.prompt ?? null,
-      model: args.model ?? null,
-    }),
-  reparentThread: (id: string, parentId?: string) =>
-    invoke<void>("reparent_thread", { id, parentId: parentId ?? null }),
-  renameThread: (id: string, title: string) =>
-    invoke<void>("rename_thread", { id, title }),
+  renameThread: (id: string, title: string) => invoke<void>("rename_thread", { id, title }),
   deleteThread: (id: string) => invoke<number>("delete_thread", { id }),
-  listProjects: () => invoke<ProjectView[]>("list_projects"),
-  getProjectRoster: (project: string) =>
-    invoke<ProjectRoster>("get_project_roster", { project }),
-  saveProjectRoster: (project: string, roster: ProjectRoster) =>
-    invoke<void>("save_project_roster", { project, roster }),
-  getProjectPlan: (project: string) =>
-    invoke<string>("get_project_plan", { project }),
-  saveProjectPlan: (project: string, content: string) =>
-    invoke<void>("save_project_plan", { project, content }),
-  getProjectKnowledge: (project: string) =>
-    invoke<string>("get_project_knowledge", { project }),
-  saveProjectKnowledge: (project: string, content: string) =>
-    invoke<void>("save_project_knowledge", { project, content }),
-  getWorktreeDiff: (project: string, lane: string, sessionId: string) =>
-    invoke<string>("get_worktree_diff", { project, lane, sessionId }),
-  applyWorktree: (project: string, lane: string, sessionId: string) =>
-    invoke<string>("apply_worktree", { project, lane, sessionId }),
-  listCheckpoints: (repo: string, session_id: string) =>
-    invoke<CheckpointView[]>("list_checkpoints", { repo, sessionId: session_id }),
-  restoreCheckpoint: (repo: string, session_id: string, turn: number) =>
-    invoke<void>("restore_checkpoint", { repo, sessionId: session_id, turn }),
-  listBuiltinTools: () => invoke<BuiltinTool[]>("list_builtin_tools"),
-  listFiles: (root: string, query: string) =>
-    invoke<string[]>("list_files", { root, query }),
-  createProject: (name: string, root: string) =>
-    invoke<void>("create_project", { name, root }),
-  deleteProject: (name: string) => invoke<number>("delete_project", { name }),
-  gitBranch: (cwd: string) => invoke<string>("git_branch", { cwd }),
-  togglePin: (id: string, pinned: boolean) =>
-    invoke<void>("toggle_pin", { id, pinned }),
+  forkThread: (id: string) => invoke<SessionMeta>("fork_thread", { id, at: null }),
+  compactThread: (id: string) => invoke<string>("compact_thread", { id, focus: null }),
   killRun: (id: string) => invoke<void>("kill_run", { id }),
-  /** Summarize a thread into a checkpoint; returns the summary. */
-  compactThread: (id: string, focus?: string) =>
-    invoke<string>("compact_thread", { id, focus: focus ?? null }),
-  forkThread: (id: string, at?: number) =>
-    invoke<SessionMeta>("fork_thread", { id, at: at ?? null }),
   approveTool: (key: string, session: string, allow: boolean) =>
     invoke<void>("approve_tool", { key, session, allow }),
-  /** Where each agent stood when last asked. Instant. */
-  providerStatuses: () => invoke<ProviderStatus[]>("provider_statuses"),
-  /** Ask the agents' own programs again (none named = all). Slow: the
-      slowest vendor sets the pace. Spends no quota. */
-  refreshProviders: (ids?: string[]) =>
-    invoke<ProviderStatus[]>("refresh_providers", { ids: ids ?? null }),
-  toggleFavorite: (spec: string) => invoke<string[]>("toggle_favorite", { spec }),
-  getThemeCss: () => invoke<string>("get_theme_css"),
-  getTheme: () => invoke<Theme>("get_theme"),
-  resetTheme: () => invoke<void>("reset_theme"),
   purgeSessions: () => invoke<number>("purge_sessions"),
+
+  pickFolder: (start?: string) => invoke<string | null>("pick_folder", { start: start || null }),
+  listFiles: (root: string, query: string) => invoke<string[]>("list_files", { root, query }),
+  gitBranch: (cwd: string) => invoke<string>("git_branch", { cwd }),
+  stageImage: (name: string, base64Data: string) => invoke<string>("stage_image", { name, base64Data }),
+  readImageDataUrl: (path: string, cwd: string) => invoke<string>("read_image_data_url", { path, cwd }),
+
+  providerStatuses: () => invoke<ProviderStatus[]>("provider_statuses"),
+  refreshProviders: (ids?: string[]) => invoke<ProviderStatus[]>("refresh_providers", { ids: ids ?? null }),
+  toggleFavorite: (spec: string) => invoke<string[]>("toggle_favorite", { spec }),
   getConfig: () => invoke<ParziConfig>("get_config"),
   saveConfig: (cfg: ParziConfig) => invoke<void>("save_config", { cfg }),
+  runDoctorQuick: () => invoke<Check[]>("run_doctor_quick"),
+
+  getTheme: () => invoke<Theme>("get_theme"),
+  getThemeCss: () => invoke<string>("get_theme_css"),
   saveTheme: (theme: Theme) => invoke<void>("save_theme", { theme }),
+  resetTheme: () => invoke<void>("reset_theme"),
+  listPackInfos: () => invoke<PackInfo[]>("list_pack_infos"),
+  savePack: (name: string) => invoke<void>("save_pack", { name }),
+  applyPack: (name: string) => invoke<string>("apply_pack", { name }),
+  renamePack: (old: string, name: string) => invoke<void>("rename_pack", { old, new: name }),
+  deletePack: (name: string) => invoke<void>("delete_pack", { name }),
   backgroundUrl: async () => {
     const abs = await invoke<string>("background_url");
     return abs ? convertFileSrc(abs) : "";
   },
-  runDoctor: () => invoke<Check[]>("run_doctor"),
-  runDoctorQuick: () => invoke<Check[]>("run_doctor_quick"),
-  runDoctorMcp: () => invoke<Check[]>("run_doctor_mcp"),
-  listMcpTools: (server: string) =>
-    invoke<McpServerTools>("list_mcp_tools", { server }),
-  listAllMcpTools: () => invoke<McpServerTools[]>("list_all_mcp_tools"),
-  listPacks: () => invoke<string[]>("list_packs"),
-  listPackInfos: () => invoke<PackInfo[]>("list_pack_infos"),
-  deletePack: (name: string) => invoke<void>("delete_pack", { name }),
-  renamePack: (old: string, name: string) => invoke<void>("rename_pack", { old, new: name }),
-  deleteBackground: (name: string) => invoke<string>("delete_background", { name }),
-  getUserCss: () => invoke<string>("get_user_css"),
-  saveUserCss: (css: string) => invoke<string>("save_user_css", { css }),
-  savePack: (name: string) => invoke<void>("save_pack", { name }),
-  applyPack: (name: string) => invoke<string>("apply_pack", { name }),
-  listBackgrounds: () => invoke<string[]>("list_backgrounds"),
   listBackgroundUrls: () => invoke<BackgroundFile[]>("list_background_urls"),
   setBackground: (name: string) => invoke<string>("set_background", { name }),
-  uploadBackground: (src: string) => invoke<string>("upload_background", { src }),
-  /** Stores the picked picture (shrunk when oversized) and makes it the
-   *  wallpaper; resolves to the name it was saved under. Tauri maps Rust's
-   *  `base64_data` to the camelCase key — snake_case here was rejected. */
   saveBackgroundData: (name: string, base64Data: string) =>
     invoke<string>("save_background_data", { name, base64Data }),
-  backgroundFile: async (name: string) => {
-    const abs = await invoke<string>("background_file", { name });
-    return convertFileSrc(abs);
-  },
-  paletteFromBackground: (name?: string) =>
-    invoke<Palette>("palette_from_background", { name: name ?? null }),
-  listPlugins: () => invoke<PluginView[]>("list_plugins"),
-  togglePlugin: (name: string, enabled: boolean) =>
-    invoke<void>("toggle_plugin", { name, enabled }),
-  installPastedSkill: (pack_name: string, text: string) =>
-    invoke<InstalledSkill>("install_pasted_skill", { packName: pack_name, text }),
-  installSkillFromGit: (url: string) =>
-    invoke<SkillInstallReport>("install_skill_from_git", { url }),
-  deleteSkill: (name: string) => invoke<void>("delete_skill", { name }),
-  openExternalUrl: (url: string) => invoke<void>("open_external_url", { url }),
-  readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
-  /** Open native file dialog; returns selected path or null if cancelled. */
-  pickTextFile: (start?: string) => invoke<string | null>("pick_text_file", { start }),
-  writeTextFile: (path: string, content: string) =>
-    invoke<void>("write_text_file", { path, content }),
-  /** Stage pasted/dropped image bytes; returns an attachable absolute path. */
-  stageImage: (name: string, base64Data: string) =>
-    invoke<string>("stage_image", { name, base64Data }),
-  /** Image bytes as a data URL for previews (confined, images only). */
-  readImageDataUrl: (path: string, cwd: string) =>
-    invoke<string>("read_image_data_url", { path, cwd }),
-  saveProjectSystem: (project: string, content: string) =>
-    invoke<string>("save_project_system", { project, content }),
-  createSkill: (name: string) => invoke<void>("create_skill", { name }),
-  skillCommands: (name: string) => invoke<SkillCommand[]>("skill_commands", { name }),
-  saveSkillCommands: (name: string, commands: SkillCommand[]) =>
-    invoke<void>("save_skill_commands", { name, commands }),
-  listProjectDocs: (project: string, root: string) =>
-    invoke<DocEntry[]>("list_project_docs", { project, root }),
-  listContext: (workspace: string, slug?: string | null) =>
-    invoke<ContextItem[]>("list_context", { workspace, slug: slug ?? null }),
-  readContextFile: (workspace: string, slug: string | null | undefined, name: string) =>
-    invoke<string>("read_context_file", { workspace, slug: slug ?? null, name }),
-  addContext: (workspace: string, slug: string | null | undefined, title: string, content: string, tier: string, source: string) =>
-    invoke<string>("add_context", { workspace, slug: slug ?? null, title, content, tier, source }),
-  setContextPinned: (workspace: string, slug: string | null | undefined, name: string, pinned: boolean) =>
-    invoke<void>("set_context_pinned", { workspace, slug: slug ?? null, name, pinned }),
-  removeContext: (workspace: string, slug: string | null | undefined, name: string) =>
-    invoke<void>("remove_context", { workspace, slug: slug ?? null, name }),
-  listContextRefs: (workspace: string, slug?: string | null) =>
-    invoke<ContextRef[]>("list_context_refs", { workspace, slug: slug ?? null }),
-  addContextRef: (workspace: string, slug: string | null | undefined, label: string, path: string, kind: string) =>
-    invoke<void>("add_context_ref", { workspace, slug: slug ?? null, label, path, kind }),
-  removeContextRef: (workspace: string, slug: string | null | undefined, path: string) =>
-    invoke<void>("remove_context_ref", { workspace, slug: slug ?? null, path }),
+  deleteBackground: (name: string) => invoke<string>("delete_background", { name }),
+  paletteFromBackground: (name?: string) => invoke<Palette>("palette_from_background", { name: name ?? null }),
+
+  browserShow: (tab: string, rect: { x: number; y: number; width: number; height: number }, url: string) =>
+    invoke<void>("browser_show", { tab, ...rect, url }),
+  browserHide: () => invoke<void>("browser_hide"),
+  browserClose: (tab: string) => invoke<void>("browser_close", { tab }),
+  browserNavigate: (tab: string, url: string) => invoke<void>("browser_navigate", { tab, url }),
+  browserNav: (tab: string, action: "back" | "forward" | "reload" | "stop") =>
+    invoke<void>("browser_nav", { tab, action }),
+  windowFullscreen: (on: boolean) => invoke<void>("window_fullscreen", { on }),
 };
+
+export interface NoteMeta {
+  path: string;
+  title: string;
+  projects: string[];
+  tags: string[];
+  folder?: string | null;
+  source?: string | null;
+  pinned: boolean;
+  links: string[];
+  modified: number;
+  bytes: number;
+  summary: string;
+}
+
+export interface SearchHit {
+  path: string;
+  title: string;
+  snippet: string;
+}
+
+export interface Project {
+  slug: string;
+  title: string;
+  folder: string;
+  note: string;
+  notes: string[];
+}
+
+export interface BrainContext {
+  project: Project | null;
+  text: string;
+  attached: string[];
+  listed: string[];
+  chars: number;
+  tokens: number;
+}
+
+export const EVERYWHERE = "all";
+
+export type ObsidianState = "missing" | "unregistered" | "ready";
+
+export interface BrowserSource {
+  id: string;
+  name: string;
+  profile: string;
+  bookmarks: number;
+  history: boolean;
+}
+
+export interface NoteCandidate {
+  source: string;
+  title: string;
+  kind: "instructions" | "memory" | "skill";
+  project_folder?: string | null;
+  bytes: number;
+}
+
+export interface ToolSource {
+  id: string;
+  name: string;
+  found: boolean;
+  notes: NoteCandidate[];
+}
+
+export interface FolderCandidate {
+  path: string;
+  name: string;
+  sources: string[];
+  last_used?: number | null;
+  exists: boolean;
+}
+
+export interface Scan {
+  browsers: BrowserSource[];
+  tools: ToolSource[];
+  folders: FolderCandidate[];
+}
+
+export interface BrowserData {
+  bookmarks: { title: string; url: string; folder: string }[];
+  history: { url: string; title: string; visits: number; last_visit: number }[];
+}
+
+export interface ImportReport {
+  notes: number;
+  projects: number;
+  skipped: string[];
+}
+
+export const brain = {
+  dir: () => invoke<string>("brain_dir"),
+  list: () => invoke<NoteMeta[]>("brain_list"),
+  read: (path: string) => invoke<string>("brain_read", { path }),
+  write: (path: string, content: string) => invoke<NoteMeta>("brain_write", { path, content }),
+  remove: (path: string) => invoke<void>("brain_delete", { path }),
+  search: (query: string) => invoke<SearchHit[]>("brain_search", { query }),
+  projects: () => invoke<Project[]>("brain_projects"),
+  upsertProject: (title: string, folder: string, slug?: string) =>
+    invoke<Project>("brain_project_upsert", { slug: slug ?? null, title, folder }),
+  map: (note: string, project: string, on: boolean) => invoke<NoteMeta>("brain_map", { note, project, on }),
+  context: (cwd: string) => invoke<BrainContext | null>("brain_context", { cwd }),
+  pin: (path: string, on: boolean) => invoke<NoteMeta>("brain_pin", { path, on }),
+  open: (path: string, target: "file" | "folder" | "obsidian") => invoke<void>("brain_open", { path, target }),
+  obsidian: () => invoke<ObsidianState>("brain_obsidian"),
+};
+
+export const onboard = {
+  scan: () => invoke<Scan>("onboard_scan"),
+  browser: (id: string, profile: string) => invoke<BrowserData>("onboard_browser", { id, profile }),
+  importTools: (notes: string[], folders: string[]) => invoke<ImportReport>("onboard_import", { notes, folders }),
+  login: (provider: string) => invoke<void>("agent_login", { provider }),
+};
+
+export interface PageEvent {
+  tab: string;
+  url?: string;
+  title?: string;
+  loading?: boolean;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
+  fullscreen?: boolean;
+}
+
+export function onBrowserOpen(cb: (e: { tab: string; url: string }) => void) {
+  return listen<{ tab: string; url: string }>("parzi://browser-open", (ev) => cb(ev.payload));
+}
+
+export function onBrowserKey(cb: (key: string) => void) {
+  return listen<{ key: string }>("parzi://browser-key", (ev) => cb(ev.payload.key));
+}
 
 export function onRunEvent(cb: (e: UiEvent) => void) {
   return listen<UiEvent>("parzi://run-event", (ev) => cb(ev.payload));
 }
 
-/** A fresh provider board, whoever asked for it (start-up, Settings). */
 export function onProviders(cb: (board: ProviderStatus[]) => void) {
   return listen<ProviderStatus[]>("parzi://providers", (ev) => cb(ev.payload));
 }
 
-/* ---------- hub (workspaces, GitHub, project creation — PLAN.md §1, §2) ---------- */
-
-// Lowercase on the wire: `workspace.toml` is meant to be read and edited by a
-// person, so core serialises these enums the way they are written in the file.
-export type WorkspaceKind = "solo" | "team";
-export type MemberRole = "owner" | "maintainer" | "member" | "viewer";
-
-/** One repo of a workspace; `local_path` is this machine's mapping. */
-export interface RepoRef {
-  name: string;
-  remote: string;
-  default_branch: string;
-  local_path: string | null;
+export function onBrowser(cb: (page: PageEvent) => void) {
+  return listen<PageEvent>("parzi://browser", (ev) => cb(ev.payload));
 }
 
-export interface Member {
-  user: string;
-  role: MemberRole;
-}
-
-/** `workspace.toml` (`parzi_core::workspace::Workspace`). */
-export interface Workspace {
-  name: string;
-  kind: WorkspaceKind;
-  repos: RepoRef[];
-  members: Member[];
-  /** Composer defaults for new drafts; empty strings = no opinion. */
-  defaults: { model: string; effort: string };
-}
-
-/** What the app knows about the GitHub credential — never the token itself. */
-export interface GithubStatus {
-  connected: boolean;
-  login: string;
-  source: "token" | "none";
-  /** `gh` is on PATH, so "Use gh" is worth offering. */
-  gh: boolean;
-}
-
-export interface GithubOrg {
-  login: string;
-  name: string;
-}
-
-export interface GithubRepo {
-  name: string;
-  full_name: string;
-  default_branch: string;
-  clone_url: string;
-  private: boolean;
-}
-
-/** What one `workspace_sync` did (`parzi_core::workspace::sync::SyncReport`). */
-export interface SyncReport {
-  committed: boolean;
-  pushed: boolean;
-  pulled: boolean;
-  /** Paths left for a human; non-empty means nothing was committed. */
-  conflicts: string[];
-}
-
-/** Progress of one `repo_clone_or_map`, pushed on `parzi://repo-clone`. */
-export interface CloneEvent {
-  workspace: string;
-  repo: string;
-  phase: "cloning" | "done" | "error";
-  line: string;
-  path: string;
-}
-
-export const hub = {
-  workspaces: () => invoke<string[]>("workspace_list"),
-  workspace: (name: string) => invoke<Workspace>("workspace_get", { name }),
-  createWorkspace: (name: string, kind: WorkspaceKind) =>
-    invoke<Workspace>("workspace_create", { name, kind }),
-  addRepos: (workspace: string, repos: RepoRef[]) =>
-    invoke<Workspace>("workspace_add_repos", { workspace, repos }),
-  /** Delete a hub workspace, its deck projects' role sessions and its chats. */
-  deleteWorkspace: (workspace: string) =>
-    invoke<number>("workspace_delete", { workspace }),
-  /** Move a legacy `~/.parzi/projects/<name>` into a hub workspace of the same name. */
-  migrateWorkspace: (name: string) =>
-    invoke<Workspace>("workspace_migrate", { name }),
-  /** Round 1's syncer is the workspace's own git repo (§1.1). */
-  syncWorkspace: (workspace: string) =>
-    invoke<SyncReport>("workspace_sync", { workspace }),
-  /** Paste a token, or pass nothing to borrow the one `gh` holds. */
-  githubConnect: (token?: string) =>
-    invoke<GithubStatus>("github_connect", { token: token ?? null }),
-  githubStatus: () => invoke<GithubStatus>("github_status"),
-  orgs: () => invoke<GithubOrg[]>("github_list_orgs"),
-  /** `org` empty = the signed-in user's own repos. */
-  repos: (org: string) => invoke<GithubRepo[]>("github_list_repos", { org }),
-  /**
-   * Map an existing checkout (`local_path`) or clone in the background.
-   * Resolves with the destination path; progress arrives on `parzi://repo-clone`.
-   */
-  cloneOrMap: (args: {
-    workspace: string;
-    repo: RepoRef;
-    localPath?: string;
-    destRoot?: string;
-  }) =>
-    invoke<string>("repo_clone_or_map", {
-      workspace: args.workspace,
-      repo: args.repo,
-      localPath: args.localPath ?? null,
-      destRoot: args.destRoot ?? null,
-    }),
-  createProject: (args: {
-    workspace: string;
-    title: string;
-    repos: string[];
-    roster: Roster;
-    budgetUsd?: number | null;
-  }) =>
-    invoke<Project>("project_create", {
-      workspace: args.workspace,
-      title: args.title,
-      repos: args.repos,
-      roster: args.roster,
-      budgetUsd: args.budgetUsd ?? null,
-    }),
-  /** Screenshot aid: `PARZI_UI_STATE=new-workspace:repos` opens that step. */
-  uiState: () => invoke<string>("ui_state"),
-};
-
-export function onCloneEvent(cb: (e: CloneEvent) => void) {
-  return listen<CloneEvent>("parzi://repo-clone", (ev) => cb(ev.payload));
-}
-
-/* ---------- deck (hub round 1 — PLAN.md §8) ---------- */
-
-/**
- * The five `status:` values of PROJECT.md, spelled exactly as the wire
- * spells them: `parzi_core::project::Status` is
- * `#[serde(rename_all = "lowercase")]`, so a capitalised union never
- * matches. `tests/fixtures/project-status.json` holds that serde output and
- * `deckState.test.ts` asserts this list is it.
- */
-export const PROJECT_STATUSES = ["drafting", "planned", "running", "done", "parked"] as const;
-
-export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
-
-/** One acceptance criterion from PROJECT.md `## What`. */
-export interface Criterion {
-  text: string;
-  done: boolean;
-}
-
-/** `provider/model` per role, as written in PROJECT.md `roster:`. */
-export interface Roster {
-  header: string;
-  orchestrator: string;
-  coder: string;
-}
-
-/** PROJECT.md, parsed (`parzi_core::project::Project`). */
-export interface Project {
-  slug: string;
-  title: string;
-  workspace: string;
-  repos: string[];
-  roster: Roster;
-  budget_usd: number | null;
-  status: ProjectStatus;
-  /** Globs whose lease transfer needs a human. */
-  critical: string[];
-  why: string;
-  what: Criterion[];
-  constraints: string[];
-}
-
-/** One task line of PLAN.md (`parzi_core::plan::Task`). */
-export interface Task {
+export interface DeskTab {
   id: string;
+  kind: "harness" | "browser" | "brain";
   title: string;
-  repo: string;
-  scope: string[];
-  after: string[];
-  critical: boolean;
-  done: boolean;
-  acceptance: string[];
+  url: string;
+  session_id: string;
 }
 
-export interface LanePlan {
-  name: string;
-  tasks: Task[];
+export interface DeskCmd {
+  op: "open" | "focus" | "close";
+  id?: string;
+  url?: string;
+  rev?: number;
 }
 
-export interface Sprint {
-  title: string;
-  target: string;
-  lanes: LanePlan[];
+export function deskSync(tabs: DeskTab[], rev: number, active: string) {
+  return invoke<void>("desk_sync", { tabs, rev, active });
 }
 
-/** PLAN.md v1, parsed (`parzi_core::plan::Plan`). */
-export interface Plan {
-  sprints: Sprint[];
+export function onDesk(cb: (cmd: DeskCmd) => void) {
+  return listen<DeskCmd>("parzi://desk", (ev) => cb(ev.payload));
 }
-
-/**
- * The journal vocabulary, spelled as the wire spells it: the same mistake
- * as `ProjectStatus` above, but `parzi_core::journal::Kind` is
- * `#[serde(rename_all = "snake_case")]`, so `PlanChanged` is `plan_changed`.
- * A capitalised union made every task in the Plan tab read as pending.
- */
-export const JOURNAL_KINDS = [
-  "claim", "release", "request", "grant", "deny", "convene",
-  "handoff", "block", "plan_changed", "approve", "note",
-] as const;
-
-export type JournalKind = (typeof JOURNAL_KINDS)[number];
-
-/** One line of `<project>/journal.jsonl`. */
-export interface JournalLine {
-  at: string;
-  who: string;
-  kind: JournalKind;
-  task: string | null;
-  text: string;
-}
-
-/** A rough plan the header wrote to `<project>/drafts/<n>.md`. */
-export interface Draft {
-  name: string;
-  title: string;
-  content: string;
-  path: string;
-}
-
-/** What `project_audit` hands back: the orchestrator's <= 15-line summary. */
-export interface AuditResult {
-  summary: string;
-  plan: Plan | null;
-}
-
-/** What `project_open` ensures: the project and its role sessions. */
-export interface ProjectOpen {
-  project: Project;
-  header_session: string;
-  orchestrator_session: string | null;
-}
-
-/** Text plus the mtime etag the poll uses to skip unchanged renders. */
-export interface TextDoc {
-  text: string;
-  etag: string;
-}
-
-/** Commands may answer a bare value or `{value, etag}`; normalise both. */
-function unwrap<T>(v: T, key: string): T {
-  const o = v as unknown as Record<string, unknown>;
-  return o && typeof o === "object" && key in o ? (o[key] as T) : v;
-}
-
-function asTextDoc(v: string | TextDoc): TextDoc {
-  return typeof v === "string" ? { text: v, etag: String(v.length) } : v;
-}
-
-export const deck = {
-  open: (workspace: string, slug: string) =>
-    invoke<ProjectOpen>("project_open", { workspace, slug }),
-  get: (workspace: string, slug: string) =>
-    invoke<Project>("project_get", { workspace, slug }),
-  save: (project: Project) => invoke<Project>("project_save", { project }),
-  list: (workspace: string) =>
-    invoke<Project[]>("project_list", { workspace }),
-  /** Rename a project's title (the slug never moves). */
-  rename: (workspace: string, slug: string, title: string) =>
-    invoke<Project>("project_rename", { workspace, slug, title }),
-  /** Delete a deck project and its role sessions. */
-  remove: (workspace: string, slug: string) =>
-    invoke<number>("project_delete", { workspace, slug }),
-  drafts: (workspace: string, slug: string) =>
-    invoke<Draft[]>("project_drafts", { workspace, slug }),
-  /** Send one draft to the orchestrator: writes PLAN.md, returns the summary. */
-  audit: async (workspace: string, slug: string, draft: string) => {
-    const r = await invoke<AuditResult | string>("project_audit", { workspace, slug, draft });
-    return typeof r === "string" ? { summary: r, plan: null } : r;
-  },
-  /** Human approval of the audited plan: status Planned, sprint 1 dispatched. */
-  approve: (workspace: string, slug: string) =>
-    invoke<Project>("project_approve", { workspace, slug }),
-  /** Deterministic STATUS.md — no model, safe to poll. */
-  status: async (workspace: string, slug: string) =>
-    asTextDoc(await invoke<string | TextDoc>("project_status", { workspace, slug })),
-  plan: async (workspace: string, slug: string) =>
-    unwrap(await invoke<Plan>("project_plan", { workspace, slug }), "plan"),
-  journal: async (workspace: string, slug: string) =>
-    unwrap(await invoke<JournalLine[]>("project_journal", { workspace, slug }), "lines"),
-  /**
-   * Ask a role. The header answers "what are we building / what's happening";
-   * the Direct toggle sends the same box to the orchestrator. Returns the
-   * session id the reply streams into.
-   */
-  ask: async (
-    open: ProjectOpen,
-    to: "header" | "orchestrator",
-    prompt: string,
-    opts: { model?: string; effort?: string; attachments?: string[] } = {},
-  ) => {
-    const session = to === "header" ? open.header_session : open.orchestrator_session;
-    return api.sendMessage({
-      sessionId: session ?? undefined,
-      project: open.project.slug,
-      lane: to,
-      model: opts.model || (to === "header" ? open.project.roster.header : open.project.roster.orchestrator),
-      prompt,
-      cwd: "",
-      effort: opts.effort,
-      attachments: opts.attachments,
-    });
-  },
-};

@@ -1,6 +1,4 @@
 <script lang="ts">
-  /** Fullscreen zoom shell for graphs: the same element, restyled fixed.
-      Backdrop click or the caller's toggle button closes it. */
   import { createEventDispatcher } from "svelte";
   const dispatch = createEventDispatcher<{ change: { open: boolean } }>();
   export let enabled = false;
@@ -34,9 +32,9 @@
     position: fixed; z-index: 501;
     left: 50%; top: 50%; transform: translate(-50%, -50%);
     width: min(1020px, 94vw); max-height: 88vh; overflow: auto;
-    background: var(--stage);
-    border: 1px solid var(--line-2); border-radius: 14px;
-    box-shadow: var(--menu-shadow);
+    background: var(--bg);
+    border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: var(--shadow);
     padding: 18px 20px;
   }
 </style>

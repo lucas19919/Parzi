@@ -39,14 +39,14 @@
   .cf { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .sw {
     position: relative; width: 24px; height: 24px; flex: none; border-radius: 50%; overflow: hidden;
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--line-3); cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--line); cursor: pointer;
   }
   .sw input { position: absolute; inset: -10px; width: 44px; height: 44px; opacity: 0; cursor: pointer; padding: 0; border: none; }
-  .lab { flex: 1; min-width: 0; font-size: 12.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lab { flex: 1; min-width: 0; font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hex {
-    width: 84px; flex: none; background: var(--input); border: 1px solid var(--line-2);
-    border-radius: var(--radius-1); color: var(--text-2); padding: 4px 7px; outline: none;
-    font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 11px; text-transform: uppercase;
+    width: 84px; flex: none; background: var(--bg); border: 1px solid var(--line);
+    border-radius: var(--radius); color: var(--muted); padding: 4px 7px; outline: none;
+    font-family: var(--mono), ui-monospace, monospace; font-size: 11px; text-transform: uppercase;
   }
-  .hex:focus { border-color: var(--accent-line); color: var(--text); box-shadow: none; }
+  .hex:focus { border-color: var(--accent); color: var(--text); box-shadow: none; }
 </style>

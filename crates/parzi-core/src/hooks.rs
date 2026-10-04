@@ -1,45 +1,18 @@
-//! Workspace event hooks: user scripts that watch tool calls.
-//!
-//! ```toml
-//! [[pre_tool]]
-//! match = "shell.exec"
-//! command = "python .parzi/guard.py"
-//! timeout_secs = 5
-//!
-//! [[post_tool]]
-//! match = "*"
-//! command = "notify-send Parzi done"
-//! ```
-//!
-//! `match` is an exact tool name, a `prefix.*` family, or `*`. `pre_tool`
-//! hooks run before the approval gate: exit 0 allows, exit 2 denies (stderr
-//! becomes the reason), anything else or a timeout allows with a warning.
-//! `post_tool` hooks are notify-only; failures surface as notices, never as
-//! tool errors. Global `~/.parzi/hooks.toml` runs first, then the
-//! workspace (or legacy project) file. Commands run with the workspace dir
-//! as cwd and the event as JSON on stdin.
-
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{lanes, paths, workspace};
+use crate::paths;
 
-/// Seconds a hook may run before it is killed (and, for pre-hooks, treated
-/// as an allow-with-warning rather than hanging the run).
 pub const HOOK_TIMEOUT_DEFAULT: u64 = 5;
-/// Hard cap so a junk drawer of hooks cannot stall every tool call.
 pub const HOOK_MAX_ENTRIES: usize = 16;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookDef {
-    /// Exact name (`shell.exec`), family prefix (`fs.*`), or `*`.
     #[serde(default)]
     pub r#match: String,
-    /// Shell command. `sh -c` on unix, `cmd /C` on Windows.
     #[serde(default)]
     pub command: String,
-    /// Kill after this long. Zero or missing = default.
     #[serde(default)]
     pub timeout_secs: u64,
 }
@@ -93,7 +66,6 @@ fn read_file(path: PathBuf) -> HookSet {
     toml::from_str::<HookSet>(&raw).unwrap_or_default().capped()
 }
 
-/// Global hooks: `~/.parzi/hooks.toml`. Missing or unparsable = none.
 #[must_use]
 pub fn global() -> HookSet {
     paths::parzi_dir()
@@ -101,44 +73,9 @@ pub fn global() -> HookSet {
         .unwrap_or_default()
 }
 
-/// Workspace hooks: `workspaces/<ws>/hooks.toml`, else legacy
-/// `projects/<name>/hooks.toml`. Anything else = none.
-#[must_use]
-pub fn workspace_hooks(name: &str) -> HookSet {
-    let key = name.trim();
-    if key.is_empty() || key == "default" {
-        return HookSet::default();
-    }
-    if workspace::load(key).is_ok() {
-        return read_file(workspace::dir(key).join("hooks.toml"));
-    }
-    if lanes::safe_name(key).is_ok() {
-        if let Ok(root) = paths::projects_dir() {
-            return read_file(root.join(key).join("hooks.toml"));
-        }
-    }
-    HookSet::default()
-}
-
-/// Merged hooks for a scope: global first, then the workspace file.
-#[must_use]
-pub fn for_scope(project: &str) -> HookSet {
-    let global = global();
-    let ws = workspace_hooks(project);
-    let mut pre_tool = global.pre_tool;
-    pre_tool.extend(ws.pre_tool);
-    let mut post_tool = global.post_tool;
-    post_tool.extend(ws.post_tool);
-    HookSet {
-        pre_tool,
-        post_tool,
-    }
-    .capped()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{for_scope, HookDef, HookSet};
+    use super::{HookDef, HookSet};
 
     #[test]
     fn matching_covers_exact_family_and_wildcard() {
@@ -179,7 +116,6 @@ mod tests {
 
     #[test]
     fn empty_and_garbage_configs_are_no_hooks() {
-        // Pure parsing is covered without touching PARZI_HOME.
         let set: HookSet = toml::from_str("not = [valid").unwrap_or_default();
         assert!(set.pre_tool.is_empty() && set.post_tool.is_empty());
         let set: HookSet = toml::from_str(
@@ -189,12 +125,5 @@ mod tests {
         assert_eq!(set.pre_tool.len(), 1);
         assert_eq!(set.post_tool.len(), 1);
         assert_eq!(set.pre_tool[0].timeout(), super::HOOK_TIMEOUT_DEFAULT);
-    }
-
-    #[test]
-    fn unknown_scopes_resolve_to_no_hooks() {
-        assert!(for_scope("").pre_tool.is_empty());
-        assert!(for_scope("default").post_tool.is_empty());
-        assert!(for_scope("../evil").pre_tool.is_empty());
     }
 }

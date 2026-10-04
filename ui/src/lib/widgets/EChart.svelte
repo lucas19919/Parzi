@@ -26,7 +26,6 @@
   let chart: echarts.ECharts | null = null;
   let shown: any = null;
 
-  /** Snapshot the rendered SVG for the download button. */
   export function snapshot(): string | null {
     if (!chart) return null;
     try {

@@ -1,8 +1,3 @@
-//! What a run owes the person when the agent cannot keep a promise: a
-//! read-only lane refuses an agent that acts unasked, a thread says once
-//! that its agent is not fully gated, a lost vendor conversation goes on
-//! with the history, and a dollar cap that cannot bite is said to be so.
-
 mod common;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -49,9 +44,14 @@ async fn a_read_only_lane_refuses_an_agent_that_acts_unasked() {
         .unwrap_err();
     assert!(err.to_string().contains("read-only"), "{err}");
     assert!(agent.seen().is_empty(), "no turn was started");
-    let sid = store.list().unwrap()[0].id.clone();
+    let sid = store
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|m| notes(&store, &m.id, "run failed to start") == 1)
+        .expect("the refused run is on disk")
+        .id;
     assert_eq!(store.get(&sid).unwrap().status, SessionStatus::Idle);
-    assert_eq!(notes(&store, &sid, "run failed to start"), 1);
 }
 
 #[tokio::test]
@@ -80,8 +80,6 @@ async fn a_thread_says_once_that_its_agent_is_not_fully_gated() {
     assert_eq!(notes(&store, &meta.id, "without asking Parzi first"), 1);
 }
 
-/// The vendor lost the conversation it was asked to resume: once, the run
-/// starts a new one and hands it the thread so far.
 #[tokio::test]
 async fn a_lost_conversation_goes_on_with_the_history() {
     home("notes");

@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ParziError, Result};
 
 const WIDGET_VERSION: u64 = 1;
-const DIAGRAM_VERSION: u64 = 1;
 
 const WIDGET_TYPES: &[&str] = &[
     "stat",
@@ -20,15 +19,7 @@ const WIDGET_TYPES: &[&str] = &[
 const MAX_TABLE_ROWS: usize = 50;
 const MAX_POINTS: usize = 200;
 const MAX_SERIES: usize = 8;
-const MAX_NODES: usize = 200;
-const MAX_EDGES: usize = 400;
 const MAX_TOTAL_BYTES: usize = 65_536;
-const MAX_LABEL_CHARS: usize = 120;
-const MAX_GROUPS: usize = 20;
-
-const NODE_COLORS: &[&str] = &["accent", "ok", "warn", "bad", "info"];
-const NODE_SHAPES: &[&str] = &["flow", "db", "diamond", "actor"];
-const EDGE_STYLES: &[&str] = &["solid", "dashed", "dotted", "thick"];
 
 fn shape<'a>(w: &'a WidgetV1, key: &str) -> Option<&'a serde_json::Value> {
     w.extra
@@ -164,72 +155,12 @@ pub struct WidgetV1 {
     pub kind: String,
     #[serde(default)]
     pub title: String,
-    /// Nested form: {"widget":1,"type":"table","payload":{"rows":[...]}}.
     #[serde(default)]
     pub payload: serde_json::Value,
-    /// Flat form agents actually emit: {"widget":1,"type":"progress","value":0.6}.
     #[serde(flatten, default)]
     pub extra: std::collections::HashMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiagramNode {
-    pub id: String,
-    #[serde(default)]
-    pub label: String,
-    #[serde(default)]
-    pub sub: String,
-    #[serde(default)]
-    pub color: String,
-    #[serde(default)]
-    pub shape: String,
-    #[serde(default)]
-    pub fill: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiagramEdge {
-    pub from: String,
-    pub to: String,
-    #[serde(default)]
-    pub label: String,
-    #[serde(default)]
-    pub color: String,
-    #[serde(default)]
-    pub style: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiagramGroup {
-    pub id: String,
-    #[serde(default)]
-    pub label: String,
-    #[serde(default)]
-    pub nodes: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiagramV1 {
-    pub diagram: u64,
-    #[serde(default)]
-    pub title: String,
-    #[serde(default)]
-    pub direction: String,
-    #[serde(default)]
-    pub layout: String,
-    pub nodes: Vec<DiagramNode>,
-    pub edges: Vec<DiagramEdge>,
-    #[serde(default)]
-    pub groups: Vec<DiagramGroup>,
-}
-
-/// Schema-checked in core so CLI + GUI + other harnesses agree.
-/// Invalid payloads fail safe: callers render a plain code block instead.
-///
-/// # Errors
-///
-/// Rejects wrong versions, unknown types, oversized payloads and malformed
-/// per-type shapes.
 pub fn validate_widget(v: &serde_json::Value) -> Result<WidgetV1> {
     if serde_json::to_string(v).map_or(usize::MAX, |s| s.len()) > MAX_TOTAL_BYTES {
         return Err(ParziError::Validation(format!(
@@ -322,138 +253,6 @@ fn check_kind(w: &WidgetV1) -> Result<()> {
             }
         }
         _ => {}
-    }
-    Ok(())
-}
-
-/// Schema-checked in core so CLI + GUI + other harnesses agree.
-///
-/// # Errors
-///
-/// Rejects wrong versions, oversized payloads, duplicate or empty node ids,
-/// dangling edges, overlong labels, unknown colors/shapes/styles and bad
-/// group references.
-pub fn validate_diagram(v: &serde_json::Value) -> Result<DiagramV1> {
-    if serde_json::to_string(v).map_or(usize::MAX, |s| s.len()) > MAX_TOTAL_BYTES {
-        return Err(ParziError::Validation(format!(
-            "diagram exceeds {MAX_TOTAL_BYTES} bytes"
-        )));
-    }
-    let d: DiagramV1 = serde_json::from_value(v.clone())
-        .map_err(|e| ParziError::Validation(format!("bad diagram: {e}")))?;
-    if d.diagram != DIAGRAM_VERSION {
-        return Err(ParziError::Validation(format!(
-            "diagram version {} unsupported (want {DIAGRAM_VERSION})",
-            d.diagram
-        )));
-    }
-    if d.nodes.is_empty() || d.nodes.len() > MAX_NODES {
-        return Err(ParziError::Validation(format!(
-            "nodes {} out of range 1..={MAX_NODES}",
-            d.nodes.len()
-        )));
-    }
-    if d.edges.len() > MAX_EDGES {
-        return Err(ParziError::Validation(format!(
-            "edges {} exceed max {MAX_EDGES}",
-            d.edges.len()
-        )));
-    }
-    let mut ids = std::collections::HashSet::new();
-    check_nodes(&d.nodes, &mut ids)?;
-    check_edges(&d.edges, &ids)?;
-    check_groups(&d.groups, &ids)?;
-    Ok(d)
-}
-
-fn check_nodes(nodes: &[DiagramNode], ids: &mut std::collections::HashSet<String>) -> Result<()> {
-    for n in nodes {
-        if n.id.trim().is_empty() || !ids.insert(n.id.clone()) {
-            return Err(ParziError::Validation(
-                "diagram node ids must be unique and non-empty".into(),
-            ));
-        }
-        for text in [&n.label, &n.sub] {
-            if text.chars().count() > MAX_LABEL_CHARS {
-                return Err(ParziError::Validation(format!(
-                    "diagram labels capped at {MAX_LABEL_CHARS} chars"
-                )));
-            }
-        }
-        if !n.color.trim().is_empty() && !NODE_COLORS.contains(&n.color.as_str()) {
-            return Err(ParziError::Validation(format!(
-                "unknown node color `{}`",
-                n.color
-            )));
-        }
-        if !n.fill.trim().is_empty() && !NODE_COLORS.contains(&n.fill.as_str()) {
-            return Err(ParziError::Validation(format!(
-                "unknown node fill `{}`",
-                n.fill
-            )));
-        }
-        if !n.shape.trim().is_empty() && !NODE_SHAPES.contains(&n.shape.as_str()) {
-            return Err(ParziError::Validation(format!(
-                "unknown node shape `{}`",
-                n.shape
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn check_edges(edges: &[DiagramEdge], ids: &std::collections::HashSet<String>) -> Result<()> {
-    for e in edges {
-        if !ids.contains(&e.from) || !ids.contains(&e.to) {
-            return Err(ParziError::Validation(format!(
-                "diagram edge references unknown node: {} -> {}",
-                e.from, e.to
-            )));
-        }
-        if e.label.chars().count() > MAX_LABEL_CHARS {
-            return Err(ParziError::Validation(format!(
-                "diagram labels capped at {MAX_LABEL_CHARS} chars"
-            )));
-        }
-        if !e.color.trim().is_empty() && !NODE_COLORS.contains(&e.color.as_str()) {
-            return Err(ParziError::Validation(format!(
-                "unknown edge color `{}`",
-                e.color
-            )));
-        }
-        if !e.style.trim().is_empty() && !EDGE_STYLES.contains(&e.style.as_str()) {
-            return Err(ParziError::Validation(format!(
-                "unknown edge style `{}`",
-                e.style
-            )));
-        }
-    }
-    Ok(())
-}
-
-fn check_groups(groups: &[DiagramGroup], ids: &std::collections::HashSet<String>) -> Result<()> {
-    if groups.len() > MAX_GROUPS {
-        return Err(ParziError::Validation(format!(
-            "diagram groups exceed max {MAX_GROUPS}"
-        )));
-    }
-    for g in groups {
-        if g.id.trim().is_empty() {
-            return Err(ParziError::Validation(
-                "diagram groups need a non-empty id".into(),
-            ));
-        }
-        if g.label.chars().count() > MAX_LABEL_CHARS {
-            return Err(ParziError::Validation(format!(
-                "diagram labels capped at {MAX_LABEL_CHARS} chars"
-            )));
-        }
-        if g.nodes.iter().any(|m| !ids.contains(m)) {
-            return Err(ParziError::Validation(format!(
-                "diagram group `{}` references unknown node",
-                g.id
-            )));
-        }
     }
     Ok(())
 }

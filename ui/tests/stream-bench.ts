@@ -1,18 +1,3 @@
-/** Streaming-path benchmark (efficiency.md E4, §3.4).
- *
- * Feeds one deterministic 4 000-token answer with three code fences through
- * the exact functions Thread.svelte calls, and counts the work each path does:
- *
- *   old  — one reactive assignment per delta, splitSegments(whole buffer) +
- *          renderMarkdown(every segment) per delta. What HEAD did.
- *   coal — the 60 ms flush only (still re-parses the whole buffer per flush).
- *   new  — 60 ms flush + LiveMarkdown: finished blocks parsed once, only the
- *          block being written is re-parsed.
- *
- * Run: npm run bench:stream   (node >= 22 strips the types itself)
- * No DOM here, so DOMPurify passes the HTML through; markdown-it + highlight.js
- * are the measured cost and they are the quadratic term.
- */
 import {
   renderMarkdown,
   splitSegments,
@@ -21,7 +6,6 @@ import {
   resetMdStats,
 } from "../src/lib/md.ts";
 
-/** Deterministic word source: no Math.random, same run every time. */
 function rng(seed: number): () => number {
   let s = seed >>> 0;
   return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
@@ -32,7 +16,6 @@ const WORDS =
     " ",
   );
 
-/** ~4 000 whitespace tokens of prose, headings, a list and three fences. */
 function answer(): string {
   const r = rng(7);
   const out: string[] = [];
@@ -67,7 +50,6 @@ function answer(): string {
 
 const TEXT = answer();
 const TOKENS: string[] = TEXT.split(/(?<=\s)/).filter((t) => t.length);
-/** 50 tok/s is a fast provider; 60 ms of that is three deltas per flush. */
 const PER_FLUSH = 3;
 
 interface Row {
@@ -102,8 +84,6 @@ function measure(name: string, fn: (emit: (buf: string) => void) => void): Row {
 
 type Path = (emit: (buf: string) => void) => void;
 
-/** HEAD: every delta re-splits and re-renders the whole buffer, through the
-    caches — which is also what evicts every finished message (probe below). */
 const oldPath: Path = (emit) => {
   let live = "";
   for (const tok of TOKENS) {
@@ -116,7 +96,6 @@ const oldPath: Path = (emit) => {
   }
 };
 
-/** Coalescing alone: the same work, 3× fewer times. */
 const coalPath: Path = (emit) => {
   let live = "";
   for (let i = 0; i < TOKENS.length; i++) {
@@ -130,7 +109,6 @@ const coalPath: Path = (emit) => {
   }
 };
 
-/** This lane: coalescing + incremental tail, exactly as Thread.svelte does it. */
 const newPath: Path = (emit) => {
   const lm = new LiveMarkdown();
   let live = "";
@@ -153,7 +131,6 @@ const newPath: Path = (emit) => {
   }
 };
 
-// Warm the JIT so the first path measured is not also paying for compilation.
 for (let i = 0; i < 40; i++) renderMarkdown(`warmup ${i}\n\n\`\`\`json\n{"i": ${i}}\n\`\`\``);
 
 const old = measure("old (per delta)", oldPath);
@@ -182,9 +159,6 @@ console.log(
   `\nold -> new: ms ${(old.ms / fresh.ms).toFixed(1)}x, parses ${(old.parses / fresh.parses).toFixed(1)}x, parsed chars ${(old.parsedChars / fresh.parsedChars).toFixed(1)}x`,
 );
 
-/** Point 4: a transcript of finished messages must still come out of the LRU
-    in O(1) after a long answer has streamed past it. The old path writes one
-    cache entry per delta, so 4 000 deltas evict all 400 slots. */
 function evictionProbe(label: string, path: Path): void {
   const msgs = Array.from(
     { length: 24 },
@@ -204,8 +178,6 @@ function evictionProbe(label: string, path: Path): void {
     process.exitCode = 1;
   }
 }
-/** The incremental tail must render the same content as one whole-buffer
-    parse: same visible text, same fences, nothing dropped at a block seam. */
 function fidelityCheck(label: string, doc: string): void {
   const lm = new LiveMarkdown();
   const toks = doc.split(/(?<=\s)/).filter((t) => t.length);

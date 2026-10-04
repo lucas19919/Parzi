@@ -1,14 +1,7 @@
-/** Provider brand marks, rendered inline by ProviderLogo.svelte.
-    Bodies are the inner markup of the lobehub icon set (MIT) plus one local
-    mark; `fill` is the root fill of monochrome marks (currentColor follows the
-    theme ink), colour marks carry their own brand fills. No tiles, no images. */
-
 export interface ProviderMark {
   viewBox: string;
-  /** Root fill; "currentColor" for monochrome marks, undefined for coloured ones. */
   fill?: string;
   fillRule?: "evenodd" | "nonzero";
-  /** Inner SVG markup. */
   body: string;
 }
 
@@ -78,7 +71,6 @@ const M: Record<string, ProviderMark> = {
   },
 };
 
-/** Provider id (as used in model ids and the roster) -> mark. Aliases share a glyph. */
 export const PROVIDER_MARKS: Record<string, ProviderMark> = {
   ...M,
   anthropic: M.claude, "claude-code": M.claude,

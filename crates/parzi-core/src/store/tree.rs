@@ -1,11 +1,7 @@
-//! Pure subtree maths, kept free of IO so it stays unit-testable.
-
 use std::collections::{HashMap, HashSet};
 
 use super::model::{SessionMeta, SessionStatus};
 
-/// `root` plus all of its descendants at any depth. Unknown roots yield just
-/// themselves so callers still remove the dir when listing raced.
 pub fn subtree_ids(all: &[SessionMeta], root: &str) -> HashSet<String> {
     let by_parent = children_map(all);
     let mut out: HashSet<String> = HashSet::new();
@@ -23,7 +19,6 @@ pub fn subtree_ids(all: &[SessionMeta], root: &str) -> HashSet<String> {
     out
 }
 
-/// Every finished session plus all of its descendants at any depth.
 pub fn cascade_kill_ids(all: &[SessionMeta]) -> HashSet<String> {
     let by_parent = children_map(all);
     let done: HashSet<&str> = all

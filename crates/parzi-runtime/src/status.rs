@@ -1,15 +1,9 @@
-//! Where each provider stands, as its own program last said. Probed on
-//! demand (Settings, start-up, Smart Auto), kept on disk so the picker has
-//! an answer before any probe finishes, and fed by runs: a plan window a
-//! turn reports lands here without a probe.
-
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use parzi_core::config::ParziConfig;
 use parzi_providers::{Provider, ProviderStatus, State, UsageWindow};
 
-/// How the runtime gets a provider: the real roster, or a test's fakes.
 pub type ProviderSource =
     Arc<dyn Fn(&str, &ParziConfig) -> Option<Arc<dyn Provider>> + Send + Sync>;
 
@@ -17,7 +11,6 @@ pub fn roster_source() -> ProviderSource {
     Arc::new(|id: &str, cfg: &ParziConfig| parzi_providers::provider(id, cfg))
 }
 
-/// A status older than this is probed again before Smart Auto trusts it.
 const FRESH_SECS: u64 = 30 * 60;
 
 pub struct StatusBoard {
@@ -32,7 +25,6 @@ fn file() -> Option<std::path::PathBuf> {
 }
 
 impl StatusBoard {
-    /// The board as it was last saved; empty on first start.
     pub fn load() -> Self {
         let map = file()
             .and_then(|p| std::fs::read_to_string(p).ok())
@@ -47,7 +39,6 @@ impl StatusBoard {
         }
     }
 
-    /// An empty board that never touches the disk (tests, one-shot tools).
     pub fn in_memory() -> Self {
         Self {
             map: RwLock::new(HashMap::new()),
@@ -59,7 +50,6 @@ impl StatusBoard {
         self.map.read().ok()?.get(id).cloned()
     }
 
-    /// Every roster provider in picker order; one never checked says so.
     pub fn all(&self) -> Vec<ProviderStatus> {
         parzi_providers::PROVIDERS
             .iter()
@@ -96,7 +86,6 @@ impl StatusBoard {
         }
     }
 
-    /// Plan windows a run just reported, merged by label.
     pub fn update_usage(&self, id: &str, windows: &[UsageWindow]) {
         let Ok(mut m) = self.map.write() else { return };
         let Some(s) = m.get_mut(id) else { return };
@@ -110,8 +99,6 @@ impl StatusBoard {
         self.save();
     }
 
-    /// Probe `ids` (all when empty) side by side. A provider switched off in
-    /// Settings is reported as such without starting anything.
     pub async fn refresh(
         &self,
         cfg: &ParziConfig,
@@ -143,7 +130,6 @@ impl StatusBoard {
                 continue;
             }
             set.spawn(async move {
-                // One slow vendor must not hold the rest.
                 tokio::time::timeout(std::time::Duration::from_secs(90), provider.status())
                     .await
                     .unwrap_or_else(|_| {
@@ -153,10 +139,6 @@ impl StatusBoard {
         }
         while let Some(done) = set.join_next().await {
             if let Ok(mut s) = done {
-                // Keep plan windows a run saw when the probe itself has none,
-                // as long as the vendor's own reset time says they still
-                // hold: one that has reset, or never said when it would, must
-                // not keep a provider used up for good.
                 if s.usage.is_empty() {
                     if let Some(old) = self.get(&s.provider) {
                         let now = parzi_providers::now_secs();
@@ -169,9 +151,6 @@ impl StatusBoard {
         self.all()
     }
 
-    /// Smart Auto: the first provider in the configured order that is on,
-    /// installed and signed in (or cannot be checked short of a session),
-    /// and has no plan window used up. Stale answers are probed first.
     pub async fn pick(&self, cfg: &ParziConfig, source: &ProviderSource) -> Option<String> {
         let now = parzi_providers::now_secs();
         for id in &cfg.routing.order {
@@ -216,7 +195,6 @@ mod tests {
         }
         async fn status(&self) -> ProviderStatus {
             let mut s = ProviderStatus::new(self.0, self.1, "");
-            // Below zero: a vendor whose check reports no plan windows.
             if self.2 >= 0.0 {
                 s.usage = vec![UsageWindow {
                     label: "Session".into(),
@@ -258,7 +236,6 @@ mod tests {
     async fn smart_auto_skips_used_up_and_signed_out_providers() {
         let board = StatusBoard::in_memory();
         let cfg = ParziConfig::default();
-        // claude's session window is at 100%, codex is signed out.
         assert_eq!(
             board.pick(&cfg, &source()).await.as_deref(),
             Some("opencode")
@@ -305,9 +282,6 @@ mod tests {
         assert!((s.usage[0].used_percent - 55.0).abs() < 1e-9);
     }
 
-    /// A window a run reported as used up blocks Smart Auto only until the
-    /// vendor's reset time; one that never said when it resets lasts until
-    /// the next check.
     #[tokio::test]
     async fn a_used_up_window_stops_counting_once_it_has_reset() {
         let board = StatusBoard::in_memory();

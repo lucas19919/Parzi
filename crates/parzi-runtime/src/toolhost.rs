@@ -1,64 +1,41 @@
-//! One run's side of the table: Parzi's own tools — widgets, teamwork,
-//! plans, knowledge, leases, the role's project tools and the connectors
-//! the lane allows — and the gate every action of the vendor agent passes.
-//!
-//! The agent reaches the tools over MCP (`mcp_host`). Its own actions
-//! (edits, shell commands) arrive as permission requests; the same policy
-//! decides both: lane lockdown, lane allowlist, leases, workspace hooks,
-//! then the approval mode.
-
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use parzi_core::context::InterKind;
-use parzi_core::error::Result;
+use parzi_core::error::{ParziError, Result};
 use parzi_core::store::{Event, SessionStore};
-use parzi_core::{artifacts, widgets};
+use parzi_core::{artifacts, brain, widgets};
 use parzi_providers::{PermissionDecision, PermissionGate, PermissionRequest};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::handler::{HarnessBridge, RunEvent, RunSink};
-use crate::lease_tools::ShellAudit;
-use crate::roles::RoleBinding;
 use crate::tools::{
-    display_name, is_lane_tool, is_session_tool, is_ui_tool, Approval, ApprovalMode, Approver,
-    ToolCallInfo, ToolDef, ToolExecutor,
+    display_name, is_brain_tool, is_browser_tool, is_lane_tool, is_session_tool, is_ui_tool,
+    Approval, ApprovalMode, Approver, ToolCallInfo, ToolDef, ToolExecutor,
 };
 
-/// Everything a run's tools need, gathered once at launch.
 pub struct ToolHostParts {
     pub session_id: String,
     pub lane: String,
     pub mode: ApprovalMode,
-    /// The composer's "edits" pill: in Ask mode, file edits run without a
-    /// prompt while everything else still asks. Never lifts Deny.
     pub edits_auto: bool,
     pub store: SessionStore,
     pub tools: Arc<ToolExecutor>,
     pub approver: Arc<dyn Approver>,
     pub harness: Option<Arc<dyn HarnessBridge>>,
-    /// §1.2: the project role this run is, when it is one.
-    pub role: Option<RoleBinding>,
     pub sink: RunSink,
     pub cancel: CancellationToken,
 }
 
 pub struct ToolHost {
     p: ToolHostParts,
-    /// Shell commands in flight: vendor tool id → the worktree before it.
-    audits: std::sync::Mutex<HashMap<String, ShellAudit>>,
-    /// The tool list, built once per run: listing a connector can take
-    /// seconds, and agents ask for the list more than once.
     defs: tokio::sync::OnceCell<Vec<ToolDef>>,
 }
 
-/// What an agent's own tool does, in the names lane allowlists have always
-/// used. `None`: fetches, sub-agents, anything else.
 fn category(tool: &str) -> Option<&'static str> {
     match tool {
-        // Claude Code, Codex (`shell`), ACP kinds (`execute`).
         "Bash" | "BashOutput" | "KillShell" | "shell" | "execute" => Some("shell.exec"),
         "Edit" | "MultiEdit" | "Write" | "NotebookEdit" | "edit" | "delete" | "move" => {
             Some("fs.write")
@@ -68,13 +45,6 @@ fn category(tool: &str) -> Option<&'static str> {
     }
 }
 
-/// `path` relative to `cwd`, with forward slashes, when it names a file
-/// inside it as the file system will resolve it, not only as it reads. Two
-/// passes: the text ([`relative_text`]), then the disk: the deepest part of
-/// the path that exists is resolved through links, junctions and short
-/// names and must still be inside `cwd`, resolved the same way. The answer
-/// is spelled as resolved, so a link inside the folder is leased by where
-/// it points. No `cwd`, or one that cannot be resolved: no inside.
 fn worktree_relative(cwd: &str, path: &str) -> Option<String> {
     let rel = relative_text(cwd, path)?;
     let root = std::fs::canonicalize(cwd).ok()?;
@@ -83,7 +53,6 @@ fn worktree_relative(cwd: &str, path: &str) -> Option<String> {
     let mut known = 0;
     for seg in &parts {
         let next = here.join(seg);
-        // A dangling link exists too; it just does not resolve below.
         if std::fs::symlink_metadata(&next).is_err() {
             break;
         }
@@ -101,13 +70,6 @@ fn worktree_relative(cwd: &str, path: &str) -> Option<String> {
     (!out.is_empty()).then(|| out.join("/"))
 }
 
-/// The text pass of [`worktree_relative`]. Relative paths are taken from
-/// `cwd`; `..` is resolved on the text, so a climb out is outside. Anything
-/// rooted — a drive, `\foo`, `C:foo`, a share, a verbatim path — must start
-/// with `cwd`, without case where the file system ignores it. Whatever a
-/// shell or Windows would read differently from the text is outside too: a
-/// leading `~`, surrounding spaces, and on Windows a `:` inside a name (a
-/// stream), a name ending in a dot or a space, or a device name.
 fn relative_text(cwd: &str, path: &str) -> Option<String> {
     let base = cwd.trim().replace('\\', "/");
     let base = base.trim_end_matches('/');
@@ -141,14 +103,12 @@ fn relative_text(cwd: &str, path: &str) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
-/// `s` without the leading `prefix`, compared without case where the file
-/// system ignores it. The rest keeps its own spelling.
 fn strip_prefix_fold<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
     let mut rest = s.char_indices();
     for want in prefix.chars() {
         let (_, got) = rest.next()?;
         let same = want == got
-            || (parzi_core::project::PATHS_IGNORE_CASE
+            || (cfg!(any(windows, target_os = "macos"))
                 && want.to_lowercase().eq(got.to_lowercase()));
         if !same {
             return None;
@@ -157,8 +117,6 @@ fn strip_prefix_fold<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
     Some(rest.next().map_or("", |(i, _)| &s[i..]))
 }
 
-/// A name Windows keeps as written: no stream (`a.rs:x`), no trailing dot
-/// or space (Windows drops them, so `.. ` climbs), and not a device.
 fn windows_plain_name(seg: &str) -> bool {
     const DEVICES: [&str; 6] = ["con", "prn", "aux", "nul", "conin$", "conout$"];
     let stem = seg
@@ -179,8 +137,6 @@ fn windows_plain_name(seg: &str) -> bool {
         && !port("lpt")
 }
 
-/// The files a write names: the request's paths, or the file field of its
-/// input when an agent sent none.
 fn write_targets(req: &PermissionRequest) -> Vec<String> {
     if !req.paths.is_empty() {
         return req.paths.clone();
@@ -193,11 +149,138 @@ fn write_targets(req: &PermissionRequest) -> Vec<String> {
         .collect()
 }
 
+fn execute_brain(name: &str, args: &Value) -> (bool, String) {
+    let arg = |k: &str| args.get(k).and_then(Value::as_str).map_or("", str::trim);
+    let note = |p: &str| {
+        if p.to_ascii_lowercase().ends_with(".md") {
+            p.to_string()
+        } else {
+            format!("{p}.md")
+        }
+    };
+    let vault = match brain::Vault::open() {
+        Ok(v) => v,
+        Err(e) => return (false, e.to_string()),
+    };
+    let out = match name {
+        "brain.search" if arg("query").is_empty() => {
+            return (false, "brain.search needs a `query`".into())
+        }
+        "brain.search" => {
+            let hits = vault.search(arg("query"));
+            Ok(if hits.is_empty() {
+                format!("no notes match `{}`", arg("query"))
+            } else {
+                hits.iter()
+                    .map(|h| format!("- {} — {}\n  {}", h.path, h.title, h.snippet))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+        }
+        "brain.read" if arg("path").is_empty() => {
+            return (false, "brain.read needs a `path`".into())
+        }
+        "brain.read" => vault.read(&note(arg("path"))),
+        "brain.list" => brain_listing(&vault, arg("project")),
+        "brain.write" => match args.get("content").and_then(Value::as_str) {
+            Some(content) if !arg("path").is_empty() => vault
+                .write(&note(arg("path")), content)
+                .map(|m| format!("saved {} ({} bytes)", m.path, m.bytes)),
+            _ => return (false, "brain.write needs `path` + `content`".into()),
+        },
+        _ => return (false, format!("unknown brain tool `{name}`")),
+    };
+    match out {
+        Ok(text) => (true, text),
+        Err(e) => (false, e.to_string()),
+    }
+}
+
+fn note_line(n: &brain::NoteMeta, projects: bool) -> String {
+    let mut line = format!("\n- {} — {}", n.path, n.title);
+    if projects && !n.projects.is_empty() {
+        line.push_str(&format!(" [{}]", n.projects.join(", ")));
+    }
+    if n.pinned {
+        line.push_str(" (pinned)");
+    }
+    if !n.summary.is_empty() {
+        line.push_str(": ");
+        line.push_str(&n.summary);
+    }
+    line
+}
+
+fn brain_listing(vault: &brain::Vault, project: &str) -> Result<String> {
+    const SHOWN: usize = 300;
+    let (notes, projects) = vault.catalog();
+    if project.eq_ignore_ascii_case(brain::EVERYWHERE) {
+        let mut out = String::from("Notes for every session:");
+        let before = out.len();
+        for n in notes.iter().filter(|n| n.everywhere()) {
+            out.push_str(&note_line(n, false));
+        }
+        if out.len() == before {
+            out.push_str(" none");
+        }
+        return Ok(out);
+    }
+    if !project.is_empty() {
+        let by_path: HashMap<&str, &brain::NoteMeta> =
+            notes.iter().map(|n| (n.path.as_str(), n)).collect();
+        let p = projects
+            .iter()
+            .find(|p| p.slug.eq_ignore_ascii_case(project))
+            .ok_or_else(|| {
+                ParziError::Validation(format!(
+                    "no project `{project}` in the brain; brain.list without a project lists them"
+                ))
+            })?;
+        let mut out = format!(
+            "{} ({}), folder {}\n- {} — project note",
+            p.title, p.slug, p.folder, p.note
+        );
+        for n in &p.notes {
+            match by_path.get(n.as_str()) {
+                Some(meta) => out.push_str(&note_line(meta, false)),
+                None => out.push_str(&format!("\n- {n}")),
+            }
+        }
+        return Ok(out);
+    }
+    if notes.is_empty() {
+        return Ok(format!("the brain is empty ({})", vault.root().display()));
+    }
+    let mut out = String::from("Projects:");
+    if projects.is_empty() {
+        out.push_str(" none");
+    }
+    for p in &projects {
+        out.push_str(&format!(
+            "\n- {} ({}), folder {}, {} notes",
+            p.slug,
+            p.title,
+            p.folder,
+            p.notes.len()
+        ));
+    }
+    out.push_str("\n\nNotes:");
+    for n in notes.iter().take(SHOWN) {
+        out.push_str(&note_line(n, true));
+    }
+    if notes.len() > SHOWN {
+        out.push_str(&format!(
+            "\n- …and {} more; use brain.search",
+            notes.len() - SHOWN
+        ));
+    }
+    Ok(out)
+}
+
 impl ToolHost {
     pub fn new(parts: ToolHostParts) -> Self {
         Self {
             p: parts,
-            audits: std::sync::Mutex::new(HashMap::new()),
             defs: tokio::sync::OnceCell::new(),
         }
     }
@@ -206,25 +289,13 @@ impl ToolHost {
         &self.p.session_id
     }
 
-    /// The tools this run offers over MCP, by Parzi's dotted names: the
-    /// always-on ones, the lease tools for a project lane, the role's
-    /// project tools, and the connectors the lane allows.
     pub async fn defs(&self) -> Vec<ToolDef> {
         self.defs
-            .get_or_init(|| async {
-                let mut defs = self.p.tools.defs_with_mcp().await;
-                if let Some(binding) = &self.p.role {
-                    defs.extend(crate::project_flow::project_defs_for(binding.role));
-                }
-                defs
-            })
+            .get_or_init(|| async { self.p.tools.defs() })
             .await
             .clone()
     }
 
-    /// Run one of Parzi's tools for the agent. Workspace hooks wrap every
-    /// call except rendering: pre-hooks can refuse before the approval gate,
-    /// post-hooks observe after.
     pub async fn call(&self, name: &str, args: &Value) -> (bool, String) {
         let id = uuid::Uuid::new_v4().to_string();
         if is_ui_tool(name) {
@@ -248,8 +319,38 @@ impl ToolHost {
     }
 
     async fn execute_inner(&self, id: &str, name: &str, args: &Value) -> (bool, String) {
+        if is_browser_tool(name) {
+            let allowed = if name == "browser.open" {
+                self.approved(id, name, args).await
+            } else {
+                self.p.tools.is_allowed(name)
+            };
+            if !allowed {
+                return (
+                    false,
+                    format!("tool `{name}` denied (lane mode / approver)"),
+                );
+            }
+            return self.execute_browser(name, args).await;
+        }
+        if is_brain_tool(name) {
+            let allowed = if name == "brain.write" {
+                self.approved(id, name, args).await
+            } else {
+                self.p.tools.is_allowed(name)
+            };
+            if !allowed {
+                return (
+                    false,
+                    format!("tool `{name}` denied (lane mode / approver)"),
+                );
+            }
+            let (name, args) = (name.to_string(), args.clone());
+            return tokio::task::spawn_blocking(move || execute_brain(&name, &args))
+                .await
+                .unwrap_or_else(|e| (false, e.to_string()));
+        }
         if is_session_tool(name) {
-            // H-5: session tools are tools: the same gate as everything else.
             if !self.approved(id, name, args).await {
                 return (
                     false,
@@ -273,31 +374,16 @@ impl ToolHost {
                 format!("tool `{name}` denied (lane mode / approver)"),
             );
         }
-        // `project.*` belongs to the run's role, not to the lane cwd.
-        if let Some(binding) = &self.p.role {
-            if crate::project_flow::is_project_tool(name) {
-                return crate::project_flow::execute_project_tool(
-                    binding.role,
-                    &binding.ctx,
-                    name,
-                    args,
-                );
-            }
-        }
         self.p.tools.execute(name, args).await
     }
 
     async fn approved(&self, id: &str, name: &str, args: &Value) -> bool {
-        // R-8: lane Deny is absolute — no per-tool override can lift it.
-        // The allowlist is checked before any prompt so nobody approves a
-        // tool that is then refused anyway.
         if self.p.mode == ApprovalMode::Deny {
             return false;
         }
         if !self.p.tools.is_allowed(name) {
             return false;
         }
-        // Per-tool connector override wins over lane Ask/Auto.
         match self.p.tools.approval_override(name) {
             Some(ApprovalMode::Deny) => return false,
             Some(ApprovalMode::Auto) => return true,
@@ -319,8 +405,6 @@ impl ToolHost {
             lane: self.p.lane.clone(),
             session: self.p.session_id.clone(),
         };
-        // Single approval path: the Approver is the gate. The event is for
-        // observers; a slow human really does block here.
         self.p
             .sink
             .emit(RunEvent::ApprovalRequest { call: info.clone() });
@@ -330,10 +414,7 @@ impl ToolHost {
         }
     }
 
-    /// The gate for the agent's own actions. See the module note for order.
     async fn gate(&self, req: &PermissionRequest) -> PermissionDecision {
-        // Parzi's own tools come in over MCP and pass Parzi's gate when they
-        // run (`call`): asking here as well would make the person approve twice.
         let parzi = display_name(&req.tool);
         if parzi != req.tool {
             return PermissionDecision::Allow;
@@ -346,9 +427,6 @@ impl ToolHost {
             return PermissionDecision::Deny("this lane is locked down: read-only".into());
         }
         if let Some(k) = kind {
-            // A lane that lists file or shell kinds and leaves this one out
-            // refuses it. Parzi adds its own tool names to every lane, so
-            // only the kinds say whether the lane meant to restrict these.
             let lists_kinds = self
                 .p
                 .tools
@@ -359,22 +437,13 @@ impl ToolHost {
                 return PermissionDecision::Deny(format!("this lane does not allow {k}"));
             }
         }
-        // A write outside the worktree, or to a file nobody named, is never
-        // approved on the lane's behalf: a person decides, and a run with
-        // nobody to ask is refused. Reads go anywhere, as under Codex's
-        // workspace sandbox.
         let mut outside = false;
         if kind == Some("fs.write") {
             let targets = write_targets(req);
-            let rel: Vec<Option<String>> = targets
-                .iter()
-                .map(|p| worktree_relative(&self.p.tools.cwd, p))
-                .collect();
-            outside = targets.is_empty() || rel.iter().any(Option::is_none);
-            let inside: Vec<String> = rel.into_iter().flatten().collect();
-            if let Some(why) = self.p.tools.lease_gate_paths(&inside).await {
-                return PermissionDecision::Deny(why);
-            }
+            outside = targets.is_empty()
+                || targets
+                    .iter()
+                    .any(|p| worktree_relative(&self.p.tools.cwd, p).is_none());
         }
         let hook_name = kind.unwrap_or(req.tool.as_str());
         let (denied, warnings) =
@@ -405,40 +474,9 @@ impl ToolHost {
         if !allowed {
             return PermissionDecision::Deny("declined".into());
         }
-        if kind == Some("shell.exec") {
-            self.begin_audit(&req.id).await;
-        }
         PermissionDecision::Allow
     }
 
-    /// A shell command is about to run: take the lease layer's before-picture
-    /// (once per command; the permission request usually got there first).
-    pub async fn tool_started(&self, id: &str, tool: &str) {
-        if category(tool) == Some("shell.exec") {
-            self.begin_audit(id).await;
-        }
-    }
-
-    async fn begin_audit(&self, id: &str) {
-        if self.audits.lock().is_ok_and(|a| a.contains_key(id)) {
-            return;
-        }
-        if let Some(audit) = self.p.tools.shell_audit_start().await {
-            if let Ok(mut a) = self.audits.lock() {
-                a.entry(id.to_string()).or_insert(audit);
-            }
-        }
-    }
-
-    /// A tool finished. For a shell command, anything it wrote into a file
-    /// another lane holds is put back; the refusal comes back for the result.
-    pub async fn tool_finished(&self, id: &str) -> Option<String> {
-        let audit = self.audits.lock().ok()?.remove(id)?;
-        self.p.tools.shell_audit_finish(audit).await
-    }
-
-    /// Dispatch `session.*` over the bridge. Spawns and messages also land in
-    /// this session's transcript so the thread shows the teamwork.
     async fn execute_session_tool(&self, name: &str, args: &Value) -> (bool, String) {
         let Some(bridge) = &self.p.harness else {
             return (false, "session tools unavailable in this run".into());
@@ -516,8 +554,6 @@ impl ToolHost {
         }
     }
 
-    /// `lane.dispatch`: a worker subsession on the project's implementation
-    /// role settings; the caller's lane and model when the roster is empty.
     async fn execute_lane_tool(&self, name: &str, args: &Value) -> (bool, String) {
         let Some(bridge) = &self.p.harness else {
             return (false, "lane tools unavailable in this run".into());
@@ -533,22 +569,8 @@ impl ToolHost {
         }
         let lane = str_arg("lane").filter(|s| !s.trim().is_empty());
         let wait = args.get("wait").and_then(Value::as_bool).unwrap_or(true);
-        let mut role_model: Option<String> = None;
-        if let Ok(meta) = self.p.store.get(&self.p.session_id) {
-            if let Ok(roster) = parzi_core::lanes::get_project_roster(&meta.project) {
-                role_model = roster.implementation.model.filter(|s| !s.trim().is_empty());
-            }
-        }
         match bridge
-            .spawn_session(
-                &self.p.session_id,
-                &title,
-                &prompt,
-                true,
-                role_model,
-                lane,
-                wait,
-            )
+            .spawn_session(&self.p.session_id, &title, &prompt, true, None, lane, wait)
             .await
         {
             Ok(text) => {
@@ -567,6 +589,51 @@ impl ToolHost {
         }
     }
 
+    async fn execute_browser(&self, name: &str, args: &Value) -> (bool, String) {
+        match name {
+            "browser.open" => {
+                let raw = args
+                    .get("url")
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("")
+                    .trim();
+                if raw.is_empty() {
+                    return (false, "browser.open needs a url".into());
+                }
+                let url = crate::desk::normalize_url(raw);
+                match crate::desk::call("tab.open", serde_json::json!({ "url": url })).await {
+                    Ok(v) => {
+                        let shown = v.get("url").and_then(|u| u.as_str()).unwrap_or(&url);
+                        (true, format!("opened {shown}"))
+                    }
+                    Err(e) => (false, e),
+                }
+            }
+            "browser.tabs" => match crate::desk::call("tab.list", serde_json::json!({})).await {
+                Ok(v) => (
+                    true,
+                    v.get("tabs")
+                        .map(|t| t.to_string())
+                        .unwrap_or_else(|| "[]".into()),
+                ),
+                Err(e) => (false, e),
+            },
+            "browser.read" => match crate::desk::call("tab.read", serde_json::json!({})).await {
+                Ok(v) => {
+                    let title = v.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                    let url = v.get("url").and_then(|t| t.as_str()).unwrap_or("");
+                    if url.is_empty() {
+                        (true, "no page is open".into())
+                    } else {
+                        (true, format!("{title} {url}").trim().to_string())
+                    }
+                }
+                Err(e) => (false, e),
+            },
+            _ => (false, format!("unknown browser tool `{name}`")),
+        }
+    }
+
     fn execute_ui_tool(&self, name: &str, args: &Value) -> (bool, String) {
         let widget = |fence: &str, payload: Value| {
             let _ = self.p.store.append(
@@ -581,15 +648,6 @@ impl ToolHost {
         match name {
             "ui.show_markdown" => {
                 let md = args.get("markdown").and_then(|m| m.as_str()).unwrap_or("");
-                if let Some(lang) = crate::handler::ascii_diagram_fence(md) {
-                    return (
-                        false,
-                        format!(
-                            "rejected: ASCII/box-drawing diagram in ```{lang} fence renders as a dead console window — \
-                             call ui.show_diagram with nodes[]/edges[] for diagrams, ui.show_widget for charts/tables, never ASCII boxes"
-                        ),
-                    );
-                }
                 let payload = serde_json::json!({"widget": 1, "type": "markdown", "text": md});
                 match widgets::validate_widget(&payload) {
                     Ok(_) => widget("parzi-widget", payload),
@@ -599,10 +657,6 @@ impl ToolHost {
             "ui.show_widget" => match widgets::validate_widget(args) {
                 Ok(_) => widget("parzi-widget", args.clone()),
                 Err(e) => (false, format!("invalid widget: {e}")),
-            },
-            "ui.show_diagram" => match widgets::validate_diagram(args) {
-                Ok(_) => widget("parzi-diagram", args.clone()),
-                Err(e) => (false, format!("invalid diagram: {e}")),
             },
             "ui.show_artifact" => match self.store_artifact(args) {
                 Ok(msg) => (true, msg),
@@ -696,7 +750,6 @@ mod tests {
             "/other/x.rs"
         };
         assert_eq!(relative_text(cwd, outside), None);
-        // A sibling that merely shares the prefix is outside too.
         let sibling = if cfg!(windows) {
             r"C:\repo2\x.rs"
         } else {
@@ -709,7 +762,6 @@ mod tests {
             None,
             "the folder is not a file"
         );
-        // Case folding never cuts a name in half, whatever it lower-cases to.
         let odd = if cfg!(windows) {
             r"C:\İrepo"
         } else {
@@ -719,9 +771,6 @@ mod tests {
         assert_eq!(relative_text(cwd, "src/İ.rs").as_deref(), Some("src/İ.rs"));
     }
 
-    /// B3's escape table, now for the agent's own writes: absolute, rooted,
-    /// drive-relative, UNC, verbatim and deep `..` climbs are all outside,
-    /// and so is whatever a shell or Windows reads differently from the text.
     #[test]
     fn escapes_are_outside() {
         let cwd = if cfg!(windows) { r"C:\repo" } else { "/repo" };
@@ -741,8 +790,6 @@ mod tests {
             "src/a.rs ",
             "",
         ];
-        // Drive letters, streams and dropped dots only mean something where
-        // Windows reads the path.
         if cfg!(windows) {
             table.extend([
                 r"C:\Windows\System32\x",
@@ -763,9 +810,6 @@ mod tests {
         }
     }
 
-    /// The disk pass: a link inside the folder that points outside it is
-    /// outside, one that points inside is leased by its target, and a file
-    /// that does not exist yet is judged by the folders that do.
     #[test]
     fn links_are_judged_by_where_they_point() {
         let base = std::env::temp_dir().join(format!("parzi-fence-{}", std::process::id()));
@@ -805,7 +849,6 @@ mod tests {
     fn link_dir(target: &std::path::Path, link: &std::path::Path) -> bool {
         #[cfg(windows)]
         {
-            // A junction needs no privilege, unlike a symlink.
             std::process::Command::new("cmd")
                 .args(["/C", "mklink", "/J"])
                 .arg(link)

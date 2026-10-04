@@ -1,8 +1,3 @@
-//! Live checks against the vendor programs installed on this machine.
-//! Ignored by default: they need the programs, and the turn checks spend a
-//! few tokens of the signed-in plan. Run with
-//! `cargo test -p parzi-providers --test live -- --ignored --nocapture`.
-
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -12,7 +7,6 @@ use parzi_providers::{
 };
 use tokio_util::sync::CancellationToken;
 
-/// Refuses everything and remembers what it was asked.
 #[derive(Default)]
 struct Refuse {
     asked: Mutex<Vec<String>>,
@@ -132,8 +126,6 @@ async fn opencode_answers_a_turn() {
         .any(|e| matches!(e, ProviderEvent::Message(m) if m.to_lowercase().contains("pong"))));
 }
 
-/// Parzi runs Claude Code with no settings, which also drops the repo's
-/// CLAUDE.md; the driver hands that text over itself.
 #[tokio::test]
 #[ignore = "spends a few tokens of the Claude plan"]
 async fn claude_reads_the_repos_claude_md() {
@@ -154,8 +146,6 @@ async fn claude_reads_the_repos_claude_md() {
         .any(|e| matches!(e, ProviderEvent::Message(m) if m.contains("PELICAN-42"))));
 }
 
-/// OpenCode runs with its project config off (a repo's opencode.json could
-/// grant itself permissions), but it still reads the repo's AGENTS.md.
 #[tokio::test]
 #[ignore = "spends a free OpenCode model's quota"]
 async fn opencode_reads_the_repos_agents_md() {
@@ -179,8 +169,6 @@ async fn opencode_reads_the_repos_agents_md() {
 const WRITE: &str = "Create a file named gate-check.txt in the current directory containing \
                      the word hello. If you are not allowed, reply with the word refused.";
 
-/// The claim every gated agent makes: it asks before it writes, and a
-/// refusal means the file is not there.
 async fn a_write_waits_for_the_gate(id: &str, model: Option<&str>) {
     let cwd = folder(&format!("{id}-gate"));
     let gate = Arc::new(Refuse::default());

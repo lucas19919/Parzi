@@ -1,8 +1,3 @@
-//! Shared test harness: a scripted agent that behaves like a vendor's.
-//! It streams words, asks Parzi's gate before acting, and calls Parzi's
-//! tools over the real MCP endpoint — the same paths Claude Code, Codex
-//! and the ACP agents take.
-
 #![allow(dead_code)]
 
 use std::future::Future;
@@ -22,8 +17,6 @@ use parzi_runtime::Orchestrator;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-/// A hermetic home for this test binary: no test session ever lands in the
-/// real `~/.parzi`. Every test calls it first; the Once shares one home.
 pub fn home(tag: &str) -> PathBuf {
     static INIT: std::sync::Once = std::sync::Once::new();
     static DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -43,7 +36,6 @@ pub type Script = Arc<
         + Sync,
 >;
 
-/// Wrap an async closure as a script.
 pub fn script<F, Fut>(f: F) -> Script
 where
     F: Fn(Agent) -> Fut + Send + Sync + 'static,
@@ -52,12 +44,10 @@ where
     Arc::new(move |a| Box::pin(f(a)))
 }
 
-/// A provider whose every turn runs `script`. It records each turn's spec.
 pub struct Fake {
     pub id: &'static str,
     pub script: Script,
     pub turns: Arc<Mutex<Vec<TurnSpec>>>,
-    /// Plays an agent that asks before every change (the usual case).
     pub gated: bool,
 }
 
@@ -71,7 +61,6 @@ impl Fake {
         })
     }
 
-    /// An agent that applies some changes without asking Parzi first.
     pub fn ungated(id: &'static str, script: Script) -> Arc<Self> {
         Arc::new(Self {
             id,
@@ -115,7 +104,6 @@ impl Provider for Fake {
     }
 }
 
-/// What a scripted turn can do.
 pub struct Agent {
     pub spec: TurnSpec,
     pub gate: Arc<dyn PermissionGate>,
@@ -130,7 +118,6 @@ impl Agent {
         });
     }
 
-    /// Stream `text` and finish it as a message.
     pub fn say(&self, text: &str) {
         let _ = self.events.send(ProviderEvent::TextDelta(text.to_string()));
         let _ = self.events.send(ProviderEvent::Message(text.to_string()));
@@ -144,7 +131,6 @@ impl Agent {
         });
     }
 
-    /// Ask Parzi's gate, as a vendor does before one of its own actions.
     pub async fn ask(&self, tool: &str, input: Value, paths: &[&str]) -> PermissionDecision {
         self.gate
             .decide(PermissionRequest {
@@ -157,8 +143,6 @@ impl Agent {
             .await
     }
 
-    /// One of the agent's own tools, start to finish, reported to Parzi.
-    /// `permit` is the permission request id when the gate was asked first.
     pub async fn own_tool<F, Fut>(
         &self,
         id: &str,
@@ -185,7 +169,6 @@ impl Agent {
         (ok, output)
     }
 
-    /// Call one of Parzi's tools over MCP, reported like a vendor reports it.
     pub async fn parzi(&self, tool: &str, args: Value) -> (bool, String) {
         let id = format!("mcp-{}", uuid::Uuid::new_v4());
         let name = format!("mcp__parzi__{}", to_mcp(tool));
@@ -204,7 +187,6 @@ impl Agent {
         (ok, output)
     }
 
-    /// The tools Parzi offers this turn, by their MCP names.
     pub async fn tool_names(&self) -> Vec<String> {
         let v = mcp(&self.spec, "tools/list", json!({})).await;
         v["result"]["tools"]
@@ -247,7 +229,6 @@ pub async fn mcp_call(spec: &TurnSpec, tool: &str, args: Value) -> (bool, String
     (!r["isError"].as_bool().unwrap_or(true), text)
 }
 
-/// A source with these fakes under roster ids; anything else is unknown.
 pub fn source(fakes: &[Arc<Fake>]) -> ProviderSource {
     let fakes: Vec<Arc<Fake>> = fakes.to_vec();
     Arc::new(
@@ -274,7 +255,6 @@ pub fn orch(fakes: &[Arc<Fake>]) -> (Arc<Orchestrator>, SessionStore) {
     orch_with(cfg, fakes)
 }
 
-/// Wait until the session is no longer active or queued.
 pub async fn settle(store: &SessionStore, id: &str) -> SessionMeta {
     for _ in 0..400 {
         let m = store.get(id).unwrap();

@@ -1,5 +1,3 @@
-//! Pure-logic gates: context assembly, compaction, widgets, theme vars.
-
 use parzi_core::context::{AttachedFile, ContextBuilder, Role};
 use parzi_core::store::Event;
 use parzi_core::theme::Theme;
@@ -19,7 +17,6 @@ fn assembles_newest_first_under_budget() {
         files: vec![],
     };
     let ctx = b.assemble(60);
-    // Tiny budget: only the newest messages survive, order preserved.
     assert!(!ctx.messages.is_empty());
     let texts: Vec<&str> = ctx.messages.iter().map(|m| m.content.as_str()).collect();
     let last = texts.last().unwrap();
@@ -27,7 +24,7 @@ fn assembles_newest_first_under_budget() {
         last.contains("message number 19"),
         "newest must survive: {last}"
     );
-    assert!(ctx.estimated_tokens <= 60 + 40); // estimate granularity, never wild
+    assert!(ctx.estimated_tokens <= 60 + 40);
 }
 
 #[test]
@@ -61,20 +58,6 @@ fn widget_validation_fails_safe() {
     let big_rows: Vec<_> = (0..60).map(|i| serde_json::json!([i])).collect();
     let big = serde_json::json!({"widget": 1, "type": "table", "rows": big_rows});
     assert!(parzi_core::widgets::validate_widget(&big).is_err());
-}
-
-#[test]
-fn diagram_caps_hold() {
-    let nodes: Vec<_> = (0..201)
-        .map(|i| serde_json::json!({"id": format!("n{i}")}))
-        .collect();
-    let d = serde_json::json!({"diagram": 1, "nodes": nodes, "edges": []});
-    assert!(parzi_core::widgets::validate_diagram(&d).is_err());
-    let ok = serde_json::json!({
-        "diagram": 1, "nodes": [{"id": "a"}, {"id": "b"}],
-        "edges": [{"from": "a", "to": "b"}],
-    });
-    assert!(parzi_core::widgets::validate_diagram(&ok).is_ok());
 }
 
 #[test]
@@ -128,79 +111,6 @@ fn widget_series_validate_per_series() {
 }
 
 #[test]
-fn diagram_rejects_dupes_and_dangling_edges() {
-    use parzi_core::widgets::validate_diagram as v;
-    let dupe = serde_json::json!({
-        "diagram": 1, "nodes": [{"id": "a"}, {"id": "a"}],
-        "edges": [],
-    });
-    assert!(v(&dupe).is_err());
-    let dangling = serde_json::json!({
-        "diagram": 1, "nodes": [{"id": "a"}],
-        "edges": [{"from": "a", "to": "ghost"}],
-    });
-    assert!(v(&dangling).is_err());
-    let long = "y".repeat(200);
-    let label = serde_json::json!({
-        "diagram": 1, "nodes": [{"id": "a", "label": long}],
-        "edges": [],
-    });
-    assert!(v(&label).is_err());
-}
-
-#[test]
-fn diagram_advanced_shapes_validate() {
-    use parzi_core::widgets::validate_diagram as v;
-    let arch = serde_json::json!({
-        "diagram": 1, "direction": "LR",
-        "nodes": [
-            {"id": "ui", "label": "Web app", "shape": "actor"},
-            {"id": "api", "label": "API", "sub": "gateway", "color": "accent"},
-            {"id": "db", "label": "Postgres", "shape": "db", "color": "info"},
-            {"id": "cache?", "label": "Cache?", "shape": "diamond"}
-        ],
-        "edges": [
-            {"from": "ui", "to": "api", "label": "https"},
-            {"from": "api", "to": "db", "label": "sql", "style": "thick", "color": "info"},
-            {"from": "api", "to": "cache?", "label": "maybe", "style": "dotted"}
-        ],
-        "groups": [{"id": "backend", "label": "Backend", "nodes": ["api", "db"]}],
-    });
-    assert!(v(&arch).is_ok());
-    let bad_shape = serde_json::json!({
-        "diagram": 1, "nodes": [{"id": "a", "shape": "pyramid"}],
-        "edges": [],
-    });
-    assert!(v(&bad_shape).is_err());
-    let bad_color = serde_json::json!({
-        "diagram": 1, "nodes": [{"id": "a", "color": "chartreuse"}],
-        "edges": [],
-    });
-    assert!(v(&bad_color).is_err());
-    let bad_style = serde_json::json!({
-        "diagram": 1, "nodes": [{"id": "a"}, {"id": "b"}],
-        "edges": [{"from": "a", "to": "b", "style": "wiggly"}],
-    });
-    assert!(v(&bad_style).is_err());
-    let bad_group = serde_json::json!({
-        "diagram": 1, "nodes": [{"id": "a"}],
-        "edges": [],
-        "groups": [{"id": "g", "nodes": ["ghost"]}],
-    });
-    assert!(v(&bad_group).is_err());
-    let filled = serde_json::json!({
-        "diagram": 1, "nodes": [{"id": "a", "fill": "info"}],
-        "edges": [],
-    });
-    assert!(v(&filled).is_ok());
-    let bad_fill = serde_json::json!({
-        "diagram": 1, "nodes": [{"id": "a", "fill": "mauve"}],
-        "edges": [],
-    });
-    assert!(v(&bad_fill).is_err());
-}
-
-#[test]
 fn artifact_validation_versions_and_dedups() {
     use parzi_core::artifacts::{is_same_content, next_version, slugify_id, validate_artifact};
     assert_eq!(slugify_id("Hello World!"), "hello-world");
@@ -231,17 +141,8 @@ fn artifact_validation_versions_and_dedups() {
 }
 
 #[test]
-fn legacy_tasks_migrate_to_lanes() {
-    use parzi_core::lanes::migrate_tasks_to_lanes;
-    // Missing project migrates zero, never errors.
-    let n = migrate_tasks_to_lanes("no-such-project-xyz").unwrap();
-    assert_eq!(n, 0);
-}
-
-#[test]
 fn session_meta_parent_id_defaults_to_none_for_legacy_files() {
     use parzi_core::store::SessionMeta;
-    // Legacy meta.json without `parent_id` must still parse (backwards compat).
     let legacy = serde_json::json!({
         "id": "abc",
         "title": "old",
@@ -250,7 +151,6 @@ fn session_meta_parent_id_defaults_to_none_for_legacy_files() {
     });
     let m: SessionMeta = serde_json::from_value(legacy).unwrap();
     assert_eq!(m.parent_id, None);
-    // Round-trips with and without a parent.
     let with_parent = serde_json::json!({
         "id": "child",
         "title": "sub",
@@ -269,7 +169,6 @@ fn session_meta_parent_id_defaults_to_none_for_legacy_files() {
 #[test]
 fn subsession_hierarchy_lists_and_reparents() {
     use parzi_core::store::SessionStore;
-    // The only test here that writes: a home of its own, never ~/.parzi.
     let dir = std::env::temp_dir().join(format!("parzi-test-logic-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -281,7 +180,6 @@ fn subsession_hierarchy_lists_and_reparents() {
         .create_with_parent("team-child", "t", "", "m", Some(&parent.id))
         .unwrap();
     assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
-    // Arbitrary depth: grandchild under the child.
     let grand = store
         .create_with_parent("team-grand", "t", "", "m", Some(&child.id))
         .unwrap();
@@ -292,10 +190,8 @@ fn subsession_hierarchy_lists_and_reparents() {
         .unwrap()
         .iter()
         .any(|m| m.id == grand.id));
-    // Detach back to top-level.
     store.set_parent(&child.id, None).unwrap();
     assert!(store.list_children(&parent.id).unwrap().is_empty());
-    // Guards: no self-parenting, no linking to missing sessions.
     assert!(store.set_parent(&parent.id, Some(&parent.id)).is_err());
     assert!(store
         .set_parent(&parent.id, Some("missing-session"))
@@ -330,12 +226,12 @@ fn purge_cascade_kills_descendants_at_any_depth() {
         updated: Utc::now(),
     };
     let all = vec![
-        mk("p", None, SessionStatus::Done),        // finished parent
-        mk("c", Some("p"), SessionStatus::Idle),   // live child: still purged
-        mk("g", Some("c"), SessionStatus::Active), // grandchild: still purged
-        mk("solo", None, SessionStatus::Done),     // unrelated finished: purged
-        mk("keep", None, SessionStatus::Idle),     // unrelated live: kept
-        mk("keepkid", Some("keep"), SessionStatus::Idle), // child of live: kept
+        mk("p", None, SessionStatus::Done),
+        mk("c", Some("p"), SessionStatus::Idle),
+        mk("g", Some("c"), SessionStatus::Active),
+        mk("solo", None, SessionStatus::Done),
+        mk("keep", None, SessionStatus::Idle),
+        mk("keepkid", Some("keep"), SessionStatus::Idle),
     ];
     let kill = cascade_kill_ids(&all);
     for id in ["p", "c", "g", "solo"] {
@@ -351,8 +247,8 @@ fn theme_emits_css_vars_with_eva_default() {
     let t = Theme::default();
     assert_eq!(t.background.image, "");
     let css = t.to_css_vars();
-    assert!(css.contains("--parzi-accent:#7C8CFF"));
-    assert!(css.contains("--parzi-glass-blur:18px"));
+    assert!(css.contains("--accent:#7C8CFF"));
+    assert!(css.contains("--bg-blur:"));
 }
 
 #[test]
@@ -370,23 +266,4 @@ fn widget_histogram_and_scatter_validate() {
     assert!(v(&flat).is_err());
     let nan = serde_json::json!({"widget": 1, "type": "scatter", "points": [[1, 2], [3]]});
     assert!(v(&nan).is_err());
-}
-
-#[test]
-fn external_url_gate() {
-    use parzi_core::urls::check_external_url as check;
-    assert!(check("https://github.com/lucas19919/Parzi/issues").is_ok());
-    assert!(check("https://github.com/parzi/parzi/releases").is_ok());
-    assert!(check("https://github.com/lucas19919/Parzi/issues/new?title=x&body=y").is_ok());
-    assert!(check("https://GITHUB.COM/lucas19919/Parzi/").is_ok());
-    assert!(check("https://github.com/lucas19919/Parzi/x|calc").is_err());
-    assert!(check("https://github.com/lucas19919/Parzi/x;calc").is_err());
-    assert!(check("https://github.com@evil.example/lucas19919/Parzi/").is_err());
-    assert!(check("https://github.com:443/lucas19919/Parzi/").is_err());
-    assert!(check("https://github.com/lucas19919/Parzi.evil/").is_err());
-    assert!(check("https://evil.example/lucas19919/Parzi/").is_err());
-    assert!(check("http://github.com/lucas19919/Parzi/").is_err());
-    assert!(check("https://github.com/lucas19919/Parzi/a b").is_err());
-    assert!(check("https://github.com/other/repo").is_err());
-    assert!(check("").is_err());
 }

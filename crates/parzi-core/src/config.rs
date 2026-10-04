@@ -5,15 +5,11 @@ use serde::{Deserialize, Serialize};
 use crate::error::{ParziError, Result};
 use crate::{atomic_write, paths};
 
-/// v2: providers are vendor programs Parzi drives (Claude Code, Codex, the
-/// ACP agents), not HTTP endpoints. v1 files migrate on load.
 pub const CONFIG_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParziConfig {
     pub version: u32,
-    /// Per-provider settings, by roster id. A provider with no entry is on,
-    /// found on PATH, and starts on its vendor's default model.
     #[serde(default)]
     pub providers: HashMap<String, ProviderEntry>,
     #[serde(default)]
@@ -24,18 +20,14 @@ pub struct ParziConfig {
     pub orchestrator: OrchLimits,
     #[serde(default)]
     pub routing: RoutingConfig,
-    /// R-4: the spend a single run may cost before it pauses. Unset = no cap.
     #[serde(default)]
     pub budget: Budget,
-    /// Starred model specs (`provider/model`) — picker favorites, Ctrl+1..5.
     #[serde(default)]
     pub favorite_models: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingConfig {
-    /// Smart Auto starts a new thread on the first ready provider in this
-    /// order. A started thread stays on its provider.
     #[serde(default = "default_order", alias = "auto_order")]
     pub order: Vec<String>,
 }
@@ -62,9 +54,6 @@ impl Default for RoutingConfig {
     }
 }
 
-/// R-4: a spend cap the runtime keeps. Both limits are optional and the
-/// tighter of config and project (`budget:` in PROJECT.md) wins. A run that
-/// hits one pauses (Idle + `budget_exceeded`) — it is never silently cut.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
 pub struct Budget {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -74,26 +63,10 @@ pub struct Budget {
 }
 
 impl Budget {
-    /// The tighter of two caps, limit by limit. `None` never tightens.
-    #[must_use]
-    pub fn tightest(self, other: Self) -> Self {
-        Self {
-            max_cost_usd: match (self.max_cost_usd, other.max_cost_usd) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            },
-            max_tokens: match (self.max_tokens, other.max_tokens) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            },
-        }
-    }
-
     pub fn is_unlimited(self) -> bool {
         self.max_cost_usd.is_none() && self.max_tokens.is_none()
     }
 
-    /// The reason this run must pause, or `None` while it is inside the cap.
     pub fn exceeded(self, tokens: u64, cost_usd: f64) -> Option<String> {
         if let Some(max) = self.max_tokens {
             if tokens >= max {
@@ -111,13 +84,10 @@ impl Budget {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderEntry {
-    /// Off = the picker and Smart Auto leave this provider out.
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// The vendor program. Empty = its usual name, found on PATH.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub binary: String,
-    /// The model a new thread starts on. Empty = the vendor's own default.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub default_model: String,
 }
@@ -134,7 +104,6 @@ impl Default for ProviderEntry {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct LaneDefaults {
-    /// auto | ask | deny
     #[serde(default = "default_mode")]
     pub default_mode: String,
     #[serde(default)]
@@ -156,14 +125,10 @@ pub struct McpServerCfg {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: HashMap<String, String>,
-    /// Exposure allowlist (short tool names): empty = expose all tools.
     #[serde(default)]
     pub allow: Vec<String>,
-    /// Exposure denylist (short tool names): takes precedence over `allow`.
     #[serde(default)]
     pub deny: Vec<String>,
-    /// Per-tool approval override: short tool name -> `auto` | `ask` | `deny`.
-    /// Absent = follow the lane mode. `deny` blocks execution even when exposed.
     #[serde(default)]
     pub tool_modes: HashMap<String, String>,
     #[serde(default = "default_timeout_ms")]
@@ -186,7 +151,6 @@ impl McpServerCfg {
         self.allow.iter().any(|a| a == tool)
     }
 
-    /// Per-tool approval override, normalised. None = follow lane mode.
     pub fn tool_mode(&self, tool: &str) -> Option<String> {
         self.tool_modes.get(tool).map(|m| {
             match m.as_str() {
@@ -205,7 +169,6 @@ pub struct OrchLimits {
     pub max_concurrent: usize,
     #[serde(default = "default_idle_kill")]
     pub mcp_idle_kill_secs: u64,
-    /// When busy: queue the run (true) or reject loudly (false).
     #[serde(default = "default_true")]
     pub queue_when_busy: bool,
 }
@@ -292,10 +255,6 @@ impl ParziConfig {
         Ok(())
     }
 
-    /// Bring an older file up to v2. v1 named HTTP adapters and their model
-    /// catalog: provider ids fold onto the roster, and model defaults and
-    /// favourites are dropped, because vendor programs name models their
-    /// own way. v2 files only get their ids folded.
     pub fn migrate(&mut self) {
         let alias = |id: &str| -> Option<&'static str> {
             match id {
@@ -315,7 +274,6 @@ impl ParziConfig {
             if from_v1 {
                 entry = ProviderEntry::default();
             }
-            // A canonical entry wins over an alias entry for the same slot.
             if id == canon || !self.providers.contains_key(canon) {
                 self.providers.insert(canon.to_string(), entry);
             }
@@ -374,7 +332,6 @@ auto_order = ["antigravity", "codex", "claude-code", "t3", "opencode"]
         assert!(cfg.providers.contains_key("grok"));
         assert!(!cfg.providers.contains_key("anthropic"));
         assert!(!cfg.providers.contains_key("ollama"));
-        // v1 model ids named the old HTTP catalog: gone, vendor default instead.
         assert_eq!(cfg.provider("claude").default_model, "");
         assert!(cfg.provider("grok").enabled);
         assert!(cfg.favorite_models.is_empty());

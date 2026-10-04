@@ -1,8 +1,3 @@
-//! One run of a thread. Parzi hands the turn to the provider's own agent
-//! and writes down what comes back — words, tool calls, usage, and the
-//! failure when there is one. The transcript is the record: a failed run
-//! leaves an error event in the thread, never only a toast.
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,12 +21,8 @@ use crate::status::StatusBoard;
 use crate::toolhost::ToolHost;
 use crate::tools::{display_name, humanize_tool_call};
 
-/// Turns one run may take: the prompt, then messages other sessions sent
-/// while it worked. A ceiling, so two sessions cannot ping-pong forever.
 const MAX_TURNS: u32 = 8;
-/// Earlier conversation a new vendor session is given, at most.
 const HISTORY_CHARS: usize = 12_000;
-/// A tool's output as the transcript keeps it, at most.
 const OUTPUT_CHARS: usize = 20_000;
 
 pub struct EngineRunParts {
@@ -40,36 +31,26 @@ pub struct EngineRunParts {
     pub provider: Arc<dyn Provider>,
     pub model: Option<String>,
     pub effort: Option<String>,
-    /// Standing instructions, already joined.
     pub instructions: String,
     pub cwd: String,
     pub attachments: Vec<AttachedFile>,
     pub store: SessionStore,
     pub host: Arc<ToolHost>,
-    /// Where Parzi's tools are served. `None`: this run offers none.
     pub mcp: Option<Arc<McpHost>>,
     pub status: Arc<StatusBoard>,
     pub sink: RunSink,
     pub cancel: CancellationToken,
-    /// R-4: what this run may spend before it pauses.
     pub budget: Budget,
-    /// The opening turn is already in the transcript (queued at enqueue, or
-    /// a message from another session): do not write a second User turn.
     pub prompt_recorded: bool,
-    /// This run's hold on its session, for its last look for messages.
     pub(crate) slot: SessionSlot,
-    /// The transcript's length when the launch claimed the session.
     pub seen: usize,
-    /// Started by a message from another session: where it landed.
     pub inbox_from: Option<usize>,
 }
 
 pub struct EngineRun {
     p: EngineRunParts,
-    /// The vendor's handle for this thread's conversation.
     resume: std::sync::Mutex<Option<Value>>,
     spent: std::sync::Mutex<(u64, f64)>,
-    /// The agent put a dollar figure on some of this run.
     cost_seen: AtomicBool,
 }
 
@@ -82,9 +63,7 @@ enum Outcome {
 
 #[derive(Default)]
 struct Turn {
-    /// The last finished message: written once we know if it ends the turn.
     pending: Option<String>,
-    /// Text streamed since the last finished message (kept on a stop).
     partial: String,
     started: HashMap<String, Instant>,
 }
@@ -123,14 +102,8 @@ impl EngineRun {
                  the folder fence cannot stop them."
             ));
         }
-        // Everything before the launch claimed the session is either this
-        // run's opening or was answered already; later messages are news.
         let mut seen = self.p.seen;
-        // This turn's own words, and what goes to the agent with them.
         let mut input = match self.p.inbox_from {
-            // Started by a message from another session: every one not yet
-            // handed to the agent, from there on, is this turn, so a sender
-            // that raced the launch is answered too.
             Some(from) => {
                 let start = self.p.slot.read_mark().unwrap_or(from);
                 let (msgs, upto) = self.inbox(start, Some(seen));
@@ -154,7 +127,6 @@ impl EngineRun {
         let mut cap_noted = false;
         loop {
             turns += 1;
-            // R-4: every turn costs, so the cap is checked before one is bought.
             if let Some(reason) = self.budget_hit() {
                 self.pause_for_budget(&reason).await;
                 return Ok(());
@@ -170,8 +142,6 @@ impl EngineRun {
                     self.pause_for_budget(&reason).await;
                     return Ok(());
                 }
-                // The agent no longer has the conversation: once, start a
-                // new one and hand it the thread so far.
                 Outcome::Failed(e) if e.class == ErrorClass::SessionLost && !restarted => {
                     restarted = true;
                     tracing::info!(session = %sid, "vendor conversation lost: {}", e.message);
@@ -213,10 +183,6 @@ impl EngineRun {
                      dollar cap cannot stop it. The token cap still does."
                 ));
             }
-            // H-5: messages other sessions sent while this turn ran are the
-            // next turn, as the untrusted data they are. Looked for under
-            // the lock senders deliver under: with none, the run settles and
-            // lets go of the session before any sender can see it live.
             let (fresh, upto) = self
                 .p
                 .slot
@@ -249,9 +215,6 @@ impl EngineRun {
         Ok(())
     }
 
-    /// Messages from other sessions in the transcript from index `from` to
-    /// `until` (or the end), as the untrusted data they are, and the index
-    /// read up to.
     fn inbox(&self, from: usize, until: Option<usize>) -> (Vec<String>, usize) {
         let events = self.p.store.events(&self.p.session_id).unwrap_or_default();
         let end = until.map_or(events.len(), |u| u.min(events.len()));
@@ -265,7 +228,6 @@ impl EngineRun {
         (msgs, end)
     }
 
-    /// The vendor's conversation is gone: the next turn opens a new one.
     fn forget_session(&self) {
         if let Ok(mut r) = self.resume.lock() {
             *r = None;
@@ -273,7 +235,6 @@ impl EngineRun {
         set_run_session(&self.p.session_id, None);
     }
 
-    /// Say something in the thread: kept in the transcript, shown live.
     fn note(&self, text: String) {
         let _ = self
             .p
@@ -292,9 +253,6 @@ impl EngineRun {
         }
     }
 
-    /// The first turn's text: earlier conversation when the vendor has none
-    /// of it yet (a thread from before this provider, a fork), text
-    /// attachments inline, then the prompt.
     fn opening(&self, prompt: &str) -> String {
         let mut parts = vec![];
         let fresh_session = self.resume.lock().map(|r| r.is_none()).unwrap_or(true);
@@ -313,8 +271,6 @@ impl EngineRun {
         parts.join("\n\n")
     }
 
-    /// The thread so far, newest last, as plain lines — without the turn
-    /// being sent now.
     fn history(&self, prompt: &str) -> Option<String> {
         let events = self.p.store.events(&self.p.session_id).ok()?;
         let mut lines: Vec<String> = events
@@ -328,8 +284,6 @@ impl EngineRun {
                 _ => None,
             })
             .collect();
-        // This turn's own prompt is already in the transcript; it goes out
-        // as the prompt, not as history.
         let own = format!("user: {}", user_event_text(prompt, &self.p.attachments));
         if lines.last() == Some(&own) {
             lines.pop();
@@ -421,7 +375,6 @@ impl EngineRun {
         }
     }
 
-    /// Write the held message; `done` marks it as the turn's answer.
     fn flush(&self, turn: &mut Turn, done: bool) {
         if let Some(text) = turn.pending.take() {
             let _ = self
@@ -431,7 +384,6 @@ impl EngineRun {
         }
     }
 
-    /// Words streamed after the last finished message, on a stop or failure.
     fn keep_partial(&self, turn: &mut Turn) {
         let partial = std::mem::take(&mut turn.partial);
         if !partial.trim().is_empty() {
@@ -445,7 +397,6 @@ impl EngineRun {
         }
     }
 
-    /// One provider event. `Some(reason)` = the budget ran out.
     async fn on_event(&self, ev: ProviderEvent, turn: &mut Turn) -> Option<String> {
         let sid = &self.p.session_id;
         match ev {
@@ -478,7 +429,6 @@ impl EngineRun {
             }
             ProviderEvent::ToolStarted { id, name, input } => {
                 self.flush(turn, false);
-                self.p.host.tool_started(&id, &name).await;
                 turn.started.insert(id.clone(), Instant::now());
                 let shown = display_name(&name);
                 let label = humanize_tool_call(&name, &input);
@@ -502,10 +452,6 @@ impl EngineRun {
                 ok,
                 output,
             } => {
-                let (ok, output) = match self.p.host.tool_finished(&id).await {
-                    Some(refusal) => (false, format!("{refusal}\n\n{output}")),
-                    None => (ok, output),
-                };
                 let ms = turn.started.remove(&id).map_or(0, |t| {
                     t.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
                 });
@@ -564,7 +510,6 @@ impl EngineRun {
         None
     }
 
-    /// The reason this run must pause, or `None` while inside the budget.
     fn budget_hit(&self) -> Option<String> {
         if self.p.budget.is_unlimited() {
             return None;
@@ -573,8 +518,6 @@ impl EngineRun {
         self.p.budget.exceeded(tokens, cost)
     }
 
-    /// Budget stop: say it in the timeline, mark the session, park it Idle.
-    /// Never silent, never a kill — the thread continues once the cap moves.
     async fn pause_for_budget(&self, reason: &str) {
         let text = format!(
             "Paused: {reason}. Raise the budget in Settings or PROJECT.md, or re-scope, \
@@ -592,8 +535,6 @@ impl EngineRun {
         self.finish(SessionStatus::Idle).await;
     }
 
-    /// R-1: a killed run stays killed. Whatever the run wanted to write, a
-    /// cancelled token (or a session already marked Killed) wins.
     async fn finish(&self, status: SessionStatus) {
         self.settle(status);
     }

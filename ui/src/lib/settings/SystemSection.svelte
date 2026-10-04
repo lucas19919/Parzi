@@ -1,26 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type Check, type PluginView } from "../api";
+  import { api, type Check } from "../api";
   import Icon from "../Icon.svelte";
-  import Switch from "./Switch.svelte";
   import "./shared.css";
 
   export let notify: (msg: string) => void = () => {};
 
-  const I = {
-    copy: "M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-1M8 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M8 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m0 0h2a2 2 0 0 1 2 2v3m2 4H10m0 0l3-3m-3 3l3 3",
-    trash: "M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
-    issue: "M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z",
-  };
-
   let quick: Check[] | null = null;
-  let mcp: Check[] | null = null;
-  let mcpLoading = true;
-  let plugins: PluginView[] = [];
+
   let threadCount = 0;
   let err = "";
 
-  // In-app updater (Tauri updater plugin; works in installed builds only).
   let appVersion = "";
   let updateState: "idle" | "checking" | "available" | "uptodate" | "downloading" | "ready" | "error" = "idle";
   let updateMsg = "";
@@ -74,32 +64,21 @@
 
   onMount(async () => {
     try {
-      const [q, p, threads, v] = await Promise.all([
+      const [q, threads, v] = await Promise.all([
         api.runDoctorQuick(),
-        api.listPlugins(),
         api.listThreads(),
         api.appVersion().catch(() => ""),
       ]);
       quick = q;
-      plugins = p;
       threadCount = threads.length;
       appVersion = v;
     } catch (e) {
       err = String(e);
     }
-    // MCP probes stream in separately: a hung server (15s timeout each)
-    // can no longer hold the whole System tab hostage.
-    try {
-      mcp = await api.runDoctorMcp();
-    } catch (e) {
-      mcp = [{ name: "mcp", ok: false, detail: String(e) }];
-    } finally {
-      mcpLoading = false;
-    }
   });
 
   function copyDiagnostics() {
-    const all = [...(quick ?? []), ...(mcp ?? [])];
+    const all = [...(quick ?? [])];
     navigator.clipboard.writeText(all.map((c) => `${c.ok ? "PASS" : "FAIL"} [${c.name}] ${c.detail}`).join("\n"));
     notify("Diagnostics copied to clipboard");
   }
@@ -114,81 +93,6 @@
     }
   }
 
-  let issueTitle = "";
-  let issueWhat = "";
-  let issueExpected = "";
-  let issueSteps = "";
-  let includeDiag = true;
-  let reportErr = "";
-  let reporting = false;
-
-  function diagnosticsBlock(): string {
-    const lines = [...(quick ?? []), ...(mcp ?? [])].map(
-      (c) => `${c.ok ? "PASS" : "FAIL"} [${c.name}] ${c.detail}`,
-    );
-    return lines.join("\n").slice(0, 2800);
-  }
-
-  function platformName(): string {
-    const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
-    return nav.userAgentData?.platform ?? navigator.platform ?? "desktop";
-  }
-
-  function diagCount(): number {
-    return (quick ?? []).length + (mcp ?? []).length;
-  }
-
-  /** Structured body: sections survive GitHub's rendering, diagnostics hide
-      in a collapsible block so the report stays readable. */
-  function issueMarkdown(): string {
-    const env = `Parzi ${appVersion || "?"} · ${platformName()}`;
-    const diag = includeDiag
-      ? `\n\n<details>\n<summary>Diagnostics (${env})</summary>\n\n\`\`\`\n${diagnosticsBlock()}\n\`\`\`\n\n</details>`
-      : `\n\n_${env}_`;
-    return `## What happened\n\n${issueWhat.trim()}\n\n## What I expected\n\n${issueExpected.trim() || "—"}\n\n## Steps to reproduce\n\n${issueSteps.trim() || "—"}${diag}`;
-  }
-
-  $: canReport = !!issueTitle.trim() && !!issueWhat.trim();
-
-  function clearIssue() {
-    issueTitle = "";
-    issueWhat = "";
-    issueExpected = "";
-    issueSteps = "";
-    reportErr = "";
-  }
-
-  async function openIssue() {
-    reportErr = "";
-    const title = issueTitle.trim().slice(0, 200);
-    if (!title || !issueWhat.trim()) {
-      reportErr = "Give it a title and say what happened.";
-      return;
-    }
-    const url =
-      "https://github.com/lucas19919/Parzi/issues/new" +
-      `?title=${encodeURIComponent(title)}&body=${encodeURIComponent(issueMarkdown())}&labels=${encodeURIComponent("bug")}`;
-    reporting = true;
-    try {
-      await api.openExternalUrl(url);
-      clearIssue();
-      notify("Opened in your browser — hit Submit to file it");
-    } catch (e) {
-      reportErr = String(e);
-    } finally {
-      reporting = false;
-    }
-  }
-
-  async function copyIssue() {
-    reportErr = "";
-    try {
-      await navigator.clipboard.writeText(`# ${issueTitle.trim() || "Parzi issue"}\n\n${issueMarkdown()}`);
-      notify("Issue markdown copied — paste it anywhere");
-    } catch (e) {
-      reportErr = String(e);
-    }
-  }
 </script>
 
 {#if err}
@@ -231,10 +135,10 @@
     <div class="section-head-with-action">
       <div>
         <h3 class="section-title">System & Doctor Health Checks</h3>
-        <p class="section-desc">Verification of tools, local harnesses, and MCP servers.</p>
+        <p class="section-desc">Config, agents, and the window.</p>
       </div>
       <button class="sbtn" on:click={copyDiagnostics}>
-        <Icon d={I.copy} size={12} />
+        <Icon name="copy" size={12} />
         <span>Copy Diagnostics</span>
       </button>
     </div>
@@ -249,33 +153,6 @@
       {/each}
     </div>
 
-    <h3 class="section-title">MCP Servers</h3>
-    {#if mcpLoading}
-      <div class="skel" />
-    {:else}
-      <div class="checks-list">
-        {#each mcp ?? [] as c}
-          <div class="check-row">
-            <span class="check-icon {c.ok ? 'pass' : 'fail'}">{c.ok ? "✓" : "✗"}</span>
-            <span class="check-name">{c.name}</span>
-            <span class="check-detail">{c.detail}</span>
-          </div>
-        {/each}
-      </div>
-    {/if}
-
-    {#if plugins.length}
-      <h3 class="section-title">Plugins</h3>
-      <div class="checks-list">
-        {#each plugins as p}
-          <div class="check-row">
-            <span class="check-icon {p.enabled ? 'pass' : 'fail'}">{p.enabled ? "✓" : "○"}</span>
-            <span class="check-name">{p.name}</span>
-            <span class="check-detail">{p.kind} · v{p.version}</span>
-          </div>
-        {/each}
-      </div>
-    {/if}
   </div>
 
   <div class="pref-section">
@@ -286,46 +163,9 @@
         <span class="field-hint">{threadCount} total threads recorded under <code>~/.parzi/sessions</code></span>
       </div>
       <button class="sbtn danger" on:click={purgeSessions}>
-        <Icon d={I.trash} size={12} />
+        <Icon name="trash" size={12} />
         <span>Purge Finished Sessions</span>
       </button>
-    </div>
-  </div>
-
-  <div class="pref-section" id="report-issue">
-    <h3 class="section-title">Report an issue</h3>
-    <p class="section-desc">Opens a structured GitHub issue in your browser — you hit Submit. Agents file directly instead, via the <span class="mono">report_issue</span> tool.</p>
-    <div class="field-card col">
-      <input class="txt" placeholder="Title — e.g. Picker freezes on large catalogs" bind:value={issueTitle} />
-      <textarea
-        class="txt"
-        rows="3"
-        placeholder="What happened…"
-        bind:value={issueWhat}
-      />
-      <input class="txt" placeholder="What you expected (optional)" bind:value={issueExpected} />
-      <textarea
-        class="txt"
-        rows="2"
-        placeholder="Steps to reproduce (optional)…"
-        bind:value={issueSteps}
-      />
-      <div class="report-row">
-        <span class="field-hint">{includeDiag ? `Attaches version, platform and ${diagCount()} checks in a collapsible block` : "No diagnostics attached"}</span>
-        <Switch on={includeDiag} title="Include version and health checks" on:toggle={() => (includeDiag = !includeDiag)} />
-      </div>
-      {#if reportErr}
-        <span class="form-err">{reportErr}</span>
-      {/if}
-      <div class="report-actions">
-        <button class="sbtn primary" on:click={openIssue} disabled={reporting || !canReport}>
-          <Icon d={I.issue} size={12} />
-          <span>{reporting ? "Opening…" : "Open GitHub issue"}</span>
-        </button>
-        <button class="sbtn" on:click={copyIssue} title="Copy the full report as markdown">
-          <span>Copy markdown</span>
-        </button>
-      </div>
     </div>
   </div>
 
@@ -333,16 +173,14 @@
     <h3 class="section-title">Keyboard Shortcuts</h3>
     <div class="shortcuts-grid">
       {#each [
-        ["Ctrl + B", "Show / hide the sidebar"],
-        ["Ctrl + \\", "Show / hide the inspector dock"],
-        ["Ctrl + Shift + F", "Full view of the inspector dock"],
-        ["Ctrl + N", "Start fresh conversation thread"],
-        ["Ctrl + ,", "Open settings & preferences"],
-        ["Ctrl + K", "Command palette & quick navigation"],
-        ["Enter", "Send message to agent"],
-        ["Shift + Enter", "Insert newline in prompt composer"],
-        ["Esc", "Stop run / close dialog / exit full view"],
-        ["F11", "Toggle fullscreen mode"],
+        ["Ctrl + T", "New tab"],
+        ["Ctrl + W", "Close tab"],
+        ["Ctrl + K", "Sessions and commands"],
+        ["Ctrl + Tab", "Next tab"],
+        ["Ctrl + ,", "Settings"],
+        ["Enter", "Send"],
+        ["Shift + Enter", "New line"],
+        ["Esc", "Stop the run, or close what is open"],
       ] as [shortcut, action]}
         <div class="shortcut-item">
           <kbd>{shortcut}</kbd>
@@ -357,36 +195,24 @@
   .checks-list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
   .check-row {
     display: flex; align-items: center; gap: 8px; padding: 6px 10px;
-    background: var(--surface-1); border-radius: 6px; font-size: 12px;
+    background: var(--panel); border-radius: 6px; font-size: 12px;
   }
   .check-icon.pass { color: var(--ok); font-weight: 700; }
   .check-icon.fail { color: var(--bad); font-weight: 700; }
   .check-name { color: var(--text); font-weight: 500; min-width: 120px; flex: none; }
-  .check-detail { color: var(--text-3); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .upd-bar { height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; margin-top: 8px; }
+  .check-detail { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .upd-bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; margin-top: 8px; }
   .upd-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.2s ease; }
   .shortcuts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; }
   .shortcut-item {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 6px 0; border-bottom: 1px solid var(--line-2);
+    padding: 6px 0; border-bottom: 1px solid var(--line);
   }
   kbd {
-    font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 11px;
-    background: var(--surface-2); border: 1px solid var(--line-3);
+    font-family: var(--mono), ui-monospace, monospace; font-size: 11px;
+    background: var(--line); border: 1px solid var(--line);
     padding: 2px 6px; border-radius: 4px; color: var(--text);
   }
-  .shortcut-action { font-size: 12px; color: var(--text-3); }
-  #report-issue { scroll-margin-top: 8px; }
+  .shortcut-action { font-size: 12px; color: var(--muted); }
   #app-updates { scroll-margin-top: 8px; }
-  .field-card.col { flex-direction: column; align-items: stretch; }
-  .txt {
-    background: var(--input); border: 1px solid var(--line-2); border-radius: var(--radius-2);
-    color: var(--text); font: inherit; font-size: 12.5px; padding: 7px 10px; width: 100%;
-  }
-  textarea.txt { resize: vertical; min-height: 72px; line-height: 1.5; }
-  .txt::placeholder { color: var(--text-4); }
-  .report-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .report-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  .mono { font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 11px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
-  .form-err { font-size: 12px; color: var(--bad); }
 </style>

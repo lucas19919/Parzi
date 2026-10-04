@@ -2,1279 +2,838 @@
   import { onMount, tick } from "svelte";
   import { fade, fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
+  import { ask } from "@tauri-apps/plugin-dialog";
   import {
-    api, hub, onRunEvent,
-    type SessionMeta, type ChatEvent, type UiEvent,
-    type ProjectView, type ProjectRoster,
+    api, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onRunEvent,
+    type ChatEvent, type PageEvent, type SessionMeta, type UiEvent,
   } from "./lib/api";
-
   import TopBar from "./lib/TopBar.svelte";
-  import type { Tab } from "./lib/tabTypes";
-  import SessionPopup from "./lib/SessionPopup.svelte";
-  import BrowserView from "./lib/BrowserView.svelte";
+  import Switcher from "./lib/Switcher.svelte";
   import DefaultArt from "./lib/DefaultArt.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
   import Thread from "./lib/Thread.svelte";
+  import SessionHeader from "./lib/SessionHeader.svelte";
+  import PageView from "./lib/PageView.svelte";
+  import HomeView from "./lib/HomeView.svelte";
+  import BrainView from "./lib/BrainView.svelte";
+  import Onboarding from "./lib/Onboarding.svelte";
+  import { brain } from "./lib/api";
+  import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
   import Settings from "./lib/Settings.svelte";
+  import Icon from "./lib/Icon.svelte";
   import { board, ensureBoard } from "./lib/providerStore";
-  import { effortLabel, effortsFor } from "./lib/providerRows";
   import { applyThemeCss } from "./lib/theme";
-  import { coalesce, changesThreadList } from "./lib/threadList";
-  import { checkForUpdates, checkForUpdatesSoon } from "./lib/updateStore";
+  import { coalesce } from "./lib/threadList";
+  import { checkForUpdatesSoon } from "./lib/updateStore";
+  import { brainTab, hostOf, isExplicitUrl, pageTab, sessionTab, toAddress, type Tab } from "./lib/tabs";
+  import { toast, toastError, toasts } from "./lib/toast";
+  import { covered } from "./lib/overlay";
+  import type { Approval, LiveTool } from "./lib/live";
 
-  const RM = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const smooth = RM ? { duration: 0 } : { duration: 200, easing: cubicOut };
-  const smoothFast = RM ? { duration: 0 } : { duration: 140, easing: cubicOut };
+  const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
 
-  let bg = "";
+  const restored = loadTabs();
+  let tabs: Tab[] = restored?.tabs ?? [sessionTab()];
+  let activeId = restored?.active ?? tabs[0].id;
   let threads: SessionMeta[] = [];
-  let projects: ProjectView[] = [];
+  let bg = "";
 
-  let curProject = "default";
-  let projectRoster: ProjectRoster | null = null;
-  let activeThreadId: string | null = null;
-  let activeMeta: SessionMeta | null = null;
+  let shown: string | null = null;
+  let meta: SessionMeta | null = null;
   let events: ChatEvent[] = [];
+  let running = new Set<string>();
+  let approvals: Approval[] = [];
+  let context = { used: 0, limit: 0 };
+  let compacting = false;
   let branch = "";
 
   let live = "";
   let liveReasoning = "";
-  let liveTokens = 0;
-  let liveCost = 0;
-  let compacting = false;
+  let liveTools: LiveTool[] = [];
+  let pending = "";
+  let flushTimer = 0;
 
-  $: contextUsed = activeMeta?.context_tokens ?? 0;
-  $: contextLimit = activeMeta?.context_limit ?? 0;
-
-  let liveTools: { id: string; name: string; label: string; running: boolean; ok: boolean; ms: number }[] = [];
   let input = "";
   let model = "auto";
   let effort = "medium";
   let permission = "full";
-
-  function pillMode(): string {
-    if (permission === "supervised" || permission === "edits") return permission;
-    return "auto";
-  }
-  let curLane = "";
+  let mode: "agent" | "web" = "agent";
   let attachments: string[] = [];
-
-  // Settings
-  let showSettings = false;
-  let settingsSection = "general";
-
-  function openSettings(section = "general") {
-    settingsSection = section;
-    showSessionPopup = false;
-    showSettings = true;
-  }
-
-  // Workspaces
-  let hubTick = 0;
-  let wsNames: string[] = [];
-  let wsRoots: Record<string, string> = {};
-
-  async function loadWorkspaces() {
-    const my = ++dataSeq;
-    try {
-      wsNames = await hub.workspaces();
-    } catch {
-      wsNames = [];
-    }
-    if (my !== dataSeq) return;
-    const pairs = await Promise.all(
-      wsNames.map(async (n) => {
-        const w = await hub.workspace(n).catch(() => null);
-        return [n, w?.repos.find((r) => r.local_path)?.local_path ?? ""] as const;
-      }),
-    );
-    if (my !== dataSeq) return;
-    wsRoots = Object.fromEntries(pairs);
-  }
-  $: if (hubTick >= 0) void loadWorkspaces();
-  $: curWorkspace = wsNames.includes(curProject) ? curProject : "";
-
-  // Dual-mode Tabs system
-  let tabs: Tab[] = [
-    {
-      id: "tab-1",
-      kind: "harness",
-      title: "New session",
-      badge: "W",
-      sessionId: null,
-    },
-  ];
-  let activeTabId: string = "tab-1";
-  $: currentTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
-
-  // Session Popup Handler (Spotlight)
-  let showSessionPopup = false;
-  let sessionMenuOpen = false;
-
-  function toggleSessionMenu() {
-    sessionMenuOpen = !sessionMenuOpen;
-  }
-
-  function handleSelectTab(id: string) {
-    activeTabId = id;
-    const tab = tabs.find((t) => t.id === id);
-    if (!tab) return;
-    if (tab.kind === "harness") {
-      if (tab.sessionId) {
-        void openThread(tab.sessionId, false);
-      } else {
-        activeThreadId = null;
-        activeMeta = null;
-        events = [];
-        clearLive();
-      }
-    }
-  }
-
-  function handleCloseTab(id: string) {
-    if (tabs.length <= 1) {
-      tabs = [
-        {
-          id: "tab-" + Date.now(),
-          kind: "harness",
-          title: "New session",
-          badge: "W",
-          sessionId: null,
-        },
-      ];
-      activeTabId = tabs[0].id;
-      activeThreadId = null;
-      activeMeta = null;
-      events = [];
-      clearLive();
-      return;
-    }
-    const idx = tabs.findIndex((t) => t.id === id);
-    const wasActive = activeTabId === id;
-    tabs = tabs.filter((t) => t.id !== id);
-    if (wasActive) {
-      const nextIdx = Math.max(0, idx - 1);
-      const nextTab = tabs[nextIdx];
-      activeTabId = nextTab.id;
-      if (nextTab.kind === "harness") {
-        if (nextTab.sessionId) {
-          void openThread(nextTab.sessionId, false);
-        } else {
-          activeThreadId = null;
-          activeMeta = null;
-          events = [];
-          clearLive();
-        }
-      }
-    }
-  }
-
-  function handleNewTab() {
-    const newId = "tab-" + Date.now();
-    const newTabItem: Tab = {
-      id: newId,
-      kind: "harness",
-      title: "New session",
-      badge: curWorkspace ? "W" : "I",
-      sessionId: null,
-    };
-    tabs = [...tabs, newTabItem];
-    activeTabId = newId;
-    activeThreadId = null;
-    activeMeta = null;
-    events = [];
-    clearLive();
-    showSettings = false;
-  }
-
-  function handleNewBrowserTab(initialUrl = "https://duckduckgo.com") {
-    const newId = "tab-" + Date.now();
-    const newTabItem: Tab = {
-      id: newId,
-      kind: "browser",
-      title: "Web Browser",
-      badge: "B",
-      url: initialUrl,
-    };
-    tabs = [...tabs, newTabItem];
-    activeTabId = newId;
-    showSettings = false;
-  }
-
-  let omniMode: "agent" | "web" = "agent";
-
-  function handleOmniBrowse(e: CustomEvent<{ url: string }>) {
-    const targetUrl = e.detail.url;
-    const cur = tabs.find((t) => t.id === activeTabId);
-    const domain = targetUrl.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "").slice(0, 24);
-    if (cur && cur.kind === "harness" && !cur.sessionId && events.length === 0) {
-      cur.kind = "browser";
-      cur.badge = "B";
-      cur.url = targetUrl;
-      cur.title = domain || "Web Browser";
-      tabs = [...tabs];
-    } else {
-      handleNewBrowserTab(targetUrl);
-    }
-  }
-
-  function handleOpenSession(id: string) {
-    const existing = tabs.find((t) => t.sessionId === id);
-    if (existing) {
-      activeTabId = existing.id;
-      void openThread(id, false);
-    } else {
-      const cur = tabs.find((t) => t.id === activeTabId);
-      if (cur && !cur.sessionId && cur.kind === "harness") {
-        cur.sessionId = id;
-        cur.title = threads.find((t) => t.id === id)?.title || "Session";
-        tabs = [...tabs];
-        void openThread(id, false);
-      } else {
-        const meta = threads.find((t) => t.id === id);
-        const newId = "tab-" + Date.now();
-        const newTabItem: Tab = {
-          id: newId,
-          kind: "harness",
-          title: meta?.title || "Session",
-          badge: meta?.lane ? meta.lane.slice(0, 1).toUpperCase() : "W",
-          sessionId: id,
-        };
-        tabs = [...tabs, newTabItem];
-        activeTabId = newId;
-        void openThread(id, false);
-      }
-    }
-    showSettings = false;
-  }
-
-  function handleSelectWorkspace(name: string) {
-    void selectWorkspace(name);
-  }
-
-  async function selectWorkspace(name: string) {
-    if (name === curProject) return;
-    curProject = name;
-    activeThreadId = null;
-    activeMeta = null;
-    events = [];
-    clearLive();
-    toast(`Workspace: ${name}`);
-    await loadThreads();
-  }
-
-  // Toasts
-  interface Toast {
-    id: number;
-    text: string;
-    err: boolean;
-  }
-  let toasts: Toast[] = [];
-  let toastSeq = 0;
-  function toast(text: string, err = false) {
-    const id = ++toastSeq;
-    toasts = [...toasts, { id, text, err }];
-    setTimeout(() => {
-      toasts = toasts.filter((t) => t.id !== id);
-    }, 3500);
-  }
-
-  // Approval card
-  interface ApprovalCard {
-    key: string;
-    session: string;
-    call: { id: string; name: string; args: unknown; lane: string; session: string };
-  }
-  let approvals: ApprovalCard[] = [];
-  $: activeApproval = approvals.find((a) => a.session === activeThreadId) ?? null;
-
-  let liveRun: string | null = null;
   let sending = false;
+
+  let switcherOpen = false;
+  let settingsOpen = false;
+  let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
-  let showScrollBottom = false;
-
-  function onStageScroll() {
-    if (!scrollEl) return;
-    const dist = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
-    showScrollBottom = dist > 140;
-  }
-
-  function scrollToBottom() {
-    if (scrollEl) {
-      scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: RM ? "auto" : "smooth" });
-    }
-  }
-
-  $: currentRoot = (wsRoots[curWorkspace] || wsRoots[curProject] || "").trim();
-
-  // Stage blur & background fade
-  let isBlurredStage = false;
-  $: isBlurredStage = !!activeThreadId || sending || events.length > 0 || (currentTab?.kind === "browser" && !!currentTab?.url) || showSettings;
-
+  let farFromBottom = false;
+  let omnibar: Omnibar;
+  let page: PageView;
+  let immersive = false;
+  let setupOpen = false;
+  let project: { slug: string; title: string; notes: number; tokens: number } | null = null;
   let navSeq = 0;
-  let dataSeq = 0;
+  let deskRev = 0;
 
-  async function openThread(id: string, keepLive = false) {
-    const my = ++navSeq;
-    activeThreadId = id;
-    if (!keepLive) clearLive();
-    liveTokens = 0;
-    liveCost = 0;
-    try {
-      const [meta, ev] = await api.getThread(id);
-      if (my !== navSeq || activeThreadId !== id) return;
-      activeMeta = meta;
-      events = ev;
-      curProject = meta.project || "default";
-      curLane = meta.lane || "";
-      if (meta.model && meta.model.includes("/")) {
-        model = meta.model;
-      }
-      // Update tab title
-      const cur = tabs.find((t) => t.id === activeTabId);
-      if (cur) {
-        cur.title = meta.title || "Session";
-        cur.sessionId = id;
-        tabs = [...tabs];
-      }
-    } catch (e) {
-      if (my !== navSeq || activeThreadId !== id) return;
-      toast(String(e), true);
-    }
-    if (keepLive) clearLive();
-    await tick();
-    if (scrollEl) {
-      scrollEl.style.scrollBehavior = "auto";
-      scrollEl.scrollTop = scrollEl.scrollHeight;
-      scrollEl.style.scrollBehavior = "";
-    }
-  }
+  $: tab = tabs.find((t) => t.id === activeId) ?? tabs[0];
+  $: streaming = !!shown && running.has(shown);
+  $: hasSession = tab.kind === "session" && (!!shown || sending || events.length > 0);
+  $: folder = tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
+  $: approval = approvals.find((a) => a.session === shown) ?? null;
+  $: void loadBranch(folder);
+  $: void loadProject(folder);
+  $: syncDesk(tabs, activeId);
+  $: saveTabs(tabs, activeId);
+  $: pageVisible = tab.kind === "page" && !settingsOpen;
+  $: if (!pageVisible) api.browserHide().catch(() => {});
+  $: if (!pageVisible && immersive) void setImmersive(false);
 
-  function newThread() {
-    handleNewTab();
-  }
-
-  async function send() {
-    const rawPrompt = input.trim();
-    if (!rawPrompt || sending || liveRun) return;
-
-    // Smart URL Detection: If user entered a URL, route to web browser tab!
-    const isUrl = /^https?:\/\//i.test(rawPrompt) ||
-                  /^(localhost|\w+\.\w+)/i.test(rawPrompt) ||
-                  /^\/(browse|web)\s+/i.test(rawPrompt);
-
-    if (isUrl) {
-      let targetUrl = rawPrompt.replace(/^\/(browse|web)\s+/i, "").trim();
-      if (!/^https?:\/\//i.test(targetUrl)) {
-        targetUrl = "https://" + targetUrl;
-      }
-      input = "";
-      const cur = tabs.find((t) => t.id === activeTabId);
-      if (cur) {
-        cur.kind = "browser";
-        cur.url = targetUrl;
-        cur.title = targetUrl.replace(/^https?:\/\/(www\.)?/, "").slice(0, 24);
-        tabs = [...tabs];
-      } else {
-        handleNewBrowserTab(targetUrl);
-      }
-      return;
-    }
-
-    const my = navSeq;
-    sending = true;
-    input = "";
-    const files = [...attachments];
-    attachments = [];
-    const cwd = currentRoot;
-    const prompt = rawPrompt;
-
-    const optimisticUser = { kind: "user", text: rawPrompt } as ChatEvent;
-    events = [...events, optimisticUser];
-
-    try {
-      const sid = await api.sendMessage({
-        sessionId: activeThreadId ?? undefined,
-        project: curProject,
-        lane: curLane,
-        model,
-        prompt,
-        cwd,
-        effort,
-        attachments: files,
-        mode: pillMode(),
-      });
-      if (my !== navSeq) {
-        await loadThreads();
-        return;
-      }
-      activeThreadId = sid;
-      liveRun = sid;
-      live = "";
-      liveReasoning = "";
-      liveTools = [];
-
-      // Update current tab
-      const cur = tabs.find((t) => t.id === activeTabId);
-      if (cur) {
-        cur.sessionId = sid;
-        cur.title = prompt.slice(0, 24);
-        tabs = [...tabs];
-      }
-
-      await loadThreads();
-      try {
-        const [meta, ev] = await api.getThread(sid);
-        if (my !== navSeq) return;
-        activeMeta = meta;
-        events = ev;
-        curProject = meta.project || curProject;
-        curLane = meta.lane || curLane;
-        if (cur && meta.title) {
-          cur.title = meta.title;
-          tabs = [...tabs];
-        }
-      } catch {}
-      await tick();
-      if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
-    } catch (e) {
-      input = rawPrompt;
-      attachments = files;
-      events = events.filter((ev) => ev !== optimisticUser);
-      toast(String(e), true);
-    } finally {
-      sending = false;
-    }
-  }
-
-  async function fork(id: string) {
-    try {
-      const m = await api.forkThread(id);
-      await loadThreads();
-      await openThread(m.id);
-      toast("Forked session");
-    } catch (e) {
-      toast(String(e), true);
-    }
-  }
-
-  async function stopRun() {
-    if (liveRun) {
-      const id = liveRun;
-      try {
-        await api.killRun(id);
-        if (liveRun === id) {
-          liveRun = null;
-          clearLive();
-          if (activeThreadId) await refreshEvents();
-          await loadThreads();
-        }
-        toast("Agent stopped");
-      } catch (e) {
-        toast(String(e), true);
-      }
-    }
-  }
-
-  async function handleDeleteThread(id: string) {
-    try {
-      await api.deleteThread(id);
-      if (liveRun === id) {
-        liveRun = null;
-        clearLive();
-      }
-      // Remove from tabs if present
-      tabs = tabs.filter((t) => t.sessionId !== id);
-      if (tabs.length === 0) {
-        handleNewTab();
-      } else {
-        handleSelectTab(tabs[0].id);
-      }
-      await loadThreads();
-      toast("Session deleted");
-    } catch (e) {
-      toast(String(e), true);
-    }
-  }
-
-  function handleRenameSession() {
-    sessionMenuOpen = false;
-    if (!activeThreadId) return;
-    const current = activeMeta?.title || "Session";
-    const next = window.prompt("Rename session:", current);
-    if (next && next.trim() && next !== current) {
-      const title = next.trim();
-      api.renameThread(activeThreadId, title)
-        .then(() => {
-          if (activeMeta) activeMeta.title = title;
-          const cur = tabs.find((t) => t.id === activeTabId);
-          if (cur) {
-            cur.title = title;
-            tabs = [...tabs];
-          }
-          toast("Renamed");
-          return loadThreads();
-        })
-        .catch((e) => toast(String(e), true));
-    }
-  }
-
-  function handleCopyId() {
-    sessionMenuOpen = false;
-    if (activeThreadId) {
-      navigator.clipboard.writeText(activeThreadId);
-      toast("Session ID copied to clipboard");
-    }
-  }
-
-  const loadThreadsCoalesced = coalesce(async () => {
-    try {
-      threads = await api.listThreads();
-    } catch {
-      threads = [];
-    }
+  const refreshThreads = coalesce(async () => {
+    threads = await api.listThreads().catch(() => threads);
   }, 100);
 
-  async function loadThreads() {
-    return loadThreadsCoalesced();
+  function patchTab(id: string, patch: Partial<Tab>) {
+    tabs = tabs.map((t) => (t.id === id ? { ...t, ...patch } : t));
   }
 
-  async function loadProjects() {
-    try {
-      projects = await api.listProjects();
-    } catch {
-      projects = [];
-    }
+  function syncDesk(list: Tab[], active: string) {
+    const rows = list.map((t) => ({
+      id: t.id,
+      kind: t.kind === "page" ? ("browser" as const) : t.kind === "brain" ? ("brain" as const) : ("harness" as const),
+      title: t.title,
+      url: t.url ?? "",
+      session_id: t.sessionId ?? "",
+    }));
+    deskSync(rows, deskRev, active).catch(() => {});
   }
 
-  async function refreshEvents() {
-    if (!activeThreadId) return;
-    const my = ++dataSeq;
-    const id = activeThreadId;
-    try {
-      const [meta, ev] = await api.getThread(id);
-      if (my !== dataSeq || activeThreadId !== id) return;
-      activeMeta = meta;
-      events = ev;
-    } catch {}
+  async function loadProject(dir: string) {
+    const ctx = dir ? await brain.context(dir).catch(() => null) : null;
+    project = ctx?.project ? { slug: ctx.project.slug, title: ctx.project.title, notes: ctx.attached.length + ctx.listed.length, tokens: ctx.tokens } : null;
   }
 
-  let liveBuf = "";
-  let liveBase = "";
-  let liveBufThread: string | null = null;
-  let liveTimer = 0;
-
-  function flushLive() {
-    liveTimer = 0;
-    if (!liveBuf) return;
-    if (live !== liveBase || activeThreadId !== liveBufThread) {
-      liveBuf = "";
-      return;
-    }
-    liveBase += liveBuf;
-    live = liveBase;
-    liveBuf = "";
-    if (scrollEl && scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 160) {
-      tick().then(() => {
-        if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
-      });
-    }
+  function openBrain() {
+    settingsOpen = false;
+    const existing = tabs.find((t) => t.kind === "brain");
+    if (existing) selectTab(existing.id);
+    else addTab(brainTab());
   }
 
-  function pushLive(text: string, session: string) {
-    if (!liveBuf) {
-      liveBase = live;
-      liveBufThread = session;
-    }
-    liveBuf += text;
-    if (liveTimer) return;
-    liveTimer = window.setTimeout(() => requestAnimationFrame(flushLive), 60);
+  async function loadBranch(dir: string) {
+    branch = dir ? await api.gitBranch(dir).catch(() => "") : "";
   }
 
   function clearLive() {
-    liveBuf = "";
-    liveBase = "";
+    clearTimeout(flushTimer);
+    flushTimer = 0;
+    pending = "";
     live = "";
     liveReasoning = "";
     liveTools = [];
   }
 
+  function nearBottom() {
+    return !!scrollEl && scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 160;
+  }
+
+  async function scrollToBottom(smooth = false) {
+    await tick();
+    scrollEl?.scrollTo({ top: scrollEl.scrollHeight, behavior: smooth && !reduced ? "smooth" : "auto" });
+  }
+
+  function showDraft() {
+    navSeq++;
+    shown = null;
+    meta = null;
+    events = [];
+    context = { used: 0, limit: 0 };
+    clearLive();
+  }
+
+  async function showSession(id: string) {
+    const my = ++navSeq;
+    shown = id;
+    clearLive();
+    try {
+      const [m, ev] = await api.getThread(id);
+      if (my !== navSeq) return;
+      meta = m;
+      events = ev;
+      context = { used: m.context_tokens ?? 0, limit: m.context_limit ?? 0 };
+      if (m.model.includes("/")) model = m.model;
+      if (m.status === "active" || m.status === "queued") running = new Set(running).add(id);
+      if (tab.sessionId === id && m.title) patchTab(tab.id, { title: m.title });
+      await scrollToBottom();
+    } catch (e) {
+      if (my === navSeq) toastError(e);
+    }
+  }
+
+  async function reload() {
+    if (!shown) return;
+    const id = shown;
+    const my = navSeq;
+    const [m, ev] = await api.getThread(id).catch(() => [null, null] as const);
+    if (!m || !ev || my !== navSeq || shown !== id) return;
+    meta = m;
+    events = ev;
+    context = { used: m.context_tokens ?? context.used, limit: m.context_limit ?? context.limit };
+  }
+
+  async function setImmersive(on: boolean) {
+    if (immersive === on) return;
+    immersive = on;
+    await api.windowFullscreen(on).catch(() => {});
+  }
+
+  function selectTab(id: string) {
+    const next = tabs.find((t) => t.id === id);
+    if (!next) return;
+    activeId = id;
+    settingsOpen = false;
+    if (next.kind === "session") {
+      if (next.sessionId) void showSession(next.sessionId);
+      else showDraft();
+    }
+  }
+
+  function addTab(t: Tab) {
+    tabs = [...tabs, t];
+    selectTab(t.id);
+  }
+
+  function moveTab(id: string, to: number) {
+    const from = tabs.findIndex((t) => t.id === id);
+    if (from < 0 || from === to) return;
+    const next = [...tabs];
+    const [moved] = next.splice(from, 1);
+    next.splice(Math.max(0, Math.min(to, next.length)), 0, moved);
+    tabs = next;
+  }
+
+  function closeTab(id: string) {
+    const idx = tabs.findIndex((t) => t.id === id);
+    if (idx < 0) return;
+    if (tabs.length === 1) {
+      if (tabs[0].kind === "page") api.browserClose(id).catch(() => {});
+      tabs = [sessionTab()];
+      selectTab(tabs[0].id);
+      return;
+    }
+    if (tabs[idx].kind === "page") api.browserClose(id).catch(() => {});
+    tabs = tabs.filter((t) => t.id !== id);
+    if (activeId === id) selectTab(tabs[Math.max(0, idx - 1)].id);
+  }
+
+  function newSession() {
+    addTab({ ...sessionTab(), cwd: folder || undefined });
+  }
+
+  function goHome() {
+    const draft = tabs.find((t) => t.kind === "session" && !t.sessionId);
+    if (draft) selectTab(draft.id);
+    else newSession();
+  }
+
+  function openPage(url: string, id?: string) {
+    const existing = tabs.find((t) => (id ? t.id === id : t.kind === "page" && t.url === url));
+    if (existing) {
+      if (url && existing.url !== url) patchTab(existing.id, { url, title: hostOf(url) });
+      selectTab(existing.id);
+    } else {
+      addTab(pageTab(url, id));
+    }
+  }
+
+  function openPageNext(url: string) {
+    const t = pageTab(url);
+    const idx = tabs.findIndex((x) => x.id === activeId);
+    tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
+    selectTab(t.id);
+  }
+
+  function navigatePage(url: string) {
+    const id = tab.id;
+    patchTab(id, { url, title: hostOf(url) });
+    api.browserNavigate(id, url).catch(() => {});
+  }
+
+  const pendingTitles = new Map<string, string>();
+
+  function onPage(e: PageEvent) {
+    const t = tabs.find((x) => x.id === e.tab);
+    if (!t) return;
+    const patch: Partial<Tab> = {};
+    if (e.loading !== undefined) patch.loading = e.loading;
+    if (e.canGoBack !== undefined) patch.canGoBack = e.canGoBack;
+    if (e.canGoForward !== undefined) patch.canGoForward = e.canGoForward;
+    if (e.title) {
+      patch.title = e.title.slice(0, 80);
+      if (t.loading) pendingTitles.set(e.tab, e.title);
+      else if (t.url) titleVisit(t.url, e.title);
+    }
+    if (e.url) {
+      const pending = pendingTitles.get(e.tab);
+      patch.url = e.url;
+      if (e.url !== t.url && !e.title) patch.title = (pending ?? hostOf(e.url)).slice(0, 80);
+      if (e.loading === false) {
+        recordVisit(e.url, pending ?? "");
+        pendingTitles.delete(e.tab);
+      }
+    }
+    patchTab(e.tab, patch);
+    if (e.fullscreen !== undefined && e.tab === activeId) void setImmersive(e.fullscreen);
+  }
+
+  function browse(url: string) {
+    if (tab.kind === "session" && !tab.sessionId && !events.length) {
+      patchTab(tab.id, { kind: "page", url, title: hostOf(url), sessionId: null });
+    } else {
+      openPage(url);
+    }
+  }
+
+  function openSession(id: string) {
+    const existing = tabs.find((t) => t.sessionId === id);
+    if (existing) {
+      selectTab(existing.id);
+      return;
+    }
+    const title = threads.find((t) => t.id === id)?.title || "Session";
+    if (tab.kind === "session" && !tab.sessionId && !events.length) {
+      patchTab(tab.id, { sessionId: id, title });
+      selectTab(tab.id);
+    } else {
+      addTab(sessionTab(id, title));
+    }
+  }
+
+  function openSettings(section = "general") {
+    settingsSection = section;
+    switcherOpen = false;
+    settingsOpen = true;
+  }
+
+  async function send() {
+    const prompt = input.trim();
+    if (!prompt || sending || streaming) return;
+    if (isExplicitUrl(prompt)) {
+      input = "";
+      browse(toAddress(prompt));
+      return;
+    }
+    const target = tab;
+    const files = attachments;
+    const optimistic: ChatEvent = { kind: "user", text: prompt };
+    sending = true;
+    input = "";
+    attachments = [];
+    events = [...events, optimistic];
+    try {
+      const sid = await api.sendMessage({
+        sessionId: target.sessionId,
+        model,
+        prompt,
+        cwd: folder,
+        effort,
+        attachments: files,
+        mode: permission === "supervised" || permission === "edits" ? permission : "auto",
+      });
+      running = new Set(running).add(sid);
+      if (!target.sessionId) patchTab(target.id, { sessionId: sid, title: prompt.slice(0, 40) });
+      if (activeId === target.id) {
+        shown = sid;
+        await reload();
+        await scrollToBottom();
+      }
+      void refreshThreads();
+    } catch (e) {
+      input = prompt;
+      attachments = files;
+      events = events.filter((ev) => ev !== optimistic);
+      toastError(e);
+    } finally {
+      sending = false;
+    }
+  }
+
+  async function stop() {
+    if (!shown || !running.has(shown)) return;
+    const id = shown;
+    try {
+      await api.killRun(id);
+      running.delete(id);
+      running = running;
+      clearLive();
+      await reload();
+      void refreshThreads();
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
+  async function fork() {
+    if (!shown) return;
+    try {
+      const m = await api.forkThread(shown);
+      await refreshThreads();
+      addTab(sessionTab(m.id, m.title || "Fork"));
+      toast("Forked");
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
+  async function compact() {
+    if (!shown) {
+      toast("Nothing to compact yet");
+      return;
+    }
+    compacting = true;
+    try {
+      await api.compactThread(shown);
+      await reload();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      compacting = false;
+    }
+  }
+
+  async function rename(title: string) {
+    if (!shown) return;
+    const id = shown;
+    try {
+      await api.renameThread(id, title);
+      if (meta?.id === id) meta = { ...meta, title };
+      tabs = tabs.map((t) => (t.sessionId === id ? { ...t, title } : t));
+      void refreshThreads();
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
+  async function remove(id: string) {
+    const title = threads.find((t) => t.id === id)?.title || meta?.title || "this session";
+    const ok = await ask(`Delete "${title}" and its transcript?`, { title: "Delete session", kind: "warning" }).catch(() => false);
+    if (!ok) return;
+    try {
+      await api.deleteThread(id);
+      running.delete(id);
+      running = running;
+      const open = tabs.filter((t) => t.sessionId === id).map((t) => t.id);
+      for (const tid of open) closeTab(tid);
+      void refreshThreads();
+      toast("Session deleted");
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
+  function copyId() {
+    if (!shown) return;
+    navigator.clipboard.writeText(shown).catch(() => {});
+    toast("Session ID copied");
+  }
+
+  function onCommand(name: string) {
+    if (name === "new") newSession();
+    else if (name === "fork") void fork();
+    else if (name === "compact") void compact();
+    else if (name === "stop") void stop();
+    else if (name === "page") addTab(pageTab());
+    else if (name === "settings") openSettings();
+  }
+
+  function flushLive() {
+    flushTimer = 0;
+    if (!pending) return;
+    const follow = nearBottom();
+    live += pending;
+    pending = "";
+    if (follow) void scrollToBottom();
+  }
+
   function onEvent(e: UiEvent) {
     if (e.kind === "approval") {
-      approvals = [
-        ...approvals.filter((a) => a.key !== e.key),
-        { key: e.key, session: e.session, call: e.call },
-      ];
+      approvals = [...approvals.filter((a) => a.key !== e.key), { key: e.key, session: e.session, call: e.call }];
       return;
     }
-    if (e.kind === "subsession_created") {
-      loadThreads();
+    if (e.kind === "done" || e.kind === "error") {
+      running.delete(e.session);
+      running = running;
+      approvals = approvals.filter((a) => a.session !== e.session);
+      void refreshThreads();
+      if (e.session === shown) {
+        flushLive();
+        clearLive();
+        void reload();
+      }
       return;
     }
-    if (e.kind === "tool_call") {
-      if (e.session === activeThreadId && !liveTools.some((t) => t.id === e.id)) {
+    if (!running.has(e.session) && e.kind !== "usage" && e.kind !== "context") {
+      running = new Set(running).add(e.session);
+    }
+    if (e.session !== shown) return;
+    if (e.kind === "text") {
+      pending += e.text;
+      if (!flushTimer) flushTimer = window.setTimeout(() => requestAnimationFrame(flushLive), 60);
+    } else if (e.kind === "reasoning") {
+      liveReasoning += e.text;
+    } else if (e.kind === "tool_call") {
+      if (!liveTools.some((t) => t.id === e.id)) {
         liveTools = [...liveTools, { id: e.id, name: e.name, label: e.label || e.name, running: true, ok: true, ms: 0 }];
       }
     } else if (e.kind === "tool_result") {
-      if (e.session === activeThreadId) {
-        liveTools = liveTools.map((t) => {
-          if (t.running && (t.id === e.id || t.name === e.name)) {
-            return { ...t, running: false, ok: e.ok, ms: e.ms };
-          }
-          return t;
-        });
-      }
-    } else if (e.kind === "done" || e.kind === "error") {
-      if (liveRun === e.session) {
-        liveRun = null;
-      }
-      approvals = approvals.filter((a) => a.session !== e.session);
-    }
-
-    if (e.session !== activeThreadId) return;
-
-    if (e.kind === "text") {
-      pushLive(e.text, e.session);
-    } else if (e.kind === "reasoning") {
-      liveReasoning += e.text;
-    } else if (e.kind === "usage") {
-      liveTokens = e.tokens_in + e.tokens_out;
-      liveCost = e.cost_usd;
-    } else if (e.kind === "done" || e.kind === "error") {
-      flushLive();
-      clearLive();
-      void refreshEvents();
+      liveTools = liveTools.map((t) => (t.running && t.id === e.id ? { ...t, running: false, ok: e.ok, ms: e.ms } : t));
+    } else if (e.kind === "context") {
+      context = { used: e.used, limit: e.limit };
     }
   }
 
-  function onGlobalKey(e: KeyboardEvent) {
-    if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === "p" || e.key.toLowerCase() === "k")) {
-      e.preventDefault();
-      showSessionPopup = !showSessionPopup;
-      return;
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "t") {
-      e.preventDefault();
-      handleNewTab();
-      return;
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "w") {
-      e.preventDefault();
-      handleCloseTab(activeTabId);
-      return;
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key === ",") {
-      e.preventDefault();
-      showSettings = !showSettings;
-      return;
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key === "Tab") {
-      e.preventDefault();
-      const idx = tabs.findIndex((t) => t.id === activeTabId);
-      const nextIdx = e.shiftKey
-        ? (idx - 1 + tabs.length) % tabs.length
-        : (idx + 1) % tabs.length;
-      handleSelectTab(tabs[nextIdx].id);
-      return;
-    }
-    if (e.key === "Escape") {
-      if (showSessionPopup) showSessionPopup = false;
-      else if (sessionMenuOpen) sessionMenuOpen = false;
-      else if (showSettings) showSettings = false;
-      else if (liveRun) stopRun();
-    }
+  function shortcut(name: string): boolean {
+    if (name === "ctrl+p" || name === "ctrl+k") switcherOpen = !switcherOpen;
+    else if (name === "ctrl+t") newSession();
+    else if (name === "ctrl+w") closeTab(activeId);
+    else if (name === "ctrl+comma") settingsOpen ? (settingsOpen = false) : openSettings();
+    else if (name === "ctrl+b") openBrain();
+    else if (name === "f11") void setImmersive(!immersive);
+    else if (name === "ctrl+l") {
+      if (tab.kind === "page" && !settingsOpen) {
+        void setImmersive(false);
+        void page?.focusAddress();
+      } else {
+        mode = "web";
+        omnibar?.focus();
+      }
+    } else if (name === "ctrl+tab" || name === "ctrl+shift+tab") {
+      const idx = tabs.findIndex((t) => t.id === activeId);
+      selectTab(tabs[(idx + (name === "ctrl+tab" ? 1 : -1) + tabs.length) % tabs.length].id);
+    } else return false;
+    return true;
   }
 
-  let hasUpdate = false;
+  function onKey(e: KeyboardEvent) {
+    const mod = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+    const name =
+      key === "f11"
+        ? "f11"
+        : mod && key === "tab"
+          ? e.shiftKey
+            ? "ctrl+shift+tab"
+            : "ctrl+tab"
+          : mod && key === ","
+            ? "ctrl+comma"
+            : mod && ["p", "k", "t", "w", "l", "b"].includes(key)
+              ? `ctrl+${key}`
+              : "";
+    if (name && shortcut(name)) {
+      e.preventDefault();
+    } else if (key === "escape" && !e.defaultPrevented && !$covered) {
+      if (immersive) void setImmersive(false);
+      else if (settingsOpen) settingsOpen = false;
+      else if (streaming) void stop();
+    }
+  }
 
   onMount(() => {
-    const unlistenPromise = onRunEvent(onEvent);
-    document.addEventListener("parzi:bg", (e) => {
-      bg = (e as CustomEvent<string>).detail;
+    const unRun = onRunEvent(onEvent);
+    const unDesk = onDesk((cmd) => {
+      if (typeof cmd.rev === "number") deskRev = Math.max(deskRev, cmd.rev);
+      if (cmd.op === "open" && cmd.url) openPage(cmd.url, cmd.id);
+      else if (cmd.op === "focus" && cmd.id) selectTab(cmd.id);
+      else if (cmd.op === "close" && cmd.id) closeTab(cmd.id);
     });
-
+    const unPage = onBrowser(onPage);
+    const unOpen = onBrowserOpen((e) => openPageNext(e.url));
+    const unKey = onBrowserKey((name) => void shortcut(name));
+    selectTab(activeId);
+    if (!$onboarded) setupOpen = true;
+    const onBg = (e: Event) => (bg = (e as CustomEvent<string>).detail);
+    document.addEventListener("parzi:bg", onBg);
     (async () => {
       try {
         applyThemeCss(await api.getThemeCss());
         bg = await api.backgroundUrl();
         await ensureBoard();
-        await loadProjects();
-        await loadThreads();
-        await loadWorkspaces();
-        checkForUpdatesSoon(2000);
+        await refreshThreads();
+        checkForUpdatesSoon();
       } catch (e) {
-        toast(`Startup warning: ${e}`, true);
+        toast(`Startup: ${e}`, true);
       }
     })();
-
-    function onDocClick(e: MouseEvent) {
-      if (!(e.target as HTMLElement).closest(".session-actions-menu")) {
-        sessionMenuOpen = false;
-      }
-    }
-    document.addEventListener("click", onDocClick);
-
     return () => {
-      unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
-      document.removeEventListener("click", onDocClick);
+      unRun.then((f) => f()).catch(() => {});
+      unDesk.then((f) => f()).catch(() => {});
+      for (const un of [unPage, unOpen, unKey]) un.then((f) => f()).catch(() => {});
+      document.removeEventListener("parzi:bg", onBg);
     };
   });
 </script>
 
-<div class="parzi-app-shell">
-  <!-- Dynamic Art Backdrop (Smooth fade on query/navigation) -->
-  <DefaultArt {bg} blurred={isBlurredStage} />
+<svelte:window on:keydown={onKey} />
 
-  <!-- Integrated TopBar: Menu, Home, Tabs, Spotlight Search, Window Controls -->
+<div class="shell">
+  <DefaultArt {bg} blurred={hasSession || tab.kind === "page" || settingsOpen} />
+
+  {#if !immersive}
   <TopBar
     {tabs}
-    {activeTabId}
-    on:selectTab={(e) => handleSelectTab(e.detail.id)}
-    on:closeTab={(e) => handleCloseTab(e.detail.id)}
-    on:newTab={handleNewTab}
-    on:home={() => handleSelectTab(tabs[0].id)}
-    on:openSettings={() => openSettings("general")}
-    on:openSessionPopup={() => (showSessionPopup = true)}
+    activeTabId={activeId}
+    on:select={(e) => selectTab(e.detail.id)}
+    on:close={(e) => closeTab(e.detail.id)}
+    on:move={(e) => moveTab(e.detail.id, e.detail.to)}
+    on:newTab={newSession}
+    on:home={goHome}
+    on:search={() => (switcherOpen = true)}
+    on:settings={() => openSettings()}
+    on:update={() => openSettings("system")}
+    on:brain={openBrain}
+    on:setup={() => (setupOpen = true)}
   />
+  {/if}
 
-  <div class="app-body">
-    <!-- Main Full-width Stage (Zero Sidebar) -->
-    <main class="stage-container">
-      {#if showSettings}
-        <div class="settings-overlay" in:fly={{ y: 8, ...smooth }} out:fly={{ y: 8, ...smoothFast }}>
-          <div class="settings-nav-strip">
-            <div class="settings-tab-buttons">
-              {#each ["general", "providers", "appearance", "connectors", "tools", "skills", "context", "system"] as sec}
-                <button
-                  class="sec-tab"
-                  class:active={settingsSection === sec}
-                  on:click={() => (settingsSection = sec)}
-                >
-                  {sec.charAt(0).toUpperCase() + sec.slice(1)}
-                </button>
-              {/each}
-            </div>
-            <button class="settings-close-btn" title="Close Settings (Esc)" on:click={() => (showSettings = false)}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
-            </button>
-          </div>
-          <div class="settings-body-scroll">
-            <Settings settingsTab={settingsSection} bareSection={settingsSection} currentProject={curProject} />
-          </div>
-        </div>
-      {:else if currentTab?.kind === "browser"}
-        <div class="browser-tab-stage" in:fade={{ duration: 150 }}>
-          <BrowserView
-            url={currentTab.url || ""}
-            title={currentTab.title}
-            on:navigate={(e) => {
-              if (currentTab) {
-                currentTab.url = e.detail.url;
-                currentTab.title = e.detail.url.replace(/^https?:\/\/(www\.)?/, "").slice(0, 24);
-                tabs = [...tabs];
-              }
-            }}
-            on:openExternal={(e) => api.openExternalUrl(e.detail.url).catch(() => window.open(e.detail.url, "_blank"))}
-          />
-        </div>
-      {:else}
-        <!-- Agent Harness Session View -->
-        {#if activeThreadId}
-          <div class="session-stage-wrapper">
-            <!-- OpenCode Session Subheader (Inside rounded canvas) -->
-            <div class="session-subheader">
-              <div class="sub-left">
-                <h2 class="sub-title">{activeMeta?.title || "New session"}</h2>
-                {#if branch}<span class="sub-branch">⎇ {branch}</span>{/if}
-              </div>
-              <div class="sub-right">
-                <button class="sub-circle-btn" title="Status">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                    <circle cx="12" cy="12" r="9" />
-                  </svg>
-                </button>
-                <div class="session-actions-menu">
-                  <button class="sub-menu-btn" title="More options" on:click={toggleSessionMenu}>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
-                      <circle cx="5" cy="12" r="2" />
-                      <circle cx="12" cy="12" r="2" />
-                      <circle cx="19" cy="12" r="2" />
-                    </svg>
-                  </button>
-                  {#if sessionMenuOpen}
-                    <div class="sub-dropdown" role="menu">
-                      <button class="menu-item" on:click={handleRenameSession}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
-                        <span>Rename session</span>
-                      </button>
-                      <button class="menu-item" on:click={() => { sessionMenuOpen = false; if (activeThreadId) fork(activeThreadId); }}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 9v6"/><circle cx="18" cy="9" r="3"/><path d="M6 9a9 9 0 0 1 9 9"/></svg>
-                        <span>Fork session</span>
-                      </button>
-                      <button class="menu-item" on:click={handleCopyId}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                        <span>Copy Session ID</span>
-                      </button>
-                      <div class="menu-sep" />
-                      <button class="menu-item danger" on:click={() => { sessionMenuOpen = false; if (activeThreadId) handleDeleteThread(activeThreadId); }}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                        <span>Delete session</span>
-                      </button>
-                    </div>
-                  {/if}
-                </div>
-              </div>
-            </div>
-
-            <!-- Message Stream -->
-            <div class="stage-scroll" bind:this={scrollEl} on:scroll={onStageScroll} in:fade={{ duration: 180 }}>
-              <Thread
-                {events}
-                liveText={live}
-                liveReasoning={liveReasoning}
-                {liveTools}
-                approval={activeApproval}
-                streaming={!!liveRun}
-                projectRoot={currentRoot}
-                on:voted={(e) => { approvals = approvals.filter((a) => a.key !== e.detail.key); }}
-              />
-            </div>
-
-            {#if showScrollBottom}
-              <button class="scroll-bottom-btn" title="Scroll to bottom" on:click={scrollToBottom}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
-              </button>
-            {/if}
-          </div>
-        {:else}
-          <!-- Home / Empty Draft Stage with Hero Art -->
-          <div class="home-hero-stage"></div>
-        {/if}
-
-        <!-- Floating Omnibar (Transitions smoothly between Hero Center and Bottom Dock) -->
-        <div class="omnibar-slot" class:hero={!activeThreadId && !events.length} class:dock={!!activeThreadId || events.length > 0}>
-          <Omnibar
-            bind:input
-            bind:model
-            bind:effort
-            bind:permission
-            bind:attachments
-            bind:mode={omniMode}
-            streaming={!!liveRun}
-            currentProject={curProject}
-            projectRoot={currentRoot}
+  <main>
+    {#if settingsOpen}
+      <div class="fill" in:fly={{ y: 8, ...motion }}>
+        <Settings bind:section={settingsSection} on:close={() => (settingsOpen = false)} />
+      </div>
+    {:else if tab.kind === "brain"}
+      <div class="fill" in:fade={{ duration: 150 }}>
+        <BrainView />
+      </div>
+    {:else if tab.kind === "page"}
+      {#key tab.id}
+        <PageView
+          bind:this={page}
+          {tab}
+          {immersive}
+          on:navigate={(e) => navigatePage(e.detail.url)}
+          on:error={(e) => toast(e.detail.text, true)}
+        />
+      {/key}
+    {:else}
+      {#if hasSession}
+        <section class="session">
+          <SessionHeader
+            title={meta?.title || tab.title}
             {branch}
-            tokens={liveTokens}
-            {contextUsed}
-            {contextLimit}
-            {compacting}
-            board={$board}
-            on:send={send}
-            on:browse={handleOmniBrowse}
-            on:stop={stopRun}
-            on:modelChange={(e) => (model = e.detail.model)}
-            workspaces={wsNames}
-            workspace={curWorkspace}
-            workspaceFixed={!!activeThreadId}
-            on:workspaceChange={(e) => selectWorkspace(e.detail.workspace)}
-            on:error={(e) => toast(e.detail.text, true)}
+            canAct={!!shown}
+            on:rename={(e) => rename(e.detail.title)}
+            on:fork={fork}
+            on:copyId={copyId}
+            on:delete={() => shown && remove(shown)}
           />
+          <div class="scroll" bind:this={scrollEl} on:scroll={() => (farFromBottom = !nearBottom())}>
+            <Thread
+              {events}
+              liveText={live}
+              {liveReasoning}
+              {liveTools}
+              {approval}
+              {streaming}
+              {folder}
+              on:voted={(e) => (approvals = approvals.filter((a) => a.key !== e.detail.key))}
+            />
+          </div>
+          {#if farFromBottom}
+            <button class="to-bottom" title="Scroll to bottom" transition:fade={{ duration: 120 }} on:click={() => scrollToBottom(true)}>
+              <Icon name="arrowDown" size={14} stroke={2.2} />
+            </button>
+          {/if}
+        </section>
+      {/if}
+
+      {#if !hasSession}
+        <div class="home" in:fade={{ duration: 200 }}>
+          <HomeView {threads} on:open={(e) => browse(e.detail.url)} on:openSession={(e) => openSession(e.detail.id)} />
         </div>
       {/if}
-    </main>
-  </div>
 
-  <!-- Session Switcher / Spotlight Modal (Zero-sidebar manager) -->
-  <SessionPopup
-    open={showSessionPopup}
+      <div class="composer" class:docked={hasSession}>
+        <Omnibar
+          bind:this={omnibar}
+          bind:input
+          bind:model
+          bind:effort
+          bind:permission
+          bind:mode
+          bind:attachments
+          {folder}
+          folderLocked={!!tab.sessionId}
+          {branch}
+          {streaming}
+          board={$board}
+          contextUsed={context.used}
+          contextLimit={context.limit}
+          {compacting}
+          hero={!hasSession}
+          {project}
+          on:send={send}
+          on:browse={(e) => browse(e.detail.url)}
+          on:stop={stop}
+          on:command={(e) => onCommand(e.detail.name)}
+          on:unavailable={() => openSettings("providers")}
+          on:folder={(e) => patchTab(tab.id, { cwd: e.detail.path })}
+          on:project={() => loadProject(folder)}
+          on:brain={openBrain}
+        />
+      </div>
+    {/if}
+  </main>
+
+  <Switcher
+    open={switcherOpen}
     {threads}
     {tabs}
-    {activeTabId}
-    workspaces={wsNames}
-    currentWorkspace={curWorkspace}
-    on:close={() => (showSessionPopup = false)}
-    on:selectTab={(e) => handleSelectTab(e.detail.id)}
-    on:openSession={(e) => handleOpenSession(e.detail.id)}
-    on:deleteSession={(e) => handleDeleteThread(e.detail.id)}
-    on:selectWorkspace={(e) => handleSelectWorkspace(e.detail.name)}
-    on:newSession={handleNewTab}
-    on:newBrowserTab={() => handleNewBrowserTab()}
-    on:openSettings={() => openSettings("general")}
+    activeTabId={activeId}
+    on:close={() => {
+      switcherOpen = false;
+      omnibar?.focus();
+    }}
+    on:selectTab={(e) => selectTab(e.detail.id)}
+    on:openSession={(e) => openSession(e.detail.id)}
+    on:deleteSession={(e) => remove(e.detail.id)}
+    on:newSession={newSession}
+    on:newPage={() => addTab(pageTab())}
+    on:settings={() => openSettings()}
+    on:brain={openBrain}
   />
 
-  <!-- Toast Stack -->
-  <div class="toast-stack">
-    {#each toasts as t (t.id)}
-      <div class="toast-item" class:error-toast={t.err} transition:fade|local={{ duration: 140 }}>
-        {t.text}
-      </div>
+  {#if setupOpen}
+    <Onboarding on:close={() => (setupOpen = false)} on:openBrain={openBrain} />
+  {/if}
+
+  <div class="toasts" aria-live="polite">
+    {#each $toasts as t (t.id)}
+      <div class="toast" class:err={t.err} transition:fade={{ duration: 140 }}>{t.text}</div>
     {/each}
   </div>
 </div>
 
-<svelte:window on:keydown={onGlobalKey} />
-
 <style>
-  :global(html) {
-    background: transparent;
-  }
-  :global(body) {
-    margin: 0;
-    padding: 0;
-    background: transparent;
-    color: var(--text);
-    font-family: var(--parzi-font), Inter, system-ui, sans-serif;
-    overflow: hidden;
-  }
-  :global(::selection) {
-    background: var(--accent-mid);
-    color: var(--text);
-  }
-  .parzi-app-shell {
+  .shell {
+    position: relative;
     width: 100vw;
     height: 100vh;
     display: flex;
     flex-direction: column;
-    position: relative;
     overflow: hidden;
     border-radius: 10px;
   }
-  :global(html.parzi-maximized) .parzi-app-shell {
+  :global(html.parzi-maximized) .shell {
     border-radius: 0;
   }
-  .app-body {
-    flex: 1;
-    display: flex;
+  main {
     position: relative;
     z-index: 1;
-    overflow: hidden;
-  }
-  .stage-container {
     flex: 1;
-    display: flex;
-    flex-direction: column;
-    position: relative;
-    overflow: hidden;
-    width: 100%;
-    height: 100%;
-  }
-  .session-stage-wrapper {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
     min-height: 0;
-    position: relative;
-    background: #18181b;
-    border: 1px solid #27272a;
-    border-bottom: none;
-    border-top-left-radius: 12px;
-    border-top-right-radius: 12px;
-    margin: 8px 8px 0 8px;
-    overflow: hidden;
-    animation: stageEnter 450ms cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    flex-direction: column;
   }
-  @keyframes stageEnter {
+  .fill {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+  .session {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin: 8px 8px 0;
+    overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-bottom: none;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    animation: enter 450ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  @keyframes enter {
     from {
       opacity: 0;
       transform: translateY(12px);
     }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
   }
-  .session-subheader {
-    height: 42px;
-    padding: 0 20px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    border-bottom: 1px solid #27272a;
-    background: #18181b;
-    user-select: none;
-    z-index: 10;
-  }
-  .sub-left {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .sub-title {
-    font-size: 14.5px;
-    font-weight: 600;
-    color: #ffffff;
-    margin: 0;
-    letter-spacing: -0.2px;
-  }
-  .sub-branch {
-    font-size: 11px;
-    color: #71717a;
-  }
-  .sub-right {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .sub-circle-btn {
-    width: 26px;
-    height: 26px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    border-radius: 5px;
-    color: #71717a;
-    cursor: pointer;
-    transition: background 0.1s ease, color 0.1s ease;
-  }
-  .sub-circle-btn:hover {
-    background: #27272a;
-    color: #f4f4f5;
-  }
-  .session-actions-menu {
-    position: relative;
-  }
-  .sub-menu-btn {
-    width: 26px;
-    height: 26px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    border-radius: 5px;
-    color: #71717a;
-    cursor: pointer;
-    transition: background 0.1s ease, color 0.1s ease;
-  }
-  .sub-menu-btn:hover {
-    background: #27272a;
-    color: #f4f4f5;
-  }
-  .sub-dropdown {
-    position: absolute;
-    top: calc(100% + 4px);
-    right: 0;
-    width: 170px;
-    background: #141416;
-    border: 1px solid #27272a;
-    border-radius: 8px;
-    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.6);
-    padding: 4px;
-    z-index: 500;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .stage-scroll {
+  .scroll {
     flex: 1;
-    overflow-y: auto;
     overflow-x: hidden;
+    overflow-y: auto;
     padding-bottom: 90px;
-    scrollbar-width: thin;
-    scrollbar-color: #27272a transparent;
   }
-  .stage-scroll::-webkit-scrollbar {
-    width: 6px;
-  }
-  .stage-scroll::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .stage-scroll::-webkit-scrollbar-thumb {
-    background: #27272a;
-    border-radius: 999px;
-  }
-  .stage-scroll::-webkit-scrollbar-thumb:hover {
-    background: #3f3f46;
-  }
-  .scroll-bottom-btn {
+  .to-bottom {
     position: absolute;
     bottom: 96px;
     left: 50%;
-    transform: translateX(-50%);
+    z-index: 15;
     width: 32px;
     height: 32px;
-    border-radius: 50%;
-    background: #18181b;
-    border: 1px solid #27272a;
-    color: #a1a1aa;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    cursor: pointer;
+    transform: translateX(-50%);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 50%;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    z-index: 15;
-    transition: background 0.1s ease, color 0.1s ease, transform 0.1s ease;
+    color: var(--muted);
+    cursor: pointer;
   }
-  .scroll-bottom-btn:hover {
-    background: #27272a;
-    color: #ffffff;
-    transform: translateX(-50%) scale(1.06);
+  .to-bottom:hover {
+    color: var(--text);
   }
-  .home-hero-stage {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
+  .home {
+    position: absolute;
+    top: calc(50% + 4px);
+    left: 50%;
+    z-index: 10;
+    width: min(720px, 90%);
+    max-height: calc(50% - 24px);
+    overflow-y: auto;
+    transform: translateX(-50%);
   }
-  .browser-tab-stage {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    border-top-left-radius: 12px;
-    border-top-right-radius: 12px;
-    margin: 8px 8px 0 8px;
-    overflow: hidden;
-    border: 1px solid #27272a;
-    border-bottom: none;
-  }
-  .omnibar-slot {
+  .composer {
     position: absolute;
     left: 50%;
+    bottom: calc(50% + 20px);
     z-index: 20;
-    display: flex;
-    justify-content: center;
-    width: 100%;
-    pointer-events: none;
+    width: min(720px, 90%);
+    transform: translate(-50%, 0);
     transition:
       bottom 700ms cubic-bezier(0.16, 1, 0.3, 1),
       transform 700ms cubic-bezier(0.16, 1, 0.3, 1),
       width 500ms ease;
   }
-  .omnibar-slot :global(.ob) {
-    pointer-events: auto;
-  }
-  .omnibar-slot.hero {
-    bottom: 46%;
-    transform: translate(-50%, 50%);
-    width: min(720px, 90%);
-    padding: 0;
-  }
-  .omnibar-slot.dock {
+  .composer.docked {
     bottom: 14px;
-    transform: translate(-50%, 0);
     width: min(740px, calc(100% - 40px));
-    padding: 0;
+    transform: translate(-50%, 0);
   }
-  .settings-overlay {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    background: var(--stage, #0c0d12);
-    z-index: 30;
-  }
-  .settings-nav-strip {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 6px 16px;
-    border-bottom: 1px solid var(--line-3, rgba(255, 255, 255, 0.08));
-    background: rgba(16, 18, 24, 0.6);
-  }
-  .settings-tab-buttons {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    overflow-x: auto;
-  }
-  .sec-tab {
-    padding: 5px 11px;
-    border-radius: 6px;
-    background: transparent;
-    border: none;
-    color: var(--text-3);
-    font-size: 12px;
-    font-family: inherit;
-    cursor: pointer;
-    transition: background 0.1s ease, color 0.1s ease;
-  }
-  .sec-tab:hover {
-    background: var(--surface-2, rgba(255, 255, 255, 0.06));
-    color: var(--text);
-  }
-  .sec-tab.active {
-    background: var(--surface-3, rgba(255, 255, 255, 0.12));
-    color: var(--text, #ffffff);
-    font-weight: 500;
-  }
-  .settings-close-btn {
-    width: 26px;
-    height: 26px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    color: var(--text-3);
-    cursor: pointer;
-    transition: background 0.1s ease, color 0.1s ease;
-  }
-  .settings-close-btn:hover {
-    background: var(--surface-2, rgba(255, 255, 255, 0.1));
-    color: var(--text);
-  }
-  .settings-body-scroll {
-    flex: 1;
-    overflow-y: auto;
-  }
-  .menu-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
-    border-radius: 5px;
-    background: transparent;
-    border: none;
-    color: var(--text);
-    font-size: 12px;
-    font-family: inherit;
-    cursor: pointer;
-    text-align: left;
-    width: 100%;
-    box-sizing: border-box;
-    transition: background 0.1s ease;
-  }
-  .menu-item:hover {
-    background: var(--surface-2, rgba(255, 255, 255, 0.08));
-  }
-  .menu-item.danger:hover {
-    background: rgba(239, 68, 68, 0.15);
-    color: #ef4444;
-  }
-  .mi-icon {
-    font-size: 12px;
-  }
-  .menu-sep {
-    height: 1px;
-    background: var(--line-3, rgba(255, 255, 255, 0.06));
-    margin: 3px 0;
-  }
-  .toast-stack {
+  .toasts {
     position: fixed;
-    bottom: 16px;
     right: 16px;
+    bottom: 16px;
+    z-index: 1200;
     display: flex;
     flex-direction: column;
     gap: 6px;
-    z-index: 1200;
     pointer-events: none;
   }
-  .toast-item {
-    background: #18181b;
-    border: 1px solid #27272a;
+  .toast {
+    max-width: 360px;
+    padding: 8px 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
     color: var(--text);
     font-size: 12px;
-    padding: 8px 14px;
-    border-radius: 6px;
-    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
   }
-  .toast-item.error-toast {
-    border-color: #ef4444;
-    color: #ef4444;
+  .toast.err {
+    border-color: var(--bad);
+    color: var(--bad);
   }
 </style>

@@ -1,11 +1,3 @@
-//! Parzi's own tools (widgets, teamwork, plans, knowledge, leases) plus the
-//! connectors a lane allows, behind one executor. Vendor agents reach them
-//! over MCP; their own file and shell tools are theirs, and only their
-//! permission requests pass through Parzi (see `toolhost`). Lane allowlists
-//! decide what runs. Approvals pause the run, never the tool.
-
-use crate::board_tools::{board_defs, is_board_tool};
-use crate::lease_tools::{is_lease_tool, lease_defs, LeaseCtx};
 use crate::mcp::McpManager;
 
 #[derive(Debug, Clone)]
@@ -38,7 +30,6 @@ pub struct ToolCallInfo {
     pub name: String,
     pub args: serde_json::Value,
     pub lane: String,
-    /// Owning run: cards render on this session and votes bind to it.
     pub session: String,
 }
 
@@ -48,7 +39,6 @@ pub enum Approval {
     Deny,
 }
 
-/// Implemented by the UI (dialog) or CLI (flag/prompt). Test doubles approve.
 #[async_trait::async_trait]
 pub trait Approver: Send + Sync {
     async fn approve(&self, call: &ToolCallInfo) -> Approval;
@@ -75,29 +65,21 @@ pub struct ToolExecutor {
     pub cwd: String,
     pub mcp: std::sync::Arc<McpManager>,
     pub allowed: Vec<String>,
-    /// A project lane's place in the lease layer (PLAN §4). `None` for an
-    /// ordinary thread: no leases, no board, and no write gate.
-    pub leases: Option<LeaseCtx>,
 }
 
 impl ToolExecutor {
-    /// Lane allowlist: exact `fs.read`, prefix `fs.*`, or `*`. Deny by default.
     pub fn is_allowed(&self, name: &str) -> bool {
         self.allowed.iter().any(|p| {
             p == "*" || p == name || (p.ends_with(".*") && name.starts_with(&p[..p.len() - 1]))
         })
     }
 
-    /// Per-tool approval override for MCP tools (`auto`|`ask`|`deny`).
-    /// Local/ui/session/plan/lane tools have no per-tool override: None = lane mode wins.
     pub fn approval_override(&self, name: &str) -> Option<ApprovalMode> {
         if is_vendor_category(name)
             || is_ui_tool(name)
+            || is_brain_tool(name)
             || is_session_tool(name)
-            || is_plan_tool(name)
             || is_lane_tool(name)
-            || is_lease_tool(name)
-            || is_board_tool(name)
         {
             return None;
         }
@@ -111,57 +93,18 @@ impl ToolExecutor {
     }
 
     pub fn defs(&self) -> Vec<ToolDef> {
-        let mut d = ui_defs();
-        d.extend(session_defs());
-        // Only a lane that is in the lease layer sees `lease.*` / `board.*`:
-        // a plain thread has no task to check out and no board to read.
-        if self.leases.is_some() {
-            d.extend(lease_defs());
-            d.extend(board_defs());
-        }
-        d
-    }
-
-    /// Parzi's own defs plus the currently-exposed MCP tools that also
-    /// pass the lane allowlist. Best-effort: an unreachable server contributes
-    /// nothing instead of failing the run. Call once per run start.
-    pub async fn defs_with_mcp(&self) -> Vec<ToolDef> {
-        let mut d = self.defs();
-        for server in self.mcp.server_names() {
-            let tools = match tokio::time::timeout(
-                std::time::Duration::from_secs(12),
-                self.mcp.exposed_tools(&server),
-            )
-            .await
-            {
-                Ok(Ok(t)) => t,
-                _ => continue,
-            };
-            for t in tools {
-                let q = t.qualified();
-                if self.is_allowed(&q) {
-                    d.push(t.to_def());
-                }
-            }
-        }
+        let mut d: Vec<ToolDef> = ui_defs()
+            .into_iter()
+            .filter(|t| t.name != "ui.show_widget")
+            .collect();
+        d.extend(browser_defs());
+        d.extend(brain_defs());
         d
     }
 
     pub async fn execute(&self, name: &str, args: &serde_json::Value) -> (bool, String) {
         if !self.is_allowed(name) {
             return (false, format!("tool `{name}` is not allowed in this lane"));
-        }
-        if is_lease_tool(name) {
-            return self.execute_lease_tool(name, args).await;
-        }
-        if is_board_tool(name) {
-            return self.execute_board_tool(name, args).await;
-        }
-        if is_plan_tool(name) {
-            return execute_plan_tool(name, args).await;
-        }
-        if is_knowledge_tool(name) {
-            return execute_knowledge_tool(name, args).await;
         }
         if let Some((server, tool)) = name.split_once('.') {
             if is_vendor_category(name) {
@@ -170,10 +113,13 @@ impl ToolExecutor {
                     format!("`{name}` is the agent's own tool now, not Parzi's"),
                 );
             }
-            if is_ui_tool(name) || is_session_tool(name) || is_lane_tool(name) {
+            if is_ui_tool(name)
+                || is_brain_tool(name)
+                || is_session_tool(name)
+                || is_lane_tool(name)
+            {
                 return (false, format!("tool `{name}` is handled by the agent loop"));
             }
-            // Server exposure gate (allow/deny lists) + per-tool deny override.
             if !self.mcp.is_tool_exposed(server, tool) {
                 return (
                     false,
@@ -192,10 +138,6 @@ impl ToolExecutor {
     }
 }
 
-/// The agent's own file and shell tools, by the names lane allowlists have
-/// always used: `fs.read` covers reads and searches, `fs.write` edits,
-/// `shell.exec` commands. Parzi no longer runs these itself; a lane that
-/// lists tools and leaves one out refuses the matching vendor action.
 pub fn is_vendor_category(name: &str) -> bool {
     matches!(name, "fs.read" | "fs.write" | "fs.list" | "shell.exec")
 }
@@ -204,7 +146,7 @@ pub fn ui_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "ui.show_markdown".into(),
-            description: "Render rich markdown in the thread. Never include ASCII/box-drawing diagrams or charts (+---|etc) in ```console/```ascii/```diagram fences — call ui.show_diagram for diagrams and ui.show_widget for tables/charts/kanban instead.".into(),
+            description: "Render rich markdown in the thread.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {"markdown": {"type": "string"}},
@@ -233,25 +175,8 @@ pub fn ui_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
-            name: "ui.show_diagram".into(),
-            description: "Render an architecture/flow diagram as SVG nodes+edges. ALWAYS use this for architecture, data flow, sequence, or component diagrams — never ASCII boxes (+---|etc), which break on narrow screens. Nodes: {id, label, sub?, color?: accent|ok|warn|bad|info, shape?: flow|db|diamond|actor}. Decisions are diamond nodes with yes/no edge labels. Group related nodes: groups:[{id,label,nodes:[ids]}]. Edges: {from,to,label?,color?,style?:solid|dashed|dotted|thick}. Layouts: flow (direction LR|TB) or sequence (layout:\"sequence\", edges in message order). Example: {\"diagram\":1,\"title\":\"API flow\",\"nodes\":[{\"id\":\"ui\",\"label\":\"UI\"},{\"id\":\"ok?\",\"label\":\"Cached?\",\"shape\":\"diamond\"},{\"id\":\"db\",\"label\":\"Postgres\",\"shape\":\"db\",\"color\":\"info\"}],\"edges\":[{\"from\":\"ui\",\"to\":\"ok?\"},{\"from\":\"ok?\",\"to\":\"db\",\"label\":\"no\"}]}. Max 200 nodes / 400 edges.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "diagram": {"type": "number", "const": 1},
-                    "title": {"type": "string"},
-                    "direction": {"type": "string", "enum": ["LR", "TB"]},
-                    "layout": {"type": "string", "enum": ["flow", "sequence"]},
-                    "nodes": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "label": {"type": "string"}, "sub": {"type": "string"}, "color": {"type": "string", "enum": ["accent","ok","warn","bad","info"]}, "shape": {"type": "string", "enum": ["flow","db","diamond","actor"]}}, "required": ["id"]}},
-                    "edges": {"type": "array", "items": {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}, "label": {"type": "string"}, "color": {"type": "string", "enum": ["accent","ok","warn","bad","info"]}, "style": {"type": "string", "enum": ["solid","dashed","dotted","thick"]}}, "required": ["from", "to"]}},
-                    "groups": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "label": {"type": "string"}, "nodes": {"type": "array", "items": {"type": "string"}}}, "required": ["id", "nodes"]}},
-                },
-                "required": ["diagram", "nodes", "edges"],
-            }),
-        },
-        ToolDef {
             name: "ui.show_artifact".into(),
-            description: "Save/update a versioned artifact card with copy/save/open-in-deck actions. Use for code over ~15 lines, full files, markdown docs, html/svg previews, json/csv data, diffs. Kinds: code|markdown|html|svg|json|csv|diff|text. Languages: rust|typescript|javascript|python|toml|json|bash|sh|diff|markdown|md|html|css. Reuse the same id to bump the version. Example: {\"artifact\":1,\"id\":\"auth-middleware\",\"title\":\"Auth middleware\",\"kind\":\"code\",\"language\":\"typescript\",\"content\":\"...\"}.".into(),
+            description: "Save/update a versioned artifact card with copy and save actions. html and svg render live in a sandboxed frame with no network access (inline everything; images only as data: URIs), with a show-source toggle. Use for code over ~15 lines, full files, markdown docs, html/svg previews, json/csv data, diffs. Diagrams (architecture, flow, sequence) go here as an svg artifact, or html when they need layout or interactivity. Kinds: code|markdown|html|svg|json|csv|diff|text. Languages: rust|typescript|javascript|python|toml|json|bash|sh|diff|markdown|md|html|css. Reuse the same id to bump the version. Example: {\"artifact\":1,\"id\":\"auth-middleware\",\"title\":\"Auth middleware\",\"kind\":\"code\",\"language\":\"typescript\",\"content\":\"...\"}.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -271,13 +196,94 @@ pub fn ui_defs() -> Vec<ToolDef> {
 pub fn is_ui_tool(name: &str) -> bool {
     matches!(
         name,
-        "ui.show_markdown" | "ui.show_widget" | "ui.show_diagram" | "ui.show_artifact"
+        "ui.show_markdown" | "ui.show_widget" | "ui.show_artifact"
     )
 }
 
-/// First-class harness session tools: agents spawn child subsessions (or full
-/// root sessions), message across sessions, and inspect other transcripts.
-/// In lane `Ask` mode these surface as approval cards like any other tool.
+pub fn browser_defs() -> Vec<ToolDef> {
+    vec![
+        ToolDef {
+            name: "browser.open".into(),
+            description: "Open a URL in a browser tab, or focus that tab if the URL is already open. A bare host is https. A phrase is a search.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"url": {"type": "string"}},
+                "required": ["url"],
+            }),
+        },
+        ToolDef {
+            name: "browser.tabs".into(),
+            description: "List the open tabs: id, title, and URL.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+            }),
+        },
+        ToolDef {
+            name: "browser.read".into(),
+            description: "The focused tab's title and URL. This does not return the page text.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+            }),
+        },
+    ]
+}
+
+pub fn is_browser_tool(name: &str) -> bool {
+    matches!(name, "browser.open" | "browser.tabs" | "browser.read")
+}
+
+pub fn brain_defs() -> Vec<ToolDef> {
+    vec![
+        ToolDef {
+            name: "brain.search".into(),
+            description: "Search the brain: the user's own notes vault, an Obsidian-style folder of markdown notes about their projects, decisions, and know-how. Matches titles and text, case-insensitive, and returns up to 20 notes with a snippet each. Notes for this session's project and notes for every session are already in your instructions: pinned ones in full, the rest listed with a one-line summary. Search for anything else the user may have written down before asking them.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+                "required": ["query"],
+            }),
+        },
+        ToolDef {
+            name: "brain.read".into(),
+            description: "Read one note from the user's notes vault (the brain) by its path relative to the vault, e.g. projects/parzi.md, as given by brain.search, brain.list, or the on-demand notes listed in your instructions. Returns the raw markdown, frontmatter included.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            }),
+        },
+        ToolDef {
+            name: "brain.list".into(),
+            description: "List the user's notes vault (the brain): projects with the folders they map to, and each note's path, title, one-line summary, and whether it is pinned (pinned notes are attached to sessions in full). Pass project (a project slug, or all for the notes attached to every session) to list only those notes.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"project": {"type": "string"}},
+            }),
+        },
+        ToolDef {
+            name: "brain.write".into(),
+            description: "Create or replace a note in the user's notes vault (the brain). path is relative to the vault and ends in .md; content is the whole markdown file. Write durable learnings back here (decisions, conventions, gotchas, how the code fits together) so later sessions start with them. To attach a note to a project, give it frontmatter `projects: [slug]` or link the project note as [[slug]]; `projects: [all]` attaches it to every session. Start the body with a one-line summary sentence (or set `description:` in the frontmatter): later sessions see that line before deciding to read the note. Read a note before replacing it and keep its frontmatter. The user may be asked to approve the write.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["path", "content"],
+            }),
+        },
+    ]
+}
+
+pub fn is_brain_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "brain.search" | "brain.read" | "brain.list" | "brain.write"
+    )
+}
+
 pub fn session_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
@@ -336,29 +342,6 @@ pub fn session_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
-            name: "plan.read".into(),
-            description: "Read the project's living PLAN.md (milestones + lane-tagged tasks).".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {"project": {"type": "string"}},
-                "required": ["project"],
-            }),
-        },
-        ToolDef {
-            name: "plan.update".into(),
-            description: "Update one living-plan task checkbox by title match (done=true/false) or append a new task line.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "project": {"type": "string"},
-                    "title_match": {"type": "string"},
-                    "done": {"type": "boolean"},
-                    "append": {"type": "string"},
-                },
-                "required": ["project"],
-            }),
-        },
-        ToolDef {
             name: "lane.dispatch".into(),
             description: "Orchestrator-only: spawn a lane worker subsession with the project's implementation role settings (model/effort/system prompt).".into(),
             schema: serde_json::json!({
@@ -372,37 +355,7 @@ pub fn session_defs() -> Vec<ToolDef> {
                 "required": ["title", "prompt"],
             }),
         },
-        ToolDef {
-            name: "knowledge.read".into(),
-            description: "Read the project's cumulative knowledge and lessons learned (KNOWLEDGE.md).".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {"project": {"type": "string"}},
-                "required": ["project"],
-            }),
-        },
-        ToolDef {
-            name: "knowledge.record".into(),
-            description: "Record an architectural decision, discovered pattern, or gotcha into the project's cumulative knowledge base.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "project": {"type": "string"},
-                    "note": {"type": "string"},
-                    "category": {"type": "string", "enum": ["decision", "pattern", "gotcha"]},
-                },
-                "required": ["project", "note"],
-            }),
-        },
     ]
-}
-
-pub fn is_plan_tool(name: &str) -> bool {
-    matches!(name, "plan.read" | "plan.update")
-}
-
-pub fn is_knowledge_tool(name: &str) -> bool {
-    matches!(name, "knowledge.read" | "knowledge.record")
 }
 
 pub fn is_lane_tool(name: &str) -> bool {
@@ -416,116 +369,6 @@ pub fn is_session_tool(name: &str) -> bool {
     )
 }
 
-/// Built-in (non-connector) tool catalog: the single source of truth for how
-/// base tools are grouped and described in Settings. Groups: Files, Shell,
-/// Teamwork, Plans, Knowledge, Display.
-pub struct BuiltinTool {
-    pub name: &'static str,
-    pub group: &'static str,
-    pub blurb: &'static str,
-}
-
-pub fn builtin_tools() -> Vec<BuiltinTool> {
-    vec![
-        BuiltinTool {
-            name: "fs.read",
-            group: "Files",
-            blurb: "The agent reads and searches files",
-        },
-        BuiltinTool {
-            name: "fs.write",
-            group: "Files",
-            blurb: "The agent edits and creates files",
-        },
-        BuiltinTool {
-            name: "shell.exec",
-            group: "Shell",
-            blurb: "The agent runs shell commands",
-        },
-        BuiltinTool {
-            name: "session.spawn",
-            group: "Teamwork",
-            blurb: "Spawn child subsessions",
-        },
-        BuiltinTool {
-            name: "session.send_message",
-            group: "Teamwork",
-            blurb: "Message other sessions",
-        },
-        BuiltinTool {
-            name: "session.read_session",
-            group: "Teamwork",
-            blurb: "Inspect other transcripts",
-        },
-        BuiltinTool {
-            name: "session.list_sessions",
-            group: "Teamwork",
-            blurb: "List sessions",
-        },
-        BuiltinTool {
-            name: "plan.read",
-            group: "Plans",
-            blurb: "Read the living project plan",
-        },
-        BuiltinTool {
-            name: "plan.update",
-            group: "Plans",
-            blurb: "Update plan checkboxes",
-        },
-        BuiltinTool {
-            name: "lane.dispatch",
-            group: "Plans",
-            blurb: "Dispatch a lane worker",
-        },
-        BuiltinTool {
-            name: "knowledge.read",
-            group: "Knowledge",
-            blurb: "Read recorded project knowledge",
-        },
-        BuiltinTool {
-            name: "knowledge.record",
-            group: "Knowledge",
-            blurb: "Record durable project knowledge",
-        },
-        BuiltinTool {
-            name: "ui.show_markdown",
-            group: "Display",
-            blurb: "Render rich text (always on)",
-        },
-        BuiltinTool {
-            name: "ui.show_widget",
-            group: "Display",
-            blurb: "Render cards and charts (always on)",
-        },
-        BuiltinTool {
-            name: "ui.show_diagram",
-            group: "Display",
-            blurb: "Render diagrams (always on)",
-        },
-        BuiltinTool {
-            name: "ui.show_artifact",
-            group: "Display",
-            blurb: "Save versioned artifacts",
-        },
-    ]
-}
-
-/// Group label for any known tool name (MCP `server.tool` names report
-/// "Connector"). Used by Settings and diagnostics.
-pub fn tool_group(name: &str) -> &'static str {
-    for t in builtin_tools() {
-        if t.name == name {
-            return t.group;
-        }
-    }
-    "Connector"
-}
-
-/// One-line human status for a tool call ("Reading Cargo.toml"). Pure and
-/// unit-tested: the single source for the live "Now:" line in the GUI, the
-/// CLI `[tool]` line, and the viewer. Unknown/connector tools fall back to
-/// `Calling server.tool` plus the most interesting string arg, so opaque MCP
-/// tools still read sensibly without an LLM.
 pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
     let str_arg = |k: &str| {
         args.get(k)
@@ -534,15 +377,11 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             .filter(|s| !s.is_empty())
             .map(str::to_string)
     };
-    // First interesting string arg for opaque tools (path > file > cmd >
-    // query > prompt > title > url > ...). Keys are exact-match on purpose:
-    // guessing shapes from training data is how args get misread.
     let hint = [
         "path", "file", "cmd", "query", "prompt", "title", "url", "message", "note", "number", "id",
     ]
     .iter()
     .find_map(|k| str_arg(k));
-    // A shell command arrives as a string (Claude) or an argv list (Codex).
     let command = || match args.get("command") {
         Some(serde_json::Value::Array(parts)) => parts
             .iter()
@@ -557,7 +396,6 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         return humanize_tool_call(&parzi, args);
     }
     match name {
-        // The agents' own tools (Claude Code, Codex).
         "Bash" | "shell" => format!("Running `{}`", one_line(&command(), 60)),
         "Read" => format!(
             "Reading {}",
@@ -623,49 +461,31 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         ),
         "session.read_session" => "Reading session".into(),
         "session.list_sessions" => "Listing sessions".into(),
-        "plan.read" => "Reading plan".into(),
-        "plan.update" => format!(
-            "Updating plan: {}",
-            one_line(
-                &str_arg("title_match")
-                    .or_else(|| str_arg("append"))
-                    .unwrap_or_default(),
-                60
-            )
-        ),
         "lane.dispatch" => format!(
             "Dispatching worker: {}",
             one_line(&str_arg("title").unwrap_or_else(|| "worker".into()), 60)
         ),
-        "knowledge.read" => "Reading knowledge".into(),
-        "knowledge.record" => "Recording knowledge".into(),
-        // PLAN §4: what the lease layer is doing, in a person's words.
-        "lease.claim" => format!(
-            "Checking out {}",
-            str_arg("task").unwrap_or_else(|| "a task".into())
+        "browser.open" => format!(
+            "Opening {}",
+            one_line(&str_arg("url").unwrap_or_else(|| "a page".into()), 60)
         ),
-        "lease.release" => format!(
-            "Releasing {}",
-            str_arg("task").unwrap_or_else(|| "a task".into())
+        "browser.tabs" => "Listing tabs".into(),
+        "browser.read" => "Reading the open page".into(),
+        "brain.search" => format!(
+            "Searching notes for {}",
+            one_line(&str_arg("query").unwrap_or_default(), 60)
         ),
-        "lease.request" => format!(
-            "Asking for {}",
-            str_arg("path").unwrap_or_else(|| "a file".into())
+        "brain.read" => format!(
+            "Reading note {}",
+            one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
         ),
-        "lease.grant" => "Handing the file over".into(),
-        "lease.deny" => "Keeping the file".into(),
-        "lease.transfer" => format!(
-            "Transfer {} to another lane?",
-            str_arg("path").unwrap_or_else(|| "a critical file".into())
-        ),
-        "board.list" => "Reading the board".into(),
-        "board.handoff" => format!(
-            "Handing off {}",
-            str_arg("task").unwrap_or_else(|| "the task".into())
-        ),
-        "board.block" => format!(
-            "Blocking {}",
-            str_arg("task").unwrap_or_else(|| "the task".into())
+        "brain.list" => match str_arg("project") {
+            Some(p) => format!("Listing notes for {}", one_line(&p, 60)),
+            None => "Listing notes".into(),
+        },
+        "brain.write" => format!(
+            "Writing note {}",
+            one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
         ),
         "ui.show_markdown" => "Rendering text".into(),
         "ui.show_widget" => format!(
@@ -676,7 +496,6 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
                 60
             )
         ),
-        "ui.show_diagram" => "Rendering diagram".into(),
         "ui.show_artifact" => format!(
             "Saving {}",
             one_line(
@@ -693,26 +512,12 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
     }
 }
 
-/// Parzi's namespaces: a tool name is `<namespace>.<name>`.
-const NAMESPACES: &[&str] = &[
-    "ui",
-    "session",
-    "plan",
-    "lane",
-    "knowledge",
-    "lease",
-    "board",
-    "project",
-];
+const NAMESPACES: &[&str] = &["ui", "browser", "brain", "session", "lane"];
 
-/// The name a tool travels under over MCP: dots are not allowed in tool
-/// names by every vendor, so `ui.show_widget` goes out as `ui_show_widget`.
 pub fn to_mcp(name: &str) -> String {
     name.replace('.', "_")
 }
 
-/// Back from `to_mcp` for Parzi's own namespaces (`ui_show_widget` →
-/// `ui.show_widget`). Connector names come back unchanged.
 pub fn from_mcp(tool: &str) -> String {
     for ns in NAMESPACES {
         if let Some(rest) = tool.strip_prefix(ns).and_then(|r| r.strip_prefix('_')) {
@@ -722,9 +527,6 @@ pub fn from_mcp(tool: &str) -> String {
     tool.to_string()
 }
 
-/// Parzi's own name for a tool an agent reports under its MCP name —
-/// Claude says `mcp__parzi__ui_show_widget`, Codex `parzi.ui_show_widget`,
-/// OpenCode `parzi_ui_show_widget`. Any other name comes back unchanged.
 pub fn display_name(name: &str) -> String {
     name.strip_prefix("mcp__parzi__")
         .or_else(|| name.strip_prefix("parzi."))
@@ -742,7 +544,6 @@ fn one_line(s: &str, n: usize) -> String {
     }
 }
 
-/// Session ids are UUIDs; status lines only need the head.
 fn short_id(s: &str) -> String {
     if s.len() > 8 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
         s.chars().take(8).collect()
@@ -754,26 +555,6 @@ fn short_id(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn catalog_covers_every_advertised_tool_exactly_once() {
-        // session_defs carries session.* + plan.* + lane.dispatch + knowledge.*;
-        // the three vendor categories name the agents' own tools.
-        let names: Vec<String> = ["fs.read", "fs.write", "shell.exec"]
-            .iter()
-            .map(|n| (*n).to_string())
-            .chain(ui_defs().into_iter().chain(session_defs()).map(|d| d.name))
-            .collect();
-        let catalog = builtin_tools();
-        for n in &names {
-            assert_eq!(
-                catalog.iter().filter(|t| t.name == n.as_str()).count(),
-                1,
-                "catalog gap/dupe: {n}"
-            );
-        }
-        assert_eq!(catalog.len(), names.len(), "catalog drift vs defs");
-    }
 
     #[test]
     fn humanizer_names_the_interesting_arg() {
@@ -793,7 +574,6 @@ mod tests {
             ),
             "Delegating: auth worker"
         );
-        // Opaque connector tools degrade to name + hint, never empty.
         assert_eq!(
             humanize_tool_call("gh.issue_get", &j(r#"{"number":"12"}"#)),
             "Calling gh.issue_get 12"
@@ -802,86 +582,6 @@ mod tests {
             humanize_tool_call("weird.tool", &j("{}")),
             "Calling weird.tool"
         );
-        // Status lines stay single-line.
         assert!(!humanize_tool_call("shell.exec", &j(r#"{"cmd":"a\nb"}"#)).contains('\n'));
-    }
-}
-
-async fn execute_plan_tool(name: &str, args: &serde_json::Value) -> (bool, String) {
-    let project = args.get("project").and_then(|v| v.as_str()).unwrap_or("");
-    if project.trim().is_empty() {
-        return (false, "plan tool needs `project`".into());
-    }
-    match name {
-        "plan.read" => match parzi_core::plan::read_plan(project) {
-            Ok(text) => {
-                let cut: String = text.chars().take(24_000).collect();
-                (true, cut)
-            }
-            Err(e) => (false, e.to_string()),
-        },
-        "plan.update" => {
-            if let Some(append) = args
-                .get("append")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.trim().is_empty())
-            {
-                let mut raw = parzi_core::plan::read_plan(project).unwrap_or_default();
-                if !raw.ends_with('\n') {
-                    raw.push('\n');
-                }
-                raw.push_str(&format!("- [ ] {append}\n"));
-                match parzi_core::plan::write_plan(project, &raw) {
-                    Ok(()) => return (true, "appended".into()),
-                    Err(e) => return (false, e.to_string()),
-                }
-            }
-            let title = args
-                .get("title_match")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if title.trim().is_empty() {
-                return (false, "plan.update needs `title_match` or `append`".into());
-            }
-            let done = args.get("done").and_then(|v| v.as_bool()).unwrap_or(true);
-            match parzi_core::plan::set_task_status(project, title, done) {
-                Ok(true) => (true, "updated".into()),
-                Ok(false) => (false, "no matching task".into()),
-                Err(e) => (false, e.to_string()),
-            }
-        }
-        _ => (false, format!("unknown plan tool `{name}`")),
-    }
-}
-
-async fn execute_knowledge_tool(name: &str, args: &serde_json::Value) -> (bool, String) {
-    let project = args.get("project").and_then(|v| v.as_str()).unwrap_or("");
-    if project.trim().is_empty() {
-        return (false, "knowledge tool needs `project`".into());
-    }
-    match name {
-        "knowledge.read" => match parzi_core::lanes::read_knowledge(project) {
-            Some(text) => {
-                let cut: String = text.chars().take(24_000).collect();
-                (true, cut)
-            }
-            None => (true, "no knowledge recorded yet for this project".into()),
-        },
-        "knowledge.record" => {
-            let note = args.get("note").and_then(|v| v.as_str()).unwrap_or("");
-            if note.trim().is_empty() {
-                return (false, "knowledge.record needs `note`".into());
-            }
-            let category = args
-                .get("category")
-                .and_then(|v| v.as_str())
-                .unwrap_or("decision");
-            let formatted = format!("[{category}] {note}");
-            match parzi_core::lanes::append_knowledge(project, &formatted) {
-                Ok(()) => (true, "knowledge recorded".into()),
-                Err(e) => (false, e.to_string()),
-            }
-        }
-        _ => (false, format!("unknown knowledge tool `{name}`")),
     }
 }

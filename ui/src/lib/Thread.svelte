@@ -5,14 +5,22 @@
   import { handleLinkClick } from "./links";
   import { renderMarkdown, splitSegments, LiveMarkdown } from "./md";
   import Widget from "./widgets/Widget.svelte";
-  import Diagram from "./widgets/Diagram.svelte";
   import ArtifactCard from "./widgets/ArtifactCard.svelte";
-  import ToolStack from "./ToolStack.svelte";
-  import TelemetryRibbon from "./TelemetryRibbon.svelte";
-  import type { ChatEvent, InspectorArtifact } from "./api";
-  import { api } from "./api";
+  import Steps from "./Steps.svelte";
+  import Icon from "./Icon.svelte";
+  import { api, type ChatEvent } from "./api";
+  import type { Approval, LiveTool, Step } from "./live";
 
-  /** A failed turn's class, in words. The vendor's own message follows. */
+  export let events: ChatEvent[] = [];
+  export let liveText = "";
+  export let liveReasoning = "";
+  export let liveTools: LiveTool[] = [];
+  export let streaming = false;
+  export let approval: Approval | null = null;
+  export let folder = "";
+
+  const dispatch = createEventDispatcher<{ voted: { key: string } }>();
+
   const ERROR_WORDS: Record<string, string> = {
     auth: "Not signed in",
     rate_limit: "Plan limit reached",
@@ -22,64 +30,146 @@
     process: "The agent's program stopped",
     unknown: "The turn failed",
   };
-
-  export let events: ChatEvent[] = [];
-  export let liveText = "";
-  export let liveReasoning = "";
-  interface LiveTool {
-    id: string;
-    name: string;
-    label: string;
-    running: boolean;
-    ok: boolean;
-    ms: number;
-  }
-  /** Status track: live tool calls with backend humanized labels. */
-  export let liveTools: LiveTool[] = [];
-  export let streaming = false;
-  export let approval: {
-    key: string;
-    session: string;
-    call: { id: string; name: string; args: unknown; lane: string; session: string };
-  } | null = null;
-  /** Set when this thread is a subsession: title of the parent session. */
-  export let parentTitle: string | null = null;
-  /** Workspace root: resolves `[attached: …]` image markers to previews. */
-  export let projectRoot = "";
-  /** Child subsessions of this thread (team status banner). */
-  export let subsessions: { id: string; title: string; status: string }[] = [];
-
-  const dispatch = createEventDispatcher<{
-    goParent: void;
-    openSubsession: { id: string };
-    /** Artifact card asked to be read in the right inspector deck. */
-    openArtifact: { artifact: InspectorArtifact };
-    /** Approval answered: the parent drops the card for that session. */
-    voted: { key: string };
-  }>();
-
-  function toDeck(e: CustomEvent<{ artifact: InspectorArtifact }>) {
-    dispatch("openArtifact", { artifact: e.detail.artifact });
-  }
-
-  function subState(s: string): string {
-    if (s === "active") return "● working";
-    if (s === "queued") return "… queued";
-    if (s === "done") return "✓ finished";
-    if (s === "killed") return "✕ stopped";
-    return "○ idle";
-  }
-
+  const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
   const spring = { duration: 160, easing: cubicOut };
-  let copied = -1;
 
-  function copy(text: string, i: number) {
-    try {
-      const p = navigator.clipboard.writeText(text) as unknown as Promise<void> | undefined;
-      if (p && typeof p.catch === "function") p.catch(() => {});
-    } catch {}
-    copied = i;
-    setTimeout(() => (copied = -1), 1200);
+  type Item =
+    | { key: string; kind: "user" | "assistant" | "checkpoint" | "system"; text: string }
+    | { key: string; kind: "error"; class: string; message: string }
+    | { key: string; kind: "widget"; fence: string; payload: unknown }
+    | { key: string; kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
+    | { key: string; kind: "steps"; reasoning: string; tools: Step[] };
+
+  let copied = "";
+  const liveMd = new LiveMarkdown();
+  const imageCache = new Map<string, Promise<string | null>>();
+
+  $: items = buildItems(events);
+  $: running = liveTools.filter((t) => t.running);
+  $: status = !streaming
+    ? ""
+    : running.length
+      ? `${running[running.length - 1].label}…`
+      : liveText
+        ? ""
+        : liveReasoning
+          ? "Thinking…"
+          : liveTools.length
+            ? "Working…"
+            : "Starting…";
+  $: showLiveSteps = !!status || !!liveReasoning || liveTools.length > 0;
+  $: if (!liveText) liveMd.reset();
+  $: liveSegs = liveText ? splitSegments(liveText, false) : [];
+  $: tailIdx = liveSegs.map((s) => s.kind).lastIndexOf("md");
+  $: livePart = tailIdx >= 0 ? liveMd.render(String(liveSegs[tailIdx].body)) : { head: "", tail: "" };
+
+  function arg(args: unknown, ...keys: string[]): string {
+    const a = (args ?? {}) as Record<string, unknown>;
+    for (const k of keys) {
+      const v = a[k];
+      if (typeof v === "string" && v.trim()) {
+        const line = v.trim().split("\n")[0];
+        return line.length > 60 ? `${line.slice(0, 60)}…` : line;
+      }
+    }
+    return "";
+  }
+
+  function toolLabel(name: string, args: unknown): string {
+    switch (name) {
+      case "fs.read":
+        return `Reading ${arg(args, "path") || "?"}`;
+      case "fs.write":
+        return `Writing ${arg(args, "path") || "?"}`;
+      case "fs.list":
+        return `Listing ${arg(args, "path") || "."}`;
+      case "shell.exec":
+        return `Running \`${arg(args, "cmd")}\``;
+      case "browser.open":
+        return `Opening ${arg(args, "url") || "a page"}`;
+      case "browser.tabs":
+        return "Listing tabs";
+      case "browser.read":
+        return "Reading the page";
+      case "brain.search":
+        return `Searching notes for ${arg(args, "query") || "?"}`;
+      case "brain.read":
+        return `Reading note ${arg(args, "path") || "?"}`;
+      case "brain.list":
+        return arg(args, "project") ? `Listing ${arg(args, "project")} notes` : "Listing notes";
+      case "brain.write":
+        return `Writing note ${arg(args, "path") || "?"}`;
+      case "ui.show_markdown":
+        return "Rendering text";
+      case "ui.show_artifact":
+        return `Saving ${arg(args, "title", "id") || "artifact"}`;
+      default: {
+        const hint = arg(args, "path", "file", "cmd", "query", "url", "title", "id");
+        return hint ? `Calling ${name} ${hint}` : `Calling ${name}`;
+      }
+    }
+  }
+
+  function buildItems(events: ChatEvent[]): Item[] {
+    const results = new Map<string, { ok: boolean; ms: number; output: string }>();
+    for (const e of events) if (e.kind === "tool_result") results.set(e.id, { ok: e.ok, ms: e.ms, output: e.output });
+    const out: Item[] = [];
+    let group: Extract<Item, { kind: "steps" }> | null = null;
+    const steps = (key: string) => {
+      if (!group) {
+        group = { key: `s${key}`, kind: "steps", reasoning: "", tools: [] };
+        out.push(group);
+      }
+      return group;
+    };
+    events.forEach((e, i) => {
+      const key = `e${i}`;
+      if (e.kind === "tool_call") {
+        const r = results.get(e.id);
+        steps(key).tools.push({ id: e.id, label: toolLabel(e.name, e.args), running: !r, ...r });
+        return;
+      }
+      if (e.kind === "reasoning") {
+        const g = steps(key);
+        g.reasoning = g.reasoning ? `${g.reasoning}
+
+${e.text}` : e.text;
+        return;
+      }
+      if (e.kind === "tool_result") return;
+      group = null;
+      if (e.kind === "checkpoint") out.push({ key, kind: "checkpoint", text: e.summary });
+      else if (e.kind === "error") out.push({ key, kind: "error", class: e.class, message: e.message });
+      else if (e.kind === "widget") out.push({ key, kind: "widget", fence: e.fence, payload: e.payload });
+      else if (e.kind === "artifact") out.push({ key, ...e });
+      else out.push({ key, kind: e.kind, text: e.text });
+    });
+    return out;
+  }
+
+  function attachedImages(text: string): string[] {
+    const m = /\[attached: ([^\]]+)\]/.exec(text);
+    return m ? m[1].split(",").map((s) => s.trim()).filter((s) => IMAGE.test(s)) : [];
+  }
+
+  function stripMarker(text: string): string {
+    return text.replace(/\n?\[attached: [^\]]+\]/, "").trimEnd();
+  }
+
+  function imageUrl(name: string): Promise<string | null> {
+    const key = `${folder}\n${name}`;
+    let p = imageCache.get(key);
+    if (!p) {
+      p = api.readImageDataUrl(name, folder).catch(() => null);
+      imageCache.set(key, p);
+    }
+    return p;
+  }
+
+  function copy(text: string, key: string) {
+    navigator.clipboard.writeText(text).catch(() => {});
+    copied = key;
+    setTimeout(() => (copied = copied === key ? "" : copied), 1200);
   }
 
   async function vote(allow: boolean) {
@@ -92,359 +182,124 @@
     }
   }
 
-  async function onThreadClick(e: MouseEvent) {
+  async function onClick(e: MouseEvent) {
     if (await handleLinkClick(e)) return;
     const el = e.target as HTMLElement;
-    const copyBtn = el.closest("[data-copy]") as HTMLElement | null;
+    const copyBtn = el.closest<HTMLElement>("[data-copy]");
     if (copyBtn) {
-      const code = copyBtn.closest(".codeblock")?.querySelector("code")?.innerText ?? "";
-      navigator.clipboard.writeText(code);
-      copyBtn.textContent = "copied";
-      setTimeout(() => (copyBtn.textContent = "copy"), 1200);
+      const code = copyBtn.closest(".codeblock")?.querySelector("code")?.textContent ?? "";
+      navigator.clipboard.writeText(code).catch(() => {});
+      copyBtn.textContent = "Copied";
+      setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
       return;
     }
-    const exp = el.closest("[data-expand]") as HTMLElement | null;
-    if (exp) {
-      const block = exp.closest(".codeblock");
+    const expand = el.closest<HTMLElement>("[data-expand]");
+    if (expand) {
+      const block = expand.closest(".codeblock");
       block?.classList.toggle("clamped");
-      exp.textContent = block?.classList.contains("clamped")
-        ? exp.dataset.label ?? "expand"
-        : "collapse";
+      expand.textContent = block?.classList.contains("clamped") ? (expand.dataset.label ?? "Show all") : "Show less";
     }
-  }
-
-  function toolLabel(name: string, args?: unknown): string {
-    const a = (args ?? {}) as Record<string, unknown>;
-    const s = (k: string) => {
-      const v = a[k];
-      return typeof v === "string" && v.trim() ? v.trim() : "";
-    };
-    const oneLine = (v: string, n: number) => {
-      const f = v.split("\n")[0].trim();
-      return f.length > n ? f.slice(0, n) + "…" : f;
-    };
-    switch (name) {
-      case "fs.read": return `Reading ${s("path") || "?"}`;
-      case "fs.write": return `Writing ${s("path") || "?"}`;
-      case "fs.list": return `Listing ${s("path") || "."}`;
-      case "shell.exec": return `Running \`${oneLine(s("cmd"), 60)}\``;
-      case "session.spawn": return `Delegating: ${oneLine(s("title") || "subsession", 60)}`;
-      case "session.send_message": return `Messaging ${(s("session_id") || "session").slice(0, 8)}`;
-      case "session.read_session": return "Reading session";
-      case "session.list_sessions": return "Listing sessions";
-      case "plan.read": return "Reading plan";
-      case "plan.update": return `Updating plan: ${oneLine(s("title_match") || s("append"), 60)}`;
-      case "lane.dispatch": return `Dispatching worker: ${oneLine(s("title") || "worker", 60)}`;
-      case "knowledge.read": return "Reading knowledge";
-      case "knowledge.record": return "Recording knowledge";
-      case "ui.show_markdown": return "Rendering text";
-      case "ui.show_widget": return `Rendering ${oneLine(s("title") || s("type") || "widget", 60)}`;
-      case "ui.show_diagram": return "Rendering diagram";
-      case "ui.show_artifact": return `Saving ${oneLine(s("title") || s("id") || "artifact", 60)}`;
-      default: {
-        const hint = s("path") || s("file") || s("cmd") || s("query") || s("prompt") || s("title") || s("url") || s("message") || s("note") || s("number") || s("id");
-        return hint ? `Calling ${name} ${oneLine(hint, 60)}` : `Calling ${name}`;
-      }
-    }
-  }
-
-  type RenderItem =
-    | { key: string; kind: "user"; text: string }
-    | { key: string; kind: "assistant"; text: string }
-    | { key: string; kind: "reasoning"; text: string }
-    | { key: string; kind: "checkpoint"; text: string }
-    | { key: string; kind: "system"; text: string }
-    | { key: string; kind: "error"; class: string; message: string }
-    | { key: string; kind: "widget"; fence: string; payload: unknown }
-    | { key: string; kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
-    | {
-        key: string;
-        kind: "tool";
-        id: string;
-        name: string;
-        label: string;
-        args?: unknown;
-        ok?: boolean;
-        ms?: number;
-        output?: string;
-        running: boolean;
-      };
-
-  type ToolItem = Extract<RenderItem, { kind: "tool" }>;
-  type GroupedItem = RenderItem | { kind: "toolgroup"; key: string; tools: ToolItem[] };
-
-  $: chronologicalItems = (() => {
-    const out: RenderItem[] = [];
-    const resultMap = new Map<string, { ok: boolean; ms: number; output: string }>();
-
-    for (const e of events) {
-      if (e.kind === "tool_result") {
-        resultMap.set(e.id, { ok: e.ok, ms: e.ms ?? 0, output: e.output });
-      }
-    }
-
-    for (let ix = 0; ix < events.length; ix++) {
-      const e = events[ix];
-      const key = `e${ix}`;
-      if (e.kind === "user") {
-        out.push({ key, kind: "user", text: e.text });
-      } else if (e.kind === "assistant") {
-        out.push({ key, kind: "assistant", text: e.text });
-      } else if (e.kind === "reasoning") {
-        out.push({ key, kind: "reasoning", text: e.text });
-      } else if (e.kind === "checkpoint") {
-        out.push({ key, kind: "checkpoint", text: e.summary });
-      } else if (e.kind === "system") {
-        out.push({ key, kind: "system", text: e.text });
-      } else if (e.kind === "error") {
-        out.push({ key, kind: "error", class: e.class, message: e.message });
-      } else if (e.kind === "widget") {
-        out.push({ key, kind: "widget", fence: e.fence, payload: e.payload });
-      } else if (e.kind === "artifact") {
-        out.push({ key, kind: "artifact", id: e.id, title: e.title, artifact_kind: e.artifact_kind, version: e.version, payload: e.payload });
-      } else if (e.kind === "tool_call") {
-        const res = resultMap.get(e.id);
-        if (res) {
-          out.push({
-            key,
-            kind: "tool",
-            id: e.id,
-            name: e.name,
-            label: toolLabel(e.name, e.args),
-            args: e.args,
-            ok: res.ok,
-            ms: res.ms,
-            output: res.output,
-            running: false,
-          });
-        } else {
-          out.push({
-            key,
-            kind: "tool",
-            id: e.id,
-            name: e.name,
-            label: toolLabel(e.name, e.args),
-            args: e.args,
-            running: true,
-          });
-        }
-      }
-    }
-    return out;
-  })();
-
-  $: groupedItems = ((): GroupedItem[] => {
-    const out: GroupedItem[] = [];
-    let buf: ToolItem[] = [];
-    const flush = () => {
-      if (buf.length) {
-        out.push({ kind: "toolgroup", key: "g" + buf.map((t) => t.id).join("+"), tools: buf });
-        buf = [];
-      }
-    };
-    for (const it of chronologicalItems) {
-      if (it.kind === "tool") buf.push(it);
-      else {
-        flush();
-        out.push(it);
-      }
-    }
-    flush();
-    return out;
-  })();
-
-  /** The "Now:" line: last running tool's label, else the text-track state. */
-  $: liveRunning = liveTools.filter((t) => t.running);
-  $: lastRunning = liveRunning.length ? liveRunning[liveRunning.length - 1] : null;
-  $: nowText = lastRunning
-    ? lastRunning.label + "…"
-    : streaming
-      ? liveText
-        ? "Writing…"
-        : liveReasoning
-          ? "Thinking…"
-          : liveTools.length
-            ? "Working…"
-            : "Starting…"
-      : "";
-
-  const liveMd = new LiveMarkdown();
-  $: if (!liveText) liveMd.reset();
-  $: liveSegs = liveText ? splitSegments(liveText, false) : [];
-  $: liveTailIdx = (() => {
-    for (let i = liveSegs.length - 1; i >= 0; i--) if (liveSegs[i].kind === "md") return i;
-    return -1;
-  })();
-  $: livePart =
-    liveTailIdx >= 0
-      ? liveMd.render(String(liveSegs[liveTailIdx].body))
-      : { head: "", tail: "" };
-
-  const SENT_IMG_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
-  /** Filenames from the backend's `[attached: a, b]` transcript marker. */
-  function attachedImages(text: string): string[] {
-    const m = /\[attached: ([^\]]+)\]/.exec(text);
-    if (!m) return [];
-    return m[1].split(",").map((s) => s.trim()).filter((s) => SENT_IMG_RE.test(s));
-  }
-  function stripMarker(text: string): string {
-    return text.replace(/\n?\[attached: [^\]]+\]/, "").trimEnd();
-  }
-  const sentImgCache = new Map<string, Promise<string | null>>();
-  function sentImgUrl(name: string): Promise<string | null> {
-    const key = `${projectRoot}\n${name}`;
-    let p = sentImgCache.get(key);
-    if (!p) {
-      p = api.readImageDataUrl(name, projectRoot).catch(() => null);
-      sentImgCache.set(key, p);
-    }
-    return p;
   }
 </script>
 
-<div class="thread-col" on:click={onThreadClick}>
-  {#if parentTitle}
-    <button class="crumb" on:click={() => dispatch("goParent")} title="Back to parent thread">
-      <span class="crumb-branch">↳</span><span>Subsession of</span><b>{parentTitle}</b>
-    </button>
-  {/if}
-  {#if subsessions.length}
-    <div class="team-banner">
-      <div class="team-head">
-        <span>Team subsessions</span>
-      </div>
-      {#each subsessions as s (s.id)}
-        <button class="team-row" on:click={() => dispatch("openSubsession", { id: s.id })} title="Open subsession">
-          <span class="team-dot" class:live={s.status === "active" || s.status === "queued"} />
-          <span class="team-title">{s.title || "untitled"}</span>
-          <span class="team-state">{subState(s.status)}</span>
-        </button>
-      {/each}
-    </div>
-  {/if}
-  {#each groupedItems as item, i (item.key)}
+<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+<div class="thread-col" on:click={onClick}>
+  {#each items as item (item.key)}
     {#if item.kind === "user"}
-      {@const sentImgs = attachedImages(item.text)}
-      <div class="msg-row user">
-        <div class="user-bubble-line">
-          <button class="copy-btn user-copy" on:click={() => copy(stripMarker(item.text), i)}>
-            {copied === i ? "copied" : "copy"}
+      {@const images = attachedImages(item.text)}
+      <div class="row user">
+        <div class="user-line">
+          <button class="copy" title="Copy" on:click={() => copy(stripMarker(item.text), item.key)}>
+            <Icon name={copied === item.key ? "check" : "copy"} size={13} />
           </button>
-          <div class="user-bubble msg">{@html renderMarkdown(stripMarker(item.text))}</div>
+          <div class="bubble msg">{@html renderMarkdown(stripMarker(item.text))}</div>
         </div>
-        {#if sentImgs.length}
-          <div class="sent-imgs">
-            {#each sentImgs as im}
-              {#await sentImgUrl(im) then url}
-                {#if url}<img src={url} alt={im} title={im} class="sent-img" />{/if}
+        {#if images.length}
+          <div class="sent">
+            {#each images as name}
+              {#await imageUrl(name) then url}
+                {#if url}<img src={url} alt={name} title={name} />{/if}
               {/await}
             {/each}
           </div>
         {/if}
       </div>
     {:else if item.kind === "assistant"}
-      <div class="msg-row">
-        <div class="msg-body">
+      <div class="row">
+        <div class="body">
           {#each splitSegments(item.text) as seg}
             {#if seg.kind === "md"}
               <div class="msg">{@html renderMarkdown(seg.body)}</div>
             {:else if seg.kind === "widget"}
               <Widget data={seg.body} />
             {:else if seg.kind === "artifact"}
-              <ArtifactCard data={seg.body} on:openInDeck={toDeck} />
-            {:else}
-              <Diagram data={seg.body} />
+              <ArtifactCard data={seg.body} />
             {/if}
           {/each}
         </div>
-        <button class="copy-btn" on:click={() => copy(item.text, i)}>
-          {copied === i ? "copied" : "copy"}
-        </button>
+        <div class="actions">
+          <button class="copy" title="Copy" on:click={() => copy(item.text, item.key)}>
+            <Icon name={copied === item.key ? "check" : "copy"} size={13} />
+          </button>
+        </div>
       </div>
-    {:else if item.kind === "reasoning"}
-      <details class="think" transition:fade|local={spring}>
-        <summary>
-          <span class="think-rail" />
-          <span>Thinking</span>
-          <span class="think-meta">{item.text.length} chars</span>
-        </summary>
-        <div class="think-body">{item.text}</div>
-      </details>
+    {:else if item.kind === "steps"}
+      <Steps reasoning={item.reasoning} tools={item.tools} />
     {:else if item.kind === "checkpoint"}
-      <details class="think">
-        <summary>
-          <span class="think-rail" />
-          <span>Conversation compacted</span>
-          <span class="think-meta">the agent continues from this summary</span>
-        </summary>
-        <div class="think-body">{item.text}</div>
-      </details>
+      <Steps title="Conversation compacted" reasoning={item.text} />
     {:else if item.kind === "system"}
-      <div class="tool-line">ⓘ {item.text.slice(0, 300)}</div>
+      <div class="system">{item.text.slice(0, 300)}</div>
     {:else if item.kind === "error"}
       <div class="turn-error" role="alert">
-        <span class="err-class">{ERROR_WORDS[item.class] ?? "The turn failed"}</span>
+        <span class="err-class">{ERROR_WORDS[item.class] ?? ERROR_WORDS.unknown}</span>
         <span class="err-msg">{item.message}</span>
       </div>
     {:else if item.kind === "widget"}
-      {#if item.fence === "parzi-diagram"}
-        <Diagram data={item.payload} />
-      {:else}
+      {#if item.fence === "parzi-widget"}
         <Widget data={item.payload} />
+      {:else}
+        <div class="msg">{@html renderMarkdown("```" + item.fence + "\n" + JSON.stringify(item.payload, null, 2) + "\n```")}</div>
       {/if}
     {:else if item.kind === "artifact"}
-      <ArtifactCard data={item.payload} fallbackId={item.id} fallbackTitle={item.title} fallbackKind={item.artifact_kind} fallbackVersion={item.version} on:openInDeck={toDeck} />
-    {:else if item.kind === "toolgroup"}
-      <ToolStack tools={item.tools} />
+      <ArtifactCard
+        data={item.payload}
+        fallbackId={item.id}
+        fallbackTitle={item.title}
+        fallbackKind={item.artifact_kind}
+        fallbackVersion={item.version}
+      />
     {/if}
   {/each}
 
-  {#if streaming && nowText}
-    <div class="live-status" transition:fade|local={spring}>
-      <span>{nowText}</span>
+  {#if showLiveSteps}
+    <div transition:fade|local={spring}>
+      <Steps reasoning={liveReasoning} tools={liveTools} {status} />
     </div>
   {/if}
 
-  {#if liveTools.length}
-    <TelemetryRibbon tools={liveTools} prose={!!liveText} />
-  {/if}
-
-  {#if liveReasoning}
-    <details class="think" open transition:fade|local={spring}>
-      <summary><span class="think-rail" /><span>Thinking</span><span class="think-meta">live</span></summary>
-      <div class="think-body">{liveReasoning}</div>
-    </details>
-  {/if}
-
-  {#if liveText}
-    {#each liveSegs as seg, si}
-      {#if seg.kind === "md" && si === liveTailIdx}
-        <div class="msg">
-          {#if livePart.head}<div class="live-head fade">{@html livePart.head}</div>{/if}
-          <div class="live-tail">{@html livePart.tail}<span class="stream-caret" /></div>
-        </div>
-      {:else if seg.kind === "md"}
-        <div class="msg">{@html renderMarkdown(seg.body)}</div>
-      {:else if seg.kind === "widget"}
-        <Widget data={seg.body} />
-      {:else if seg.kind === "artifact"}
-        <ArtifactCard data={seg.body} on:openInDeck={toDeck} />
-      {:else}
-        <Diagram data={seg.body} />
-      {/if}
-    {/each}
-  {/if}
-
-  {#if streaming && !liveText && !liveReasoning && !liveTools.length && !nowText}
-    <div class="live-status"><span>writing…</span></div>
-  {/if}
+  {#each liveSegs as seg, i}
+    {#if seg.kind === "md" && i === tailIdx}
+      <div class="msg">
+        {#if livePart.head}<div class="live-head">{@html livePart.head}</div>{/if}
+        <div class="live-tail">{@html livePart.tail}<span class="caret" /></div>
+      </div>
+    {:else if seg.kind === "md"}
+      <div class="msg">{@html renderMarkdown(seg.body)}</div>
+    {:else if seg.kind === "widget"}
+      <Widget data={seg.body} />
+    {:else if seg.kind === "artifact"}
+      <ArtifactCard data={seg.body} />
+    {/if}
+  {/each}
 
   {#if approval}
-    <div class="approval-card" transition:fade={spring}>
-      <div>Allow <b>{approval.call.name}</b> in lane {approval.call.lane}?</div>
+    <div class="approval" transition:fade={spring}>
+      <div>Allow <b>{approval.call.name}</b>?</div>
       <pre>{JSON.stringify(approval.call.args, null, 2)?.slice(0, 2000)}</pre>
-      <button class="btn primary" on:click={() => vote(true)}>Approve</button>
-      <button class="btn" on:click={() => vote(false)}>Deny</button>
+      <div class="approval-actions">
+        <button class="btn primary" on:click={() => vote(true)}>Approve</button>
+        <button class="btn" on:click={() => vote(false)}>Deny</button>
+      </div>
     </div>
   {/if}
 </div>
@@ -454,216 +309,171 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
-    padding: 16px 24px 190px;
+    width: 100%;
     max-width: 820px;
     margin: 0 auto;
-    width: 100%;
-    box-sizing: border-box;
+    padding: 16px 24px 190px;
   }
-  .msg-row {
+  .row {
     display: flex;
     flex-direction: column;
-    position: relative;
   }
-  .msg-row.user {
+  .row.user {
     align-items: flex-end;
   }
-  .user-bubble-line {
+  .user-line {
     display: inline-flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 8px;
     max-width: 85%;
-    justify-content: flex-end;
   }
-  .user-bubble {
-    background: #27272a;
-    border: 1px solid #3f3f46;
-    color: #f4f4f5;
+  .bubble {
+    min-width: 0;
+    max-width: 100%;
     padding: 8px 16px;
-    border-radius: 9999px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--text);
     font-size: 13.5px;
     line-height: 1.5;
-    max-width: 100%;
-    min-width: 0;
     overflow-wrap: break-word;
-    word-break: break-word;
   }
-  .user-bubble:has(p + p, pre, ul, ol, blockquote) {
+  .bubble:has(p + p, pre, ul, ol, blockquote) {
     border-radius: 18px;
   }
-  .user-bubble :global(h1), .user-bubble :global(h2),
-  .user-bubble :global(h3), .user-bubble :global(h4) {
+  .bubble :global(h1),
+  .bubble :global(h2),
+  .bubble :global(h3) {
     margin: 0.5em 0 0.3em;
     font-size: 1.02em;
   }
-  .user-bubble :global(ul), .user-bubble :global(ol) {
+  .bubble :global(ul),
+  .bubble :global(ol) {
     margin: 0.4em 0;
     padding-left: 20px;
   }
-  .user-bubble :global(.codeblock) {
-    margin: 0.5em 0;
-  }
-  .sent-imgs {
+  .sent {
     display: flex;
-    gap: 6px;
     flex-wrap: wrap;
     justify-content: flex-end;
+    gap: 6px;
     margin-top: 6px;
   }
-  .sent-img {
+  .sent img {
     max-width: 220px;
     max-height: 160px;
-    border-radius: 8px;
-    border: 1px solid var(--line-2);
     object-fit: cover;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
   }
-  .msg-body {
+  .body {
     display: flex;
     flex-direction: column;
     gap: 8px;
+    color: color-mix(in srgb, var(--text) 92%, transparent);
   }
-  :global(.live-head > p:last-child) {
-    margin-bottom: 0.55em;
+  .actions {
+    height: 24px;
+    margin-left: -4px;
+    display: flex;
+    align-items: center;
   }
-  .live-head.fade { opacity: 0.72; filter: saturate(0.92); }
-  .live-tail { color: var(--text); }
-  .stream-caret {
-    display: inline-block; width: 6px; height: 1em; margin-left: 2px;
-    vertical-align: text-bottom; border-radius: 1px;
-    background: var(--text-3);
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .live-head.fade { opacity: 1; filter: none; }
-  }
-  .copy-btn {
-    position: absolute;
-    top: 0;
-    right: 0;
-    opacity: 0;
-    background: var(--surface-3);
-    border: none;
-    border-radius: 4px;
-    color: var(--text-3);
-    font-size: 11px;
-    padding: 2px 6px;
-    cursor: pointer;
-    transition: opacity 0.12s ease;
-  }
-  .msg-row:hover .copy-btn {
-    opacity: 1;
-  }
-  .user-bubble-line .copy-btn.user-copy {
-    position: static;
-    top: auto;
-    right: auto;
-    margin: 0;
-    flex-shrink: 0;
-  }
-  .live-status {
+  .copy {
+    width: 24px;
+    height: 24px;
+    flex: none;
     display: inline-flex;
     align-items: center;
-    align-self: flex-start;
-    color: var(--text-3);
+    justify-content: center;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--faint);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 140ms ease;
+  }
+  .row:hover .copy,
+  .copy:focus-visible {
+    opacity: 1;
+  }
+  .copy:hover {
+    background: var(--line);
+    color: var(--text);
+  }
+  .live-head {
+    opacity: 0.72;
+  }
+  .live-head :global(p:last-child) {
+    margin-bottom: 0.55em;
+  }
+  .live-tail {
+    color: var(--text);
+  }
+  .caret {
+    display: inline-block;
+    width: 6px;
+    height: 1em;
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    border-radius: 1px;
+    background: var(--muted);
+  }
+  .system {
+    font-family: var(--mono);
     font-size: 12px;
-    padding: 4px 0;
-    user-select: none;
+    color: var(--muted);
   }
   .turn-error {
     display: flex;
     flex-direction: column;
     gap: 3px;
     padding: 8px 12px;
-    border-radius: 8px;
-    border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
-    background: color-mix(in srgb, var(--bad) 8%, transparent);
+    background: transparent;
+    border: 1px solid var(--bad);
+    border-radius: var(--radius);
     font-size: 12px;
   }
   .err-class {
-    color: var(--bad);
     font-weight: 600;
+    color: var(--bad);
   }
   .err-msg {
-    color: var(--text-2);
+    color: var(--muted);
     white-space: pre-wrap;
     word-break: break-word;
   }
-  .think {
-    background: var(--input);
-    border: 1px solid var(--line-2);
-    border-radius: 8px;
-    padding: 8px 12px;
-    font-size: 12px;
-  }
-  .think summary {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    color: var(--text-3);
-    font-weight: 500;
-  }
-  .think-rail {
-    width: 3px;
-    height: 12px;
-    background: var(--accent);
-    border-radius: 2px;
-  }
-  .think-meta {
-    font-size: 10px;
-    opacity: 0.5;
-    font-family: var(--parzi-mono), ui-monospace, monospace;
-  }
-  .think-body {
-    margin-top: 8px;
-    font-family: var(--parzi-mono), ui-monospace, monospace;
-    font-size: 11.5px;
-    line-height: 1.6;
-    color: var(--text-2);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .approval-card {
-    background: var(--warn-soft);
-    border: 1px solid var(--warn-line);
-    border-radius: 10px;
-    padding: 14px 16px;
-    font-size: 13px;
-    color: var(--text);
+  .approval {
     display: flex;
     flex-direction: column;
     gap: 10px;
+    padding: 14px 16px;
+    background: transparent;
+    border: 1px solid var(--warn);
+    border-radius: var(--radius-lg);
+    font-size: 13px;
+    color: var(--text);
   }
-  .crumb {
-    align-self: flex-start; display: inline-flex; align-items: center; gap: 7px;
-    background: var(--surface-1); border: 1px solid var(--line-2);
-    border-radius: 8px; color: var(--text-2); font: inherit; font-size: 12px;
-    padding: 5px 11px; cursor: pointer;
-  }
-  .crumb:hover { color: var(--text); background: var(--surface-3); }
-  .crumb-branch { color: var(--text-3); }
-  .crumb b { font-weight: 600; color: var(--text); }
-  .team-banner {
-    display: flex; flex-direction: column; gap: 2px; padding: 8px;
-    background: var(--accent-soft); border: 1px solid var(--accent-mid);
-    border-radius: 10px;
-  }
-  .team-head { font-size: 11px; color: var(--text-3); padding: 0 4px 4px; }
-  .team-row {
-    display: flex; align-items: center; gap: 8px; width: 100%;
-    background: transparent; border: none; border-radius: 7px; color: var(--text-2);
-    font: inherit; font-size: 12.5px; padding: 6px 8px; cursor: pointer; text-align: left;
-  }
-  .team-row:hover { background: var(--surface-2); color: var(--text); }
-  .team-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--text-4); }
-  .team-dot.live { background: var(--ok); }
-  .team-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .team-state { font-size: 11px; color: var(--text-3); font-family: var(--parzi-mono), ui-monospace, monospace; flex: none; }
-  .approval-card pre {
-    background: var(--input);
-    padding: 8px 12px;
-    border-radius: 6px;
-    font-size: 11px;
+  .approval pre {
     max-height: 160px;
+    margin: 0;
+    padding: 8px 12px;
     overflow: auto;
+    background: var(--bg);
+    border-radius: var(--radius);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .approval-actions {
+    display: flex;
+    gap: 8px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-head {
+      opacity: 1;
+    }
   }
 </style>

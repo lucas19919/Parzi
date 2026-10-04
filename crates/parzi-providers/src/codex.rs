@@ -1,7 +1,3 @@
-//! Codex, driven over its own app-server (JSON-RPC on stdio) — the protocol
-//! OpenAI's IDE extensions speak. Codex keeps its ChatGPT
-//! sign-in fresh by itself; Parzi never reads `~/.codex/auth.json`.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -76,7 +72,6 @@ async fn open(program: &Path, cwd: &Path) -> Result<Server, ProviderError> {
         }
     };
     let _ = peer.notify("initialized", Value::Null).await;
-    // userAgent reads `codex_cli_rs/0.51.0 (…)`: the version follows the slash.
     let version = init
         .get("userAgent")
         .and_then(Value::as_str)
@@ -97,8 +92,6 @@ impl Provider for Codex {
         ID
     }
 
-    /// `untrusted` approvals: every patch and every command not known to
-    /// be read-only is an approval request (see [`APPROVAL`]).
     fn gated(&self) -> bool {
         true
     }
@@ -261,7 +254,6 @@ async fn list_models(peer: &Peer) -> Vec<ModelInfo> {
     out
 }
 
-/// Plan windows from a rate-limit snapshot (`primary` / `secondary`).
 fn windows(snapshot: &Value) -> Vec<UsageWindow> {
     let mut out = vec![];
     for key in ["primary", "secondary"] {
@@ -287,10 +279,6 @@ fn windows(snapshot: &Value) -> Vec<UsageWindow> {
     out
 }
 
-/// Codex's most-asking setup, whatever the lane allows: `untrusted` asks
-/// before every patch and every command it does not know to be read-only,
-/// and the read-only sandbox holds the commands it runs without asking.
-/// Parzi's gate answers each request with the lane's own rules.
 const APPROVAL: &str = "untrusted";
 const SANDBOX: &str = "read-only";
 
@@ -300,8 +288,6 @@ fn thread_id(v: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Parzi's effort pill in Codex's words: its top two pills are Codex's top
-/// one. Codex's own words pass through.
 fn effort(e: &str) -> &str {
     match e {
         "extra" | "ultra" | "max" => "xhigh",
@@ -309,8 +295,6 @@ fn effort(e: &str) -> &str {
     }
 }
 
-/// Open (or resume) the thread and run one turn on it. Split from
-/// `run_turn` so the wire is testable without a real `codex`.
 async fn drive(
     peer: &Arc<Peer>,
     incoming: &mut mpsc::UnboundedReceiver<Incoming>,
@@ -335,7 +319,6 @@ async fn drive(
         thread["developerInstructions"] = json!(i);
     }
     if let Some(t) = &spec.tools {
-        // The secret rides in the URL path, so no header is needed.
         thread["config"] = json!({"mcp_servers": {t.name.clone(): {"url": t.url}}});
     }
     let limit = Duration::from_secs(60);
@@ -351,8 +334,6 @@ async fn drive(
             p["threadId"] = json!(tid);
             match peer.request_within("thread/resume", p, limit).await {
                 Ok(v) => thread_id(&v).unwrap_or(tid),
-                // The server answered and refused the thread: it no longer
-                // has it. The run starts a new one and hands it the history.
                 Err(e) if e.code != RpcError::CLOSED && e.code != RpcError::TIMEOUT => {
                     return Err(ProviderError::new(
                         ErrorClass::SessionLost,
@@ -435,7 +416,6 @@ async fn drive(
                     .and_then(Value::as_str)
                     .and_then(|i| st.file_paths.get(i).cloned())
                     .unwrap_or_default();
-                // A person may take minutes: never block the stream on it.
                 tokio::spawn(async move { answer(&peer, id, &method, params, paths, gate).await });
             }
             Incoming::Raw(_) => {}
@@ -524,7 +504,6 @@ async fn answer(
 struct Turn {
     thread: String,
     turn: String,
-    /// fileChange item id → the files it touches (for the lease gate).
     file_paths: HashMap<String, Vec<String>>,
     last_error: Option<ProviderError>,
     interrupting: bool,
@@ -765,7 +744,6 @@ fn item_completed(item: &Value, events: &EventTx) {
     }
 }
 
-/// A turn error, classed by Codex's own `codexErrorInfo`.
 fn turn_error(e: &Value) -> ProviderError {
     let message = e
         .get("message")
@@ -773,7 +751,6 @@ fn turn_error(e: &Value) -> ProviderError {
         .unwrap_or("Codex reported an error")
         .to_string();
     let info = e.get("codexErrorInfo").unwrap_or(&Value::Null);
-    // A plain variant is a string; one with data is a one-key object.
     let kind = info
         .as_str()
         .map(str::to_string)

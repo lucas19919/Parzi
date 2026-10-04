@@ -1,7 +1,3 @@
-//! Teamwork: `session.*` — spawn (subsession vs full session), messages
-//! across sessions, inspection — through the bridge and, end to end, from
-//! an agent calling Parzi's tools over MCP.
-
 mod common;
 
 use std::collections::HashMap;
@@ -26,7 +22,6 @@ impl Approver for Allow {
     }
 }
 
-/// Answers every turn with a fixed reply.
 fn answer() -> Arc<Fake> {
     Fake::new(
         "claude",
@@ -37,7 +32,6 @@ fn answer() -> Arc<Fake> {
     )
 }
 
-/// Holds its run slot until killed.
 fn hang() -> Arc<Fake> {
     Fake::new(
         "claude",
@@ -86,9 +80,9 @@ fn session_tools_advertised_and_recognized() {
         cwd: String::new(),
         mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
         allowed: vec!["*".into()],
-        leases: None,
     };
-    assert!(e.defs().iter().any(|d| d.name == "session.spawn"));
+    assert!(e.defs().iter().any(|d| d.name == "browser.open"));
+    assert!(e.defs().iter().all(|d| d.name != "session.spawn"));
 }
 
 #[tokio::test]
@@ -109,7 +103,6 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
         .await
         .unwrap(),
     );
-    // Default model: the parent's.
     assert_eq!(store.get(&sub_id).unwrap().model, "claude/model");
     assert_eq!(
         store.get(&sub_id).unwrap().parent_id.as_deref(),
@@ -165,10 +158,8 @@ async fn spawn_wait_collects_child_reply() {
     );
 }
 
-/// End to end: an agent delegates with `session.spawn` over MCP, waits,
-/// and gets the child's answer back as the tool result.
 #[tokio::test]
-async fn an_agent_delegates_over_mcp_and_gets_the_answer() {
+async fn a_plain_run_cannot_spawn_a_crew() {
     home("teamwork");
     let fake = Fake::new(
         "claude",
@@ -204,16 +195,9 @@ async fn an_agent_delegates_over_mcp_and_gets_the_answer() {
         .unwrap();
     settle(&store, &meta.id).await;
     let reply = last_reply(&store, &meta.id);
-    assert!(
-        reply.contains("ok=true") && reply.contains("child found x"),
-        "{reply}"
-    );
+    assert!(reply.contains("ok=false"), "{reply}");
     let children = store.list_children(&meta.id).unwrap();
-    assert_eq!(children.len(), 1, "the child nests under the parent");
-    // The call shows in the parent's thread under Parzi's own name.
-    assert!(events(&store, &meta.id)
-        .iter()
-        .any(|e| matches!(e, Event::ToolCall { name, .. } if name == "session.spawn")));
+    assert!(children.is_empty(), "a refused spawn creates no child");
 }
 
 #[tokio::test]
@@ -240,7 +224,6 @@ async fn send_message_continues_target_and_can_wait() {
         v["response"].as_str().unwrap().contains("teamwork reply"),
         "{out}"
     );
-    // H-5: in the transcript as typed data, never as a user turn…
     let evs = events(&store, &target.id);
     assert!(evs.iter().any(|e| matches!(
         e,
@@ -249,7 +232,6 @@ async fn send_message_continues_target_and_can_wait() {
     assert!(!evs
         .iter()
         .any(|e| matches!(e, Event::User { text } if text.contains("follow up please"))));
-    // …and to the agent in its untrusted wrapping.
     let prompt = fake.seen().last().unwrap().prompt.clone();
     assert!(
         prompt.contains("follow up please") && prompt.contains("untrusted"),
@@ -290,8 +272,6 @@ async fn read_and_list_inspect_sessions() {
     orch.kill(&sub_id).await.ok();
 }
 
-/// max=1 with a hanging child holding the only slot: a blocking wait would
-/// deadlock, so the bridge answers `queued` instead.
 #[tokio::test]
 async fn spawn_wait_degrades_to_queued_when_slots_full() {
     let (orch, store) = team(1, hang());

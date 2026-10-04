@@ -1,8 +1,3 @@
-//! ACP agents (Agent Client Protocol): OpenCode, Grok, Antigravity and
-//! Cursor each ship an agent that speaks it on stdio. One driver serves all
-//! four; an [`Agent`] says how to start each one and how to check its
-//! sign-in without opening a session.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,24 +14,16 @@ use crate::types::{
     Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd, TurnSpec,
 };
 
-/// ACP's "authentication required" error code.
 const AUTH_REQUIRED: i64 = -32000;
 
-/// How a roster agent is started and checked.
 #[derive(Clone, Copy)]
 pub struct Agent {
     pub id: &'static str,
     pub name: &'static str,
-    /// Program name on PATH when no path is configured.
     program: &'static str,
-    /// The agent in its most-asking mode: Parzi's gate answers for the lane.
     args: &'static [&'static str],
-    /// Extra environment, from the resolved program's location.
     env: fn(&Path) -> Vec<(String, String)>,
-    /// Where the program lives when it is not on PATH.
     locate: fn() -> Option<PathBuf>,
-    /// Every change the agent makes arrives as `session/request_permission`
-    /// ([`Provider::gated`]). Only claimed where the setup makes it so.
     gated: bool,
     install_hint: &'static str,
     login_hint: &'static str,
@@ -45,12 +32,8 @@ pub struct Agent {
 
 #[derive(Clone, Copy)]
 enum Probe {
-    /// `opencode models`: one `provider/model` per line, empty when no
-    /// provider is signed in.
     OpencodeModels,
-    /// `grok models`: says whether you are logged in, then the models.
     GrokModels,
-    /// The agent offers no check short of a session: the first turn tells.
     None,
 }
 
@@ -58,9 +41,6 @@ fn no_env(_: &Path) -> Vec<(String, String)> {
     vec![]
 }
 
-/// OpenCode lets edits and commands run unasked by default. Its
-/// `OPENCODE_PERMISSION` is merged over every config file, and with project
-/// config off a repo's own `opencode.json` cannot grant itself anything.
 fn opencode_env(_: &Path) -> Vec<(String, String)> {
     vec![
         (
@@ -71,7 +51,6 @@ fn opencode_env(_: &Path) -> Vec<(String, String)> {
     ]
 }
 
-/// Google's agent needs its harness binary, which ships beside it.
 fn antigravity_env(program: &Path) -> Vec<(String, String)> {
     let harness = program.with_file_name(if cfg!(windows) {
         "localharness_external.exe"
@@ -82,10 +61,6 @@ fn antigravity_env(program: &Path) -> Vec<(String, String)> {
         "ANTIGRAVITY_HARNESS_PATH".into(),
         harness.display().to_string(),
     )];
-    // It is a PyInstaller build: every start unpacks ~1.2 GB into a `_MEI*`
-    // folder in TEMP that only a clean exit removes, and Parzi stops it with
-    // a tree kill. Give it a TEMP of its own and clear, on each start, what
-    // earlier runs left there.
     if let Some(tmp) = crate::process::private_temp("antigravity") {
         let tmp = tmp.display().to_string();
         env.push(("TEMP".into(), tmp.clone()));
@@ -119,9 +94,6 @@ pub fn agent(id: &str) -> Option<Agent> {
             args: &["--permission-mode", "default", "agent", "stdio"],
             env: no_env,
             locate: nowhere,
-            // `default` asks, but Grok also applies allow rules from its own
-            // and the folder's config, with no switch to skip them, and it
-            // has not yet been seen asking live (its plan was used up).
             gated: false,
             install_hint: "Install the Grok CLI or set its path in Settings.",
             login_hint: "Sign in with the Grok CLI (`grok`) in a terminal, then check again.",
@@ -134,12 +106,8 @@ pub fn agent(id: &str) -> Option<Agent> {
             args: &[],
             env: antigravity_env,
             locate: t3_antigravity,
-            // Not yet seen asking before an edit: until it is, leases and
-            // the folder fence cannot promise to stop it.
             gated: false,
             install_hint: "Install Google's Antigravity agent (T3 Code downloads it) or set the path to agy_acp_server in Settings.",
-            // The agent keeps its Google sign-in under ~/.gemini, whichever
-            // client started it.
             login_hint: "Sign in with Google in T3 Code's Antigravity settings, then check again.",
             probe: Probe::None,
         },
@@ -150,7 +118,6 @@ pub fn agent(id: &str) -> Option<Agent> {
             args: &["acp"],
             env: no_env,
             locate: nowhere,
-            // Not yet seen asking before an edit (not installed here).
             gated: false,
             install_hint: "Install Cursor's CLI (`cursor-agent`) or set its path in Settings.",
             login_hint: "Run `cursor-agent login` in a terminal, then check again.",
@@ -160,9 +127,6 @@ pub fn agent(id: &str) -> Option<Agent> {
     })
 }
 
-/// Google's agent as T3 Code installs it: `~/.t3/tools/antigravity-acp/
-/// <platform>/versions/<release>/agy_acp_server`, `active.json` naming the
-/// release in use.
 fn t3_antigravity() -> Option<PathBuf> {
     let platform = match (std::env::consts::OS, std::env::consts::ARCH) {
         ("windows", _) => "win32-x64",
@@ -228,8 +192,6 @@ impl Acp {
                 "initialize",
                 json!({
                     "protocolVersion": 1,
-                    // Parzi offers no file system or terminal of its own: the
-                    // agent works with its own tools and asks before acting.
                     "clientCapabilities": {"fs": {"readTextFile": false, "writeTextFile": false}, "terminal": false},
                     "clientInfo": {"name": "parzi", "title": "Parzi", "version": env!("CARGO_PKG_VERSION")},
                 }),
@@ -287,7 +249,6 @@ impl Provider for Acp {
                 "Installed. Sign-in is checked when a thread starts.",
             ),
         };
-        // The agent's own version, from a handshake that opens no session.
         if let Ok(mut conn) = self.open(&program, &std::env::temp_dir()).await {
             status.version = conn
                 .init
@@ -378,10 +339,6 @@ async fn grok_status(program: &Path, agent: Agent) -> ProviderStatus {
     }
 }
 
-/// What `grok models` said. Listed models or "you are logged in" is ready —
-/// checked first, because a sign-in refresh can print a "not logged in"
-/// line on its way to succeeding. Anything unrecognised is an error in
-/// Grok's own words, never a guess.
 fn grok_read(out: &str, agent: Agent) -> ProviderStatus {
     let lower = out.to_lowercase();
     let mut s = ProviderStatus::new(agent.id, State::Ready, "");
@@ -416,9 +373,6 @@ fn grok_read(out: &str, agent: Agent) -> ProviderStatus {
     )
 }
 
-/// Pick the option that carries a decision. An allow is always one action,
-/// never a standing grant: that would let later actions skip Parzi's gate.
-/// An agent that offers no one-time allow is refused.
 fn option_for(options: &[Value], decision: &PermissionDecision) -> Option<String> {
     let prefer: &[&str] = match decision {
         PermissionDecision::Allow | PermissionDecision::AllowAlways => {
@@ -529,8 +483,6 @@ async fn drive(
     let mut fresh = true;
     let mut session = Value::Null;
     let mut sid = String::new();
-    // An agent that cannot resume is never handed a cursor, so every turn
-    // of the thread reaches it as a new session with the history.
     if let Some(id) = earlier.filter(|_| can_resume) {
         match peer
             .request_within(
@@ -548,8 +500,6 @@ async fn drive(
             Err(e) if matches!(e.code, AUTH_REQUIRED | RpcError::CLOSED | RpcError::TIMEOUT) => {
                 return Err(rpc_failure(agent, e));
             }
-            // The agent answered and refused: it no longer has the
-            // conversation. The run starts a new one with the history.
             Err(e) => {
                 return Err(ProviderError::new(
                     ErrorClass::SessionLost,
@@ -586,8 +536,6 @@ async fn drive(
     if let Some(model) = spec.model.as_deref().filter(|m| !m.is_empty()) {
         select_model(peer, &session, &sid, model, agent, events).await;
     }
-    // ACP has no system prompt: a new session gets Parzi's instructions as
-    // the head of its first prompt; a resumed one already has them.
     let mut text = spec.prompt.clone();
     if fresh {
         if let Some(i) = spec
@@ -628,8 +576,6 @@ async fn drive(
     }
     let mut buffers = Buffers::default();
     let mut tool_names: HashMap<String, String> = HashMap::new();
-    // ACP reports the session's running cost. A new session starts at zero;
-    // a resumed one at the total its cursor carried from the last turn.
     let mut last_cost: Option<f64> = if fresh {
         Some(0.0)
     } else {
@@ -642,9 +588,6 @@ async fn drive(
     let mut stop_by: Option<tokio::time::Instant> = None;
     let mut open = true;
     loop {
-        // Biased: every update queued before the prompt's answer is read
-        // first, so the last chunks of a turn are never dropped. A closed
-        // stream is switched off, or it would win every round.
         tokio::select! {
         biased;
         () = cancel.cancelled(), if !interrupting => {
@@ -658,7 +601,6 @@ async fn drive(
         }
         msg = incoming.recv(), if open => {
             let Some(msg) = msg else {
-                // The reader ended; the prompt answer (an error) is next.
                 open = false;
                 continue;
             };
@@ -819,8 +761,6 @@ fn update(
             ) {
                 let _ = events.send(ProviderEvent::Context { used, limit });
             }
-            // The cost is the session's running total: bill the increase, and
-            // keep the total in the cursor so the next turn starts from it.
             if let Some(total) = u.pointer("/cost/amount").and_then(Value::as_f64) {
                 let delta = total - last_cost.unwrap_or(total);
                 *last_cost = Some(total);
@@ -871,8 +811,6 @@ async fn permission(peer: &Peer, id: Value, params: &Value, gate: Arc<dyn Permis
         .flatten()
         .filter_map(|l| l.get("path").and_then(Value::as_str).map(str::to_string))
         .collect();
-    // An action that names files but no kind is taken for an edit, so the
-    // folder fence and the leases see it rather than an unknown "other".
     let kind = match call.get("kind").and_then(Value::as_str) {
         Some(k) => k,
         None if !locations.is_empty() => "edit",
@@ -1147,7 +1085,6 @@ mod tests {
     #[test]
     fn grok_models_output_reads_sign_in_and_models() {
         let grok = agent("grok").unwrap();
-        // Verbatim from grok 1.0.34.
         let out = "You are logged in with grok.com.\n\nDefault model: grok-4.6\n\nAvailable models:\n  * grok-4.6 (default)\n  - grok-4.5\n";
         let s = grok_read(out, grok);
         assert_eq!(s.state, State::Ready);
@@ -1173,9 +1110,6 @@ mod tests {
         assert!(odd.hint.contains("network unreachable"), "{}", odd.hint);
     }
 
-    /// Parzi's allow is one action: a standing grant would let the agent's
-    /// later actions skip the gate, and an agent that offers only that is
-    /// refused.
     #[test]
     fn an_allow_is_one_action_and_never_a_standing_grant() {
         let always = json!({"optionId": "always", "kind": "allow_always", "name": "Always"});

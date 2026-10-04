@@ -1,23 +1,9 @@
-//! Workspace event hooks, executed: user scripts watching tool calls.
-//!
-//! `pre_tool` hooks run before the approval gate — automation first. Exit 0
-//! allows, exit 2 denies (stderr becomes the reason, capped), anything else
-//! or a timeout allows with a warning notice. `post_tool` hooks are
-//! notify-only: failures surface as notices, never as tool errors.
-//!
-//! Children get the H-6 scrubbed environment (PATH and system vars only —
-//! never provider keys) plus `PARZI_SESSION`, `PARZI_PROJECT`, `PARZI_TOOL`,
-//! `PARZI_EVENT`, and the event JSON on stdin. The working directory is the
-//! workspace dir, the legacy project dir, or the Parzi home for global-only
-//! runs.
-
 use std::process::Stdio;
 use std::time::Duration;
 
 use parzi_core::store::SessionStore;
 use serde_json::Value;
 
-/// Cap for stderr reasons surfaced to the transcript.
 const REASON_CAP: usize = 500;
 
 struct HookRun {
@@ -30,6 +16,8 @@ fn shell(cmd: &str) -> tokio::process::Command {
     if cfg!(windows) {
         let mut c = tokio::process::Command::new("cmd");
         c.arg("/C").arg(cmd);
+        #[cfg(windows)]
+        c.creation_flags(parzi_providers::process::CREATE_NO_WINDOW);
         c
     } else {
         let mut c = tokio::process::Command::new("sh");
@@ -45,7 +33,6 @@ fn scrubbed(
     tool: &str,
     event: &str,
 ) {
-    // H-6, same posture as shell.exec and MCP children.
     cmd.env_clear();
     for (k, v) in [
         ("PATH", std::env::var("PATH").unwrap_or_default()),
@@ -133,21 +120,18 @@ fn reason(mut s: String) -> String {
 }
 
 fn scope_of(store: &SessionStore, session_id: &str) -> (String, std::path::PathBuf) {
-    let project = store.get(session_id).map(|m| m.project).unwrap_or_default();
-    let cwd = if parzi_core::workspace::load(&project).is_ok() {
-        parzi_core::workspace::dir(&project)
-    } else if parzi_core::lanes::safe_name(&project).is_ok() {
-        parzi_core::paths::projects_dir()
-            .map(|root| root.join(&project))
-            .unwrap_or_else(|_| std::env::temp_dir())
-    } else {
-        parzi_core::paths::parzi_dir().unwrap_or_else(|_| std::env::temp_dir())
-    };
+    let meta = store.get(session_id).ok();
+    let project = meta.as_ref().map(|m| m.project.clone()).unwrap_or_default();
+    let cwd = meta
+        .as_ref()
+        .map(|m| m.cwd.trim().to_string())
+        .filter(|c| !c.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| parzi_core::paths::parzi_dir().ok())
+        .unwrap_or_else(|| std::env::temp_dir());
     (project, cwd)
 }
 
-/// Run matching `pre_tool` hooks in file order. Returns the denial reason
-/// when one fires, plus warnings (timeouts, crashes) for the transcript.
 pub async fn pre_tool(
     store: &SessionStore,
     session_id: &str,
@@ -155,7 +139,7 @@ pub async fn pre_tool(
     args: &Value,
 ) -> (Option<String>, Vec<String>) {
     let (project, cwd) = scope_of(store, session_id);
-    let set = parzi_core::hooks::for_scope(&project);
+    let set = parzi_core::hooks::global();
     let payload = serde_json::json!({
         "session": session_id,
         "project": project,
@@ -188,7 +172,6 @@ pub async fn pre_tool(
     (None, warnings)
 }
 
-/// Run matching `post_tool` hooks. Returns notices for failed hooks.
 pub async fn post_tool(
     store: &SessionStore,
     session_id: &str,
@@ -198,7 +181,7 @@ pub async fn post_tool(
     output: &str,
 ) -> Vec<String> {
     let (project, cwd) = scope_of(store, session_id);
-    let set = parzi_core::hooks::for_scope(&project);
+    let set = parzi_core::hooks::global();
     let payload = serde_json::json!({
         "session": session_id,
         "project": project,

@@ -1,7 +1,4 @@
 <script lang="ts">
-  // Appearance: every field of theme.toml, in the order you'd reach for it.
-  // Edits preview instantly (inline vars), persist ~400ms later, then the
-  // authoritative stylesheet from Rust replaces the preview.
   import { onMount, onDestroy } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { api, type Theme, type PackInfo, type BackgroundFile } from "../api";
@@ -24,17 +21,15 @@
   let sampling = false;
   let scanOn = false;
 
-  // Whole-number twins for the 0..1 fields.
   let dimPct = 66;
   let vignettePct = 50;
-  let opacityPct = 85;
 
   const ACCENTS = ["#7C8CFF", "#7AA2F7", "#88C0D0", "#CBA6F7", "#EB6F92", "#F5A97F", "#A6DA95", "#E0DEF4"];
   const UI_FONTS = ["Inter", "system-ui", "Segoe UI", "SF Pro Text", "Roboto", "IBM Plex Sans"];
   const MONO_FONTS = ["JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "SF Mono", "ui-monospace"];
   const SIZES_UI = [12, 13, 14, 15, 16].map((n) => ({ value: String(n), label: String(n) }));
   const SIZES_MONO = [11, 12, 13, 14, 15].map((n) => ({ value: String(n), label: String(n) }));
-  const COLOR_KEYS = ["sidebar", "stage", "bar", "border", "accent", "text", "text_dim"] as const;
+  const COLOR_KEYS = ["stage", "accent", "text", "text_dim"] as const;
   type ColorKey = (typeof COLOR_KEYS)[number];
 
   onMount(() => {
@@ -73,7 +68,6 @@
     if (!theme) return;
     dimPct = Math.round(theme.background.dim * 100);
     vignettePct = Math.round(theme.background.vignette * 100);
-    opacityPct = Math.round(theme.glass.opacity * 100);
   }
 
   function sameColors(a: Theme["colors"], b: Theme["colors"]): boolean {
@@ -85,10 +79,7 @@
   }
   $: activePack = findActive(theme, packs);
 
-  // ---- edit pipeline -------------------------------------------------------
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Blur baked into the wallpaper at last render; the slider only takes
-      effect through a re-render. */
   let lastBlur = 0;
   function touch() {
     if (!theme) return;
@@ -109,8 +100,6 @@
       }
     } catch (e) {
       notify(`Save failed: ${e}`);
-      // Never leave a preview the disk state doesn't match: fall back to
-      // the authoritative stylesheet and re-read the saved theme.
       try {
         applyThemeCss(await api.getThemeCss());
         theme = await api.getTheme();
@@ -124,7 +113,6 @@
     if (msg) notify(msg);
   }
 
-  // ---- themes ---------------------------------------------------------------
   async function applyPack(p: PackInfo) {
     renamingPack = null;
     delPack = null;
@@ -132,8 +120,6 @@
       await commitNow();
       applyThemeCss(await api.applyPack(p.name));
       theme = await api.getTheme();
-      // Packs can ship art: re-read the gallery or the new picture has no
-      // thumbnail and the wallpaper highlight cannot move to it.
       syncPercents();
       lastBlur = theme.background.blur;
       notify(`Theme: ${titleCase(p.name)}`);
@@ -172,7 +158,6 @@
   }
   let delPack: string | null = null;
   async function deletePack(p: PackInfo) {
-    // Two-step: packs are directories, deletion is forever.
     if (delPack !== p.name) {
       delPack = p.name;
       return;
@@ -206,11 +191,9 @@
     }
   }
 
-  // ---- wallpaper --------------------------------------------------------------
   async function setBg(name: string) {
     delWall = null;
     try {
-      // Flush pending edits first: set_background re-reads theme.toml.
       await commitNow();
       applyThemeCss(await api.setBackground(name));
       theme = await api.getTheme();
@@ -232,8 +215,6 @@
   function pickFile() {
     fileInputEl?.click();
   }
-  /** Two-step wallpaper delete: first click arms, second click fires. The
-      live wallpaper falls back to solid instead of a missing file. */
   let delWall: string | null = null;
   async function deleteWall(b: BackgroundFile) {
     if (delWall !== b.name) {
@@ -298,7 +279,6 @@
     } else notify("Accent no longer follows the wallpaper");
   }
 
-  // ---- fields ----------------------------------------------------------------
   function onDim() {
     if (theme) {
       theme.background.dim = dimPct / 100;
@@ -308,12 +288,6 @@
   function onVignette() {
     if (theme) {
       theme.background.vignette = vignettePct / 100;
-      touch();
-    }
-  }
-  function onOpacity() {
-    if (theme) {
-      theme.glass.opacity = opacityPct / 100;
       touch();
     }
   }
@@ -327,10 +301,6 @@
     theme.font[key] = Number(v);
     touch();
   }
-
-  // ---- custom css: hackers only ------------------------------------------------
-  // `~/.parzi/user.css` still loads last and wins (backend keeps it,
-  // packs snapshot it) — there is just no editor for it here anymore.
 
   async function resetAppearance() {
     try {
@@ -362,7 +332,7 @@
 {:else}
   <section class="pref-section">
     <h3 class="section-title">Theme</h3>
-    <p class="section-desc">A theme sets the seven colours and the glass. Your wallpaper stays.</p>
+    <p class="section-desc">A theme sets the colours. Your wallpaper stays.</p>
     <div class="packs">
       {#each packs as p (p.name)}
         {@const c = p.colors}
@@ -375,15 +345,12 @@
           >
             <span
               class="pp"
-              style="--pp-sb:{c.sidebar};--pp-st:{c.stage};--pp-bar:{c.bar};--pp-bd:{c.border};--pp-ac:{c.accent};--pp-tx:{c.text};--pp-td:{c.text_dim}"
+              style="--pp-st:{c.stage};--pp-ac:{c.accent};--pp-tx:{c.text};--pp-td:{c.text_dim}"
             >
-              <span class="pp-side"><i /><i /><i /></span>
-              <span class="pp-stage">
-                <span class="pp-line" /><span class="pp-line short" />
-                <span class="pp-bar"><i /></span>
-              </span>
+              <span class="pp-line" /><span class="pp-line short" />
+              <span class="pp-bar"><i /></span>
             </span>
-            <span class="pack-name">{#if renamingPack === p.name && !p.builtin}<input class="pack-rename" bind:value={renameDraft} use:focusRename on:click|stopPropagation on:keydown={(e) => { if (e.key === "Enter") commitPackRename(p); else if (e.key === "Escape") renamingPack = null; }} />{:else}{titleCase(p.name)}{/if}{#if p.has_art} <span class="art-dot" title="Switches the wallpaper too">🖼</span>{/if}</span>
+            <span class="pack-name">{#if renamingPack === p.name && !p.builtin}<input class="pack-rename" bind:value={renameDraft} use:focusRename on:click|stopPropagation on:keydown={(e) => { if (e.key === "Enter") commitPackRename(p); else if (e.key === "Escape") renamingPack = null; }} />{:else}{titleCase(p.name)}{/if}{#if p.has_art}<span class="art-dot" title="Switches the wallpaper too"> + wallpaper</span>{/if}</span>
           </button>
           {#if !p.builtin}
             <div class="pack-actions">
@@ -483,12 +450,9 @@
 
   <section class="pref-section">
     <h3 class="section-title">Colours</h3>
-    <p class="section-desc">Everything else derives from these six. Edit them, or leave them to the theme.</p>
+    <p class="section-desc">Every surface, line and shade is mixed from these three and the accent.</p>
     <div class="field-card grid2">
-      <ColorField label="Sidebar" value={theme.colors.sidebar} on:input={(e) => setColor("sidebar", e.detail)} />
-      <ColorField label="Stage" value={theme.colors.stage} on:input={(e) => setColor("stage", e.detail)} />
-      <ColorField label="Composer" value={theme.colors.bar} on:input={(e) => setColor("bar", e.detail)} />
-      <ColorField label="Border" value={theme.colors.border} on:input={(e) => setColor("border", e.detail)} />
+      <ColorField label="Background" value={theme.colors.stage} on:input={(e) => setColor("stage", e.detail)} />
       <ColorField label="Text" value={theme.colors.text} on:input={(e) => setColor("text", e.detail)} />
       <ColorField label="Muted text" value={theme.colors.text_dim} on:input={(e) => setColor("text_dim", e.detail)} />
     </div>
@@ -520,13 +484,7 @@
   </section>
 
   <section class="pref-section">
-    <h3 class="section-title">Glass</h3>
-    <p class="section-desc">The composer, menus and the command palette.</p>
-    <div class="field-card stack">
-      <Slider label="Opacity" bind:value={opacityPct} min={40} max={100} unit="%" on:input={onOpacity} />
-      <Slider label="Blur" bind:value={theme.glass.blur_px} min={0} max={40} unit="px" on:input={touch} />
-      <Slider label="Corner radius" bind:value={theme.glass.radius} min={0} max={24} unit="px" on:input={touch} />
-    </div>
+    <h3 class="section-title">Effects</h3>
     <div class="field-card">
       <div class="field-info">
         <span class="field-label">Scanlines</span>
@@ -541,22 +499,6 @@
         }}
       />
     </div>
-    <div class="field-card">
-      <div class="field-info">
-        <span class="field-label">Shadows</span>
-        <span class="field-hint">Depth under floating surfaces.</span>
-      </div>
-      <Switch
-        on={theme.glass.shadow}
-        title="Shadows"
-        on:toggle={() => {
-          if (theme) {
-            theme.glass.shadow = !theme.glass.shadow;
-            touch();
-          }
-        }}
-      />
-    </div>
   </section>
 
   <div class="actions-row-end">
@@ -565,29 +507,26 @@
 {/if}
 
 <style>
-  /* Theme cards: a real thumbnail of the palette, not four swatches. */
   .packs { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 10px; }
   .pack { position: relative; }
   .pack-btn {
     width: 100%; display: flex; flex-direction: column; gap: 7px; padding: 5px;
-    background: transparent; border: 1px solid transparent; border-radius: var(--radius-3);
-    cursor: pointer; text-align: left; font: inherit; color: var(--text-2);
+    background: transparent; border: 1px solid transparent; border-radius: var(--radius-lg);
+    cursor: pointer; text-align: left; font: inherit; color: var(--muted);
   }
-  .pack-btn:hover { background: var(--surface-1); border-color: var(--line-2); color: var(--text); }
-  .pack.on .pack-btn { border-color: var(--accent-line); background: var(--accent-soft); color: var(--text); }
+  .pack-btn:hover { background: var(--panel); border-color: var(--line); color: var(--text); }
+  .pack.on .pack-btn { border-color: var(--accent); background: var(--line); color: var(--text); }
   .pp {
-    display: grid; grid-template-columns: 30% 1fr; height: 72px;
-    border-radius: var(--radius-2); overflow: hidden; border: 1px solid var(--pp-bd);
+    position: relative; display: flex; flex-direction: column; gap: 5px; height: 72px; padding: 11px 10px 0;
+    border-radius: var(--radius); overflow: hidden; background: var(--pp-st);
+    border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
   }
-  .pp-side { background: var(--pp-sb); padding: 9px 7px; display: flex; flex-direction: column; gap: 5px; }
-  .pp-side i { display: block; height: 4px; border-radius: 2px; background: var(--pp-td); opacity: 0.7; width: 70%; }
-  .pp-side i:first-child { background: var(--pp-tx); width: 48%; }
-  .pp-stage { background: var(--pp-st); position: relative; padding: 11px 10px 0; display: flex; flex-direction: column; gap: 5px; }
   .pp-line { display: block; height: 4px; border-radius: 2px; background: var(--pp-tx); opacity: 0.85; width: 62%; }
   .pp-line.short { width: 40%; background: var(--pp-td); }
   .pp-bar {
     position: absolute; left: 10px; right: 10px; bottom: 8px; height: 16px;
-    border-radius: 5px; background: var(--pp-bar); border: 1px solid var(--pp-bd);
+    border-radius: 5px; background: color-mix(in srgb, var(--pp-tx) 6%, var(--pp-st));
+    border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
   }
   .pp-bar i { position: absolute; right: 4px; top: 3px; width: 8px; height: 8px; border-radius: 3px; background: var(--pp-ac); }
   .pack-name { font-size: 12px; padding: 0 3px; }
@@ -599,19 +538,19 @@
   .pack-actions .pack-del { position: static; opacity: 1; }
   .pack-act {
     width: 20px; height: 20px; line-height: 1;
-    border-radius: var(--radius-1); border: none; background: var(--menu); color: var(--text-3);
+    border-radius: var(--radius); border: none; background: var(--panel); color: var(--muted);
     font: inherit; font-size: 11px; cursor: pointer; padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
   }
   .pack-act:hover { color: var(--text); }
   .pack-rename {
     font: inherit; font-size: 12px; color: var(--text);
-    background: var(--input); border: 1px solid var(--accent-line); border-radius: 5px;
+    background: var(--bg); border: 1px solid var(--accent); border-radius: 5px;
     padding: 1px 5px; width: 100%; box-sizing: border-box; outline: none;
   }
   .pack-del {
     position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; line-height: 1;
-    border-radius: var(--radius-1); border: none; background: var(--menu); color: var(--text-3);
+    border-radius: var(--radius); border: none; background: var(--panel); color: var(--muted);
     font: inherit; font-size: 14px; cursor: pointer; opacity: 0;
   }
   .pack:hover .pack-del, .pack-del:focus-visible { opacity: 1; }
@@ -619,35 +558,35 @@
 
   .save-row { display: flex; gap: 8px; }
   .text {
-    flex: 1; min-width: 0; background: var(--input); border: 1px solid var(--line-2);
-    border-radius: var(--radius-2); color: var(--text); padding: 7px 10px;
+    flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line);
+    border-radius: var(--radius); color: var(--text); padding: 7px 10px;
     font: inherit; font-size: 12.5px; outline: none;
   }
-  .text::placeholder { color: var(--text-4); }
-  .text:focus { border-color: var(--accent-line) !important; box-shadow: none; }
+  .text::placeholder { color: var(--faint); }
+  .text:focus { border-color: var(--accent) !important; box-shadow: none; }
 
   .walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 10px; }
   .wall {
     display: flex; flex-direction: column; gap: 6px; padding: 5px;
-    background: transparent; border: 1px solid transparent; border-radius: var(--radius-3);
-    cursor: pointer; font: inherit; color: var(--text-3); text-align: left;
+    background: transparent; border: 1px solid transparent; border-radius: var(--radius-lg);
+    cursor: pointer; font: inherit; color: var(--muted); text-align: left;
   }
-  .wall:hover { background: var(--surface-1); border-color: var(--line-2); color: var(--text); }
-  .wall.on { border-color: var(--accent-line); background: var(--accent-soft); color: var(--text); }
+  .wall:hover { background: var(--panel); border-color: var(--line); color: var(--text); }
+  .wall.on { border-color: var(--accent); background: var(--line); color: var(--text); }
   .wall-pre {
     display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover;
-    border-radius: var(--radius-2); border: 1px solid var(--line-2);
+    border-radius: var(--radius); border: 1px solid var(--line);
   }
   .wall-pre.none {
-    background: var(--stage); display: flex; align-items: center; justify-content: center;
-    font-size: 11px; color: var(--text-4);
+    background: var(--bg); display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: var(--faint);
   }
   .wall-name { font-size: 11.5px; padding: 0 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wall-wrap { position: relative; min-width: 0; }
   .wall-wrap .wall { width: 100%; }
   .wall-del {
     position: absolute; top: 8px; right: 8px; min-width: 20px; height: 20px; line-height: 1;
-    border-radius: var(--radius-1); border: none; background: var(--menu); color: var(--text-3);
+    border-radius: var(--radius); border: none; background: var(--panel); color: var(--muted);
     font: inherit; font-size: 12px; cursor: pointer; opacity: 0; padding: 0 3px;
   }
   .wall-wrap:hover .wall-del, .wall-del:focus-visible { opacity: 1; }
@@ -655,8 +594,6 @@
   .wall-del.armed { opacity: 1; color: var(--bad); font-size: 10px; font-weight: 600; padding: 0 7px; }
 
   .field-card.stack { flex-direction: column; align-items: stretch; gap: 12px; }
-  /* Auto-fit (not a viewport breakpoint): columns stack based on the card's
-     real width, so narrow stages never squeeze fields into each other. */
   .field-card.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px 24px; align-items: center; }
   .inline-actions { display: flex; align-items: center; gap: 12px; flex: none; }
 
@@ -666,12 +603,12 @@
     width: 24px; height: 24px; border-radius: 50%; background: var(--sw);
     border: 2px solid transparent; padding: 0; cursor: pointer;
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
-    transition: transform var(--dur-lift) var(--ease-spring), border-color var(--dur-lift) ease;
+    transition: transform 140ms ease, border-color 140ms ease;
   }
   .swatch:hover { transform: scale(1.1); }
   .swatch.on { border-color: var(--text); }
 
-  .fld { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--text-2); min-width: 0; }
+  .fld { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--muted); min-width: 0; }
   .fld > span { flex: none; }
   .fld .text { max-width: 190px; }
 

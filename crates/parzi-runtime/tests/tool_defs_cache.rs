@@ -1,7 +1,3 @@
-//! R-2: an unreachable connector costs one attempt per run, never one per
-//! request. Agents ask for Parzi's tool list more than once in a turn (and
-//! every call resolves its name against it): the list is built once.
-
 mod common;
 
 use std::collections::HashMap;
@@ -36,7 +32,8 @@ async fn the_tool_list_is_built_once_per_run() {
         "claude",
         script(|a: Agent| async move {
             for _ in 0..3 {
-                assert!(a.tool_names().await.iter().any(|n| n == "ui_show_widget"));
+                assert!(a.tool_names().await.iter().any(|n| n == "browser_open"));
+                assert!(a.tool_names().await.iter().all(|n| n != "ui_show_widget"));
             }
             let (ok, out) = a.parzi("plan.read", json!({})).await;
             a.say(&format!("{ok} {out}"));
@@ -54,7 +51,7 @@ async fn the_tool_list_is_built_once_per_run() {
     settle(&store, &meta.id).await;
     assert_eq!(
         orch.mcp().exposed_tools_calls(),
-        1,
-        "the broken connector was asked once for this run"
+        0,
+        "connectors are not consulted for the tool list"
     );
 }

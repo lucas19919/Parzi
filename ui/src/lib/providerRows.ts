@@ -1,8 +1,5 @@
-/** What the model menus show, built once from the provider board so the
- *  composer and the role pickers cannot disagree. */
 import type { ProviderStatus } from "./api";
 
-/** The roster in menu order. Mirrors the backend `PROVIDERS` list. */
 export const PROVIDER_ORDER = ["claude", "codex", "opencode", "grok", "antigravity", "cursor"];
 
 export const PROVIDER_NAME: Record<string, string> = {
@@ -16,13 +13,10 @@ export const PROVIDER_NAME: Record<string, string> = {
 
 export const nameOf = (id: string): string => PROVIDER_NAME[id] ?? id;
 
-/** One pickable line: a model of an agent, or the agent's own default. */
 export interface PickRow {
   provider: string;
-  /** Picking it can start a turn: signed in, or not checkable short of one. */
   usable: boolean;
   label: string;
-  /** `provider/model`; `provider` alone runs the agent's default; "auto" is Smart Auto. */
   value: string;
 }
 
@@ -31,7 +25,6 @@ export const AUTO_ROW: PickRow = { provider: "auto", usable: true, label: "Smart
 export const isUsable = (p: ProviderStatus | undefined): boolean =>
   !!p && (p.state === "ready" || p.state === "unchecked");
 
-/** An agent's lines: its models, or its default when it lists none. */
 export function rowsOf(p: ProviderStatus): PickRow[] {
   const usable = isUsable(p);
   if (!p.models.length) {
@@ -47,7 +40,6 @@ export function rowsOf(p: ProviderStatus): PickRow[] {
 
 export const allRows = (board: ProviderStatus[]): PickRow[] => board.flatMap(rowsOf);
 
-/** The state in a few words, for a menu line or a badge. */
 export function stateLabel(p: ProviderStatus): string {
   switch (p.state) {
     case "ready":
@@ -65,14 +57,12 @@ export function stateLabel(p: ProviderStatus): string {
   }
 }
 
-/** A menu line's second line: agent · plan or state. */
 export function rowSub(row: PickRow, board: ProviderStatus[]): string {
   if (row.provider === "auto") return "Starts on the first ready agent in your order";
   const p = board.find((b) => b.provider === row.provider);
   return p ? `${nameOf(row.provider)} · ${stateLabel(p)}` : nameOf(row.provider);
 }
 
-/** What a picker trigger shows for a value. */
 export function shownOf(value: string, board: ProviderStatus[]): { provider: string; name: string } {
   if (!value || value === "auto") return { provider: "auto", name: "Smart Auto" };
   const [p, ...rest] = value.split("/");
@@ -82,11 +72,8 @@ export function shownOf(value: string, board: ProviderStatus[]): { provider: str
   return { provider: p, name: id || nameOf(p) };
 }
 
-/** Parzi's own effort pill; each agent's driver translates it. */
 export const PILL = ["low", "medium", "high", "extra", "ultra"];
 
-/** The efforts a choice takes: the model's own words, Parzi's pill for
- *  Smart Auto, nothing when the agent has no effort knob. */
 export function effortsFor(value: string, board: ProviderStatus[]): string[] {
   if (!value || value === "auto") return PILL;
   const [p, ...rest] = value.split("/");
@@ -96,8 +83,6 @@ export function effortsFor(value: string, board: ProviderStatus[]): string[] {
   return m?.efforts ?? [];
 }
 
-/** The effort to keep when the choice changes: the current one when the new
- *  model takes it, else medium, else the middle of what it takes. */
 export function fitEffort(current: string, efforts: string[]): string {
   if (!efforts.length || efforts.includes(current)) return current;
   if (efforts.includes("medium")) return "medium";

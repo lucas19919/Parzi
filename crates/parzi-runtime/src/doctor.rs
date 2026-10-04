@@ -1,7 +1,3 @@
-//! `parzi doctor`: one function, used by CLI and GUI About alike.
-//! Providers are asked where they stand by their own programs; no secret
-//! is ever read or printed.
-
 use parzi_core::config::ParziConfig;
 use parzi_core::paths;
 
@@ -45,14 +41,10 @@ impl Doctor {
         out.push(self.check_theme());
         out.extend(self.check_providers().await);
         out.extend(self.check_routing());
-        out.extend(self.check_mcp().await);
         out.push(self.check_webview());
         out
     }
 
-    /// Fast subset: everything except the MCP server probes (each probe can
-    /// block up to 15s). Settings > System renders this first, then streams
-    /// the MCP section in via `run_mcp_only`.
     pub async fn run_quick(&self) -> Vec<Check> {
         let mut out = vec![];
         out.push(self.check_dirs());
@@ -62,11 +54,6 @@ impl Doctor {
         out.extend(self.check_routing());
         out.push(self.check_webview());
         out
-    }
-
-    /// MCP probes only (slow path: 15s timeout per configured server).
-    pub async fn run_mcp_only(&self) -> Vec<Check> {
-        self.check_mcp().await
     }
 
     fn check_dirs(&self) -> Check {
@@ -90,8 +77,6 @@ impl Doctor {
         }
     }
 
-    /// Each provider, as its own program reports it. A provider switched off
-    /// or not installed is not a failure: it is simply not in use.
     async fn check_providers(&self) -> Vec<Check> {
         use parzi_providers::State;
         let board = crate::status::StatusBoard::in_memory();
@@ -125,7 +110,6 @@ impl Doctor {
             .collect()
     }
 
-    /// Smart Auto's order: where a new thread starts.
     fn check_routing(&self) -> Vec<Check> {
         vec![Check::ok(
             "routing:smart-auto",
@@ -134,33 +118,6 @@ impl Doctor {
                 self.cfg.routing.order.join(" → ")
             ),
         )]
-    }
-
-    async fn check_mcp(&self) -> Vec<Check> {
-        let mut out = vec![];
-        if self.cfg.mcp.servers.is_empty() {
-            return vec![Check::ok("mcp", "no servers configured")];
-        }
-        let mgr = crate::mcp::McpManager::new(
-            self.cfg.mcp.servers.clone(),
-            self.cfg.orchestrator.mcp_idle_kill_secs,
-        );
-        for name in mgr.server_names() {
-            match tokio::time::timeout(std::time::Duration::from_secs(15), mgr.list_tools(&name))
-                .await
-            {
-                Ok(Ok(tools)) => {
-                    mgr.stop(&name).await;
-                    out.push(Check::ok(
-                        &format!("mcp:{name}"),
-                        format!("{} tools", tools.len()),
-                    ));
-                }
-                Ok(Err(e)) => out.push(Check::fail(&format!("mcp:{name}"), e.to_string())),
-                Err(_) => out.push(Check::fail(&format!("mcp:{name}"), "probe timed out")),
-            }
-        }
-        out
     }
 
     #[cfg(windows)]
@@ -174,8 +131,6 @@ impl Doctor {
 
     #[cfg(target_os = "macos")]
     fn check_webview(&self) -> Check {
-        // macOS renders via the system WKWebView — always present, no
-        // Evergreen-style runtime to probe like WebView2 on Windows.
         Check::ok("webview", "system WKWebView")
     }
 
@@ -187,6 +142,7 @@ impl Doctor {
 
 #[cfg(windows)]
 fn reg_key_version() -> Option<String> {
+    use std::os::windows::process::CommandExt as _;
     use std::process::Command;
     let out = Command::new("reg")
         .args([
@@ -195,6 +151,7 @@ fn reg_key_version() -> Option<String> {
             "/v",
             "pv",
         ])
+        .creation_flags(parzi_providers::process::CREATE_NO_WINDOW)
         .output()
         .ok()?;
     let text = String::from_utf8_lossy(&out.stdout);

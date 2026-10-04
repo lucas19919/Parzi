@@ -1,6 +1,7 @@
 <script lang="ts">
   import { renderMarkdown } from "../md";
   import { handleLinkClick } from "../links";
+  import { resolveColor } from "../theme";
   import Zoomable from "./Zoomable.svelte";
   import EChart from "./EChart.svelte";
 
@@ -25,7 +26,6 @@
     : Array.isArray(d.payload?.points)
       ? (d.payload.points as number[]).map(Number).filter((n) => Number.isFinite(n)).slice(0, 200)
       : [];
-  /** Multi-series form: {series:[{name, points[]}]}; falls back to one. */
   $: ser = ((): { name: string; points: number[] }[] => {
     const raw = d.series ?? d.payload?.series;
     if (!Array.isArray(raw)) return [{ name: "", points: pts }];
@@ -44,35 +44,28 @@
   })();
   $: all = plotSer.flatMap((s) => s.points);
   $: maxLen = Math.max(1, ...plotSer.map((s) => s.points.length));
-  function cssVar(n: string, fb: string): string {
-    try {
-      return getComputedStyle(document.documentElement).getPropertyValue(n).trim() || fb;
-    } catch {
-      return fb;
-    }
-  }
+  const cssVar = resolveColor;
   $: INK = [
     cssVar("--accent", "#7C8CFF"),
     cssVar("--ok", "#22c55e"),
-    cssVar("--info", "#5eb1ff"),
+    cssVar("--accent", "#5eb1ff"),
     cssVar("--warn", "#f59e0b"),
     cssVar("--bad", "#ef4444"),
   ];
   $: serInk = (i: number): string => INK[i % INK.length];
   $: showLegend = plotSer.length > 1 && plotSer.some((s) => s.name);
   $: axisCommon = {
-    axisLine: { lineStyle: { color: cssVar("--line-2", "#333") } },
+    axisLine: { lineStyle: { color: cssVar("--line", "#333") } },
     axisTick: { show: false },
-    axisLabel: { color: cssVar("--text-4", "#999"), fontSize: 10 },
-    splitLine: { lineStyle: { color: cssVar("--line-2", "#333") } },
+    axisLabel: { color: cssVar("--faint", "#999"), fontSize: 10 },
+    splitLine: { lineStyle: { color: cssVar("--line", "#333") } },
   };
   $: tipStyle = {
-    backgroundColor: cssVar("--parzi-bar", "#14141a"),
-    borderColor: cssVar("--line-2", "#333"),
+    backgroundColor: cssVar("--panel", "#14141a"),
+    borderColor: cssVar("--line", "#333"),
     borderWidth: 1,
     textStyle: { color: cssVar("--text", "#eee"), fontSize: 11 },
   };
-  /** ECharts option for line/bar/histogram from the normalized series. */
   $: chartOpt = !all.length
     ? null
     : {
@@ -86,13 +79,13 @@
             name: xlabel,
             nameLocation: "middle",
             nameGap: 22,
-            nameTextStyle: { color: cssVar("--text-4", "#999"), fontSize: 10 },
+            nameTextStyle: { color: cssVar("--faint", "#999"), fontSize: 10 },
             ...axisCommon,
           },
           yAxis: {
             type: "value",
             name: ylabel,
-            nameTextStyle: { color: cssVar("--text-4", "#999"), fontSize: 10 },
+            nameTextStyle: { color: cssVar("--faint", "#999"), fontSize: 10 },
             ...axisCommon,
           },
           series: [
@@ -111,7 +104,7 @@
                     name: "trend",
                     type: "line",
                     data: Array.from({ length: trend.n }, (_, i) => trend.m * i + trend.b),
-                    color: cssVar("--text-3", "#999"),
+                    color: cssVar("--muted", "#999"),
                     lineStyle: { width: 1.5, type: "dashed" },
                     showSymbol: false,
                   },
@@ -119,7 +112,6 @@
               : []),
           ],
         };
-  /** ECharts option for scatter (both axes fit the data). */
   $: scatterOpt = scSer.some((s) => s.points.length)
       ? {
           animation: false,
@@ -131,14 +123,14 @@
             name: xlabel,
             nameLocation: "middle",
             nameGap: 22,
-            nameTextStyle: { color: cssVar("--text-4", "#999"), fontSize: 10 },
+            nameTextStyle: { color: cssVar("--faint", "#999"), fontSize: 10 },
             ...axisCommon,
           },
           yAxis: {
             type: "value",
             scale: true,
             name: ylabel,
-            nameTextStyle: { color: cssVar("--text-4", "#999"), fontSize: 10 },
+            nameTextStyle: { color: cssVar("--faint", "#999"), fontSize: 10 },
             ...axisCommon,
           },
           series: scSer
@@ -168,7 +160,6 @@
     return String(+v.toFixed(2));
   }
 
-  /** Histogram bins raw values into counts; renders through the bar plot. */
   function binValues(vals: number[], nb: number) {
     if (!vals.length) return { counts: [] as number[], labels: [] as string[] };
     let lo = Math.min(...vals);
@@ -194,7 +185,6 @@
   $: plotLabels = hist ? hist.labels : xlabels;
   $: plotType = type === "histogram" ? "chart-bar" : type;
 
-  /** Scatter pairs (and per-series pairs); both axes fit the data. */
   $: scSer = (() => {
     const toPairs = (v: unknown): [number, number][] => {
       if (!Array.isArray(v)) return [];
@@ -220,7 +210,6 @@
     return [{ name: "", points: toPairs(d.points ?? d.payload?.points) }];
   })();
 
-  /** Least-squares trend for the first line series (chart-line + trend). */
   $: trend =
     type === "chart-line" && (d.trend ?? d.payload?.trend) && ser[0]?.points.length > 1
       ? (() => {
@@ -393,42 +382,42 @@
     padding-bottom: 6px;
   }
   .widget-card.bad {
-    border: 1px solid var(--bad-line);
+    border: 1px solid var(--bad);
     border-radius: 12px;
-    background: var(--surface-1);
+    background: var(--panel);
     overflow: hidden;
   }
   .w-head { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 11px; }
-  .w-kind { font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 10px; color: var(--text-4); }
+  .w-kind { font-family: var(--mono), ui-monospace, monospace; font-size: 10px; color: var(--faint); }
   .w-title { font-weight: 600; color: var(--text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .xbar { display: flex; gap: 2px; padding: 2px 0 4px; }
   .w-error { padding: 8px 12px; font-size: 11px; color: var(--bad); }
-  .w-source { margin: 0 12px; padding: 8px; font-size: 10px; overflow: auto; background: var(--input); border-radius: 6px; }
-  .w-sub { padding: 4px 0; font-size: 11px; color: var(--text-3); }
-  .w-empty { padding: 8px 0; font-size: 11px; font-style: italic; color: var(--text-3); }
+  .w-source { margin: 0 12px; padding: 8px; font-size: 10px; overflow: auto; background: var(--bg); border-radius: 6px; }
+  .w-sub { padding: 4px 0; font-size: 11px; color: var(--muted); }
+  .w-empty { padding: 8px 0; font-size: 11px; font-style: italic; color: var(--muted); }
   .w-md { padding: 6px 0; font-size: 13px; }
   .w-list { margin: 4px 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; }
   .stat-big { padding: 8px 0; font-size: 22px; font-weight: 700; color: var(--text); }
-  .progress-track { margin: 8px 0 4px; height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
+  .progress-track { margin: 8px 0 4px; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
   .progress-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 300ms ease; }
-  .table-wrap { overflow-x: auto; margin: 8px 0 0; border-radius: 8px; border: 1px solid var(--line-2); }
+  .table-wrap { overflow-x: auto; margin: 8px 0 0; border-radius: 8px; border: 1px solid var(--line); }
   .ezoom { cursor: zoom-in; border-radius: 8px; }
   .ezoom:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 2px 0 4px; }
-  .leg { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-3); }
+  .leg { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
   .leg i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
-  .leg.trend-leg { color: var(--text-4); }
-  .trend-sw { width: 14px !important; height: 0 !important; border-radius: 0 !important; border-top: 2px dashed var(--text-3); }
+  .leg.trend-leg { color: var(--faint); }
+  .trend-sw { width: 14px !important; height: 0 !important; border-radius: 0 !important; border-top: 2px dashed var(--muted); }
   .xbtn {
     background: transparent; border: none; border-radius: 4px;
-    color: var(--text-4); font-family: var(--parzi-mono), ui-monospace, monospace;
+    color: var(--faint); font-family: var(--mono), ui-monospace, monospace;
     font-size: 10px; padding: 2px 6px; cursor: pointer; flex: none;
   }
-  .xbtn:hover { color: var(--text); background: var(--surface-1); }
+  .xbtn:hover { color: var(--text); background: var(--panel); }
   table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
-  th, td { padding: 6px 10px; border-bottom: 1px solid var(--line-2); text-align: left; }
-  th { color: var(--text-3); font-weight: 600; background: var(--surface-1); }
+  th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+  th { color: var(--muted); font-weight: 600; background: var(--panel); }
   .kanban { display: flex; gap: 8px; padding: 6px 0 0; overflow-x: auto; }
   .kcol { flex: 1; min-width: 140px; }
-  .pill { display: block; margin: 4px 0; background: transparent; border: none; border-left: 2px solid var(--line-3); border-radius: 0; padding: 3px 8px; font-size: 11px; }
+  .pill { display: block; margin: 4px 0; background: transparent; border: none; border-left: 2px solid var(--line); border-radius: 0; padding: 3px 8px; font-size: 11px; }
 </style>

@@ -32,7 +32,7 @@ default_model = "kimi-k2.5"
 [lanes]
 default_mode = "ask"
 max_steps = 32
-default_allowed_tools = ["fs.read", "fs.list", "ui.show_markdown", "ui.show_widget", "ui.show_diagram"]
+default_allowed_tools = ["fs.read", "fs.list", "ui.show_markdown", "ui.show_widget", "ui.show_artifact"]
 
 [orchestrator]
 max_concurrent = 4

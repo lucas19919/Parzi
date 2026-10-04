@@ -1,8 +1,3 @@
-//! B1: Ask mode waits for the human — a slow approver that answers Allow
-//! lets the action happen exactly once, never an instant deny. B4: finished
-//! runs release their slot. H-5: Parzi's session tools obey the lane
-//! allowlist. And the agent's own actions pass the same gate.
-
 mod common;
 
 use std::collections::HashMap;
@@ -45,8 +40,6 @@ impl Approver for Allow {
     }
 }
 
-/// An agent that asks to write `gate.txt`, writes it only when allowed,
-/// and says what happened.
 fn writer() -> Arc<Fake> {
     Fake::new(
         "claude",
@@ -143,8 +136,6 @@ async fn ask_mode_waits_for_a_slow_approver_and_deny_denies() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// B4: sequential finished runs never queue, and a finished thread takes a
-/// second message.
 #[tokio::test]
 async fn sequential_completed_runs_release_slots() {
     home("approval");
@@ -222,11 +213,9 @@ fn host(allowed: Vec<String>, mode: ApprovalMode) -> ToolHost {
             cwd: std::env::temp_dir().display().to_string(),
             mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
             allowed,
-            leases: None,
         }),
         approver: Arc::new(Allow),
         harness: Some(Arc::new(NoHarness)),
-        role: None,
         sink: RunSink::new(&meta.id, tx, None),
         cancel: tokio_util::sync::CancellationToken::new(),
     })
@@ -270,7 +259,6 @@ impl parzi_runtime::handler::HarnessBridge for NoHarness {
     }
 }
 
-/// H-5: a lane without `session.*` cannot list other sessions.
 #[tokio::test]
 async fn session_tools_obey_the_lane_allowlist() {
     home("approval");
@@ -292,9 +280,6 @@ fn request(tool: &str) -> PermissionRequest {
     }
 }
 
-/// The agent's own actions: a lane that lists file and shell kinds refuses
-/// the kinds it leaves out; a lane that lists none leaves them to the mode;
-/// lockdown lets reads through and nothing else.
 #[tokio::test]
 async fn the_agents_own_actions_pass_the_lane_and_the_mode() {
     home("approval");
@@ -324,27 +309,8 @@ async fn the_agents_own_actions_pass_the_lane_and_the_mode() {
         locked.decide(request("Read")).await,
         PermissionDecision::Allow
     );
-    // Parzi's own tools pass Parzi's gate when they run, so the vendor's
-    // permission ask for them is waved through, even locked down.
     assert_eq!(
         locked.decide(request("mcp__parzi__ui_show_widget")).await,
         PermissionDecision::Allow
     );
-}
-
-/// Markdown with an ASCII-box diagram renders as a dead console window: the
-/// render tool refuses it and names the tools that draw it properly.
-#[tokio::test]
-async fn markdown_with_an_ascii_diagram_is_refused() {
-    home("approval");
-    let h = host(vec![], ApprovalMode::Auto);
-    let boxes = "```ascii\n+------+------+\n|  api |  web |\n+------+------+\n```";
-    let (ok, out) = h
-        .call("ui.show_markdown", &json!({"markdown": boxes}))
-        .await;
-    assert!(!ok && out.contains("ui.show_diagram"), "{out}");
-    let (ok, out) = h
-        .call("ui.show_markdown", &json!({"markdown": "Plain **text**."}))
-        .await;
-    assert!(ok, "{out}");
 }

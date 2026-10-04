@@ -1,9 +1,3 @@
-//! The MCP endpoint vendor agents reach Parzi's tools through: JSON-RPC
-//! over streamable HTTP on 127.0.0.1, one path per run. The path carries a
-//! random secret, and a vendor that sends it as a bearer header instead is
-//! let in too. Nothing here is reachable from another machine, and a web
-//! page cannot reach it either (the Origin check).
-
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -21,9 +15,7 @@ use tokio::net::TcpListener;
 use crate::toolhost::ToolHost;
 use crate::tools::{from_mcp, to_mcp};
 
-/// The server name agents see (`mcp__parzi__…` in Claude Code).
 pub const SERVER_NAME: &str = "parzi";
-/// MCP revisions this endpoint answers to, newest first.
 const PROTOCOLS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_BODY: usize = 8 * 1024 * 1024;
 
@@ -34,7 +26,6 @@ pub struct McpHost {
     runs: Runs,
 }
 
-/// One run's endpoint. Dropping it closes the endpoint.
 pub struct Registration {
     runs: Runs,
     token: String,
@@ -50,7 +41,6 @@ impl Drop for Registration {
 }
 
 impl McpHost {
-    /// Bind a free port on 127.0.0.1 and serve until the process ends.
     pub async fn start() -> std::io::Result<Arc<Self>> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
         let addr = listener.local_addr()?;
@@ -64,7 +54,6 @@ impl McpHost {
                 let stream = match listener.accept().await {
                     Ok((stream, _)) => stream,
                     Err(_) => {
-                        // Out of sockets or similar: back off instead of spinning.
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                         continue;
                     }
@@ -117,7 +106,6 @@ fn json_reply(v: &Value) -> Response<Full<Bytes>> {
     r
 }
 
-/// The run secret: the path (`/mcp/<token>`) or a bearer header.
 fn token_of(req: &Request<Incoming>) -> Option<String> {
     if let Some(t) = req.uri().path().strip_prefix("/mcp/") {
         let t = t.trim_end_matches('/');
@@ -151,9 +139,7 @@ async fn handle(req: Request<Incoming>, runs: Runs) -> Result<Response<Full<Byte
     };
     match *req.method() {
         Method::POST => {}
-        // Ending a session: nothing is kept per session, so nothing to end.
         Method::DELETE => return Ok(plain(StatusCode::OK)),
-        // No server-sent stream: every answer comes back on its own POST.
         _ => {
             let mut r = plain(StatusCode::METHOD_NOT_ALLOWED);
             r.headers_mut().insert(
@@ -188,12 +174,10 @@ async fn handle(req: Request<Incoming>, runs: Runs) -> Result<Response<Full<Byte
     };
     Ok(match reply {
         Some(v) => json_reply(&v),
-        // Notifications and responses only: accepted, nothing to say.
         None => plain(StatusCode::ACCEPTED),
     })
 }
 
-/// Answer one JSON-RPC message; `None` for notifications and responses.
 async fn dispatch(msg: &Value, host: &ToolHost) -> Option<Value> {
     let id = msg.get("id").filter(|i| !i.is_null())?.clone();
     let method = msg.get("method").and_then(Value::as_str)?;
@@ -233,8 +217,6 @@ async fn dispatch(msg: &Value, host: &ToolHost) -> Option<Value> {
                 .filter(|a| !a.is_null())
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            // Exact reverse of `to_mcp` from this run's own list; connector
-            // names may carry underscores of their own.
             let name = host
                 .defs()
                 .await

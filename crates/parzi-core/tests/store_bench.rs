@@ -1,16 +1,3 @@
-//! E5 benchmark: cost of one session's transcript, appended and read back.
-//!
-//! Ignored by default (it writes tens of thousands of files' worth of bytes);
-//! run it by hand:
-//!
-//! ```text
-//! cargo test -p parzi-core --test store_bench -- --ignored --nocapture
-//! PARZI_BENCH_EVENTS=2000 cargo test ... (smaller run)
-//! ```
-//!
-//! It reports wall time, the store's own filesystem call counts and the bytes
-//! the store put on disk, so "writes per append" is a measured number.
-
 use parzi_core::store::{Event, SessionStore};
 
 #[test]
@@ -23,7 +10,6 @@ fn append_and_read_10k_events() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(10_000);
-    // One `assemble()` per turn: a run re-reads the transcript this often.
     let turn_every = 8;
 
     let store = SessionStore::open().expect("store");
@@ -65,7 +51,6 @@ fn append_and_read_10k_events() {
     let read_ms = t1.elapsed().as_secs_f64() * 1000.0;
     assert_eq!(read.len(), n);
 
-    // Run end: the one place `session.md` and `meta.json` are written now.
     let t2 = std::time::Instant::now();
     store
         .set_status(&s.id, parzi_core::store::SessionStatus::Done)

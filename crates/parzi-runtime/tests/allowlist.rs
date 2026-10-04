@@ -1,6 +1,3 @@
-//! Runtime gates: allowlists deny by default, and an agent's own writes are
-//! fenced to its lane's folder.
-
 mod common;
 
 use std::collections::HashMap;
@@ -20,7 +17,6 @@ fn exec(allowed: &[&str]) -> ToolExecutor {
         cwd: String::new(),
         mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
         allowed: allowed.iter().map(|s| s.to_string()).collect(),
-        leases: None,
     }
 }
 
@@ -56,7 +52,6 @@ async fn disallowed_tool_fails_closed() {
     assert!(!ok);
 }
 
-/// Remembers the cards it was shown and answers them all the same way.
 struct Person {
     answer: Approval,
     seen: Mutex<Vec<ToolCallInfo>>,
@@ -70,7 +65,6 @@ impl Approver for Person {
     }
 }
 
-/// The gate an agent in `folder` asks, in `mode`, with `person` to ask.
 fn gate(folder: &Path, mode: ApprovalMode, edits_auto: bool, person: Arc<Person>) -> ToolHost {
     common::home("allowlist");
     let store = SessionStore::open().unwrap();
@@ -86,11 +80,9 @@ fn gate(folder: &Path, mode: ApprovalMode, edits_auto: bool, person: Arc<Person>
             cwd: folder.display().to_string(),
             mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
             allowed: vec!["*".into()],
-            leases: None,
         }),
         approver: person,
         harness: None,
-        role: None,
         sink: RunSink::new(&sid, tx, None),
         cancel: CancellationToken::new(),
     })
@@ -114,9 +106,6 @@ fn nobody() -> Arc<Person> {
     })
 }
 
-/// B3 where the agent's own writes now pass: an Auto lane writes inside its
-/// folder without asking; outside it, or to a file nobody named, a person
-/// decides — and a run with nobody to ask is refused. Reads are not fenced.
 #[tokio::test]
 async fn writes_outside_the_folder_need_a_person() {
     let folder = std::env::temp_dir().join(format!("parzi-fence-{}", std::process::id()));
@@ -153,7 +142,6 @@ async fn writes_outside_the_folder_need_a_person() {
         "reads are not fenced"
     );
 
-    // The composer's "edits" pill pre-approves edits inside the folder only.
     let host = gate(&folder, ApprovalMode::Ask, true, nobody());
     assert_eq!(
         ask(&host, "Edit", &["src/a.rs"]).await,
@@ -164,7 +152,6 @@ async fn writes_outside_the_folder_need_a_person() {
         PermissionDecision::Deny(_)
     ));
 
-    // With a person there, the card says why it came.
     let person = Arc::new(Person {
         answer: Approval::Allow,
         seen: Mutex::new(vec![]),

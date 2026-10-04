@@ -9,7 +9,6 @@
 
   export let notify: (msg: string) => void = () => {};
 
-  /** The program each agent runs when no path is set: found on PATH. */
   const PROGRAM: Record<string, string> = {
     claude: "claude",
     codex: "codex",
@@ -48,7 +47,6 @@
   $: modelsFor = (p: ProviderStatus | undefined) =>
     !p ? [] : !q ? p.models : p.models.filter((m) => (m.name || m.id).toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
   $: entryOf = (id: string): ProviderEntry => cfg?.providers?.[id] ?? { enabled: true };
-  /** The configured order, with any agent it leaves out appended. */
   $: order = (() => {
     const base = (cfg?.routing?.order ?? []).filter((p) => PROVIDER_ORDER.includes(p));
     for (const id of PROVIDER_ORDER) if (!base.includes(id)) base.push(id);
@@ -125,7 +123,6 @@
     }
   }
 
-  /** A set or edited path asks for confirmation (it runs on every turn). */
   async function savePath(id: string) {
     const next = (paths[id] ?? "").trim();
     if (next === (entryOf(id).binary ?? "")) return;
@@ -289,8 +286,7 @@
 
             {#if p && !p.gated}
               <div class="provider-ungated" title="Parzi's own gate only sees what the agent asks about.">
-                Can change files without asking Parzi: file leases and the folder fence cannot stop it,
-                and read-only lanes refuse it.
+                Can change files without asking Parzi: the folder fence cannot stop it.
               </div>
             {/if}
 
@@ -366,128 +362,128 @@
   .models-toolbar { display: flex; gap: 8px; align-items: center; }
   .models-search {
     flex: 1; display: flex; align-items: center; gap: 7px; padding: 7px 10px;
-    background: var(--surface-1); border: 1px solid var(--line-2);
-    border-radius: 8px; color: var(--text-3);
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; color: var(--muted);
   }
   .models-search input {
     flex: 1; min-width: 0; background: transparent; border: none; outline: none;
     color: var(--text); font: inherit; font-size: 12.5px;
   }
-  .models-search input::placeholder { color: var(--text-4); }
-  .clear-btn { background: transparent; border: none; color: var(--text-3); cursor: pointer; font-size: 11px; padding: 0 2px; }
+  .models-search input::placeholder { color: var(--faint); }
+  .clear-btn { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 11px; padding: 0 2px; }
   .clear-btn:hover { color: var(--text); }
   .skel.search { flex: 1; min-height: 34px; }
   .skel.btn { width: 110px; min-height: 34px; }
 
   .order-card {
-    background: var(--surface-1); border: 1px solid var(--line-2);
-    border-radius: var(--radius-3); padding: 4px 6px; display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius-lg); padding: 4px 6px; display: flex; flex-direction: column;
   }
   .order-row { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 7px; }
-  .order-row + .order-row { border-top: 1px solid var(--line-2); }
-  .order-row.dim .order-name { color: var(--text-3); }
-  .order-n { width: 14px; font-size: 11px; color: var(--text-4); font-family: var(--parzi-mono), ui-monospace, monospace; text-align: right; flex: none; }
+  .order-row + .order-row { border-top: 1px solid var(--line); }
+  .order-row.dim .order-name { color: var(--muted); }
+  .order-n { width: 14px; font-size: 11px; color: var(--faint); font-family: var(--mono), ui-monospace, monospace; text-align: right; flex: none; }
   .order-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
   .mini {
-    background: transparent; border: 1px solid transparent; border-radius: 5px; color: var(--text-3);
+    background: transparent; border: 1px solid transparent; border-radius: 5px; color: var(--muted);
     font: inherit; font-size: 9px; width: 22px; height: 20px; cursor: pointer; flex: none;
   }
-  .mini:hover:not(:disabled) { background: var(--surface-2); border-color: var(--line-3); color: var(--text); }
+  .mini:hover:not(:disabled) { background: var(--line); border-color: var(--line); color: var(--text); }
   .mini:disabled { opacity: 0.3; cursor: default; }
-  .status-badge.key { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--line-3); }
+  .status-badge.key { background: var(--line); color: var(--muted); border: 1px solid var(--line); }
 
   .providers-list { display: flex; flex-direction: column; gap: 8px; }
   .provider-card {
-    background: var(--surface-1);
-    border: 1px solid var(--line-2);
-    border-radius: var(--radius-3); padding: 12px 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg); padding: 12px 14px;
     display: flex; flex-direction: column; gap: 8px;
   }
-  .provider-card.signed-in { border-color: var(--line-3); }
+  .provider-card.signed-in { border-color: var(--line); }
   .provider-card.off { opacity: 0.6; }
   .provider-head { display: flex; align-items: center; gap: 10px; }
   .provider-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .provider-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .provider-name { font-size: 13.5px; font-weight: 700; color: var(--text); }
-  .provider-sub { font-size: 11.5px; color: var(--text-3); }
-  .version { font-size: 10.5px; color: var(--text-4); font-family: var(--parzi-mono), ui-monospace, monospace; }
-  .provider-how { font-size: 12px; color: var(--text-2); line-height: 1.45; }
+  .provider-sub { font-size: 11.5px; color: var(--muted); }
+  .version { font-size: 10.5px; color: var(--faint); font-family: var(--mono), ui-monospace, monospace; }
+  .provider-how { font-size: 12px; color: var(--muted); line-height: 1.45; }
   .provider-ungated {
     font-size: 12px; line-height: 1.45; color: var(--warn);
-    background: var(--warn-soft); border: 1px solid var(--warn-line); border-radius: 6px; padding: 6px 9px;
+    background: transparent; border: 1px solid var(--warn); border-radius: 6px; padding: 6px 9px;
   }
   .head-spacer { flex: 1; }
   .def-tag {
-    font-size: 10.5px; color: var(--accent-text); font-family: var(--parzi-mono), ui-monospace, monospace;
+    font-size: 10.5px; color: var(--accent); font-family: var(--mono), ui-monospace, monospace;
     max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 
   .usage { display: flex; flex-direction: column; gap: 5px; }
-  .usage-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--text-3); }
+  .usage-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); }
   .usage-label { width: 96px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .usage-bar { flex: 1; height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+  .usage-bar { flex: 1; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
   .usage-fill { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
   .usage-fill.hot { background: var(--warn); }
-  .usage-num { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2); flex: none; }
-  .usage-reset { font-size: 10.5px; color: var(--text-4); flex: none; }
+  .usage-num { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
+  .usage-reset { font-size: 10.5px; color: var(--faint); flex: none; }
 
   .path-row { display: flex; align-items: center; gap: 8px; }
-  .path-label { font-size: 11.5px; color: var(--text-3); flex: none; width: 58px; }
+  .path-label { font-size: 11.5px; color: var(--muted); flex: none; width: 58px; }
   .path-in {
-    flex: 1; min-width: 0; background: var(--input);
-    border: 1px solid var(--line-2); border-radius: 6px;
+    flex: 1; min-width: 0; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 6px;
     color: var(--text); font-size: 12px; padding: 5px 9px; outline: none;
-    font-family: var(--parzi-mono), ui-monospace, monospace;
+    font-family: var(--mono), ui-monospace, monospace;
   }
-  .path-in:focus { border-color: var(--accent-line); }
-  .path-in::placeholder { color: var(--text-4); }
+  .path-in:focus { border-color: var(--accent); }
+  .path-in::placeholder { color: var(--faint); }
 
   .models-toggle {
     display: flex; align-items: center; gap: 8px; width: 100%;
     background: transparent; border: none; cursor: pointer; padding: 2px 0 0;
-    font: inherit; font-size: 11.5px; text-align: left; color: var(--text-3);
+    font: inherit; font-size: 11.5px; text-align: left; color: var(--muted);
   }
   .models-toggle:hover { color: var(--text); }
   .disclosure { font-size: 10px; width: 10px; flex: none; text-align: center; }
 
   .model-list {
     display: flex; flex-direction: column; gap: 2px;
-    border-top: 1px solid var(--line-2); padding-top: 8px;
+    border-top: 1px solid var(--line); padding-top: 8px;
     max-height: 320px; overflow-y: auto;
   }
   .model-row {
     display: flex; align-items: center; gap: 8px; padding: 6px 8px;
     border-radius: 6px; font-size: 12px;
   }
-  .model-row:hover { background: var(--surface-2); }
+  .model-row:hover { background: var(--line); }
   .fav-btn {
-    background: transparent; border: none; color: var(--text-3); cursor: pointer;
+    background: transparent; border: none; color: var(--muted); cursor: pointer;
     font-size: 13px; padding: 0 2px; flex: none; line-height: 1;
   }
   .fav-btn:hover { color: var(--warn); }
   .model-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .model-name { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .model-meta { display: flex; align-items: center; gap: 7px; font-size: 10.5px; color: var(--text-4); overflow: hidden; white-space: nowrap; }
-  .model-meta .mono { font-family: var(--parzi-mono), ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; }
+  .model-meta { display: flex; align-items: center; gap: 7px; font-size: 10.5px; color: var(--faint); overflow: hidden; white-space: nowrap; }
+  .model-meta .mono { font-family: var(--mono), ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; }
   .pill {
     font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 4px; flex: none;
-    background: var(--surface-2); border: 1px solid var(--line-3); color: var(--text-3);
+    background: var(--line); border: 1px solid var(--line); color: var(--muted);
   }
-  .pill.hot { background: var(--accent-mid); border-color: var(--accent-line); color: var(--accent-text); }
-  .pill.on { background: var(--ok-soft); border-color: var(--ok-line); color: var(--ok); }
+  .pill.hot { background: var(--line); border-color: var(--accent); color: var(--accent); }
+  .pill.on { background: transparent; border-color: var(--ok); color: var(--ok); }
   .def-btn {
     background: transparent; border: 1px solid transparent; border-radius: 5px;
-    color: var(--text-4); font: inherit; font-size: 10.5px; cursor: pointer; padding: 3px 8px; flex: none;
+    color: var(--faint); font: inherit; font-size: 10.5px; cursor: pointer; padding: 3px 8px; flex: none;
   }
-  .def-btn:hover { color: var(--text); border-color: var(--line-3); background: var(--surface-2); }
-  .empty-note { padding: 10px; font-size: 12px; color: var(--text-4); }
+  .def-btn:hover { color: var(--text); border-color: var(--line); background: var(--line); }
+  .empty-note { padding: 10px; font-size: 12px; color: var(--faint); }
   .spend { display: flex; align-items: center; gap: 6px; }
-  .cur { font-size: 13px; color: var(--text-3); }
+  .cur { font-size: 13px; color: var(--muted); }
   .spend-in {
-    width: 88px; background: var(--input); border: 1px solid var(--line-2); border-radius: 6px;
+    width: 88px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
     color: var(--text); font: inherit; font-size: 13px; padding: 6px 8px; outline: none;
     font-variant-numeric: tabular-nums;
   }
   .spend-in.wide { width: 120px; }
-  .spend-in:focus { border-color: var(--accent-line); }
+  .spend-in:focus { border-color: var(--accent); }
 </style>

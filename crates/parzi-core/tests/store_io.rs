@@ -1,10 +1,5 @@
-//! Store I/O gates (E5, C-2, C-5, C-6): append-through reads, tolerant
-//! parsing, the lazily rendered `session.md` and the `list()` index.
-
 use parzi_core::store::{Event, SessionStatus, SessionStore};
 
-/// The store in a home of this test binary's own, so a local `cargo test`
-/// never writes sessions into the real `~/.parzi`.
 fn open() -> SessionStore {
     static HOME: std::sync::Once = std::sync::Once::new();
     HOME.call_once(|| {
@@ -36,7 +31,6 @@ fn append_through_keeps_reads_in_sync() {
     }
     let evs = store.events(&s.id).unwrap();
     assert_eq!(evs.len(), 5);
-    // The file is the truth, not just the cache.
     let raw = std::fs::read_to_string(events_file(&s.id)).unwrap();
     assert_eq!(raw.lines().filter(|l| !l.is_empty()).count(), 5);
     assert!(raw.ends_with('\n'), "every append ends its line");
@@ -49,7 +43,6 @@ fn another_writer_is_picked_up_by_the_tail_read() {
     a.append(&s.id, &user("from a")).unwrap();
     assert_eq!(a.events(&s.id).unwrap().len(), 1);
 
-    // A second store (think: CLI next to the GUI) appends behind our back.
     let b = open();
     b.append(&s.id, &user("from b")).unwrap();
 
@@ -69,8 +62,6 @@ fn a_bad_line_does_not_brick_the_transcript() {
             .append(true)
             .open(events_file(&s.id))
             .unwrap();
-        // A half-written line from an older build, and an event kind this
-        // build has never heard of (C-2).
         writeln!(f, "{{\"kind\":\"user\",\"text\":\"tru").unwrap();
         writeln!(f, "{{\"kind\":\"quantum\",\"text\":\"from the future\"}}").unwrap();
     }
@@ -131,7 +122,6 @@ fn session_md_is_lazy_and_closes_the_widget_fence() {
         "C-5: appends must not re-render session.md"
     );
 
-    // Run end renders it once.
     store.set_status(&s.id, SessionStatus::Done).unwrap();
     let md = std::fs::read_to_string(&md_path).unwrap();
     assert!(md.contains("line 19"), "run end flushes the human view");
@@ -181,8 +171,6 @@ fn list_sees_a_title_change_through_the_index() {
     store.set_title(&s.id, "after").unwrap();
     assert_eq!(find(&store), "after", "C-6: a changed session is re-read");
 
-    // A meta.json nobody can parse is logged, not silently dropped, and must
-    // not take the rest of the list with it.
     let bad = store.create("bad", "t-list", "lane", "m").unwrap();
     std::fs::write(
         parzi_core::paths::sessions_dir()
@@ -210,7 +198,6 @@ fn appends_do_not_rewrite_meta_but_list_stays_ordered() {
         before,
         "meta.json is written at turn boundaries, not per event"
     );
-    // Readers still see the newer stamp.
     assert!(store.get(&s.id).unwrap().updated > s.updated);
     store.flush(&s.id).unwrap();
     assert_ne!(
@@ -223,19 +210,17 @@ fn appends_do_not_rewrite_meta_but_list_stays_ordered() {
 #[test]
 fn the_event_cache_is_bounded_and_keeps_unflushed_runs() {
     let store = open();
-    // One session that stays mid-turn: appended to, never flushed.
     let live = store.create("live", "t-cap-live", "lane", "m").unwrap();
     store.append(&live.id, &user("half a turn")).unwrap();
     let live_updated = store.get(&live.id).unwrap().updated;
 
-    // Browse far more transcripts than the cache may hold.
     let mut ids = vec![];
     for i in 0..40 {
         let s = store
             .create(&format!("browse {i}"), &format!("t-cap-{i}"), "lane", "m")
             .unwrap();
         store.append(&s.id, &user(&format!("m{i}"))).unwrap();
-        store.flush(&s.id).unwrap(); // turn boundary: nothing left in memory
+        store.flush(&s.id).unwrap();
         store.events(&s.id).unwrap();
         ids.push(s.id);
     }
@@ -244,10 +229,8 @@ fn the_event_cache_is_bounded_and_keeps_unflushed_runs() {
         "cache grew to {} sessions",
         store.cached_sessions()
     );
-    // An evicted transcript re-reads correctly.
     let first = store.events(&ids[0]).unwrap();
     assert_eq!(first.len(), 1);
     assert!(matches!(&first[0], Event::User { text } if text == "m0"));
-    // The unflushed stamp of the live run survived the eviction pressure.
     assert_eq!(store.get(&live.id).unwrap().updated, live_updated);
 }

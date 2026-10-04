@@ -60,7 +60,7 @@
           {cfg.lanes.default_mode === "ask"
             ? "Ask: Prompts for confirmation on each tool execution"
             : cfg.lanes.default_mode === "auto"
-            ? "Turbo: Automatically executes tool calls in project directory"
+            ? "Turbo: Runs tool calls in the session folder without asking"
             : "Lockdown: Strictly blocks all local shell & mutating tool execution"}
         </span>
       </div>
@@ -126,7 +126,7 @@
   .slider-wrapper { display: flex; align-items: center; gap: 10px; min-width: 180px; }
   .slider-wrapper input[type="range"] { flex: 1; accent-color: var(--accent); }
   .slider-val {
-    font-family: var(--parzi-mono), ui-monospace, monospace; font-size: 11px; color: var(--text-3);
+    font-family: var(--mono), ui-monospace, monospace; font-size: 11px; color: var(--muted);
     width: 38px; text-align: right;
   }
 </style>

@@ -1,35 +1,22 @@
-//! What a run is when it is not running: the sidecar next to the transcript
-//! (R-5 — a queued prompt, the project it belongs to, the note it stopped
-//! on), the parked run itself, and the pump that starts parked runs as slots
-//! free up.
-
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use parzi_core::config::ParziConfig;
 use parzi_core::error::Result;
-use parzi_core::store::{Event, SessionMeta, SessionStatus, SessionStore};
+use parzi_core::store::{Event, SessionStatus, SessionStore};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex, Notify};
 
 use crate::handler::{RunEvent, RunEventBus};
-use crate::lease_tools::LeaseHub;
 use crate::mcp::McpManager;
 use crate::mcp_host::McpHost;
-use crate::roles::RoleBinding;
 use crate::status::{ProviderSource, StatusBoard};
 use crate::tools::Approver;
 
 use super::{Handle, Orchestrator};
 
-/// The note a run that hit its budget leaves behind (R-4).
 pub const BUDGET_NOTE: &str = "budget_exceeded";
 
-/// Per-session run state that is not session metadata: the prompt a queued
-/// run still owes (R-5 — it used to live only in memory, so a restart lost
-/// it), the hub project the session belongs to (R-4, so follow-up turns keep
-/// the project's budget) and the note a paused run left. One small file next
-/// to the transcript, written atomically.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct RunSidecar {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -38,17 +25,10 @@ struct RunSidecar {
     project: Option<(String, String)>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     note: Option<String>,
-    /// The project role this session runs as (§1.2), if it is one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    role: Option<RoleBinding>,
-    /// The vendor conversation this thread continues.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     session: Option<VendorSession>,
 }
 
-/// A thread's conversation on the vendor's side: which provider holds it,
-/// and the handle that provider gave for resuming it. A thread that has one
-/// stays on that provider.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VendorSession {
     pub provider: String,
@@ -60,14 +40,10 @@ impl RunSidecar {
         self.queued.is_none()
             && self.project.is_none()
             && self.note.is_none()
-            && self.role.is_none()
             && self.session.is_none()
     }
 }
 
-/// Everything a queued run needs to be launched again after a restart.
-/// Attachment bytes are deliberately not persisted: a re-enqueued run carries
-/// its prompt (which names them), not a copy of the files.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedRun {
     project: String,
@@ -80,14 +56,12 @@ struct PersistedRun {
     workspace_project: Option<(String, String)>,
     #[serde(default)]
     prompt_recorded: bool,
-    /// Chat intent survives restarts like the prompt does.
     #[serde(default)]
     mode_override: Option<String>,
     #[serde(default)]
     inbox_from: Option<usize>,
 }
 
-/// H-7: only a valid uuid ever becomes a path segment.
 fn sidecar_path(session_id: &str) -> Option<std::path::PathBuf> {
     uuid::Uuid::parse_str(session_id).ok()?;
     parzi_core::paths::sessions_dir()
@@ -124,7 +98,6 @@ fn save_sidecar(session_id: &str, sidecar: &RunSidecar) {
     }
 }
 
-/// Mark why a run stopped (today: `budget_exceeded`). `None` clears it.
 pub fn set_run_note(session_id: &str, note: Option<&str>) {
     let mut sidecar = load_sidecar(session_id);
     let next = note.map(str::to_string);
@@ -135,50 +108,11 @@ pub fn set_run_note(session_id: &str, note: Option<&str>) {
     save_sidecar(session_id, &sidecar);
 }
 
-/// The note a paused run left, for the deck and the header agent.
 #[must_use]
 pub fn run_note(session_id: &str) -> Option<String> {
     load_sidecar(session_id).note
 }
 
-/// Bind a session to a hub project `(workspace, slug)`. Every later turn of
-/// that session then honours the project's `budget:` too, not just the turn
-/// that was dispatched with it.
-pub fn set_run_project(session_id: &str, project: Option<(String, String)>) {
-    let mut sidecar = load_sidecar(session_id);
-    if sidecar.project == project {
-        return;
-    }
-    sidecar.project = project;
-    save_sidecar(session_id, &sidecar);
-}
-
-/// The hub project a session belongs to, if any.
-#[must_use]
-pub fn run_project(session_id: &str) -> Option<(String, String)> {
-    load_sidecar(session_id).project
-}
-
-/// Bind a session to a project role (§1.2). Every turn of that session is
-/// then briefed with `roles::brief` instead of the lane's SYSTEM.md and may
-/// call only that role's tools — including turns the shell sends later.
-pub fn set_run_role(session_id: &str, role: Option<RoleBinding>) {
-    let mut sidecar = load_sidecar(session_id);
-    if sidecar.role == role {
-        return;
-    }
-    sidecar.role = role;
-    save_sidecar(session_id, &sidecar);
-}
-
-/// The role a session runs as, if any.
-#[must_use]
-pub fn run_role(session_id: &str) -> Option<RoleBinding> {
-    load_sidecar(session_id).role
-}
-
-/// Record the vendor conversation a thread continues. `None` forgets it
-/// (a fork starts its own).
 pub fn set_run_session(session_id: &str, session: Option<VendorSession>) {
     let mut sidecar = load_sidecar(session_id);
     if sidecar.session == session {
@@ -188,14 +122,11 @@ pub fn set_run_session(session_id: &str, session: Option<VendorSession>) {
     save_sidecar(session_id, &sidecar);
 }
 
-/// The vendor conversation a thread continues, if it has one.
 #[must_use]
 pub fn run_session(session_id: &str) -> Option<VendorSession> {
     load_sidecar(session_id).session
 }
 
-/// A run waiting for a slot. Pumped headless (transcript persists, no live
-/// channel) with AutoApprover; lane Ask mode still logs denials visibly.
 pub(super) struct QueuedRun {
     pub(super) session_id: String,
     pub(super) project: String,
@@ -206,20 +137,8 @@ pub(super) struct QueuedRun {
     pub(super) effort: String,
     pub(super) attachments: Vec<parzi_core::context::AttachedFile>,
     pub(super) approver: Option<Arc<dyn Approver>>,
-    /// Chat intent for this run (`ask` | `auto`): the composer's permission
-    /// pill. Never lifts the workspace floor — see `restrict_mode`.
     pub(super) mode_override: Option<String>,
-    /// Hub project this run belongs to: `(workspace, slug)`. Set by the role
-    /// dispatch path; the run then honours `budget:` from its PROJECT.md.
-    /// (Named `workspace_project` because `project` is already the legacy
-    /// lane project name on this struct.)
-    pub(super) workspace_project: Option<(String, String)>,
-    /// The opening turn is already in the transcript (queued at enqueue, or
-    /// an inter-session message): the run must not append it again.
     pub(super) prompt_recorded: bool,
-    /// Started by a message from another session: that message's place in
-    /// the transcript. The first turn answers every unread message from
-    /// there, so a sender that raced this launch is answered too.
     pub(super) inbox_from: Option<usize>,
 }
 
@@ -232,7 +151,7 @@ impl QueuedRun {
             prompt: self.prompt.clone(),
             cwd: self.cwd.clone(),
             effort: self.effort.clone(),
-            workspace_project: self.workspace_project.clone(),
+            workspace_project: None,
             prompt_recorded: self.prompt_recorded,
             mode_override: self.mode_override.clone(),
             inbox_from: self.inbox_from,
@@ -250,7 +169,6 @@ impl QueuedRun {
             effort: p.effort,
             attachments: vec![],
             approver: None,
-            workspace_project: p.workspace_project,
             prompt_recorded: p.prompt_recorded,
             mode_override: p.mode_override,
             inbox_from: p.inbox_from,
@@ -258,9 +176,6 @@ impl QueuedRun {
     }
 }
 
-/// Cloneable handles for the pump, which runs inside finished tasks.
-/// `cfg` is shared (not cloned) so Settings saves apply to the next launch
-/// without an app restart.
 #[derive(Clone)]
 pub(super) struct Pump {
     pub(super) queue: Arc<Mutex<VecDeque<QueuedRun>>>,
@@ -273,7 +188,6 @@ pub(super) struct Pump {
     pub(super) status: Arc<StatusBoard>,
     pub(super) tools_server: Arc<tokio::sync::OnceCell<Option<Arc<McpHost>>>>,
     pub(super) bus: RunEventBus,
-    pub(super) leases: Arc<LeaseHub>,
     pub(super) marks: super::ReadMarks,
 }
 
@@ -282,9 +196,6 @@ impl Pump {
         self.cfg.read().map(|c| c.clone()).unwrap_or_default()
     }
 
-    /// The endpoint Parzi's tools are served on, started with the first
-    /// run. `None` when no local port could be bound: runs then go on
-    /// without Parzi's tools rather than not at all.
     pub(super) async fn tools_server(&self) -> Option<Arc<McpHost>> {
         self.tools_server
             .get_or_init(|| async {
@@ -300,8 +211,6 @@ impl Pump {
             .clone()
     }
 
-    /// Park a run: persist it (R-5 — a restart must not lose the prompt),
-    /// record the opening turn once, and push it onto the queue.
     pub(super) async fn enqueue(&self, mut q: QueuedRun) {
         record_prompt(&self.store, &mut q);
         let mut sidecar = load_sidecar(&q.session_id);
@@ -311,8 +220,6 @@ impl Pump {
     }
 }
 
-/// Write the queued run's opening User turn now, so the thread shows what it
-/// is waiting to say and a re-enqueue after a restart does not double it.
 fn record_prompt(store: &SessionStore, q: &mut QueuedRun) {
     if q.prompt_recorded {
         return;
@@ -324,7 +231,6 @@ fn record_prompt(store: &SessionStore, q: &mut QueuedRun) {
     }
 }
 
-/// Forget a run's parked copy once it launches, is killed, or is dropped.
 pub(super) fn clear_queued(session_id: &str) {
     let mut sidecar = load_sidecar(session_id);
     if sidecar.queued.take().is_some() {
@@ -333,10 +239,6 @@ pub(super) fn clear_queued(session_id: &str) {
 }
 
 impl Orchestrator {
-    /// R-5: put `Queued` sessions back on the queue after a restart. Their
-    /// prompts live next to the transcript, so nothing is lost with the
-    /// process. Sessions whose parked copy is gone fall back to Idle rather
-    /// than sitting "queued" forever.
     pub async fn recover_queue(&self) -> Result<usize> {
         let mut n = 0;
         for m in self.store.list()? {
@@ -361,8 +263,6 @@ impl Orchestrator {
         Ok(n)
     }
 
-    /// Long-lived pump loop. Spawn once per process; the driver task only
-    /// notifies (sync — this keeps the async graph acyclic for Send).
     pub async fn pump_loop(self: Arc<Self>) {
         loop {
             self.notify.notified().await;
@@ -370,100 +270,12 @@ impl Orchestrator {
         }
     }
 
-    /// Create a child subsession record under `parent_id`, inheriting the
-    /// parent's project/lane/cwd and — unless overridden — model. When
-    /// `prompt` is given, a run starts on the child (launched or queued like
-    /// any other run); otherwise the subsession waits empty for its first
-    /// message. Never fails the creation when the run cannot start: the
-    /// reason is appended to the child's transcript instead.
-    pub async fn create_subsession(
-        &self,
-        parent_id: &str,
-        title: &str,
-        prompt: Option<&str>,
-        model: Option<&str>,
-    ) -> Result<SessionMeta> {
-        let parent = self.store.get(parent_id)?;
-        let title: String = if title.trim().is_empty() {
-            prompt
-                .and_then(|p| p.lines().next())
-                .unwrap_or("subsession")
-                .chars()
-                .take(80)
-                .collect()
-        } else {
-            title.chars().take(80).collect()
-        };
-        let model_spec = model
-            .filter(|s| !s.trim().is_empty())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| parent.model.clone());
-        let meta = self.store.create_with_parent(
-            &title,
-            &parent.project,
-            &parent.lane,
-            &model_spec,
-            Some(parent_id),
-        )?;
-        if !parent.cwd.is_empty() {
-            let _ = self.store.set_cwd(&meta.id, &parent.cwd);
-        }
-        if let Some(p) = prompt.filter(|s| !s.trim().is_empty()) {
-            let q = QueuedRun {
-                session_id: meta.id.clone(),
-                project: parent.project.clone(),
-                lane: parent.lane.clone(),
-                model_spec,
-                prompt: p.to_string(),
-                cwd: parent.cwd.clone(),
-                effort: "medium".into(),
-                attachments: vec![],
-                approver: None,
-                // A child works on the parent's project, so it inherits its
-                // budget (R-4).
-                workspace_project: run_project(parent_id),
-                prompt_recorded: false,
-                inbox_from: None,
-                // No chat intent carried over: children run under policy.
-                // (B2: harness-spawned children must never silently run as Auto.)
-                mode_override: None,
-            };
-            if q.workspace_project.is_some() {
-                set_run_project(&meta.id, q.workspace_project.clone());
-            }
-            let live = {
-                let mut h = self.handles.lock().await;
-                h.retain(|_, handle| !handle.finished());
-                h.len()
-            };
-            let snap = self.config();
-            if live >= snap.orchestrator.max_concurrent.max(1) {
-                if snap.orchestrator.queue_when_busy {
-                    let _ = self.store.set_status(&meta.id, SessionStatus::Queued);
-                    self.pump_parts().enqueue(q).await;
-                }
-            } else if let Err(e) = Self::launch(self.pump_parts(), q).await {
-                let _ = self.store.append(
-                    &meta.id,
-                    &Event::System {
-                        text: format!("subsession run failed to start: {e}"),
-                    },
-                );
-            }
-        }
-        self.store.get(&meta.id)
-    }
-
-    /// Live-run count with finished-task pruning. Call wherever the
-    /// concurrency cap or `is active` guard is read so a just-finished task
-    /// that hasn't self-removed yet never blocks a new run.
     async fn live_count(p: &Pump) -> usize {
         let mut h = p.handles.lock().await;
         h.retain(|_, handle| !handle.finished());
         h.len()
     }
 
-    /// Start queued runs while slots are free. Skips killed/missing sessions.
     async fn pump(p: Pump) {
         loop {
             let next = {
@@ -476,8 +288,6 @@ impl Orchestrator {
                     }
                     h.keys().cloned().collect()
                 };
-                // A session with a run of its own keeps its queued turn until
-                // that run ends; the end of the run wakes the pump again.
                 let mut queue = p.queue.lock().await;
                 let at = queue.iter().position(|r| !busy.contains(&r.session_id));
                 at.and_then(|i| queue.remove(i))
@@ -490,16 +300,12 @@ impl Orchestrator {
             if killed {
                 continue;
             }
-            // R-5: a run that cannot start is parked Idle by `launch` and its
-            // error goes out on the bus; the queue keeps draining instead of
-            // stalling behind one bad entry.
             if Self::launch(p.clone(), q).await.is_err() {
                 continue;
             }
         }
     }
 
-    /// Kick the pump (boot recovery, kills). No-op when nothing is queued.
     pub async fn kick(&self) {
         self.notify.notify_one();
     }
@@ -516,8 +322,6 @@ impl Pump {
         self.cfg_snapshot().orchestrator.max_concurrent.max(1)
     }
 
-    /// Enqueue-or-launch a queued run, mirroring `Orchestrator::spawn`.
-    /// Returns true when the run launched immediately (slot free).
     pub(super) async fn dispatch(&self, q: QueuedRun) -> bool {
         let live = Orchestrator::live_count(self).await;
         if live >= self.max_live() {

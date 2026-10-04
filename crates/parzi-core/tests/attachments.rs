@@ -1,6 +1,3 @@
-//! Image attachments: media-type routing, base64 encoding, downscale
-//! past the raw cap, and context assembly onto the newest user turn.
-
 use parzi_core::context::{
     encode_image, image_media_type, read_attachments, AttachedFile, ChatMessage, ContextBuilder,
     Role,
@@ -20,7 +17,7 @@ fn media_types_route() {
     assert_eq!(image_media_type("a.gif"), Some("image/gif"));
     assert_eq!(image_media_type("a.webp"), Some("image/webp"));
     assert_eq!(image_media_type("a.bmp"), Some("image/bmp"));
-    assert_eq!(image_media_type("a.svg"), None); // XML text: snippet path
+    assert_eq!(image_media_type("a.svg"), None);
     assert_eq!(image_media_type("a.rs"), None);
     assert_eq!(image_media_type("noext"), None);
 }
@@ -49,7 +46,6 @@ fn read_mixes_text_and_images() {
 
 #[test]
 fn oversized_image_downscales_to_jpeg() {
-    // Noisy 1600x1600 RGB: PNG lands well past the raw cap, stays decodable.
     use image::{ExtendedColorType, ImageEncoder};
     let mut state: u64 = 0x1234_5678_9abc_def1;
     let mut px = vec![0u8; 1600 * 1600 * 3];
@@ -106,13 +102,11 @@ fn images_ride_newest_user_turn() {
     assert!(users[0].images.is_empty(), "older turn stays text-only");
     assert_eq!(users[1].images.len(), 1, "newest user turn carries it");
     assert_eq!(users[1].images[0].media_type, "image/png");
-    // The model still sees a filename marker in the text channel.
     assert!(ctx.messages.iter().any(|m| m.content.contains("<image")));
 }
 
 #[test]
 fn chat_message_stays_backward_compatible() {
-    // Old serialized transcripts have no `images` key.
     let m: ChatMessage = serde_json::from_str(r#"{"role":"user","content":"hi"}"#).unwrap();
     assert!(m.images.is_empty());
 }

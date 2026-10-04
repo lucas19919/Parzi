@@ -1,8 +1,3 @@
-//! Finding and starting a vendor program. An npm install leaves a `.cmd`
-//! launcher on PATH on Windows; where it points at a native binary, Parzi
-//! runs that binary directly, so the process tree is one process and no
-//! console window flashes.
-
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -11,14 +6,10 @@ use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
 
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// Bytes of stderr kept for a failure message.
 const STDERR_KEEP: usize = 16 * 1024;
 
-/// `<PARZI_HOME>/tmp/<agent>`, created, with the unpack folders earlier runs
-/// left behind removed. `None` when the folder cannot be made (the agent
-/// then keeps the system TEMP).
 pub fn private_temp(agent: &str) -> Option<PathBuf> {
     let dir = parzi_core::paths::parzi_dir().ok()?.join("tmp").join(agent);
     std::fs::create_dir_all(&dir).ok()?;
@@ -26,10 +17,6 @@ pub fn private_temp(agent: &str) -> Option<PathBuf> {
     Some(dir)
 }
 
-/// Remove `_MEI*` folders no running program holds. A running PyInstaller
-/// program has DLLs loaded from its folder, and Windows refuses to rename a
-/// folder with loaded files, so a folder that renames is abandoned: only
-/// then is it deleted. Elsewhere nothing locks, so nothing is touched.
 pub fn sweep_unpack_dirs(dir: &Path) {
     if !cfg!(windows) {
         return;
@@ -49,8 +36,6 @@ pub fn sweep_unpack_dirs(dir: &Path) {
     }
 }
 
-/// The program to run for `program` (a bare name searched on PATH, or a
-/// path, `~` allowed). `None` = not installed.
 pub fn resolve(program: &str) -> Option<PathBuf> {
     let program = program.trim();
     if program.is_empty() {
@@ -86,8 +71,6 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     };
     for dir in std::env::split_paths(&path) {
         for ext in &exts {
-            // A bare extensionless file on Windows is the sh launcher npm
-            // writes for Git Bash; the `.cmd` next to it is the real one.
             if cfg!(windows) && ext.is_empty() && Path::new(name).extension().is_none() {
                 continue;
             }
@@ -100,8 +83,6 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     None
 }
 
-/// npm's `cmd-shim` writes `"%dp0%\node_modules\…\bin\x.exe" %*` for
-/// packages that ship a native binary. Returns that binary when it exists.
 fn follow_npm_shim(path: &Path) -> Option<PathBuf> {
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
     if ext != "cmd" && ext != "bat" {
@@ -131,8 +112,6 @@ pub struct Proc {
 }
 
 impl Proc {
-    /// Start `program` in `cwd`. stdin/stdout are for the protocol; stderr
-    /// is drained in the background so a chatty vendor never blocks.
     pub fn spawn(
         program: &Path,
         args: &[String],
@@ -177,23 +156,16 @@ impl Proc {
         Ok(Self { child, stderr })
     }
 
-    /// What the program printed on stderr so far (last 16 KiB).
     pub fn stderr(&self) -> String {
         self.stderr.lock().map(|s| s.clone()).unwrap_or_default()
     }
 
-    /// Kill the program and everything it started.
     pub async fn kill(&mut self) {
         self.kill_tree();
         let _ = self.child.start_kill();
         let _ = tokio::time::timeout(std::time::Duration::from_secs(5), self.child.wait()).await;
     }
 
-    /// The program and every process under it, found by parent id: the
-    /// vendor's own shell commands, dev servers and MCP servers die with it.
-    /// Only while the child is not yet reaped, so its id is still its own.
-    /// A child that already exited has left its children to the system,
-    /// where no parent id leads to them any more.
     fn kill_tree(&mut self) {
         let Some(pid) = self.child.id() else {
             return;
@@ -223,15 +195,12 @@ impl Proc {
     }
 }
 
-/// A run dropped mid-turn (aborted, or its task cancelled) still takes the
-/// vendor's whole tree down, not only the program itself.
 impl Drop for Proc {
     fn drop(&mut self) {
         self.kill_tree();
     }
 }
 
-/// Every process under `root`, from one `ps` listing of parent ids.
 #[cfg(unix)]
 fn descendants(root: u32) -> Vec<u32> {
     let Ok(out) = std::process::Command::new("ps")
@@ -261,13 +230,8 @@ fn descendants(root: u32) -> Vec<u32> {
     tree
 }
 
-/// How long a vendor gets to end a turn it was asked to stop before Parzi
-/// stops waiting. Shorter than the orchestrator's wait on a killed run (5 s),
-/// so a stopped turn always ends through its driver, which then kills the
-/// program's whole tree.
 pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
-/// First line of `program args…` (a `--version` call), within 15 s.
 pub async fn first_line(program: &Path, args: &[&str]) -> Option<String> {
     let mut cmd = Command::new(program);
     cmd.args(args)
@@ -324,7 +288,6 @@ mod tests {
         .unwrap();
         let got = follow_npm_shim(&shim).expect("shim followed");
         assert!(got.ends_with(Path::new("node_modules/tool/bin/tool.exe")));
-        // A shim that runs node has no native target: the shim itself runs.
         std::fs::write(
             &shim,
             "\"%_prog%\" \"%dp0%\\node_modules\\tool\\cli.js\" %*\r\n",
@@ -340,8 +303,6 @@ mod tests {
         assert!(resolve("").is_none());
     }
 
-    /// A run dropped mid-turn takes down what its vendor started, not only
-    /// the vendor program itself.
     #[tokio::test]
     async fn dropping_a_program_kills_what_it_started() {
         let dir = std::env::temp_dir().join(format!("parzi-tree-{}", std::process::id()));
@@ -406,7 +367,6 @@ mod tests {
             std::fs::create_dir_all(d).unwrap();
             std::fs::write(d.join("x.pyd"), b"x").unwrap();
         }
-        // Held the way a loaded DLL is: no sharing at all.
         let lock = std::fs::OpenOptions::new()
             .read(true)
             .share_mode(0)

@@ -1,14 +1,10 @@
 # Parzi — lean agent harness (Rust + Tauri)
 
-Sidebar, stage, glass omni-bar. Projects > lanes > threads. Six agents, one bar:
-Claude Code, Codex, OpenCode, Grok, Antigravity and Cursor. Parzi drives each
-vendor's own agent on your own sign-in; Parzi's tools reach the agent over MCP,
-and every action the agent asks about passes Parzi's approval gate. Which
-agents ask about every change is in the table under [Agents](#agents).
-
-- `PLAN.md` — frozen architecture
-- `LOOP.md` — how it gets built (gates, phases)
-- `PROGRESS.md` — build evidence per phase
+Tabs, a composer, and six agents behind one bar: Claude Code, Codex, OpenCode,
+Grok, Antigravity and Cursor. Parzi drives each vendor's own agent on your own
+sign-in; Parzi's tools reach the agent over MCP, and every action the agent
+asks about passes Parzi's approval gate. Which agents ask about every change is
+in the table under [Agents](#agents).
 
 ## Install
 
@@ -22,28 +18,65 @@ Grab the latest release from
 | macOS, Apple Silicon or Intel | `Parzi_*_universal.dmg` — drag Parzi into Applications |
 
 First launch asks once: on Windows SmartScreen wants
-*More info → Run anyway*. On macOS (since builds are not Apple-notarized), Gatekeeper
-asks once: open Terminal and run `xattr -d com.apple.quarantine /Applications/Parzi.app`
-(or go to *System Settings › Privacy & Security › Open Anyway*). Afterwards it
-launches normally and updates itself in-app. Your threads and settings live in
-`~/.parzi` and are never touched by updates or reinstalls.
+*More info → Run anyway*. On macOS (builds are not Apple-notarized), run
+`xattr -d com.apple.quarantine /Applications/Parzi.app` once, or use
+*System Settings › Privacy & Security › Open Anyway*. Afterwards it updates
+itself in-app. Threads and settings live in `~/.parzi` and survive updates.
 
-Quick start (from source):
+From source:
 
 ```powershell
 cargo build -p parzi-cli
 .\target\debug\parzi.exe init
 .\target\debug\parzi.exe doctor
-.\target\debug\parzi.exe send new "hello" --model auto --yes
+.\target\debug\parzi.exe session send new "hello" --model auto --yes
 ```
 
 GUI: `cd ui; npm install; npm run build`, then `cargo tauri dev` in `src-tauri`
 (requires `cargo install tauri-cli --locked`).
 
+## Using it
+
+- **Tabs** hold a session or a web page, and come back after a restart. Drag a
+  tab to reorder it (`Ctrl+Shift+←/→` on a focused tab). `Ctrl+T` new tab
+  (Home), `Ctrl+W` close, `Ctrl+Tab` cycle, `Ctrl+P` search sessions, tabs and
+  actions, `Ctrl+,` settings. These work while a page has focus too.
+- **Home** is where a new tab lands: the composer, pinned sites (pin any page
+  from its toolbar; until you do, your most visited sites show), and recent
+  sessions.
+- **Set up Parzi** (first launch, or the menu) signs you in to each agent with
+  its own login, imports Brave/Chrome/Edge bookmarks and history (never
+  passwords or cookies), and turns your other agents' instructions, memories
+  and skills into notes and the folders you worked in into projects.
+- **Brain** (`Ctrl+B`) manages what context your agents start with. Notes are
+  plain markdown in `~/.parzi/brain` (open it in Obsidian or any editor; edits
+  show up when you come back to Parzi). A note goes to **All sessions** or to
+  any number of projects (frontmatter `projects: [all, parzi]`, or a link to
+  the project note); a project is a note with a `folder:`. Pinned notes
+  (`pinned: true`) are sent in full; every other note is listed with a
+  one-line summary (`description:` or its first line), and the agent reads it
+  with `brain_read` when the task needs it. Full text is capped at about 12k
+  characters. In the Brain tab these scopes are folders: drag a note onto one
+  to move it, Ctrl+drag to copy it. Clicking a folder shows its token cost and
+  exactly what the agent gets.
+  There is no embedding index: search is plain text, and links are the graph.
+- **Pages** keep their state when you switch tabs. `Ctrl+L` address bar,
+  `Alt+←/→` back and forward, `Ctrl+R` reload, `Ctrl+F` find, `F11` full
+  screen. Links that open a new window open a new tab.
+- **Composer**: `Tab` switches between Agent and Web. In Agent mode pick the
+  model, effort, permissions and the project the agent works on (pick one,
+  start a new one from a folder, or turn the current folder into one); `@`
+  lists files in the project's folder, `/` lists commands (`/new`, `/fork`,
+  `/compact`, `/stop`, `/model`, `/effort`, `/page`, `/settings`). `Esc` stops
+  a run.
+- A session without a project runs in its own empty scratch folder.
+- Drop any image into `~/.parzi/backgrounds/` and pick it under
+  Settings › Appearance.
+
 ## Agents
 
-Install an agent and sign in with its own program; Parzi picks it up. It
-never stores keys or tokens.
+Install an agent and sign in with its own program; Parzi picks it up. It never
+stores keys or tokens.
 
 | Agent | Program | Parzi talks to it over | Asks Parzi before every change |
 | --- | --- | --- | --- |
@@ -54,150 +87,59 @@ never stores keys or tokens.
 | Antigravity | `agy_acp_server` (T3 Code installs it) | ACP | no |
 | Cursor | `cursor-agent` | ACP (`cursor-agent acp`) | no |
 
-Parzi starts every agent in its most-asking mode and answers for the lane
-itself: Auto, Ask, edits-only or read-only. Claude Code runs without user or
-project settings, so no permission rule or hook in them answers before
-Parzi; Parzi hands it the repo's `CLAUDE.md` files itself. Codex runs with
-approval on every action and a read-only sandbox. OpenCode asks on every
-edit, command and fetch and ignores the repo's `opencode.json`; it still
-reads `AGENTS.md`. An agent marked *no* can change files without asking:
-Settings and `parzi providers` say so, its thread says so once, file leases
-and the folder fence cannot stop it, and a read-only lane refuses it.
+Parzi starts every agent in its most-asking mode and answers for the session
+itself: Supervised, Auto-accept edits, Auto or Full access. Claude Code runs
+without user or project settings, so no permission rule or hook in them answers
+before Parzi; Parzi hands it the repo's `CLAUDE.md` files itself. Codex runs
+with approval on every action and a read-only sandbox. OpenCode asks on every
+edit, command and fetch and ignores the repo's `opencode.json`; it still reads
+`AGENTS.md`. An agent marked *no* can change files without asking: Settings and
+`parzi providers` say so, and its thread says so once.
 
-`parzi providers` (or Settings › Providers) asks each program where it
-stands: installed, signed in, plan usage, models and their effort levels. It
-spends no quota. Smart Auto starts a new thread on the first ready agent in
-your order; a started thread stays with its agent. A turn that fails says so
-in the thread, in the vendor's own words.
+`parzi providers` (or Settings › Providers) asks each program where it stands:
+installed, signed in, plan usage, models and their effort levels. It spends no
+quota. Smart Auto starts a new thread on the first ready agent in your order; a
+started thread stays with its agent. A turn that fails says so in the thread,
+in the vendor's own words.
 
-An agent may read anywhere, but a write outside the thread's folder, or to a
-file it does not name, is never approved on your behalf: you are asked, and a
-run with nobody to ask is refused. The folder is judged the way the file
-system resolves it: a link inside it that points elsewhere is outside. The
-desktop app logs to `~/.parzi/logs/parzi-<date>.log`.
+An agent may read anywhere, but a write outside the session's folder is never
+approved on your behalf: you are asked, and a run with nobody to ask is
+refused. The desktop app logs to `~/.parzi/logs/parzi-<date>.log`.
 
-Default background: none (a solid stage). Drop any image into
-`~/.parzi/backgrounds/` and pick it under Settings › Appearance.
+## CLI
 
-## Open backend — plug other agents into Parzi
-
-Parzi is a harness other harnesses can drive. Three surfaces, same state
-under `~/.parzi`:
-
-**MCP server** (richest — 22 tools: sessions, workspaces, deck projects,
-knowledge, plans, diagnostics, workspace sync/remote/clone, plus
-`report_issue` so agents file Parzi bugs themselves):
-
-```json
-{ "mcpServers": { "parzi": { "command": "parzi", "args": ["mcp"] } } }
-```
-
-`sessions` run to completion and return the transcript tail plus usage;
-`sends` auto-approve (the transport is non-interactive). Destructive tools
-(`workspace_delete`, `project_delete`) kill the affected runs first and say
-how many sessions went with them.
-
-Remote VMs need no new protocol: `ssh user@vm parzi mcp` *is* an MCP
-server entry, and the workspace's git remote moves the work:
+When the window is open the CLI drives it (it finds the window through
+`~/.parzi/gui.json`); otherwise session commands work on the files directly.
 
 ```powershell
-parzi workspace remote acme git@github.com:you/acme-workspace.git
-parzi workspace sync acme          # here
-ssh vm parzi workspace clone git@github.com:you/acme-workspace.git acme
-ssh vm parzi workspace sync acme   # there, from now on
+parzi session list
+parzi session send new "hello" --model claude --cwd C:\src\app   # asks before tools
+parzi session send <id> "and now the tests" --yes                # approves every tool call
+parzi session export <id>                                        # transcript to stdout
+parzi tab open github.com                                        # opens a page tab
+parzi providers --json
 ```
 
-See `docs/remote-control.md`.
+Sessions are plain files under `~/.parzi/sessions/<id>/` (`meta.json`,
+append-only `events.jsonl`, rendered `session.md`), readable by anything.
 
-**CLI** (scripts, pipes, other harnesses):
+## Standing instructions and hooks
 
-```powershell
-.\target\debug\parzi.exe send new "hello" --model auto --yes
-.\target\debug\parzi.exe export <id>          # transcript to stdout
-.\target\debug\parzi.exe report-issue "title" "what happened, what you expected"
-```
+`~/.parzi/SYSTEM.md` is loaded into every chat (capped at 8 KB; a missing file
+is normal).
 
-**Files** (no API at all): sessions, transcripts (`session.md`), `PROJECT.md` /
-`PLAN.md` grammar, `workspace.toml`, `KNOWLEDGE.md` — all plain text under
-`~/.parzi`, readable and writable by anything.
-
-## Standing instructions (Claude-style memory, Parzi-shaped)
-
-Three scopes, auto-loaded into context, capped at 8 KB each. Missing files
-are normal — most scopes have none:
-
-| Scope | File | Applies to |
-| --- | --- | --- |
-| You, everywhere | `~/.parzi/SYSTEM.md` | every chat and role run |
-| Workspace | `~/.parzi/workspaces/<name>/SYSTEM.md` | chats in that workspace, its header/orchestrator runs |
-| Project / lane (legacy) | `projects/<name>/SYSTEM.md`, `lanes/<l>/SYSTEM.md` | chats via the existing scan pass |
-
-Keep them short (under ~200 lines); longer files cap with a note. Deck
-projects carry their goal in `PROJECT.md` instead. Coders stay task-scoped
-on purpose — instructions stop at header/orchestrator level.
-
-## Path-scoped rules
-
-Domain knowledge that loads only when relevant: `<workspace>/rules/*.md`
-(and `projects/<name>/rules/*.md` for legacy projects). A `paths:` frontmatter
-picks the files it governs; attaching one pulls the body into that run:
-
-```markdown
----
-paths:
-  - "apps/web/**"
-  - "*.tsx"
----
-Use the shared Button; never raw <button>.
-```
-
-A pattern without a `/` also matches the bare file name; no `paths:` means
-always applies. Bodies cap at 8 KB, 32 files per directory, sorted by name.
-
-## Workspace composer defaults
-
-A workspace can set the composer's starting pick for new drafts in
-`workspace.toml`:
-
-```toml
-[defaults]
-model = "claude/opus"   # agent/model, or "auto"
-effort = "high"          # low | medium | high | extra | ultra
-```
-
-Empty (or absent) means no opinion. Switching into the workspace adopts
-them, but only where the composer is still on app defaults (`auto` /
-`medium`) — an explicit pick is never clobbered. Permission modes stay
-global for now.
-
-## Workspace policy: enforced permissions
-
-`workspace.toml` can floor what runs are allowed to do:
-
-```toml
-[policy]
-mode = "ask"   # ask | auto | deny; unset = the lane policy decides
-```
-
-`deny` is absolute lockdown (nothing lifts it, not even Full access);
-`ask` floors `auto`. The composer's permission pill
-(Supervised/Edits → ask, Auto/Full → auto, Edits pre-approves file writes)
-tightens, never lifts. Applies to chats, MCP sends, and deck role runs alike.
-
-## Workspace hooks: user scripts watching tools
-
-`~/.parzi/hooks.toml` (global) and `workspaces/<name>/hooks.toml`:
+`~/.parzi/hooks.toml` runs your scripts around tool calls:
 
 ```toml
 [[pre_tool]]
 match = "shell.exec"          # exact, family prefix "fs.*", or "*"
-command = "python .parzi/guard.py"
+command = "python guard.py"
 timeout_secs = 5              # default 5, max 120
 ```
 
 `pre_tool` hooks run before the approval gate with the event JSON on stdin:
-exit 0 allows, exit 2 denies (stderr is the reason), anything else allows
-with a warning. `post_tool` hooks are notify-only. Children get a scrubbed
-environment (no provider keys) plus `PARZI_SESSION/PROJECT/TOOL/EVENT`.
+exit 0 allows, exit 2 denies (stderr is the reason), anything else allows with
+a warning. `post_tool` hooks are notify-only. Children get a scrubbed
+environment (no provider keys) plus `PARZI_SESSION/TOOL/EVENT`.
 
 License: MIT.

@@ -1,8 +1,3 @@
-//! The teamwork bridge (H-5): `session.spawn`, `session.send_message`,
-//! `session.read_session`, `session.list_sessions`. Every call is scoped to
-//! the caller's own project and subtree, and a message is typed data in the
-//! target's transcript, never its user turn.
-
 use parzi_core::context::{InterKind, InterSessionMessage};
 use parzi_core::error::{ParziError, Result};
 use parzi_core::store::{Event, SessionMeta, SessionStatus};
@@ -10,16 +5,11 @@ use parzi_core::store::{Event, SessionMeta, SessionStatus};
 use crate::handler::HarnessBridge;
 use crate::inter;
 
-use super::queue::{run_project, set_run_project, Pump, QueuedRun};
+use super::queue::{Pump, QueuedRun};
 
-/// How long `wait: true` harness calls block for a child reply before
-/// handing back a `timeout` status (the child keeps running; poll with
-/// `session.read_session`).
 const HARNESS_WAIT_SECS: u64 = 180;
 
 impl Pump {
-    /// H-5: the caller may only see sessions in its own project — its subtree
-    /// or a sibling of the same project — never another project's threads.
     fn in_scope(&self, caller_id: &str, target_id: &str) -> Result<SessionMeta> {
         let target = self.store.get(target_id)?;
         if caller_id == target_id {
@@ -38,7 +28,6 @@ impl Pump {
         )))
     }
 
-    /// Block until the session leaves Active/Queued (or the timeout hits).
     async fn await_settled(&self, session_id: &str) -> Option<SessionMeta> {
         let ticks = HARNESS_WAIT_SECS * 4;
         for _ in 0..ticks {
@@ -58,7 +47,6 @@ impl Pump {
         None
     }
 
-    /// Last assistant text in a session (the "reply" for `wait: true`).
     fn last_reply(&self, session_id: &str) -> String {
         let mut reply = String::new();
         if let Ok(events) = self.store.events(session_id) {
@@ -87,11 +75,6 @@ impl Pump {
 
 #[async_trait::async_trait]
 impl HarnessBridge for Pump {
-    /// Spawn a child subsession (`is_subsession`) under the caller or a full
-    /// top-level session. The child inherits the caller's project, lane, cwd
-    /// and — unless overridden — model. `wait: true` blocks for the reply;
-    /// when no run slot is free it returns `queued` instead of deadlocking
-    /// the parent against the concurrency cap.
     async fn spawn_session(
         &self,
         caller_id: &str,
@@ -137,14 +120,10 @@ impl HarnessBridge for Pump {
             effort: "medium".into(),
             attachments: vec![],
             approver: None,
-            workspace_project: run_project(caller_id),
             prompt_recorded: false,
             inbox_from: None,
             mode_override: None,
         };
-        if q.workspace_project.is_some() {
-            set_run_project(&meta.id, q.workspace_project.clone());
-        }
         let launched = self.dispatch(q).await;
         let meta = self.store.get(&meta.id)?;
         if !wait {
@@ -175,12 +154,6 @@ impl HarnessBridge for Pump {
         }
     }
 
-    /// Deliver a message to another session and optionally wait for its reply.
-    /// When the target is already running, the message is appended for it to
-    /// pick up; otherwise a continuation run is started on that session.
-    ///
-    /// H-5: the message is typed data from a named run, written as a `System`
-    /// event and rendered untrusted — it is never the target's user turn.
     async fn send_message(
         &self,
         caller_id: &str,
@@ -192,10 +165,6 @@ impl HarnessBridge for Pump {
         let target = self.in_scope(caller_id, session_id)?;
         let caller = self.store.get(caller_id)?;
         let msg = inter::from_caller(&caller, kind, message);
-        // Delivered under the lock a run takes for its last look: the
-        // message is either read by the live run or finds the session free
-        // and starts one (see `SessionSlot`). B4: prune first — a finished
-        // target must take a continuation run, not an append-to-dead-run.
         let (at, still_live) = {
             let mut h = self.handles.lock().await;
             h.retain(|_, handle| !handle.finished());
@@ -227,16 +196,11 @@ impl HarnessBridge for Pump {
             project: target.project.clone(),
             lane: target.lane.clone(),
             model_spec: target.model.clone(),
-            // The vendor gets the message in its untrusted wrapping; the
-            // transcript already holds it as data (H-5).
             prompt: msg.render(),
             cwd: target.cwd.clone(),
             effort: "medium".into(),
             attachments: vec![],
             approver: None,
-            workspace_project: run_project(session_id),
-            // The message is already in the transcript as untrusted data:
-            // the run must not also write it as a user turn (H-5).
             prompt_recorded: true,
             mode_override: None,
             inbox_from: Some(at),
@@ -269,8 +233,6 @@ impl HarnessBridge for Pump {
         }
     }
 
-    /// H-5: reads are scoped — a session may read its own project's threads
-    /// and its own subtree, nothing else.
     async fn read_session(
         &self,
         caller_id: &str,
@@ -325,8 +287,6 @@ impl HarnessBridge for Pump {
         .to_string())
     }
 
-    /// H-5: the listing is the caller's project and subtree, never the whole
-    /// machine's threads.
     async fn list_sessions(&self, caller_id: &str, only_subsessions: bool) -> Result<String> {
         let all = self.store.list()?;
         let caller = self.store.get(caller_id)?;

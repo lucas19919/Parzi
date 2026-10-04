@@ -25,7 +25,6 @@ pub enum ParziError {
 
 pub type Result<T> = std::result::Result<T, ParziError>;
 
-/// Atomic write: tmp file + rename. Never half-write user data.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;

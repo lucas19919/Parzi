@@ -1,10 +1,3 @@
-//! JSON-RPC 2.0 over newline-delimited stdio: the wire of Codex's app-server
-//! and of every ACP agent. Requests run both ways (the vendor asks Parzi to
-//! approve an action), so incoming requests surface next to notifications.
-//!
-//! Lines are decoded whole: a character split across two reads is never
-//! mangled, because nothing is decoded before its newline arrives.
-
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
@@ -22,9 +15,7 @@ pub struct RpcError {
 }
 
 impl RpcError {
-    /// The peer went away before answering.
     pub const CLOSED: i64 = -32099;
-    /// No answer in time.
     pub const TIMEOUT: i64 = -32098;
 
     fn closed() -> Self {
@@ -37,8 +28,6 @@ impl RpcError {
 }
 
 impl std::fmt::Display for RpcError {
-    /// The message and, when the peer sent one, the reason in `data`: ACP
-    /// agents put the real cause there under a generic "Internal error".
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.message)?;
         let detail = match &self.data {
@@ -69,7 +58,6 @@ pub enum Incoming {
         method: String,
         params: Value,
     },
-    /// A stdout line that is not JSON-RPC (some agents print sign-in links).
     Raw(String),
 }
 
@@ -82,9 +70,6 @@ pub struct Peer {
 }
 
 impl Peer {
-    /// Wire a peer to a reader/writer pair. Incoming traffic that is not an
-    /// answer to our own request arrives on the returned channel, which
-    /// closes when the reader hits end of file.
     pub fn start<R, W>(reader: R, writer: W) -> (Arc<Self>, mpsc::UnboundedReceiver<Incoming>)
     where
         R: AsyncRead + Send + Unpin + 'static,
@@ -163,8 +148,6 @@ impl Peer {
     }
 }
 
-/// A request or notification. `params` is left out when null: JSON-RPC
-/// allows only an object or array there, and strict peers refuse `null`.
 fn envelope(id: Option<i64>, method: &str, params: Value) -> Value {
     let mut msg = json!({"jsonrpc": "2.0", "method": method});
     if let Some(id) = id {
@@ -261,7 +244,6 @@ mod tests {
             let req: Value =
                 serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
             assert_eq!(req["method"], "initialize");
-            // A notification, a request of its own, a stray line, then the answer.
             sw.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"note\",\"params\":{\"a\":1}}\n")
                 .await
                 .unwrap();
