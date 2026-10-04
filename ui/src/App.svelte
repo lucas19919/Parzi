@@ -14,6 +14,7 @@
   import Thread from "./lib/Thread.svelte";
   import SessionHeader from "./lib/SessionHeader.svelte";
   import PageView from "./lib/PageView.svelte";
+  import HistoryView from "./lib/HistoryView.svelte";
   import HomeView from "./lib/HomeView.svelte";
   import BrainView from "./lib/BrainView.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
@@ -25,7 +26,7 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { brainTab, hostOf, isExplicitUrl, pageTab, sessionTab, toAddress, type Tab } from "./lib/tabs";
+  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, sessionTab, toAddress, type Tab } from "./lib/tabs";
   import { toast, toastError, toasts } from "./lib/toast";
   import { covered } from "./lib/overlay";
   import type { Approval, LiveTool } from "./lib/live";
@@ -99,7 +100,7 @@
   function syncDesk(list: Tab[], active: string) {
     const rows = list.map((t) => ({
       id: t.id,
-      kind: t.kind === "page" ? ("browser" as const) : t.kind === "brain" ? ("brain" as const) : ("harness" as const),
+      kind: t.kind === "page" ? ("browser" as const) : t.kind === "brain" || t.kind === "history" ? t.kind : ("harness" as const),
       title: t.title,
       url: t.url ?? "",
       session_id: t.sessionId ?? "",
@@ -110,6 +111,22 @@
   async function loadProject(dir: string) {
     const ctx = dir ? await brain.context(dir).catch(() => null) : null;
     project = ctx?.project ? { slug: ctx.project.slug, title: ctx.project.title, notes: ctx.attached.length + ctx.listed.length, tokens: ctx.tokens } : null;
+  }
+
+  let closed: { url: string; title: string }[] = [];
+
+  function openHistory() {
+    settingsOpen = false;
+    const existing = tabs.find((t) => t.kind === "history");
+    if (existing) selectTab(existing.id);
+    else addTab(historyTab());
+  }
+
+  function reopenClosed() {
+    const last = closed[closed.length - 1];
+    if (!last) return;
+    closed = closed.slice(0, -1);
+    openPageNext(last.url);
   }
 
   function openBrain() {
@@ -220,13 +237,18 @@
       selectTab(tabs[0].id);
       return;
     }
-    if (tabs[idx].kind === "page") api.browserClose(id).catch(() => {});
+    if (tabs[idx].kind === "page") {
+      api.browserClose(id).catch(() => {});
+      const t = tabs[idx];
+      if (t.url) closed = [...closed, { url: t.url, title: t.title }].slice(-20);
+    }
     tabs = tabs.filter((t) => t.id !== id);
     if (activeId === id) selectTab(tabs[Math.max(0, idx - 1)].id);
   }
 
   function newSession() {
     addTab({ ...sessionTab(), cwd: folder || undefined });
+    void tick().then(() => omnibar?.focus());
   }
 
   function goHome() {
@@ -267,6 +289,8 @@
     if (e.loading !== undefined) patch.loading = e.loading;
     if (e.canGoBack !== undefined) patch.canGoBack = e.canGoBack;
     if (e.canGoForward !== undefined) patch.canGoForward = e.canGoForward;
+    if (e.blocked !== undefined) patch.blocked = e.blocked;
+    if (e.bg) patch.bg = e.bg;
     if (e.title) {
       patch.title = e.title.slice(0, 80);
       if (t.loading) pendingTitles.set(e.tab, e.title);
@@ -497,6 +521,8 @@
     else if (name === "ctrl+w") closeTab(activeId);
     else if (name === "ctrl+comma") settingsOpen ? (settingsOpen = false) : openSettings();
     else if (name === "ctrl+b") openBrain();
+    else if (name === "ctrl+h") openHistory();
+    else if (name === "ctrl+shift+t") reopenClosed();
     else if (name === "f11") void setImmersive(!immersive);
     else if (name === "ctrl+l") {
       if (tab.kind === "page" && !settingsOpen) {
@@ -525,15 +551,27 @@
             : "ctrl+tab"
           : mod && key === ","
             ? "ctrl+comma"
-            : mod && ["p", "k", "t", "w", "l", "b"].includes(key)
-              ? `ctrl+${key}`
-              : "";
+            : mod && e.shiftKey && key === "t"
+              ? "ctrl+shift+t"
+              : mod && ["p", "k", "t", "w", "l", "b", "h"].includes(key)
+                ? `ctrl+${key}`
+                : "";
     if (name && shortcut(name)) {
       e.preventDefault();
     } else if (key === "escape" && !e.defaultPrevented && !$covered) {
       if (immersive) void setImmersive(false);
       else if (settingsOpen) settingsOpen = false;
       else if (streaming) void stop();
+    }
+  }
+
+  async function warmPages() {
+    await new Promise((r) => setTimeout(r, 1500));
+    const later = tabs.filter((t) => t.kind === "page" && t.url && t.id !== activeId).slice(0, 8);
+    for (const t of later) {
+      if (!tabs.some((x) => x.id === t.id)) continue;
+      await api.browserPrepare(t.id, t.url ?? "").catch(() => {});
+      await new Promise((r) => setTimeout(r, 500));
     }
   }
 
@@ -550,6 +588,7 @@
     const unKey = onBrowserKey((name) => void shortcut(name));
     selectTab(activeId);
     if (!$onboarded) setupOpen = true;
+    void warmPages();
     const onBg = (e: Event) => (bg = (e as CustomEvent<string>).detail);
     document.addEventListener("parzi:bg", onBg);
     (async () => {
@@ -590,6 +629,7 @@
     on:settings={() => openSettings()}
     on:update={() => openSettings("system")}
     on:brain={openBrain}
+    on:history={openHistory}
     on:setup={() => (setupOpen = true)}
   />
   {/if}
@@ -602,6 +642,10 @@
     {:else if tab.kind === "brain"}
       <div class="fill" in:fade={{ duration: 150 }}>
         <BrainView />
+      </div>
+    {:else if tab.kind === "history"}
+      <div class="fill" in:fade={{ duration: 150 }}>
+        <HistoryView on:open={(e) => openPageNext(e.detail.url)} />
       </div>
     {:else if tab.kind === "page"}
       {#key tab.id}
@@ -699,6 +743,7 @@
     on:newPage={() => addTab(pageTab())}
     on:settings={() => openSettings()}
     on:brain={openBrain}
+    on:history={openHistory}
   />
 
   {#if setupOpen}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type ParziConfig } from "../api";
+  import { adblock, api, vault, BITWARDEN_INSTALL, type ParziConfig, type VaultState } from "../api";
   import Switch from "./Switch.svelte";
   import SegControl from "./SegControl.svelte";
   import "./shared.css";
@@ -9,8 +9,26 @@
 
   let cfg: ParziConfig | null = null;
   let err = "";
+  let blockAds = true;
+  let pw: VaultState | null = null;
+  let pwBusy = false;
+
+  async function pwAction() {
+    if (!pw || pwBusy) return;
+    pwBusy = true;
+    try {
+      pw = pw.status === "unlocked" ? await vault.lock() : await vault.unlock();
+    } catch (e) {
+      notify(String(e) === "missing" ? `Install the Bitwarden CLI: ${BITWARDEN_INSTALL}` : String(e));
+      pw = await vault.state().catch(() => pw);
+    } finally {
+      pwBusy = false;
+    }
+  }
 
   onMount(async () => {
+    adblock.state("").then((s) => (blockAds = s.enabled)).catch(() => {});
+    vault.state().then((s) => (pw = s)).catch(() => {});
     try {
       cfg = await api.getConfig();
     } catch (e) {
@@ -27,6 +45,14 @@
       try {
         cfg = await api.getConfig();
       } catch {}
+    }
+  }
+
+  async function toggleAds() {
+    try {
+      blockAds = (await adblock.enable(!blockAds)).enabled;
+    } catch (e) {
+      notify(`Save failed: ${e}`);
     }
   }
 
@@ -49,6 +75,40 @@
     <div class="skel" />
   </div>
 {:else}
+  <div class="pref-section">
+    <h3 class="section-title">Browser</h3>
+    <div class="field-card">
+      <div class="field-info">
+        <span class="field-label">Block ads and trackers</span>
+        <span class="field-hint">Uses the EasyList and EasyPrivacy lists. Allow a single site from the shield in the page toolbar.</span>
+      </div>
+      <Switch on={blockAds} title="Block ads and trackers" on:toggle={toggleAds} />
+    </div>
+    <div class="field-card">
+      <div class="field-info">
+        <span class="field-label">Passwords from Bitwarden</span>
+        <span class="field-hint">
+          {#if !pw}
+            Checking…
+          {:else if pw.status === "missing"}
+            Install the Bitwarden CLI with <code>{BITWARDEN_INSTALL}</code>, then restart Parzi.
+          {:else if pw.status === "unlocked"}
+            Unlocked{pw.email ? ` as ${pw.email}` : ""}. Use the key in the page toolbar to fill a login.
+          {:else if pw.status === "unauthenticated"}
+            Not signed in. You sign in in Bitwarden's own prompt; Parzi never sees your master password.
+          {:else}
+            Locked{pw.email ? ` (${pw.email})` : ""}. You unlock in Bitwarden's own prompt; Parzi never sees your master password.
+          {/if}
+        </span>
+      </div>
+      {#if pw && pw.status !== "missing"}
+        <button class="sbtn" disabled={pwBusy} on:click={pwAction}>
+          {pwBusy ? "Waiting…" : pw.status === "unlocked" ? "Lock" : pw.status === "unauthenticated" ? "Sign in" : "Unlock"}
+        </button>
+      {/if}
+    </div>
+  </div>
+
   <div class="pref-section">
     <h3 class="section-title">Agent Autonomy Policy</h3>
     <p class="section-desc">Controls how terminal commands and local tools require approval before running.</p>

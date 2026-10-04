@@ -15,14 +15,17 @@ use tokio::sync::{broadcast, oneshot, Mutex};
 #[cfg(target_os = "windows")]
 mod dwm;
 
+mod adblock;
 mod appearance;
 mod brain;
 mod browser;
 mod control;
 mod files;
 mod onboard;
+mod search;
 mod sessions;
 mod settings;
+mod vault;
 
 pub(crate) type Pending = Arc<Mutex<HashMap<String, (String, oneshot::Sender<Approval>)>>>;
 
@@ -441,6 +444,7 @@ fn main() {
             if let Some(w) = app.get_webview_window("main") {
                 dwm::round_window_corners(&w);
             }
+            adblock::start();
             let bus_rx = o.subscribe();
             let bus_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -472,6 +476,17 @@ fn main() {
             browser::browser_close,
             browser::browser_navigate,
             browser::browser_nav,
+            browser::browser_prepare,
+            browser::browser_snapshot,
+            search::search_suggest,
+            adblock::adblock_state,
+            adblock::adblock_enable,
+            adblock::adblock_site,
+            vault::vault_state,
+            vault::vault_unlock,
+            vault::vault_lock,
+            vault::vault_logins,
+            vault::vault_fill,
             brain::brain_dir,
             brain::brain_list,
             brain::brain_read,

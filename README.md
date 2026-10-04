@@ -39,8 +39,10 @@ GUI: `cd ui; npm install; npm run build`, then `cargo tauri dev` in `src-tauri`
 
 - **Tabs** hold a session or a web page, and come back after a restart. Drag a
   tab to reorder it (`Ctrl+Shift+←/→` on a focused tab). `Ctrl+T` new tab
-  (Home), `Ctrl+W` close, `Ctrl+Tab` cycle, `Ctrl+P` search sessions, tabs and
-  actions, `Ctrl+,` settings. These work while a page has focus too.
+  (Home, cursor in the composer), `Ctrl+W` close, `Ctrl+Shift+T` reopen the
+  last closed page, `Ctrl+Tab` cycle, `Ctrl+H` history and bookmarks, `Ctrl+P`
+  search sessions, tabs and actions, `Ctrl+,` settings. These work while a page
+  has focus too.
 - **Home** is where a new tab lands: the composer, pinned sites (pin any page
   from its toolbar; until you do, your most visited sites show), and recent
   sessions.
@@ -60,9 +62,23 @@ GUI: `cd ui; npm install; npm run build`, then `cargo tauri dev` in `src-tauri`
   to move it, Ctrl+drag to copy it. Clicking a folder shows its token cost and
   exactly what the agent gets.
   There is no embedding index: search is plain text, and links are the graph.
-- **Pages** keep their state when you switch tabs. `Ctrl+L` address bar,
-  `Alt+←/→` back and forward, `Ctrl+R` reload, `Ctrl+F` find, `F11` full
+- **Pages** keep their state when you switch tabs, and tabs restored at
+  startup load in the background. The address bar (and the composer in Web
+  mode) completes sites you visited or bookmarked as you type, and shows a
+  list like Chrome's: the search itself, DuckDuckGo suggestions (never for
+  text that looks like an address), then matching history and bookmarks;
+  arrows to move, Enter to go, Esc to close. `Ctrl+L`
+  address bar, `Alt+←/→` back and forward, `Ctrl+R` reload, `F11` full
   screen. Links that open a new window open a new tab.
+- **Passwords** come from Bitwarden; Parzi stores none. Install the CLI
+  (`winget install Bitwarden.CLI`), then Settings › General › Passwords signs
+  in or unlocks in Bitwarden's own prompt, so Parzi never sees the master
+  password. The key in the page toolbar fills a login for the site you are
+  on, only on https and only when you click it.
+- **Ad blocker**: Brave's engine with EasyList and EasyPrivacy, downloaded to
+  `~/.parzi/cache/adblock` and refreshed every four days. The shield in the
+  page toolbar shows how many requests it blocked; click it to allow ads on
+  that site. Settings › General turns it off.
 - **Composer**: `Tab` switches between Agent and Web. In Agent mode pick the
   model, effort, permissions and the project the agent works on (pick one,
   start a new one from a folder, or turn the current folder into one); `@`

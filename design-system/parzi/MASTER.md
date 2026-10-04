@@ -50,9 +50,24 @@ a pack without art keeps the current wallpaper.
   and the docked composer; an empty draft shows the composer centred.
 - Each page tab owns a native WebView2 child that stays alive while hidden,
   so switching tabs never reloads. It fills everything under the 40px toolbar
-  (back, forward, reload, address, pin); F11 or a page's own fullscreen hides
-  all chrome. Any HTML overlay above it (top menu, switcher, popovers)
-  registers in `lib/overlay.ts` so the page hides while the overlay is open.
+  (back, forward, reload, address, shield, pin); F11 or a page's own
+  fullscreen hides all chrome. Any HTML overlay above it (top menu, switcher,
+  popovers) registers in `lib/overlay.ts` so the page hides while the overlay
+  is open.
+- No white flashes: a page webview starts in the theme background, and the
+  slot under it takes the page's own background colour (read after each
+  load), so switching tabs never shows a mismatched frame. Restored page
+  tabs are created hidden in the background shortly after startup.
+- Shield: accent with the blocked count while blocking; faint when the site
+  is allowed or the blocker is off. One click toggles the site and reloads.
+- Key: fills a Bitwarden login on https pages; one match fills at once, more
+  open a short list. Unlocking happens in Bitwarden's own prompt.
+- Address suggestions (`SuggestList.svelte`): search row, DuckDuckGo
+  phrases, then history/bookmark matches; inline completion selects the
+  completed part. Over a page, the native view hides while the list is open
+  and a JPEG snapshot of the page (taken on focus) stands in for it.
+- History is a tab (Ctrl+H): History | Bookmarks, one search field, rows
+  grouped by day with a hover ×. A new tab focuses the composer.
 - An empty session tab is Home: the composer with pinned (or most visited)
   sites and recent sessions under it. New tab and the Home button land here.
 - Switcher (Ctrl+P / Ctrl+K): actions, open tabs, sessions. Settings is a full

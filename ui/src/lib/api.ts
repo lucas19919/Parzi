@@ -201,6 +201,9 @@ export const api = {
   browserShow: (tab: string, rect: { x: number; y: number; width: number; height: number }, url: string) =>
     invoke<void>("browser_show", { tab, ...rect, url }),
   browserHide: () => invoke<void>("browser_hide"),
+  browserPrepare: (tab: string, url: string) => invoke<void>("browser_prepare", { tab, url }),
+  browserSnapshot: (tab: string) => invoke<string>("browser_snapshot", { tab }),
+  searchSuggest: (query: string) => invoke<string[]>("search_suggest", { query }),
   browserClose: (tab: string) => invoke<void>("browser_close", { tab }),
   browserNavigate: (tab: string, url: string) => invoke<void>("browser_navigate", { tab, url }),
   browserNav: (tab: string, action: "back" | "forward" | "reload" | "stop") =>
@@ -329,7 +332,43 @@ export interface PageEvent {
   canGoBack?: boolean;
   canGoForward?: boolean;
   fullscreen?: boolean;
+  blocked?: number;
+  bg?: string;
 }
+
+export interface AdblockState {
+  enabled: boolean;
+  ready: boolean;
+  allowed: boolean;
+  host: string;
+}
+
+export interface VaultState {
+  status: "missing" | "unauthenticated" | "locked" | "unlocked" | string;
+  email: string;
+}
+
+export interface VaultLogin {
+  id: string;
+  name: string;
+  username: string;
+}
+
+export const vault = {
+  state: () => invoke<VaultState>("vault_state"),
+  unlock: () => invoke<VaultState>("vault_unlock"),
+  lock: () => invoke<VaultState>("vault_lock"),
+  logins: (tab: string) => invoke<{ status: string; host: string; items: VaultLogin[] }>("vault_logins", { tab }),
+  fill: (tab: string, id: string) => invoke<string>("vault_fill", { tab, id }),
+};
+
+export const BITWARDEN_INSTALL = "winget install Bitwarden.CLI";
+
+export const adblock = {
+  state: (url: string) => invoke<AdblockState>("adblock_state", { url }),
+  enable: (on: boolean) => invoke<AdblockState>("adblock_enable", { on }),
+  site: (url: string, allow: boolean) => invoke<AdblockState>("adblock_site", { url, allow }),
+};
 
 export function onBrowserOpen(cb: (e: { tab: string; url: string }) => void) {
   return listen<{ tab: string; url: string }>("parzi://browser-open", (ev) => cb(ev.payload));
@@ -353,7 +392,7 @@ export function onBrowser(cb: (page: PageEvent) => void) {
 
 export interface DeskTab {
   id: string;
-  kind: "harness" | "browser" | "brain";
+  kind: "harness" | "browser" | "brain" | "history";
   title: string;
   url: string;
   session_id: string;

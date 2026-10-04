@@ -51,6 +51,40 @@ export function titleVisit(url: string, title: string) {
   history.update((all) => all.map((v) => (v.url === url ? { ...v, title } : v)));
 }
 
+export function removeVisit(url: string) {
+  history.update((all) => all.filter((v) => v.url !== url));
+}
+
+export function clearHistory() {
+  history.set([]);
+}
+
+function bare(url: string) {
+  return url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "");
+}
+
+export function completeAddress(typed: string, visits: Visit[], marks: { url: string }[]): string {
+  const t = typed.toLowerCase();
+  if (t.length < 2 || /\s/.test(t) || /^https?:/.test(t)) return "";
+  const scores = new Map<string, number>();
+  const add = (url: string, score: number) => {
+    const b = bare(url);
+    const c = t.includes("/") ? b : b.split("/")[0];
+    if (c.length > t.length && c.toLowerCase().startsWith(t)) scores.set(c, (scores.get(c) ?? 0) + score);
+  };
+  for (const v of visits) add(v.url, v.count + 1);
+  for (const m of marks) add(m.url, 3);
+  let best = "";
+  let top = 0;
+  for (const [c, score] of scores) {
+    if (score > top || (score === top && c.length < best.length)) {
+      best = c;
+      top = score;
+    }
+  }
+  return best;
+}
+
 export function addPin(url: string, title: string) {
   pins.update((all) => (all.some((p) => p.url === url) ? all : [...all, { url, title }].slice(0, 12)));
 }
@@ -90,7 +124,7 @@ export function saveTabs(tabs: Tab[], active: string) {
 export function loadTabs(): { tabs: Tab[]; active: string } | null {
   const saved = read<{ tabs: Tab[]; active: string } | null>(TABS_KEY, null);
   if (!saved || !Array.isArray(saved.tabs) || !saved.tabs.length) return null;
-  const tabs = saved.tabs.filter((t) => t && typeof t.id === "string" && (t.kind === "session" || t.kind === "page" || t.kind === "brain"));
+  const tabs = saved.tabs.filter((t) => t && typeof t.id === "string" && (t.kind === "session" || t.kind === "page" || t.kind === "brain" || t.kind === "history"));
   if (!tabs.length) return null;
   return { tabs, active: tabs.some((t) => t.id === saved.active) ? saved.active : tabs[0].id };
 }
@@ -121,6 +155,10 @@ export interface Bookmark {
 }
 
 export const bookmarks = persisted<Bookmark[]>("parzi.bookmarks.v1", []);
+
+export function removeBookmark(url: string) {
+  bookmarks.update((all) => all.filter((b) => b.url !== url));
+}
 
 export function importBrowser(data: {
   bookmarks: Bookmark[];

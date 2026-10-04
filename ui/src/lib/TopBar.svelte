@@ -21,6 +21,7 @@
     search: void;
     update: void;
     brain: void;
+    history: void;
     setup: void;
   }>();
 
@@ -32,6 +33,7 @@
   const MENU = [
     { label: "New tab", key: "Ctrl+T", icon: "plus", run: () => dispatch("newTab") },
     { label: "Search", key: "Ctrl+P", icon: "search", run: () => dispatch("search") },
+    { label: "History", key: "Ctrl+H", icon: "clock", run: () => dispatch("history") },
     { label: "Brain", key: "Ctrl+B", icon: "brain", run: () => dispatch("brain") },
     { label: "Settings", key: "Ctrl+,", icon: "settings", run: () => dispatch("settings") },
     { label: "Set up Parzi", key: "", icon: "spark", run: () => dispatch("setup") },

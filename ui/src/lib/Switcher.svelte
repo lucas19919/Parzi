@@ -21,6 +21,7 @@
     newPage: void;
     settings: void;
     brain: void;
+    history: void;
   }>();
 
   interface Item {
@@ -62,6 +63,7 @@
     ...[
       { id: "new-session", icon: "chat", title: "New session", sub: "Start a draft", run: () => dispatch("newSession") },
       { id: "new-page", icon: "globe", title: "New page", sub: "Open a web page", run: () => dispatch("newPage") },
+      { id: "history", icon: "clock", title: "History", sub: "Pages you visited and bookmarks", run: () => dispatch("history") },
       { id: "brain", icon: "brain", title: "Brain", sub: "Notes and projects", run: () => dispatch("brain") },
       { id: "settings", icon: "settings", title: "Settings", sub: "Agents, appearance, system", run: () => dispatch("settings") },
     ]

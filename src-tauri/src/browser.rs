@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, Webv
 
 const BROWSER: &str = "parzi://browser";
 const PAGE_PREFIX: &str = "page-";
+const OFFSCREEN: f64 = -30_000.0;
 
 static OP: Mutex<()> = Mutex::new(());
 static GEN: AtomicU64 = AtomicU64::new(0);
@@ -86,6 +87,22 @@ fn page_bounds(
     }
 }
 
+fn backdrop() -> tauri::window::Color {
+    let hex = parzi_core::theme::Theme::load()
+        .map(|t| t.colors.stage)
+        .unwrap_or_default();
+    let digits = hex.trim().trim_start_matches('#');
+    let channel = |i: usize| {
+        digits
+            .get(i..i + 2)
+            .and_then(|h| u8::from_str_radix(h, 16).ok())
+    };
+    match (digits.len(), channel(0), channel(2), channel(4)) {
+        (6 | 8, Some(r), Some(g), Some(b)) => tauri::window::Color(r, g, b, 255),
+        _ => tauri::window::Color(11, 11, 16, 255),
+    }
+}
+
 fn hide_pages(app: &AppHandle, keep: &str) {
     for (label, wv) in app.webviews() {
         if label.starts_with(PAGE_PREFIX) && label != keep {
@@ -128,6 +145,44 @@ pub fn browser_show(
         scale: window.scale_factor().unwrap_or(1.0),
     };
     std::thread::spawn(move || mount_page(&app, &window, job));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn browser_prepare(app: AppHandle, tab: String, url: &str) -> Result<(), String> {
+    let label = page_label(&tab)?;
+    if app.get_webview(&label).is_some() {
+        return Ok(());
+    }
+    let url = http_page(url)?;
+    locked(&TABS).entry(label.clone()).or_insert((tab, url));
+    let Some(window) = app.get_window("main") else {
+        return Ok(());
+    };
+    std::thread::spawn(move || {
+        let _op = locked(&OP);
+        if app.get_webview(&label).is_some() || !locked(&TABS).contains_key(&label) {
+            return;
+        }
+        let scale = window.scale_factor().unwrap_or(1.0).max(0.01);
+        let Ok(inner) = window.inner_size() else {
+            return;
+        };
+        let job = Fit {
+            gen: GEN.load(Ordering::Relaxed),
+            label,
+            x: OFFSCREEN,
+            y: OFFSCREEN,
+            width: f64::from(inner.width) / scale,
+            height: f64::from(inner.height) / scale,
+            scale,
+        };
+        if let Some(wv) = open_page(&app, &window, &job) {
+            if *locked(&SHOWN) != job.label {
+                let _ = wv.hide();
+            }
+        }
+    });
     Ok(())
 }
 
@@ -190,6 +245,7 @@ fn page_builder(app: &AppHandle, label: &str, tab: &str, url: Url) -> WebviewBui
     let (opener, open_tab, title_tab) = (app.clone(), tab.to_string(), tab.to_string());
     let builder = WebviewBuilder::new(label, WebviewUrl::External(url))
         .devtools(false)
+        .background_color(backdrop())
         .on_navigation(|url| matches!(url.scheme(), "http" | "https" | "about" | "blob" | "data"))
         .on_new_window(move |url, features| {
             if features.size().is_some() {
@@ -236,7 +292,13 @@ fn watch_page(app: &AppHandle, wv: &Webview, tab: String) {
     use crate::dwm::PageSignal;
     let app = app.clone();
     let hooked = crate::dwm::watch_page(wv, move |signal| match signal {
-        PageSignal::Loading => tell(&app, BROWSER, json!({ "tab": tab, "loading": true })),
+        PageSignal::Loading => tell(
+            &app,
+            BROWSER,
+            json!({ "tab": tab, "loading": true, "blocked": 0 }),
+        ),
+        PageSignal::Blocked(count) => tell(&app, BROWSER, json!({ "tab": tab, "blocked": count })),
+        PageSignal::Background(color) => tell(&app, BROWSER, json!({ "tab": tab, "bg": color })),
         PageSignal::Loaded { url, back, forward } => tell(
             &app,
             BROWSER,
@@ -360,6 +422,27 @@ fn arm_page_refit(app: AppHandle) {
             arm_page_refit(app);
         }
     });
+}
+
+#[tauri::command]
+pub async fn browser_snapshot(app: AppHandle, tab: String) -> Result<String, String> {
+    let wv = app.get_webview(&page_label(&tab)?).ok_or("no such tab")?;
+    #[cfg(windows)]
+    {
+        use base64::Engine as _;
+        let jpeg = tauri::async_runtime::spawn_blocking(move || crate::dwm::capture_page(&wv))
+            .await
+            .map_err(|e| e.to_string())??;
+        Ok(format!(
+            "data:image/jpeg;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(jpeg)
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = wv;
+        Err("snapshots need Windows".into())
+    }
 }
 
 #[tauri::command]

@@ -8,6 +8,9 @@
   import { effortHint, effortLabel, effortsFor, fitEffort } from "./providerRows";
   import { folderName, toAddress } from "./tabs";
   import { popover, placeAbove } from "./popover";
+  import { bookmarks, completeAddress, history, pins } from "./browserData";
+  import SuggestList from "./SuggestList.svelte";
+  import { boxText, firstRows, looksLikeUrl, mergeRows, pageRows, phraseRows, type Suggestion } from "./suggest";
   import type { IconName } from "./icons";
 
   export let input = "";
@@ -74,6 +77,12 @@
   let slashIndex = 0;
   let thumbs: Record<string, string | null> = {};
   let attachError = "";
+  let webRows: Suggestion[] = [];
+  let webActive = -1;
+  let webTyped = "";
+  let webSeq = 0;
+  let webTimer = 0;
+  let focused = false;
 
   $: efforts = effortsFor(model, board);
   $: {
@@ -102,6 +111,11 @@
     const text = input.trim();
     if (!text || streaming) return;
     if (mode === "web") {
+      if (webActive >= 0 && webRows[webActive]) {
+        pickWeb(webRows[webActive]);
+        return;
+      }
+      clearWeb();
       dispatch("browse", { url: toAddress(text) });
       input = "";
     } else {
@@ -130,6 +144,19 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+    if (webOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      webActive = webActive + step < -1 ? webRows.length - 1 : webActive + step >= webRows.length ? -1 : webActive + step;
+      input = webActive >= 0 ? boxText(webRows[webActive]) : webTyped;
+      return;
+    }
+    if (webOpen && e.key === "Escape") {
+      e.stopPropagation();
+      input = webTyped;
+      clearWeb();
+      return;
+    }
     if (slashItems.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
       slashIndex = move(slashItems, slashIndex, e.key === "ArrowDown" ? 1 : -1);
@@ -159,9 +186,53 @@
   }
 
   $: if (textarea && !input) textarea.style.height = "";
+  $: if (mode !== "web" || !input.trim()) clearWeb();
+  $: webOpen = focused && mode === "web" && webRows.length > 0;
 
-  async function onInput() {
+  function clearWeb() {
+    webRows = [];
+    webActive = -1;
+    clearTimeout(webTimer);
+  }
+
+  function suggestWeb(value: string, completed: string) {
+    const marks = [...$bookmarks, ...$pins];
+    webRows = mergeRows(firstRows(value, completed), pageRows(value, $history, marks));
+    clearTimeout(webTimer);
+    if (!value.trim() || looksLikeUrl(value)) return;
+    const seq = ++webSeq;
+    webTimer = window.setTimeout(async () => {
+      const phrases = await api.searchSuggest(value).catch(() => [] as string[]);
+      if (seq !== webSeq || mode !== "web" || !input.trim()) return;
+      webRows = mergeRows(firstRows(value, completed), phraseRows(value, phrases), pageRows(value, $history, marks));
+    }, 120);
+  }
+
+  function pickWeb(row: Suggestion) {
+    clearWeb();
+    input = "";
+    dispatch("browse", { url: row.url });
+  }
+
+  async function onInput(e: Event) {
     void autosize();
+    if (mode === "web" && textarea) {
+      const typed = textarea.value;
+      webTyped = typed;
+      webActive = -1;
+      let completed = "";
+      if ((e as InputEvent).inputType?.startsWith("insert") && textarea.selectionStart === typed.length) {
+        const full = completeAddress(typed, $history, [...$bookmarks, ...$pins]);
+        if (full) {
+          completed = typed + full.slice(typed.length);
+          input = completed;
+          await tick();
+          textarea?.setSelectionRange(typed.length, completed.length);
+        }
+      }
+      suggestWeb(typed, completed);
+      return;
+    }
     const at = mode === "agent" ? /@([\w./-]*)$/.exec(input) : null;
     if (!at || !folder) {
       atItems = [];
@@ -307,6 +378,11 @@
 
 <div class="ob" class:hero>
   <div class="box" class:web={mode === "web"} role="group" aria-label="Composer" on:dragover|preventDefault on:drop|preventDefault={onDrop}>
+    {#if webOpen}
+      <div class="web-suggest" class:below={hero}>
+        <SuggestList rows={webRows} active={webActive} typed={webTyped} on:pick={(e) => pickWeb(e.detail.row)} on:hover={(e) => (webActive = e.detail.index)} />
+      </div>
+    {/if}
     {#if slashItems.length || atItems.length}
       <div class="suggest" transition:fade={{ duration: 100 }}>
         {#each slashItems as cmd, i (cmd.name)}
@@ -342,6 +418,8 @@
         placeholder={streaming ? "Working · Esc to stop" : mode === "web" ? "Search or enter an address" : "Ask anything"}
         on:keydown={onKeydown}
         on:input={onInput}
+        on:focus={() => (focused = true)}
+        on:blur={() => (focused = false)}
         on:paste={onPaste}
       />
       {#if streaming}
@@ -622,6 +700,17 @@
     font-size: 11px;
     color: var(--bad);
   }
+  .web-suggest {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: calc(100% + 6px);
+    z-index: 6;
+  }
+  .web-suggest.below {
+    top: calc(100% + 6px);
+    bottom: auto;
+  }
   .suggest {
     position: absolute;
     left: 0;
@@ -704,6 +793,8 @@
     cursor: default;
   }
   .dim {
+    flex: none;
+    white-space: nowrap;
     color: var(--faint);
     opacity: 0.8;
   }

@@ -1,4 +1,4 @@
-export type TabKind = "session" | "page" | "brain";
+export type TabKind = "session" | "page" | "brain" | "history";
 
 export interface Tab {
   id: string;
@@ -10,6 +10,8 @@ export interface Tab {
   loading?: boolean;
   canGoBack?: boolean;
   canGoForward?: boolean;
+  blocked?: number;
+  bg?: string;
 }
 
 let seq = 0;
@@ -25,6 +27,10 @@ export function sessionTab(sessionId: string | null = null, title = "New session
 
 export function pageTab(url = "", id = tabId()): Tab {
   return { id, kind: "page", title: hostOf(url) || "New page", url };
+}
+
+export function historyTab(): Tab {
+  return { id: tabId(), kind: "history", title: "History" };
 }
 
 export function brainTab(): Tab {
