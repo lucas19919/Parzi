@@ -56,8 +56,7 @@ impl Pump {
                 }
             }
         }
-        let cut: String = reply.chars().take(4_000).collect();
-        cut
+        reply.chars().take(4_000).collect()
     }
 
     fn reply_json(&self, session_id: &str, meta: &SessionMeta) -> String {

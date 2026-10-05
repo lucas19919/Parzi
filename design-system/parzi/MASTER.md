@@ -1,8 +1,6 @@
 # Parzi Design System — MASTER
 
 > Single source of truth for every agent touching `ui/`.
-> Pattern: ui-ux-pro-max Master + Overrides (MIT). Page overrides live beside
-> components as `*.override.md` — none exist yet; add one only for deviations.
 
 ## Product
 
@@ -44,7 +42,7 @@ a pack without art keeps the current wallpaper.
 ## Layout
 
 - Top bar (38px): menu, home, tabs, window controls. The bar is the drag region.
-- Tabs are sessions, pages or the brain. Drag reorders them (pointer events,
+- Tabs are sessions, pages, the brain or history. Drag reorders them (pointer events,
   not HTML5 drag, which WebView2 hands to the file-drop handler);
   Ctrl+Shift+←/→ moves the focused tab. A session tab shows the thread card
   and the docked composer; an empty draft shows the composer centred.
@@ -76,15 +74,15 @@ a pack without art keeps the current wallpaper.
 ## Components (states: default / hover / active / focus-visible / disabled)
 
 - Brain is a folder tree, kept simple. Folders: All sessions, each project,
-  Not used; each shows its tokens per session. Notes sit inside; a pin marks
-  "always in full". Drag a note onto a folder to move it, Ctrl+drag to copy
-  (pointer events, not HTML5 drag). Clicking a folder shows its token total
-  and the exact text the agent gets; clicking a note shows one header row
-  (title, "Always include in full", Read/Edit, Open in Obsidian, Open file,
-  Delete) and the note. No chips, no footer. Reloads on window focus.
+  Not used, with no counts. Clicking a folder opens or closes it; a project
+  also opens its project note. Notes sit inside; a pin marks "always in
+  full". Drag a note onto a folder to move it, Ctrl+drag to copy (pointer
+  events, not HTML5 drag). A note shows one header row (title, pin, Read/Edit,
+  Open in Obsidian, Open file, Delete) and the note. No chips, no footer.
+  Reloads on window focus.
 - Composer: one box (attachments, textarea, send), then a quiet row: attach,
-  Agent (robot) / Web (globe) mode (Tab), permissions, project (+ notes count, git branch) on the
-  left; model, effort, context ring on the right. The project chip opens a
+  Agent (robot) / Web (globe) mode (Tab), permissions, project (+ git
+  branch) on the left; model, effort, context ring on the right. The project chip opens a
   picker (projects, make this folder a project, new project from a folder, no
   project); it never opens a bare folder dialog. Send fills with the accent
   once there is text. `/` opens commands, `@` lists files. Esc stops a run.

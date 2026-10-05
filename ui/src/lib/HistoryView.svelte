@@ -3,6 +3,7 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import Icon from "./Icon.svelte";
   import { bookmarks, clearHistory, faviconUrl, history, removeBookmark, removeVisit, type Bookmark, type Visit } from "./browserData";
+  import { bare } from "./suggest";
 
   const dispatch = createEventDispatcher<{ open: { url: string } }>();
   const DAY = 86_400_000;
@@ -52,10 +53,6 @@
     return new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   }
 
-  function short(url: string) {
-    return url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "");
-  }
-
   async function clearAll() {
     const ok = await ask("Clear all browsing history?", { title: "Clear history", kind: "warning" }).catch(() => false);
     if (ok) clearHistory();
@@ -102,8 +99,8 @@
                   <Icon name="globe" size={13} />
                 {/if}
               </span>
-              <span class="title">{v.title || short(v.url)}</span>
-              <span class="url">{short(v.url)}</span>
+              <span class="title">{v.title || bare(v.url)}</span>
+              <span class="url">{bare(v.url)}</span>
             </button>
             <button class="x" title="Remove from history" on:click={() => removeVisit(v.url)}><Icon name="close" size={12} /></button>
           </div>
@@ -124,8 +121,8 @@
                   <Icon name="globe" size={13} />
                 {/if}
               </span>
-              <span class="title">{b.title || short(b.url)}</span>
-              <span class="url">{short(b.url)}</span>
+              <span class="title">{b.title || bare(b.url)}</span>
+              <span class="url">{bare(b.url)}</span>
             </button>
             <button class="x" title="Remove bookmark" on:click={() => removeBookmark(b.url)}><Icon name="close" size={12} /></button>
           </div>

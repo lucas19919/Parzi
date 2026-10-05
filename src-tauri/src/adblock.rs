@@ -40,7 +40,6 @@ fn yes() -> bool {
 #[derive(Serialize)]
 pub struct AdblockState {
     enabled: bool,
-    ready: bool,
     allowed: bool,
     host: String,
 }
@@ -116,7 +115,6 @@ pub fn adblock_site(url: &str, allow: bool) -> Result<AdblockState, String> {
 fn state(host: &str) -> AdblockState {
     AdblockState {
         enabled: ENABLED.load(Ordering::Relaxed),
-        ready: current().is_some(),
         allowed: allowed(host),
         host: host.to_string(),
     }

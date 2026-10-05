@@ -22,8 +22,6 @@ struct RunSidecar {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     queued: Option<PersistedRun>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    project: Option<(String, String)>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     session: Option<VendorSession>,
@@ -37,10 +35,7 @@ pub struct VendorSession {
 
 impl RunSidecar {
     fn is_empty(&self) -> bool {
-        self.queued.is_none()
-            && self.project.is_none()
-            && self.note.is_none()
-            && self.session.is_none()
+        self.queued.is_none() && self.note.is_none() && self.session.is_none()
     }
 }
 
@@ -52,8 +47,6 @@ struct PersistedRun {
     prompt: String,
     cwd: String,
     effort: String,
-    #[serde(default)]
-    workspace_project: Option<(String, String)>,
     #[serde(default)]
     prompt_recorded: bool,
     #[serde(default)]
@@ -151,7 +144,6 @@ impl QueuedRun {
             prompt: self.prompt.clone(),
             cwd: self.cwd.clone(),
             effort: self.effort.clone(),
-            workspace_project: None,
             prompt_recorded: self.prompt_recorded,
             mode_override: self.mode_override.clone(),
             inbox_from: self.inbox_from,
@@ -279,7 +271,7 @@ impl Orchestrator {
     async fn pump(p: Pump) {
         loop {
             let next = {
-                let max = p.cfg_snapshot().orchestrator.max_concurrent.max(1);
+                let max = p.max_live();
                 let busy: std::collections::HashSet<String> = {
                     let mut h = p.handles.lock().await;
                     h.retain(|_, handle| !handle.finished());
@@ -297,11 +289,8 @@ impl Orchestrator {
                 Ok(m) => m.status == SessionStatus::Killed,
                 Err(_) => true,
             };
-            if killed {
-                continue;
-            }
-            if Self::launch(p.clone(), q).await.is_err() {
-                continue;
+            if !killed {
+                let _ = Self::launch(p.clone(), q).await;
             }
         }
     }
@@ -318,7 +307,7 @@ impl Orchestrator {
 }
 
 impl Pump {
-    pub(super) fn max_live(&self) -> usize {
+    fn max_live(&self) -> usize {
         self.cfg_snapshot().orchestrator.max_concurrent.max(1)
     }
 

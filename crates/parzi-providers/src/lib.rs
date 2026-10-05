@@ -1,9 +1,10 @@
-pub mod acp;
-pub mod claude;
-pub mod codex;
+mod acp;
+mod claude;
+mod codex;
 mod jsonrpc;
 pub mod process;
-pub mod types;
+mod setup;
+mod types;
 
 use std::sync::Arc;
 
@@ -57,18 +58,40 @@ pub fn split_spec(spec: &str) -> Option<(&'static str, Option<String>)> {
     Some((canonical_id(p.trim())?, m))
 }
 
-pub fn provider(id: &str, cfg: &ParziConfig) -> Option<Arc<dyn Provider>> {
-    let id = canonical_id(id)?;
-    let binary = cfg
-        .providers
+fn binary(id: &str, cfg: &ParziConfig) -> String {
+    cfg.providers
         .get(id)
         .map(|e| e.binary.clone())
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+pub fn provider(id: &str, cfg: &ParziConfig) -> Option<Arc<dyn Provider>> {
+    let id = canonical_id(id)?;
+    let binary = binary(id, cfg);
     Some(match id {
         claude::ID => Arc::new(claude::Claude::new(&binary)),
         codex::ID => Arc::new(codex::Codex::new(&binary)),
         other => Arc::new(acp::Acp::new(acp::agent(other)?, &binary)),
     })
+}
+
+pub fn install_script(id: &str) -> Option<String> {
+    setup::install_script(canonical_id(id)?)
+}
+
+pub fn login_script(id: &str, cfg: &ParziConfig) -> Option<String> {
+    let id = canonical_id(id)?;
+    setup::login_script(id, &binary(id, cfg))
+}
+
+pub async fn sign_in(id: &str, cfg: &ParziConfig) -> Result<(), ProviderError> {
+    let Some((id, agent)) = canonical_id(id).and_then(|id| Some((id, acp::agent(id)?))) else {
+        return Err(ProviderError::new(
+            ErrorClass::BadRequest,
+            format!("{} signs in with its own command", display_name(id)),
+        ));
+    };
+    acp::Acp::new(agent, &binary(id, cfg)).sign_in().await
 }
 
 pub(crate) fn image_base64(path: &std::path::Path) -> Option<(String, String)> {

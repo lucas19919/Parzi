@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{atomic_write, ParziError, Result};
 use crate::paths;
 
-pub const CONTEXT_CAP: usize = 12_000;
+const CONTEXT_CAP: usize = 12_000;
 pub const EVERYWHERE: &str = "all";
 const MAX_NOTES: usize = 5_000;
 const MAX_BYTES: u64 = 1024 * 1024;
@@ -132,12 +132,12 @@ impl Vault {
     }
 
     #[must_use]
-    pub fn list(&self) -> Vec<NoteMeta> {
+    fn list(&self) -> Vec<NoteMeta> {
         self.scan().into_iter().map(|n| n.meta).collect()
     }
 
     #[must_use]
-    pub fn projects(&self) -> Vec<Project> {
+    fn projects(&self) -> Vec<Project> {
         projects_of(&self.scan())
     }
 
@@ -166,7 +166,7 @@ impl Vault {
         self.meta(rel, &full)
     }
 
-    pub fn delete(&self, path: &str) -> Result<()> {
+    fn delete(&self, path: &str) -> Result<()> {
         Ok(std::fs::remove_file(self.locate(path)?.1)?)
     }
 
@@ -199,7 +199,7 @@ impl Vault {
         titled
     }
 
-    pub fn project_upsert(&self, slug: Option<&str>, title: &str, folder: &str) -> Result<Project> {
+    fn project_upsert(&self, slug: Option<&str>, title: &str, folder: &str) -> Result<Project> {
         let folder = folder.trim();
         if folder.is_empty() {
             return Err(ParziError::Validation("a project needs a folder".into()));
@@ -242,7 +242,7 @@ impl Vault {
             .ok_or_else(|| ParziError::Store(format!("project note `{rel}` did not read back")))
     }
 
-    pub fn map(&self, note_path: &str, slug: &str, on: bool) -> Result<NoteMeta> {
+    fn map(&self, note_path: &str, slug: &str, on: bool) -> Result<NoteMeta> {
         let slug = slug.trim();
         if slug.is_empty() {
             return Err(ParziError::Validation("project slug is empty".into()));
@@ -268,7 +268,7 @@ impl Vault {
         self.meta(rel, &full)
     }
 
-    pub fn set_pinned(&self, path: &str, on: bool) -> Result<NoteMeta> {
+    fn set_pinned(&self, path: &str, on: bool) -> Result<NoteMeta> {
         let (rel, full) = self.locate(path)?;
         let raw = std::fs::read_to_string(&full)?;
         let found = split(&raw).0.map(blocks).unwrap_or_default();
@@ -282,7 +282,7 @@ impl Vault {
     }
 
     #[must_use]
-    pub fn context(&self, cwd: &Path) -> Option<BrainContext> {
+    fn context(&self, cwd: &Path) -> Option<BrainContext> {
         if !self.root.is_dir() {
             return None;
         }

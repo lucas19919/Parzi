@@ -10,13 +10,14 @@ use tokio_util::sync::CancellationToken;
 use crate::jsonrpc::{Incoming, Peer, RpcError};
 use crate::process::{self, Proc, STOP_GRACE};
 use crate::types::{
-    tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate, PermissionRequest,
-    Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd, TurnSpec, UsageWindow,
+    sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
+    PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd,
+    TurnSpec, UsageWindow,
 };
 
 pub const ID: &str = "codex";
-const INSTALL_HINT: &str = "Install Codex (`npm i -g @openai/codex`) or set its path in Settings.";
-const LOGIN_HINT: &str = "Run `codex login` in a terminal, then check again.";
+const INSTALL_HINT: &str = "Install Codex from Set up Parzi, or set its path in Settings.";
+const LOGIN_HINT: &str = "Sign in from Set up Parzi (it runs `codex login`), then check again.";
 
 pub struct Codex {
     binary: String,
@@ -106,7 +107,6 @@ impl Provider for Codex {
         };
         let status = probe(&server.peer, server.version.clone()).await;
         server.proc.kill().await;
-        drop(server.incoming);
         status
     }
 
@@ -447,13 +447,6 @@ fn rpc_failure(e: RpcError) -> ProviderError {
     )
 }
 
-async fn sleep_until(deadline: Option<tokio::time::Instant>) {
-    match deadline {
-        Some(d) => tokio::time::sleep_until(d).await,
-        None => std::future::pending().await,
-    }
-}
-
 async fn answer(
     peer: &Peer,
     id: Value,
@@ -485,7 +478,6 @@ async fn answer(
             };
             let decision = match gate.decide(request).await {
                 PermissionDecision::Allow => "accept",
-                PermissionDecision::AllowAlways => "acceptForSession",
                 PermissionDecision::Deny(_) => "decline",
             };
             let _ = peer.respond(id, json!({"decision": decision})).await;
@@ -761,12 +753,13 @@ fn turn_error(e: &Value) -> ProviderError {
         "usageLimitExceeded" | "rateLimitExceeded" | "sessionBudgetExceeded" => {
             ErrorClass::RateLimit
         }
-        "serverOverloaded" | "internalServerError" => ErrorClass::Overloaded,
-        "contextWindowExceeded" => ErrorClass::ContextOverflow,
-        "badRequest" => ErrorClass::BadRequest,
-        "httpConnectionFailed"
+        "serverOverloaded"
+        | "internalServerError"
+        | "httpConnectionFailed"
         | "responseStreamConnectionFailed"
         | "responseStreamDisconnected" => ErrorClass::Overloaded,
+        "contextWindowExceeded" => ErrorClass::ContextOverflow,
+        "badRequest" => ErrorClass::BadRequest,
         _ => ErrorClass::Unknown,
     };
     ProviderError::new(class, message)
@@ -800,7 +793,6 @@ mod tests {
 
     fn spec() -> TurnSpec {
         TurnSpec {
-            session_id: "s".into(),
             cwd: std::env::temp_dir(),
             model: Some("gpt-5.5".into()),
             effort: Some("high".into()),

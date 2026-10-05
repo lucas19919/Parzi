@@ -17,11 +17,11 @@ pub fn config_path() -> Result<PathBuf> {
     Ok(parzi_dir()?.join("config.toml"))
 }
 
-pub fn theme_path() -> Result<PathBuf> {
+pub(crate) fn theme_path() -> Result<PathBuf> {
     Ok(parzi_dir()?.join("theme.toml"))
 }
 
-pub fn user_css_path() -> Result<PathBuf> {
+pub(crate) fn user_css_path() -> Result<PathBuf> {
     Ok(parzi_dir()?.join("user.css"))
 }
 
@@ -57,13 +57,8 @@ pub fn ensure_dirs() -> Result<PathBuf> {
     ] {
         std::fs::create_dir_all(root.join(sub))?;
     }
-    seed_default_background(&root)?;
     seed_builtin_packs(&root)?;
     Ok(root)
-}
-
-fn seed_default_background(_root: &std::path::Path) -> Result<()> {
-    Ok(())
 }
 
 fn seed_builtin_packs(root: &std::path::Path) -> Result<()> {

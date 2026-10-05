@@ -42,7 +42,6 @@
 .switch:hover .knob { background: var(--muted); }
 .switch.on { background: var(--accent); border-color: transparent; }
 .switch.on .knob { left: 18px; background: var(--bg); }
-.switch.locked { opacity: 0.55; cursor: not-allowed; }
 
 .sbtn {
   background: var(--line);
@@ -55,8 +54,6 @@
 }
 .sbtn:hover:not(:disabled) { background: var(--line); }
 .sbtn:active:not(:disabled) { transform: scale(0.97); transition-duration: 60ms; }
-.sbtn.primary { background: var(--accent); border-color: transparent; color: var(--bg); font-weight: 600; }
-.sbtn.primary:hover:not(:disabled) { filter: brightness(1.08); background: var(--accent); }
 .sbtn.danger { background: transparent; border-color: var(--bad); color: var(--bad); }
 .sbtn.danger:hover:not(:disabled) { background: transparent; }
 .sbtn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -64,7 +61,6 @@
 .status-badge { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 999px; white-space: nowrap; }
 .status-badge.ok { background: transparent; color: var(--ok); border: 1px solid var(--ok); }
 .status-badge.missing { background: var(--line); color: var(--muted); border: 1px solid var(--line); }
-.status-badge.expired { background: transparent; color: var(--warn); border: 1px solid var(--warn); }
 
 .skel {
   border-radius: var(--radius);
@@ -84,22 +80,3 @@
   border: 1px solid var(--bad);
   border-radius: var(--radius); padding: 10px 14px;
 }
-
-.perm-rows { display: flex; flex-direction: column; gap: 2px; width: 100%; }
-.perm-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 6px 2px; border-top: 1px solid var(--line);
-}
-.perm-row:first-child { border-top: none; }
-.perm-name { color: var(--muted); }
-.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
-.chip {
-  display: inline-flex; align-items: center; gap: 6px;
-  background: var(--line); border: 1px solid var(--line);
-  border-radius: 999px; padding: 3px 6px 3px 10px; font-size: 11px; color: var(--muted);
-}
-.chip-x {
-  display: inline-flex; align-items: center; justify-content: center;
-  background: transparent; border: none; color: var(--muted); cursor: pointer; padding: 2px;
-}
-.chip-x:hover { color: var(--bad); }

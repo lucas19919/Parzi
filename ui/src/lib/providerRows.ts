@@ -2,7 +2,7 @@ import type { ProviderStatus } from "./api";
 
 export const PROVIDER_ORDER = ["claude", "codex", "opencode", "grok", "antigravity", "cursor"];
 
-export const PROVIDER_NAME: Record<string, string> = {
+const PROVIDER_NAME: Record<string, string> = {
   claude: "Claude",
   codex: "Codex",
   opencode: "OpenCode",
@@ -25,7 +25,7 @@ export const AUTO_ROW: PickRow = { provider: "auto", usable: true, label: "Smart
 export const isUsable = (p: ProviderStatus | undefined): boolean =>
   !!p && (p.state === "ready" || p.state === "unchecked");
 
-export function rowsOf(p: ProviderStatus): PickRow[] {
+function rowsOf(p: ProviderStatus): PickRow[] {
   const usable = isUsable(p);
   if (!p.models.length) {
     return [{ provider: p.provider, usable, label: `${nameOf(p.provider)} (its default model)`, value: p.provider }];
@@ -72,7 +72,7 @@ export function shownOf(value: string, board: ProviderStatus[]): { provider: str
   return { provider: p, name: id || nameOf(p) };
 }
 
-export const PILL = ["low", "medium", "high", "extra", "ultra"];
+const PILL = ["low", "medium", "high", "extra", "ultra"];
 
 export function effortsFor(value: string, board: ProviderStatus[]): string[] {
   if (!value || value === "auto") return PILL;

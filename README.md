@@ -37,12 +37,12 @@ GUI: `cd ui; npm install; npm run build`, then `cargo tauri dev` in `src-tauri`
 
 ## Using it
 
-- **Tabs** hold a session or a web page, and come back after a restart. Drag a
-  tab to reorder it (`Ctrl+Shift+←/→` on a focused tab). `Ctrl+T` new tab
-  (Home, cursor in the composer), `Ctrl+W` close, `Ctrl+Shift+T` reopen the
-  last closed page, `Ctrl+Tab` cycle, `Ctrl+H` history and bookmarks, `Ctrl+P`
-  search sessions, tabs and actions, `Ctrl+,` settings. These work while a page
-  has focus too.
+- **Tabs** hold a session, a web page, the Brain or History, and come back
+  after a restart. Drag a tab to reorder it (`Ctrl+Shift+←/→` on a focused
+  tab). `Ctrl+T` new tab (Home, cursor in the composer), `Ctrl+W` close,
+  `Ctrl+Shift+T` reopen the last closed page, `Ctrl+Tab` cycle, `Ctrl+H`
+  history and bookmarks, `Ctrl+P` search sessions, tabs and actions, `Ctrl+,`
+  settings. These work while a page has focus too.
 - **Home** is where a new tab lands: the composer, pinned sites (pin any page
   from its toolbar; until you do, your most visited sites show), and recent
   sessions.
@@ -59,8 +59,7 @@ GUI: `cd ui; npm install; npm run build`, then `cargo tauri dev` in `src-tauri`
   one-line summary (`description:` or its first line), and the agent reads it
   with `brain_read` when the task needs it. Full text is capped at about 12k
   characters. In the Brain tab these scopes are folders: drag a note onto one
-  to move it, Ctrl+drag to copy it. Clicking a folder shows its token cost and
-  exactly what the agent gets.
+  to move it, Ctrl+drag to copy it, and click the pin to send a note in full.
   There is no embedding index: search is plain text, and links are the graph.
 - **Pages** keep their state when you switch tabs, and tabs restored at
   startup load in the background. The address bar (and the composer in Web
@@ -91,8 +90,9 @@ GUI: `cd ui; npm install; npm run build`, then `cargo tauri dev` in `src-tauri`
 
 ## Agents
 
-Install an agent and sign in with its own program; Parzi picks it up. It never
-stores keys or tokens.
+Set up Parzi installs each agent with its vendor's official installer, in a
+terminal you can watch, and signs you in with the agent's own login; Parzi
+picks it up when it's done. It never stores keys or tokens.
 
 | Agent | Program | Parzi talks to it over | Asks Parzi before every change |
 | --- | --- | --- | --- |
@@ -100,8 +100,11 @@ stores keys or tokens.
 | Codex | `codex` | `codex app-server` (JSON-RPC) | yes |
 | OpenCode | `opencode` | ACP (`opencode acp`) | yes |
 | Grok | `grok` | ACP (`grok agent stdio`) | no |
-| Antigravity | `agy_acp_server` (T3 Code installs it) | ACP | no |
+| Antigravity | `agy_acp_server` (Google's build, kept in `~/.parzi/agents`) | ACP | no |
 | Cursor | `cursor-agent` | ACP (`cursor-agent acp`) | no |
+
+Antigravity signs in with Google in your browser. Its first start takes about a
+minute, so Parzi keeps it running for 15 minutes after a turn.
 
 Parzi starts every agent in its most-asking mode and answers for the session
 itself: Supervised, Auto-accept edits, Auto or Full access. Claude Code runs

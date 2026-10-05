@@ -10,14 +10,14 @@ pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const STDERR_KEEP: usize = 16 * 1024;
 
-pub fn private_temp(agent: &str) -> Option<PathBuf> {
+pub(crate) fn private_temp(agent: &str) -> Option<PathBuf> {
     let dir = parzi_core::paths::parzi_dir().ok()?.join("tmp").join(agent);
     std::fs::create_dir_all(&dir).ok()?;
     sweep_unpack_dirs(&dir);
     Some(dir)
 }
 
-pub fn sweep_unpack_dirs(dir: &Path) {
+fn sweep_unpack_dirs(dir: &Path) {
     if !cfg!(windows) {
         return;
     }
@@ -57,8 +57,31 @@ fn expand_home(p: &str) -> PathBuf {
     }
 }
 
+fn install_dirs() -> Vec<PathBuf> {
+    let Some(home) = dirs::home_dir() else {
+        return vec![];
+    };
+    let mut out = vec![
+        home.join(".local").join("bin"),
+        home.join(".grok").join("bin"),
+    ];
+    if cfg!(windows) {
+        if let Some(roaming) = dirs::data_dir() {
+            out.push(roaming.join("npm"));
+        }
+        if let Some(local) = dirs::data_local_dir() {
+            out.push(local.join("cursor-agent"));
+        }
+    } else {
+        out.push(PathBuf::from("/opt/homebrew/bin"));
+        out.push(PathBuf::from("/usr/local/bin"));
+    }
+    out
+}
+
 fn find_on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let search: Vec<PathBuf> = std::env::split_paths(&path).chain(install_dirs()).collect();
     let exts: Vec<String> = if cfg!(windows) {
         let pathext =
             std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
@@ -69,7 +92,7 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     } else {
         vec![String::new()]
     };
-    for dir in std::env::split_paths(&path) {
+    for dir in search {
         for ext in &exts {
             if cfg!(windows) && ext.is_empty() && Path::new(name).extension().is_none() {
                 continue;
@@ -106,7 +129,7 @@ fn follow_npm_shim(path: &Path) -> Option<PathBuf> {
     None
 }
 
-pub struct Proc {
+pub(crate) struct Proc {
     pub child: Child,
     stderr: Arc<Mutex<String>>,
 }
@@ -232,7 +255,7 @@ fn descendants(root: u32) -> Vec<u32> {
 
 pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
-pub async fn first_line(program: &Path, args: &[&str]) -> Option<String> {
+pub(crate) async fn first_line(program: &Path, args: &[&str]) -> Option<String> {
     let mut cmd = Command::new(program);
     cmd.args(args)
         .stdin(Stdio::null())
@@ -252,7 +275,7 @@ pub async fn first_line(program: &Path, args: &[&str]) -> Option<String> {
         .map(str::to_string)
 }
 
-pub async fn output(program: &Path, args: &[&str], secs: u64) -> Option<String> {
+pub(crate) async fn output(program: &Path, args: &[&str], secs: u64) -> Option<String> {
     let mut cmd = Command::new(program);
     cmd.args(args)
         .stdin(Stdio::null())

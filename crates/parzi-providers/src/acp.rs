@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -9,22 +10,28 @@ use tokio_util::sync::CancellationToken;
 
 use crate::jsonrpc::{Incoming, Peer, RpcError};
 use crate::process::{self, Proc, STOP_GRACE};
+use crate::setup;
 use crate::types::{
-    tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate, PermissionRequest,
-    Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd, TurnSpec,
+    sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
+    PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd,
+    TurnSpec,
 };
 
 const AUTH_REQUIRED: i64 = -32000;
+const SIGN_IN_WAIT: Duration = Duration::from_secs(300);
+const WARM_FOR: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Clone, Copy)]
 pub struct Agent {
-    pub id: &'static str,
-    pub name: &'static str,
+    id: &'static str,
+    name: &'static str,
     program: &'static str,
     args: &'static [&'static str],
     env: fn(&Path) -> Vec<(String, String)>,
     locate: fn() -> Option<PathBuf>,
     gated: bool,
+    slow_start: bool,
+    sign_in: Option<&'static str>,
     install_hint: &'static str,
     login_hint: &'static str,
     probe: Probe,
@@ -34,7 +41,8 @@ pub struct Agent {
 enum Probe {
     OpencodeModels,
     GrokModels,
-    None,
+    CursorStatus,
+    GeminiSettings,
 }
 
 fn no_env(_: &Path) -> Vec<(String, String)> {
@@ -51,22 +59,12 @@ fn opencode_env(_: &Path) -> Vec<(String, String)> {
     ]
 }
 
-fn antigravity_env(program: &Path) -> Vec<(String, String)> {
-    let harness = program.with_file_name(if cfg!(windows) {
-        "localharness_external.exe"
-    } else {
-        "localharness_external"
-    });
-    let mut env = vec![(
-        "ANTIGRAVITY_HARNESS_PATH".into(),
-        harness.display().to_string(),
-    )];
-    if let Some(tmp) = crate::process::private_temp("antigravity") {
-        let tmp = tmp.display().to_string();
-        env.push(("TEMP".into(), tmp.clone()));
-        env.push(("TMP".into(), tmp));
-    }
-    env
+fn antigravity_env(_: &Path) -> Vec<(String, String)> {
+    let Some(tmp) = process::private_temp("antigravity") else {
+        return vec![];
+    };
+    let tmp = tmp.display().to_string();
+    vec![("TEMP".into(), tmp.clone()), ("TMP".into(), tmp)]
 }
 
 fn nowhere() -> Option<PathBuf> {
@@ -83,8 +81,10 @@ pub fn agent(id: &str) -> Option<Agent> {
             env: opencode_env,
             locate: nowhere,
             gated: true,
-            install_hint: "Install OpenCode (`npm i -g opencode-ai`) or set its path in Settings.",
-            login_hint: "Run `opencode auth login` in a terminal, then check again.",
+            slow_start: false,
+            sign_in: None,
+            install_hint: "Install OpenCode from Set up Parzi, or set its path in Settings.",
+            login_hint: "Sign in from Set up Parzi (it runs `opencode auth login`), then check again.",
             probe: Probe::OpencodeModels,
         },
         "grok" => Agent {
@@ -95,8 +95,10 @@ pub fn agent(id: &str) -> Option<Agent> {
             env: no_env,
             locate: nowhere,
             gated: false,
-            install_hint: "Install the Grok CLI or set its path in Settings.",
-            login_hint: "Sign in with the Grok CLI (`grok`) in a terminal, then check again.",
+            slow_start: false,
+            sign_in: None,
+            install_hint: "Install Grok from Set up Parzi, or set its path in Settings.",
+            login_hint: "Sign in from Set up Parzi (it runs `grok login`), then check again.",
             probe: Probe::GrokModels,
         },
         "antigravity" => Agent {
@@ -105,11 +107,13 @@ pub fn agent(id: &str) -> Option<Agent> {
             program: "agy_acp_server",
             args: &[],
             env: antigravity_env,
-            locate: t3_antigravity,
+            locate: setup::antigravity_program,
             gated: false,
-            install_hint: "Install Google's Antigravity agent (T3 Code downloads it) or set the path to agy_acp_server in Settings.",
-            login_hint: "Sign in with Google in T3 Code's Antigravity settings, then check again.",
-            probe: Probe::None,
+            slow_start: true,
+            sign_in: Some("oauth-personal"),
+            install_hint: "Install Google's Antigravity agent from Set up Parzi, or set the path to agy_acp_server in Settings.",
+            login_hint: "Sign in with Google from Set up Parzi, then check again.",
+            probe: Probe::GeminiSettings,
         },
         "cursor" => Agent {
             id: "cursor",
@@ -119,37 +123,14 @@ pub fn agent(id: &str) -> Option<Agent> {
             env: no_env,
             locate: nowhere,
             gated: false,
-            install_hint: "Install Cursor's CLI (`cursor-agent`) or set its path in Settings.",
-            login_hint: "Run `cursor-agent login` in a terminal, then check again.",
-            probe: Probe::None,
+            slow_start: false,
+            sign_in: None,
+            install_hint: "Install Cursor's CLI from Set up Parzi, or set the path to cursor-agent in Settings.",
+            login_hint: "Sign in from Set up Parzi (it runs `cursor-agent login`), then check again.",
+            probe: Probe::CursorStatus,
         },
         _ => return None,
     })
-}
-
-fn t3_antigravity() -> Option<PathBuf> {
-    let platform = match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("windows", _) => "win32-x64",
-        ("macos", "aarch64") => "darwin-arm64",
-        ("macos", _) => "darwin-x64",
-        ("linux", "aarch64") => "linux-arm64",
-        _ => "linux-x64",
-    };
-    let base = dirs::home_dir()?
-        .join(".t3")
-        .join("tools")
-        .join("antigravity-acp")
-        .join(platform);
-    let active: Value =
-        serde_json::from_str(&std::fs::read_to_string(base.join("active.json")).ok()?).ok()?;
-    let release = active.get("releaseId")?.as_str()?;
-    let exe = if cfg!(windows) {
-        "agy_acp_server.exe"
-    } else {
-        "agy_acp_server"
-    };
-    let path = base.join("versions").join(release).join(exe);
-    path.is_file().then_some(path)
 }
 
 pub struct Acp {
@@ -172,6 +153,13 @@ impl Acp {
         process::resolve(self.agent.program).or_else(self.agent.locate)
     }
 
+    fn not_installed(&self) -> ProviderError {
+        ProviderError::process(format!(
+            "{} is not installed. {}",
+            self.agent.name, self.agent.install_hint
+        ))
+    }
+
     async fn open(&self, program: &Path, cwd: &Path) -> Result<Conn, ProviderError> {
         let args: Vec<String> = self.agent.args.iter().map(|a| (*a).to_string()).collect();
         let env = (self.agent.env)(program);
@@ -187,6 +175,7 @@ impl Acp {
             )));
         };
         let (peer, incoming) = Peer::start(stdout, stdin);
+        let wait = Duration::from_secs(if self.agent.slow_start { 240 } else { 60 });
         let init = peer
             .request_within(
                 "initialize",
@@ -195,7 +184,7 @@ impl Acp {
                     "clientCapabilities": {"fs": {"readTextFile": false, "writeTextFile": false}, "terminal": false},
                     "clientInfo": {"name": "parzi", "title": "Parzi", "version": env!("CARGO_PKG_VERSION")},
                 }),
-                Duration::from_secs(60),
+                wait,
             )
             .await;
         match init {
@@ -216,6 +205,66 @@ impl Acp {
             }
         }
     }
+
+    async fn connect(
+        &self,
+        program: &Path,
+        cwd: &Path,
+        events: Option<&EventTx>,
+    ) -> Result<Conn, ProviderError> {
+        if self.agent.slow_start {
+            if let Some(conn) = take_warm(program) {
+                return Ok(conn);
+            }
+            if let Some(events) = events {
+                let _ = events.send(ProviderEvent::Notice(format!(
+                    "Starting {}. Its first start takes about a minute.",
+                    self.agent.name
+                )));
+            }
+        }
+        self.open(program, cwd).await
+    }
+
+    async fn release(&self, program: PathBuf, mut conn: Conn, reusable: bool) {
+        if reusable && self.agent.slow_start {
+            park(program, conn);
+        } else {
+            conn.proc.kill().await;
+        }
+    }
+
+    pub async fn sign_in(&self) -> Result<(), ProviderError> {
+        let name = self.agent.name;
+        let method = self.agent.sign_in.ok_or_else(|| {
+            ProviderError::new(
+                ErrorClass::BadRequest,
+                format!("{name} signs in with its own command"),
+            )
+        })?;
+        let program = self.program().ok_or_else(|| self.not_installed())?;
+        let mut conn = self.connect(&program, &std::env::temp_dir(), None).await?;
+        let answer = conn
+            .peer
+            .request_within("authenticate", json!({"methodId": method}), SIGN_IN_WAIT)
+            .await;
+        match answer {
+            Ok(_) => {
+                if matches!(self.agent.probe, Probe::GeminiSettings) {
+                    remember_gemini_auth(method);
+                }
+                self.release(program, conn, true).await;
+                Ok(())
+            }
+            Err(e) => {
+                conn.proc.kill().await;
+                Err(ProviderError::new(
+                    ErrorClass::Auth,
+                    format!("{name} sign-in did not finish: {e}"),
+                ))
+            }
+        }
+    }
 }
 
 struct Conn {
@@ -223,6 +272,40 @@ struct Conn {
     peer: Arc<Peer>,
     incoming: mpsc::UnboundedReceiver<Incoming>,
     init: Value,
+}
+
+static WARM: Mutex<Vec<(u64, PathBuf, Conn)>> = Mutex::new(Vec::new());
+static WARM_ID: AtomicU64 = AtomicU64::new(0);
+
+fn take_warm(program: &Path) -> Option<Conn> {
+    let mut warm = WARM.lock().ok()?;
+    while let Some(i) = warm.iter().position(|(_, p, _)| p == program) {
+        let (_, _, mut conn) = warm.remove(i);
+        if matches!(conn.proc.child.try_wait(), Ok(None)) {
+            while conn.incoming.try_recv().is_ok() {}
+            return Some(conn);
+        }
+    }
+    None
+}
+
+fn park(program: PathBuf, conn: Conn) {
+    let id = WARM_ID.fetch_add(1, Ordering::Relaxed);
+    let Ok(mut warm) = WARM.lock() else {
+        return;
+    };
+    warm.push((id, program, conn));
+    drop(warm);
+    tokio::spawn(async move {
+        tokio::time::sleep(WARM_FOR).await;
+        let stale = WARM.lock().ok().and_then(|mut warm| {
+            let i = warm.iter().position(|(n, ..)| *n == id)?;
+            Some(warm.remove(i).2)
+        });
+        if let Some(mut conn) = stale {
+            conn.proc.kill().await;
+        }
+    });
 }
 
 #[async_trait::async_trait]
@@ -236,20 +319,22 @@ impl Provider for Acp {
     }
 
     async fn status(&self) -> ProviderStatus {
-        let id = self.agent.id;
         let Some(program) = self.program() else {
-            return ProviderStatus::new(id, State::NotInstalled, self.agent.install_hint);
+            return ProviderStatus::new(
+                self.agent.id,
+                State::NotInstalled,
+                self.agent.install_hint,
+            );
         };
         let mut status = match self.agent.probe {
             Probe::OpencodeModels => opencode_status(&program, self.agent).await,
             Probe::GrokModels => grok_status(&program, self.agent).await,
-            Probe::None => ProviderStatus::new(
-                id,
-                State::Unchecked,
-                "Installed. Sign-in is checked when a thread starts.",
-            ),
+            Probe::CursorStatus => cursor_status(&program, self.agent).await,
+            Probe::GeminiSettings => gemini_status(self.agent),
         };
-        if let Ok(mut conn) = self.open(&program, &std::env::temp_dir()).await {
+        if self.agent.slow_start {
+            status.version = setup::installed_version(&program);
+        } else if let Ok(mut conn) = self.open(&program, &std::env::temp_dir()).await {
             status.version = conn
                 .init
                 .pointer("/agentInfo/version")
@@ -268,13 +353,8 @@ impl Provider for Acp {
         events: EventTx,
         cancel: CancellationToken,
     ) -> Result<TurnEnd, ProviderError> {
-        let program = self.program().ok_or_else(|| {
-            ProviderError::process(format!(
-                "{} is not installed. {}",
-                self.agent.name, self.agent.install_hint
-            ))
-        })?;
-        let mut conn = self.open(&program, &spec.cwd).await?;
+        let program = self.program().ok_or_else(|| self.not_installed())?;
+        let mut conn = self.connect(&program, &spec.cwd, Some(&events)).await?;
         let outcome = drive(
             &conn.peer,
             &mut conn.incoming,
@@ -294,8 +374,109 @@ impl Provider for Acp {
             ))),
             other => other,
         };
-        conn.proc.kill().await;
+        let reusable = matches!(outcome, Ok(TurnEnd::Completed));
+        self.release(program, conn, reusable).await;
         outcome
+    }
+}
+
+fn gemini_settings() -> Option<PathBuf> {
+    let home = std::env::var_os("GEMINI_HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".gemini")))?;
+    Some(home.join("antigravity-acp").join("settings.json"))
+}
+
+fn gemini_auth_type(settings: &Value) -> Option<String> {
+    settings
+        .pointer("/auth/type")
+        .or_else(|| settings.get("auth.type"))
+        .or_else(|| settings.pointer("/security/auth/selectedType"))
+        .and_then(Value::as_str)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+}
+
+fn read_gemini_settings() -> Option<Value> {
+    serde_json::from_str(&std::fs::read_to_string(gemini_settings()?).ok()?).ok()
+}
+
+fn gemini_status(agent: Agent) -> ProviderStatus {
+    let Some(kind) = read_gemini_settings().as_ref().and_then(gemini_auth_type) else {
+        return ProviderStatus::new(agent.id, State::SignedOut, agent.login_hint);
+    };
+    let mut s = ProviderStatus::new(agent.id, State::Ready, "");
+    s.account = Some(
+        match kind.as_str() {
+            "oauth-personal" => "Google account",
+            "oauth-business" => "Gemini Enterprise",
+            "gemini-api-key" => "Gemini API key",
+            "agent-platform" | "vertex-ai" => "Agent Platform",
+            other => other,
+        }
+        .to_string(),
+    );
+    s
+}
+
+fn remember_gemini_auth(method: &str) {
+    let Some(path) = gemini_settings() else {
+        return;
+    };
+    let mut settings = read_gemini_settings().unwrap_or_else(|| json!({}));
+    if gemini_auth_type(&settings).is_some() {
+        return;
+    }
+    let Some(root) = settings.as_object_mut() else {
+        return;
+    };
+    let auth = root.entry("auth").or_insert_with(|| json!({}));
+    let Some(auth) = auth.as_object_mut() else {
+        return;
+    };
+    auth.insert("type".into(), json!(method));
+    if let (Some(dir), Ok(text)) = (path.parent(), serde_json::to_string_pretty(&settings)) {
+        let _ = std::fs::create_dir_all(dir);
+        let _ = std::fs::write(&path, text);
+    }
+}
+
+async fn cursor_status(program: &Path, agent: Agent) -> ProviderStatus {
+    match process::output(program, &["status", "--format", "json"], 60).await {
+        Some(out) => cursor_read(&out, agent),
+        None => ProviderStatus::new(
+            agent.id,
+            State::Error,
+            "`cursor-agent status` gave no answer.",
+        ),
+    }
+}
+
+fn cursor_read(out: &str, agent: Agent) -> ProviderStatus {
+    let answer = out.find('{').and_then(|i| {
+        serde_json::Deserializer::from_str(&out[i..])
+            .into_iter::<Value>()
+            .next()?
+            .ok()
+    });
+    match answer {
+        Some(v) if v.get("isAuthenticated").and_then(Value::as_bool) == Some(true) => {
+            let mut s = ProviderStatus::new(agent.id, State::Ready, "");
+            s.account = Some(
+                v.pointer("/userInfo/email")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Cursor account")
+                    .to_string(),
+            );
+            s
+        }
+        Some(_) => ProviderStatus::new(agent.id, State::SignedOut, agent.login_hint),
+        None => ProviderStatus::new(
+            agent.id,
+            State::Error,
+            format!("`cursor-agent status` said: {}", tail(out.trim(), 300)),
+        ),
     }
 }
 
@@ -375,9 +556,7 @@ fn grok_read(out: &str, agent: Agent) -> ProviderStatus {
 
 fn option_for(options: &[Value], decision: &PermissionDecision) -> Option<String> {
     let prefer: &[&str] = match decision {
-        PermissionDecision::Allow | PermissionDecision::AllowAlways => {
-            &["allow_once", "reject_once", "reject_always"]
-        }
+        PermissionDecision::Allow => &["allow_once", "reject_once", "reject_always"],
         PermissionDecision::Deny(_) => &["reject_once", "reject_always"],
     };
     prefer.iter().find_map(|kind| {
@@ -589,67 +768,68 @@ async fn drive(
     let mut open = true;
     loop {
         tokio::select! {
-        biased;
-        () = cancel.cancelled(), if !interrupting => {
-            interrupting = true;
-            stop_by = Some(tokio::time::Instant::now() + STOP_GRACE);
-            let _ = peer.notify("session/cancel", json!({"sessionId": sid})).await;
-        }
-        () = sleep_until(stop_by) => {
-            buffers.flush(events);
-            return Ok(TurnEnd::Interrupted);
-        }
-        msg = incoming.recv(), if open => {
-            let Some(msg) = msg else {
-                open = false;
-                continue;
-            };
-            match msg {
-                Incoming::Notification { method, params } if method == "session/update" => {
-                    if params.get("sessionId").and_then(Value::as_str).is_some_and(|s| s != sid) {
-                        continue;
+            biased;
+            () = cancel.cancelled(), if !interrupting => {
+                interrupting = true;
+                stop_by = Some(tokio::time::Instant::now() + STOP_GRACE);
+                let _ = peer.notify("session/cancel", json!({"sessionId": sid})).await;
+            }
+            () = sleep_until(stop_by) => {
+                buffers.flush(events);
+                return Ok(TurnEnd::Interrupted);
+            }
+            msg = incoming.recv(), if open => {
+                let Some(msg) = msg else {
+                    open = false;
+                    continue;
+                };
+                match msg {
+                    Incoming::Notification { method, params } if method == "session/update" => {
+                        if params.get("sessionId").and_then(Value::as_str).is_some_and(|s| s != sid) {
+                            continue;
+                        }
+                        let u = params.get("update").unwrap_or(&Value::Null);
+                        update(u, &sid, can_resume, &mut buffers, &mut tool_names, &mut last_cost, events);
                     }
-                    let u = params.get("update").unwrap_or(&Value::Null);
-                    update(u, &sid, can_resume, &mut buffers, &mut tool_names, &mut last_cost, events);
-                }
-                Incoming::Request { id, method, params } => {
-                    if method == "session/request_permission" {
-                        let (peer, gate) = (peer.clone(), gate.clone());
-                        tokio::spawn(async move { permission(&peer, id, &params, gate).await });
-                    } else {
-                        let _ = peer.respond_error(id, -32601, &format!("Parzi does not offer {method}")).await;
+                    Incoming::Request { id, method, params } => {
+                        if method == "session/request_permission" {
+                            let (peer, gate) = (peer.clone(), gate.clone());
+                            tokio::spawn(async move { permission(&peer, id, &params, gate).await });
+                        } else {
+                            let _ = peer.respond_error(id, -32601, &format!("Parzi does not offer {method}")).await;
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
+            }
+            done = &mut done_rx => {
+                buffers.flush(events);
+                let answer = done.unwrap_or_else(|_| Err(RpcError { code: RpcError::CLOSED, message: format!("{} exited before the turn finished", agent.name), data: None }));
+                let answer = match answer {
+                    Ok(v) => v,
+                    Err(_) if interrupting => return Ok(TurnEnd::Interrupted),
+                    Err(e) => return Err(rpc_failure(agent, e)),
+                };
+                if let Some(u) = answer.get("usage").filter(|u| !u.is_null()) {
+                    let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+                    let _ = events.send(ProviderEvent::Usage { input: n("inputTokens"), output: n("outputTokens"), cost_usd: None });
+                }
+                return match answer.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn") {
+                    "cancelled" => Ok(TurnEnd::Interrupted),
+                    "refusal" => Err(ProviderError::new(ErrorClass::BadRequest, format!("{} refused to continue", agent.name))),
+                    "max_tokens" => {
+                        let _ = events.send(ProviderEvent::Notice(format!("{} hit its output limit", agent.name)));
+                        Ok(TurnEnd::Completed)
+                    }
+                    "max_turn_requests" => {
+                        let _ = events.send(ProviderEvent::Notice(format!("{} hit its step limit", agent.name)));
+                        Ok(TurnEnd::Completed)
+                    }
+                    _ if interrupting => Ok(TurnEnd::Interrupted),
+                    _ => Ok(TurnEnd::Completed),
+                };
             }
         }
-        done = &mut done_rx => {
-            buffers.flush(events);
-            let answer = done.unwrap_or_else(|_| Err(RpcError { code: RpcError::CLOSED, message: format!("{} exited before the turn finished", agent.name), data: None }));
-            let answer = match answer {
-                Ok(v) => v,
-                Err(_) if interrupting => return Ok(TurnEnd::Interrupted),
-                Err(e) => return Err(rpc_failure(agent, e)),
-            };
-            if let Some(u) = answer.get("usage").filter(|u| !u.is_null()) {
-                let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
-                let _ = events.send(ProviderEvent::Usage { input: n("inputTokens"), output: n("outputTokens"), cost_usd: None });
-            }
-            return match answer.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn") {
-                "cancelled" => Ok(TurnEnd::Interrupted),
-                "refusal" => Err(ProviderError::new(ErrorClass::BadRequest, format!("{} refused to continue", agent.name))),
-                "max_tokens" => {
-                    let _ = events.send(ProviderEvent::Notice(format!("{} hit its output limit", agent.name)));
-                    Ok(TurnEnd::Completed)
-                }
-                "max_turn_requests" => {
-                    let _ = events.send(ProviderEvent::Notice(format!("{} hit its step limit", agent.name)));
-                    Ok(TurnEnd::Completed)
-                }
-                _ if interrupting => Ok(TurnEnd::Interrupted),
-                _ => Ok(TurnEnd::Completed),
-            };
-        }        }
     }
 }
 
@@ -849,13 +1029,6 @@ async fn permission(peer: &Peer, id: Value, params: &Value, gate: Arc<dyn Permis
     let _ = peer.respond(id, outcome).await;
 }
 
-async fn sleep_until(deadline: Option<tokio::time::Instant>) {
-    match deadline {
-        Some(d) => tokio::time::sleep_until(d).await,
-        None => std::future::pending().await,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -874,7 +1047,6 @@ mod tests {
 
     fn spec(resume: Option<Value>) -> TurnSpec {
         TurnSpec {
-            session_id: "s".into(),
             cwd: std::env::temp_dir(),
             model: Some("opencode/big-pickle".into()),
             effort: None,
@@ -1111,6 +1283,34 @@ mod tests {
     }
 
     #[test]
+    fn cursor_status_reads_its_json() {
+        let cursor = agent("cursor").unwrap();
+        let out = "{\n  \"status\": \"unauthenticated\",\n  \"isAuthenticated\": false,\n  \"message\": \"Not logged in\"\n}\n";
+        assert_eq!(cursor_read(out, cursor).state, State::SignedOut);
+        let signed =
+            r#"{"status":"authenticated","isAuthenticated":true,"userInfo":{"email":"a@b.c"}}"#;
+        let s = cursor_read(&format!("update available\n{signed}\n"), cursor);
+        assert_eq!(s.state, State::Ready);
+        assert_eq!(s.account.as_deref(), Some("a@b.c"));
+        assert_eq!(cursor_read("boom", cursor).state, State::Error);
+    }
+
+    #[test]
+    fn antigravity_sign_in_is_the_auth_type_it_saved() {
+        assert_eq!(
+            gemini_auth_type(&json!({"auth": {"type": "oauth-personal"}})).as_deref(),
+            Some("oauth-personal")
+        );
+        assert_eq!(
+            gemini_auth_type(&json!({"security": {"auth": {"selectedType": "gemini-api-key"}}}))
+                .as_deref(),
+            Some("gemini-api-key")
+        );
+        assert_eq!(gemini_auth_type(&json!({"auth": {"type": ""}})), None);
+        assert_eq!(gemini_auth_type(&json!({})), None);
+    }
+
+    #[test]
     fn an_allow_is_one_action_and_never_a_standing_grant() {
         let always = json!({"optionId": "always", "kind": "allow_always", "name": "Always"});
         let once = json!({"optionId": "once", "kind": "allow_once", "name": "Once"});
@@ -1118,10 +1318,6 @@ mod tests {
         let all = [always.clone(), once, no.clone()];
         assert_eq!(
             option_for(&all, &PermissionDecision::Allow).as_deref(),
-            Some("once")
-        );
-        assert_eq!(
-            option_for(&all, &PermissionDecision::AllowAlways).as_deref(),
             Some("once")
         );
         assert_eq!(

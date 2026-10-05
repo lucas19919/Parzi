@@ -145,7 +145,6 @@ pub struct ToolServer {
 
 #[derive(Debug, Clone)]
 pub struct TurnSpec {
-    pub session_id: String,
     pub cwd: PathBuf,
     pub model: Option<String>,
     pub effort: Option<String>,
@@ -207,7 +206,6 @@ pub struct PermissionRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermissionDecision {
     Allow,
-    AllowAlways,
     Deny(String),
 }
 
@@ -250,4 +248,11 @@ pub(crate) fn tail(text: &str, max: usize) -> String {
     }
     let skip = n - max;
     format!("…{}", t.chars().skip(skip).collect::<String>())
+}
+
+pub(crate) async fn sleep_until(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(d) => tokio::time::sleep_until(d).await,
+        None => std::future::pending().await,
+    }
 }

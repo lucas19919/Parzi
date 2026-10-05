@@ -7,7 +7,7 @@ use parzi_providers::{Provider, ProviderStatus, State, UsageWindow};
 pub type ProviderSource =
     Arc<dyn Fn(&str, &ParziConfig) -> Option<Arc<dyn Provider>> + Send + Sync>;
 
-pub fn roster_source() -> ProviderSource {
+pub(crate) fn roster_source() -> ProviderSource {
     Arc::new(|id: &str, cfg: &ParziConfig| parzi_providers::provider(id, cfg))
 }
 
@@ -25,7 +25,7 @@ fn file() -> Option<std::path::PathBuf> {
 }
 
 impl StatusBoard {
-    pub fn load() -> Self {
+    pub(crate) fn load() -> Self {
         let map = file()
             .and_then(|p| std::fs::read_to_string(p).ok())
             .and_then(|t| serde_json::from_str::<Vec<ProviderStatus>>(&t).ok())
@@ -46,11 +46,11 @@ impl StatusBoard {
         }
     }
 
-    pub fn get(&self, id: &str) -> Option<ProviderStatus> {
+    pub(crate) fn get(&self, id: &str) -> Option<ProviderStatus> {
         self.map.read().ok()?.get(id).cloned()
     }
 
-    pub fn all(&self) -> Vec<ProviderStatus> {
+    pub(crate) fn all(&self) -> Vec<ProviderStatus> {
         parzi_providers::PROVIDERS
             .iter()
             .map(|id| {
@@ -86,7 +86,7 @@ impl StatusBoard {
         }
     }
 
-    pub fn update_usage(&self, id: &str, windows: &[UsageWindow]) {
+    pub(crate) fn update_usage(&self, id: &str, windows: &[UsageWindow]) {
         let Ok(mut m) = self.map.write() else { return };
         let Some(s) = m.get_mut(id) else { return };
         for w in windows {
@@ -99,7 +99,7 @@ impl StatusBoard {
         self.save();
     }
 
-    pub async fn refresh(
+    pub(crate) async fn refresh(
         &self,
         cfg: &ParziConfig,
         ids: &[String],
@@ -151,7 +151,7 @@ impl StatusBoard {
         self.all()
     }
 
-    pub async fn pick(&self, cfg: &ParziConfig, source: &ProviderSource) -> Option<String> {
+    pub(crate) async fn pick(&self, cfg: &ParziConfig, source: &ProviderSource) -> Option<String> {
         let now = parzi_providers::now_secs();
         for id in &cfg.routing.order {
             let Some(id) = parzi_providers::canonical_id(id) else {

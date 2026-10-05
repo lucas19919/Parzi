@@ -2,7 +2,8 @@ mod harness;
 mod launch;
 mod queue;
 
-pub use queue::{run_note, run_session, set_run_note, set_run_session, VendorSession, BUDGET_NOTE};
+pub use queue::{run_note, BUDGET_NOTE};
+pub(crate) use queue::{run_session, set_run_note, set_run_session, VendorSession};
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;

@@ -1,13 +1,13 @@
-use std::path::PathBuf;
-
 use parzi_core::{system, theme};
 
-fn test_home() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("parzi-test-scopes-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::env::set_var("PARZI_HOME", &dir);
-    dir
+fn test_home() {
+    static HOME: std::sync::Once = std::sync::Once::new();
+    HOME.call_once(|| {
+        let dir = std::env::temp_dir().join(format!("parzi-test-scopes-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("PARZI_HOME", &dir);
+    });
 }
 
 fn solid_png(path: &std::path::Path, rgb: [u8; 3]) {
@@ -19,24 +19,19 @@ fn solid_png(path: &std::path::Path, rgb: [u8; 3]) {
 fn global_system_file_is_capped_and_blank_counts_as_missing() {
     test_home();
     assert!(system::global().is_none());
-    assert!(system::for_chat().is_empty());
 
     let path = parzi_core::paths::parzi_dir().unwrap().join("SYSTEM.md");
     std::fs::write(&path, "Be direct.\n").unwrap();
-    let chat = system::for_chat();
-    assert_eq!(chat.len(), 1);
-    assert_eq!(chat[0].scope, "user");
-    assert!(chat[0].text.contains("Be direct"));
+    assert!(system::global().unwrap().contains("Be direct"));
 
     let big = "x".repeat(system::SYSTEM_CAP + 100);
     std::fs::write(&path, &big).unwrap();
-    let capped = system::for_chat();
-    assert_eq!(capped.len(), 1);
-    assert!(capped[0].text.ends_with("…(truncated)"));
-    assert!(capped[0].text.len() < big.len());
+    let capped = system::global().unwrap();
+    assert!(capped.ends_with("…(truncated)"));
+    assert!(capped.len() < big.len());
 
     std::fs::write(&path, "   \n").unwrap();
-    assert!(system::for_chat().is_empty());
+    assert!(system::global().is_none());
 }
 
 #[test]

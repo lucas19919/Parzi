@@ -1,17 +1,15 @@
-#![cfg(target_os = "windows")]
 #![allow(unsafe_code, reason = "Win32 window and WebView2 calls")]
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2, ICoreWebView2AcceleratorKeyPressedEventArgs, ICoreWebView2Controller,
-    ICoreWebView2Environment, ICoreWebView2_2, COREWEBVIEW2_KEY_EVENT_KIND,
-    COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_PHYSICAL_KEY_STATUS,
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_CSP_VIOLATION_REPORT,
+    ICoreWebView2Environment, ICoreWebView2_2, COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG,
+    COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
+    COREWEBVIEW2_PHYSICAL_KEY_STATUS, COREWEBVIEW2_WEB_RESOURCE_CONTEXT,
+    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_CSP_VIOLATION_REPORT,
     COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FETCH,
     COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FONT, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE,
     COREWEBVIEW2_WEB_RESOURCE_CONTEXT_MEDIA, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_PING,
@@ -26,8 +24,7 @@ use webview2_com::{
     WebResourceRequestedEventHandler,
 };
 use windows::core::{w, Interface, BOOL, HSTRING, PWSTR};
-use windows::Win32::Foundation::HGLOBAL;
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Foundation::{HGLOBAL, HWND, RECT};
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
 use windows::Win32::System::Com::{IStream, STREAM_SEEK_END, STREAM_SEEK_SET};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -41,7 +38,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 static PAGE_ENV: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
 pub fn stash_page_environment(env: ICoreWebView2Environment) {
-    use windows::core::Interface;
     let raw = Interface::into_raw(env) as isize;
     let prev = PAGE_ENV.swap(raw, std::sync::atomic::Ordering::SeqCst);
     if prev != 0 {
@@ -55,7 +51,6 @@ pub fn stash_page_environment(env: ICoreWebView2Environment) {
 }
 
 pub fn take_page_environment() -> Option<ICoreWebView2Environment> {
-    use windows::core::Interface;
     let raw = PAGE_ENV.swap(0, std::sync::atomic::Ordering::SeqCst);
     if raw == 0 {
         None

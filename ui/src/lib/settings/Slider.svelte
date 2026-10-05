@@ -1,6 +1,5 @@
 <script lang="ts">
   export let label = "";
-  export let hint = "";
   export let value = 0;
   export let min = 0;
   export let max = 100;
@@ -18,10 +17,9 @@
 <div class="row">
   <div class="info">
     <span class="lab">{label}</span>
-    {#if hint}<span class="hint">{hint}</span>{/if}
   </div>
   <div class="ctl">
-    <input type="range" {min} {max} {step} value={value} style="--p:{pct}%" aria-label={label} on:input={onRange} on:change />
+    <input type="range" {min} {max} {step} value={value} style="--p:{pct}%" aria-label={label} on:input={onRange} />
     <span class="val">{shown}{unit}</span>
   </div>
 </div>
@@ -30,7 +28,6 @@
   .row { display: grid; grid-template-columns: 132px 1fr; align-items: center; gap: 14px; }
   .info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .lab { font-size: 12.5px; font-weight: 500; color: var(--text); }
-  .hint { font-size: 11px; color: var(--muted); }
   .ctl { display: flex; align-items: center; gap: 12px; }
   input[type="range"] {
     -webkit-appearance: none; appearance: none;

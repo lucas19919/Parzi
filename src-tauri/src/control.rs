@@ -22,7 +22,7 @@ pub struct TabSnap {
     pub title: String,
     #[serde(default)]
     pub url: String,
-    #[serde(default, alias = "sessionId")]
+    #[serde(default)]
     pub session_id: String,
 }
 

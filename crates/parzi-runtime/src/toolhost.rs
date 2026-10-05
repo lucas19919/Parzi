@@ -285,11 +285,7 @@ impl ToolHost {
         }
     }
 
-    pub fn session_id(&self) -> &str {
-        &self.p.session_id
-    }
-
-    pub async fn defs(&self) -> Vec<ToolDef> {
+    pub(crate) async fn defs(&self) -> Vec<ToolDef> {
         self.defs
             .get_or_init(|| async { self.p.tools.defs() })
             .await

@@ -52,7 +52,7 @@ fn writer() -> Arc<Fake> {
             let (ok, _) = a
                 .own_tool("w1", "Write", input, || async {
                     match decision {
-                        PermissionDecision::Allow | PermissionDecision::AllowAlways => {
+                        PermissionDecision::Allow => {
                             std::fs::write(&path, "hello").unwrap();
                             (true, "written".to_string())
                         }

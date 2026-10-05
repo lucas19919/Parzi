@@ -111,11 +111,7 @@ impl EngineRun {
                 if msgs.is_empty() {
                     prompt.to_string()
                 } else {
-                    msgs.join(
-                        "
-
-",
-                    )
+                    msgs.join("\n\n")
                 }
             }
             None => prompt.to_string(),
@@ -128,18 +124,18 @@ impl EngineRun {
         loop {
             turns += 1;
             if let Some(reason) = self.budget_hit() {
-                self.pause_for_budget(&reason).await;
+                self.pause_for_budget(&reason);
                 return Ok(());
             }
             match self.turn(&text).await {
                 Outcome::Completed => {}
                 Outcome::Interrupted => {
-                    self.finish(SessionStatus::Killed).await;
+                    self.settle(SessionStatus::Killed);
                     self.p.sink.emit(RunEvent::Error("cancelled".into()));
                     return Ok(());
                 }
                 Outcome::Paused(reason) => {
-                    self.pause_for_budget(&reason).await;
+                    self.pause_for_budget(&reason);
                     return Ok(());
                 }
                 Outcome::Failed(e) if e.class == ErrorClass::SessionLost && !restarted => {
@@ -169,7 +165,7 @@ impl EngineRun {
                         },
                     );
                     self.p.sink.emit(RunEvent::Error(e.message.clone()));
-                    self.finish(SessionStatus::Idle).await;
+                    self.settle(SessionStatus::Idle);
                     return Err(ParziError::Provider(self.p.provider_id.clone(), e.message));
                 }
             }
@@ -208,7 +204,7 @@ impl EngineRun {
             text = input.clone();
         }
         if !released {
-            self.finish(SessionStatus::Done).await;
+            self.settle(SessionStatus::Done);
         }
         tracing::info!(session = %sid, turns, "run done");
         self.p.sink.emit(RunEvent::Done { turns });
@@ -327,7 +323,6 @@ impl EngineRun {
     async fn turn(&self, text: &str) -> Outcome {
         let registration = self.p.mcp.as_ref().map(|m| m.register(self.p.host.clone()));
         let spec = TurnSpec {
-            session_id: self.p.session_id.clone(),
             cwd: PathBuf::from(&self.p.cwd),
             model: self.p.model.clone(),
             effort: self.p.effort.clone(),
@@ -348,7 +343,7 @@ impl EngineRun {
         let mut turn = Turn::default();
         let mut paused: Option<String> = None;
         while let Some(ev) = rx.recv().await {
-            if let Some(reason) = self.on_event(ev, &mut turn).await {
+            if let Some(reason) = self.on_event(ev, &mut turn) {
                 if paused.is_none() {
                     paused = Some(reason);
                     turn_cancel.cancel();
@@ -397,7 +392,7 @@ impl EngineRun {
         }
     }
 
-    async fn on_event(&self, ev: ProviderEvent, turn: &mut Turn) -> Option<String> {
+    fn on_event(&self, ev: ProviderEvent, turn: &mut Turn) -> Option<String> {
         let sid = &self.p.session_id;
         match ev {
             ProviderEvent::Session { resume } => {
@@ -518,7 +513,7 @@ impl EngineRun {
         self.p.budget.exceeded(tokens, cost)
     }
 
-    async fn pause_for_budget(&self, reason: &str) {
+    fn pause_for_budget(&self, reason: &str) {
         let text = format!(
             "Paused: {reason}. Raise the budget in Settings or PROJECT.md, or re-scope, \
              then send the thread on."
@@ -532,11 +527,7 @@ impl EngineRun {
             Some(crate::orchestrator::BUDGET_NOTE),
         );
         self.p.sink.emit(RunEvent::Notice { text });
-        self.finish(SessionStatus::Idle).await;
-    }
-
-    async fn finish(&self, status: SessionStatus) {
-        self.settle(status);
+        self.settle(SessionStatus::Idle);
     }
 
     fn settle(&self, status: SessionStatus) {

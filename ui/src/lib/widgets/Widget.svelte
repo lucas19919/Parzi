@@ -282,7 +282,7 @@
   {#if bad}
     <div class="w-error">Couldn't render widget type "{type}" — showing source.</div>
     <pre class="w-source">{JSON.stringify(d, null, 2)?.slice(0, 3000)}</pre>
-  {:else if type === "stat" || type === undefined}
+  {:else if type === "stat"}
     <div class="stat-big">{text || value}</div>
     {#if d.sub}<div class="w-sub">{d.sub}</div>{/if}
   {:else if type === "progress"}
@@ -397,7 +397,7 @@
   .w-empty { padding: 8px 0; font-size: 11px; font-style: italic; color: var(--muted); }
   .w-md { padding: 6px 0; font-size: 13px; }
   .w-list { margin: 4px 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; }
-  .stat-big { padding: 8px 0; font-size: 22px; font-weight: 700; color: var(--text); }
+  .stat-big { padding: 8px 0; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; color: var(--text); }
   .progress-track { margin: 8px 0 4px; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
   .progress-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 300ms ease; }
   .table-wrap { overflow-x: auto; margin: 8px 0 0; border-radius: 8px; border: 1px solid var(--line); }

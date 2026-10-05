@@ -9,9 +9,7 @@ use parzi_core::store::Event;
 use parzi_providers::TurnEnd;
 use parzi_runtime::inter::{InterKind, InterSessionMessage};
 use parzi_runtime::mcp::McpManager;
-use parzi_runtime::tools::{
-    is_session_tool, session_defs, Approval, Approver, ToolCallInfo, ToolExecutor,
-};
+use parzi_runtime::tools::{is_session_tool, Approval, Approver, ToolCallInfo, ToolExecutor};
 use serde_json::{json, Value};
 
 struct Allow;
@@ -64,15 +62,13 @@ fn id_of(json: &str) -> String {
 }
 
 #[test]
-fn session_tools_advertised_and_recognized() {
-    let names: Vec<String> = session_defs().into_iter().map(|d| d.name).collect();
+fn session_tools_recognized_but_not_advertised() {
     for t in [
         "session.spawn",
         "session.send_message",
         "session.read_session",
         "session.list_sessions",
     ] {
-        assert!(names.contains(&t.to_string()), "missing def {t}");
         assert!(is_session_tool(t));
     }
     assert!(!is_session_tool("fs.read"));

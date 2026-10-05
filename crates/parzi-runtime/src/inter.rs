@@ -1,7 +1,7 @@
 use parzi_core::error::Result;
 use parzi_core::store::{Event, SessionMeta, SessionStore};
 
-pub use parzi_core::context::{InterKind, InterSessionMessage, INTER_TAG};
+pub use parzi_core::context::{InterKind, InterSessionMessage};
 
 #[must_use]
 pub fn from_caller(
@@ -32,11 +32,6 @@ pub fn inbox(store: &SessionStore, session_id: &str) -> Result<Vec<InterSessionM
         .collect())
 }
 
-#[must_use]
-pub fn is_inter(event_text: &str) -> bool {
-    event_text.starts_with(INTER_TAG)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -53,8 +48,6 @@ mod tests {
         assert_eq!(decoded.from_lane, "api");
         assert_eq!(decoded.kind, InterKind::LeaseRequest);
         assert_eq!(decoded.body, "src/routes.rs");
-        assert!(is_inter(&m.encode()));
-        assert!(!is_inter("plain system note"));
         assert!(InterSessionMessage::decode("plain system note").is_none());
     }
 

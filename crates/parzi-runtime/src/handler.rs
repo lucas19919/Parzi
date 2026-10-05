@@ -4,7 +4,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::tools::ToolCallInfo;
 
-pub type RunEventBus = broadcast::Sender<(String, RunEvent)>;
+pub(crate) type RunEventBus = broadcast::Sender<(String, RunEvent)>;
 
 #[derive(Debug, Clone)]
 pub enum RunEvent {
@@ -102,7 +102,10 @@ pub trait HarnessBridge: Send + Sync {
     async fn list_sessions(&self, caller_id: &str, only_subsessions: bool) -> Result<String>;
 }
 
-pub fn user_event_text(prompt: &str, attachments: &[parzi_core::context::AttachedFile]) -> String {
+pub(crate) fn user_event_text(
+    prompt: &str,
+    attachments: &[parzi_core::context::AttachedFile],
+) -> String {
     let mut text = prompt.to_string();
     if !attachments.is_empty() {
         let names: Vec<&str> = attachments.iter().map(|a| a.path.as_str()).collect();
@@ -128,8 +131,8 @@ pub fn system_parts(lane: &str, cwd: &str) -> Vec<String> {
     } else {
         format!("{PARZI_BRIEF} Lane: {lane}.")
     }];
-    for inst in parzi_core::system::for_chat() {
-        parts.push(format!("# Global instructions\n\n{}", inst.text));
+    if let Some(text) = parzi_core::system::global() {
+        parts.push(format!("# Global instructions\n\n{text}"));
     }
     if let Some(ctx) = parzi_core::brain::context_for(std::path::Path::new(cwd.trim())) {
         parts.push(ctx.text);

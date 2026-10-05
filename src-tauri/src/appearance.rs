@@ -18,10 +18,8 @@ pub async fn save_theme(theme: Theme) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn reset_theme() -> Result<String, String> {
-    let theme = Theme::default();
-    theme.save().map_err(|e| e.to_string())?;
-    get_theme_css().await
+pub async fn reset_theme() -> Result<(), String> {
+    Theme::default().save().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -178,23 +176,14 @@ pub async fn save_background_data(name: String, base64_data: String) -> Result<S
 }
 
 #[tauri::command]
-pub async fn palette_from_background(
-    name: Option<String>,
-) -> Result<parzi_core::theme::Palette, String> {
-    let path = match name {
-        Some(n) if !n.is_empty() => parzi_core::paths::backgrounds_dir()
-            .map_err(|e| e.to_string())?
-            .join(n),
-        _ => {
-            let theme = Theme::load().map_err(|e| e.to_string())?;
-            if theme.background.image.is_empty() {
-                return Err("no wallpaper set".into());
-            }
-            parzi_core::paths::parzi_dir()
-                .map_err(|e| e.to_string())?
-                .join(&theme.background.image)
-        }
-    };
+pub async fn palette_from_background() -> Result<parzi_core::theme::Palette, String> {
+    let theme = Theme::load().map_err(|e| e.to_string())?;
+    if theme.background.image.is_empty() {
+        return Err("no wallpaper set".into());
+    }
+    let path = parzi_core::paths::parzi_dir()
+        .map_err(|e| e.to_string())?
+        .join(&theme.background.image);
     let path = checked_background(path).ok_or("bad background name")?;
     tauri::async_runtime::spawn_blocking(move || {
         parzi_core::theme::extract_palette(&path).map_err(|e| e.to_string())

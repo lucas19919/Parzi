@@ -11,8 +11,6 @@ const send = (o) => process.stdout.write(JSON.stringify(o) + '\n');
 readline.createInterface({ input: process.stdin }).on('line', (line) => {
   let m; try { m = JSON.parse(line); } catch (e) { return; }
   if (m.method === 'initialize') {
-    // A notification before the answer: a one-line-per-request reader eats it
-    // and treats it as the response (R-3).
     send({ jsonrpc: '2.0', method: 'notifications/progress', params: {} });
     send({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: '2024-11-05', capabilities: {},
       serverInfo: { name: 'fake', version: '1' } } });

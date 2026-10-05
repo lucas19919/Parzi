@@ -9,8 +9,6 @@ workspace = true
 
 [dependencies]
 parzi-core = { path = "../parzi-core" }
-# `process` + `io-util`: every provider is a vendor program Parzi drives over
-# its stdio.
 tokio = { version = "1", features = ["rt", "macros", "sync", "time", "net", "process", "io-util", "fs"] }
 tokio-util = "0.7"
 serde = { version = "1", features = ["derive"] }
@@ -21,6 +19,4 @@ uuid = { version = "1", features = ["v4"] }
 base64 = "=0.22.1"
 
 [dev-dependencies]
-async-trait = "0.1"
-tokio-util = "0.7"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "io-util"] }

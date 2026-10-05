@@ -155,7 +155,6 @@ kbd {
   position: relative; margin: 0.8em 0; background: var(--bg);
   border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
 }
-.codeblock .hljs { background: transparent; }
 .hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-template-tag { color: var(--accent); }
 .hljs-string, .hljs-regexp, .hljs-meta .hljs-string { color: var(--ok); }
 .hljs-number, .hljs-literal { color: var(--warn); }
@@ -163,7 +162,7 @@ kbd {
 .hljs-comment, .hljs-quote { color: var(--faint); font-style: italic; }
 .hljs-variable, .hljs-template-variable, .hljs-attr, .hljs-attribute,
 .hljs-name, .hljs-selector-id, .hljs-selector-class { color: var(--accent); }
-.hljs-type, .hljs-built_in, .hljs-builtin-name { color: var(--warn); }
+.hljs-type, .hljs-built_in { color: var(--warn); }
 .hljs-symbol, .hljs-bullet, .hljs-link { color: var(--accent); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
@@ -211,12 +210,3 @@ kbd {
 .msg li::marker { color: var(--muted); }
 .msg hr { border: none; border-top: 1px solid var(--line); margin: 1em 0; }
 .msg img { max-width: 100%; border-radius: 8px; }
-
-.widget {
-  border: 1px solid var(--line); border-top-color: var(--line);
-  border-radius: var(--radius-lg); padding: 12px; background: var(--panel);
-}
-.widget h4 { margin: 0 0 8px; font-size: 13px; color: var(--muted); font-weight: 500; }
-.progress-track { height: 8px; border-radius: 999px; background: var(--line); overflow: hidden; }
-.progress-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width 400ms ease; }
-.stat-big { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; }

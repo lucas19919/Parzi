@@ -1,4 +1,4 @@
-export type TabKind = "session" | "page" | "brain" | "history";
+type TabKind = "session" | "page" | "brain" | "history";
 
 export interface Tab {
   id: string;
@@ -16,7 +16,7 @@ export interface Tab {
 
 let seq = 0;
 
-export function tabId(): string {
+function tabId(): string {
   seq += 1;
   return `tab-${Date.now().toString(36)}-${seq}`;
 }

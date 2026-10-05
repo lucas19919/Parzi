@@ -200,14 +200,10 @@ impl Default for ParziConfig {
             lanes: LaneDefaults {
                 default_mode: default_mode(),
                 default_allowed_tools: vec![],
-                max_steps: 32,
+                max_steps: default_max_steps(),
             },
             mcp: McpConfig::default(),
-            orchestrator: OrchLimits {
-                max_concurrent: 4,
-                mcp_idle_kill_secs: 60,
-                queue_when_busy: true,
-            },
+            orchestrator: OrchLimits::default(),
             routing: RoutingConfig::default(),
             budget: Budget::default(),
             favorite_models: vec![],
@@ -255,7 +251,7 @@ impl ParziConfig {
         Ok(())
     }
 
-    pub fn migrate(&mut self) {
+    fn migrate(&mut self) {
         let alias = |id: &str| -> Option<&'static str> {
             match id {
                 "claude" | "claude-code" | "anthropic" => Some("claude"),
@@ -322,7 +318,7 @@ default_model = "llama3.1"
 [routing]
 auto_failover = true
 keys_in_auto = false
-auto_order = ["antigravity", "codex", "claude-code", "t3", "opencode"]
+auto_order = ["antigravity", "codex", "claude-code", "ollama", "opencode"]
 "#;
         let mut cfg: ParziConfig = toml::from_str(toml_text).unwrap();
         cfg.check_version().unwrap();

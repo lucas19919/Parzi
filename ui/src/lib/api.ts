@@ -32,15 +32,15 @@ export type ChatEvent =
   | { kind: "error"; message: string; class: string }
   | { kind: "checkpoint"; summary: string };
 
-export type ProviderState = "ready" | "signed_out" | "not_installed" | "disabled" | "error" | "unchecked";
+type ProviderState = "ready" | "signed_out" | "not_installed" | "disabled" | "error" | "unchecked";
 
-export interface UsageWindow {
+interface UsageWindow {
   label: string;
   used_percent: number;
   resets_at?: number;
 }
 
-export interface ProviderModel {
+interface ProviderModel {
   id: string;
   name: string;
   is_default: boolean;
@@ -73,7 +73,6 @@ export type UiEvent =
   | { kind: "tool_call"; session: string; id: string; name: string; label: string }
   | { kind: "tool_result"; session: string; id: string; name: string; ok: boolean; ms: number }
   | { kind: "notice"; session: string; text: string }
-  | { kind: "usage"; session: string; tokens_in: number; tokens_out: number; cost_usd: number }
   | { kind: "context"; session: string; used: number; limit: number }
   | { kind: "approval"; key: string; session: string; call: ApprovalCall }
   | { kind: "done"; session: string; turns: number }
@@ -109,7 +108,7 @@ export interface Theme {
   glass: { opacity: number; radius: number; blur_px: number; shadow: boolean };
 }
 
-export interface Palette {
+interface Palette {
   accent: string;
   average: string;
   deep: string;
@@ -127,7 +126,7 @@ export interface PackInfo {
   has_art: boolean;
 }
 
-export interface SendArgs {
+interface SendArgs {
   sessionId?: string | null;
   model: string;
   prompt: string;
@@ -143,12 +142,10 @@ export const api = {
   openConfirmedUrl: (url: string) => invoke<void>("open_confirmed_url", { url }),
 
   listThreads: () => invoke<SessionMeta[]>("list_threads"),
-  getThread: (id: string) => invoke<[SessionMeta, ChatEvent[], string]>("get_thread", { id }),
+  getThread: (id: string) => invoke<[SessionMeta, ChatEvent[]]>("get_thread", { id }),
   sendMessage: (a: SendArgs) =>
     invoke<string>("send_message", {
       sessionId: a.sessionId ?? null,
-      project: "default",
-      lane: "",
       model: a.model,
       prompt: a.prompt,
       cwd: a.cwd,
@@ -158,8 +155,8 @@ export const api = {
     }),
   renameThread: (id: string, title: string) => invoke<void>("rename_thread", { id, title }),
   deleteThread: (id: string) => invoke<number>("delete_thread", { id }),
-  forkThread: (id: string) => invoke<SessionMeta>("fork_thread", { id, at: null }),
-  compactThread: (id: string) => invoke<string>("compact_thread", { id, focus: null }),
+  forkThread: (id: string) => invoke<SessionMeta>("fork_thread", { id }),
+  compactThread: (id: string) => invoke<string>("compact_thread", { id }),
   killRun: (id: string) => invoke<void>("kill_run", { id }),
   approveTool: (key: string, session: string, allow: boolean) =>
     invoke<void>("approve_tool", { key, session, allow }),
@@ -196,7 +193,7 @@ export const api = {
   saveBackgroundData: (name: string, base64Data: string) =>
     invoke<string>("save_background_data", { name, base64Data }),
   deleteBackground: (name: string) => invoke<string>("delete_background", { name }),
-  paletteFromBackground: (name?: string) => invoke<Palette>("palette_from_background", { name: name ?? null }),
+  paletteFromBackground: () => invoke<Palette>("palette_from_background"),
 
   browserShow: (tab: string, rect: { x: number; y: number; width: number; height: number }, url: string) =>
     invoke<void>("browser_show", { tab, ...rect, url }),
@@ -225,12 +222,6 @@ export interface NoteMeta {
   summary: string;
 }
 
-export interface SearchHit {
-  path: string;
-  title: string;
-  snippet: string;
-}
-
 export interface Project {
   slug: string;
   title: string;
@@ -239,7 +230,7 @@ export interface Project {
   notes: string[];
 }
 
-export interface BrainContext {
+interface BrainContext {
   project: Project | null;
   text: string;
   attached: string[];
@@ -252,7 +243,7 @@ export const EVERYWHERE = "all";
 
 export type ObsidianState = "missing" | "unregistered" | "ready";
 
-export interface BrowserSource {
+interface BrowserSource {
   id: string;
   name: string;
   profile: string;
@@ -260,7 +251,7 @@ export interface BrowserSource {
   history: boolean;
 }
 
-export interface NoteCandidate {
+interface NoteCandidate {
   source: string;
   title: string;
   kind: "instructions" | "memory" | "skill";
@@ -268,14 +259,14 @@ export interface NoteCandidate {
   bytes: number;
 }
 
-export interface ToolSource {
+interface ToolSource {
   id: string;
   name: string;
   found: boolean;
   notes: NoteCandidate[];
 }
 
-export interface FolderCandidate {
+interface FolderCandidate {
   path: string;
   name: string;
   sources: string[];
@@ -289,12 +280,12 @@ export interface Scan {
   folders: FolderCandidate[];
 }
 
-export interface BrowserData {
+interface BrowserData {
   bookmarks: { title: string; url: string; folder: string }[];
   history: { url: string; title: string; visits: number; last_visit: number }[];
 }
 
-export interface ImportReport {
+interface ImportReport {
   notes: number;
   projects: number;
   skipped: string[];
@@ -306,10 +297,8 @@ export const brain = {
   read: (path: string) => invoke<string>("brain_read", { path }),
   write: (path: string, content: string) => invoke<NoteMeta>("brain_write", { path, content }),
   remove: (path: string) => invoke<void>("brain_delete", { path }),
-  search: (query: string) => invoke<SearchHit[]>("brain_search", { query }),
   projects: () => invoke<Project[]>("brain_projects"),
-  upsertProject: (title: string, folder: string, slug?: string) =>
-    invoke<Project>("brain_project_upsert", { slug: slug ?? null, title, folder }),
+  upsertProject: (title: string, folder: string) => invoke<Project>("brain_project_upsert", { title, folder }),
   map: (note: string, project: string, on: boolean) => invoke<NoteMeta>("brain_map", { note, project, on }),
   context: (cwd: string) => invoke<BrainContext | null>("brain_context", { cwd }),
   pin: (path: string, on: boolean) => invoke<NoteMeta>("brain_pin", { path, on }),
@@ -321,7 +310,8 @@ export const onboard = {
   scan: () => invoke<Scan>("onboard_scan"),
   browser: (id: string, profile: string) => invoke<BrowserData>("onboard_browser", { id, profile }),
   importTools: (notes: string[], folders: string[]) => invoke<ImportReport>("onboard_import", { notes, folders }),
-  login: (provider: string) => invoke<void>("agent_login", { provider }),
+  install: (provider: string) => invoke<void>("agent_install", { provider }),
+  login: (provider: string) => invoke<boolean>("agent_login", { provider }),
 };
 
 export interface PageEvent {
@@ -338,7 +328,6 @@ export interface PageEvent {
 
 export interface AdblockState {
   enabled: boolean;
-  ready: boolean;
   allowed: boolean;
   host: string;
 }
@@ -390,7 +379,7 @@ export function onBrowser(cb: (page: PageEvent) => void) {
   return listen<PageEvent>("parzi://browser", (ev) => cb(ev.payload));
 }
 
-export interface DeskTab {
+interface DeskTab {
   id: string;
   kind: "harness" | "browser" | "brain" | "history";
   title: string;
@@ -398,7 +387,7 @@ export interface DeskTab {
   session_id: string;
 }
 
-export interface DeskCmd {
+interface DeskCmd {
   op: "open" | "focus" | "close";
   id?: string;
   url?: string;

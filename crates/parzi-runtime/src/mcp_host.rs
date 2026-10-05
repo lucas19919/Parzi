@@ -15,7 +15,7 @@ use tokio::net::TcpListener;
 use crate::toolhost::ToolHost;
 use crate::tools::{from_mcp, to_mcp};
 
-pub const SERVER_NAME: &str = "parzi";
+const SERVER_NAME: &str = "parzi";
 const PROTOCOLS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_BODY: usize = 8 * 1024 * 1024;
 
@@ -196,7 +196,7 @@ async fn dispatch(msg: &Value, host: &ToolHost) -> Option<Value> {
             json!({
                 "protocolVersion": version,
                 "capabilities": {"tools": {"listChanged": false}},
-                "serverInfo": {"name": SERVER_NAME, "title": "Parzi", "version": crate::version()},
+                "serverInfo": {"name": SERVER_NAME, "title": "Parzi", "version": env!("CARGO_PKG_VERSION")},
                 "instructions": "Parzi's own tools: widgets and artifacts in the thread, teamwork across sessions, plans, knowledge and leases.",
             })
         }

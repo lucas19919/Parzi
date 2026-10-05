@@ -5,7 +5,7 @@ const GENERIC_FAMILIES = new Set([
   "ui-sans-serif", "ui-serif", "ui-rounded", "cursive", "fantasy", "inherit",
 ]);
 
-export function cssFontList(s: string): string {
+function cssFontList(s: string): string {
   const parts = s
     .split(",")
     .map((p) => p.trim().replace(/^["']|["']$/g, "").trim())
@@ -47,7 +47,7 @@ export function resolveColor(token: string, fallback: string): string {
   }
 }
 
-export function themeVars(t: Theme): Record<string, string> {
+function themeVars(t: Theme): Record<string, string> {
   return {
     "--font": cssFontList(t.font.family),
     "--font-size": `${t.font.size}px`,
@@ -70,7 +70,7 @@ export function previewTheme(t: Theme) {
 
 const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--bg-dim", "--vignette", "--bg-blur"];
 
-export function clearPreview() {
+function clearPreview() {
   const s = document.documentElement.style;
   for (const n of THEME_VARS) s.removeProperty(n);
 }
@@ -82,10 +82,6 @@ export function applyThemeCss(css: string) {
   style.textContent = css;
   document.head.appendChild(style);
   clearPreview();
-}
-
-export async function refreshTheme() {
-  applyThemeCss(await api.getThemeCss());
 }
 
 export async function refreshBackground() {

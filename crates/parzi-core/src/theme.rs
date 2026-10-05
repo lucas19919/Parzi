@@ -258,7 +258,7 @@ const GENERIC_FAMILIES: &[&str] = &[
     "inherit",
 ];
 
-pub fn css_font_list(s: &str) -> String {
+fn css_font_list(s: &str) -> String {
     let parts: Vec<String> = s
         .split(',')
         .map(|p| p.trim().trim_matches('"').trim_matches('\'').trim())
@@ -287,7 +287,7 @@ pub fn read_user_css() -> Result<String> {
     }
 }
 
-pub const BUILTIN_PACKS: &[&str] = &["ember", "midnight", "grey", "light"];
+const BUILTIN_PACKS: &[&str] = &["ember", "midnight", "grey", "light"];
 
 pub fn themes_dir() -> Result<std::path::PathBuf> {
     Ok(paths::parzi_dir()?.join("themes"))
@@ -306,7 +306,7 @@ fn check_pack_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn list_packs() -> Result<Vec<String>> {
+fn list_packs() -> Result<Vec<String>> {
     let root = themes_dir()?;
     let mut out = vec![];
     if let Ok(entries) = std::fs::read_dir(&root) {

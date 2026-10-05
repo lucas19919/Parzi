@@ -61,7 +61,6 @@ async fn one_turn(
     let cfg = ParziConfig::default();
     let p = parzi_providers::provider(id, &cfg).unwrap();
     let spec = TurnSpec {
-        session_id: "live".into(),
         cwd,
         model: model.map(str::to_string),
         effort: None,

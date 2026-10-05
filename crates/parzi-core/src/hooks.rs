@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths;
 
-pub const HOOK_TIMEOUT_DEFAULT: u64 = 5;
-pub const HOOK_MAX_ENTRIES: usize = 16;
+const HOOK_TIMEOUT_DEFAULT: u64 = 5;
+const HOOK_MAX_ENTRIES: usize = 16;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookDef {
@@ -14,7 +14,7 @@ pub struct HookDef {
     #[serde(default)]
     pub command: String,
     #[serde(default)]
-    pub timeout_secs: u64,
+    timeout_secs: u64,
 }
 
 impl HookDef {

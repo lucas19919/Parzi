@@ -35,7 +35,7 @@ FunctionEnd
 
 ; --- Welcome ---
 !define MUI_WELCOMEPAGE_TITLE "Welcome to Parzi"
-!define MUI_WELCOMEPAGE_TEXT "Parzi is a lean agent harness: Claude, Codex, Antigravity, OpenCode and Grok through one elegant window.$\r$\n$\r$\nThis installs Parzi for your user account only, no admin needed. Your threads and settings live in your user folder and are never touched by updates."
+!define MUI_WELCOMEPAGE_TEXT "Parzi is a lean agent harness: Claude, Codex, OpenCode, Grok, Antigravity and Cursor through one window.$\r$\n$\r$\nThis installs Parzi for your user account only, no admin needed. Your threads and settings live in your user folder and are never touched by updates."
 
 ; --- License (MIT, from bundle.licenseFile) ---
 !define MUI_LICENSEPAGE_TEXT_TOP "Parzi is MIT-licensed. Short version: do what you want, keep the notice."

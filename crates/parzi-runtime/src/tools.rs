@@ -45,7 +45,7 @@ pub trait Approver: Send + Sync {
 }
 
 pub struct AutoApprover;
-pub struct DenyApprover;
+pub(crate) struct DenyApprover;
 
 #[async_trait::async_trait]
 impl Approver for AutoApprover {
@@ -74,7 +74,7 @@ impl ToolExecutor {
         })
     }
 
-    pub fn approval_override(&self, name: &str) -> Option<ApprovalMode> {
+    pub(crate) fn approval_override(&self, name: &str) -> Option<ApprovalMode> {
         if is_vendor_category(name)
             || is_ui_tool(name)
             || is_brain_tool(name)
@@ -93,10 +93,7 @@ impl ToolExecutor {
     }
 
     pub fn defs(&self) -> Vec<ToolDef> {
-        let mut d: Vec<ToolDef> = ui_defs()
-            .into_iter()
-            .filter(|t| t.name != "ui.show_widget")
-            .collect();
+        let mut d = ui_defs();
         d.extend(browser_defs());
         d.extend(brain_defs());
         d
@@ -138,11 +135,11 @@ impl ToolExecutor {
     }
 }
 
-pub fn is_vendor_category(name: &str) -> bool {
+pub(crate) fn is_vendor_category(name: &str) -> bool {
     matches!(name, "fs.read" | "fs.write" | "fs.list" | "shell.exec")
 }
 
-pub fn ui_defs() -> Vec<ToolDef> {
+fn ui_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "ui.show_markdown".into(),
@@ -151,27 +148,6 @@ pub fn ui_defs() -> Vec<ToolDef> {
                 "type": "object",
                 "properties": {"markdown": {"type": "string"}},
                 "required": ["markdown"],
-            }),
-        },
-        ToolDef {
-            name: "ui.show_widget".into(),
-            description: "Render a rich widget card (table, chart, kanban, progress, stat, list, markdown). Prefer this over ASCII tables/boxes. Types: stat{title,text,sub} progress{title,value 0..1} list{title,items[]} table{title,columns[],rows[][]} chart-line/chart-bar{title,points[number[]] | series[{name,points[]}], labels?, xlabel?, ylabel?} kanban{columns[{title,cards[]}]} markdown{title,text}. Example: {\"widget\":1,\"type\":\"table\",\"title\":\"Endpoints\",\"columns\":[\"Route\",\"Method\"],\"rows\":[[\"/api\",\"GET\"]]}.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "widget": {"type": "number", "const": 1},
-                    "type": {"type": "string", "enum": ["stat","progress","list","table","chart-line","chart-bar","kanban","markdown"]},
-                    "title": {"type": "string"},
-                    "text": {"type": "string"},
-                    "sub": {"type": "string"},
-                    "value": {"type": "number"},
-                    "items": {"type": "array", "items": {}},
-                    "columns": {"type": "array", "items": {}},
-                    "rows": {"type": "array", "items": {"type": "array", "items": {}}},
-                    "points": {"type": "array", "items": {"type": "number"}},
-                    "payload": {"type": "object"},
-                },
-                "required": ["widget", "type"],
             }),
         },
         ToolDef {
@@ -193,14 +169,14 @@ pub fn ui_defs() -> Vec<ToolDef> {
     ]
 }
 
-pub fn is_ui_tool(name: &str) -> bool {
+pub(crate) fn is_ui_tool(name: &str) -> bool {
     matches!(
         name,
         "ui.show_markdown" | "ui.show_widget" | "ui.show_artifact"
     )
 }
 
-pub fn browser_defs() -> Vec<ToolDef> {
+fn browser_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "browser.open".into(),
@@ -230,7 +206,7 @@ pub fn browser_defs() -> Vec<ToolDef> {
     ]
 }
 
-pub fn is_browser_tool(name: &str) -> bool {
+pub(crate) fn is_browser_tool(name: &str) -> bool {
     matches!(name, "browser.open" | "browser.tabs" | "browser.read")
 }
 
@@ -284,81 +260,7 @@ pub fn is_brain_tool(name: &str) -> bool {
     )
 }
 
-pub fn session_defs() -> Vec<ToolDef> {
-    vec![
-        ToolDef {
-            name: "session.spawn".into(),
-            description: "Spawn a child subsession (is_subsession=true, nested under this session) or a full independent top-level session (is_subsession=false). wait=true blocks for the child's reply; wait=false returns immediately with the new session id for background teamwork.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "prompt": {"type": "string"},
-                    "is_subsession": {"type": "boolean"},
-                    "model": {"type": "string"},
-                    "lane": {"type": "string"},
-                    "wait": {"type": "boolean"},
-                },
-                "required": ["title", "prompt"],
-            }),
-        },
-        ToolDef {
-            name: "session.send_message".into(),
-            description: "Send a message to another session in this project (child, parent, or peer) and optionally wait for its reply. It arrives as typed, untrusted data from your run — not as a user turn — so say what you want done, plainly.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "session_id": {"type": "string"},
-                    "message": {"type": "string"},
-                    "kind": {
-                        "type": "string",
-                        "enum": ["text", "lease_request", "lease_answer", "convene"],
-                    },
-                    "wait": {"type": "boolean"},
-                },
-                "required": ["session_id", "message"],
-            }),
-        },
-        ToolDef {
-            name: "session.read_session".into(),
-            description: "Inspect another session's title, status, and recent transcript tail without switching to it.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "session_id": {"type": "string"},
-                    "tail_events": {"type": "number"},
-                },
-                "required": ["session_id"],
-            }),
-        },
-        ToolDef {
-            name: "session.list_sessions".into(),
-            description: "List sessions and their status. only_subsessions=true restricts to this session's child subsessions.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "only_subsessions": {"type": "boolean"},
-                },
-            }),
-        },
-        ToolDef {
-            name: "lane.dispatch".into(),
-            description: "Orchestrator-only: spawn a lane worker subsession with the project's implementation role settings (model/effort/system prompt).".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "prompt": {"type": "string"},
-                    "lane": {"type": "string"},
-                    "wait": {"type": "boolean"},
-                },
-                "required": ["title", "prompt"],
-            }),
-        },
-    ]
-}
-
-pub fn is_lane_tool(name: &str) -> bool {
+pub(crate) fn is_lane_tool(name: &str) -> bool {
     matches!(name, "lane.dispatch")
 }
 
@@ -369,7 +271,7 @@ pub fn is_session_tool(name: &str) -> bool {
     )
 }
 
-pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
+pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
     let str_arg = |k: &str| {
         args.get(k)
             .and_then(|v| v.as_str())
@@ -396,7 +298,7 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         return humanize_tool_call(&parzi, args);
     }
     match name {
-        "Bash" | "shell" => format!("Running `{}`", one_line(&command(), 60)),
+        "Bash" | "shell" | "shell.exec" => format!("Running `{}`", one_line(&command(), 60)),
         "Read" => format!(
             "Reading {}",
             str_arg("file_path").unwrap_or_else(|| "a file".into())
@@ -450,7 +352,6 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         },
         "fs.read" => format!("Reading {}", str_arg("path").unwrap_or_else(|| "?".into())),
         "fs.write" => format!("Writing {}", str_arg("path").unwrap_or_else(|| "?".into())),
-        "shell.exec" => format!("Running `{}`", one_line(&command(), 60)),
         "session.spawn" => format!(
             "Delegating: {}",
             one_line(&str_arg("title").unwrap_or_else(|| "subsession".into()), 60)
@@ -518,7 +419,7 @@ pub fn to_mcp(name: &str) -> String {
     name.replace('.', "_")
 }
 
-pub fn from_mcp(tool: &str) -> String {
+pub(crate) fn from_mcp(tool: &str) -> String {
     for ns in NAMESPACES {
         if let Some(rest) = tool.strip_prefix(ns).and_then(|r| r.strip_prefix('_')) {
             return format!("{ns}.{rest}");

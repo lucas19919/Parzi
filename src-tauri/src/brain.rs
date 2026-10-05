@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use parzi_core::brain::{self, BrainContext, NoteMeta, Project, SearchHit, Vault};
+use parzi_core::brain::{self, BrainContext, NoteMeta, Project, Vault};
 
 async fn blocking<T, F>(f: F) -> Result<T, String>
 where
@@ -44,22 +44,13 @@ pub async fn brain_delete(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn brain_search(query: String) -> Result<Vec<SearchHit>, String> {
-    blocking(move || brain::search(&query)).await
-}
-
-#[tauri::command]
 pub async fn brain_projects() -> Result<Vec<Project>, String> {
     blocking(brain::projects).await
 }
 
 #[tauri::command]
-pub async fn brain_project_upsert(
-    slug: Option<String>,
-    title: String,
-    folder: String,
-) -> Result<Project, String> {
-    blocking(move || brain::project_upsert(slug.as_deref(), &title, &folder)).await
+pub async fn brain_project_upsert(title: String, folder: String) -> Result<Project, String> {
+    blocking(move || brain::project_upsert(None, &title, &folder)).await
 }
 
 #[tauri::command]

@@ -1,51 +1,4 @@
-use parzi_core::context::{AttachedFile, ContextBuilder, Role};
-use parzi_core::store::Event;
 use parzi_core::theme::Theme;
-
-fn user(t: &str) -> Event {
-    Event::User { text: t.into() }
-}
-
-#[test]
-fn assembles_newest_first_under_budget() {
-    let history: Vec<Event> = (0..20)
-        .map(|i| user(&format!("message number {i}")))
-        .collect();
-    let b = ContextBuilder {
-        system_parts: vec!["sys".into()],
-        history,
-        files: vec![],
-    };
-    let ctx = b.assemble(60);
-    assert!(!ctx.messages.is_empty());
-    let texts: Vec<&str> = ctx.messages.iter().map(|m| m.content.as_str()).collect();
-    let last = texts.last().unwrap();
-    assert!(
-        last.contains("message number 19"),
-        "newest must survive: {last}"
-    );
-    assert!(ctx.estimated_tokens <= 60 + 40);
-}
-
-#[test]
-fn files_cap_and_truncate() {
-    let big = "x".repeat(100_000);
-    let b = ContextBuilder {
-        system_parts: vec![],
-        history: vec![],
-        files: vec![AttachedFile::text("a.rs".into(), big)],
-    };
-    let ctx = b.assemble(100);
-    assert!(ctx.messages.iter().any(|m| m.role == Role::System));
-}
-
-#[test]
-fn compact_keeps_tail_and_folds_head() {
-    let history: Vec<Event> = (0..30).map(|i| user(&format!("m{i}"))).collect();
-    let out = ContextBuilder::compact(&history, 20);
-    assert_eq!(out.len(), 21);
-    assert!(matches!(out[0], Event::Checkpoint { .. }));
-}
 
 #[test]
 fn widget_validation_fails_safe() {
@@ -167,7 +120,7 @@ fn session_meta_parent_id_defaults_to_none_for_legacy_files() {
 }
 
 #[test]
-fn subsession_hierarchy_lists_and_reparents() {
+fn subsession_hierarchy_lists_children() {
     use parzi_core::store::SessionStore;
     let dir = std::env::temp_dir().join(format!("parzi-test-logic-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -190,12 +143,6 @@ fn subsession_hierarchy_lists_and_reparents() {
         .unwrap()
         .iter()
         .any(|m| m.id == grand.id));
-    store.set_parent(&child.id, None).unwrap();
-    assert!(store.list_children(&parent.id).unwrap().is_empty());
-    assert!(store.set_parent(&parent.id, Some(&parent.id)).is_err());
-    assert!(store
-        .set_parent(&parent.id, Some("missing-session"))
-        .is_err());
     if let Ok(dir) = parzi_core::paths::sessions_dir() {
         for id in [&parent.id, &child.id, &grand.id] {
             let _ = std::fs::remove_dir_all(dir.join(id));

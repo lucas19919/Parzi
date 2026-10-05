@@ -1,4 +1,5 @@
 import { writable, type Writable } from "svelte/store";
+import { bare } from "./suggest";
 import type { Tab } from "./tabs";
 
 export interface Visit {
@@ -57,10 +58,6 @@ export function removeVisit(url: string) {
 
 export function clearHistory() {
   history.set([]);
-}
-
-function bare(url: string) {
-  return url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/$/, "");
 }
 
 export function completeAddress(typed: string, visits: Visit[], marks: { url: string }[]): string {
@@ -129,7 +126,7 @@ export function loadTabs(): { tabs: Tab[]; active: string } | null {
   return { tabs, active: tabs.some((t) => t.id === saved.active) ? saved.active : tabs[0].id };
 }
 
-export function siteName(url: string): string {
+function siteName(url: string): string {
   try {
     const host = new URL(url).hostname.replace(/^www\./, "");
     const parts = host.split(".");
@@ -186,7 +183,7 @@ export function importBrowser(data: {
         count: Math.max(prev?.count ?? 0, h.visits),
       });
     }
-    return [...byUrl.values()].sort((a, b) => b.at - a.at).slice(0, 2000);
+    return [...byUrl.values()].sort((a, b) => b.at - a.at).slice(0, HISTORY_MAX);
   });
   return { bookmarks: marks.length, history: data.history.length };
 }

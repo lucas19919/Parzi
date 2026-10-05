@@ -26,7 +26,7 @@ impl Check {
 }
 
 pub struct Doctor {
-    pub cfg: ParziConfig,
+    cfg: ParziConfig,
 }
 
 impl Doctor {
@@ -46,14 +46,7 @@ impl Doctor {
     }
 
     pub async fn run_quick(&self) -> Vec<Check> {
-        let mut out = vec![];
-        out.push(self.check_dirs());
-        out.push(self.check_config());
-        out.push(self.check_theme());
-        out.extend(self.check_providers().await);
-        out.extend(self.check_routing());
-        out.push(self.check_webview());
-        out
+        self.run().await
     }
 
     fn check_dirs(&self) -> Check {

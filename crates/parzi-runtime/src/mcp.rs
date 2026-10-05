@@ -16,8 +16,6 @@ const HANDSHAKE_FLOOR: Duration = Duration::from_secs(10);
 pub struct McpTool {
     pub server: String,
     pub name: String,
-    pub description: String,
-    pub schema: serde_json::Value,
 }
 
 impl McpTool {
@@ -98,7 +96,6 @@ fn tool_err(msg: String) -> ParziError {
     ParziError::Tool("mcp".into(), msg)
 }
 
-#[allow(clippy::type_complexity)]
 async fn rpc_round_trip<W, R>(
     stdin: &mut W,
     stdout: &mut R,
@@ -205,7 +202,7 @@ impl McpManager {
             .clone()
     }
 
-    pub async fn set_configs(&self, configs: HashMap<String, McpServerCfg>) {
+    pub(crate) async fn set_configs(&self, configs: HashMap<String, McpServerCfg>) {
         let dead: Vec<String> = {
             let slots = self.slots.lock().await;
             slots
@@ -245,7 +242,6 @@ impl McpManager {
             .collect())
     }
 
-    #[allow(clippy::type_complexity)]
     async fn request(
         sv: &mut LiveServer,
         method: &str,
@@ -383,7 +379,7 @@ impl McpManager {
         )
     }
 
-    pub async fn list_tools(&self, name: &str) -> Result<Vec<McpTool>> {
+    async fn list_tools(&self, name: &str) -> Result<Vec<McpTool>> {
         let slot = self.slot_for(name).await;
         let mut guard = slot.lock().await;
         self.ensure_live(&slot, &mut guard, name).await?;
@@ -414,15 +410,6 @@ impl McpManager {
                 out.push(McpTool {
                     server: name.to_string(),
                     name: t.get("name").and_then(|n| n.as_str()).unwrap_or("?").into(),
-                    description: t
-                        .get("description")
-                        .and_then(|d| d.as_str())
-                        .unwrap_or("")
-                        .into(),
-                    schema: t
-                        .get("inputSchema")
-                        .cloned()
-                        .unwrap_or(serde_json::json!({"type": "object"})),
                 });
             }
         }

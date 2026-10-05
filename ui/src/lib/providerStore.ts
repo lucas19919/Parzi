@@ -2,7 +2,7 @@ import { writable, get } from "svelte/store";
 import { api, onProviders, type ProviderStatus } from "./api";
 
 export const board = writable<ProviderStatus[]>([]);
-export const boardLoaded = writable(false);
+const boardLoaded = writable(false);
 export const checking = writable<Set<string>>(new Set());
 
 let loading: Promise<ProviderStatus[]> | null = null;

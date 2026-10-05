@@ -1,6 +1,6 @@
 import { writable } from "svelte/store";
 
-export interface Toast {
+interface Toast {
   id: number;
   text: string;
   err: boolean;

@@ -7,6 +7,9 @@ use std::process::Command;
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tauri::State;
+
+use crate::AppState;
 
 const NOTE_CAP: u64 = 256 * 1024;
 const JSON_CAP: u64 = 8 * 1024 * 1024;
@@ -28,14 +31,6 @@ const BROWSERS: [(&str, &str); 3] = [
     ("brave", "Brave"),
     ("edge", "Microsoft Edge"),
     ("chrome", "Google Chrome"),
-];
-
-const LOGINS: [(&str, &str, &[&str]); 5] = [
-    ("claude", "Claude Code", &["claude", "auth", "login"]),
-    ("codex", "Codex", &["codex", "login"]),
-    ("opencode", "OpenCode", &["opencode", "auth", "login"]),
-    ("grok", "Grok", &["grok", "login"]),
-    ("cursor", "Cursor", &["cursor-agent", "login"]),
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -140,15 +135,26 @@ pub async fn onboard_import(
 }
 
 #[tauri::command]
-pub async fn agent_login(provider: String) -> Result<(), String> {
-    if provider == "antigravity" {
-        return Err("Sign in with Google in T3 Code's Antigravity settings".into());
+pub async fn agent_install(provider: String) -> Result<(), String> {
+    let script = parzi_providers::install_script(&provider)
+        .ok_or_else(|| format!("no install is known for {provider}"))?;
+    let name = parzi_providers::display_name(&provider);
+    open_terminal(&format!("Install {name}"), &script)
+}
+
+#[tauri::command]
+pub async fn agent_login(state: State<'_, AppState>, provider: String) -> Result<bool, String> {
+    let cfg = state.orch.config();
+    match parzi_providers::login_script(&provider, &cfg) {
+        Some(script) => {
+            let name = parzi_providers::display_name(&provider);
+            open_terminal(&format!("Sign in to {name}"), &script).map(|()| false)
+        }
+        None => parzi_providers::sign_in(&provider, &cfg)
+            .await
+            .map(|()| true)
+            .map_err(|e| e.message),
     }
-    let (_, name, argv) = LOGINS
-        .iter()
-        .find(|(id, ..)| *id == provider)
-        .ok_or_else(|| format!("no sign-in is known for {provider}"))?;
-    open_terminal(name, argv)
 }
 
 async fn blocking<T: Send + 'static>(
@@ -160,28 +166,33 @@ async fn blocking<T: Send + 'static>(
 }
 
 #[cfg(windows)]
-fn open_terminal(name: &str, argv: &[&str]) -> Result<(), String> {
+fn open_terminal(title: &str, script: &str) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
-    let title = format!("Sign in to {name}");
-    Command::new("cmd.exe")
-        .args(["/c", "start", title.as_str(), "cmd.exe", "/k"])
-        .args(argv)
-        .creation_flags(0x0800_0000)
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+    let title = title.replace('\'', "''");
+    Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-NoExit",
+            "-Command",
+        ])
+        .arg(format!("$Host.UI.RawUI.WindowTitle = '{title}'; {script}"))
+        .creation_flags(CREATE_NEW_CONSOLE)
         .spawn()
         .map(drop)
         .map_err(|e| format!("could not open a terminal: {e}"))
 }
 
 #[cfg(target_os = "macos")]
-fn open_terminal(_name: &str, argv: &[&str]) -> Result<(), String> {
-    let script = format!(
-        "tell application \"Terminal\" to do script \"{}\"",
-        argv.join(" ")
-    );
+fn open_terminal(_title: &str, script: &str) -> Result<(), String> {
+    let script = script.replace('\\', "\\\\").replace('"', "\\\"");
+    let tell = format!("tell application \"Terminal\" to do script \"{script}\"");
     let mut child = Command::new("osascript")
         .args([
             "-e",
-            script.as_str(),
+            tell.as_str(),
             "-e",
             "tell application \"Terminal\" to activate",
         ])
@@ -194,8 +205,8 @@ fn open_terminal(_name: &str, argv: &[&str]) -> Result<(), String> {
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn open_terminal(_name: &str, argv: &[&str]) -> Result<(), String> {
-    Err(format!("Open a terminal and run `{}`", argv.join(" ")))
+fn open_terminal(_title: &str, script: &str) -> Result<(), String> {
+    Err(format!("Open a terminal and run: {script}"))
 }
 
 struct Env {

@@ -39,7 +39,7 @@ fn tell(app: &AppHandle, event: &str, payload: serde_json::Value) {
     let _ = app.emit_to("main", event, payload);
 }
 
-fn page_label(tab: &str) -> Result<String, String> {
+pub fn page_label(tab: &str) -> Result<String, String> {
     if tab.is_empty() {
         return Err("no tab".into());
     }

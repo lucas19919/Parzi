@@ -4,11 +4,6 @@ use crate::paths;
 
 pub const SYSTEM_CAP: usize = 8_000;
 
-pub struct ScopedSystem {
-    pub scope: String,
-    pub text: String,
-}
-
 fn read_capped(path: PathBuf) -> Option<String> {
     let raw = std::fs::read_to_string(path).ok()?;
     let text = raw.trim().to_string();
@@ -26,15 +21,4 @@ fn read_capped(path: PathBuf) -> Option<String> {
 pub fn global() -> Option<String> {
     let path = paths::parzi_dir().ok()?.join("SYSTEM.md");
     read_capped(path)
-}
-
-#[must_use]
-pub fn for_chat() -> Vec<ScopedSystem> {
-    global()
-        .into_iter()
-        .map(|text| ScopedSystem {
-            scope: "user".into(),
-            text,
-        })
-        .collect()
 }

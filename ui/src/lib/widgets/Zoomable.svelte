@@ -1,12 +1,9 @@
 <script lang="ts">
-  import { createEventDispatcher } from "svelte";
-  const dispatch = createEventDispatcher<{ change: { open: boolean } }>();
   export let enabled = false;
   let open = false;
   function set(v: boolean) {
     if (!enabled && v) return;
     open = v;
-    dispatch("change", { open });
   }
   function toggle() {
     set(!open);

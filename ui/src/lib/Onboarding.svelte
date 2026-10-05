@@ -1,10 +1,11 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
+  import { get } from "svelte/store";
   import { fade, fly } from "svelte/transition";
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
-  import { brain, onboard, type Scan } from "./api";
+  import { brain, onboard, type ProviderStatus, type Scan } from "./api";
   import { board, checking, refreshBoard } from "./providerStore";
   import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "./providerRows";
   import { importBrowser, onboarded } from "./browserData";
@@ -14,6 +15,9 @@
   const dispatch = createEventDispatcher<{ close: void; openBrain: void }>();
 
   const STEPS = ["Agents", "Browser", "Your tools", "Brain"];
+  const WATCH_EVERY = 5_000;
+  const INSTALL_WAIT = 600_000;
+  const SIGN_IN_WAIT = 180_000;
 
   let step = 0;
   let scan: Scan | null = null;
@@ -27,6 +31,8 @@
   let folderPicks = new Set<string>();
   let toolResult = "";
   let vault = "";
+  let waiting = new Map<string, string>();
+  let alive = true;
 
   $: agents = PROVIDER_ORDER.map((id) => $board.find((b) => b.provider === id)).filter((b) => !!b);
   $: browsers = scan?.browsers ?? [];
@@ -36,7 +42,10 @@
   onMount(() => {
     setOverlay("onboarding", true);
     void load();
-    return () => setOverlay("onboarding", false);
+    return () => {
+      alive = false;
+      setOverlay("onboarding", false);
+    };
   });
 
   async function load() {
@@ -60,13 +69,45 @@
     return next;
   }
 
-  async function signIn(provider: string) {
-    try {
-      await onboard.login(provider);
-    } catch (e) {
-      toastError(e);
+  const stateOf = (provider: string) => get(board).find((b) => b.provider === provider)?.state;
+
+  async function watch(provider: string, from: string | undefined, ms: number) {
+    const until = Date.now() + ms;
+    while (alive && Date.now() < until) {
+      await new Promise((r) => setTimeout(r, WATCH_EVERY));
+      const fresh = await refreshBoard([provider]).catch(() => [] as ProviderStatus[]);
+      const now = fresh.find((b) => b.provider === provider)?.state;
+      if (now && now !== from) return;
     }
   }
+
+  async function act(provider: string, note: string, work: () => Promise<number>) {
+    if (waiting.has(provider)) return;
+    const from = stateOf(provider);
+    waiting = new Map(waiting).set(provider, note);
+    try {
+      const ms = await work();
+      if (ms) await watch(provider, from, ms);
+      else await refreshBoard([provider]);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      const next = new Map(waiting);
+      next.delete(provider);
+      waiting = next;
+    }
+  }
+
+  const install = (provider: string) =>
+    act(provider, "Installing in the terminal window…", async () => {
+      await onboard.install(provider);
+      return INSTALL_WAIT;
+    });
+
+  const signIn = (provider: string) =>
+    act(provider, "Finish signing in in the window that opens…", async () =>
+      (await onboard.login(provider)) ? 0 : SIGN_IN_WAIT,
+    );
 
   async function importFromBrowser() {
     if (!browserPick) return;
@@ -125,7 +166,7 @@
     <div class="body">
       {#if step === 0}
         <h2>Your agents</h2>
-        <p class="lead">Parzi drives each agent on your own subscription. Sign in with the agent's own login; Parzi never sees your tokens.</p>
+        <p class="lead">Parzi drives each agent on your own subscription. Install and sign in right here; each agent keeps its own login, so Parzi never sees your tokens.</p>
         <div class="list">
           {#each agents as a (a.provider)}
             <div class="item">
@@ -134,10 +175,16 @@
               </span>
               <span class="grow">
                 <span class="title">{nameOf(a.provider)}</span>
-                <span class="sub" class:ok={isUsable(a)}>{a.state === "not_installed" ? a.hint || "Not installed" : stateLabel(a)}</span>
+                <span class="sub" class:ok={isUsable(a)}>{waiting.get(a.provider) ?? stateLabel(a)}</span>
               </span>
-              {#if a.state === "signed_out" || a.state === "unchecked"}
-                <button class="btn" on:click={() => signIn(a.provider)}>Sign in</button>
+              {#if a.state === "not_installed"}
+                <button class="btn" disabled={waiting.has(a.provider)} on:click={() => install(a.provider)}>
+                  {waiting.has(a.provider) ? "Installing…" : "Install"}
+                </button>
+              {:else if a.state === "signed_out" || a.state === "unchecked"}
+                <button class="btn" disabled={waiting.has(a.provider)} on:click={() => signIn(a.provider)}>
+                  {waiting.has(a.provider) ? "Waiting…" : "Sign in"}
+                </button>
               {/if}
             </div>
           {/each}

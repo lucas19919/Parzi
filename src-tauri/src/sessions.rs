@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use parzi_core::store::{Event, SessionMeta};
 use parzi_runtime::tools::{Approval, Approver};
-use tauri::{Emitter, State};
+use tauri::State;
 
-use crate::{AppState, GuiApprover, UiEvent};
+use crate::{AppState, GuiApprover};
 
 #[tauri::command]
 pub async fn list_threads(state: State<'_, AppState>) -> Result<Vec<SessionMeta>, String> {
@@ -15,17 +15,10 @@ pub async fn list_threads(state: State<'_, AppState>) -> Result<Vec<SessionMeta>
 pub async fn get_thread(
     state: State<'_, AppState>,
     id: String,
-) -> Result<(SessionMeta, Vec<Event>, String), String> {
+) -> Result<(SessionMeta, Vec<Event>), String> {
     let meta = state.orch.store().get(&id).map_err(|e| e.to_string())?;
     let events = state.orch.store().events(&id).map_err(|e| e.to_string())?;
-    let md = std::fs::read_to_string(
-        parzi_core::paths::sessions_dir()
-            .map_err(|e| e.to_string())?
-            .join(&id)
-            .join("session.md"),
-    )
-    .unwrap_or_default();
-    Ok((meta, events, md))
+    Ok((meta, events))
 }
 
 #[tauri::command]
@@ -33,14 +26,11 @@ pub async fn get_thread(
 pub async fn send_message(
     state: State<'_, AppState>,
     session_id: Option<String>,
-    project: String,
-    lane: String,
     model: String,
     prompt: String,
     cwd: String,
     effort: Option<String>,
     attachments: Option<Vec<String>>,
-    parent_id: Option<String>,
     mode: Option<String>,
 ) -> Result<String, String> {
     let effort = parzi_runtime::orchestrator::normalize_effort(effort.as_deref().unwrap_or("med"));
@@ -49,10 +39,9 @@ pub async fn send_message(
         app: state.app.clone(),
         pending: state.pending.clone(),
     });
-    let app = state.app.clone();
-    let (sid, rx) = match session_id {
+    let sid = match session_id {
         Some(id) => {
-            let rx = state
+            state
                 .orch
                 .send_to(
                     &id,
@@ -61,89 +50,33 @@ pub async fn send_message(
                     &cwd,
                     &effort,
                     attached,
-                    Some(model.clone()),
-                    mode.clone(),
+                    Some(model),
+                    mode,
                 )
                 .await
                 .map_err(|e| e.to_string())?;
-            (id, rx)
+            id
         }
         None => {
-            if let Some(pid) = parent_id.filter(|p| !p.trim().is_empty()) {
-                let pmeta = state.orch.store().get(&pid).map_err(|e| e.to_string())?;
-                let title: String = prompt
-                    .lines()
-                    .next()
-                    .unwrap_or("subsession")
-                    .chars()
-                    .take(80)
-                    .collect();
-                let lane = if lane.is_empty() {
-                    pmeta.lane.clone()
-                } else {
-                    lane
-                };
-                let model = if model.is_empty() {
-                    pmeta.model.clone()
-                } else {
-                    model
-                };
-                let cwd = if cwd.is_empty() {
-                    pmeta.cwd.clone()
-                } else {
-                    cwd
-                };
-                let meta = state
-                    .orch
-                    .store()
-                    .create_with_parent(&title, &pmeta.project, &lane, &model, Some(&pid))
-                    .map_err(|e| e.to_string())?;
-                if !cwd.is_empty() {
-                    let _ = state.orch.store().set_cwd(&meta.id, &cwd);
-                }
-                let rx = state
-                    .orch
-                    .send_to(
-                        &meta.id,
-                        &prompt,
-                        Some(approver),
-                        &cwd,
-                        &effort,
-                        attached,
-                        Some(model.clone()),
-                        mode.clone(),
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
-                let _ = app.emit(
-                    "parzi://run-event",
-                    UiEvent::SubsessionCreated {
-                        parent_id: pid,
-                        subsession: meta.clone(),
-                    },
-                );
-                (meta.id, rx)
-            } else {
-                let (meta, rx) = state
-                    .orch
-                    .spawn(
-                        &project,
-                        &lane,
-                        &model,
-                        &prompt,
-                        Some(approver),
-                        &cwd,
-                        &effort,
-                        attached,
-                        mode.clone(),
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
-                (meta.id, rx)
-            }
+            state
+                .orch
+                .spawn(
+                    "default",
+                    "",
+                    &model,
+                    &prompt,
+                    Some(approver),
+                    &cwd,
+                    &effort,
+                    attached,
+                    mode,
+                )
+                .await
+                .map_err(|e| e.to_string())?
+                .0
+                .id
         }
     };
-    drop(rx);
     Ok(sid)
 }
 
@@ -162,25 +95,13 @@ pub async fn kill_run(state: State<'_, AppState>, id: String) -> Result<(), Stri
 }
 
 #[tauri::command]
-pub async fn compact_thread(
-    state: State<'_, AppState>,
-    id: String,
-    focus: Option<String>,
-) -> Result<String, String> {
-    state
-        .orch
-        .compact(&id, focus.as_deref().unwrap_or(""))
-        .await
-        .map_err(|e| e.to_string())
+pub async fn compact_thread(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    state.orch.compact(&id, "").await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn fork_thread(
-    state: State<'_, AppState>,
-    id: String,
-    at: Option<usize>,
-) -> Result<SessionMeta, String> {
-    state.orch.fork(&id, at).await.map_err(|e| e.to_string())
+pub async fn fork_thread(state: State<'_, AppState>, id: String) -> Result<SessionMeta, String> {
+    state.orch.fork(&id, None).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]

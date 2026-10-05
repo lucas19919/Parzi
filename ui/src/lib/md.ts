@@ -49,20 +49,9 @@ hljs.registerLanguage("patch", diff);
 hljs.registerLanguage("c", c);
 hljs.registerLanguage("cpp", cpp);
 
-
 const md = new MarkdownIt({
   html: false,
   linkify: true,
-  highlight: (code, lang) => {
-    try {
-      if (lang && hljs.getLanguage(lang)) {
-        return hljs.highlight(code, { language: lang }).value;
-      }
-      return escapeHtml(code);
-    } catch {
-      return "";
-    }
-  },
 });
 
 const PLAIN_FENCES = new Set([
@@ -165,7 +154,6 @@ export const mdStats = {
 export function resetMdStats(): void {
   for (const k of Object.keys(mdStats) as (keyof typeof mdStats)[]) mdStats[k] = 0;
 }
-if (DEV) (globalThis as Record<string, unknown>).__parziMd = mdStats;
 
 const mdCache = new Map<string, string>();
 const MD_CACHE_MAX = 400;
@@ -206,7 +194,7 @@ export function renderMarkdown(src: string, cache = true): string {
   return res;
 }
 
-export type Segment =
+type Segment =
   | { kind: "md"; body: string }
   | { kind: "widget"; body: unknown }
   | { kind: "artifact"; body: any };

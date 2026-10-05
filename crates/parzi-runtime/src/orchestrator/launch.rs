@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use parzi_core::config::{Budget, ParziConfig};
+use parzi_core::config::ParziConfig;
 use parzi_core::error::{ParziError, Result};
 use parzi_core::store::{Event, SessionMeta, SessionStatus};
 use tokio::sync::mpsc;
@@ -14,10 +14,6 @@ use parzi_providers::display_name;
 
 use super::queue::{clear_queued, run_session, set_run_note, Pump, QueuedRun};
 use super::{next_run_id, normalize_effort, Handle, Orchestrator, SessionSlot};
-
-fn budget_for(cfg: &ParziConfig) -> Budget {
-    cfg.budget
-}
 
 impl Orchestrator {
     #[allow(clippy::too_many_arguments)]
@@ -191,7 +187,7 @@ impl Orchestrator {
                 None => {
                     let id = p.status.pick(cfg, &p.source).await.ok_or_else(|| {
                         ParziError::Store(
-                            "Smart Auto found no provider that is ready. Sign in to one                              (Settings → Providers) or pick one."
+                            "Smart Auto found no provider that is ready. Sign in to one (Settings → Providers) or pick one."
                                 .into(),
                         )
                     })?;
@@ -222,7 +218,7 @@ impl Orchestrator {
         Ok((provider, model))
     }
 
-    pub(super) fn lane_policy_for(cfg: &ParziConfig) -> (ApprovalMode, Vec<String>) {
+    fn lane_policy_for(cfg: &ParziConfig) -> (ApprovalMode, Vec<String>) {
         let mode = ApprovalMode::parse(&cfg.lanes.default_mode);
         let mut allowed = cfg.lanes.default_allowed_tools.clone();
         for u in [
@@ -243,7 +239,7 @@ impl Orchestrator {
         (mode, allowed)
     }
 
-    pub(super) fn restrict_mode(a: ApprovalMode, b: ApprovalMode) -> ApprovalMode {
+    fn restrict_mode(a: ApprovalMode, b: ApprovalMode) -> ApprovalMode {
         use ApprovalMode::{Ask, Auto, Deny};
         match (a, b) {
             (Deny, _) | (_, Deny) => Deny,
@@ -378,7 +374,7 @@ impl Orchestrator {
             status: p.status.clone(),
             sink,
             cancel: cancel.clone(),
-            budget: budget_for(&snap),
+            budget: snap.budget,
             prompt_recorded: q.prompt_recorded,
             slot: SessionSlot {
                 handles: p.handles.clone(),
@@ -457,7 +453,6 @@ mod tests {
 
     #[test]
     fn mode_floor_never_lifts_only_tightens() {
-        use super::Orchestrator;
         use crate::tools::ApprovalMode::{Ask, Auto, Deny};
         assert_eq!(Orchestrator::restrict_mode(Auto, Auto), Auto);
         assert_eq!(Orchestrator::restrict_mode(Auto, Ask), Ask);

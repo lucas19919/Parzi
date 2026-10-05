@@ -78,8 +78,7 @@
   });
 
   function copyDiagnostics() {
-    const all = [...(quick ?? [])];
-    navigator.clipboard.writeText(all.map((c) => `${c.ok ? "PASS" : "FAIL"} [${c.name}] ${c.detail}`).join("\n"));
+    navigator.clipboard.writeText((quick ?? []).map((c) => `${c.ok ? "PASS" : "FAIL"} [${c.name}] ${c.detail}`).join("\n"));
     notify("Diagnostics copied to clipboard");
   }
 
@@ -92,7 +91,6 @@
       notify(`Purge failed: ${e}`);
     }
   }
-
 </script>
 
 {#if err}
@@ -104,7 +102,7 @@
     <div class="skel" />
   </div>
 {:else}
-  <div class="pref-section" id="app-updates">
+  <div class="pref-section">
     <div class="section-head-with-action">
       <div>
         <h3 class="section-title">Updates</h3>
@@ -214,5 +212,4 @@
     padding: 2px 6px; border-radius: 4px; color: var(--text);
   }
   .shortcut-action { font-size: 12px; color: var(--muted); }
-  #app-updates { scroll-margin-top: 8px; }
 </style>

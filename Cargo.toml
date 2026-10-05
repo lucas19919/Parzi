@@ -5,7 +5,6 @@ members = [
     "crates/parzi-runtime",
     "crates/parzi-cli",
 ]
-# src-tauri is a detached crate (own lockfile surface); GUI deps never leak into the CLI.
 exclude = ["src-tauri"]
 resolver = "2"
 

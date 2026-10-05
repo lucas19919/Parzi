@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use parzi_core::config::ParziConfig;
-use parzi_core::store::{SessionMeta, SessionStore};
+use parzi_core::store::SessionStore;
 use parzi_runtime::handler::RunEvent;
 use parzi_runtime::tools::{Approval, Approver, ToolCallInfo};
 use parzi_runtime::Orchestrator;
@@ -64,12 +64,6 @@ pub(crate) enum UiEvent {
         session: String,
         text: String,
     },
-    Usage {
-        session: String,
-        tokens_in: u64,
-        tokens_out: u64,
-        cost_usd: f64,
-    },
     Context {
         session: String,
         used: u64,
@@ -79,10 +73,6 @@ pub(crate) enum UiEvent {
         key: String,
         session: String,
         call: ToolCallView,
-    },
-    SubsessionCreated {
-        parent_id: String,
-        subsession: SessionMeta,
     },
     Done {
         session: String,
@@ -195,7 +185,10 @@ fn window_fullscreen(window: tauri::Window, on: bool) -> Result<(), String> {
 
 fn ui_from_run(session: String, ev: RunEvent) -> Option<UiEvent> {
     Some(match ev {
-        RunEvent::Text(_) | RunEvent::Reasoning { .. } => return None,
+        RunEvent::Text(_)
+        | RunEvent::Reasoning { .. }
+        | RunEvent::Usage { .. }
+        | RunEvent::ApprovalRequest { .. } => return None,
         RunEvent::ToolCall { id, name, label } => UiEvent::ToolCall {
             session,
             id,
@@ -210,22 +203,11 @@ fn ui_from_run(session: String, ev: RunEvent) -> Option<UiEvent> {
             ms,
         },
         RunEvent::Notice { text } => UiEvent::Notice { session, text },
-        RunEvent::Usage {
-            tokens_in,
-            tokens_out,
-            cost_usd,
-        } => UiEvent::Usage {
-            session,
-            tokens_in,
-            tokens_out,
-            cost_usd,
-        },
         RunEvent::Context { used, limit } => UiEvent::Context {
             session,
             used,
             limit,
         },
-        RunEvent::ApprovalRequest { .. } => return None,
         RunEvent::Done { turns } => UiEvent::Done { session, turns },
         RunEvent::Error(error) => UiEvent::Error { session, error },
     })
@@ -492,7 +474,6 @@ fn main() {
             brain::brain_read,
             brain::brain_write,
             brain::brain_delete,
-            brain::brain_search,
             brain::brain_projects,
             brain::brain_project_upsert,
             brain::brain_map,
@@ -541,6 +522,7 @@ fn main() {
             onboard::onboard_scan,
             onboard::onboard_browser,
             onboard::onboard_import,
+            onboard::agent_install,
             onboard::agent_login,
         ])
         .build(tauri::generate_context!())

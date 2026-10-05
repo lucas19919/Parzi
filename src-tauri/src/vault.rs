@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Manager, Url, Webview};
 
-const PAGE_PREFIX: &str = "page-";
 const UNLOCK_WAIT: Duration = Duration::from_secs(180);
 const BW_WAIT: Duration = Duration::from_secs(30);
 const MAX_KEY: usize = 512;
@@ -285,17 +284,8 @@ async fn ask_for_key(action: &str) -> Result<String, String> {
 }
 
 fn page(app: &AppHandle, tab: &str) -> Result<Webview, String> {
-    let label = format!(
-        "{PAGE_PREFIX}{}",
-        tab.chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            })
-            .collect::<String>()
-    );
-    app.get_webview(&label).ok_or_else(|| "no such page".into())
+    app.get_webview(&crate::browser::page_label(tab)?)
+        .ok_or_else(|| "no such page".into())
 }
 
 fn origin_of(url: &str) -> Option<(String, String)> {

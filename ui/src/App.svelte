@@ -4,7 +4,7 @@
   import { cubicOut } from "svelte/easing";
   import { ask } from "@tauri-apps/plugin-dialog";
   import {
-    api, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onRunEvent,
+    api, brain, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onRunEvent,
     type ChatEvent, type PageEvent, type SessionMeta, type UiEvent,
   } from "./lib/api";
   import TopBar from "./lib/TopBar.svelte";
@@ -18,7 +18,6 @@
   import HomeView from "./lib/HomeView.svelte";
   import BrainView from "./lib/BrainView.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
-  import { brain } from "./lib/api";
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
   import Settings from "./lib/Settings.svelte";
   import Icon from "./lib/Icon.svelte";
@@ -72,7 +71,7 @@
   let page: PageView;
   let immersive = false;
   let setupOpen = false;
-  let project: { slug: string; title: string; notes: number; tokens: number } | null = null;
+  let project: { slug: string; title: string; tokens: number } | null = null;
   let navSeq = 0;
   let deskRev = 0;
 
@@ -110,7 +109,7 @@
 
   async function loadProject(dir: string) {
     const ctx = dir ? await brain.context(dir).catch(() => null) : null;
-    project = ctx?.project ? { slug: ctx.project.slug, title: ctx.project.title, notes: ctx.attached.length + ctx.listed.length, tokens: ctx.tokens } : null;
+    project = ctx?.project ? { slug: ctx.project.slug, title: ctx.project.title, tokens: ctx.tokens } : null;
   }
 
   let closed: { url: string; title: string }[] = [];
@@ -495,7 +494,7 @@
       }
       return;
     }
-    if (!running.has(e.session) && e.kind !== "usage" && e.kind !== "context") {
+    if (!running.has(e.session) && e.kind !== "context") {
       running = new Set(running).add(e.session);
     }
     if (e.session !== shown) return;

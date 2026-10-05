@@ -2,6 +2,7 @@
   import { createEventDispatcher, tick } from "svelte";
   import { fade, scale, slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
+  import { open } from "@tauri-apps/plugin-dialog";
   import Icon from "./Icon.svelte";
   import ModelPicker from "./ModelPicker.svelte";
   import { api, brain, type Project, type ProviderStatus } from "./api";
@@ -28,7 +29,7 @@
   export let contextLimit = 0;
   export let compacting = false;
   export let hero = false;
-  export let project: { slug: string; title: string; notes: number; tokens: number } | null = null;
+  export let project: { slug: string; title: string; tokens: number } | null = null;
 
   const dispatch = createEventDispatcher<{
     send: void;
@@ -278,7 +279,6 @@
 
   async function pickFiles() {
     try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
       const picked = await open({ multiple: true, directory: false, defaultPath: folder || undefined });
       if (!picked) return;
       addAttachments(Array.isArray(picked) ? picked : [picked]);
@@ -454,7 +454,6 @@
         >
           <Icon name={project || !folder ? "project" : "folder"} size={12} />
           <span class="truncate">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
-          {#if project && project.notes}<span class="dim">{project.notes} note{project.notes === 1 ? "" : "s"}</span>{/if}
           {#if branch}<span class="dim">{branch}</span>{/if}
           {#if !folderLocked}<Icon name="chevDown" size={10} stroke={2} />{/if}
         </button>

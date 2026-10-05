@@ -190,21 +190,6 @@ impl SessionStore {
         Ok(out)
     }
 
-    pub fn set_parent(&self, id: &str, parent_id: Option<&str>) -> Result<()> {
-        if parent_id == Some(id) {
-            return Err(ParziError::Store("session cannot be its own parent".into()));
-        }
-        if let Some(pid) = parent_id {
-            self.get(pid)?;
-        }
-        let mut meta = self.get(id)?;
-        meta.parent_id = parent_id.map(std::string::ToString::to_string);
-        meta.updated = Utc::now();
-        self.write_meta(&meta)?;
-        self.mark_md_dirty(id);
-        Ok(())
-    }
-
     pub fn set_cwd(&self, id: &str, cwd: &str) -> Result<()> {
         let mut meta = self.get(id)?;
         meta.cwd = cwd.to_string();

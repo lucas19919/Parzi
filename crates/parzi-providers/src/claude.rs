@@ -11,14 +11,15 @@ use tokio_util::sync::CancellationToken;
 
 use crate::process::{self, Proc, STOP_GRACE};
 use crate::types::{
-    tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate, PermissionRequest,
-    Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd, TurnSpec, UsageWindow,
+    sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
+    PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd,
+    TurnSpec, UsageWindow,
 };
 
 pub const ID: &str = "claude";
-const INSTALL_HINT: &str =
-    "Install Claude Code (`npm i -g @anthropic-ai/claude-code`) or set its path in Settings.";
-const LOGIN_HINT: &str = "Run `claude auth login` in a terminal, then check again.";
+const INSTALL_HINT: &str = "Install Claude Code from Set up Parzi, or set its path in Settings.";
+const LOGIN_HINT: &str =
+    "Sign in from Set up Parzi (it runs `claude auth login`), then check again.";
 
 pub struct Claude {
     binary: String,
@@ -194,11 +195,7 @@ async fn handshake(program: &Path) -> Result<Value, ProviderError> {
         return Err(ProviderError::process("Claude Code started without stdio"));
     };
     let (link, mut incoming) = Link::start(stdout, stdin);
-    let pump = tokio::spawn(async move {
-        while let Some(msg) = incoming.recv().await {
-            let _ = msg;
-        }
-    });
+    let pump = tokio::spawn(async move { while incoming.recv().await.is_some() {} });
     let init = link
         .control(
             json!({"subtype": "initialize", "hooks": null}),
@@ -609,13 +606,6 @@ where
     }
 }
 
-async fn sleep_until(deadline: Option<tokio::time::Instant>) {
-    match deadline {
-        Some(d) => tokio::time::sleep_until(d).await,
-        None => std::future::pending().await,
-    }
-}
-
 fn user_content(prompt: &str, images: &[PathBuf]) -> (Value, Vec<PathBuf>) {
     if images.is_empty() {
         return (json!(prompt), vec![]);
@@ -656,7 +646,7 @@ async fn handle(
                 tokio::spawn(async move {
                     let (request, input) = permission_request(&req);
                     let response = match gate.decide(request).await {
-                        PermissionDecision::Allow | PermissionDecision::AllowAlways => {
+                        PermissionDecision::Allow => {
                             json!({"behavior": "allow", "updatedInput": input})
                         }
                         PermissionDecision::Deny(why) => {
@@ -991,7 +981,6 @@ fn finish(v: &Value, st: &TurnState, events: &EventTx) -> Result<TurnEnd, Provid
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{PermissionDecision, PermissionGate, PermissionRequest};
     use tokio::io::AsyncBufReadExt;
 
     struct Gate(PermissionDecision);
@@ -1005,7 +994,6 @@ mod tests {
 
     fn spec() -> TurnSpec {
         TurnSpec {
-            session_id: "s".into(),
             cwd: std::env::temp_dir(),
             model: None,
             effort: None,

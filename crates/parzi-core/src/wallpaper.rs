@@ -4,11 +4,11 @@ use image::{imageops, ImageReader};
 
 use crate::error::{ParziError, Result};
 
-pub const MAX_SOURCE_EDGE: u32 = 4096;
-pub const CAP_W: u32 = 2560;
-pub const CAP_H: u32 = 1600;
+pub(crate) const MAX_SOURCE_EDGE: u32 = 4096;
+const CAP_W: u32 = 2560;
+const CAP_H: u32 = 1600;
 
-pub fn limits() -> image::Limits {
+pub(crate) fn limits() -> image::Limits {
     let mut l = image::Limits::default();
     l.max_image_width = Some(MAX_SOURCE_EDGE);
     l.max_image_height = Some(MAX_SOURCE_EDGE);
@@ -31,26 +31,26 @@ fn open(path: &Path, l: image::Limits) -> Result<ImageReader<std::io::BufReader<
     Ok(r)
 }
 
-pub fn source_size(path: &Path) -> Result<(u32, u32)> {
+fn source_size(path: &Path) -> Result<(u32, u32)> {
     open(path, header_limits())?
         .into_dimensions()
         .map_err(|e| ParziError::Config(format!("unreadable image: {e}")))
 }
 
-pub fn check_source(path: &Path) -> Result<()> {
+pub(crate) fn check_source(path: &Path) -> Result<(u32, u32)> {
     let (w, h) = source_size(path)?;
     if w.max(h) > MAX_SOURCE_EDGE {
         return Err(ParziError::Config(format!(
             "{w}×{h} is too big: wallpapers are at most {MAX_SOURCE_EDGE} px on the long edge"
         )));
     }
-    Ok(())
+    Ok((w, h))
 }
 
 const IMPORT_MAX_EDGE: u32 = 12_000;
 const IMPORT_TARGET_EDGE: u32 = 3840;
 
-pub fn shrink_for_import(bytes: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn shrink_for_import(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut r = ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|e| ParziError::Config(format!("unreadable image: {e}")))?;
@@ -83,7 +83,7 @@ pub fn shrink_for_import(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-pub fn bytes_size(bytes: &[u8]) -> Result<(u32, u32)> {
+pub(crate) fn bytes_size(bytes: &[u8]) -> Result<(u32, u32)> {
     let mut r = ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|e| ParziError::Config(format!("unreadable image: {e}")))?;
@@ -95,7 +95,7 @@ pub fn bytes_size(bytes: &[u8]) -> Result<(u32, u32)> {
     })
 }
 
-pub fn fit(src_w: u32, src_h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
+fn fit(src_w: u32, src_h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
     let (sw, sh) = (src_w.max(1), src_h.max(1));
     let (mw, mh) = (max_w.clamp(1, CAP_W), max_h.clamp(1, CAP_H));
     if sw <= mw && sh <= mh {
@@ -108,7 +108,7 @@ pub fn fit(src_w: u32, src_h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
     )
 }
 
-pub fn blur_sigma(blur: f64, scale: f64, out_w: u32, screen_w: u32) -> f32 {
+fn blur_sigma(blur: f64, scale: f64, out_w: u32, screen_w: u32) -> f32 {
     if blur <= 0.0 || out_w == 0 || screen_w == 0 {
         return 0.0;
     }
@@ -124,7 +124,7 @@ fn fnv1a(bytes: &[u8], mut h: u64) -> u64 {
     h
 }
 
-pub fn cache_key(src: &Path, mtime: u64, len: u64, sigma: f32, out_w: u32, out_h: u32) -> String {
+fn cache_key(src: &Path, mtime: u64, len: u64, sigma: f32, out_w: u32, out_h: u32) -> String {
     let mut h = fnv1a(src.to_string_lossy().as_bytes(), 0xcbf2_9ce4_8422_2325);
     for n in [
         mtime,
@@ -138,7 +138,7 @@ pub fn cache_key(src: &Path, mtime: u64, len: u64, sigma: f32, out_w: u32, out_h
     format!("{h:016x}")
 }
 
-pub fn cache_name(key: &str, sigma: f32) -> String {
+fn cache_name(key: &str, sigma: f32) -> String {
     if sigma > 0.0 {
         format!("bg-{key}.webp")
     } else {
@@ -166,12 +166,7 @@ pub fn prepare(
     if !meta.is_file() {
         return Err(ParziError::Config("wallpaper is not a file".into()));
     }
-    let (sw, sh) = source_size(src)?;
-    if sw.max(sh) > MAX_SOURCE_EDGE {
-        return Err(ParziError::Config(format!(
-            "{sw}×{sh} is too big: wallpapers are at most {MAX_SOURCE_EDGE} px on the long edge"
-        )));
-    }
+    let (sw, sh) = check_source(src)?;
     let (out_w, out_h) = fit(sw, sh, screen_w, screen_h);
     let sigma = blur_sigma(blur, scale, out_w, screen_w);
     let key = cache_key(src, mtime_secs(&meta), meta.len(), sigma, out_w, out_h);
@@ -233,7 +228,7 @@ pub fn prepare(
 
 const TMP_GRACE_SECS: u64 = 600;
 
-pub fn sweep(cache_dir: &Path, keep: &Path) {
+fn sweep(cache_dir: &Path, keep: &Path) {
     let Ok(entries) = std::fs::read_dir(cache_dir) else {
         return;
     };

@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{ParziError, Result};
 
-pub const ARTIFACT_VERSION: u64 = 1;
-pub const MAX_ARTIFACT_CHARS: usize = 64_000;
-pub const MAX_TITLE_CHARS: usize = 120;
-pub const MAX_ID_LEN: usize = 64;
+const ARTIFACT_VERSION: u64 = 1;
+const MAX_ARTIFACT_CHARS: usize = 64_000;
+const MAX_TITLE_CHARS: usize = 120;
+const MAX_ID_LEN: usize = 64;
 
 const ARTIFACT_KINDS: &[&str] = &[
     "code", "markdown", "html", "svg", "json", "csv", "diff", "text",
@@ -69,7 +69,7 @@ pub fn slugify_id(raw: &str) -> String {
     }
 }
 
-pub fn is_valid_id(id: &str) -> bool {
+fn is_valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= MAX_ID_LEN
         && id

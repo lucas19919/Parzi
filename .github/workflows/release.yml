@@ -1,17 +1,5 @@
 name: Release
 
-# Ship Windows installers + macOS DMG + the updater feed.
-# Flow: tag a version (git tag v0.1.0; git push origin v0.1.0) -> CI builds
-# per platform (Windows: NSIS .exe + MSI; macOS: unsigned universal .dmg for
-# Apple Silicon + Intel — deliberately no Apple signing, see the Gatekeeper
-# note in the release body), signs the updater artifacts with
-# TAURI_SIGNING_PRIVATE_KEY, and PUBLISHES the release with latest.json.
-# The repo is public so the updater endpoint resolves; installed Parzi
-# copies offer the update. No Authenticode/notarization by decision:
-# SmartScreen/Gatekeeper ask once (see body), no signing budget spent.
-#
-# Tags only: manual dispatch once cut a release named after a branch.
-
 on:
   push:
     tags:
@@ -41,7 +29,6 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # Universal macOS binary (Apple Silicon + Intel in one .dmg).
       - name: Add macOS Rust targets
         if: runner.os == 'macOS'
         run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
@@ -71,7 +58,7 @@ jobs:
             | Windows 10 / 11, 64-bit (recommended) | `Parzi_*_x64-setup.exe` — per-user install, no admin needed |
             | Windows, system-wide | `Parzi_*_x64_en-US.msi` — needs admin |
             | macOS, Apple Silicon or Intel | `Parzi_*_universal.dmg` — drag Parzi into Applications |
-            | Headless (any agent harness) | `parzi-windows-x64.exe` or `parzi-macos-arm64` — point any MCP client at `parzi mcp` |
+            | Command line | `parzi-windows-x64.exe` or `parzi-macos-arm64` — drives sessions and tabs from scripts |
 
             ### First launch (once per machine)
 
@@ -87,13 +74,6 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
-      # tauri-action's own uploader dropped a finished build twice on the
-      # v0.1.16 tag — once on a GitHub 500, once on "Error creating asset temp
-      # dir" — each time throwing away a twelve-minute macOS build over a
-      # transient API hiccup. `gh release upload --clobber` is idempotent, so
-      # this re-attaches whatever is missing and is a no-op when the upload
-      # worked. Never fatal: on the happy path there is nothing left to do,
-      # and a failure here must not turn a good release red.
       - name: Re-attach bundles the uploader may have dropped
         if: always() && startsWith(github.ref, 'refs/tags/')
         continue-on-error: true
@@ -102,22 +82,17 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           shopt -s nullglob
-          # Windows bundles land under target/release, the macOS universal
-          # build under target/universal-apple-darwin/release.
           files=(src-tauri/target/release/bundle/{nsis,msi}/* \
                  src-tauri/target/universal-apple-darwin/release/bundle/{dmg,macos}/*)
           for f in "${files[@]}"; do
-            # Parzi.app is a directory; the updater ships its .tar.gz instead.
             [ -f "$f" ] || continue
             gh release upload "${{ github.ref_name }}" "$f" --clobber
           done
 
-      # Ship the headless CLI too: `parzi mcp` is the open backend other
-      # agents plug into. Attaches per-platform binaries to the same draft.
       - name: Build parzi CLI
         run: cargo build --release -p parzi-cli
 
-      - name: Attach CLI to the draft release
+      - name: Attach CLI to the release
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         env:

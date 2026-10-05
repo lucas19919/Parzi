@@ -1,8 +1,4 @@
-use parzi_core::context::{
-    encode_image, image_media_type, read_attachments, AttachedFile, ChatMessage, ContextBuilder,
-    Role,
-};
-use parzi_core::store::Event;
+use parzi_core::context::{encode_image, image_media_type, read_attachments};
 
 fn write(dir: &std::path::Path, name: &str, bytes: &[u8]) -> String {
     std::fs::write(dir.join(name), bytes).unwrap();
@@ -67,46 +63,4 @@ fn oversized_image_downscales_to_jpeg() {
     let img = encode_image("big.png", &buf).unwrap();
     assert_eq!(img.media_type, "image/jpeg");
     assert!(!img.data_b64.is_empty());
-}
-
-#[test]
-fn images_ride_newest_user_turn() {
-    let history = vec![
-        Event::User {
-            text: "first".into(),
-        },
-        Event::Assistant {
-            text: "reply".into(),
-            done: true,
-        },
-        Event::User {
-            text: "look at this".into(),
-        },
-    ];
-    let b = ContextBuilder {
-        system_parts: vec![],
-        history,
-        files: vec![AttachedFile {
-            path: "shot.png".into(),
-            snippet: String::new(),
-            image: encode_image("shot.png", &[1, 2, 3]),
-        }],
-    };
-    let ctx = b.assemble(100_000);
-    let users: Vec<&ChatMessage> = ctx
-        .messages
-        .iter()
-        .filter(|m| m.role == Role::User)
-        .collect();
-    assert_eq!(users.len(), 2);
-    assert!(users[0].images.is_empty(), "older turn stays text-only");
-    assert_eq!(users[1].images.len(), 1, "newest user turn carries it");
-    assert_eq!(users[1].images[0].media_type, "image/png");
-    assert!(ctx.messages.iter().any(|m| m.content.contains("<image")));
-}
-
-#[test]
-fn chat_message_stays_backward_compatible() {
-    let m: ChatMessage = serde_json::from_str(r#"{"role":"user","content":"hi"}"#).unwrap();
-    assert!(m.images.is_empty());
 }
