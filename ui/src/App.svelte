@@ -26,7 +26,7 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, sessionTab, toAddress, type Tab } from "./lib/tabs";
+  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, sessionTab, settingsTab, toAddress, type Tab } from "./lib/tabs";
   import { toast, toastError, toasts, notify } from "./lib/toast";
   import { covered } from "./lib/overlay";
   import type { Approval, LiveTool } from "./lib/live";
@@ -115,7 +115,6 @@
   }
 
   let switcherOpen = false;
-  let settingsOpen = false;
   let panelOpen = false;
   let panelTab: "ask" | "agents" = "ask";
   let settingsSection = "general";
@@ -142,7 +141,7 @@
   $: void loadProject(folder);
   $: syncDesk(tabs, activeId);
   $: saveTabs(tabs, activeId);
-  $: pageVisible = tab.kind === "page" && !settingsOpen;
+  $: pageVisible = tab.kind === "page";
   $: if (!pageVisible) api.browserHide().catch(() => {});
   $: if (!pageVisible && immersive) void setImmersive(false);
 
@@ -176,7 +175,6 @@
 
   function openHistory(view = historyView) {
     historyView = view;
-    settingsOpen = false;
     const existing = tabs.find((t) => t.kind === "history");
     if (existing) selectTab(existing.id);
     else addTab(historyTab());
@@ -190,7 +188,6 @@
   }
 
   function openBrain() {
-    settingsOpen = false;
     const existing = tabs.find((t) => t.kind === "brain");
     if (existing) selectTab(existing.id);
     else addTab(brainTab());
@@ -277,7 +274,6 @@
     const next = tabs.find((t) => t.id === id);
     if (!next) return;
     activeId = id;
-    settingsOpen = false;
     if (navTab !== id) {
       navTrail = [];
       navTab = "";
@@ -447,7 +443,9 @@
   function openSettings(section = "general") {
     settingsSection = section;
     switcherOpen = false;
-    settingsOpen = true;
+    const existing = tabs.find((t) => t.kind === "settings");
+    if (existing) selectTab(existing.id);
+    else addTab(settingsTab());
   }
 
   async function send() {
@@ -653,7 +651,7 @@
     if (name === "ctrl+p" || name === "ctrl+k") switcherOpen = !switcherOpen;
     else if (name === "ctrl+t") newSession();
     else if (name === "ctrl+w") closeTab(activeId);
-    else if (name === "ctrl+comma") settingsOpen ? (settingsOpen = false) : openSettings();
+    else if (name === "ctrl+comma") tab.kind === "settings" ? closeTab(activeId) : openSettings();
     else if (name === "ctrl+b") openBrain();
     else if (name === "ctrl+h") openHistory();
     else if (name === "ctrl+shift+a") {
@@ -666,8 +664,7 @@
     else if (name === "ctrl+shift+t") reopenClosed();
     else if (name === "f11") void setImmersive(!immersive);
     else if (name === "ctrl+l") {
-      if (tab.kind === "page" && !settingsOpen) {
-        void setImmersive(false);
+      if (tab.kind === "page") {        void setImmersive(false);
         void page?.focusAddress();
       } else {
         mode = "search";
@@ -705,7 +702,7 @@
       e.preventDefault();
     } else if (key === "escape" && !e.defaultPrevented && !$covered) {
       if (immersive) void setImmersive(false);
-      else if (settingsOpen) settingsOpen = false;
+      else if (tab.kind === "settings") closeTab(activeId);
       else if (streaming) void stop();
     }
   }
@@ -761,7 +758,7 @@
 <div class="shell">
   <DefaultArt {bg} blurred={tab.kind === "page"} />
 
-  {#if !bg && !hasSession && !settingsOpen && tab.kind !== "page" && tab.kind !== "history" && tab.kind !== "brain"}
+  {#if !bg && !hasSession && tab.kind !== "page" && tab.kind !== "history" && tab.kind !== "brain" && tab.kind !== "settings"}
     {@const heroBg = bg
       ? `linear-gradient(to bottom, transparent calc(20% + 80% * (1 - var(--hero-fade, 1))), var(--bg) calc(92% + 8% * (1 - var(--hero-fade, 1)))), url("${bg}") center 32% / cover no-repeat`
       : undefined}
@@ -788,9 +785,9 @@
   {/if}
 
   <main>
-    {#if settingsOpen}
+    {#if tab.kind === "settings"}
       <div class="fill" in:fly={{ y: 8, ...motion }}>
-        <Settings bind:section={settingsSection} on:close={() => (settingsOpen = false)} />
+        <Settings bind:section={settingsSection} on:close={() => closeTab(activeId)} />
       </div>
     {:else if tab.kind === "brain"}
       <div class="fill" in:fade={{ duration: 150 }}>
@@ -984,6 +981,14 @@
     flex: 1;
     min-height: 0;
     display: flex;
+    margin: 8px 8px 0;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--panel) 60%, transparent);
+    -webkit-backdrop-filter: blur(24px) saturate(1.2);
+    backdrop-filter: blur(24px) saturate(1.2);
+    border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+    border-bottom: none;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
   .session {
     position: relative;

@@ -55,9 +55,7 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    background: color-mix(in srgb, var(--bg) 82%, transparent);
-    -webkit-backdrop-filter: blur(24px) saturate(1.2);
-    backdrop-filter: blur(24px) saturate(1.2);
+    background: transparent;
   }
   nav {
     display: flex;

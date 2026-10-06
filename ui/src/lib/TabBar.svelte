@@ -160,7 +160,7 @@
         {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
           <img src={faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
         {:else}
-          <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : laneIcon(lane)} size={12} />
+          <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : laneIcon(lane)} size={12} />
         {/if}
       </span>
       <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>

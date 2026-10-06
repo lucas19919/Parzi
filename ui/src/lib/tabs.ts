@@ -1,4 +1,4 @@
-type TabKind = "session" | "page" | "brain" | "history";
+type TabKind = "session" | "page" | "brain" | "history" | "settings";
 
 export interface Tab {
   id: string;
@@ -36,6 +36,10 @@ export function historyTab(): Tab {
 
 export function brainTab(): Tab {
   return { id: tabId(), kind: "brain", title: "Brain" };
+}
+
+export function settingsTab(): Tab {
+  return { id: tabId(), kind: "settings", title: "Settings" };
 }
 
 export function hostOf(url: string): string {
