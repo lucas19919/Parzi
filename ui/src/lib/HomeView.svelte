@@ -1,11 +1,15 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import { fade } from "svelte/transition";
+  import Icon from "./Icon.svelte";
   import type { SessionMeta } from "./api";
   import { folderName } from "./tabs";
 
   export let threads: SessionMeta[] = [];
 
   const dispatch = createEventDispatcher<{ open: { url: string }; openSession: { id: string }; allSessions: void }>();
+
+  let showRecent = false;
 
   $: recent = threads.slice(0, 5);
 
@@ -23,12 +27,15 @@
 
 <div class="home">
   {#if recent.length}
-    <section>
-      <div class="head">
-        <h3>Recent sessions</h3>
-        <button class="all" on:click={() => dispatch("allSessions")}>All sessions</button>
-      </div>
-      <div class="sessions">
+    <div class="recent-foot">
+      <button class="disclosure" aria-expanded={showRecent} on:click={() => (showRecent = !showRecent)}>
+        <span class="tri" class:open={showRecent}>▸</span>
+        <span>Recent sessions</span>
+      </button>
+      <button class="all" on:click={() => dispatch("allSessions")}>All sessions</button>
+    </div>
+    {#if showRecent}
+      <div class="sessions" transition:fade={{ duration: 180 }}>
         {#each recent as s (s.id)}
           <button class="session" on:click={() => dispatch("openSession", { id: s.id })}>
             <span class="title">{s.title || "Untitled session"}</span>
@@ -36,7 +43,7 @@
           </button>
         {/each}
       </div>
-    </section>
+    {/if}
   {/if}
 </div>
 
@@ -49,10 +56,36 @@
     gap: 22px;
     width: 100%;
   }
-  .head {
+  .recent-foot {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
+    padding: 0 4px;
+  }
+  .disclosure {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
+    background: none;
+    border: none;
+    color: var(--faint);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .disclosure:hover {
+    color: var(--text);
+  }
+  .tri {
+    display: inline-block;
+    font-size: 10px;
+    transition: transform 140ms ease;
+  }
+  .tri.open {
+    transform: rotate(90deg);
   }
   .all {
     padding: 0 4px;
@@ -64,14 +97,6 @@
   }
   .all:hover {
     color: var(--text);
-  }
-  h3 {
-    margin: 0 0 8px 4px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--faint);
   }
   .sessions {
     display: flex;
