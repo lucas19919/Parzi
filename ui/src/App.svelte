@@ -958,11 +958,13 @@
     z-index: 0;
     height: 48%;
     pointer-events: none;
-    background: url("/hero-harbor.png") center 32% / cover no-repeat;
-    filter: brightness(0.82) saturate(0.94);
-    -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent 99%);
-    mask-image: linear-gradient(to bottom, #000 58%, transparent 99%);
-    opacity: 0.9;
+    background:
+      linear-gradient(to bottom, transparent 20%, var(--bg) 92%),
+      url("/hero-harbor.png") center 32% / cover no-repeat;
+    filter: brightness(0.68) saturate(0.9);
+    -webkit-mask-image: linear-gradient(to bottom, #000 30%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 30%, transparent 100%);
+    opacity: 0.94;
   }
   .toasts {
     position: fixed;
