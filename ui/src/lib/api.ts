@@ -99,6 +99,7 @@ export interface ParziConfig {
   routing: { order: string[] };
   budget?: { max_cost_usd: number | null; max_tokens: number | null };
   favorite_models: string[];
+  quick_model?: string;
 }
 
 export interface Theme {
@@ -134,7 +135,16 @@ interface SendArgs {
   effort: string;
   attachments: string[];
   mode: string;
+  lane: string;
 }
+
+export type ComposerMode = "search" | "code" | "research";
+
+export const MODE_META: Record<ComposerMode, { label: string; icon: "globe" | "bot" | "brain"; tint: string; hint: string }> = {
+  search: { label: "Search", icon: "globe", tint: "#6aa8ff", hint: "Search or enter an address" },
+  code: { label: "Code", icon: "bot", tint: "#7fce7f", hint: "Ask anything" },
+  research: { label: "Research", icon: "brain", tint: "#e8b64c", hint: "Ask a quick question — no approvals, ever" },
+};
 
 export const api = {
   appVersion: () => invoke<string>("app_version"),
@@ -152,7 +162,9 @@ export const api = {
       effort: a.effort,
       attachments: a.attachments,
       mode: a.mode,
+      lane: a.lane,
     }),
+  saveAnswer: (content: string) => invoke<NoteMeta>("brain_save_answer", { content }),
   renameThread: (id: string, title: string) => invoke<void>("rename_thread", { id, title }),
   deleteThread: (id: string) => invoke<number>("delete_thread", { id }),
   forkThread: (id: string) => invoke<SessionMeta>("fork_thread", { id }),

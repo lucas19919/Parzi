@@ -41,6 +41,7 @@
     | { key: string; kind: "steps"; reasoning: string; tools: Step[] };
 
   let copied = "";
+  let saved = "";
   const liveMd = new LiveMarkdown();
   const imageCache = new Map<string, Promise<string | null>>();
 
@@ -176,6 +177,15 @@ ${e.text}` : e.text;
     setTimeout(() => (copied = copied === key ? "" : copied), 1200);
   }
 
+  async function save(text: string, key: string) {
+    if (saved) return;
+    try {
+      await api.saveAnswer(text);
+      saved = key;
+      setTimeout(() => (saved = saved === key ? "" : saved), 1600);
+    } catch {}
+  }
+
   async function vote(allow: boolean) {
     if (!approval) return;
     const { key, session } = approval;
@@ -244,6 +254,9 @@ ${e.text}` : e.text;
         <div class="actions">
           <button class="copy" title="Copy" on:click={() => copy(item.text, item.key)}>
             <Icon name={copied === item.key ? "check" : "copy"} size={13} />
+          </button>
+          <button class="copy" title="Save to brain" on:click={() => save(item.text, item.key)}>
+            <Icon name={saved === item.key ? "check" : "brain"} size={13} />
           </button>
         </div>
       </div>

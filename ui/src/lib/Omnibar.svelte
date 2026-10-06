@@ -5,7 +5,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import Icon from "./Icon.svelte";
   import ModelPicker from "./ModelPicker.svelte";
-  import { api, brain, type Project, type ProviderStatus } from "./api";
+  import { api, brain, MODE_META, type ComposerMode, type Project, type ProviderStatus } from "./api";
   import { effortHint, effortLabel, effortsFor, fitEffort } from "./providerRows";
   import { folderName, toAddress } from "./tabs";
   import { popover, placeAbove } from "./popover";
@@ -18,7 +18,7 @@
   export let model = "auto";
   export let effort = "medium";
   export let permission = "full";
-  export let mode: "agent" | "web" = "agent";
+  export let mode: ComposerMode = "code";
   export let attachments: string[] = [];
   export let folder = "";
   export let folderLocked = false;
@@ -49,7 +49,12 @@
     { id: "full", title: "Full access", desc: "Run commands and edits without asking.", icon: "unlock" },
   ];
 
+  const MODES: ComposerMode[] = ["search", "code", "research"];
+
   const SLASH = [
+    { name: "search", hint: "search mode" },
+    { name: "code", hint: "code mode" },
+    { name: "research", hint: "research mode" },
     { name: "new", hint: "new session" },
     { name: "fork", hint: "branch this session" },
     { name: "compact", hint: "summarize to free context" },
@@ -111,7 +116,7 @@
   function submit() {
     const text = input.trim();
     if (!text || streaming) return;
-    if (mode === "web") {
+    if (mode === "search") {
       if (webActive >= 0 && webRows[webActive]) {
         pickWeb(webRows[webActive]);
         return;
@@ -128,6 +133,7 @@
     input = "";
     if (name === "model") picker?.show();
     else if (name === "effort") cycleEffort();
+    else if ((MODES as string[]).includes(name)) mode = name as ComposerMode;
     else dispatch("command", { name });
   }
 
@@ -136,8 +142,8 @@
     effort = efforts[(Math.max(0, efforts.indexOf(effort)) + 1) % efforts.length];
   }
 
-  function toggleMode() {
-    mode = mode === "agent" ? "web" : "agent";
+  function cycleMode() {
+    mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
   }
 
   function move(list: unknown[], i: number, delta: number) {
@@ -171,7 +177,10 @@
       else submit();
     } else if (e.key === "Tab" && !slashItems.length && !atItems.length) {
       e.preventDefault();
-      toggleMode();
+      cycleMode();
+    } else if (/^[123]$/.test(e.key) && (e.ctrlKey || e.metaKey) && !slashItems.length && !atItems.length) {
+      e.preventDefault();
+      mode = MODES[Number(e.key) - 1];
     } else if (e.key === "Escape" && (slashItems.length || atItems.length)) {
       e.stopPropagation();
       atItems = [];
@@ -187,8 +196,8 @@
   }
 
   $: if (textarea && !input) textarea.style.height = "";
-  $: if (mode !== "web" || !input.trim()) clearWeb();
-  $: webOpen = focused && mode === "web" && webRows.length > 0;
+  $: if (mode !== "search" || !input.trim()) clearWeb();
+  $: webOpen = focused && mode === "search" && webRows.length > 0;
 
   function clearWeb() {
     webRows = [];
@@ -204,7 +213,7 @@
     const seq = ++webSeq;
     webTimer = window.setTimeout(async () => {
       const phrases = await api.searchSuggest(value).catch(() => [] as string[]);
-      if (seq !== webSeq || mode !== "web" || !input.trim()) return;
+      if (seq !== webSeq || mode !== "search" || !input.trim()) return;
       webRows = mergeRows(firstRows(value, completed), phraseRows(value, phrases), pageRows(value, $history, marks));
     }, 120);
   }
@@ -217,7 +226,7 @@
 
   async function onInput(e: Event) {
     void autosize();
-    if (mode === "web" && textarea) {
+    if (mode === "search" && textarea) {
       const typed = textarea.value;
       webTyped = typed;
       webActive = -1;
@@ -234,7 +243,7 @@
       suggestWeb(typed, completed);
       return;
     }
-    const at = mode === "agent" ? /@([\w./-]*)$/.exec(input) : null;
+    const at = mode === "code" ? /@([\w./-]*)$/.exec(input) : null;
     if (!at || !folder) {
       atItems = [];
       return;
@@ -377,7 +386,15 @@
 </script>
 
 <div class="ob" class:hero>
-  <div class="box" class:web={mode === "web"} role="group" aria-label="Composer" on:dragover|preventDefault on:drop|preventDefault={onDrop}>
+  <div
+    class="box"
+    class:web={mode === "search"}
+    style:--tint={MODE_META[mode].tint}
+    role="group"
+    aria-label="Composer"
+    on:dragover|preventDefault
+    on:drop|preventDefault={onDrop}
+  >
     {#if webOpen}
       <div class="web-suggest" class:below={hero}>
         <SuggestList rows={webRows} active={webActive} typed={webTyped} on:pick={(e) => pickWeb(e.detail.row)} on:hover={(e) => (webActive = e.detail.index)} />
@@ -418,7 +435,7 @@
         bind:this={textarea}
         bind:value={input}
         rows="1"
-        placeholder={streaming ? "Working · Esc to stop" : mode === "web" ? "Search or enter an address" : "Ask anything"}
+        placeholder={streaming ? "Working · Esc to stop" : MODE_META[mode].hint}
         on:keydown={onKeydown}
         on:input={onInput}
         on:focus={() => (focused = true)}
@@ -428,7 +445,7 @@
       {#if streaming}
         <button class="go stop" title="Stop (Esc)" on:click={() => dispatch("stop")}><span class="square" /></button>
       {:else}
-        <button class="go" class:ready={!!input.trim()} title={mode === "web" ? "Open (Enter)" : "Send (Enter)"} disabled={!input.trim()} on:click={submit}>
+        <button class="go" class:ready={!!input.trim()} title={mode === "search" ? "Open (Enter)" : "Send (Enter)"} disabled={!input.trim()} on:click={submit}>
           <Icon name="enter" size={15} />
         </button>
       {/if}
@@ -438,10 +455,23 @@
 
   <div class="bar">
     <button class="ctl" title="Attach files" on:click={pickFiles}><Icon name="plus" size={14} stroke={2} /></button>
-    <button class="ctl" title={mode === "web" ? "Web: search or open pages (Tab)" : "Agent (Tab)"} on:click={toggleMode}>
-      <Icon name={mode === "web" ? "globe" : "bot"} size={14} />
-    </button>
-    {#if mode === "agent"}
+    <div class="modes" role="tablist" aria-label="Mode">
+      {#each MODES as m, i (m)}
+        <button
+          role="tab"
+          aria-selected={mode === m}
+          class="mode"
+          class:on={mode === m}
+          style:--tint={MODE_META[m].tint}
+          title={`${MODE_META[m].label} (Ctrl+${i + 1}, Tab cycles)`}
+          on:click={() => (mode = m)}
+        >
+          <Icon name={MODE_META[m].icon} size={13} />
+          <span>{MODE_META[m].label}</span>
+        </button>
+      {/each}
+    </div>
+    {#if mode === "code"}
       <button bind:this={permBtn} class="ctl" class:open={permOpen} title={perm.desc} on:click|stopPropagation={togglePerm}>
         <Icon name={perm.icon} size={12} />
         <span class="truncate">{perm.title}</span>
@@ -462,13 +492,11 @@
           {#if !folderLocked}<Icon name="chevDown" size={10} stroke={2} />{/if}
         </button>
       {/if}
-    {:else}
-      <span class="ctl static">Web</span>
     {/if}
 
     <span class="spacer" />
 
-    {#if mode === "agent"}
+    {#if mode !== "search"}
       <ModelPicker bind:this={picker} bind:value={model} {board} on:unavailable />
       {#if efforts.length}
         <div class="effort" role="radiogroup" aria-label="Effort" title={`Effort: ${effortLabel(effort)}${effortHint(effort) ? ` · ${effortHint(effort)}` : ""}`}>
@@ -485,7 +513,7 @@
           {/each}
         </div>
       {/if}
-      {#if contextLimit > 0 && (contextUsed > 0 || compacting)}
+      {#if mode === "code" && contextLimit > 0 && (contextUsed > 0 || compacting)}
         <button
           class="ctx"
           class:warn={contextPct >= 70}
@@ -575,12 +603,14 @@
     padding: 6px 6px 6px 16px;
     background: var(--panel);
     border: 1px solid var(--line);
+    border-top: 2px solid color-mix(in srgb, var(--tint, var(--line)) 55%, var(--line));
     border-radius: var(--radius-lg);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
     transition: border-color 140ms ease;
   }
   .box:focus-within {
     border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+    border-top-color: color-mix(in srgb, var(--tint, var(--accent)) 70%, transparent);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
   }
   .box.web:focus-within {
@@ -847,8 +877,36 @@
     background: transparent;
     transform: none;
   }
-  .static {
-    cursor: default;
+  .modes {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--text) 5%, transparent);
+  }
+  .mode {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    padding: 0 9px;
+    background: transparent;
+    border: none;
+    border-radius: calc(var(--radius) - 2px);
+    color: var(--faint);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .mode:hover {
+    color: var(--text);
+  }
+  .mode.on {
+    background: color-mix(in srgb, var(--tint) 18%, transparent);
+    color: var(--text);
+  }
+  .mode.on :global(svg) {
+    color: var(--tint);
   }
   .locked {
     cursor: default;

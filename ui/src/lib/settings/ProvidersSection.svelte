@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { api, type ParziConfig, type ProviderEntry, type ProviderStatus } from "../api";
   import { board, checking, ensureBoard, refreshBoard } from "../providerStore";
-  import { PROVIDER_ORDER, effortLabel, isUsable, modelLabel, nameOf, stateLabel } from "../providerRows";
+  import { PROVIDER_ORDER, allRows, effortLabel, isUsable, modelLabel, nameOf, stateLabel } from "../providerRows";
   import Switch from "./Switch.svelte";
   import "./shared.css";
 
@@ -53,6 +53,17 @@
     return base;
   })();
   $: allChecking = $checking.has("*");
+  $: quickRows = allRows($board).filter((r) => r.usable);
+
+  async function setQuick(value: string) {
+    if (!cfg) return;
+    cfg.quick_model = value;
+    await saveCfg(value ? "Quick model set" : "Quick model follows Smart Auto");
+  }
+
+  function setQuickFrom(e: Event) {
+    void setQuick((e.currentTarget as HTMLSelectElement).value);
+  }
 
   function badgeOf(p: ProviderStatus | undefined, enabled: boolean): { label: string; cls: string } {
     if (!enabled) return { label: "Off", cls: "key" };
@@ -196,8 +207,30 @@
   </div>
 
   <div class="pref-section">
-    <h3 class="section-title">Smart Auto</h3>
+    <h3 class="section-title">Quick model</h3>
     <p class="section-desc">
+      Answers Research questions and other fast turns. Empty follows Smart Auto.
+    </p>
+    <div class="order-card">
+      <div class="order-row">
+        <span class="order-n">⚡</span>
+        <select
+          class="quick-pick"
+          value={cfg?.quick_model ?? ""}
+          on:change={setQuickFrom}
+          aria-label="Quick model"
+        >
+          <option value="">Smart Auto</option>
+          {#each quickRows as r (r.value)}
+            <option value={r.value}>{r.label}</option>
+          {/each}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="pref-section">
+    <h3 class="section-title">Smart Auto</h3>    <p class="section-desc">
       A new thread on Smart Auto starts on the first ready agent in this order.
       Once it has started, a thread stays with its agent.
     </p>
@@ -383,6 +416,17 @@
   .order-row + .order-row { border-top: 1px solid var(--line); }
   .order-row.dim .order-name { color: var(--muted); }
   .order-n { width: 14px; font-size: 11px; color: var(--faint); font-family: var(--mono), ui-monospace, monospace; text-align: right; flex: none; }
+  .quick-pick {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 8px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--text);
+    font: inherit;
+    font-size: 12.5px;
+  }
   .order-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
   .mini {
     background: transparent; border: 1px solid transparent; border-radius: 5px; color: var(--muted);

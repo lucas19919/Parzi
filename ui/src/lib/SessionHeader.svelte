@@ -5,6 +5,7 @@
 
   export let title = "";
   export let branch = "";
+  export let lane = "";
   export let canAct = false;
 
   const dispatch = createEventDispatcher<{ rename: { title: string }; fork: void; copyId: void; delete: void }>();
@@ -68,6 +69,9 @@
     {/if}
     {#if branch}
       <span class="branch"><Icon name="branch" size={11} />{branch}</span>
+    {/if}
+    {#if lane === "research" || lane === "code"}
+      <span class="lane" class:research={lane === "research"}>{lane === "research" ? "Research" : "Code"}</span>
     {/if}
   </div>
   {#if canAct}
@@ -137,6 +141,20 @@
     flex: none;
     font-size: 11px;
     color: var(--muted);
+  }
+  .lane {
+    flex: none;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    color: var(--muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+  }
+  .lane.research {
+    background: color-mix(in srgb, #e8b64c 18%, transparent);
+    color: #e8b64c;
   }
   .menu {
     position: relative;

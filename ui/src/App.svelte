@@ -5,7 +5,7 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import {
     api, brain, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onRunEvent,
-    type ChatEvent, type PageEvent, type SessionMeta, type UiEvent,
+    MODE_META, type ChatEvent, type ComposerMode, type PageEvent, type SessionMeta, type UiEvent,
   } from "./lib/api";
   import TopBar from "./lib/TopBar.svelte";
   import Switcher from "./lib/Switcher.svelte";
@@ -59,9 +59,30 @@
   let warmed = "";
   let effort = "medium";
   let permission = "full";
-  let mode: "agent" | "web" = "agent";
+  let mode: ComposerMode = "code";
   let attachments: string[] = [];
   let sending = false;
+
+  const modeDefaults = { search: { model: "auto", effort: "medium" }, code: { model: "auto", effort: "medium" }, research: { model: "auto", effort: "low" } };
+  let modeKept: Record<ComposerMode, { model: string; effort: string }> = {
+    search: { ...modeDefaults.search },
+    code: { ...modeDefaults.code },
+    research: { ...modeDefaults.research },
+  };
+  let prevMode: ComposerMode = mode;
+
+  function laneOf(sessionId: string | null | undefined): string {
+    if (!sessionId) return "";
+    return threads.find((t) => t.id === sessionId)?.lane ?? "";
+  }
+
+  $: if (mode !== prevMode) {
+    modeKept[prevMode] = { model, effort };
+    const kept = modeKept[mode] ?? modeDefaults[mode];
+    model = kept.model;
+    effort = kept.effort;
+    prevMode = mode;
+  }
 
   let switcherOpen = false;
   let settingsOpen = false;
@@ -361,6 +382,8 @@
     }
     const target = tab;
     const files = attachments;
+    const sessionLane = laneOf(target.sessionId);
+    const fresh = !target.sessionId || (sessionLane !== "" && sessionLane !== mode);
     const optimistic: ChatEvent = { kind: "user", text: prompt };
     sending = true;
     input = "";
@@ -368,16 +391,17 @@
     events = [...events, optimistic];
     try {
       const sid = await api.sendMessage({
-        sessionId: target.sessionId,
+        sessionId: fresh ? null : target.sessionId,
         model,
         prompt,
         cwd: folder,
         effort,
         attachments: files,
         mode: permission,
+        lane: mode,
       });
       running = new Set(running).add(sid);
-      if (!target.sessionId) patchTab(target.id, { sessionId: sid, title: prompt.slice(0, 40) });
+      if (fresh) patchTab(target.id, { sessionId: sid, title: prompt.slice(0, 40) });
       if (activeId === target.id) {
         shown = sid;
         await reload();
@@ -542,7 +566,7 @@
         void setImmersive(false);
         void page?.focusAddress();
       } else {
-        mode = "web";
+        mode = "search";
         omnibar?.focus();
       }
     } else if (name === "ctrl+tab" || name === "ctrl+shift+tab") {
@@ -683,6 +707,7 @@
           <SessionHeader
             title={meta?.title || tab.title}
             {branch}
+            lane={meta?.lane ?? ""}
             canAct={!!shown}
             on:rename={(e) => rename(e.detail.title)}
             on:fork={fork}
@@ -721,6 +746,9 @@
       {/if}
 
       <div class="composer" class:docked={hasSession} bind:clientHeight={dockHeight}>
+        {#if hasSession && meta?.lane && meta.lane !== mode && mode !== "search"}
+          <div class="lane-hint">↵ starts a new {MODE_META[mode].label} session</div>
+        {/if}
         <Omnibar
           bind:this={omnibar}
           bind:input
@@ -886,6 +914,12 @@
     bottom: 14px;
     width: min(740px, calc(100% - 40px));
     transform: translate(-50%, 0);
+  }
+  .lane-hint {
+    margin: 0 0 6px;
+    text-align: center;
+    font-size: 11.5px;
+    color: var(--faint);
   }
   .toasts {
     position: fixed;

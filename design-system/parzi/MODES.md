@@ -1,7 +1,7 @@
 # Modes Plan — Search / Code / Research
 
-Status: mode switch UI not built yet. This file is the backlog so the
-design doesn't live only in chat. Work it top to bottom.
+Status: Research lane backend + mode switch UI built (2026-10-06).
+Remaining here: side panel, history chips, LaTeX, CLI catalog.
 
 ## The three modes (locked)
 
