@@ -91,9 +91,6 @@
       <button class="icon-btn" title="Session actions" aria-expanded={open} on:click={() => (open = !open)}>
         <Icon name="more" stroke={3} />
       </button>
-      <button class="icon-btn" title="Session actions" aria-expanded={open} on:click={() => (open = !open)}>
-        <Icon name="more" stroke={3} />
-      </button>
       {#if open}
         <div class="dropdown" role="menu">
           {#each ITEMS as item (item.id)}
