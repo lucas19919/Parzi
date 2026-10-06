@@ -8,7 +8,7 @@ const MAX_TITLE_CHARS: usize = 120;
 const MAX_ID_LEN: usize = 64;
 
 const ARTIFACT_KINDS: &[&str] = &[
-    "code", "markdown", "html", "svg", "json", "csv", "diff", "text",
+    "code", "markdown", "html", "svg", "json", "csv", "diff", "text", "image",
 ];
 
 const CODE_LANGS: &[&str] = &[

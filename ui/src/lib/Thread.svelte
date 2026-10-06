@@ -92,6 +92,14 @@
         return "Listing tabs";
       case "browser.read":
         return "Reading the page";
+      case "browser.shot":
+        return "Looking at the page";
+      case "image.generate":
+        return `Drawing ${arg(args, "prompt") || "an image"}`;
+      case "doc.read":
+        return `Reading ${arg(args, "source") || "a document"}`;
+      case "models.list":
+        return "Checking the bench";
       case "browser.click":
         return `Clicking ${arg(args, "text", "selector") || "a control"}`;
       case "browser.type":

@@ -45,6 +45,7 @@ fn host(approver: Arc<Person>) -> ToolHost {
         mode: ApprovalMode::Ask,
         edits_auto: false,
         full: false,
+        cfg: parzi_core::config::ParziConfig::default(),
         store,
         tools: Arc::new(ToolExecutor {
             cwd: String::new(),

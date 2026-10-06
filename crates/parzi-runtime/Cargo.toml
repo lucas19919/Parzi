@@ -21,6 +21,9 @@ hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls-manual-roots"] }
+pdf-extract = "0.12.1"
+base64 = "0.23.1"
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json"] }

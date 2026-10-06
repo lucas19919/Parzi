@@ -102,6 +102,9 @@ impl ToolExecutor {
         d.extend(brain_defs());
         d.extend(session_defs());
         d.extend(lane_defs());
+        d.extend(image_defs());
+        d.extend(doc_defs());
+        d.extend(team_defs());
         d.retain(|t| self.is_allowed(&t.name));
         d
     }
@@ -235,13 +238,26 @@ fn browser_defs() -> Vec<ToolDef> {
                 "required": ["text"],
             }),
         },
+        ToolDef {
+            name: "browser.shot".into(),
+            description: "Screenshot the session's browser tab and save it as a JPEG file. Returns the file path — open it with your own vision (Read) to actually see the pixels and verify layouts, diagrams, and rendered pages.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+            }),
+        },
     ]
 }
 
 pub(crate) fn is_browser_tool(name: &str) -> bool {
     matches!(
         name,
-        "browser.open" | "browser.tabs" | "browser.read" | "browser.click" | "browser.type"
+        "browser.open"
+            | "browser.tabs"
+            | "browser.read"
+            | "browser.click"
+            | "browser.type"
+            | "browser.shot"
     )
 }
 
@@ -297,6 +313,56 @@ pub fn is_brain_tool(name: &str) -> bool {
 
 pub(crate) fn is_lane_tool(name: &str) -> bool {
     matches!(name, "lane.dispatch")
+}
+
+pub(crate) fn is_image_tool(name: &str) -> bool {
+    matches!(name, "image.generate")
+}
+
+pub(crate) fn is_doc_tool(name: &str) -> bool {
+    matches!(name, "doc.read")
+}
+
+pub(crate) fn is_models_tool(name: &str) -> bool {
+    matches!(name, "models.list")
+}
+
+fn image_defs() -> Vec<ToolDef> {
+    vec![ToolDef {
+        name: "image.generate".into(),
+        description: "Generate an image from a text prompt. Saves a PNG under generated/ in the working folder and publishes it as an image artifact the user sees. Describe the picture concretely (subject, style, mood, composition).".into(),
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string"},
+                "size": {"type": "string", "description": "square, wide, or tall"},
+            },
+            "required": ["prompt"],
+        }),
+    }]
+}
+
+fn doc_defs() -> Vec<ToolDef> {
+    vec![ToolDef {
+        name: "doc.read".into(),
+        description: "Read a document as text: a PDF or text file from an http(s) URL or a local path. Use it for research papers, manuals, and reports (for web pages prefer the browser tools). Returns the first ~12k characters.".into(),
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {"source": {"type": "string"}},
+            "required": ["source"],
+        }),
+    }]
+}
+
+fn team_defs() -> Vec<ToolDef> {
+    vec![ToolDef {
+        name: "models.list".into(),
+        description: "List the agent bench: enabled providers in routing order with display names and default models. Check this before staffing subagents, then pass an explicit model to session.spawn so each job runs on the right strength (quick lookups on fast models, builds on strong ones).".into(),
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {},
+        }),
+    }]
 }
 
 pub fn is_session_tool(name: &str) -> bool {
@@ -479,7 +545,16 @@ pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String
         ),
         "browser.tabs" => "Listing tabs".into(),
         "browser.read" => "Reading the open page".into(),
-        "browser.click" => format!(
+        "browser.shot" => "Looking at the open page".into(),
+        "image.generate" => format!(
+            "Drawing {}",
+            one_line(&str_arg("prompt").unwrap_or_else(|| "an image".into()), 60)
+        ),
+        "doc.read" => format!(
+            "Reading {}",
+            one_line(&str_arg("source").unwrap_or_else(|| "a document".into()), 60)
+        ),
+        "models.list" => "Checking the bench".into(),        "browser.click" => format!(
             "Clicking {}",
             one_line(
                 &str_arg("text")

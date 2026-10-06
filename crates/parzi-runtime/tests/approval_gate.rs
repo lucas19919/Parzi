@@ -209,6 +209,7 @@ fn host(allowed: Vec<String>, mode: ApprovalMode) -> ToolHost {
         mode,
         edits_auto: false,
         full: false,
+        cfg: parzi_core::config::ParziConfig::default(),
         store,
         tools: Arc::new(ToolExecutor {
             cwd: std::env::temp_dir().display().to_string(),

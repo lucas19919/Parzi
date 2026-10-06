@@ -87,6 +87,26 @@ fn session_tools_advertised_iff_allowed() {
     assert!(shut.defs().iter().all(|d| d.name != "session.spawn"));
 }
 
+#[test]
+fn makers_and_readers_are_advertised() {
+    let open = ToolExecutor {
+        cwd: String::new(),
+        mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
+        allowed: vec!["*".into()],
+    };
+    for t in [
+        "image.generate",
+        "doc.read",
+        "models.list",
+        "browser.shot",
+    ] {
+        assert!(
+            open.defs().iter().any(|d| d.name == *t),
+            "{t} must be advertised"
+        );
+    }
+}
+
 #[tokio::test]
 async fn spawn_subsession_nests_but_full_session_stays_top_level() {
     let (orch, store) = team(4, answer());

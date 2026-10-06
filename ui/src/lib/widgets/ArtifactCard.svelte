@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import DOMPurify from "dompurify";
+  import { api } from "../api";
   import { renderMarkdown } from "../md";
   import { handleLinkClick } from "../links";
 
@@ -32,6 +33,7 @@
           ALLOWED_URI_REGEXP: /^(?:(?:https?|parzi):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
         })
       : "";
+  $: imageUrl = kind === "image" && content.trim() ? api.readImageDataUrl(content, "").catch(() => null) : null;
   let showCode = false;
   let frame: HTMLIFrameElement | null = null;
 
@@ -80,6 +82,10 @@
     <div class="art-md" on:click={(e) => void handleLinkClick(e)}>{@html renderMarkdown(content)}</div>
   {:else if kind === "svg"}
     <div class="art-svg">{@html safeSvg}</div>
+  {:else if kind === "image" && imageUrl}
+    {#await imageUrl then url}
+      {#if url}<img class="art-img" src={url} alt={title} />{/if}
+    {/await}
   {:else if canRender && !showCode}
     <iframe bind:this={frame} class="art-render" {title} sandbox="allow-scripts" scrolling="no" srcdoc={LOCAL_ONLY + RESIZE + content}></iframe>
   {:else}
@@ -132,6 +138,7 @@
   .mini-btn:hover { color: var(--text); }
   .art-md { padding: 2px 0; font-size: 13px; }
   .art-svg :global(svg) { width: 100%; height: auto; display: block; }
+  .art-img { width: 100%; height: auto; display: block; border-radius: 8px; }
   .art-render { width: 100%; min-height: 320px; border: none; background: transparent; display: block; overflow: hidden; }
   .art-code { font-size: 11.5px; }
   .art-code.clamped :global(.codeblock.clamped) { max-height: 420px; }

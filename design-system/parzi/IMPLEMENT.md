@@ -1,36 +1,25 @@
 # Implement List — committed, from the T3 comparison
 
-Three items. Everything else in T3_GAP.md is explicitly not scheduled.
+Status 2026-10-06: image generation + doc reading + page screenshots
+shipped (below). Remaining: keyed image endpoint in Settings, DDG
+search API (browser navigation covers it crudely today), message edit.
 
-## 1. Image generation
+## 1. Image generation — SHIPPED (Pollinations default)
 
-- New Parzi-native tool, e.g. `image.generate { prompt, size? }`,
-  offered on Code lane (Research: allow — trivial "gen an image"
-  questions are a headline Research use case).
-- Needs a backend: provider-native where it exists, else a configured
-  endpoint + key in Settings › Providers. Decide at build time; do not
-  hardcode one vendor.
-- Output must land somewhere visible: artifacts have no image kind
-  today (`code|markdown|html|svg|json|csv|diff|text`) and EChart was
-  removed — add an image-capable artifact/widget path in the same
-  change, or generated images have nowhere to live.
-- Approval: image calls go through the normal permission mode
-  (Supervised asks, Full runs).
+- `image.generate {prompt, size?}` on Build (approval-gated) and
+  Research (auto). Endpoint template in config (`image.endpoint`,
+  `{prompt} {width} {height} {model}`), default Pollinations flux.
+- Saves under `generated/`, publishes a kind-`image` artifact rendered
+  inline. Still open: keyed provider endpoint + Settings UI for it.
 
-## 2. Web search for all agents (browser-backed)
+## 2. Web search for all agents (browser-backed) — PARTIAL
 
-- Today `browser.open` *navigates*; no tool *returns* search results as
-  data. Add a data-returning search tool (e.g. `web.search { query }`
-  → titles + URLs + snippets) on Code **and** Research lanes.
-- Start with the DuckDuckGo html/lite endpoint (no key, no dependency);
-  graduate to a keyed API (Brave/Tavily) in Settings if quality demands
-  it. Keep the tool interface identical so the backend is swappable.
-- Research answers cite sources by default (brief already says so;
-  enforce by having URLs in-context, not by hoping).
-- The connected tabs (open → read → click/type) are the verification
-  loop: search returns candidates, the agent opens and quotes the real
-  pages. That loop is also the test plan: seed a query, assert the
-  answer cites a page the tabs actually loaded.
+- `doc.read {source}` extracts PDFs (arxiv!) and text from URLs/paths
+  on all lanes; `browser.shot` saves a JPEG the agent opens with its
+  own vision to verify pages and diagrams. Connected tabs stay the
+  verification loop.
+- Still open: a data-returning `web.search` API (today: navigate DDG
+  in-browser and read the results page — works, inelegant).
 
 ## 3. Message edit (maybe)
 

@@ -26,6 +26,8 @@ pub struct ParziConfig {
     pub favorite_models: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub quick_model: String,
+    #[serde(default)]
+    pub image: ImageConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,6 +122,39 @@ pub struct McpConfig {
     pub servers: HashMap<String, McpServerCfg>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageConfig {
+    #[serde(default = "default_image_endpoint")]
+    pub endpoint: String,
+    #[serde(default = "default_image_model")]
+    pub model: String,
+    #[serde(default = "default_image_size")]
+    pub width: u32,
+    #[serde(default = "default_image_size")]
+    pub height: u32,
+}
+
+fn default_image_endpoint() -> String {
+    "https://image.pollinations.ai/prompt/{prompt}?width={width}&height={height}&model={model}&nologo=true".into()
+}
+fn default_image_model() -> String {
+    "flux".into()
+}
+fn default_image_size() -> u32 {
+    1024
+}
+
+impl Default for ImageConfig {
+    fn default() -> Self {
+        Self {
+            endpoint: default_image_endpoint(),
+            model: default_image_model(),
+            width: default_image_size(),
+            height: default_image_size(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct McpServerCfg {
     pub command: String,
@@ -210,6 +245,7 @@ impl Default for ParziConfig {
             budget: Budget::default(),
             favorite_models: vec![],
             quick_model: String::new(),
+            image: ImageConfig::default(),
         }
     }
 }

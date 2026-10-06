@@ -1,10 +1,11 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
+use parzi_core::config::ParziConfig;
 use parzi_core::context::InterKind;
-use parzi_core::error::{ParziError, Result};
-use parzi_core::store::{Event, SessionStore};
+use parzi_core::error::{ParziError, Result};use parzi_core::store::{Event, SessionStore};
 use parzi_core::{artifacts, brain, widgets};
 use parzi_providers::{PermissionDecision, PermissionGate, PermissionRequest};
 use serde_json::Value;
@@ -12,8 +13,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::handler::{HarnessBridge, RunEvent, RunSink};
 use crate::tools::{
-    display_name, is_brain_tool, is_browser_tool, is_lane_tool, is_session_tool, is_ui_tool,
-    Approval, ApprovalMode, Approver, ToolCallInfo, ToolDef, ToolExecutor,
+    display_name, is_brain_tool, is_browser_tool, is_doc_tool, is_image_tool, is_lane_tool,
+    is_models_tool, is_session_tool, is_ui_tool, Approval, ApprovalMode, Approver, ToolCallInfo,
+    ToolDef, ToolExecutor,
 };
 
 pub struct ToolHostParts {
@@ -22,6 +24,7 @@ pub struct ToolHostParts {
     pub mode: ApprovalMode,
     pub edits_auto: bool,
     pub full: bool,
+    pub cfg: ParziConfig,
     pub store: SessionStore,
     pub tools: Arc<ToolExecutor>,
     pub approver: Arc<dyn Approver>,
@@ -287,6 +290,48 @@ fn truncate_text(s: &str, n: usize) -> String {
     format!("{cut}…")
 }
 
+fn url_encode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+async fn fetch_bytes(url: &str) -> std::result::Result<(Vec<u8>, String), String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(90))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let res = client.get(url).send().await.map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        return Err(format!("the service replied {}", res.status()));
+    }
+    let content_type = res
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let bytes = res.bytes().await.map_err(|e| e.to_string())?.to_vec();
+    Ok((bytes, content_type))
+}
+
+fn image_ext(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        Some("png")
+    } else if bytes.starts_with(&[0xFF, 0xD8]) {
+        Some("jpg")
+    } else if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
+    }
+}
+
 impl ToolHost {
     pub fn new(parts: ToolHostParts) -> Self {
         Self {
@@ -306,9 +351,14 @@ impl ToolHost {
                 | "browser.read"
                 | "browser.click"
                 | "browser.type"
+                | "browser.shot"
                 | "brain.search"
                 | "brain.read"
                 | "brain.list"
+                | "brain.write"
+                | "image.generate"
+                | "doc.read"
+                | "models.list"
                 | "ui.show_markdown"
                 | "ui.show_widget"
                 | "ui.show_artifact"
@@ -393,6 +443,27 @@ impl ToolHost {
                 );
             }
             return self.execute_lane_tool(name, args).await;
+        }
+        if is_image_tool(name) {
+            if !self.approved(id, name, args).await {
+                return (
+                    false,
+                    format!("tool `{name}` denied (lane mode / approver)"),
+                );
+            }
+            return self.execute_image(args).await;
+        }
+        if is_doc_tool(name) || is_models_tool(name) {
+            if !self.p.tools.is_allowed(name) {
+                return (
+                    false,
+                    format!("tool `{name}` denied (lane mode / approver)"),
+                );
+            }
+            if name == "models.list" {
+                return (true, self.models_list());
+            }
+            return self.execute_doc(args).await;
         }
         if !self.approved(id, name, args).await {
             return (
@@ -503,7 +574,10 @@ impl ToolHost {
                 "research mode is read-only: answer from knowledge, search, and page reads";
             return match kind {
                 Some("fs.read") => PermissionDecision::Allow,
-                Some(_) => PermissionDecision::Deny(READ_ONLY.into()),
+                Some("fs.write") if !outside => PermissionDecision::Allow,
+                Some(_) => PermissionDecision::Deny(
+                    "research can write notes and documents, but cannot run commands or spawn workers".into(),
+                ),
                 None if matches!(req.tool.as_str(), "WebFetch" | "WebSearch" | "web_search") => {
                     PermissionDecision::Allow
                 }
@@ -645,6 +719,144 @@ impl ToolHost {
         }
     }
 
+    fn models_list(&self) -> String {
+        let cfg = &self.p.cfg;
+        let mut order = cfg.routing.order.clone();
+        for id in cfg.providers.keys() {
+            if !order.contains(id) {
+                order.push(id.clone());
+            }
+        }
+        let mut lines = vec!["The bench, in routing order:".to_string()];
+        for id in &order {
+            let entry = cfg.provider(id);
+            if !entry.enabled {
+                continue;
+            }
+            let model = if entry.default_model.trim().is_empty() {
+                "smart auto".to_string()
+            } else {
+                entry.default_model.clone()
+            };
+            lines.push(format!("- {id} — {} (default: {model})", display_name(id)));
+        }
+        let off: Vec<&String> = order
+            .iter()
+            .filter(|id| !cfg.provider(id).enabled)
+            .collect();
+        if !off.is_empty() {
+            lines.push(format!(
+                "Switched off: {}",
+                off.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            ));
+        }
+        lines.join("\n")
+    }
+
+    async fn execute_image(&self, args: &Value) -> (bool, String) {
+        let prompt = args
+            .get("prompt")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if prompt.is_empty() {
+            return (false, "image.generate needs a `prompt`".into());
+        }
+        let (w, h) = match args.get("size").and_then(Value::as_str).unwrap_or("square") {
+            "wide" => (1536, 1024),
+            "tall" => (1024, 1536),
+            _ => (1024, 1024),
+        };
+        let img = &self.p.cfg.image;
+        let url = img
+            .endpoint
+            .replace("{prompt}", &url_encode(prompt))
+            .replace("{width}", &w.to_string())
+            .replace("{height}", &h.to_string())
+            .replace("{model}", &img.model);
+        let (bytes, _content_type) = match fetch_bytes(&url).await {
+            Ok(pair) => pair,
+            Err(e) => return (false, e),
+        };
+        if bytes.len() > 12 * 1024 * 1024 {
+            return (false, "the image came back over 12 MiB, dropped".into());
+        }
+        let ext = match image_ext(&bytes) {
+            Some(e) => e,
+            None => return (false, "the image service did not return a picture".into()),
+        };
+        let dir = PathBuf::from(&self.p.tools.cwd).join("generated");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            return (false, format!("cannot create generated/: {e}"));
+        }
+        let slug = artifacts::slugify_id(prompt);
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let path = dir.join(format!("{slug}-{stamp}.{ext}"));
+        if let Err(e) = std::fs::write(&path, &bytes) {
+            return (false, format!("cannot save image: {e}"));
+        }
+        let title: String = prompt.chars().take(80).collect();
+        let payload = serde_json::json!({
+            "artifact": 1,
+            "id": format!("img-{slug}"),
+            "title": title,
+            "kind": "image",
+            "content": path.display().to_string(),
+        });
+        match self.store_artifact(&payload) {
+            Ok(msg) => (
+                true,
+                format!("saved {} ({:.1} KiB)\n{msg}", path.display(), bytes.len() as f64 / 1024.0),
+            ),
+            Err(e) => (false, e.to_string()),
+        }
+    }
+
+    async fn execute_doc(&self, args: &Value) -> (bool, String) {
+        let src = args
+            .get("source")
+            .or_else(|| args.get("url"))
+            .or_else(|| args.get("path"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if src.is_empty() {
+            return (false, "doc.read needs a `source` URL or path".into());
+        }
+        let (bytes, is_pdf) = if src.starts_with("http://") || src.starts_with("https://") {
+            let (data, content_type) = match fetch_bytes(src).await {
+                Ok(pair) => pair,
+                Err(e) => return (false, e),
+            };
+            let pdf = content_type.contains("pdf")
+                || src.split(['?', '#']).next().unwrap_or("").to_lowercase().ends_with(".pdf");
+            (data, pdf)
+        } else {
+            let data = match std::fs::read(src) {
+                Ok(d) => d,
+                Err(e) => return (false, format!("cannot read {src}: {e}")),
+            };
+            (data, src.to_lowercase().ends_with(".pdf"))
+        };
+        if bytes.len() > 8 * 1024 * 1024 {
+            return (false, "document is over 8 MiB, refusing".into());
+        }
+        if is_pdf {
+            return match pdf_extract::extract_text_from_mem(&bytes) {
+                Ok(text) => (true, truncate_text(&text, 12_000)),
+                Err(e) => (false, format!("cannot read that PDF: {e}")),
+            };
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        if text.bytes().any(|b| b == 0) {
+            return (false, "that file is not text — doc.read handles PDFs and text".into());
+        }
+        (true, truncate_text(&text, 12_000))
+    }
+
     async fn execute_browser(&self, name: &str, args: &Value) -> (bool, String) {
         match name {
             "browser.open" => {
@@ -712,6 +924,48 @@ impl ToolHost {
                         }
                         (true, out)
                     }
+                }
+                Err(e) => (false, e),
+            },
+            "browser.shot" => match crate::desk::call(
+                "tab.shot",
+                serde_json::json!({ "session": self.p.session_id }),
+            )
+            .await
+            {
+                Ok(v) => {
+                    use base64::Engine as _;
+                    let raw = v.get("jpeg").and_then(Value::as_str).unwrap_or("");
+                    let bytes =
+                        match base64::engine::general_purpose::STANDARD.decode(raw) {
+                            Ok(b) if !b.is_empty() => b,
+                            _ => {
+                                return (
+                                    false,
+                                    "the tab did not produce a screenshot".into(),
+                                )
+                            }
+                        };
+                    let dir = PathBuf::from(&self.p.tools.cwd).join("shots");
+                    if let Err(e) = std::fs::create_dir_all(&dir) {
+                        return (false, format!("cannot create shots/: {e}"));
+                    }
+                    let stamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let path = dir.join(format!("shot-{stamp}.jpg"));
+                    if let Err(e) = std::fs::write(&path, &bytes) {
+                        return (false, format!("cannot save screenshot: {e}"));
+                    }
+                    (
+                        true,
+                        format!(
+                            "saved {} ({:.0} KiB) — open it with your Read tool to see the pixels",
+                            path.display(),
+                            bytes.len() as f64 / 1024.0
+                        ),
+                    )
                 }
                 Err(e) => (false, e),
             },

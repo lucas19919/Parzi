@@ -76,6 +76,7 @@ fn gate(folder: &Path, mode: ApprovalMode, edits_auto: bool, person: Arc<Person>
         mode,
         edits_auto,
         full: false,
+        cfg: parzi_core::config::ParziConfig::default(),
         store,
         tools: Arc::new(ToolExecutor {
             cwd: folder.display().to_string(),
@@ -194,6 +195,7 @@ async fn full_access_writes_anywhere_without_a_card() {
         mode: ApprovalMode::Auto,
         edits_auto: false,
         full: true,
+        cfg: parzi_core::config::ParziConfig::default(),
         store,
         tools: Arc::new(ToolExecutor {
             cwd: folder.display().to_string(),
@@ -228,6 +230,7 @@ fn research_host(folder: &Path, person: Arc<Person>) -> ToolHost {
         mode: ApprovalMode::Ask,
         edits_auto: false,
         full: false,
+        cfg: parzi_core::config::ParziConfig::default(),
         store,
         tools: Arc::new(ToolExecutor {
             cwd: folder.display().to_string(),
@@ -248,7 +251,14 @@ async fn research_lane_answers_without_cards_and_never_writes() {
     let person = nobody();
     let host = research_host(&folder, person.clone());
 
-    for tool in ["Write", "Edit", "Bash", "Task"] {
+    for tool in ["Write", "Edit"] {
+        assert_eq!(
+            ask(&host, tool, &["src/a.rs"]).await,
+            PermissionDecision::Allow,
+            "{tool} writes notes and docs on the research lane"
+        );
+    }
+    for tool in ["Bash", "Task"] {
         assert!(
             matches!(
                 ask(&host, tool, &["src/a.rs"]).await,
@@ -269,10 +279,10 @@ async fn research_lane_answers_without_cards_and_never_writes() {
     let (ok, _) = host
         .call("brain.write", &serde_json::json!({"path": "x", "content": "y"}))
         .await;
-    assert!(!ok, "the agent cannot write notes on the research lane");
+    assert!(ok, "research may write notes, just never run or spawn");
     assert!(
         person.seen.lock().unwrap().is_empty(),
-        "still no card after a refused write"
+        "still no card after an allowed write"
     );
     let _ = std::fs::remove_dir_all(&folder);
 }
