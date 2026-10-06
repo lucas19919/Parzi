@@ -567,6 +567,7 @@
     else if (name === "ctrl+comma") settingsOpen ? (settingsOpen = false) : openSettings();
     else if (name === "ctrl+b") openBrain();
     else if (name === "ctrl+h") openHistory();
+    else if (name === "ctrl+shift+a") openHistory("agents");
     else if (name === "ctrl+shift+t") reopenClosed();
     else if (name === "f11") void setImmersive(!immersive);
     else if (name === "ctrl+l") {
@@ -596,8 +597,10 @@
             : "ctrl+tab"
           : mod && key === ","
             ? "ctrl+comma"
-            : mod && e.shiftKey && key === "t"
-              ? "ctrl+shift+t"
+          : mod && e.shiftKey && key === "t"
+            ? "ctrl+shift+t"
+            : mod && e.shiftKey && key === "a"
+              ? "ctrl+shift+a"
               : mod && ["p", "k", "t", "w", "l", "b", "h"].includes(key)
                 ? `ctrl+${key}`
                 : "";
@@ -661,6 +664,10 @@
 <div class="shell">
   <DefaultArt {bg} blurred={hasSession || tab.kind === "page" || settingsOpen} />
 
+  {#if !hasSession && !settingsOpen && tab.kind !== "page" && tab.kind !== "history" && tab.kind !== "brain"}
+    <div class="hero-reef" aria-hidden="true" />
+  {/if}
+
   {#if !immersive}
   <TopBar
     {tabs}
@@ -680,9 +687,6 @@
   {/if}
 
   <main>
-    {#if !hasSession && !settingsOpen && tab.kind !== "page" && tab.kind !== "history" && tab.kind !== "brain"}
-      <div class="hero-reef" aria-hidden="true" />
-    {/if}
     {#if settingsOpen}
       <div class="fill" in:fly={{ y: 8, ...motion }}>
         <Settings bind:section={settingsSection} on:close={() => (settingsOpen = false)} />
@@ -873,12 +877,12 @@
     border: 1px solid var(--line);
     border-bottom: none;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    animation: enter 450ms cubic-bezier(0.16, 1, 0.3, 1);
+    animation: enter 600ms cubic-bezier(0.22, 1, 0.36, 1);
   }
   @keyframes enter {
     from {
       opacity: 0;
-      transform: translateY(12px);
+      transform: translateY(6px);
     }
   }
   .scroll {
@@ -931,9 +935,9 @@
     width: min(720px, 90%);
     transform: translate(-50%, 0);
     transition:
-      bottom 700ms cubic-bezier(0.16, 1, 0.3, 1),
-      transform 700ms cubic-bezier(0.16, 1, 0.3, 1),
-      width 500ms ease;
+      bottom 1050ms cubic-bezier(0.22, 1, 0.36, 1),
+      transform 1050ms cubic-bezier(0.22, 1, 0.36, 1),
+      width 700ms ease;
   }
   .composer.docked {
     bottom: 14px;
@@ -954,7 +958,7 @@
     z-index: 0;
     height: 48%;
     pointer-events: none;
-    background: url("/hero-reef.png") center 32% / cover no-repeat;
+    background: url("/hero-harbor.png") center 32% / cover no-repeat;
     -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent 99%);
     mask-image: linear-gradient(to bottom, #000 58%, transparent 99%);
     opacity: 0.9;

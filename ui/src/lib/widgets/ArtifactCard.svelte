@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import DOMPurify from "dompurify";
   import { renderMarkdown } from "../md";
   import { handleLinkClick } from "../links";
 
@@ -16,12 +17,21 @@
   const content: string = String(d.content ?? "");
 
   const LOCAL_ONLY = `<meta http-equiv="Content-Security-Policy" content="img-src data: blob:; media-src data: blob:; connect-src 'none'">`;
-  const RESIZE = `<script>function tell(){var h=document.documentElement.scrollHeight;parent.postMessage({parziArt:1,height:h},"*")}addEventListener("load",tell);setTimeout(tell,400);<\/script>`;
+  const RESIZE = `<script>function tell(){try{var h=document.documentElement.scrollHeight;parent.postMessage({parziArt:1,height:h},"*")}catch(e){}}addEventListener("load",tell);setTimeout(tell,400);setTimeout(tell,1500);<\/script>`;
   const lines = content ? content.split("\n").length : 0;
   const bad = !content.trim();
   let expanded = false;
   let copied = false;
   $: canRender = (kind === "html" || kind === "svg") && !!content.trim();
+  // SVG renders inline (scripts/handlers stripped) so diagrams size
+  // naturally with zero chrome and zero scrollbars. HTML stays in the
+  // sandboxed frame since it can carry live scripts.
+  $: safeSvg =
+    kind === "svg" && content.trim()
+      ? DOMPurify.sanitize(content, {
+          ALLOWED_URI_REGEXP: /^(?:(?:https?|parzi):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
+        })
+      : "";
   let showCode = false;
   let frame: HTMLIFrameElement | null = null;
 
@@ -68,8 +78,10 @@
   {:else if kind === "markdown"}
     <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
     <div class="art-md" on:click={(e) => void handleLinkClick(e)}>{@html renderMarkdown(content)}</div>
+  {:else if kind === "svg"}
+    <div class="art-svg">{@html safeSvg}</div>
   {:else if canRender && !showCode}
-    <iframe bind:this={frame} class="art-render" {title} sandbox="allow-scripts" srcdoc={LOCAL_ONLY + RESIZE + content}></iframe>
+    <iframe bind:this={frame} class="art-render" {title} sandbox="allow-scripts" scrolling="no" srcdoc={LOCAL_ONLY + RESIZE + content}></iframe>
   {:else}
     <div class="art-code" class:clamped={!expanded && lines > 30}>
       {@html renderMarkdown("```" + (language || kind) + "\n" + content.slice(0, 60000) + "\n```")}
@@ -119,7 +131,8 @@
   }
   .mini-btn:hover { color: var(--text); }
   .art-md { padding: 2px 0; font-size: 13px; }
-  .art-render { width: 100%; min-height: 320px; border: none; background: transparent; display: block; }
+  .art-svg :global(svg) { width: 100%; height: auto; display: block; }
+  .art-render { width: 100%; min-height: 320px; border: none; background: transparent; display: block; overflow: hidden; }
   .art-code { font-size: 11.5px; }
   .art-code.clamped :global(.codeblock.clamped) { max-height: 420px; }
   .art-error { padding: 8px 12px; font-size: 11px; color: var(--bad); }
