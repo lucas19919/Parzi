@@ -91,7 +91,11 @@
         await api.browserHide();
         return;
       }
-      const rect = { x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height) };
+      // Overscan outward: rounding inward leaves a 1px sliver of the
+      // Parzi background around the page, visible as an outline.
+      const x = Math.floor(r.x);
+      const y = Math.floor(r.y);
+      const rect = { x, y, width: Math.ceil(r.x + r.width) - x, height: Math.ceil(r.y + r.height) - y };
       await api.browserShow(tab.id, rect, url);
     } catch (e) {
       if (!reported) {

@@ -26,7 +26,7 @@
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
   import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, sessionTab, toAddress, type Tab } from "./lib/tabs";
-  import { toast, toastError, toasts } from "./lib/toast";
+  import { toast, toastError, toasts, notify } from "./lib/toast";
   import { covered } from "./lib/overlay";
   import type { Approval, LiveTool } from "./lib/live";
 
@@ -234,6 +234,7 @@
   async function setImmersive(on: boolean) {
     if (immersive === on) return;
     immersive = on;
+    document.documentElement.classList.toggle("parzi-maximized", on);
     await api.windowFullscreen(on).catch(() => {});
   }
 
@@ -529,6 +530,9 @@
         flushLive();
         clearLive();
         void reload();
+      } else {
+        const title = threads.find((t) => t.id === e.session)?.title || "Agent";
+        notify(e.kind === "done" ? `${title} finished` : `${title} stopped`, e.session);
       }
       return;
     }
@@ -805,7 +809,19 @@
 
   <div class="toasts" aria-live="polite">
     {#each $toasts as t (t.id)}
-      <div class="toast" class:err={t.err} transition:fade={{ duration: 140 }}>{t.text}</div>
+      {#if t.session}
+        <button
+          class="toast go"
+          transition:fade={{ duration: 140 }}
+          on:click={() => {
+            toasts.update((all) => all.filter((x) => x.id !== t.id));
+            if (immersive) void setImmersive(false);
+            openSession(t.session ?? "");
+          }}>{t.text}</button
+        >
+      {:else}
+        <div class="toast" class:err={t.err} transition:fade={{ duration: 140 }}>{t.text}</div>
+      {/if}
     {/each}
   </div>
 </div>
@@ -939,7 +955,17 @@
     border-radius: var(--radius);
     box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
     color: var(--text);
+    font: inherit;
     font-size: 12px;
+    text-align: left;
+  }
+  .toast.go {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+    cursor: pointer;
+    pointer-events: auto;
+  }
+  .toast.go:hover {
+    background: color-mix(in srgb, var(--text) 6%, var(--panel));
   }
   .toast.err {
     border-color: var(--bad);

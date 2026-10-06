@@ -78,8 +78,10 @@ fn page_bounds(
     let max_h = f64::from(inner.height) / scale;
     let x = x.clamp(0.0, max_w);
     let y = y.clamp(0.0, max_h);
-    let width = width.min((max_w - x).max(0.0));
-    let height = height.min((max_h - y).max(0.0));
+    // Allow a 2px bleed past the window edge: the UI overscans the slot
+    // rect outward so no background sliver shows around the page.
+    let width = width.min((max_w - x + 2.0).max(0.0));
+    let height = height.min((max_h - y + 2.0).max(0.0));
     if width < 8.0 || height < 8.0 {
         None
     } else {
