@@ -60,14 +60,14 @@
   let warmed = "";
   let effort = "medium";
   let permission = "full";
-  let mode: ComposerMode = "code";
+  let mode: ComposerMode = "build";
   let attachments: string[] = [];
   let sending = false;
 
-  const modeDefaults = { search: { model: "auto", effort: "medium" }, code: { model: "auto", effort: "medium" }, research: { model: "auto", effort: "low" } };
+  const modeDefaults = { search: { model: "auto", effort: "medium" }, build: { model: "auto", effort: "medium" }, research: { model: "auto", effort: "low" } };
   let modeKept: Record<ComposerMode, { model: string; effort: string }> = {
     search: { ...modeDefaults.search },
-    code: { ...modeDefaults.code },
+    build: { ...modeDefaults.build },
     research: { ...modeDefaults.research },
   };
   let prevMode: ComposerMode = mode;
@@ -75,6 +75,11 @@
   function laneOf(sessionId: string | null | undefined): string {
     if (!sessionId) return "";
     return threads.find((t) => t.id === sessionId)?.lane ?? "";
+  }
+
+  // Legacy sessions stored lane "code"; that is today's "build".
+  function normLane(lane: string): string {
+    return lane === "code" ? "build" : lane;
   }
 
   function isDescendant(id: string, ancestor: string): boolean {
@@ -404,7 +409,7 @@
     }
     const target = tab;
     const files = attachments;
-    const sessionLane = laneOf(target.sessionId);
+    const sessionLane = normLane(laneOf(target.sessionId));
     const fresh = !target.sessionId || (sessionLane !== "" && sessionLane !== mode);
     const optimistic: ChatEvent = { kind: "user", text: prompt };
     sending = true;
@@ -814,7 +819,7 @@
       {/if}
 
       <div class="composer" class:docked={hasSession} bind:clientHeight={dockHeight}>
-        {#if hasSession && meta?.lane && meta.lane !== mode && mode !== "search"}
+        {#if hasSession && meta?.lane && normLane(meta.lane) !== mode && mode !== "search"}
           <div class="lane-hint">↵ starts a new {MODE_META[mode].label} session</div>
         {/if}
         <Omnibar

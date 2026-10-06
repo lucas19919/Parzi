@@ -229,6 +229,10 @@ impl Orchestrator {
             "browser.read",
             "browser.click",
             "browser.type",
+            "browser.shot",
+            "image.generate",
+            "doc.read",
+            "models.list",
             "brain.search",
             "brain.read",
             "brain.list",
@@ -383,6 +387,7 @@ impl Orchestrator {
             mode,
             edits_auto,
             full,
+            cfg: snap.clone(),
             store: p.store.clone(),
             tools,
             approver: q.approver.clone().unwrap_or_else(|| Arc::new(DenyApprover)),
@@ -475,6 +480,10 @@ mod tests {
             "browser.read",
             "browser.click",
             "browser.type",
+            "browser.shot",
+            "image.generate",
+            "doc.read",
+            "models.list",
             "ui.show_artifact",
             "brain.search",
             "brain.write",
@@ -487,7 +496,7 @@ mod tests {
     #[test]
     fn code_lane_can_orchestrate_and_research_cannot() {
         let cfg = ParziConfig::default();
-        for lane in ["code", ""] {
+        for lane in ["build", "code", ""] {
             let (_, allowed) = Orchestrator::lane_policy_for(&cfg, lane);
             for t in [
                 "session.spawn",

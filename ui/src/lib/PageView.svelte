@@ -338,7 +338,7 @@
       {/each}
     </div>
   {/if}
-  <div class="slot" class:empty={!url} style={tab.bg ? `background:${tab.bg}` : ""} bind:this={slot}>
+  <div class="slot" class:empty={!url} class:dark={immersive} style={!immersive && tab.bg ? `background:${tab.bg}` : ""} bind:this={slot}>
     {#if !url}
       <div class="blank">Type an address or a search above</div>
     {:else if open && snapshot}
@@ -506,6 +506,9 @@
     align-items: center;
     justify-content: center;
     background: var(--bg);
+  }
+  .slot.dark {
+    background: #000;
   }
   .snap {
     width: 100%;

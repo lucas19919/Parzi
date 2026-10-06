@@ -18,7 +18,7 @@
   export let model = "auto";
   export let effort = "medium";
   export let permission = "full";
-  export let mode: ComposerMode = "code";
+  export let mode: ComposerMode = "build";
   export let attachments: string[] = [];
   export let folder = "";
   export let folderLocked = false;
@@ -49,11 +49,11 @@
     { id: "full", title: "Full access", desc: "Run commands and edits without asking.", icon: "unlock" },
   ];
 
-  const MODES: ComposerMode[] = ["search", "code", "research"];
+  const MODES: ComposerMode[] = ["search", "build", "research"];
 
   const SLASH = [
     { name: "search", hint: "search mode" },
-    { name: "code", hint: "code mode" },
+    { name: "build", hint: "build mode" },
     { name: "research", hint: "research mode" },
     { name: "new", hint: "new session" },
     { name: "fork", hint: "branch this session" },
@@ -243,7 +243,7 @@
       suggestWeb(typed, completed);
       return;
     }
-    const at = mode === "code" ? /@([\w./-]*)$/.exec(input) : null;
+    const at = mode === "build" ? /@([\w./-]*)$/.exec(input) : null;
     if (!at || !folder) {
       atItems = [];
       return;
@@ -471,7 +471,7 @@
         </button>
       {/each}
     </div>
-    {#if mode === "code"}
+    {#if mode === "build"}
       <button bind:this={permBtn} class="ctl" class:open={permOpen} title={perm.desc} on:click|stopPropagation={togglePerm}>
         <Icon name={perm.icon} size={12} />
         <span class="truncate">{perm.title}</span>
@@ -513,7 +513,7 @@
           {/each}
         </div>
       {/if}
-      {#if mode === "code" && contextLimit > 0 && (contextUsed > 0 || compacting)}
+      {#if mode === "build" && contextLimit > 0 && (contextUsed > 0 || compacting)}
         <button
           class="ctx"
           class:warn={contextPct >= 70}

@@ -14,7 +14,7 @@ as of 2026-10-06. Parzi-side vs harness-side matters: we only fix ours.
 2. **Delegation works (Parzi side)** — `session.spawn` wait/block and
    background id + `read_session` poll are covered by live tests. The
    probe's `idle` + `ServeError` came from the opencode Task layer, not
-   us. Our defs are advertised per lane now (Code yes, Research never).
+    us. Our defs are advertised per lane now (Build yes, Research never).
 3. **Memory listing placement bug** — `projects/<slug>/…` notes now
    count as project members even without frontmatter (was: invisible
    to `brain.list(project)`).
@@ -44,7 +44,7 @@ as of 2026-10-06. Parzi-side vs harness-side matters: we only fix ours.
    Needs an image-capable tool result path first.
 10. **Interactive questions (Parzi UI)** — approvals are the only
     mid-turn user contact. The opencode layer has a question tool; our
-    thread has no equivalent. Wanted for Code lane forks.
+    thread has no equivalent. Wanted for Build lane forks.
 
 ## Open, harness-side (not ours to fix)
 

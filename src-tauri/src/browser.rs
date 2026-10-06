@@ -386,8 +386,10 @@ fn place_page(wv: &Webview, job: &Fit) -> Result<(), String> {
     #[cfg(windows)]
     {
         let scale = job.scale.max(0.01);
+        // Overscan 1 device px per side: CSS/device rounding otherwise
+        // leaves a hairline of Parzi background around the page.
         let px = |v: f64| (v * scale).round() as i32;
-        crate::dwm::fit_page_surface(wv, px(job.x), px(job.y), px(job.width), px(job.height))
+        crate::dwm::fit_page_surface(wv, px(job.x) - 1, px(job.y) - 1, px(job.width) + 2, px(job.height) + 2)
     }
     #[cfg(not(windows))]
     {
