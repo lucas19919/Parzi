@@ -6,7 +6,7 @@ use std::sync::Arc;
 use parzi_core::config::ParziConfig;
 use parzi_core::store::SessionStore;
 use parzi_runtime::handler::RunEvent;
-use parzi_runtime::tools::{Approval, Approver, ToolCallInfo};
+use parzi_runtime::tools::{Approval, Approver, AskRequest, Asker, ToolCallInfo};
 use parzi_runtime::Orchestrator;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -30,10 +30,13 @@ mod settings;
 mod vault;
 
 pub(crate) type Pending = Arc<Mutex<HashMap<String, (String, oneshot::Sender<Approval>)>>>;
+pub(crate) type PendingQuestions =
+    Arc<Mutex<HashMap<String, (String, oneshot::Sender<String>)>>>;
 
 pub(crate) struct AppState {
     pub(crate) orch: Arc<Orchestrator>,
     pub(crate) pending: Pending,
+    pub(crate) questions: PendingQuestions,
     pub(crate) app: AppHandle,
     pub(crate) desk: Arc<control::Desk>,
 }
@@ -75,6 +78,12 @@ pub(crate) enum UiEvent {
         key: String,
         session: String,
         call: ToolCallView,
+    },
+    Question {
+        key: String,
+        session: String,
+        question: String,
+        options: Vec<String>,
     },
     Done {
         session: String,
@@ -129,6 +138,38 @@ impl Approver for GuiApprover {
         match out {
             Ok(Ok(a)) => a,
             _ => Approval::Deny,
+        }
+    }
+}
+
+pub(crate) struct GuiAsker {
+    pub(crate) app: AppHandle,
+    pub(crate) pending: PendingQuestions,
+}
+
+#[async_trait::async_trait]
+impl Asker for GuiAsker {
+    async fn ask(&self, req: &AskRequest) -> String {
+        let key = uuid::Uuid::new_v4().to_string();
+        let (tx, rx) = oneshot::channel();
+        self.pending
+            .lock()
+            .await
+            .insert(key.clone(), (req.session.clone(), tx));
+        let _ = self.app.emit(
+            "parzi://run-event",
+            UiEvent::Question {
+                key: key.clone(),
+                session: req.session.clone(),
+                question: req.question.clone(),
+                options: req.options.clone(),
+            },
+        );
+        let out = tokio::time::timeout(std::time::Duration::from_secs(300), rx).await;
+        self.pending.lock().await.remove(&key);
+        match out {
+            Ok(Ok(a)) if !a.trim().is_empty() => a,
+            _ => "the user didn't answer — decide yourself and say what you assumed".into(),
         }
     }
 }
@@ -363,6 +404,7 @@ fn main() {
     let orch = Arc::new(Orchestrator::new(cfg, store));
     orch.recover().ok();
     let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+    let questions: PendingQuestions = Arc::new(Mutex::new(HashMap::new()));
     let desk = Arc::new(control::Desk::new());
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -403,9 +445,14 @@ fn main() {
             app.manage(AppState {
                 orch,
                 pending,
+                questions: questions.clone(),
                 app: app.handle().clone(),
                 desk: desk.clone(),
             });
+            o.set_asker(Arc::new(GuiAsker {
+                app: app.handle().clone(),
+                pending: questions.clone(),
+            }));
             let ctl_app = app.handle().clone();
             let ctl_orch = o.clone();
             let ctl_pending = app.state::<AppState>().pending.clone();
@@ -495,6 +542,7 @@ fn main() {
             sessions::delete_thread,
             sessions::purge_sessions,
             sessions::approve_tool,
+            sessions::answer_question,
             files::pick_folder,
             files::list_files,
             files::git_branch,

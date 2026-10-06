@@ -5,7 +5,7 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import {
     api, brain, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onRunEvent,
-    MODE_META, type ChatEvent, type ComposerMode, type PageEvent, type SessionMeta, type UiEvent,
+    MODE_META, type ChatEvent, type ComposerMode, type PageEvent, type Question, type SessionMeta, type UiEvent,
   } from "./lib/api";
   import TopBar from "./lib/TopBar.svelte";
   import Switcher from "./lib/Switcher.svelte";
@@ -45,6 +45,7 @@
   let events: ChatEvent[] = [];
   let running = new Set<string>();
   let approvals: Approval[] = [];
+  let questions: Question[] = [];
   let context = { used: 0, limit: 0 };
   let compacting = false;
   let branch = "";
@@ -129,6 +130,7 @@
   $: hasSession = tab.kind === "session" && (!!shown || sending || events.length > 0);
   $: folder = tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
   $: approval = approvals.find((a) => a.session === shown) ?? null;
+  $: openQuestion = questions.find((q) => q.session === shown) ?? null;
   $: void loadBranch(folder);
   $: void loadProject(folder);
   $: syncDesk(tabs, activeId);
@@ -554,10 +556,15 @@
       approvals = [...approvals.filter((a) => a.key !== e.key), { key: e.key, session: e.session, call: e.call }];
       return;
     }
+    if (e.kind === "question") {
+      questions = [...questions.filter((q) => q.key !== e.key), { key: e.key, session: e.session, question: e.question, options: e.options }];
+      return;
+    }
     if (e.kind === "done" || e.kind === "error") {
       running.delete(e.session);
       running = running;
       approvals = approvals.filter((a) => a.session !== e.session);
+      questions = questions.filter((q) => q.session !== e.session);
       void refreshThreads();
       if (e.session === shown) {
         flushLive();
@@ -780,9 +787,11 @@
                 {liveReasoning}
                 {liveTools}
                 {approval}
+                question={openQuestion}
                 {streaming}
                 {folder}
                 on:voted={(e) => (approvals = approvals.filter((a) => a.key !== e.detail.key))}
+                on:answered={(e) => (questions = questions.filter((q) => q.key !== e.detail.key))}
               />
             </div>
             {#if panelOpen}

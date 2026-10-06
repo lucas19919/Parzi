@@ -163,6 +163,26 @@ pub async fn purge_sessions(state: State<'_, AppState>) -> Result<usize, String>
 }
 
 #[tauri::command]
+pub async fn answer_question(
+    state: State<'_, AppState>,
+    key: String,
+    session: String,
+    answer: String,
+) -> Result<(), String> {
+    let entry = state.questions.lock().await.remove(&key);
+    match entry {
+        Some((bound, tx)) => {
+            if bound != session {
+                return Err("answer is for another session".into());
+            }
+            let _ = tx.send(answer);
+            Ok(())
+        }
+        None => Err("question expired or unknown".into()),
+    }
+}
+
+#[tauri::command]
 pub async fn approve_tool(
     state: State<'_, AppState>,
     key: String,

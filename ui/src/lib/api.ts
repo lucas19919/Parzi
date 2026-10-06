@@ -67,6 +67,13 @@ export interface ApprovalCall {
   session: string;
 }
 
+export interface Question {
+  key: string;
+  session: string;
+  question: string;
+  options: string[];
+}
+
 export type UiEvent =
   | { kind: "text"; session: string; text: string }
   | { kind: "reasoning"; session: string; text: string }
@@ -75,6 +82,7 @@ export type UiEvent =
   | { kind: "notice"; session: string; text: string }
   | { kind: "context"; session: string; used: number; limit: number }
   | { kind: "approval"; key: string; session: string; call: ApprovalCall }
+  | { kind: "question"; key: string; session: string; question: string; options: string[] }
   | { kind: "done"; session: string; turns: number }
   | { kind: "error"; session: string; error: string };
 
@@ -172,6 +180,8 @@ export const api = {
   killRun: (id: string) => invoke<void>("kill_run", { id }),
   approveTool: (key: string, session: string, allow: boolean) =>
     invoke<void>("approve_tool", { key, session, allow }),
+  answerQuestion: (key: string, session: string, answer: string) =>
+    invoke<void>("answer_question", { key, session, answer }),
   purgeSessions: () => invoke<number>("purge_sessions"),
 
   pickFolder: (start?: string) => invoke<string | null>("pick_folder", { start: start || null }),

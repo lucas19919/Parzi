@@ -8,7 +8,7 @@
   import ArtifactCard from "./widgets/ArtifactCard.svelte";
   import Steps from "./Steps.svelte";
   import Icon from "./Icon.svelte";
-  import { api, type ChatEvent } from "./api";
+  import { api, type ChatEvent, type Question } from "./api";
   import type { Approval, LiveTool, Step } from "./live";
 
   export let events: ChatEvent[] = [];
@@ -17,9 +17,10 @@
   export let liveTools: LiveTool[] = [];
   export let streaming = false;
   export let approval: Approval | null = null;
+  export let question: Question | null = null;
   export let folder = "";
 
-  const dispatch = createEventDispatcher<{ voted: { key: string } }>();
+  const dispatch = createEventDispatcher<{ voted: { key: string }; answered: { key: string } }>();
 
   const ERROR_WORDS: Record<string, string> = {
     auth: "Not signed in",
@@ -100,6 +101,14 @@
         return `Reading ${arg(args, "source") || "a document"}`;
       case "models.list":
         return "Checking the bench";
+      case "ask.user":
+        return `Asking ${arg(args, "question") || "a question"}`;
+      case "plan.write":
+        return "Writing the plan";
+      case "plan.read":
+        return "Reading the plan";
+      case "project.create":
+        return `Creating ${arg(args, "title") || "a project"}`;
       case "browser.click":
         return `Clicking ${arg(args, "text", "selector") || "a control"}`;
       case "browser.type":
@@ -201,6 +210,19 @@ ${e.text}` : e.text;
       await api.approveTool(key, session, allow);
     } finally {
       dispatch("voted", { key });
+    }
+  }
+
+  let answerText = "";
+
+  async function respond(answer: string) {
+    if (!question || !answer.trim()) return;
+    const { key, session } = question;
+    answerText = "";
+    try {
+      await api.answerQuestion(key, session, answer.trim());
+    } finally {
+      dispatch("answered", { key });
     }
   }
 
@@ -323,6 +345,29 @@ ${e.text}` : e.text;
       <div class="approval-actions">
         <button class="btn primary" on:click={() => vote(true)}>Approve</button>
         <button class="btn" on:click={() => vote(false)}>Deny</button>
+      </div>
+    </div>
+  {/if}
+
+  {#if question}
+    <div class="approval ask" transition:fade={spring}>
+      <div class="ask-q">{question.question}</div>
+      {#if question.options.length}
+        <div class="ask-options">
+          {#each question.options as opt}
+            <button class="btn" on:click={() => respond(opt)}>{opt}</button>
+          {/each}
+        </div>
+      {/if}
+      <div class="ask-free">
+        <input
+          placeholder="Or type an answer… (Enter sends)"
+          bind:value={answerText}
+          on:keydown={(e) => {
+            if (e.key === "Enter") respond(answerText);
+          }}
+        />
+        <button class="btn primary" disabled={!answerText.trim()} on:click={() => respond(answerText)}>Send</button>
       </div>
     </div>
   {/if}
@@ -485,6 +530,33 @@ ${e.text}` : e.text;
   .approval-actions {
     display: flex;
     gap: 8px;
+  }
+  .ask-q {
+    font-weight: 600;
+  }
+  .ask-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .ask-free {
+    display: flex;
+    gap: 8px;
+  }
+  .ask-free input {
+    flex: 1;
+    min-width: 0;
+    padding: 7px 10px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    outline: none;
+  }
+  .ask-free input:focus {
+    border-color: var(--accent);
   }
   @media (prefers-reduced-motion: reduce) {
     .live-head {
