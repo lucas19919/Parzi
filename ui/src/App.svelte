@@ -902,6 +902,9 @@
           board={$board}
           contextUsed={context.used}
           contextLimit={context.limit}
+          tokensIn={meta?.tokens_in ?? 0}
+          tokensOut={meta?.tokens_out ?? 0}
+          costUsd={meta?.cost_usd ?? 0}
           {compacting}
           hero={!hasSession}
           {project}

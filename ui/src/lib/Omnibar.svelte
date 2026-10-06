@@ -31,6 +31,9 @@
   export let hero = false;
   export let project: { slug: string; title: string; tokens: number } | null = null;
   export let lockMode: ComposerMode | null = null;
+  export let tokensIn = 0;
+  export let tokensOut = 0;
+  export let costUsd = 0;
 
   const dispatch = createEventDispatcher<{
     send: void;
@@ -75,6 +78,12 @@
   let permBtn: HTMLButtonElement | null = null;
   let permOpen = false;
   let permStyle = "";
+  let effortBtn: HTMLButtonElement | null = null;
+  let effortOpen = false;
+  let effortStyle = "";
+  let ctxBtn: HTMLButtonElement | null = null;
+  let ctxOpen = false;
+  let ctxStyle = "";
   let projBtn: HTMLButtonElement | null = null;
   let projOpen = false;
   let projStyle = "";
@@ -144,6 +153,16 @@
   function cycleEffort() {
     if (!efforts.length) return;
     effort = efforts[(Math.max(0, efforts.indexOf(effort)) + 1) % efforts.length];
+  }
+
+  function toggleEffort() {
+    effortOpen = !effortOpen;
+    if (effortOpen && effortBtn) effortStyle = placeAbove(effortBtn, 240);
+  }
+
+  function toggleCtx() {
+    ctxOpen = !ctxOpen;
+    if (ctxOpen && ctxBtn) ctxStyle = placeAbove(ctxBtn, 260);
   }
 
   function cycleMode() {
@@ -508,29 +527,25 @@
 
       {#if mode !== "search"}
         <ModelPicker bind:this={picker} bind:value={model} {board} on:unavailable />
-        {#if efforts.length}
-          <div class="effort" role="radiogroup" aria-label="Effort" title={`Effort: ${effortLabel(effort)}${effortHint(effort) ? ` · ${effortHint(effort)}` : ""}`}>
-            {#each efforts as e, i (e)}
-              <button
-                class="lvl"
-                class:on={i <= efforts.indexOf(effort)}
-                role="radio"
-                aria-checked={e === effort}
-                aria-label={effortLabel(e)}
-                style:--h="{5 + Math.round((i * 9) / Math.max(1, efforts.length - 1))}px"
-                on:click={() => (effort = e)}
-              />
-            {/each}
-          </div>
-        {/if}
+        <button
+          bind:this={effortBtn}
+          class="ctl"
+          class:open={effortOpen}
+          title={effortHint(effort) ? `Effort: ${effortHint(effort)}. Click to change.` : "Effort. Click to change."}
+          on:click|stopPropagation={toggleEffort}
+        >
+          <span class="truncate">{effortLabel(effort)}</span>
+          <Icon name="chevDown" size={10} stroke={2} />
+        </button>
         {#if mode === "build" && contextLimit > 0 && (contextUsed > 0 || compacting)}
           <button
+            bind:this={ctxBtn}
             class="ctx"
             class:warn={contextPct >= 70}
             class:bad={contextPct >= 90}
             disabled={compacting || streaming}
-            title={compacting ? "Compacting…" : `Context ${contextPct}% full: ${kTokens(contextUsed)} of ${kTokens(contextLimit)} tokens. Click to compact.`}
-            on:click={() => dispatch("command", { name: "compact" })}
+            title={compacting ? "Compacting…" : `Context ${contextPct}% full. Click for breakdown.`}
+            on:click|stopPropagation={toggleCtx}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
               <circle class="track" cx="8" cy="8" r="6" />
@@ -542,6 +557,48 @@
     </div>
   </div>
   {#if attachError}<div class="error" role="alert">{attachError}</div>{/if}
+
+  {#if effortOpen}
+    <div class="menu-pop" style={effortStyle} use:popover={{ anchor: effortBtn, close: () => (effortOpen = false) }} transition:fly={{ y: effortStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
+      <div class="pop-head">Effort</div>
+      {#each efforts as e (e)}
+        <button
+          class="opt"
+          class:on={effort === e}
+          on:click={() => {
+            effort = e;
+            effortOpen = false;
+          }}
+        >
+          <span class="meta"><span class="name">{effortLabel(e)}</span><span class="sub">{effortHint(e) || "Default depth"}</span></span>
+          {#if effort === e}<span class="tick"><Icon name="check" size={13} stroke={2} /></span>{/if}
+        </button>
+      {/each}
+    </div>
+  {/if}
+
+  {#if ctxOpen}
+    <div class="menu-pop ctx-pop" style={ctxStyle} use:popover={{ anchor: ctxBtn, close: () => (ctxOpen = false) }} transition:fly={{ y: ctxStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
+      <div class="pop-head">Context window</div>
+      <div class="ctx-big">{contextPct}<span>%</span></div>
+      <div class="ctx-bar"><i style:width="{contextPct}%" /></div>
+      <div class="ctx-rows">
+        <div><span>Used</span><b>{kTokens(contextUsed)} of {kTokens(contextLimit)}</b></div>
+        <div><span>Session</span><b>{kTokens(tokensIn)} in · {kTokens(tokensOut)} out</b></div>
+        {#if costUsd > 0}<div><span>Cost</span><b>${costUsd.toFixed(4)}</b></div>{/if}
+      </div>
+      <button
+        class="btn primary wide"
+        disabled={compacting || streaming}
+        on:click={() => {
+          ctxOpen = false;
+          dispatch("command", { name: "compact" });
+        }}
+      >
+        {compacting ? "Compacting…" : "Compact now"}
+      </button>
+    </div>
+  {/if}
 
   {#if projOpen}
     <div class="menu-pop" style={projStyle} use:popover={{ anchor: projBtn, close: () => (projOpen = false) }} transition:fly={{ y: projStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
@@ -1022,41 +1079,57 @@
     display: inline-flex;
     color: var(--text);
   }
-  .effort {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    height: 26px;
-    padding: 0 6px;
-    border-radius: var(--radius);
+  .ctx-pop {
+    width: 260px;
+    padding: 6px 10px 10px;
   }
-  .effort:hover {
+  .ctx-big {
+    font-size: 26px;
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    margin: 2px 2px 6px;
+  }
+  .ctx-big span {
+    font-size: 14px;
+    color: var(--faint);
+    font-weight: 500;
+  }
+  .ctx-bar {
+    height: 6px;
+    margin: 0 2px 10px;
+    border-radius: 3px;
     background: var(--line);
+    overflow: hidden;
   }
-  .lvl {
-    width: 7px;
-    height: 16px;
-    display: inline-flex;
-    align-items: flex-end;
-    justify-content: center;
-    padding: 0;
-    background: none;
-    border: none;
-    cursor: pointer;
+  .ctx-bar i {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--accent);
   }
-  .lvl::before {
-    content: "";
-    width: 3px;
-    height: var(--h);
-    border-radius: 1px;
-    background: color-mix(in srgb, var(--text) 22%, transparent);
-    transition: background 120ms ease;
+  .ctx-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin: 0 2px 12px;
+    font-size: 12px;
   }
-  .lvl.on::before {
-    background: var(--muted);
+  .ctx-rows div {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
   }
-  .effort:hover .lvl.on::before {
-    background: var(--text);
+  .ctx-rows span {
+    color: var(--faint);
+  }
+  .ctx-rows b {
+    font-weight: 550;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .wide {
+    width: 100%;
   }
   .pop-head {
     padding: 6px 8px 4px;

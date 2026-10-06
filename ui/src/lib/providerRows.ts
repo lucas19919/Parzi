@@ -87,13 +87,16 @@ export function shownOf(value: string, board: ProviderStatus[]): { provider: str
 
 const PILL = ["low", "medium", "high", "extra", "ultra"];
 
+export const DEFAULT_EFFORTS = PILL;
+
 export function effortsFor(value: string, board: ProviderStatus[]): string[] {
   if (!value || value === "auto") return PILL;
   const [p, ...rest] = value.split("/");
   const models = board.find((b) => b.provider === p)?.models ?? [];
   const id = rest.join("/");
   const m = models.find((x) => x.id === id) ?? models.find((x) => x.is_default);
-  return m?.efforts ?? [];
+  const list = m?.efforts ?? [];
+  return list.length ? list : PILL;
 }
 
 export function fitEffort(current: string, efforts: string[]): string {
