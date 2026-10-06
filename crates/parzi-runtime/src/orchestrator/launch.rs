@@ -233,6 +233,9 @@ impl Orchestrator {
             "image.generate",
             "doc.read",
             "models.list",
+            "ask.user",
+            "plan.write",
+            "plan.read",
             "brain.search",
             "brain.read",
             "brain.list",
@@ -252,6 +255,7 @@ impl Orchestrator {
                 "session.read_session",
                 "session.list_sessions",
                 "lane.dispatch",
+                "project.create",
             ] {
                 if !allowed.contains(&u.to_string()) {
                     allowed.push(u.into());
@@ -391,6 +395,7 @@ impl Orchestrator {
             store: p.store.clone(),
             tools,
             approver: q.approver.clone().unwrap_or_else(|| Arc::new(DenyApprover)),
+            asker: p.asker.lock().await.clone(),
             harness: Some(bridge),
             sink: sink.clone(),
             cancel: cancel.clone(),

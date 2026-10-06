@@ -101,6 +101,7 @@ pub struct Orchestrator {
     tools_server: Arc<tokio::sync::OnceCell<Option<Arc<McpHost>>>>,
     bus: RunEventBus,
     marks: ReadMarks,
+    asker: Arc<Mutex<Option<Arc<dyn crate::tools::Asker>>>>,
 }
 
 impl Orchestrator {
@@ -122,6 +123,13 @@ impl Orchestrator {
             tools_server: Arc::new(tokio::sync::OnceCell::new()),
             bus,
             marks: ReadMarks::default(),
+            asker: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    pub fn set_asker(&self, asker: Arc<dyn crate::tools::Asker>) {
+        if let Ok(mut slot) = self.asker.try_lock() {
+            *slot = Some(asker);
         }
     }
 
@@ -150,6 +158,7 @@ impl Orchestrator {
             tools_server: self.tools_server.clone(),
             bus: self.bus.clone(),
             marks: self.marks.clone(),
+            asker: self.asker.clone(),
         }
     }
 

@@ -181,6 +181,7 @@ pub(super) struct Pump {
     pub(super) tools_server: Arc<tokio::sync::OnceCell<Option<Arc<McpHost>>>>,
     pub(super) bus: RunEventBus,
     pub(super) marks: super::ReadMarks,
+    pub(super) asker: Arc<Mutex<Option<Arc<dyn crate::tools::Asker>>>>,
 }
 
 impl Pump {

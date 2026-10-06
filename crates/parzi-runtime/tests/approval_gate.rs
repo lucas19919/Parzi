@@ -217,6 +217,7 @@ fn host(allowed: Vec<String>, mode: ApprovalMode) -> ToolHost {
             allowed,
         }),
         approver: Arc::new(Allow),
+        asker: None,
         harness: Some(Arc::new(NoHarness)),
         sink: RunSink::new(&meta.id, tx, None),
         cancel: tokio_util::sync::CancellationToken::new(),

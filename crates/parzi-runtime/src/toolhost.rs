@@ -14,8 +14,8 @@ use tokio_util::sync::CancellationToken;
 use crate::handler::{HarnessBridge, RunEvent, RunSink};
 use crate::tools::{
     display_name, is_brain_tool, is_browser_tool, is_doc_tool, is_image_tool, is_lane_tool,
-    is_models_tool, is_session_tool, is_ui_tool, Approval, ApprovalMode, Approver, ToolCallInfo,
-    ToolDef, ToolExecutor,
+    is_models_tool, is_plan_tool, is_project_tool, is_question_tool, is_session_tool, is_ui_tool,
+    Approval, ApprovalMode, Approver, AskRequest, Asker, ToolCallInfo, ToolDef, ToolExecutor,
 };
 
 pub struct ToolHostParts {
@@ -28,6 +28,7 @@ pub struct ToolHostParts {
     pub store: SessionStore,
     pub tools: Arc<ToolExecutor>,
     pub approver: Arc<dyn Approver>,
+    pub asker: Option<Arc<dyn Asker>>,
     pub harness: Option<Arc<dyn HarnessBridge>>,
     pub sink: RunSink,
     pub cancel: CancellationToken,
@@ -359,6 +360,7 @@ impl ToolHost {
                 | "image.generate"
                 | "doc.read"
                 | "models.list"
+                | "ask.user"
                 | "ui.show_markdown"
                 | "ui.show_widget"
                 | "ui.show_artifact"
@@ -452,6 +454,30 @@ impl ToolHost {
                 );
             }
             return self.execute_image(args).await;
+        }
+        if is_question_tool(name) || is_plan_tool(name) {
+            if !self.p.tools.is_allowed(name) {
+                return (
+                    false,
+                    format!("tool `{name}` denied (lane mode / approver)"),
+                );
+            }
+            if name == "plan.read" {
+                return self.execute_plan_read().await;
+            }
+            if name == "plan.write" {
+                return self.execute_plan_write(args).await;
+            }
+            return self.execute_question(id, args).await;
+        }
+        if is_project_tool(name) {
+            if !self.approved(id, name, args).await {
+                return (
+                    false,
+                    format!("tool `{name}` denied (lane mode / approver)"),
+                );
+            }
+            return self.execute_project(args).await;
         }
         if is_doc_tool(name) || is_models_tool(name) {
             if !self.p.tools.is_allowed(name) {
@@ -855,6 +881,136 @@ impl ToolHost {
             return (false, "that file is not text — doc.read handles PDFs and text".into());
         }
         (true, truncate_text(&text, 12_000))
+    }
+
+    async fn execute_question(&self, id: &str, args: &Value) -> (bool, String) {
+        let question = args
+            .get("question")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if question.is_empty() {
+            return (false, "ask.user needs a `question`".into());
+        }
+        let options: Vec<String> = args
+            .get("options")
+            .and_then(Value::as_array)
+            .map(|list| {
+                list.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .take(6)
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let _ = self.p.store.append(
+            &self.p.session_id,
+            &Event::System {
+                text: format!("asked the user: {question}"),
+            },
+        );
+        let Some(asker) = &self.p.asker else {
+            return (
+                true,
+                "there is no one to ask — decide yourself and say what you assumed".into(),
+            );
+        };
+        let req = AskRequest {
+            id: id.into(),
+            question: question.to_string(),
+            options,
+            lane: self.p.lane.clone(),
+            session: self.p.session_id.clone(),
+        };
+        let answer = asker.ask(&req).await;
+        let _ = self.p.store.append(
+            &self.p.session_id,
+            &Event::System {
+                text: format!("the user answered: {answer}"),
+            },
+        );
+        (true, answer)
+    }
+
+    fn plan_path(&self) -> std::result::Result<PathBuf, String> {
+        let dir = parzi_core::paths::sessions_dir()
+            .map(|d| d.join(&self.p.session_id))
+            .map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&dir).map_err(|e| format!("cannot keep a plan: {e}"))?;
+        Ok(dir.join("plan.json"))
+    }
+
+    async fn execute_plan_read(&self) -> (bool, String) {
+        let path = match self.plan_path() {
+            Ok(p) => p,
+            Err(e) => return (false, e.to_string()),
+        };
+        match std::fs::read_to_string(&path) {
+            Ok(text) if !text.trim().is_empty() => (true, text),
+            _ => (true, "no plan written yet — write one with plan.write before building".into()),
+        }
+    }
+
+    async fn execute_plan_write(&self, args: &Value) -> (bool, String) {
+        if !args.is_object() {
+            return (false, "plan.write needs an object with goal, decisions, steps".into());
+        }
+        let path = match self.plan_path() {
+            Ok(p) => p,
+            Err(e) => return (false, e.to_string()),
+        };
+        let pretty = serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string());
+        if let Err(e) = std::fs::write(&path, &pretty) {
+            return (false, format!("cannot save the plan: {e}"));
+        }
+        let goal = args.get("goal").and_then(Value::as_str).unwrap_or("").trim();
+        let steps = args.get("steps").and_then(Value::as_array).map_or(0, Vec::len);
+        let decisions = args.get("decisions").and_then(Value::as_array).map_or(0, Vec::len);
+        let _ = self.p.store.append(
+            &self.p.session_id,
+            &Event::System {
+                text: format!(
+                    "plan written: {} ({steps} steps, {decisions} decisions)",
+                    if goal.is_empty() { "untitled" } else { goal }
+                ),
+            },
+        );
+        (true, format!("plan saved ({steps} steps, {decisions} decisions) — build it, updating step statuses as you go"))
+    }
+
+    async fn execute_project(&self, args: &Value) -> (bool, String) {
+        let title = args
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let folder = args
+            .get("folder")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if title.is_empty() || folder.is_empty() {
+            return (false, "project.create needs a `title` and a `folder`".into());
+        }
+        if let Err(e) = std::fs::create_dir_all(folder) {
+            return (false, format!("cannot create {folder}: {e}"));
+        }
+        let project = match parzi_core::brain::project_upsert(None, title, folder) {
+            Ok(p) => p,
+            Err(e) => return (false, format!("project registered, folder ready, but mapping failed: {e}")),
+        };
+        if let Err(e) = self.p.store.set_cwd(&self.p.session_id, folder) {
+            return (false, format!("project {} ready at {folder}, but this session could not move there: {e}", project.slug));
+        }
+        (
+            true,
+            format!(
+                "project {} ready at {folder} — this session now works there; build inside it",
+                project.slug
+            ),
+        )
     }
 
     async fn execute_browser(&self, name: &str, args: &Value) -> (bool, String) {

@@ -53,6 +53,7 @@ fn host(approver: Arc<Person>) -> ToolHost {
             allowed: vec!["brain.*".into()],
         }),
         approver,
+        asker: None,
         harness: None,
         sink: RunSink::new(&sid, tx, None),
         cancel: CancellationToken::new(),

@@ -48,6 +48,20 @@ pub trait Approver: Send + Sync {
     async fn approve(&self, call: &ToolCallInfo) -> Approval;
 }
 
+#[derive(Debug, Clone)]
+pub struct AskRequest {
+    pub id: String,
+    pub question: String,
+    pub options: Vec<String>,
+    pub lane: String,
+    pub session: String,
+}
+
+#[async_trait::async_trait]
+pub trait Asker: Send + Sync {
+    async fn ask(&self, req: &AskRequest) -> String;
+}
+
 pub struct AutoApprover;
 pub(crate) struct DenyApprover;
 
@@ -105,6 +119,9 @@ impl ToolExecutor {
         d.extend(image_defs());
         d.extend(doc_defs());
         d.extend(team_defs());
+        d.extend(question_defs());
+        d.extend(plan_defs());
+        d.extend(project_defs());
         d.retain(|t| self.is_allowed(&t.name));
         d
     }
@@ -325,6 +342,93 @@ pub(crate) fn is_doc_tool(name: &str) -> bool {
 
 pub(crate) fn is_models_tool(name: &str) -> bool {
     matches!(name, "models.list")
+}
+
+pub(crate) fn is_question_tool(name: &str) -> bool {
+    matches!(name, "ask.user")
+}
+
+pub(crate) fn is_plan_tool(name: &str) -> bool {
+    matches!(name, "plan.write" | "plan.read")
+}
+
+pub(crate) fn is_project_tool(name: &str) -> bool {
+    matches!(name, "project.create")
+}
+
+fn question_defs() -> Vec<ToolDef> {
+    vec![ToolDef {
+        name: "ask.user".into(),
+        description: "Ask the user a question mid-turn and wait for their answer. Use it at real forks instead of guessing: which approach, which scope, proceed/stop. Keep options short (≤6 words each); the user may also type free text. Never ask about something already decided in the thread.".into(),
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "question": {"type": "string"},
+                "options": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["question"],
+        }),
+    }]
+}
+
+fn plan_defs() -> Vec<ToolDef> {
+    vec![
+        ToolDef {
+            name: "plan.write".into(),
+            description: "Write or replace this session's build plan: goal, architecture decisions (each with why — scalability, structure, trade-offs), and steps with status (todo/doing/done). Write the plan BEFORE building anything non-trivial, update step statuses as you go, and record every load-bearing decision. Read it back with plan.read when resuming.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "goal": {"type": "string"},
+                    "decisions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "decision": {"type": "string"},
+                                "why": {"type": "string"},
+                            },
+                        },
+                    },
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": "string"},
+                                "status": {"type": "string"},
+                                "note": {"type": "string"},
+                            },
+                            "required": ["title"],
+                        },
+                    },
+                },
+            }),
+        },
+        ToolDef {
+            name: "plan.read".into(),
+            description: "Read this session's build plan back (goal, decisions, step statuses).".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+            }),
+        },
+    ]
+}
+
+fn project_defs() -> Vec<ToolDef> {
+    vec![ToolDef {
+        name: "project.create".into(),
+        description: "Create a real project: makes the folder, registers it in the brain, and moves this session into it. Use it when the work deserves a home instead of scratch — then build inside it.".into(),
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "folder": {"type": "string"},
+            },
+            "required": ["title", "folder"],
+        }),
+    }]
 }
 
 fn image_defs() -> Vec<ToolDef> {
@@ -554,7 +658,17 @@ pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String
             "Reading {}",
             one_line(&str_arg("source").unwrap_or_else(|| "a document".into()), 60)
         ),
-        "models.list" => "Checking the bench".into(),        "browser.click" => format!(
+        "models.list" => "Checking the bench".into(),
+        "ask.user" => format!(
+            "Asking {}",
+            one_line(&str_arg("question").unwrap_or_else(|| "a question".into()), 60)
+        ),
+        "plan.write" => "Writing the plan".into(),
+        "plan.read" => "Reading the plan".into(),
+        "project.create" => format!(
+            "Creating project {}",
+            one_line(&str_arg("title").unwrap_or_else(|| "untitled".into()), 40)
+        ),        "browser.click" => format!(
             "Clicking {}",
             one_line(
                 &str_arg("text")

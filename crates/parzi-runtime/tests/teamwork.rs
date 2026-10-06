@@ -5,11 +5,14 @@ use std::sync::Arc;
 
 use common::*;
 use parzi_core::config::ParziConfig;
-use parzi_core::store::Event;
+use parzi_core::store::{Event, SessionStore};
 use parzi_providers::TurnEnd;
 use parzi_runtime::inter::{InterKind, InterSessionMessage};
 use parzi_runtime::mcp::McpManager;
-use parzi_runtime::tools::{is_session_tool, Approval, Approver, ToolCallInfo, ToolExecutor};
+use parzi_runtime::handler::RunSink;
+use parzi_runtime::toolhost::{ToolHost, ToolHostParts};
+use parzi_runtime::tools::{is_session_tool, Approval, ApprovalMode, Approver, Asker, AskRequest, ToolCallInfo, ToolExecutor};
+use tokio_util::sync::CancellationToken;
 use serde_json::{json, Value};
 
 struct Allow;
@@ -224,8 +227,7 @@ async fn a_code_run_can_spawn_a_crew() {
 }
 
 #[tokio::test]
-async fn send_message_continues_target_and_can_wait() {
-    let fake = answer();
+async fn send_message_continues_target_and_can_wait() {    let fake = answer();
     let (orch, store) = team(4, fake.clone());
     let parent = store.create("boss", "t", "", "claude/model").unwrap();
     let target = store.create("worker", "t", "", "claude/model").unwrap();
@@ -316,4 +318,98 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
     assert_eq!(v["status"], "queued", "{second}");
     orch.kill(&first_id).await.ok();
     orch.kill(v["session_id"].as_str().unwrap()).await.ok();
+}
+
+struct Echo(String);
+
+#[async_trait::async_trait]
+impl Asker for Echo {
+    async fn ask(&self, _req: &AskRequest) -> String {
+        self.0.clone()
+    }
+}
+
+fn build_host(asker: Option<Arc<dyn Asker>>) -> (ToolHost, SessionStore, String) {
+    home("teamwork-tools");
+    let store = SessionStore::open().unwrap();
+    let sid = store.create("tools", "", "", "claude/m").unwrap().id;
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let folder = std::env::temp_dir()
+        .join(format!("parzi-tools-{}", std::process::id()))
+        .display()
+        .to_string();
+    std::fs::create_dir_all(&folder).unwrap();
+    let host = ToolHost::new(ToolHostParts {
+        session_id: sid.clone(),
+        lane: "build".into(),
+        mode: ApprovalMode::Auto,
+        edits_auto: false,
+        full: false,
+        cfg: ParziConfig::default(),
+        store: store.clone(),
+        tools: Arc::new(ToolExecutor {
+            cwd: folder,
+            mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
+            allowed: vec!["*".into()],
+        }),
+        approver: Arc::new(Allow),
+        asker,
+        harness: None,
+        sink: RunSink::new(&sid, tx, None),
+        cancel: CancellationToken::new(),
+    });
+    (host, store, sid)
+}
+
+#[tokio::test]
+async fn plan_write_then_read_roundtrips() {
+    let (host, _store, _sid) = build_host(None);
+    let (ok, out) = host
+        .call(
+            "plan.write",
+            &json!({
+                "goal": "ship v1",
+                "decisions": [{"decision": "sqlite", "why": "single file"}],
+                "steps": [{"title": "migrate", "status": "doing"}],
+            }),
+        )
+        .await;
+    assert!(ok, "{out}");
+    assert!(out.contains("1 steps"), "{out}");
+    let (ok, back) = host.call("plan.read", &json!({})).await;
+    assert!(ok, "{back}");
+    assert!(back.contains("ship v1") && back.contains("sqlite"), "{back}");
+}
+
+#[tokio::test]
+async fn ask_user_returns_the_answer_or_says_so() {
+    let (host, _store, _sid) = build_host(Some(Arc::new(Echo("blue".into()))));
+    let (ok, out) = host
+        .call("ask.user", &json!({"question": "which?", "options": ["blue"]}))
+        .await;
+    assert!(ok && out == "blue", "{out}");
+
+    let (lonely, _store, _sid) = build_host(None);
+    let (ok, out) = lonely.call("ask.user", &json!({"question": "which?"}))
+        .await;
+    assert!(ok && out.contains("no one to ask"), "{out}");
+}
+
+#[tokio::test]
+async fn project_create_makes_a_home() {
+    let (host, store, sid) = build_host(None);
+    let folder = std::env::temp_dir()
+        .join(format!("parzi-proj-{}", std::process::id()))
+        .join("demo");
+    let (ok, out) = host
+        .call(
+            "project.create",
+            &json!({"title": "Demo", "folder": folder.display().to_string()}),
+        )
+        .await;
+    assert!(ok, "{out}");
+    assert!(folder.is_dir(), "the folder exists");
+    let _ = std::fs::remove_dir_all(folder.parent().unwrap());
+    let meta = store.get(&sid).unwrap();
+    assert_eq!(meta.cwd, folder.display().to_string(), "session moved there");
 }

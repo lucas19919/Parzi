@@ -135,13 +135,15 @@ const RESEARCH_BRIEF: &str = "Research mode: this turn is a quick question, not 
     the question needs depth; publish long answers with ui_show_artifact. Cite papers \
     and pages as [Title](url), and brain notes by vault path.";
 
-const TEAMWORK_BRIEF: &str = "Teamwork: you are the orchestrator and subagents are your tools. \
-    Before staffing, check models_list for the bench, then pass an explicit model per job: \
-    quick lookups on fast models, builds on strong ones. Fan out with session_spawn \
-    (a background subsession with your tools; wait=false returns its id and you \
-    check it later with session_read_session), nudge one with session_send_message, \
-    or dispatch onto another lane with lane_dispatch. Prefer one background \
-    subsession per independent chunk of work over doing everything inline.";
+const TEAMWORK_BRIEF: &str = "Work like a lead, not a chat window. For anything \
+    non-trivial, plan.write FIRST: goal, architecture decisions with why \
+    (structure, scalability, trade-offs), steps with statuses — then build, \
+    updating step statuses as you go and spawning background subsessions per \
+    independent chunk (session_spawn; wait=false + session_read_session). \
+    Staff deliberately: check models_list and pass explicit models per job. \
+    If the work deserves a home, project.create it and build inside it. \
+    At real forks, ask.user instead of guessing. Record load-bearing decisions \
+    so the next session starts with them.";
 
 pub fn system_parts(lane: &str, cwd: &str) -> Vec<String> {
     let mut parts = vec![if lane.is_empty() {
