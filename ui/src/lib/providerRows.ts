@@ -18,7 +18,25 @@ export interface PickRow {
   usable: boolean;
   label: string;
   value: string;
+  note?: string;
 }
+
+export function prettyModel(id: string): string {
+  const words = (id.split("/").pop() ?? id).split(/[-_\s]+/).filter(Boolean);
+  const out: string[] = [];
+  for (const w of words) {
+    const prev = out[out.length - 1];
+    if (/^\d{1,2}$/.test(w) && prev && /^\d+(\.\d+)*$/.test(prev)) out[out.length - 1] = `${prev}.${w}`;
+    else if (/^gpt$/i.test(w)) out.push("GPT");
+    else out.push(w[0].toUpperCase() + w.slice(1));
+  }
+  return out.join(" ") || id;
+}
+
+export const modelLabel = (m: { id: string; name: string }): string =>
+  m.name && m.name !== m.id ? m.name : prettyModel(m.id);
+
+const sourceOf = (id: string): string => id.split("/").slice(0, -1).join("/");
 
 export const AUTO_ROW: PickRow = { provider: "auto", usable: true, label: "Smart Auto", value: "auto" };
 
@@ -33,8 +51,9 @@ function rowsOf(p: ProviderStatus): PickRow[] {
   return p.models.map((m) => ({
     provider: p.provider,
     usable,
-    label: m.name || m.id,
+    label: modelLabel(m),
     value: `${p.provider}/${m.id}`,
+    note: sourceOf(m.id),
   }));
 }
 
@@ -57,19 +76,13 @@ export function stateLabel(p: ProviderStatus): string {
   }
 }
 
-export function rowSub(row: PickRow, board: ProviderStatus[]): string {
-  if (row.provider === "auto") return "Starts on the first ready agent in your order";
-  const p = board.find((b) => b.provider === row.provider);
-  return p ? `${nameOf(row.provider)} · ${stateLabel(p)}` : nameOf(row.provider);
-}
-
 export function shownOf(value: string, board: ProviderStatus[]): { provider: string; name: string } {
   if (!value || value === "auto") return { provider: "auto", name: "Smart Auto" };
   const [p, ...rest] = value.split("/");
   const id = rest.join("/");
   const m = board.find((b) => b.provider === p)?.models.find((x) => x.id === id);
-  if (m) return { provider: p, name: m.name || m.id };
-  return { provider: p, name: id || nameOf(p) };
+  if (m) return { provider: p, name: modelLabel(m) };
+  return { provider: p, name: id ? prettyModel(id) : nameOf(p) };
 }
 
 const PILL = ["low", "medium", "high", "extra", "ultra"];

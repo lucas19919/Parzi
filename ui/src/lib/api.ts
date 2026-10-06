@@ -171,6 +171,7 @@ export const api = {
   providerStatuses: () => invoke<ProviderStatus[]>("provider_statuses"),
   refreshProviders: (ids?: string[]) => invoke<ProviderStatus[]>("refresh_providers", { ids: ids ?? null }),
   toggleFavorite: (spec: string) => invoke<string[]>("toggle_favorite", { spec }),
+  warmAgent: (provider: string) => invoke<void>("warm_agent", { provider }),
   getConfig: () => invoke<ParziConfig>("get_config"),
   saveConfig: (cfg: ParziConfig) => invoke<void>("save_config", { cfg }),
   runDoctorQuick: () => invoke<Check[]>("run_doctor_quick"),
@@ -373,6 +374,15 @@ export function onRunEvent(cb: (e: UiEvent) => void) {
 
 export function onProviders(cb: (board: ProviderStatus[]) => void) {
   return listen<ProviderStatus[]>("parzi://providers", (ev) => cb(ev.payload));
+}
+
+export interface SignInStep {
+  provider: string;
+  step: "starting" | "browser";
+}
+
+export function onSignIn(cb: (s: SignInStep) => void) {
+  return listen<SignInStep>("parzi://sign-in", (ev) => cb(ev.payload));
 }
 
 export function onBrowser(cb: (page: PageEvent) => void) {

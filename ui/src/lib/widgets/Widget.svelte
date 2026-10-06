@@ -46,7 +46,7 @@
   $: maxLen = Math.max(1, ...plotSer.map((s) => s.points.length));
   const cssVar = resolveColor;
   $: INK = [
-    cssVar("--accent", "#7C8CFF"),
+    cssVar("--accent", "#E6E8EE"),
     cssVar("--ok", "#22c55e"),
     cssVar("--accent", "#5eb1ff"),
     cssVar("--warn", "#f59e0b"),

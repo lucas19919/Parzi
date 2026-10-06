@@ -1,13 +1,13 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
-  import { scale } from "svelte/transition";
+  import { fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
   import { api, type ProviderStatus } from "./api";
   import { ageOf, checking, refreshBoard } from "./providerStore";
-  import { AUTO_ROW, PROVIDER_ORDER, allRows, isUsable, nameOf, rowSub, shownOf, type PickRow } from "./providerRows";
+  import { AUTO_ROW, PROVIDER_ORDER, allRows, isUsable, nameOf, shownOf, stateLabel, type PickRow } from "./providerRows";
   import { popover, placeAbove } from "./popover";
 
   export let value = "auto";
@@ -16,68 +16,76 @@
   const dispatch = createEventDispatcher<{ unavailable: { provider: string } }>();
 
   const FRESH_SECS = 300;
+  const RETRY_SECS = 60;
+
+  interface Group {
+    key: string;
+    label: string;
+    provider: string;
+    note: string;
+    rows: PickRow[];
+  }
 
   let open = false;
-  let rail = "";
   let query = "";
   let index = 0;
   let favorites: string[] = [];
   let trigger: HTMLButtonElement | null = null;
   let searchEl: HTMLInputElement | null = null;
+  let listEl: HTMLDivElement | null = null;
   let style = "";
+  let above = true;
 
-  $: rows = allRows(board);
-  $: q = query.trim().toLowerCase();
-  $: favRows = favorites.map((v) => rows.find((r) => r.value === v)).filter((r): r is PickRow => !!r);
-  $: items = listFor(q, rail, rows, favRows);
-  $: if (index >= items.length) index = 0;
   $: shown = shownOf(value, board);
-  $: railStatus = board.find((b) => b.provider === rail);
-  $: busy = $checking.has(rail) || $checking.has("*");
+  $: q = query.trim().toLowerCase();
+  $: groups = groupsFor(board, favorites, q);
+  $: flat = groups.flatMap((g) => g.rows);
+  $: if (index >= flat.length) index = 0;
+  $: idle = board.filter((b) => !isUsable(b) && PROVIDER_ORDER.includes(b.provider));
+  $: busy = $checking.size > 0;
 
-  function listFor(q: string, rail: string, rows: PickRow[], favRows: PickRow[]): PickRow[] {
-    if (q) {
-      return [AUTO_ROW, ...rows].filter(
-        (r) => r.label.toLowerCase().includes(q) || r.value.toLowerCase().includes(q) || nameOf(r.provider).toLowerCase().includes(q),
-      );
-    }
-    if (rail === "__auto") return [AUTO_ROW];
-    if (rail === "__fav") return favRows;
-    return rows.filter((r) => r.provider === rail);
+  function matches(row: PickRow, q: string) {
+    return !q || `${row.label} ${row.value} ${nameOf(row.provider)}`.toLowerCase().includes(q);
   }
 
-  function freshen(p: string) {
-    if (!p || p.startsWith("__")) return;
-    if (ageOf(board.find((b) => b.provider === p)) < FRESH_SECS) return;
-    void refreshBoard([p]).catch(() => {});
+  function groupsFor(board: ProviderStatus[], favorites: string[], q: string): Group[] {
+    const rows = allRows(board).filter((r) => r.usable);
+    const out: Group[] = [];
+    if (matches(AUTO_ROW, q)) out.push({ key: "auto", label: "", provider: "", note: "", rows: [AUTO_ROW] });
+    const starred = favorites.map((v) => rows.find((r) => r.value === v)).filter((r): r is PickRow => !!r && matches(r, q));
+    if (starred.length) out.push({ key: "starred", label: "Starred", provider: "", note: "", rows: starred });
+    for (const id of PROVIDER_ORDER) {
+      const status = board.find((b) => b.provider === id);
+      if (!status || !isUsable(status)) continue;
+      const mine = rows.filter((r) => r.provider === id && matches(r, q));
+      if (mine.length) out.push({ key: id, label: nameOf(id), provider: id, note: stateLabel(status), rows: mine });
+    }
+    return out;
+  }
+
+  function labelOf(row: PickRow) {
+    return row.provider !== "auto" && row.value === row.provider ? "Default model" : row.label;
   }
 
   async function focusSearch() {
     await tick();
     searchEl?.focus();
-  }
-
-  function selectRail(p: string) {
-    rail = p;
-    query = "";
-    index = 0;
-    freshen(p);
-    void focusSearch();
+    listEl?.querySelector(".row.picked")?.scrollIntoView({ block: "nearest" });
   }
 
   export function show() {
-    const [p] = value.split("/");
-    rail =
-      value === "auto" || !value
-        ? "__auto"
-        : PROVIDER_ORDER.includes(p) && board.some((b) => b.provider === p)
-          ? p
-          : (PROVIDER_ORDER.find((id) => board.some((b) => b.provider === id)) ?? "__auto");
     query = "";
-    index = 0;
     open = true;
-    if (trigger) style = placeAbove(trigger, 440);
-    freshen(rail);
+    if (trigger) {
+      style = placeAbove(trigger, 300);
+      above = style.includes("bottom:");
+    }
+    index = 0;
+    const current = value.split("/")[0];
+    const stale = board
+      .filter((b) => isUsable(b) && (ageOf(b) >= (b.provider === current ? FRESH_SECS : Infinity) || (!b.models.length && ageOf(b) >= RETRY_SECS)))
+      .map((b) => b.provider);
+    if (stale.length) void refreshBoard(stale).catch(() => {});
     api
       .getConfig()
       .then((c) => (favorites = c.favorite_models ?? []))
@@ -87,34 +95,24 @@
 
   function pick(row: PickRow) {
     open = false;
-    if (!row.usable) {
-      dispatch("unavailable", { provider: row.provider });
-      return;
-    }
     value = row.value;
   }
 
-  async function toggleFav(spec: string) {
-    try {
-      favorites = await api.toggleFavorite(spec);
-    } catch {}
+  function setUp(provider: string) {
+    open = false;
+    dispatch("unavailable", { provider });
   }
 
   function onKey(e: KeyboardEvent) {
-    if (e.ctrlKey && /^[1-5]$/.test(e.key)) {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
-      const row = items[Number(e.key) - 1];
-      if (row) pick(row);
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      index = (index + 1) % Math.max(1, items.length);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      index = (index - 1 + items.length) % Math.max(1, items.length);
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      index = (index + step + flat.length) % Math.max(1, flat.length);
+      void tick().then(() => listEl?.querySelector(".row.active")?.scrollIntoView({ block: "nearest" }));
     } else if (e.key === "Enter") {
       e.preventDefault();
       e.stopPropagation();
-      if (items[index]) pick(items[index]);
+      if (flat[index]) pick(flat[index]);
     } else if (e.key === "Escape") {
       e.stopPropagation();
       open = false;
@@ -124,9 +122,9 @@
 
 <button
   bind:this={trigger}
-  class="ctl"
+  class="ctl model"
   class:open
-  title="Model"
+  title={shown.name}
   aria-expanded={open}
   on:click|stopPropagation={() => (open ? (open = false) : show())}
 >
@@ -136,107 +134,79 @@
 
 {#if open}
   <div
-    class="pop"
+    class="picker"
+    class:above
     {style}
     use:popover={{ anchor: trigger, close: () => (open = false) }}
-    transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}
+    transition:fly={{ y: above ? 6 : -6, duration: 140, easing: cubicOut }}
   >
     <div class="search">
       <Icon name="search" size={13} />
-      <input
-        bind:this={searchEl}
-        bind:value={query}
-        on:keydown={onKey}
-        placeholder={rail === "__fav" ? "Starred models" : rail === "__auto" ? "Smart Auto" : `Search ${nameOf(rail)} models`}
-      />
-      {#if busy}<span class="spin" title="Asking the agent" />{/if}
+      <input bind:this={searchEl} bind:value={query} on:keydown={onKey} placeholder="Search models" spellcheck="false" />
+      {#if busy}<span class="spin" title="Checking your agents" />{/if}
     </div>
-    <div class="body">
-      <div class="rail">
-        <button class="rail-row" class:on={rail === "__auto"} title="Smart Auto" on:click={() => selectRail("__auto")}>
-          <span class="auto"><Icon name="spark" /></span>
-        </button>
-        {#if favRows.length}
-          <button class="rail-row" class:on={rail === "__fav"} title="Starred" on:click={() => selectRail("__fav")}>
-            <span class="star-rail">★</span>
-          </button>
+    <div class="list" bind:this={listEl}>
+      {#each groups as g (g.key)}
+        {#if g.label}
+          <div class="head">
+            {#if g.provider && hasMark(g.provider)}<ProviderLogo provider={g.provider} size={13} />{/if}
+            <span>{g.label}</span>
+            {#if g.note}<span class="note">{g.note}</span>{/if}
+          </div>
         {/if}
-        {#each PROVIDER_ORDER as p}
-          {@const status = board.find((b) => b.provider === p)}
-          {#if status}
-            <button
-              class="rail-row"
-              class:on={rail === p}
-              class:dim={!isUsable(status)}
-              title={isUsable(status) ? nameOf(p) : `${nameOf(p)}: ${status.hint}`}
-              on:click={() => selectRail(p)}
-            >
-              {#if hasMark(p)}
-                <ProviderLogo provider={p} size={18} />
-              {:else}
-                <span class="initial">{p.slice(0, 1).toUpperCase()}</span>
-              {/if}
-            </button>
-          {/if}
-        {/each}
-      </div>
-      <div class="list">
-        {#if !q && railStatus && !isUsable(railStatus)}
+        {#each g.rows as row (g.key + row.value)}
+          {@const i = flat.indexOf(row)}
           <button
-            class="hint"
-            on:click={() => {
-              open = false;
-              dispatch("unavailable", { provider: rail });
-            }}
+            class="row"
+            class:active={i === index}
+            class:picked={row.value === value}
+            on:click={() => pick(row)}
+            on:mousemove={() => (index = i)}
           >
-            {railStatus.hint || "Not available"}
+            {#if row.provider === "auto"}<span class="spark"><Icon name="spark" size={14} /></span>{/if}
+            <span class="name">{labelOf(row)}</span>
+            {#if row.provider === "auto"}<span class="note">First ready agent</span>{:else if row.note}<span class="note">{row.note}</span>{/if}
+            {#if row.value === value}<span class="tick"><Icon name="check" size={13} stroke={2} /></span>{/if}
           </button>
-        {/if}
-        {#each items as row, i (row.value)}
-          <button class="mrow" class:on={row.value === value || i === index} on:click={() => pick(row)} on:mousemove={() => (index = i)}>
-            {#if q && hasMark(row.provider)}
-              <ProviderLogo provider={row.provider} size={14} />
-            {/if}
-            <span class="meta">
-              <span class="name">{row.label}</span>
-              <span class="sub">{rowSub(row, board)}</span>
-            </span>
-            {#if i < 5}<kbd>Ctrl+{i + 1}</kbd>{/if}
-            {#if !row.usable}<span class="unavailable">unavailable</span>{/if}
-            {#if row.provider !== "auto"}
-              <span
-                class="star"
-                class:on={favorites.includes(row.value)}
-                role="button"
-                tabindex="0"
-                title="Star model"
-                on:click|stopPropagation={() => toggleFav(row.value)}
-                on:keydown={(e) => e.key === "Enter" && toggleFav(row.value)}>{favorites.includes(row.value) ? "★" : "☆"}</span
-              >
-            {/if}
-          </button>
-        {:else}
-          <div class="empty">{busy ? "Asking the agent…" : q ? "No matching models" : "No models. Open Settings › Providers"}</div>
         {/each}
-      </div>
+      {:else}
+        <div class="empty">{busy ? "Checking your agents…" : "No matching models"}</div>
+      {/each}
+      {#if idle.length && !q}
+        <div class="head">Not set up</div>
+        {#each idle as b (b.provider)}
+          <button class="row idle" on:click={() => setUp(b.provider)}>
+            {#if hasMark(b.provider)}<ProviderLogo provider={b.provider} size={13} />{/if}
+            <span class="name">{nameOf(b.provider)}</span>
+            <span class="note">{b.state === "not_installed" ? "Install" : "Sign in"}</span>
+          </button>
+        {/each}
+      {/if}
     </div>
   </div>
 {/if}
 
 <style>
-  .pop {
-    width: 340px;
-    height: 380px;
+  .model {
+    flex-shrink: 0;
+    max-width: 280px;
+  }
+  .picker {
+    width: 300px;
     display: flex;
     flex-direction: column;
+    transform-origin: bottom left;
+  }
+  .picker:not(.above) {
+    transform-origin: top left;
   }
   .search {
     display: flex;
     align-items: center;
     gap: 8px;
     flex: none;
-    padding: 8px 10px;
-    color: var(--muted);
+    padding: 9px 12px;
+    color: var(--faint);
     border-bottom: 1px solid var(--line);
   }
   .search input {
@@ -259,160 +229,81 @@
     border-radius: 50%;
     border: 1.6px solid var(--line);
     border-top-color: var(--muted);
+    animation: spin 0.8s linear infinite;
   }
-  .body {
-    display: flex;
-    flex: 1;
-    min-height: 0;
-  }
-  .rail {
-    width: 46px;
-    flex: none;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding: 5px 4px;
-    overflow-y: auto;
-    border-right: 1px solid var(--line);
-  }
-  .rail-row {
-    height: 32px;
-    flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 7px;
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .rail-row:hover {
-    background: var(--line);
-    color: var(--text);
-  }
-  .rail-row.on,
-  .mrow.on {
-    background: color-mix(in srgb, var(--accent) 12%, var(--line));
-    color: var(--text);
-  }
-  .rail-row.dim {
-    opacity: 0.4;
-  }
-  .auto {
-    display: inline-flex;
-    color: var(--accent);
-  }
-  .star-rail {
-    color: var(--warn);
-    font-size: 15px;
-    line-height: 1;
-  }
-  .initial {
-    width: 20px;
-    height: 20px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 6px;
-    background: var(--line);
-    font-size: 10px;
-    font-weight: 600;
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .list {
     flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    padding: 4px;
+    min-height: 0;
+    max-height: 420px;
     overflow-y: auto;
+    padding: 4px;
   }
-  .hint {
-    margin: 2px 2px 6px;
-    padding: 8px 10px;
-    background: var(--line);
-    border: 1px solid var(--accent);
-    border-radius: 7px;
-    color: var(--accent);
-    font-size: 12px;
-    text-align: left;
-    cursor: pointer;
-  }
-  .mrow {
+  .head {
     display: flex;
     align-items: center;
-    gap: 9px;
+    gap: 7px;
+    padding: 10px 8px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--faint);
+  }
+  .head .note {
+    margin-left: auto;
+    font-weight: 400;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     width: 100%;
-    padding: 6px 8px;
+    height: 32px;
+    padding: 0 8px;
     background: transparent;
     border: none;
-    border-radius: 7px;
-    color: var(--muted);
+    border-radius: var(--radius);
+    color: var(--text);
     font-size: 13px;
     text-align: left;
     cursor: pointer;
   }
-  .mrow:hover {
-    background: var(--line);
-    color: var(--text);
+  .row.active {
+    background: color-mix(in srgb, var(--text) 7%, transparent);
   }
-  .meta {
+  .name {
     flex: 1;
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
-  .name,
-  .sub {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .sub {
-    font-size: 11px;
-    color: var(--muted);
-  }
-  kbd {
+  .note {
     flex: none;
-    padding: 1px 5px;
-    font-size: 10px;
-    color: var(--muted);
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    opacity: 0;
-  }
-  .mrow:hover kbd,
-  .mrow.on kbd {
-    opacity: 1;
-  }
-  .unavailable {
-    flex: none;
-    font-size: 11px;
-    color: var(--bad);
-  }
-  .star {
-    flex: none;
-    padding: 1px 4px;
-    font-size: 13px;
+    font-size: 11.5px;
     color: var(--faint);
-    cursor: pointer;
-    opacity: 0;
   }
-  .mrow:hover .star,
-  .star.on {
-    opacity: 1;
+  .spark {
+    display: inline-flex;
+    color: var(--accent);
   }
-  .star.on {
-    color: var(--warn);
+  .tick {
+    display: inline-flex;
+    color: var(--accent);
+  }
+  .row.idle {
+    color: var(--muted);
+  }
+  .row.idle .note {
+    color: var(--accent);
   }
   .empty {
-    padding: 14px;
+    padding: 16px;
     text-align: center;
     font-size: 12px;
-    color: var(--muted);
+    color: var(--faint);
   }
 </style>

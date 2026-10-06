@@ -15,7 +15,7 @@
   --bg: #0b0b10;
   --text: #ededf2;
   --muted: #9aa0ae;
-  --accent: #7c8cff;
+  --accent: #e6e8ee;
   --panel: color-mix(in srgb, var(--text) 6%, var(--bg));
   --line: color-mix(in srgb, var(--text) 12%, var(--bg));
   --faint: color-mix(in srgb, var(--muted) 62%, var(--bg));
@@ -127,18 +127,12 @@ kbd {
 }
 .btn.primary {
   background: var(--accent); color: var(--bg); border-color: transparent; font-weight: 600;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    0 1px 2px rgba(0, 0, 0, 0.35),
-    0 4px 16px color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 .btn.primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 80%, #fff);
   transform: translateY(-1px);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.45),
-    0 3px 6px rgba(0, 0, 0, 0.35),
-    0 8px 24px color-mix(in srgb, var(--accent) 32%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 3px 6px rgba(0, 0, 0, 0.35);
 }
 .btn:active:not(:disabled) { transform: translateY(0) scale(0.97); transition-duration: 60ms; }
 .btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }

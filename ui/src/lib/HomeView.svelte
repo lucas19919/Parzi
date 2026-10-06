@@ -7,7 +7,7 @@
 
   export let threads: SessionMeta[] = [];
 
-  const dispatch = createEventDispatcher<{ open: { url: string }; openSession: { id: string } }>();
+  const dispatch = createEventDispatcher<{ open: { url: string }; openSession: { id: string }; allSessions: void }>();
 
   let broken = new Set<string>();
 
@@ -65,7 +65,10 @@
 
   {#if recent.length}
     <section>
-      <h3>Recent sessions</h3>
+      <div class="head">
+        <h3>Recent sessions</h3>
+        <button class="all" on:click={() => dispatch("allSessions")}>All sessions</button>
+      </div>
       <div class="sessions">
         {#each recent as s (s.id)}
           <button class="session" on:click={() => dispatch("openSession", { id: s.id })}>
@@ -84,6 +87,22 @@
     flex-direction: column;
     gap: 22px;
     width: 100%;
+  }
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+  .all {
+    padding: 0 4px;
+    background: none;
+    border: none;
+    color: var(--faint);
+    font-size: 11.5px;
+    cursor: pointer;
+  }
+  .all:hover {
+    color: var(--text);
   }
   h3 {
     margin: 0 0 8px 4px;

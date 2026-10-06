@@ -190,11 +190,11 @@ fn purge_cascade_kills_descendants_at_any_depth() {
 }
 
 #[test]
-fn theme_emits_css_vars_with_eva_default() {
+fn theme_emits_css_vars_with_a_neutral_default() {
     let t = Theme::default();
     assert_eq!(t.background.image, "");
     let css = t.to_css_vars();
-    assert!(css.contains("--accent:#7C8CFF"));
+    assert!(css.contains("--accent:#E6E8EE"));
     assert!(css.contains("--bg-blur:"));
 }
 

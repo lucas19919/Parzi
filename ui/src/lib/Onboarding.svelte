@@ -5,7 +5,7 @@
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
-  import { brain, onboard, type ProviderStatus, type Scan } from "./api";
+  import { brain, onboard, onSignIn, type ProviderStatus, type Scan } from "./api";
   import { board, checking, refreshBoard } from "./providerStore";
   import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "./providerRows";
   import { importBrowser, onboarded } from "./browserData";
@@ -18,6 +18,12 @@
   const WATCH_EVERY = 5_000;
   const INSTALL_WAIT = 600_000;
   const SIGN_IN_WAIT = 180_000;
+  const START_ETA = 75_000;
+
+  interface Wait {
+    note: string;
+    eta: number;
+  }
 
   let step = 0;
   let scan: Scan | null = null;
@@ -31,7 +37,7 @@
   let folderPicks = new Set<string>();
   let toolResult = "";
   let vault = "";
-  let waiting = new Map<string, string>();
+  let waiting = new Map<string, Wait>();
   let alive = true;
 
   $: agents = PROVIDER_ORDER.map((id) => $board.find((b) => b.provider === id)).filter((b) => !!b);
@@ -42,8 +48,18 @@
   onMount(() => {
     setOverlay("onboarding", true);
     void load();
+    const unlisten = onSignIn(({ provider, step }) => {
+      if (!waiting.has(provider)) return;
+      waiting = new Map(waiting).set(
+        provider,
+        step === "starting"
+          ? { note: `Starting ${nameOf(provider)}. This takes about a minute…`, eta: START_ETA }
+          : { note: "Sign in with Google in your browser…", eta: 0 },
+      );
+    });
     return () => {
       alive = false;
+      void unlisten.then((off) => off());
       setOverlay("onboarding", false);
     };
   });
@@ -84,7 +100,7 @@
   async function act(provider: string, note: string, work: () => Promise<number>) {
     if (waiting.has(provider)) return;
     const from = stateOf(provider);
-    waiting = new Map(waiting).set(provider, note);
+    waiting = new Map(waiting).set(provider, { note, eta: 0 });
     try {
       const ms = await work();
       if (ms) await watch(provider, from, ms);
@@ -169,21 +185,27 @@
         <p class="lead">Parzi drives each agent on your own subscription. Install and sign in right here; each agent keeps its own login, so Parzi never sees your tokens.</p>
         <div class="list">
           {#each agents as a (a.provider)}
+            {@const wait = waiting.get(a.provider)}
             <div class="item">
               <span class="logo">
                 {#if hasMark(a.provider)}<ProviderLogo provider={a.provider} size={18} />{:else}{a.provider.slice(0, 1).toUpperCase()}{/if}
               </span>
               <span class="grow">
                 <span class="title">{nameOf(a.provider)}</span>
-                <span class="sub" class:ok={isUsable(a)}>{waiting.get(a.provider) ?? stateLabel(a)}</span>
+                <span class="sub" class:ok={!wait && isUsable(a)}>{wait?.note ?? stateLabel(a)}</span>
               </span>
+              {#if wait}
+                {#key wait.note}
+                  <span class="progress" class:sweep={!wait.eta} style:--eta="{wait.eta}ms"><span></span></span>
+                {/key}
+              {/if}
               {#if a.state === "not_installed"}
                 <button class="btn" disabled={waiting.has(a.provider)} on:click={() => install(a.provider)}>
                   {waiting.has(a.provider) ? "Installing…" : "Install"}
                 </button>
               {:else if a.state === "signed_out" || a.state === "unchecked"}
                 <button class="btn" disabled={waiting.has(a.provider)} on:click={() => signIn(a.provider)}>
-                  {waiting.has(a.provider) ? "Waiting…" : "Sign in"}
+                  {waiting.has(a.provider) ? "Signing in…" : "Sign in"}
                 </button>
               {/if}
             </div>
@@ -405,6 +427,7 @@
     overflow-y: auto;
   }
   .item {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -464,6 +487,45 @@
   }
   .sub.ok {
     color: var(--ok);
+  }
+  .progress {
+    position: absolute;
+    left: 48px;
+    right: 10px;
+    bottom: 3px;
+    height: 2px;
+    overflow: hidden;
+    border-radius: 2px;
+    background: var(--line);
+  }
+  .progress span {
+    position: absolute;
+    inset: 0 8% 0 0;
+    border-radius: inherit;
+    background: var(--accent);
+    transform-origin: left;
+    animation: fill var(--eta) cubic-bezier(0.2, 0.6, 0.3, 1) forwards;
+  }
+  .progress.sweep span {
+    inset: 0 auto 0 0;
+    width: 30%;
+    animation: sweep 1.3s ease-in-out infinite;
+  }
+  @keyframes fill {
+    from {
+      transform: scaleX(0);
+    }
+    to {
+      transform: scaleX(1);
+    }
+  }
+  @keyframes sweep {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(340%);
+    }
   }
   .checks {
     display: flex;

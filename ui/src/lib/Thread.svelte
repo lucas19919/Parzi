@@ -281,7 +281,7 @@ ${e.text}` : e.text;
     {#if seg.kind === "md" && i === tailIdx}
       <div class="msg">
         {#if livePart.head}<div class="live-head">{@html livePart.head}</div>{/if}
-        <div class="live-tail">{@html livePart.tail}<span class="caret" /></div>
+        <div class="live-tail">{@html livePart.tail}</div>
       </div>
     {:else if seg.kind === "md"}
       <div class="msg">{@html renderMarkdown(seg.body)}</div>
@@ -312,7 +312,7 @@ ${e.text}` : e.text;
     width: 100%;
     max-width: 820px;
     margin: 0 auto;
-    padding: 16px 24px 190px;
+    padding: 16px 24px 8px;
   }
   .row {
     display: flex;
@@ -334,14 +334,14 @@ ${e.text}` : e.text;
     padding: 8px 16px;
     background: var(--line);
     border: 1px solid var(--line);
-    border-radius: 999px;
+    border-radius: 14px;
     color: var(--text);
     font-size: 13.5px;
     line-height: 1.5;
     overflow-wrap: break-word;
   }
   .bubble:has(p + p, pre, ul, ol, blockquote) {
-    border-radius: 18px;
+    border-radius: 12px;
   }
   .bubble :global(h1),
   .bubble :global(h2),
@@ -412,15 +412,6 @@ ${e.text}` : e.text;
   }
   .live-tail {
     color: var(--text);
-  }
-  .caret {
-    display: inline-block;
-    width: 6px;
-    height: 1em;
-    margin-left: 2px;
-    vertical-align: text-bottom;
-    border-radius: 1px;
-    background: var(--muted);
   }
   .system {
     font-family: var(--mono);

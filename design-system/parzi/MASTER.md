@@ -87,11 +87,13 @@ a pack without art keeps the current wallpaper.
   project); it never opens a bare folder dialog. Send fills with the accent
   once there is text. `/` opens commands, `@` lists files. Esc stops a run.
 - Buttons: `.btn` is a raised neutral (hover brightens fill and border);
-  `.btn.primary` is the accent with an inner highlight and a soft accent glow,
+  `.btn.primary` is the accent with an inner highlight and no glow,
   lifting 1px on hover. Every button presses (scale 0.97). Disabled is 45%.
-- Model picker: provider rail, search, starred, Smart Auto, Ctrl+1..5.
+- Model picker: one list sized to its content. Search, Smart Auto, Starred
+  (set in Settings › Providers), then each ready agent's models under its
+  name, and agents that are not set up last. Opens from its button.
 - Popovers go through `lib/popover.ts` (portal, placement, outside click, Esc).
-- Thread: user pill bubbles right, tool stacks (running / ok / failed with
+- Thread: user bubbles right (14px radius), tool stacks (running / ok / failed with
   output), reasoning rail, code blocks (ext badge, lines, copy, gutter, diff
   tint, 30-line clamp), per-message copy under the message.
 - Icons come from `lib/icons.ts` through `Icon.svelte`; no inline SVG paths

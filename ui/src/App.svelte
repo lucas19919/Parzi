@@ -56,6 +56,7 @@
 
   let input = "";
   let model = "auto";
+  let warmed = "";
   let effort = "medium";
   let permission = "full";
   let mode: "agent" | "web" = "agent";
@@ -67,6 +68,7 @@
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
   let farFromBottom = false;
+  let dockHeight = 90;
   let omnibar: Omnibar;
   let page: PageView;
   let immersive = false;
@@ -114,7 +116,10 @@
 
   let closed: { url: string; title: string }[] = [];
 
-  function openHistory() {
+  let historyView: "sessions" | "history" | "bookmarks" = "sessions";
+
+  function openHistory(view = historyView) {
+    historyView = view;
     settingsOpen = false;
     const existing = tabs.find((t) => t.kind === "history");
     if (existing) selectTab(existing.id);
@@ -164,6 +169,15 @@
     events = [];
     context = { used: 0, limit: 0 };
     clearLive();
+  }
+
+  $: warm(model.split("/")[0]);
+  $: warm(meta?.model.split("/")[0] ?? "");
+
+  function warm(provider: string) {
+    if (!provider || provider === "auto" || provider === warmed) return;
+    warmed = provider;
+    void api.warmAgent(provider).catch(() => {});
   }
 
   async function showSession(id: string) {
@@ -360,7 +374,7 @@
         cwd: folder,
         effort,
         attachments: files,
-        mode: permission === "supervised" || permission === "edits" ? permission : "auto",
+        mode: permission,
       });
       running = new Set(running).add(sid);
       if (!target.sessionId) patchTab(target.id, { sessionId: sid, title: prompt.slice(0, 40) });
@@ -628,7 +642,7 @@
     on:settings={() => openSettings()}
     on:update={() => openSettings("system")}
     on:brain={openBrain}
-    on:history={openHistory}
+    on:history={() => openHistory()}
     on:setup={() => (setupOpen = true)}
   />
   {/if}
@@ -644,7 +658,14 @@
       </div>
     {:else if tab.kind === "history"}
       <div class="fill" in:fade={{ duration: 150 }}>
-        <HistoryView on:open={(e) => openPageNext(e.detail.url)} />
+        <HistoryView
+          {threads}
+          {running}
+          bind:view={historyView}
+          on:open={(e) => openPageNext(e.detail.url)}
+          on:openSession={(e) => openSession(e.detail.id)}
+          on:deleteSession={(e) => remove(e.detail.id)}
+        />
       </div>
     {:else if tab.kind === "page"}
       {#key tab.id}
@@ -658,7 +679,7 @@
       {/key}
     {:else}
       {#if hasSession}
-        <section class="session">
+        <section class="session" style:--dock="{dockHeight}px">
           <SessionHeader
             title={meta?.title || tab.title}
             {branch}
@@ -690,11 +711,16 @@
 
       {#if !hasSession}
         <div class="home" in:fade={{ duration: 200 }}>
-          <HomeView {threads} on:open={(e) => browse(e.detail.url)} on:openSession={(e) => openSession(e.detail.id)} />
+          <HomeView
+            {threads}
+            on:open={(e) => browse(e.detail.url)}
+            on:openSession={(e) => openSession(e.detail.id)}
+            on:allSessions={() => openHistory("sessions")}
+          />
         </div>
       {/if}
 
-      <div class="composer" class:docked={hasSession}>
+      <div class="composer" class:docked={hasSession} bind:clientHeight={dockHeight}>
         <Omnibar
           bind:this={omnibar}
           bind:input
@@ -742,7 +768,7 @@
     on:newPage={() => addTab(pageTab())}
     on:settings={() => openSettings()}
     on:brain={openBrain}
-    on:history={openHistory}
+    on:history={() => openHistory()}
   />
 
   {#if setupOpen}
@@ -806,11 +832,16 @@
     flex: 1;
     overflow-x: hidden;
     overflow-y: auto;
-    padding-bottom: 90px;
+    padding-bottom: calc(var(--dock) + 30px);
+    mask-image: linear-gradient(
+      to bottom,
+      #000 calc(100% - var(--dock) - 28px),
+      transparent calc(100% - var(--dock) - 4px)
+    );
   }
   .to-bottom {
     position: absolute;
-    bottom: 96px;
+    bottom: calc(var(--dock) + 26px);
     left: 50%;
     z-index: 15;
     width: 32px;

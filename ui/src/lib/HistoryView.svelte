@@ -2,18 +2,29 @@
   import { createEventDispatcher, onMount, tick } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
   import Icon from "./Icon.svelte";
+  import ProviderLogo from "./ProviderLogo.svelte";
+  import { hasMark } from "./providerMarks";
+  import { folderName } from "./tabs";
+  import type { SessionMeta } from "./api";
   import { bookmarks, clearHistory, faviconUrl, history, removeBookmark, removeVisit, type Bookmark, type Visit } from "./browserData";
   import { bare } from "./suggest";
 
-  const dispatch = createEventDispatcher<{ open: { url: string } }>();
-  const DAY = 86_400_000;
+  export let threads: SessionMeta[] = [];
+  export let running: Set<string> = new Set();
+  export let view: "sessions" | "history" | "bookmarks" = "sessions";
 
-  let view: "history" | "bookmarks" = "history";
+  const dispatch = createEventDispatcher<{ open: { url: string }; openSession: { id: string }; deleteSession: { id: string } }>();
+  const DAY = 86_400_000;
+  const PLACEHOLDER = { sessions: "Search sessions", history: "Search history", bookmarks: "Search bookmarks" };
+
   let query = "";
   let field: HTMLInputElement | null = null;
   let broken = new Set<string>();
 
   $: q = query.trim().toLowerCase();
+  $: sessionDays = byDay(
+    threads.filter((t) => matches(t.title, whereOf(t), q)).map((t) => ({ ...t, at: Date.parse(t.updated) || 0 })),
+  );
   $: days = byDay($history.filter((v) => matches(v.title, v.url, q)));
   $: folders = byFolder($bookmarks.filter((b) => matches(b.title, b.url, q)));
 
@@ -29,8 +40,17 @@
     return new Date(at).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
   }
 
-  function byDay(list: Visit[]) {
-    const out: { label: string; items: Visit[] }[] = [];
+  function agentOf(s: SessionMeta) {
+    return s.model.split("/")[0];
+  }
+
+  function whereOf(s: SessionMeta) {
+    if (!s.cwd || /[\\/]\.parzi[\\/]scratch[\\/]/.test(s.cwd)) return "";
+    return folderName(s.cwd);
+  }
+
+  function byDay<T extends { at: number }>(list: T[]) {
+    const out: { label: string; items: T[] }[] = [];
     for (const v of [...list].sort((a, b) => b.at - a.at)) {
       const label = dayLabel(v.at);
       const last = out[out.length - 1];
@@ -58,7 +78,7 @@
     if (ok) clearHistory();
   }
 
-  async function show(next: "history" | "bookmarks") {
+  async function show(next: typeof view) {
     view = next;
     await tick();
     field?.focus();
@@ -72,12 +92,13 @@
 <div class="library">
   <header>
     <div class="seg">
-      <button class:on={view === "history"} on:click={() => show("history")}>History</button>
+      <button class:on={view === "sessions"} on:click={() => show("sessions")}>Sessions</button>
+      <button class:on={view === "history"} on:click={() => show("history")}>Pages</button>
       <button class:on={view === "bookmarks"} on:click={() => show("bookmarks")}>Bookmarks</button>
     </div>
     <div class="search">
       <Icon name="search" size={13} />
-      <input bind:this={field} bind:value={query} placeholder={view === "history" ? "Search history" : "Search bookmarks"} spellcheck="false" />
+      <input bind:this={field} bind:value={query} placeholder={PLACEHOLDER[view]} spellcheck="false" />
     </div>
     {#if view === "history" && $history.length}
       <button class="link" on:click={clearAll}>Clear history</button>
@@ -85,7 +106,26 @@
   </header>
 
   <div class="list">
-    {#if view === "history"}
+    {#if view === "sessions"}
+      {#each sessionDays as day (day.label)}
+        <h3>{day.label}</h3>
+        {#each day.items as s (s.id)}
+          <div class="row">
+            <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
+              <span class="time">{time(s.at)}</span>
+              <span class="icon">
+                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name="chat" size={13} />{/if}
+              </span>
+              <span class="title">{s.title || "Untitled session"}</span>
+              <span class="url" class:live={running.has(s.id)}>{running.has(s.id) ? "Running" : whereOf(s)}</span>
+            </button>
+            <button class="x" title="Delete session" on:click={() => dispatch("deleteSession", { id: s.id })}><Icon name="close" size={12} /></button>
+          </div>
+        {/each}
+      {:else}
+        <p class="empty">{q ? "Nothing matches." : "Your sessions show up here."}</p>
+      {/each}
+    {:else if view === "history"}
       {#each days as day (day.label)}
         <h3>{day.label}</h3>
         {#each day.items as v (v.url)}
@@ -285,6 +325,9 @@
     white-space: nowrap;
     font-size: 12px;
     color: var(--faint);
+  }
+  .url.live {
+    color: var(--ok);
   }
   .x {
     width: 28px;

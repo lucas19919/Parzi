@@ -90,7 +90,7 @@ fn c_stage() -> String {
     "#0B0B10".into()
 }
 fn c_accent() -> String {
-    "#7C8CFF".into()
+    "#E6E8EE".into()
 }
 fn c_text() -> String {
     "#EDEDF2".into()
@@ -654,12 +654,12 @@ pub fn extract_palette(path: &std::path::Path) -> Result<Palette> {
                 0.0
             };
             if sat < 0.18 {
-                [0x7C, 0x8C, 0xFF]
+                [0xE6, 0xE8, 0xEE]
             } else {
                 rgb
             }
         }
-        None => [0x7C, 0x8C, 0xFF],
+        None => [0xE6, 0xE8, 0xEE],
     };
     Ok(Palette {
         accent: hex(accent[0], accent[1], accent[2]),
@@ -692,7 +692,7 @@ mod css_tests {
         let css = Theme::default().to_css_vars();
         assert!(css.contains("--font:\"Inter\""));
         assert!(css.contains("--bg-dim:0.66"));
-        assert!(css.contains("--accent:#7C8CFF"));
+        assert!(css.contains("--accent:#E6E8EE"));
         assert!(!css.contains("glass"));
         assert!(!css.contains("--parzi-"));
         let mut t = Theme::default();
@@ -734,7 +734,7 @@ mod palette_tests {
         let p = dir.path().join("gray.png");
         solid_png(&p, [120, 120, 120]);
         let pal = extract_palette(&p).unwrap();
-        assert_eq!(pal.accent, "#7C8CFF");
+        assert_eq!(pal.accent, "#E6E8EE");
         assert_eq!(pal.average, "#787878");
     }
 

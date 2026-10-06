@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
-  import { fade, scale, slide } from "svelte/transition";
+  import { fade, fly, scale, slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { open } from "@tauri-apps/plugin-dialog";
   import Icon from "./Icon.svelte";
@@ -372,7 +372,7 @@
 
   function togglePerm() {
     permOpen = !permOpen;
-    if (permOpen && permBtn) permStyle = placeAbove(permBtn, 320, true);
+    if (permOpen && permBtn) permStyle = placeAbove(permBtn, 280);
   }
 </script>
 
@@ -411,6 +411,9 @@
     {/if}
 
     <div class="row">
+      {#if streaming}
+        <span class="orb" aria-hidden="true" title="Working…"><span class="eye" /><span class="eye" /></span>
+      {/if}
       <textarea
         bind:this={textarea}
         bind:value={input}
@@ -440,6 +443,7 @@
     </button>
     {#if mode === "agent"}
       <button bind:this={permBtn} class="ctl" class:open={permOpen} title={perm.desc} on:click|stopPropagation={togglePerm}>
+        <Icon name={perm.icon} size={12} />
         <span class="truncate">{perm.title}</span>
       </button>
       {#if showFolder}
@@ -467,9 +471,19 @@
     {#if mode === "agent"}
       <ModelPicker bind:this={picker} bind:value={model} {board} on:unavailable />
       {#if efforts.length}
-        <button class="ctl" title={`Effort${effortHint(effort) ? `: ${effortHint(effort)}` : ""}. Click to change.`} on:click={cycleEffort}>
-          <span class="truncate">{effortLabel(effort)}</span>
-        </button>
+        <div class="effort" role="radiogroup" aria-label="Effort" title={`Effort: ${effortLabel(effort)}${effortHint(effort) ? ` · ${effortHint(effort)}` : ""}`}>
+          {#each efforts as e, i (e)}
+            <button
+              class="lvl"
+              class:on={i <= efforts.indexOf(effort)}
+              role="radio"
+              aria-checked={e === effort}
+              aria-label={effortLabel(e)}
+              style:--h="{5 + Math.round((i * 9) / Math.max(1, efforts.length - 1))}px"
+              on:click={() => (effort = e)}
+            />
+          {/each}
+        </div>
       {/if}
       {#if contextLimit > 0 && (contextUsed > 0 || compacting)}
         <button
@@ -490,7 +504,7 @@
   </div>
 
   {#if projOpen}
-    <div class="menu-pop" style={projStyle} use:popover={{ anchor: projBtn, close: () => (projOpen = false) }} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
+    <div class="menu-pop" style={projStyle} use:popover={{ anchor: projBtn, close: () => (projOpen = false) }} transition:fly={{ y: projStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
       <div class="pop-head">Project</div>
       {#each projects as p (p.slug)}
         <button class="opt" class:on={project?.slug === p.slug} on:click={() => chooseProject(p)}>
@@ -530,18 +544,18 @@
   {/if}
 
   {#if permOpen}
-    <div class="menu-pop" style={permStyle} use:popover={{ anchor: permBtn, close: () => (permOpen = false) }} transition:scale={{ duration: 150, start: 0.97, easing: cubicOut }}>
+    <div class="menu-pop perms" style={permStyle} use:popover={{ anchor: permBtn, close: () => (permOpen = false) }} transition:fly={{ y: permStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
       {#each PERMS as p (p.id)}
         <button
-          class="opt"
-          class:on={permission === p.id}
+          class="perm"
           on:click={() => {
             permission = p.id;
             permOpen = false;
           }}
         >
-          <Icon name={p.icon} size={14} />
-          <span class="meta"><span class="name">{p.title}</span><span class="sub">{p.desc}</span></span>
+          <span class="perm-icon"><Icon name={p.icon} size={13} /></span>
+          <span class="meta"><span class="perm-name">{p.title}</span><span class="perm-sub">{p.desc}</span></span>
+          {#if permission === p.id}<span class="tick"><Icon name="check" size={13} stroke={2} /></span>{/if}
         </button>
       {/each}
     </div>
@@ -567,7 +581,7 @@
   }
   .box:focus-within {
     border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3), 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
   }
   .box.web:focus-within {
     border-color: var(--accent);
@@ -576,6 +590,54 @@
     display: flex;
     align-items: flex-end;
     gap: 8px;
+  }
+  .orb {
+    width: 22px;
+    height: 22px;
+    flex: none;
+    align-self: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--text) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text) 16%, transparent);
+    animation: orb-bob 2.4s ease-in-out infinite;
+  }
+  .eye {
+    width: 3px;
+    height: 4.5px;
+    border-radius: 2px;
+    background: var(--text);
+    opacity: 0.85;
+    animation: orb-blink 4.4s ease-in-out infinite;
+    transform-origin: center;
+  }
+  @keyframes orb-bob {
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-1.5px);
+    }
+  }
+  @keyframes orb-blink {
+    0%,
+    91%,
+    100% {
+      transform: scaleY(1);
+    }
+    94.5% {
+      transform: scaleY(0.12);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .orb,
+    .eye {
+      animation: none;
+    }
   }
   textarea {
     flex: 1;
@@ -619,7 +681,7 @@
   .go.ready:not(:disabled) {
     background: var(--accent);
     color: var(--bg);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 4px 14px color-mix(in srgb, var(--accent) 28%, transparent);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
   }
   .go.ready:hover:not(:disabled) {
     background: color-mix(in srgb, var(--accent) 80%, #fff);
@@ -842,6 +904,77 @@
     width: 340px;
     padding: 5px;
     overflow-y: auto;
+  }
+  .menu-pop.perms {
+    width: 280px;
+    padding: 4px;
+  }
+  .perm {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 7px 8px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+  }
+  .perm:hover {
+    background: color-mix(in srgb, var(--text) 7%, transparent);
+  }
+  .perm-icon {
+    display: inline-flex;
+    color: var(--muted);
+  }
+  .perm-name {
+    font-size: 13px;
+  }
+  .perm-sub {
+    font-size: 11.5px;
+    color: var(--faint);
+  }
+  .tick {
+    display: inline-flex;
+    color: var(--text);
+  }
+  .effort {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 26px;
+    padding: 0 6px;
+    border-radius: var(--radius);
+  }
+  .effort:hover {
+    background: var(--line);
+  }
+  .lvl {
+    width: 7px;
+    height: 16px;
+    display: inline-flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+  .lvl::before {
+    content: "";
+    width: 3px;
+    height: var(--h);
+    border-radius: 1px;
+    background: color-mix(in srgb, var(--text) 22%, transparent);
+    transition: background 120ms ease;
+  }
+  .lvl.on::before {
+    background: var(--muted);
+  }
+  .effort:hover .lvl.on::before {
+    background: var(--text);
   }
   .pop-head {
     padding: 6px 8px 4px;

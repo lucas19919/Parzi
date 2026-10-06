@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { api, type ParziConfig, type ProviderEntry, type ProviderStatus } from "../api";
   import { board, checking, ensureBoard, refreshBoard } from "../providerStore";
-  import { PROVIDER_ORDER, effortLabel, isUsable, nameOf, stateLabel } from "../providerRows";
+  import { PROVIDER_ORDER, effortLabel, isUsable, modelLabel, nameOf, stateLabel } from "../providerRows";
   import Switch from "./Switch.svelte";
   import "./shared.css";
 
@@ -331,7 +331,7 @@
                           {favs.has(spec) ? "★" : "☆"}
                         </button>
                         <span class="model-main">
-                          <span class="model-name">{m.name || m.id}</span>
+                          <span class="model-name">{modelLabel(m)}</span>
                           <span class="model-meta">
                             <span class="mono">{m.id}</span>
                             {#if m.efforts.length}<span>effort: {m.efforts.map(effortLabel).join(" · ")}</span>{/if}
