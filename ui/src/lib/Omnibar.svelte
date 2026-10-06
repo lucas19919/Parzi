@@ -603,7 +603,7 @@
     padding: 6px 6px 6px 16px;
     background: var(--panel);
     border: 1px solid var(--line);
-    border-top: 2px solid color-mix(in srgb, var(--tint, var(--line)) 55%, var(--line));
+    border-top: 2px solid color-mix(in srgb, var(--tint, var(--line)) 30%, var(--line));
     border-radius: var(--radius-lg);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
     transition: border-color 140ms ease;

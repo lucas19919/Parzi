@@ -657,7 +657,11 @@ impl ToolHost {
                     return (false, "browser.open needs a url".into());
                 }
                 let url = crate::desk::normalize_url(raw);
-                match crate::desk::call("tab.open", serde_json::json!({ "url": url })).await {
+                match crate::desk::call(
+                    "tab.open",
+                    serde_json::json!({ "url": url, "session": self.p.session_id }),
+                )
+                .await {
                     Ok(v) => {
                         let shown = v.get("url").and_then(|u| u.as_str()).unwrap_or(&url);
                         (true, format!("opened {shown}"))

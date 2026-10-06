@@ -960,7 +960,8 @@ fn projects_of(notes: &[Note]) -> Vec<Project> {
                 .filter(|n| {
                     n.meta.path != home.meta.path
                         && (n.meta.projects.iter().any(|p| p.eq_ignore_ascii_case(slug))
-                            || n.meta.links.contains(&home.meta.path))
+                            || n.meta.links.contains(&home.meta.path)
+                            || note_in_project_folder(&n.meta.path, slug))
                 })
                 .map(|n| n.meta.path.clone())
                 .collect();
@@ -973,6 +974,15 @@ fn projects_of(notes: &[Note]) -> Vec<Project> {
             })
         })
         .collect()
+}
+
+/// A note filed under `projects/<slug>/…` belongs to that project even
+/// without frontmatter — placement implies membership.
+fn note_in_project_folder(path: &str, slug: &str) -> bool {
+    let prefix = format!("projects/{slug}/");
+    path.len() > prefix.len()
+        && path[..prefix.len()].eq_ignore_ascii_case(&prefix)
+        && !path[prefix.len()..].contains('/')
 }
 
 fn project_slug(path: &str) -> Option<&str> {
@@ -1220,6 +1230,19 @@ mod tests {
             "---\nprojects: [parzi-app]\n---\nunrelated"
         );
         assert_eq!(v.projects()[0].notes, ["one.md", "three.md", "two.md"]);
+        v.write("projects/parzi-app/probe.md", "filed, not tagged")
+            .unwrap();
+        v.write("projects/parzi-app/nested/deep.md", "too deep to claim")
+            .unwrap();
+        assert_eq!(
+            v.projects()[0].notes,
+            [
+                "one.md",
+                "projects/parzi-app/probe.md",
+                "three.md",
+                "two.md"
+            ]
+        );
         v.map("one.md", "parzi-app", false).unwrap();
         assert_eq!(v.read("one.md").unwrap(), "---\n---\nfirst");
         assert_eq!(

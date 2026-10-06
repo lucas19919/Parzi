@@ -959,6 +959,7 @@
     height: 48%;
     pointer-events: none;
     background: url("/hero-harbor.png") center 32% / cover no-repeat;
+    filter: brightness(0.82) saturate(0.94);
     -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent 99%);
     mask-image: linear-gradient(to bottom, #000 58%, transparent 99%);
     opacity: 0.9;
