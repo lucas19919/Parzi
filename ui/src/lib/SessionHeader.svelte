@@ -7,8 +7,10 @@
   export let branch = "";
   export let lane = "";
   export let canAct = false;
+  export let agentCount = 0;
+  export let panelOpen = false;
 
-  const dispatch = createEventDispatcher<{ rename: { title: string }; fork: void; copyId: void; delete: void }>();
+  const dispatch = createEventDispatcher<{ rename: { title: string }; fork: void; copyId: void; delete: void; agents: void }>();
 
   type Action = "rename" | "fork" | "copyId" | "delete";
   const ITEMS: { id: Action; label: string; icon: IconName }[] = [
@@ -76,6 +78,13 @@
   </div>
   {#if canAct}
     <div class="menu" bind:this={menu}>
+      <button class="icon-btn" class:on={panelOpen} title="Subagents (Ctrl+Shift+A)" on:click={() => dispatch("agents")}>
+        <Icon name="bot" size={14} />
+        {#if agentCount > 0}<span class="count">{agentCount > 99 ? "99+" : agentCount}</span>{/if}
+      </button>
+      <button class="icon-btn" title="Session actions" aria-expanded={open} on:click={() => (open = !open)}>
+        <Icon name="more" stroke={3} />
+      </button>
       <button class="icon-btn" title="Session actions" aria-expanded={open} on:click={() => (open = !open)}>
         <Icon name="more" stroke={3} />
       </button>
@@ -158,8 +167,12 @@
   }
   .menu {
     position: relative;
+    display: flex;
+    align-items: center;
+    gap: 2px;
   }
   .icon-btn {
+    position: relative;
     width: 26px;
     height: 26px;
     display: inline-flex;
@@ -175,6 +188,25 @@
   .icon-btn:hover {
     background: var(--line);
     color: var(--text);
+  }
+  .icon-btn.on {
+    background: var(--line);
+    color: var(--text);
+  }
+  .count {
+    position: absolute;
+    top: 0;
+    right: -1px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 999px;
+    background: var(--ok);
+    color: #06110a;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 14px;
+    text-align: center;
   }
   .dropdown {
     position: absolute;

@@ -10,6 +10,7 @@
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
   export let folder = "";
+  export let sessionId = "";
   export let tab: "ask" | "agents" = "ask";
 
   const dispatch = createEventDispatcher<{
@@ -60,7 +61,24 @@
   }
 
   $: q = askInput.trim().toLowerCase();
-  $: pool = threads
+  $: family = (() => {
+    if (!sessionId) return [];
+    const byId = new Map(threads.map((t) => [t.id, t]));
+    const out: SessionMeta[] = [];
+    for (const t of threads) {
+      let cur = t.parent_id;
+      let guard = 0;
+      while (cur && guard++ < 50) {
+        if (cur === sessionId) {
+          out.push(t);
+          break;
+        }
+        cur = byId.get(cur)?.parent_id;
+      }
+    }
+    return out;
+  })();
+  $: pool = family
     .filter((t) => !q || t.title.toLowerCase().includes(q) || t.model.toLowerCase().includes(q))
     .map((t) => ({ ...t, at: Date.parse(t.updated) || 0 }));
   $: activeList = pool.filter((t) => isLive(t) || t.status === "queued").sort((a, b) => b.at - a.at);
@@ -72,7 +90,7 @@
       kids.get(p)?.push(t);
     }
     const byId = new Map(pool.map((t) => [t.id, t]));
-    const roots = [...(kids.get("") ?? []), ...pool.filter((t) => t.parent_id && !byId.has(t.parent_id))];
+    const roots = (kids.get(sessionId) ?? []).concat(pool.filter((t) => t.parent_id && t.parent_id !== sessionId && !byId.has(t.parent_id)));
     const byTime = (a: { at: number }, b: { at: number }) => b.at - a.at;
     roots.sort(byTime);
     for (const arr of kids.values()) arr.sort(byTime);
@@ -226,7 +244,7 @@
         {/each}
       {/if}
       {#if rows.length}
-        <h3>All agents</h3>
+        <h3>This session</h3>
         {#each rows as { s, depth } (s.id)}
           {@const sub = pillOf(s)}
           <div class="row" style:padding-left="{depth * 16}px">
@@ -244,7 +262,7 @@
           </div>
         {/each}
       {:else}
-        <p class="empty">{q ? "Nothing matches." : "Background agents and subsessions show up here."}</p>
+        <p class="empty">{q ? "Nothing matches." : "No subagents yet — this session hasn't fanned anything out."}</p>
       {/if}
     </div>
   {/if}

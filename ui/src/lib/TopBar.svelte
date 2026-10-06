@@ -10,7 +10,6 @@
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
-  export let agentCount = 0;
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -23,7 +22,6 @@
     update: void;
     brain: void;
     history: void;
-    agents: void;
     setup: void;
   }>();
 
@@ -120,10 +118,6 @@
   </div>
 
   <div class="window-controls">
-    <button class="icon-btn agents" title="Agents (Ctrl+Shift+A)" on:click={() => dispatch("agents")}>
-      <Icon name="bot" size={15} />
-      {#if agentCount > 0}<span class="count">{agentCount > 99 ? "99+" : agentCount}</span>{/if}
-    </button>
     <button class="win-btn" title="Minimize" tabindex="-1" on:click={windowMinimize}>
       <svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" /></svg>
     </button>
@@ -196,21 +190,6 @@
     background: var(--panel);
     border-color: var(--line);
     color: var(--text);
-  }
-  .agents .count {
-    position: absolute;
-    top: 1px;
-    right: 0;
-    min-width: 14px;
-    height: 14px;
-    padding: 0 3px;
-    border-radius: 999px;
-    background: var(--ok);
-    color: #06110a;
-    font-size: 9px;
-    font-weight: 700;
-    line-height: 14px;
-    text-align: center;
   }
   .dropdown {
     position: absolute;

@@ -77,6 +77,24 @@
     return threads.find((t) => t.id === sessionId)?.lane ?? "";
   }
 
+  function isDescendant(id: string, ancestor: string): boolean {
+    let cur = threads.find((t) => t.id === id)?.parent_id;
+    let guard = 0;
+    while (cur && guard++ < 50) {
+      if (cur === ancestor) return true;
+      cur = threads.find((t) => t.id === cur)?.parent_id;
+    }
+    return false;
+  }
+
+  $: familyActive = (() => {
+    if (!shown) return 0;
+    const focus: string = shown;
+    return threads.filter(
+      (t) => t.id !== focus && isDescendant(t.id, focus) && (t.status === "active" || t.status === "queued" || running.has(t.id)),
+    ).length;
+  })();
+
   $: if (mode !== prevMode) {
     modeKept[prevMode] = { model, effort };
     const kept = modeKept[mode] ?? modeDefaults[mode];
@@ -686,7 +704,6 @@
   <TopBar
     {tabs}
     activeTabId={activeId}
-    agentCount={running.size}
     on:select={(e) => selectTab(e.detail.id)}
     on:close={(e) => closeTab(e.detail.id)}
     on:move={(e) => moveTab(e.detail.id, e.detail.to)}
@@ -697,10 +714,6 @@
     on:update={() => openSettings("system")}
     on:brain={openBrain}
     on:history={() => openHistory()}
-    on:agents={() => {
-      panelTab = "agents";
-      panelOpen = !panelOpen;
-    }}
     on:setup={() => (setupOpen = true)}
   />
   {/if}
@@ -742,11 +755,17 @@
             title={meta?.title || tab.title}
             {branch}
             lane={meta?.lane ?? ""}
+            agentCount={familyActive}
+            {panelOpen}
             canAct={!!shown}
             on:rename={(e) => rename(e.detail.title)}
             on:fork={fork}
             on:copyId={copyId}
             on:delete={() => shown && remove(shown)}
+            on:agents={() => {
+              panelTab = "agents";
+              panelOpen = !panelOpen;
+            }}
           />
           <div class="workarea">
             <div class="scroll" bind:this={scrollEl} on:scroll={() => (farFromBottom = !nearBottom())}>
@@ -766,6 +785,7 @@
                 {threads}
                 {running}
                 {folder}
+                sessionId={shown ?? ""}
                 bind:tab={panelTab}
                 on:openSession={(e) => openSession(e.detail.id)}
                 on:stopSession={(e) => stopSession(e.detail.id)}
