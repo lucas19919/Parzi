@@ -759,10 +759,13 @@
 <svelte:window on:keydown={onKey} />
 
 <div class="shell">
-  <DefaultArt {bg} blurred={hasSession || tab.kind === "page" || settingsOpen} />
+  <DefaultArt {bg} blurred={tab.kind === "page"} />
 
   {#if !hasSession && !settingsOpen && tab.kind !== "page" && tab.kind !== "history" && tab.kind !== "brain"}
-    <div class="hero-reef" aria-hidden="true" />
+    {@const heroBg = bg
+      ? `linear-gradient(to bottom, transparent 20%, var(--bg) 92%), url("${bg}") center 32% / cover no-repeat`
+      : undefined}
+    <div class="hero-reef" aria-hidden="true" style:background={heroBg} />
   {/if}
 
   {#if !immersive}
@@ -990,8 +993,10 @@
     flex-direction: column;
     margin: 8px 8px 0;
     overflow: hidden;
-    background: var(--panel);
-    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) 68%, transparent);
+    -webkit-backdrop-filter: blur(20px) saturate(1.15);
+    backdrop-filter: blur(20px) saturate(1.15);
+    border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
     border-bottom: none;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     animation: enter 600ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -1056,14 +1061,23 @@
     left: 0;
     right: 0;
     z-index: 0;
-    height: 48%;
+    height: calc(var(--hero-height, 48) * 1%);
     pointer-events: none;
     background:
       linear-gradient(to bottom, transparent 20%, var(--bg) 92%),
       url("/hero-harbor.png") center 32% / cover no-repeat;
+    background-size: cover, cover;
     filter: brightness(0.68) saturate(0.9);
-    -webkit-mask-image: linear-gradient(to bottom, #000 30%, transparent 100%);
-    mask-image: linear-gradient(to bottom, #000 30%, transparent 100%);
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      #000 calc(30% * var(--hero-fade, 1) + 70% * (1 - var(--hero-fade, 1))),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      #000 calc(30% * var(--hero-fade, 1) + 70% * (1 - var(--hero-fade, 1))),
+      transparent 100%
+    );
     opacity: 0.94;
   }
   .toasts {

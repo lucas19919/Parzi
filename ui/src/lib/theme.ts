@@ -60,6 +60,8 @@ function themeVars(t: Theme): Record<string, string> {
     "--bg-dim": String(clamp01(t.background.dim)),
     "--vignette": String(clamp01(t.background.vignette)),
     "--bg-blur": `${t.background.blur}px`,
+    "--hero-fade": t.background.hero_fade === false ? "0" : "1",
+    "--hero-height": String(Math.min(70, Math.max(20, t.background.hero_height ?? 48))),
   };
 }
 
@@ -68,7 +70,7 @@ export function previewTheme(t: Theme) {
   for (const [k, v] of Object.entries(themeVars(t))) s.setProperty(k, v);
 }
 
-const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--bg-dim", "--vignette", "--bg-blur"];
+const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--bg-dim", "--vignette", "--bg-blur", "--hero-fade", "--hero-height"];
 
 function clearPreview() {
   const s = document.documentElement.style;

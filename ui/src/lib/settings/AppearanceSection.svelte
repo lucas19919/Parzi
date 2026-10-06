@@ -23,6 +23,7 @@
 
   let dimPct = 66;
   let vignettePct = 50;
+  let heroHeightPct = 48;
 
   const ACCENTS = ["#E6E8EE", "#7AA2F7", "#88C0D0", "#CBA6F7", "#EB6F92", "#F5A97F", "#A6DA95", "#E0DEF4"];
   const UI_FONTS = ["Inter", "system-ui", "Segoe UI", "SF Pro Text", "Roboto", "IBM Plex Sans"];
@@ -68,6 +69,7 @@
     if (!theme) return;
     dimPct = Math.round(theme.background.dim * 100);
     vignettePct = Math.round(theme.background.vignette * 100);
+    heroHeightPct = Math.round(theme.background.hero_height ?? 48);
   }
 
   function sameColors(a: Theme["colors"], b: Theme["colors"]): boolean {
@@ -291,6 +293,17 @@
       touch();
     }
   }
+  function onHeroHeight() {
+    if (theme) {
+      theme.background.hero_height = heroHeightPct;
+      touch();
+    }
+  }
+  async function toggleHeroFade() {
+    if (!theme) return;
+    theme.background.hero_fade = theme.background.hero_fade === false ? true : false;
+    await commitNow();
+  }
   function setColor(key: ColorKey, hex: string) {
     if (!theme) return;
     theme.colors[key] = hex;
@@ -412,6 +425,16 @@
       <Slider label="Dim" bind:value={dimPct} min={0} max={95} unit="%" on:input={onDim} />
       <Slider label="Blur" bind:value={theme.background.blur} min={0} max={20} step={0.5} unit="px" on:input={touch} />
       <Slider label="Vignette" bind:value={vignettePct} min={0} max={90} unit="%" on:input={onVignette} />
+    </div>
+    <div class="field-card">
+      <div class="field-info">
+        <span class="field-label">Home hero fade</span>
+        <span class="field-hint">Melt the top art into the background. Off shows the full picture edge.</span>
+      </div>
+      <Switch on={theme.background.hero_fade !== false} title="Home hero fade" on:toggle={toggleHeroFade} />
+    </div>
+    <div class="field-card stack">
+      <Slider label="Hero height" bind:value={heroHeightPct} min={20} max={70} unit="%" on:input={onHeroHeight} />
     </div>
     <div class="field-card">
       <div class="field-info">

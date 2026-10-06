@@ -613,8 +613,10 @@
   .box {
     position: relative;
     padding: 6px 6px 6px 16px;
-    background: var(--panel);
-    border: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) 72%, transparent);
+    -webkit-backdrop-filter: blur(18px) saturate(1.15);
+    backdrop-filter: blur(18px) saturate(1.15);
+    border: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
     border-radius: var(--radius-lg);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
     transition: border-color 140ms ease;

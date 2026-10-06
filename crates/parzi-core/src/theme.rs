@@ -57,6 +57,10 @@ pub struct BackgroundTheme {
     pub blur: f64,
     #[serde(default)]
     pub auto_accent: bool,
+    #[serde(default = "d_hero_fade")]
+    pub hero_fade: bool,
+    #[serde(default = "d_hero_height")]
+    pub hero_height: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,6 +120,12 @@ fn d_vignette() -> f64 {
 fn d_bg_blur() -> f64 {
     3.0
 }
+fn d_hero_fade() -> bool {
+    true
+}
+fn d_hero_height() -> f64 {
+    48.0
+}
 fn d_opacity() -> f64 {
     0.85
 }
@@ -160,6 +170,8 @@ impl Default for BackgroundTheme {
             vignette: d_vignette(),
             blur: d_bg_blur(),
             auto_accent: false,
+            hero_fade: d_hero_fade(),
+            hero_height: d_hero_height(),
         }
     }
 }
@@ -193,6 +205,7 @@ impl Theme {
         t.background.dim = round2(t.background.dim.clamp(0.0, 1.0));
         t.background.vignette = round2(t.background.vignette.clamp(0.0, 1.0));
         t.background.blur = round2(t.background.blur.clamp(0.0, 40.0));
+        t.background.hero_height = round2(t.background.hero_height.clamp(20.0, 70.0));
         t.glass.opacity = round2(t.glass.opacity.clamp(0.0, 1.0));
         t.glass.radius = t.glass.radius.min(32);
         t.glass.blur_px = t.glass.blur_px.min(60);
@@ -208,7 +221,7 @@ impl Theme {
         format!(
             ":root{{--font:{};--font-size:{}px;--mono:{};--mono-size:{}px;\
             --bg:{};--text:{};--muted:{};--accent:{};\
-            --bg-dim:{};--vignette:{};--bg-blur:{}px;}}\n",
+            --bg-dim:{};--vignette:{};--bg-blur:{}px;--hero-fade:{};--hero-height:{};}}\n",
             css_font_list(&t.font.family),
             t.font.size,
             css_font_list(&t.font.mono),
@@ -220,6 +233,8 @@ impl Theme {
             num(b.dim),
             num(b.vignette),
             num(b.blur),
+            if b.hero_fade { "1" } else { "0" },
+            num(b.hero_height),
         )
     }
 }

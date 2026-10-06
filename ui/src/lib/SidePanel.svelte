@@ -283,6 +283,8 @@
     flex-direction: column;
     border-left: 1px solid var(--line);
     background: color-mix(in srgb, var(--panel) 55%, transparent);
+    -webkit-backdrop-filter: blur(18px) saturate(1.15);
+    backdrop-filter: blur(18px) saturate(1.15);
   }
   .p-head {
     flex: none;
