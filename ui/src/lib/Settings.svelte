@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { createEventDispatcher } from "svelte";
-  import Icon from "./Icon.svelte";
   import GeneralSection from "./settings/GeneralSection.svelte";
   import ProvidersSection from "./settings/ProvidersSection.svelte";
   import AppearanceSection from "./settings/AppearanceSection.svelte";
@@ -8,8 +6,6 @@
   import { toast } from "./toast";
 
   export let section = "general";
-
-  const dispatch = createEventDispatcher<{ close: void }>();
 
   const SECTIONS = [
     { id: "general", label: "General" },
@@ -30,9 +26,6 @@
         </button>
       {/each}
     </div>
-    <button class="close" title="Close settings (Esc)" on:click={() => dispatch("close")}>
-      <Icon name="close" size={13} stroke={2} />
-    </button>
   </nav>
   <div class="scroll">
     <div class="content">
@@ -86,22 +79,6 @@
     background: var(--line);
     color: var(--text);
     font-weight: 500;
-  }
-  .close {
-    width: 26px;
-    height: 26px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .close:hover {
-    background: var(--line);
-    color: var(--text);
   }
   .scroll {
     flex: 1;

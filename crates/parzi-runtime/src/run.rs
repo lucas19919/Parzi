@@ -96,12 +96,6 @@ impl EngineRun {
             cwd = %self.p.cwd,
             "run started"
         );
-        if !self.p.provider.gated() {
-            self.note_once(format!(
-                "{name} applies some changes without asking Parzi first, so file leases and \
-                 the folder fence cannot stop them."
-            ));
-        }
         let mut seen = self.p.seen;
         let mut input = match self.p.inbox_from {
             Some(from) => {
@@ -237,16 +231,6 @@ impl EngineRun {
             .store
             .append(&self.p.session_id, &Event::System { text: text.clone() });
         self.p.sink.emit(RunEvent::Notice { text });
-    }
-
-    fn note_once(&self, text: String) {
-        let said = self.p.store.events(&self.p.session_id).is_ok_and(|evs| {
-            evs.iter()
-                .any(|e| matches!(e, Event::System { text: t } if *t == text))
-        });
-        if !said {
-            self.note(text);
-        }
     }
 
     fn opening(&self, prompt: &str) -> String {

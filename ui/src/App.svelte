@@ -11,6 +11,7 @@
   import Switcher from "./lib/Switcher.svelte";
   import DefaultArt from "./lib/DefaultArt.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
+  import PanelHeader from "./lib/PanelHeader.svelte";
   import SidePanel from "./lib/SidePanel.svelte";
   import Thread from "./lib/Thread.svelte";
   import SessionHeader from "./lib/SessionHeader.svelte";
@@ -786,15 +787,18 @@
 
   <main>
     {#if tab.kind === "settings"}
-      <div class="fill" in:fly={{ y: 8, ...motion }}>
+      <div class="fill col" in:fly={{ y: 8, ...motion }}>
+        <PanelHeader title="Settings" on:close={() => closeTab(activeId)} />
         <Settings bind:section={settingsSection} on:close={() => closeTab(activeId)} />
       </div>
     {:else if tab.kind === "brain"}
-      <div class="fill" in:fade={{ duration: 150 }}>
+      <div class="fill col" in:fade={{ duration: 150 }}>
+        <PanelHeader title="Brain" on:close={() => closeTab(activeId)} />
         <BrainView />
       </div>
     {:else if tab.kind === "history"}
-      <div class="fill" in:fade={{ duration: 150 }}>
+      <div class="fill col" in:fade={{ duration: 150 }}>
+        <PanelHeader title="History" on:close={() => closeTab(activeId)} />
         <HistoryView
           {threads}
           {running}
@@ -983,12 +987,15 @@
     display: flex;
     margin: 8px 8px 0;
     overflow: hidden;
-    background: color-mix(in srgb, var(--panel) 60%, transparent);
-    -webkit-backdrop-filter: blur(24px) saturate(1.2);
-    backdrop-filter: blur(24px) saturate(1.2);
-    border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+    border: var(--glass-border);
     border-bottom: none;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+  .fill.col {
+    flex-direction: column;
   }
   .session {
     position: relative;
@@ -998,10 +1005,10 @@
     flex-direction: column;
     margin: 8px 8px 0;
     overflow: hidden;
-    background: color-mix(in srgb, var(--panel) 60%, transparent);
-    -webkit-backdrop-filter: blur(24px) saturate(1.2);
-    backdrop-filter: blur(24px) saturate(1.2);
-    border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+    border: var(--glass-border);
     border-bottom: none;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     animation: enter 600ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -1074,7 +1081,7 @@
         transparent calc(20% + 80% * (1 - var(--hero-fade, 1))),
         var(--bg) calc(92% + 8% * (1 - var(--hero-fade, 1)))
       ),
-      url("/hero-harbor.png") center 32% / cover no-repeat;
+      var(--hero-art) center 32% / cover no-repeat;
     background-size: cover, cover;
     filter: brightness(0.68) saturate(0.9);
     -webkit-mask-image: linear-gradient(

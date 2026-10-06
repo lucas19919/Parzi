@@ -165,8 +165,8 @@
     letter-spacing: 0.2px;
   }
   .lane.research {
-    background: color-mix(in srgb, #e8b64c 18%, transparent);
-    color: #e8b64c;
+    background: color-mix(in srgb, var(--research) 18%, transparent);
+    color: var(--research);
   }
   .menu {
     position: relative;
@@ -205,7 +205,7 @@
     padding: 0 3px;
     border-radius: 999px;
     background: var(--ok);
-    color: #06110a;
+    color: var(--on-ok);
     font-size: 9px;
     font-weight: 700;
     line-height: 14px;

@@ -380,8 +380,7 @@ impl Orchestrator {
         let instructions = system_parts(&q.lane, &cwd);
         if mode == ApprovalMode::Deny && !provider.gated() {
             return Err(ParziError::Validation(format!(
-                "this lane is read-only, and {} applies some changes without asking Parzi \
-                 first; pick another agent for it",
+                "this lane is read-only, and {} cannot run read-only; pick another agent for it",
                 display_name(&provider_id)
             )));
         }

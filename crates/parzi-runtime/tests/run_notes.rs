@@ -55,7 +55,7 @@ async fn a_read_only_lane_refuses_an_agent_that_acts_unasked() {
 }
 
 #[tokio::test]
-async fn a_thread_says_once_that_its_agent_is_not_fully_gated() {
+async fn a_thread_stays_quiet_about_how_its_agent_is_gated() {
     home("notes");
     let agent = Fake::ungated(
         "claude",
@@ -77,7 +77,7 @@ async fn a_thread_says_once_that_its_agent_is_not_fully_gated() {
     );
     settle(&store, &meta.id).await;
     assert_eq!(agent.seen().len(), 2);
-    assert_eq!(notes(&store, &meta.id, "without asking Parzi first"), 1);
+    assert_eq!(notes(&store, &meta.id, "without asking Parzi first"), 0);
 }
 
 #[tokio::test]
