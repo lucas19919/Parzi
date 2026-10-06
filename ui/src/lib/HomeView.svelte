@@ -32,7 +32,6 @@
 </script>
 
 <div class="home">
-  <div class="hero" aria-hidden="true" />
   {#if sites.length}
     <section>
       <h3>{pinnedMode ? "Pinned" : "Frequent"}</h3>
@@ -84,20 +83,12 @@
 
 <style>
   .home {
+    position: relative;
+    z-index: 1;
     display: flex;
     flex-direction: column;
     gap: 22px;
     width: 100%;
-  }
-  .hero {
-    height: 210px;
-    margin: 2px 2px -6px;
-    border-radius: var(--radius-lg);
-    background: url("/hero-dither.png") center 28% / cover no-repeat;
-    -webkit-mask-image: linear-gradient(to bottom, #000 52%, transparent 100%);
-    mask-image: linear-gradient(to bottom, #000 52%, transparent 100%);
-    opacity: 0.92;
-    pointer-events: none;
   }
   .head {
     display: flex;

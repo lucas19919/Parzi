@@ -1,5 +1,7 @@
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 import hljs from "highlight.js/lib/core";
 import rust from "highlight.js/lib/languages/rust";
 import python from "highlight.js/lib/languages/python";
@@ -53,6 +55,85 @@ const md = new MarkdownIt({
   html: false,
   linkify: true,
 });
+
+function texHtml(tex: string, display: boolean): string | null {
+  if (!tex.trim()) return null;
+  try {
+    return katex.renderToString(tex, {
+      displayMode: display,
+      throwOnError: true,
+      output: "html",
+      strict: false,
+    });
+  } catch {
+    return null;
+  }
+}
+
+// $$…$$ display blocks (single- or multi-line).
+md.block.ruler.before("fence", "parzi-math-block", (state, start, end, silent) => {
+  const first = state.getLines(start, start + 1, 0, false).trim();
+  if (!first.startsWith("$$")) return false;
+  let line = start;
+  let body = first.slice(2);
+  if (body.includes("$$")) {
+    body = body.slice(0, body.indexOf("$$"));
+  } else {
+    line++;
+    const parts: string[] = [body];
+    let closed = false;
+    for (; line <= end; line++) {
+      const text = state.getLines(line, line + 1, 0, false);
+      const cut = text.indexOf("$$");
+      if (cut >= 0) {
+        parts.push(text.slice(0, cut));
+        closed = true;
+        break;
+      }
+      parts.push(text);
+    }
+    if (!closed) return false;
+    body = parts.join("\n");
+  }
+  if (silent) return true;
+  const tok = state.push("parzi_math", "div", 0);
+  tok.content = body;
+  tok.meta = { display: true };
+  tok.map = [start, line + 1];
+  state.line = line + 1;
+  return true;
+});
+
+// $…$ inline math on one line (escaped \$ ignored).
+md.inline.ruler.after("escape", "parzi-math-inline", (state, silent) => {
+  const src = state.src;
+  if (state.pos >= src.length || src[state.pos] !== "$") return false;
+  if (src[state.pos + 1] === "$") return false;
+  if (state.pos > 0 && src[state.pos - 1] === "\\") return false;
+  let end = state.pos + 1;
+  while (end < src.length) {
+    if (src[end] === "$" && src[end - 1] !== "\\" && src[end + 1] !== "$") break;
+    if (src[end] === "\n") return false;
+    end++;
+  }
+  if (end >= src.length) return false;
+  const tex = src.slice(state.pos + 1, end);
+  if (!tex.trim()) return false;
+  if (silent) return true;
+  const tok = state.push("parzi_math", "span", 0);
+  tok.content = tex;
+  tok.meta = { display: false };
+  state.pos = end + 1;
+  return true;
+});
+
+md.renderer.rules.parzi_math = (tokens, idx) => {
+  const tok = tokens[idx];
+  const html = texHtml(tok.content, !!tok.meta?.display);
+  if (html) return tok.meta?.display ? `<div class="md-math">${html}</div>` : html;
+  const esc = tok.content.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return tok.meta?.display ? `$$${esc}$$` : `$${esc}$`;
+};
 
 const PLAIN_FENCES = new Set([
   "",

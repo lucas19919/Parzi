@@ -680,6 +680,9 @@
   {/if}
 
   <main>
+    {#if !hasSession && !settingsOpen && tab.kind !== "page" && tab.kind !== "history" && tab.kind !== "brain"}
+      <div class="hero-reef" aria-hidden="true" />
+    {/if}
     {#if settingsOpen}
       <div class="fill" in:fly={{ y: 8, ...motion }}>
         <Settings bind:section={settingsSection} on:close={() => (settingsOpen = false)} />
@@ -942,6 +945,19 @@
     text-align: center;
     font-size: 11.5px;
     color: var(--faint);
+  }
+  .hero-reef {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 0;
+    height: 48%;
+    pointer-events: none;
+    background: url("/hero-reef.png") center 32% / cover no-repeat;
+    -webkit-mask-image: linear-gradient(to bottom, #000 58%, transparent 99%);
+    mask-image: linear-gradient(to bottom, #000 58%, transparent 99%);
+    opacity: 0.9;
   }
   .toasts {
     position: fixed;

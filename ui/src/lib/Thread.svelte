@@ -283,7 +283,6 @@ ${e.text}` : e.text;
         fallbackId={item.id}
         fallbackTitle={item.title}
         fallbackKind={item.artifact_kind}
-        fallbackVersion={item.version}
       />
     {/if}
   {/each}
