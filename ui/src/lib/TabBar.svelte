@@ -139,6 +139,85 @@
     {@const lane = laneOf(tab)}
     {@const attached = tab.kind === "session" && tab.sessionId ? (groups.kids.get(tab.sessionId) ?? []) : []}
     {@const shut = tab.sessionId ? collapsed.has(tab.sessionId) : false}
+    {#if attached.length && !shut}
+      <div class="group" role="group" aria-label="Linked tabs">
+        <div
+          bind:this={els[tab.id]}
+          class="tab"
+          class:active={tab.id === activeTabId}
+          class:dragging={tab.id === dragId}
+          style={tab.id === dragId ? `transform: translateX(${dragX}px)` : ""}
+          role="tab"
+          tabindex="0"
+          aria-selected={tab.id === activeTabId}
+          title={tab.title}
+          on:pointerdown={(e) => onDown(e, tab.id)}
+          on:click={() => dispatch("select", { id: tab.id })}
+          on:keydown={(e) => onKey(e, tab.id)}
+          on:auxclick={(e) => onAux(e, tab.id)}
+        >
+          <span class="kind">
+            {#if tab.loading}
+              <span class="spinner" />
+            {:else}
+              <Icon name={laneIcon(lane)} size={12} />
+            {/if}
+          </span>
+          <span class="title">{tab.title || "New session"}</span>
+          <button
+            class="close group-caret"
+            title={`Hide ${attached.length} linked page${attached.length === 1 ? "" : "s"}`}
+            aria-label="Hide linked pages"
+            on:click|stopPropagation={() => tab.sessionId && toggleGroup(tab.sessionId)}
+          >
+            <Icon name="chevDown" size={10} stroke={2.2} />
+            <span class="n">{attached.length}</span>
+          </button>
+          {#if tabs.length > 1}
+            <button
+              class="close"
+              title="Close tab"
+              aria-label="Close tab"
+              on:click|stopPropagation={() => dispatch("close", { id: tab.id })}
+            >
+              <Icon name="close" size={11} stroke={2.2} />
+            </button>
+          {/if}
+        </div>
+        {#each attached as sub (sub.id)}
+          <div
+            class="tab sub"
+            class:active={sub.id === activeTabId}
+            role="tab"
+            tabindex="0"
+            aria-selected={sub.id === activeTabId}
+            title={sub.url || sub.title}
+            on:click={() => dispatch("select", { id: sub.id })}
+            on:keydown={(e) => onKey(e, sub.id)}
+            on:auxclick={(e) => onAux(e, sub.id)}
+          >
+            <span class="kind">
+              {#if sub.loading}
+                <span class="spinner" />
+              {:else if sub.url && !broken.has(sub.url)}
+                <img src={faviconUrl(sub.url)} alt="" on:error={() => sub.url && (broken = new Set(broken).add(sub.url))} />
+              {:else}
+                <Icon name="globe" size={11} />
+              {/if}
+            </span>
+            <span class="title">{sub.title || "New page"}</span>
+            <button
+              class="close"
+              title="Close tab"
+              aria-label="Close tab"
+              on:click|stopPropagation={() => dispatch("close", { id: sub.id })}
+            >
+              <Icon name="close" size={10} stroke={2.2} />
+            </button>
+          </div>
+        {/each}
+      </div>
+    {:else}
     <div
       bind:this={els[tab.id]}
       class="tab"
@@ -166,10 +245,9 @@
       <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>
       {#if attached.length}
         <button
-          class="close group-caret"
-          class:shut
-          title={shut ? `Show ${attached.length} linked page${attached.length === 1 ? "" : "s"}` : "Hide linked pages"}
-          aria-label={shut ? "Show linked pages" : "Hide linked pages"}
+          class="close group-caret shut"
+          title={`Show ${attached.length} linked page${attached.length === 1 ? "" : "s"}`}
+          aria-label="Show linked pages"
           on:click|stopPropagation={() => tab.sessionId && toggleGroup(tab.sessionId)}
         >
           <Icon name="chevDown" size={10} stroke={2.2} />
@@ -187,39 +265,6 @@
         </button>
       {/if}
     </div>
-    {#if attached.length && !shut}
-      {#each attached as sub (sub.id)}
-        <div
-          class="tab sub"
-          class:active={sub.id === activeTabId}
-          role="tab"
-          tabindex="0"
-          aria-selected={sub.id === activeTabId}
-          title={sub.url || sub.title}
-          on:click={() => dispatch("select", { id: sub.id })}
-          on:keydown={(e) => onKey(e, sub.id)}
-          on:auxclick={(e) => onAux(e, sub.id)}
-        >
-          <span class="kind">
-            {#if sub.loading}
-              <span class="spinner" />
-            {:else if sub.url && !broken.has(sub.url)}
-              <img src={faviconUrl(sub.url)} alt="" on:error={() => sub.url && (broken = new Set(broken).add(sub.url))} />
-            {:else}
-              <Icon name="globe" size={11} />
-            {/if}
-          </span>
-          <span class="title">{sub.title || "New page"}</span>
-          <button
-            class="close"
-            title="Close tab"
-            aria-label="Close tab"
-            on:click|stopPropagation={() => dispatch("close", { id: sub.id })}
-          >
-            <Icon name="close" size={10} stroke={2.2} />
-          </button>
-        </div>
-      {/each}
     {/if}
   {/each}
   <button class="new" title="New tab (Ctrl+T)" on:click={() => dispatch("newTab")}>
@@ -302,9 +347,23 @@
     height: 24px;
     max-width: 170px;
     min-width: 60px;
-    margin-left: 14px;
     font-size: 11px;
     opacity: 0.85;
+  }
+  .group {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+    border: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+  }
+  .group .tab {
+    border-color: transparent;
+  }
+  .group .tab.active {
+    border-color: var(--line);
   }
   .group-caret {
     opacity: 1;
