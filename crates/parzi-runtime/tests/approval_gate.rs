@@ -236,6 +236,7 @@ impl parzi_runtime::handler::HarnessBridge for NoHarness {
         _: Option<String>,
         _: Option<String>,
         _: bool,
+        _: Option<String>,
     ) -> parzi_core::error::Result<String> {
         Ok("spawned".into())
     }

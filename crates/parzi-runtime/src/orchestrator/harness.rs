@@ -83,6 +83,7 @@ impl HarnessBridge for Pump {
         model: Option<String>,
         lane: Option<String>,
         wait: bool,
+        mode_override: Option<String>,
     ) -> Result<String> {
         let caller = self.store.get(caller_id)?;
         let title: String = if title.trim().is_empty() {
@@ -121,7 +122,7 @@ impl HarnessBridge for Pump {
             approver: None,
             prompt_recorded: false,
             inbox_from: None,
-            mode_override: None,
+            mode_override,
         };
         let launched = self.dispatch(q).await;
         let meta = self.store.get(&meta.id)?;

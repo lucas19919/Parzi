@@ -534,13 +534,14 @@ fn session_defs() -> Vec<ToolDef> {
 fn lane_defs() -> Vec<ToolDef> {
     vec![ToolDef {
         name: "lane.dispatch".into(),
-        description: "Dispatch a lane worker: like session.spawn but onto a named lane (for example a research lane) instead of inheriting yours.".into(),
+        description: "Dispatch a lane worker: like session.spawn but onto a named lane (for example a research lane) instead of inheriting yours. Pass an explicit model to staff by strength.".into(),
         schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "title": {"type": "string"},
                 "prompt": {"type": "string"},
                 "lane": {"type": "string"},
+                "model": {"type": "string"},
                 "wait": {"type": "boolean"},
             },
             "required": ["prompt"],

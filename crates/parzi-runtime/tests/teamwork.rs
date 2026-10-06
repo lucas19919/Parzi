@@ -6,7 +6,7 @@ use std::sync::Arc;
 use common::*;
 use parzi_core::config::ParziConfig;
 use parzi_core::store::{Event, SessionStore};
-use parzi_providers::TurnEnd;
+use parzi_providers::{PermissionDecision, TurnEnd};
 use parzi_runtime::inter::{InterKind, InterSessionMessage};
 use parzi_runtime::mcp::McpManager;
 use parzi_runtime::handler::RunSink;
@@ -20,6 +20,14 @@ struct Allow;
 impl Approver for Allow {
     async fn approve(&self, _call: &ToolCallInfo) -> Approval {
         Approval::Allow
+    }
+}
+
+struct DenyAll;
+#[async_trait::async_trait]
+impl Approver for DenyAll {
+    async fn approve(&self, _call: &ToolCallInfo) -> Approval {
+        Approval::Deny
     }
 }
 
@@ -124,6 +132,7 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
             None,
             None,
             false,
+            None,
         )
         .await
         .unwrap(),
@@ -147,6 +156,7 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
             Some("claude/other".into()),
             None,
             false,
+            None,
         )
         .await
         .unwrap(),
@@ -170,6 +180,7 @@ async fn spawn_wait_collects_child_reply() {
             None,
             None,
             true,
+            None,
         ),
     )
     .await
@@ -227,6 +238,69 @@ async fn a_code_run_can_spawn_a_crew() {
 }
 
 #[tokio::test]
+async fn full_access_reaches_the_children() {
+    home("teamwork-prop");
+    let dir = std::env::temp_dir().join(format!("parzi-prop-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("child.txt");
+    let want = target.display().to_string();
+    let fake = Fake::new(
+        "claude",
+        script(move |a: Agent| {
+            let want = want.clone();
+            async move {
+                if a.spec.prompt.contains("child writes") {
+                    let input = json!({"file_path": want, "content": "hello"});
+                    let decision = a.ask("Write", input, &[&want]).await;
+                    if decision == PermissionDecision::Allow {
+                        std::fs::write(&want, "hello").unwrap();
+                        a.say("child wrote it");
+                    } else {
+                        a.say("child was denied");
+                    }
+                    return Ok(TurnEnd::Completed);
+                }
+                let (ok, out) = a
+                    .parzi(
+                        "session.spawn",
+                        json!({"title": "writer", "prompt": format!("child writes {want}"), "wait": true}),
+                    )
+                    .await;
+                a.say(&format!("parent heard: ok={ok} {out}"));
+                Ok(TurnEnd::Completed)
+            }
+        }),
+    );
+    let mut cfg = ParziConfig::default();
+    cfg.orchestrator.max_concurrent = 4;
+    let (orch, store) = orch_with(cfg, &[fake]);
+    let cwd = dir.display().to_string();
+    let (meta, _rx) = orch
+        .spawn(
+            "t",
+            "",
+            "claude",
+            "delegate the writing",
+            Some(Arc::new(DenyAll)),
+            &cwd,
+            "low",
+            vec![],
+            Some("full".into()),
+        )
+        .await
+        .unwrap();
+    settle(&store, &meta.id).await;
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap_or_default(),
+        "hello",
+        "a Full parent's child writes without any approver involved"
+    );
+    let reply = last_reply(&store, &meta.id);
+    assert!(reply.contains("ok=true"), "{reply}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
 async fn send_message_continues_target_and_can_wait() {    let fake = answer();
     let (orch, store) = team(4, fake.clone());
     let parent = store.create("boss", "t", "", "claude/model").unwrap();
@@ -278,6 +352,7 @@ async fn read_and_list_inspect_sessions() {
             None,
             None,
             false,
+            None,
         )
         .await
         .unwrap(),
@@ -305,13 +380,13 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
     let parent = store.create("boss", "t", "", "claude/model").unwrap();
     let h = orch.harness();
     let first_id = id_of(
-        &h.spawn_session(&parent.id, "one", "first work", true, None, None, false)
+        &h.spawn_session(&parent.id, "one", "first work", true, None, None, false, None)
             .await
             .unwrap(),
     );
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let second = h
-        .spawn_session(&parent.id, "two", "second work", true, None, None, true)
+        .spawn_session(&parent.id, "two", "second work", true, None, None, true, None)
         .await
         .unwrap();
     let v: Value = serde_json::from_str(&second).unwrap();

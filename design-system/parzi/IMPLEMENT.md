@@ -35,3 +35,12 @@ search API (browser navigation covers it crudely today), message edit.
 - Enhance prompt, temp chat, edit-retry/regenerate, branching — see
   T3_GAP.md. Revisit only with user demand, except share links which
   wait for ParziOS hosting.
+
+## Next: wake-ups (scheduled runs)
+
+- Queued runs already survive restarts (sidecar per session,
+  `recover_queue` at boot, covered by test) and plans/transcripts live
+  on disk. What does not exist: anything that wakes up on its own.
+- Shape when built: persisted schedule list (cron-ish), a timer in the
+  pump loop, `schedule.create/list/delete` agent tools, per-fire
+  approval posture inherited like children. No UI until agents use it.

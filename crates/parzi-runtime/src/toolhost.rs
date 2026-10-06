@@ -656,6 +656,7 @@ impl ToolHost {
                         str_arg("model").filter(|s| !s.trim().is_empty()),
                         str_arg("lane").filter(|s| !s.trim().is_empty()),
                         bool_arg("wait", true),
+                        self.child_mode(),
                     )
                     .await
             }
@@ -726,7 +727,16 @@ impl ToolHost {
         let lane = str_arg("lane").filter(|s| !s.trim().is_empty());
         let wait = args.get("wait").and_then(Value::as_bool).unwrap_or(true);
         match bridge
-            .spawn_session(&self.p.session_id, &title, &prompt, true, None, lane, wait)
+            .spawn_session(
+                &self.p.session_id,
+                &title,
+                &prompt,
+                true,
+                str_arg("model").filter(|s| !s.trim().is_empty()),
+                lane,
+                wait,
+                self.child_mode(),
+            )
             .await
         {
             Ok(text) => {
@@ -742,6 +752,22 @@ impl ToolHost {
                 (true, text)
             }
             Err(e) => (false, e.to_string()),
+        }
+    }
+
+    /// The approval posture children inherit: Full stays full, edits stay
+    /// edits, Auto stays auto. Anything else (Ask, Deny) is intentionally
+    /// NOT propagated — a child must never pop cards on the user's screen
+    /// uninvited, so it runs lane-default and fails closed on approvals.
+    fn child_mode(&self) -> Option<String> {
+        if self.p.full {
+            Some("full".into())
+        } else if self.p.edits_auto {
+            Some("edits".into())
+        } else if self.p.mode == ApprovalMode::Auto {
+            Some("auto".into())
+        } else {
+            None
         }
     }
 
