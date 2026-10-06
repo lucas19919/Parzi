@@ -4,9 +4,11 @@
 </script>
 
 <div class="backdrop" class:blurred>
-  <img src={bg || "/hero-harbor.png"} alt="" />
-  <div class="grain" />
-  <div class="shade" />
+  {#if bg}
+    <img src={bg} alt="" />
+    <div class="grain" />
+    <div class="shade" />
+  {/if}
 </div>
 
 <style>

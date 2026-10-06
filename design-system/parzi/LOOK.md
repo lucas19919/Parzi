@@ -8,8 +8,9 @@ from tokens, not patches.
 
 ## Layers (top to bottom)
 
-1. **Backdrop** — exactly one: DefaultArt wallpaper, else the bundled
-   harbor fallback. Nothing else paints a full-bleed background, ever.
+1. **Backdrop** — exactly one: DefaultArt wallpaper, else plain theme
+   stage. No fallback art, no bands. Nothing else paints a full-bleed
+   background, ever.
 2. **Glass** — every floating surface (session panel, fills, composer,
    side panel, popovers, toasts) from `--glass-*` tokens. Content
    (bubbles, code, text) stays solid for readability.
