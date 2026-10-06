@@ -114,6 +114,12 @@ pub async fn refresh_providers(
 }
 
 #[tauri::command]
+pub async fn warm_agent(state: State<'_, AppState>, provider: String) -> Result<(), String> {
+    parzi_providers::warm(&provider, &state.orch.config());
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn run_doctor_quick(
     state: State<'_, AppState>,
 ) -> Result<Vec<parzi_runtime::doctor::Check>, String> {

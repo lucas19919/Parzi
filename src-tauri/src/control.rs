@@ -148,7 +148,10 @@ async fn dispatch(
         "tab.open" => tab_open(app, desk, req).await,
         "tab.focus" => tab_focus(app, desk, req).await,
         "tab.close" => tab_close(app, desk, req).await,
-        "tab.read" => tab_read(desk).await,
+        "tab.read" => tab_read(app, desk, req).await,
+        "tab.click" => tab_act(app, desk, req, "click").await,
+        "tab.type" => tab_act(app, desk, req, "type").await,
+        "tab.shot" => tab_shot(app, desk, req).await,
         "session.list" => session_list(orch),
         "session.show" | "session.export" => session_show(orch, req, op == "session.export"),
         "session.kill" => session_kill(orch, req).await,
@@ -173,16 +176,67 @@ async fn tab_list(desk: &Desk) -> Value {
     json!({ "ok": true, "tabs": st.tabs, "active": st.active })
 }
 
-async fn tab_read(desk: &Desk) -> Value {
+async fn connected(desk: &Desk, session: &str) -> Option<TabSnap> {
     let st = desk.state.lock().await;
-    let tab = st
-        .tabs
+    st.tabs
+        .iter()
+        .find(|t| t.kind == "browser" && !session.is_empty() && t.session_id == session)
+        .cloned()
+}
+
+async fn page_for(desk: &Desk, req: &Value) -> Option<TabSnap> {
+    let session = str_arg(req, "session");
+    if !session.is_empty() {
+        return connected(desk, &session).await;
+    }
+    let st = desk.state.lock().await;
+    st.tabs
         .iter()
         .find(|t| t.id == st.active && t.kind == "browser")
-        .or_else(|| st.tabs.iter().rev().find(|t| t.kind == "browser"));
-    match tab {
-        Some(t) => json!({ "ok": true, "id": t.id, "title": t.title, "url": t.url }),
-        None => json!({ "ok": true, "id": "", "title": "", "url": "" }),
+        .or_else(|| st.tabs.iter().rev().find(|t| t.kind == "browser"))
+        .cloned()
+}
+
+const NO_TAB: &str = "this session has no tab yet: open one with browser_open";
+
+async fn tab_read(app: &AppHandle, desk: &Desk, req: &Value) -> Value {
+    let Some(tab) = page_for(desk, req).await else {
+        return json!({ "ok": true, "id": "", "title": "", "url": "" });
+    };
+    if str_arg(req, "session").is_empty() {
+        return json!({ "ok": true, "id": tab.id, "title": tab.title, "url": tab.url });
+    }
+    match crate::pagectl::read(app, &tab.id).await {
+        Ok(page) => json!({
+            "ok": true,
+            "id": tab.id,
+            "title": page.get("title").cloned().unwrap_or_default(),
+            "url": page.get("url").cloned().unwrap_or_default(),
+            "text": page.get("text").cloned().unwrap_or_default(),
+            "controls": page.get("controls").cloned().unwrap_or_default(),
+        }),
+        Err(e) => json!({ "ok": false, "error": e }),
+    }
+}
+
+async fn tab_act(app: &AppHandle, desk: &Desk, req: &Value, kind: &str) -> Value {
+    let Some(tab) = connected(desk, &str_arg(req, "session")).await else {
+        return json!({ "ok": false, "error": NO_TAB });
+    };
+    let args = req.get("args").cloned().unwrap_or_else(|| json!({}));
+    match crate::pagectl::act(app, &tab.id, kind, &args).await {
+        Ok(done) => json!({ "ok": true, "done": done }),
+        Err(e) => json!({ "ok": false, "error": e }),
+    }
+}
+
+async fn tab_shot(app: &AppHandle, desk: &Desk, req: &Value) -> Value {
+    let Some(tab) = connected(desk, &str_arg(req, "session")).await else {
+        return json!({ "ok": false, "error": NO_TAB });
+    };
+    match crate::pagectl::shot(app, &tab.id).await {
+        Ok(jpeg) => json!({ "ok": true, "jpeg": jpeg }),
+        Err(e) => json!({ "ok": false, "error": e }),
     }
 }
 
@@ -198,6 +252,10 @@ async fn tab_open(app: &AppHandle, desk: &Desk, req: &Value) -> Value {
     let url = normalize_url(&str_arg(req, "url"));
     if url.is_empty() {
         return json!({ "ok": false, "error": "url is required" });
+    }
+    let session = str_arg(req, "session");
+    if !session.is_empty() {
+        return open_connected(app, desk, &session, &url).await;
     }
     let mut st = desk.state.lock().await;
     if let Some(id) = st
@@ -230,6 +288,40 @@ async fn tab_open(app: &AppHandle, desk: &Desk, req: &Value) -> Value {
         "parzi://desk",
         json!({ "op": "open", "id": id, "url": url, "rev": rev }),
     );
+    json!({ "ok": true, "id": id, "url": url, "rev": rev })
+}
+
+async fn open_connected(app: &AppHandle, desk: &Desk, session: &str, url: &str) -> Value {
+    if let Some(tab) = connected(desk, session).await {
+        if let Err(e) = crate::browser::browser_navigate(app.clone(), &tab.id, url) {
+            return json!({ "ok": false, "error": e });
+        }
+        let _ = app.emit(
+            "parzi://desk",
+            json!({ "op": "navigate", "id": tab.id, "url": url }),
+        );
+        return json!({ "ok": true, "id": tab.id, "url": url });
+    }
+    let id = format!("tab-{}", uuid::Uuid::new_v4().simple());
+    let rev = {
+        let mut st = desk.state.lock().await;
+        st.rev += 1;
+        st.tabs.push(TabSnap {
+            id: id.clone(),
+            kind: "browser".into(),
+            title: host_title(url),
+            url: url.to_string(),
+            session_id: session.to_string(),
+        });
+        st.rev
+    };
+    let _ = app.emit(
+        "parzi://desk",
+        json!({ "op": "open", "id": id, "url": url, "rev": rev, "owner": session }),
+    );
+    if let Err(e) = crate::browser::browser_prepare(app.clone(), id.clone(), url) {
+        return json!({ "ok": false, "error": e });
+    }
     json!({ "ok": true, "id": id, "url": url, "rev": rev })
 }
 

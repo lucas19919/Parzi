@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
@@ -9,6 +9,18 @@ use tokio::process::{Child, Command};
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const STDERR_KEEP: usize = 16 * 1024;
+
+static ADOPT: OnceLock<fn(u32)> = OnceLock::new();
+
+pub fn on_spawn(adopt: fn(u32)) {
+    let _ = ADOPT.set(adopt);
+}
+
+pub fn adopt(child: &Child) {
+    if let (Some(adopt), Some(pid)) = (ADOPT.get(), child.id()) {
+        adopt(pid);
+    }
+}
 
 pub(crate) fn private_temp(agent: &str) -> Option<PathBuf> {
     let dir = parzi_core::paths::parzi_dir().ok()?.join("tmp").join(agent);
@@ -154,6 +166,7 @@ impl Proc {
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
         let mut child = cmd.spawn()?;
+        adopt(&child);
         let stderr = Arc::new(Mutex::new(String::new()));
         if let Some(mut pipe) = child.stderr.take() {
             let sink = stderr.clone();
@@ -354,7 +367,7 @@ mod tests {
         );
         let proc = Proc::spawn(&program, &script, &dir, &[]).unwrap();
         let mut pid = None;
-        for _ in 0..150 {
+        for _ in 0..300 {
             pid = std::fs::read_to_string(&pidfile)
                 .ok()
                 .and_then(|s| s.trim().parse::<u32>().ok());

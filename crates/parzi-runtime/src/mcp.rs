@@ -315,6 +315,7 @@ impl McpManager {
         let mut child: Child = cmd
             .spawn()
             .map_err(|e| tool_err(format!("spawn `{name}`: {e}")))?;
+        parzi_providers::process::adopt(&child);
         let stdin = child
             .stdin
             .take()

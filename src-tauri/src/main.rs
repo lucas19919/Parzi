@@ -21,7 +21,9 @@ mod brain;
 mod browser;
 mod control;
 mod files;
+mod job;
 mod onboard;
+mod pagectl;
 mod search;
 mod sessions;
 mod settings;
@@ -332,6 +334,7 @@ fn init_log() {
 
 fn main() {
     init_log();
+    parzi_providers::process::on_spawn(job::adopt);
     std::panic::set_hook(Box::new(|info| {
         let msg = format!("panic: {info}");
         eprintln!("{msg}");
@@ -502,6 +505,7 @@ fn main() {
             settings::toggle_favorite,
             settings::provider_statuses,
             settings::refresh_providers,
+            settings::warm_agent,
             settings::run_doctor_quick,
             appearance::get_theme_css,
             appearance::get_theme,

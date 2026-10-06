@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -234,7 +234,7 @@ impl Acp {
         }
     }
 
-    pub async fn sign_in(&self) -> Result<(), ProviderError> {
+    pub async fn sign_in(&self, started: impl FnOnce() + Send) -> Result<(), ProviderError> {
         let name = self.agent.name;
         let method = self.agent.sign_in.ok_or_else(|| {
             ProviderError::new(
@@ -244,6 +244,7 @@ impl Acp {
         })?;
         let program = self.program().ok_or_else(|| self.not_installed())?;
         let mut conn = self.connect(&program, &std::env::temp_dir(), None).await?;
+        started();
         let answer = conn
             .peer
             .request_within("authenticate", json!({"methodId": method}), SIGN_IN_WAIT)
@@ -253,7 +254,8 @@ impl Acp {
                 if matches!(self.agent.probe, Probe::GeminiSettings) {
                     remember_gemini_auth(method);
                 }
-                self.release(program, conn, true).await;
+                let learned = self.learn_models(&conn).await;
+                self.release(program, conn, learned).await;
                 Ok(())
             }
             Err(e) => {
@@ -267,6 +269,128 @@ impl Acp {
     }
 }
 
+impl Acp {
+    async fn learn_models(&self, conn: &Conn) -> bool {
+        let session = conn
+            .peer
+            .request_within(
+                "session/new",
+                json!({"cwd": std::env::temp_dir().display().to_string(), "mcpServers": []}),
+                Duration::from_secs(120),
+            )
+            .await;
+        match session {
+            Ok(session) => {
+                remember_models(self.agent.id, &session_models(&session));
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub fn warm(&self) {
+        if !self.agent.slow_start {
+            return;
+        }
+        if let Some(program) = self.program() {
+            self.warm_up(program);
+        }
+    }
+
+    fn warm_up(&self, program: PathBuf) {
+        if is_warm(&program) || WARMING.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let acp = Acp::new(self.agent, &self.binary);
+        tokio::spawn(async move {
+            if let Ok(conn) = acp.open(&program, &std::env::temp_dir()).await {
+                let learned = acp.learn_models(&conn).await;
+                acp.release(program, conn, learned).await;
+            }
+            WARMING.store(false, Ordering::SeqCst);
+        });
+    }
+}
+
+static WARMING: AtomicBool = AtomicBool::new(false);
+
+fn models_cache(agent: &str) -> Option<PathBuf> {
+    Some(
+        parzi_core::paths::cache_dir()
+            .ok()?
+            .join("models")
+            .join(format!("{agent}.json")),
+    )
+}
+
+fn cached_models(agent: &str) -> Vec<ModelInfo> {
+    models_cache(agent)
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+fn remember_models(agent: &str, models: &[ModelInfo]) {
+    let (Some(path), false) = (models_cache(agent), models.is_empty()) else {
+        return;
+    };
+    let Ok(text) = serde_json::to_string(models) else {
+        return;
+    };
+    if std::fs::read_to_string(&path).ok().as_deref() == Some(text.as_str()) {
+        return;
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, text);
+}
+
+fn session_models(session: &Value) -> Vec<ModelInfo> {
+    let model = |id: &str, name: Option<&str>, current: Option<&str>| ModelInfo {
+        id: id.to_string(),
+        name: name.unwrap_or(id).to_string(),
+        is_default: current == Some(id),
+        efforts: vec![],
+    };
+    if let Some(list) = session
+        .pointer("/models/availableModels")
+        .and_then(Value::as_array)
+    {
+        let current = session
+            .pointer("/models/currentModelId")
+            .and_then(Value::as_str);
+        return list
+            .iter()
+            .filter_map(|m| {
+                let id = m.get("modelId")?.as_str()?;
+                Some(model(id, m.get("name").and_then(Value::as_str), current))
+            })
+            .collect();
+    }
+    let Some(option) = session
+        .get("configOptions")
+        .and_then(Value::as_array)
+        .and_then(|opts| {
+            opts.iter()
+                .find(|o| o.get("id").and_then(Value::as_str) == Some("model"))
+        })
+    else {
+        return vec![];
+    };
+    let current = option.get("currentValue").and_then(Value::as_str);
+    option
+        .get("options")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|m| {
+            let id = m.get("value")?.as_str()?;
+            Some(model(id, m.get("name").and_then(Value::as_str), current))
+        })
+        .collect()
+}
+
 struct Conn {
     proc: Proc,
     peer: Arc<Peer>,
@@ -276,6 +400,11 @@ struct Conn {
 
 static WARM: Mutex<Vec<(u64, PathBuf, Conn)>> = Mutex::new(Vec::new());
 static WARM_ID: AtomicU64 = AtomicU64::new(0);
+
+fn is_warm(program: &Path) -> bool {
+    WARM.lock()
+        .is_ok_and(|warm| warm.iter().any(|(_, p, _)| p == program))
+}
 
 fn take_warm(program: &Path) -> Option<Conn> {
     let mut warm = WARM.lock().ok()?;
@@ -332,6 +461,12 @@ impl Provider for Acp {
             Probe::CursorStatus => cursor_status(&program, self.agent).await,
             Probe::GeminiSettings => gemini_status(self.agent),
         };
+        if status.models.is_empty() && status.state == State::Ready {
+            status.models = cached_models(self.agent.id);
+            if status.models.is_empty() && self.agent.slow_start {
+                self.warm_up(program.clone());
+            }
+        }
         if self.agent.slow_start {
             status.version = setup::installed_version(&program);
         } else if let Ok(mut conn) = self.open(&program, &std::env::temp_dir()).await {
@@ -707,6 +842,7 @@ async fn drive(
                 )
             })?;
     }
+    remember_models(agent.id, &session_models(&session));
     if can_resume {
         let _ = events.send(ProviderEvent::Session {
             resume: json!({"session_id": sid}),
@@ -1293,6 +1429,33 @@ mod tests {
         assert_eq!(s.state, State::Ready);
         assert_eq!(s.account.as_deref(), Some("a@b.c"));
         assert_eq!(cursor_read("boom", cursor).state, State::Error);
+    }
+
+    #[test]
+    fn models_come_from_the_session_or_its_model_option() {
+        let listed = json!({"models": {
+            "availableModels": [
+                {"modelId": "gemini-3.8-flash-high", "name": "Gemini 3.8 Flash (High)"},
+                {"modelId": "gemini-pro-agent", "name": "Gemini 3.1 Pro (High)"}
+            ],
+            "currentModelId": "gemini-pro-agent"
+        }});
+        let got = session_models(&listed);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[1].name, "Gemini 3.1 Pro (High)");
+        assert!(got[1].is_default && !got[0].is_default);
+
+        let option = json!({"configOptions": [
+            {"id": "mode", "options": [{"value": "yolo"}]},
+            {"id": "model", "currentValue": "b", "options": [{"value": "a", "name": "A"}, {"value": "b"}]}
+        ]});
+        let got = session_models(&option);
+        assert_eq!(
+            got.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(),
+            ["A", "b"]
+        );
+        assert!(got[1].is_default);
+        assert!(session_models(&json!({"sessionId": "S"})).is_empty());
     }
 
     #[test]

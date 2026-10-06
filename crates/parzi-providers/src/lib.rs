@@ -84,14 +84,26 @@ pub fn login_script(id: &str, cfg: &ParziConfig) -> Option<String> {
     setup::login_script(id, &binary(id, cfg))
 }
 
-pub async fn sign_in(id: &str, cfg: &ParziConfig) -> Result<(), ProviderError> {
+pub fn warm(id: &str, cfg: &ParziConfig) {
+    if let Some((id, agent)) = canonical_id(id).and_then(|id| Some((id, acp::agent(id)?))) {
+        acp::Acp::new(agent, &binary(id, cfg)).warm();
+    }
+}
+
+pub async fn sign_in(
+    id: &str,
+    cfg: &ParziConfig,
+    started: impl FnOnce() + Send,
+) -> Result<(), ProviderError> {
     let Some((id, agent)) = canonical_id(id).and_then(|id| Some((id, acp::agent(id)?))) else {
         return Err(ProviderError::new(
             ErrorClass::BadRequest,
             format!("{} signs in with its own command", display_name(id)),
         ));
     };
-    acp::Acp::new(agent, &binary(id, cfg)).sign_in().await
+    acp::Acp::new(agent, &binary(id, cfg))
+        .sign_in(started)
+        .await
 }
 
 pub(crate) fn image_base64(path: &std::path::Path) -> Option<(String, String)> {

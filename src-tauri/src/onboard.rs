@@ -7,7 +7,7 @@ use std::process::Command;
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::AppState;
 
@@ -143,17 +143,30 @@ pub async fn agent_install(provider: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn agent_login(state: State<'_, AppState>, provider: String) -> Result<bool, String> {
+pub async fn agent_login(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    provider: String,
+) -> Result<bool, String> {
     let cfg = state.orch.config();
     match parzi_providers::login_script(&provider, &cfg) {
         Some(script) => {
             let name = parzi_providers::display_name(&provider);
             open_terminal(&format!("Sign in to {name}"), &script).map(|()| false)
         }
-        None => parzi_providers::sign_in(&provider, &cfg)
-            .await
-            .map(|()| true)
-            .map_err(|e| e.message),
+        None => {
+            let step = |step: &str| {
+                let _ = app.emit(
+                    "parzi://sign-in",
+                    serde_json::json!({ "provider": provider, "step": step }),
+                );
+            };
+            step("starting");
+            parzi_providers::sign_in(&provider, &cfg, || step("browser"))
+                .await
+                .map(|()| true)
+                .map_err(|e| e.message)
+        }
     }
 }
 
