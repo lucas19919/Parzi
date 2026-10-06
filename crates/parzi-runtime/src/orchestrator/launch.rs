@@ -327,9 +327,15 @@ impl Orchestrator {
         };
         let (mut mode, allowed) = Self::lane_policy_for(&snap);
         let mut edits_auto = false;
+        let mut full = false;
         if let Some(o) = q.mode_override.as_deref() {
-            mode = Self::restrict_mode(mode, ApprovalMode::parse(o));
-            edits_auto = o.trim() == "edits";
+            if ApprovalMode::is_full_override(Some(o)) {
+                mode = ApprovalMode::Auto;
+                full = true;
+            } else {
+                mode = Self::restrict_mode(mode, ApprovalMode::parse(o));
+                edits_auto = o.trim() == "edits";
+            }
         }
         let tools = Arc::new(ToolExecutor {
             cwd: cwd.clone(),
@@ -352,6 +358,7 @@ impl Orchestrator {
             lane: q.lane.clone(),
             mode,
             edits_auto,
+            full,
             store: p.store.clone(),
             tools,
             approver: q.approver.clone().unwrap_or_else(|| Arc::new(DenyApprover)),

@@ -44,6 +44,7 @@ fn host(approver: Arc<Person>) -> ToolHost {
         lane: String::new(),
         mode: ApprovalMode::Ask,
         edits_auto: false,
+        full: false,
         store,
         tools: Arc::new(ToolExecutor {
             cwd: String::new(),

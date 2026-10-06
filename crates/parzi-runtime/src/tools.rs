@@ -16,11 +16,15 @@ pub enum ApprovalMode {
 
 impl ApprovalMode {
     pub fn parse(s: &str) -> Self {
-        match s {
-            "auto" => Self::Auto,
+        match s.trim() {
+            "auto" | "full" => Self::Auto,
             "deny" => Self::Deny,
             _ => Self::Ask,
         }
+    }
+
+    pub fn is_full_override(s: Option<&str>) -> bool {
+        matches!(s, Some(o) if o.trim() == "full")
     }
 }
 

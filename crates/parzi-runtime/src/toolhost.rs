@@ -21,6 +21,7 @@ pub struct ToolHostParts {
     pub lane: String,
     pub mode: ApprovalMode,
     pub edits_auto: bool,
+    pub full: bool,
     pub store: SessionStore,
     pub tools: Arc<ToolExecutor>,
     pub approver: Arc<dyn Approver>,
@@ -380,6 +381,12 @@ impl ToolHost {
         if !self.p.tools.is_allowed(name) {
             return false;
         }
+        if self.p.full {
+            return !matches!(
+                self.p.tools.approval_override(name),
+                Some(ApprovalMode::Deny)
+            );
+        }
         match self.p.tools.approval_override(name) {
             Some(ApprovalMode::Deny) => return false,
             Some(ApprovalMode::Auto) => return true,
@@ -449,6 +456,9 @@ impl ToolHost {
         }
         if let Some(reason) = denied {
             return PermissionDecision::Deny(format!("blocked by a workspace hook: {reason}"));
+        }
+        if self.p.full {
+            return PermissionDecision::Allow;
         }
         let allowed = match self.p.mode {
             ApprovalMode::Auto if !outside => true,

@@ -208,6 +208,7 @@ fn host(allowed: Vec<String>, mode: ApprovalMode) -> ToolHost {
         lane: "test".into(),
         mode,
         edits_auto: false,
+        full: false,
         store,
         tools: Arc::new(ToolExecutor {
             cwd: std::env::temp_dir().display().to_string(),

@@ -75,6 +75,7 @@ fn gate(folder: &Path, mode: ApprovalMode, edits_auto: bool, person: Arc<Person>
         lane: String::new(),
         mode,
         edits_auto,
+        full: false,
         store,
         tools: Arc::new(ToolExecutor {
             cwd: folder.display().to_string(),
@@ -170,6 +171,48 @@ async fn writes_outside_the_folder_need_a_person() {
             .contains("outside"),
         "{:?}",
         cards[0].args
+    );
+    let _ = std::fs::remove_dir_all(&folder);
+}
+
+#[tokio::test]
+async fn full_access_writes_anywhere_without_a_card() {
+    use parzi_runtime::toolhost::{ToolHost, ToolHostParts};
+    use parzi_runtime::tools::{ApprovalMode, ToolExecutor};
+    use tokio_util::sync::CancellationToken;
+
+    common::home("allowlist-full");
+    let folder = std::env::temp_dir().join(format!("parzi-fence-full-{}", std::process::id()));
+    std::fs::create_dir_all(folder.join("src")).unwrap();
+    let store = SessionStore::open().unwrap();
+    let sid = store.create("gate", "", "", "claude/m").unwrap().id;
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let person = nobody();
+    let host = ToolHost::new(ToolHostParts {
+        session_id: sid.clone(),
+        lane: String::new(),
+        mode: ApprovalMode::Auto,
+        edits_auto: false,
+        full: true,
+        store,
+        tools: Arc::new(ToolExecutor {
+            cwd: folder.display().to_string(),
+            mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
+            allowed: vec!["*".into()],
+        }),
+        approver: person.clone(),
+        harness: None,
+        sink: RunSink::new(&sid, tx, None),
+        cancel: CancellationToken::new(),
+    });
+    let elsewhere = std::env::temp_dir().join("elsewhere-full.rs");
+    assert_eq!(
+        ask(&host, "Write", &[elsewhere.to_str().unwrap()]).await,
+        PermissionDecision::Allow
+    );
+    assert!(
+        person.seen.lock().unwrap().is_empty(),
+        "full access never shows a card"
     );
     let _ = std::fs::remove_dir_all(&folder);
 }
