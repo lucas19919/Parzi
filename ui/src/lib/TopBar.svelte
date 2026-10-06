@@ -10,6 +10,7 @@
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
+  export let sessionLanes: Record<string, string> = {};
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -110,6 +111,7 @@
     <TabBar
       {tabs}
       {activeTabId}
+      {sessionLanes}
       on:select={(e) => dispatch("select", e.detail)}
       on:close={(e) => dispatch("close", e.detail)}
       on:move={(e) => dispatch("move", e.detail)}

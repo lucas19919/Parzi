@@ -50,7 +50,7 @@
   $: running = liveTools.filter((t) => t.running);
   $: status = !streaming
     ? ""
-    : running.length
+    : running.length && running[running.length - 1].label.trim()
       ? `${running[running.length - 1].label}…`
       : liveText
         ? ""

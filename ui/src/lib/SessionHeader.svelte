@@ -9,8 +9,9 @@
   export let canAct = false;
   export let agentCount = 0;
   export let panelOpen = false;
+  export let backTitle: string | null = null;
 
-  const dispatch = createEventDispatcher<{ rename: { title: string }; fork: void; copyId: void; delete: void; agents: void }>();
+  const dispatch = createEventDispatcher<{ rename: { title: string }; fork: void; copyId: void; delete: void; agents: void; back: void }>();
 
   type Action = "rename" | "fork" | "copyId" | "delete";
   const ITEMS: { id: Action; label: string; icon: IconName }[] = [
@@ -64,6 +65,11 @@
 
 <div class="head">
   <div class="left">
+    {#if backTitle}
+      <button class="icon-btn" title="Back to {backTitle}" on:click={() => dispatch("back")}>
+        <Icon name="arrowLeft" size={14} />
+      </button>
+    {/if}
     {#if editing}
       <input bind:this={field} bind:value={draft} on:keydown={onKey} on:blur={commit} aria-label="Session title" />
     {:else}

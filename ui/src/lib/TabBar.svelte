@@ -1,12 +1,12 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
-  import { flip } from "svelte/animate";
   import Icon from "./Icon.svelte";
   import type { Tab } from "./tabs";
   import { faviconUrl } from "./browserData";
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
+  export let sessionLanes: Record<string, string> = {};
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -27,8 +27,42 @@
 
   $: shown = order ? order.map((id) => tabs.find((t) => t.id === id)).filter((t): t is Tab => !!t) : tabs;
 
-  function shift(node: Element, rects: { from: DOMRect; to: DOMRect }, params: { skip: boolean }) {
-    return params.skip ? { duration: 0 } : flip(node, rects, { duration: 160 });
+  let collapsed = new Set<string>();
+
+  function laneOf(t: Tab): string {
+    if (t.kind !== "session" || !t.sessionId) return "";
+    const l = sessionLanes[t.sessionId] ?? "";
+    return l === "code" ? "build" : l;
+  }
+
+  function laneIcon(lane: string): "brain" | "bot" | "chat" {
+    return lane === "research" ? "brain" : lane === "build" ? "bot" : "chat";
+  }
+
+  // Page tabs opened by an agent attach under their session tab instead
+  // of cluttering the strip. Sessions with attached pages get a collapse
+  // caret; attached pages render smaller and indented.
+  $: groups = (() => {
+    const bySession = new Map<string, Tab>();
+    for (const t of shown) if (t.kind === "session" && t.sessionId) bySession.set(t.sessionId, t);
+    const kids = new Map<string, Tab[]>();
+    const lone: Tab[] = [];
+    for (const t of shown) {
+      if (t.kind === "page" && t.owner && bySession.has(t.owner)) {
+        const arr = kids.get(t.owner) ?? [];
+        arr.push(t);
+        kids.set(t.owner, arr);
+      } else {
+        lone.push(t);
+      }
+    }
+    return { bySession, kids, lone };
+  })();
+
+  function toggleGroup(sessionId: string) {
+    collapsed = new Set(collapsed);
+    if (collapsed.has(sessionId)) collapsed.delete(sessionId);
+    else collapsed.add(sessionId);
   }
 
   async function onKey(e: KeyboardEvent, id: string) {
@@ -101,10 +135,12 @@
 <svelte:window on:pointermove={onMove} on:pointerup={onUp} on:pointercancel={onUp} />
 
 <div class="tabs" role="tablist" bind:this={strip}>
-  {#each shown as tab (tab.id)}
+  {#each groups.lone as tab (tab.id)}
+    {@const lane = laneOf(tab)}
+    {@const attached = tab.kind === "session" && tab.sessionId ? (groups.kids.get(tab.sessionId) ?? []) : []}
+    {@const shut = tab.sessionId ? collapsed.has(tab.sessionId) : false}
     <div
       bind:this={els[tab.id]}
-      animate:shift={{ skip: tab.id === dragId }}
       class="tab"
       class:active={tab.id === activeTabId}
       class:dragging={tab.id === dragId}
@@ -124,10 +160,22 @@
         {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
           <img src={faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
         {:else}
-          <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : "chat"} size={12} />
+          <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : laneIcon(lane)} size={12} />
         {/if}
       </span>
       <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>
+      {#if attached.length}
+        <button
+          class="close group-caret"
+          class:shut
+          title={shut ? `Show ${attached.length} linked page${attached.length === 1 ? "" : "s"}` : "Hide linked pages"}
+          aria-label={shut ? "Show linked pages" : "Hide linked pages"}
+          on:click|stopPropagation={() => tab.sessionId && toggleGroup(tab.sessionId)}
+        >
+          <Icon name="chevDown" size={10} stroke={2.2} />
+          <span class="n">{attached.length}</span>
+        </button>
+      {/if}
       {#if tabs.length > 1}
         <button
           class="close"
@@ -139,6 +187,40 @@
         </button>
       {/if}
     </div>
+    {#if attached.length && !shut}
+      {#each attached as sub (sub.id)}
+        <div
+          class="tab sub"
+          class:active={sub.id === activeTabId}
+          role="tab"
+          tabindex="0"
+          aria-selected={sub.id === activeTabId}
+          title={sub.url || sub.title}
+          on:click={() => dispatch("select", { id: sub.id })}
+          on:keydown={(e) => onKey(e, sub.id)}
+          on:auxclick={(e) => onAux(e, sub.id)}
+        >
+          <span class="kind">
+            {#if sub.loading}
+              <span class="spinner" />
+            {:else if sub.url && !broken.has(sub.url)}
+              <img src={faviconUrl(sub.url)} alt="" on:error={() => sub.url && (broken = new Set(broken).add(sub.url))} />
+            {:else}
+              <Icon name="globe" size={11} />
+            {/if}
+          </span>
+          <span class="title">{sub.title || "New page"}</span>
+          <button
+            class="close"
+            title="Close tab"
+            aria-label="Close tab"
+            on:click|stopPropagation={() => dispatch("close", { id: sub.id })}
+          >
+            <Icon name="close" size={10} stroke={2.2} />
+          </button>
+        </div>
+      {/each}
+    {/if}
   {/each}
   <button class="new" title="New tab (Ctrl+T)" on:click={() => dispatch("newTab")}>
     <Icon name="plus" size={13} stroke={2.2} />
@@ -215,6 +297,30 @@
   }
   .tab.active .kind {
     color: var(--accent);
+  }
+  .tab.sub {
+    height: 24px;
+    max-width: 170px;
+    min-width: 60px;
+    margin-left: 14px;
+    font-size: 11px;
+    opacity: 0.85;
+  }
+  .group-caret {
+    opacity: 1;
+    gap: 1px;
+    width: auto;
+    padding: 0 3px;
+  }
+  .group-caret :global(svg) {
+    transition: transform 140ms ease;
+  }
+  .group-caret.shut :global(svg) {
+    transform: rotate(-90deg);
+  }
+  .group-caret .n {
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
   }
   .title {
     flex: 1;

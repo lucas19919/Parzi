@@ -37,6 +37,11 @@
   const restored = loadTabs();
   let tabs: Tab[] = restored?.tabs ?? [sessionTab()];
   let activeId = restored?.active ?? tabs[0].id;
+  // In-tab subagent navigation: when the panel opens a descendant of the
+  // visible session, we swap the tab's session in place and remember the
+  // way back instead of spawning another top-level tab.
+  let navTrail: string[] = [];
+  let navTab = "";
   let threads: SessionMeta[] = [];
   let bg = "";
 
@@ -131,6 +136,8 @@
   $: folder = tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
   $: approval = approvals.find((a) => a.session === shown) ?? null;
   $: openQuestion = questions.find((q) => q.session === shown) ?? null;
+  $: lockMode = (normLane(meta?.lane ?? "") === "research" && hasSession ? "research" : null) as ComposerMode | null;
+  $: sessionLanes = Object.fromEntries(threads.map((t) => [t.id, t.lane ?? ""]));
   $: void loadBranch(folder);
   $: void loadProject(folder);
   $: syncDesk(tabs, activeId);
@@ -271,6 +278,10 @@
     if (!next) return;
     activeId = id;
     settingsOpen = false;
+    if (navTab !== id) {
+      navTrail = [];
+      navTab = "";
+    }
     if (next.kind === "session") {
       if (next.sessionId) void showSession(next.sessionId);
       else showDraft();
@@ -294,19 +305,31 @@
   function closeTab(id: string) {
     const idx = tabs.findIndex((t) => t.id === id);
     if (idx < 0) return;
-    if (tabs.length === 1) {
-      if (tabs[0].kind === "page") api.browserClose(id).catch(() => {});
+    // Closing a session tab takes its agent-owned pages with it.
+    const doomed = new Set([id]);
+    const closingSession = tabs[idx].kind === "session" ? tabs[idx].sessionId : null;
+    for (const t of tabs) {
+      if (t.kind === "page" && t.owner && closingSession && t.owner === closingSession) doomed.add(t.id);
+    }
+    for (const dead of doomed) {
+      const t = tabs.find((x) => x.id === dead);
+      if (t?.kind === "page") {
+        api.browserClose(dead).catch(() => {});
+        if (t.url) closed = [...closed, { url: t.url, title: t.title }].slice(-20);
+      }
+    }
+    if (navTab === id || doomed.has(navTab)) {
+      navTrail = [];
+      navTab = "";
+    }
+    const kept = tabs.filter((t) => !doomed.has(t.id));
+    if (!kept.length) {
       tabs = [sessionTab()];
       selectTab(tabs[0].id);
       return;
     }
-    if (tabs[idx].kind === "page") {
-      api.browserClose(id).catch(() => {});
-      const t = tabs[idx];
-      if (t.url) closed = [...closed, { url: t.url, title: t.title }].slice(-20);
-    }
-    tabs = tabs.filter((t) => t.id !== id);
-    if (activeId === id) selectTab(tabs[Math.max(0, idx - 1)].id);
+    tabs = kept;
+    if (doomed.has(activeId)) selectTab(tabs[Math.max(0, idx - 1)].id);
   }
 
   function newSession() {
@@ -320,13 +343,14 @@
     else newSession();
   }
 
-  function openPage(url: string, id?: string) {
+  function openPage(url: string, id?: string, owner?: string | null) {
     const existing = tabs.find((t) => (id ? t.id === id : t.kind === "page" && t.url === url));
     if (existing) {
       if (url && existing.url !== url) patchTab(existing.id, { url, title: hostOf(url) });
+      if (owner !== undefined && existing.owner !== owner) patchTab(existing.id, { owner: owner ?? null });
       selectTab(existing.id);
     } else {
-      addTab(pageTab(url, id));
+      addTab(pageTab(url, id, owner ?? null));
     }
   }
 
@@ -381,6 +405,15 @@
   }
 
   function openSession(id: string) {
+    // A descendant of the visible session opens in place (same tab) with
+    // a way back; anything else keeps the old find-or-open-tab behavior.
+    if (shown && id !== shown && isDescendant(id, shown) && tab.kind === "session") {
+      navTrail = [...navTrail, shown];
+      navTab = tab.id;
+      patchTab(tab.id, { sessionId: id, title: threads.find((t) => t.id === id)?.title || "Session" });
+      void showSession(id);
+      return;
+    }
     const existing = tabs.find((t) => t.sessionId === id);
     if (existing) {
       selectTab(existing.id);
@@ -394,6 +427,22 @@
       addTab(sessionTab(id, title));
     }
   }
+
+  function goBack() {
+    const prev = navTrail[navTrail.length - 1];
+    if (!prev) return;
+    navTrail = navTrail.slice(0, -1);
+    const host = tabs.find((t) => t.id === navTab);
+    if (host && host.kind === "session") {
+      patchTab(host.id, { sessionId: prev, title: threads.find((t) => t.id === prev)?.title || "Session" });
+      if (host.id === activeId) void showSession(prev);
+    } else {
+      openSession(prev);
+    }
+    if (!navTrail.length) navTab = "";
+  }
+
+  $: backTitle = navTrail.length && navTab === tab.id ? (threads.find((t) => t.id === navTrail[navTrail.length - 1])?.title || "Back") : null;
 
   function openSettings(section = "general") {
     settingsSection = section;
@@ -413,6 +462,10 @@
     const files = attachments;
     const sessionLane = normLane(laneOf(target.sessionId));
     const fresh = !target.sessionId || (sessionLane !== "" && sessionLane !== mode);
+    if (fresh) {
+      navTrail = [];
+      navTab = "";
+    }
     const optimistic: ChatEvent = { kind: "user", text: prompt };
     sending = true;
     input = "";
@@ -671,7 +724,7 @@
     const unRun = onRunEvent(onEvent);
     const unDesk = onDesk((cmd) => {
       if (typeof cmd.rev === "number") deskRev = Math.max(deskRev, cmd.rev);
-      if (cmd.op === "open" && cmd.url) openPage(cmd.url, cmd.id);
+      if (cmd.op === "open" && cmd.url) openPage(cmd.url, cmd.id, cmd.owner ?? null);
       else if (cmd.op === "focus" && cmd.id) selectTab(cmd.id);
       else if (cmd.op === "close" && cmd.id) closeTab(cmd.id);
     });
@@ -716,6 +769,7 @@
   <TopBar
     {tabs}
     activeTabId={activeId}
+    {sessionLanes}
     on:select={(e) => selectTab(e.detail.id)}
     on:close={(e) => closeTab(e.detail.id)}
     on:move={(e) => moveTab(e.detail.id, e.detail.to)}
@@ -769,11 +823,13 @@
             lane={meta?.lane ?? ""}
             agentCount={familyActive}
             {panelOpen}
+            backTitle={backTitle}
             canAct={!!shown}
             on:rename={(e) => rename(e.detail.title)}
             on:fork={fork}
             on:copyId={copyId}
             on:delete={() => shown && remove(shown)}
+            on:back={goBack}
             on:agents={() => {
               panelTab = "agents";
               panelOpen = !panelOpen;
@@ -808,11 +864,6 @@
               />
             {/if}
           </div>
-          {#if farFromBottom}
-            <button class="to-bottom" title="Scroll to bottom" transition:fade={{ duration: 120 }} on:click={() => scrollToBottom(true)}>
-              <Icon name="arrowDown" size={14} stroke={2.2} />
-            </button>
-          {/if}
         </section>
       {/if}
 
@@ -840,6 +891,7 @@
           bind:mode
           bind:attachments
           {folder}
+          lockMode={lockMode}
           folderLocked={!!tab.sessionId}
           {branch}
           {streaming}
@@ -964,27 +1016,6 @@
       #000 calc(100% - var(--dock) - 28px),
       transparent calc(100% - var(--dock) - 4px)
     );
-  }
-  .to-bottom {
-    position: absolute;
-    bottom: calc(var(--dock) + 26px);
-    left: 50%;
-    z-index: 15;
-    width: 32px;
-    height: 32px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    transform: translateX(-50%);
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 50%;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .to-bottom:hover {
-    color: var(--text);
   }
   .home {
     position: absolute;

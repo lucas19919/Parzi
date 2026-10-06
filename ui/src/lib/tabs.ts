@@ -7,6 +7,7 @@ export interface Tab {
   sessionId?: string | null;
   url?: string;
   cwd?: string;
+  owner?: string | null;
   loading?: boolean;
   canGoBack?: boolean;
   canGoForward?: boolean;
@@ -25,8 +26,8 @@ export function sessionTab(sessionId: string | null = null, title = "New session
   return { id: tabId(), kind: "session", title, sessionId };
 }
 
-export function pageTab(url = "", id = tabId()): Tab {
-  return { id, kind: "page", title: hostOf(url) || "New page", url };
+export function pageTab(url = "", id = tabId(), owner: string | null = null): Tab {
+  return { id, kind: "page", title: hostOf(url) || "New page", url, owner };
 }
 
 export function historyTab(): Tab {

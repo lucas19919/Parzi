@@ -142,7 +142,8 @@ kbd {
 .msg p { margin: 0 0 0.55em; }
 .msg p:last-child { margin-bottom: 0; }
 .msg h1, .msg h2, .msg h3 { letter-spacing: -0.01em; margin: 0.9em 0 0.4em; }
-.msg a { color: var(--accent); }
+.msg a { color: #8ab4ff; text-decoration: underline; text-underline-offset: 2px; text-decoration-color: color-mix(in srgb, #8ab4ff 55%, transparent); }
+.msg a:hover { color: #aecbff; text-decoration-color: currentColor; }
 .msg :not(pre) > code { background: var(--line); border-radius: 5px; padding: 1px 5px; font-family: var(--mono); font-size: 0.92em; }
 .msg .katex { font-size: 1.1em; color: var(--text); }
 .msg .katex-display { margin: 0.7em 0; }

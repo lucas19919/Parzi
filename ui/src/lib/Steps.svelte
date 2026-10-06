@@ -25,12 +25,12 @@
   }
 
   function describe(reasoning: string, tools: Step[], total: number) {
-    if (!reasoning && tools.length === 1) return tools[0].label;
+    if (!reasoning && tools.length === 1) return tools[0].label.trim() || "Working";
     const parts: string[] = [];
     if (reasoning) parts.push("Thought");
     if (tools.length) parts.push(`${tools.length} tool${tools.length === 1 ? "" : "s"}`);
     if (total >= 1000) parts.push(duration(total));
-    return parts.join(" · ");
+    return parts.join(" · ") || "Working";
   }
 
   function toggle(id: string) {

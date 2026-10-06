@@ -30,6 +30,7 @@
   export let compacting = false;
   export let hero = false;
   export let project: { slug: string; title: string; tokens: number } | null = null;
+  export let lockMode: ComposerMode | null = null;
 
   const dispatch = createEventDispatcher<{
     send: void;
@@ -133,7 +134,10 @@
     input = "";
     if (name === "model") picker?.show();
     else if (name === "effort") cycleEffort();
-    else if ((MODES as string[]).includes(name)) mode = name as ComposerMode;
+    else if ((MODES as string[]).includes(name)) {
+      const next = name as ComposerMode;
+      if (!lockMode || next === lockMode) mode = next;
+    }
     else dispatch("command", { name });
   }
 
@@ -143,7 +147,9 @@
   }
 
   function cycleMode() {
-    mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
+    if (lockMode) return;
+    const order = MODES.filter((m) => lockMode === null || m === lockMode);
+    mode = order[(order.indexOf(mode) + 1 + order.length) % order.length] ?? mode;
   }
 
   function move(list: unknown[], i: number, delta: number) {
@@ -180,7 +186,8 @@
       cycleMode();
     } else if (/^[123]$/.test(e.key) && (e.ctrlKey || e.metaKey) && !slashItems.length && !atItems.length) {
       e.preventDefault();
-      mode = MODES[Number(e.key) - 1];
+      const next = MODES[Number(e.key) - 1];
+      if (!lockMode || next === lockMode) mode = next;
     } else if (e.key === "Escape" && (slashItems.length || atItems.length)) {
       e.stopPropagation();
       atItems = [];
@@ -195,6 +202,7 @@
     textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
   }
 
+  $: if (lockMode && mode !== lockMode) mode = lockMode;
   $: if (textarea && !input) textarea.style.height = "";
   $: if (mode !== "search" || !input.trim()) clearWeb();
   $: webOpen = focused && mode === "search" && webRows.length > 0;
@@ -389,7 +397,6 @@
   <div
     class="box"
     class:web={mode === "search"}
-    style:--tint={MODE_META[mode].tint}
     role="group"
     aria-label="Composer"
     on:dragover|preventDefault
@@ -457,14 +464,19 @@
     <button class="ctl" title="Attach files" on:click={pickFiles}><Icon name="plus" size={14} stroke={2} /></button>
     <div class="modes" role="tablist" aria-label="Mode">
       {#each MODES as m, i (m)}
+        {@const locked = lockMode !== null && m !== lockMode}
         <button
           role="tab"
           aria-selected={mode === m}
           class="mode"
           class:on={mode === m}
+          class:off={locked}
           style:--tint={MODE_META[m].tint}
-          title={`${MODE_META[m].label} (Ctrl+${i + 1}, Tab cycles)`}
-          on:click={() => (mode = m)}
+          title={locked ? `${MODE_META[m].label} (unavailable here)` : `${MODE_META[m].label} (Ctrl+${i + 1}, Tab cycles)`}
+          disabled={locked}
+          on:click={() => {
+            if (!locked) mode = m;
+          }}
         >
           <Icon name={MODE_META[m].icon} size={13} />
           <span>{MODE_META[m].label}</span>
@@ -603,14 +615,12 @@
     padding: 6px 6px 6px 16px;
     background: var(--panel);
     border: 1px solid var(--line);
-    border-top: 2px solid color-mix(in srgb, var(--tint, var(--line)) 30%, var(--line));
     border-radius: var(--radius-lg);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
     transition: border-color 140ms ease;
   }
   .box:focus-within {
     border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
-    border-top-color: color-mix(in srgb, var(--tint, var(--accent)) 70%, transparent);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
   }
   .box.web:focus-within {
@@ -907,6 +917,10 @@
   }
   .mode.on :global(svg) {
     color: var(--tint);
+  }
+  .mode.off {
+    opacity: 0.35;
+    cursor: default;
   }
   .locked {
     cursor: default;

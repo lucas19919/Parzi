@@ -44,6 +44,16 @@
     return s.model.split("/")[0];
   }
 
+  function laneOf(s: SessionMeta): string {
+    const l = s.lane ?? "";
+    return l === "code" ? "build" : l;
+  }
+
+  function laneIcon(s: SessionMeta): "brain" | "bot" | "chat" {
+    const l = laneOf(s);
+    return l === "research" ? "brain" : l === "build" ? "bot" : "chat";
+  }
+
   function whereOf(s: SessionMeta) {
     if (!s.cwd || /[\\/]\.parzi[\\/]scratch[\\/]/.test(s.cwd)) return "";
     return folderName(s.cwd);
@@ -114,7 +124,7 @@
             <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
               <span class="time">{time(s.at)}</span>
               <span class="icon">
-                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name="chat" size={13} />{/if}
+                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneIcon(s)} size={13} />{/if}
               </span>
               <span class="title">{s.title || "Untitled session"}</span>
               <span class="url" class:live={running.has(s.id)}>{running.has(s.id) ? "Running" : whereOf(s)}</span>

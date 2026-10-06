@@ -424,6 +424,7 @@ interface DeskCmd {
   id?: string;
   url?: string;
   rev?: number;
+  owner?: string | null;
 }
 
 export function deskSync(tabs: DeskTab[], rev: number, active: string) {

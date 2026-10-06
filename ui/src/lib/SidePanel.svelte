@@ -39,6 +39,12 @@
     return s.model.split("/")[0];
   }
 
+  function laneFallback(s: SessionMeta): "brain" | "bot" | "chat" {
+    const l = s.lane ?? "";
+    const lane = l === "code" ? "build" : l;
+    return lane === "research" ? "brain" : lane === "build" ? "bot" : "chat";
+  }
+
   function isLive(s: SessionMeta) {
     return running.has(s.id) || s.status === "active";
   }
@@ -234,7 +240,7 @@
             <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
               <span class="time">{time(s.updated)}</span>
               <span class="icon">
-                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name="chat" size={13} />{/if}
+                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneFallback(s)} size={13} />{/if}
               </span>
               <span class="title">{s.title || "Untitled session"}</span>
               {#if pill}<span class="pill {pill.cls}">{pill.label}</span>{/if}
@@ -251,7 +257,7 @@
             <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
               <span class="time">{time(s.updated)}</span>
               <span class="icon">
-                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name="chat" size={13} />{/if}
+                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneFallback(s)} size={13} />{/if}
               </span>
               <span class="title">{s.title || "Untitled session"}</span>
               {#if sub}<span class="pill {sub.cls}">{sub.label}</span>{:else}<span class="url">{whereOf(s)}</span>{/if}
