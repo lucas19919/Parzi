@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, onDestroy, onMount, tick } from "svelte";
+  import { createEventDispatcher, onMount, tick } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
@@ -11,17 +11,11 @@
 
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
-  export let view: "sessions" | "history" | "bookmarks" | "agents" = "sessions";
+  export let view: "sessions" | "history" | "bookmarks" = "sessions";
 
-  const dispatch = createEventDispatcher<{
-    open: { url: string };
-    openSession: { id: string };
-    deleteSession: { id: string };
-    stopSession: { id: string };
-    refresh: void;
-  }>();
+  const dispatch = createEventDispatcher<{ open: { url: string }; openSession: { id: string }; deleteSession: { id: string } }>();
   const DAY = 86_400_000;
-  const PLACEHOLDER = { sessions: "Search sessions", history: "Search history", bookmarks: "Search bookmarks", agents: "Search agents" };
+  const PLACEHOLDER = { sessions: "Search sessions", history: "Search history", bookmarks: "Search bookmarks" };
 
   let query = "";
   let field: HTMLInputElement | null = null;
@@ -49,48 +43,6 @@
   function agentOf(s: SessionMeta) {
     return s.model.split("/")[0];
   }
-
-  function isLive(s: SessionMeta) {
-    return running.has(s.id) || s.status === "active";
-  }
-
-  function pillOf(s: SessionMeta): { label: string; cls: string } | null {
-    if (isLive(s)) return { label: "Running", cls: "live" };
-    if (s.status === "queued") return { label: "Queued", cls: "queue" };
-    return null;
-  }
-
-  $: agentPool = threads
-    .filter((t) => matches(t.title, t.model, q))
-    .map((t) => ({ ...t, at: Date.parse(t.updated) || 0 }));
-  $: agentActive = agentPool
-    .filter((t) => isLive(t) || t.status === "queued")
-    .sort((a, b) => b.at - a.at);
-  $: agentRows = (() => {
-    const kids = new Map<string, typeof agentPool>();
-    for (const t of agentPool) {
-      const p = t.parent_id ?? "";
-      if (!kids.has(p)) kids.set(p, []);
-      kids.get(p)?.push(t);
-    }
-    const byId = new Map(agentPool.map((t) => [t.id, t]));
-    const roots = [...(kids.get("") ?? []), ...agentPool.filter((t) => t.parent_id && !byId.has(t.parent_id))];
-    const byTime = (a: { at: number }, b: { at: number }) => b.at - a.at;
-    roots.sort(byTime);
-    for (const arr of kids.values()) arr.sort(byTime);
-    const out: { s: (typeof agentPool)[number]; depth: number }[] = [];
-    const walk = (id: string, depth: number) => {
-      for (const c of kids.get(id) ?? []) {
-        out.push({ s: c, depth });
-        walk(c.id, depth + 1);
-      }
-    };
-    for (const r of roots) {
-      out.push({ s: r, depth: 0 });
-      walk(r.id, 1);
-    }
-    return out;
-  })();
 
   function whereOf(s: SessionMeta) {
     if (!s.cwd || /[\\/]\.parzi[\\/]scratch[\\/]/.test(s.cwd)) return "";
@@ -135,22 +87,6 @@
   onMount(() => {
     field?.focus();
   });
-
-  onDestroy(() => clearInterval(poller));
-
-  let poller = 0;
-
-  function poke() {
-    if (view === "agents") {
-      dispatch("refresh");
-      clearInterval(poller);
-      poller = window.setInterval(() => dispatch("refresh"), 3000);
-    } else {
-      clearInterval(poller);
-    }
-  }
-
-  $: view, poke();
 </script>
 
 <div class="library">
@@ -159,7 +95,6 @@
       <button class:on={view === "sessions"} on:click={() => show("sessions")}>Sessions</button>
       <button class:on={view === "history"} on:click={() => show("history")}>Pages</button>
       <button class:on={view === "bookmarks"} on:click={() => show("bookmarks")}>Bookmarks</button>
-      <button class:on={view === "agents"} on:click={() => show("agents")}>Agents</button>
     </div>
     <div class="search">
       <Icon name="search" size={13} />
@@ -213,47 +148,6 @@
       {:else}
         <p class="empty">{q ? "Nothing matches." : "Pages you visit show up here."}</p>
       {/each}
-    {:else if view === "agents"}
-      {#if agentActive.length}
-        <h3>Active now</h3>
-        {#each agentActive as s (s.id)}
-          {@const pill = pillOf(s)}
-          <div class="row">
-            <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
-              <span class="time">{time(s.at)}</span>
-              <span class="icon">
-                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name="chat" size={13} />{/if}
-              </span>
-              <span class="title">{s.title || "Untitled session"}</span>
-              {#if pill}<span class="pill {pill.cls}">{pill.label}</span>{/if}
-            </button>
-            <button class="stop" title="Stop this run (keeps the transcript)" on:click={() => dispatch("stopSession", { id: s.id })}>Stop</button>
-          </div>
-        {/each}
-      {/if}
-      {#if agentRows.length}
-        <h3>All agents</h3>
-        {#each agentRows as { s, depth } (s.id)}
-          {@const sub = pillOf(s)}
-          <div class="row" style:padding-left="{depth * 18}px">
-            <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
-              <span class="time">{time(s.at)}</span>
-              <span class="icon">
-                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name="chat" size={13} />{/if}
-              </span>
-              <span class="title">{s.title || "Untitled session"}</span>
-              {#if sub}<span class="pill {sub.cls}">{sub.label}</span>{:else}<span class="url">{whereOf(s)}</span>{/if}
-            </button>
-            {#if sub}
-              <button class="stop" title="Stop this run (keeps the transcript)" on:click={() => dispatch("stopSession", { id: s.id })}>Stop</button>
-            {:else}
-              <button class="x" title="Delete session" on:click={() => dispatch("deleteSession", { id: s.id })}><Icon name="close" size={12} /></button>
-            {/if}
-          </div>
-        {/each}
-      {:else}
-        <p class="empty">{q ? "Nothing matches." : "Background agents and subsessions show up here."}</p>
-      {/if}
     {:else}
       {#each folders as folder (folder.label)}
         <h3>{folder.label}</h3>
@@ -458,36 +352,6 @@
   .x:hover {
     background: var(--line);
     color: var(--text);
-  }
-  .pill {
-    flex: none;
-    padding: 1px 8px;
-    border-radius: 999px;
-    font-size: 10.5px;
-    font-weight: 600;
-  }
-  .pill.live {
-    background: color-mix(in srgb, var(--ok) 16%, transparent);
-    color: var(--ok);
-  }
-  .pill.queue {
-    background: color-mix(in srgb, var(--warn) 16%, transparent);
-    color: var(--warn);
-  }
-  .stop {
-    flex: none;
-    margin-right: 4px;
-    padding: 4px 10px;
-    background: none;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    color: var(--muted);
-    font-size: 11.5px;
-    cursor: pointer;
-  }
-  .stop:hover {
-    border-color: var(--bad);
-    color: var(--bad);
   }
   .empty {
     margin: 40px 0;

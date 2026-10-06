@@ -11,6 +11,7 @@
   import Switcher from "./lib/Switcher.svelte";
   import DefaultArt from "./lib/DefaultArt.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
+  import SidePanel from "./lib/SidePanel.svelte";
   import Thread from "./lib/Thread.svelte";
   import SessionHeader from "./lib/SessionHeader.svelte";
   import PageView from "./lib/PageView.svelte";
@@ -86,6 +87,8 @@
 
   let switcherOpen = false;
   let settingsOpen = false;
+  let panelOpen = false;
+  let panelTab: "ask" | "agents" = "ask";
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
   let farFromBottom = false;
@@ -137,7 +140,7 @@
 
   let closed: { url: string; title: string }[] = [];
 
-  let historyView: "sessions" | "history" | "bookmarks" | "agents" = "sessions";
+  let historyView: "sessions" | "history" | "bookmarks" = "sessions";
 
   function openHistory(view = historyView) {
     historyView = view;
@@ -570,7 +573,13 @@
     else if (name === "ctrl+comma") settingsOpen ? (settingsOpen = false) : openSettings();
     else if (name === "ctrl+b") openBrain();
     else if (name === "ctrl+h") openHistory();
-    else if (name === "ctrl+shift+a") openHistory("agents");
+    else if (name === "ctrl+shift+a") {
+      panelTab = "agents";
+      panelOpen = true;
+    } else if (name === "ctrl+j") {
+      panelTab = "ask";
+      panelOpen = true;
+    }
     else if (name === "ctrl+shift+t") reopenClosed();
     else if (name === "f11") void setImmersive(!immersive);
     else if (name === "ctrl+l") {
@@ -604,9 +613,11 @@
             ? "ctrl+shift+t"
             : mod && e.shiftKey && key === "a"
               ? "ctrl+shift+a"
-              : mod && ["p", "k", "t", "w", "l", "b", "h"].includes(key)
-                ? `ctrl+${key}`
-                : "";
+              : mod && !e.shiftKey && key === "j"
+                ? "ctrl+j"
+                : mod && ["p", "k", "t", "w", "l", "b", "h"].includes(key)
+                  ? `ctrl+${key}`
+                  : "";
     if (name && shortcut(name)) {
       e.preventDefault();
     } else if (key === "escape" && !e.defaultPrevented && !$covered) {
@@ -686,7 +697,10 @@
     on:update={() => openSettings("system")}
     on:brain={openBrain}
     on:history={() => openHistory()}
-    on:agents={() => openHistory("agents")}
+    on:agents={() => {
+      panelTab = "agents";
+      panelOpen = !panelOpen;
+    }}
     on:setup={() => (setupOpen = true)}
   />
   {/if}
@@ -709,8 +723,6 @@
           on:open={(e) => openPageNext(e.detail.url)}
           on:openSession={(e) => openSession(e.detail.id)}
           on:deleteSession={(e) => remove(e.detail.id)}
-          on:stopSession={(e) => stopSession(e.detail.id)}
-          on:refresh={() => void refreshThreads()}
         />
       </div>
     {:else if tab.kind === "page"}
@@ -736,17 +748,31 @@
             on:copyId={copyId}
             on:delete={() => shown && remove(shown)}
           />
-          <div class="scroll" bind:this={scrollEl} on:scroll={() => (farFromBottom = !nearBottom())}>
-            <Thread
-              {events}
-              liveText={live}
-              {liveReasoning}
-              {liveTools}
-              {approval}
-              {streaming}
-              {folder}
-              on:voted={(e) => (approvals = approvals.filter((a) => a.key !== e.detail.key))}
-            />
+          <div class="workarea">
+            <div class="scroll" bind:this={scrollEl} on:scroll={() => (farFromBottom = !nearBottom())}>
+              <Thread
+                {events}
+                liveText={live}
+                {liveReasoning}
+                {liveTools}
+                {approval}
+                {streaming}
+                {folder}
+                on:voted={(e) => (approvals = approvals.filter((a) => a.key !== e.detail.key))}
+              />
+            </div>
+            {#if panelOpen}
+              <SidePanel
+                {threads}
+                {running}
+                {folder}
+                bind:tab={panelTab}
+                on:openSession={(e) => openSession(e.detail.id)}
+                on:stopSession={(e) => stopSession(e.detail.id)}
+                on:settled={() => void refreshThreads()}
+                on:close={() => (panelOpen = false)}
+              />
+            {/if}
           </div>
           {#if farFromBottom}
             <button class="to-bottom" title="Scroll to bottom" transition:fade={{ duration: 120 }} on:click={() => scrollToBottom(true)}>
@@ -890,9 +916,13 @@
       transform: translateY(6px);
     }
   }
-  .scroll {
+  .workarea {
     flex: 1;
-    overflow-x: hidden;
+    min-height: 0;
+    display: flex;
+  }
+  .scroll {
+    flex: 1;    overflow-x: hidden;
     overflow-y: auto;
     padding-bottom: calc(var(--dock) + 30px);
     mask-image: linear-gradient(
