@@ -35,7 +35,6 @@
   --glass-border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
   --glass-hairline: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
   --glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-  --hero-art: url("/hero-harbor.png");
 
   --font: "Inter";
   --font-size: 14px;

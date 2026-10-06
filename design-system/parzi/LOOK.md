@@ -8,14 +8,12 @@ from tokens, not patches.
 
 ## Layers (top to bottom)
 
-1. **Backdrop** — exactly one: DefaultArt wallpaper, else theme stage.
-   Nothing else paints a full-bleed background, ever.
-2. **Hero** — fallback art only, only when no wallpaper. Driven by
-   `--hero-art`, `--hero-height`, `--hero-fade`.
-3. **Glass** — every floating surface (session panel, fills, composer,
+1. **Backdrop** — exactly one: DefaultArt wallpaper, else the bundled
+   harbor fallback. Nothing else paints a full-bleed background, ever.
+2. **Glass** — every floating surface (session panel, fills, composer,
    side panel, popovers, toasts) from `--glass-*` tokens. Content
    (bubbles, code, text) stays solid for readability.
-4. **Content** — text, code, math. Links `--link`, never accent.
+3. **Content** — text, code, math. Links `--link`, never accent.
 
 ## Tokens (theme.css `:root`)
 
@@ -25,10 +23,9 @@ from tokens, not patches.
 - `--glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.3)`
 - `--glass-strong-bg` (composer, 58%) — only exception, documented here
 - `--on-ok: #06110a` (dark text on green pills)
-- `--research: #e8b64c` (replaces 3 hardcoded ambers)
+- `--research: #e8b64c` (replaces hardcoded ambers)
 - `--link: #8ab4ff`, `--link-hover: #aecbff`
 - `--scrim: rgba(0, 0, 0, 0.6)` (modal scrims)
-- `--hero-art: url("/hero-harbor.png")` (fallback; wallpaper overrides)
 
 ## Rules
 

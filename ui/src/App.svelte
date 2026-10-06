@@ -136,7 +136,11 @@
   $: folder = tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
   $: approval = approvals.find((a) => a.session === shown) ?? null;
   $: openQuestion = questions.find((q) => q.session === shown) ?? null;
-  $: lockMode = (normLane(meta?.lane ?? "") === "research" && hasSession ? "research" : null) as ComposerMode | null;
+  $: lockMode = (() => {
+    if (!hasSession) return null;
+    const l = normLane(meta?.lane ?? "");
+    return l === "build" || l === "research" ? (l as ComposerMode) : null;
+  })();
   $: sessionLanes = Object.fromEntries(threads.map((t) => [t.id, t.lane ?? ""]));
   $: void loadBranch(folder);
   $: void loadProject(folder);
@@ -759,13 +763,6 @@
 <div class="shell">
   <DefaultArt {bg} blurred={tab.kind === "page"} />
 
-  {#if !bg && !hasSession && tab.kind !== "page" && tab.kind !== "history" && tab.kind !== "brain" && tab.kind !== "settings"}
-    {@const heroBg = bg
-      ? `linear-gradient(to bottom, transparent calc(20% + 80% * (1 - var(--hero-fade, 1))), var(--bg) calc(92% + 8% * (1 - var(--hero-fade, 1)))), url("${bg}") center 32% / cover no-repeat`
-      : undefined}
-    <div class="hero-reef" aria-hidden="true" style:background={heroBg} />
-  {/if}
-
   {#if !immersive}
   <TopBar
     {tabs}
@@ -1069,35 +1066,6 @@
     text-align: center;
     font-size: 11.5px;
     color: var(--faint);
-  }
-  .hero-reef {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 0;
-    height: calc(var(--hero-height, 48) * 1%);
-    pointer-events: none;
-    background:
-      linear-gradient(
-        to bottom,
-        transparent calc(20% + 80% * (1 - var(--hero-fade, 1))),
-        var(--bg) calc(92% + 8% * (1 - var(--hero-fade, 1)))
-      ),
-      var(--hero-art) center 32% / cover no-repeat;
-    background-size: cover, cover;
-    filter: brightness(0.68) saturate(0.9);
-    -webkit-mask-image: linear-gradient(
-      to bottom,
-      #000 calc(30% * var(--hero-fade, 1) + 70% * (1 - var(--hero-fade, 1))),
-      transparent 100%
-    );
-    mask-image: linear-gradient(
-      to bottom,
-      #000 calc(30% * var(--hero-fade, 1) + 70% * (1 - var(--hero-fade, 1))),
-      transparent 100%
-    );
-    opacity: 0.94;
   }
   .toasts {
     position: fixed;

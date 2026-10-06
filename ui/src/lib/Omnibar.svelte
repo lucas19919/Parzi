@@ -479,7 +479,12 @@
 
     <div class="bar">
       <button class="ctl" title="Attach files" on:click={pickFiles}><Icon name="plus" size={14} stroke={2} /></button>
-      <div class="modes" role="tablist" aria-label="Mode">
+    <div class="modes" role="tablist" aria-label="Mode">
+      {#if lockMode}
+        <span class="mode on solo" style:--tint={MODE_META[lockMode].tint} title={MODE_META[lockMode].label}>
+          <Icon name={MODE_META[lockMode].icon} size={13} />
+        </span>
+      {:else}
         {#each MODES as m, i (m)}
           {@const locked = lockMode !== null && m !== lockMode}
           <button
@@ -499,7 +504,8 @@
             <span>{MODE_META[m].label}</span>
           </button>
         {/each}
-      </div>
+      {/if}
+    </div>
       {#if mode === "build"}
         <button bind:this={permBtn} class="ctl" class:open={permOpen} title={perm.desc} on:click|stopPropagation={togglePerm}>
           <Icon name={perm.icon} size={12} />
@@ -537,7 +543,7 @@
           <span class="truncate">{effortLabel(effort)}</span>
           <Icon name="chevDown" size={10} stroke={2} />
         </button>
-        {#if mode === "build" && contextLimit > 0 && (contextUsed > 0 || compacting)}
+        {#if (mode === "build" || mode === "research") && contextLimit > 0 && (contextUsed > 0 || compacting)}
           <button
             bind:this={ctxBtn}
             class="ctx"
@@ -984,6 +990,10 @@
   }
   .mode.on :global(svg) {
     color: var(--tint);
+  }
+  .mode.solo {
+    cursor: default;
+    padding: 0 8px;
   }
   .mode.off {
     opacity: 0.35;

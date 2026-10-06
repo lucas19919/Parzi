@@ -113,7 +113,7 @@ export interface ParziConfig {
 export interface Theme {
   font: { family: string; size: number; mono: string; mono_size: number };
   colors: { sidebar: string; stage: string; accent: string; text: string; text_dim: string; bar: string; border: string };
-  background: { image: string; dim: number; vignette: number; blur: number; auto_accent?: boolean; hero_fade: boolean; hero_height: number };
+  background: { image: string; dim: number; vignette: number; blur: number; auto_accent?: boolean };
   glass: { opacity: number; radius: number; blur_px: number; shadow: boolean };
 }
 
