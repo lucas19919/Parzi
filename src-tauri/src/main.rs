@@ -476,6 +476,7 @@ fn main() {
             brain::brain_list,
             brain::brain_read,
             brain::brain_write,
+            brain::brain_save_answer,
             brain::brain_delete,
             brain::brain_projects,
             brain::brain_project_upsert,

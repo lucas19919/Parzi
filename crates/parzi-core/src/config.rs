@@ -22,8 +22,10 @@ pub struct ParziConfig {
     pub routing: RoutingConfig,
     #[serde(default)]
     pub budget: Budget,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub favorite_models: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub quick_model: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +209,7 @@ impl Default for ParziConfig {
             routing: RoutingConfig::default(),
             budget: Budget::default(),
             favorite_models: vec![],
+            quick_model: String::new(),
         }
     }
 }

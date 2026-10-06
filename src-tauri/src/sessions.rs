@@ -32,6 +32,7 @@ pub async fn send_message(
     effort: Option<String>,
     attachments: Option<Vec<String>>,
     mode: Option<String>,
+    lane: Option<String>,
 ) -> Result<String, String> {
     let effort = parzi_runtime::orchestrator::normalize_effort(effort.as_deref().unwrap_or("med"));
     let attached = read_attachments(&cwd, &attachments.unwrap_or_default());
@@ -62,7 +63,7 @@ pub async fn send_message(
                 .orch
                 .spawn(
                     "default",
-                    "",
+                    lane.as_deref().unwrap_or(""),
                     &model,
                     &prompt,
                     Some(approver),

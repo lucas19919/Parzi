@@ -295,6 +295,26 @@ impl ToolHost {
         }
     }
 
+    /// Parzi-native tools a research turn may use without asking. Writes,
+    /// shell, sessions, and lane tools are absent on purpose: research is
+    /// read-only, so those deny silently instead of showing a card.
+    fn research_allows(name: &str) -> bool {
+        matches!(
+            name,
+            "browser.open"
+                | "browser.tabs"
+                | "browser.read"
+                | "browser.click"
+                | "browser.type"
+                | "brain.search"
+                | "brain.read"
+                | "brain.list"
+                | "ui.show_markdown"
+                | "ui.show_widget"
+                | "ui.show_artifact"
+        )
+    }
+
     pub(crate) async fn defs(&self) -> Vec<ToolDef> {
         self.defs
             .get_or_init(|| async { self.p.tools.defs() })
@@ -396,6 +416,15 @@ impl ToolHost {
                 Some(ApprovalMode::Deny)
             );
         }
+        if self.p.lane == "research" {
+            return match self.p.tools.approval_override(name) {
+                Some(ApprovalMode::Deny) => false,
+                Some(ApprovalMode::Auto) => true,
+                Some(ApprovalMode::Ask) => self.ask(id, name, args).await,
+                None if Self::research_allows(name) => true,
+                None => false,
+            };
+        }
         match self.p.tools.approval_override(name) {
             Some(ApprovalMode::Deny) => return false,
             Some(ApprovalMode::Auto) => return true,
@@ -468,6 +497,18 @@ impl ToolHost {
         }
         if self.p.full {
             return PermissionDecision::Allow;
+        }
+        if self.p.lane == "research" {
+            const READ_ONLY: &str =
+                "research mode is read-only: answer from knowledge, search, and page reads";
+            return match kind {
+                Some("fs.read") => PermissionDecision::Allow,
+                Some(_) => PermissionDecision::Deny(READ_ONLY.into()),
+                None if matches!(req.tool.as_str(), "WebFetch" | "WebSearch" | "web_search") => {
+                    PermissionDecision::Allow
+                }
+                None => PermissionDecision::Deny(READ_ONLY.into()),
+            };
         }
         let allowed = match self.p.mode {
             ApprovalMode::Auto if !outside => true,

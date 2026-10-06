@@ -39,6 +39,35 @@ pub async fn brain_write(path: String, content: String) -> Result<NoteMeta, Stri
 }
 
 #[tauri::command]
+pub async fn brain_save_answer(content: String) -> Result<NoteMeta, String> {
+    blocking(move || {
+        let slug: String = content
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .next()
+            .unwrap_or("note")
+            .trim_start_matches('#')
+            .trim()
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == ' ')
+            .collect::<String>()
+            .split_whitespace()
+            .take(6)
+            .collect::<Vec<_>>()
+            .join("-")
+            .to_lowercase();
+        let slug = if slug.is_empty() { "note".into() } else { slug };
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        brain::write(&format!("research/{slug}-{stamp}"), &content)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn brain_delete(path: String) -> Result<(), String> {
     blocking(move || brain::delete(&path)).await
 }

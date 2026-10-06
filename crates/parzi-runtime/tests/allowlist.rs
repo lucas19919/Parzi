@@ -216,3 +216,63 @@ async fn full_access_writes_anywhere_without_a_card() {
     );
     let _ = std::fs::remove_dir_all(&folder);
 }
+
+fn research_host(folder: &Path, person: Arc<Person>) -> ToolHost {
+    common::home("allowlist-research");
+    let store = SessionStore::open().unwrap();
+    let sid = store.create("gate", "", "", "claude/m").unwrap().id;
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    ToolHost::new(ToolHostParts {
+        session_id: sid.clone(),
+        lane: "research".into(),
+        mode: ApprovalMode::Ask,
+        edits_auto: false,
+        full: false,
+        store,
+        tools: Arc::new(ToolExecutor {
+            cwd: folder.display().to_string(),
+            mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
+            allowed: vec!["*".into()],
+        }),
+        approver: person,
+        harness: None,
+        sink: RunSink::new(&sid, tx, None),
+        cancel: CancellationToken::new(),
+    })
+}
+
+#[tokio::test]
+async fn research_lane_answers_without_cards_and_never_writes() {
+    let folder = std::env::temp_dir().join(format!("parzi-fence-research-{}", std::process::id()));
+    std::fs::create_dir_all(folder.join("src")).unwrap();
+    let person = nobody();
+    let host = research_host(&folder, person.clone());
+
+    for tool in ["Write", "Edit", "Bash", "Task"] {
+        assert!(
+            matches!(
+                ask(&host, tool, &["src/a.rs"]).await,
+                PermissionDecision::Deny(_)
+            ),
+            "{tool} must be refused silently on the research lane"
+        );
+    }
+    assert_eq!(
+        ask(&host, "Read", &["src/a.rs"]).await,
+        PermissionDecision::Allow
+    );
+    assert!(
+        person.seen.lock().unwrap().is_empty(),
+        "research never shows an approval card"
+    );
+
+    let (ok, _) = host
+        .call("brain.write", &serde_json::json!({"path": "x", "content": "y"}))
+        .await;
+    assert!(!ok, "the agent cannot write notes on the research lane");
+    assert!(
+        person.seen.lock().unwrap().is_empty(),
+        "still no card after a refused write"
+    );
+    let _ = std::fs::remove_dir_all(&folder);
+}
