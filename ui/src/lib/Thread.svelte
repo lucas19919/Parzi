@@ -24,13 +24,23 @@
 
   const ERROR_WORDS: Record<string, string> = {
     auth: "Not signed in",
-    rate_limit: "Plan limit reached",
-    overloaded: "The service is overloaded",
+    rate_limit: "Plan limit reached — wait a bit, then send again",
+    overloaded: "The service is overloaded — wait a bit, then send again",
     context_overflow: "The conversation is too long",
     bad_request: "The agent refused the request",
     process: "The agent's program stopped",
     unknown: "The turn failed",
   };
+  const ERROR_HINT: Record<string, string> = {
+    rate_limit: "Your prompt is kept — nothing was lost.",
+  };
+
+  // Vendor errors often trail a raw JSON blob; cut it, it never helped.
+  function shortErr(message: string): string {
+    const cut = message.search(/\s*\{[\s"]*"errorName"|\s*\{"errorName"|\s*\{"code"/);
+    if (cut > 0) return `${message.slice(0, cut).trimEnd()}…`;
+    return message.length > 400 ? `${message.slice(0, 400).trimEnd()}…` : message;
+  }
   const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
   const spring = { duration: 160, easing: cubicOut };
 
@@ -299,7 +309,8 @@ ${e.text}` : e.text;
     {:else if item.kind === "error"}
       <div class="turn-error" role="alert">
         <span class="err-class">{ERROR_WORDS[item.class] ?? ERROR_WORDS.unknown}</span>
-        <span class="err-msg">{item.message}</span>
+        <span class="err-msg">{shortErr(item.message)}</span>
+        {#if ERROR_HINT[item.class]}<span class="err-hint">{ERROR_HINT[item.class]}</span>{/if}
       </div>
     {:else if item.kind === "widget"}
       {#if item.fence === "parzi-widget"}
@@ -505,6 +516,10 @@ ${e.text}` : e.text;
     color: var(--muted);
     white-space: pre-wrap;
     word-break: break-word;
+  }
+  .err-hint {
+    color: var(--faint);
+    font-size: 11.5px;
   }
   .approval {
     display: flex;

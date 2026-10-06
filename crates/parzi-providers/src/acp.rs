@@ -743,7 +743,7 @@ fn rpc_failure(agent: Agent, e: RpcError) -> ProviderError {
             format!("{} is not signed in. {}", agent.name, agent.login_hint),
         ),
         RpcError::CLOSED | RpcError::TIMEOUT => ProviderError::process(e.to_string()),
-        _ => ProviderError::new(ErrorClass::Unknown, format!("{}: {e}", agent.name)),
+        _ => ProviderError::sniffed(ErrorClass::Unknown, format!("{}: {e}", agent.name)),
     }
 }
 
@@ -1172,6 +1172,19 @@ mod tests {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     struct Gate(PermissionDecision, std::sync::Mutex<Vec<PermissionRequest>>);
+
+    #[test]
+    fn untyped_vendor_failures_are_sniffed() {
+        let rate = ProviderError::sniffed(
+            ErrorClass::Unknown,
+            "OpenCode: Internal error: Rate limit exceeded. {\"errorName\":\"APIError\"}",
+        );
+        assert_eq!(rate.class, ErrorClass::RateLimit);
+        let plain = ProviderError::sniffed(ErrorClass::Unknown, "something odd happened");
+        assert_eq!(plain.class, ErrorClass::Unknown);
+        let kept = ProviderError::sniffed(ErrorClass::Auth, "Rate limit exceeded");
+        assert_eq!(kept.class, ErrorClass::Auth);
+    }
 
     #[async_trait::async_trait]
     impl PermissionGate for Gate {

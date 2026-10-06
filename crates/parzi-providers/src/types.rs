@@ -47,8 +47,36 @@ impl ProviderError {
         }
     }
 
+    /// Upgrade a best-guess class from the message text. Vendor drivers
+    /// often surface failures as untyped strings (or JSON blobs), so a
+    /// "Rate limit exceeded" that arrived as Unknown still reads as one.
+    pub fn sniffed(class: ErrorClass, message: impl Into<String>) -> Self {
+        let message = message.into();
+        let class = match class {
+            ErrorClass::Unknown => sniff_class(&message).unwrap_or(ErrorClass::Unknown),
+            c => c,
+        };
+        Self { class, message }
+    }
+
     pub fn process(message: impl Into<String>) -> Self {
         Self::new(ErrorClass::Process, message)
+    }
+}
+
+fn sniff_class(message: &str) -> Option<ErrorClass> {
+    let m = message.to_lowercase();
+    let has = |s: &[&str]| s.iter().any(|w| m.contains(w));
+    if has(&["rate limit", "rate_limit", "ratelimit", "429", "quota exceeded", "too many requests"]) {
+        Some(ErrorClass::RateLimit)
+    } else if has(&["not signed in", "unauthorized", "401", "403", "authentication required", "invalid api key"]) {
+        Some(ErrorClass::Auth)
+    } else if has(&["context window", "context_length", "too many tokens", "context overflow"]) {
+        Some(ErrorClass::ContextOverflow)
+    } else if has(&["overloaded", "over capacity", "503", "service unavailable", "try again later"]) {
+        Some(ErrorClass::Overloaded)
+    } else {
+        None
     }
 }
 
