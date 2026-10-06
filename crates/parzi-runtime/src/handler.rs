@@ -119,7 +119,7 @@ const PARZI_BRIEF: &str = "You are running inside Parzi. Besides your own tools 
     (code over ~15 lines, whole files, docs, html/svg previews, json/csv, diffs); reuse an \
     artifact id to publish a new version. Publish architecture, flow, or component diagrams \
     as an svg or html artifact with ui_show_artifact. Use ui_show_markdown for a rendered \
-    note. The page is browser_open, browser_tabs, and browser_read (title and URL only). The brain is the user's notes vault: brain_search, \
+    note. The page is browser_open, browser_tabs, browser_read (title, URL, text, and controls), browser_click (by visible text or CSS selector), and browser_type (fill a field, optionally submitting). Open a page with browser_open first; the tab stays bound to this session, so reads, clicks, and typing act on it. The brain is the user's notes vault: brain_search, \
     brain_read, brain_list, and brain_write. Notes the user pinned are attached below in full; \
     on-demand notes are listed with a one-line summary, so read one with brain_read when the \
     task needs it. Write durable learnings back with brain_write. Tool results tagged \

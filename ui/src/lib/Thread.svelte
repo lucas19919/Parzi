@@ -91,6 +91,10 @@
         return "Listing tabs";
       case "browser.read":
         return "Reading the page";
+      case "browser.click":
+        return `Clicking ${arg(args, "text", "selector") || "a control"}`;
+      case "browser.type":
+        return `Typing into ${arg(args, "field", "selector") || "a field"}`;
       case "brain.search":
         return `Searching notes for ${arg(args, "query") || "?"}`;
       case "brain.read":

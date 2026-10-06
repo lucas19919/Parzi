@@ -278,6 +278,15 @@ fn brain_listing(vault: &brain::Vault, project: &str) -> Result<String> {
     Ok(out)
 }
 
+fn truncate_text(s: &str, n: usize) -> String {
+    let text = s.trim();
+    if text.chars().count() <= n {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(n).collect();
+    format!("{cut}…")
+}
+
 impl ToolHost {
     pub fn new(parts: ToolHostParts) -> Self {
         Self {
@@ -317,7 +326,7 @@ impl ToolHost {
 
     async fn execute_inner(&self, id: &str, name: &str, args: &Value) -> (bool, String) {
         if is_browser_tool(name) {
-            let allowed = if name == "browser.open" {
+            let allowed = if matches!(name, "browser.open" | "browser.click" | "browser.type") {
                 self.approved(id, name, args).await
             } else {
                 self.p.tools.is_allowed(name)
@@ -624,18 +633,75 @@ impl ToolHost {
                 ),
                 Err(e) => (false, e),
             },
-            "browser.read" => match crate::desk::call("tab.read", serde_json::json!({})).await {
+            "browser.read" => match crate::desk::call(
+                "tab.read",
+                serde_json::json!({ "session": self.p.session_id }),
+            )
+            .await
+            {
                 Ok(v) => {
                     let title = v.get("title").and_then(|t| t.as_str()).unwrap_or("");
                     let url = v.get("url").and_then(|t| t.as_str()).unwrap_or("");
                     if url.is_empty() {
                         (true, "no page is open".into())
                     } else {
-                        (true, format!("{title} {url}").trim().to_string())
+                        let mut out = format!("{title} {url}").trim().to_string();
+                        if let Some(text) = v.get("text").and_then(|t| t.as_str()) {
+                            let text = truncate_text(text, 3000);
+                            if !text.is_empty() {
+                                out.push_str("\n\n");
+                                out.push_str(&text);
+                            }
+                        }
+                        if let Some(controls) = v.get("controls").and_then(|c| c.as_array()) {
+                            let list: Vec<&str> = controls
+                                .iter()
+                                .filter_map(|c| c.as_str())
+                                .filter(|c| !c.is_empty())
+                                .take(40)
+                                .collect();
+                            if !list.is_empty() {
+                                out.push_str("\n\nControls:\n- ");
+                                out.push_str(&list.join("\n- "));
+                            }
+                        }
+                        (true, out)
                     }
                 }
                 Err(e) => (false, e),
             },
+            "browser.click" => {
+                let mut body = serde_json::json!({ "session": self.p.session_id });
+                if let serde_json::Value::Object(map) = &mut body {
+                    map.insert("args".into(), args.clone());
+                }
+                match crate::desk::call("tab.click", body).await {
+                    Ok(v) => (
+                        true,
+                        v.get("done")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("clicked")
+                            .to_string(),
+                    ),
+                    Err(e) => (false, e),
+                }
+            }
+            "browser.type" => {
+                let mut body = serde_json::json!({ "session": self.p.session_id });
+                if let serde_json::Value::Object(map) = &mut body {
+                    map.insert("args".into(), args.clone());
+                }
+                match crate::desk::call("tab.type", body).await {
+                    Ok(v) => (
+                        true,
+                        v.get("done")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("typed")
+                            .to_string(),
+                    ),
+                    Err(e) => (false, e),
+                }
+            }
             _ => (false, format!("unknown browser tool `{name}`")),
         }
     }

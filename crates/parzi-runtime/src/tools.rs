@@ -201,17 +201,45 @@ fn browser_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "browser.read".into(),
-            description: "The focused tab's title and URL. This does not return the page text.".into(),
+            description: "Read the session's browser tab: title, URL, page text, and clickable controls. Needs a tab opened with browser.open first.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {},
+            }),
+        },
+        ToolDef {
+            name: "browser.click".into(),
+            description: "Click a control on the session's browser tab. Pick it by its visible text, or by a CSS selector.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "selector": {"type": "string"},
+                },
+            }),
+        },
+        ToolDef {
+            name: "browser.type".into(),
+            description: "Type into a field on the session's browser tab, optionally submitting (Enter + form submit). Pick the field by its label, or by a CSS selector.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                    "field": {"type": "string"},
+                    "selector": {"type": "string"},
+                    "submit": {"type": "boolean"},
+                },
+                "required": ["text"],
             }),
         },
     ]
 }
 
 pub(crate) fn is_browser_tool(name: &str) -> bool {
-    matches!(name, "browser.open" | "browser.tabs" | "browser.read")
+    matches!(
+        name,
+        "browser.open" | "browser.tabs" | "browser.read" | "browser.click" | "browser.type"
+    )
 }
 
 pub fn brain_defs() -> Vec<ToolDef> {
@@ -376,6 +404,24 @@ pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String
         ),
         "browser.tabs" => "Listing tabs".into(),
         "browser.read" => "Reading the open page".into(),
+        "browser.click" => format!(
+            "Clicking {}",
+            one_line(
+                &str_arg("text")
+                    .or_else(|| str_arg("selector"))
+                    .unwrap_or_else(|| "a control".into()),
+                60
+            )
+        ),
+        "browser.type" => format!(
+            "Typing into {}",
+            one_line(
+                &str_arg("field")
+                    .or_else(|| str_arg("selector"))
+                    .unwrap_or_else(|| "a field".into()),
+                60
+            )
+        ),
         "brain.search" => format!(
             "Searching notes for {}",
             one_line(&str_arg("query").unwrap_or_default(), 60)
