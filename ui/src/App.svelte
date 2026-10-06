@@ -763,7 +763,7 @@
 
   {#if !hasSession && !settingsOpen && tab.kind !== "page" && tab.kind !== "history" && tab.kind !== "brain"}
     {@const heroBg = bg
-      ? `linear-gradient(to bottom, transparent 20%, var(--bg) 92%), url("${bg}") center 32% / cover no-repeat`
+      ? `linear-gradient(to bottom, transparent calc(20% + 80% * (1 - var(--hero-fade, 1))), var(--bg) calc(92% + 8% * (1 - var(--hero-fade, 1)))), url("${bg}") center 32% / cover no-repeat`
       : undefined}
     <div class="hero-reef" aria-hidden="true" style:background={heroBg} />
   {/if}
@@ -993,9 +993,9 @@
     flex-direction: column;
     margin: 8px 8px 0;
     overflow: hidden;
-    background: color-mix(in srgb, var(--panel) 68%, transparent);
-    -webkit-backdrop-filter: blur(20px) saturate(1.15);
-    backdrop-filter: blur(20px) saturate(1.15);
+    background: color-mix(in srgb, var(--panel) 60%, transparent);
+    -webkit-backdrop-filter: blur(24px) saturate(1.2);
+    backdrop-filter: blur(24px) saturate(1.2);
     border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
     border-bottom: none;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
@@ -1064,7 +1064,11 @@
     height: calc(var(--hero-height, 48) * 1%);
     pointer-events: none;
     background:
-      linear-gradient(to bottom, transparent 20%, var(--bg) 92%),
+      linear-gradient(
+        to bottom,
+        transparent calc(20% + 80% * (1 - var(--hero-fade, 1))),
+        var(--bg) calc(92% + 8% * (1 - var(--hero-fade, 1)))
+      ),
       url("/hero-harbor.png") center 32% / cover no-repeat;
     background-size: cover, cover;
     filter: brightness(0.68) saturate(0.9);

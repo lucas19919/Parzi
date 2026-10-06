@@ -613,12 +613,14 @@
   .box {
     position: relative;
     padding: 6px 6px 6px 16px;
-    background: color-mix(in srgb, var(--panel) 72%, transparent);
-    -webkit-backdrop-filter: blur(18px) saturate(1.15);
-    backdrop-filter: blur(18px) saturate(1.15);
-    border: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+    background: color-mix(in srgb, var(--panel) 58%, transparent);
+    -webkit-backdrop-filter: blur(22px) saturate(1.25);
+    backdrop-filter: blur(22px) saturate(1.25);
+    border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
     border-radius: var(--radius-lg);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.07),
+      0 10px 30px rgba(0, 0, 0, 0.35);
     transition: border-color 140ms ease;
   }
   .box:focus-within {
