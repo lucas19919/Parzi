@@ -457,91 +457,91 @@
         </button>
       {/if}
     </div>
+
+    <div class="bar">
+      <button class="ctl" title="Attach files" on:click={pickFiles}><Icon name="plus" size={14} stroke={2} /></button>
+      <div class="modes" role="tablist" aria-label="Mode">
+        {#each MODES as m, i (m)}
+          {@const locked = lockMode !== null && m !== lockMode}
+          <button
+            role="tab"
+            aria-selected={mode === m}
+            class="mode"
+            class:on={mode === m}
+            class:off={locked}
+            style:--tint={MODE_META[m].tint}
+            title={locked ? `${MODE_META[m].label} (unavailable here)` : `${MODE_META[m].label} (Ctrl+${i + 1}, Tab cycles)`}
+            disabled={locked}
+            on:click={() => {
+              if (!locked) mode = m;
+            }}
+          >
+            <Icon name={MODE_META[m].icon} size={13} />
+            <span>{MODE_META[m].label}</span>
+          </button>
+        {/each}
+      </div>
+      {#if mode === "build"}
+        <button bind:this={permBtn} class="ctl" class:open={permOpen} title={perm.desc} on:click|stopPropagation={togglePerm}>
+          <Icon name={perm.icon} size={12} />
+          <span class="truncate">{perm.title}</span>
+        </button>
+        {#if showFolder}
+          <button
+            bind:this={projBtn}
+            class="ctl project"
+            class:open={projOpen}
+            class:set={!!project}
+            class:locked={folderLocked}
+            title={project ? `Project ${project.title} · ${folder} · about ${project.tokens} tokens of notes per session` : folder ? `${folder} · not a project yet` : "Pick the project this session works on"}
+            on:click|stopPropagation={toggleProject}
+          >
+            <Icon name={project || !folder ? "project" : "folder"} size={12} />
+            <span class="truncate">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
+            {#if branch}<span class="dim">{branch}</span>{/if}
+            {#if !folderLocked}<Icon name="chevDown" size={10} stroke={2} />{/if}
+          </button>
+        {/if}
+      {/if}
+
+      <span class="spacer" />
+
+      {#if mode !== "search"}
+        <ModelPicker bind:this={picker} bind:value={model} {board} on:unavailable />
+        {#if efforts.length}
+          <div class="effort" role="radiogroup" aria-label="Effort" title={`Effort: ${effortLabel(effort)}${effortHint(effort) ? ` · ${effortHint(effort)}` : ""}`}>
+            {#each efforts as e, i (e)}
+              <button
+                class="lvl"
+                class:on={i <= efforts.indexOf(effort)}
+                role="radio"
+                aria-checked={e === effort}
+                aria-label={effortLabel(e)}
+                style:--h="{5 + Math.round((i * 9) / Math.max(1, efforts.length - 1))}px"
+                on:click={() => (effort = e)}
+              />
+            {/each}
+          </div>
+        {/if}
+        {#if mode === "build" && contextLimit > 0 && (contextUsed > 0 || compacting)}
+          <button
+            class="ctx"
+            class:warn={contextPct >= 70}
+            class:bad={contextPct >= 90}
+            disabled={compacting || streaming}
+            title={compacting ? "Compacting…" : `Context ${contextPct}% full: ${kTokens(contextUsed)} of ${kTokens(contextLimit)} tokens. Click to compact.`}
+            on:click={() => dispatch("command", { name: "compact" })}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+              <circle class="track" cx="8" cy="8" r="6" />
+              <circle class="fill" cx="8" cy="8" r="6" stroke-dasharray={RING} stroke-dashoffset={compacting ? RING * 0.7 : RING * (1 - contextPct / 100)} />
+            </svg>
+          </button>
+        {/if}
+      {/if}
+    </div>
   </div>
   {#if attachError}<div class="error" role="alert">{attachError}</div>{/if}
-
-  <div class="bar">
-    <button class="ctl" title="Attach files" on:click={pickFiles}><Icon name="plus" size={14} stroke={2} /></button>
-    <div class="modes" role="tablist" aria-label="Mode">
-      {#each MODES as m, i (m)}
-        {@const locked = lockMode !== null && m !== lockMode}
-        <button
-          role="tab"
-          aria-selected={mode === m}
-          class="mode"
-          class:on={mode === m}
-          class:off={locked}
-          style:--tint={MODE_META[m].tint}
-          title={locked ? `${MODE_META[m].label} (unavailable here)` : `${MODE_META[m].label} (Ctrl+${i + 1}, Tab cycles)`}
-          disabled={locked}
-          on:click={() => {
-            if (!locked) mode = m;
-          }}
-        >
-          <Icon name={MODE_META[m].icon} size={13} />
-          <span>{MODE_META[m].label}</span>
-        </button>
-      {/each}
-    </div>
-    {#if mode === "build"}
-      <button bind:this={permBtn} class="ctl" class:open={permOpen} title={perm.desc} on:click|stopPropagation={togglePerm}>
-        <Icon name={perm.icon} size={12} />
-        <span class="truncate">{perm.title}</span>
-      </button>
-      {#if showFolder}
-        <button
-          bind:this={projBtn}
-          class="ctl project"
-          class:open={projOpen}
-          class:set={!!project}
-          class:locked={folderLocked}
-          title={project ? `Project ${project.title} · ${folder} · about ${project.tokens} tokens of notes per session` : folder ? `${folder} · not a project yet` : "Pick the project this session works on"}
-          on:click|stopPropagation={toggleProject}
-        >
-          <Icon name={project || !folder ? "project" : "folder"} size={12} />
-          <span class="truncate">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
-          {#if branch}<span class="dim">{branch}</span>{/if}
-          {#if !folderLocked}<Icon name="chevDown" size={10} stroke={2} />{/if}
-        </button>
-      {/if}
-    {/if}
-
-    <span class="spacer" />
-
-    {#if mode !== "search"}
-      <ModelPicker bind:this={picker} bind:value={model} {board} on:unavailable />
-      {#if efforts.length}
-        <div class="effort" role="radiogroup" aria-label="Effort" title={`Effort: ${effortLabel(effort)}${effortHint(effort) ? ` · ${effortHint(effort)}` : ""}`}>
-          {#each efforts as e, i (e)}
-            <button
-              class="lvl"
-              class:on={i <= efforts.indexOf(effort)}
-              role="radio"
-              aria-checked={e === effort}
-              aria-label={effortLabel(e)}
-              style:--h="{5 + Math.round((i * 9) / Math.max(1, efforts.length - 1))}px"
-              on:click={() => (effort = e)}
-            />
-          {/each}
-        </div>
-      {/if}
-      {#if mode === "build" && contextLimit > 0 && (contextUsed > 0 || compacting)}
-        <button
-          class="ctx"
-          class:warn={contextPct >= 70}
-          class:bad={contextPct >= 90}
-          disabled={compacting || streaming}
-          title={compacting ? "Compacting…" : `Context ${contextPct}% full: ${kTokens(contextUsed)} of ${kTokens(contextLimit)} tokens. Click to compact.`}
-          on:click={() => dispatch("command", { name: "compact" })}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-            <circle class="track" cx="8" cy="8" r="6" />
-            <circle class="fill" cx="8" cy="8" r="6" stroke-dasharray={RING} stroke-dashoffset={compacting ? RING * 0.7 : RING * (1 - contextPct / 100)} />
-          </svg>
-        </button>
-      {/if}
-    {/if}
-  </div>
 
   {#if projOpen}
     <div class="menu-pop" style={projStyle} use:popover={{ anchor: projBtn, close: () => (projOpen = false) }} transition:fly={{ y: projStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
@@ -863,15 +863,20 @@
   .bar {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
     min-width: 0;
-    padding: 6px 4px 0;
+    margin-top: 6px;
+    padding: 7px 6px 1px;
+    border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
   }
   .bar :global(.ctl) {
     height: 26px;
     padding: 0 8px;
     color: var(--muted);
     font-size: 12px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+    border: 1px solid transparent;
   }
   .bar :global(.ctl:hover),
   .bar :global(.ctl.open) {
@@ -896,8 +901,9 @@
     align-items: center;
     gap: 2px;
     padding: 2px;
-    border-radius: var(--radius);
-    background: color-mix(in srgb, var(--text) 5%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+    border: 1px solid color-mix(in srgb, var(--text) 6%, transparent);
   }
   .mode {
     display: inline-flex;
@@ -907,7 +913,7 @@
     padding: 0 9px;
     background: transparent;
     border: none;
-    border-radius: calc(var(--radius) - 2px);
+    border-radius: 999px;
     color: var(--faint);
     font-size: 12px;
     cursor: pointer;

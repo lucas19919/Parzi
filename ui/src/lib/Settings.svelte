@@ -55,7 +55,9 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    background: var(--bg);
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    -webkit-backdrop-filter: blur(24px) saturate(1.2);
+    backdrop-filter: blur(24px) saturate(1.2);
   }
   nav {
     display: flex;
@@ -111,7 +113,8 @@
     display: flex;
     flex-direction: column;
     gap: 24px;
-    max-width: 860px;
+    width: 100%;
+    max-width: 980px;
     margin: 0 auto;
     padding: 26px 28px 40px;
     user-select: none;

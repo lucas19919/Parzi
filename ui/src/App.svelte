@@ -761,7 +761,7 @@
 <div class="shell">
   <DefaultArt {bg} blurred={tab.kind === "page"} />
 
-  {#if !hasSession && !settingsOpen && tab.kind !== "page" && tab.kind !== "history" && tab.kind !== "brain"}
+  {#if !bg && !hasSession && !settingsOpen && tab.kind !== "page" && tab.kind !== "history" && tab.kind !== "brain"}
     {@const heroBg = bg
       ? `linear-gradient(to bottom, transparent calc(20% + 80% * (1 - var(--hero-fade, 1))), var(--bg) calc(92% + 8% * (1 - var(--hero-fade, 1)))), url("${bg}") center 32% / cover no-repeat`
       : undefined}
