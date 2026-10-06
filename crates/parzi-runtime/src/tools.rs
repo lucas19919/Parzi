@@ -100,6 +100,9 @@ impl ToolExecutor {
         let mut d = ui_defs();
         d.extend(browser_defs());
         d.extend(brain_defs());
+        d.extend(session_defs());
+        d.extend(lane_defs());
+        d.retain(|t| self.is_allowed(&t.name));
         d
     }
 
@@ -301,6 +304,78 @@ pub fn is_session_tool(name: &str) -> bool {
         name,
         "session.spawn" | "session.send_message" | "session.read_session" | "session.list_sessions"
     )
+}
+
+fn session_defs() -> Vec<ToolDef> {
+    vec![
+        ToolDef {
+            name: "session.spawn".into(),
+            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder, lane, and model unless overridden. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id immediately for background work you check later with session.read_session.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "prompt": {"type": "string"},
+                    "is_subsession": {"type": "boolean"},
+                    "model": {"type": "string"},
+                    "lane": {"type": "string"},
+                    "wait": {"type": "boolean"},
+                },
+                "required": ["prompt"],
+            }),
+        },
+        ToolDef {
+            name: "session.send_message".into(),
+            description: "Send a follow-up message to another session (for example a background subsession) and optionally wait for its reply.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "message": {"type": "string"},
+                    "kind": {"type": "string"},
+                    "wait": {"type": "boolean"},
+                },
+                "required": ["session_id", "message"],
+            }),
+        },
+        ToolDef {
+            name: "session.read_session".into(),
+            description: "Read what another session (for example a background subsession) has produced. tail_events caps how many recent events come back.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "tail_events": {"type": "number"},
+                },
+                "required": ["session_id"],
+            }),
+        },
+        ToolDef {
+            name: "session.list_sessions".into(),
+            description: "List sessions. only_subsessions=true shows only the subsessions of the calling session.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"only_subsessions": {"type": "boolean"}},
+            }),
+        },
+    ]
+}
+
+fn lane_defs() -> Vec<ToolDef> {
+    vec![ToolDef {
+        name: "lane.dispatch".into(),
+        description: "Dispatch a lane worker: like session.spawn but onto a named lane (for example a research lane) instead of inheriting yours.".into(),
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "prompt": {"type": "string"},
+                "lane": {"type": "string"},
+                "wait": {"type": "boolean"},
+            },
+            "required": ["prompt"],
+        }),
+    }]
 }
 
 pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {

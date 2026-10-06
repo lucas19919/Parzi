@@ -132,6 +132,12 @@ const RESEARCH_BRIEF: &str = "Research mode: this turn is a quick question, not 
     knowledge, web search, page reads, and the brain instead. Keep it short unless \
     the question needs depth; publish long answers with ui_show_artifact.";
 
+const TEAMWORK_BRIEF: &str = "Teamwork: you can fan work out with session_spawn \
+    (a background subsession with your tools; wait=false returns its id and you \
+    check it later with session_read_session), nudge one with session_send_message, \
+    or dispatch onto another lane with lane_dispatch. Prefer one background \
+    subsession per independent chunk of work over doing everything inline.";
+
 pub fn system_parts(lane: &str, cwd: &str) -> Vec<String> {
     let mut parts = vec![if lane.is_empty() {
         PARZI_BRIEF.to_string()
@@ -140,6 +146,8 @@ pub fn system_parts(lane: &str, cwd: &str) -> Vec<String> {
     }];
     if lane == "research" {
         parts.push(RESEARCH_BRIEF.to_string());
+    } else {
+        parts.push(TEAMWORK_BRIEF.to_string());
     }
     if let Some(text) = parzi_core::system::global() {
         parts.push(format!("# Global instructions\n\n{text}"));

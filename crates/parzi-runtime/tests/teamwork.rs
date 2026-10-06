@@ -62,7 +62,7 @@ fn id_of(json: &str) -> String {
 }
 
 #[test]
-fn session_tools_recognized_but_not_advertised() {
+fn session_tools_advertised_iff_allowed() {
     for t in [
         "session.spawn",
         "session.send_message",
@@ -72,13 +72,19 @@ fn session_tools_recognized_but_not_advertised() {
         assert!(is_session_tool(t));
     }
     assert!(!is_session_tool("fs.read"));
-    let e = ToolExecutor {
+    let open = ToolExecutor {
         cwd: String::new(),
         mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
         allowed: vec!["*".into()],
     };
-    assert!(e.defs().iter().any(|d| d.name == "browser.open"));
-    assert!(e.defs().iter().all(|d| d.name != "session.spawn"));
+    assert!(open.defs().iter().any(|d| d.name == "browser.open"));
+    assert!(open.defs().iter().any(|d| d.name == "session.spawn"));
+    let shut = ToolExecutor {
+        cwd: String::new(),
+        mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
+        allowed: vec![],
+    };
+    assert!(shut.defs().iter().all(|d| d.name != "session.spawn"));
 }
 
 #[tokio::test]
@@ -155,7 +161,7 @@ async fn spawn_wait_collects_child_reply() {
 }
 
 #[tokio::test]
-async fn a_plain_run_cannot_spawn_a_crew() {
+async fn a_code_run_can_spawn_a_crew() {
     home("teamwork");
     let fake = Fake::new(
         "claude",
@@ -191,9 +197,10 @@ async fn a_plain_run_cannot_spawn_a_crew() {
         .unwrap();
     settle(&store, &meta.id).await;
     let reply = last_reply(&store, &meta.id);
-    assert!(reply.contains("ok=false"), "{reply}");
+    assert!(reply.contains("ok=true"), "{reply}");
+    assert!(reply.contains("child found x"), "{reply}");
     let children = store.list_children(&meta.id).unwrap();
-    assert!(children.is_empty(), "a refused spawn creates no child");
+    assert!(!children.is_empty(), "a spawn creates a child");
 }
 
 #[tokio::test]

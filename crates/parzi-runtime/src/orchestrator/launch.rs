@@ -218,7 +218,7 @@ impl Orchestrator {
         Ok((provider, model))
     }
 
-    fn lane_policy_for(cfg: &ParziConfig) -> (ApprovalMode, Vec<String>) {
+    fn lane_policy_for(cfg: &ParziConfig, lane: &str) -> (ApprovalMode, Vec<String>) {
         let mode = ApprovalMode::parse(&cfg.lanes.default_mode);
         let mut allowed = cfg.lanes.default_allowed_tools.clone();
         for u in [
@@ -236,6 +236,22 @@ impl Orchestrator {
         ] {
             if !allowed.contains(&u.to_string()) {
                 allowed.push(u.into());
+            }
+        }
+        // Subagents are a Code-lane power tool: spawning burns quota and
+        // acts on its own, so the read-only research lane never gets them.
+        // (Spawns still go through the permission mode like any other tool.)
+        if lane != "research" {
+            for u in [
+                "session.spawn",
+                "session.send_message",
+                "session.read_session",
+                "session.list_sessions",
+                "lane.dispatch",
+            ] {
+                if !allowed.contains(&u.to_string()) {
+                    allowed.push(u.into());
+                }
             }
         }
         (mode, allowed)
@@ -333,7 +349,7 @@ impl Orchestrator {
         } else {
             q.cwd.clone()
         };
-        let (mut mode, allowed) = Self::lane_policy_for(&snap);
+        let (mut mode, allowed) = Self::lane_policy_for(&snap, &q.lane);
         let mut edits_auto = false;
         let mut full = false;
         if let Some(o) = q.mode_override.as_deref() {
@@ -452,7 +468,7 @@ mod tests {
     #[test]
     fn lane_policy_offers_the_page_and_not_the_crew() {
         let cfg = ParziConfig::default();
-        let (_mode, allowed) = Orchestrator::lane_policy_for(&cfg);
+        let (_mode, allowed) = Orchestrator::lane_policy_for(&cfg, "research");
         for t in [
             "browser.open",
             "browser.tabs",
@@ -466,6 +482,30 @@ mod tests {
             assert!(allowed.iter().any(|a| a == t), "lane missing {t}");
         }
         assert!(allowed.iter().all(|a| a != "session.spawn"));
+    }
+
+    #[test]
+    fn code_lane_can_orchestrate_and_research_cannot() {
+        let cfg = ParziConfig::default();
+        for lane in ["code", ""] {
+            let (_, allowed) = Orchestrator::lane_policy_for(&cfg, lane);
+            for t in [
+                "session.spawn",
+                "session.send_message",
+                "session.read_session",
+                "session.list_sessions",
+                "lane.dispatch",
+            ] {
+                assert!(allowed.iter().any(|a| a == t), "{lane} lane missing {t}");
+            }
+        }
+        let (_, allowed) = Orchestrator::lane_policy_for(&cfg, "research");
+        for t in ["session.spawn", "session.send_message", "lane.dispatch"] {
+            assert!(
+                allowed.iter().all(|a| a != t),
+                "research lane must not offer {t}"
+            );
+        }
     }
 
     #[test]

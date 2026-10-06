@@ -137,7 +137,7 @@
 
   let closed: { url: string; title: string }[] = [];
 
-  let historyView: "sessions" | "history" | "bookmarks" = "sessions";
+  let historyView: "sessions" | "history" | "bookmarks" | "agents" = "sessions";
 
   function openHistory(view = historyView) {
     historyView = view;
@@ -421,13 +421,17 @@
 
   async function stop() {
     if (!shown || !running.has(shown)) return;
-    const id = shown;
+    await stopSession(shown);
+    clearLive();
+    await reload();
+    void refreshThreads();
+  }
+
+  async function stopSession(id: string) {
     try {
       await api.killRun(id);
       running.delete(id);
       running = running;
-      clearLive();
-      await reload();
       void refreshThreads();
     } catch (e) {
       toastError(e);
@@ -693,6 +697,8 @@
           on:open={(e) => openPageNext(e.detail.url)}
           on:openSession={(e) => openSession(e.detail.id)}
           on:deleteSession={(e) => remove(e.detail.id)}
+          on:stopSession={(e) => stopSession(e.detail.id)}
+          on:refresh={() => void refreshThreads()}
         />
       </div>
     {:else if tab.kind === "page"}
