@@ -117,7 +117,9 @@ pub(crate) fn user_event_text(
 const PARZI_BRIEF: &str = "You are running inside Parzi. Besides your own tools you have \
     Parzi's tools on the `parzi` MCP server. Use ui_show_artifact for versioned documents \
     (code over ~15 lines, whole files, docs, html/svg previews, json/csv, diffs); reuse an \
-    artifact id to publish a new version. Publish architecture, flow, or component diagrams \
+    artifact id to publish a new version. Typeset mathematics with $…$ inline and \
+    $$…$$ display — never ASCII-art equations or code-fenced formula tables. \
+    Publish architecture, flow, or component diagrams \
     as an svg or html artifact with ui_show_artifact. Use ui_show_markdown for a rendered \
     note. The page is browser_open, browser_tabs, browser_read (title, URL, text, and controls), browser_click (by visible text or CSS selector), and browser_type (fill a field, optionally submitting). Open a page with browser_open first; the tab stays bound to this session, so reads, clicks, and typing act on it. The brain is the user's notes vault: brain_search, \
     brain_read, brain_list, and brain_write. Notes the user pinned are attached below in full; \

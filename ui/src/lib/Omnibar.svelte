@@ -709,13 +709,13 @@
     cursor: pointer;
   }
   .go.ready:not(:disabled) {
-    background: var(--accent);
-    color: var(--bg);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    background: color-mix(in srgb, var(--text) 14%, transparent);
+    color: var(--text);
+    box-shadow: none;
   }
   .go.ready:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent) 80%, #fff);
-    transform: translateY(-1px);
+    background: color-mix(in srgb, var(--text) 22%, transparent);
+    transform: none;
   }
   .go:active:not(:disabled) {
     transform: scale(0.94);

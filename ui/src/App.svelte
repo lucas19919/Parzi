@@ -421,10 +421,13 @@
 
   async function stop() {
     if (!shown || !running.has(shown)) return;
-    await stopSession(shown);
+    const id = shown;
+    running.delete(id);
+    running = running;
     clearLive();
     await reload();
     void refreshThreads();
+    await stopSession(id);
   }
 
   async function stopSession(id: string) {
@@ -672,6 +675,7 @@
   <TopBar
     {tabs}
     activeTabId={activeId}
+    agentCount={running.size}
     on:select={(e) => selectTab(e.detail.id)}
     on:close={(e) => closeTab(e.detail.id)}
     on:move={(e) => moveTab(e.detail.id, e.detail.to)}
@@ -682,6 +686,7 @@
     on:update={() => openSettings("system")}
     on:brain={openBrain}
     on:history={() => openHistory()}
+    on:agents={() => openHistory("agents")}
     on:setup={() => (setupOpen = true)}
   />
   {/if}
