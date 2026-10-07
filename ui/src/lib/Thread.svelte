@@ -117,6 +117,18 @@
         return "Writing the plan";
       case "plan.read":
         return "Reading the plan";
+      case "session.spawn":
+        return `Delegating: ${arg(args, "title") || "a subsession"}`;
+      case "session.send":
+      case "session.send_message":
+        return `Messaging ${arg(args, "title", "session", "session_id") || "a subsession"}`;
+      case "session.read":
+      case "session.read_session":
+        return `Checking on ${arg(args, "title", "session", "session_id") || "a subsession"}`;
+      case "session.list":
+        return "Listing subsessions";
+      case "lane.dispatch":
+        return `Dispatching ${arg(args, "lane") || "a lane"}`;
       case "project.create":
         return `Creating ${arg(args, "title") || "a project"}`;
       case "shell.exec":
@@ -182,9 +194,23 @@ ${e.text}` : e.text;
       else if (e.kind === "error") out.push({ key, kind: "error", class: e.class, message: e.message });
       else if (e.kind === "widget") out.push({ key, kind: "widget", fence: e.fence, payload: e.payload });
       else if (e.kind === "artifact") out.push({ key, ...e });
-      else out.push({ key, kind: e.kind, text: e.text });
+      else if (e.kind === "assistant" && echoLine(e.text)) {
+        pushSys(key, out, echoLine(e.text));
+      } else if (e.kind === "system") {
+        pushSys(key, out, e.text);
+      } else out.push({ key, kind: e.kind, text: e.text });
     });
     return out;
+  }
+
+  // Consecutive routine lines join into one whisper instead of a stack.
+  function pushSys(key: string, out: Item[], text: string) {
+    const prev = out[out.length - 1];
+    if (prev?.kind === "system" && sysTone(prev.text) === "line" && sysTone(text) === "line") {
+      prev.text = `${prev.text} · ${text.trim()}`;
+      return;
+    }
+    out.push({ key, kind: "system", text });
   }
 
   function attachedImages(text: string): string[] {
@@ -203,6 +229,17 @@ ${e.text}` : e.text;
 
   function stripMarker(text: string): string {
     return text.replace(/\n?\[attached: [^\]]+\]/, "").trimEnd();
+  }
+
+  // Agent narration that only echoes tool I/O (a pseudo-call or a result
+  // JSON pasted into chat) carries no information — whisper one line.
+  function echoLine(text: string): string {
+    const t = text.trim();
+    if (/^[\w.]+\(\s*['"`{]/.test(t) || (t.length < 500 && /"(session_id|response)"\s*:/.test(t))) {
+      const line = t.split("\n")[0].trim();
+      return line.length > 140 ? `${line.slice(0, 140)}…` : line;
+    }
+    return "";
   }
 
   function imageUrl(name: string): Promise<string | null> {

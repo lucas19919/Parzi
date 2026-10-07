@@ -1033,7 +1033,7 @@ impl ToolHost {
         };
         match std::fs::read_to_string(&path) {
             Ok(text) if !text.trim().is_empty() => (true, text),
-            _ => (true, "no plan written yet — write one with plan.write before building".into()),
+            _ => (true, "no plan on file — for a single fix just build it; write a plan only if the work spans sessions or parallel lanes".into()),
         }
     }
 
@@ -1061,7 +1061,7 @@ impl ToolHost {
                 ),
             },
         );
-        (true, format!("plan saved ({steps} steps, {decisions} decisions) — build it, updating step statuses as you go"))
+        (true, format!("plan saved ({steps} steps, {decisions} decisions) — own it end to end and verify before reporting done"))
     }
 
     async fn execute_project(&self, args: &Value) -> (bool, String) {

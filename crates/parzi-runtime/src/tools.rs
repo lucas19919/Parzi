@@ -559,7 +559,7 @@ fn session_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "session.spawn".into(),
-            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder, lane, and model unless overridden. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id immediately for background work you check later with session.read_session.".into(),
+            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder, lane, and model unless overridden. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id immediately for background work you check later with session.read_session. For independent chunks prefer wait=false so they run in parallel, then collect each with session.read_session. Brief the outcome — what must become true and how to verify — never a list of edits.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {

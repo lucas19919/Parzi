@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
@@ -24,6 +25,31 @@
     return `${Math.round(ms)}ms`;
   }
 
+  // Heartbeat for live work: ticking elapsed so a hung call is obvious.
+  let elapsed = 0;
+  let timer: number | null = null;
+  $: live = !!status;
+  $: {
+    if (live && timer === null) {
+      const t0 = Date.now();
+      elapsed = 0;
+      timer = window.setInterval(() => {
+        elapsed = Date.now() - t0;
+      }, 1000);
+    } else if (!live && timer !== null) {
+      window.clearInterval(timer);
+      timer = null;
+      elapsed = 0;
+    }
+  }
+  onDestroy(() => {
+    if (timer !== null) window.clearInterval(timer);
+  });
+  function clock(ms: number): string {
+    const s = Math.floor(ms / 1000);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+
   function describe(reasoning: string, tools: Step[], total: number) {
     if (!reasoning && tools.length === 1) return tools[0].label.trim() || "Working";
     const parts: string[] = [];
@@ -42,7 +68,7 @@
 
 <div class="steps">
   <button class="head" class:live={!!status} disabled={!expandable} aria-expanded={open} on:click={() => (open = !open)}>
-    <span class="text">{status || summary}</span>
+    <span class="text">{status || summary}{#if live && elapsed >= 10_000} · {clock(elapsed)}{#if elapsed >= 120_000} · still going — Esc stops it{/if}{/if}</span>
     {#if failed && !status}<span class="failed">{failed} failed</span>{/if}
     {#if expandable}<span class="chev" class:open><Icon name="chevDown" size={12} /></span>{/if}
   </button>
