@@ -28,6 +28,7 @@
   export let contextUsed = 0;
   export let contextLimit = 0;
   export let compacting = false;
+  export let hasSession = false;
   export let hero = false;
   export let project: { slug: string; title: string; tokens: number } | null = null;
   export let lockMode: ComposerMode | null = null;
@@ -517,7 +518,6 @@
         <button bind:this={permBtn} class="ctl icon-only" class:open={permOpen} title={perm.title + " — " + perm.desc} on:click|stopPropagation={togglePerm}>
           <Icon name={perm.icon} size={12} />
         </button>
-        {#if folder || project}
           <button
             bind:this={projBtn}
             class="ctl project"
@@ -532,7 +532,6 @@
             {#if branch}<span class="dim">{branch}</span>{/if}
             {#if !folderLocked}<Icon name="chevDown" size={10} stroke={2} />{/if}
           </button>
-        {/if}
       {/if}
 
       <span class="spacer" />
@@ -549,7 +548,7 @@
           <span class="truncate">{effortLabel(effort)}</span>
           <Icon name="chevDown" size={10} stroke={2} />
         </button>
-        {#if (mode === "build" || mode === "work") && contextLimit > 0}
+        {#if (mode === "build" || mode === "work") && (contextLimit > 0 || !hasSession)}
           <button
             bind:this={ctxBtn}
             class="ctx"
@@ -557,7 +556,7 @@
             class:bad={contextPct >= 90}
             class:busy={compacting}
             disabled={compacting || streaming}
-            title={compacting ? "Compacting…" : `Context ${contextPct}% full. Click for breakdown.`}
+            title={compacting ? "Compacting…" : contextLimit > 0 ? `Context ${contextPct}% full. Click for breakdown.` : "Context appears once the session starts."}
             on:click|stopPropagation={toggleCtx}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">

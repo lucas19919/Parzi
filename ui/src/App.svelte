@@ -965,6 +965,7 @@
           tokensOut={meta?.tokens_out ?? 0}
           costUsd={meta?.cost_usd ?? 0}
           {compacting}
+          {hasSession}
           hero={!hasSession}
           {project}
           on:send={send}
