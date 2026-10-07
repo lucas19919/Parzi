@@ -496,7 +496,15 @@
             title={locked ? `${MODE_META[m].label} (unavailable here)` : `${MODE_META[m].label} (Ctrl+${i + 1}, Tab cycles)`}
             disabled={locked}
             on:click={() => {
-              if (!locked) mode = m;
+              if (locked) return;
+              mode = m;
+              if (m === "build") {
+                model = "auto";
+                effort = "medium";
+              } else if (m === "work") {
+                model = "auto";
+                effort = "low";
+              }
             }}
           >
             <Icon name={MODE_META[m].icon} size={13} />
@@ -547,6 +555,7 @@
             class="ctx"
             class:warn={contextPct >= 70}
             class:bad={contextPct >= 90}
+            class:busy={compacting}
             disabled={compacting || streaming}
             title={compacting ? "Compacting…" : `Context ${contextPct}% full. Click for breakdown.`}
             on:click|stopPropagation={toggleCtx}
@@ -1027,6 +1036,15 @@
   }
   .ctx:disabled {
     cursor: default;
+    opacity: 0.55;
+  }
+  .ctx.busy svg {
+    animation: ctxspin 1.2s linear infinite;
+  }
+  @keyframes ctxspin {
+    to {
+      transform: rotate(270deg);
+    }
   }
   .ctx.warn {
     --ctx: var(--warn);

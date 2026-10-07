@@ -569,12 +569,24 @@
       return;
     }
     compacting = true;
+    let timer = 0;
     try {
-      await api.compactThread(shown);
-      await reload();
+      await Promise.race([
+        (async () => {
+          await api.compactThread(shown);
+          await reload();
+        })(),
+        new Promise<never>((_, reject) => {
+          timer = window.setTimeout(
+            () => reject(new Error("Compact timed out — the summarizer is taking too long. You can try again.")),
+            300_000,
+          );
+        }),
+      ]);
     } catch (e) {
       toastError(e);
     } finally {
+      clearTimeout(timer);
       compacting = false;
     }
   }
