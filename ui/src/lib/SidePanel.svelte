@@ -191,10 +191,16 @@
   let sessionPlan: SessionPlan | null = null;
   let planFor = "";
 
+  function stripFront(src: string): string {
+    return src.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, "");
+  }
+
+  let showDecisions = false;
+
   function parseTasks(src: string): TaskSection[] {
     const sections: TaskSection[] = [];
     let current: TaskSection = { title: "", items: [] };
-    for (const line of src.split("\n")) {
+    for (const line of stripFront(src).split("\n")) {
       const head = /^#{1,3}\s+(.*)\s*$/.exec(line);
       if (head) {
         if (current.items.length || current.title) sections.push(current);
@@ -396,56 +402,57 @@
         <p class="empty">No GOALS.md yet. Ask the agent to draft the goal and break it into tasks.</p>
       {:else}
         {#if sessionPlan}
-          <div class="proj-head">
-            <span class="proj-name">{sessionPlan.goal || "Session plan"}</span>
-            {#if sessionPlan.steps.length}<span class="proj-prog">{planDone}/{sessionPlan.steps.length} done</span>{/if}
-          </div>
-          {#if sessionPlan.steps.length}
-            <div class="proj-bar"><i style:width="{Math.round((planDone / Math.max(1, sessionPlan.steps.length)) * 100)}%" /></div>
-          {/if}
-          {#each sessionPlan.steps as st (st.title)}
-            <div class="trow">
-              <span class="box" class:doing={st.status === "doing"} class:done={st.status === "done"}>{#if st.status === "done"}x{/if}</span>
-              <span class="ttext" class:done={st.status === "done"}>{st.title}</span>
-              {#if st.status === "doing"}<span class="pill live">doing</span>{/if}
-            </div>
-          {/each}
-          {#if sessionPlan.decisions.length}
-            <h3>Decisions</h3>
-            {#each sessionPlan.decisions as d (d.decision)}
-              <div class="dec"><b>{d.decision}</b>{#if d.why}<span> — {d.why}</span>{/if}</div>
-            {/each}
-          {/if}
-        {/if}
-        {#if projectSlug}
-          <div class="proj-head">
-            <span class="proj-name">{projectSlug}</span>
-            {#if taskTotal}<span class="proj-prog">{taskDone}/{taskTotal} done</span>{/if}
-            <span class="spacer" />
-            <button class="mini" title="Reload GOALS.md and TASKS.md" on:click={refreshProject}>Reload</button>
-          </div>
-          {#if taskTotal}
-            <div class="proj-bar"><i style:width="{Math.round((taskDone / Math.max(1, taskTotal)) * 100)}%" /></div>
-          {/if}
-          {#if goalsMd}
-            <h3>Goals</h3>
-            <div class="goals">{@html renderMarkdown(goalsMd)}</div>
-          {/if}
-          {#if taskSections.length}
-            <h3>Tasks</h3>
-            {#each taskSections as sec (sec.title || "top")}
-              {#if sec.title}<h4>{sec.title}</h4>{/if}
-            {#each sec.items as item (item.text)}
-              <div class="trow" style:padding-left="{8 + item.depth * 14}px">
-                <span class="box" class:done={item.done}>{#if item.done}x{/if}</span>
-                <span class="ttext" class:done={item.done}>{item.text}</span>
-                {#if !item.done}
-                  <button class="assign" title="Assign an agent to this track" on:click={() => assignTrack(sec.title, item.text)}>Assign</button>
-                {/if}
+          <section class="card" aria-label="Session plan">
+            <div class="eyebrow">This session</div>
+            <div class="card-title">{sessionPlan.goal || "Session plan"}</div>
+            {#if sessionPlan.steps.length}
+              <div class="proj-bar"><i style:width="{Math.round((planDone / Math.max(1, sessionPlan.steps.length)) * 100)}%" /></div>
+              <div class="prog">{planDone}/{sessionPlan.steps.length} steps done</div>
+            {/if}
+            {#each sessionPlan.steps as st (st.title)}
+              <div class="trow">
+                <span class="box" class:doing={st.status === "doing"} class:done={st.status === "done"}>{#if st.status === "done"}x{/if}</span>
+                <span class="ttext" class:done={st.status === "done"}>{st.title}</span>
+                {#if st.status === "doing"}<span class="pill live">doing</span>{/if}
               </div>
             {/each}
+            {#if sessionPlan.decisions.length}
+              <button class="disclosure" aria-expanded={showDecisions} on:click={() => (showDecisions = !showDecisions)}>
+                <span class="tri" class:open={showDecisions}>▸</span>
+                <span>{sessionPlan.decisions.length} decision{sessionPlan.decisions.length === 1 ? "" : "s"}</span>
+              </button>
+              {#if showDecisions}
+                {#each sessionPlan.decisions as d (d.decision)}
+                  <div class="dec"><b>{d.decision}</b>{#if d.why}<span> — {d.why}</span>{/if}</div>
+                {/each}
+              {/if}
+            {/if}
+          </section>
+        {/if}
+        {#if projectSlug}
+          <section class="card" aria-label="Project plan">
+            <div class="eyebrow">Project · {projectSlug}</div>
+            {#if taskTotal}
+              <div class="proj-bar"><i style:width="{Math.round((taskDone / Math.max(1, taskTotal)) * 100)}%" /></div>
+              <div class="prog">{taskDone}/{taskTotal} tracks done</div>
+            {/if}
+            {#if goalsMd}
+              <div class="goals">{@html renderMarkdown(stripFront(goalsMd))}</div>
+            {/if}
+            {#each taskSections as sec (sec.title || "top")}
+              {#if sec.title}<h4>{sec.title}</h4>{/if}
+              {#each sec.items as item (item.text)}
+                <div class="trow" style:padding-left="{8 + item.depth * 14}px">
+                  <span class="box" class:done={item.done}>{#if item.done}x{/if}</span>
+                  <span class="ttext" class:done={item.done}>{item.text}</span>
+                  {#if !item.done}
+                    <button class="assign" title="Assign an agent to this track" on:click={() => assignTrack(sec.title, item.text)}>Assign</button>
+                  {/if}
+                </div>
+              {/each}
             {/each}
-          {/if}
+            <button class="mini" title="Reload GOALS.md and TASKS.md" on:click={refreshProject}>Reload files</button>
+          </section>
         {/if}
       {/if}
     </div>
@@ -590,7 +597,38 @@
     cursor: pointer;
   }
   .stop:hover { border-color: var(--bad); color: var(--bad); }
-  .proj { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 16px; }
+  .proj { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 10px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .card {
+    background: color-mix(in srgb, var(--panel) 60%, transparent);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    padding: 10px 12px 12px;
+  }
+  .eyebrow {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 6px;
+  }
+  .card-title { font-weight: 650; font-size: 13.5px; color: var(--text); margin-bottom: 8px; }
+  .prog { font-size: 11px; color: var(--faint); margin: 4px 2px 2px; font-variant-numeric: tabular-nums; }
+  .disclosure {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 2px 0;
+    background: none;
+    border: none;
+    color: var(--faint);
+    font-size: 11.5px;
+    cursor: pointer;
+  }
+  .disclosure:hover { color: var(--text); }
+  .tri { display: inline-block; font-size: 10px; transition: transform 140ms ease; }
+  .tri.open { transform: rotate(90deg); }
   .proj-head {
     display: flex;
     align-items: baseline;
