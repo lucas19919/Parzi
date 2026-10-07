@@ -146,12 +146,12 @@ interface SendArgs {
   lane: string;
 }
 
-export type ComposerMode = "search" | "build" | "research";
+export type ComposerMode = "search" | "build" | "work";
 
 export const MODE_META: Record<ComposerMode, { label: string; icon: "globe" | "bot" | "brain"; tint: string; hint: string }> = {
   search: { label: "Search", icon: "globe", tint: "#6aa8ff", hint: "Search or enter an address" },
   build: { label: "Build", icon: "bot", tint: "#4e8f5c", hint: "Ask anything" },
-  research: { label: "Research", icon: "brain", tint: "#e8b64c", hint: "Ask a quick question" },
+  work: { label: "Work", icon: "brain", tint: "#e8b64c", hint: "Ask a quick question" },
 };
 
 export const api = {

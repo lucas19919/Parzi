@@ -149,17 +149,36 @@ pub(crate) async fn delete_with_runs(
     }
     for sid in &doomed {
         let _ = orch.kill(sid).await;
+        orch.drop_shells(sid);
     }
     orch.store().delete_thread(&id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn purge_sessions(state: State<'_, AppState>) -> Result<usize, String> {
-    state
+    let gone: Vec<String> = state
+        .orch
+        .store()
+        .list()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|m| {
+            matches!(
+                m.status,
+                parzi_core::store::SessionStatus::Done | parzi_core::store::SessionStatus::Killed
+            )
+        })
+        .map(|m| m.id)
+        .collect();
+    let n = state
         .orch
         .store()
         .purge_finished()
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    for sid in &gone {
+        state.orch.drop_shells(sid);
+    }
+    Ok(n)
 }
 
 #[tauri::command]

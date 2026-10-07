@@ -249,7 +249,7 @@ impl Orchestrator {
                 allowed.push(u.into());
             }
         }
-        // Research staffs its own read/write workers (a paper is a project);
+        // Work staffs its own read/write workers (a paper is a project);
         // only shell execution and cross-lane dispatch stay Build-only.
         // (Spawns still go through the permission mode like any other tool.)
         for u in [
@@ -263,7 +263,7 @@ impl Orchestrator {
                 allowed.push(u.into());
             }
         }
-        if lane != "research" {
+        if lane != "work" {
             if !allowed.contains(&"lane.dispatch".to_string()) {
                 allowed.push("lane.dispatch".into());
             }
@@ -345,7 +345,7 @@ impl Orchestrator {
         let spec_auto =
             q.model_spec.trim().is_empty() || q.model_spec == "auto" || q.model_spec.starts_with("auto/");
         let mut model = model;
-        if q.lane == "research" && spec_auto && model.is_none() {
+        if q.lane == "work" && spec_auto && model.is_none() {
             model = Some(snap.quick_model.clone()).filter(|m| !m.trim().is_empty());
         }
         let provider = (p.source)(&provider_id, &snap).ok_or_else(|| {
@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn lane_policy_offers_the_page_and_not_the_crew() {
         let cfg = ParziConfig::default();
-        let (_mode, allowed) = Orchestrator::lane_policy_for(&cfg, "research");
+        let (_mode, allowed) = Orchestrator::lane_policy_for(&cfg, "work");
         for t in [
             "browser.open",
             "browser.tabs",
@@ -526,11 +526,11 @@ mod tests {
                 assert!(allowed.iter().any(|a| a == t), "{lane} lane missing {t}");
             }
         }
-        let (_, allowed) = Orchestrator::lane_policy_for(&cfg, "research");
+        let (_, allowed) = Orchestrator::lane_policy_for(&cfg, "work");
         for t in ["session.spawn", "session.send_message", "project.create"] {
             assert!(
                 allowed.iter().any(|a| a == t),
-                "research lane missing {t}"
+                "work lane missing {t}"
             );
         }
         assert!(
@@ -540,17 +540,17 @@ mod tests {
     }
 
     #[test]
-    fn research_lane_is_stripped_of_shell() {
+    fn work_lane_is_stripped_of_shell() {
         let cfg = ParziConfig::default();
         let (_, build) = Orchestrator::lane_policy_for(&cfg, "build");
         for t in ["shell.exec", "shell.start", "shell.logs", "shell.kill"] {
             assert!(build.iter().any(|a| a == t), "build lane missing {t}");
         }
-        let (_, research) = Orchestrator::lane_policy_for(&cfg, "research");
+        let (_, research) = Orchestrator::lane_policy_for(&cfg, "work");
         for t in ["shell.exec", "shell.start", "shell.logs", "shell.kill"] {
             assert!(
                 research.iter().all(|a| a != t),
-                "research lane must not offer {t}"
+                "work lane must not offer {t}"
             );
         }
     }

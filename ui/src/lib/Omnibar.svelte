@@ -53,12 +53,12 @@
     { id: "full", title: "Full access", desc: "Run commands and edits without asking.", icon: "unlock" },
   ];
 
-  const MODES: ComposerMode[] = ["search", "build", "research"];
+  const MODES: ComposerMode[] = ["search", "build", "work"];
 
   const SLASH = [
     { name: "search", hint: "search mode" },
     { name: "build", hint: "build mode" },
-    { name: "research", hint: "research mode" },
+    { name: "work", hint: "work mode" },
     { name: "new", hint: "new session" },
     { name: "fork", hint: "branch this session" },
     { name: "compact", hint: "summarize to free context" },
@@ -541,7 +541,7 @@
           <span class="truncate">{effortLabel(effort)}</span>
           <Icon name="chevDown" size={10} stroke={2} />
         </button>
-        {#if (mode === "build" || mode === "research") && contextLimit > 0 && (contextUsed > 0 || compacting)}
+        {#if (mode === "build" || mode === "work") && contextLimit > 0 && (contextUsed > 0 || compacting)}
           <button
             bind:this={ctxBtn}
             class="ctx"

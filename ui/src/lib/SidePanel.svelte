@@ -62,8 +62,8 @@
 
   function laneFallback(s: SessionMeta): "brain" | "bot" | "chat" {
     const l = s.lane ?? "";
-    const lane = l === "code" ? "build" : l;
-    return lane === "research" ? "brain" : lane === "build" ? "bot" : "chat";
+    const lane = l === "code" ? "build" : l === "research" ? "work" : l;
+    return lane === "work" ? "brain" : lane === "build" ? "bot" : "chat";
   }
 
   function isLive(s: SessionMeta) {

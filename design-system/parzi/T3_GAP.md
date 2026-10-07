@@ -28,7 +28,7 @@ Nothing here is a commitment — the commitment lives in IMPLEMENT.md.
   inside chat. We render artifacts beautifully but cannot *make*
   images. → IMPLEMENT.md.
 - **Web search for any model** — T3 pairs any model with search +
-  citations. Our Research lane does this via agents; plain Code turns
+  citations. Our Work lane does this via agents; plain Build turns
   still have no data-returning search (browser.open navigates, it does
   not return results). → IMPLEMENT.md.
 - **File / image uploads** — have it (up to 8 attachments, images

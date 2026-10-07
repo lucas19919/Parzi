@@ -32,11 +32,13 @@
   function laneOf(t: Tab): string {
     if (t.kind !== "session" || !t.sessionId) return "";
     const l = sessionLanes[t.sessionId] ?? "";
-    return l === "code" ? "build" : l;
+    if (l === "code") return "build";
+    if (l === "research") return "work";
+    return l;
   }
 
   function laneIcon(lane: string): "brain" | "bot" | "chat" {
-    return lane === "research" ? "brain" : lane === "build" ? "bot" : "chat";
+    return lane === "work" ? "brain" : lane === "build" ? "bot" : "chat";
   }
 
   // Page tabs opened by an agent attach under their session tab instead

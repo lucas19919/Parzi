@@ -229,7 +229,7 @@ fn research_host(folder: &Path, person: Arc<Person>) -> ToolHost {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     ToolHost::new(ToolHostParts {
         session_id: sid.clone(),
-        lane: "research".into(),
+        lane: "work".into(),
         mode: ApprovalMode::Ask,
         edits_auto: false,
         full: false,
@@ -260,14 +260,14 @@ async fn research_lane_answers_without_cards_and_staffs_workers() {
         assert_eq!(
             ask(&host, tool, &["src/a.rs"]).await,
             PermissionDecision::Allow,
-            "{tool} writes notes and docs on the research lane"
+            "{tool} writes notes and docs on the work lane"
         );
     }
     for tool in ["session.spawn", "session.read_session", "project.create"] {
         assert_eq!(
             ask(&host, tool, &[]).await,
             PermissionDecision::Allow,
-            "{tool} staffs and homes research work"
+            "{tool} staffs and homes work"
         );
     }
     for tool in ["Bash", "Task"] {
@@ -276,7 +276,7 @@ async fn research_lane_answers_without_cards_and_staffs_workers() {
                 ask(&host, tool, &["src/a.rs"]).await,
                 PermissionDecision::Deny(_)
             ),
-            "{tool} must be refused silently on the research lane"
+            "{tool} must be refused silently on the work lane"
         );
     }
     assert_eq!(
@@ -285,13 +285,13 @@ async fn research_lane_answers_without_cards_and_staffs_workers() {
     );
     assert!(
         person.seen.lock().unwrap().is_empty(),
-        "research never shows an approval card"
+        "work never shows an approval card"
     );
 
     let (ok, _) = host
         .call("brain.write", &serde_json::json!({"path": "x", "content": "y"}))
         .await;
-    assert!(ok, "research may write notes, just never run or spawn");
+    assert!(ok, "work may write notes, just never run shell");
     assert!(
         person.seen.lock().unwrap().is_empty(),
         "still no card after an allowed write"

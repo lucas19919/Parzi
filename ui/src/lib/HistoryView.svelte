@@ -46,12 +46,14 @@
 
   function laneOf(s: SessionMeta): string {
     const l = s.lane ?? "";
-    return l === "code" ? "build" : l;
+    if (l === "code") return "build";
+    if (l === "research") return "work";
+    return l;
   }
 
   function laneIcon(s: SessionMeta): "brain" | "bot" | "chat" {
     const l = laneOf(s);
-    return l === "research" ? "brain" : l === "build" ? "bot" : "chat";
+    return l === "work" ? "brain" : l === "build" ? "bot" : "chat";
   }
 
   function whereOf(s: SessionMeta) {

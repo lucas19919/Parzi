@@ -148,7 +148,7 @@ async fn research_offers_no_shell() {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let host = ToolHost::new(ToolHostParts {
         session_id: sid.clone(),
-        lane: "research".into(),
+        lane: "work".into(),
         mode: ApprovalMode::Ask,
         edits_auto: false,
         full: false,
@@ -167,7 +167,7 @@ async fn research_offers_no_shell() {
         cancel: CancellationToken::new(),
     });
     let (ok, _) = host.call("shell.exec", &json!({"cmd": "echo hi"})).await;
-    assert!(!ok, "research must not run commands");
+    assert!(!ok, "work must not run commands");
     let d = host
         .decide(PermissionRequest {
             id: "req-1".into(),
@@ -179,6 +179,6 @@ async fn research_offers_no_shell() {
         .await;
     assert!(
         matches!(d, PermissionDecision::Deny(_)),
-        "research denies vendor shell too"
+        "work denies vendor shell too"
     );
 }

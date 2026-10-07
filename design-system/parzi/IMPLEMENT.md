@@ -7,7 +7,7 @@ search API (browser navigation covers it crudely today), message edit.
 ## 1. Image generation — SHIPPED (Pollinations default)
 
 - `image.generate {prompt, size?}` on Build (approval-gated) and
-  Research (auto). Endpoint template in config (`image.endpoint`,
+  Work (auto). Endpoint template in config (`image.endpoint`,
   `{prompt} {width} {height} {model}`), default Pollinations flux.
 - Saves under `generated/`, publishes a kind-`image` artifact rendered
   inline. Still open: keyed provider endpoint + Settings UI for it.

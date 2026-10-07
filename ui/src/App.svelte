@@ -71,11 +71,11 @@
   let attachments: string[] = [];
   let sending = false;
 
-  const modeDefaults = { search: { model: "auto", effort: "medium" }, build: { model: "auto", effort: "medium" }, research: { model: "auto", effort: "low" } };
+  const modeDefaults = { search: { model: "auto", effort: "medium" }, build: { model: "auto", effort: "medium" }, work: { model: "auto", effort: "low" } };
   let modeKept: Record<ComposerMode, { model: string; effort: string }> = {
     search: { ...modeDefaults.search },
     build: { ...modeDefaults.build },
-    research: { ...modeDefaults.research },
+    work: { ...modeDefaults.work },
   };
   let prevMode: ComposerMode = mode;
 
@@ -84,9 +84,12 @@
     return threads.find((t) => t.id === sessionId)?.lane ?? "";
   }
 
-  // Legacy sessions stored lane "code"; that is today's "build".
+  // Legacy sessions stored lane "code" (today's "build") or "research"
+  // (today's "work").
   function normLane(lane: string): string {
-    return lane === "code" ? "build" : lane;
+    if (lane === "code") return "build";
+    if (lane === "research") return "work";
+    return lane;
   }
 
   function isDescendant(id: string, ancestor: string): boolean {
@@ -140,7 +143,7 @@
   $: lockMode = (() => {
     if (!hasSession) return null;
     const l = normLane(meta?.lane ?? "");
-    return l === "build" || l === "research" ? (l as ComposerMode) : null;
+    return l === "build" || l === "work" ? (l as ComposerMode) : null;
   })();
   $: sessionLanes = Object.fromEntries(threads.map((t) => [t.id, t.lane ?? ""]));
   $: void loadBranch(folder);

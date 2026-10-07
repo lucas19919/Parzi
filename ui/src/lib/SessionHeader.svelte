@@ -78,8 +78,9 @@
     {#if branch}
       <span class="branch"><Icon name="branch" size={11} />{branch}</span>
     {/if}
-    {#if lane === "research" || lane === "build" || lane === "code"}
-      <span class="lane" class:research={lane === "research"}>{lane === "research" ? "Research" : "Build"}</span>
+    {#if lane === "work" || lane === "research" || lane === "build" || lane === "code"}
+      {@const work = lane === "work" || lane === "research"}
+      <span class="lane" class:research={work}>{work ? "Work" : "Build"}</span>
     {/if}
   </div>
   {#if canAct}

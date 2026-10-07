@@ -183,14 +183,15 @@ impl ShellRegistry {
                     }
                     Ok(n) => {
                         use std::io::Write as _;
-                        if spilled < SPILL_CAP {
-                            let room = (SPILL_CAP - spilled).min(n as u64) as usize;
+                        let room = usize::try_from(
+                            (SPILL_CAP - spilled).min(u64::try_from(n).unwrap_or(u64::MAX)),
+                        )
+                        .unwrap_or(usize::MAX);
                             if let Some(f) = spill.as_mut() {
                                 if f.write_all(&buf[..room]).is_ok() {
                                     spilled += room as u64;
                                 }
                             }
-                        }
                         ring.extend_from_slice(&buf[..n]);
                         if ring.len() > RING_KEEP {
                             let cut = ring.len() - RING_KEEP;
@@ -200,7 +201,7 @@ impl ShellRegistry {
                     }
                     Err(_) => continue,
                 },
-                _ = tokio::time::sleep(timeout) => {
+                () = tokio::time::sleep(timeout) => {
                     timed_out = true;
                     if let Some(pid) = pid {
                         process::kill_tree(pid);
@@ -335,8 +336,10 @@ impl ShellRegistry {
             let start = offset.min(sh.total);
             let buf_start = sh.total.saturating_sub(sh.buf.len() as u64);
             let from = start.max(buf_start);
-            let mut text =
-                String::from_utf8_lossy(&sh.buf[(from - buf_start) as usize..]).into_owned();
+            let mut text = {
+                let at = usize::try_from(from - buf_start).unwrap_or(usize::MAX);
+                String::from_utf8_lossy(&sh.buf[at.min(sh.buf.len())..]).into_owned()
+            };
             if text.len() > tail {
                 let cut = text.len() - tail;
                 text.drain(..cut);
@@ -366,6 +369,27 @@ impl ShellRegistry {
             true
         })
         .unwrap_or(false)
+    }
+
+    /// Kill every live shell in this registry. Used when the owning
+    /// session is deleted or purged so nothing outlives it.
+    pub fn kill_all(&self) {
+        let Ok(mut reg) = self.inner.lock() else {
+            return;
+        };
+        for sh in reg.shells.values_mut() {
+            if sh.exit.is_some() {
+                continue;
+            }
+            if let Some(child) = sh.child.as_mut() {
+                if let Some(pid) = child.id() {
+                    process::kill_tree(pid);
+                }
+                let _ = child.start_kill();
+            }
+            sh.exit = Some(-1);
+            sh.killed = true;
+        }
     }
 
     pub fn describe(&self, id: &str) -> Option<(String, bool, Option<i32>)> {
@@ -474,7 +498,7 @@ async fn pump(
                     continue;
                 }
             },
-            _ = tokio::time::sleep(Duration::from_millis(500)) => {
+            () = tokio::time::sleep(Duration::from_millis(500)) => {
                 // Wake periodically to re-check exit even when silent.
                 let done: Option<i32> = inner
                     .lock()

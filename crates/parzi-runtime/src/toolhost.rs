@@ -343,10 +343,10 @@ impl ToolHost {
         }
     }
 
-    /// Parzi-native tools a research turn may use without asking. Writes,
-    /// shell, sessions, and lane tools are absent on purpose: research is
-    /// read-only, so those deny silently instead of showing a card.
-    fn research_allows(name: &str) -> bool {
+    /// Parzi-native tools a work turn may use without asking. Shell is
+    /// absent on purpose: work never runs commands, so those deny
+    /// silently instead of showing a card.
+    fn work_allows(name: &str) -> bool {
         matches!(
             name,
             "browser.open"
@@ -539,12 +539,12 @@ impl ToolHost {
                 Some(ApprovalMode::Deny)
             );
         }
-        if self.p.lane == "research" {
+        if self.p.lane == "work" {
             return match self.p.tools.approval_override(name) {
                 Some(ApprovalMode::Deny) => false,
                 Some(ApprovalMode::Auto) => true,
                 Some(ApprovalMode::Ask) => self.ask(id, name, args).await,
-                None if Self::research_allows(name) => true,
+                None if Self::work_allows(name) => true,
                 None => false,
             };
         }
@@ -606,7 +606,7 @@ impl ToolHost {
         }
         // The harness owns the shell: vendor-native shell tools are refused
         // wherever shell.* is offered, with the reroute named so the model
-        // switches first try. (Research offers no shell.*, so the lane's
+        // switches first try. (Work offers no shell.*, so the lane's
         // normal deny below still applies there.)
         const VENDOR_SHELL: &[&str] = &[
             "Bash",
@@ -643,9 +643,9 @@ impl ToolHost {
         if self.p.full {
             return PermissionDecision::Allow;
         }
-        if self.p.lane == "research" {
+        if self.p.lane == "work" {
             const READ_ONLY: &str =
-                "research cannot run shell commands — say what needs running instead";
+                "work cannot run shell commands — say what needs running instead";
             if matches!(
                 req.tool.as_str(),
                 "session.spawn"
@@ -660,7 +660,7 @@ impl ToolHost {
                 Some("fs.read") => PermissionDecision::Allow,
                 Some("fs.write") if !outside => PermissionDecision::Allow,
                 Some(_) => PermissionDecision::Deny(
-                    "research can staff workers and write documents, but cannot run commands".into(),
+                    "work can staff workers and write documents, but cannot run commands".into(),
                 ),
                 None if matches!(req.tool.as_str(), "WebFetch" | "WebSearch" | "web_search") => {
                     PermissionDecision::Allow
