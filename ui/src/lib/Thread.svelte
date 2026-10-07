@@ -184,6 +184,15 @@ ${e.text}` : e.text;
     return m ? m[1].split(",").map((s) => s.trim()).filter((s) => IMAGE.test(s)) : [];
   }
 
+  // Routine narrations render as a whisper, not a mono block.
+  function sysTone(text: string): "line" | "block" {
+    return /^(asked the user|the user answered|plan written|plan saved|brain\.write|session\.spawn|session\.send_message|lane\.dispatch):/i.test(
+      text.trim(),
+    )
+      ? "line"
+      : "block";
+  }
+
   function stripMarker(text: string): string {
     return text.replace(/\n?\[attached: [^\]]+\]/, "").trimEnd();
   }
@@ -305,7 +314,11 @@ ${e.text}` : e.text;
     {:else if item.kind === "checkpoint"}
       <Steps title="Conversation compacted" reasoning={item.text} />
     {:else if item.kind === "system"}
-      <div class="system">{item.text.slice(0, 300)}</div>
+      {#if sysTone(item.text) === "line"}
+        <div class="sysline">{item.text.slice(0, 300)}</div>
+      {:else}
+        <div class="system">{item.text.slice(0, 300)}</div>
+      {/if}
     {:else if item.kind === "error"}
       <div class="turn-error" role="alert">
         <span class="err-class">{ERROR_WORDS[item.class] ?? ERROR_WORDS.unknown}</span>
@@ -497,6 +510,11 @@ ${e.text}` : e.text;
     font-family: var(--mono);
     font-size: 12px;
     color: var(--muted);
+  }
+  .sysline {
+    font-size: 12px;
+    color: var(--faint);
+    padding-left: 2px;
   }
   .turn-error {
     display: flex;

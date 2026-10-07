@@ -44,24 +44,20 @@
   let seq = 0;
   let field: HTMLTextAreaElement | null = null;
   let poller = 0;
-  let w = 360;
-  try {
-    const saved = Number(localStorage.getItem("parzi.dock.w"));
-    if (saved >= 280 && saved <= 640) w = saved;
-  } catch {}
+  export let dockW = 360;
 
   function startResize(e: PointerEvent) {
     e.preventDefault();
     const startX = e.clientX;
-    const startW = w;
+    const startW = dockW;
     const move = (ev: PointerEvent) => {
-      w = Math.min(640, Math.max(280, Math.round(startW + (startX - ev.clientX))));
+      dockW = Math.min(640, Math.max(280, Math.round(startW + (startX - ev.clientX))));
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
       try {
-        localStorage.setItem("parzi.dock.w", String(w));
+        localStorage.setItem("parzi.dock.w", String(dockW));
       } catch {}
     };
     window.addEventListener("pointermove", move);
@@ -225,11 +221,18 @@
     title: string;
     items: TaskItem[];
   }
+  interface SessionPlan {
+    goal: string;
+    decisions: { decision: string; why: string }[];
+    steps: { title: string; status: string }[];
+  }
 
   let goalsMd = "";
   let taskSections: TaskSection[] = [];
   let projState: "idle" | "loading" | "missing" = "idle";
   let projFor = "";
+  let sessionPlan: SessionPlan | null = null;
+  let planFor = "";
 
   function parseTasks(src: string): TaskSection[] {
     const sections: TaskSection[] = [];
@@ -278,11 +281,47 @@
     projState = !goals && !tasks ? "missing" : "idle";
   }
 
-  $: if (tab === "projects") void loadProject(projectSlug);
+  $: if (tab === "projects") {
+    void loadProject(projectSlug);
+    void loadSessionPlan(sessionId);
+  }
+
+  async function loadSessionPlan(sid: string) {
+    if (!sid || planFor === sid) return;
+    planFor = sid;
+    sessionPlan = null;
+    try {
+      const raw = await api.planGet(sid);
+      if (!raw.trim() || planFor !== sid) return;
+      const p = JSON.parse(raw);
+      sessionPlan = {
+        goal: String(p.goal ?? ""),
+        decisions: Array.isArray(p.decisions)
+          ? p.decisions.map((d: { decision?: unknown; why?: unknown }) => ({
+              decision: String(d.decision ?? ""),
+              why: String(d.why ?? ""),
+            }))
+          : [],
+        steps: Array.isArray(p.steps)
+          ? p.steps.map((s: { title?: unknown; status?: unknown }) => ({
+              title: String(s.title ?? ""),
+              status: String(s.status ?? "todo"),
+            }))
+          : [],
+      };
+    } catch {
+      if (planFor === sid) sessionPlan = null;
+    }
+  }
+
+  $: planDone = sessionPlan?.steps.filter((s) => s.status === "done").length ?? 0;
 
   function refreshProject() {
     projFor = "";
+    planFor = "";
+    sessionPlan = null;
     void loadProject(projectSlug);
+    void loadSessionPlan(sessionId);
   }
 
   function onKey(e: KeyboardEvent) {
@@ -293,7 +332,7 @@
   }
 </script>
 
-<div class="panel" style:width="{w}px">
+<div class="panel" style:width="{dockW}px">
   <div class="grip" on:pointerdown={startResize} title="Drag to resize the dock" />
   <div class="p-head">
     <div class="p-tabs" role="tablist" aria-label="Dock">
@@ -382,37 +421,57 @@
     </div>
   {:else if tab === "projects"}
     <div class="proj">
-      {#if !projectSlug}
-        <p class="empty">No project here — pick a folder below and the dock will track its GOALS.md and TASKS.md.</p>
-      {:else if projState === "loading" && !goalsMd && !taskSections.length}
-        <p class="empty">Reading {projectSlug}…</p>
-      {:else if projState === "missing"}
+      {#if !projectSlug && !sessionPlan}
         <p class="empty">No GOALS.md yet. Ask the agent to draft the goal and break it into tasks.</p>
       {:else}
-        <div class="proj-head">
-          <span class="proj-name">{projectSlug}</span>
-          {#if taskTotal}<span class="proj-prog">{taskDone}/{taskTotal} done</span>{/if}
-          <span class="spacer" />
-          <button class="mini" title="Reload GOALS.md and TASKS.md" on:click={refreshProject}>Reload</button>
-        </div>
-        {#if taskTotal}
-          <div class="proj-bar"><i style:width="{Math.round((taskDone / Math.max(1, taskTotal)) * 100)}%" /></div>
-        {/if}
-        {#if goalsMd}
-          <h3>Goals</h3>
-          <div class="goals">{@html renderMarkdown(goalsMd)}</div>
-        {/if}
-        {#if taskSections.length}
-          <h3>Tasks</h3>
-          {#each taskSections as sec (sec.title || "top")}
-            {#if sec.title}<h4>{sec.title}</h4>{/if}
-            {#each sec.items as item (item.text)}
-              <div class="trow" style:padding-left="{8 + item.depth * 14}px">
-                <span class="box" class:done={item.done}>{#if item.done}x{/if}</span>
-                <span class="ttext" class:done={item.done}>{item.text}</span>
-              </div>
-            {/each}
+        {#if sessionPlan}
+          <div class="proj-head">
+            <span class="proj-name">{sessionPlan.goal || "Session plan"}</span>
+            {#if sessionPlan.steps.length}<span class="proj-prog">{planDone}/{sessionPlan.steps.length} done</span>{/if}
+          </div>
+          {#if sessionPlan.steps.length}
+            <div class="proj-bar"><i style:width="{Math.round((planDone / Math.max(1, sessionPlan.steps.length)) * 100)}%" /></div>
+          {/if}
+          {#each sessionPlan.steps as st (st.title)}
+            <div class="trow">
+              <span class="box" class:doing={st.status === "doing"} class:done={st.status === "done"}>{#if st.status === "done"}x{/if}</span>
+              <span class="ttext" class:done={st.status === "done"}>{st.title}</span>
+              {#if st.status === "doing"}<span class="pill live">doing</span>{/if}
+            </div>
           {/each}
+          {#if sessionPlan.decisions.length}
+            <h3>Decisions</h3>
+            {#each sessionPlan.decisions as d (d.decision)}
+              <div class="dec"><b>{d.decision}</b>{#if d.why}<span> — {d.why}</span>{/if}</div>
+            {/each}
+          {/if}
+        {/if}
+        {#if projectSlug}
+          <div class="proj-head">
+            <span class="proj-name">{projectSlug}</span>
+            {#if taskTotal}<span class="proj-prog">{taskDone}/{taskTotal} done</span>{/if}
+            <span class="spacer" />
+            <button class="mini" title="Reload GOALS.md and TASKS.md" on:click={refreshProject}>Reload</button>
+          </div>
+          {#if taskTotal}
+            <div class="proj-bar"><i style:width="{Math.round((taskDone / Math.max(1, taskTotal)) * 100)}%" /></div>
+          {/if}
+          {#if goalsMd}
+            <h3>Goals</h3>
+            <div class="goals">{@html renderMarkdown(goalsMd)}</div>
+          {/if}
+          {#if taskSections.length}
+            <h3>Tasks</h3>
+            {#each taskSections as sec (sec.title || "top")}
+              {#if sec.title}<h4>{sec.title}</h4>{/if}
+              {#each sec.items as item (item.text)}
+                <div class="trow" style:padding-left="{8 + item.depth * 14}px">
+                  <span class="box" class:done={item.done}>{#if item.done}x{/if}</span>
+                  <span class="ttext" class:done={item.done}>{item.text}</span>
+                </div>
+              {/each}
+            {/each}
+          {/if}
         {/if}
       {/if}
     </div>
@@ -649,6 +708,9 @@
     transform: translateY(2px);
   }
   .trow .box.done { background: var(--ok); border-color: var(--ok); }
+  .trow .box.doing { border-color: var(--warn); }
+  .dec { margin: 2px 12px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+  .dec b { color: var(--text); font-weight: 600; }
   .ttext { font-size: 12.5px; color: var(--text); }
   .ttext.done { color: var(--faint); text-decoration: line-through; }
 </style>

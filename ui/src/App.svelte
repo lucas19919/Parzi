@@ -117,6 +117,7 @@
 
   let switcherOpen = false;
   let panelOpen = false;
+  let panelW = 360;
   let panelTab: "ask" | "agents" | "projects" = "ask";
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
@@ -723,6 +724,10 @@
   }
 
   onMount(() => {
+    try {
+      const saved = Number(localStorage.getItem("parzi.dock.w"));
+      if (saved >= 280 && saved <= 640) panelW = saved;
+    } catch {}
     const unRun = onRunEvent(onEvent);
     const unDesk = onDesk((cmd) => {
       if (typeof cmd.rev === "number") deskRev = Math.max(deskRev, cmd.rev);
@@ -857,6 +862,7 @@
                 {running}
                 {folder}
                 projectSlug={project?.slug ?? ""}
+                bind:dockW={panelW}
                 sessionId={shown ?? ""}
                 bind:tab={panelTab}
                 on:openSession={(e) => openSession(e.detail.id)}
@@ -880,7 +886,13 @@
         </div>
       {/if}
 
-      <div class="composer" class:docked={hasSession} bind:clientHeight={dockHeight}>
+      <div
+        class="composer"
+        class:docked={hasSession}
+        class:shifted={hasSession && panelOpen}
+        style:--shift="{panelOpen && hasSession ? panelW / 2 : 0}px"
+        bind:clientHeight={dockHeight}
+      >
         {#if hasSession && meta?.lane && normLane(meta.lane) !== mode && mode !== "search"}
           <div class="lane-hint">↵ starts a new {MODE_META[mode].label} session</div>
         {/if}
@@ -1051,7 +1063,7 @@
     bottom: calc(50% + 20px);
     z-index: 20;
     width: min(720px, 90%);
-    transform: translate(-50%, 0);
+    transform: translate(calc(-50% - var(--shift, 0px)), 0);
     transition:
       bottom 1050ms cubic-bezier(0.22, 1, 0.36, 1),
       transform 1050ms cubic-bezier(0.22, 1, 0.36, 1),
@@ -1060,7 +1072,7 @@
   .composer.docked {
     bottom: 14px;
     width: min(740px, calc(100% - 40px));
-    transform: translate(-50%, 0);
+    transform: translate(calc(-50% - var(--shift, 0px)), 0);
   }
   .lane-hint {
     margin: 0 0 6px;

@@ -585,8 +585,7 @@
 
   {#if ctxOpen}
     <div class="menu-pop ctx-pop" style={ctxStyle} use:popover={{ anchor: ctxBtn, close: () => (ctxOpen = false) }} transition:fly={{ y: ctxStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
-      <div class="pop-head">Context window</div>
-      <div class="ctx-big">{contextPct}<span>%</span></div>
+      <div class="pop-head">Context window · {contextPct}%</div>
       <div class="ctx-bar"><i style:width="{contextPct}%" /></div>
       <div class="ctx-rows">
         <div><span>Used</span><b>{kTokens(contextUsed)} of {kTokens(contextLimit)}</b></div>
@@ -594,14 +593,15 @@
         {#if costUsd > 0}<div><span>Cost</span><b>${costUsd.toFixed(4)}</b></div>{/if}
       </div>
       <button
-        class="btn primary wide"
-        disabled={compacting || streaming}
+        class="opt"
+        aria-disabled={compacting || streaming}
         on:click={() => {
+          if (compacting || streaming) return;
           ctxOpen = false;
           dispatch("command", { name: "compact" });
         }}
       >
-        {compacting ? "Compacting…" : "Compact now"}
+        <span class="meta"><span class="name">{compacting ? "Compacting…" : "Compact now"}</span><span class="sub">Summarize to free context</span></span>
       </button>
     </div>
   {/if}
@@ -1093,18 +1093,6 @@
     width: 260px;
     padding: 6px 10px 10px;
   }
-  .ctx-big {
-    font-size: 26px;
-    font-weight: 650;
-    letter-spacing: -0.02em;
-    color: var(--text);
-    margin: 2px 2px 6px;
-  }
-  .ctx-big span {
-    font-size: 14px;
-    color: var(--faint);
-    font-weight: 500;
-  }
   .ctx-bar {
     height: 6px;
     margin: 0 2px 10px;
@@ -1137,9 +1125,6 @@
     font-weight: 550;
     color: var(--text);
     font-variant-numeric: tabular-nums;
-  }
-  .wide {
-    width: 100%;
   }
   .pop-head {
     padding: 6px 8px 4px;
@@ -1183,6 +1168,14 @@
   .opt.on {
     background: var(--line);
     color: var(--text);
+  }
+  .opt[aria-disabled="true"] {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .opt[aria-disabled="true"]:hover {
+    background: transparent;
+    color: var(--muted);
   }
   .opt.on :global(svg) {
     color: var(--accent);

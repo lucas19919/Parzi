@@ -182,6 +182,7 @@ export const api = {
     invoke<void>("approve_tool", { key, session, allow }),
   answerQuestion: (key: string, session: string, answer: string) =>
     invoke<void>("answer_question", { key, session, answer }),
+  planGet: (id: string) => invoke<string>("plan_get", { id }),
   purgeSessions: () => invoke<number>("purge_sessions"),
 
   pickFolder: (start?: string) => invoke<string | null>("pick_folder", { start: start || null }),
