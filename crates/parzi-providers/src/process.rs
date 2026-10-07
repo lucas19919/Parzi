@@ -22,6 +22,61 @@ pub fn adopt(child: &Child) {
     }
 }
 
+/// Kill a process and its whole descendant tree (best effort).
+/// Windows uses taskkill /T /F; unix walks `ps` and kills descendants.
+pub fn kill_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(unix)]
+    {
+        let tree = descendants(pid);
+        if !tree.is_empty() {
+            let _ = std::process::Command::new("kill")
+                .arg("-KILL")
+                .args(tree.iter().map(u32::to_string))
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+}
+
+/// The harness shell: pwsh when present, else powershell, else sh.
+/// Returns the program plus the argument prefix placed before the command.
+pub fn shell_program() -> (String, Vec<String>) {
+    #[cfg(windows)]
+    {
+        if resolve("pwsh").is_some() {
+            return (
+                "pwsh".into(),
+                ["-NoProfile", "-NonInteractive", "-Command"]
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect(),
+            );
+        }
+        (
+            "powershell".into(),
+            ["-NoProfile", "-NonInteractive", "-Command"]
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect(),
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        ("sh".into(), vec!["-c".into()])
+    }
+}
+
 pub(crate) fn private_temp(agent: &str) -> Option<PathBuf> {
     let dir = parzi_core::paths::parzi_dir().ok()?.join("tmp").join(agent);
     std::fs::create_dir_all(&dir).ok()?;
@@ -206,28 +261,7 @@ impl Proc {
         let Some(pid) = self.child.id() else {
             return;
         };
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt as _;
-            let _ = std::process::Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .creation_flags(CREATE_NO_WINDOW)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-        }
-        #[cfg(unix)]
-        {
-            let tree = descendants(pid);
-            if !tree.is_empty() {
-                let _ = std::process::Command::new("kill")
-                    .arg("-KILL")
-                    .args(tree.iter().map(u32::to_string))
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
-            }
-        }
+        kill_tree(pid);
     }
 }
 

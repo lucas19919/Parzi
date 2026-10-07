@@ -429,6 +429,7 @@ fn build_host(asker: Option<Arc<dyn Asker>>) -> (ToolHost, SessionStore, String)
         }),
         approver: Arc::new(Allow),
         asker,
+        shell: Arc::new(parzi_runtime::shell::ShellRegistry::new("test")),
         harness: None,
         sink: RunSink::new(&sid, tx, None),
         cancel: CancellationToken::new(),

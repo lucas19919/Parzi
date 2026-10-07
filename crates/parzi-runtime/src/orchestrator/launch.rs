@@ -236,6 +236,10 @@ impl Orchestrator {
             "ask.user",
             "plan.write",
             "plan.read",
+            "shell.exec",
+            "shell.start",
+            "shell.logs",
+            "shell.kill",
             "brain.search",
             "brain.read",
             "brain.list",
@@ -263,6 +267,8 @@ impl Orchestrator {
             if !allowed.contains(&"lane.dispatch".to_string()) {
                 allowed.push("lane.dispatch".into());
             }
+        } else {
+            allowed.retain(|t| !t.starts_with("shell."));
         }
         (mode, allowed)
     }
@@ -397,6 +403,7 @@ impl Orchestrator {
             tools,
             approver: q.approver.clone().unwrap_or_else(|| Arc::new(DenyApprover)),
             asker: p.asker.lock().await.clone(),
+            shell: p.shells_for(&q.session_id),
             harness: Some(bridge),
             sink: sink.clone(),
             cancel: cancel.clone(),
@@ -530,6 +537,22 @@ mod tests {
             allowed.iter().all(|a| a != "lane.dispatch"),
             "cross-lane dispatch stays Build-only"
         );
+    }
+
+    #[test]
+    fn research_lane_is_stripped_of_shell() {
+        let cfg = ParziConfig::default();
+        let (_, build) = Orchestrator::lane_policy_for(&cfg, "build");
+        for t in ["shell.exec", "shell.start", "shell.logs", "shell.kill"] {
+            assert!(build.iter().any(|a| a == t), "build lane missing {t}");
+        }
+        let (_, research) = Orchestrator::lane_policy_for(&cfg, "research");
+        for t in ["shell.exec", "shell.start", "shell.logs", "shell.kill"] {
+            assert!(
+                research.iter().all(|a| a != t),
+                "research lane must not offer {t}"
+            );
+        }
     }
 
     #[test]

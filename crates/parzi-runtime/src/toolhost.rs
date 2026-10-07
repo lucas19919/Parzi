@@ -14,8 +14,9 @@ use tokio_util::sync::CancellationToken;
 use crate::handler::{HarnessBridge, RunEvent, RunSink};
 use crate::tools::{
     display_name, is_brain_tool, is_browser_tool, is_doc_tool, is_image_tool, is_lane_tool,
-    is_models_tool, is_plan_tool, is_project_tool, is_question_tool, is_session_tool, is_ui_tool,
-    Approval, ApprovalMode, Approver, AskRequest, Asker, ToolCallInfo, ToolDef, ToolExecutor,
+    is_models_tool, is_plan_tool, is_project_tool, is_question_tool, is_session_tool,
+    is_shell_tool, is_ui_tool, Approval, ApprovalMode, Approver, AskRequest, Asker, ToolCallInfo,
+    ToolDef, ToolExecutor,
 };
 
 pub struct ToolHostParts {
@@ -29,6 +30,7 @@ pub struct ToolHostParts {
     pub tools: Arc<ToolExecutor>,
     pub approver: Arc<dyn Approver>,
     pub asker: Option<Arc<dyn Asker>>,
+    pub shell: Arc<crate::shell::ShellRegistry>,
     pub harness: Option<Arc<dyn HarnessBridge>>,
     pub sink: RunSink,
     pub cancel: CancellationToken,
@@ -486,8 +488,25 @@ impl ToolHost {
             }
             return self.execute_project(args).await;
         }
-        if is_doc_tool(name) || is_models_tool(name) {
-            if !self.p.tools.is_allowed(name) {
+        if is_shell_tool(name) {
+            if name == "shell.logs" {
+                if !self.p.tools.is_allowed(name) {
+                    return (
+                        false,
+                        format!("tool `{name}` denied (lane mode / approver)"),
+                    );
+                }
+                return self.execute_shell_logs(args).await;
+            }
+            if !self.approved(id, name, args).await {
+                return (
+                    false,
+                    format!("tool `{name}` denied (lane mode / approver)"),
+                );
+            }
+            return self.execute_shell(name, args).await;
+        }
+        if is_doc_tool(name) || is_models_tool(name) {            if !self.p.tools.is_allowed(name) {
                 return (
                     false,
                     format!("tool `{name}` denied (lane mode / approver)"),
@@ -577,10 +596,32 @@ impl ToolHost {
                 .tools
                 .allowed
                 .iter()
-                .any(|a| crate::tools::is_vendor_category(a) || a == "fs.*" || a == "shell.*");
+                .any(|a| {
+                    (crate::tools::is_vendor_category(a) || a == "fs.*" || a == "shell.*")
+                        && !crate::tools::is_parzi_tool(a)
+                });
             if lists_kinds && !self.p.tools.is_allowed(k) {
                 return PermissionDecision::Deny(format!("this lane does not allow {k}"));
             }
+        }
+        // The harness owns the shell: vendor-native shell tools are refused
+        // wherever shell.* is offered, with the reroute named so the model
+        // switches first try. (Research offers no shell.*, so the lane's
+        // normal deny below still applies there.)
+        const VENDOR_SHELL: &[&str] = &[
+            "Bash",
+            "bash",
+            "BashOutput",
+            "KillShell",
+            "shell",
+            "execute",
+            "run_command",
+        ];
+        if VENDOR_SHELL.contains(&req.tool.as_str()) && self.p.tools.is_allowed("shell.exec") {
+            return PermissionDecision::Deny(
+                "use shell.exec — the Parzi shell keeps history, timeouts, and background jobs"
+                    .into(),
+            );
         }
         let mut outside = false;
         if kind == Some("fs.write") {
@@ -1054,6 +1095,116 @@ impl ToolHost {
                 project.slug
             ),
         )
+    }
+
+    fn shell_cwd(&self, args: &Value) -> std::result::Result<PathBuf, String> {
+        let raw = args
+            .get("workdir")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .unwrap_or("");
+        if raw.is_empty() {
+            return Ok(PathBuf::from(&self.p.tools.cwd));
+        }
+        let rel = worktree_relative(&self.p.tools.cwd, raw)
+            .ok_or_else(|| format!("workdir `{raw}` is outside this session's folder"))?;
+        Ok(PathBuf::from(&self.p.tools.cwd).join(rel))
+    }
+
+    async fn execute_shell(&self, name: &str, args: &Value) -> (bool, String) {
+        let str_arg = |k: &str| args.get(k).and_then(|v| v.as_str()).map(str::to_string);
+        let cwd = match self.shell_cwd(args) {
+            Ok(d) => d,
+            Err(e) => return (false, e),
+        };
+        match name {
+            "shell.exec" => {
+                let cmd = str_arg("cmd").unwrap_or_default();
+                if cmd.trim().is_empty() {
+                    return (false, "shell.exec needs a `cmd`".into());
+                }
+                let timeout = args
+                    .get("timeout_ms")
+                    .and_then(Value::as_u64)
+                    .map(|ms| Duration::from_millis(ms))
+                    .unwrap_or(crate::shell::FOREGROUND_DEFAULT_TIMEOUT);
+                match self.p.shell.exec(&cmd, &cwd, timeout).await {
+                    Ok(out) => {
+                        let mut head = if out.timed_out {
+                            format!(
+                                "timed out and killed — restart it with shell.start for long work\n"
+                            )
+                        } else {
+                            match out.exit {
+                                Some(0) => String::new(),
+                                Some(c) => format!("exit {c}\n"),
+                                None => "no exit code\n".to_string(),
+                            }
+                        };
+                        head.push_str(&out.text);
+                        (true, head)
+                    }
+                    Err(e) => (false, format!("cannot run that: {e}")),
+                }
+            }
+            "shell.start" => {
+                let cmd = str_arg("cmd").unwrap_or_default();
+                if cmd.trim().is_empty() {
+                    return (false, "shell.start needs a `cmd`".into());
+                }
+                let title = str_arg("title").unwrap_or_default();
+                match self.p.shell.start(&cmd, &cwd, &title) {
+                    Ok(id) => (
+                        true,
+                        format!("started {id} — poll with shell.logs, stop with shell.kill"),
+                    ),
+                    Err(e) => (false, format!("cannot start that: {e}")),
+                }
+            }
+            "shell.kill" => {
+                let id = str_arg("id").unwrap_or_default();
+                if id.trim().is_empty() {
+                    return (false, "shell.kill needs an `id`".into());
+                }
+                if self.p.shell.kill(&id) {
+                    (true, format!("killed {id}"))
+                } else {
+                    (true, format!("{id} is already done"))
+                }
+            }
+            _ => (false, format!("unknown shell tool `{name}`")),
+        }
+    }
+
+    async fn execute_shell_logs(&self, args: &Value) -> (bool, String) {
+        let id = args
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if id.is_empty() {
+            return (false, "shell.logs needs an `id`".into());
+        }
+        let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0);
+        let tail = args
+            .get("tail")
+            .and_then(Value::as_u64)
+            .map(|n| n.min(16_384) as usize)
+            .unwrap_or(4096);
+        match self.p.shell.logs(id, offset, tail) {
+            Some(t) => {
+                let state = match (t.running, t.exit) {
+                    (true, _) => "running".to_string(),
+                    (false, Some(c)) => format!("done (exit {c})"),
+                    (false, None) => "done".to_string(),
+                };
+                (
+                    true,
+                    format!("{state} · next_offset {}\n{}", t.next_offset, t.text),
+                )
+            }
+            None => (false, format!("no shell `{id}` in this session")),
+        }
     }
 
     async fn execute_browser(&self, name: &str, args: &Value) -> (bool, String) {

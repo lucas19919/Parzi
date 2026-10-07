@@ -182,6 +182,21 @@ pub(super) struct Pump {
     pub(super) bus: RunEventBus,
     pub(super) marks: super::ReadMarks,
     pub(super) asker: Arc<Mutex<Option<Arc<dyn crate::tools::Asker>>>>,
+    pub(super) shells: Arc<std::sync::Mutex<HashMap<String, Arc<crate::shell::ShellRegistry>>>>,
+}
+
+impl Pump {
+    /// One shell registry per session, so background shells survive
+    /// across turns and the Tasks tab can read them later.
+    pub(super) fn shells_for(&self, sid: &str) -> Arc<crate::shell::ShellRegistry> {
+        let mut shells = self.shells.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(reg) = shells.get(sid) {
+            return reg.clone();
+        }
+        let reg = Arc::new(crate::shell::ShellRegistry::new(sid));
+        shells.insert(sid.to_string(), reg.clone());
+        reg
+    }
 }
 
 impl Pump {

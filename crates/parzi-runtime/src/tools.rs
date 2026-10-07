@@ -122,6 +122,7 @@ impl ToolExecutor {
         d.extend(question_defs());
         d.extend(plan_defs());
         d.extend(project_defs());
+        d.extend(shell_defs());
         d.retain(|t| self.is_allowed(&t.name));
         d
     }
@@ -164,6 +165,24 @@ impl ToolExecutor {
 
 pub(crate) fn is_vendor_category(name: &str) -> bool {
     matches!(name, "fs.read" | "fs.write" | "fs.list" | "shell.exec")
+}
+
+/// Every tool Parzi itself offers. Used to tell lane-allowlist entries
+/// that name our own tools apart from entries that speak in vendor
+/// categories (e.g. "fs.*") — "shell.exec" is unfortunately both.
+pub(crate) fn is_parzi_tool(name: &str) -> bool {
+    is_ui_tool(name)
+        || is_browser_tool(name)
+        || is_session_tool(name)
+        || is_lane_tool(name)
+        || is_image_tool(name)
+        || is_doc_tool(name)
+        || is_models_tool(name)
+        || is_question_tool(name)
+        || is_plan_tool(name)
+        || is_project_tool(name)
+        || is_shell_tool(name)
+        || is_brain_tool(name)
 }
 
 fn ui_defs() -> Vec<ToolDef> {
@@ -342,6 +361,66 @@ pub(crate) fn is_doc_tool(name: &str) -> bool {
 
 pub(crate) fn is_models_tool(name: &str) -> bool {
     matches!(name, "models.list")
+}
+
+pub(crate) fn is_shell_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "shell.exec" | "shell.start" | "shell.logs" | "shell.kill"
+    )
+}
+
+fn shell_defs() -> Vec<ToolDef> {
+    vec![
+        ToolDef {
+            name: "shell.exec".into(),
+            description: "Run a shell command and wait for it (default 120s, timeout_ms up to 600000). Output is capped; the rest spills to a file whose path comes back. Pass workdir instead of cd. Stdin is closed: non-interactive flags only.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "cmd": {"type": "string"},
+                    "workdir": {"type": "string"},
+                    "timeout_ms": {"type": "number"},
+                },
+                "required": ["cmd"],
+            }),
+        },
+        ToolDef {
+            name: "shell.start".into(),
+            description: "Start a long-running command (dev server, watcher, build) in the background. Returns a shell id immediately; poll with shell.logs, stop with shell.kill.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "cmd": {"type": "string"},
+                    "workdir": {"type": "string"},
+                    "title": {"type": "string"},
+                },
+                "required": ["cmd"],
+            }),
+        },
+        ToolDef {
+            name: "shell.logs".into(),
+            description: "Read new output from a background shell. Pass back next_offset to walk forward.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "offset": {"type": "number"},
+                    "tail": {"type": "number"},
+                },
+                "required": ["id"],
+            }),
+        },
+        ToolDef {
+            name: "shell.kill".into(),
+            description: "Kill a background shell and its whole process tree.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"id": {"type": "string"}},
+                "required": ["id"],
+            }),
+        },
+    ]
 }
 
 pub(crate) fn is_question_tool(name: &str) -> bool {
@@ -660,6 +739,12 @@ pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String
             one_line(&str_arg("source").unwrap_or_else(|| "a document".into()), 60)
         ),
         "models.list" => "Checking the bench".into(),
+        "shell.start" => format!(
+            "Starting {}",
+            one_line(&str_arg("cmd").unwrap_or_else(|| "a command".into()), 60)
+        ),
+        "shell.logs" => "Reading shell output".into(),
+        "shell.kill" => "Stopping a shell".into(),
         "ask.user" => format!(
             "Asking {}",
             one_line(&str_arg("question").unwrap_or_else(|| "a question".into()), 60)

@@ -102,6 +102,7 @@ pub struct Orchestrator {
     bus: RunEventBus,
     marks: ReadMarks,
     asker: Arc<Mutex<Option<Arc<dyn crate::tools::Asker>>>>,
+    shells: Arc<std::sync::Mutex<HashMap<String, Arc<crate::shell::ShellRegistry>>>>,
 }
 
 impl Orchestrator {
@@ -124,6 +125,7 @@ impl Orchestrator {
             bus,
             marks: ReadMarks::default(),
             asker: Arc::new(Mutex::new(None)),
+            shells: Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -159,6 +161,7 @@ impl Orchestrator {
             bus: self.bus.clone(),
             marks: self.marks.clone(),
             asker: self.asker.clone(),
+            shells: self.shells.clone(),
         }
     }
 

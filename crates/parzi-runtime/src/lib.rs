@@ -7,6 +7,7 @@ pub mod mcp;
 mod mcp_host;
 pub mod orchestrator;
 mod run;
+pub mod shell;
 pub mod status;
 pub mod toolhost;
 pub mod tools;

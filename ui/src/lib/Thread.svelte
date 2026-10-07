@@ -119,6 +119,14 @@
         return "Reading the plan";
       case "project.create":
         return `Creating ${arg(args, "title") || "a project"}`;
+      case "shell.exec":
+        return `Running ${arg(args, "cmd") || "a command"}`;
+      case "shell.start":
+        return `Starting ${arg(args, "cmd") || "a command"}`;
+      case "shell.logs":
+        return "Reading shell output";
+      case "shell.kill":
+        return "Stopping a shell";
       case "browser.click":
         return `Clicking ${arg(args, "text", "selector") || "a control"}`;
       case "browser.type":

@@ -218,6 +218,7 @@ fn host(allowed: Vec<String>, mode: ApprovalMode) -> ToolHost {
         }),
         approver: Arc::new(Allow),
         asker: None,
+        shell: Arc::new(parzi_runtime::shell::ShellRegistry::new("test")),
         harness: Some(Arc::new(NoHarness)),
         sink: RunSink::new(&meta.id, tx, None),
         cancel: tokio_util::sync::CancellationToken::new(),

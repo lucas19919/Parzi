@@ -54,6 +54,7 @@ fn host(approver: Arc<Person>) -> ToolHost {
         }),
         approver,
         asker: None,
+        shell: Arc::new(parzi_runtime::shell::ShellRegistry::new("test")),
         harness: None,
         sink: RunSink::new(&sid, tx, None),
         cancel: CancellationToken::new(),
