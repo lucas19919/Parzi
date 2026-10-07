@@ -245,21 +245,23 @@ impl Orchestrator {
                 allowed.push(u.into());
             }
         }
-        // Subagents are a Code-lane power tool: spawning burns quota and
-        // acts on its own, so the read-only research lane never gets them.
+        // Research staffs its own read/write workers (a paper is a project);
+        // only shell execution and cross-lane dispatch stay Build-only.
         // (Spawns still go through the permission mode like any other tool.)
+        for u in [
+            "session.spawn",
+            "session.send_message",
+            "session.read_session",
+            "session.list_sessions",
+            "project.create",
+        ] {
+            if !allowed.contains(&u.to_string()) {
+                allowed.push(u.into());
+            }
+        }
         if lane != "research" {
-            for u in [
-                "session.spawn",
-                "session.send_message",
-                "session.read_session",
-                "session.list_sessions",
-                "lane.dispatch",
-                "project.create",
-            ] {
-                if !allowed.contains(&u.to_string()) {
-                    allowed.push(u.into());
-                }
+            if !allowed.contains(&"lane.dispatch".to_string()) {
+                allowed.push("lane.dispatch".into());
             }
         }
         (mode, allowed)
@@ -491,14 +493,19 @@ mod tests {
             "ui.show_artifact",
             "brain.search",
             "brain.write",
+            "session.spawn",
+            "session.send_message",
+            "session.read_session",
+            "session.list_sessions",
+            "project.create",
         ] {
             assert!(allowed.iter().any(|a| a == t), "lane missing {t}");
         }
-        assert!(allowed.iter().all(|a| a != "session.spawn"));
+        assert!(allowed.iter().all(|a| a != "lane.dispatch"));
     }
 
     #[test]
-    fn code_lane_can_orchestrate_and_research_cannot() {
+    fn both_lanes_orchestrate_but_only_build_dispatches() {
         let cfg = ParziConfig::default();
         for lane in ["build", "code", ""] {
             let (_, allowed) = Orchestrator::lane_policy_for(&cfg, lane);
@@ -513,12 +520,16 @@ mod tests {
             }
         }
         let (_, allowed) = Orchestrator::lane_policy_for(&cfg, "research");
-        for t in ["session.spawn", "session.send_message", "lane.dispatch"] {
+        for t in ["session.spawn", "session.send_message", "project.create"] {
             assert!(
-                allowed.iter().all(|a| a != t),
-                "research lane must not offer {t}"
+                allowed.iter().any(|a| a == t),
+                "research lane missing {t}"
             );
         }
+        assert!(
+            allowed.iter().all(|a| a != "lane.dispatch"),
+            "cross-lane dispatch stays Build-only"
+        );
     }
 
     #[test]

@@ -11,11 +11,12 @@ Remaining here: side panel, history chips, LaTeX, CLI catalog.
 - **Build** (green, bot icon): full agent, project folder optional. A
   picked folder adds cwd + brain context; no folder means scratch, like
   today. Never blocks on project picking.
-- **Research** (amber, brain icon): read-only Q&A agent on the Settings
-  quick-model. Never shows an approval card by construction: the lane
-  allowlist excludes writes/shell, and vendor-native write tools get a
-  silent `Deny("read-only mode")` with a lane brief telling the model
-  to answer directly. Throwaway answers; Keep promotes to a session.
+- **Research** (amber, brain icon): the scholar. Math, schoolwork,
+  science, papers, data. Never shows an approval card (no shell, so
+  nothing gated), runs the Settings quick-model, low effort default.
+  May write notes/docs, generate images, staff read/write subsessions,
+  and create real projects (a paper is a project). Model and effort
+  fully pickable; quick/low are defaults, never locks.
 
 Research lives in two doors, one lane: the segmented control (dedicated
 Q&A) and a docked side panel (`Ctrl+J`) for asking mid-build without

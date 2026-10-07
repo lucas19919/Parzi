@@ -361,6 +361,13 @@ impl ToolHost {
                 | "doc.read"
                 | "models.list"
                 | "ask.user"
+                | "plan.write"
+                | "plan.read"
+                | "session.spawn"
+                | "session.send_message"
+                | "session.read_session"
+                | "session.list_sessions"
+                | "project.create"
                 | "ui.show_markdown"
                 | "ui.show_widget"
                 | "ui.show_artifact"
@@ -597,12 +604,22 @@ impl ToolHost {
         }
         if self.p.lane == "research" {
             const READ_ONLY: &str =
-                "research mode is read-only: answer from knowledge, search, and page reads";
+                "research cannot run shell commands — say what needs running instead";
+            if matches!(
+                req.tool.as_str(),
+                "session.spawn"
+                    | "session.send_message"
+                    | "session.read_session"
+                    | "session.list_sessions"
+                    | "project.create"
+            ) {
+                return PermissionDecision::Allow;
+            }
             return match kind {
                 Some("fs.read") => PermissionDecision::Allow,
                 Some("fs.write") if !outside => PermissionDecision::Allow,
                 Some(_) => PermissionDecision::Deny(
-                    "research can write notes and documents, but cannot run commands or spawn workers".into(),
+                    "research can staff workers and write documents, but cannot run commands".into(),
                 ),
                 None if matches!(req.tool.as_str(), "WebFetch" | "WebSearch" | "web_search") => {
                     PermissionDecision::Allow

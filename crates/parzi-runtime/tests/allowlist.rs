@@ -247,7 +247,7 @@ fn research_host(folder: &Path, person: Arc<Person>) -> ToolHost {
 }
 
 #[tokio::test]
-async fn research_lane_answers_without_cards_and_never_writes() {
+async fn research_lane_answers_without_cards_and_staffs_workers() {
     let folder = std::env::temp_dir().join(format!("parzi-fence-research-{}", std::process::id()));
     std::fs::create_dir_all(folder.join("src")).unwrap();
     let person = nobody();
@@ -258,6 +258,13 @@ async fn research_lane_answers_without_cards_and_never_writes() {
             ask(&host, tool, &["src/a.rs"]).await,
             PermissionDecision::Allow,
             "{tool} writes notes and docs on the research lane"
+        );
+    }
+    for tool in ["session.spawn", "session.read_session", "project.create"] {
+        assert_eq!(
+            ask(&host, tool, &[]).await,
+            PermissionDecision::Allow,
+            "{tool} staffs and homes research work"
         );
     }
     for tool in ["Bash", "Task"] {
