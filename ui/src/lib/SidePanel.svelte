@@ -1,9 +1,9 @@
-<script lang="ts">
+﻿<script lang="ts">
   import { createEventDispatcher, onDestroy } from "svelte";
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
-  import { api, type ChatEvent, type SessionMeta } from "./api";
+  import { api, brain, type ChatEvent, type SessionMeta } from "./api";
   import { folderName } from "./tabs";
   import { renderMarkdown } from "./md";
 
@@ -11,12 +11,14 @@
   export let running: Set<string> = new Set();
   export let folder = "";
   export let sessionId = "";
+  export let projectSlug = "";
   // Dock tabs are a registry: append { id, label } plus a content branch
   // below to add projects, checklists, etc. without touching the shell.
-  type DockTab = "ask" | "agents";
+  type DockTab = "ask" | "agents" | "projects";
   const DOCK_TABS: { id: DockTab; label: string }[] = [
     { id: "ask", label: "Ask" },
     { id: "agents", label: "Agents" },
+    { id: "projects", label: "Projects" },
   ];
 
   export let tab: DockTab = "ask";
@@ -214,6 +216,75 @@
     cards = cards;
   }
 
+  interface TaskItem {
+    done: boolean;
+    text: string;
+    depth: number;
+  }
+  interface TaskSection {
+    title: string;
+    items: TaskItem[];
+  }
+
+  let goalsMd = "";
+  let taskSections: TaskSection[] = [];
+  let projState: "idle" | "loading" | "missing" = "idle";
+  let projFor = "";
+
+  function parseTasks(src: string): TaskSection[] {
+    const sections: TaskSection[] = [];
+    let current: TaskSection = { title: "", items: [] };
+    for (const line of src.split("\n")) {
+      const head = /^#{1,3}\s+(.*)\s*$/.exec(line);
+      if (head) {
+        if (current.items.length || current.title) sections.push(current);
+        current = { title: head[1].trim(), items: [] };
+        continue;
+      }
+      const m = /^(\s*)[-*]\s+\[([ xX])\]\s+(.*)$/.exec(line);
+      if (m) {
+        current.items.push({
+          done: m[2] !== " ",
+          text: m[3].trim(),
+          depth: Math.min(3, Math.floor(m[1].replace(/\t/g, "  ").length / 2)),
+        });
+      }
+    }
+    if (current.items.length || current.title) sections.push(current);
+    return sections;
+  }
+
+  $: taskTotal = taskSections.reduce((n, s) => n + s.items.length, 0);
+  $: taskDone = taskSections.reduce((n, s) => n + s.items.filter((i) => i.done).length, 0);
+
+  async function loadProject(slug: string) {
+    if (!slug) {
+      projState = "idle";
+      goalsMd = "";
+      taskSections = [];
+      projFor = "";
+      return;
+    }
+    if (projFor === slug && projState !== "idle") return;
+    projFor = slug;
+    projState = "loading";
+    const [goals, tasks] = await Promise.all([
+      brain.read(`projects/${slug}/GOALS.md`).catch(() => ""),
+      brain.read(`projects/${slug}/TASKS.md`).catch(() => ""),
+    ]);
+    if (projFor !== slug) return;
+    goalsMd = goals;
+    taskSections = tasks ? parseTasks(tasks) : [];
+    projState = !goals && !tasks ? "missing" : "idle";
+  }
+
+  $: if (tab === "projects") void loadProject(projectSlug);
+
+  function refreshProject() {
+    projFor = "";
+    void loadProject(projectSlug);
+  }
+
   function onKey(e: KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -307,6 +378,42 @@
         {/each}
       {:else}
         <p class="empty">{q ? "Nothing matches." : "No subagents yet — this session hasn't fanned anything out."}</p>
+      {/if}
+    </div>
+  {:else if tab === "projects"}
+    <div class="proj">
+      {#if !projectSlug}
+        <p class="empty">No project here — pick a folder below and the dock will track its GOALS.md and TASKS.md.</p>
+      {:else if projState === "loading" && !goalsMd && !taskSections.length}
+        <p class="empty">Reading {projectSlug}…</p>
+      {:else if projState === "missing"}
+        <p class="empty">No GOALS.md yet. Ask the agent to draft the goal and break it into tasks.</p>
+      {:else}
+        <div class="proj-head">
+          <span class="proj-name">{projectSlug}</span>
+          {#if taskTotal}<span class="proj-prog">{taskDone}/{taskTotal} done</span>{/if}
+          <span class="spacer" />
+          <button class="mini" title="Reload GOALS.md and TASKS.md" on:click={refreshProject}>Reload</button>
+        </div>
+        {#if taskTotal}
+          <div class="proj-bar"><i style:width="{Math.round((taskDone / Math.max(1, taskTotal)) * 100)}%" /></div>
+        {/if}
+        {#if goalsMd}
+          <h3>Goals</h3>
+          <div class="goals">{@html renderMarkdown(goalsMd)}</div>
+        {/if}
+        {#if taskSections.length}
+          <h3>Tasks</h3>
+          {#each taskSections as sec (sec.title || "top")}
+            {#if sec.title}<h4>{sec.title}</h4>{/if}
+            {#each sec.items as item (item.text)}
+              <div class="trow" style:padding-left="{8 + item.depth * 14}px">
+                <span class="box" class:done={item.done}>{#if item.done}x{/if}</span>
+                <span class="ttext" class:done={item.done}>{item.text}</span>
+              </div>
+            {/each}
+          {/each}
+        {/if}
       {/if}
     </div>
   {/if}
@@ -491,4 +598,57 @@
     cursor: pointer;
   }
   .stop:hover { border-color: var(--bad); color: var(--bad); }
+  .proj { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 16px; }
+  .proj-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 12px 12px 6px;
+  }
+  .proj-name { font-weight: 650; font-size: 13px; color: var(--text); }
+  .proj-prog { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .spacer { flex: 1; }
+  .mini {
+    padding: 3px 9px;
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .mini:hover { color: var(--text); }
+  .proj-bar {
+    height: 5px;
+    margin: 0 12px 4px;
+    border-radius: 3px;
+    background: var(--line);
+    overflow: hidden;
+  }
+  .proj-bar i { display: block; height: 100%; background: var(--ok); border-radius: inherit; }
+  .proj h4 {
+    margin: 12px 12px 2px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .goals { margin: 0 12px; font-size: 12.5px; line-height: 1.6; color: var(--muted); }
+  .trow { display: flex; align-items: baseline; gap: 8px; padding: 3px 12px 3px 0; }
+  .trow .box {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--faint);
+    border-radius: 4px;
+    font-size: 10px;
+    line-height: 13px;
+    text-align: center;
+    color: var(--on-ok);
+    transform: translateY(2px);
+  }
+  .trow .box.done { background: var(--ok); border-color: var(--ok); }
+  .ttext { font-size: 12.5px; color: var(--text); }
+  .ttext.done { color: var(--faint); text-decoration: line-through; }
 </style>

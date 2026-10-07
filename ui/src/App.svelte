@@ -117,7 +117,7 @@
 
   let switcherOpen = false;
   let panelOpen = false;
-  let panelTab: "ask" | "agents" = "ask";
+  let panelTab: "ask" | "agents" | "projects" = "ask";
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
   let farFromBottom = false;
@@ -856,6 +856,7 @@
                 {threads}
                 {running}
                 {folder}
+                projectSlug={project?.slug ?? ""}
                 sessionId={shown ?? ""}
                 bind:tab={panelTab}
                 on:openSession={(e) => openSession(e.detail.id)}
