@@ -9,6 +9,10 @@ const MAX_ID_LEN: usize = 64;
 
 const ARTIFACT_KINDS: &[&str] = &[
     "code", "markdown", "html", "svg", "json", "csv", "diff", "text", "image",
+    // Live design previews: content is JSON naming a UI-registered component
+    // (see ui previewRegistry). The backend stores and threads it like any
+    // artifact; only the UI resolves component names.
+    "preview",
 ];
 
 const CODE_LANGS: &[&str] = &[

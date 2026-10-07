@@ -71,7 +71,6 @@
     { name: "model", hint: "pick a model" },
     { name: "effort", hint: "cycle effort" },
     { name: "page", hint: "open a web page" },
-    { name: "preview", hint: "live component previews" },
     { name: "settings", hint: "open settings" },
   ];
 

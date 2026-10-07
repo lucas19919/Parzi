@@ -198,14 +198,14 @@ fn ui_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "ui.show_artifact".into(),
-            description: "Save/update a versioned artifact card with copy and save actions. html and svg render live in a sandboxed frame with no network access (inline everything; images only as data: URIs), with a show-source toggle. Use for code over ~15 lines, full files, markdown docs, html/svg previews, json/csv data, diffs. Diagrams (architecture, flow, sequence) go here as an svg artifact, or html when they need layout or interactivity. Kinds: code|markdown|html|svg|json|csv|diff|text. Languages: rust|typescript|javascript|python|toml|json|bash|sh|diff|markdown|md|html|css. Reuse the same id to bump the version. Example: {\"artifact\":1,\"id\":\"auth-middleware\",\"title\":\"Auth middleware\",\"kind\":\"code\",\"language\":\"typescript\",\"content\":\"...\"}.".into(),
+            description: "Save/update a versioned artifact card with copy and save actions. html and svg render live in a sandboxed frame with no network access (inline everything; images only as data: URIs), with a show-source toggle. Use for code over ~15 lines, full files, markdown docs, html/svg previews, json/csv data, diffs. Diagrams (architecture, flow, sequence) go here as an svg artifact, or html when they need layout or interactivity. Kinds: code|markdown|html|svg|json|csv|diff|text|preview. The preview kind renders a live UI-registered component inline in the thread: content is JSON like {\"component\":\"omnibar\",\"variant\":2} plus optional props. Reuse the same id to bump the version. Example: {\"artifact\":1,\"id\":\"auth-middleware\",\"title\":\"Auth middleware\",\"kind\":\"code\",\"language\":\"typescript\",\"content\":\"...\"}.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "artifact": {"type": "number", "const": 1},
                     "id": {"type": "string", "description": "slug [a-z0-9-], reused across versions"},
                     "title": {"type": "string"},
-                    "kind": {"type": "string", "enum": ["code","markdown","html","svg","json","csv","diff","text"]},
+                    "kind": {"type": "string", "enum": ["code","markdown","html","svg","json","csv","diff","text","preview"]},
                     "language": {"type": "string"},
                     "content": {"type": "string"},
                 },

@@ -22,6 +22,7 @@
     settings: void;
     brain: void;
     history: void;
+    previews: void;
   }>();
 
   interface Item {
@@ -65,6 +66,7 @@
       { id: "new-page", icon: "globe", title: "New page", sub: "Open a web page", run: () => dispatch("newPage") },
       { id: "history", icon: "clock", title: "History", sub: "Pages you visited and bookmarks", run: () => dispatch("history") },
       { id: "brain", icon: "brain", title: "Brain", sub: "Notes and projects", run: () => dispatch("brain") },
+      { id: "previews", icon: "spark", title: "Component previews", sub: "Live Omnibar variants, side by side", run: () => dispatch("previews") },
       { id: "settings", icon: "settings", title: "Settings", sub: "Agents, appearance, system", run: () => dispatch("settings") },
     ]
       .filter((c) => hit(q, c.title, c.sub))

@@ -4,6 +4,7 @@
   import { api } from "../api";
   import { renderMarkdown } from "../md";
   import { handleLinkClick } from "../links";
+  import { previewNames, previewSpecOf } from "../previewRegistry";
 
   export let data: any;
   export let fallbackId = "";
@@ -20,9 +21,14 @@
   const LOCAL_ONLY = `<meta http-equiv="Content-Security-Policy" content="img-src data: blob:; media-src data: blob:; connect-src 'none'">`;
   const RESIZE = `<script>function tell(){try{var h=document.documentElement.scrollHeight;parent.postMessage({parziArt:1,height:h},"*")}catch(e){}}addEventListener("load",tell);setTimeout(tell,400);setTimeout(tell,1500);<\/script>`;
   const lines = content ? content.split("\n").length : 0;
-  const bad = !content.trim();
+  const bad = !content.trim() && kind !== "preview";
   let expanded = false;
   let copied = false;
+  // Inline design previews: { "component": "omnibar", "variant": 2 }.
+  // Components resolve through previewRegistry — one entry per component,
+  // no hardcoded branches here. Extra keys merge over demo defaults.
+  $: preview = kind === "preview" ? previewSpecOf(content) : null;
+  $: previewProps = preview ? preview.entry.props(preview.variant, preview.extra) : {};
   $: canRender = (kind === "html" || kind === "svg") && !!content.trim();
   // SVG renders inline (scripts/handlers stripped) so diagrams size
   // naturally with zero chrome and zero scrollbars. HTML stays in the
@@ -77,6 +83,12 @@
   {#if bad}
     <div class="art-error">Couldn't render artifact — showing source.</div>
     <pre class="art-source">{JSON.stringify(d, null, 2)?.slice(0, 4000)}</pre>
+  {:else if kind === "preview" && preview}
+    <div class="art-preview">
+      <svelte:component this={preview.entry.component} {...previewProps} />
+    </div>
+  {:else if kind === "preview"}
+    <div class="art-error">Unknown preview "{content.slice(0, 120)}" — known components: {previewNames()}.</div>
   {:else if kind === "markdown"}
     <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
     <div class="art-md" on:click={(e) => void handleLinkClick(e)}>{@html renderMarkdown(content)}</div>
@@ -137,6 +149,12 @@
   }
   .mini-btn:hover { color: var(--text); }
   .art-md { padding: 2px 0; font-size: 13px; }
+  .art-preview {
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 12px 0 4px;
+  }
   .art-svg :global(svg) { width: 100%; height: auto; display: block; }
   .art-img { width: 100%; height: auto; display: block; border-radius: 8px; }
   .art-render { width: 100%; min-height: 320px; border: none; background: transparent; display: block; overflow: hidden; }

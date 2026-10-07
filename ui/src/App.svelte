@@ -646,7 +646,6 @@
     else if (name === "compact") void compact();
     else if (name === "stop") void stop();
     else if (name === "page") addTab(pageTab());
-    else if (name === "preview") openPreview();
     else if (name === "settings") openSettings();
   }
 
@@ -1009,6 +1008,7 @@
     on:newSession={newSession}
     on:newPage={() => addTab(pageTab())}
     on:settings={() => openSettings()}
+    on:previews={() => openPreview()}
     on:brain={openBrain}
     on:history={() => openHistory()}
   />

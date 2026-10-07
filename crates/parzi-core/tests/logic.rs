@@ -79,6 +79,12 @@ fn artifact_validation_versions_and_dedups() {
     assert!(validate_artifact(&bad_kind).is_err());
     let bad_lang = serde_json::json!({"artifact": 1, "id": "x", "kind": "code", "language": "cobol-x", "content": "hi"});
     assert!(validate_artifact(&bad_lang).is_err());
+    let preview = serde_json::json!({
+        "artifact": 1, "id": "omni-v2", "title": "Omnibar v2",
+        "kind": "preview", "content": "{\"component\":\"omnibar\",\"variant\":2}",
+    });
+    let p = validate_artifact(&preview).unwrap();
+    assert_eq!(p.kind, "preview");
     let v2 = next_version("auth-hook", std::slice::from_ref(&a));
     assert_eq!(v2, 2);
     assert!(is_same_content(
