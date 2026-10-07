@@ -3,25 +3,24 @@
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
-  import { api, brain, type ChatEvent, type SessionMeta } from "./api";
+  import { api, brain, type SessionMeta } from "./api";
   import { folderName } from "./tabs";
   import { renderMarkdown } from "./md";
 
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
-  export let folder = "";
   export let sessionId = "";
   export let projectSlug = "";
   // Dock tabs are a registry: append { id, label } plus a content branch
   // below to add projects, checklists, etc. without touching the shell.
-  type DockTab = "ask" | "agents" | "projects";
+  type DockTab = "agents" | "projects" | "tasks";
   const DOCK_TABS: { id: DockTab; label: string }[] = [
-    { id: "ask", label: "Ask" },
     { id: "agents", label: "Agents" },
     { id: "projects", label: "Projects" },
+    { id: "tasks", label: "Tasks" },
   ];
 
-  export let tab: DockTab = "ask";
+  export let tab: DockTab = "agents";
 
   const dispatch = createEventDispatcher<{
     openSession: { id: string };
@@ -30,19 +29,12 @@
     settled: void;
   }>();
 
-  interface AskCard {
-    key: number;
-    q: string;
-    sid: string;
-    answer: string;
-    busy: boolean;
+  interface McpConn {
+    name: string;
+    on: boolean;
   }
 
-  let askInput = "";
-  let asking = false;
-  let cards: AskCard[] = [];
-  let seq = 0;
-  let field: HTMLTextAreaElement | null = null;
+  let q = "";
   let poller = 0;
   export let dockW = 360;
 
@@ -95,7 +87,6 @@
     return new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   }
 
-  $: q = askInput.trim().toLowerCase();
   $: family = (() => {
     if (!sessionId) return [];
     const byId = new Map(threads.map((t) => [t.id, t]));
@@ -143,74 +134,39 @@
     return out;
   })();
 
-  function answerOf(events: ChatEvent[]): string {
-    let out = "";
-    for (const e of events) if (e.kind === "assistant") out = e.text;
-    return out;
-  }
+  $: busyRuns = threads
+    .filter((t) => isLive(t) || t.status === "queued")
+    .map((t) => ({ ...t, at: Date.parse(t.updated) || 0 }))
+    .sort((a, b) => b.at - a.at);
 
-  async function poll(card: AskCard) {
+  let conns: McpConn[] = [];
+  let connsFor = "";
+
+  async function loadConns() {
+    if (connsFor) return;
+    connsFor = "loading";
     try {
-      const [meta, events] = await api.getThread(card.sid);
-      card.answer = answerOf(events);
-      cards = cards;
-      if (meta.status === "active" || meta.status === "queued" || running.has(card.sid)) return;
+      const cfg = await api.getConfig();
+      const servers = (cfg.mcp?.servers ?? {}) as Record<string, { enabled?: boolean }>;
+      conns = Object.entries(servers).map(([name, s]) => ({ name, on: s.enabled !== false }));
+      connsFor = "done";
     } catch {
-      return;
+      connsFor = "";
     }
-    card.busy = false;
-    cards = cards;
-    dispatch("settled");
   }
 
   function poke() {
     clearInterval(poller);
-    if (cards.some((c) => c.busy)) {
-      poller = window.setInterval(() => {
-        for (const c of cards) if (c.busy) void poll(c);
-        if (!cards.some((c) => c.busy)) clearInterval(poller);
-      }, 1500);
+    if (tab === "tasks") {
+      void loadConns();
+      dispatch("settled");
+      poller = window.setInterval(() => dispatch("settled"), 3000);
     }
   }
 
-  $: cards, poke();
+  $: tab, poke();
 
   onDestroy(() => clearInterval(poller));
-
-  async function sendAsk() {
-    const prompt = askInput.trim();
-    if (!prompt || asking) return;
-    asking = true;
-    const input = prompt;
-    askInput = "";
-    try {
-      const sid = await api.sendMessage({
-        sessionId: null,
-        model: "auto",
-        prompt: input,
-        cwd: folder,
-        effort: "low",
-        attachments: [],
-        mode: "auto",
-        lane: "research",
-      });
-      const card: AskCard = { key: ++seq, q: input, sid, answer: "", busy: true };
-      cards = [card, ...cards];
-      void poll(card);
-    } catch (e) {
-      askInput = input;
-    } finally {
-      asking = false;
-    }
-  }
-
-  async function stopAsk(card: AskCard) {
-    try {
-      await api.killRun(card.sid);
-    } catch {}
-    card.busy = false;
-    cards = cards;
-  }
 
   interface TaskItem {
     done: boolean;
@@ -323,13 +279,6 @@
     void loadProject(projectSlug);
     void loadSessionPlan(sessionId);
   }
-
-  function onKey(e: KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void sendAsk();
-    }
-  }
 </script>
 
 <div class="panel" style:width="{dockW}px">
@@ -350,32 +299,36 @@
     <button class="x" title="Close panel" on:click={() => dispatch("close")}><Icon name="close" size={12} /></button>
   </div>
 
-  {#if tab === "ask"}
-    <div class="ask-box">
-      <textarea
-        bind:this={field}
-        bind:value={askInput}
-        rows="2"
-        placeholder="Quick question — research lane, never asks"
-        on:keydown={onKey}
-      />
-      <button class="go" disabled={!askInput.trim() || asking} title="Send (Enter)" on:click={sendAsk}>
-        <Icon name="enter" size={14} />
-      </button>
-    </div>
-    <div class="cards">
-      {#each cards as c (c.key)}
-        <div class="card">
-          <div class="q">{c.q}</div>
-          <div class="a">
-            {#if c.answer}{@html renderMarkdown(c.answer)}{:else}<span class="thinking">Thinking…</span>{/if}
+  {#if tab === "tasks"}
+    <div class="agents">
+      {#if busyRuns.length}
+        <h3>Running now</h3>
+        {#each busyRuns as s (s.id)}
+          {@const pill = pillOf(s)}
+          <div class="row">
+            <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
+              <span class="time">{time(s.updated)}</span>
+              <span class="icon">
+                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneFallback(s)} size={13} />{/if}
+              </span>
+              <span class="title">{s.title || "Untitled session"}</span>
+              {#if pill}<span class="pill {pill.cls}">{pill.label}</span>{/if}
+            </button>
+            <button class="stop" title="Stop this run (keeps the transcript)" on:click={() => dispatch("stopSession", { id: s.id })}>Stop</button>
           </div>
-          {#if c.busy}
-            <button class="stop" on:click={() => stopAsk(c)}>Stop</button>
-          {/if}
+        {/each}
+      {:else}
+        <p class="empty">Nothing running. Spawned agents and queued runs land here.</p>
+      {/if}
+      <h3>Connections</h3>
+      {#each conns as c (c.name)}
+        <div class="row">
+          <span class="dot" class:on={c.on} />
+          <span class="title">{c.name}</span>
+          <span class="url">{c.on ? "connected" : "off"}</span>
         </div>
       {:else}
-        <p class="empty">Ask anything while your code runs. Answers are research sessions — find them in history later.</p>
+        <p class="empty">No connectors configured. Add one in Settings › System.</p>
       {/each}
     </div>
   {:else if tab === "agents"}
@@ -574,55 +527,16 @@
     color: var(--faint);
   }
   .empty { margin: 24px 16px; font-size: 12.5px; color: var(--faint); line-height: 1.6; }
-  .ask-box {
+  .agents { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 16px; }
+  .dot {
     flex: none;
-    display: flex;
-    align-items: flex-end;
-    gap: 6px;
-    margin: 2px 10px 0;
-    padding: 8px 8px 8px 12px;
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    width: 8px;
+    height: 8px;
+    margin-left: 8px;
+    border-radius: 50%;
+    background: var(--faint);
   }
-  .ask-box textarea {
-    flex: 1;
-    min-width: 0;
-    background: none;
-    border: none;
-    outline: none;
-    resize: none;
-    color: var(--text);
-    font-size: 13px;
-    line-height: 1.45;
-  }
-  .go {
-    width: 28px;
-    height: 28px;
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--faint);
-    cursor: pointer;
-  }
-  .go:not(:disabled) { color: var(--text); background: color-mix(in srgb, var(--text) 12%, transparent); }
-  .go:disabled { cursor: default; }
-  .cards, .agents { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 16px; }
-  .card {
-    margin: 10px;
-    padding: 10px 12px;
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
-    font-size: 13px;
-  }
-  .q { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
-  .a { color: var(--text); line-height: 1.6; overflow-wrap: break-word; }
-  .thinking { color: var(--faint); }
+  .dot.on { background: var(--ok); }
   .row { display: flex; align-items: center; gap: 2px; padding: 2px 8px 2px 4px; }
   .open {
     flex: 1;

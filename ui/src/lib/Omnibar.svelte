@@ -106,7 +106,6 @@
     if (next !== effort) effort = next;
   }
   $: perm = PERMS.find((p) => p.id === permission) ?? PERMS[3];
-  $: showFolder = !(folderLocked && !folder);
   $: contextPct = contextLimit > 0 ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : 0;
   $: slashQuery = /^\/\w*$/.test(input.trim()) ? input.trim().slice(1).toLowerCase() : null;
   $: slashItems = slashQuery === null ? [] : SLASH.filter((c) => c.name.startsWith(slashQuery));
@@ -507,11 +506,10 @@
       {/if}
     </div>
       {#if mode === "build"}
-        <button bind:this={permBtn} class="ctl" class:open={permOpen} title={perm.desc} on:click|stopPropagation={togglePerm}>
+        <button bind:this={permBtn} class="ctl icon-only" class:open={permOpen} title={perm.title + " — " + perm.desc} on:click|stopPropagation={togglePerm}>
           <Icon name={perm.icon} size={12} />
-          <span class="truncate">{perm.title}</span>
         </button>
-        {#if showFolder}
+        {#if folder || project}
           <button
             bind:this={projBtn}
             class="ctl project"
@@ -940,6 +938,11 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--text) 6%, transparent);
     border: 1px solid transparent;
+  }
+  .bar :global(.ctl.icon-only) {
+    padding: 0;
+    width: 26px;
+    justify-content: center;
   }
   .bar :global(.ctl:hover),
   .bar :global(.ctl.open) {

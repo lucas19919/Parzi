@@ -118,7 +118,7 @@
   let switcherOpen = false;
   let panelOpen = false;
   let panelW = 360;
-  let panelTab: "ask" | "agents" | "projects" = "ask";
+  let panelTab: "agents" | "projects" | "tasks" = "agents";
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
   let farFromBottom = false;
@@ -663,9 +663,6 @@
     else if (name === "ctrl+shift+a") {
       panelTab = "agents";
       panelOpen = true;
-    } else if (name === "ctrl+j") {
-      panelTab = "ask";
-      panelOpen = true;
     }
     else if (name === "ctrl+shift+t") reopenClosed();
     else if (name === "f11") void setImmersive(!immersive);
@@ -699,9 +696,7 @@
             ? "ctrl+shift+t"
             : mod && e.shiftKey && key === "a"
               ? "ctrl+shift+a"
-              : mod && !e.shiftKey && key === "j"
-                ? "ctrl+j"
-                : mod && ["p", "k", "t", "w", "l", "b", "h"].includes(key)
+              : mod && ["p", "k", "t", "w", "l", "b", "h"].includes(key)
                   ? `ctrl+${key}`
                   : "";
     if (name && shortcut(name)) {
@@ -860,7 +855,6 @@
               <SidePanel
                 {threads}
                 {running}
-                {folder}
                 projectSlug={project?.slug ?? ""}
                 bind:dockW={panelW}
                 sessionId={shown ?? ""}
