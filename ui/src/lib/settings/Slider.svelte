@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { createEventDispatcher } from "svelte";
+
   export let label = "";
   export let value = 0;
   export let min = 0;
@@ -6,11 +8,14 @@
   export let step = 1;
   export let unit = "";
 
+  const dispatch = createEventDispatcher<{ input: number }>();
+
   $: pct = max > min ? Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100)) : 0;
   $: shown = Number.isInteger(step) ? String(Math.round(value)) : String(value);
 
   function onRange(e: Event) {
     value = +(e.currentTarget as HTMLInputElement).value;
+    dispatch("input", value);
   }
 </script>
 

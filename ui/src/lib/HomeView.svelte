@@ -1,13 +1,10 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { fade } from "svelte/transition";
-  import HomeWidgets from "./HomeWidgets.svelte";
-  import type { ProviderStatus, SessionMeta } from "./api";
+  import type { SessionMeta } from "./api";
   import { folderName } from "./tabs";
 
   export let threads: SessionMeta[] = [];
-  export let running: Set<string> = new Set();
-  export let board: ProviderStatus[] = [];
 
   const dispatch = createEventDispatcher<{ open: { url: string }; openSession: { id: string }; allSessions: void }>();
 
@@ -28,7 +25,6 @@
 </script>
 
 <div class="home">
-  <HomeWidgets {threads} {running} {board} on:allSessions={() => dispatch("allSessions")} />
   {#if recent.length}
     <div class="recent-foot">
       <button class="disclosure" aria-expanded={showRecent} on:click={() => (showRecent = !showRecent)}>

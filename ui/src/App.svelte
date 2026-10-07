@@ -876,8 +876,6 @@
         <div class="home" in:fade={{ duration: 200 }}>
           <HomeView
             {threads}
-            {running}
-            board={$board}
             on:open={(e) => browse(e.detail.url)}
             on:openSession={(e) => openSession(e.detail.id)}
             on:allSessions={() => openHistory("sessions")}
