@@ -1073,7 +1073,7 @@
   .composer {
     position: absolute;
     left: 50%;
-    bottom: calc(50% + 20px);
+    bottom: calc(54% - 58px);
     z-index: 20;
     width: min(720px, 90%);
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
