@@ -11,7 +11,15 @@
   export let running: Set<string> = new Set();
   export let folder = "";
   export let sessionId = "";
-  export let tab: "ask" | "agents" = "ask";
+  // Dock tabs are a registry: append { id, label } plus a content branch
+  // below to add projects, checklists, etc. without touching the shell.
+  type DockTab = "ask" | "agents";
+  const DOCK_TABS: { id: DockTab; label: string }[] = [
+    { id: "ask", label: "Ask" },
+    { id: "agents", label: "Agents" },
+  ];
+
+  export let tab: DockTab = "ask";
 
   const dispatch = createEventDispatcher<{
     openSession: { id: string };
@@ -34,6 +42,29 @@
   let seq = 0;
   let field: HTMLTextAreaElement | null = null;
   let poller = 0;
+  let w = 360;
+  try {
+    const saved = Number(localStorage.getItem("parzi.dock.w"));
+    if (saved >= 280 && saved <= 640) w = saved;
+  } catch {}
+
+  function startResize(e: PointerEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = w;
+    const move = (ev: PointerEvent) => {
+      w = Math.min(640, Math.max(280, Math.round(startW + (startX - ev.clientX))));
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      try {
+        localStorage.setItem("parzi.dock.w", String(w));
+      } catch {}
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
 
   function agentOf(s: SessionMeta) {
     return s.model.split("/")[0];
@@ -191,13 +222,20 @@
   }
 </script>
 
-<div class="panel">
+<div class="panel" style:width="{w}px">
+  <div class="grip" on:pointerdown={startResize} title="Drag to resize the dock" />
   <div class="p-head">
-    <div class="p-tabs" role="tablist" aria-label="Side panel">
-      <button role="tab" aria-selected={tab === "ask"} class:on={tab === "ask"} on:click={() => (tab = "ask")}>Ask</button>
-      <button role="tab" aria-selected={tab === "agents"} class:on={tab === "agents"} on:click={() => (tab = "agents")}>
-        Agents{#if activeList.length}<span class="n">{activeList.length}</span>{/if}
-      </button>
+    <div class="p-tabs" role="tablist" aria-label="Dock">
+      {#each DOCK_TABS as t (t.id)}
+        <button
+          role="tab"
+          aria-selected={tab === t.id}
+          class:on={tab === t.id}
+          on:click={() => (tab = t.id)}
+        >
+          {t.label}{#if t.id === "agents" && activeList.length}<span class="n">{activeList.length}</span>{/if}
+        </button>
+      {/each}
     </div>
     <button class="x" title="Close panel" on:click={() => dispatch("close")}><Icon name="close" size={12} /></button>
   </div>
@@ -230,7 +268,7 @@
         <p class="empty">Ask anything while your code runs. Answers are research sessions — find them in history later.</p>
       {/each}
     </div>
-  {:else}
+  {:else if tab === "agents"}
     <div class="agents">
       {#if activeList.length}
         <h3>Active now</h3>
@@ -276,15 +314,36 @@
 
 <style>
   .panel {
-    width: 360px;
+    position: relative;
     flex: none;
     min-height: 0;
     display: flex;
     flex-direction: column;
     border-left: 1px solid var(--line);
-    background: color-mix(in srgb, var(--panel) 55%, transparent);
+    background: var(--glass-bg);
     -webkit-backdrop-filter: var(--glass-strong-blur);
     backdrop-filter: var(--glass-strong-blur);
+  }
+  .grip {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -4px;
+    width: 9px;
+    cursor: ew-resize;
+    z-index: 5;
+  }
+  .grip:hover::after,
+  .grip:active::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 3px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--accent);
+    opacity: 0.7;
   }
   .p-head {
     flex: none;

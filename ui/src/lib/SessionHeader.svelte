@@ -84,8 +84,8 @@
   </div>
   {#if canAct}
     <div class="menu" bind:this={menu}>
-      <button class="icon-btn" class:on={panelOpen} title="Subagents (Ctrl+Shift+A)" on:click={() => dispatch("agents")}>
-        <Icon name="bot" size={14} />
+      <button class="icon-btn" class:on={panelOpen} title="Toggle dock (Ctrl+Shift+A)" on:click={() => dispatch("agents")}>
+        <Icon name="panel" size={14} />
         {#if agentCount > 0}<span class="count">{agentCount > 99 ? "99+" : agentCount}</span>{/if}
       </button>
       <button class="icon-btn" title="Session actions" aria-expanded={open} on:click={() => (open = !open)}>
