@@ -67,6 +67,23 @@
     return row.provider !== "auto" && row.value === row.provider ? "Default model" : row.label;
   }
 
+  // Long provider strings ("Muse Spark 1.3 Contributor Free") collapse to
+  // the first two non-version words ("Muse Spark") so the pill never
+  // crushes its neighbours.
+  function shortName(name: string) {
+    const skip = new Set(["contributor", "free", "preview", "latest", "thinking"]);
+    const keep: string[] = [];
+    const parts = name.split(/\s+/);
+    for (let i = 0; i < parts.length && keep.length < 2; i++) {
+      const p = parts[i];
+      if (/\d/.test(p) && i > 0) continue;
+      if (skip.has(p.toLowerCase())) continue;
+      keep.push(p);
+    }
+    const short = (keep.length ? keep : parts.slice(0, 2)).join(" ");
+    return short.length > 22 ? `${short.slice(0, 22)}…` : short;
+  }
+
   async function focusSearch() {
     await tick();
     searchEl?.focus();
@@ -128,7 +145,7 @@
   aria-expanded={open}
   on:click|stopPropagation={() => (open ? (open = false) : show())}
 >
-  <span class="truncate">{shown.name}</span>
+  <span class="truncate">{shortName(shown.name)}</span>
   <Icon name="chevDown" size={10} />
 </button>
 

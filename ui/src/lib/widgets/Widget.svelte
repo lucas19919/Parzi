@@ -275,10 +275,12 @@
 
 <Zoomable enabled={isChart} let:open let:toggle>
 <div class="widget-card" class:bad>
+  {#if bad || title}
   <div class="w-head">
-    <span class="w-kind">{bad ? "widget" : type}</span>
+    {#if bad}<span class="w-kind">widget</span>{/if}
     {#if title}<span class="w-title">{title}</span>{/if}
   </div>
+  {/if}
   {#if bad}
     <div class="w-error">Couldn't render widget type "{type}" — showing source.</div>
     <pre class="w-source">{JSON.stringify(d, null, 2)?.slice(0, 3000)}</pre>

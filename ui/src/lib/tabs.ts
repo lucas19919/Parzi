@@ -1,5 +1,5 @@
 export type ComposerMode = "search" | "build" | "work";
-type TabKind = "session" | "page" | "brain" | "history" | "settings";
+type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview";
 
 export interface TabComposerState {
   input: string;
@@ -54,6 +54,10 @@ export function brainTab(): Tab {
 
 export function settingsTab(): Tab {
   return { id: tabId(), kind: "settings", title: "Settings", composer: defaultComposer() };
+}
+
+export function previewTab(which = "omnibar"): Tab {
+  return { id: tabId(), kind: "preview", title: `Preview ${which}`, url: which, composer: defaultComposer() };
 }
 
 export function hostOf(url: string): string {

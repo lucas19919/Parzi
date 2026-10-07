@@ -18,6 +18,7 @@
   import PageView from "./lib/PageView.svelte";
   import HistoryView from "./lib/HistoryView.svelte";
   import HomeView from "./lib/HomeView.svelte";
+  import PreviewView from "./lib/PreviewView.svelte";
   import BrainView from "./lib/BrainView.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
@@ -27,7 +28,7 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, sessionTab, settingsTab, toAddress, type Tab } from "./lib/tabs";
+  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, toAddress, type Tab } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
   import { toast, toastError, toasts, notify } from "./lib/toast";
   import { covered } from "./lib/overlay";
@@ -468,6 +469,12 @@
 
   $: backTitle = navTrail.length && navTab === tab.id ? (threads.find((t) => t.id === navTrail[navTrail.length - 1])?.title || "Back") : null;
 
+  function openPreview(which = "omnibar") {
+    const existing = tabs.find((t) => t.kind === "preview" && t.url === which);
+    if (existing) selectTab(existing.id);
+    else addTab(previewTab(which));
+  }
+
   function openSettings(section = "general") {
     settingsSection = section;
     switcherOpen = false;
@@ -639,6 +646,7 @@
     else if (name === "compact") void compact();
     else if (name === "stop") void stop();
     else if (name === "page") addTab(pageTab());
+    else if (name === "preview") openPreview();
     else if (name === "settings") openSettings();
   }
 
@@ -859,6 +867,11 @@
           on:openSession={(e) => openSession(e.detail.id)}
           on:deleteSession={(e) => remove(e.detail.id)}
         />
+      </div>
+    {:else if tab.kind === "preview"}
+      <div class="fill col" in:fade={{ duration: 150 }}>
+        <PanelHeader title={tab.title} on:close={() => closeTab(activeId)} />
+        <PreviewView which={tab.url ?? "omnibar"} />
       </div>
     {:else if tab.kind === "page"}
       {#key tab.id}

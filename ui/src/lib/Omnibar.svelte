@@ -35,6 +35,10 @@
   export let tokensIn = 0;
   export let tokensOut = 0;
   export let costUsd = 0;
+  // Preview variants for live design iteration (Preview tab renders the
+  // real component with variant 1/2/3). 1 = current, 2 = icon-only modes
+  // with everything on one row, 3 = two-line with the project on its own.
+  export let variant = 1;
 
   const dispatch = createEventDispatcher<{
     send: void;
@@ -67,6 +71,7 @@
     { name: "model", hint: "pick a model" },
     { name: "effort", hint: "cycle effort" },
     { name: "page", hint: "open a web page" },
+    { name: "preview", hint: "live component previews" },
     { name: "settings", hint: "open settings" },
   ];
 
@@ -412,7 +417,7 @@
   }
 </script>
 
-<div class="ob" class:hero>
+<div class="ob" class:hero class:v2={variant === 2} class:v3={variant === 3}>
   <div
     class="box"
     class:web={mode === "search"}
@@ -1212,5 +1217,23 @@
     font-size: 11px;
     line-height: 1.4;
     color: var(--muted);
+  }
+  /* Preview variants (see PreviewView): same controls, different layout. */
+  .ob.v2 .mode span:last-child {
+    display: none;
+  }
+  .ob.v2 .mode {
+    padding: 0 7px;
+  }
+  .ob.v2 .bar :global(.model) {
+    max-width: 130px;
+  }
+  .ob.v3 .bar {
+    flex-wrap: wrap;
+  }
+  .ob.v3 .project {
+    order: -1;
+    flex: 1 1 100%;
+    justify-content: flex-start;
   }
 </style>
