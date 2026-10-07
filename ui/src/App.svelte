@@ -118,6 +118,13 @@
     prevMode = mode;
   }
 
+  // Model + effort belong to the session, not the window: switching
+  // sessions restores each one's pick, and picking in A never leaks
+  // into B. Recorded on open (first visit takes the thread's model)
+  // and on every send. New drafts keep the composer's current values.
+  let sessionModels: Record<string, string> = {};
+  let sessionEfforts: Record<string, string> = {};
+
   let switcherOpen = false;
   let panelOpen = false;
   let panelW = 360;
@@ -252,7 +259,14 @@
       meta = m;
       events = ev;
       context = { used: m.context_tokens ?? 0, limit: m.context_limit ?? 0 };
-      if (m.model.includes("/")) model = m.model;
+      if (sessionModels[id]) {
+        model = sessionModels[id];
+        effort = sessionEfforts[id] ?? effort;
+      } else {
+        if (m.model.includes("/")) model = m.model;
+        sessionModels[id] = model;
+        sessionEfforts[id] = effort;
+      }
       if (m.status === "active" || m.status === "queued") running = new Set(running).add(id);
       if (tab.sessionId === id && m.title) patchTab(tab.id, { title: m.title });
       await scrollToBottom();
@@ -490,6 +504,8 @@
         lane: mode,
       });
       running = new Set(running).add(sid);
+      sessionModels[sid] = model;
+      sessionEfforts[sid] = effort;
       if (fresh) patchTab(target.id, { sessionId: sid, title: prompt.slice(0, 40) });
       if (activeId === target.id) {
         shown = sid;
