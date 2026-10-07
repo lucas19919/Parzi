@@ -216,12 +216,7 @@ impl Acp {
             if let Some(conn) = take_warm(program) {
                 return Ok(conn);
             }
-            if let Some(events) = events {
-                let _ = events.send(ProviderEvent::Notice(format!(
-                    "Starting {}. Its first start takes about a minute.",
-                    self.agent.name
-                )));
-            }
+            let _ = events;
         }
         self.open(program, cwd).await
     }

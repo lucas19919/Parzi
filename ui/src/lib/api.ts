@@ -182,6 +182,8 @@ export const api = {
     invoke<void>("approve_tool", { key, session, allow }),
   answerQuestion: (key: string, session: string, answer: string) =>
     invoke<void>("answer_question", { key, session, answer }),
+  spawnTrack: (parent: string, title: string, prompt: string) =>
+    invoke<string>("spawn_track", { parent, title, prompt }),
   planGet: (id: string) => invoke<string>("plan_get", { id }),
   purgeSessions: () => invoke<number>("purge_sessions"),
 

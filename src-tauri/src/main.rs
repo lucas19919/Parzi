@@ -543,6 +543,7 @@ fn main() {
             sessions::purge_sessions,
             sessions::approve_tool,
             sessions::answer_question,
+            sessions::spawn_track,
             sessions::plan_get,
             files::pick_folder,
             files::list_files,

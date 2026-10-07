@@ -182,11 +182,26 @@ pub async fn purge_sessions(state: State<'_, AppState>) -> Result<usize, String>
 }
 
 #[tauri::command]
-pub async fn plan_get(state: State<'_, AppState>, id: String) -> Result<String, String> {
+pub async fn plan_get(id: String) -> Result<String, String> {
     let dir = parzi_core::paths::sessions_dir()
         .map(|d| d.join(&id))
         .map_err(|e| e.to_string())?;
     Ok(std::fs::read_to_string(dir.join("plan.json")).unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn spawn_track(
+    state: State<'_, AppState>,
+    parent: String,
+    title: String,
+    prompt: String,
+) -> Result<String, String> {
+    state
+        .orch
+        .harness()
+        .spawn_session(&parent, &title, &prompt, true, None, None, false, None)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

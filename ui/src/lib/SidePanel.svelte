@@ -4,6 +4,7 @@
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
   import { api, brain, type SessionMeta } from "./api";
+  import { toast } from "./toast";
   import { folderName } from "./tabs";
   import { renderMarkdown } from "./md";
 
@@ -279,6 +280,23 @@
     void loadProject(projectSlug);
     void loadSessionPlan(sessionId);
   }
+
+  async function assignTrack(section: string, text: string) {
+    if (!sessionId) return;
+    const where = section ? `${section} — ` : "";
+    try {
+      await api.spawnTrack(
+        sessionId,
+        text.slice(0, 60),
+        `Work this track from ${projectSlug || "the project"}: ${where}${text}. Do the work, then reply with your result as the final message. Do not edit TASKS.md or GOALS.md — the orchestrator owns those files; just report back.`,
+      );
+      toast("Agent assigned — watch the Agents tab");
+      tab = "agents";
+      dispatch("settled");
+    } catch (e) {
+      toast(String(e), true);
+    }
+  }
 </script>
 
 <div class="panel" style:width="{dockW}px">
@@ -417,12 +435,15 @@
             <h3>Tasks</h3>
             {#each taskSections as sec (sec.title || "top")}
               {#if sec.title}<h4>{sec.title}</h4>{/if}
-              {#each sec.items as item (item.text)}
-                <div class="trow" style:padding-left="{8 + item.depth * 14}px">
-                  <span class="box" class:done={item.done}>{#if item.done}x{/if}</span>
-                  <span class="ttext" class:done={item.done}>{item.text}</span>
-                </div>
-              {/each}
+            {#each sec.items as item (item.text)}
+              <div class="trow" style:padding-left="{8 + item.depth * 14}px">
+                <span class="box" class:done={item.done}>{#if item.done}x{/if}</span>
+                <span class="ttext" class:done={item.done}>{item.text}</span>
+                {#if !item.done}
+                  <button class="assign" title="Assign an agent to this track" on:click={() => assignTrack(sec.title, item.text)}>Assign</button>
+                {/if}
+              </div>
+            {/each}
             {/each}
           {/if}
         {/if}
@@ -625,6 +646,19 @@
   .trow .box.doing { border-color: var(--warn); }
   .dec { margin: 2px 12px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
   .dec b { color: var(--text); font-weight: 600; }
-  .ttext { font-size: 12.5px; color: var(--text); }
+  .ttext { font-size: 12.5px; color: var(--text); flex: 1; min-width: 0; }
   .ttext.done { color: var(--faint); text-decoration: line-through; }
+  .assign {
+    flex: none;
+    padding: 2px 8px;
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--faint);
+    font-size: 10.5px;
+    cursor: pointer;
+    opacity: 0;
+  }
+  .trow:hover .assign { opacity: 1; }
+  .assign:hover { color: var(--text); border-color: var(--faint); }
 </style>

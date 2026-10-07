@@ -104,26 +104,33 @@ md.block.ruler.before("fence", "parzi-math-block", (state, start, end, silent) =
   return true;
 });
 
-// $…$ inline math on one line (escaped \$ ignored).
+// $…$ inline and $$…$$ single-line display (escaped \$ ignored).
 md.inline.ruler.after("escape", "parzi-math-inline", (state, silent) => {
   const src = state.src;
   if (state.pos >= src.length || src[state.pos] !== "$") return false;
-  if (src[state.pos + 1] === "$") return false;
   if (state.pos > 0 && src[state.pos - 1] === "\\") return false;
-  let end = state.pos + 1;
+  const display = src[state.pos + 1] === "$";
+  const open = display ? state.pos + 2 : state.pos + 1;
+  let end = open;
   while (end < src.length) {
-    if (src[end] === "$" && src[end - 1] !== "\\" && src[end + 1] !== "$") break;
     if (src[end] === "\n") return false;
+    if (src[end] === "$" && src[end - 1] !== "\\") {
+      if (display) {
+        if (src[end + 1] === "$") break;
+      } else if (src[end + 1] !== "$") {
+        break;
+      }
+    }
     end++;
   }
   if (end >= src.length) return false;
-  const tex = src.slice(state.pos + 1, end);
+  const tex = src.slice(open, end);
   if (!tex.trim()) return false;
   if (silent) return true;
   const tok = state.push("parzi_math", "span", 0);
   tok.content = tex;
-  tok.meta = { display: false };
-  state.pos = end + 1;
+  tok.meta = { display };
+  state.pos = display ? end + 2 : end + 1;
   return true;
 });
 
