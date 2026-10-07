@@ -54,6 +54,9 @@
     flex-direction: column;
     gap: 22px;
     width: 100%;
+    /* The hero composer is bottom-anchored and overlaps the top of the
+       home box; clear it so the disclosure never slides underneath. */
+    padding-top: 48px;
   }
   .recent-foot {
     display: flex;
