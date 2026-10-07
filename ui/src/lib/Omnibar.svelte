@@ -682,14 +682,11 @@
     box-shadow:
       inset 0 1px 0 rgba(255, 255, 255, 0.07),
       var(--glass-shadow);
-    transition: border-color 140ms ease;
+    outline: none;
   }
+  .box:focus,
   .box:focus-within {
-    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-  }
-  .box.web:focus-within {
-    border-color: var(--accent);
+    outline: none;
   }
   .row {
     display: flex;

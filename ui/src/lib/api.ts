@@ -423,7 +423,7 @@ interface DeskTab {
 }
 
 interface DeskCmd {
-  op: "open" | "focus" | "close";
+  op: "open" | "focus" | "close" | "navigate";
   id?: string;
   url?: string;
   rev?: number;

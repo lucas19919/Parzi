@@ -28,6 +28,16 @@
   $: shown = order ? order.map((id) => tabs.find((t) => t.id === id)).filter((t): t is Tab => !!t) : tabs;
 
   let collapsed = new Set<string>();
+  let touched = new Set<string>();
+
+  // Groups start collapsed (agent tabs arrive quietly); explicit
+  // user toggles win from then on.
+  $: {
+    for (const [sid, kids] of groups.kids) {
+      if (kids.length && !touched.has(sid)) collapsed.add(sid);
+    }
+    collapsed = collapsed;
+  }
 
   function laneOf(t: Tab): string {
     if (t.kind !== "session" || !t.sessionId) return "";
@@ -63,6 +73,7 @@
 
   function toggleGroup(sessionId: string) {
     collapsed = new Set(collapsed);
+    touched.add(sessionId);
     if (collapsed.has(sessionId)) collapsed.delete(sessionId);
     else collapsed.add(sessionId);
   }
@@ -366,6 +377,9 @@
   }
   .group .tab.active {
     border-color: var(--line);
+  }
+  .group:has(.tab.active) {
+    border-color: color-mix(in srgb, var(--accent) 38%, transparent);
   }
   .group-caret {
     opacity: 1;

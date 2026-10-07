@@ -1,4 +1,4 @@
-﻿<script lang="ts">
+<script lang="ts">
   import { createEventDispatcher, onDestroy } from "svelte";
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
@@ -460,9 +460,7 @@
     display: flex;
     flex-direction: column;
     border-left: 1px solid var(--line);
-    background: var(--glass-bg);
-    -webkit-backdrop-filter: var(--glass-strong-blur);
-    backdrop-filter: var(--glass-strong-blur);
+    background: transparent;
   }
   .grip {
     position: absolute;

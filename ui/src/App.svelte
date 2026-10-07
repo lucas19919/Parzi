@@ -362,14 +362,20 @@
     else newSession();
   }
 
-  function openPage(url: string, id?: string, owner?: string | null) {
+  function openPage(url: string, id?: string, owner?: string | null, background = false) {
     const existing = tabs.find((t) => (id ? t.id === id : t.kind === "page" && t.url === url));
     if (existing) {
       if (url && existing.url !== url) patchTab(existing.id, { url, title: hostOf(url) });
       if (owner !== undefined && existing.owner !== owner) patchTab(existing.id, { owner: owner ?? null });
-      selectTab(existing.id);
+      if (!background) selectTab(existing.id);
     } else {
-      addTab(pageTab(url, id, owner ?? null));
+      const t = pageTab(url, id, owner ?? null);
+      if (background) {
+        const idx = tabs.findIndex((x) => x.id === activeId);
+        tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
+      } else {
+        addTab(t);
+      }
     }
   }
 
@@ -745,8 +751,12 @@
     const unRun = onRunEvent(onEvent);
     const unDesk = onDesk((cmd) => {
       if (typeof cmd.rev === "number") deskRev = Math.max(deskRev, cmd.rev);
-      if (cmd.op === "open" && cmd.url) openPage(cmd.url, cmd.id, cmd.owner ?? null);
-      else if (cmd.op === "focus" && cmd.id) selectTab(cmd.id);
+      // Agent-driven tab events never steal focus: pages open in the
+      // background attached to their session; navigations patch in place.
+      if (cmd.op === "open" && cmd.url) openPage(cmd.url, cmd.id, cmd.owner ?? null, true);
+      else if (cmd.op === "navigate" && cmd.id && cmd.url) {
+        patchTab(cmd.id, { url: cmd.url, title: hostOf(cmd.url) });
+      } else if (cmd.op === "focus" && cmd.id) selectTab(cmd.id);
       else if (cmd.op === "close" && cmd.id) closeTab(cmd.id);
     });
     const unPage = onBrowser(onPage);
