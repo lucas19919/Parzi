@@ -28,6 +28,7 @@
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
   import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, sessionTab, settingsTab, toAddress, type Tab } from "./lib/tabs";
+  import { openBrainNote, brainTabRequested } from "./lib/brainStore";
   import { toast, toastError, toasts, notify } from "./lib/toast";
   import { covered } from "./lib/overlay";
   import type { Approval, LiveTool } from "./lib/live";
@@ -36,7 +37,10 @@
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
 
   const restored = loadTabs();
-  let tabs: Tab[] = restored?.tabs ?? [sessionTab()];
+  let tabs: Tab[] = (restored?.tabs ?? [sessionTab()]).map((t) => ({
+    ...t,
+    composer: (t as Partial<Tab>).composer ?? { input: "", mode: "build", model: "auto", effort: "medium", attachments: [] },
+  }));
   let activeId = restored?.active ?? tabs[0].id;
   // In-tab subagent navigation: when the panel opens a descendant of the
   // visible session, we swap the tab's session in place and remember the
@@ -71,13 +75,11 @@
   let attachments: string[] = [];
   let sending = false;
 
-  const modeDefaults = { search: { model: "auto", effort: "medium" }, build: { model: "auto", effort: "medium" }, work: { model: "auto", effort: "low" } };
-  let modeKept: Record<ComposerMode, { model: string; effort: string }> = {
-    search: { ...modeDefaults.search },
-    build: { ...modeDefaults.build },
-    work: { ...modeDefaults.work },
-  };
-  let prevMode: ComposerMode = mode;
+  const modeDefaults: Record<ComposerMode, { model: string; effort: string }> = { search: { model: "auto", effort: "medium" }, build: { model: "auto", effort: "medium" }, work: { model: "auto", effort: "low" } };
+
+  // Omnibar binds directly to the active tab's composer (see markup
+  // below), so each tab keeps its own draft, mode, model, effort and
+  // attachments without cross-contamination.
 
   function laneOf(sessionId: string | null | undefined): string {
     if (!sessionId) return "";
@@ -110,20 +112,8 @@
     ).length;
   })();
 
-  $: if (mode !== prevMode) {
-    modeKept[prevMode] = { model, effort };
-    const kept = modeKept[mode] ?? modeDefaults[mode];
-    model = kept.model;
-    effort = kept.effort;
-    prevMode = mode;
-  }
-
-  // Model + effort belong to the session, not the window: switching
-  // sessions restores each one's pick, and picking in A never leaks
-  // into B. Recorded on open (first visit takes the thread's model)
-  // and on every send. New drafts keep the composer's current values.
-  let sessionModels: Record<string, string> = {};
-  let sessionEfforts: Record<string, string> = {};
+  // Composer state lives on the tab: switching tabs preserves each
+  // tab's composer intact, with no copying and no cross-contamination.
 
   let switcherOpen = false;
   let panelOpen = false;
@@ -142,6 +132,14 @@
   let deskRev = 0;
 
   $: tab = tabs.find((t) => t.id === activeId) ?? tabs[0];
+  $: composer = tab.composer;
+  // Legacy mirrors for session logic; the Omnibar binds directly to
+  // tab.composer.* (see markup), so each tab keeps its own state.
+  $: input = composer.input;
+  $: mode = composer.mode;
+  $: model = composer.model;
+  $: effort = composer.effort;
+  $: attachments = composer.attachments;
   $: streaming = !!shown && running.has(shown);
   $: hasSession = tab.kind === "session" && (!!shown || sending || events.length > 0);
   $: folder = tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
@@ -203,7 +201,8 @@
     openPageNext(last.url);
   }
 
-  function openBrain() {
+  function openBrain(path: string | unknown = "") {
+    if (typeof path === "string" && path) openBrainNote(path);
     const existing = tabs.find((t) => t.kind === "brain");
     if (existing) selectTab(existing.id);
     else addTab(brainTab());
@@ -259,13 +258,10 @@
       meta = m;
       events = ev;
       context = { used: m.context_tokens ?? 0, limit: m.context_limit ?? 0 };
-      if (sessionModels[id]) {
-        model = sessionModels[id];
-        effort = sessionEfforts[id] ?? effort;
-      } else {
-        if (m.model.includes("/")) model = m.model;
-        sessionModels[id] = model;
-        sessionEfforts[id] = effort;
+      const comp = tab.composer;
+      if (m.model.includes("/")) {
+        comp.model = m.model;
+        tabs = tabs;
       }
       if (m.status === "active" || m.status === "queued") running = new Set(running).add(id);
       if (tab.sessionId === id && m.title) patchTab(tab.id, { title: m.title });
@@ -296,6 +292,8 @@
   function selectTab(id: string) {
     const next = tabs.find((t) => t.id === id);
     if (!next) return;
+    // Each tab owns its composer; switching only changes the active tab
+    // so drafts, mode, model, effort and attachments are preserved intact.
     activeId = id;
     if (navTab !== id) {
       navTrail = [];
@@ -308,6 +306,7 @@
   }
 
   function addTab(t: Tab) {
+    if (!t.composer) t.composer = { input: "", mode: "build", model: "auto", effort: "medium", attachments: [] };
     tabs = [...tabs, t];
     selectTab(t.id);
   }
@@ -343,7 +342,8 @@
     }
     const kept = tabs.filter((t) => !doomed.has(t.id));
     if (!kept.length) {
-      tabs = [sessionTab()];
+      const fresh = sessionTab();
+      tabs = [fresh];
       selectTab(tabs[0].id);
       return;
     }
@@ -362,8 +362,7 @@
     else newSession();
   }
 
-  function openPage(url: string, id?: string, owner?: string | null, background = false) {
-    const existing = tabs.find((t) => (id ? t.id === id : t.kind === "page" && t.url === url));
+  function openPage(url: string, id?: string, owner?: string | null, background = false) {    const existing = tabs.find((t) => (id ? t.id === id : t.kind === "page" && t.url === url));
     if (existing) {
       if (url && existing.url !== url) patchTab(existing.id, { url, title: hostOf(url) });
       if (owner !== undefined && existing.owner !== owner) patchTab(existing.id, { owner: owner ?? null });
@@ -478,40 +477,46 @@
   }
 
   async function send() {
-    const prompt = input.trim();
+    const target = tab;
+    const comp = target.composer;
+    const prompt = comp.input.trim();
     if (!prompt || sending || streaming) return;
     if (isExplicitUrl(prompt)) {
-      input = "";
+      comp.input = "";
+      tabs = tabs;
       browse(toAddress(prompt));
       return;
     }
-    const target = tab;
-    const files = attachments;
+    const files = [...comp.attachments];
     const sessionLane = normLane(laneOf(target.sessionId));
-    const fresh = !target.sessionId || (sessionLane !== "" && sessionLane !== mode);
+    const fresh = !target.sessionId || (sessionLane !== "" && sessionLane !== comp.mode);
     if (fresh) {
       navTrail = [];
       navTab = "";
     }
     const optimistic: ChatEvent = { kind: "user", text: prompt };
     sending = true;
-    input = "";
-    attachments = [];
+    comp.input = "";
+    comp.attachments = [];
+    tabs = tabs;
     events = [...events, optimistic];
     try {
       const sid = await api.sendMessage({
         sessionId: fresh ? null : target.sessionId,
-        model,
+        model: comp.model,
         prompt,
         cwd: folder,
-        effort,
+        effort: comp.effort,
         attachments: files,
         mode: permission,
-        lane: mode,
+        lane: comp.mode,
       });
       running = new Set(running).add(sid);
-      sessionModels[sid] = model;
-      sessionEfforts[sid] = effort;
+      // The field was cleared before the await. Drop the stored draft
+      // for the tab that sent, not whichever tab is active now.
+      target.composer.input = "";
+      target.composer.attachments = [];
+      tabs = tabs;
       if (fresh) patchTab(target.id, { sessionId: sid, title: prompt.slice(0, 40) });
       if (activeId === target.id) {
         shown = sid;
@@ -520,8 +525,9 @@
       }
       void refreshThreads();
     } catch (e) {
-      input = prompt;
-      attachments = files;
+      target.composer.input = prompt;
+      target.composer.attachments = files;
+      tabs = tabs;
       events = events.filter((ev) => ev !== optimistic);
       toastError(e);
     } finally {
@@ -774,6 +780,13 @@
     const unPage = onBrowser(onPage);
     const unOpen = onBrowserOpen((e) => openPageNext(e.url));
     const unKey = onBrowserKey((name) => void shortcut(name));
+    let brainSeen = 0;
+    const unBrain = brainTabRequested.subscribe((n) => {
+      if (n > 0 && n !== brainSeen) {
+        brainSeen = n;
+        openBrain();
+      }
+    });
     selectTab(activeId);
     if (!$onboarded) setupOpen = true;
     void warmPages();
@@ -791,6 +804,7 @@
       }
     })();
     return () => {
+      unBrain();
       unRun.then((f) => f()).catch(() => {});
       unDesk.then((f) => f()).catch(() => {});
       for (const un of [unPage, unOpen, unKey]) un.then((f) => f()).catch(() => {});
@@ -933,12 +947,12 @@
         {/if}
         <Omnibar
           bind:this={omnibar}
-          bind:input
-          bind:model
-          bind:effort
+          bind:input={tab.composer.input}
+          bind:model={tab.composer.model}
+          bind:effort={tab.composer.effort}
           bind:permission
-          bind:mode
-          bind:attachments
+          bind:mode={tab.composer.mode}
+          bind:attachments={tab.composer.attachments}
           {folder}
           lockMode={lockMode}
           folderLocked={!!tab.sessionId}
@@ -1019,7 +1033,15 @@
     border-radius: 10px;
   }
   :global(html.parzi-maximized) .shell {
+    border-radius: 0 !important;
+  }
+  :global(html.parzi-maximized) .fill,
+  :global(html.parzi-maximized) .session {
+    margin-left: 0;
+    margin-right: 0;
     border-radius: 0;
+    border-left: none;
+    border-right: none;
   }
   main {
     position: relative;

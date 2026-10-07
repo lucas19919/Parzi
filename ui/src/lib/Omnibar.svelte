@@ -549,7 +549,7 @@
           <span class="truncate">{effortLabel(effort)}</span>
           <Icon name="chevDown" size={10} stroke={2} />
         </button>
-        {#if (mode === "build" || mode === "work") && contextLimit > 0 && (contextUsed > 0 || compacting)}
+        {#if (mode === "build" || mode === "work") && contextLimit > 0}
           <button
             bind:this={ctxBtn}
             class="ctx"

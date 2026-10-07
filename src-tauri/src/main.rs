@@ -551,6 +551,7 @@ fn main() {
             files::read_image_data_url,
             files::stage_image,
             files::open_confirmed_url,
+            files::open_file_path,
             settings::get_config,
             settings::save_config,
             settings::toggle_favorite,

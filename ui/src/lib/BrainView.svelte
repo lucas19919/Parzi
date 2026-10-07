@@ -6,6 +6,7 @@
   import { renderMarkdown } from "./md";
   import { folderName } from "./tabs";
   import { toast, toastError } from "./toast";
+  import { targetBrainNote } from "./brainStore";
 
   const UNUSED = "unused";
   const OPEN_KEY = "parzi.brain.open.v2";
@@ -135,10 +136,24 @@
   async function openNote(path: string) {
     await flush();
     try {
-      raw = await brain.read(path);
-      selected = path;
+      if (!notes.length) await refresh();
+      const normalized = path.replace(/\\/g, "/");
+      const resolved = resolve(normalized) ?? resolve(decodeURIComponent(normalized)) ?? normalized;
+      raw = await brain.read(resolved);
+      selected = resolved;
       editing = false;
       dirty = false;
+      // Auto-expand the folder containing the note so it stays visible.
+      const holder = folders.find((f) => f.items.some((n) => n.path === resolved)) ?? folders.find((f) => f.project && resolved.startsWith(`projects/${f.key}/`));
+      if (holder) {
+        folder = holder.key;
+        toggle(holder.key, true);
+      }
+      // Fallback so the note view renders even if the index hasn't caught up.
+      if (!byPath.get(selected)) {
+        const title = selected.split("/").pop()?.replace(/\.md$/, "") ?? selected;
+        notes = [...notes, { path: selected, title, summary: "", projects: [], tags: [], links: [], pinned: false, modified: 0, bytes: 0 }];
+      }
     } catch (e) {
       toastError(e);
     }
@@ -349,7 +364,14 @@
     brain.obsidian().then((s) => (obsidian = s)).catch(() => {});
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisible);
+    const unTarget = targetBrainNote.subscribe((path) => {
+      if (path) {
+        targetBrainNote.set("");
+        void openNote(path);
+      }
+    });
     return () => {
+      unTarget();
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisible);
       void flush();

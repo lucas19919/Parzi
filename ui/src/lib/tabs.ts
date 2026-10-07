@@ -1,4 +1,17 @@
+export type ComposerMode = "search" | "build" | "work";
 type TabKind = "session" | "page" | "brain" | "history" | "settings";
+
+export interface TabComposerState {
+  input: string;
+  mode: ComposerMode;
+  model: string;
+  effort: string;
+  attachments: string[];
+}
+
+function defaultComposer(): TabComposerState {
+  return { input: "", mode: "build", model: "auto", effort: "medium", attachments: [] };
+}
 
 export interface Tab {
   id: string;
@@ -13,6 +26,7 @@ export interface Tab {
   canGoForward?: boolean;
   blocked?: number;
   bg?: string;
+  composer: TabComposerState;
 }
 
 let seq = 0;
@@ -23,23 +37,23 @@ function tabId(): string {
 }
 
 export function sessionTab(sessionId: string | null = null, title = "New session"): Tab {
-  return { id: tabId(), kind: "session", title, sessionId };
+  return { id: tabId(), kind: "session", title, sessionId, composer: defaultComposer() };
 }
 
 export function pageTab(url = "", id = tabId(), owner: string | null = null): Tab {
-  return { id, kind: "page", title: hostOf(url) || "New page", url, owner };
+  return { id, kind: "page", title: hostOf(url) || "New page", url, owner, composer: defaultComposer() };
 }
 
 export function historyTab(): Tab {
-  return { id: tabId(), kind: "history", title: "History" };
+  return { id: tabId(), kind: "history", title: "History", composer: defaultComposer() };
 }
 
 export function brainTab(): Tab {
-  return { id: tabId(), kind: "brain", title: "Brain" };
+  return { id: tabId(), kind: "brain", title: "Brain", composer: defaultComposer() };
 }
 
 export function settingsTab(): Tab {
-  return { id: tabId(), kind: "settings", title: "Settings" };
+  return { id: tabId(), kind: "settings", title: "Settings", composer: defaultComposer() };
 }
 
 export function hostOf(url: string): string {

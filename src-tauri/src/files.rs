@@ -277,6 +277,15 @@ pub async fn open_confirmed_url(url: String) -> Result<(), String> {
     open_url_native(&url)
 }
 
+#[tauri::command]
+pub async fn open_file_path(path: String) -> Result<(), String> {
+    let p = PathBuf::from(path.trim());
+    if !p.exists() {
+        return Err(format!("path does not exist: {}", p.display()));
+    }
+    open_url_native(&p.to_string_lossy())
+}
+
 fn open_url_native(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let status = std::process::Command::new("rundll32")

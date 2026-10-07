@@ -56,6 +56,12 @@ const md = new MarkdownIt({
   linkify: true,
 });
 
+const defaultValidateLink = md.validateLink.bind(md);
+md.validateLink = (url: string) => {
+  if (/^(?:file|brain|parzi|vscode):/i.test(url)) return true;
+  return defaultValidateLink(url);
+};
+
 function texHtml(tex: string, display: boolean): string | null {
   if (!tex.trim()) return null;
   try {
@@ -271,7 +277,7 @@ export function renderMarkdown(src: string, cache = true): string {
     mdStats.parsedChars += src.length;
   }
   const res = DOMPurify.sanitize(md.render(src), {
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|parzi):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|parzi|brain|file|vscode):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
   });
   if (!cache) return res;
   if (mdCache.size >= MD_CACHE_MAX) {
