@@ -99,7 +99,7 @@
     query = "";
     open = true;
     if (trigger) {
-      style = placeAbove(trigger, 264);
+      style = placeAbove(trigger, 240);
       above = style.includes("bottom:");
     }
     index = 0;
@@ -219,9 +219,9 @@
 
 <style>
   .model {
-    flex: 1 1 auto;
+    flex: none;
     min-width: 0;
-    max-width: 280px;
+    max-width: 200px;
   }
   .model .truncate {
     overflow: hidden;
@@ -230,7 +230,7 @@
     min-width: 0;
   }
   .picker {
-    width: 264px;
+    width: 240px;
     display: flex;
     flex-direction: column;
     transform-origin: bottom left;
