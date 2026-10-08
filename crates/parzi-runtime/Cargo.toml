@@ -24,6 +24,7 @@ bytes = "1"
 reqwest = { version = "0.12", features = ["json", "rustls-tls-manual-roots"] }
 pdf-extract = "0.12.1"
 base64 = "0.23.1"
+fs4 = "0.13"
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json"] }

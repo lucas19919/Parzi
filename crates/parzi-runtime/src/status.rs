@@ -255,16 +255,31 @@ mod tests {
         };
         board.update_usage("claude", &[spent(Some(now + 3600))]);
         assert!(
-            board.get("claude").unwrap().usage.iter().any(|w| w.spent(now)),
+            board
+                .get("claude")
+                .unwrap()
+                .usage
+                .iter()
+                .any(|w| w.spent(now)),
             "used up until it resets"
         );
         board.update_usage("claude", &[spent(Some(now - 1))]);
         assert!(
-            !board.get("claude").unwrap().usage.iter().any(|w| w.spent(now)),
+            !board
+                .get("claude")
+                .unwrap()
+                .usage
+                .iter()
+                .any(|w| w.spent(now)),
             "past its reset, the window is open again"
         );
         board.update_usage("claude", &[spent(None)]);
-        assert!(board.get("claude").unwrap().usage.iter().any(|w| w.spent(now)));
+        assert!(board
+            .get("claude")
+            .unwrap()
+            .usage
+            .iter()
+            .any(|w| w.spent(now)));
         board.refresh(&cfg, &["claude".into()], &quiet).await;
         assert!(
             board.get("claude").unwrap().usage.is_empty(),

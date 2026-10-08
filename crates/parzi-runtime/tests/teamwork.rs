@@ -7,13 +7,16 @@ use common::*;
 use parzi_core::config::ParziConfig;
 use parzi_core::store::{Event, SessionStore};
 use parzi_providers::{PermissionDecision, TurnEnd};
+use parzi_runtime::handler::RunSink;
 use parzi_runtime::inter::{InterKind, InterSessionMessage};
 use parzi_runtime::mcp::McpManager;
-use parzi_runtime::handler::RunSink;
 use parzi_runtime::toolhost::{ToolHost, ToolHostParts};
-use parzi_runtime::tools::{is_session_tool, Approval, ApprovalMode, Approver, Asker, AskRequest, ToolCallInfo, ToolExecutor};
-use tokio_util::sync::CancellationToken;
+use parzi_runtime::tools::{
+    is_session_tool, Approval, ApprovalMode, Approver, AskRequest, Asker, ToolCallInfo,
+    ToolExecutor,
+};
 use serde_json::{json, Value};
+use tokio_util::sync::CancellationToken;
 
 struct Allow;
 #[async_trait::async_trait]
@@ -105,12 +108,7 @@ fn makers_and_readers_are_advertised() {
         mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
         allowed: vec!["*".into()],
     };
-    for t in [
-        "image.generate",
-        "doc.read",
-        "models.list",
-        "browser.shot",
-    ] {
+    for t in ["image.generate", "doc.read", "models.list", "browser.shot"] {
         assert!(
             open.defs().iter().any(|d| d.name == *t),
             "{t} must be advertised"
@@ -304,7 +302,8 @@ async fn full_access_reaches_the_children() {
 }
 
 #[tokio::test]
-async fn send_message_continues_target_and_can_wait() {    let fake = answer();
+async fn send_message_continues_target_and_can_wait() {
+    let fake = answer();
     let (orch, store) = team(4, fake.clone());
     let parent = store.create("boss", "t", "", "claude/model").unwrap();
     let target = store.create("worker", "t", "", "claude/model").unwrap();
@@ -385,13 +384,33 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
     let parent = store.create("boss", "t", "", "claude/model").unwrap();
     let h = orch.harness();
     let first_id = id_of(
-        &h.spawn_session(&parent.id, "one", "first work", true, None, None, false, None, None)
-            .await
-            .unwrap(),
+        &h.spawn_session(
+            &parent.id,
+            "one",
+            "first work",
+            true,
+            None,
+            None,
+            false,
+            None,
+            None,
+        )
+        .await
+        .unwrap(),
     );
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let second = h
-        .spawn_session(&parent.id, "two", "second work", true, None, None, true, None, None)
+        .spawn_session(
+            &parent.id,
+            "two",
+            "second work",
+            true,
+            None,
+            None,
+            true,
+            None,
+            None,
+        )
         .await
         .unwrap();
     let v: Value = serde_json::from_str(&second).unwrap();
@@ -459,19 +478,26 @@ async fn plan_write_then_read_roundtrips() {
     assert!(out.contains("1 steps"), "{out}");
     let (ok, back) = host.call("plan.read", &json!({})).await;
     assert!(ok, "{back}");
-    assert!(back.contains("ship v1") && back.contains("sqlite"), "{back}");
+    assert!(
+        back.contains("ship v1") && back.contains("sqlite"),
+        "{back}"
+    );
 }
 
 #[tokio::test]
 async fn ask_user_returns_the_answer_or_says_so() {
     let (host, _store, _sid) = build_host(Some(Arc::new(Echo("blue".into()))));
     let (ok, out) = host
-        .call("ask.user", &json!({"question": "which?", "options": ["blue"]}))
+        .call(
+            "ask.user",
+            &json!({"question": "which?", "options": ["blue"]}),
+        )
         .await;
     assert!(ok && out == "blue", "{out}");
 
     let (lonely, _store, _sid) = build_host(None);
-    let (ok, out) = lonely.call("ask.user", &json!({"question": "which?"}))
+    let (ok, out) = lonely
+        .call("ask.user", &json!({"question": "which?"}))
         .await;
     assert!(ok && out.contains("no one to ask"), "{out}");
 }
@@ -492,5 +518,9 @@ async fn project_create_makes_a_home() {
     assert!(folder.is_dir(), "the folder exists");
     let _ = std::fs::remove_dir_all(folder.parent().unwrap());
     let meta = store.get(&sid).unwrap();
-    assert_eq!(meta.cwd, folder.display().to_string(), "session moved there");
+    assert_eq!(
+        meta.cwd,
+        folder.display().to_string(),
+        "session moved there"
+    );
 }

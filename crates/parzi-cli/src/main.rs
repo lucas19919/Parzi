@@ -45,6 +45,15 @@ enum Cmd {
         #[command(subcommand)]
         action: TabCmd,
     },
+    #[command(about = "Run the engine with no window. Listens on 127.0.0.1")]
+    Serve,
+    #[command(about = "Prepare ~/.parzi for ParziOS. Does not start the engine")]
+    Setup,
+    #[command(about = "Answer a parked approval on parzi serve")]
+    Approval {
+        #[command(subcommand)]
+        action: ApprovalCmd,
+    },
 }
 
 #[derive(Subcommand)]
@@ -94,6 +103,18 @@ enum SessionCmd {
     Rename { id: String, title: String },
     #[command(about = "Delete a session and its transcript")]
     Delete { id: String },
+}
+
+#[derive(Subcommand)]
+enum ApprovalCmd {
+    #[command(about = "Approvals waiting on parzi serve")]
+    List,
+    Allow {
+        key: String,
+    },
+    Deny {
+        key: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -155,6 +176,9 @@ async fn main() -> Result<()> {
         Cmd::Providers { provider, json } => cmd_providers(provider.as_deref(), json).await,
         Cmd::Session { action } => cmd_session(action).await,
         Cmd::Tab { action } => cmd_tab(action).await,
+        Cmd::Serve => cmd_serve().await,
+        Cmd::Setup => cmd_setup(),
+        Cmd::Approval { action } => cmd_approval(action).await,
     }
 }
 
@@ -175,12 +199,99 @@ fn cmd_init() -> Result<()> {
     Ok(())
 }
 
+async fn cmd_serve() -> Result<()> {
+    let (cfg, store) = boot()?;
+    let orch = Arc::new(Orchestrator::new(cfg, store));
+    let daemon = parzi_runtime::osserve::start(orch)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))?;
+    eprintln!("parzi serve listening on 127.0.0.1:{}", daemon.port);
+    if let Some(path) = desk::serve_path() {
+        eprintln!("token file: {}", path.display());
+    }
+    eprintln!("this socket is local. A remote machine is reached through SSH.");
+    tokio::signal::ctrl_c()
+        .await
+        .context("waiting for ctrl-c")?;
+    drop(daemon);
+    eprintln!("stopped");
+    Ok(())
+}
+
+fn cmd_setup() -> Result<()> {
+    cmd_init()?;
+    #[cfg(target_os = "linux")]
+    {
+        let exe = std::env::current_exe().context("finding the parzi binary")?;
+        let unit = parzi_runtime::osserve::systemd_unit(&exe);
+        let path = paths::parzi_dir()?.join("parzi-os.service");
+        parzi_core::atomic_write(&path, unit.as_bytes()).context("writing the service file")?;
+        println!("service file: {}", path.display());
+        println!("it is not enabled. To start it on login:");
+        println!("  systemctl --user link {}", path.display());
+        println!("  systemctl --user enable --now parzi-os.service");
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        println!("the user service file is written when setup runs on Linux.");
+        println!("on this PC: parzi serve");
+    }
+    Ok(())
+}
+
+async fn cmd_approval(action: ApprovalCmd) -> Result<()> {
+    if desk::desk_is_open().await {
+        anyhow::bail!("the desk is open and handles its own approvals");
+    }
+    match action {
+        ApprovalCmd::List => {
+            let v = desk::call_serve("approval.list", json!({}), Duration::from_secs(5))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let rows = v
+                .get("approvals")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if rows.is_empty() {
+                println!("no approvals waiting");
+                return Ok(());
+            }
+            for row in rows {
+                let key = row.get("key").and_then(Value::as_str).unwrap_or("");
+                let session = row.get("session").and_then(Value::as_str).unwrap_or("");
+                let label = row.get("label").and_then(Value::as_str).unwrap_or("");
+                println!("{key}  {session}  {label}");
+            }
+            Ok(())
+        }
+        ApprovalCmd::Allow { key } => answer_approval(&key, true).await,
+        ApprovalCmd::Deny { key } => answer_approval(&key, false).await,
+    }
+}
+
+async fn answer_approval(key: &str, allow: bool) -> Result<()> {
+    desk::call_serve(
+        "approval.answer",
+        json!({ "key": key, "allow": allow }),
+        Duration::from_secs(5),
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!(e))?;
+    println!("{key}");
+    Ok(())
+}
+
 fn offline(err: &str) -> bool {
     err.contains("not open")
 }
 
 async fn window(op: &str, body: Value, wait: Duration) -> Result<Value, String> {
     desk::call_within(op, body, wait).await
+}
+
+async fn engine(op: &str, body: Value, wait: Duration) -> Result<Value, String> {
+    desk::call_desk_or_serve(op, body, wait).await
 }
 
 fn print_json(v: &Value) -> Result<()> {
@@ -219,7 +330,7 @@ async fn cmd_session(action: SessionCmd) -> Result<()> {
 }
 
 async fn session_list(json: bool) -> Result<()> {
-    match window("session.list", json!({}), Duration::from_secs(5)).await {
+    match engine("session.list", json!({}), Duration::from_secs(5)).await {
         Ok(v) => {
             if json {
                 return print_json(&v);
@@ -270,7 +381,7 @@ async fn session_show(id: &str, json: bool, export: bool) -> Result<()> {
     } else {
         "session.show"
     };
-    match window(op, json!({ "id": id }), Duration::from_secs(5)).await {
+    match engine(op, json!({ "id": id }), Duration::from_secs(5)).await {
         Ok(v) => {
             if export {
                 println!("{}", v.get("text").and_then(Value::as_str).unwrap_or(""));
@@ -323,10 +434,16 @@ async fn session_send(
         "yes": yes,
         "effort": effort,
     });
-    match window("session.send", body, Duration::from_secs(3600)).await {
+    match engine("session.send", body, Duration::from_secs(3600)).await {
         Ok(v) => {
             if let Some(id) = v.get("id").and_then(Value::as_str) {
                 eprintln!("session {id}");
+            }
+            if v.get("serve").and_then(Value::as_bool) == Some(true) {
+                let status = v.get("status").and_then(Value::as_str).unwrap_or("active");
+                eprintln!("{status} on parzi serve");
+                eprintln!("parzi approval list");
+                return Ok(());
             }
             println!("{}", v.get("text").and_then(Value::as_str).unwrap_or(""));
             Ok(())
@@ -424,7 +541,7 @@ async fn send_local(
 
 async fn session_fork(id: &str, at: Option<usize>) -> Result<()> {
     let body = json!({ "id": id, "at": at });
-    match window("session.fork", body, Duration::from_secs(5)).await {
+    match engine("session.fork", body, Duration::from_secs(5)).await {
         Ok(v) => {
             println!(
                 "forked -> {}",
@@ -444,7 +561,7 @@ async fn session_fork(id: &str, at: Option<usize>) -> Result<()> {
 }
 
 async fn session_kill(id: &str) -> Result<()> {
-    match window("session.kill", json!({ "id": id }), Duration::from_secs(5)).await {
+    match engine("session.kill", json!({ "id": id }), Duration::from_secs(5)).await {
         Ok(v) => {
             println!(
                 "killed {}",
@@ -467,7 +584,7 @@ async fn session_kill(id: &str) -> Result<()> {
 }
 
 async fn session_rename(id: &str, title: &str) -> Result<()> {
-    match window(
+    match engine(
         "session.rename",
         json!({ "id": id, "title": title }),
         Duration::from_secs(5),
@@ -490,7 +607,7 @@ async fn session_rename(id: &str, title: &str) -> Result<()> {
 }
 
 async fn session_delete(id: &str) -> Result<()> {
-    match window(
+    match engine(
         "session.delete",
         json!({ "id": id }),
         Duration::from_secs(5),

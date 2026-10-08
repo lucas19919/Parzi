@@ -181,8 +181,7 @@ impl Orchestrator {
         // No defaults and no guessing. An empty spec (or a legacy "auto"
         // one) keeps a bound thread on its own provider, else it is an
         // error that tells the human to pick a model.
-        let legacy_auto =
-            spec.trim().is_empty() || spec == "auto" || spec.starts_with("auto/");
+        let legacy_auto = spec.trim().is_empty() || spec == "auto" || spec.starts_with("auto/");
         let (provider, model) = match parzi_providers::split_spec(spec) {
             Some((id, model)) => (id.to_string(), model),
             None if !legacy_auto => {
@@ -306,10 +305,15 @@ impl Orchestrator {
             }
         };
         let Some((id, seen)) = claim else {
-            if q.inbox_from.is_none() {
+            // A lost claim is not a quiet queue: with queueing off the
+            // caller must hear "retry", not receive a dead channel.
+            if q.inbox_from.is_none() && p.cfg_snapshot().orchestrator.queue_when_busy {
                 p.enqueue(q).await;
+                return Ok(Self::closed_rx());
             }
-            return Ok(Self::closed_rx());
+            return Err(ParziError::Store(format!(
+                "session {sid} already has a live run; kill it first"
+            )));
         };
         match Self::launch_inner(p.clone(), q, id, cancel, seen).await {
             Ok(rx) => Ok(rx),
@@ -435,11 +439,16 @@ impl Orchestrator {
             parts: p.clone(),
             sid: q.session_id.clone(),
             id,
+            done: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         let prompt = q.prompt.clone();
+        let done = end.done.clone();
         let task = tokio::spawn(async move {
             let _end = end;
             let _ = run.run(&prompt).await;
+            // A normal return (including cancellation) always sets this. A
+            // panic never reaches it, which is exactly the case Drop guards.
+            done.store(true, std::sync::atomic::Ordering::SeqCst);
         });
         if let Some(h) = p.handles.lock().await.get_mut(&q.session_id) {
             if h.id == id {
@@ -454,11 +463,13 @@ struct RunEnd {
     parts: Pump,
     sid: String,
     id: u64,
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Drop for RunEnd {
     fn drop(&mut self) {
         let (p, sid, id) = (self.parts.clone(), std::mem::take(&mut self.sid), self.id);
+        let done = self.done.clone();
         let Ok(rt) = tokio::runtime::Handle::try_current() else {
             return;
         };
@@ -467,6 +478,23 @@ impl Drop for RunEnd {
                 let mut h = p.handles.lock().await;
                 if h.get(&sid).is_some_and(|x| x.id == id) {
                     h.remove(&sid);
+                }
+            }
+            // A panicking run task never settles and never sets done: stand
+            // the session down with an error instead of a forever-Running
+            // phantom. Normal and cancelled returns set done first.
+            if !done.load(std::sync::atomic::Ordering::SeqCst) {
+                if let Ok(m) = p.store.get(&sid) {
+                    if m.status == SessionStatus::Active {
+                        let _ = p.store.set_status(&sid, SessionStatus::Idle);
+                        let _ = p.store.append(
+                            &sid,
+                            &Event::Error {
+                                message: "run task ended without settling; transcript kept, nothing was sent".into(),
+                                class: "harness".into(),
+                            },
+                        );
+                    }
                 }
             }
             p.notify.notify_one();
@@ -523,10 +551,7 @@ mod tests {
         }
         let (_, allowed) = Orchestrator::lane_policy_for(&cfg, "work");
         for t in ["session.spawn", "session.send_message", "project.create"] {
-            assert!(
-                allowed.iter().any(|a| a == t),
-                "work lane missing {t}"
-            );
+            assert!(allowed.iter().any(|a| a == t), "work lane missing {t}");
         }
         assert!(
             allowed.iter().all(|a| a != "lane.dispatch"),

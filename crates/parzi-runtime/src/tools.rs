@@ -213,10 +213,7 @@ fn ui_defs() -> Vec<ToolDef> {
 }
 
 pub(crate) fn is_ui_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "ui.show_markdown" | "ui.show_artifact"
-    )
+    matches!(name, "ui.show_markdown" | "ui.show_artifact")
 }
 
 fn browser_defs() -> Vec<ToolDef> {
@@ -736,7 +733,10 @@ pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String
         ),
         "doc.read" => format!(
             "Reading {}",
-            one_line(&str_arg("source").unwrap_or_else(|| "a document".into()), 60)
+            one_line(
+                &str_arg("source").unwrap_or_else(|| "a document".into()),
+                60
+            )
         ),
         "models.list" => "Checking the bench".into(),
         "shell.start" => format!(
@@ -747,14 +747,18 @@ pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String
         "shell.kill" => "Stopping a shell".into(),
         "ask.user" => format!(
             "Asking {}",
-            one_line(&str_arg("question").unwrap_or_else(|| "a question".into()), 60)
+            one_line(
+                &str_arg("question").unwrap_or_else(|| "a question".into()),
+                60
+            )
         ),
         "plan.write" => "Writing the plan".into(),
         "plan.read" => "Reading the plan".into(),
         "project.create" => format!(
             "Creating project {}",
             one_line(&str_arg("title").unwrap_or_else(|| "untitled".into()), 40)
-        ),        "browser.click" => format!(
+        ),
+        "browser.click" => format!(
             "Clicking {}",
             one_line(
                 &str_arg("text")

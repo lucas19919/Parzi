@@ -133,28 +133,12 @@ pub async fn set_background(name: String) -> Result<String, String> {
 }
 
 fn decode_b64(input: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    // Strip a data: prefix if present, then standard decode.
     let clean = input.split(',').next_back()?.trim();
-    let mut out = Vec::new();
-    let mut buf = 0u32;
-    let mut bits = 0;
-    for &b in clean.as_bytes() {
-        let val = match b {
-            b'A'..=b'Z' => b - b'A',
-            b'a'..=b'z' => b - b'a' + 26,
-            b'0'..=b'9' => b - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            b'=' | b'\r' | b'\n' | b' ' => continue,
-            _ => return None,
-        } as u32;
-        buf = (buf << 6) | val;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buf >> bits) as u8);
-        }
-    }
-    Some(out)
+    base64::engine::general_purpose::STANDARD
+        .decode(clean)
+        .ok()
 }
 
 #[tauri::command]

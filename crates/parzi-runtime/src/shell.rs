@@ -101,7 +101,11 @@ impl ShellRegistry {
         &self,
         cmd: &str,
         workdir: &std::path::Path,
-    ) -> std::io::Result<(Child, tokio::process::ChildStdout, tokio::process::ChildStderr)> {
+    ) -> std::io::Result<(
+        Child,
+        tokio::process::ChildStdout,
+        tokio::process::ChildStderr,
+    )> {
         let (program, mut args) = process::shell_program();
         args.push(cmd.to_string());
         let mut c = Command::new(program);
@@ -115,12 +119,14 @@ impl ShellRegistry {
         c.creation_flags(CREATE_NO_WINDOW);
         let mut child = c.spawn()?;
         process::adopt(&child);
-        let stdout = child.stdout.take().ok_or_else(|| {
-            std::io::Error::other("shell did not offer stdout")
-        })?;
-        let stderr = child.stderr.take().ok_or_else(|| {
-            std::io::Error::other("shell did not offer stderr")
-        })?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| std::io::Error::other("shell did not offer stdout"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| std::io::Error::other("shell did not offer stderr"))?;
         Ok((child, stdout, stderr))
     }
 
@@ -224,7 +230,10 @@ impl ShellRegistry {
         if truncated {
             let cut = text.len() - OUTPUT_CAP;
             text.drain(..cut);
-            text = format!("…[earlier output cut; full log: {}]\n{text}", spill_path.display());
+            text = format!(
+                "…[earlier output cut; full log: {}]\n{text}",
+                spill_path.display()
+            );
         } else {
             let _ = std::fs::remove_file(&spill_path);
             return Ok(ExecResult {
@@ -253,9 +262,10 @@ impl ShellRegistry {
     ) -> std::io::Result<String> {
         let (child, stdout, stderr) = self.spawn_shell(cmd, workdir)?;
         let dir = self.dir()?;
-        let mut reg = self.inner.lock().map_err(|_| {
-            std::io::Error::other("shell registry poisoned")
-        })?;
+        let mut reg = self
+            .inner
+            .lock()
+            .map_err(|_| std::io::Error::other("shell registry poisoned"))?;
         let running = reg.shells.values().filter(|s| s.exit.is_none()).count();
         if running >= MAX_BACKGROUND_PER_SESSION {
             return Err(std::io::Error::other(format!(
@@ -393,13 +403,7 @@ impl ShellRegistry {
     }
 
     pub fn describe(&self, id: &str) -> Option<(String, bool, Option<i32>)> {
-        self.with(id, |sh| {
-            (
-                sh.cmd.clone(),
-                sh.exit.is_none(),
-                sh.exit,
-            )
-        })
+        self.with(id, |sh| (sh.cmd.clone(), sh.exit.is_none(), sh.exit))
     }
 }
 
@@ -651,14 +655,7 @@ mod tests {
         }
         assert!(reg.start(&cmd_sleep(30), &tmp(), "one-more").is_err());
         // Reap everything so temp shells don't linger past the test.
-        let ids: Vec<String> = reg
-            .inner
-            .lock()
-            .unwrap()
-            .shells
-            .keys()
-            .cloned()
-            .collect();
+        let ids: Vec<String> = reg.inner.lock().unwrap().shells.keys().cloned().collect();
         for id in ids {
             reg.kill(&id);
         }

@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use parzi_core::config::ParziConfig;
 use parzi_core::context::InterKind;
-use parzi_core::error::{ParziError, Result};use parzi_core::store::{Event, SessionStore};
+use parzi_core::error::{ParziError, Result};
+use parzi_core::store::{Event, SessionStore};
 use parzi_core::{artifacts, brain, widgets};
 use parzi_providers::{PermissionDecision, PermissionGate, PermissionRequest};
 use serde_json::Value;
@@ -57,7 +58,10 @@ fn category(tool: &str) -> Option<&'static str> {
                 || l.contains("bash")
                 || l.contains("terminal")
                 || l.contains("powershell")
-                || matches!(l.as_str(), "cmd" | "exec" | "execute" | "command" | "run_command")
+                || matches!(
+                    l.as_str(),
+                    "cmd" | "exec" | "execute" | "command" | "run_command"
+                )
             {
                 Some("shell.exec")
             } else {
@@ -313,7 +317,9 @@ fn url_encode(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }
@@ -521,7 +527,8 @@ impl ToolHost {
             }
             return self.execute_shell(name, args).await;
         }
-        if is_doc_tool(name) || is_models_tool(name) {            if !self.p.tools.is_allowed(name) {
+        if is_doc_tool(name) || is_models_tool(name) {
+            if !self.p.tools.is_allowed(name) {
                 return (
                     false,
                     format!("tool `{name}` denied (lane mode / approver)"),
@@ -606,15 +613,10 @@ impl ToolHost {
             return PermissionDecision::Deny("this lane is locked down: read-only".into());
         }
         if let Some(k) = kind {
-            let lists_kinds = self
-                .p
-                .tools
-                .allowed
-                .iter()
-                .any(|a| {
-                    (crate::tools::is_vendor_category(a) || a == "fs.*" || a == "shell.*")
-                        && !crate::tools::is_parzi_tool(a)
-                });
+            let lists_kinds = self.p.tools.allowed.iter().any(|a| {
+                (crate::tools::is_vendor_category(a) || a == "fs.*" || a == "shell.*")
+                    && !crate::tools::is_parzi_tool(a)
+            });
             if lists_kinds && !self.p.tools.is_allowed(k) {
                 return PermissionDecision::Deny(format!("this lane does not allow {k}"));
             }
@@ -871,7 +873,10 @@ impl ToolHost {
         if !off.is_empty() {
             lines.push(format!(
                 "Switched off: {}",
-                off.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                off.iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
         lines.join("\n")
@@ -953,7 +958,12 @@ impl ToolHost {
                 Err(e) => return (false, e),
             };
             let pdf = content_type.contains("pdf")
-                || src.split(['?', '#']).next().unwrap_or("").to_lowercase().ends_with(".pdf");
+                || src
+                    .split(['?', '#'])
+                    .next()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .ends_with(".pdf");
             (data, pdf)
         } else {
             let data = match std::fs::read(src) {
@@ -979,7 +989,10 @@ impl ToolHost {
         }
         let text = String::from_utf8_lossy(&bytes);
         if text.bytes().any(|b| b == 0) {
-            return (false, "that file is not text — doc.read handles PDFs and text".into());
+            return (
+                false,
+                "that file is not text — doc.read handles PDFs and text".into(),
+            );
         }
         (
             true,
@@ -1050,7 +1063,10 @@ impl ToolHost {
 
     async fn execute_plan_write(&self, args: &Value) -> (bool, String) {
         if !args.is_object() {
-            return (false, "plan.write needs an object with goal, decisions, steps".into());
+            return (
+                false,
+                "plan.write needs an object with goal, decisions, steps".into(),
+            );
         }
         let path = match self.plan_path() {
             Ok(p) => p,
@@ -1060,9 +1076,18 @@ impl ToolHost {
         if let Err(e) = std::fs::write(&path, &pretty) {
             return (false, format!("cannot save the plan: {e}"));
         }
-        let steps = args.get("steps").and_then(Value::as_array).map_or(0, Vec::len);
-        let decisions = args.get("decisions").and_then(Value::as_array).map_or(0, Vec::len);
-        (true, format!("plan saved ({steps} steps, {decisions} decisions)"))
+        let steps = args
+            .get("steps")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        let decisions = args
+            .get("decisions")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        (
+            true,
+            format!("plan saved ({steps} steps, {decisions} decisions)"),
+        )
     }
 
     async fn execute_project(&self, args: &Value) -> (bool, String) {
@@ -1077,22 +1102,33 @@ impl ToolHost {
             .unwrap_or("")
             .trim();
         if title.is_empty() || folder.is_empty() {
-            return (false, "project.create needs a `title` and a `folder`".into());
+            return (
+                false,
+                "project.create needs a `title` and a `folder`".into(),
+            );
         }
         if let Err(e) = std::fs::create_dir_all(folder) {
             return (false, format!("cannot create {folder}: {e}"));
         }
         let project = match parzi_core::brain::project_upsert(None, title, folder) {
             Ok(p) => p,
-            Err(e) => return (false, format!("project registered, folder ready, but mapping failed: {e}")),
+            Err(e) => {
+                return (
+                    false,
+                    format!("project registered, folder ready, but mapping failed: {e}"),
+                )
+            }
         };
         if let Err(e) = self.p.store.set_cwd(&self.p.session_id, folder) {
-            return (false, format!("project {} ready at {folder}, but this session could not move there: {e}", project.slug));
+            return (
+                false,
+                format!(
+                    "project {} ready at {folder}, but this session could not move there: {e}",
+                    project.slug
+                ),
+            );
         }
-        (
-            true,
-            format!("project {} ready at {folder}", project.slug),
-        )
+        (true, format!("project {} ready at {folder}", project.slug))
     }
 
     fn shell_cwd(&self, args: &Value) -> std::result::Result<PathBuf, String> {
@@ -1170,11 +1206,7 @@ impl ToolHost {
     }
 
     async fn execute_shell_logs(&self, args: &Value) -> (bool, String) {
-        let id = args
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim();
+        let id = args.get("id").and_then(Value::as_str).unwrap_or("").trim();
         if id.is_empty() {
             return (false, "shell.logs needs an `id`".into());
         }
@@ -1216,7 +1248,8 @@ impl ToolHost {
                     "tab.open",
                     serde_json::json!({ "url": url, "session": self.p.session_id }),
                 )
-                .await {
+                .await
+                {
                     Ok(v) => {
                         let shown = v.get("url").and_then(|u| u.as_str()).unwrap_or(&url);
                         (true, format!("opened {shown}"))
@@ -1287,16 +1320,10 @@ impl ToolHost {
                 Ok(v) => {
                     use base64::Engine as _;
                     let raw = v.get("jpeg").and_then(Value::as_str).unwrap_or("");
-                    let bytes =
-                        match base64::engine::general_purpose::STANDARD.decode(raw) {
-                            Ok(b) if !b.is_empty() => b,
-                            _ => {
-                                return (
-                                    false,
-                                    "the tab did not produce a screenshot".into(),
-                                )
-                            }
-                        };
+                    let bytes = match base64::engine::general_purpose::STANDARD.decode(raw) {
+                        Ok(b) if !b.is_empty() => b,
+                        _ => return (false, "the tab did not produce a screenshot".into()),
+                    };
                     let dir = PathBuf::from(&self.p.tools.cwd).join("shots");
                     if let Err(e) = std::fs::create_dir_all(&dir) {
                         return (false, format!("cannot create shots/: {e}"));

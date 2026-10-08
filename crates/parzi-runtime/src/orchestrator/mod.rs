@@ -139,11 +139,7 @@ impl Orchestrator {
     /// Kill every background shell of a session and forget its registry.
     /// Called when sessions are deleted or purged so nothing outlives them.
     pub fn drop_shells(&self, id: &str) {
-        let reg = self
-            .shells
-            .lock()
-            .map(|mut m| m.remove(id))
-            .unwrap_or(None);
+        let reg = self.shells.lock().map(|mut m| m.remove(id)).unwrap_or(None);
         if let Some(reg) = reg {
             reg.kill_all();
         }

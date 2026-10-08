@@ -68,32 +68,28 @@ fn seed_builtin_packs(root: &std::path::Path) -> Result<()> {
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
 [colors]\nsidebar = \"#0D0708\"\nstage = \"#120B0C\"\naccent = \"#E5484D\"\ntext = \"#F5EDED\"\n\
 text_dim = \"#A89A9B\"\nbar = \"#1D1214\"\nborder = \"#33201F\"\n\n\
-[background]\nimage = \"\"\ndim = 0.62\nvignette = 0.48\nblur = 0.0\n\n\
-[glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
+[background]\nimage = \"\"\ndim = 0.62\nvignette = 0.48\nblur = 0.0\n",
         ),
         (
             "midnight",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
 [colors]\nsidebar = \"#0A0C12\"\nstage = \"#0E1118\"\naccent = \"#7C8CFF\"\ntext = \"#E8EAF0\"\n\
 text_dim = \"#8B93A7\"\nbar = \"#161B26\"\nborder = \"#262D3D\"\n\n\
-[background]\nimage = \"\"\ndim = 0.60\nvignette = 0.45\nblur = 0.0\n\n\
-[glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
+[background]\nimage = \"\"\ndim = 0.60\nvignette = 0.45\nblur = 0.0\n",
         ),
         (
             "grey",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
 [colors]\nsidebar = \"#101012\"\nstage = \"#171719\"\naccent = \"#E6E8EE\"\ntext = \"#EDEDEF\"\n\
 text_dim = \"#9A9AA2\"\nbar = \"#1F1F23\"\nborder = \"#2E2E35\"\n\n\
-[background]\nimage = \"\"\ndim = 0.60\nvignette = 0.40\nblur = 0.0\n\n\
-[glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
+[background]\nimage = \"\"\ndim = 0.60\nvignette = 0.40\nblur = 0.0\n",
         ),
         (
             "light",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
 [colors]\nsidebar = \"#F2F3F5\"\nstage = \"#FFFFFF\"\naccent = \"#4F5EE0\"\ntext = \"#1A1D24\"\n\
 text_dim = \"#5B6472\"\nbar = \"#E9EBEF\"\nborder = \"#D5D9E0\"\n\n\
-[background]\nimage = \"\"\ndim = 0.50\nvignette = 0.35\nblur = 0.0\n\n\
-[glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n",
+[background]\nimage = \"\"\ndim = 0.50\nvignette = 0.35\nblur = 0.0\n",
         ),
     ];
     for (name, toml) in packs {

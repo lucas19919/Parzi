@@ -58,7 +58,9 @@ fn workdir() -> String {
 #[tokio::test]
 async fn foreground_echo_comes_back() {
     let h = host(&workdir());
-    let (ok, out) = h.call("shell.exec", &json!({"cmd": "echo shell-owned"})).await;
+    let (ok, out) = h
+        .call("shell.exec", &json!({"cmd": "echo shell-owned"}))
+        .await;
     assert!(ok, "{out}");
     assert!(out.contains("shell-owned"), "{out}");
 }

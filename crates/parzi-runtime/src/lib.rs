@@ -6,6 +6,7 @@ pub mod inter;
 pub mod mcp;
 mod mcp_host;
 pub mod orchestrator;
+pub mod osserve;
 mod run;
 pub mod shell;
 pub mod status;

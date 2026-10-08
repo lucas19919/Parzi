@@ -124,10 +124,6 @@ pub struct ImageConfig {
     pub endpoint: String,
     #[serde(default = "default_image_model")]
     pub model: String,
-    #[serde(default = "default_image_size")]
-    pub width: u32,
-    #[serde(default = "default_image_size")]
-    pub height: u32,
 }
 
 fn default_image_endpoint() -> String {
@@ -136,17 +132,12 @@ fn default_image_endpoint() -> String {
 fn default_image_model() -> String {
     "flux".into()
 }
-fn default_image_size() -> u32 {
-    1024
-}
 
 impl Default for ImageConfig {
     fn default() -> Self {
         Self {
             endpoint: default_image_endpoint(),
             model: default_image_model(),
-            width: default_image_size(),
-            height: default_image_size(),
         }
     }
 }

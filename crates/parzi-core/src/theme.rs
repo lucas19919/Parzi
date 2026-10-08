@@ -11,8 +11,6 @@ pub struct Theme {
     pub colors: ColorTheme,
     #[serde(default)]
     pub background: BackgroundTheme,
-    #[serde(default)]
-    pub glass: GlassTheme,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,18 +55,6 @@ pub struct BackgroundTheme {
     pub blur: f64,
     #[serde(default)]
     pub auto_accent: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GlassTheme {
-    #[serde(default = "d_opacity")]
-    pub opacity: f64,
-    #[serde(default = "d_radius")]
-    pub radius: u32,
-    #[serde(default = "d_blur")]
-    pub blur_px: u32,
-    #[serde(default = "d_shadow")]
-    pub shadow: bool,
 }
 
 fn d_ui_font() -> String {
@@ -116,18 +102,6 @@ fn d_vignette() -> f64 {
 fn d_bg_blur() -> f64 {
     3.0
 }
-fn d_opacity() -> f64 {
-    0.85
-}
-fn d_radius() -> u32 {
-    12
-}
-fn d_blur() -> u32 {
-    18
-}
-fn d_shadow() -> bool {
-    true
-}
 
 impl Default for FontTheme {
     fn default() -> Self {
@@ -163,16 +137,6 @@ impl Default for BackgroundTheme {
         }
     }
 }
-impl Default for GlassTheme {
-    fn default() -> Self {
-        Self {
-            opacity: d_opacity(),
-            radius: d_radius(),
-            blur_px: d_blur(),
-            shadow: d_shadow(),
-        }
-    }
-}
 
 impl Theme {
     pub fn load() -> Result<Self> {
@@ -193,9 +157,6 @@ impl Theme {
         t.background.dim = round2(t.background.dim.clamp(0.0, 1.0));
         t.background.vignette = round2(t.background.vignette.clamp(0.0, 1.0));
         t.background.blur = round2(t.background.blur.clamp(0.0, 40.0));
-        t.glass.opacity = round2(t.glass.opacity.clamp(0.0, 1.0));
-        t.glass.radius = t.glass.radius.min(32);
-        t.glass.blur_px = t.glass.blur_px.min(60);
         t.font.size = t.font.size.clamp(10, 20);
         t.font.mono_size = t.font.mono_size.clamp(9, 18);
         t

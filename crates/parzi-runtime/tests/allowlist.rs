@@ -77,7 +77,8 @@ fn gate(folder: &Path, mode: ApprovalMode, edits_auto: bool, person: Arc<Person>
         edits_auto,
         full: false,
         cfg: parzi_core::config::ParziConfig::default(),
-        store,        tools: Arc::new(ToolExecutor {
+        store,
+        tools: Arc::new(ToolExecutor {
             cwd: folder.display().to_string(),
             mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
             allowed: vec!["*".into()],
@@ -291,7 +292,10 @@ async fn research_lane_answers_without_cards_and_staffs_workers() {
     );
 
     let (ok, _) = host
-        .call("brain.write", &serde_json::json!({"path": "x", "content": "y"}))
+        .call(
+            "brain.write",
+            &serde_json::json!({"path": "x", "content": "y"}),
+        )
         .await;
     assert!(ok, "work may write notes, just never run shell");
     assert!(

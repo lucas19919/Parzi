@@ -9,9 +9,57 @@ pub fn gui_path() -> Option<std::path::PathBuf> {
         .map(|d| d.join("gui.json"))
 }
 
-pub async fn call_within(op: &str, mut body: Value, wait: Duration) -> Result<Value, String> {
+#[must_use]
+pub fn serve_path() -> Option<std::path::PathBuf> {
+    parzi_core::paths::parzi_dir()
+        .ok()
+        .map(|d| d.join("serve.json"))
+}
+
+pub async fn call_within(op: &str, body: Value, wait: Duration) -> Result<Value, String> {
     let path = gui_path().ok_or_else(|| "Parzi is not open".to_string())?;
-    let raw = std::fs::read_to_string(&path).map_err(|_| "Parzi is not open".to_string())?;
+    call_at(&path, op, body, wait).await
+}
+
+/// Desk first. If the window is closed, the ParziOS socket.
+pub async fn call_desk_or_serve(op: &str, body: Value, wait: Duration) -> Result<Value, String> {
+    match call_within(op, body.clone(), wait).await {
+        Err(e) if e.contains("not open") => {
+            let Some(path) = serve_path() else {
+                return Err(e);
+            };
+            call_at(&path, op, body, wait).await
+        }
+        other => other,
+    }
+}
+
+pub async fn call_serve(op: &str, body: Value, wait: Duration) -> Result<Value, String> {
+    let path = serve_path().ok_or_else(|| "parzi serve is not running".to_string())?;
+    match call_at(&path, op, body, wait).await {
+        Err(e) if e.contains("not open") => Err("parzi serve is not running".into()),
+        other => other,
+    }
+}
+
+pub async fn desk_is_open() -> bool {
+    match gui_path() {
+        Some(path) if path.exists() => {
+            call_at(&path, "session.list", json!({}), Duration::from_millis(400))
+                .await
+                .is_ok()
+        }
+        _ => false,
+    }
+}
+
+async fn call_at(
+    path: &std::path::Path,
+    op: &str,
+    mut body: Value,
+    wait: Duration,
+) -> Result<Value, String> {
+    let raw = std::fs::read_to_string(path).map_err(|_| "Parzi is not open".to_string())?;
     let meta: Value = serde_json::from_str(&raw).map_err(|_| "Parzi is not open".to_string())?;
     let port = meta
         .get("port")

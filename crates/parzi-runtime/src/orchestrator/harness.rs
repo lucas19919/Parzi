@@ -5,8 +5,8 @@ use parzi_core::store::{Event, SessionMeta, SessionStatus};
 use crate::handler::HarnessBridge;
 use crate::inter;
 
-use super::queue::{Pump, QueuedRun};
 use super::normalize_effort;
+use super::queue::{Pump, QueuedRun};
 
 const HARNESS_WAIT_SECS: u64 = 180;
 
@@ -85,10 +85,41 @@ impl Pump {
         if let Some(err) = self.last_error(session_id) {
             o["error"] = err.into();
         }
+        // Verifiable outcome, not just the last monologue: last shell
+        // result, artifacts published, error count.
+        o["outcome"] = self.run_outcome(session_id).into();
         if let Some(n) = note {
             o["note"] = n.into();
         }
         o.to_string()
+    }
+
+    fn run_outcome(&self, session_id: &str) -> String {
+        let mut shells = 0;
+        let mut last_shell_ok: Option<bool> = None;
+        let mut artifacts = 0;
+        let mut errors = 0;
+        if let Ok(events) = self.store.events(session_id) {
+            for e in &events {
+                match e {
+                    Event::ToolResult { name, ok, .. }
+                        if name == "shell.exec" || name == "shell.start" =>
+                    {
+                        shells += 1;
+                        last_shell_ok = Some(*ok);
+                    }
+                    Event::Artifact { .. } => artifacts += 1,
+                    Event::Error { .. } => errors += 1,
+                    _ => {}
+                }
+            }
+        }
+        let shell = match last_shell_ok {
+            Some(true) => format!("last shell ok ({shells} calls)"),
+            Some(false) => format!("last shell FAILED ({shells} calls)"),
+            None => "no shell calls".to_string(),
+        };
+        format!("{shell}, {artifacts} artifacts, {errors} errors")
     }
 }
 
@@ -186,11 +217,7 @@ impl HarnessBridge for Pump {
             .to_string());
         }
         match self.await_settled(&meta.id).await {
-            Some(done) => Ok(self.reply_json(
-                &meta.id,
-                &done,
-                crippled.then_some(crippled_note),
-            )),
+            Some(done) => Ok(self.reply_json(&meta.id, &done, crippled.then_some(crippled_note))),
             None => Ok(serde_json::json!({
                 "session_id": meta.id,
                 "status": "timeout",
@@ -313,7 +340,10 @@ impl HarnessBridge for Pump {
                 Event::ToolResult {
                     name, ok, output, ..
                 } => {
-                    format!("tool_result({name}, ok={ok}): {}\n", truncate(output, 1_500))
+                    format!(
+                        "tool_result({name}, ok={ok}): {}\n",
+                        truncate(output, 1_500)
+                    )
                 }
                 Event::Reasoning { text } => format!("reasoning: {}\n", truncate(text, 300)),
                 Event::Checkpoint { summary } => {

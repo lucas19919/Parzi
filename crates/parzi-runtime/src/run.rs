@@ -52,6 +52,10 @@ pub struct EngineRun {
     resume: std::sync::Mutex<Option<Value>>,
     spent: std::sync::Mutex<(u64, f64)>,
     cost_seen: AtomicBool,
+    // Fallback token estimate for providers that never emit Usage: without
+    // it the budget caps cannot trip and the run goes until killed.
+    usage_seen: AtomicBool,
+    est_tokens: std::sync::Mutex<u64>,
 }
 
 enum Outcome {
@@ -78,6 +82,8 @@ impl EngineRun {
             resume: std::sync::Mutex::new(resume),
             spent: std::sync::Mutex::new((0, 0.0)),
             cost_seen: AtomicBool::new(false),
+            usage_seen: AtomicBool::new(false),
+            est_tokens: std::sync::Mutex::new(0),
         }
     }
 
@@ -269,7 +275,9 @@ impl EngineRun {
                     let a: String = a.chars().take(200).collect();
                     Some(format!("tool_call: {name} {a}"))
                 }
-                Event::ToolResult { name, ok, output, .. } => {
+                Event::ToolResult {
+                    name, ok, output, ..
+                } => {
                     let out: String = output.chars().take(500).collect();
                     Some(format!("tool_result({name}, ok={ok}): {out}"))
                 }
@@ -405,9 +413,11 @@ impl EngineRun {
             }
             ProviderEvent::TextDelta(t) => {
                 turn.partial.push_str(&t);
+                self.count_estimate(&t);
                 self.p.sink.emit(RunEvent::Text(t));
             }
             ProviderEvent::ReasoningDelta(text) => {
+                self.count_estimate(&text);
                 self.p.sink.emit(RunEvent::Reasoning { text });
             }
             ProviderEvent::Message(text) => {
@@ -470,6 +480,7 @@ impl EngineRun {
                 output,
                 cost_usd,
             } => {
+                self.usage_seen.store(true, Ordering::Relaxed);
                 if cost_usd.is_some() {
                     self.cost_seen.store(true, Ordering::Relaxed);
                 }
@@ -501,12 +512,29 @@ impl EngineRun {
         None
     }
 
+    // Rough token estimate (~4 chars/token) so providers that never emit
+    // Usage still trip the budget caps instead of running until killed.
+    fn count_estimate(&self, text: &str) {
+        if self.usage_seen.load(Ordering::Relaxed) {
+            return;
+        }
+        if let Ok(mut est) = self.est_tokens.lock() {
+            *est = est.saturating_add((text.chars().count() as u64 + 3) / 4);
+        }
+    }
+
     fn budget_hit(&self) -> Option<String> {
         if self.p.budget.is_unlimited() {
             return None;
         }
         let (tokens, cost) = self.spent.lock().ok().map(|s| *s)?;
-        self.p.budget.exceeded(tokens, cost)
+        // Real usage wins once seen; the estimate only covers silent providers.
+        let est = if self.usage_seen.load(Ordering::Relaxed) {
+            0
+        } else {
+            self.est_tokens.lock().ok().map(|e| *e).unwrap_or(0)
+        };
+        self.p.budget.exceeded(tokens.max(est), cost)
     }
 
     fn pause_for_budget(&self, reason: &str) {

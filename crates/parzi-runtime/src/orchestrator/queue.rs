@@ -53,6 +53,11 @@ struct PersistedRun {
     mode_override: Option<String>,
     #[serde(default)]
     inbox_from: Option<usize>,
+    // Attachment paths only: snippets were already recorded in the user
+    // event, images re-read from disk. The approver cannot persist, so
+    // restored runs keep their mode_override and fail closed otherwise.
+    #[serde(default)]
+    attachments: Vec<String>,
 }
 
 fn sidecar_path(session_id: &str) -> Option<std::path::PathBuf> {
@@ -147,6 +152,7 @@ impl QueuedRun {
             prompt_recorded: self.prompt_recorded,
             mode_override: self.mode_override.clone(),
             inbox_from: self.inbox_from,
+            attachments: self.attachments.iter().map(|a| a.path.clone()).collect(),
         }
     }
 
@@ -159,7 +165,15 @@ impl QueuedRun {
             prompt: p.prompt,
             cwd: p.cwd,
             effort: p.effort,
-            attachments: vec![],
+            attachments: p
+                .attachments
+                .into_iter()
+                .map(|path| parzi_core::context::AttachedFile {
+                    path,
+                    snippet: String::new(),
+                    image: None,
+                })
+                .collect(),
             approver: None,
             prompt_recorded: p.prompt_recorded,
             mode_override: p.mode_override,
