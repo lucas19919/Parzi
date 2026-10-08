@@ -11,8 +11,6 @@ pub(crate) fn roster_source() -> ProviderSource {
     Arc::new(|id: &str, cfg: &ParziConfig| parzi_providers::provider(id, cfg))
 }
 
-const FRESH_SECS: u64 = 30 * 60;
-
 pub struct StatusBoard {
     map: RwLock<HashMap<String, ProviderStatus>>,
     persist: bool,
@@ -150,31 +148,6 @@ impl StatusBoard {
         }
         self.all()
     }
-
-    pub(crate) async fn pick(&self, cfg: &ParziConfig, source: &ProviderSource) -> Option<String> {
-        let now = parzi_providers::now_secs();
-        for id in &cfg.routing.order {
-            let Some(id) = parzi_providers::canonical_id(id) else {
-                continue;
-            };
-            if !cfg.provider(id).enabled {
-                continue;
-            }
-            let stale = self
-                .get(id)
-                .is_none_or(|s| now.saturating_sub(s.checked_at) > FRESH_SECS);
-            if stale {
-                self.refresh(cfg, &[id.to_string()], source).await;
-            }
-            let Some(s) = self.get(id) else { continue };
-            let usable = matches!(s.state, State::Ready | State::Unchecked);
-            let spent = s.usage.iter().any(|w| w.spent(now));
-            if usable && !spent {
-                return Some(id.to_string());
-            }
-        }
-        None
-    }
 }
 
 #[cfg(test)]
@@ -233,29 +206,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn smart_auto_skips_used_up_and_signed_out_providers() {
-        let board = StatusBoard::in_memory();
-        let cfg = ParziConfig::default();
-        assert_eq!(
-            board.pick(&cfg, &source()).await.as_deref(),
-            Some("opencode")
-        );
-        let mut off = cfg.clone();
-        off.providers.insert(
-            "opencode".into(),
-            parzi_core::config::ProviderEntry {
-                enabled: false,
-                ..Default::default()
-            },
-        );
-        assert_eq!(
-            board.pick(&off, &source()).await,
-            None,
-            "nothing else is ready"
-        );
-    }
-
-    #[tokio::test]
     async fn a_run_s_windows_merge_into_the_probe() {
         let board = StatusBoard::in_memory();
         board
@@ -304,24 +254,30 @@ mod tests {
             resets_at,
         };
         board.update_usage("claude", &[spent(Some(now + 3600))]);
-        assert_eq!(
-            board.pick(&cfg, &quiet).await,
-            None,
+        assert!(
+            board.get("claude").unwrap().usage.iter().any(|w| w.spent(now)),
             "used up until it resets"
         );
         board.update_usage("claude", &[spent(Some(now - 1))]);
-        assert_eq!(
-            board.pick(&cfg, &quiet).await.as_deref(),
-            Some("claude"),
+        assert!(
+            !board.get("claude").unwrap().usage.iter().any(|w| w.spent(now)),
             "past its reset, the window is open again"
         );
         board.update_usage("claude", &[spent(None)]);
-        assert_eq!(board.pick(&cfg, &quiet).await, None);
+        assert!(board.get("claude").unwrap().usage.iter().any(|w| w.spent(now)));
         board.refresh(&cfg, &["claude".into()], &quiet).await;
         assert!(
             board.get("claude").unwrap().usage.is_empty(),
             "a check that reports nothing does not carry a window with no reset time"
         );
-        assert_eq!(board.pick(&cfg, &quiet).await.as_deref(), Some("claude"));
+        assert!(
+            board
+                .get("claude")
+                .unwrap()
+                .usage
+                .iter()
+                .all(|w| !w.spent(now)),
+            "no window reports spent after a clean check"
+        );
     }
 }

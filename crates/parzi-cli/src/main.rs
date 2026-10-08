@@ -318,7 +318,7 @@ async fn session_send(
     let body = json!({
         "target": target,
         "message": message,
-        "model": model.unwrap_or("auto"),
+        "model": model.unwrap_or_default(),
         "cwd": base.display().to_string(),
         "yes": yes,
         "effort": effort,
@@ -377,7 +377,7 @@ async fn send_local(
             .spawn(
                 "default",
                 "",
-                model.unwrap_or("auto"),
+                model.unwrap_or_default(),
                 message,
                 Some(approver),
                 &cwd,

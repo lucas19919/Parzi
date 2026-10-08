@@ -38,10 +38,11 @@
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
 
   const restored = loadTabs();
-  let tabs: Tab[] = (restored?.tabs ?? [sessionTab()]).map((t) => ({
-    ...t,
-    composer: (t as Partial<Tab>).composer ?? { input: "", mode: "build", model: "auto", effort: "medium", attachments: [] },
-  }));
+  let tabs: Tab[] = (restored?.tabs ?? [sessionTab()]).map((t) => {
+    const c = (t as Partial<Tab>).composer ?? { input: "", mode: "build", model: "", effort: "medium", attachments: [] };
+    if (c.model === "auto") c.model = "";
+    return { ...t, composer: c };
+  });
   let activeId = restored?.active ?? tabs[0].id;
   // In-tab subagent navigation: when the panel opens a descendant of the
   // visible session, we swap the tab's session in place and remember the
@@ -68,15 +69,13 @@
   let flushTimer = 0;
 
   let input = "";
-  let model = "auto";
+  let model = "";
   let warmed = "";
   let effort = "medium";
   let permission = "full";
   let mode: ComposerMode = "build";
   let attachments: string[] = [];
   let sending = false;
-
-  const modeDefaults: Record<ComposerMode, { model: string; effort: string }> = { search: { model: "auto", effort: "medium" }, build: { model: "auto", effort: "medium" }, work: { model: "auto", effort: "low" } };
 
   // Omnibar binds directly to the active tab's composer (see markup
   // below), so each tab keeps its own draft, mode, model, effort and
@@ -307,7 +306,7 @@
   }
 
   function addTab(t: Tab) {
-    if (!t.composer) t.composer = { input: "", mode: "build", model: "auto", effort: "medium", attachments: [] };
+    if (!t.composer) t.composer = { input: "", mode: "build", model: "", effort: "medium", attachments: [] };
     tabs = [...tabs, t];
     selectTab(t.id);
   }
@@ -488,6 +487,11 @@
     const comp = target.composer;
     const prompt = comp.input.trim();
     if (!prompt || sending || streaming) return;
+    if (!comp.model && comp.mode !== "search") {
+      toast("Pick a model first");
+      omnibar?.openModels();
+      return;
+    }
     if (isExplicitUrl(prompt)) {
       comp.input = "";
       tabs = tabs;
@@ -758,6 +762,23 @@
     }
   }
 
+  // New tabs start on the default model the human picked in Settings.
+  // Nothing is pre-selected behind their back.
+  async function resolveDefaultModel() {
+    try {
+      const d = (await api.getConfig()).default_model?.trim();
+      if (!d) return;
+      let touched = false;
+      for (const t of tabs) {
+        if (t.kind === "session" && !t.composer.model) {
+          t.composer.model = d;
+          touched = true;
+        }
+      }
+      if (touched) tabs = tabs;
+    } catch {}
+  }
+
   async function warmPages() {
     await new Promise((r) => setTimeout(r, 1500));
     const later = tabs.filter((t) => t.kind === "page" && t.url && t.id !== activeId).slice(0, 8);
@@ -797,6 +818,7 @@
     selectTab(activeId);
     if (!$onboarded) setupOpen = true;
     void warmPages();
+    void resolveDefaultModel();
     const onBg = (e: Event) => (bg = (e as CustomEvent<string>).detail);
     document.addEventListener("parzi:bg", onBg);
     (async () => {

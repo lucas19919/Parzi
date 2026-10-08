@@ -20,7 +20,7 @@ export interface PreviewEntry {
 function omnibarProps(variant: number, extra: Record<string, unknown>) {
   return {
     input: "",
-    model: "auto",
+    model: "",
     effort: "medium",
     permission: "full",
     mode: "build",

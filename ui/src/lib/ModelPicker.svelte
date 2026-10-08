@@ -7,11 +7,14 @@
   import { hasMark } from "./providerMarks";
   import { api, type ProviderStatus } from "./api";
   import { ageOf, checking, refreshBoard } from "./providerStore";
-  import { AUTO_ROW, PROVIDER_ORDER, allRows, isUsable, nameOf, shownOf, stateLabel, type PickRow } from "./providerRows";
+  import { PROVIDER_ORDER, allRows, isUsable, nameOf, shownOf, stateLabel, type PickRow } from "./providerRows";
+  import { effortLabel, effortsFor } from "./providerRows";
   import { popover, placeAbove } from "./popover";
 
-  export let value = "auto";
+  export let value = "";
   export let board: ProviderStatus[] = [];
+  // Two-way: parent binds its effort; picking here updates the composer.
+  export let effort = "medium";
 
   const dispatch = createEventDispatcher<{ unavailable: { provider: string } }>();
 
@@ -37,6 +40,7 @@
   let above = true;
 
   $: shown = shownOf(value, board);
+  $: modelEfforts = effortsFor(value, board);
   $: q = query.trim().toLowerCase();
   $: groups = groupsFor(board, favorites, q);
   $: flat = groups.flatMap((g) => g.rows);
@@ -51,7 +55,6 @@
   function groupsFor(board: ProviderStatus[], favorites: string[], q: string): Group[] {
     const rows = allRows(board).filter((r) => r.usable);
     const out: Group[] = [];
-    if (matches(AUTO_ROW, q)) out.push({ key: "auto", label: "", provider: "", note: "", rows: [AUTO_ROW] });
     const starred = favorites.map((v) => rows.find((r) => r.value === v)).filter((r): r is PickRow => !!r && matches(r, q));
     if (starred.length) out.push({ key: "starred", label: "Starred", provider: "", note: "", rows: starred });
     for (const id of PROVIDER_ORDER) {
@@ -64,7 +67,7 @@
   }
 
   function labelOf(row: PickRow) {
-    return row.provider !== "auto" && row.value === row.provider ? "Default model" : row.label;
+    return row.value === row.provider ? "Default model" : row.label;
   }
 
   // Long provider strings ("Muse Spark 1.3 Contributor Free") collapse to
@@ -163,6 +166,16 @@
       {#if busy}<span class="spin" title="Checking your agents" />{/if}
     </div>
     <div class="list" bind:this={listEl}>
+      {#if modelEfforts.length > 1}
+        <div class="head">Effort</div>
+        <div class="effort-row">
+          {#each modelEfforts as e (e)}
+            <button class="effort" class:on={effort === e} on:click={() => (effort = e)}>
+              {effortLabel(e)}
+            </button>
+          {/each}
+        </div>
+      {/if}
       {#each groups as g (g.key)}
         {#if g.label}
           <div class="head">
@@ -180,9 +193,8 @@
             on:click={() => pick(row)}
             on:mousemove={() => (index = i)}
           >
-            {#if row.provider === "auto"}<span class="spark"><Icon name="spark" size={14} /></span>{/if}
             <span class="name">{labelOf(row)}</span>
-            {#if row.provider === "auto"}<span class="note">First ready agent</span>{:else if row.note}<span class="note">{row.note}</span>{/if}
+            {#if row.note}<span class="note">{row.note}</span>{/if}
             {#if row.value === value}<span class="tick"><Icon name="check" size={13} stroke={2} /></span>{/if}
           </button>
         {/each}
@@ -273,6 +285,28 @@
     margin-left: auto;
     font-weight: 400;
   }
+  .effort-row {
+    display: flex;
+    gap: 4px;
+    padding: 2px 8px 8px;
+  }
+  .effort {
+    flex: 1;
+    height: 28px;
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .effort:hover {
+    color: var(--text);
+  }
+  .effort.on {
+    border-color: var(--accent);
+    color: var(--text);
+  }
   .row {
     display: flex;
     align-items: center;
@@ -302,10 +336,6 @@
     flex: none;
     font-size: 11.5px;
     color: var(--faint);
-  }
-  .spark {
-    display: inline-flex;
-    color: var(--accent);
   }
   .tick {
     display: inline-flex;

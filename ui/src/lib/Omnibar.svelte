@@ -6,7 +6,7 @@
   import Icon from "./Icon.svelte";
   import ModelPicker from "./ModelPicker.svelte";
   import { api, brain, MODE_META, type ComposerMode, type Project, type ProviderStatus } from "./api";
-  import { effortHint, effortLabel, effortsFor, fitEffort } from "./providerRows";
+  import { effortsFor, fitEffort } from "./providerRows";
   import { folderName, toAddress } from "./tabs";
   import { popover, placeAbove } from "./popover";
   import { bookmarks, completeAddress, history, pins } from "./browserData";
@@ -15,7 +15,7 @@
   import type { IconName } from "./icons";
 
   export let input = "";
-  export let model = "auto";
+  export let model = "";
   export let effort = "medium";
   export let permission = "full";
   export let mode: ComposerMode = "build";
@@ -83,9 +83,6 @@
   let permBtn: HTMLButtonElement | null = null;
   let permOpen = false;
   let permStyle = "";
-  let effortBtn: HTMLButtonElement | null = null;
-  let effortOpen = false;
-  let effortStyle = "";
   let ctxBtn: HTMLButtonElement | null = null;
   let ctxOpen = false;
   let ctxStyle = "";
@@ -127,6 +124,10 @@
     textarea?.focus();
   }
 
+  export function openModels() {
+    picker?.show();
+  }
+
   function submit() {
     const text = input.trim();
     if (!text || streaming) return;
@@ -157,11 +158,6 @@
   function cycleEffort() {
     if (!efforts.length) return;
     effort = efforts[(Math.max(0, efforts.indexOf(effort)) + 1) % efforts.length];
-  }
-
-  function toggleEffort() {
-    effortOpen = !effortOpen;
-    if (effortOpen && effortBtn) effortStyle = placeAbove(effortBtn, 240);
   }
 
   function toggleCtx() {
@@ -504,10 +500,8 @@
               if (locked) return;
               mode = m;
               if (m === "build") {
-                model = "auto";
                 effort = "medium";
               } else if (m === "work") {
-                model = "auto";
                 effort = "low";
               }
             }}
@@ -541,17 +535,7 @@
       <span class="spacer" />
 
       {#if mode !== "search"}
-        <ModelPicker bind:this={picker} bind:value={model} {board} on:unavailable />
-        <button
-          bind:this={effortBtn}
-          class="ctl"
-          class:open={effortOpen}
-          title={effortHint(effort) ? `Effort: ${effortHint(effort)}. Click to change.` : "Effort. Click to change."}
-          on:click|stopPropagation={toggleEffort}
-        >
-          <span class="truncate">{effortLabel(effort)}</span>
-          <Icon name="chevDown" size={10} stroke={2} />
-        </button>
+        <ModelPicker bind:this={picker} bind:value={model} bind:effort {board} on:unavailable />
         {#if (mode === "build" || mode === "work") && (contextLimit > 0 || !hasSession)}
           <button
             bind:this={ctxBtn}
@@ -573,25 +557,6 @@
     </div>
   </div>
   {#if attachError}<div class="error" role="alert">{attachError}</div>{/if}
-
-  {#if effortOpen}
-    <div class="menu-pop" style={effortStyle} use:popover={{ anchor: effortBtn, close: () => (effortOpen = false) }} transition:fly={{ y: effortStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
-      <div class="pop-head">Effort</div>
-      {#each efforts as e (e)}
-        <button
-          class="opt"
-          class:on={effort === e}
-          on:click={() => {
-            effort = e;
-            effortOpen = false;
-          }}
-        >
-          <span class="meta"><span class="name">{effortLabel(e)}</span><span class="sub">{effortHint(e) || "Default depth"}</span></span>
-          {#if effort === e}<span class="tick"><Icon name="check" size={13} stroke={2} /></span>{/if}
-        </button>
-      {/each}
-    </div>
-  {/if}
 
   {#if ctxOpen}
     <div class="menu-pop ctx-pop" style={ctxStyle} use:popover={{ anchor: ctxBtn, close: () => (ctxOpen = false) }} transition:fly={{ y: ctxStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>

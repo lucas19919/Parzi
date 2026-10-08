@@ -91,7 +91,7 @@
           group: "Sessions",
           icon: "chat",
           title: t.title || "Untitled session",
-          sub: [t.model || "auto", t.cwd ? folderName(t.cwd) : "", tokens(t)].filter(Boolean).join(" · "),
+          sub: [t.model && t.model !== "auto" ? t.model : "no model yet", t.cwd ? folderName(t.cwd) : "", tokens(t)].filter(Boolean).join(" · "),
           run: () => dispatch("openSession", { id: t.id }),
           remove: () => dispatch("deleteSession", { id: t.id }),
         }),

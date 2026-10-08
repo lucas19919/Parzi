@@ -38,8 +38,6 @@ export const modelLabel = (m: { id: string; name: string }): string =>
 
 const sourceOf = (id: string): string => id.split("/").slice(0, -1).join("/");
 
-export const AUTO_ROW: PickRow = { provider: "auto", usable: true, label: "Smart Auto", value: "auto" };
-
 export const isUsable = (p: ProviderStatus | undefined): boolean =>
   !!p && (p.state === "ready" || p.state === "unchecked");
 
@@ -77,7 +75,7 @@ export function stateLabel(p: ProviderStatus): string {
 }
 
 export function shownOf(value: string, board: ProviderStatus[]): { provider: string; name: string } {
-  if (!value || value === "auto") return { provider: "auto", name: "Smart Auto" };
+  if (!value || value === "auto") return { provider: "", name: "Pick a model" };
   const [p, ...rest] = value.split("/");
   const id = rest.join("/");
   const m = board.find((b) => b.provider === p)?.models.find((x) => x.id === id);

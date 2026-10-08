@@ -47,18 +47,23 @@
   $: modelsFor = (p: ProviderStatus | undefined) =>
     !p ? [] : !q ? p.models : p.models.filter((m) => (m.name || m.id).toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
   $: entryOf = (id: string): ProviderEntry => cfg?.providers?.[id] ?? { enabled: true };
-  $: order = (() => {
-    const base = (cfg?.routing?.order ?? []).filter((p) => PROVIDER_ORDER.includes(p));
-    for (const id of PROVIDER_ORDER) if (!base.includes(id)) base.push(id);
-    return base;
-  })();
   $: allChecking = $checking.has("*");
   $: quickRows = allRows($board).filter((r) => r.usable);
+
+  async function setDefaultModel(value: string) {
+    if (!cfg) return;
+    cfg.default_model = value;
+    await saveCfg(value ? `New threads start on ${value}` : "Default model cleared: pick a model before sending");
+  }
+
+  function setDefaultModelFrom(e: Event) {
+    void setDefaultModel((e.currentTarget as HTMLSelectElement).value);
+  }
 
   async function setQuick(value: string) {
     if (!cfg) return;
     cfg.quick_model = value;
-    await saveCfg(value ? "Quick model set" : "Quick model follows Smart Auto");
+    await saveCfg(value ? "Quick model set" : "Quick model follows the default model");
   }
 
   function setQuickFrom(e: Event) {
@@ -129,7 +134,7 @@
 
   async function setEnabled(id: string, on: boolean) {
     setEntry(id, { enabled: on });
-    if (await saveCfg(on ? `${nameOf(id)} is on` : `${nameOf(id)} is off: the picker and Smart Auto leave it out`)) {
+    if (await saveCfg(on ? `${nameOf(id)} is on` : `${nameOf(id)} is off: the picker leaves it out`)) {
       void checkAgain([id]);
     }
   }
@@ -141,17 +146,6 @@
     if (await saveCfg(next ? `${nameOf(id)} runs ${next}` : `${nameOf(id)} runs \`${PROGRAM[id]}\` from PATH`)) {
       void checkAgain([id]);
     }
-  }
-
-  function move(id: string, dir: -1 | 1) {
-    if (!cfg) return;
-    const next = [...order];
-    const i = next.indexOf(id);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= next.length) return;
-    [next[i], next[j]] = [next[j], next[i]];
-    cfg.routing = { ...cfg.routing, order: next };
-    void saveCfg();
   }
 
   async function setDefault(id: string, model: string) {
@@ -207,9 +201,33 @@
   </div>
 
   <div class="pref-section">
+    <h3 class="section-title">Default model</h3>
+    <p class="section-desc">
+      New threads start here. You pick it; Parzi never guesses. Until this is
+      set, sending asks you to pick a model first.
+    </p>
+    <div class="order-card">
+      <div class="order-row">
+        <span class="order-n">◉</span>
+        <select
+          class="quick-pick"
+          value={cfg?.default_model ?? ""}
+          on:change={setDefaultModelFrom}
+          aria-label="Default model"
+        >
+          <option value="">Pick a model…</option>
+          {#each quickRows as r (r.value)}
+            <option value={r.value}>{r.label}</option>
+          {/each}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="pref-section">
     <h3 class="section-title">Quick model</h3>
     <p class="section-desc">
-      Answers Research questions and other fast turns. Empty follows Smart Auto.
+      Answers Research questions and other fast turns. Empty uses the default model.
     </p>
     <div class="order-card">
       <div class="order-row">
@@ -220,34 +238,12 @@
           on:change={setQuickFrom}
           aria-label="Quick model"
         >
-          <option value="">Smart Auto</option>
+          <option value="">Same as default model</option>
           {#each quickRows as r (r.value)}
             <option value={r.value}>{r.label}</option>
           {/each}
         </select>
       </div>
-    </div>
-  </div>
-
-  <div class="pref-section">
-    <h3 class="section-title">Smart Auto</h3>    <p class="section-desc">
-      A new thread on Smart Auto starts on the first ready agent in this order.
-      Once it has started, a thread stays with its agent.
-    </p>
-    <div class="order-card">
-      {#each order as id, i (id)}
-        {@const p = statusOf(id)}
-        {@const b = badgeOf(p, entryOf(id).enabled)}
-        <div class="order-row" class:dim={!isUsable(p) || !entryOf(id).enabled}>
-          <span class="order-n">{i + 1}</span>
-          <ProviderLogo provider={id} size={15} />
-          <span class="order-name">{nameOf(id)}</span>
-          <span class="status-badge {b.cls}">{b.label}</span>
-          <span class="head-spacer" />
-          <button class="mini" title="Move up" disabled={i === 0} on:click={() => move(id, -1)}>▲</button>
-          <button class="mini" title="Move down" disabled={i === order.length - 1} on:click={() => move(id, 1)}>▼</button>
-        </div>
-      {/each}
     </div>
   </div>
 
@@ -413,8 +409,6 @@
     border-radius: var(--radius-lg); padding: 4px 6px; display: flex; flex-direction: column;
   }
   .order-row { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 7px; }
-  .order-row + .order-row { border-top: 1px solid var(--line); }
-  .order-row.dim .order-name { color: var(--muted); }
   .order-n { width: 14px; font-size: 11px; color: var(--faint); font-family: var(--mono), ui-monospace, monospace; text-align: right; flex: none; }
   .quick-pick {
     flex: 1;

@@ -10,7 +10,7 @@ export interface TabComposerState {
 }
 
 function defaultComposer(): TabComposerState {
-  return { input: "", mode: "build", model: "auto", effort: "medium", attachments: [] };
+  return { input: "", mode: "build", model: "", effort: "medium", attachments: [] };
 }
 
 export interface Tab {

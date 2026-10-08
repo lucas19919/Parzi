@@ -123,7 +123,7 @@ async fn brain_reads_freely_writes_with_approval_and_attaches_project_notes() {
     let src = code.join("src");
     let src = src.to_str().unwrap();
     let parts = system_parts("", src);
-    assert!(parts[0].contains("on-demand notes are listed with a one-line summary"));
+    assert!(parts[1].contains("one line summaries"));
     let last = parts.last().unwrap();
     assert!(
         last.starts_with("# The user's notes (Parzi brain)\n"),
