@@ -53,9 +53,8 @@ struct PersistedRun {
     mode_override: Option<String>,
     #[serde(default)]
     inbox_from: Option<usize>,
-    // Attachment paths only: snippets were already recorded in the user
-    // event, images re-read from disk. The approver cannot persist, so
-    // restored runs keep their mode_override and fail closed otherwise.
+    // Attachment paths only (snippets already live in the user event).
+    // Approvers cannot persist: restored runs fail closed.
     #[serde(default)]
     attachments: Vec<String>,
 }

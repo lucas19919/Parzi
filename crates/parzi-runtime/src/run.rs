@@ -52,8 +52,7 @@ pub struct EngineRun {
     resume: std::sync::Mutex<Option<Value>>,
     spent: std::sync::Mutex<(u64, f64)>,
     cost_seen: AtomicBool,
-    // Fallback token estimate for providers that never emit Usage: without
-    // it the budget caps cannot trip and the run goes until killed.
+    // Token estimate for providers that never emit Usage (else caps never trip).
     usage_seen: AtomicBool,
     est_tokens: std::sync::Mutex<u64>,
 }
@@ -267,8 +266,7 @@ impl EngineRun {
                 Event::Checkpoint { summary } => {
                     Some(format!("summary of earlier turns: {summary}"))
                 }
-                // A replacement that only replays chat would repeat work or
-                // undo it: it must also see what was run and what came back.
+                // Replacements must also see tool calls and results, not just chat.
                 Event::ToolCall { name, args, .. } => {
                     let a = args.to_string();
                     let a: String = a.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -512,8 +510,7 @@ impl EngineRun {
         None
     }
 
-    // Rough token estimate (~4 chars/token) so providers that never emit
-    // Usage still trip the budget caps instead of running until killed.
+    // ~4 chars/token estimate so silent providers still trip budget caps.
     fn count_estimate(&self, text: &str) {
         if self.usage_seen.load(Ordering::Relaxed) {
             return;
@@ -528,7 +525,7 @@ impl EngineRun {
             return None;
         }
         let (tokens, cost) = self.spent.lock().ok().map(|s| *s)?;
-        // Real usage wins once seen; the estimate only covers silent providers.
+        // Real usage wins once seen; the estimate covers silent providers only.
         let est = if self.usage_seen.load(Ordering::Relaxed) {
             0
         } else {

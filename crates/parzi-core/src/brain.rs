@@ -333,8 +333,7 @@ impl Vault {
         self.meta(rel, &full)
     }
 
-    /// Archive or unarchive a project by slug. The note stays on disk;
-    /// archived projects vanish from routing, catalogs, and folder matches.
+    /// Archive/unarchive a project. Archived projects vanish from routing and catalogs.
     fn project_archive(&self, slug: &str, on: bool) -> Result<Project> {
         let slug = slug.trim();
         let rel = format!("projects/{slug}.md");
@@ -359,8 +358,7 @@ impl Vault {
         })
     }
 
-    /// Delete a project's note by slug. Mapped notes keep their frontmatter;
-    /// mappings to a missing slug are ignored everywhere.
+    /// Delete a project's note. Mappings to a missing slug are ignored.
     fn project_delete(&self, slug: &str) -> Result<String> {
         let slug = slug.trim();
         if slug.is_empty() {
@@ -1047,8 +1045,7 @@ fn projects_of(notes: &[Note]) -> Vec<Project> {
         .iter()
         .filter_map(|home| {
             let slug = project_slug(&home.meta.path)?;
-            // Archived project notes stay on disk but leave every list:
-            // no routing, no catalog, no folder matches.
+            // Archived notes stay on disk but leave every project list.
             if home.meta.archived {
                 return None;
             }

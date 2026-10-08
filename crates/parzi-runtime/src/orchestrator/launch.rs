@@ -178,9 +178,7 @@ impl Orchestrator {
         spec: &str,
     ) -> Result<(String, Option<String>)> {
         let bound = run_session(session_id).map(|s| s.provider);
-        // No defaults and no guessing. An empty spec (or a legacy "auto"
-        // one) keeps a bound thread on its own provider, else it is an
-        // error that tells the human to pick a model.
+        // No defaults, no guessing: empty specs keep bound threads put.
         let legacy_auto = spec.trim().is_empty() || spec == "auto" || spec.starts_with("auto/");
         let (provider, model) = match parzi_providers::split_spec(spec) {
             Some((id, model)) => (id.to_string(), model),
@@ -253,9 +251,7 @@ impl Orchestrator {
                 allowed.push(u.into());
             }
         }
-        // Work staffs its own read/write workers (a paper is a project);
-        // only shell execution and cross-lane dispatch stay Build-only.
-        // (Spawns still go through the permission mode like any other tool.)
+        // Work staffs read/write workers; shell and cross-lane dispatch stay Build-only.
         for u in [
             "session.spawn",
             "session.send_message",
@@ -310,8 +306,7 @@ impl Orchestrator {
             }
         };
         let Some((id, seen)) = claim else {
-            // A lost claim is not a quiet queue: with queueing off the
-            // caller must hear "retry", not receive a dead channel.
+            // A lost claim is "retry", never a dead channel.
             if q.inbox_from.is_none() && p.cfg_snapshot().orchestrator.queue_when_busy {
                 p.enqueue(q).await;
                 return Ok(Self::closed_rx());
@@ -451,8 +446,7 @@ impl Orchestrator {
         let task = tokio::spawn(async move {
             let _end = end;
             let _ = run.run(&prompt).await;
-            // A normal return (including cancellation) always sets this. A
-            // panic never reaches it, which is exactly the case Drop guards.
+            // Normal returns set done; only a panic skips it.
             done.store(true, std::sync::atomic::Ordering::SeqCst);
         });
         if let Some(h) = p.handles.lock().await.get_mut(&q.session_id) {
@@ -485,9 +479,7 @@ impl Drop for RunEnd {
                     h.remove(&sid);
                 }
             }
-            // A panicking run task never settles and never sets done: stand
-            // the session down with an error instead of a forever-Running
-            // phantom. Normal and cancelled returns set done first.
+            // A panicking task never settles: stand it down with an error.
             if !done.load(std::sync::atomic::Ordering::SeqCst) {
                 if let Ok(m) = p.store.get(&sid) {
                     if m.status == SessionStatus::Active {

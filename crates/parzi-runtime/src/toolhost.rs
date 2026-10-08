@@ -229,11 +229,8 @@ fn execute_brain(name: &str, args: &Value) -> (bool, String) {
     }
 }
 
-/// Formal plan layer: steps have stable ids (`id`, else s1/s2/…), an
-/// optional `lane`, and `needs` naming steps that must finish first.
-/// Lanes group steps; decisions carry an optional status
-/// (active/contested/retired). Validation rejects unknown needs, cycles,
-/// and done-steps with unfinished needs, so cross-lane waits are real.
+/// Formal plans: steps have stable ids, an optional lane, and needs.
+/// Done-steps with unfinished needs, unknown needs, and cycles are rejected.
 fn plan_step_id(step: &Value, index: usize) -> String {
     step.get("id")
         .and_then(Value::as_str)
@@ -347,8 +344,7 @@ fn validate_plan(args: &Value) -> std::result::Result<(), String> {
     Ok(())
 }
 
-/// Computed rollup appended to plan reads and write replies: what is
-/// ready, what is blocked and on what, grouped by lane.
+/// Computed rollup appended to plan reads and write replies.
 fn plan_rollup(args: &Value) -> String {
     let steps = args
         .get("steps")
@@ -639,8 +635,7 @@ impl ToolHost {
             return self.execute_browser(name, args).await;
         }
         if is_brain_tool(name) {
-            // Writes and deletes change the vault: approval-gated. Reads
-            // and lists are allowlist-only.
+            // Writes and deletes change the vault: approval-gated.
             let allowed = if name == "brain.write" || name == "brain.delete" {
                 self.approved(id, name, args).await
             } else {
@@ -667,8 +662,7 @@ impl ToolHost {
             return self.execute_session_tool(name, args).await;
         }
         if is_lane_tool(name) {
-            // lane.status is read-only: allowlist only. Dispatch staffs
-            // workers, so it goes through approval like any other spawn.
+            // lane.status is read-only: allowlist only.
             if name == "lane.status" {
                 if !self.p.tools.is_allowed(name) {
                     return (
@@ -835,9 +829,7 @@ impl ToolHost {
             }
         }
         // The harness owns the shell: vendor-native shell tools are refused
-        // wherever shell.* is offered, with the reroute named so the model
-        // switches first try. (Work offers no shell.*, so the lane's
-        // normal deny below still applies there.)
+        // wherever shell.* is offered.
         const VENDOR_SHELL: &[&str] = &[
             "Bash",
             "bash",
@@ -885,8 +877,7 @@ impl ToolHost {
             }
             return match kind {
                 Some("fs.read") => PermissionDecision::Allow,
-                // Work writes through brain.write and artifacts, never the
-                // repo directly: a research thread must not edit code.
+                // Work writes through brain.write and artifacts, never the repo.
                 Some("fs.write") => PermissionDecision::Deny(
                     "work cannot write files — put it in a brain note or artifact instead".into(),
                 ),
@@ -1042,9 +1033,7 @@ impl ToolHost {
         }
     }
 
-    /// Lane state across every session, from the store: queued and active
-    /// runs grouped by lane. Read-only, so orchestrators can see what each
-    /// lane is working on before staffing more.
+    /// Lane state across every session, from the store. Read-only.
     fn lane_state(&self) -> String {
         let all = match self.p.store.list() {
             Ok(l) => l,
@@ -1079,10 +1068,8 @@ impl ToolHost {
         out
     }
 
-    /// The approval posture children inherit: Full stays full, edits stay
-    /// edits, Auto stays auto. Anything else (Ask, Deny) is intentionally
-    /// NOT propagated — a child must never pop cards on the user's screen
-    /// uninvited, so it runs lane-default and fails closed on approvals.
+    /// Approval posture children inherit. Ask/Deny never propagate: a child
+    /// must not pop cards on the user's screen uninvited.
     fn child_mode(&self) -> Option<String> {
         if self.p.full {
             Some("full".into())
@@ -1292,8 +1279,7 @@ impl ToolHost {
         (true, answer)
     }
 
-    /// Flag a stored note back to the user: "memory says X — still agree?"
-    /// Keep leaves it; Remove deletes it. The question is the approval.
+    /// Flag a stored note back to the user. Remove deletes it.
     async fn execute_memory_review(&self, id: &str, args: &Value) -> (bool, String) {
         let path = args
             .get("path")
@@ -1368,9 +1354,7 @@ impl ToolHost {
                 "plan.write needs an object with goal, decisions, steps".into(),
             );
         }
-        // Formal plans: steps carry ids and needs, lanes group them, and a
-        // step cannot be marked done while its needs are unfinished. The
-        // system enforces this so lanes can wait on each other for real.
+        // Formal plans: done-steps with unfinished needs are rejected here.
         if let Err(e) = validate_plan(args) {
             return (false, e);
         }

@@ -31,9 +31,8 @@ export function toastError(e: unknown) {
 
 let ctx: AudioContext | null = null;
 
-// Short two-tone bell for background completions. Lazy AudioContext,
-// best effort: browsers block audio before first interaction, so a
-// suspended context just stays silent instead of throwing.
+// Short two-tone bell for background completions. Best effort: blocked
+// audio stays silent instead of throwing.
 export function chime(ok: boolean) {
   try {
     ctx ??= new AudioContext();

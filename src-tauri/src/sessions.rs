@@ -59,8 +59,7 @@ pub async fn send_message(
             id
         }
         None => {
-            // Threads belong to the project whose folder they start in, not
-            // a shared "default": same-project reads stay meaningful.
+            // Threads belong to their folder's project, not shared "default".
             let project =
                 parzi_core::brain::project_for_folder(&cwd).unwrap_or_else(|| "default".into());
             state

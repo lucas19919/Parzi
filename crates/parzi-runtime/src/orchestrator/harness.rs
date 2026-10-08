@@ -80,13 +80,11 @@ impl Pump {
             "title": meta.title,
             "response": reply,
         });
-        // Idle is not always success: a failed turn settles Idle with an
-        // Error event. The parent gets the error, not just a stale sentence.
+        // Idle with an Error event is failure, not success: pass it on.
         if let Some(err) = self.last_error(session_id) {
             o["error"] = err.into();
         }
-        // Verifiable outcome, not just the last monologue: last shell
-        // result, artifacts published, error count.
+        // Verifiable outcome alongside the last reply.
         o["outcome"] = self.run_outcome(session_id).into();
         if let Some(n) = note {
             o["note"] = n.into();
@@ -151,9 +149,7 @@ impl HarnessBridge for Pump {
         };
         let model_spec = model.unwrap_or_else(|| caller.model.clone());
         let lane_name = lane.unwrap_or_else(|| caller.lane.clone());
-        // Ask/Deny parents pass no posture, so the child runs Ask with a
-        // denying approver and stalls on the first gated tool. Computed
-        // before mode_override moves into the queued run.
+        // Ask/Deny parents pass no posture: warn that the child is crippled.
         let crippled = mode_override.is_none();
         let parent = if is_subsession { Some(caller_id) } else { None };
         let meta = self.store.create_with_parent(
@@ -182,7 +178,7 @@ impl HarnessBridge for Pump {
         };
         let launched = self.dispatch(q).await;
         let meta = self.store.get(&meta.id)?;
-        // Say it now instead of letting the parent discover a mute child.
+        // Say it now instead of a mute child discovered 180s later.
         let crippled_note = "child runs Ask with no approver: approval-gated tools are denied. Staff autonomous work from a Full session.";
         if !wait {
             let mut o = serde_json::json!({
@@ -196,8 +192,7 @@ impl HarnessBridge for Pump {
             return Ok(o.to_string());
         }
         if !launched {
-            // A fresh session starts Active: if nothing will ever run it,
-            // say so and stand it down instead of an ever-running phantom.
+            // Nothing will ever run it: stand it down, don't phantom-run.
             if self.cfg_snapshot().orchestrator.queue_when_busy {
                 return Ok(serde_json::json!({
                     "session_id": meta.id,
