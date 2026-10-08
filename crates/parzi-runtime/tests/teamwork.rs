@@ -133,6 +133,7 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
             None,
             false,
             None,
+            None,
         )
         .await
         .unwrap(),
@@ -157,6 +158,7 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
             None,
             false,
             None,
+            None,
         )
         .await
         .unwrap(),
@@ -180,6 +182,7 @@ async fn spawn_wait_collects_child_reply() {
             None,
             None,
             true,
+            None,
             None,
         ),
     )
@@ -313,6 +316,7 @@ async fn send_message_continues_target_and_can_wait() {    let fake = answer();
             "follow up please",
             InterKind::Text,
             true,
+            None,
         ),
     )
     .await
@@ -353,6 +357,7 @@ async fn read_and_list_inspect_sessions() {
             None,
             false,
             None,
+            None,
         )
         .await
         .unwrap(),
@@ -380,13 +385,13 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
     let parent = store.create("boss", "t", "", "claude/model").unwrap();
     let h = orch.harness();
     let first_id = id_of(
-        &h.spawn_session(&parent.id, "one", "first work", true, None, None, false, None)
+        &h.spawn_session(&parent.id, "one", "first work", true, None, None, false, None, None)
             .await
             .unwrap(),
     );
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let second = h
-        .spawn_session(&parent.id, "two", "second work", true, None, None, true, None)
+        .spawn_session(&parent.id, "two", "second work", true, None, None, true, None, None)
         .await
         .unwrap();
     let v: Value = serde_json::from_str(&second).unwrap();

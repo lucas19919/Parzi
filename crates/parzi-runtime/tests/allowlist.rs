@@ -257,10 +257,12 @@ async fn research_lane_answers_without_cards_and_staffs_workers() {
     let host = research_host(&folder, person.clone());
 
     for tool in ["Write", "Edit"] {
-        assert_eq!(
-            ask(&host, tool, &["src/a.rs"]).await,
-            PermissionDecision::Allow,
-            "{tool} writes notes and docs on the work lane"
+        assert!(
+            matches!(
+                ask(&host, tool, &["src/a.rs"]).await,
+                PermissionDecision::Deny(_)
+            ),
+            "{tool} must not edit the repo on the work lane — notes go through brain.write"
         );
     }
     for tool in ["session.spawn", "session.read_session", "project.create"] {

@@ -110,8 +110,6 @@ pub struct LaneDefaults {
     pub default_mode: String,
     #[serde(default)]
     pub default_allowed_tools: Vec<String>,
-    #[serde(default = "default_max_steps")]
-    pub max_steps: u32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -211,9 +209,6 @@ pub struct OrchLimits {
 fn default_mode() -> String {
     "ask".into()
 }
-fn default_max_steps() -> u32 {
-    32
-}
 fn default_timeout_ms() -> u64 {
     30_000
 }
@@ -235,7 +230,6 @@ impl Default for ParziConfig {
             lanes: LaneDefaults {
                 default_mode: default_mode(),
                 default_allowed_tools: vec![],
-                max_steps: default_max_steps(),
             },
             mcp: McpConfig::default(),
             orchestrator: OrchLimits::default(),

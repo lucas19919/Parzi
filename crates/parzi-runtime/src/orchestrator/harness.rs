@@ -6,6 +6,7 @@ use crate::handler::HarnessBridge;
 use crate::inter;
 
 use super::queue::{Pump, QueuedRun};
+use super::normalize_effort;
 
 const HARNESS_WAIT_SECS: u64 = 180;
 
@@ -59,16 +60,35 @@ impl Pump {
         reply.chars().take(4_000).collect()
     }
 
-    fn reply_json(&self, session_id: &str, meta: &SessionMeta) -> String {
+    fn last_error(&self, session_id: &str) -> Option<String> {
+        if let Ok(events) = self.store.events(session_id) {
+            for e in events.iter().rev() {
+                if let Event::Error { message, .. } = e {
+                    return Some(message.chars().take(500).collect());
+                }
+            }
+        }
+        None
+    }
+
+    fn reply_json(&self, session_id: &str, meta: &SessionMeta, note: Option<&str>) -> String {
         let status = format!("{:?}", meta.status).to_lowercase();
         let reply = self.last_reply(session_id);
-        serde_json::json!({
+        let mut o = serde_json::json!({
             "session_id": session_id,
             "status": status,
             "title": meta.title,
             "response": reply,
-        })
-        .to_string()
+        });
+        // Idle is not always success: a failed turn settles Idle with an
+        // Error event. The parent gets the error, not just a stale sentence.
+        if let Some(err) = self.last_error(session_id) {
+            o["error"] = err.into();
+        }
+        if let Some(n) = note {
+            o["note"] = n.into();
+        }
+        o.to_string()
     }
 }
 
@@ -84,6 +104,7 @@ impl HarnessBridge for Pump {
         lane: Option<String>,
         wait: bool,
         mode_override: Option<String>,
+        effort: Option<String>,
     ) -> Result<String> {
         let caller = self.store.get(caller_id)?;
         let title: String = if title.trim().is_empty() {
@@ -99,6 +120,10 @@ impl HarnessBridge for Pump {
         };
         let model_spec = model.unwrap_or_else(|| caller.model.clone());
         let lane_name = lane.unwrap_or_else(|| caller.lane.clone());
+        // Ask/Deny parents pass no posture, so the child runs Ask with a
+        // denying approver and stalls on the first gated tool. Computed
+        // before mode_override moves into the queued run.
+        let crippled = mode_override.is_none();
         let parent = if is_subsession { Some(caller_id) } else { None };
         let meta = self.store.create_with_parent(
             &title,
@@ -117,7 +142,7 @@ impl HarnessBridge for Pump {
             model_spec,
             prompt: prompt.to_string(),
             cwd: caller.cwd.clone(),
-            effort: "medium".into(),
+            effort: normalize_effort(&effort.unwrap_or_default()),
             attachments: vec![],
             approver: None,
             prompt_recorded: false,
@@ -126,25 +151,46 @@ impl HarnessBridge for Pump {
         };
         let launched = self.dispatch(q).await;
         let meta = self.store.get(&meta.id)?;
+        // Say it now instead of letting the parent discover a mute child.
+        let crippled_note = "child runs Ask with no approver: approval-gated tools are denied. Staff autonomous work from a Full session.";
         if !wait {
-            return Ok(serde_json::json!({
+            let mut o = serde_json::json!({
                 "session_id": meta.id,
                 "status": format!("{:?}", meta.status).to_lowercase(),
                 "title": meta.title,
-            })
-            .to_string());
+            });
+            if crippled {
+                o["note"] = crippled_note.into();
+            }
+            return Ok(o.to_string());
         }
         if !launched {
+            // A fresh session starts Active: if nothing will ever run it,
+            // say so and stand it down instead of an ever-running phantom.
+            if self.cfg_snapshot().orchestrator.queue_when_busy {
+                return Ok(serde_json::json!({
+                    "session_id": meta.id,
+                    "status": "queued",
+                    "title": meta.title,
+                    "note": "no run slot free; parent would deadlock waiting — poll with session.read_session",
+                })
+                .to_string());
+            }
+            let _ = self.store.set_status(&meta.id, SessionStatus::Idle);
             return Ok(serde_json::json!({
                 "session_id": meta.id,
-                "status": "queued",
+                "status": "idle",
                 "title": meta.title,
-                "note": "no run slot free; parent would deadlock waiting — poll with session.read_session",
+                "note": "no run slot free and queueing is off; retry the spawn when a slot frees",
             })
             .to_string());
         }
         match self.await_settled(&meta.id).await {
-            Some(done) => Ok(self.reply_json(&meta.id, &done)),
+            Some(done) => Ok(self.reply_json(
+                &meta.id,
+                &done,
+                crippled.then_some(crippled_note),
+            )),
             None => Ok(serde_json::json!({
                 "session_id": meta.id,
                 "status": "timeout",
@@ -161,6 +207,7 @@ impl HarnessBridge for Pump {
         message: &str,
         kind: InterKind,
         wait: bool,
+        effort: Option<String>,
     ) -> Result<String> {
         let target = self.in_scope(caller_id, session_id)?;
         let caller = self.store.get(caller_id)?;
@@ -182,7 +229,7 @@ impl HarnessBridge for Pump {
                 .to_string());
             }
             return match self.await_settled(session_id).await {
-                Some(done) => Ok(self.reply_json(session_id, &done)),
+                Some(done) => Ok(self.reply_json(session_id, &done, None)),
                 None => Ok(serde_json::json!({
                     "session_id": session_id,
                     "status": "timeout",
@@ -198,7 +245,7 @@ impl HarnessBridge for Pump {
             model_spec: target.model.clone(),
             prompt: msg.render(),
             cwd: target.cwd.clone(),
-            effort: "medium".into(),
+            effort: normalize_effort(&effort.unwrap_or_default()),
             attachments: vec![],
             approver: None,
             prompt_recorded: true,
@@ -215,15 +262,23 @@ impl HarnessBridge for Pump {
             .to_string());
         }
         if !launched {
+            if self.cfg_snapshot().orchestrator.queue_when_busy {
+                return Ok(serde_json::json!({
+                    "session_id": session_id,
+                    "status": "queued",
+                    "note": "no run slot free — poll with session.read_session",
+                })
+                .to_string());
+            }
             return Ok(serde_json::json!({
                 "session_id": session_id,
-                "status": "queued",
-                "note": "no run slot free — poll with session.read_session",
+                "status": "idle",
+                "note": "no run slot free and queueing is off; retry the message",
             })
             .to_string());
         }
         match self.await_settled(session_id).await {
-            Some(done) => Ok(self.reply_json(session_id, &done)),
+            Some(done) => Ok(self.reply_json(session_id, &done, None)),
             None => Ok(serde_json::json!({
                 "session_id": session_id,
                 "status": "timeout",
@@ -252,11 +307,13 @@ impl HarnessBridge for Pump {
                 },
                 Event::User { text } => format!("user: {}\n", truncate(text, 1_000)),
                 Event::Assistant { text, .. } => format!("assistant: {}\n", truncate(text, 2_000)),
-                Event::ToolCall { name, .. } => format!("tool_call: {name}\n"),
+                Event::ToolCall { name, args, .. } => {
+                    format!("tool_call: {name} {}\n", truncate(&one_line(args), 120))
+                }
                 Event::ToolResult {
                     name, ok, output, ..
                 } => {
-                    format!("tool_result({name}, ok={ok}): {}\n", truncate(output, 500))
+                    format!("tool_result({name}, ok={ok}): {}\n", truncate(output, 1_500))
                 }
                 Event::Reasoning { text } => format!("reasoning: {}\n", truncate(text, 300)),
                 Event::Checkpoint { summary } => {
@@ -308,6 +365,11 @@ impl HarnessBridge for Pump {
             .collect();
         Ok(serde_json::Value::Array(rows).to_string())
     }
+}
+
+fn one_line(v: &serde_json::Value) -> String {
+    let s = v.to_string();
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn truncate(s: &str, n: usize) -> String {

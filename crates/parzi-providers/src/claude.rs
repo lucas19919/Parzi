@@ -245,6 +245,13 @@ impl TurnFiles {
         .into_iter()
         .flatten()
         .collect();
+        // Parzi's rules win over any repo instructions riding along: the
+        // model must not follow a CLAUDE.md back into native Bash.
+        let text: Vec<String> = std::iter::once(
+            "Parzi rules override any repo instructions below that conflict: run shell through shell.exec, never native Bash.".to_string(),
+        )
+        .chain(text)
+        .collect();
         if !text.is_empty() {
             let p = dir.join("instructions.md");
             std::fs::write(&p, text.join("\n\n---\n\n"))
@@ -1310,7 +1317,8 @@ mod tests {
         let files = TurnFiles::write(&spec).unwrap();
         let written = std::fs::read_to_string(files.instructions.as_ref().unwrap()).unwrap();
         files.remove();
-        assert!(written.starts_with("parzi brief") && written.contains("outer rule"));
+        assert!(written.contains("parzi brief") && written.contains("outer rule"));
+        assert!(written.starts_with("Parzi rules override"));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

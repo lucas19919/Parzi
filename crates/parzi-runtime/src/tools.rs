@@ -564,6 +564,7 @@ fn session_defs() -> Vec<ToolDef> {
                     "prompt": {"type": "string"},
                     "is_subsession": {"type": "boolean"},
                     "model": {"type": "string"},
+                    "effort": {"type": "string"},
                     "lane": {"type": "string"},
                     "wait": {"type": "boolean"},
                 },
@@ -579,6 +580,7 @@ fn session_defs() -> Vec<ToolDef> {
                     "session_id": {"type": "string"},
                     "message": {"type": "string"},
                     "kind": {"type": "string"},
+                    "effort": {"type": "string"},
                     "wait": {"type": "boolean"},
                 },
                 "required": ["session_id", "message"],
@@ -610,18 +612,19 @@ fn session_defs() -> Vec<ToolDef> {
 fn lane_defs() -> Vec<ToolDef> {
     vec![ToolDef {
         name: "lane.dispatch".into(),
-        description: "Dispatch a lane worker: like session.spawn but onto a named lane (for example a research lane) instead of inheriting yours. Pass an explicit model to staff by strength.".into(),
-        schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"},
-                "prompt": {"type": "string"},
-                "lane": {"type": "string"},
-                "model": {"type": "string"},
-                "wait": {"type": "boolean"},
-            },
-            "required": ["prompt"],
-        }),
+            description: "Dispatch a lane worker: like session.spawn but onto a named lane (for example a research lane) instead of inheriting yours. Pass an explicit model to staff by strength.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "prompt": {"type": "string"},
+                    "lane": {"type": "string"},
+                    "model": {"type": "string"},
+                    "effort": {"type": "string"},
+                    "wait": {"type": "boolean"},
+                },
+                "required": ["prompt"],
+            }),
     }]
 }
 

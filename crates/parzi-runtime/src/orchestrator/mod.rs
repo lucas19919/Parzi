@@ -130,9 +130,10 @@ impl Orchestrator {
     }
 
     pub fn set_asker(&self, asker: Arc<dyn crate::tools::Asker>) {
-        if let Ok(mut slot) = self.asker.try_lock() {
-            *slot = Some(asker);
-        }
+        // Never silently drop the asker: a missed GUI asker turns every
+        // ask.user into "decide yourself". Called from sync setup, so a
+        // blocking lock is safe (must stay out of async contexts).
+        *self.asker.blocking_lock() = Some(asker);
     }
 
     /// Kill every background shell of a session and forget its registry.

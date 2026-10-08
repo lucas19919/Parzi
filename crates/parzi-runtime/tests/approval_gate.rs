@@ -238,6 +238,7 @@ impl parzi_runtime::handler::HarnessBridge for NoHarness {
         _: Option<String>,
         _: bool,
         _: Option<String>,
+        _: Option<String>,
     ) -> parzi_core::error::Result<String> {
         Ok("spawned".into())
     }
@@ -248,6 +249,7 @@ impl parzi_runtime::handler::HarnessBridge for NoHarness {
         _: &str,
         _: parzi_core::context::InterKind,
         _: bool,
+        _: Option<String>,
     ) -> parzi_core::error::Result<String> {
         Ok("sent".into())
     }

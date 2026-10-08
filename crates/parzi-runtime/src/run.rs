@@ -261,6 +261,18 @@ impl EngineRun {
                 Event::Checkpoint { summary } => {
                     Some(format!("summary of earlier turns: {summary}"))
                 }
+                // A replacement that only replays chat would repeat work or
+                // undo it: it must also see what was run and what came back.
+                Event::ToolCall { name, args, .. } => {
+                    let a = args.to_string();
+                    let a: String = a.split_whitespace().collect::<Vec<_>>().join(" ");
+                    let a: String = a.chars().take(200).collect();
+                    Some(format!("tool_call: {name} {a}"))
+                }
+                Event::ToolResult { name, ok, output, .. } => {
+                    let out: String = output.chars().take(500).collect();
+                    Some(format!("tool_result({name}, ok={ok}): {out}"))
+                }
                 _ => None,
             })
             .collect();
@@ -499,7 +511,7 @@ impl EngineRun {
 
     fn pause_for_budget(&self, reason: &str) {
         let text = format!(
-            "Paused: {reason}. Raise the budget in Settings or PROJECT.md, or re-scope, \
+            "Paused: {reason}. Raise the budget in Settings, or re-scope, \
              then send the thread on."
         );
         let _ = self

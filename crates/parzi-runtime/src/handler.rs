@@ -85,6 +85,7 @@ pub trait HarnessBridge: Send + Sync {
         lane: Option<String>,
         wait: bool,
         mode_override: Option<String>,
+        effort: Option<String>,
     ) -> Result<String>;
     async fn send_message(
         &self,
@@ -93,6 +94,7 @@ pub trait HarnessBridge: Send + Sync {
         message: &str,
         kind: InterKind,
         wait: bool,
+        effort: Option<String>,
     ) -> Result<String>;
     async fn read_session(
         &self,

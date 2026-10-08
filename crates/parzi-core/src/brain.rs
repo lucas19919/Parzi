@@ -15,7 +15,7 @@ const MAX_HITS: usize = 20;
 const MAX_LISTED: usize = 50;
 const SUMMARY_MAX: usize = 140;
 const CONTEXT_HEAD: &str = "# The user's notes (Parzi brain)\nPinned notes are included in full. \
-On-demand notes are listed with a one-line summary; read one with brain_read when the task needs it.";
+On-demand notes are listed with a one-line summary; read one with brain.read when the task needs it.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteMeta {
@@ -1312,7 +1312,7 @@ mod tests {
             ctx.text,
             format!(
                 "# The user's notes (Parzi brain)\n\
-                 Pinned notes are included in full. On-demand notes are listed with a one-line summary; read one with brain_read when the task needs it.\n\
+                 Pinned notes are included in full. On-demand notes are listed with a one-line summary; read one with brain.read when the task needs it.\n\
                  \n\
                  ## Project: Demo\n\
                  Folder: {}\n\
