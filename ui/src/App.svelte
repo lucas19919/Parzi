@@ -644,6 +644,30 @@
     toast("Session ID copied");
   }
 
+  // History's Clear sessions: purge finished threads, close their tabs.
+  // Running threads are left alone.
+  async function clearFinishedSessions() {
+    const idle = threads.filter((t) => !running.has(t.id));
+    if (!idle.length) {
+      toast("Nothing to clear");
+      return;
+    }
+    const ok = await ask(`Delete ${idle.length} finished session${idle.length === 1 ? "" : "s"}? Running ones stay.`, {
+      title: "Clear sessions",
+      kind: "warning",
+    }).catch(() => false);
+    if (!ok) return;
+    try {
+      const count = await api.purgeSessions();
+      await refreshThreads();
+      const gone = new Set(threads.map((t) => t.id));
+      for (const t of tabs.filter((t) => t.sessionId && !gone.has(t.sessionId))) closeTab(t.id);
+      toast(count ? `Cleared ${count} sessions` : "Sessions cleared");
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
   function onCommand(name: string) {
     if (name === "new") newSession();
     else if (name === "fork") void fork();
@@ -887,6 +911,7 @@
           on:open={(e) => openPageNext(e.detail.url)}
           on:openSession={(e) => openSession(e.detail.id)}
           on:deleteSession={(e) => remove(e.detail.id)}
+          on:clearSessions={clearFinishedSessions}
         />
       </div>
     {:else if tab.kind === "preview"}

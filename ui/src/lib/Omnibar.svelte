@@ -560,24 +560,29 @@
 
   {#if ctxOpen}
     <div class="menu-pop ctx-pop" style={ctxStyle} use:popover={{ anchor: ctxBtn, close: () => (ctxOpen = false) }} transition:fly={{ y: ctxStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
-      <div class="pop-head">Context window · {contextPct}%</div>
+      <div class="pop-head ctx-head">
+        <span>Context window · {contextPct}%</span>
+        <span class="ctx-actions">
+          {#if costUsd > 0}<span class="ctx-cost">${costUsd.toFixed(4)}</span>{/if}
+          <button
+            class="ctx-compact"
+            aria-disabled={compacting || streaming}
+            title={compacting ? "Compacting…" : "Summarize to free context"}
+            on:click={() => {
+              if (compacting || streaming) return;
+              ctxOpen = false;
+              dispatch("command", { name: "compact" });
+            }}
+          >
+            {compacting ? "Compacting…" : "Compact"}
+          </button>
+        </span>
+      </div>
       <div class="ctx-bar"><i style:width="{contextPct}%" /></div>
       <div class="ctx-rows">
         <div><span>Used</span><b>{kTokens(contextUsed)} of {kTokens(contextLimit)}</b></div>
         <div><span>Session</span><b>{kTokens(tokensIn)} in · {kTokens(tokensOut)} out</b></div>
-        {#if costUsd > 0}<div><span>Cost</span><b>${costUsd.toFixed(4)}</b></div>{/if}
       </div>
-      <button
-        class="opt"
-        aria-disabled={compacting || streaming}
-        on:click={() => {
-          if (compacting || streaming) return;
-          ctxOpen = false;
-          dispatch("command", { name: "compact" });
-        }}
-      >
-        <span class="meta"><span class="name">{compacting ? "Compacting…" : "Compact now"}</span><span class="sub">Summarize to free context</span></span>
-      </button>
     </div>
   {/if}
 
@@ -1079,6 +1084,43 @@
     width: 260px;
     padding: 6px 10px 10px;
   }
+  .ctx-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    text-transform: none;
+  }
+  .ctx-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+  .ctx-cost {
+    font-size: 11px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .ctx-compact {
+    padding: 3px 10px;
+    background: var(--line);
+    border: none;
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .ctx-compact:hover {
+    background: color-mix(in srgb, var(--text) 16%, transparent);
+  }
+  .ctx-compact[aria-disabled="true"] {
+    opacity: 0.45;
+    cursor: default;
+  }
   .ctx-bar {
     height: 6px;
     margin: 0 2px 10px;
@@ -1154,14 +1196,6 @@
   .opt.on {
     background: var(--line);
     color: var(--text);
-  }
-  .opt[aria-disabled="true"] {
-    opacity: 0.45;
-    cursor: default;
-  }
-  .opt[aria-disabled="true"]:hover {
-    background: transparent;
-    color: var(--muted);
   }
   .opt.on :global(svg) {
     color: var(--accent);

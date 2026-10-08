@@ -40,13 +40,21 @@ impl Doctor {
         out.push(self.check_config());
         out.push(self.check_theme());
         out.extend(self.check_providers().await);
-        out.extend(self.check_routing());
+        out.push(self.check_routing());
         out.push(self.check_webview());
         out
     }
 
     pub async fn run_quick(&self) -> Vec<Check> {
-        self.run().await
+        // Quick must return fast: no provider probes here. Providers have
+        // their own section with live checks; System would hang on them.
+        vec![
+            self.check_dirs(),
+            self.check_config(),
+            self.check_theme(),
+            self.check_routing(),
+            self.check_webview(),
+        ]
     }
 
     fn check_dirs(&self) -> Check {
@@ -103,14 +111,16 @@ impl Doctor {
             .collect()
     }
 
-    fn check_routing(&self) -> Vec<Check> {
-        vec![Check::ok(
-            "routing:smart-auto",
-            format!(
-                "new threads start on the first ready provider of: {}",
-                self.cfg.routing.order.join(" → ")
-            ),
-        )]
+    fn check_routing(&self) -> Check {
+        let def = self.cfg.default_model.trim();
+        Check::ok(
+            "routing",
+            if def.is_empty() {
+                "no default model set: pick one in Settings → Providers".into()
+            } else {
+                format!("new threads start on {def}")
+            },
+        )
     }
 
     #[cfg(windows)]

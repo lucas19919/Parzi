@@ -7,6 +7,8 @@
   export let notify: (msg: string) => void = () => {};
 
   let quick: Check[] | null = null;
+  let loaded = false;
+  let diagTimedOut = false;
 
   let threadCount = 0;
   let err = "";
@@ -62,19 +64,39 @@
     }
   }
 
-  onMount(async () => {
+  // Diagnostics must never hold the section hostage: provider probes are
+  // slow, so a timeout renders the rest and says so.
+  async function load() {
+    loaded = false;
+    diagTimedOut = false;
+    err = "";
     try {
-      const [q, threads, v] = await Promise.all([
+      const all = Promise.all([
         api.runDoctorQuick(),
         api.listThreads(),
         api.appVersion().catch(() => ""),
       ]);
+      const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error("diagnostics timed out")), 12000));
+      const [q, threads, v] = await Promise.race([all, timeout]);
       quick = q;
       threadCount = threads.length;
       appVersion = v;
     } catch (e) {
-      err = String(e);
+      diagTimedOut = true;
+      quick = [];
+      try {
+        threadCount = (await api.listThreads()).length;
+      } catch {}
+      try {
+        appVersion = await api.appVersion().catch(() => "");
+      } catch {}
+    } finally {
+      loaded = true;
     }
+  }
+
+  onMount(() => {
+    void load();
   });
 
   function copyDiagnostics() {
@@ -95,7 +117,7 @@
 
 {#if err}
   <div class="load-err"><span>{err}</span></div>
-{:else if !quick}
+{:else if !loaded}
   <div class="pref-section">
     <div class="skel tall" />
     <div class="skel" />
@@ -142,7 +164,15 @@
     </div>
 
     <div class="checks-list">
-      {#each quick as c}
+      {#if diagTimedOut}
+        <div class="check-row">
+          <span class="check-icon fail">✗</span>
+          <span class="check-name">diagnostics</span>
+          <span class="check-detail">Timed out after 12s. Providers check themselves live under Agents.</span>
+          <button class="sbtn" on:click={() => void load()}>Run again</button>
+        </div>
+      {/if}
+      {#each quick ?? [] as c}
         <div class="check-row">
           <span class="check-icon {c.ok ? 'pass' : 'fail'}">{c.ok ? "✓" : "✗"}</span>
           <span class="check-name">{c.name}</span>

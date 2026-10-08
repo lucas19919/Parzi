@@ -844,11 +844,11 @@ impl ToolHost {
                 continue;
             }
             let model = if entry.default_model.trim().is_empty() {
-                "smart auto".to_string()
+                "the agent default".to_string()
             } else {
                 entry.default_model.clone()
             };
-            lines.push(format!("- {id} — {} (default: {model})", display_name(id)));
+            lines.push(format!("- {id}: {} (default: {model})", display_name(id)));
         }
         let off: Vec<&String> = order
             .iter()

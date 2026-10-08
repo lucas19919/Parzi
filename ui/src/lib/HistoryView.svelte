@@ -13,7 +13,7 @@
   export let running: Set<string> = new Set();
   export let view: "sessions" | "history" | "bookmarks" = "sessions";
 
-  const dispatch = createEventDispatcher<{ open: { url: string }; openSession: { id: string }; deleteSession: { id: string } }>();
+  const dispatch = createEventDispatcher<{ open: { url: string }; openSession: { id: string }; deleteSession: { id: string }; clearSessions: void }>();
   const DAY = 86_400_000;
   const PLACEHOLDER = { sessions: "Search sessions", history: "Search history", bookmarks: "Search bookmarks" };
 
@@ -112,6 +112,9 @@
       <Icon name="search" size={13} />
       <input bind:this={field} bind:value={query} placeholder={PLACEHOLDER[view]} spellcheck="false" />
     </div>
+    {#if view === "sessions" && threads.length}
+      <button class="link" on:click={() => dispatch("clearSessions")}>Clear sessions</button>
+    {/if}
     {#if view === "history" && $history.length}
       <button class="link" on:click={clearAll}>Clear history</button>
     {/if}
