@@ -26,6 +26,8 @@ pub struct NoteMeta {
     pub folder: Option<String>,
     pub source: Option<String>,
     pub pinned: bool,
+    #[serde(default)]
+    pub archived: bool,
     pub links: Vec<String>,
     pub modified: i64,
     pub bytes: u64,
@@ -127,6 +129,14 @@ pub fn map(note_path: &str, slug: &str, on: bool) -> Result<NoteMeta> {
 
 pub fn pin(path: &str, on: bool) -> Result<NoteMeta> {
     Vault::open()?.set_pinned(path, on)
+}
+
+pub fn archive_project(slug: &str, on: bool) -> Result<Project> {
+    Vault::open()?.project_archive(slug, on)
+}
+
+pub fn delete_project(slug: &str) -> Result<String> {
+    Vault::open()?.project_delete(slug)
 }
 
 #[must_use]
@@ -305,6 +315,63 @@ impl Vault {
             atomic_write(&full, text.as_bytes())?;
         }
         self.meta(rel, &full)
+    }
+
+    fn set_archived(&self, path: &str, on: bool) -> Result<NoteMeta> {
+        let (rel, full) = self.locate(path)?;
+        let raw = std::fs::read_to_string(&full)?;
+        let found = split(&raw).0.map(blocks).unwrap_or_default();
+        let keyed = found.iter().any(|b| b.key.as_deref() == Some("archived"));
+        let archived = fields(&found).archived;
+        if on != archived || (!on && keyed) {
+            let text = rewrite(
+                &raw,
+                &[("archived", on.then(|| "archived: true".to_string()))],
+            );
+            atomic_write(&full, text.as_bytes())?;
+        }
+        self.meta(rel, &full)
+    }
+
+    /// Archive or unarchive a project by slug. The note stays on disk;
+    /// archived projects vanish from routing, catalogs, and folder matches.
+    fn project_archive(&self, slug: &str, on: bool) -> Result<Project> {
+        let slug = slug.trim();
+        let rel = format!("projects/{slug}.md");
+        let meta = self.set_archived(&rel, on)?;
+        if !on {
+            return self
+                .projects()
+                .into_iter()
+                .find(|p| p.note.eq_ignore_ascii_case(&meta.path))
+                .ok_or_else(|| {
+                    ParziError::Validation(format!(
+                        "unarchived `{rel}` but it is not a project (missing folder?)"
+                    ))
+                });
+        }
+        Ok(Project {
+            slug: slug.to_string(),
+            title: meta.title.clone(),
+            folder: meta.folder.clone().unwrap_or_default(),
+            note: meta.path.clone(),
+            notes: vec![],
+        })
+    }
+
+    /// Delete a project's note by slug. Mapped notes keep their frontmatter;
+    /// mappings to a missing slug are ignored everywhere.
+    fn project_delete(&self, slug: &str) -> Result<String> {
+        let slug = slug.trim();
+        if slug.is_empty() {
+            return Err(ParziError::Validation("project slug is empty".into()));
+        }
+        let (rel, full) = self.locate(&format!("projects/{slug}.md"))?;
+        if !full.is_file() {
+            return Err(ParziError::Validation(format!("no project `{slug}`")));
+        }
+        std::fs::remove_file(&full)?;
+        Ok(rel)
     }
 
     #[must_use]
@@ -501,6 +568,7 @@ struct Fields {
     source: Option<String>,
     description: Option<String>,
     pinned: bool,
+    archived: bool,
 }
 
 struct Block {
@@ -634,6 +702,7 @@ fn parse(path: String, raw: &str, modified: i64, bytes: u64, resolver: &Resolver
             folder: f.folder,
             source: f.source,
             pinned: f.pinned,
+            archived: f.archived,
             links,
             modified,
             bytes,
@@ -816,6 +885,9 @@ fn fields(blocks: &[Block]) -> Fields {
             Some("projects") => f.projects = b.list(),
             Some("tags") => f.tags = b.list(),
             Some("pinned") => f.pinned = b.scalar().is_some_and(|v| v.eq_ignore_ascii_case("true")),
+            Some("archived") => {
+                f.archived = b.scalar().is_some_and(|v| v.eq_ignore_ascii_case("true"))
+            }
             _ => {}
         }
     }
@@ -975,6 +1047,11 @@ fn projects_of(notes: &[Note]) -> Vec<Project> {
         .iter()
         .filter_map(|home| {
             let slug = project_slug(&home.meta.path)?;
+            // Archived project notes stay on disk but leave every list:
+            // no routing, no catalog, no folder matches.
+            if home.meta.archived {
+                return None;
+            }
             let folder = home
                 .meta
                 .folder
@@ -1294,6 +1371,24 @@ mod tests {
         assert!(raw.ends_with("---\nbody stays\n"), "{raw}");
         assert!(v.project_upsert(Some("a/b"), "x", folder).is_err());
         assert!(v.project_upsert(None, "x", " ").is_err());
+    }
+
+    #[test]
+    fn projects_archive_and_delete() {
+        let (_d, v) = vault();
+        let folder = "C:\\code\\demo";
+        v.project_upsert(Some("demo"), "Demo", folder).unwrap();
+        assert_eq!(v.projects().len(), 1);
+        v.project_archive("demo", true).unwrap();
+        assert!(v.projects().is_empty(), "archived projects leave the list");
+        assert!(v.read("projects/demo.md").is_ok(), "the note stays on disk");
+        v.project_archive("demo", false).unwrap();
+        assert_eq!(v.projects().len(), 1, "unarchive brings it back");
+        assert!(v.project_archive("missing", true).is_err());
+        let rel = v.project_delete("demo").unwrap();
+        assert_eq!(rel, "projects/demo.md");
+        assert!(v.projects().is_empty());
+        assert!(v.project_delete("demo").is_err(), "deleting twice fails");
     }
 
     #[test]

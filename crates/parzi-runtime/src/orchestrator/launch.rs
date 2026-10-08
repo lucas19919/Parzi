@@ -243,6 +243,11 @@ impl Orchestrator {
             "brain.read",
             "brain.list",
             "brain.write",
+            "brain.delete",
+            "project.archive",
+            "project.delete",
+            "lane.status",
+            "memory.review",
         ] {
             if !allowed.contains(&u.to_string()) {
                 allowed.push(u.into());

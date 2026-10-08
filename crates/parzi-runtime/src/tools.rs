@@ -337,12 +337,12 @@ pub fn brain_defs() -> Vec<ToolDef> {
 pub fn is_brain_tool(name: &str) -> bool {
     matches!(
         name,
-        "brain.search" | "brain.read" | "brain.list" | "brain.write"
+        "brain.search" | "brain.read" | "brain.list" | "brain.write" | "brain.delete"
     )
 }
 
 pub(crate) fn is_lane_tool(name: &str) -> bool {
-    matches!(name, "lane.dispatch")
+    matches!(name, "lane.dispatch" | "lane.status")
 }
 
 pub(crate) fn is_image_tool(name: &str) -> bool {
@@ -418,7 +418,7 @@ fn shell_defs() -> Vec<ToolDef> {
 }
 
 pub(crate) fn is_question_tool(name: &str) -> bool {
-    matches!(name, "ask.user")
+    matches!(name, "ask.user" | "memory.review")
 }
 
 pub(crate) fn is_plan_tool(name: &str) -> bool {
@@ -426,33 +426,49 @@ pub(crate) fn is_plan_tool(name: &str) -> bool {
 }
 
 pub(crate) fn is_project_tool(name: &str) -> bool {
-    matches!(name, "project.create")
+    matches!(
+        name,
+        "project.create" | "project.archive" | "project.delete"
+    )
 }
 
 fn question_defs() -> Vec<ToolDef> {
-    vec![ToolDef {
-        name: "ask.user".into(),
+    vec![
+        ToolDef {
+            name: "ask.user".into(),
             description: "Ask the user a question mid-turn and wait for their answer. Use it at real forks instead of guessing: which approach, which scope, proceed/stop. Keep options short; the user may also type free text.".into(),
-        schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "question": {"type": "string"},
-                "options": {"type": "array", "items": {"type": "string"}},
-            },
-            "required": ["question"],
-        }),
-    }]
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string"},
+                    "options": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["question"],
+            }),
+        },
+        ToolDef {
+            name: "memory.review".into(),
+            description: "Flag a stored note back to the user for re-confirmation (a founder decision that may be stale, a convention to keep or drop). Shows the note and asks Keep or Remove; Remove deletes it. Use when memory says something the current work contradicts.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            }),
+        },
+    ]
 }
 
 fn plan_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "plan.write".into(),
-            description: "Write or replace this session's build plan for work that spans sessions or parallel lanes: goal, decisions with why, steps with status. Read it back with plan.read when resuming.".into(),
+            description: "Write or replace this session's build plan for work that spans sessions or parallel lanes: goal, decisions with why, lanes, and steps with status. Steps take an id, an optional lane, and needs (ids of steps that must finish first). A lane B step that needs a lane A step cannot be marked done until A is done — the system enforces this. Decisions take an optional status (active/contested/retired). Set archived true to retire the plan. Read it back with plan.read when resuming.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "goal": {"type": "string"},
+                    "project": {"type": "string"},
+                    "archived": {"type": "boolean"},
                     "decisions": {
                         "type": "array",
                         "items": {
@@ -460,7 +476,20 @@ fn plan_defs() -> Vec<ToolDef> {
                             "properties": {
                                 "decision": {"type": "string"},
                                 "why": {"type": "string"},
+                                "status": {"type": "string"},
                             },
+                        },
+                    },
+                    "lanes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "title": {"type": "string"},
+                                "status": {"type": "string"},
+                            },
+                            "required": ["id"],
                         },
                     },
                     "steps": {
@@ -468,8 +497,11 @@ fn plan_defs() -> Vec<ToolDef> {
                         "items": {
                             "type": "object",
                             "properties": {
+                                "id": {"type": "string"},
                                 "title": {"type": "string"},
                                 "status": {"type": "string"},
+                                "lane": {"type": "string"},
+                                "needs": {"type": "array", "items": {"type": "string"}},
                                 "note": {"type": "string"},
                             },
                             "required": ["title"],
@@ -480,7 +512,7 @@ fn plan_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "plan.read".into(),
-            description: "Read this session's build plan back (goal, decisions, step statuses).".into(),
+            description: "Read this session's build plan back (goal, lanes, decisions, step statuses) plus a computed rollup: what is ready, what is blocked and on what.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {},
@@ -490,18 +522,41 @@ fn plan_defs() -> Vec<ToolDef> {
 }
 
 fn project_defs() -> Vec<ToolDef> {
-    vec![ToolDef {
-        name: "project.create".into(),
-        description: "Create a real project: makes the folder, registers it in the brain, and moves this session into it. Use it when the work deserves a home instead of scratch — then build inside it.".into(),
-        schema: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"},
-                "folder": {"type": "string"},
-            },
-            "required": ["title", "folder"],
-        }),
-    }]
+    vec![
+        ToolDef {
+            name: "project.create".into(),
+            description: "Create a real project: makes the folder, registers it in the brain, and moves this session into it. Use it when the work deserves a home instead of scratch — then build inside it.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "folder": {"type": "string"},
+                },
+                "required": ["title", "folder"],
+            }),
+        },
+        ToolDef {
+            name: "project.archive".into(),
+            description: "Archive or unarchive a project by slug (archived defaults true). Archived projects stay on disk but leave every list, routing match, and catalog. Pass archived false to bring one back.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "slug": {"type": "string"},
+                    "archived": {"type": "boolean"},
+                },
+                "required": ["slug"],
+            }),
+        },
+        ToolDef {
+            name: "project.delete".into(),
+            description: "Delete a project by slug: removes its project note. Mapped notes keep their frontmatter; mappings to a missing slug are ignored. The folder on disk is left alone.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"slug": {"type": "string"}},
+                "required": ["slug"],
+            }),
+        },
+    ]
 }
 
 fn image_defs() -> Vec<ToolDef> {
@@ -607,8 +662,9 @@ fn session_defs() -> Vec<ToolDef> {
 }
 
 fn lane_defs() -> Vec<ToolDef> {
-    vec![ToolDef {
-        name: "lane.dispatch".into(),
+    vec![
+        ToolDef {
+            name: "lane.dispatch".into(),
             description: "Dispatch a lane worker: like session.spawn but onto a named lane (for example a research lane) instead of inheriting yours. Pass an explicit model to staff by strength.".into(),
             schema: serde_json::json!({
                 "type": "object",
@@ -622,7 +678,16 @@ fn lane_defs() -> Vec<ToolDef> {
                 },
                 "required": ["prompt"],
             }),
-    }]
+        },
+        ToolDef {
+            name: "lane.status".into(),
+            description: "See every lane's live state across sessions: queued and active runs grouped by lane with session ids and titles. Read-only. Use it before staffing so lanes do not double-book.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+            }),
+        },
+    ]
 }
 
 pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
@@ -757,6 +822,23 @@ pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String
         "project.create" => format!(
             "Creating project {}",
             one_line(&str_arg("title").unwrap_or_else(|| "untitled".into()), 40)
+        ),
+        "project.archive" => format!(
+            "Archiving project {}",
+            one_line(&str_arg("slug").unwrap_or_else(|| "?".into()), 40)
+        ),
+        "project.delete" => format!(
+            "Deleting project {}",
+            one_line(&str_arg("slug").unwrap_or_else(|| "?".into()), 40)
+        ),
+        "brain.delete" => format!(
+            "Deleting note {}",
+            one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
+        ),
+        "lane.status" => "Reading lane state".into(),
+        "memory.review" => format!(
+            "Reviewing memory {}",
+            one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
         ),
         "browser.click" => format!(
             "Clicking {}",

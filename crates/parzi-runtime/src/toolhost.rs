@@ -208,6 +208,13 @@ fn execute_brain(name: &str, args: &Value) -> (bool, String) {
         }
         "brain.read" => vault.read(&note(arg("path"))),
         "brain.list" => brain_listing(&vault, arg("project")),
+        "brain.delete" if arg("path").is_empty() => {
+            return (false, "brain.delete needs a `path`".into())
+        }
+        "brain.delete" => match brain::delete(&note(arg("path"))) {
+            Ok(()) => Ok(format!("deleted {}", note(arg("path")))),
+            Err(e) => Err(e),
+        },
         "brain.write" => match args.get("content").and_then(Value::as_str) {
             Some(content) if !arg("path").is_empty() => vault
                 .write(&note(arg("path")), content)
@@ -220,6 +227,191 @@ fn execute_brain(name: &str, args: &Value) -> (bool, String) {
         Ok(text) => (true, text),
         Err(e) => (false, e.to_string()),
     }
+}
+
+/// Formal plan layer: steps have stable ids (`id`, else s1/s2/…), an
+/// optional `lane`, and `needs` naming steps that must finish first.
+/// Lanes group steps; decisions carry an optional status
+/// (active/contested/retired). Validation rejects unknown needs, cycles,
+/// and done-steps with unfinished needs, so cross-lane waits are real.
+fn plan_step_id(step: &Value, index: usize) -> String {
+    step.get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("s{}", index + 1))
+}
+
+fn plan_step_done(step: &Value) -> bool {
+    step.get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|s| s.trim().eq_ignore_ascii_case("done"))
+}
+
+fn plan_needs(step: &Value) -> Vec<String> {
+    step.get("needs")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn validate_plan(args: &Value) -> std::result::Result<(), String> {
+    let steps = args
+        .get("steps")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let ids: Vec<String> = steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| plan_step_id(s, i))
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    for id in &ids {
+        if !seen.insert(id) {
+            return Err(format!("plan step id `{id}` is used twice"));
+        }
+    }
+    let by_id: std::collections::HashMap<&str, &Value> = ids
+        .iter()
+        .zip(steps.iter())
+        .map(|(id, s)| (id.as_str(), s))
+        .collect();
+    for (id, step) in ids.iter().zip(steps.iter()) {
+        for need in plan_needs(step) {
+            if !by_id.contains_key(need.as_str()) {
+                return Err(format!(
+                    "plan step `{id}` needs unknown step `{need}`"
+                ));
+            }
+        }
+    }
+    // Cycle check (iterative DFS over step indices).
+    let pos: std::collections::HashMap<&str, usize> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
+    let mut color = vec![0u8; steps.len()];
+    for start in 0..steps.len() {
+        if color[start] != 0 {
+            continue;
+        }
+        let mut stack: Vec<(usize, bool)> = vec![(start, false)];
+        while let Some((i, closing)) = stack.pop() {
+            if closing {
+                color[i] = 2;
+                continue;
+            }
+            if color[i] == 2 {
+                continue;
+            }
+            if color[i] == 1 {
+                return Err(format!(
+                    "plan steps depend in a circle through `{}`",
+                    ids[i]
+                ));
+            }
+            color[i] = 1;
+            stack.push((i, true));
+            for need in plan_needs(&steps[i]) {
+                if let Some(&j) = pos.get(need.as_str()) {
+                    stack.push((j, false));
+                }
+            }
+        }
+    }
+    // Done-gating: a done step's needs must all be done.
+    for (id, step) in ids.iter().zip(steps.iter()) {
+        if plan_step_done(step) {
+            let open: Vec<String> = plan_needs(step)
+                .into_iter()
+                .filter(|n| !by_id.get(n.as_str()).is_some_and(|s| plan_step_done(s)))
+                .collect();
+            if !open.is_empty() {
+                return Err(format!(
+                    "plan step `{id}` is marked done but needs unfinished: {}",
+                    open.join(", ")
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Computed rollup appended to plan reads and write replies: what is
+/// ready, what is blocked and on what, grouped by lane.
+fn plan_rollup(args: &Value) -> String {
+    let steps = args
+        .get("steps")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if steps.is_empty() {
+        return String::new();
+    }
+    let ids: Vec<String> = steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| plan_step_id(s, i))
+        .collect();
+    let by_id: std::collections::HashMap<&str, &Value> = ids
+        .iter()
+        .zip(steps.iter())
+        .map(|(id, s)| (id.as_str(), s))
+        .collect();
+    let lane_of = |s: &Value| {
+        s.get("lane")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+    };
+    let mut ready: Vec<String> = vec![];
+    let mut blocked: Vec<(&str, Vec<String>)> = vec![];
+    let mut done = 0;
+    for (id, step) in ids.iter().zip(steps.iter()) {
+        if plan_step_done(step) {
+            done += 1;
+            continue;
+        }
+        let open: Vec<String> = plan_needs(step)
+            .into_iter()
+            .filter(|n| !by_id.get(n.as_str()).is_some_and(|s| plan_step_done(s)))
+            .collect();
+        let label = match lane_of(step) {
+            Some(l) => format!("{id} [{l}]"),
+            None => id.clone(),
+        };
+        if open.is_empty() {
+            ready.push(label);
+        } else {
+            blocked.push((id.as_str(), open));
+        }
+    }
+    let mut out = format!("\nplan: {done}/{} done", steps.len());
+    if args
+        .get("archived")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        out.push_str(" (archived)");
+    }
+    if !ready.is_empty() {
+        out.push_str(&format!("\nready: {}", ready.join(", ")));
+    }
+    for (id, open) in blocked {
+        out.push_str(&format!("\nblocked: {id} waits on {}", open.join(", ")));
+    }
+    out
 }
 
 fn note_line(n: &brain::NoteMeta, projects: bool) -> String {
@@ -381,6 +573,11 @@ impl ToolHost {
                 | "brain.read"
                 | "brain.list"
                 | "brain.write"
+                | "brain.delete"
+                | "project.archive"
+                | "project.delete"
+                | "lane.status"
+                | "memory.review"
                 | "image.generate"
                 | "doc.read"
                 | "models.list"
@@ -442,7 +639,9 @@ impl ToolHost {
             return self.execute_browser(name, args).await;
         }
         if is_brain_tool(name) {
-            let allowed = if name == "brain.write" {
+            // Writes and deletes change the vault: approval-gated. Reads
+            // and lists are allowlist-only.
+            let allowed = if name == "brain.write" || name == "brain.delete" {
                 self.approved(id, name, args).await
             } else {
                 self.p.tools.is_allowed(name)
@@ -468,6 +667,17 @@ impl ToolHost {
             return self.execute_session_tool(name, args).await;
         }
         if is_lane_tool(name) {
+            // lane.status is read-only: allowlist only. Dispatch staffs
+            // workers, so it goes through approval like any other spawn.
+            if name == "lane.status" {
+                if !self.p.tools.is_allowed(name) {
+                    return (
+                        false,
+                        format!("tool `{name}` denied (lane mode / approver)"),
+                    );
+                }
+                return (true, self.lane_state());
+            }
             if !self.approved(id, name, args).await {
                 return (
                     false,
@@ -498,6 +708,9 @@ impl ToolHost {
             if name == "plan.write" {
                 return self.execute_plan_write(args).await;
             }
+            if name == "memory.review" {
+                return self.execute_memory_review(id, args).await;
+            }
             return self.execute_question(id, args).await;
         }
         if is_project_tool(name) {
@@ -507,7 +720,7 @@ impl ToolHost {
                     format!("tool `{name}` denied (lane mode / approver)"),
                 );
             }
-            return self.execute_project(args).await;
+            return self.execute_project(name, args).await;
         }
         if is_shell_tool(name) {
             if name == "shell.logs" {
@@ -829,6 +1042,43 @@ impl ToolHost {
         }
     }
 
+    /// Lane state across every session, from the store: queued and active
+    /// runs grouped by lane. Read-only, so orchestrators can see what each
+    /// lane is working on before staffing more.
+    fn lane_state(&self) -> String {
+        let all = match self.p.store.list() {
+            Ok(l) => l,
+            Err(e) => return format!("cannot list sessions: {e}"),
+        };
+        let mut lanes: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for m in &all {
+            let s = format!("{:?}", m.status).to_lowercase();
+            if s != "active" && s != "queued" {
+                continue;
+            }
+            let lane = if m.lane.trim().is_empty() {
+                "build".into()
+            } else {
+                m.lane.clone()
+            };
+            lanes.entry(lane).or_default().push(format!(
+                "{} [{}] {}",
+                &m.id[..8.min(m.id.len())],
+                s,
+                m.title.chars().take(48).collect::<String>()
+            ));
+        }
+        if lanes.is_empty() {
+            return "lanes: idle — nothing queued or active".into();
+        }
+        let mut out = String::from("lanes:");
+        for (lane, runs) in lanes {
+            out.push_str(&format!("\n- {lane}: {}", runs.join("; ")));
+        }
+        out
+    }
+
     /// The approval posture children inherit: Full stays full, edits stay
     /// edits, Auto stays auto. Anything else (Ask, Deny) is intentionally
     /// NOT propagated — a child must never pop cards on the user's screen
@@ -1042,6 +1292,52 @@ impl ToolHost {
         (true, answer)
     }
 
+    /// Flag a stored note back to the user: "memory says X — still agree?"
+    /// Keep leaves it; Remove deletes it. The question is the approval.
+    async fn execute_memory_review(&self, id: &str, args: &Value) -> (bool, String) {
+        let path = args
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if path.is_empty() {
+            return (false, "memory.review needs a `path`".into());
+        }
+        let note_path = if path.to_ascii_lowercase().ends_with(".md") {
+            path.to_string()
+        } else {
+            format!("{path}.md")
+        };
+        let body = match parzi_core::brain::read(&note_path) {
+            Ok(b) => b,
+            Err(e) => return (false, e.to_string()),
+        };
+        let head: String = body.chars().take(600).collect();
+        let Some(asker) = &self.p.asker else {
+            return (
+                true,
+                "there is no one to ask — decide yourself and say what you assumed".into(),
+            );
+        };
+        let req = AskRequest {
+            id: id.into(),
+            question: format!(
+                "Memory says this ({note_path}):\n\n{head}\n\nStill agree, or remove it?"
+            ),
+            options: vec!["Keep".into(), "Remove".into()],
+            lane: self.p.lane.clone(),
+            session: self.p.session_id.clone(),
+        };
+        let answer = asker.ask(&req).await;
+        if answer.trim().eq_ignore_ascii_case("remove") {
+            return match parzi_core::brain::delete(&note_path) {
+                Ok(()) => (true, format!("removed {note_path} per review")),
+                Err(e) => (false, e.to_string()),
+            };
+        }
+        (true, format!("kept {note_path}: {answer}"))
+    }
+
     fn plan_path(&self) -> std::result::Result<PathBuf, String> {
         let dir = parzi_core::paths::sessions_dir()
             .map(|d| d.join(&self.p.session_id))
@@ -1056,7 +1352,11 @@ impl ToolHost {
             Err(e) => return (false, e.to_string()),
         };
         match std::fs::read_to_string(&path) {
-            Ok(text) if !text.trim().is_empty() => (true, text),
+            Ok(text) if !text.trim().is_empty() => {
+                let mut out = text;
+                out.push_str(&plan_rollup(&serde_json::from_str(&out).unwrap_or_default()));
+                (true, out)
+            }
             _ => (true, "no plan on file.".into()),
         }
     }
@@ -1067,6 +1367,12 @@ impl ToolHost {
                 false,
                 "plan.write needs an object with goal, decisions, steps".into(),
             );
+        }
+        // Formal plans: steps carry ids and needs, lanes group them, and a
+        // step cannot be marked done while its needs are unfinished. The
+        // system enforces this so lanes can wait on each other for real.
+        if let Err(e) = validate_plan(args) {
+            return (false, e);
         }
         let path = match self.plan_path() {
             Ok(p) => p,
@@ -1084,13 +1390,53 @@ impl ToolHost {
             .get("decisions")
             .and_then(Value::as_array)
             .map_or(0, Vec::len);
-        (
-            true,
-            format!("plan saved ({steps} steps, {decisions} decisions)"),
-        )
+        let lanes = args.get("lanes").and_then(Value::as_array).map_or(0, Vec::len);
+        let mut reply = format!("plan saved ({steps} steps, {decisions} decisions");
+        if lanes > 0 {
+            reply.push_str(&format!(", {lanes} lanes"));
+        }
+        reply.push(')');
+        reply.push_str(&plan_rollup(args));
+        (true, reply)
     }
 
-    async fn execute_project(&self, args: &Value) -> (bool, String) {
+    async fn execute_project(&self, name: &str, args: &Value) -> (bool, String) {
+        if name == "project.archive" {
+            let slug = args
+                .get("slug")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            if slug.is_empty() {
+                return (false, "project.archive needs a `slug`".into());
+            }
+            let on = args
+                .get("archived")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            return match parzi_core::brain::archive_project(slug, on) {
+                Ok(_) if on => (true, format!("project {slug} archived")),
+                Ok(_) => (true, format!("project {slug} unarchived")),
+                Err(e) => (false, e.to_string()),
+            };
+        }
+        if name == "project.delete" {
+            let slug = args
+                .get("slug")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            if slug.is_empty() {
+                return (false, "project.delete needs a `slug`".into());
+            }
+            return match parzi_core::brain::delete_project(slug) {
+                Ok(note) => (
+                    true,
+                    format!("project {slug} deleted (removed {note}; folder on disk kept)"),
+                ),
+                Err(e) => (false, e.to_string()),
+            };
+        }
         let title = args
             .get("title")
             .and_then(Value::as_str)

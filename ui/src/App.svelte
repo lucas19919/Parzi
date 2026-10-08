@@ -30,7 +30,7 @@
   import { checkForUpdatesSoon } from "./lib/updateStore";
   import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, toAddress, type Tab } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
-  import { toast, toastError, toasts, notify } from "./lib/toast";
+  import { toast, toastError, toasts, notify, chime } from "./lib/toast";
   import { covered } from "./lib/overlay";
   import type { Approval, LiveTool } from "./lib/live";
 
@@ -708,6 +708,7 @@
       } else {
         const title = threads.find((t) => t.id === e.session)?.title || "Agent";
         notify(e.kind === "done" ? `${title} finished` : `${title} stopped`, e.session);
+        chime(e.kind === "done");
       }
       return;
     }

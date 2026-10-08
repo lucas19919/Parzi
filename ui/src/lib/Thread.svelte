@@ -129,8 +129,16 @@
         return "Listing subsessions";
       case "lane.dispatch":
         return `Dispatching ${arg(args, "lane") || "a lane"}`;
+      case "lane.status":
+        return "Reading lane state";
+      case "memory.review":
+        return `Reviewing memory ${arg(args, "path") || "?"}`;
       case "project.create":
         return `Creating ${arg(args, "title") || "a project"}`;
+      case "project.archive":
+        return `Archiving ${arg(args, "slug") || "a project"}`;
+      case "project.delete":
+        return `Deleting ${arg(args, "slug") || "a project"}`;
       case "shell.start":
         return `Starting ${arg(args, "cmd") || "a command"}`;
       case "shell.logs":
@@ -149,6 +157,8 @@
         return arg(args, "project") ? `Listing ${arg(args, "project")} notes` : "Listing notes";
       case "brain.write":
         return `Writing note ${arg(args, "path") || "?"}`;
+      case "brain.delete":
+        return `Deleting note ${arg(args, "path") || "?"}`;
       case "ui.show_markdown":
         return "Rendering text";
       case "ui.show_artifact":
