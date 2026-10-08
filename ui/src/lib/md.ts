@@ -234,21 +234,6 @@ md.renderer.rules.parzi_front = (tokens, idx) => {
   return `<dl class="md-front">${rows}</dl>`;
 };
 
-const DEV: boolean = import.meta.env?.DEV ?? true;
-
-export const mdStats = {
-  renders: 0,
-  parses: 0,
-  hits: 0,
-  parsedChars: 0,
-  splits: 0,
-  splitParses: 0,
-  liveBlocks: 0,
-};
-export function resetMdStats(): void {
-  for (const k of Object.keys(mdStats) as (keyof typeof mdStats)[]) mdStats[k] = 0;
-}
-
 const mdCache = new Map<string, string>();
 const MD_CACHE_MAX = 400;
 
@@ -264,17 +249,11 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
 });
 
 export function renderMarkdown(src: string, cache = true): string {
-  if (DEV) mdStats.renders++;
   if (cache) {
     const hit = mdCache.get(src);
     if (hit !== undefined) {
-      if (DEV) mdStats.hits++;
       return hit;
     }
-  }
-  if (DEV) {
-    mdStats.parses++;
-    mdStats.parsedChars += src.length;
   }
   const res = DOMPurify.sanitize(md.render(src), {
     ALLOWED_URI_REGEXP: /^(?:(?:https?|parzi|brain|file|vscode):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
@@ -297,12 +276,10 @@ const segCache = new Map<string, Segment[]>();
 const SEG_CACHE_MAX = 400;
 
 export function splitSegments(text: string, cache = true): Segment[] {
-  if (DEV) mdStats.splits++;
   if (cache) {
     const hit = segCache.get(text);
     if (hit !== undefined) return hit;
   }
-  if (DEV) mdStats.splitParses++;
   const out: Segment[] = [];
   const re = /```(parzi-widget|parzi-artifact)\n([\s\S]*?)```/g;
   let last = 0;
@@ -371,7 +348,6 @@ export class LiveMarkdown {
       const chunk = text.slice(this.src.length, cut);
       if (chunk.trim()) {
         this.headHtml += renderMarkdown(chunk, false);
-        if (DEV) mdStats.liveBlocks++;
       }
       this.src = text.slice(0, cut);
     }

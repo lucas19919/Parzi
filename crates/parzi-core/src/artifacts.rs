@@ -81,6 +81,27 @@ fn is_valid_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+fn validate_preview(content: &str) -> Result<()> {
+    let v: serde_json::Value = serde_json::from_str(content).map_err(|_| {
+        ParziError::Validation(
+            "preview content must be JSON like {\"component\":\"omnibar\",\"variant\":2}".into(),
+        )
+    })?;
+    let component = v.get("component").and_then(|c| c.as_str()).unwrap_or("");
+    if component.trim().is_empty() {
+        return Err(ParziError::Validation(
+            "preview content needs a \"component\" string".into(),
+        ));
+    }
+    let variant_ok = v.get("variant").is_some_and(|n| n.as_u64().is_some());
+    if !variant_ok {
+        return Err(ParziError::Validation(
+            "preview content needs an integer \"variant\"".into(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn validate_artifact(v: &serde_json::Value) -> Result<ArtifactV1> {
     let mut a: ArtifactV1 = serde_json::from_value(v.clone())
         .map_err(|e| ParziError::Validation(format!("bad artifact: {e}")))?;
@@ -127,6 +148,9 @@ pub fn validate_artifact(v: &serde_json::Value) -> Result<ArtifactV1> {
     }
     if a.content.trim().is_empty() {
         return Err(ParziError::Validation("artifact content is empty".into()));
+    }
+    if a.kind == "preview" {
+        validate_preview(&a.content)?;
     }
     if a.version == 0 {
         a.version = 1;

@@ -90,25 +90,6 @@ export function removePin(url: string) {
   pins.update((all) => all.filter((p) => p.url !== url));
 }
 
-export function frequentSites(visits: Visit[], limit = 8): Pin[] {
-  const byOrigin = new Map<string, { url: string; title: string; score: number }>();
-  for (const v of visits) {
-    let origin: string;
-    try {
-      origin = new URL(v.url).origin;
-    } catch {
-      continue;
-    }
-    const cur = byOrigin.get(origin);
-    if (cur) cur.score += v.count;
-    else byOrigin.set(origin, { url: `${origin}/`, title: siteName(origin), score: v.count });
-  }
-  return [...byOrigin.values()]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map(({ url, title }) => ({ url, title }));
-}
-
 const TABS_KEY = "parzi.tabs.v1";
 
 export function saveTabs(tabs: Tab[], active: string) {
@@ -124,16 +105,6 @@ export function loadTabs(): { tabs: Tab[]; active: string } | null {
   const tabs = saved.tabs.filter((t) => t && typeof t.id === "string" && (t.kind === "session" || t.kind === "page" || t.kind === "brain" || t.kind === "history"));
   if (!tabs.length) return null;
   return { tabs, active: tabs.some((t) => t.id === saved.active) ? saved.active : tabs[0].id };
-}
-
-function siteName(url: string): string {
-  try {
-    const host = new URL(url).hostname.replace(/^www\./, "");
-    const parts = host.split(".");
-    return parts.length > 1 ? parts.slice(0, -1).join(".") : host;
-  } catch {
-    return url;
-  }
 }
 
 export function faviconUrl(url: string): string {

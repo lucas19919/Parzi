@@ -289,7 +289,7 @@ fn request(tool: &str) -> PermissionRequest {
 async fn the_agents_own_actions_pass_the_lane_and_the_mode() {
     home("approval");
     let reads_only = host(
-        vec!["fs.read".into(), "ui.show_widget".into()],
+        vec!["fs.read".into(), "ui.show_artifact".into()],
         ApprovalMode::Auto,
     );
     assert!(matches!(
@@ -315,7 +315,7 @@ async fn the_agents_own_actions_pass_the_lane_and_the_mode() {
         PermissionDecision::Allow
     );
     assert_eq!(
-        locked.decide(request("mcp__parzi__ui_show_widget")).await,
+        locked.decide(request("mcp__parzi__ui_show_artifact")).await,
         PermissionDecision::Allow
     );
 }

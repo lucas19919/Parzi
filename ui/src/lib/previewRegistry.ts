@@ -46,6 +46,9 @@ const ENTRIES: PreviewEntry[] = [
       { n: 2, label: "Edition A · Priority row", blurb: "Icon-only modes, project-first with accent, one row." },
       { n: 3, label: "Edition B · Two-line calm", blurb: "Project on its own full-width row, controls below." },
       { n: 4, label: "Edition C · Compact", blurb: "Tighter pills, everything kept, nothing hidden." },
+      { n: 5, label: "Edition D · Outside eyebrow", blurb: "Project lives above the box as a quiet row." },
+      { n: 6, label: "Edition E · Fused tab", blurb: "Project as a tab fused to the top edge." },
+      { n: 7, label: "Edition F · Inline @mention", blurb: "Project as @slug inside the input, minimal bar." },
     ],
     props: omnibarProps,
   },
@@ -69,8 +72,26 @@ export function previewSpecOf(raw: string): { entry: PreviewEntry; variant: numb
   if (!p || typeof p.component !== "string") return null;
   const entry = PREVIEWS[p.component];
   if (!entry) return null;
+  // Strict: unknown variants error, never silently render something else.
+  if (typeof p.variant === "boolean") return null;
+  const n = Number(p.variant);
+  if (!Number.isInteger(n)) return null;
   const ns = entry.variants.map((v) => v.n);
-  const variant = ns.includes(Number(p.variant)) ? Number(p.variant) : ns[0];
+  if (!ns.includes(n)) return null;
   const { component: _c, variant: _v, ...extra } = p;
-  return { entry, variant, extra };
+  return { entry, variant: n, extra };
+}
+
+// Human-readable reason a preview spec failed, for the inline error card.
+export function previewProblem(raw: string): string {
+  let p: { component?: unknown; variant?: unknown };
+  try {
+    p = JSON.parse(raw);
+  } catch {
+    return `not JSON: "${raw.slice(0, 120)}"`;
+  }
+  const entry = typeof p?.component === "string" ? PREVIEWS[p.component] : undefined;
+  if (!entry) return `unknown component "${String(p?.component).slice(0, 40)}" — known: ${previewNames()}`;
+  const ns = entry.variants.map((v) => v.n);
+  return `unknown variant ${String(p?.variant).slice(0, 40)} for ${entry.name} — valid: ${ns.join(", ")}`;
 }

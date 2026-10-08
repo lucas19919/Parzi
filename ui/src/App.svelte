@@ -1008,6 +1008,7 @@
           {hasSession}
           hero={!hasSession}
           {project}
+          variant={2}
           on:send={send}
           on:browse={(e) => browse(e.detail.url)}
           on:stop={stop}

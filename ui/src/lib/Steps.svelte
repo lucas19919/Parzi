@@ -26,9 +26,10 @@
   }
 
   // Heartbeat for live work: ticking elapsed so a hung call is obvious.
+  // Only ticks while expanded so collapsed groups cost nothing.
   let elapsed = 0;
   let timer: number | null = null;
-  $: live = !!status;
+  $: live = !!status && open;
   $: {
     if (live && timer === null) {
       const t0 = Date.now();

@@ -36,9 +36,10 @@
   export let tokensOut = 0;
   export let costUsd = 0;
   // Preview variants for live design iteration (Preview tab renders the
-  // real component with variant 1/2/3/4). The live composer ships 2:
+  // real component with variants 1-7). The live composer ships 2:
   // one row, icon-only modes, project inline after the controls.
   export let variant = 2;
+  $: outsideProject = variant === 5 || variant === 6 || variant === 7;
 
   const dispatch = createEventDispatcher<{
     send: void;
@@ -412,7 +413,17 @@
   }
 </script>
 
-<div class="ob" class:hero class:v2={variant === 2} class:v3={variant === 3} class:v4={variant === 4}>
+<div class="ob" class:hero class:v2={variant === 2} class:v3={variant === 3} class:v4={variant === 4} class:v5={variant === 5} class:v6={variant === 6} class:v7={variant === 7}>
+  {#if outsideProject}
+    <button class="proj-out" class:set={!!project} on:click|stopPropagation={toggleProject} title={project ? `Project ${project.title} · ${folder}` : "Pick the project this session works on"}>
+      <span class="proj-dot" />
+      <Icon name={project || !folder ? "project" : "folder"} size={13} />
+      <span class="proj-title">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
+      {#if folder}<span class="proj-path">{folder}</span>{/if}
+      {#if branch}<span class="proj-branch">{branch}</span>{/if}
+      {#if !folderLocked}<Icon name="chevDown" size={10} stroke={2} />{/if}
+    </button>
+  {/if}
   <div
     class="box"
     class:web={mode === "search"}
@@ -454,6 +465,9 @@
     {/if}
 
     <div class="row">
+      {#if variant === 7}
+        {#if project}<span class="inline-at">@{project.slug}</span>{/if}
+      {/if}
       {#if streaming}
         <span class="orb" aria-hidden="true" title="Working…"><span class="eye" /><span class="eye" /></span>
       {/if}
@@ -1258,8 +1272,7 @@
   .ob.v3 .bar :global(.model) {
     max-width: 200px;
   }
-  /* Edition C — compact: tighter pills, everything kept, nothing hidden. */
-  .ob.v4 .bar {
+  /* Edition C — compact: tighter pills, everything kept, nothing hidden. */  .ob.v4 .bar {
     flex-wrap: nowrap;
     gap: 3px;
   }
@@ -1290,4 +1303,61 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Shared outside-project header (v5/v6/v7). */
+  .proj-out {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    max-width: 100%;
+    margin: 0 0 6px 2px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .proj-out:hover { color: var(--text); }
+  .proj-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--faint); }
+  .proj-out.set .proj-dot { background: var(--accent); box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 70%, transparent); }
+  .proj-title { font-weight: 650; color: var(--text); white-space: nowrap; }
+  .proj-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .proj-branch { flex: none; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--text) 7%, transparent); font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  /* v5: quiet eyebrow row, inline project hidden, box slimmer. */
+  .ob.v5 .bar .project, .ob.v6 .bar .project, .ob.v7 .bar .project { display: none; }
+  .ob.v5 .box { padding-top: 8px; }
+  .ob.v5 .mode span:last-child { display: none; }
+  .ob.v5 .mode { padding: 0 7px; }
+  /* v6: tab fused to box top edge. */
+  .ob.v6 .proj-out {
+    margin: 0 0 0 10px;
+    padding: 3px 10px;
+    transform: translateY(1px);
+    background: var(--glass-strong-bg);
+    border: var(--glass-hairline);
+    border-bottom: none;
+    border-radius: 9px 9px 0 0;
+    width: fit-content;
+    max-width: calc(100% - 20px);
+  }
+  .ob.v6 .box { border-radius: 12px; }
+  .ob.v6 .mode span:last-child { display: none; }
+  .ob.v6 .mode { padding: 0 7px; }
+  /* v7: innovative inline @mention, minimal bar, icons only. */
+  .ob.v7 .proj-out { margin-bottom: 7px; }
+  .ob.v7 .inline-at {
+    flex: none;
+    align-self: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 600;
+  }
+  .ob.v7 .mode span:last-child, .ob.v7 .bar :global(.model .lbl) { display: none; }
+  .ob.v7 .mode { padding: 0 7px; }
+  .ob.v7 .bar { border-top-style: dashed; }
 </style>

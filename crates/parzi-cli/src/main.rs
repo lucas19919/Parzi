@@ -66,7 +66,7 @@ enum SessionCmd {
     Send {
         target: String,
         message: Vec<String>,
-        #[arg(long, help = "Agent and model: `claude`, `claude/opus`, or `auto`")]
+        #[arg(long, help = "Agent and model: `claude`, `claude/opus`")]
         model: Option<String>,
         #[arg(
             long,

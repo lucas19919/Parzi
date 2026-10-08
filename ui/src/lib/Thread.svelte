@@ -96,7 +96,7 @@
       case "fs.list":
         return `Listing ${arg(args, "path") || "."}`;
       case "shell.exec":
-        return `Running \`${arg(args, "cmd")}\``;
+        return `Running ${arg(args, "cmd") || "a command"}`;
       case "browser.open":
         return `Opening ${arg(args, "url") || "a page"}`;
       case "browser.tabs":
@@ -131,8 +131,6 @@
         return `Dispatching ${arg(args, "lane") || "a lane"}`;
       case "project.create":
         return `Creating ${arg(args, "title") || "a project"}`;
-      case "shell.exec":
-        return `Running ${arg(args, "cmd") || "a command"}`;
       case "shell.start":
         return `Starting ${arg(args, "cmd") || "a command"}`;
       case "shell.logs":

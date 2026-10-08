@@ -83,18 +83,16 @@ export function shownOf(value: string, board: ProviderStatus[]): { provider: str
   return { provider: p, name: id ? prettyModel(id) : nameOf(p) };
 }
 
-const PILL = ["low", "medium", "high", "extra", "ultra"];
-
-export const DEFAULT_EFFORTS = PILL;
+export const DEFAULT_EFFORTS = ["low", "medium", "high", "extra", "ultra"];
 
 export function effortsFor(value: string, board: ProviderStatus[]): string[] {
-  if (!value || value === "auto") return PILL;
+  if (!value || value === "auto") return DEFAULT_EFFORTS;
   const [p, ...rest] = value.split("/");
   const models = board.find((b) => b.provider === p)?.models ?? [];
   const id = rest.join("/");
   const m = models.find((x) => x.id === id) ?? models.find((x) => x.is_default);
   const list = m?.efforts ?? [];
-  return list.length ? list : PILL;
+  return list.length ? list : DEFAULT_EFFORTS;
 }
 
 export function fitEffort(current: string, efforts: string[]): string {
@@ -103,18 +101,5 @@ export function fitEffort(current: string, efforts: string[]): string {
   return efforts[Math.floor(efforts.length / 2)];
 }
 
-const EFFORT_HINT: Record<string, string> = {
-  minimal: "Barely thinks",
-  low: "Fastest",
-  medium: "Balanced",
-  high: "Thinks longer",
-  xhigh: "Longer still",
-  extra: "Longer still",
-  max: "As long as it takes",
-  ultra: "As long as it takes",
-};
-
 export const effortLabel = (e: string): string =>
   e === "xhigh" ? "Extra high" : e ? e[0].toUpperCase() + e.slice(1) : e;
-
-export const effortHint = (e: string): string => EFFORT_HINT[e] ?? "";

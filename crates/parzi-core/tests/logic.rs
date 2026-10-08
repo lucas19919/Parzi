@@ -85,6 +85,16 @@ fn artifact_validation_versions_and_dedups() {
     });
     let p = validate_artifact(&preview).unwrap();
     assert_eq!(p.kind, "preview");
+    let bad_preview = serde_json::json!({
+        "artifact": 1, "id": "omni-x", "title": "Bad preview",
+        "kind": "preview", "content": "{\"component\":\"omnibar\",\"variant\":\"many\"}",
+    });
+    assert!(validate_artifact(&bad_preview).is_err());
+    let bare_preview = serde_json::json!({
+        "artifact": 1, "id": "omni-y", "title": "Bare preview",
+        "kind": "preview", "content": "just text",
+    });
+    assert!(validate_artifact(&bare_preview).is_err());
     let v2 = next_version("auth-hook", std::slice::from_ref(&a));
     assert_eq!(v2, 2);
     assert!(is_same_content(

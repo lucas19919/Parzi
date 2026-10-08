@@ -219,7 +219,8 @@ fn note_line(n: &brain::NoteMeta, projects: bool) -> String {
 }
 
 fn brain_listing(vault: &brain::Vault, project: &str) -> Result<String> {
-    const SHOWN: usize = 300;
+    // Capped: one curious unfiltered list must not evict the task.
+    const SHOWN: usize = 50;
     let (notes, projects) = vault.catalog();
     if project.eq_ignore_ascii_case(brain::EVERYWHERE) {
         let mut out = String::from("Notes for every session:");
@@ -371,7 +372,6 @@ impl ToolHost {
                 | "session.list_sessions"
                 | "project.create"
                 | "ui.show_markdown"
-                | "ui.show_widget"
                 | "ui.show_artifact"
         )
     }
@@ -618,10 +618,7 @@ impl ToolHost {
             "run_command",
         ];
         if VENDOR_SHELL.contains(&req.tool.as_str()) && self.p.tools.is_allowed("shell.exec") {
-            return PermissionDecision::Deny(
-                "use shell.exec — the Parzi shell keeps history, timeouts, and background jobs"
-                    .into(),
-            );
+            return PermissionDecision::Deny("use shell.exec".into());
         }
         let mut outside = false;
         if kind == Some("fs.write") {
@@ -752,16 +749,11 @@ impl ToolHost {
         };
         match out {
             Ok(text) => {
+                // The tool result carries this; no extra System copy.
                 if matches!(name, "session.spawn" | "session.send_message") {
                     self.p.sink.emit(RunEvent::Notice {
                         text: text.chars().take(240).collect(),
                     });
-                    let _ = self.p.store.append(
-                        sid,
-                        &Event::System {
-                            text: format!("{name}: {text}"),
-                        },
-                    );
                 }
                 (true, text)
             }
@@ -801,12 +793,6 @@ impl ToolHost {
                 self.p.sink.emit(RunEvent::Notice {
                     text: text.chars().take(240).collect(),
                 });
-                let _ = self.p.store.append(
-                    &self.p.session_id,
-                    &Event::System {
-                        text: format!("{name}: {text}"),
-                    },
-                );
                 (true, text)
             }
             Err(e) => (false, e.to_string()),
@@ -837,7 +823,7 @@ impl ToolHost {
                 order.push(id.clone());
             }
         }
-        let mut lines = vec!["The bench, in routing order:".to_string()];
+        let mut lines = vec!["The bench:".to_string()];
         for id in &order {
             let entry = cfg.provider(id);
             if !entry.enabled {
@@ -917,10 +903,7 @@ impl ToolHost {
             "content": path.display().to_string(),
         });
         match self.store_artifact(&payload) {
-            Ok(msg) => (
-                true,
-                format!("saved {} ({:.1} KiB)\n{msg}", path.display(), bytes.len() as f64 / 1024.0),
-            ),
+            Ok(msg) => (true, msg),
             Err(e) => (false, e.to_string()),
         }
     }
@@ -989,12 +972,6 @@ impl ToolHost {
                     .collect()
             })
             .unwrap_or_default();
-        let _ = self.p.store.append(
-            &self.p.session_id,
-            &Event::System {
-                text: format!("asked the user: {question}"),
-            },
-        );
         let Some(asker) = &self.p.asker else {
             return (
                 true,
@@ -1009,12 +986,6 @@ impl ToolHost {
             session: self.p.session_id.clone(),
         };
         let answer = asker.ask(&req).await;
-        let _ = self.p.store.append(
-            &self.p.session_id,
-            &Event::System {
-                text: format!("the user answered: {answer}"),
-            },
-        );
         (true, answer)
     }
 
@@ -1033,7 +1004,7 @@ impl ToolHost {
         };
         match std::fs::read_to_string(&path) {
             Ok(text) if !text.trim().is_empty() => (true, text),
-            _ => (true, "no plan on file — for a single fix just build it; write a plan only if the work spans sessions or parallel lanes".into()),
+            _ => (true, "no plan on file.".into()),
         }
     }
 
@@ -1049,19 +1020,9 @@ impl ToolHost {
         if let Err(e) = std::fs::write(&path, &pretty) {
             return (false, format!("cannot save the plan: {e}"));
         }
-        let goal = args.get("goal").and_then(Value::as_str).unwrap_or("").trim();
         let steps = args.get("steps").and_then(Value::as_array).map_or(0, Vec::len);
         let decisions = args.get("decisions").and_then(Value::as_array).map_or(0, Vec::len);
-        let _ = self.p.store.append(
-            &self.p.session_id,
-            &Event::System {
-                text: format!(
-                    "plan written: {} ({steps} steps, {decisions} decisions)",
-                    if goal.is_empty() { "untitled" } else { goal }
-                ),
-            },
-        );
-        (true, format!("plan saved ({steps} steps, {decisions} decisions) — own it end to end and verify before reporting done"))
+        (true, format!("plan saved ({steps} steps, {decisions} decisions)"))
     }
 
     async fn execute_project(&self, args: &Value) -> (bool, String) {
@@ -1090,10 +1051,7 @@ impl ToolHost {
         }
         (
             true,
-            format!(
-                "project {} ready at {folder} — this session now works there; build inside it",
-                project.slug
-            ),
+            format!("project {} ready at {folder}", project.slug),
         )
     }
 
@@ -1131,9 +1089,7 @@ impl ToolHost {
                 match self.p.shell.exec(&cmd, &cwd, timeout).await {
                     Ok(out) => {
                         let mut head = if out.timed_out {
-                            format!(
-                                "timed out and killed — restart it with shell.start for long work\n"
-                            )
+                            "timed out — use shell.start\n".to_string()
                         } else {
                             match out.exit {
                                 Some(0) => String::new(),
@@ -1154,10 +1110,7 @@ impl ToolHost {
                 }
                 let title = str_arg("title").unwrap_or_default();
                 match self.p.shell.start(&cmd, &cwd, &title) {
-                    Ok(id) => (
-                        true,
-                        format!("started {id} — poll with shell.logs, stop with shell.kill"),
-                    ),
+                    Ok(id) => (true, format!("started {id}")),
                     Err(e) => (false, format!("cannot start that: {e}")),
                 }
             }
@@ -1261,11 +1214,19 @@ impl ToolHost {
                             }
                         }
                         if let Some(controls) = v.get("controls").and_then(|c| c.as_array()) {
-                            let list: Vec<&str> = controls
+                            let list: Vec<String> = controls
                                 .iter()
                                 .filter_map(|c| c.as_str())
                                 .filter(|c| !c.is_empty())
                                 .take(40)
+                                .map(|c| {
+                                    let t = c.trim();
+                                    if t.chars().count() > 120 {
+                                        format!("{}…", t.chars().take(120).collect::<String>())
+                                    } else {
+                                        t.to_string()
+                                    }
+                                })
                                 .collect();
                             if !list.is_empty() {
                                 out.push_str("\n\nControls:\n- ");
@@ -1375,10 +1336,6 @@ impl ToolHost {
                     Err(e) => (false, format!("invalid markdown: {e}")),
                 }
             }
-            "ui.show_widget" => match widgets::validate_widget(args) {
-                Ok(_) => widget("parzi-widget", args.clone()),
-                Err(e) => (false, format!("invalid widget: {e}")),
-            },
             "ui.show_artifact" => match self.store_artifact(args) {
                 Ok(msg) => (true, msg),
                 Err(e) => (false, e),

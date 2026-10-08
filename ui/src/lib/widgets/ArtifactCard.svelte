@@ -4,7 +4,7 @@
   import { api } from "../api";
   import { renderMarkdown } from "../md";
   import { handleLinkClick } from "../links";
-  import { previewNames, previewSpecOf } from "../previewRegistry";
+  import { previewSpecOf, previewProblem } from "../previewRegistry";
 
   export let data: any;
   export let fallbackId = "";
@@ -88,7 +88,7 @@
       <svelte:component this={preview.entry.component} {...previewProps} />
     </div>
   {:else if kind === "preview"}
-    <div class="art-error">Unknown preview "{content.slice(0, 120)}" — known components: {previewNames()}.</div>
+    <div class="art-error">Unknown preview — {previewProblem(content)}.</div>
   {:else if kind === "markdown"}
     <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
     <div class="art-md" on:click={(e) => void handleLinkClick(e)}>{@html renderMarkdown(content)}</div>

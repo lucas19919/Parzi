@@ -133,10 +133,7 @@ impl ToolExecutor {
         }
         if let Some((server, tool)) = name.split_once('.') {
             if is_vendor_category(name) {
-                return (
-                    false,
-                    format!("`{name}` is the agent's own tool now, not Parzi's"),
-                );
+                return (false, format!("tool `{name}` is not allowed in this lane"));
             }
             if is_ui_tool(name)
                 || is_brain_tool(name)
@@ -198,7 +195,7 @@ fn ui_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "ui.show_artifact".into(),
-            description: "Save/update a versioned artifact card with copy and save actions. html and svg render live in a sandboxed frame with no network access (inline everything; images only as data: URIs), with a show-source toggle. Use for code over ~15 lines, full files, markdown docs, html/svg previews, json/csv data, diffs. Diagrams (architecture, flow, sequence) go here as an svg artifact, or html when they need layout or interactivity. Kinds: code|markdown|html|svg|json|csv|diff|text|preview. The preview kind renders a live UI-registered component inline in the thread: content is JSON like {\"component\":\"omnibar\",\"variant\":2} plus optional props. Deliver every UI design this way — the artifact IS the render, inline, no separate step. Never tell the user to open a preview tab, gallery, or window to see your work; those are the user's own tools, not your delivery channel. Reuse the same id to bump the version. Example: {\"artifact\":1,\"id\":\"auth-middleware\",\"title\":\"Auth middleware\",\"kind\":\"code\",\"language\":\"typescript\",\"content\":\"...\"}.".into(),
+            description: "Versioned artifact card with copy/save. Use for code over ~15 lines, files, docs, data, diffs, diagrams (svg, or html for layout). html/svg render live sandboxed with no network: inline everything, images as data: URIs. Kinds: code|markdown|html|svg|json|csv|diff|text|preview. preview renders a live component inline from JSON like {\"component\":\"omnibar\",\"variant\":2} (omnibar only, variant 1-7 integer, live ships 2; anything else errors). The artifact IS the delivery: never send the user to a tab or window. Reuse an id for new versions. Example: {\"artifact\":1,\"id\":\"auth-middleware\",\"title\":\"Auth middleware\",\"kind\":\"code\",\"language\":\"typescript\",\"content\":\"...\"}.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -218,7 +215,7 @@ fn ui_defs() -> Vec<ToolDef> {
 pub(crate) fn is_ui_tool(name: &str) -> bool {
     matches!(
         name,
-        "ui.show_markdown" | "ui.show_widget" | "ui.show_artifact"
+        "ui.show_markdown" | "ui.show_artifact"
     )
 }
 
@@ -301,7 +298,7 @@ pub fn brain_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "brain.search".into(),
-            description: "Search the brain: the user's own notes vault, an Obsidian-style folder of markdown notes about their projects, decisions, and know-how. Matches titles and text, case-insensitive, and returns up to 20 notes with a snippet each. Notes for this session's project and notes for every session are already in your instructions: pinned ones in full, the rest listed with a one-line summary. Search for anything else the user may have written down before asking them.".into(),
+            description: "Search the user's notes vault by title and text. Returns up to 20 notes with a snippet each.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -327,7 +324,7 @@ pub fn brain_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "brain.write".into(),
-            description: "Create or replace a note in the user's notes vault (the brain). path is relative to the vault and ends in .md; content is the whole markdown file. Write durable learnings back here (decisions, conventions, gotchas, how the code fits together) so later sessions start with them. To attach a note to a project, give it frontmatter `projects: [slug]` or link the project note as [[slug]]; `projects: [all]` attaches it to every session. Start the body with a one-line summary sentence (or set `description:` in the frontmatter): later sessions see that line before deciding to read the note. Read a note before replacing it and keep its frontmatter. The user may be asked to approve the write.".into(),
+            description: "Create or replace a vault note (path relative to the vault, ends .md; content is the whole file). To attach it to a project: frontmatter `projects: [slug]` or a [[slug]] link; `[all]` attaches it everywhere. Start the body with a one-line summary. Read a note before replacing it and keep its frontmatter.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -438,7 +435,7 @@ pub(crate) fn is_project_tool(name: &str) -> bool {
 fn question_defs() -> Vec<ToolDef> {
     vec![ToolDef {
         name: "ask.user".into(),
-        description: "Ask the user a question mid-turn and wait for their answer. Use it at real forks instead of guessing: which approach, which scope, proceed/stop. Keep options short (≤6 words each); the user may also type free text. Never ask about something already decided in the thread.".into(),
+            description: "Ask the user a question mid-turn and wait for their answer. Use it at real forks instead of guessing: which approach, which scope, proceed/stop. Keep options short; the user may also type free text.".into(),
         schema: serde_json::json!({
             "type": "object",
             "properties": {
@@ -454,7 +451,7 @@ fn plan_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "plan.write".into(),
-            description: "Write or replace this session's build plan: goal, architecture decisions (each with why — scalability, structure, trade-offs), and steps with status (todo/doing/done). Write the plan BEFORE building anything non-trivial, update step statuses as you go, and record every load-bearing decision. Read it back with plan.read when resuming.".into(),
+            description: "Write or replace this session's build plan for work that spans sessions or parallel lanes: goal, decisions with why, steps with status. Read it back with plan.read when resuming.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -540,7 +537,7 @@ fn doc_defs() -> Vec<ToolDef> {
 fn team_defs() -> Vec<ToolDef> {
     vec![ToolDef {
         name: "models.list".into(),
-        description: "List the agent bench: enabled providers in routing order with display names and default models. Check this before staffing subagents, then pass an explicit model to session.spawn so each job runs on the right strength (quick lookups on fast models, builds on strong ones).".into(),
+            description: "List the agent bench: enabled providers with display names. Check this before staffing subagents.".into(),
         schema: serde_json::json!({
             "type": "object",
             "properties": {},
@@ -559,7 +556,7 @@ fn session_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "session.spawn".into(),
-            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder, lane, and model unless overridden. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id immediately for background work you check later with session.read_session. For independent chunks prefer wait=false so they run in parallel, then collect each with session.read_session. Brief the outcome — what must become true and how to verify — never a list of edits.".into(),
+            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder, lane, and model unless overridden. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id immediately for background work you check later with session.read_session.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -789,14 +786,6 @@ pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String
             one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
         ),
         "ui.show_markdown" => "Rendering text".into(),
-        "ui.show_widget" => format!(
-            "Rendering {}",
-            one_line(
-                &str_arg("title")
-                    .unwrap_or_else(|| str_arg("type").unwrap_or_else(|| "widget".into())),
-                60
-            )
-        ),
         "ui.show_artifact" => format!(
             "Saving {}",
             one_line(
