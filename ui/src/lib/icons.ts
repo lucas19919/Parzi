@@ -15,6 +15,7 @@ export const ICONS = {
   copy: "M9 9h11a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1",
   trash: "M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2",
   arrowDown: "M12 5v14M5 12l7 7 7-7",
+  arrowUp: "M12 19V5M5 12l7-7 7-7",
   arrowLeft: "M19 12H5M12 19l-7-7 7-7",
   reload: "M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6",
   pin: "M12 17v5M9 3h6l-1 7 4 3H6l4-3z",

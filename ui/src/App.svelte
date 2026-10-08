@@ -953,6 +953,13 @@
                 {folder}
                 on:voted={(e) => (approvals = approvals.filter((a) => a.key !== e.detail.key))}
                 on:answered={(e) => (questions = questions.filter((q) => q.key !== e.detail.key))}
+                on:edited={(e) => {
+                  tab.composer.input = e.detail.text;
+                  tabs = tabs;
+                  omnibar?.focus();
+                  toast("Loaded into composer — edit and send");
+                }}
+                on:forked={() => fork()}
               />
             </div>
             {#if panelOpen}

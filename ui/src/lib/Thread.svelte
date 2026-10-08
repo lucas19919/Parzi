@@ -20,7 +20,7 @@
   export let question: Question | null = null;
   export let folder = "";
 
-  const dispatch = createEventDispatcher<{ voted: { key: string }; answered: { key: string } }>();
+  const dispatch = createEventDispatcher<{ voted: { key: string }; answered: { key: string }; edited: { text: string }; forked: void }>();
 
   const ERROR_WORDS: Record<string, string> = {
     auth: "Not signed in",
@@ -318,6 +318,9 @@ ${e.text}` : e.text;
           <button class="copy" title="Copy" on:click={() => copy(stripMarker(item.text), item.key)}>
             <Icon name={copied === item.key ? "check" : "copy"} size={13} />
           </button>
+          <button class="copy" title="Edit in composer" on:click={() => dispatch("edited", { text: stripMarker(item.text) })}>
+            <Icon name="pencil" size={13} />
+          </button>
           <div class="bubble msg">{@html renderMarkdown(stripMarker(item.text))}</div>
         </div>
         {#if images.length}
@@ -349,6 +352,9 @@ ${e.text}` : e.text;
           </button>
           <button class="copy" title="Save to brain" on:click={() => save(item.text, item.key)}>
             <Icon name={saved === item.key ? "check" : "brain"} size={13} />
+          </button>
+          <button class="copy" title="Fork thread to try again" on:click={() => dispatch("forked")}>
+            <Icon name="fork" size={13} />
           </button>
         </div>
       </div>

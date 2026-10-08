@@ -462,7 +462,7 @@
         <button class="go stop" title="Stop (Esc)" on:click={() => dispatch("stop")}><span class="square" /></button>
       {:else}
         <button class="go" class:ready={!!input.trim()} title={mode === "search" ? "Open (Enter)" : "Send (Enter)"} disabled={!input.trim()} on:click={submit}>
-          <Icon name="enter" size={15} />
+          <Icon name="arrowUp" size={14} stroke={2} />
         </button>
       {/if}
     </div>
@@ -694,16 +694,16 @@
     padding: 9px 0;
   }
   .go {
-    width: 30px;
-    height: 30px;
+    width: 26px;
+    height: 26px;
     flex: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     padding: 0;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+    border: 1px solid transparent;
+    border-radius: 999px;
     color: var(--faint);
     cursor: pointer;
   }
@@ -732,8 +732,8 @@
     color: var(--bad);
   }
   .square {
-    width: 10px;
-    height: 10px;
+    width: 8px;
+    height: 8px;
     border-radius: 2px;
     background: currentColor;
   }
