@@ -393,10 +393,9 @@
 
 <div class="ob" class:hero class:v2={variant === 2} class:v3={variant === 3} class:v4={variant === 4} class:v5={variant === 5} class:v6={variant === 6} class:v7={variant === 7}>
   {#if outsideProject}
-    <button class="proj-out" class:set={!!project} on:click|stopPropagation={toggleProject} title={project ? `Project ${project.title} · ${folder}` : "Pick the project this session works on"}>
-      <Icon name={project || !folder ? "project" : "folder"} size={13} />
+    <button bind:this={projBtn} class="proj-out" class:set={!!project} on:click|stopPropagation={toggleProject} title={project ? `Project ${project.title}${branch ? ` · ${branch}` : ""}` : "Pick the project this session works on"}>
+      <Icon name={project || !folder ? "project" : "folder"} size={14} stroke={2} />
       <span class="proj-title">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
-      {#if folder}<span class="proj-path">{folder}</span>{/if}
       {#if branch}<span class="proj-branch">{branch}</span>{/if}
       {#if !folderLocked}<Icon name="chevDown" size={10} stroke={2} />{/if}
     </button>
@@ -473,7 +472,7 @@
     <div class="modes" role="tablist" aria-label="Mode">
       {#if lockMode}
         <span class="mode on solo" style:--tint={MODE_META[lockMode].tint} title={MODE_META[lockMode].label}>
-          <Icon name={MODE_META[lockMode].icon} size={13} />
+          <Icon name={MODE_META[lockMode].icon} size={14} stroke={2} />
         </span>
       {:else}
         {#each MODES as m, i (m)}
@@ -497,15 +496,15 @@
               }
             }}
           >
-            <Icon name={MODE_META[m].icon} size={13} />
+            <Icon name={MODE_META[m].icon} size={14} stroke={2} />
             <span>{MODE_META[m].label}</span>
           </button>
         {/each}
       {/if}
     </div>
-      {#if mode === "build"}
+      {#if mode === "build" && !outsideProject}
         <button bind:this={permBtn} class="ctl icon-only" class:open={permOpen} title={perm.title + " — " + perm.desc} on:click|stopPropagation={togglePerm}>
-          <Icon name={perm.icon} size={12} />
+          <Icon name={perm.icon} size={14} stroke={2} />
         </button>
           <button
             bind:this={projBtn}
@@ -516,7 +515,7 @@
             title={project ? `Project ${project.title} · ${folder} · about ${project.tokens} tokens of notes per session` : folder ? `${folder} · not a project yet` : "Pick the project this session works on"}
             on:click|stopPropagation={toggleProject}
           >
-            <Icon name={project || !folder ? "project" : "folder"} size={12} />
+            <Icon name={project || !folder ? "project" : "folder"} size={14} stroke={2} />
             <span class="truncate">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
             {#if branch}<span class="dim">{branch}</span>{/if}
             {#if !folderLocked}<Icon name="chevDown" size={10} stroke={2} />{/if}
@@ -537,8 +536,8 @@
       <div class="pop-head">Project</div>
       {#each projects as p (p.slug)}
         <button class="opt" class:on={project?.slug === p.slug} on:click={() => chooseProject(p)}>
-          <Icon name="project" size={14} />
-          <span class="meta"><span class="name">{p.title}</span><span class="sub truncate">{p.folder}</span></span>
+          <Icon name="project" size={14} stroke={2} />
+          <span class="meta"><span class="name">{p.title}</span><span class="sub truncate">{sameDir(p.folder, folder) && branch ? `${folderName(p.folder)} · ${branch}` : folderName(p.folder)}</span></span>
           {#if p.notes.length}<span class="count">{p.notes.length} note{p.notes.length === 1 ? "" : "s"}</span>{/if}
         </button>
       {:else}
@@ -547,16 +546,16 @@
       <div class="sep" />
       {#if folder && !project}
         <button class="opt" on:click={makeProject}>
-          <Icon name="plus" size={14} />
+          <Icon name="plus" size={14} stroke={2} />
           <span class="meta"><span class="name">Make {folderName(folder)} a project</span><span class="sub">Notes you map to it come along to every session here</span></span>
         </button>
       {/if}
       <button class="opt" on:click={newProject}>
-        <Icon name="plus" size={14} />
+        <Icon name="plus" size={14} stroke={2} />
         <span class="meta"><span class="name">New project…</span><span class="sub">Pick the folder it lives in</span></span>
       </button>
       <button class="opt" class:on={!folder} on:click={() => chooseProject(null)}>
-        <Icon name="close" size={14} />
+        <Icon name="close" size={14} stroke={2} />
         <span class="meta"><span class="name">No project</span><span class="sub">Run in an empty scratch folder</span></span>
       </button>
       <button
@@ -566,7 +565,7 @@
           dispatch("brain");
         }}
       >
-        <Icon name="brain" size={14} />
+        <Icon name="brain" size={14} stroke={2} />
         <span class="meta"><span class="name">Manage projects in Brain</span></span>
       </button>
     </div>
@@ -1133,7 +1132,6 @@
   .proj-out:hover { color: var(--text); }
   .proj-out.set :global(svg:first-child) { color: var(--accent); }
   .proj-title { font-weight: 650; color: var(--text); white-space: nowrap; }
-  .proj-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11px; color: var(--faint); }
   .proj-branch { flex: none; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--text) 7%, transparent); font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
   /* v5: quiet eyebrow row, inline project hidden, box slimmer. */
   .ob.v5 .bar .project, .ob.v6 .bar .project, .ob.v7 .bar .project { display: none; }
