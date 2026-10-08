@@ -50,7 +50,6 @@
     background: url("/dither-bayer.png");
     background-size: 32px 32px;
     image-rendering: pixelated;
-    mix-blend-mode: overlay;
     opacity: 0.16;
   }
 </style>

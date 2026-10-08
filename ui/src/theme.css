@@ -29,6 +29,7 @@
   --scrim: rgba(0, 0, 0, 0.6);
 
   --glass-bg: color-mix(in srgb, var(--panel) 60%, transparent);
+  --glass-bg-solid: color-mix(in srgb, var(--panel) 88%, transparent);
   --glass-strong-bg: color-mix(in srgb, var(--panel) 58%, transparent);
   --glass-blur: blur(24px) saturate(1.2);
   --glass-strong-blur: blur(22px) saturate(1.25);
@@ -60,7 +61,6 @@ html.scanlines .shell::after {
     transparent 0 2px,
     color-mix(in srgb, var(--text) 7%, transparent) 2px 3px
   );
-  mix-blend-mode: overlay;
 }
 
 * { box-sizing: border-box; }

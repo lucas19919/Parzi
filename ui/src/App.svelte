@@ -1091,9 +1091,7 @@
     display: flex;
     margin: 8px 8px 0;
     overflow: hidden;
-    background: var(--glass-bg);
-    -webkit-backdrop-filter: var(--glass-blur);
-    backdrop-filter: var(--glass-blur);
+    background: var(--glass-bg-solid);
     border: var(--glass-border);
     border-bottom: none;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
@@ -1109,9 +1107,7 @@
     flex-direction: column;
     margin: 8px 8px 0;
     overflow: hidden;
-    background: var(--glass-bg);
-    -webkit-backdrop-filter: var(--glass-blur);
-    backdrop-filter: var(--glass-blur);
+    background: var(--glass-bg-solid);
     border: var(--glass-border);
     border-bottom: none;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
