@@ -311,7 +311,7 @@
     if (folderLocked) return;
     projOpen = !projOpen;
     if (!projOpen || !projBtn) return;
-    projStyle = placeAbove(projBtn, 340);
+    projStyle = placeAbove(projBtn, 300);
     projects = await brain.projects().catch(() => []);
   }
 
@@ -955,7 +955,7 @@
     min-width: 4px;
   }
   .menu-pop {
-    width: 340px;
+    width: 300px;
     padding: 5px;
     overflow-y: auto;
   }
@@ -1024,7 +1024,7 @@
     align-items: center;
     gap: 9px;
     width: 100%;
-    padding: 6px 8px;
+    padding: 5px 8px;
     background: transparent;
     border: none;
     border-radius: var(--radius);

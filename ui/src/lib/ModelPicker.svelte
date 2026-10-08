@@ -99,7 +99,7 @@
     query = "";
     open = true;
     if (trigger) {
-      style = placeAbove(trigger, 300);
+      style = placeAbove(trigger, 264);
       above = style.includes("bottom:");
     }
     index = 0;
@@ -230,7 +230,7 @@
     min-width: 0;
   }
   .picker {
-    width: 300px;
+    width: 264px;
     display: flex;
     flex-direction: column;
     transform-origin: bottom left;
@@ -243,7 +243,7 @@
     align-items: center;
     gap: 8px;
     flex: none;
-    padding: 9px 12px;
+    padding: 7px 12px;
     color: var(--faint);
     border-bottom: 1px solid var(--line);
   }
@@ -285,7 +285,7 @@
     display: flex;
     align-items: center;
     gap: 7px;
-    padding: 10px 8px 4px;
+    padding: 8px 8px 2px;
     font-size: 11px;
     font-weight: 600;
     color: var(--faint);
@@ -301,7 +301,7 @@
   }
   .effort {
     flex: 1;
-    height: 28px;
+    height: 26px;
     background: transparent;
     border: 1px solid var(--line);
     border-radius: 999px;
@@ -321,7 +321,7 @@
     align-items: center;
     gap: 8px;
     width: 100%;
-    height: 32px;
+    height: 30px;
     padding: 0 8px;
     background: transparent;
     border: none;

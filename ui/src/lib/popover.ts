@@ -12,11 +12,12 @@ export function placeAbove(anchor: HTMLElement | null, width: number, alignRight
   const left = Math.max(8, Math.min(alignRight ? r.right - width : r.left, window.innerWidth - width - 8));
   const above = r.top - 46;
   const below = window.innerHeight - r.bottom - 8;
+  // Hug the anchor (4px): popups that float far feel disconnected.
   if (above >= 300 || above >= below) {
     const maxH = Math.max(180, Math.min(above, 560));
-    return `left:${Math.round(left)}px;bottom:${Math.round(window.innerHeight - r.top + 8)}px;max-height:${Math.round(maxH)}px;`;
+    return `left:${Math.round(left)}px;bottom:${Math.round(window.innerHeight - r.top + 4)}px;max-height:${Math.round(maxH)}px;`;
   }
-  return `left:${Math.round(left)}px;top:${Math.round(r.bottom + 8)}px;max-height:${Math.round(Math.max(180, below))}px;`;
+  return `left:${Math.round(left)}px;top:${Math.round(r.bottom + 4)}px;max-height:${Math.round(Math.max(180, below))}px;`;
 }
 
 interface PopoverOptions {
