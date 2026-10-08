@@ -36,9 +36,9 @@
   export let tokensOut = 0;
   export let costUsd = 0;
   // Preview variants for live design iteration (Preview tab renders the
-  // real component with variant 1/2/3/4). The live composer ships 3
-  // (Edition B: project on its own row, controls below).
-  export let variant = 3;
+  // real component with variant 1/2/3/4). The live composer ships 2:
+  // one row, icon-only modes, project inline after the controls.
+  export let variant = 2;
 
   const dispatch = createEventDispatcher<{
     send: void;
