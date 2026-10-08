@@ -61,7 +61,8 @@ pub async fn send_message(
         None => {
             // Threads belong to the project whose folder they start in, not
             // a shared "default": same-project reads stay meaningful.
-            let project = project_for_folder(&cwd).unwrap_or_else(|| "default".into());
+            let project =
+                parzi_core::brain::project_for_folder(&cwd).unwrap_or_else(|| "default".into());
             state
                 .orch
                 .spawn(
@@ -82,30 +83,6 @@ pub async fn send_message(
         }
     };
     Ok(sid)
-}
-
-fn project_for_folder(cwd: &str) -> Option<String> {
-    let cwd = cwd.trim().replace('\\', "/");
-    let cwd = cwd.trim_end_matches('/');
-    if cwd.is_empty() {
-        return None;
-    }
-    let projects = parzi_core::brain::projects().ok()?;
-    let mut best: Option<(usize, String)> = None;
-    for p in projects {
-        let folder = p.folder.trim().replace('\\', "/");
-        let folder = folder.trim_end_matches('/');
-        if folder.is_empty() {
-            continue;
-        }
-        if cwd == folder || cwd.starts_with(&format!("{folder}/")) {
-            let len = folder.len();
-            if best.as_ref().is_none_or(|(l, _)| len > *l) {
-                best = Some((len, p.slug.clone()));
-            }
-        }
-    }
-    best.map(|(_, slug)| slug)
 }
 
 fn read_attachments(cwd: &str, paths: &[String]) -> Vec<parzi_core::context::AttachedFile> {

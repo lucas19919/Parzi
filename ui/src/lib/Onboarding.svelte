@@ -5,7 +5,7 @@
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
-  import { brain, onboard, onSignIn, type ProviderStatus, type Scan } from "./api";
+  import { api, brain, onboard, onSignIn, type ProviderStatus, type Scan } from "./api";
   import { board, checking, refreshBoard } from "./providerStore";
   import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "./providerRows";
   import { importBrowser, onboarded } from "./browserData";
@@ -14,7 +14,7 @@
 
   const dispatch = createEventDispatcher<{ close: void; openBrain: void }>();
 
-  const STEPS = ["Agents", "Browser", "Your tools", "Brain"];
+  const STEPS = ["Agents", "Browser", "Your tools", "Brain", "Remote"];
   const WATCH_EVERY = 5_000;
   const INSTALL_WAIT = 600_000;
   const SIGN_IN_WAIT = 180_000;
@@ -33,6 +33,11 @@
   let wantHistory = true;
   let browserResult = "";
   let busy = false;
+  let serveRunning: boolean | null = null;
+  let servePort: number | null = null;
+  let serveChecked = false;
+  let serveBusy = false;
+  let copied = "";
   let notePicks = new Set<string>();
   let folderPicks = new Set<string>();
   let toolResult = "";
@@ -166,6 +171,40 @@
     const days = Math.floor((Date.now() - ms) / 86_400_000);
     return days <= 0 ? "today" : days === 1 ? "yesterday" : `${days}d ago`;
   }
+
+  const REMOTE_CMDS = [
+    { label: "Prepare the remote", cmd: "parzi setup" },
+    { label: "Start the engine there", cmd: "parzi serve" },
+    { label: "Approve from anywhere", cmd: "parzi approval list" },
+  ];
+
+  async function checkServe() {
+    if (serveBusy) return;
+    serveBusy = true;
+    try {
+      const s = await api.serveStatus();
+      serveRunning = s.running;
+      servePort = s.port;
+      serveChecked = true;
+    } catch {
+      serveRunning = false;
+      serveChecked = true;
+    } finally {
+      serveBusy = false;
+    }
+  }
+
+  function copyCmd(cmd: string) {
+    navigator.clipboard.writeText(cmd).catch(() => {});
+    copied = cmd;
+    setTimeout(() => (copied = copied === cmd ? "" : copied), 1200);
+  }
+
+  function copyAllRemote() {
+    copyCmd(REMOTE_CMDS.map((c) => c.cmd).join("\n"));
+  }
+
+  $: if (step === 4 && !serveChecked && !serveBusy) void checkServe();
 </script>
 
 <div class="backdrop" transition:fade={{ duration: 150 }} role="presentation">
@@ -287,7 +326,7 @@
             {#if toolResult}<span class="result">{toolResult}</span>{/if}
           </div>
         {/if}
-      {:else}
+      {:else if step === 3}
         <h2>Your brain</h2>
         <p class="lead">
           Plain markdown notes in <code>{vault || "~/.parzi/brain"}</code>. Link them with <code>[[wikilinks]]</code>; any Obsidian install can open the folder as a vault.
@@ -297,6 +336,36 @@
           <li>Map a note to a project from the Brain tab, or link it to the project note.</li>
           <li>Agents can search, read and write the brain while they work. Writes ask first unless you allow them.</li>
         </ul>
+      {:else}
+        <h2>Work from anywhere</h2>
+        <p class="lead">
+          The headless engine runs your sessions with no window. Reach it over SSH and answer approvals from anywhere.
+        </p>
+        <div class="item">
+          <span class="grow">
+            <span class="title">Local engine</span>
+            <span class="sub" class:ok={serveRunning === true}>
+              {serveBusy ? "Checking…" : serveRunning ? `Running${servePort ? ` on port ${servePort}` : ""}` : serveChecked ? "Not running" : "Unknown"}
+            </span>
+          </span>
+          <button class="btn" disabled={serveBusy} on:click={checkServe}>{serveBusy ? "Checking…" : "Check again"}</button>
+        </div>
+        <h3>On the remote machine</h3>
+        <div class="list">
+          {#each REMOTE_CMDS as c (c.cmd)}
+            <div class="item compact">
+              <span class="grow">
+                <span class="title">{c.label}</span>
+                <span class="sub mono">{c.cmd}</span>
+              </span>
+              <button class="btn" on:click={() => copyCmd(c.cmd)}>{copied === c.cmd ? "Copied" : "Copy"}</button>
+            </div>
+          {/each}
+        </div>
+        <div class="action">
+          <button class="btn primary" on:click={copyAllRemote}>{copied ? "Copied" : "Copy all three"}</button>
+          <span class="result">Run them over SSH, then answer approvals with the third.</span>
+        </div>
       {/if}
     </div>
 
@@ -487,6 +556,10 @@
   }
   .sub.ok {
     color: var(--ok);
+  }
+  .sub.mono {
+    font-family: var(--mono), ui-monospace, monospace;
+    color: var(--muted);
   }
   .progress {
     position: absolute;

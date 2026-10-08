@@ -436,6 +436,18 @@ fn main() {
             }
         }))
         .setup(move |app| {
+            // Mutual exclusion with `parzi serve`: both own ~/.parzi, so the
+            // desk refuses to start while the headless lock is held.
+            if parzi_runtime::osserve::serve_locked() {
+                use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+                let _ = app
+                    .dialog()
+                    .message("parzi serve is running. The desk and serve must never own sessions at the same time. Stop serve first, then open Parzi.")
+                    .title("Parzi is already running headless")
+                    .buttons(MessageDialogButtons::Ok)
+                    .blocking_show();
+                std::process::exit(2);
+            }
             let o = orch.clone();
             app.manage(AppState {
                 orch,
@@ -553,6 +565,7 @@ fn main() {
             settings::refresh_providers,
             settings::warm_agent,
             settings::run_doctor_quick,
+            settings::serve_status,
             appearance::get_theme_css,
             appearance::get_theme,
             appearance::save_theme,

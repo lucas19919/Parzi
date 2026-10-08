@@ -282,6 +282,26 @@ fn lock_serve(path: &Path) -> Result<std::fs::File, String> {
     }
 }
 
+/// True when another `parzi serve` holds the lock. The desk checks this at
+/// startup: the exclusion is mutual, not just serve-side.
+#[must_use]
+pub fn serve_locked() -> bool {
+    let Ok(root) = parzi_core::paths::ensure_dirs() else {
+        return false;
+    };
+    let Ok(file) = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(root.join("serve.lock"))
+    else {
+        return false;
+    };
+    use fs4::fs_std::FileExt;
+    !matches!(file.try_lock_exclusive(), Ok(true))
+}
+
 fn write_serve_file(path: &Path, body: &str) -> Result<(), String> {
     if path.exists() {
         let _ = std::fs::remove_file(path);
@@ -485,25 +505,19 @@ async fn session_send(state: &State, req: &Value) -> Value {
     let target = str_arg(req, "target");
     let model = str_arg(req, "model");
     let cwd = str_arg(req, "cwd");
-    let effort = {
-        let effort = str_arg(req, "effort");
-        if effort.is_empty() {
-            "medium".into()
-        } else {
-            effort
-        }
-    };
+    let effort = crate::orchestrator::normalize_effort(&str_arg(req, "effort"));
     let yes = req.get("yes").and_then(Value::as_bool).unwrap_or(false);
     let approver: Arc<dyn Approver> = if yes {
         Arc::new(AutoApprover)
     } else {
         state.approver.clone()
     };
+    let project = parzi_core::brain::project_for_folder(&cwd).unwrap_or_else(|| "default".into());
     let sent = if target.is_empty() || target == "new" {
         state
             .orch
             .spawn(
-                "default",
+                &project,
                 "",
                 &model,
                 &message,

@@ -198,6 +198,7 @@ export const api = {
   getConfig: () => invoke<ParziConfig>("get_config"),
   saveConfig: (cfg: ParziConfig) => invoke<void>("save_config", { cfg }),
   runDoctorQuick: () => invoke<Check[]>("run_doctor_quick"),
+  serveStatus: () => invoke<{ running: boolean; port: number | null }>("serve_status"),
 
   getTheme: () => invoke<Theme>("get_theme"),
   getThemeCss: () => invoke<string>("get_theme_css"),

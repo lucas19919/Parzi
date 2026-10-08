@@ -91,6 +91,32 @@ pub fn projects() -> Result<Vec<Project>> {
     Ok(Vault::open()?.projects())
 }
 
+/// Deepest project whose folder contains `cwd`, or None. New threads use
+/// this instead of a shared fallback so same-project reads stay meaningful.
+#[must_use]
+pub fn project_for_folder(cwd: &str) -> Option<String> {
+    let cwd = cwd.trim().replace('\\', "/");
+    let cwd = cwd.trim_end_matches('/');
+    if cwd.is_empty() {
+        return None;
+    }
+    let projects = projects().ok()?;
+    let mut best: Option<(usize, String)> = None;
+    for p in projects {
+        let folder = p.folder.trim().replace('\\', "/");
+        let folder = folder.trim_end_matches('/');
+        if folder.is_empty() {
+            continue;
+        }
+        if cwd == folder || cwd.starts_with(&format!("{folder}/")) {
+            if best.as_ref().is_none_or(|(l, _)| folder.len() > *l) {
+                best = Some((folder.len(), p.slug.clone()));
+            }
+        }
+    }
+    best.map(|(_, slug)| slug)
+}
+
 pub fn project_upsert(slug: Option<&str>, title: &str, folder: &str) -> Result<Project> {
     Vault::open()?.project_upsert(slug, title, folder)
 }
