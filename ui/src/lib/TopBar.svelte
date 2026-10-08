@@ -45,6 +45,7 @@
       const w = getCurrentWindow();
       const full = await w.isFullscreen().catch(() => false);
       maximized = full || (await w.isMaximized().catch(() => false));
+      document.documentElement.classList.toggle("parzi-maximized", maximized);
     } catch {}
   }
 

@@ -285,6 +285,7 @@
   async function setImmersive(on: boolean) {
     if (immersive === on) return;
     immersive = on;
+    document.documentElement.classList.toggle("parzi-maximized", on);
     await api.windowFullscreen(on).catch(() => {});
   }
 
@@ -1076,6 +1077,9 @@
     overflow: hidden;
     border-radius: 10px;
     background: var(--bg);
+  }
+  :global(html.parzi-maximized) .shell {
+    border-radius: 0;
   }
   main {
     position: relative;
