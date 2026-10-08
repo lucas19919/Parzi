@@ -226,7 +226,7 @@ pub async fn spawn_track(
     state
         .orch
         .harness()
-        .spawn_session(&parent, &title, &prompt, true, None, None, false, None)
+        .spawn_session(&parent, &title, &prompt, true, None, None, false, None, None)
         .await
         .map_err(|e| e.to_string())
 }
