@@ -40,7 +40,7 @@ impl Doctor {
         out.push(self.check_config());
         out.push(self.check_theme());
         out.extend(self.check_providers().await);
-        out.push(self.check_routing());
+        out.push(Self::check_routing());
         out.push(self.check_webview());
         out
     }
@@ -52,7 +52,7 @@ impl Doctor {
             self.check_dirs(),
             self.check_config(),
             self.check_theme(),
-            self.check_routing(),
+            Self::check_routing(),
             self.check_webview(),
         ]
     }
@@ -111,15 +111,10 @@ impl Doctor {
             .collect()
     }
 
-    fn check_routing(&self) -> Check {
-        let def = self.cfg.default_model.trim();
+    fn check_routing() -> Check {
         Check::ok(
             "routing",
-            if def.is_empty() {
-                "no default model set: pick one in Settings → Providers".into()
-            } else {
-                format!("new threads start on {def}")
-            },
+            "no defaults: every thread picks its model in the composer",
         )
     }
 

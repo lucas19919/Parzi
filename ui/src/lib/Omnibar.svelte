@@ -36,9 +36,9 @@
   export let tokensOut = 0;
   export let costUsd = 0;
   // Preview variants for live design iteration (Preview tab renders the
-  // real component with variant 1/2/3). 1 = current, 2 = icon-only modes
-  // with everything on one row, 3 = two-line with the project on its own.
-  export let variant = 1;
+  // real component with variant 1/2/3/4). The live composer ships 3
+  // (Edition B: project on its own row, controls below).
+  export let variant = 3;
 
   const dispatch = createEventDispatcher<{
     send: void;
@@ -1240,7 +1240,7 @@
     padding: 0 7px;
   }
   .ob.v2 .bar :global(.model) {
-    max-width: 130px;
+    max-width: 200px;
   }
   .ob.v2 .project {
     border-color: color-mix(in srgb, var(--accent) 45%, transparent);
@@ -1256,7 +1256,7 @@
     justify-content: flex-start;
   }
   .ob.v3 .bar :global(.model) {
-    max-width: 150px;
+    max-width: 200px;
   }
   /* Edition C — compact: tighter pills, everything kept, nothing hidden. */
   .ob.v4 .bar {
@@ -1279,7 +1279,7 @@
     width: 24px;
   }
   .ob.v4 .bar :global(.model) {
-    max-width: 104px;
+    max-width: 150px;
   }
   .ob.v4 .project {
     min-width: 0;

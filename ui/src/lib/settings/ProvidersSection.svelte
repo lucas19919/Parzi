@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { api, type ParziConfig, type ProviderEntry, type ProviderStatus } from "../api";
   import { board, checking, ensureBoard, refreshBoard } from "../providerStore";
-  import { PROVIDER_ORDER, allRows, effortLabel, isUsable, modelLabel, nameOf, stateLabel } from "../providerRows";
+  import { PROVIDER_ORDER, effortLabel, isUsable, modelLabel, nameOf, stateLabel } from "../providerRows";
   import Switch from "./Switch.svelte";
   import "./shared.css";
 
@@ -48,27 +48,6 @@
     !p ? [] : !q ? p.models : p.models.filter((m) => (m.name || m.id).toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
   $: entryOf = (id: string): ProviderEntry => cfg?.providers?.[id] ?? { enabled: true };
   $: allChecking = $checking.has("*");
-  $: quickRows = allRows($board).filter((r) => r.usable);
-
-  async function setDefaultModel(value: string) {
-    if (!cfg) return;
-    cfg.default_model = value;
-    await saveCfg(value ? `New threads start on ${value}` : "Default model cleared: pick a model before sending");
-  }
-
-  function setDefaultModelFrom(e: Event) {
-    void setDefaultModel((e.currentTarget as HTMLSelectElement).value);
-  }
-
-  async function setQuick(value: string) {
-    if (!cfg) return;
-    cfg.quick_model = value;
-    await saveCfg(value ? "Quick model set" : "Quick model follows the default model");
-  }
-
-  function setQuickFrom(e: Event) {
-    void setQuick((e.currentTarget as HTMLSelectElement).value);
-  }
 
   function badgeOf(p: ProviderStatus | undefined, enabled: boolean): { label: string; cls: string } {
     if (!enabled) return { label: "Off", cls: "key" };
@@ -197,53 +176,6 @@
       <button class="sbtn" on:click={() => checkAgain()} disabled={allChecking} title="Ask every agent's own program where it stands. Spends no quota.">
         {allChecking ? "Checking…" : "↻ Check again"}
       </button>
-    </div>
-  </div>
-
-  <div class="pref-section">
-    <h3 class="section-title">Default model</h3>
-    <p class="section-desc">
-      New threads start here. You pick it; Parzi never guesses. Until this is
-      set, sending asks you to pick a model first.
-    </p>
-    <div class="order-card">
-      <div class="order-row">
-        <span class="order-n">◉</span>
-        <select
-          class="quick-pick"
-          value={cfg?.default_model ?? ""}
-          on:change={setDefaultModelFrom}
-          aria-label="Default model"
-        >
-          <option value="">Pick a model…</option>
-          {#each quickRows as r (r.value)}
-            <option value={r.value}>{r.label}</option>
-          {/each}
-        </select>
-      </div>
-    </div>
-  </div>
-
-  <div class="pref-section">
-    <h3 class="section-title">Quick model</h3>
-    <p class="section-desc">
-      Answers Research questions and other fast turns. Empty uses the default model.
-    </p>
-    <div class="order-card">
-      <div class="order-row">
-        <span class="order-n">⚡</span>
-        <select
-          class="quick-pick"
-          value={cfg?.quick_model ?? ""}
-          on:change={setQuickFrom}
-          aria-label="Quick model"
-        >
-          <option value="">Same as default model</option>
-          {#each quickRows as r (r.value)}
-            <option value={r.value}>{r.label}</option>
-          {/each}
-        </select>
-      </div>
     </div>
   </div>
 
@@ -404,24 +336,6 @@
   .skel.search { flex: 1; min-height: 34px; }
   .skel.btn { width: 110px; min-height: 34px; }
 
-  .order-card {
-    background: var(--panel); border: 1px solid var(--line);
-    border-radius: var(--radius-lg); padding: 4px 6px; display: flex; flex-direction: column;
-  }
-  .order-row { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 7px; }
-  .order-n { width: 14px; font-size: 11px; color: var(--faint); font-family: var(--mono), ui-monospace, monospace; text-align: right; flex: none; }
-  .quick-pick {
-    flex: 1;
-    min-width: 0;
-    padding: 5px 8px;
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    color: var(--text);
-    font: inherit;
-    font-size: 12.5px;
-  }
-  .order-name { font-size: 12.5px; font-weight: 600; color: var(--text); }
   .mini {
     background: transparent; border: 1px solid transparent; border-radius: 5px; color: var(--muted);
     font: inherit; font-size: 9px; width: 22px; height: 20px; cursor: pointer; flex: none;
@@ -434,15 +348,15 @@
   .provider-card {
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg); padding: 12px 14px;
-    display: flex; flex-direction: column; gap: 8px;
+    border-radius: var(--radius-lg); padding: 10px 12px;
+    display: flex; flex-direction: column; gap: 6px;
   }
   .provider-card.signed-in { border-color: var(--line); }
   .provider-card.off { opacity: 0.6; }
   .provider-head { display: flex; align-items: center; gap: 10px; }
   .provider-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .provider-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .provider-name { font-size: 13.5px; font-weight: 700; color: var(--text); }
+  .provider-name { font-size: 13px; font-weight: 650; color: var(--text); }
   .provider-sub { font-size: 11.5px; color: var(--muted); }
   .version { font-size: 10.5px; color: var(--faint); font-family: var(--mono), ui-monospace, monospace; }
   .provider-how { font-size: 12px; color: var(--muted); line-height: 1.45; }
@@ -490,7 +404,7 @@
     max-height: 320px; overflow-y: auto;
   }
   .model-row {
-    display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+    display: flex; align-items: center; gap: 8px; padding: 5px 8px;
     border-radius: 6px; font-size: 12px;
   }
   .model-row:hover { background: var(--line); }

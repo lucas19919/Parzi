@@ -24,10 +24,6 @@ pub struct ParziConfig {
     pub budget: Budget,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub favorite_models: Vec<String>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub quick_model: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub default_model: String,
     #[serde(default)]
     pub image: ImageConfig,
 }
@@ -246,8 +242,6 @@ impl Default for ParziConfig {
             routing: RoutingConfig::default(),
             budget: Budget::default(),
             favorite_models: vec![],
-            quick_model: String::new(),
-            default_model: String::new(),
             image: ImageConfig::default(),
         }
     }

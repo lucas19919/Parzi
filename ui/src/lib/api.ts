@@ -107,8 +107,6 @@ export interface ParziConfig {
   routing: { order: string[] };
   budget?: { max_cost_usd: number | null; max_tokens: number | null };
   favorite_models: string[];
-  quick_model?: string;
-  default_model?: string;
 }
 
 export interface Theme {

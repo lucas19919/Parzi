@@ -178,9 +178,9 @@ impl Orchestrator {
         spec: &str,
     ) -> Result<(String, Option<String>)> {
         let bound = run_session(session_id).map(|s| s.provider);
-        // No automatic routing. An empty spec (or a legacy "auto" one) keeps
-        // a bound thread on its own provider, else uses the default model
-        // the human picked in Settings. Nothing guesses a provider.
+        // No defaults and no guessing. An empty spec (or a legacy "auto"
+        // one) keeps a bound thread on its own provider, else it is an
+        // error that tells the human to pick a model.
         let legacy_auto =
             spec.trim().is_empty() || spec == "auto" || spec.starts_with("auto/");
         let (provider, model) = match parzi_providers::split_spec(spec) {
@@ -194,15 +194,9 @@ impl Orchestrator {
                 if let Some(b) = &bound {
                     (b.clone(), None)
                 } else {
-                    match parzi_providers::split_spec(cfg.default_model.trim()) {
-                        Some((id, model)) => (id.to_string(), model),
-                        None => {
-                            return Err(ParziError::Store(
-                                "No default model set. Pick one in Settings → Providers, or choose a model in the composer."
-                                    .into(),
-                            ))
-                        }
-                    }
+                    return Err(ParziError::Store(
+                        "No model chosen. Pick one in the composer before sending.".into(),
+                    ));
                 }
             }
         };
@@ -348,12 +342,7 @@ impl Orchestrator {
     ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
         let snap = p.cfg_snapshot();
         let (provider_id, model) = Self::route(&snap, &q.session_id, &q.model_spec).await?;
-        let spec_empty =
-            q.model_spec.trim().is_empty() || q.model_spec == "auto" || q.model_spec.starts_with("auto/");
-        let mut model = model;
-        if q.lane == "work" && spec_empty && model.is_none() {
-            model = Some(snap.quick_model.clone()).filter(|m| !m.trim().is_empty());
-        }
+        let model = model;
         let provider = (p.source)(&provider_id, &snap).ok_or_else(|| {
             ParziError::Store(format!("{provider_id} is not on this build's roster"))
         })?;

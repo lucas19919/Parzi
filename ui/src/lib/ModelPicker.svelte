@@ -75,6 +75,7 @@
   // crushes its neighbours.
   function shortName(name: string) {
     if (!value) return "Pick a model";
+    if (name.length <= 24) return name;
     const skip = new Set(["contributor", "free", "preview", "latest", "thinking"]);
     const keep: string[] = [];
     const parts = name.split(/\s+/);

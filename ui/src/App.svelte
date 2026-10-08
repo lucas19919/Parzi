@@ -785,23 +785,6 @@
     }
   }
 
-  // New tabs start on the default model the human picked in Settings.
-  // Nothing is pre-selected behind their back.
-  async function resolveDefaultModel() {
-    try {
-      const d = (await api.getConfig()).default_model?.trim();
-      if (!d) return;
-      let touched = false;
-      for (const t of tabs) {
-        if (t.kind === "session" && !t.composer.model) {
-          t.composer.model = d;
-          touched = true;
-        }
-      }
-      if (touched) tabs = tabs;
-    } catch {}
-  }
-
   async function warmPages() {
     await new Promise((r) => setTimeout(r, 1500));
     const later = tabs.filter((t) => t.kind === "page" && t.url && t.id !== activeId).slice(0, 8);
@@ -841,7 +824,6 @@
     selectTab(activeId);
     if (!$onboarded) setupOpen = true;
     void warmPages();
-    void resolveDefaultModel();
     const onBg = (e: Event) => (bg = (e as CustomEvent<string>).detail);
     document.addEventListener("parzi:bg", onBg);
     (async () => {
