@@ -156,6 +156,7 @@ pub fn system_parts(lane: &str, cwd: &str) -> Vec<String> {
         parts.push(harness_section("teamwork"));
         parts.push(harness_section("build"));
     }
+    parts.push(harness_section("delivery"));
     if let Some(text) = parzi_core::system::global() {
         parts.push(format!("# Global instructions\n\n{text}"));
     }
@@ -171,7 +172,7 @@ mod tests {
 
     #[test]
     fn harness_doc_has_every_section() {
-        for s in ["tools", "teamwork", "build", "work"] {
+        for s in ["tools", "teamwork", "build", "work", "delivery"] {
             let body = harness_section(s);
             assert!(body.lines().count() > 3, "section {s} is missing or empty");
         }
@@ -195,8 +196,10 @@ mod tests {
         let build = system_parts("build", "C:\\x");
         assert!(build.iter().any(|p| p.starts_with("## teamwork")));
         assert!(build.iter().any(|p| p.starts_with("## build")));
+        assert!(build.iter().any(|p| p.starts_with("## delivery")));
         let work = system_parts("work", "C:\\x");
         assert!(work.iter().any(|p| p.starts_with("## work")));
         assert!(!work.iter().any(|p| p.starts_with("## teamwork")));
+        assert!(work.iter().any(|p| p.starts_with("## delivery")));
     }
 }
