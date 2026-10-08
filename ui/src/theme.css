@@ -64,7 +64,7 @@ html.scanlines .shell::after {
 }
 
 * { box-sizing: border-box; }
-html, body, #app { height: 100%; margin: 0; background: var(--bg); }
+html, body, #app { height: 100%; margin: 0; background: transparent; }
 body {
   font-family: var(--font), Inter, system-ui, sans-serif;
   font-size: var(--font-size);

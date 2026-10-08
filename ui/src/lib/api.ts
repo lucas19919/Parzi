@@ -157,7 +157,6 @@ export const MODE_META: Record<ComposerMode, { label: string; icon: "globe" | "b
 
 export const api = {
   appVersion: () => invoke<string>("app_version"),
-  windowStartDragging: () => invoke<void>("window_start_dragging"),
   openConfirmedUrl: (url: string) => invoke<void>("open_confirmed_url", { url }),
   openFilePath: (path: string) => invoke<void>("open_file_path", { path }),
 

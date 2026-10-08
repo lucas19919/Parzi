@@ -74,6 +74,7 @@
   // the first two non-version words ("Muse Spark") so the pill never
   // crushes its neighbours.
   function shortName(name: string) {
+    if (!value) return "Pick a model";
     const skip = new Set(["contributor", "free", "preview", "latest", "thinking"]);
     const keep: string[] = [];
     const parts = name.split(/\s+/);
@@ -217,8 +218,15 @@
 
 <style>
   .model {
-    flex-shrink: 0;
+    flex: 1 1 auto;
+    min-width: 0;
     max-width: 280px;
+  }
+  .model .truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
   .picker {
     width: 300px;

@@ -45,7 +45,6 @@
       const w = getCurrentWindow();
       const full = await w.isFullscreen().catch(() => false);
       maximized = full || (await w.isMaximized().catch(() => false));
-      document.documentElement.classList.toggle("parzi-maximized", maximized);
     } catch {}
   }
 
@@ -66,8 +65,8 @@
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<header class="topbar" data-tauri-drag-region on:mousedown={startWindowDrag}>
-  <div class="left" data-tauri-drag-region>
+<header class="topbar" on:mousedown={startWindowDrag}>
+  <div class="left">
     <div class="menu">
       <button class="icon-btn" class:active={menuOpen} title="Menu" on:click={() => (menuOpen = !menuOpen)}>
         <Icon name="menu" />

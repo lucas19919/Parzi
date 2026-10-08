@@ -908,6 +908,11 @@
     margin-top: 6px;
     padding: 7px 6px 1px;
     border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .bar::-webkit-scrollbar {
+    display: none;
   }
   .bar :global(.ctl) {
     height: 26px;
@@ -933,6 +938,16 @@
   }
   .project.set {
     color: var(--text);
+  }
+  .project {
+    flex: none;
+    max-width: 220px;
+  }
+  .project .truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
   .project.set :global(svg:first-child) {
     color: var(--accent);

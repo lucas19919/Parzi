@@ -25,9 +25,8 @@
         "height": 800,
         "minWidth": 960,
         "minHeight": 640,
-        "transparent": false,
+        "transparent": true,
         "decorations": false,
-        "backgroundColor": "#0b0b10",
         "center": true
       }
     ]

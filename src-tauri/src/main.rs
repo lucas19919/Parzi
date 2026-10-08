@@ -217,11 +217,6 @@ async fn app_version() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn window_start_dragging(window: tauri::Window) -> Result<(), String> {
-    window.start_dragging().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 fn window_fullscreen(window: tauri::Window, on: bool) -> Result<(), String> {
     window.set_fullscreen(on).map_err(|e| e.to_string())
 }
@@ -501,7 +496,6 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             app_version,
-            window_start_dragging,
             window_fullscreen,
             browser::browser_show,
             browser::browser_hide,

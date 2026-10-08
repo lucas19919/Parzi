@@ -285,7 +285,6 @@
   async function setImmersive(on: boolean) {
     if (immersive === on) return;
     immersive = on;
-    document.documentElement.classList.toggle("parzi-maximized", on);
     await api.windowFullscreen(on).catch(() => {});
   }
 
@@ -1092,17 +1091,7 @@
     flex-direction: column;
     overflow: hidden;
     border-radius: 10px;
-  }
-  :global(html.parzi-maximized) .shell {
-    border-radius: 0 !important;
-  }
-  :global(html.parzi-maximized) .fill,
-  :global(html.parzi-maximized) .session {
-    margin-left: 0;
-    margin-right: 0;
-    border-radius: 0;
-    border-left: none;
-    border-right: none;
+    background: var(--bg);
   }
   main {
     position: relative;
