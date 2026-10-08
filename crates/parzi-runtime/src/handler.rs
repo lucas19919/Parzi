@@ -167,6 +167,8 @@ const TEAMWORK_BRIEF: &str = "You own the outcome end to end: understand the ask
     If the work deserves a home, project.create it and build inside it. \
     At real forks, ask.user instead of guessing. Verify before claiming done: typecheck/tests, \
     open the result in the session browser tab and look at it (browser.read, browser.shot). \
+    Show UI work inline as preview artifacts in the thread — never send the user to a \
+    preview tab or window to see it. \
     Long work goes to shell.start (one server per need, kill it when done); foreground \
     builds get explicit timeouts. \
     Record durable learnings with brain_write, \

@@ -42,9 +42,10 @@ const ENTRIES: PreviewEntry[] = [
     title: "Omnibar",
     component: Omnibar as unknown as ComponentType,
     variants: [
-      { n: 1, label: "Current", blurb: "Baseline. Full labels, full model pill." },
-      { n: 2, label: "Icon modes", blurb: "Search / Build / Work as icons only. One row." },
-      { n: 3, label: "Project first", blurb: "Project pill on its own line above the controls." },
+      { n: 1, label: "Current", blurb: "Baseline. Full labels, full controls." },
+      { n: 2, label: "Edition A · Priority row", blurb: "Icon-only modes, project-first with accent, one row." },
+      { n: 3, label: "Edition B · Two-line calm", blurb: "Project on its own full-width row, controls below." },
+      { n: 4, label: "Edition C · Compact", blurb: "Tighter pills, everything kept, nothing hidden." },
     ],
     props: omnibarProps,
   },

@@ -416,7 +416,7 @@
   }
 </script>
 
-<div class="ob" class:hero class:v2={variant === 2} class:v3={variant === 3}>
+<div class="ob" class:hero class:v2={variant === 2} class:v3={variant === 3} class:v4={variant === 4}>
   <div
     class="box"
     class:web={mode === "search"}
@@ -482,7 +482,7 @@
     </div>
 
     <div class="bar">
-      <button class="ctl" title="Attach files" on:click={pickFiles}><Icon name="plus" size={14} stroke={2} /></button>
+      <button class="ctl icon-only" title="Attach files" on:click={pickFiles}><Icon name="plus" size={14} stroke={2} /></button>
     <div class="modes" role="tablist" aria-label="Mode">
       {#if lockMode}
         <span class="mode on solo" style:--tint={MODE_META[lockMode].tint} title={MODE_META[lockMode].label}>
@@ -1218,6 +1218,7 @@
     color: var(--muted);
   }
   /* Preview variants (see PreviewView): same controls, different layout. */
+  /* Edition A — priority row: icon-only modes, project-first, one row. */
   .ob.v2 .mode span:last-child {
     display: none;
   }
@@ -1227,6 +1228,11 @@
   .ob.v2 .bar :global(.model) {
     max-width: 130px;
   }
+  .ob.v2 .project {
+    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    color: var(--text);
+  }
+  /* Edition B — two-line calm: project on its own full-width row. */
   .ob.v3 .bar {
     flex-wrap: wrap;
   }
@@ -1234,5 +1240,40 @@
     order: -1;
     flex: 1 1 100%;
     justify-content: flex-start;
+  }
+  .ob.v3 .bar :global(.model) {
+    max-width: 150px;
+  }
+  /* Edition C — compact: tighter pills, everything kept, nothing hidden. */
+  .ob.v4 .bar {
+    flex-wrap: nowrap;
+    gap: 3px;
+  }
+  .ob.v4 .mode {
+    height: 22px;
+    padding: 0 7px;
+    font-size: 11.5px;
+  }
+  .ob.v4 .modes {
+    padding: 1px;
+  }
+  .ob.v4 .bar :global(.ctl) {
+    height: 24px;
+    font-size: 11.5px;
+  }
+  .ob.v4 .bar :global(.ctl.icon-only) {
+    width: 24px;
+  }
+  .ob.v4 .bar :global(.model) {
+    max-width: 104px;
+  }
+  .ob.v4 .project {
+    min-width: 0;
+    max-width: 150px;
+  }
+  .ob.v4 .project .truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>
