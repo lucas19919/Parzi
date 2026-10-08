@@ -2,7 +2,12 @@ import { setOverlay } from "./overlay";
 
 let seq = 0;
 
-export function placeAbove(anchor: HTMLElement, width: number, alignRight = false): string {
+export function placeAbove(anchor: HTMLElement | null, width: number, alignRight = false): string {
+  // A dead anchor must never strand an unpositioned panel (the giant
+  // weird popup): fall back to top-center instead of throwing.
+  if (!anchor || !anchor.isConnected) {
+    return `left:${Math.max(8, Math.round((window.innerWidth - width) / 2))}px;top:64px;max-height:${Math.round(window.innerHeight - 128)}px;`;
+  }
   const r = anchor.getBoundingClientRect();
   const left = Math.max(8, Math.min(alignRight ? r.right - width : r.left, window.innerWidth - width - 8));
   const above = r.top - 46;
@@ -40,9 +45,17 @@ export function popover(node: HTMLElement, opts: PopoverOptions) {
     current.close();
   }
 
+  function onScroll(e: Event) {
+    // The anchor scrolls but the panel is body-fixed: close instead of
+    // floating detached. Ignore scrolls inside the panel itself.
+    if (e.target instanceof Node && node.contains(e.target)) return;
+    current.close();
+  }
+
   window.addEventListener("pointerdown", onPointer, true);
   window.addEventListener("keydown", onKey);
   window.addEventListener("resize", onResize);
+  window.addEventListener("scroll", onScroll, true);
 
   return {
     update(next: PopoverOptions) {
@@ -52,6 +65,7 @@ export function popover(node: HTMLElement, opts: PopoverOptions) {
       window.removeEventListener("pointerdown", onPointer, true);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onScroll, true);
       setOverlay(key, false);
       node.remove();
     },

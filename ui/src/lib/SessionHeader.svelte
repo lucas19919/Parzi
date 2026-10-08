@@ -238,7 +238,7 @@
     padding: 0;
     background: transparent;
     border: none;
-    border-radius: 5px;
+    border-radius: var(--radius);
     color: var(--muted);
     cursor: pointer;
   }
@@ -276,7 +276,7 @@
     gap: 2px;
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: var(--radius);
+    border-radius: var(--radius-lg);
     box-shadow: var(--shadow);
     z-index: 500;
   }
@@ -288,7 +288,7 @@
     padding: 6px 8px;
     background: transparent;
     border: none;
-    border-radius: 5px;
+    border-radius: var(--radius);
     color: var(--text);
     font-size: 12px;
     text-align: left;
