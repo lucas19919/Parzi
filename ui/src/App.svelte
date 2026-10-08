@@ -921,11 +921,19 @@
             {panelOpen}
             backTitle={backTitle}
             canAct={!!shown}
+            contextUsed={context.used}
+            contextLimit={context.limit}
+            {compacting}
+            {streaming}
+            tokensIn={meta?.tokens_in ?? 0}
+            tokensOut={meta?.tokens_out ?? 0}
+            costUsd={meta?.cost_usd ?? 0}
             on:rename={(e) => rename(e.detail.title)}
             on:fork={fork}
             on:copyId={copyId}
             on:delete={() => shown && remove(shown)}
             on:back={goBack}
+            on:compact={() => onCommand("compact")}
             on:agents={() => {
               panelTab = "agents";
               panelOpen = !panelOpen;
@@ -999,16 +1007,9 @@
           {branch}
           {streaming}
           board={$board}
-          contextUsed={context.used}
-          contextLimit={context.limit}
-          tokensIn={meta?.tokens_in ?? 0}
-          tokensOut={meta?.tokens_out ?? 0}
-          costUsd={meta?.cost_usd ?? 0}
-          {compacting}
-          {hasSession}
           hero={!hasSession}
           {project}
-          variant={2}
+          variant={6}
           on:send={send}
           on:browse={(e) => browse(e.detail.url)}
           on:stop={stop}

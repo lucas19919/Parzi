@@ -25,19 +25,12 @@
   export let branch = "";
   export let streaming = false;
   export let board: ProviderStatus[] = [];
-  export let contextUsed = 0;
-  export let contextLimit = 0;
-  export let compacting = false;
-  export let hasSession = false;
   export let hero = false;
   export let project: { slug: string; title: string; tokens: number } | null = null;
   export let lockMode: ComposerMode | null = null;
-  export let tokensIn = 0;
-  export let tokensOut = 0;
-  export let costUsd = 0;
   // Preview variants for live design iteration (Preview tab renders the
-  // real component with variants 1-7). The live composer ships 2:
-  // one row, icon-only modes, project inline after the controls.
+  // real component with variant 1-7). The live composer ships 6:
+  // fused project tab on the top edge, project outside the box.
   export let variant = 2;
   $: outsideProject = variant === 5 || variant === 6 || variant === 7;
 
@@ -84,9 +77,6 @@
   let permBtn: HTMLButtonElement | null = null;
   let permOpen = false;
   let permStyle = "";
-  let ctxBtn: HTMLButtonElement | null = null;
-  let ctxOpen = false;
-  let ctxStyle = "";
   let projBtn: HTMLButtonElement | null = null;
   let projOpen = false;
   let projStyle = "";
@@ -109,17 +99,10 @@
     if (next !== effort) effort = next;
   }
   $: perm = PERMS.find((p) => p.id === permission) ?? PERMS[3];
-  $: contextPct = contextLimit > 0 ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : 0;
   $: slashQuery = /^\/\w*$/.test(input.trim()) ? input.trim().slice(1).toLowerCase() : null;
   $: slashItems = slashQuery === null ? [] : SLASH.filter((c) => c.name.startsWith(slashQuery));
   $: if (slashIndex >= slashItems.length) slashIndex = 0;
   $: void loadThumbs(attachments, folder);
-
-  function kTokens(n: number) {
-    if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
-    return String(n);
-  }
 
   export function focus() {
     textarea?.focus();
@@ -159,11 +142,6 @@
   function cycleEffort() {
     if (!efforts.length) return;
     effort = efforts[(Math.max(0, efforts.indexOf(effort)) + 1) % efforts.length];
-  }
-
-  function toggleCtx() {
-    ctxOpen = !ctxOpen;
-    if (ctxOpen && ctxBtn) ctxStyle = placeAbove(ctxBtn, 260);
   }
 
   function cycleMode() {
@@ -416,7 +394,6 @@
 <div class="ob" class:hero class:v2={variant === 2} class:v3={variant === 3} class:v4={variant === 4} class:v5={variant === 5} class:v6={variant === 6} class:v7={variant === 7}>
   {#if outsideProject}
     <button class="proj-out" class:set={!!project} on:click|stopPropagation={toggleProject} title={project ? `Project ${project.title} · ${folder}` : "Pick the project this session works on"}>
-      <span class="proj-dot" />
       <Icon name={project || !folder ? "project" : "folder"} size={13} />
       <span class="proj-title">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
       {#if folder}<span class="proj-path">{folder}</span>{/if}
@@ -550,55 +527,10 @@
 
       {#if mode !== "search"}
         <ModelPicker bind:this={picker} bind:value={model} bind:effort {board} on:unavailable />
-        {#if (mode === "build" || mode === "work") && (contextLimit > 0 || !hasSession)}
-          <button
-            bind:this={ctxBtn}
-            class="ctx"
-            class:warn={contextPct >= 70}
-            class:bad={contextPct >= 90}
-            class:busy={compacting}
-            disabled={compacting || streaming}
-            title={compacting ? "Compacting…" : contextLimit > 0 ? `Context ${contextPct}% full. Click for breakdown.` : "Context appears once the session starts."}
-            on:click|stopPropagation={toggleCtx}
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-              <circle class="track" cx="8" cy="8" r="6" />
-              <circle class="fill" cx="8" cy="8" r="6" stroke-dasharray={RING} stroke-dashoffset={compacting ? RING * 0.7 : RING * (1 - contextPct / 100)} />
-            </svg>
-          </button>
-        {/if}
       {/if}
     </div>
   </div>
   {#if attachError}<div class="error" role="alert">{attachError}</div>{/if}
-
-  {#if ctxOpen}
-    <div class="menu-pop ctx-pop" style={ctxStyle} use:popover={{ anchor: ctxBtn, close: () => (ctxOpen = false) }} transition:fly={{ y: ctxStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
-      <div class="pop-head ctx-head">
-        <span>Context window · {contextPct}%</span>
-        <span class="ctx-actions">
-          {#if costUsd > 0}<span class="ctx-cost">${costUsd.toFixed(4)}</span>{/if}
-          <button
-            class="ctx-compact"
-            aria-disabled={compacting || streaming}
-            title={compacting ? "Compacting…" : "Summarize to free context"}
-            on:click={() => {
-              if (compacting || streaming) return;
-              ctxOpen = false;
-              dispatch("command", { name: "compact" });
-            }}
-          >
-            {compacting ? "Compacting…" : "Compact"}
-          </button>
-        </span>
-      </div>
-      <div class="ctx-bar"><i style:width="{contextPct}%" /></div>
-      <div class="ctx-rows">
-        <div><span>Used</span><b>{kTokens(contextUsed)} of {kTokens(contextLimit)}</b></div>
-        <div><span>Session</span><b>{kTokens(tokensIn)} in · {kTokens(tokensOut)} out</b></div>
-      </div>
-    </div>
-  {/if}
 
   {#if projOpen}
     <div class="menu-pop" style={projStyle} use:popover={{ anchor: projBtn, close: () => (projOpen = false) }} transition:fly={{ y: projStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
@@ -1023,52 +955,6 @@
     flex: 1 1 auto;
     min-width: 4px;
   }
-  .ctx {
-    --ctx: var(--faint);
-    width: 24px;
-    height: 24px;
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: none;
-    border: none;
-    cursor: pointer;
-  }
-  .ctx:disabled {
-    cursor: default;
-    opacity: 0.55;
-  }
-  .ctx.busy svg {
-    animation: ctxspin 1.2s linear infinite;
-  }
-  @keyframes ctxspin {
-    to {
-      transform: rotate(270deg);
-    }
-  }
-  .ctx.warn {
-    --ctx: var(--warn);
-  }
-  .ctx.bad {
-    --ctx: var(--bad);
-  }
-  .ctx svg {
-    transform: rotate(-90deg);
-  }
-  .track {
-    fill: none;
-    stroke: var(--line);
-    stroke-width: 2;
-  }
-  .fill {
-    fill: none;
-    stroke: var(--ctx);
-    stroke-width: 2;
-    stroke-linecap: round;
-    transition: stroke-dashoffset 0.4s ease;
-  }
   .menu-pop {
     width: 340px;
     padding: 5px;
@@ -1108,80 +994,6 @@
   .tick {
     display: inline-flex;
     color: var(--text);
-  }
-  .ctx-pop {
-    width: 260px;
-    padding: 6px 10px 10px;
-  }
-  .ctx-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    text-transform: none;
-  }
-  .ctx-actions {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    flex: none;
-  }
-  .ctx-cost {
-    font-size: 11px;
-    color: var(--muted);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0;
-    text-transform: none;
-  }
-  .ctx-compact {
-    padding: 3px 10px;
-    background: var(--line);
-    border: none;
-    border-radius: var(--radius);
-    color: var(--text);
-    font-size: 11.5px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .ctx-compact:hover {
-    background: color-mix(in srgb, var(--text) 16%, transparent);
-  }
-  .ctx-compact[aria-disabled="true"] {
-    opacity: 0.45;
-    cursor: default;
-  }
-  .ctx-bar {
-    height: 6px;
-    margin: 0 2px 10px;
-    border-radius: 3px;
-    background: var(--line);
-    overflow: hidden;
-  }
-  .ctx-bar i {
-    display: block;
-    height: 100%;
-    border-radius: inherit;
-    background: var(--accent);
-  }
-  .ctx-rows {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-    margin: 0 2px 12px;
-    font-size: 12px;
-  }
-  .ctx-rows div {
-    display: flex;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .ctx-rows span {
-    color: var(--faint);
-  }
-  .ctx-rows b {
-    font-weight: 550;
-    color: var(--text);
-    font-variant-numeric: tabular-nums;
   }
   .pop-head {
     padding: 6px 8px 4px;
@@ -1319,8 +1131,7 @@
     text-align: left;
   }
   .proj-out:hover { color: var(--text); }
-  .proj-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--faint); }
-  .proj-out.set .proj-dot { background: var(--accent); box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 70%, transparent); }
+  .proj-out.set :global(svg:first-child) { color: var(--accent); }
   .proj-title { font-weight: 650; color: var(--text); white-space: nowrap; }
   .proj-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 11px; color: var(--faint); }
   .proj-branch { flex: none; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--text) 7%, transparent); font-family: var(--mono); font-size: 10.5px; color: var(--muted); }

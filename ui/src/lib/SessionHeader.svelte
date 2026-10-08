@@ -10,8 +10,15 @@
   export let agentCount = 0;
   export let panelOpen = false;
   export let backTitle: string | null = null;
+  export let contextUsed = 0;
+  export let contextLimit = 0;
+  export let compacting = false;
+  export let streaming = false;
+  export let tokensIn = 0;
+  export let tokensOut = 0;
+  export let costUsd = 0;
 
-  const dispatch = createEventDispatcher<{ rename: { title: string }; fork: void; copyId: void; delete: void; agents: void; back: void }>();
+  const dispatch = createEventDispatcher<{ rename: { title: string }; fork: void; copyId: void; delete: void; agents: void; back: void; compact: void }>();
 
   type Action = "rename" | "fork" | "copyId" | "delete";
   const ITEMS: { id: Action; label: string; icon: IconName }[] = [
@@ -26,6 +33,16 @@
   let editing = false;
   let draft = "";
   let field: HTMLInputElement | null = null;
+
+  function kTokens(n: number) {
+    if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+    return String(n);
+  }
+
+  const RING = 2 * Math.PI * 6;
+  $: contextPct = contextLimit > 0 ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : 0;
+  let ctxOpen = false;
 
   async function run(id: Action) {
     open = false;
@@ -85,6 +102,21 @@
   </div>
   {#if canAct}
     <div class="menu" bind:this={menu}>
+      {#if contextLimit > 0}
+        <button
+          class="icon-btn ctx"
+          class:warn={contextPct >= 70}
+          class:bad={contextPct >= 90}
+          disabled={compacting || streaming}
+          title={compacting ? "Compacting…" : `Context ${contextPct}% full. Click for breakdown.`}
+          on:click={() => (ctxOpen = !ctxOpen)}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+            <circle class="track" cx="8" cy="8" r="6" />
+            <circle class="fill" cx="8" cy="8" r="6" stroke-dasharray={RING} stroke-dashoffset={compacting ? RING * 0.7 : RING * (1 - contextPct / 100)} />
+          </svg>
+        </button>
+      {/if}
       <button class="icon-btn" class:on={panelOpen} title="Toggle dock (Ctrl+Shift+A)" on:click={() => dispatch("agents")}>
         <Icon name="panel" size={14} />
         {#if agentCount > 0}<span class="count">{agentCount > 99 ? "99+" : agentCount}</span>{/if}
@@ -101,6 +133,27 @@
               <span>{item.label}</span>
             </button>
           {/each}
+        </div>
+      {/if}
+      {#if ctxOpen && contextLimit > 0}
+        <div class="dropdown ctx-pop" role="dialog" aria-label="Context usage">
+          <div class="ctx-head"><span>Context · {contextPct}%</span>{#if costUsd > 0}<span class="ctx-cost">${costUsd.toFixed(4)}</span>{/if}</div>
+          <div class="ctx-bar"><i style:width="{contextPct}%" /></div>
+          <div class="ctx-rows">
+            <div><span>Used</span><b>{kTokens(contextUsed)} of {kTokens(contextLimit)}</b></div>
+            <div><span>Session</span><b>{kTokens(tokensIn)} in · {kTokens(tokensOut)} out</b></div>
+          </div>
+          <button
+            class="ctx-compact"
+            disabled={compacting || streaming}
+            on:click={() => {
+              if (compacting || streaming) return;
+              ctxOpen = false;
+              dispatch("compact");
+            }}
+          >
+            {compacting ? "Compacting…" : "Compact"}
+          </button>
         </div>
       {/if}
     </div>
@@ -253,4 +306,23 @@
     margin: 3px 0;
     background: var(--line);
   }
+  .ctx { --ctx: var(--faint); }
+  .ctx:disabled { opacity: 0.55; cursor: default; }
+  .ctx svg { transform: rotate(-90deg); }
+  .ctx .track { fill: none; stroke: var(--line); stroke-width: 2; }
+  .ctx .fill { fill: none; stroke: var(--ctx); stroke-width: 2; stroke-linecap: round; }
+  .ctx.warn { --ctx: var(--warn); }
+  .ctx.bad { --ctx: var(--bad); }
+  .ctx-pop { padding: 10px 12px 12px; width: 220px; }
+  .ctx-head { display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+  .ctx-cost { color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+  .ctx-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin-bottom: 8px; }
+  .ctx-bar i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+  .ctx-rows { display: flex; flex-direction: column; gap: 4px; font-size: 12px; margin-bottom: 10px; }
+  .ctx-rows div { display: flex; justify-content: space-between; }
+  .ctx-rows span { color: var(--faint); }
+  .ctx-rows b { font-weight: 550; font-variant-numeric: tabular-nums; }
+  .ctx-compact { width: 100%; padding: 5px; background: var(--line); border: none; border-radius: var(--radius); font-size: 12px; font-weight: 600; cursor: pointer; color: var(--text); }
+  .ctx-compact:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 16%, transparent); }
+  .ctx-compact:disabled { opacity: 0.45; cursor: default; }
 </style>
