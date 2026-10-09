@@ -16,6 +16,13 @@ static TABS: Mutex<BTreeMap<String, (String, Url)>> = Mutex::new(BTreeMap::new()
 static REFIT: Mutex<Option<Fit>> = Mutex::new(None);
 static ARMED: AtomicBool = AtomicBool::new(false);
 static SHOWN: Mutex<String> = Mutex::new(String::new());
+static LRU: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+// Live page renderers are the app's biggest memory cost
+// (~50-150MB each). Past this many, the least-recently-shown
+// background page is closed; its current URL is kept so reopening
+// restores it. Shown page + this many background pages stay live.
+const PAGE_CAP: usize = 6;
 
 struct Fit {
     gen: u64,
@@ -113,6 +120,49 @@ fn hide_pages(app: &AppHandle, keep: &str) {
     }
 }
 
+fn touch_lru(label: &str) {
+    let mut lru = locked(&LRU);
+    if let Some(i) = lru.iter().position(|l| l == label) {
+        lru.remove(i);
+    }
+    lru.insert(0, label.to_string());
+}
+
+fn evict_lru(app: &AppHandle, keep: &str) {
+    let live: Vec<String> = app
+        .webviews()
+        .into_iter()
+        .map(|(label, _)| label)
+        .filter(|l| l.starts_with(PAGE_PREFIX))
+        .collect();
+    if live.len() <= PAGE_CAP {
+        return;
+    }
+    let victim = {
+        let lru = locked(&LRU);
+        lru.iter()
+            .rev()
+            .find(|l| *l != keep && live.iter().any(|v| v == *l))
+            .cloned()
+            .or_else(|| live.into_iter().find(|l| l != keep))
+    };
+    let Some(label) = victim else {
+        return;
+    };
+    if let Some(wv) = app.get_webview(&label) {
+        // Keep the tab's current URL so reopening restores it.
+        if let Ok(url) = wv.url() {
+            if url.scheme() == "http" || url.scheme() == "https" {
+                if let Some(slot) = locked(&TABS).get_mut(&label) {
+                    slot.1 = url;
+                }
+            }
+        }
+        let _ = wv.close();
+    }
+    locked(&LRU).retain(|l| l != &label);
+}
+
 #[tauri::command]
 pub fn browser_show(
     app: AppHandle,
@@ -137,6 +187,7 @@ pub fn browser_show(
         let url = http_page(url).inspect_err(|_| hide_pages(&app, ""))?;
         locked(&TABS).entry(label.clone()).or_insert((tab, url));
     }
+    touch_lru(&label);
     let job = Fit {
         gen,
         label,
@@ -158,6 +209,16 @@ pub fn browser_prepare(app: AppHandle, tab: String, url: &str) -> Result<(), Str
     }
     let url = http_page(url)?;
     locked(&TABS).entry(label.clone()).or_insert((tab, url));
+    // Warming past the cap only records the entry; the webview is
+    // created lazily on first show so background tabs stay bounded.
+    let live = app
+        .webviews()
+        .into_iter()
+        .filter(|(l, _)| l.starts_with(PAGE_PREFIX))
+        .count();
+    if live >= PAGE_CAP {
+        return Ok(());
+    }
     let Some(window) = app.get_window("main") else {
         return Ok(());
     };
@@ -207,6 +268,7 @@ fn mount_page(app: &AppHandle, window: &tauri::Window, job: Fit) {
     };
     if fit_page(&wv, &job) {
         hide_pages(app, &job.label);
+        evict_lru(app, &job.label);
         let mut shown = locked(&SHOWN);
         if *shown != job.label {
             shown.clone_from(&job.label);
@@ -460,6 +522,7 @@ pub fn browser_hide(app: AppHandle) {
 pub fn browser_close(app: AppHandle, tab: &str) -> Result<(), String> {
     let label = page_label(tab)?;
     locked(&TABS).remove(&label);
+    locked(&LRU).retain(|l| l != &label);
     match app.get_webview(&label) {
         Some(wv) => wv.close().map_err(|e| e.to_string()),
         None => Ok(()),

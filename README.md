@@ -14,8 +14,7 @@ Grab the latest release from
 | Your machine | Pick this file |
 | --- | --- |
 | Windows 10 / 11, 64-bit (recommended) | `Parzi_*_x64-setup.exe` — per-user install, no admin needed |
-| Windows, system-wide | `Parzi_*_x64_en-US.msi` — needs admin |
-| macOS, Apple Silicon or Intel | `Parzi_*_universal.dmg` — drag Parzi into Applications |
+| macOS, Apple Silicon | `Parzi_*_aarch64.dmg` — drag Parzi into Applications |
 
 First launch asks once: on Windows SmartScreen wants
 *More info → Run anyway*. On macOS (builds are not Apple-notarized), run

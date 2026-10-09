@@ -3,7 +3,7 @@
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { handleLinkClick } from "./links";
-  import { renderMarkdown, splitSegments, LiveMarkdown } from "./md";
+  import { mdHtml, richReady, splitSegments, LiveMarkdown } from "./md";
   import Widget from "./widgets/Widget.svelte";
   import ArtifactCard from "./widgets/ArtifactCard.svelte";
   import Steps from "./Steps.svelte";
@@ -331,7 +331,7 @@ ${e.text}` : e.text;
           <button class="copy" title="Edit in composer" on:click={() => dispatch("edited", { text: stripMarker(item.text) })}>
             <Icon name="pencil" size={13} />
           </button>
-          <div class="bubble msg">{@html renderMarkdown(stripMarker(item.text))}</div>
+          <div class="bubble msg">{@html mdHtml(stripMarker(item.text), $richReady)}</div>
         </div>
         {#if images.length}
           <div class="sent">
@@ -348,7 +348,7 @@ ${e.text}` : e.text;
         <div class="body">
           {#each splitSegments(item.text) as seg}
             {#if seg.kind === "md"}
-              <div class="msg">{@html renderMarkdown(seg.body)}</div>
+              <div class="msg">{@html mdHtml(seg.body, $richReady)}</div>
             {:else if seg.kind === "widget"}
               <Widget data={seg.body} />
             {:else if seg.kind === "artifact"}
@@ -388,7 +388,7 @@ ${e.text}` : e.text;
       {#if item.fence === "parzi-widget"}
         <Widget data={item.payload} />
       {:else}
-        <div class="msg">{@html renderMarkdown("```" + item.fence + "\n" + JSON.stringify(item.payload, null, 2) + "\n```")}</div>
+        <div class="msg">{@html mdHtml("```" + item.fence + "\n" + JSON.stringify(item.payload, null, 2) + "\n```", $richReady)}</div>
       {/if}
     {:else if item.kind === "artifact"}
       <ArtifactCard
@@ -413,7 +413,7 @@ ${e.text}` : e.text;
         <div class="live-tail">{@html livePart.tail}</div>
       </div>
     {:else if seg.kind === "md"}
-      <div class="msg">{@html renderMarkdown(seg.body)}</div>
+      <div class="msg">{@html mdHtml(seg.body, $richReady)}</div>
     {:else if seg.kind === "widget"}
       <Widget data={seg.body} />
     {:else if seg.kind === "artifact"}

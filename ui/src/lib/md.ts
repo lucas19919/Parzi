@@ -1,55 +1,88 @@
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
-import katex from "katex";
+import { writable } from "svelte/store";
 import "katex/dist/katex.min.css";
-import hljs from "highlight.js/lib/core";
-import rust from "highlight.js/lib/languages/rust";
-import python from "highlight.js/lib/languages/python";
-import javascript from "highlight.js/lib/languages/javascript";
-import typescript from "highlight.js/lib/languages/typescript";
-import bash from "highlight.js/lib/languages/bash";
-import json from "highlight.js/lib/languages/json";
-import ini from "highlight.js/lib/languages/ini";
-import xml from "highlight.js/lib/languages/xml";
-import css from "highlight.js/lib/languages/css";
-import sql from "highlight.js/lib/languages/sql";
-import go from "highlight.js/lib/languages/go";
-import markdown from "highlight.js/lib/languages/markdown";
-import yaml from "highlight.js/lib/languages/yaml";
-import diff from "highlight.js/lib/languages/diff";
-import c from "highlight.js/lib/languages/c";
-import cpp from "highlight.js/lib/languages/cpp";
 
-hljs.registerLanguage("rust", rust);
-hljs.registerLanguage("rs", rust);
-hljs.registerLanguage("python", python);
-hljs.registerLanguage("py", python);
-hljs.registerLanguage("javascript", javascript);
-hljs.registerLanguage("js", javascript);
-hljs.registerLanguage("typescript", typescript);
-hljs.registerLanguage("ts", typescript);
-hljs.registerLanguage("bash", bash);
-hljs.registerLanguage("sh", bash);
-hljs.registerLanguage("shell", bash);
-hljs.registerLanguage("zsh", bash);
-hljs.registerLanguage("json", json);
-hljs.registerLanguage("toml", ini);
-hljs.registerLanguage("ini", ini);
-hljs.registerLanguage("xml", xml);
-hljs.registerLanguage("html", xml);
-hljs.registerLanguage("svg", xml);
-hljs.registerLanguage("css", css);
-hljs.registerLanguage("sql", sql);
-hljs.registerLanguage("go", go);
-hljs.registerLanguage("golang", go);
-hljs.registerLanguage("markdown", markdown);
-hljs.registerLanguage("md", markdown);
-hljs.registerLanguage("yaml", yaml);
-hljs.registerLanguage("yml", yaml);
-hljs.registerLanguage("diff", diff);
-hljs.registerLanguage("patch", diff);
-hljs.registerLanguage("c", c);
-hljs.registerLanguage("cpp", cpp);
+// Rich renderers (KaTeX + highlight.js) load on first use, off the
+// startup path. Until then code renders plain and math renders as
+// escaped source; `richReady` flips and cached fallbacks are dropped.
+export const richReady = writable(false);
+
+type Katex = { renderToString: (tex: string, opts: Record<string, unknown>) => string };
+type Hljs = { getLanguage: (name: string) => unknown; highlight: (code: string, opts: { language: string }) => { value: string } };
+
+let katex: Katex | null = null;
+let hljs: Hljs | null = null;
+let richPromise: Promise<void> | null = null;
+
+export function ensureRich(): Promise<void> {
+  if (!richPromise) {
+    richPromise = (async () => {
+      const [k, h, langs] = await Promise.all([
+        import("katex"),
+        import("highlight.js/lib/core"),
+        Promise.all([
+          import("highlight.js/lib/languages/rust"),
+          import("highlight.js/lib/languages/python"),
+          import("highlight.js/lib/languages/javascript"),
+          import("highlight.js/lib/languages/typescript"),
+          import("highlight.js/lib/languages/bash"),
+          import("highlight.js/lib/languages/json"),
+          import("highlight.js/lib/languages/ini"),
+          import("highlight.js/lib/languages/xml"),
+          import("highlight.js/lib/languages/css"),
+          import("highlight.js/lib/languages/sql"),
+          import("highlight.js/lib/languages/go"),
+          import("highlight.js/lib/languages/markdown"),
+          import("highlight.js/lib/languages/yaml"),
+          import("highlight.js/lib/languages/diff"),
+          import("highlight.js/lib/languages/c"),
+          import("highlight.js/lib/languages/cpp"),
+        ]),
+      ]);
+      katex = ((k as any).default ?? k) as Katex;
+      const core = ((h as any).default ?? h) as Hljs & { registerLanguage: (name: string, lang: unknown) => void };
+      const [rust, python, javascript, typescript, bash, json, ini, xml, css, sql, go, markdown, yaml, diff, c, cpp] =
+        langs.map((m) => (m as any).default ?? m);
+      core.registerLanguage("rust", rust);
+      core.registerLanguage("rs", rust);
+      core.registerLanguage("python", python);
+      core.registerLanguage("py", python);
+      core.registerLanguage("javascript", javascript);
+      core.registerLanguage("js", javascript);
+      core.registerLanguage("typescript", typescript);
+      core.registerLanguage("ts", typescript);
+      core.registerLanguage("bash", bash);
+      core.registerLanguage("sh", bash);
+      core.registerLanguage("shell", bash);
+      core.registerLanguage("zsh", bash);
+      core.registerLanguage("json", json);
+      core.registerLanguage("toml", ini);
+      core.registerLanguage("ini", ini);
+      core.registerLanguage("xml", xml);
+      core.registerLanguage("html", xml);
+      core.registerLanguage("svg", xml);
+      core.registerLanguage("css", css);
+      core.registerLanguage("sql", sql);
+      core.registerLanguage("go", go);
+      core.registerLanguage("golang", go);
+      core.registerLanguage("markdown", markdown);
+      core.registerLanguage("md", markdown);
+      core.registerLanguage("yaml", yaml);
+      core.registerLanguage("yml", yaml);
+      core.registerLanguage("diff", diff);
+      core.registerLanguage("patch", diff);
+      core.registerLanguage("c", c);
+      core.registerLanguage("cpp", cpp);
+      hljs = core;
+      mdCache.clear();
+      richReady.set(true);
+    })().catch(() => {
+      richPromise = null;
+    });
+  }
+  return richPromise;
+}
 
 const md = new MarkdownIt({
   html: false,
@@ -63,7 +96,7 @@ md.validateLink = (url: string) => {
 };
 
 function texHtml(tex: string, display: boolean): string | null {
-  if (!tex.trim()) return null;
+  if (!tex.trim() || !katex) return null;
   try {
     return katex.renderToString(tex, {
       displayMode: display,
@@ -175,9 +208,9 @@ md.renderer.rules.fence = (tokens, idx) => {
       })
       .join("\n");
   } else {
-    const plain = PLAIN_FENCES.has(lang.toLowerCase()) || !hljs.getLanguage(lang);
+    const plain = !hljs || PLAIN_FENCES.has(lang.toLowerCase()) || !hljs.getLanguage(lang);
     try {
-      code = plain ? escapeHtml(body) : hljs.highlight(body, { language: lang }).value;
+      code = plain || !hljs ? escapeHtml(body) : hljs.highlight(body, { language: lang }).value;
     } catch {
       code = escapeHtml(body);
     }
@@ -249,6 +282,10 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
 });
 
 export function renderMarkdown(src: string, cache = true): string {
+  // Kick the rich renderers off the startup path; the first render may
+  // fall back to plain code / escaped math and upgrades when they land
+  // (callers pass $richReady via mdHtml so markup re-renders then).
+  void ensureRich();
   if (cache) {
     const hit = mdCache.get(src);
     if (hit !== undefined) {
@@ -265,6 +302,12 @@ export function renderMarkdown(src: string, cache = true): string {
   }
   mdCache.set(src, res);
   return res;
+}
+
+// Reactive wrapper for markup: `{@html mdHtml(body, $richReady)}`
+// re-renders with highlighting/math once the lazy chunks arrive.
+export function mdHtml(src: string, _rev: unknown, cache = true): string {
+  return renderMarkdown(src, cache);
 }
 
 type Segment =

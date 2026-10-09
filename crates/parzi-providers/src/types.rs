@@ -67,13 +67,38 @@ impl ProviderError {
 fn sniff_class(message: &str) -> Option<ErrorClass> {
     let m = message.to_lowercase();
     let has = |s: &[&str]| s.iter().any(|w| m.contains(w));
-    if has(&["rate limit", "rate_limit", "ratelimit", "429", "quota exceeded", "too many requests"]) {
+    if has(&[
+        "rate limit",
+        "rate_limit",
+        "ratelimit",
+        "429",
+        "quota exceeded",
+        "too many requests",
+    ]) {
         Some(ErrorClass::RateLimit)
-    } else if has(&["not signed in", "unauthorized", "401", "403", "authentication required", "invalid api key"]) {
+    } else if has(&[
+        "not signed in",
+        "unauthorized",
+        "401",
+        "403",
+        "authentication required",
+        "invalid api key",
+    ]) {
         Some(ErrorClass::Auth)
-    } else if has(&["context window", "context_length", "too many tokens", "context overflow"]) {
+    } else if has(&[
+        "context window",
+        "context_length",
+        "too many tokens",
+        "context overflow",
+    ]) {
         Some(ErrorClass::ContextOverflow)
-    } else if has(&["overloaded", "over capacity", "503", "service unavailable", "try again later"]) {
+    } else if has(&[
+        "overloaded",
+        "over capacity",
+        "503",
+        "service unavailable",
+        "try again later",
+    ]) {
         Some(ErrorClass::Overloaded)
     } else {
         None

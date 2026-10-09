@@ -21,5 +21,17 @@ export default defineConfig({
   plugins: [svelte(), katexWoff2Only()],
   clearScreen: false,
   server: { port: 1420, strictPort: true },
-  build: { target: "es2021" },
+  build: {
+    target: "es2021",
+    rollupOptions: {
+      output: {
+        // Stable vendor/md chunks keep app-code hashes churn-free
+        // across releases; heavy renderers split off by dynamic import.
+        manualChunks: {
+          vendor: ["svelte", "@tauri-apps/api"],
+          md: ["markdown-it", "dompurify"],
+        },
+      },
+    },
+  },
 });

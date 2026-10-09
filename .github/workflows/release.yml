@@ -16,7 +16,7 @@ jobs:
           - platform: windows-latest
             args: ""
           - platform: macos-latest
-            args: "--target universal-apple-darwin"
+            args: "--target aarch64-apple-darwin"
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -28,10 +28,6 @@ jobs:
           cache-dependency-path: ui/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Add macOS Rust targets
-        if: runner.os == 'macOS'
-        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -56,8 +52,7 @@ jobs:
             | Your machine | Pick this file |
             | --- | --- |
             | Windows 10 / 11, 64-bit (recommended) | `Parzi_*_x64-setup.exe` — per-user install, no admin needed |
-            | Windows, system-wide | `Parzi_*_x64_en-US.msi` — needs admin |
-            | macOS, Apple Silicon or Intel | `Parzi_*_universal.dmg` — drag Parzi into Applications |
+            | macOS, Apple Silicon | `Parzi_*_aarch64.dmg` — drag Parzi into Applications |
             | Command line | `parzi-windows-x64.exe` or `parzi-macos-arm64` — drives sessions and tabs from scripts |
 
             ### First launch (once per machine)
@@ -82,8 +77,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           shopt -s nullglob
-          files=(src-tauri/target/release/bundle/{nsis,msi}/* \
-                 src-tauri/target/universal-apple-darwin/release/bundle/{dmg,macos}/*)
+          files=(src-tauri/target/release/bundle/nsis/* \
+                 src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*)
           for f in "${files[@]}"; do
             [ -f "$f" ] || continue
             gh release upload "${{ github.ref_name }}" "$f" --clobber

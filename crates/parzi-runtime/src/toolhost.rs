@@ -285,9 +285,7 @@ fn validate_plan(args: &Value) -> std::result::Result<(), String> {
     for (id, step) in ids.iter().zip(steps.iter()) {
         for need in plan_needs(step) {
             if !by_id.contains_key(need.as_str()) {
-                return Err(format!(
-                    "plan step `{id}` needs unknown step `{need}`"
-                ));
+                return Err(format!("plan step `{id}` needs unknown step `{need}`"));
             }
         }
     }
@@ -1364,7 +1362,9 @@ impl ToolHost {
         match std::fs::read_to_string(&path) {
             Ok(text) if !text.trim().is_empty() => {
                 let mut out = text;
-                out.push_str(&plan_rollup(&serde_json::from_str(&out).unwrap_or_default()));
+                out.push_str(&plan_rollup(
+                    &serde_json::from_str(&out).unwrap_or_default(),
+                ));
                 (true, out)
             }
             _ => (true, "no plan on file.".into()),
@@ -1398,7 +1398,10 @@ impl ToolHost {
             .get("decisions")
             .and_then(Value::as_array)
             .map_or(0, Vec::len);
-        let lanes = args.get("lanes").and_then(Value::as_array).map_or(0, Vec::len);
+        let lanes = args
+            .get("lanes")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
         let mut reply = format!("plan saved ({steps} steps, {decisions} decisions");
         if lanes > 0 {
             reply.push_str(&format!(", {lanes} lanes"));

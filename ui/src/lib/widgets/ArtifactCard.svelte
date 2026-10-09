@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import DOMPurify from "dompurify";
   import { api } from "../api";
-  import { renderMarkdown } from "../md";
+  import { mdHtml, richReady } from "../md";
   import { handleLinkClick } from "../links";
   import { previewSpecOf, previewProblem } from "../previewRegistry";
 
@@ -91,7 +91,7 @@
     <div class="art-error">Unknown preview — {previewProblem(content)}.</div>
   {:else if kind === "markdown"}
     <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
-    <div class="art-md" on:click={(e) => void handleLinkClick(e)}>{@html renderMarkdown(content)}</div>
+    <div class="art-md" on:click={(e) => void handleLinkClick(e)}>{@html mdHtml(content, $richReady)}</div>
   {:else if kind === "svg"}
     <div class="art-svg">{@html safeSvg}</div>
   {:else if kind === "image" && imageUrl}
@@ -102,7 +102,7 @@
     <iframe bind:this={frame} class="art-render" {title} sandbox="allow-scripts" scrolling="no" srcdoc={LOCAL_ONLY + RESIZE + content}></iframe>
   {:else}
     <div class="art-code" class:clamped={!expanded && lines > 30}>
-      {@html renderMarkdown("```" + (language || kind) + "\n" + content.slice(0, 60000) + "\n```")}
+      {@html mdHtml("```" + (language || kind) + "\n" + content.slice(0, 60000) + "\n```", $richReady)}
     </div>
     {#if lines > 30}
       <button class="expand-btn" on:click={() => (expanded = !expanded)}>

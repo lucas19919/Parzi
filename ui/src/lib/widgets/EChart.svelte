@@ -1,30 +1,16 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import * as echarts from "echarts/core";
-  import { LineChart, BarChart, ScatterChart } from "echarts/charts";
-  import {
-    GridComponent,
-    TooltipComponent,
-    DataZoomComponent,
-  } from "echarts/components";
-  import { SVGRenderer } from "echarts/renderers";
 
-  echarts.use([
-    LineChart,
-    BarChart,
-    ScatterChart,
-    GridComponent,
-    TooltipComponent,
-    DataZoomComponent,
-    SVGRenderer,
-  ]);
+  // echarts loads on first chart, off the startup path.
+  type ECharts = import("echarts/core").ECharts;
 
   export let option: any = null;
   export let height = 260;
 
   let el: HTMLDivElement | null = null;
-  let chart: echarts.ECharts | null = null;
+  let chart: ECharts | null = null;
   let shown: any = null;
+  let failed = false;
 
   export function snapshot(): string | null {
     if (!chart) return null;
@@ -36,12 +22,41 @@
   }
 
   onMount(() => {
-    if (!el) return;
-    chart = echarts.init(el, null, { renderer: "svg" });
-    if (shown) chart.setOption(shown, true);
+    let dead = false;
+    void (async () => {
+      try {
+        const [core, charts, comps, renderers] = await Promise.all([
+          import("echarts/core"),
+          import("echarts/charts"),
+          import("echarts/components"),
+          import("echarts/renderers"),
+        ]);
+        if (dead || !el) return;
+        core.use([
+          charts.LineChart,
+          charts.BarChart,
+          charts.ScatterChart,
+          comps.GridComponent,
+          comps.TooltipComponent,
+          comps.DataZoomComponent,
+          renderers.SVGRenderer,
+        ]);
+        chart = core.init(el, null, { renderer: "svg" });
+        if (shown) chart.setOption(shown, true);
+        else if (option) {
+          shown = option;
+          chart.setOption(option, true);
+        }
+      } catch {
+        if (!dead) failed = true;
+      }
+    })();
     const ro = new ResizeObserver(() => chart?.resize());
-    ro.observe(el);
-    return () => ro.disconnect();
+    if (el) ro.observe(el);
+    return () => {
+      dead = true;
+      ro.disconnect();
+    };
   });
 
   $: if (chart && option && option !== shown) {
@@ -55,11 +70,17 @@
   });
 </script>
 
-<div bind:this={el} class="echart" style={`height:${height}px`} />
+<div bind:this={el} class="echart" style={`height:${height}px`}>
+  {#if failed}<span class="echart-err">Chart failed to load</span>{/if}
+</div>
 
 <style>
   .echart {
     width: 100%;
     min-width: 0;
+  }
+  .echart-err {
+    font-size: 12px;
+    color: var(--faint);
   }
 </style>

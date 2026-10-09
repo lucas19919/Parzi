@@ -3,7 +3,7 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import Icon from "./Icon.svelte";
   import { api, brain, EVERYWHERE, type NoteMeta, type ObsidianState, type Project } from "./api";
-  import { renderMarkdown } from "./md";
+  import { mdHtml, richReady } from "./md";
   import { folderName } from "./tabs";
   import { toast, toastError } from "./toast";
   import { targetBrainNote } from "./brainStore";
@@ -467,7 +467,7 @@
           <textarea bind:value={raw} on:input={onEdit} on:blur={flush} spellcheck="true" />
         {:else}
           <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-          <div class="msg doc" on:click={onPreviewClick}>{@html renderMarkdown(withLinks(body(raw)), false)}</div>
+          <div class="msg doc" on:click={onPreviewClick}>{@html mdHtml(withLinks(body(raw)), $richReady, false)}</div>
         {/if}
       </div>
     {:else if current}

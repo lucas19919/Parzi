@@ -33,7 +33,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "dmg"],
     "publisher": "Parzi",
     "copyright": "Copyright © 2026 Parzi",
     "homepage": "https://github.com/lucas19919/Parzi",
@@ -50,11 +50,6 @@
     ],
     "createUpdaterArtifacts": true,
     "windows": {
-      "wix": {
-        "language": "en-US",
-        "bannerPath": "installer/banner.bmp",
-        "dialogImagePath": "installer/dialog.bmp"
-      },
       "nsis": {
         "installMode": "currentUser",
         "languages": ["English"],

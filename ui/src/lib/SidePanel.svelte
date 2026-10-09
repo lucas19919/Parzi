@@ -5,7 +5,7 @@
   import { hasMark } from "./providerMarks";
   import { api, brain, type SessionMeta } from "./api";
   import { toast } from "./toast";
-  import { renderMarkdown } from "./md";
+  import { mdHtml, richReady } from "./md";
   import { agentOf, isLiveSession, whereOf } from "./sessions";
   import { laneIcon } from "./lanes";
   import { formatTime as time } from "./time";
@@ -422,7 +422,7 @@
               <div class="prog">{taskDone}/{taskTotal} tracks done</div>
             {/if}
             {#if goalsMd}
-              <div class="goals">{@html renderMarkdown(stripFront(goalsMd))}</div>
+              <div class="goals">{@html mdHtml(stripFront(goalsMd), $richReady)}</div>
             {/if}
             {#each taskSections as sec (sec.title || "top")}
               {#if sec.title}<h4>{sec.title}</h4>{/if}
