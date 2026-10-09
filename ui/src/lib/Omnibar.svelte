@@ -202,6 +202,9 @@
 
   $: if (lockMode && mode !== lockMode) mode = lockMode;
   $: if (textarea && !input) textarea.style.height = "";
+  // Keystrokes call autosize via onInput; this covers programmatic fills
+  // (edit-load, tab drafts) so the box always fits its text.
+  $: if (textarea && input) void autosize();
   $: if (mode !== "search" || !input.trim()) clearWeb();
   $: webOpen = focused && mode === "search" && webRows.length > 0;
 

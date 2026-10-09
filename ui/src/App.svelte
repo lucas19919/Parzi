@@ -9,6 +9,8 @@
   } from "./lib/api";
   import TopBar from "./lib/TopBar.svelte";
   import Sidebar from "./lib/Sidebar.svelte";
+  import WinControls from "./lib/WinControls.svelte";
+  import { startWindowDrag } from "./lib/windowChrome";
   import Switcher from "./lib/Switcher.svelte";
   import DefaultArt from "./lib/DefaultArt.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
@@ -325,6 +327,7 @@
   function closeTab(id: string) {
     const idx = tabs.findIndex((t) => t.id === id);
     if (idx < 0) return;
+    const closedKind = tabs[idx].kind;
     // Closing a session tab takes its agent-owned pages with it.
     const doomed = new Set([id]);
     const closingSession = tabs[idx].kind === "session" ? tabs[idx].sessionId : null;
@@ -338,6 +341,7 @@
         if (t.url) closed = [...closed, { url: t.url, title: t.title }].slice(-20);
       }
     }
+    if (settingsReturn && doomed.has(settingsReturn)) settingsReturn = null;
     if (navTab === id || doomed.has(navTab)) {
       navTrail = [];
       navTab = "";
@@ -350,7 +354,15 @@
       return;
     }
     tabs = kept;
-    if (doomed.has(activeId)) selectTab(tabs[Math.max(0, idx - 1)].id);
+    if (!doomed.has(activeId)) return;
+    // Settings (and friends) return to the tab you came from, not a neighbor.
+    if (closedKind === "settings" && settingsReturn && kept.some((t) => t.id === settingsReturn)) {
+      const back = settingsReturn;
+      settingsReturn = null;
+      selectTab(back);
+      return;
+    }
+    selectTab(kept[Math.max(0, Math.min(idx, kept.length - 1))].id);
   }
 
   function newSession() {
@@ -476,12 +488,19 @@
     else addTab(previewTab(which));
   }
 
+  // Closing settings always lands back where you came from.
+  let settingsReturn: string | null = null;
+
   function openSettings(section = "general") {
     settingsSection = section;
     switcherOpen = false;
     const existing = tabs.find((t) => t.kind === "settings");
-    if (existing) selectTab(existing.id);
-    else addTab(settingsTab());
+    if (existing) {
+      selectTab(existing.id);
+      return;
+    }
+    if (tab.kind !== "settings") settingsReturn = activeId;
+    addTab(settingsTab());
   }
 
   async function send() {
@@ -904,6 +923,13 @@
   {/if}
 
   <main>
+    {#if layout === "sidebar" && !immersive}
+      <!-- svelte-ignore a11y-no-static-element-interactions a11y-no-noninteractive-element-interactions -->
+      <div class="winstrip" on:mousedown={startWindowDrag}>
+        <span class="winstrip-fill" />
+        <WinControls />
+      </div>
+    {/if}
     {#if tab.kind === "settings"}
       <div class="fill col" in:fly={{ y: 8, ...motion }}>
         <PanelHeader title="Settings" on:close={() => closeTab(activeId)} />
@@ -1015,6 +1041,7 @@
         <div class="home" in:fade={{ duration: 200 }}>
           <HomeView
             {threads}
+            {running}
             on:open={(e) => browse(e.detail.url)}
             on:openSession={(e) => openSession(e.detail.id)}
             on:allSessions={() => openHistory("sessions")}
@@ -1130,6 +1157,17 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+  }
+  .winstrip {
+    display: flex;
+    align-items: center;
+    height: 32px;
+    flex: none;
+    padding: 0 6px 0 12px;
+    user-select: none;
+  }
+  .winstrip-fill {
+    flex: 1;
   }
   .fill {
     flex: 1;

@@ -1,12 +1,12 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { getCurrentWindow } from "@tauri-apps/api/window";
   import Icon from "./Icon.svelte";
   import TabBar from "./TabBar.svelte";
+  import WinControls from "./WinControls.svelte";
   import type { Tab } from "./tabs";
   import { setOverlay } from "./overlay";
   import { updateVersion } from "./updateStore";
-  import { startWindowDrag, windowClose, windowMaximize, windowMinimize } from "./windowChrome";
+  import { startWindowDrag } from "./windowChrome";
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
@@ -27,7 +27,6 @@
   }>();
 
   let menuOpen = false;
-  let maximized = false;
 
   $: setOverlay("topbar-menu", menuOpen);
 
@@ -40,25 +39,13 @@
     { label: "Set up Parzi", key: "", icon: "spark", run: () => dispatch("setup") },
   ] as const;
 
-  async function syncChrome() {
-    try {
-      const w = getCurrentWindow();
-      const full = await w.isFullscreen().catch(() => false);
-      maximized = full || (await w.isMaximized().catch(() => false));
-      document.documentElement.classList.toggle("parzi-maximized", maximized);
-    } catch {}
-  }
-
   function onDocClick(e: MouseEvent) {
     if (!(e.target as HTMLElement).closest(".menu")) menuOpen = false;
   }
 
   onMount(() => {
-    void syncChrome();
-    window.addEventListener("resize", syncChrome);
     document.addEventListener("click", onDocClick);
     return () => {
-      window.removeEventListener("resize", syncChrome);
       document.removeEventListener("click", onDocClick);
       setOverlay("topbar-menu", false);
     };
@@ -119,23 +106,7 @@
     />
   </div>
 
-  <div class="window-controls">
-    <button class="win-btn" title="Minimize" tabindex="-1" on:click={windowMinimize}>
-      <svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" /></svg>
-    </button>
-    <button class="win-btn" title={maximized ? "Restore" : "Maximize"} tabindex="-1" on:click={windowMaximize}>
-      {#if maximized}
-        <svg width="10" height="10" viewBox="0 0 10 10">
-          <path d="M2.5 2V.5h7v7H8M.5 2.5h7v7h-7z" fill="none" stroke="currentColor" />
-        </svg>
-      {:else}
-        <svg width="10" height="10" viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor" /></svg>
-      {/if}
-    </button>
-    <button class="win-btn close" title="Close" tabindex="-1" on:click={windowClose}>
-      <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.1" /></svg>
-    </button>
-  </div>
+  <WinControls />
 </header>
 
 <style>
@@ -231,29 +202,5 @@
   .key {
     font-size: 10px;
     color: var(--faint);
-  }
-  .window-controls {
-    display: flex;
-    align-self: stretch;
-    flex: none;
-  }
-  .win-btn {
-    width: 44px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: transparent;
-    border: none;
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .win-btn:hover {
-    background: var(--line);
-    color: var(--text);
-  }
-  .win-btn.close:hover {
-    background: #e81123;
-    color: #fff;
   }
 </style>

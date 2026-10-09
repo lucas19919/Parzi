@@ -5,10 +5,9 @@
   import { folderName } from "./tabs";
 
   export let threads: SessionMeta[] = [];
+  export let running: Set<string> = new Set();
 
   const dispatch = createEventDispatcher<{ open: { url: string }; openSession: { id: string }; allSessions: void }>();
-
-  let showRecent = false;
 
   $: recent = threads.slice(0, 5);
 
@@ -26,23 +25,20 @@
 
 <div class="home">
   {#if recent.length}
-    <div class="recent-foot">
-      <button class="disclosure" aria-expanded={showRecent} on:click={() => (showRecent = !showRecent)}>
-        <span class="tri" class:open={showRecent}>▸</span>
-        <span>Recent sessions</span>
-      </button>
+    <div class="recent-head">
+      <span>Recent sessions</span>
       <button class="all" on:click={() => dispatch("allSessions")}>All sessions</button>
     </div>
-    {#if showRecent}
-      <div class="sessions" transition:fade={{ duration: 180 }}>
-        {#each recent as s (s.id)}
-          <button class="session" on:click={() => dispatch("openSession", { id: s.id })}>
-            <span class="title">{s.title || "Untitled session"}</span>
-            <span class="meta">{[s.cwd ? folderName(s.cwd) : "", ago(s.updated)].filter(Boolean).join(" · ")}</span>
-          </button>
-        {/each}
-      </div>
-    {/if}
+    <div class="sessions">
+      {#each recent as s (s.id)}
+        <button class="session" on:click={() => dispatch("openSession", { id: s.id })}>
+          <span class="dot" class:live={running.has(s.id)} />
+          <span class="title">{s.title || "Untitled session"}</span>
+          <span class="meta">{[s.cwd ? folderName(s.cwd) : "", ago(s.updated)].filter(Boolean).join(" · ")}</span>
+          <span class="go">›</span>
+        </button>
+      {/each}
+    </div>
   {/if}
 </div>
 
@@ -58,36 +54,16 @@
        home box; clear it so the disclosure never slides underneath. */
     padding-top: 48px;
   }
-  .recent-foot {
+  .recent-head {
     display: flex;
-    align-items: center;
+    align-items: baseline;
     justify-content: space-between;
-    padding: 0 4px;
-  }
-  .disclosure {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 2px 0;
-    background: none;
-    border: none;
-    color: var(--faint);
+    padding: 0 10px 2px;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    cursor: pointer;
-  }
-  .disclosure:hover {
-    color: var(--text);
-  }
-  .tri {
-    display: inline-block;
-    font-size: 10px;
-    transition: transform 140ms ease;
-  }
-  .tri.open {
-    transform: rotate(90deg);
+    color: var(--faint);
   }
   .all {
     padding: 0 4px;
@@ -107,10 +83,10 @@
   }
   .session {
     display: flex;
-    align-items: baseline;
-    gap: 12px;
+    align-items: center;
+    gap: 10px;
     width: 100%;
-    padding: 7px 10px;
+    padding: 8px 10px;
     background: none;
     border: none;
     border-radius: var(--radius);
@@ -134,5 +110,26 @@
     flex: none;
     font-size: 11.5px;
     color: var(--faint);
+  }
+  .dot {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--faint);
+    opacity: 0.6;
+  }
+  .dot.live {
+    background: var(--ok);
+    opacity: 1;
+  }
+  .go {
+    flex: none;
+    color: var(--faint);
+    font-size: 15px;
+    line-height: 1;
+  }
+  .session:hover .go {
+    color: var(--text);
   }
 </style>
