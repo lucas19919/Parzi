@@ -31,7 +31,7 @@ side panel for asking mid-build without losing the thread.
   default on Work, legacy `code`/`research` ids normalize.
 - Work uni kit: connected tabs, artifacts, KaTeX, save-to-brain,
   citation convention in the brief.
-- Dock: Ask/Agents/Projects/Tasks tabs, resizable, session-scoped.
+- Dock: Agents/Projects/Tasks tabs, resizable, session-scoped.
 - Shell ownership (see SHELL.md); Work has no shell by design.
 
 ## Remaining

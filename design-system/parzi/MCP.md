@@ -39,8 +39,7 @@ no discovery, no health. This plan takes it from hidden to first-class.
 ## 2. Policy model (no new concepts)
 
 - Per-tool modes stay (`tool_modes`: auto/deny/ask) + lane allowlists
-  stay (Work/Build see connectors; research… err, Work sees them,
-  Search sees none).
+  stay (Work/Build see connectors, Search sees none).
 - `allow`/`deny` lists are tool-name filters per server (already
   implemented, just unexposed — surface as multi-toggle in the editor).
 - Secrets live in `env` per server, values stored sealed (OS keyring

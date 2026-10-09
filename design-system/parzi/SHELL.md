@@ -75,7 +75,7 @@ Semantics:
   squat forever across restarts. Registry does NOT survive restart
   (running PIDs die with the job object anyway); on boot, stale
   `shell/*.log` files remain readable, shells report `restarted`.
-- Research lane: no shell tools offered, gate denies vendor shell as
+- Work lane: no shell tools offered, gate denies vendor shell as
   today. Unchanged.
 
 ## Gate changes (exact)
@@ -92,10 +92,10 @@ Semantics:
    check misfires on our own allowlist entry and instantly denies all
    vendor file tools. `is_parzi_tool()` excludes our own tools from
    that check; `approval_gate` caught it.
-2. `lane_policy_for`: build/research-unchanged except add
-   `"shell.exec" | "shell.start" | "shell.logs" | "shell.kill"` to the
-   always-offered list; research explicitly excluded (assert in test).
-3. `research_allows`: no shell entries (unchanged — deny path stands).
+2. `lane_policy_for`: build/work-unchanged except add
+    `"shell.exec" | "shell.start" | "shell.logs" | "shell.kill"` to the
+    always-offered list; work explicitly excluded (assert in test).
+3. `work_allows`: no shell entries (unchanged — deny path stands).
 4. `approval_override`/mode flow untouched: shell tools go through
    `approved()` like any Parzi tool, so Full runs, Supervised asks,
    MCP `tool_modes` still apply per `server.tool`.
@@ -130,7 +130,7 @@ Semantics:
 6. Tests: `tests/shell_tools.rs` (new) — foreground echo/true/false
    exit codes; timeout kills a sleeper (short sleeps only);
    start→logs→kill lifecycle; output cap + spill file exists;
-   research lane denies vendor Bash and offers no shell.*; allowlist
+    work lane denies vendor Bash and offers no shell.*; allowlist
    membership assertions in the style of the existing teamwork tests.
 7. No UI changes. No protocol changes. Follow-up (not this build):
    Tasks dock tab reads live shells (registry is per-run today; needs

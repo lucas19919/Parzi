@@ -116,7 +116,7 @@ edit, command and fetch and ignores the repo's `opencode.json`; it still reads
 
 `parzi providers` (or Settings › Providers) asks each program where it stands:
 installed, signed in, plan usage, models and their effort levels. It spends no
-quota. Smart Auto starts a new thread on the first ready agent in your order; a
+quota. New threads use the default model picked in Settings › Providers; a
 started thread stays with its agent. A turn that fails says so in the thread,
 in the vendor's own words.
 

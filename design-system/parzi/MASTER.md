@@ -89,7 +89,7 @@ a pack without art keeps the current wallpaper.
 - Buttons: `.btn` is a raised neutral (hover brightens fill and border);
   `.btn.primary` is the accent with an inner highlight and no glow,
   lifting 1px on hover. Every button presses (scale 0.97). Disabled is 45%.
-- Model picker: one list sized to its content. Search, Smart Auto, Starred
+- Model picker: one list sized to its content. Search, Starred
   (set in Settings › Providers), then each ready agent's models under its
   name, and agents that are not set up last. Opens from its button.
 - Popovers go through `lib/popover.ts` (portal, placement, outside click, Esc).

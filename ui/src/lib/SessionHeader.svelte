@@ -97,7 +97,7 @@
     {/if}
     {#if lane === "work" || lane === "build"}
       {@const work = lane === "work"}
-      <span class="lane" class:research={work}>{work ? "Work" : "Build"}</span>
+      <span class="lane" class:worklane={work}>{work ? "Work" : "Build"}</span>
     {/if}
   </div>
   {#if canAct}
@@ -218,9 +218,9 @@
     font-weight: 600;
     letter-spacing: 0.2px;
   }
-  .lane.research {
-    background: color-mix(in srgb, var(--research) 18%, transparent);
-    color: var(--research);
+  .lane.worklane {
+    background: color-mix(in srgb, var(--work) 18%, transparent);
+    color: var(--work);
   }
   .menu {
     position: relative;

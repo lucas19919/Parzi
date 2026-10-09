@@ -24,7 +24,7 @@ from tokens, not patches.
 - `--glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.3)`
 - `--glass-strong-bg` (composer, 58%) — only exception, documented here
 - `--on-ok: #06110a` (dark text on green pills)
-- `--research: #e8b64c` (replaces hardcoded ambers)
+- `--work: #e8b64c` (replaces hardcoded ambers)
 - `--link: #8ab4ff`, `--link-hover: #aecbff`
 - `--scrim: rgba(0, 0, 0, 0.6)` (modal scrims)
 
