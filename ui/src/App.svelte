@@ -1136,9 +1136,10 @@
   :global(html.parzi-maximized) .shell {
     border-radius: 0;
   }
-  :global(html.parzi-sidebar) .shell {
-    flex-direction: row;
-  }
+  /* The shell is always a column: the top bar spans the full width and
+     the sidebar (when enabled) sits inside .content next to main. (An
+     older row direction here crumpled the top bar into a dead column
+     once the top bar became always-on.) */
   main {
     position: relative;
     z-index: 1;
