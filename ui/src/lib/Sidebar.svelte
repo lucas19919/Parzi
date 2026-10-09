@@ -113,6 +113,9 @@
     display: flex;
     flex-direction: column;
     border-right: 1px solid var(--line);
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
     user-select: none;
   }
   .side-head {

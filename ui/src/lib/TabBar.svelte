@@ -324,8 +324,7 @@
     max-width: none;
   }
   .tabs.vertical .new {
-    width: 100%;
-    padding: 6px 0;
+    display: none;
   }
   .tab {
     display: inline-flex;
