@@ -1,7 +1,7 @@
 export const ICONS = {
   menu: "M4 6h16M4 12h16M4 18h16",
   home: "M3 10.5 12 3l9 7.5V20a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM9 22V12h6v10",
-  plus: "M12 5v14M5 12h14",
+  plus: "M12 4v16M4 12h16",
   close: "M18 6 6 18M6 6l12 12",
   search: "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3",
   settings:

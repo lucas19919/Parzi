@@ -85,3 +85,8 @@ export function folderName(path: string): string {
   const parts = path.replace(/[/\\]+$/, "").split(/[/\\]/);
   return parts[parts.length - 1] || path;
 }
+
+/// Brain/history/settings/preview live apart from working tabs.
+export function isSystemTab(t: Tab): boolean {
+  return t.kind !== "session" && t.kind !== "page";
+}

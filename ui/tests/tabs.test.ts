@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { folderName, hostOf, isExplicitUrl, toAddress } from "../src/lib/tabs.ts";
+import { folderName, hostOf, isExplicitUrl, isSystemTab, sessionTab, pageTab, historyTab, brainTab, settingsTab, toAddress } from "../src/lib/tabs.ts";
 import { normLane } from "../src/lib/lanes.ts";
 
 test("hostOf strips protocol and path", () => {
@@ -31,4 +31,12 @@ test("legacy lanes normalize", () => {
   assert.equal(normLane("research"), "work");
   assert.equal(normLane("build"), "build");
   assert.equal(normLane(""), "");
+});
+
+test("system tabs split from working tabs", () => {
+  assert.equal(isSystemTab(sessionTab()), false);
+  assert.equal(isSystemTab(pageTab("https://example.com")), false);
+  assert.equal(isSystemTab(historyTab()), true);
+  assert.equal(isSystemTab(brainTab()), true);
+  assert.equal(isSystemTab(settingsTab()), true);
 });

@@ -10,6 +10,7 @@
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
+  export let activeTitle = "";
   export let sessionLanes: Record<string, string> = {};
   export let tabsVisible = true;
 
@@ -106,6 +107,8 @@
         on:move={(e) => dispatch("move", e.detail)}
         on:newTab={() => dispatch("newTab")}
       />
+    {:else}
+      <span class="top-title">{activeTitle || "New session"}</span>
     {/if}
   </div>
 
@@ -130,6 +133,19 @@
     height: 100%;
     flex: 1;
     min-width: 0;
+  }
+  .top-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--muted);
+    user-select: none;
+    pointer-events: none;
   }
   .menu {
     position: relative;
