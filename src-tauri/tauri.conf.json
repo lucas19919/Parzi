@@ -1,13 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Parzi",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "identifier": "com.parzi.app",
   "build": {
     "frontendDist": "../ui/dist",
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "npm --prefix ./ui run dev -- --port 1420",
-    "beforeBuildCommand": "npm --prefix ./ui run build"
+    "beforeDevCommand": "npm --prefix ./ui run dev -- --port 1420 || npm run dev -- --port 1420",
+    "beforeBuildCommand": "npm --prefix ./ui run build || npm run build"
   },
   "app": {
     "security": {
