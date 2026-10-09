@@ -11,6 +11,7 @@
   export let tabs: Tab[] = [];
   export let activeTabId = "";
   export let sessionLanes: Record<string, string> = {};
+  export let tabsVisible = true;
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -95,15 +96,17 @@
     <button class="icon-btn" title="Home" on:click={() => dispatch("home")}>
       <Icon name="home" />
     </button>
-    <TabBar
-      {tabs}
-      {activeTabId}
-      {sessionLanes}
-      on:select={(e) => dispatch("select", e.detail)}
-      on:close={(e) => dispatch("close", e.detail)}
-      on:move={(e) => dispatch("move", e.detail)}
-      on:newTab={() => dispatch("newTab")}
-    />
+    {#if tabsVisible}
+      <TabBar
+        {tabs}
+        {activeTabId}
+        {sessionLanes}
+        on:select={(e) => dispatch("select", e.detail)}
+        on:close={(e) => dispatch("close", e.detail)}
+        on:move={(e) => dispatch("move", e.detail)}
+        on:newTab={() => dispatch("newTab")}
+      />
+    {/if}
   </div>
 
   <WinControls />

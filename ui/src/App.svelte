@@ -9,8 +9,6 @@
   } from "./lib/api";
   import TopBar from "./lib/TopBar.svelte";
   import Sidebar from "./lib/Sidebar.svelte";
-  import WinControls from "./lib/WinControls.svelte";
-  import { startWindowDrag } from "./lib/windowChrome";
   import Switcher from "./lib/Switcher.svelte";
   import DefaultArt from "./lib/DefaultArt.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
@@ -885,7 +883,27 @@
   <DefaultArt {bg} blurred={tab.kind === "page"} />
 
   {#if !immersive}
-    {#if layout === "sidebar"}
+    <TopBar
+      {tabs}
+      activeTabId={activeId}
+      {sessionLanes}
+      tabsVisible={layout !== "sidebar"}
+      on:select={(e) => selectTab(e.detail.id)}
+      on:close={(e) => closeTab(e.detail.id)}
+      on:move={(e) => moveTab(e.detail.id, e.detail.to)}
+      on:newTab={newSession}
+      on:home={goHome}
+      on:search={() => (switcherOpen = true)}
+      on:settings={() => openSettings()}
+      on:update={() => openSettings("system")}
+      on:brain={openBrain}
+      on:history={() => openHistory()}
+      on:setup={() => (setupOpen = true)}
+    />
+  {/if}
+
+  <div class="content">
+    {#if layout === "sidebar" && !immersive}
       <Sidebar
         {tabs}
         activeTabId={activeId}
@@ -893,44 +911,9 @@
         on:select={(e) => selectTab(e.detail.id)}
         on:close={(e) => closeTab(e.detail.id)}
         on:move={(e) => moveTab(e.detail.id, e.detail.to)}
-        on:newTab={newSession}
-        on:home={goHome}
-        on:search={() => (switcherOpen = true)}
-        on:settings={() => openSettings()}
-        on:update={() => openSettings("system")}
-        on:brain={openBrain}
-        on:history={() => openHistory()}
-        on:setup={() => (setupOpen = true)}
       />
-    {:else}
-      <TopBar
-    {tabs}
-    activeTabId={activeId}
-    {sessionLanes}
-    on:select={(e) => selectTab(e.detail.id)}
-    on:close={(e) => closeTab(e.detail.id)}
-    on:move={(e) => moveTab(e.detail.id, e.detail.to)}
-    on:newTab={newSession}
-    on:home={goHome}
-    on:search={() => (switcherOpen = true)}
-    on:settings={() => openSettings()}
-    on:update={() => openSettings("system")}
-    on:brain={openBrain}
-    on:history={() => openHistory()}
-    on:setup={() => (setupOpen = true)}
-  />
     {/if}
-  {/if}
-
-  <main>
-    {#if layout === "sidebar" && !immersive}
-      <!-- svelte-ignore a11y-no-static-element-interactions a11y-no-noninteractive-element-interactions -->
-      <div class="winstrip" on:mousedown={startWindowDrag}>
-        <span class="strip-title">{tab.title || "New session"}</span>
-        <span class="winstrip-fill" />
-        <WinControls />
-      </div>
-    {/if}
+    <main>
     {#if tab.kind === "settings"}
       <div class="fill col" in:fly={{ y: 8, ...motion }}>
         <PanelHeader title="Settings" on:close={() => closeTab(activeId)} />
@@ -1088,7 +1071,8 @@
         />
       </div>
     {/if}
-  </main>
+    </main>
+  </div>
 
   <Switcher
     open={switcherOpen}
@@ -1160,26 +1144,10 @@
     display: flex;
     flex-direction: column;
   }
-  .winstrip {
+  .content {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 38px;
-    flex: none;
-    padding: 0 6px 0 14px;
-    user-select: none;
-  }
-  .strip-title {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--muted);
-  }
-  .winstrip-fill {
     flex: 1;
+    min-height: 0;
   }
   .fill {
     flex: 1;
