@@ -4,7 +4,6 @@
   import TabBar from "./TabBar.svelte";
   import WinControls from "./WinControls.svelte";
   import type { Tab } from "./tabs";
-  import { updateVersion } from "./updateStore";
   import { startWindowDrag } from "./windowChrome";
 
   export let tabs: Tab[] = [];
@@ -51,25 +50,6 @@
       on:newTab={() => dispatch("newTab")}
     />
   </div>
-
-  <div class="side-foot">
-    <button class="icon-btn" title="Search (Ctrl+P)" on:click={() => dispatch("search")}>
-      <Icon name="search" />
-    </button>
-    <button class="icon-btn" title="Brain (Ctrl+B)" on:click={() => dispatch("brain")}>
-      <Icon name="brain" />
-    </button>
-    <button class="icon-btn" title="History (Ctrl+H)" on:click={() => dispatch("history")}>
-      <Icon name="clock" />
-    </button>
-    <button class="icon-btn" title="Settings (Ctrl+,)" on:click={() => dispatch("settings")}>
-      <Icon name="settings" />
-      {#if $updateVersion}<span class="dot" />{/if}
-    </button>
-    <button class="icon-btn" title="Set up Parzi" on:click={() => dispatch("setup")}>
-      <Icon name="spark" />
-    </button>
-  </div>
 </aside>
 
 <style>
@@ -100,16 +80,7 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 2px 8px;
-  }
-  .side-foot {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    height: 38px;
-    flex: none;
-    padding: 0 8px;
-    border-top: 1px solid var(--line);
+    padding: 2px 8px 8px;
   }
   .icon-btn {
     position: relative;
@@ -130,14 +101,5 @@
     background: var(--panel);
     border-color: var(--line);
     color: var(--text);
-  }
-  .dot {
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--accent);
   }
 </style>

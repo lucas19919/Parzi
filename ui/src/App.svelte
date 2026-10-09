@@ -926,6 +926,7 @@
     {#if layout === "sidebar" && !immersive}
       <!-- svelte-ignore a11y-no-static-element-interactions a11y-no-noninteractive-element-interactions -->
       <div class="winstrip" on:mousedown={startWindowDrag}>
+        <span class="strip-title">{tab.title || "New session"}</span>
         <span class="winstrip-fill" />
         <WinControls />
       </div>
@@ -1105,6 +1106,7 @@
     on:newPage={() => addTab(pageTab())}
     on:settings={() => openSettings()}
     on:previews={() => openPreview()}
+    on:setup={() => (setupOpen = true)}
     on:brain={openBrain}
     on:history={() => openHistory()}
   />
@@ -1161,10 +1163,20 @@
   .winstrip {
     display: flex;
     align-items: center;
-    height: 32px;
+    gap: 8px;
+    height: 38px;
     flex: none;
-    padding: 0 6px 0 12px;
+    padding: 0 6px 0 14px;
     user-select: none;
+  }
+  .strip-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--muted);
   }
   .winstrip-fill {
     flex: 1;

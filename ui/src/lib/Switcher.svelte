@@ -23,6 +23,7 @@
     brain: void;
     history: void;
     previews: void;
+    setup: void;
   }>();
 
   interface Item {
@@ -68,6 +69,7 @@
       { id: "brain", icon: "brain", title: "Brain", sub: "Notes and projects", run: () => dispatch("brain") },
       { id: "previews", icon: "spark", title: "Component previews", sub: "Live Omnibar variants, side by side", run: () => dispatch("previews") },
       { id: "settings", icon: "settings", title: "Settings", sub: "Agents, appearance, system", run: () => dispatch("settings") },
+      { id: "setup", icon: "spark", title: "Set up Parzi", sub: "Agents, browser, tools, brain, remote", run: () => dispatch("setup") },
     ]
       .filter((c) => hit(q, c.title, c.sub))
       .map((c) => ({ ...c, group: "Actions" }) as Item),
