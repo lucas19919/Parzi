@@ -516,7 +516,7 @@ impl EngineRun {
             return;
         }
         if let Ok(mut est) = self.est_tokens.lock() {
-            *est = est.saturating_add((text.chars().count() as u64 + 3) / 4);
+            *est = est.saturating_add((text.chars().count() as u64).div_ceil(4));
         }
     }
 

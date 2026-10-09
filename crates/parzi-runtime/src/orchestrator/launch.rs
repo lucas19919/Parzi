@@ -346,7 +346,6 @@ impl Orchestrator {
     ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
         let snap = p.cfg_snapshot();
         let (provider_id, model) = Self::route(&snap, &q.session_id, &q.model_spec).await?;
-        let model = model;
         let provider = (p.source)(&provider_id, &snap).ok_or_else(|| {
             ParziError::Store(format!("{provider_id} is not on this build's roster"))
         })?;

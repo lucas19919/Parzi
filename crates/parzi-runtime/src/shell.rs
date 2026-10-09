@@ -53,18 +53,10 @@ struct LiveShell {
     killed: bool,
 }
 
+#[derive(Default)]
 struct Registry {
     shells: HashMap<String, LiveShell>,
     seq: u64,
-}
-
-impl Default for Registry {
-    fn default() -> Self {
-        Self {
-            shells: HashMap::new(),
-            seq: 0,
-        }
-    }
 }
 
 /// The harness shell, per session. Cloned handles share one registry;

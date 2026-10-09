@@ -514,22 +514,46 @@ fn url_encode(s: &str) -> String {
     out
 }
 
-async fn fetch_bytes(url: &str) -> std::result::Result<(Vec<u8>, String), String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(90))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let res = client.get(url).send().await.map_err(|e| e.to_string())?;
-    if !res.status().is_success() {
-        return Err(format!("the service replied {}", res.status()));
-    }
+const IMAGE_FETCH_CAP: u64 = 12 * 1024 * 1024 + 1;
+const DOC_FETCH_CAP: u64 = 32 * 1024 * 1024;
+
+async fn fetch_bytes(url: &str, max_bytes: u64) -> std::result::Result<(Vec<u8>, String), String> {
+    // ureq blocks, so the download runs on the blocking pool and never
+    // stalls the async workers that serve all other commands.
+    let url = url.to_string();
+    tokio::task::spawn_blocking(move || fetch_blocking(&url, max_bytes))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn fetch_agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(90)))
+            .build()
+            .into()
+    })
+}
+
+fn fetch_blocking(url: &str, max_bytes: u64) -> std::result::Result<(Vec<u8>, String), String> {
+    let mut res = match fetch_agent().get(url).call() {
+        Ok(r) => r,
+        Err(ureq::Error::StatusCode(code)) => return Err(format!("the service replied {code}")),
+        Err(e) => return Err(e.to_string()),
+    };
     let content_type = res
         .headers()
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let bytes = res.bytes().await.map_err(|e| e.to_string())?.to_vec();
+    let bytes = res
+        .body_mut()
+        .with_config()
+        .limit(max_bytes)
+        .read_to_vec()
+        .map_err(|e| e.to_string())?;
     Ok((bytes, content_type))
 }
 
@@ -1140,7 +1164,7 @@ impl ToolHost {
             .replace("{width}", &w.to_string())
             .replace("{height}", &h.to_string())
             .replace("{model}", &img.model);
-        let (bytes, _content_type) = match fetch_bytes(&url).await {
+        let (bytes, _content_type) = match fetch_bytes(&url, IMAGE_FETCH_CAP).await {
             Ok(pair) => pair,
             Err(e) => return (false, e),
         };
@@ -1190,7 +1214,7 @@ impl ToolHost {
             return (false, "doc.read needs a `source` URL or path".into());
         }
         let (bytes, is_pdf) = if src.starts_with("http://") || src.starts_with("https://") {
-            let (data, content_type) = match fetch_bytes(src).await {
+            let (data, content_type) = match fetch_bytes(src, DOC_FETCH_CAP).await {
                 Ok(pair) => pair,
                 Err(e) => return (false, e),
             };
