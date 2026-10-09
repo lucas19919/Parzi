@@ -113,6 +113,8 @@
         return "Checking the bench";
       case "ask.user":
         return `Asking ${arg(args, "question") || "a question"}`;
+      case "request.user":
+        return `Requesting ${arg(args, "request") || "something"}`;
       case "plan.write":
         return "Writing the plan";
       case "plan.read":

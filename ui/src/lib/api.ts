@@ -74,6 +74,13 @@ export interface Question {
   options: string[];
 }
 
+export interface AgentRequest {
+  key: string;
+  session: string;
+  request: string;
+  kind: string;
+}
+
 export type UiEvent =
   | { kind: "text"; session: string; text: string }
   | { kind: "reasoning"; session: string; text: string }
@@ -83,6 +90,7 @@ export type UiEvent =
   | { kind: "context"; session: string; used: number; limit: number }
   | { kind: "approval"; key: string; session: string; call: ApprovalCall }
   | { kind: "question"; key: string; session: string; question: string; options: string[] }
+  | { kind: "request"; key: string; session: string; request: string; req_kind: string }
   | { kind: "done"; session: string; turns: number }
   | { kind: "error"; session: string; error: string };
 

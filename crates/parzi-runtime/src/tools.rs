@@ -53,6 +53,9 @@ pub struct AskRequest {
     pub id: String,
     pub question: String,
     pub options: Vec<String>,
+    /// Empty for questions; otherwise the request kind ("text", "file",
+    /// "image"). The UI surfaces requests as a popup, questions inline.
+    pub kind: String,
     pub lane: String,
     pub session: String,
 }
@@ -418,7 +421,7 @@ fn shell_defs() -> Vec<ToolDef> {
 }
 
 pub(crate) fn is_question_tool(name: &str) -> bool {
-    matches!(name, "ask.user" | "memory.review")
+    matches!(name, "ask.user" | "request.user" | "memory.review")
 }
 
 pub(crate) fn is_plan_tool(name: &str) -> bool {
@@ -453,6 +456,18 @@ fn question_defs() -> Vec<ToolDef> {
                 "type": "object",
                 "properties": {"path": {"type": "string"}},
                 "required": ["path"],
+            }),
+        },
+        ToolDef {
+            name: "request.user".into(),
+            description: "Ask the human to give or do something mid-turn and wait for their reply: send a picture, paste inspiration or text, drop a file path, confirm something only they can see. Renders as a popup, so reserve it for real needs, not forks (those are ask.user). Set kind to file when you need a file, image when you need a picture, else text.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "request": {"type": "string"},
+                    "kind": {"type": "string", "enum": ["text", "file", "image"]},
+                },
+                "required": ["request"],
             }),
         },
     ]
@@ -814,6 +829,13 @@ pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String
             "Asking {}",
             one_line(
                 &str_arg("question").unwrap_or_else(|| "a question".into()),
+                60
+            )
+        ),
+        "request.user" => format!(
+            "Requesting {}",
+            one_line(
+                &str_arg("request").unwrap_or_else(|| "something".into()),
                 60
             )
         ),

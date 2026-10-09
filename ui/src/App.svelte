@@ -5,7 +5,7 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import {
     api, brain, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onRunEvent,
-    MODE_META, type ChatEvent, type ComposerMode, type PageEvent, type Question, type SessionMeta, type UiEvent,
+    MODE_META, type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type Question, type SessionMeta, type UiEvent,
   } from "./lib/api";
   import TopBar from "./lib/TopBar.svelte";
   import Sidebar from "./lib/Sidebar.svelte";
@@ -22,6 +22,7 @@
   import PreviewView from "./lib/PreviewView.svelte";
   import BrainView from "./lib/BrainView.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
+  import RequestPopup from "./lib/RequestPopup.svelte";
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
   import Settings from "./lib/Settings.svelte";
   import Icon from "./lib/Icon.svelte";
@@ -60,6 +61,7 @@
   let running = new Set<string>();
   let approvals: Approval[] = [];
   let questions: Question[] = [];
+  let requests: AgentRequest[] = [];
   let context = { used: 0, limit: 0 };
   let compacting = false;
   let branch = "";
@@ -137,6 +139,9 @@
   $: folder = tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
   $: approval = approvals.find((a) => a.session === shown) ?? null;
   $: openQuestion = questions.find((q) => q.session === shown) ?? null;
+  // The popup shows the visible session's request first, else the oldest.
+  $: openRequest = requests.find((r) => r.session === shown) ?? requests[0] ?? null;
+  $: openRequestTitle = openRequest ? (threads.find((t) => t.id === openRequest.session)?.title || "Agent") : "";
   $: lockMode = (() => {
     if (!hasSession) return null;
     const l = normLane(meta?.lane ?? "");
@@ -664,6 +669,30 @@
     toast("Session ID copied");
   }
 
+  // Agent requests share the question answer path: answering resumes the
+  // turn, declining sends blank and the agent proceeds on assumption.
+  async function answerRequest(key: string, text: string) {
+    const r = requests.find((x) => x.key === key);
+    if (!r) return;
+    requests = requests.filter((x) => x.key !== key);
+    try {
+      await api.answerQuestion(key, r.session, text);
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
+  async function declineRequest(key: string) {
+    const r = requests.find((x) => x.key === key);
+    if (!r) return;
+    requests = requests.filter((x) => x.key !== key);
+    try {
+      await api.answerQuestion(key, r.session, "");
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
   // History's Clear sessions: purge finished threads, close their tabs.
   // Running threads are left alone.
   async function clearFinishedSessions() {
@@ -715,11 +744,17 @@
       questions = [...questions.filter((q) => q.key !== e.key), { key: e.key, session: e.session, question: e.question, options: e.options }];
       return;
     }
+    if (e.kind === "request") {
+      requests = [...requests.filter((r) => r.key !== e.key), { key: e.key, session: e.session, request: e.request, kind: e.req_kind }];
+      chime(false);
+      return;
+    }
     if (e.kind === "done" || e.kind === "error") {
       running.delete(e.session);
       running = running;
       approvals = approvals.filter((a) => a.session !== e.session);
       questions = questions.filter((q) => q.session !== e.session);
+      requests = requests.filter((r) => r.session !== e.session);
       void refreshThreads();
       if (e.session === shown) {
         flushLive();
@@ -1101,6 +1136,26 @@
 
   {#if setupOpen}
     <Onboarding on:close={() => (setupOpen = false)} on:openBrain={openBrain} />
+  {/if}
+
+  {#if openRequest}
+    <RequestPopup
+      request={openRequest}
+      title={openRequestTitle}
+      pending={requests.length}
+      on:answer={(e) => answerRequest(e.detail.key, e.detail.text)}
+      on:decline={(e) => declineRequest(e.detail.key)}
+    />
+  {/if}
+
+  {#if openRequest}
+    <RequestPopup
+      request={openRequest}
+      title={openRequestTitle}
+      pending={requests.length}
+      on:answer={(e) => answerRequest(e.detail.key, e.detail.text)}
+      on:decline={(e) => declineRequest(e.detail.key)}
+    />
   {/if}
 
   <div class="toasts" aria-live="polite">

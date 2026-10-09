@@ -86,6 +86,12 @@ pub(crate) enum UiEvent {
         question: String,
         options: Vec<String>,
     },
+    Request {
+        key: String,
+        session: String,
+        request: String,
+        req_kind: String,
+    },
     Done {
         session: String,
         turns: u32,
@@ -159,11 +165,20 @@ impl Asker for GuiAsker {
             .insert(key.clone(), (req.session.clone(), tx));
         let _ = self.app.emit(
             "parzi://run-event",
-            UiEvent::Question {
-                key: key.clone(),
-                session: req.session.clone(),
-                question: req.question.clone(),
-                options: req.options.clone(),
+            if req.kind.is_empty() {
+                UiEvent::Question {
+                    key: key.clone(),
+                    session: req.session.clone(),
+                    question: req.question.clone(),
+                    options: req.options.clone(),
+                }
+            } else {
+                UiEvent::Request {
+                    key: key.clone(),
+                    session: req.session.clone(),
+                    request: req.question.clone(),
+                    req_kind: req.kind.clone(),
+                }
             },
         );
         let out = tokio::time::timeout(std::time::Duration::from_secs(300), rx).await;

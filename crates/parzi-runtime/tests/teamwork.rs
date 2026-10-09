@@ -503,6 +503,38 @@ async fn ask_user_returns_the_answer_or_says_so() {
 }
 
 #[tokio::test]
+async fn request_user_validates_kind_and_echoes_the_reply() {
+    let (host, _store, _sid) = build_host(Some(Arc::new(Echo("here.png".into()))));
+    let (ok, out) = host
+        .call(
+            "request.user",
+            &json!({"request": "send a picture", "kind": "image"}),
+        )
+        .await;
+    assert!(ok && out == "here.png", "{out}");
+
+    let (ok, out) = host
+        .call(
+            "request.user",
+            &json!({"request": "send a picture", "kind": "telepathy"}),
+        )
+        .await;
+    assert!(
+        ok && out == "here.png",
+        "unknown kinds fall back to text: {out}"
+    );
+
+    let (ok, out) = host.call("request.user", &json!({})).await;
+    assert!(!ok && out.contains("needs a `request`"), "{out}");
+
+    let (lonely, _store, _sid) = build_host(None);
+    let (ok, out) = lonely
+        .call("request.user", &json!({"request": "send a picture"}))
+        .await;
+    assert!(ok && out.contains("no one to ask"), "{out}");
+}
+
+#[tokio::test]
 async fn project_create_makes_a_home() {
     let (host, store, sid) = build_host(None);
     let folder = std::env::temp_dir()

@@ -600,6 +600,7 @@ impl ToolHost {
                 | "doc.read"
                 | "models.list"
                 | "ask.user"
+                | "request.user"
                 | "plan.write"
                 | "plan.read"
                 | "session.spawn"
@@ -726,6 +727,9 @@ impl ToolHost {
             }
             if name == "memory.review" {
                 return self.execute_memory_review(id, args).await;
+            }
+            if name == "request.user" {
+                return self.execute_request(id, args).await;
             }
             return self.execute_question(id, args).await;
         }
@@ -1294,6 +1298,44 @@ impl ToolHost {
             id: id.into(),
             question: question.to_string(),
             options,
+            kind: String::new(),
+            lane: self.p.lane.clone(),
+            session: self.p.session_id.clone(),
+        };
+        let answer = asker.ask(&req).await;
+        (true, answer)
+    }
+
+    async fn execute_request(&self, id: &str, args: &Value) -> (bool, String) {
+        let request = args
+            .get("request")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if request.is_empty() {
+            return (false, "request.user needs a `request`".into());
+        }
+        let kind = args
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("text")
+            .trim()
+            .to_lowercase();
+        let kind = match kind.as_str() {
+            "file" | "image" | "text" => kind,
+            _ => "text".to_string(),
+        };
+        let Some(asker) = &self.p.asker else {
+            return (
+                true,
+                "there is no one to ask — decide yourself and say what you assumed".into(),
+            );
+        };
+        let req = AskRequest {
+            id: id.into(),
+            question: request.to_string(),
+            options: vec![],
+            kind,
             lane: self.p.lane.clone(),
             session: self.p.session_id.clone(),
         };
@@ -1333,6 +1375,7 @@ impl ToolHost {
                 "Memory says this ({note_path}):\n\n{head}\n\nStill agree, or remove it?"
             ),
             options: vec!["Keep".into(), "Remove".into()],
+            kind: String::new(),
             lane: self.p.lane.clone(),
             session: self.p.session_id.clone(),
         };

@@ -231,6 +231,7 @@ impl Orchestrator {
             "doc.read",
             "models.list",
             "ask.user",
+            "request.user",
             "plan.write",
             "plan.read",
             "shell.exec",
