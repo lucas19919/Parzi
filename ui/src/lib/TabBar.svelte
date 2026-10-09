@@ -7,6 +7,7 @@
   export let tabs: Tab[] = [];
   export let activeTabId = "";
   export let sessionLanes: Record<string, string> = {};
+  export let vertical = false;
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -20,7 +21,7 @@
   let strip: HTMLElement;
   const els: Record<string, HTMLElement> = {};
   let broken = new Set<string>();
-  let press: { id: string; x: number; grab: number; pointer: number } | null = null;
+  let press: { id: string; x: number; y: number; grab: number; pointer: number } | null = null;
   let dragId = "";
   let dragX = 0;
   let order: string[] | null = null;
@@ -82,10 +83,11 @@
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       dispatch("select", { id });
-    } else if (e.ctrlKey && e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+    } else if (e.ctrlKey && e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown")) {
       e.preventDefault();
       const at = tabs.findIndex((t) => t.id === id);
-      dispatch("move", { id, to: Math.max(0, at + (e.key === "ArrowLeft" ? -1 : 1)) });
+      const back = e.key === "ArrowLeft" || e.key === "ArrowUp";
+      dispatch("move", { id, to: Math.max(0, at + (back ? -1 : 1)) });
       await tick();
       els[id]?.focus();
     }
@@ -99,41 +101,49 @@
     if (e.button !== 0 || (e.target as HTMLElement).closest(".close")) return;
     const el = els[id];
     if (!el) return;
-    press = { id, x: e.clientX, grab: e.clientX - el.getBoundingClientRect().left, pointer: e.pointerId };
+    const r = el.getBoundingClientRect();
+    press = vertical
+      ? { id, x: e.clientX, y: e.clientY, grab: e.clientY - r.top, pointer: e.pointerId }
+      : { id, x: e.clientX, y: e.clientY, grab: e.clientX - r.left, pointer: e.pointerId };
   }
 
   function onMove(e: PointerEvent) {
     if (!press) return;
     if (!dragId) {
-      if (Math.abs(e.clientX - press.x) < DRAG_START) return;
+      const moved = vertical ? Math.abs(e.clientY - press.y) : Math.abs(e.clientX - press.x);
+      if (moved < DRAG_START) return;
       dragId = press.id;
       order = tabs.map((t) => t.id);
       try {
         els[dragId]?.setPointerCapture(press.pointer);
       } catch {}
     }
-    void follow(e.clientX);
+    void follow(vertical ? e.clientY : e.clientX);
   }
 
-  async function follow(clientX: number) {
+  async function follow(client: number) {
     const el = els[dragId];
     if (!el || !order || !press) return;
     const box = strip.getBoundingClientRect();
-    const end = Math.max(...order.map((id) => (els[id] ? els[id].offsetLeft + els[id].offsetWidth : 0)));
-    const left = Math.max(0, Math.min(clientX - box.left + strip.scrollLeft - press.grab, end - el.offsetWidth));
-    const right = left + el.offsetWidth;
+    const size = (id: string) => (els[id] ? (vertical ? els[id].offsetHeight : els[id].offsetWidth) : 0);
+    const start = (id: string) => (els[id] ? (vertical ? els[id].offsetTop : els[id].offsetLeft) : 0);
+    const end = Math.max(...order.map((id) => (els[id] ? start(id) + size(id) : 0)));
+    const scroll = vertical ? strip.scrollTop : strip.scrollLeft;
+    const origin = vertical ? box.top : box.left;
+    const pos = Math.max(0, Math.min(client - origin + scroll - press.grab, end - size(dragId)));
+    const far = pos + size(dragId);
     const mine = order.indexOf(dragId);
     const before = order.filter((id, i) => {
       if (id === dragId || !els[id]) return false;
-      const center = els[id].offsetLeft + els[id].offsetWidth / 2;
-      return i < mine ? left >= center : right > center;
+      const center = start(id) + size(id) / 2;
+      return i < mine ? pos >= center : far > center;
     });
     const next = [...before, dragId, ...order.filter((id) => id !== dragId && !before.includes(id))];
     if (next.join() !== order.join()) {
       order = next;
       await tick();
     }
-    dragX = left - el.offsetLeft;
+    dragX = pos - start(dragId);
   }
 
   function onUp() {
@@ -147,7 +157,7 @@
 
 <svelte:window on:pointermove={onMove} on:pointerup={onUp} on:pointercancel={onUp} />
 
-<div class="tabs" role="tablist" bind:this={strip}>
+<div class="tabs" class:vertical role="tablist" bind:this={strip}>
   {#each groups.lone as tab (tab.id)}
     {@const lane = laneOf(tab)}
     {@const attached = tab.kind === "session" && tab.sessionId ? (groups.kids.get(tab.sessionId) ?? []) : []}
@@ -159,7 +169,7 @@
           class="tab"
           class:active={tab.id === activeTabId}
           class:dragging={tab.id === dragId}
-          style={tab.id === dragId ? `transform: translateX(${dragX}px)` : ""}
+          style={tab.id === dragId ? `transform: ${vertical ? "translateY" : "translateX"}(${dragX}px)` : ""}
           role="tab"
           tabindex="0"
           aria-selected={tab.id === activeTabId}
@@ -293,6 +303,29 @@
     gap: 4px;
     min-width: 0;
     overflow-x: auto;
+  }
+  .tabs.vertical {
+    flex-direction: column;
+    align-items: stretch;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .tabs.vertical .tab {
+    max-width: none;
+    width: 100%;
+    flex: none;
+  }
+  .tabs.vertical .group {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .tabs.vertical .tab.sub {
+    max-width: none;
+  }
+  .tabs.vertical .new {
+    width: 100%;
+    padding: 6px 0;
   }
   .tab {
     display: inline-flex;

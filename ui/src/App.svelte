@@ -8,6 +8,7 @@
     MODE_META, type ChatEvent, type ComposerMode, type PageEvent, type Question, type SessionMeta, type UiEvent,
   } from "./lib/api";
   import TopBar from "./lib/TopBar.svelte";
+  import Sidebar from "./lib/Sidebar.svelte";
   import Switcher from "./lib/Switcher.svelte";
   import DefaultArt from "./lib/DefaultArt.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
@@ -126,6 +127,7 @@
   let omnibar: Omnibar;
   let page: PageView;
   let immersive = false;
+  let layout: "topbar" | "sidebar" = "topbar";
   let setupOpen = false;
   let project: { slug: string; title: string; tokens: number } | null = null;
   let navSeq = 0;
@@ -802,7 +804,15 @@
       const saved = Number(localStorage.getItem("parzi.dock.w"));
       if (saved >= 280 && saved <= 640) panelW = saved;
     } catch {}
-    const unRun = onRunEvent(onEvent);
+    try {
+      layout = localStorage.getItem("parzi.layout") === "sidebar" ? "sidebar" : "topbar";
+    } catch {}
+    document.documentElement.classList.toggle("parzi-sidebar", layout === "sidebar");
+    const onLayout = (e: Event) => {
+      layout = (e as CustomEvent<string>).detail === "sidebar" ? "sidebar" : "topbar";
+      document.documentElement.classList.toggle("parzi-sidebar", layout === "sidebar");
+    };
+    document.addEventListener("parzi:layout", onLayout);    const unRun = onRunEvent(onEvent);
     const unDesk = onDesk((cmd) => {
       if (typeof cmd.rev === "number") deskRev = Math.max(deskRev, cmd.rev);
       // Agent-driven tab events never steal focus: pages open in the
@@ -845,6 +855,7 @@
       unDesk.then((f) => f()).catch(() => {});
       for (const un of [unPage, unOpen, unKey]) un.then((f) => f()).catch(() => {});
       document.removeEventListener("parzi:bg", onBg);
+      document.removeEventListener("parzi:layout", onLayout);
     };
   });
 </script>
@@ -855,7 +866,25 @@
   <DefaultArt {bg} blurred={tab.kind === "page"} />
 
   {#if !immersive}
-  <TopBar
+    {#if layout === "sidebar"}
+      <Sidebar
+        {tabs}
+        activeTabId={activeId}
+        {sessionLanes}
+        on:select={(e) => selectTab(e.detail.id)}
+        on:close={(e) => closeTab(e.detail.id)}
+        on:move={(e) => moveTab(e.detail.id, e.detail.to)}
+        on:newTab={newSession}
+        on:home={goHome}
+        on:search={() => (switcherOpen = true)}
+        on:settings={() => openSettings()}
+        on:update={() => openSettings("system")}
+        on:brain={openBrain}
+        on:history={() => openHistory()}
+        on:setup={() => (setupOpen = true)}
+      />
+    {:else}
+      <TopBar
     {tabs}
     activeTabId={activeId}
     {sessionLanes}
@@ -871,6 +900,7 @@
     on:history={() => openHistory()}
     on:setup={() => (setupOpen = true)}
   />
+    {/if}
   {/if}
 
   <main>
@@ -1089,10 +1119,14 @@
   :global(html.parzi-maximized) .shell {
     border-radius: 0;
   }
+  :global(html.parzi-sidebar) .shell {
+    flex-direction: row;
+  }
   main {
     position: relative;
     z-index: 1;
     flex: 1;
+    min-width: 0;
     min-height: 0;
     display: flex;
     flex-direction: column;

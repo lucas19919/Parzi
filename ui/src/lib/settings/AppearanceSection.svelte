@@ -20,6 +20,7 @@
   let fileInputEl: HTMLInputElement | null = null;
   let sampling = false;
   let scanOn = false;
+  let layout = "topbar";
 
   let dimPct = 66;
   let vignettePct = 50;
@@ -34,6 +35,7 @@
 
   onMount(() => {
     scanOn = document.documentElement.classList.contains("scanlines");
+    layout = document.documentElement.classList.contains("parzi-sidebar") ? "sidebar" : "topbar";
     void load();
   });
   onDestroy(() => {
@@ -481,6 +483,26 @@
     </div>
     <datalist id="parzi-ui-fonts">{#each UI_FONTS as f}<option value={f} />{/each}</datalist>
     <datalist id="parzi-mono-fonts">{#each MONO_FONTS as f}<option value={f} />{/each}</datalist>
+  </section>
+
+  <section class="pref-section">
+    <h3 class="section-title">Layout</h3>
+    <div class="field-card">
+      <div class="field-info">
+        <span class="field-label">Window layout</span>
+        <span class="field-hint">Tabs across the top, or down a sidebar.</span>
+      </div>
+      <SegControl
+        options={[{ value: "topbar", label: "Top bar" }, { value: "sidebar", label: "Sidebar" }]}
+        value={layout}
+        on:pick={(e) => {
+          layout = e.detail === "sidebar" ? "sidebar" : "topbar";
+          document.documentElement.classList.toggle("parzi-sidebar", layout === "sidebar");
+          try { localStorage.setItem("parzi.layout", layout); } catch {}
+          window.dispatchEvent(new CustomEvent("parzi:layout", { detail: layout }));
+        }}
+      />
+    </div>
   </section>
 
   <section class="pref-section">
