@@ -499,7 +499,7 @@
           layout = e.detail === "sidebar" ? "sidebar" : "topbar";
           document.documentElement.classList.toggle("parzi-sidebar", layout === "sidebar");
           try { localStorage.setItem("parzi.layout", layout); } catch {}
-          window.dispatchEvent(new CustomEvent("parzi:layout", { detail: layout }));
+          document.dispatchEvent(new CustomEvent("parzi:layout", { detail: layout }));
         }}
       />
     </div>
