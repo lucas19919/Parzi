@@ -178,6 +178,21 @@
     { label: "Approve from anywhere", cmd: "parzi approval list" },
   ];
 
+  let remoteUser = "";
+  let remoteHost = "";
+  try {
+    remoteUser = localStorage.getItem("parzi.remote.user") ?? "";
+    remoteHost = localStorage.getItem("parzi.remote.host") ?? "";
+  } catch {}
+  $: remoteCmd =
+    remoteUser.trim() && remoteHost.trim()
+      ? `ssh ${remoteUser.trim()}@${remoteHost.trim()} 'parzi setup && parzi serve'`
+      : "";
+  $: try {
+    localStorage.setItem("parzi.remote.user", remoteUser);
+    localStorage.setItem("parzi.remote.host", remoteHost);
+  } catch {}
+
   async function checkServe() {
     if (serveBusy) return;
     serveBusy = true;
@@ -198,10 +213,6 @@
     navigator.clipboard.writeText(cmd).catch(() => {});
     copied = cmd;
     setTimeout(() => (copied = copied === cmd ? "" : copied), 1200);
-  }
-
-  function copyAllRemote() {
-    copyCmd(REMOTE_CMDS.map((c) => c.cmd).join("\n"));
   }
 
   $: if (step === 4 && !serveChecked && !serveBusy) void checkServe();
@@ -351,21 +362,44 @@
           <button class="btn" disabled={serveBusy} on:click={checkServe}>{serveBusy ? "Checking…" : "Check again"}</button>
         </div>
         <h3>On the remote machine</h3>
-        <div class="list">
-          {#each REMOTE_CMDS as c (c.cmd)}
-            <div class="item compact">
-              <span class="grow">
-                <span class="title">{c.label}</span>
-                <span class="sub mono">{c.cmd}</span>
-              </span>
-              <button class="btn" on:click={() => copyCmd(c.cmd)}>{copied === c.cmd ? "Copied" : "Copy"}</button>
-            </div>
-          {/each}
+        <div class="remote-form">
+          <label>
+            <span>User</span>
+            <input placeholder="you" spellcheck="false" bind:value={remoteUser} />
+          </label>
+          <label>
+            <span>Host</span>
+            <input placeholder="gpu-box" spellcheck="false" bind:value={remoteHost} />
+          </label>
         </div>
-        <div class="action">
-          <button class="btn primary" on:click={copyAllRemote}>{copied ? "Copied" : "Copy all three"}</button>
-          <span class="result">Run them over SSH, then answer approvals with the third.</span>
-        </div>
+        {#if remoteCmd}
+          <div class="item compact">
+            <span class="grow">
+              <span class="title">Log in and set it up</span>
+              <span class="sub mono">{remoteCmd}</span>
+            </span>
+            <button class="btn" on:click={() => copyCmd(remoteCmd)}>{copied === remoteCmd ? "Copied" : "Copy"}</button>
+          </div>
+          <div class="action">
+            <span class="result">Paste that in a terminal. It logs in, prepares the remote, and starts the engine. Answer approvals with <code>parzi approval list</code> over the same SSH.</span>
+          </div>
+        {:else}
+          <p class="empty">Enter the SSH user and host above and the one-liner appears here.</p>
+        {/if}
+        <details class="diy">
+          <summary>Do it yourself, step by step</summary>
+          <div class="list">
+            {#each REMOTE_CMDS as c (c.cmd)}
+              <div class="item compact">
+                <span class="grow">
+                  <span class="title">{c.label}</span>
+                  <span class="sub mono">{c.cmd}</span>
+                </span>
+                <button class="btn" on:click={() => copyCmd(c.cmd)}>{copied === c.cmd ? "Copied" : "Copy"}</button>
+              </div>
+            {/each}
+          </div>
+        </details>
       {/if}
     </div>
 
@@ -560,6 +594,45 @@
   .sub.mono {
     font-family: var(--mono), ui-monospace, monospace;
     color: var(--muted);
+  }
+  .remote-form {
+    display: flex;
+    gap: 8px;
+    margin: 4px 0 8px;
+  }
+  .remote-form label {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 11.5px;
+    color: var(--faint);
+  }
+  .remote-form input {
+    padding: 7px 10px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--text);
+    font: inherit;
+    font-size: 12.5px;
+    outline: none;
+  }
+  .remote-form input:focus {
+    border-color: var(--accent);
+  }
+  .diy {
+    margin-top: 10px;
+  }
+  .diy summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--faint);
+    padding: 4px 0;
+  }
+  .diy summary:hover {
+    color: var(--text);
   }
   .progress {
     position: absolute;
