@@ -89,6 +89,29 @@ jobs:
             gh release upload "${{ github.ref_name }}" "$f" --clobber
           done
 
+  cli:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            exe: parzi-windows-x64.exe
+            build: target/release/parzi.exe
+          - platform: macos-latest
+            exe: parzi-macos-arm64
+            build: target/release/parzi
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
       - name: Build parzi CLI
         run: cargo build --release -p parzi-cli
 
@@ -98,10 +121,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp target/release/parzi.exe parzi-windows-x64.exe
-            gh release upload "${{ github.ref_name }}" parzi-windows-x64.exe --clobber
-          else
-            cp target/release/parzi parzi-macos-arm64
-            gh release upload "${{ github.ref_name }}" parzi-macos-arm64 --clobber
-          fi
+          # The app job creates the release; wait for it (up to ~30 min).
+          for i in $(seq 1 60); do
+            gh release view "${{ github.ref_name }}" >/dev/null 2>&1 && break
+            sleep 30
+          done
+          cp "${{ matrix.build }}" "${{ matrix.exe }}"
+          gh release upload "${{ github.ref_name }}" "${{ matrix.exe }}" --clobber

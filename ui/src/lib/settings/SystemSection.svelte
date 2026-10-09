@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, type Check } from "../api";
   import Icon from "../Icon.svelte";
+  import { check as checkUpdatesStore, dlDone, dlTotal, installUpdate, updateMsg, updateState, updateVersion } from "../updateStore";
   import "./shared.css";
 
   export let notify: (msg: string) => void = () => {};
@@ -14,54 +15,15 @@
   let err = "";
 
   let appVersion = "";
-  let updateState: "idle" | "checking" | "available" | "uptodate" | "downloading" | "ready" | "error" = "idle";
-  let updateMsg = "";
-  let updateVersion = "";
-  let dlTotal = 0;
-  let dlDone = 0;
-  let pendingUpdate: { version: string; body?: string; downloadAndInstall: (cb?: (e: unknown) => void) => Promise<void> } | null = null;
 
+  // Update state lives in updateStore: the startup check pre-downloads
+  // in the background, so this section only reflects and installs.
   async function checkUpdates() {
-    updateState = "checking";
-    updateMsg = "Checking for updates…";
-    try {
-      const { check } = await import("@tauri-apps/plugin-updater");
-      const u = await check();
-      if (!u) {
-        updateState = "uptodate";
-        updateMsg = "You're on the latest version.";
-        return;
-      }
-      pendingUpdate = u as unknown as typeof pendingUpdate;
-      updateVersion = u.version;
-      updateState = "available";
-      updateMsg = `v${u.version} is available.`;
-    } catch (e) {
-      updateState = "error";
-      updateMsg = `Update check failed (${e}). Dev builds check nothing — install from a release to update.`;
-    }
+    await checkUpdatesStore(true);
   }
 
-  async function installUpdate() {
-    if (!pendingUpdate) return;
-    updateState = "downloading";
-    dlTotal = 0;
-    dlDone = 0;
-    updateMsg = "Downloading…";
-    try {
-      await pendingUpdate.downloadAndInstall((e: unknown) => {
-        const ev = e as { event: string; data?: { contentLength?: number; chunkLength?: number } };
-        if (ev.event === "Started") dlTotal = ev.data?.contentLength ?? 0;
-        else if (ev.event === "Progress") dlDone += ev.data?.chunkLength ?? 0;
-        else if (ev.event === "Finished") updateMsg = "Finishing install…";
-      });
-      updateState = "ready";
-      updateMsg = "Update installed — restart Parzi to use it.";
-      notify("Update installed — restart Parzi");
-    } catch (e) {
-      updateState = "error";
-      updateMsg = `Install failed: ${e}`;
-    }
+  async function installUpdateClicked() {
+    await installUpdate();
   }
 
   // Diagnostics must never hold the section hostage: provider probes are
@@ -130,23 +92,27 @@
         <h3 class="section-title">Updates</h3>
         <p class="section-desc">Parzi {appVersion ? `v${appVersion}` : ""} · stable channel · checks GitHub releases.</p>
       </div>
-      {#if updateState === "available"}
-        <button class="sbtn" on:click={installUpdate}>
-          <span>Download & install v{updateVersion}</span>
+      {#if $updateState === "ready"}
+        <button class="sbtn" on:click={installUpdateClicked}>
+          <span>Install & restart v{$updateVersion}</span>
+        </button>
+      {:else if $updateState === "available" || $updateState === "downloading"}
+        <button class="sbtn" disabled>
+          <span>{$updateState === "downloading" ? "Downloading…" : "Preparing…"}</span>
         </button>
       {:else}
-        <button class="sbtn" disabled={updateState === "checking" || updateState === "downloading"} on:click={checkUpdates}>
-          <span>{updateState === "checking" ? "Checking…" : "Check for updates"}</span>
+        <button class="sbtn" disabled={$updateState === "checking"} on:click={checkUpdates}>
+          <span>{$updateState === "checking" ? "Checking…" : "Check for updates"}</span>
         </button>
       {/if}
     </div>
-    {#if updateState === "downloading" && dlTotal > 0}
-      <div class="upd-bar"><div class="upd-fill" style={`width:${Math.min(100, Math.round((dlDone / dlTotal) * 100))}%`} /></div>
+    {#if $updateState === "downloading" && $dlTotal > 0}
+      <div class="upd-bar"><div class="upd-fill" style={`width:${Math.min(100, Math.round(($dlDone / $dlTotal) * 100))}%`} /></div>
     {/if}
-    {#if updateMsg && updateState !== "idle"}
+    {#if $updateMsg && $updateState !== "idle"}
       <div class="check-row">
-        <span class="check-icon {updateState === "ready" || updateState === "uptodate" ? "pass" : updateState === "error" ? "fail" : ""}">{updateState === "ready" || updateState === "uptodate" ? "✓" : updateState === "error" ? "✗" : "○"}</span>
-        <span class="check-detail">{updateMsg}</span>
+        <span class="check-icon {$updateState === "ready" || $updateState === "uptodate" ? "pass" : $updateState === "error" ? "fail" : ""}">{$updateState === "ready" || $updateState === "uptodate" ? "✓" : $updateState === "error" ? "✗" : "○"}</span>
+        <span class="check-detail">{$updateMsg}</span>
       </div>
     {/if}
   </div>

@@ -46,9 +46,8 @@ windows = { version = "0.61", features = [
 
 [profile.release]
 opt-level = "z"
-lto = true
+lto = "thin"
 strip = true
-codegen-units = 1
 
 [lints.rust]
 unsafe_code = "deny"
