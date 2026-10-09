@@ -70,18 +70,17 @@
   let pending = "";
   let flushTimer = 0;
 
-  let input = "";
   let model = "";
   let warmed = "";
-  let effort = "medium";
   let permission = "full";
   let mode: ComposerMode = "build";
-  let attachments: string[] = [];
   let sending = false;
 
   // Omnibar binds directly to the active tab's composer (see markup
   // below), so each tab keeps its own draft, mode, model, effort and
-  // attachments without cross-contamination.
+  // attachments without cross-contamination. Only mode/model are mirrored
+  // out (lane hint, agent warmup); the rest would fan every keystroke
+  // through the whole reactive graph for no readers.
 
   function laneOf(sessionId: string | null | undefined): string {
     if (!sessionId) return "";
@@ -129,14 +128,10 @@
   let deskRev = 0;
 
   $: tab = tabs.find((t) => t.id === activeId) ?? tabs[0];
-  $: composer = tab.composer;
-  // Legacy mirrors for session logic; the Omnibar binds directly to
-  // tab.composer.* (see markup), so each tab keeps its own state.
-  $: input = composer.input;
-  $: mode = composer.mode;
-  $: model = composer.model;
-  $: effort = composer.effort;
-  $: attachments = composer.attachments;
+  // Only mode/model mirror out (lane hint, agent warmup). Mirroring the
+  // whole composer would re-dirty the graph on every keystroke.
+  $: mode = tab.composer.mode;
+  $: model = tab.composer.model;
   $: streaming = !!shown && running.has(shown);
   $: hasSession = tab.kind === "session" && (!!shown || sending || events.length > 0);
   $: folder = tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
@@ -148,13 +143,24 @@
     return l === "build" || l === "work" ? (l as ComposerMode) : null;
   })();
   $: sessionLanes = Object.fromEntries(threads.map((t) => [t.id, t.lane ?? ""]));
-  $: void loadBranch(folder);
-  $: void loadProject(folder);
+  // Folder-driven side effects fire on value change only: without the
+  // guard every keystroke (same folder string, fresh dirty flag) would
+  // re-invoke git_branch + brain_context and pile backend work behind typing.
+  let lastFolder = "@@none@@";
+  $: if (folder !== lastFolder) {
+    lastFolder = folder;
+    void loadBranch(folder);
+    void loadProject(folder);
+  }
   $: syncDesk(tabs, activeId);
   $: saveTabs(tabs, activeId);
   $: pageVisible = tab.kind === "page";
-  $: if (!pageVisible) api.browserHide().catch(() => {});
-  $: if (!pageVisible && immersive) void setImmersive(false);
+  let lastPageVisible: boolean | null = null;
+  $: if (pageVisible !== lastPageVisible) {
+    lastPageVisible = pageVisible;
+    if (!pageVisible) api.browserHide().catch(() => {});
+    if (!pageVisible && immersive) void setImmersive(false);
+  }
 
   const refreshThreads = coalesce(async () => {
     threads = await api.listThreads().catch(() => threads);

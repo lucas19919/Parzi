@@ -115,6 +115,11 @@ input[type="color"] { background: transparent; border: 1px solid var(--line); bo
 .ctl.open { background: var(--line); color: var(--text); }
 .ctl svg { flex: none; }
 .truncate { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pop {
+  position: fixed; z-index: 600; max-width: calc(100vw - 16px);
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow); overflow: hidden;
+}
 
 kbd {
   font-family: var(--mono); font-size: 11px; padding: 2px 7px;
