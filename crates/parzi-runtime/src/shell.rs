@@ -25,6 +25,47 @@ pub const MAX_BACKGROUND_PER_SESSION: usize = 8;
 /// Background shells are killed past this age; servers are restarted, not squatted on.
 pub const BACKGROUND_MAX_LIFETIME: Duration = Duration::from_secs(30 * 60);
 
+/// Append one stdout chunk to the ring and the spill file.
+fn ingest_output(
+    ring: &mut Vec<u8>,
+    spill: &mut Option<std::fs::File>,
+    spilled: &mut u64,
+    chunk: &[u8],
+) {
+    use std::io::Write as _;
+    let room =
+        usize::try_from((SPILL_CAP - *spilled).min(u64::try_from(chunk.len()).unwrap_or(u64::MAX)))
+            .unwrap_or(usize::MAX);
+    if let Some(f) = spill.as_mut() {
+        if f.write_all(&chunk[..room]).is_ok() {
+            *spilled += room as u64;
+        }
+    }
+    ring.extend_from_slice(chunk);
+    if ring.len() > RING_KEEP {
+        let cut = ring.len() - RING_KEEP;
+        ring.drain(..cut);
+    }
+}
+
+/// Collect output still in flight after the child is gone, so a fast
+/// exit never reports empty output. Bounded: grandchildren holding the
+/// pipe cannot hang the turn.
+async fn drain_stdout(
+    stdout: &mut tokio::process::ChildStdout,
+    ring: &mut Vec<u8>,
+    spill: &mut Option<std::fs::File>,
+    spilled: &mut u64,
+) {
+    let mut buf = [0u8; 8192];
+    loop {
+        match tokio::time::timeout(Duration::from_millis(2000), stdout.read(&mut buf)).await {
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
+            Ok(Ok(n)) => ingest_output(ring, spill, spilled, &buf[..n]),
+        }
+    }
+}
+
 pub struct ExecResult {
     pub exit: Option<i32>,
     pub timed_out: bool,
@@ -147,7 +188,7 @@ impl ShellRegistry {
         // wedge the stdout reader (kept tail only, like Proc).
         let err_keep = Arc::new(Mutex::new(Vec::<u8>::new()));
         let err_sink = err_keep.clone();
-        tokio::spawn(async move {
+        let err_task = tokio::spawn(async move {
             let mut buf = [0u8; 4096];
             loop {
                 match stderr.read(&mut buf).await {
@@ -169,32 +210,25 @@ impl ShellRegistry {
             let mut buf = [0u8; 8192];
             tokio::select! {
                 biased;
-                status = child.wait() => break status.ok().and_then(|s| s.code()),
+                status = child.wait() => {
+                    let code = status.ok().and_then(|s| s.code());
+                    drain_stdout(&mut stdout, &mut ring, &mut spill, &mut spilled).await;
+                    break code;
+                }
                 n = stdout.read(&mut buf) => match n {
                     Ok(0) => {
                         // EOF is NOT completion (children may hold pipes);
                         // keep waiting for real process exit.
                         match child.try_wait() {
-                            Ok(Some(status)) => break status.code(),
+                            Ok(Some(status)) => {
+                                drain_stdout(&mut stdout, &mut ring, &mut spill, &mut spilled).await;
+                                break status.code();
+                            }
                             _ => continue,
                         }
                     }
                     Ok(n) => {
-                        use std::io::Write as _;
-                        let room = usize::try_from(
-                            (SPILL_CAP - spilled).min(u64::try_from(n).unwrap_or(u64::MAX)),
-                        )
-                        .unwrap_or(usize::MAX);
-                            if let Some(f) = spill.as_mut() {
-                                if f.write_all(&buf[..room]).is_ok() {
-                                    spilled += room as u64;
-                                }
-                            }
-                        ring.extend_from_slice(&buf[..n]);
-                        if ring.len() > RING_KEEP {
-                            let cut = ring.len() - RING_KEEP;
-                            ring.drain(..cut);
-                        }
+                        ingest_output(&mut ring, &mut spill, &mut spilled, &buf[..n]);
                         continue;
                     }
                     Err(_) => continue,
@@ -206,11 +240,14 @@ impl ShellRegistry {
                     }
                     let _ = child.start_kill();
                     let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+                    drain_stdout(&mut stdout, &mut ring, &mut spill, &mut spilled).await;
                     break None;
                 }
             }
         };
         drop(spill);
+        // Let the stderr drain land (bounded like stdout) before composing.
+        let _ = tokio::time::timeout(Duration::from_secs(2), err_task).await;
         let mut text = String::from_utf8_lossy(&ring).into_owned();
         if let Ok(err) = err_keep.lock() {
             if !err.is_empty() {

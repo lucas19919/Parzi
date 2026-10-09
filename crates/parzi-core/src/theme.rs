@@ -248,7 +248,9 @@ pub fn read_user_css() -> Result<String> {
     }
 }
 
-const BUILTIN_PACKS: &[&str] = &["ember", "midnight", "grey", "light"];
+const BUILTIN_PACKS: &[&str] = &[
+    "ember", "midnight", "forest", "grape", "sand", "grey", "light",
+];
 
 pub fn themes_dir() -> Result<std::path::PathBuf> {
     Ok(paths::parzi_dir()?.join("themes"))

@@ -78,6 +78,27 @@ text_dim = \"#8B93A7\"\nbar = \"#161B26\"\nborder = \"#262D3D\"\n\n\
 [background]\nimage = \"\"\ndim = 0.60\nvignette = 0.45\nblur = 0.0\n",
         ),
         (
+            "forest",
+            "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+[colors]\nsidebar = \"#0A0F0C\"\nstage = \"#0E1511\"\naccent = \"#34D399\"\ntext = \"#E9F2EC\"\n\
+text_dim = \"#8AA395\"\nbar = \"#16211B\"\nborder = \"#24352B\"\n\n\
+[background]\nimage = \"\"\ndim = 0.62\nvignette = 0.48\nblur = 0.0\n",
+        ),
+        (
+            "grape",
+            "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+[colors]\nsidebar = \"#0D0A14\"\nstage = \"#120E1C\"\naccent = \"#A78BFA\"\ntext = \"#EFEAFB\"\n\
+text_dim = \"#9C92B8\"\nbar = \"#1B1428\"\nborder = \"#2E2342\"\n\n\
+[background]\nimage = \"\"\ndim = 0.62\nvignette = 0.48\nblur = 0.0\n",
+        ),
+        (
+            "sand",
+            "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+[colors]\nsidebar = \"#100C08\"\nstage = \"#171209\"\naccent = \"#E8B64C\"\ntext = \"#F3EDE2\"\n\
+text_dim = \"#A89A86\"\nbar = \"#211A10\"\nborder = \"#37291A\"\n\n\
+[background]\nimage = \"\"\ndim = 0.62\nvignette = 0.48\nblur = 0.0\n",
+        ),
+        (
             "grey",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
 [colors]\nsidebar = \"#101012\"\nstage = \"#171719\"\naccent = \"#E6E8EE\"\ntext = \"#EDEDEF\"\n\

@@ -19,9 +19,9 @@ jobs:
             args: "--target aarch64-apple-darwin --bundles dmg"
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -35,7 +35,9 @@ jobs:
 
       - run: npm --prefix ui ci
 
-      - uses: tauri-apps/tauri-action@v0
+      # Pinned: floating @v0 once pulled a CLI with different hook-cwd
+      # behavior and broke a release. Bump deliberately, never floating.
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -99,7 +101,7 @@ jobs:
             build: target/release/parzi
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 

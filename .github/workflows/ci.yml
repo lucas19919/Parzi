@@ -13,7 +13,7 @@ jobs:
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with: { toolchain: "1.98.0", components: "clippy, rustfmt" }
       - uses: Swatinem/rust-cache@v2
@@ -23,7 +23,7 @@ jobs:
       - run: cargo test --workspace --no-fail-fast
         env:
           PARZI_HOME: ${{ runner.temp }}/parzi-test-home
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with: { node-version: 24, cache: npm, cache-dependency-path: ui/package-lock.json }
       - run: npm --prefix ui ci
       - run: npm --prefix ui run build
@@ -31,8 +31,8 @@ jobs:
   ui:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: 24, cache: npm, cache-dependency-path: ui/package-lock.json }
       - run: npm --prefix ui ci
       - run: npm --prefix ui run check
@@ -42,7 +42,7 @@ jobs:
   hygiene:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: |
           v=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           grep -q "\"version\": \"$v\"" src-tauri/tauri.conf.json ui/package.json

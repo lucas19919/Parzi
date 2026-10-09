@@ -66,6 +66,24 @@ async fn foreground_echo_comes_back() {
 }
 
 #[tokio::test]
+async fn foreground_rapid_exits_keep_every_byte() {
+    // Fast exits used to beat the stdout drain and report empty output
+    // (macOS CI). Every marker must survive, every time.
+    let h = host(&workdir());
+    for i in 0..50u32 {
+        let marker = format!("race-marker-{i}");
+        let (ok, out) = h
+            .call("shell.exec", &json!({"cmd": format!("echo {marker}")}))
+            .await;
+        assert!(ok, "{out}");
+        assert!(
+            out.contains(&marker),
+            "lost output on iteration {i}: {out:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn foreground_failure_reports_its_exit() {
     let h = host(&workdir());
     let (ok, out) = h
