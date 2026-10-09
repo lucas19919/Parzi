@@ -131,8 +131,7 @@ fn touch_lru(label: &str) {
 fn evict_lru(app: &AppHandle, keep: &str) {
     let live: Vec<String> = app
         .webviews()
-        .into_iter()
-        .map(|(label, _)| label)
+        .into_keys()
         .filter(|l| l.starts_with(PAGE_PREFIX))
         .collect();
     if live.len() <= PAGE_CAP {

@@ -180,18 +180,56 @@
 
   let remoteUser = "";
   let remoteHost = "";
+  let remotePass = "";
+  let connState: "idle" | "connecting" | "connected" | "error" = "idle";
+  let connMsg = "";
+  let connMethod = "";
   try {
     remoteUser = localStorage.getItem("parzi.remote.user") ?? "";
     remoteHost = localStorage.getItem("parzi.remote.host") ?? "";
+    const saved = localStorage.getItem("parzi.remote.conn");
+    if (saved) {
+      const c = JSON.parse(saved) as { user?: string; host?: string; method?: string };
+      if (c.user === remoteUser && c.host === remoteHost && c.method) {
+        connState = "connected";
+        connMethod = c.method;
+        connMsg = `Connected to ${c.user}@${c.host} via ${c.method}.`;
+      }
+    }
   } catch {}
-  $: remoteCmd =
-    remoteUser.trim() && remoteHost.trim()
-      ? `ssh ${remoteUser.trim()}@${remoteHost.trim()} 'parzi setup && parzi serve'`
-      : "";
   $: try {
     localStorage.setItem("parzi.remote.user", remoteUser);
     localStorage.setItem("parzi.remote.host", remoteHost);
   } catch {}
+  // The password is never written anywhere: it lives in this field
+  // until Connect reads it, then only inside the backend call.
+
+  async function connectRemote() {
+    const user = remoteUser.trim();
+    const host = remoteHost.trim();
+    if (!user || !host || connState === "connecting") return;
+    connState = "connecting";
+    connMsg = `Reaching ${user}@${host}…`;
+    try {
+      const r = await api.remoteConnect(user, host, remotePass || undefined);
+      remotePass = "";
+      if (r.connected) {
+        connState = "connected";
+        connMethod = r.method;
+        connMsg = r.detail;
+        try {
+          localStorage.setItem("parzi.remote.conn", JSON.stringify({ user, host, method: r.method, at: Date.now() }));
+        } catch {}
+      } else {
+        connState = "error";
+        connMsg = r.detail;
+      }
+    } catch (e) {
+      remotePass = "";
+      connState = "error";
+      connMsg = String(e);
+    }
+  }
 
   async function checkServe() {
     if (serveBusy) return;
@@ -365,26 +403,38 @@
         <div class="remote-form">
           <label>
             <span>User</span>
-            <input placeholder="you" spellcheck="false" bind:value={remoteUser} />
+            <input placeholder="you" spellcheck="false" autocomplete="username" bind:value={remoteUser} />
           </label>
           <label>
             <span>Host</span>
-            <input placeholder="gpu-box" spellcheck="false" bind:value={remoteHost} />
+            <input placeholder="gpu-box or 192.168.178.155" spellcheck="false" bind:value={remoteHost} />
+          </label>
+          <label>
+            <span>Password <em>(only if the server needs one)</em></span>
+            <input type="password" placeholder="leave empty for key login" autocomplete="current-password" bind:value={remotePass} />
           </label>
         </div>
-        {#if remoteCmd}
+        <div class="action">
+          <button
+            class="btn primary"
+            disabled={!remoteUser.trim() || !remoteHost.trim() || connState === "connecting"}
+            on:click={connectRemote}
+          >
+            {connState === "connecting" ? "Connecting…" : connState === "connected" ? "Connected — check again" : "Connect"}
+          </button>
+          {#if connMsg && connState !== "idle"}<span class="result">{connMsg}</span>{/if}
+        </div>
+        {#if connState === "connected"}
           <div class="item compact">
             <span class="grow">
-              <span class="title">Log in and set it up</span>
-              <span class="sub mono">{remoteCmd}</span>
+              <span class="title">Start the engine there</span>
+              <span class="sub mono">parzi serve</span>
             </span>
-            <button class="btn" on:click={() => copyCmd(remoteCmd)}>{copied === remoteCmd ? "Copied" : "Copy"}</button>
+            <button class="btn" on:click={() => copyCmd("parzi serve")}>{copied === "parzi serve" ? "Copied" : "Copy"}</button>
           </div>
           <div class="action">
-            <span class="result">Paste that in a terminal. It logs in, prepares the remote, and starts the engine. Answer approvals with <code>parzi approval list</code> over the same SSH.</span>
+            <span class="result">Run that on {remoteUser.trim()}@{remoteHost.trim()}, then answer approvals with <code>parzi approval list</code> over the same SSH.</span>
           </div>
-        {:else}
-          <p class="empty">Enter the SSH user and host above and the one-liner appears here.</p>
         {/if}
         <details class="diy">
           <summary>Do it yourself, step by step</summary>

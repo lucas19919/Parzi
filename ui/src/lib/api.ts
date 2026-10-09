@@ -199,6 +199,12 @@ export const api = {
   saveConfig: (cfg: ParziConfig) => invoke<void>("save_config", { cfg }),
   runDoctorQuick: () => invoke<Check[]>("run_doctor_quick"),
   serveStatus: () => invoke<{ running: boolean; port: number | null }>("serve_status"),
+  remoteConnect: (user: string, host: string, password?: string) =>
+    invoke<{ connected: boolean; method: string; prepared: boolean; detail: string }>("remote_connect", {
+      user,
+      host,
+      password: password || null,
+    }),
 
   getTheme: () => invoke<Theme>("get_theme"),
   getThemeCss: () => invoke<string>("get_theme_css"),

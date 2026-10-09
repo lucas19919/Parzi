@@ -24,6 +24,7 @@ mod files;
 mod job;
 mod onboard;
 mod pagectl;
+mod remote;
 mod search;
 mod sessions;
 mod settings;
@@ -587,6 +588,7 @@ fn main() {
             onboard::onboard_import,
             onboard::agent_install,
             onboard::agent_login,
+            remote::remote_connect,
         ])
         .build(tauri::generate_context!())
         .expect("parzi failed to start")

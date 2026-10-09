@@ -44,8 +44,7 @@ pub async fn brain_save_answer(content: String) -> Result<NoteMeta, String> {
         let slug: String = content
             .lines()
             .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .next()
+            .find(|l| !l.is_empty())
             .unwrap_or("note")
             .trim_start_matches('#')
             .trim()
