@@ -34,7 +34,7 @@ pub async fn send_message(
     mode: Option<String>,
     lane: Option<String>,
 ) -> Result<String, String> {
-    let effort = parzi_runtime::orchestrator::normalize_effort(effort.as_deref().unwrap_or("med"));
+    let effort = parzi_runtime::orchestrator::normalize_effort(effort.as_deref().unwrap_or("medium"));
     let attached = read_attachments(&cwd, &attachments.unwrap_or_default());
     let approver: Arc<dyn Approver> = Arc::new(GuiApprover {
         app: state.app.clone(),

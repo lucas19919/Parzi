@@ -4,17 +4,18 @@
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
-  import { folderName } from "./tabs";
   import type { SessionMeta } from "./api";
   import { bookmarks, clearHistory, faviconUrl, history, removeBookmark, removeVisit, type Bookmark, type Visit } from "./browserData";
   import { bare } from "./suggest";
+  import { agentOf, whereOf } from "./sessions";
+  import { laneIcon, normLane } from "./lanes";
+  import { byDay, formatTime as time } from "./time";
 
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
   export let view: "sessions" | "history" | "bookmarks" = "sessions";
 
   const dispatch = createEventDispatcher<{ open: { url: string }; openSession: { id: string }; deleteSession: { id: string }; clearSessions: void }>();
-  const DAY = 86_400_000;
   const PLACEHOLDER = { sessions: "Search sessions", history: "Search history", bookmarks: "Search bookmarks" };
 
   let query = "";
@@ -32,44 +33,12 @@
     return !term || title.toLowerCase().includes(term) || url.toLowerCase().includes(term);
   }
 
-  function dayLabel(at: number) {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    if (at >= start.getTime()) return "Today";
-    if (at >= start.getTime() - DAY) return "Yesterday";
-    return new Date(at).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
-  }
-
-  function agentOf(s: SessionMeta) {
-    return s.model.split("/")[0];
-  }
-
   function laneOf(s: SessionMeta): string {
-    const l = s.lane ?? "";
-    if (l === "code") return "build";
-    if (l === "research") return "work";
-    return l;
+    return normLane(s.lane ?? "");
   }
 
-  function laneIcon(s: SessionMeta): "brain" | "bot" | "chat" {
-    const l = laneOf(s);
-    return l === "work" ? "brain" : l === "build" ? "bot" : "chat";
-  }
-
-  function whereOf(s: SessionMeta) {
-    if (!s.cwd || /[\\/]\.parzi[\\/]scratch[\\/]/.test(s.cwd)) return "";
-    return folderName(s.cwd);
-  }
-
-  function byDay<T extends { at: number }>(list: T[]) {
-    const out: { label: string; items: T[] }[] = [];
-    for (const v of [...list].sort((a, b) => b.at - a.at)) {
-      const label = dayLabel(v.at);
-      const last = out[out.length - 1];
-      if (last?.label === label) last.items.push(v);
-      else out.push({ label, items: [v] });
-    }
-    return out;
+  function laneIconFor(s: SessionMeta): "brain" | "bot" | "chat" {
+    return laneIcon(s.lane ?? "");
   }
 
   function byFolder(list: Bookmark[]) {
@@ -79,10 +48,6 @@
       map.set(name, [...(map.get(name) ?? []), b]);
     }
     return [...map.entries()].map(([label, items]) => ({ label, items }));
-  }
-
-  function time(at: number) {
-    return new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   }
 
   async function clearAll() {
@@ -129,7 +94,7 @@
             <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
               <span class="time">{time(s.at)}</span>
               <span class="icon">
-                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneIcon(s)} size={13} />{/if}
+                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneIconFor(s)} size={13} />{/if}
               </span>
               <span class="title">{s.title || "Untitled session"}</span>
               <span class="url" class:live={running.has(s.id)}>{running.has(s.id) ? "Running" : whereOf(s)}</span>

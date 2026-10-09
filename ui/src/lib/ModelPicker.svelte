@@ -73,7 +73,7 @@
   // Long provider strings ("Muse Spark 1.3 Contributor Free") collapse to
   // the first two non-version words ("Muse Spark") so the pill never
   // crushes its neighbours.
-  function shortName(name: string) {
+  function shortModel(name: string) {
     if (!value) return "Pick a model";
     if (name.length <= 24) return name;
     const skip = new Set(["contributor", "free", "preview", "latest", "thinking"]);
@@ -150,7 +150,7 @@
   aria-expanded={open}
   on:click|stopPropagation={() => (open ? (open = false) : show())}
 >
-  <span class="truncate">{shortName(shown.name)}</span>
+  <span class="truncate">{shortModel(shown.name)}</span>
   <Icon name="chevDown" size={10} />
 </button>
 

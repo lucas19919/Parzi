@@ -3,6 +3,7 @@
   import Icon from "./Icon.svelte";
   import type { Tab } from "./tabs";
   import { faviconUrl } from "./browserData";
+  import { laneIcon, normLane } from "./lanes";
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
@@ -32,24 +33,24 @@
   let touched = new Set<string>();
 
   // Groups start collapsed (agent tabs arrive quietly); explicit
-  // user toggles win from then on.
+  // user toggles win from then on. Guarded: only reassign when the set
+  // actually changed, otherwise `collapsed = collapsed` self-invalidates
+  // (objects are always dirty) and loops the reactive flush forever,
+  // freezing the UI on the next tabs change / keystroke.
   $: {
+    let changed = false;
     for (const [sid, kids] of groups.kids) {
-      if (kids.length && !touched.has(sid)) collapsed.add(sid);
+      if (kids.length && !touched.has(sid) && !collapsed.has(sid)) {
+        collapsed.add(sid);
+        changed = true;
+      }
     }
-    collapsed = collapsed;
+    if (changed) collapsed = new Set(collapsed);
   }
 
   function laneOf(t: Tab): string {
     if (t.kind !== "session" || !t.sessionId) return "";
-    const l = sessionLanes[t.sessionId] ?? "";
-    if (l === "code") return "build";
-    if (l === "research") return "work";
-    return l;
-  }
-
-  function laneIcon(lane: string): "brain" | "bot" | "chat" {
-    return lane === "work" ? "brain" : lane === "build" ? "bot" : "chat";
+    return normLane(sessionLanes[t.sessionId] ?? "");
   }
 
   // Page tabs opened by an agent attach under their session tab instead
@@ -73,8 +74,8 @@
   })();
 
   function toggleGroup(sessionId: string) {
+    touched = new Set(touched).add(sessionId);
     collapsed = new Set(collapsed);
-    touched.add(sessionId);
     if (collapsed.has(sessionId)) collapsed.delete(sessionId);
     else collapsed.add(sessionId);
   }

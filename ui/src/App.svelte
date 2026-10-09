@@ -26,6 +26,7 @@
   import Settings from "./lib/Settings.svelte";
   import Icon from "./lib/Icon.svelte";
   import { board, ensureBoard } from "./lib/providerStore";
+  import { normLane } from "./lib/lanes";
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
@@ -88,13 +89,7 @@
   }
 
   // Legacy sessions stored lane "code" (today's "build") or "research"
-  // (today's "work").
-  function normLane(lane: string): string {
-    if (lane === "code") return "build";
-    if (lane === "research") return "work";
-    return lane;
-  }
-
+  // (today's "work"): normalized in lib/lanes.ts.
   function isDescendant(id: string, ancestor: string): boolean {
     let cur = threads.find((t) => t.id === id)?.parent_id;
     let guard = 0;

@@ -8,6 +8,7 @@
   import { api, brain, MODE_META, type ComposerMode, type Project, type ProviderStatus } from "./api";
   import { effortsFor, fitEffort } from "./providerRows";
   import { folderName, toAddress } from "./tabs";
+  import { relativeTo, sameDir, shortAttachment as shortName } from "./paths";
   import { popover, placeAbove } from "./popover";
   import { bookmarks, completeAddress, history, pins } from "./browserData";
   import SuggestList from "./SuggestList.svelte";
@@ -91,6 +92,9 @@
   let webTyped = "";
   let webSeq = 0;
   let webTimer = 0;
+  let atSeq = 0;
+  let atTimer = 0;
+  let thumbsKey = "";
   let focused = false;
 
   $: efforts = effortsFor(model, board);
@@ -102,7 +106,15 @@
   $: slashQuery = /^\/\w*$/.test(input.trim()) ? input.trim().slice(1).toLowerCase() : null;
   $: slashItems = slashQuery === null ? [] : SLASH.filter((c) => c.name.startsWith(slashQuery));
   $: if (slashIndex >= slashItems.length) slashIndex = 0;
-  $: void loadThumbs(attachments, folder);
+  // Attachments change rarely; guard by key so per-keystroke parent
+  // object churn (same array, new dirty flag) doesn't re-decode images.
+  $: {
+    const key = `${folder}\n${attachments.join("\n")}`;
+    if (key !== thumbsKey) {
+      thumbsKey = key;
+      void loadThumbs(attachments, folder);
+    }
+  }
 
   export function focus() {
     textarea?.focus();
@@ -255,15 +267,23 @@
     const at = mode === "build" ? /@([\w./-]*)$/.exec(input) : null;
     if (!at || !folder) {
       atItems = [];
+      clearTimeout(atTimer);
       return;
     }
-    try {
-      const found = await api.listFiles(folder, at[1].split("/").pop() ?? "");
-      atItems = found.slice(0, 8);
-      atIndex = 0;
-    } catch {
-      atItems = [];
-    }
+    // Debounce FS walks: one in-flight query per pause, stale wins dropped.
+    const query = at[1].split("/").pop() ?? "";
+    const seq = ++atSeq;
+    clearTimeout(atTimer);
+    atTimer = window.setTimeout(async () => {
+      try {
+        const found = await api.listFiles(folder, query);
+        if (seq !== atSeq) return;
+        atItems = found.slice(0, 8);
+        atIndex = 0;
+      } catch {
+        if (seq === atSeq) atItems = [];
+      }
+    }, 150);
   }
 
   function pickMention(item: string) {
@@ -273,16 +293,8 @@
     textarea?.focus();
   }
 
-  function relative(path: string) {
-    const root = folder.replace(/[/\\]+$/, "");
-    if (root && (path.startsWith(`${root}\\`) || path.startsWith(`${root}/`))) {
-      return path.slice(root.length + 1);
-    }
-    return path;
-  }
-
   function addAttachments(paths: string[]) {
-    const next = paths.map(relative).filter((p) => p && !attachments.includes(p));
+    const next = paths.map((p) => relativeTo(p, folder)).filter((p) => p && !attachments.includes(p));
     if (next.length) attachments = [...attachments, ...next].slice(0, MAX_ATTACH);
   }
 
@@ -303,11 +315,6 @@
     } catch (e) {
       attachError = String(e);
     }
-  }
-
-  function sameDir(a: string, b: string) {
-    const norm = (p: string) => p.replace(/[/\\]+$/, "").replace(/\\/g, "/").toLowerCase();
-    return !!a && !!b && norm(a) === norm(b);
   }
 
   async function toggleProject() {
@@ -381,11 +388,6 @@
   function onDrop(e: DragEvent) {
     const files = e.dataTransfer?.files;
     if (files?.length) void stageImages(files);
-  }
-
-  function shortName(name: string) {
-    const base = name.split(/[/\\]/).pop() ?? name;
-    return base.length > 22 ? `${base.slice(0, 22)}…` : base;
   }
 
   function togglePerm() {

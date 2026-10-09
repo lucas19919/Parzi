@@ -5,8 +5,10 @@
   import { hasMark } from "./providerMarks";
   import { api, brain, type SessionMeta } from "./api";
   import { toast } from "./toast";
-  import { folderName } from "./tabs";
   import { renderMarkdown } from "./md";
+  import { agentOf, isLiveSession, whereOf } from "./sessions";
+  import { laneIcon } from "./lanes";
+  import { formatTime as time } from "./time";
 
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
@@ -57,35 +59,18 @@
     window.addEventListener("pointerup", up);
   }
 
-  function agentOf(s: SessionMeta) {
-    return s.model.split("/")[0];
-  }
-
   function laneFallback(s: SessionMeta): "brain" | "bot" | "chat" {
-    const l = s.lane ?? "";
-    const lane = l === "code" ? "build" : l === "research" ? "work" : l;
-    return lane === "work" ? "brain" : lane === "build" ? "bot" : "chat";
+    return laneIcon(s.lane ?? "");
   }
 
   function isLive(s: SessionMeta) {
-    return running.has(s.id) || s.status === "active";
+    return isLiveSession(s, running);
   }
 
   function pillOf(s: SessionMeta): { label: string; cls: string } | null {
     if (isLive(s)) return { label: "Running", cls: "live" };
     if (s.status === "queued") return { label: "Queued", cls: "queue" };
     return null;
-  }
-
-  function whereOf(s: SessionMeta) {
-    if (!s.cwd || /[\\/]\.parzi[\\/]scratch[\\/]/.test(s.cwd)) return "";
-    return folderName(s.cwd);
-  }
-
-  function time(iso: string) {
-    const at = Date.parse(iso);
-    if (!at) return "";
-    return new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   }
 
   $: family = (() => {
@@ -629,15 +614,6 @@
   .disclosure:hover { color: var(--text); }
   .tri { display: inline-block; font-size: 10px; transition: transform 140ms ease; }
   .tri.open { transform: rotate(90deg); }
-  .proj-head {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    margin: 12px 12px 6px;
-  }
-  .proj-name { font-weight: 650; font-size: 13px; color: var(--text); }
-  .proj-prog { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
-  .spacer { flex: 1; }
   .mini {
     padding: 3px 9px;
     background: none;

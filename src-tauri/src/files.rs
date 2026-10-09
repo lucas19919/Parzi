@@ -150,41 +150,53 @@ pub async fn list_files(
     }
     let root_path = confined_path(state.orch.store(), &root)?;
     let q = query.to_lowercase();
-    let mut out = vec![];
-    let mut stack = vec![(root_path.clone(), 0u8)];
-    while let Some((dir, depth)) = stack.pop() {
-        if depth > 4 || out.len() >= 200 {
-            continue;
-        }
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for e in entries.flatten() {
-            let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || SKIP.contains(&name.as_str()) {
+    // FS walks run on the blocking pool so per-keystroke @-mentions
+    // never stall the 3 async workers that serve all other commands.
+    let out = tokio::task::spawn_blocking(move || {
+        let mut out = vec![];
+        let mut stack = vec![(root_path.clone(), 0u8)];
+        let mut visited = 0usize;
+        while let Some((dir, depth)) = stack.pop() {
+            if depth > 4 || out.len() >= 200 || visited >= 5000 {
                 continue;
             }
-            let Ok(kind) = e.file_type() else {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
             };
-            if kind.is_symlink() {
-                continue;
-            }
-            let p = e.path();
-            if kind.is_dir() {
-                stack.push((p, depth + 1));
-            } else if let Ok(rel) = p.strip_prefix(&root_path) {
-                let s = rel.to_string_lossy().replace('\\', "/");
-                if q.is_empty() || s.to_lowercase().contains(&q) {
-                    out.push(s);
-                }
-                if out.len() >= 200 {
+            for e in entries.flatten() {
+                visited += 1;
+                if visited >= 5000 || out.len() >= 200 {
                     break;
+                }
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') || SKIP.contains(&name.as_str()) {
+                    continue;
+                }
+                let Ok(kind) = e.file_type() else {
+                    continue;
+                };
+                if kind.is_symlink() {
+                    continue;
+                }
+                let p = e.path();
+                if kind.is_dir() {
+                    stack.push((p, depth + 1));
+                } else if let Ok(rel) = p.strip_prefix(&root_path) {
+                    let s = rel.to_string_lossy().replace('\\', "/");
+                    if q.is_empty() || s.to_lowercase().contains(&q) {
+                        out.push(s);
+                    }
+                    if out.len() >= 200 {
+                        break;
+                    }
                 }
             }
         }
-    }
-    out.sort();
+        out.sort();
+        out
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(out)
 }
 
