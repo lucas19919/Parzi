@@ -1,14 +1,18 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, SystemTime};
 
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
+
+use crate::types::{ErrorClass, ProviderError};
 
 #[cfg(windows)]
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 const STDERR_KEEP: usize = 16 * 1024;
+const UNPACK_MIN_AGE: Duration = Duration::from_secs(10 * 60);
 
 static ADOPT: OnceLock<fn(u32)> = OnceLock::new();
 
@@ -28,7 +32,13 @@ pub fn kill_tree(pid: u32) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
-        let _ = std::process::Command::new("taskkill")
+        // Full path: a `taskkill.exe` planted next to the app or on PATH
+        // must never run in its place.
+        let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        let taskkill = std::path::Path::new(&root)
+            .join("System32")
+            .join("taskkill.exe");
+        let _ = std::process::Command::new(taskkill)
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .creation_flags(CREATE_NO_WINDOW)
             .stdout(Stdio::null())
@@ -46,6 +56,19 @@ pub fn kill_tree(pid: u32) {
                 .stderr(Stdio::null())
                 .status();
         }
+    }
+}
+
+// The root too: on unix kill_tree leaves it to the caller.
+fn kill_all(pid: u32) {
+    kill_tree(pid);
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 }
 
@@ -80,20 +103,39 @@ pub fn shell_program() -> (String, Vec<String>) {
 pub(crate) fn private_temp(agent: &str) -> Option<PathBuf> {
     let dir = parzi_core::paths::parzi_dir().ok()?.join("tmp").join(agent);
     std::fs::create_dir_all(&dir).ok()?;
-    sweep_unpack_dirs(&dir);
+    sweep_unpack_dirs(&dir, UNPACK_MIN_AGE);
     Some(dir)
 }
 
-fn sweep_unpack_dirs(dir: &Path) {
+pub(crate) fn existing_folder(cwd: &Path) -> Result<(), ProviderError> {
+    if cwd.is_dir() {
+        return Ok(());
+    }
+    Err(ProviderError::new(
+        ErrorClass::BadRequest,
+        format!("the folder {} does not exist", cwd.display()),
+    ))
+}
+
+// A young folder may belong to an agent still unpacking itself.
+fn sweep_unpack_dirs(dir: &Path, min_age: Duration) {
     if !cfg!(windows) {
         return;
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
+    let now = SystemTime::now();
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
         if !name.starts_with("_MEI") || !e.path().is_dir() {
+            continue;
+        }
+        let age = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|t| now.duration_since(t).unwrap_or(Duration::ZERO));
+        if !age.is_ok_and(|a| a >= min_age) {
             continue;
         }
         let dead = dir.join(format!("_gone{}", &name[4..]));
@@ -209,12 +251,14 @@ impl Proc {
         env: &[(String, String)],
     ) -> std::io::Result<Self> {
         let mut cmd = Command::new(program);
+        // Drop kills root and tree off-thread; tokio killing the root first
+        // would cut the tree walk short.
         cmd.args(args)
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true);
+            .kill_on_drop(false);
         for (k, v) in env {
             cmd.env(k, v);
         }
@@ -252,22 +296,26 @@ impl Proc {
     }
 
     pub async fn kill(&mut self) {
-        self.kill_tree();
+        if let Some(pid) = self.child.id() {
+            let _ = tokio::task::spawn_blocking(move || kill_tree(pid)).await;
+        }
         let _ = self.child.start_kill();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), self.child.wait()).await;
-    }
-
-    fn kill_tree(&mut self) {
-        let Some(pid) = self.child.id() else {
-            return;
-        };
-        kill_tree(pid);
+        let _ = tokio::time::timeout(Duration::from_secs(5), self.child.wait()).await;
     }
 }
 
 impl Drop for Proc {
     fn drop(&mut self) {
-        self.kill_tree();
+        let Some(pid) = self.child.id() else {
+            return;
+        };
+        // taskkill and ps are slow; never block whoever drops this.
+        let spawned = std::thread::Builder::new()
+            .name("parzi-kill".into())
+            .spawn(move || kill_all(pid));
+        if spawned.is_err() {
+            kill_all(pid);
+        }
     }
 }
 
@@ -302,27 +350,9 @@ fn descendants(root: u32) -> Vec<u32> {
 
 pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
-pub(crate) async fn first_line(program: &Path, args: &[&str]) -> Option<String> {
-    let mut cmd = Command::new(program);
-    cmd.args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    #[cfg(windows)]
-    cmd.creation_flags(CREATE_NO_WINDOW);
-    let out = tokio::time::timeout(std::time::Duration::from_secs(15), cmd.output())
-        .await
-        .ok()?
-        .ok()?;
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .map(str::to_string)
-}
-
-pub(crate) async fn output(program: &Path, args: &[&str], secs: u64) -> Option<String> {
+// Stdout and stderr of a short command; on timeout its whole tree dies,
+// not just the direct child.
+async fn probe(program: &Path, args: &[&str], secs: u64) -> Option<(String, String)> {
     let mut cmd = Command::new(program);
     cmd.args(args)
         .stdin(Stdio::null())
@@ -331,13 +361,61 @@ pub(crate) async fn output(program: &Path, args: &[&str], secs: u64) -> Option<S
         .kill_on_drop(true);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
-    let out = tokio::time::timeout(std::time::Duration::from_secs(secs), cmd.output())
-        .await
-        .ok()?
-        .ok()?;
-    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
-    text.push_str(&String::from_utf8_lossy(&out.stderr));
-    Some(text)
+    #[cfg(unix)]
+    cmd.process_group(0);
+    let mut child = cmd.spawn().ok()?;
+    adopt(&child);
+    let pid = child.id();
+    let (mut stdout, mut stderr) = (child.stdout.take()?, child.stderr.take()?);
+    let run = async {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let _ = tokio::join!(stdout.read_to_end(&mut out), stderr.read_to_end(&mut err));
+        let _ = child.wait().await;
+        (out, err)
+    };
+    if let Ok((out, err)) = tokio::time::timeout(Duration::from_secs(secs), run).await {
+        return Some((
+            String::from_utf8_lossy(&out).into_owned(),
+            String::from_utf8_lossy(&err).into_owned(),
+        ));
+    }
+    if let Some(pid) = pid {
+        let _ = tokio::task::spawn_blocking(move || kill_probe(pid)).await;
+    }
+    let _ = child.start_kill();
+    None
+}
+
+fn kill_probe(pid: u32) {
+    #[cfg(windows)]
+    kill_tree(pid);
+    // The probe leads its own group, so one signal reaches every descendant.
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", "--", &format!("-{pid}")])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+pub(crate) async fn first_line(program: &Path, args: &[&str]) -> Option<String> {
+    let (out, _) = probe(program, args, 15).await?;
+    out.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(str::to_string)
+}
+
+pub(crate) async fn output(program: &Path, args: &[&str], secs: u64) -> Option<String> {
+    let (mut out, err) = probe(program, args, secs).await?;
+    out.push_str(&err);
+    Some(out)
+}
+
+pub(crate) async fn stdout(program: &Path, args: &[&str], secs: u64) -> Option<String> {
+    probe(program, args, secs).await.map(|(out, _)| out)
 }
 
 #[cfg(test)]
@@ -371,6 +449,18 @@ mod tests {
     fn a_missing_program_is_not_installed() {
         assert!(resolve("parzi-no-such-program-xyz").is_none());
         assert!(resolve("").is_none());
+    }
+
+    #[test]
+    fn a_missing_folder_is_named() {
+        let gone = std::env::temp_dir().join(format!("parzi-gone-{}", uuid::Uuid::new_v4()));
+        let err = existing_folder(&gone).unwrap_err();
+        assert_eq!(err.class, ErrorClass::BadRequest);
+        assert!(
+            err.message.starts_with("the folder") && err.message.ends_with("does not exist"),
+            "{err}"
+        );
+        assert!(existing_folder(&std::env::temp_dir()).is_ok());
     }
 
     #[tokio::test]
@@ -442,7 +532,9 @@ mod tests {
             .share_mode(0)
             .open(held.join("x.pyd"))
             .unwrap();
-        sweep_unpack_dirs(&dir);
+        sweep_unpack_dirs(&dir, UNPACK_MIN_AGE);
+        assert!(gone.exists(), "a folder still being unpacked was swept");
+        sweep_unpack_dirs(&dir, Duration::ZERO);
         assert!(!gone.exists(), "abandoned unpack folder was kept");
         assert!(held.join("x.pyd").exists(), "a folder in use was touched");
         assert!(

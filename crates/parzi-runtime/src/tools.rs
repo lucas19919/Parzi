@@ -96,12 +96,9 @@ impl ToolExecutor {
     }
 
     pub(crate) fn approval_override(&self, name: &str) -> Option<ApprovalMode> {
-        if is_vendor_category(name)
-            || is_ui_tool(name)
-            || is_brain_tool(name)
-            || is_session_tool(name)
-            || is_lane_tool(name)
-        {
+        // Connector modes govern connector tools only: a connector named
+        // `shell` or `project` must not relax Parzi's own gates.
+        if is_vendor_category(name) || is_parzi_tool(name) {
             return None;
         }
         let (server, tool) = name.split_once('.')?;
@@ -390,7 +387,6 @@ fn shell_defs() -> Vec<ToolDef> {
                 "properties": {
                     "cmd": {"type": "string"},
                     "workdir": {"type": "string"},
-                    "title": {"type": "string"},
                 },
                 "required": ["cmd"],
             }),
@@ -935,14 +931,16 @@ pub fn display_name(name: &str) -> String {
         .map_or_else(|| name.to_string(), from_mcp)
 }
 
-fn one_line(s: &str, n: usize) -> String {
-    let first = s.lines().next().unwrap_or("").trim();
-    let cut: String = first.chars().take(n).collect();
-    if first.chars().count() > n {
-        format!("{cut}…")
-    } else {
-        cut
+/// At most `n` chars, with an ellipsis when something was cut.
+pub(crate) fn clip(s: &str, n: usize) -> String {
+    match s.char_indices().nth(n) {
+        Some((at, _)) => format!("{}…", &s[..at]),
+        None => s.to_string(),
     }
+}
+
+fn one_line(s: &str, n: usize) -> String {
+    clip(s.lines().next().unwrap_or("").trim(), n)
 }
 
 fn short_id(s: &str) -> String {
@@ -984,5 +982,53 @@ mod tests {
             "Calling weird.tool"
         );
         assert!(!humanize_tool_call("shell.exec", &j(r#"{"cmd":"a\nb"}"#)).contains('\n'));
+    }
+
+    #[test]
+    fn connector_modes_never_override_parzi_tools() {
+        let auto = |tools: &[&str]| parzi_core::config::McpServerCfg {
+            command: "nope".into(),
+            tool_modes: tools
+                .iter()
+                .map(|t| ((*t).to_string(), "auto".to_string()))
+                .collect(),
+            enabled: true,
+            ..Default::default()
+        };
+        let servers = [
+            ("shell", auto(&["exec", "start"])),
+            ("project", auto(&["create"])),
+            ("browser", auto(&["open"])),
+            ("doc", auto(&["read"])),
+            ("gh", auto(&["issue_get"])),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        let tools = ToolExecutor {
+            cwd: String::new(),
+            mcp: std::sync::Arc::new(McpManager::new(servers, 60)),
+            allowed: vec!["*".into()],
+        };
+        for own in [
+            "shell.exec",
+            "shell.start",
+            "project.create",
+            "browser.open",
+            "doc.read",
+        ] {
+            assert_eq!(tools.approval_override(own), None, "{own}");
+        }
+        assert_eq!(
+            tools.approval_override("gh.issue_get"),
+            Some(ApprovalMode::Auto)
+        );
+    }
+
+    #[test]
+    fn clip_counts_chars_not_bytes() {
+        assert_eq!(clip("héllo", 2), "hé…");
+        assert_eq!(clip("hé", 2), "hé");
+        assert_eq!(one_line("  a\nb", 5), "a");
     }
 }

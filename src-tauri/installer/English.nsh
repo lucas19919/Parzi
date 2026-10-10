@@ -5,7 +5,7 @@ LangString alreadyInstalledLong ${LANG_ENGLISH} "${PRODUCTNAME} ${VERSION} is al
 LangString appRunning ${LANG_ENGLISH} "${PRODUCTNAME} is running. Close it first, then continue."
 LangString appRunningOkKill ${LANG_ENGLISH} "${PRODUCTNAME} is running.$\nPress OK and the installer will close it for you."
 LangString createDesktop ${LANG_ENGLISH} "Put Parzi on my desktop"
-LangString deleteAppData ${LANG_ENGLISH} "Also delete my threads, settings and local data"
+LangString deleteAppData ${LANG_ENGLISH} "Also delete my threads, notes and settings (.parzi)"
 LangString failedToKillApp ${LANG_ENGLISH} "Could not close ${PRODUCTNAME}. Close it yourself, then try again."
 LangString unableToUninstall ${LANG_ENGLISH} "Could not uninstall - is Parzi still running?"
 LangString uninstallApp ${LANG_ENGLISH} "Uninstall ${PRODUCTNAME}"

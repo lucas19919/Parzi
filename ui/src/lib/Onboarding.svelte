@@ -10,9 +10,10 @@
   import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "./providerRows";
   import { importBrowser, onboarded } from "./browserData";
   import { setOverlay } from "./overlay";
+  import { mergeProgress, onRemoteProgress, remote, stepName, type RemoteInfo, type RemoteProgress } from "./remote";
   import { toastError } from "./toast";
 
-  const dispatch = createEventDispatcher<{ close: void; openBrain: void }>();
+  const dispatch = createEventDispatcher<{ close: void; openBrain: void; openRemote: void }>();
 
   const STEPS = ["Agents", "Browser", "Your tools", "Brain", "Remote"];
   const WATCH_EVERY = 5_000;
@@ -25,7 +26,9 @@
     eta: number;
   }
 
-  let step = 0;
+  export let startStep = 0;
+
+  let step = startStep;
   let scan: Scan | null = null;
   let scanError = "";
   let browserPick = "";
@@ -33,11 +36,6 @@
   let wantHistory = true;
   let browserResult = "";
   let busy = false;
-  let serveRunning: boolean | null = null;
-  let servePort: number | null = null;
-  let serveChecked = false;
-  let serveBusy = false;
-  let copied = "";
   let notePicks = new Set<string>();
   let folderPicks = new Set<string>();
   let toolResult = "";
@@ -160,10 +158,11 @@
     }
   }
 
-  function finish(openBrain = false) {
+  function finish(openBrain = false, openRemote = false) {
     onboarded.set(true);
     dispatch("close");
     if (openBrain) dispatch("openBrain");
+    if (openRemote) dispatch("openRemote");
   }
 
   function ago(ms?: number | null) {
@@ -172,88 +171,61 @@
     return days <= 0 ? "today" : days === 1 ? "yesterday" : `${days}d ago`;
   }
 
-  const REMOTE_CMDS = [
-    { label: "Prepare the remote", cmd: "parzi setup" },
-    { label: "Start the engine there", cmd: "parzi serve" },
-    { label: "Approve from anywhere", cmd: "parzi approval list" },
-  ];
-
+  let remoteInfo: RemoteInfo | null = null;
+  let remoteLoaded = false;
   let remoteUser = "";
   let remoteHost = "";
   let remotePass = "";
-  let connState: "idle" | "connecting" | "connected" | "error" = "idle";
-  let connMsg = "";
-  let connMethod = "";
+  let bringNotes = true;
+  let setupRows: RemoteProgress[] = [];
+  let setupState: "idle" | "running" | "done" | "error" = "idle";
+  let setupMsg = "";
   try {
     remoteUser = localStorage.getItem("parzi.remote.user") ?? "";
     remoteHost = localStorage.getItem("parzi.remote.host") ?? "";
-    const saved = localStorage.getItem("parzi.remote.conn");
-    if (saved) {
-      const c = JSON.parse(saved) as { user?: string; host?: string; method?: string };
-      if (c.user === remoteUser && c.host === remoteHost && c.method) {
-        connState = "connected";
-        connMethod = c.method;
-        connMsg = `Connected to ${c.user}@${c.host} via ${c.method}.`;
-      }
-    }
   } catch {}
   $: try {
     localStorage.setItem("parzi.remote.user", remoteUser);
     localStorage.setItem("parzi.remote.host", remoteHost);
   } catch {}
-  // The password is never written anywhere: it lives in this field
-  // until Connect reads it, then only inside the backend call.
+  // The password lives in this field until Set up reads it, then only
+  // inside the backend call. It is never written anywhere.
 
-  async function connectRemote() {
+  async function loadRemote() {
+    try {
+      remoteInfo = await remote.info();
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
+  async function setupRemote() {
     const user = remoteUser.trim();
     const host = remoteHost.trim();
-    if (!user || !host || connState === "connecting") return;
-    connState = "connecting";
-    connMsg = `Reaching ${user}@${host}…`;
+    if (!user || !host || setupState === "running") return;
+    setupState = "running";
+    setupRows = [];
+    setupMsg = "";
+    const password = remotePass;
+    remotePass = "";
+    const off = await onRemoteProgress((p) => (setupRows = mergeProgress(setupRows, p)));
     try {
-      const r = await api.remoteConnect(user, host, remotePass || undefined);
-      remotePass = "";
-      if (r.connected) {
-        connState = "connected";
-        connMethod = r.method;
-        connMsg = r.detail;
-        try {
-          localStorage.setItem("parzi.remote.conn", JSON.stringify({ user, host, method: r.method, at: Date.now() }));
-        } catch {}
-      } else {
-        connState = "error";
-        connMsg = r.detail;
-      }
+      remoteInfo = await remote.setup(user, host, password, bringNotes);
+      setupState = "done";
+      setupMsg = `Linked to ${remoteInfo.label}.`;
     } catch (e) {
-      remotePass = "";
-      connState = "error";
-      connMsg = String(e);
-    }
-  }
-
-  async function checkServe() {
-    if (serveBusy) return;
-    serveBusy = true;
-    try {
-      const s = await api.serveStatus();
-      serveRunning = s.running;
-      servePort = s.port;
-      serveChecked = true;
-    } catch {
-      serveRunning = false;
-      serveChecked = true;
+      setupState = "error";
+      // The failed step row already says why; repeat it only if no row did.
+      setupMsg = setupRows.some((r) => r.state === "fail") ? "" : String(e);
     } finally {
-      serveBusy = false;
+      off();
     }
   }
 
-  function copyCmd(cmd: string) {
-    navigator.clipboard.writeText(cmd).catch(() => {});
-    copied = cmd;
-    setTimeout(() => (copied = copied === cmd ? "" : copied), 1200);
+  $: if (step === 4 && !remoteLoaded) {
+    remoteLoaded = true;
+    void loadRemote();
   }
-
-  $: if (step === 4 && !serveChecked && !serveBusy) void checkServe();
 </script>
 
 <div class="backdrop" transition:fade={{ duration: 150 }} role="presentation">
@@ -388,18 +360,17 @@
       {:else}
         <h2>Work from anywhere</h2>
         <p class="lead">
-          The headless engine runs your sessions with no window. Reach it over SSH and answer approvals from anywhere.
+          Run Parzi on your own Linux server so sessions keep going while this PC sleeps. Enter how you reach it over SSH. Parzi installs itself there, starts its engine and links back.
         </p>
-        <div class="item">
-          <span class="grow">
-            <span class="title">Local engine</span>
-            <span class="sub" class:ok={serveRunning === true}>
-              {serveBusy ? "Checking…" : serveRunning ? `Running${servePort ? ` on port ${servePort}` : ""}` : serveChecked ? "Not running" : "Unknown"}
+        {#if remoteInfo && setupState !== "running"}
+          <div class="item">
+            <span class="grow">
+              <span class="title">{remoteInfo.label}</span>
+              <span class="sub ok">Linked{remoteInfo.version ? ` · Parzi ${remoteInfo.version}` : ""}</span>
             </span>
-          </span>
-          <button class="btn" disabled={serveBusy} on:click={checkServe}>{serveBusy ? "Checking…" : "Check again"}</button>
-        </div>
-        <h3>On the remote machine</h3>
+            <button class="btn" on:click={() => finish(false, true)}>Open</button>
+          </div>
+        {/if}
         <div class="remote-form">
           <label>
             <span>User</span>
@@ -407,49 +378,41 @@
           </label>
           <label>
             <span>Host</span>
-            <input placeholder="gpu-box or 192.168.178.155" spellcheck="false" bind:value={remoteHost} />
+            <input placeholder="gpu-box or 203.0.113.7" title="host, or host:port" spellcheck="false" bind:value={remoteHost} />
           </label>
           <label>
-            <span>Password <em>(only if the server needs one)</em></span>
-            <input type="password" placeholder="leave empty for key login" autocomplete="current-password" bind:value={remotePass} />
+            <span>Password <em>(optional)</em></span>
+            <input type="password" placeholder="only if there is no key login" autocomplete="current-password" bind:value={remotePass} />
           </label>
         </div>
+        <label class="check">
+          <input type="checkbox" bind:checked={bringNotes} />
+          <span>Bring my brain notes (project notes stay here)</span>
+        </label>
         <div class="action">
           <button
             class="btn primary"
-            disabled={!remoteUser.trim() || !remoteHost.trim() || connState === "connecting"}
-            on:click={connectRemote}
+            disabled={!remoteUser.trim() || !remoteHost.trim() || setupState === "running"}
+            on:click={setupRemote}
           >
-            {connState === "connecting" ? "Connecting…" : connState === "connected" ? "Connected — check again" : "Connect"}
+            {setupState === "running" ? "Setting up…" : remoteInfo ? "Set up again" : "Set up"}
           </button>
-          {#if connMsg && connState !== "idle"}<span class="result">{connMsg}</span>{/if}
+          {#if setupMsg}<span class="result" class:bad={setupState === "error"}>{setupMsg}</span>{/if}
         </div>
-        {#if connState === "connected"}
-          <div class="item compact">
-            <span class="grow">
-              <span class="title">Start the engine there</span>
-              <span class="sub mono">parzi serve</span>
-            </span>
-            <button class="btn" on:click={() => copyCmd("parzi serve")}>{copied === "parzi serve" ? "Copied" : "Copy"}</button>
-          </div>
-          <div class="action">
-            <span class="result">Run that on {remoteUser.trim()}@{remoteHost.trim()}, then answer approvals with <code>parzi approval list</code> over the same SSH.</span>
-          </div>
-        {/if}
-        <details class="diy">
-          <summary>Do it yourself, step by step</summary>
-          <div class="list">
-            {#each REMOTE_CMDS as c (c.cmd)}
-              <div class="item compact">
-                <span class="grow">
-                  <span class="title">{c.label}</span>
-                  <span class="sub mono">{c.cmd}</span>
+        {#if setupRows.length}
+          <ul class="setup-log">
+            {#each setupRows as r (r.step)}
+              <li>
+                <span class="mark {r.state}">
+                  {#if r.state === "ok"}<Icon name="check" size={13} />{:else if r.state === "fail"}<Icon name="close" size={13} />{:else if r.state === "run"}<span class="spin" />{/if}
                 </span>
-                <button class="btn" on:click={() => copyCmd(c.cmd)}>{copied === c.cmd ? "Copied" : "Copy"}</button>
-              </div>
+                <span class="name">{stepName(r.step)}</span>
+                <span class="detail">{r.detail}</span>
+              </li>
             {/each}
-          </div>
-        </details>
+          </ul>
+        {/if}
+        <p class="fine">With a password, Parzi adds its own SSH key to that account so it can reconnect without one. The password itself is never stored.</p>
       {/if}
     </div>
 
@@ -672,17 +635,72 @@
   .remote-form input:focus {
     border-color: var(--accent);
   }
-  .diy {
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin-top: 10px;
-  }
-  .diy summary {
+    font-size: 13px;
+    color: var(--muted);
     cursor: pointer;
+  }
+  .result.bad {
+    color: var(--bad);
+  }
+  .setup-log {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .setup-log li {
+    display: grid;
+    grid-template-columns: 18px 130px 1fr;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 12.5px;
+  }
+  .setup-log .name {
+    color: var(--text);
+  }
+  .setup-log .detail {
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .mark {
+    display: inline-flex;
+    align-self: center;
+  }
+  .mark.ok {
+    color: var(--ok);
+  }
+  .mark.fail {
+    color: var(--bad);
+  }
+  .spin {
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--line);
+    border-top-color: var(--accent);
+    border-radius: 999px;
+    animation: turn 0.8s linear infinite;
+  }
+  @keyframes turn {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spin {
+      animation: none;
+    }
+  }
+  .fine {
+    margin: 12px 0 0;
     font-size: 12px;
     color: var(--faint);
-    padding: 4px 0;
-  }
-  .diy summary:hover {
-    color: var(--text);
   }
   .progress {
     position: absolute;
@@ -741,6 +759,10 @@
     align-items: center;
     gap: 12px;
     margin-top: 16px;
+  }
+  .action .btn {
+    flex: none;
+    white-space: nowrap;
   }
   .result {
     font-size: 12px;

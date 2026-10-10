@@ -23,6 +23,17 @@ use queue::{clear_queued, Pump, QueuedRun};
 
 const BUS_CAPACITY: usize = 4_096;
 
+static HEADLESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `parzi serve` runs with no desk, so its lanes offer no browser tools.
+pub fn set_headless() {
+    HEADLESS.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn headless() -> bool {
+    HEADLESS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn normalize_effort(effort: &str) -> String {
     match effort.trim() {
         e @ ("minimal" | "low" | "medium" | "high" | "extra" | "ultra" | "xhigh" | "max") => {
@@ -233,10 +244,15 @@ impl Orchestrator {
     }
 
     pub async fn kill(&self, id: &str) -> Result<()> {
-        if let Some(h) = self.handles.lock().await.remove(id) {
+        // The handle stays (cancelled, task taken) until the run has really
+        // stopped, so a resend cannot start a second run in the grace window.
+        let stopping = self.handles.lock().await.get_mut(id).map(|h| {
             h.cancel.cancel();
+            (h.id, h.task.take())
+        });
+        if let Some((run, task)) = stopping {
             let mut alive = true;
-            if let Some(task) = h.task {
+            if let Some(task) = task {
                 let by = tokio::time::Instant::now()
                     + parzi_providers::process::STOP_GRACE
                     + std::time::Duration::from_secs(2);
@@ -246,6 +262,12 @@ impl Orchestrator {
                 alive = !task.is_finished();
                 task.abort();
             }
+            {
+                let mut h = self.handles.lock().await;
+                if h.get(id).is_some_and(|x| x.id == run) {
+                    h.remove(id);
+                }
+            }
             if alive {
                 let _ = self
                     .bus
@@ -254,7 +276,6 @@ impl Orchestrator {
         }
         self.queue.lock().await.retain(|q| q.session_id != id);
         clear_queued(id);
-        self.mcp.stop(id).await;
         self.store.set_status(id, SessionStatus::Killed)?;
         self.notify.notify_one();
         Ok(())

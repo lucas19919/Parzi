@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 use image::{imageops, ImageReader};
 
@@ -154,6 +155,9 @@ fn mtime_secs(m: &std::fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
+/// Two renders of one key in this process must not share a tmp file.
+static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
 pub fn prepare(
     src: &Path,
     cache_dir: &Path,
@@ -190,7 +194,11 @@ pub fn prepare(
         rgb = imageops::fast_blur(&rgb, sigma);
     }
 
-    let tmp = cache_dir.join(format!("{key}.{}.tmp", std::process::id()));
+    let tmp = cache_dir.join(format!(
+        "{key}.{}.{}.tmp",
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Relaxed)
+    ));
     let write = (|| -> Result<()> {
         let mut w = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
         let r = if sigma > 0.0 {

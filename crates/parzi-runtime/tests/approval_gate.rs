@@ -321,3 +321,131 @@ async fn the_agents_own_actions_pass_the_lane_and_the_mode() {
         PermissionDecision::Allow
     );
 }
+
+/// Records the lane each spawn asked for.
+#[derive(Default)]
+struct LaneSpy(std::sync::Mutex<Vec<Option<String>>>);
+#[async_trait::async_trait]
+impl parzi_runtime::handler::HarnessBridge for LaneSpy {
+    async fn spawn_session(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: bool,
+        _: Option<String>,
+        lane: Option<String>,
+        _: bool,
+        _: Option<String>,
+        _: Option<String>,
+    ) -> parzi_core::error::Result<String> {
+        self.0.lock().unwrap().push(lane);
+        Ok("spawned".into())
+    }
+    async fn send_message(
+        &self,
+        _: &str,
+        _: &str,
+        _: &str,
+        _: parzi_core::context::InterKind,
+        _: bool,
+        _: Option<String>,
+    ) -> parzi_core::error::Result<String> {
+        Ok("sent".into())
+    }
+    async fn read_session(
+        &self,
+        _: &str,
+        _: &str,
+        _: Option<usize>,
+    ) -> parzi_core::error::Result<String> {
+        Ok("read".into())
+    }
+    async fn list_sessions(&self, _: &str, _: bool) -> parzi_core::error::Result<String> {
+        Ok("[]".into())
+    }
+}
+
+fn lane_host(
+    lane: &str,
+    cwd: &str,
+    approver: Arc<dyn Approver>,
+    harness: Arc<dyn parzi_runtime::handler::HarnessBridge>,
+) -> ToolHost {
+    let store = parzi_core::store::SessionStore::open().unwrap();
+    let meta = store.create("lanes", "t", lane, "claude").unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    ToolHost::new(ToolHostParts {
+        session_id: meta.id.clone(),
+        lane: lane.into(),
+        mode: ApprovalMode::Auto,
+        edits_auto: false,
+        full: false,
+        cfg: parzi_core::config::ParziConfig::default(),
+        store,
+        tools: Arc::new(ToolExecutor {
+            cwd: cwd.to_string(),
+            mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
+            allowed: vec!["*".into()],
+        }),
+        approver,
+        asker: None,
+        shell: Arc::new(parzi_runtime::shell::ShellRegistry::new("test")),
+        harness: Some(harness),
+        sink: RunSink::new(&meta.id, tx, None),
+        cancel: tokio_util::sync::CancellationToken::new(),
+    })
+}
+
+#[tokio::test]
+async fn work_children_stay_in_work() {
+    home("approval");
+    let cwd = std::env::temp_dir().display().to_string();
+    let spy = Arc::new(LaneSpy::default());
+    let work = lane_host("work", &cwd, Arc::new(DenyAll), spy.clone());
+    let (ok, out) = work
+        .call("session.spawn", &json!({"prompt": "go", "lane": "build"}))
+        .await;
+    assert!(ok, "{out}");
+    let build = lane_host("build", &cwd, Arc::new(DenyAll), spy.clone());
+    let (ok, out) = build
+        .call(
+            "session.spawn",
+            &json!({"prompt": "go", "lane": "research"}),
+        )
+        .await;
+    assert!(ok, "{out}");
+    assert_eq!(
+        *spy.0.lock().unwrap(),
+        vec![Some("work".to_string()), Some("research".to_string())],
+        "a work thread cannot staff a shell-capable child"
+    );
+}
+
+#[tokio::test]
+async fn project_create_outside_the_folder_asks_even_in_work() {
+    home("approval");
+    let base = std::env::temp_dir().join(format!("parzi-proj-{}", std::process::id()));
+    let (cwd, away) = (base.join("here"), base.join("away").join("paper"));
+    std::fs::create_dir_all(&cwd).unwrap();
+    let cwd_s = cwd.display().to_string();
+    let host = lane_host("work", &cwd_s, Arc::new(DenyAll), Arc::new(NoHarness));
+    let (ok, out) = host
+        .call(
+            "project.create",
+            &json!({"title": "Away", "folder": away.display().to_string()}),
+        )
+        .await;
+    assert!(!ok, "{out}");
+    assert!(out.contains("declined"), "{out}");
+    assert!(!away.exists(), "nothing is created without a yes");
+    let (ok, out) = host
+        .call(
+            "project.create",
+            &json!({"title": "Paper", "folder": "papers/./one/../paper"}),
+        )
+        .await;
+    assert!(ok, "{out}");
+    assert!(cwd.join("papers").join("paper").is_dir(), "{out}");
+    let _ = std::fs::remove_dir_all(&base);
+}

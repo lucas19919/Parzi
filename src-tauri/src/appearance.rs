@@ -1,4 +1,4 @@
-use parzi_core::theme::Theme;
+use parzi_core::theme::{checked_background, Theme};
 use tauri::{AppHandle, Manager};
 
 #[tauri::command]
@@ -54,20 +54,6 @@ pub async fn delete_background(name: String) -> Result<String, String> {
     Ok(theme_css(&theme))
 }
 
-fn checked_background(abs: std::path::PathBuf) -> Option<std::path::PathBuf> {
-    let bgs = parzi_core::paths::backgrounds_dir().ok()?;
-    if abs
-        .components()
-        .any(|c| matches!(c, std::path::Component::ParentDir))
-        || !abs.starts_with(&bgs)
-    {
-        return None;
-    }
-    std::fs::symlink_metadata(&abs)
-        .is_ok_and(|m| m.is_file())
-        .then_some(abs)
-}
-
 #[tauri::command]
 pub async fn background_url(app: AppHandle) -> Result<String, String> {
     let theme = Theme::load().map_err(|e| e.to_string())?;
@@ -99,7 +85,7 @@ pub async fn background_url(app: AppHandle) -> Result<String, String> {
     let out = match rendered {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("wallpaper render failed, serving the source: {e}");
+            tracing::warn!("wallpaper render failed, serving the source: {e}");
             abs
         }
     };
@@ -136,9 +122,7 @@ fn decode_b64(input: &str) -> Option<Vec<u8>> {
     use base64::Engine as _;
     // Strip a data: prefix if present, then standard decode.
     let clean = input.split(',').next_back()?.trim();
-    base64::engine::general_purpose::STANDARD
-        .decode(clean)
-        .ok()
+    base64::engine::general_purpose::STANDARD.decode(clean).ok()
 }
 
 #[tauri::command]

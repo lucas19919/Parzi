@@ -59,6 +59,13 @@ struct PersistedRun {
     attachments: Vec<String>,
 }
 
+/// run.json is load-modify-saved from several tasks: one writer at a time.
+fn sidecar_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn sidecar_path(session_id: &str) -> Option<std::path::PathBuf> {
     uuid::Uuid::parse_str(session_id).ok()?;
     parzi_core::paths::sessions_dir()
@@ -96,6 +103,7 @@ fn save_sidecar(session_id: &str, sidecar: &RunSidecar) {
 }
 
 pub fn set_run_note(session_id: &str, note: Option<&str>) {
+    let _write = sidecar_lock();
     let mut sidecar = load_sidecar(session_id);
     let next = note.map(str::to_string);
     if sidecar.note == next {
@@ -111,6 +119,7 @@ pub fn run_note(session_id: &str) -> Option<String> {
 }
 
 pub fn set_run_session(session_id: &str, session: Option<VendorSession>) {
+    let _write = sidecar_lock();
     let mut sidecar = load_sidecar(session_id);
     if sidecar.session == session {
         return;
@@ -234,10 +243,15 @@ impl Pump {
 
     pub(super) async fn enqueue(&self, mut q: QueuedRun) {
         record_prompt(&self.store, &mut q);
-        let mut sidecar = load_sidecar(&q.session_id);
-        sidecar.queued = Some(q.persisted());
-        save_sidecar(&q.session_id, &sidecar);
+        {
+            let _write = sidecar_lock();
+            let mut sidecar = load_sidecar(&q.session_id);
+            sidecar.queued = Some(q.persisted());
+            save_sidecar(&q.session_id, &sidecar);
+        }
         self.queue.lock().await.push_back(q);
+        // Wake the pump: a slot may already be free again.
+        self.notify.notify_one();
     }
 }
 
@@ -253,6 +267,7 @@ fn record_prompt(store: &SessionStore, q: &mut QueuedRun) {
 }
 
 pub(super) fn clear_queued(session_id: &str) {
+    let _write = sidecar_lock();
     let mut sidecar = load_sidecar(session_id);
     if sidecar.queued.take().is_some() {
         save_sidecar(session_id, &sidecar);

@@ -44,6 +44,8 @@ pub struct McpManager {
     exposed_calls: AtomicU64,
 }
 
+/// The parent variables any spawned helper (MCP server, hook, shell.exec)
+/// sees: OS plumbing and toolchain homes, never keys or tokens.
 const CHILD_ENV_PASSTHROUGH: &[&str] = &[
     "PATH",
     "SYSTEMROOT",
@@ -55,9 +57,28 @@ const CHILD_ENV_PASSTHROUGH: &[&str] = &[
     "USERPROFILE",
     "LANG",
     "LC_ALL",
+    "PATHEXT",
+    "COMSPEC",
+    "WINDIR",
+    "SYSTEMDRIVE",
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "USERNAME",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TERM",
+    "CARGO_HOME",
+    "RUSTUP_HOME",
+    "GOPATH",
+    "GOROOT",
+    "JAVA_HOME",
 ];
 
-fn child_env(extra: &HashMap<String, String>) -> HashMap<String, String> {
+/// Scrubbed child environment: the passthrough list plus `extra`.
+pub(crate) fn child_env(extra: &HashMap<String, String>) -> HashMap<String, String> {
     let parent: HashMap<String, String> = std::env::vars().collect();
     child_env_from(&parent, extra)
 }
@@ -158,18 +179,9 @@ where
 }
 
 async fn kill_tree(child: &mut Child) {
-    #[cfg(windows)]
+    // Descendants first (blocking taskkill/ps, off the workers), then the root.
     if let Some(pid) = child.id() {
-        let root = std::env::var("SYSTEMROOT").unwrap_or_else(|_| "C:\\Windows".to_string());
-        let _ = Command::new(format!("{root}\\System32\\taskkill.exe"))
-            .args(["/T", "/F", "/PID", &pid.to_string()])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .creation_flags(parzi_providers::process::CREATE_NO_WINDOW)
-            .kill_on_drop(true)
-            .status()
-            .await;
+        let _ = tokio::task::spawn_blocking(move || parzi_providers::process::kill_tree(pid)).await;
     }
     let _ = child.kill().await;
 }
@@ -533,25 +545,26 @@ mod tests {
     }
 
     #[test]
-    fn child_env_matches_shell_exec_posture() {
+    fn child_env_passes_plumbing_never_secrets() {
         for k in [
             "PATH",
             "SYSTEMROOT",
             "TEMP",
-            "TMP",
-            "TMPDIR",
             "HOME",
-            "APPDATA",
             "USERPROFILE",
-            "LANG",
-            "LC_ALL",
+            "PATHEXT",
         ] {
+            assert!(CHILD_ENV_PASSTHROUGH.contains(&k), "{k} must pass");
+        }
+        for k in CHILD_ENV_PASSTHROUGH {
+            let up = k.to_ascii_uppercase();
             assert!(
-                CHILD_ENV_PASSTHROUGH.contains(&k),
-                "shell.exec allows {k} but MCP spawn does not"
+                !["KEY", "TOKEN", "SECRET", "PASS"]
+                    .iter()
+                    .any(|s| up.contains(s)),
+                "{k} looks like a secret"
             );
         }
-        assert_eq!(CHILD_ENV_PASSTHROUGH.len(), 10);
     }
 
     #[cfg(windows)]

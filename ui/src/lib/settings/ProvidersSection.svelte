@@ -336,12 +336,6 @@
   .skel.search { flex: 1; min-height: 34px; }
   .skel.btn { width: 110px; min-height: 34px; }
 
-  .mini {
-    background: transparent; border: 1px solid transparent; border-radius: 5px; color: var(--muted);
-    font: inherit; font-size: 9px; width: 22px; height: 20px; cursor: pointer; flex: none;
-  }
-  .mini:hover:not(:disabled) { background: var(--line); border-color: var(--line); color: var(--text); }
-  .mini:disabled { opacity: 0.3; cursor: default; }
   .status-badge.key { background: var(--line); color: var(--muted); border: 1px solid var(--line); }
 
   .providers-list { display: flex; flex-direction: column; gap: 8px; }

@@ -38,19 +38,31 @@ pub(crate) struct SessionCache {
     pub len: u64,
     pub pending_updated: Option<DateTime<Utc>>,
     pub md_dirty: bool,
+    /// Bumped on every mark, so a render only clears marks it has seen.
+    pub md_seq: u64,
     pub used: u64,
+}
+
+impl SessionCache {
+    pub fn mark_md(&mut self) {
+        self.md_dirty = true;
+        self.md_seq += 1;
+    }
 }
 
 #[derive(Debug)]
 pub(crate) struct IndexEntry {
     pub dir_mtime: Option<SystemTime>,
-    pub meta: SessionMeta,
+    /// None: meta.json did not parse; remembered so `list()` skips it quietly.
+    pub meta: Option<SessionMeta>,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct StoreCache {
     pub sessions: HashMap<String, SessionCache>,
     pub index: HashMap<String, IndexEntry>,
+    /// Bumped by every meta write; `list()` skips indexing reads it raced.
+    pub meta_writes: u64,
     tick: u64,
 }
 
@@ -93,44 +105,29 @@ impl StoreCache {
 }
 
 pub(crate) fn fold_lines(bytes: &[u8], path: &Path, out: &mut Vec<Event>) {
+    out.extend(parse_lines(bytes, path).into_iter().map(|(_, e)| e));
+}
+
+/// Events with the byte offset just past their line, so a caller can drop
+/// the ones another thread already cached.
+pub(crate) fn parse_lines(bytes: &[u8], path: &Path) -> Vec<(usize, Event)> {
+    let mut out = vec![];
+    let mut end = 0;
     for line in bytes.split(|b| *b == b'\n') {
+        end += line.len() + 1;
         if line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
         match serde_json::from_slice::<Event>(line) {
-            Ok(e) => out.push(e),
+            Ok(e) => out.push((end, e)),
             Err(err) => tracing::warn!("skipping unreadable event in {}: {err}", path.display()),
         }
     }
+    out
 }
 
+/// The shared atomic writer, counted for the bench (tmp write + rename).
 pub(crate) fn atomic_write_sync(path: &Path, bytes: &[u8]) -> Result<()> {
-    use std::io::Write;
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent)?;
-    let name = path
-        .file_name()
-        .map_or("store", |n| n.to_str().unwrap_or("store"));
-    let tmp = parent.join(format!(
-        ".{name}.{}.{}.tmp",
-        std::process::id(),
-        SEQ.fetch_add(1, Relaxed)
-    ));
     count_write(2);
-    let write = (|| -> std::io::Result<()> {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()
-    })();
-    if let Err(e) = write {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
-    }
-    if let Err(e) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
-    }
-    Ok(())
+    crate::error::atomic_write(path, bytes)
 }

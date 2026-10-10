@@ -1,6 +1,9 @@
+use std::path::PathBuf;
 use std::process::Stdio;
-use std::time::Duration;
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, SystemTime};
 
+use parzi_core::hooks::{HookDef, HookSet};
 use parzi_core::store::SessionStore;
 use serde_json::Value;
 
@@ -34,28 +37,7 @@ fn scrubbed(
     event: &str,
 ) {
     cmd.env_clear();
-    for (k, v) in [
-        ("PATH", std::env::var("PATH").unwrap_or_default()),
-        (
-            "SYSTEMROOT",
-            std::env::var("SYSTEMROOT").unwrap_or_default(),
-        ),
-        ("TEMP", std::env::var("TEMP").unwrap_or_default()),
-        ("TMP", std::env::var("TMP").unwrap_or_default()),
-        ("TMPDIR", std::env::var("TMPDIR").unwrap_or_default()),
-        ("HOME", std::env::var("HOME").unwrap_or_default()),
-        ("APPDATA", std::env::var("APPDATA").unwrap_or_default()),
-        (
-            "USERPROFILE",
-            std::env::var("USERPROFILE").unwrap_or_default(),
-        ),
-        ("LANG", std::env::var("LANG").unwrap_or_default()),
-        ("LC_ALL", std::env::var("LC_ALL").unwrap_or_default()),
-    ] {
-        if !v.is_empty() {
-            cmd.env(k, v);
-        }
-    }
+    cmd.envs(crate::mcp::child_env(&std::collections::HashMap::new()));
     cmd.env("PARZI_SESSION", session);
     cmd.env("PARZI_PROJECT", project);
     cmd.env("PARZI_TOOL", tool);
@@ -63,7 +45,7 @@ fn scrubbed(
 }
 
 async fn run_hook(
-    def: &parzi_core::hooks::HookDef,
+    def: &HookDef,
     cwd: &std::path::Path,
     payload: &Value,
     session: &str,
@@ -77,6 +59,8 @@ async fn run_hook(
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
+    // A timed-out hook dies with the dropped future instead of lingering.
+    cmd.kill_on_drop(true);
     let body = payload.to_string();
     let work = async {
         let mut child = cmd.spawn().map_err(|e| e.to_string())?;
@@ -109,7 +93,11 @@ async fn run_hook(
 
 fn reason(mut s: String) -> String {
     if s.len() > REASON_CAP {
-        s.truncate(REASON_CAP);
+        let mut at = REASON_CAP;
+        while !s.is_char_boundary(at) {
+            at -= 1;
+        }
+        s.truncate(at);
         s.push('…');
     }
     if s.trim().is_empty() {
@@ -117,6 +105,27 @@ fn reason(mut s: String) -> String {
     } else {
         s
     }
+}
+
+/// hooks.toml, re-read only when its mtime or size changes.
+fn hook_set() -> HookSet {
+    type Cached = (PathBuf, Option<SystemTime>, u64, HookSet);
+    static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
+    let Ok(path) = parzi_core::paths::parzi_dir().map(|d| d.join("hooks.toml")) else {
+        return HookSet::default();
+    };
+    let meta = std::fs::metadata(&path).ok();
+    let mtime = meta.as_ref().and_then(|m| m.modified().ok());
+    let len = meta.as_ref().map_or(0, std::fs::Metadata::len);
+    let mut cache = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((p, m, l, set)) = cache.as_ref() {
+        if *p == path && *m == mtime && *l == len {
+            return set.clone();
+        }
+    }
+    let set = parzi_core::hooks::global();
+    *cache = Some((path, mtime, len, set.clone()));
+    set
 }
 
 fn scope_of(store: &SessionStore, session_id: &str) -> (String, std::path::PathBuf) {
@@ -138,8 +147,13 @@ pub async fn pre_tool(
     tool: &str,
     args: &Value,
 ) -> (Option<String>, Vec<String>) {
+    let set = hook_set();
+    let defs: Vec<&HookDef> = set.pre_tool.iter().filter(|d| d.matches(tool)).collect();
+    // No hook for this tool: skip the session lookup entirely.
+    if defs.is_empty() {
+        return (None, vec![]);
+    }
     let (project, cwd) = scope_of(store, session_id);
-    let set = parzi_core::hooks::global();
     let payload = serde_json::json!({
         "session": session_id,
         "project": project,
@@ -147,7 +161,7 @@ pub async fn pre_tool(
         "args": args,
     });
     let mut warnings = Vec::new();
-    for def in set.pre_tool.iter().filter(|d| d.matches(tool)) {
+    for def in defs {
         let run = run_hook(def, &cwd, &payload, session_id, &project, tool, "pre_tool").await;
         if run.timed_out {
             warnings.push(format!(
@@ -180,8 +194,12 @@ pub async fn post_tool(
     ok: bool,
     output: &str,
 ) -> Vec<String> {
+    let set = hook_set();
+    let defs: Vec<&HookDef> = set.post_tool.iter().filter(|d| d.matches(tool)).collect();
+    if defs.is_empty() {
+        return vec![];
+    }
     let (project, cwd) = scope_of(store, session_id);
-    let set = parzi_core::hooks::global();
     let payload = serde_json::json!({
         "session": session_id,
         "project": project,
@@ -191,7 +209,7 @@ pub async fn post_tool(
         "output": output.chars().take(4000).collect::<String>(),
     });
     let mut notices = Vec::new();
-    for def in set.post_tool.iter().filter(|d| d.matches(tool)) {
+    for def in defs {
         let run = run_hook(def, &cwd, &payload, session_id, &project, tool, "post_tool").await;
         if run.timed_out {
             notices.push(format!(
@@ -210,4 +228,17 @@ pub async fn post_tool(
         }
     }
     notices
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_reasons_cut_on_a_char_boundary() {
+        let r = reason(format!("x{}", "é".repeat(400)));
+        assert!(r.ends_with('…'));
+        assert!(r.len() <= REASON_CAP + '…'.len_utf8());
+        assert_eq!(reason("  ".into()), "blocked by a workspace hook");
+    }
 }

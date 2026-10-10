@@ -10,6 +10,7 @@
   import Icon from "./Icon.svelte";
   import { api, type ChatEvent, type Question } from "./api";
   import type { Approval, LiveTool, Step } from "./live";
+  import { toast, toastError } from "./toast";
 
   export let events: ChatEvent[] = [];
   export let liveText = "";
@@ -263,18 +264,22 @@ ${e.text}` : e.text;
   }
 
   function copy(text: string, key: string) {
-    navigator.clipboard.writeText(text).catch(() => {});
-    copied = key;
-    setTimeout(() => (copied = copied === key ? "" : copied), 1200);
+    navigator.clipboard.writeText(text).then(() => {
+      copied = key;
+      setTimeout(() => (copied = copied === key ? "" : copied), 1200);
+    }, (e) => toast(`Couldn't copy: ${e}`, true));
   }
 
   async function save(text: string, key: string) {
     if (saved) return;
     try {
-      await api.saveAnswer(text);
+      const note = await api.saveAnswer(text);
       saved = key;
       setTimeout(() => (saved = saved === key ? "" : saved), 1600);
-    } catch {}
+      toast(`Saved to brain as ${note.title || note.path}`);
+    } catch (e) {
+      toastError(e);
+    }
   }
 
   async function vote(allow: boolean) {
@@ -282,6 +287,8 @@ ${e.text}` : e.text;
     const { key, session } = approval;
     try {
       await api.approveTool(key, session, allow);
+    } catch (e) {
+      toastError(e);
     } finally {
       dispatch("voted", { key });
     }
@@ -295,6 +302,8 @@ ${e.text}` : e.text;
     answerText = "";
     try {
       await api.answerQuestion(key, session, answer.trim());
+    } catch (e) {
+      toastError(e);
     } finally {
       dispatch("answered", { key });
     }
@@ -306,9 +315,10 @@ ${e.text}` : e.text;
     const copyBtn = el.closest<HTMLElement>("[data-copy]");
     if (copyBtn) {
       const code = copyBtn.closest(".codeblock")?.querySelector("code")?.textContent ?? "";
-      navigator.clipboard.writeText(code).catch(() => {});
-      copyBtn.textContent = "Copied";
-      setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
+      navigator.clipboard.writeText(code).then(() => {
+        copyBtn.textContent = "Copied";
+        setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
+      }, (e) => toast(`Couldn't copy: ${e}`, true));
       return;
     }
     const expand = el.closest<HTMLElement>("[data-expand]");

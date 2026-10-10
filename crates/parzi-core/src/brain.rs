@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,7 @@ const MAX_BYTES: u64 = 1024 * 1024;
 const MAX_HITS: usize = 20;
 const MAX_LISTED: usize = 50;
 const SUMMARY_MAX: usize = 140;
+const TITLE_MAX: usize = 120;
 const CONTEXT_HEAD: &str = "# The user's notes (Parzi brain)\nPinned notes are included in full. \
 On-demand notes are listed with a one-line summary; read one with brain.read when the task needs it.";
 
@@ -85,10 +87,6 @@ pub fn delete(path: &str) -> Result<()> {
     Vault::open()?.delete(path)
 }
 
-pub fn search(query: &str) -> Result<Vec<SearchHit>> {
-    Ok(Vault::open()?.search(query))
-}
-
 pub fn projects() -> Result<Vec<Project>> {
     Ok(Vault::open()?.projects())
 }
@@ -97,26 +95,7 @@ pub fn projects() -> Result<Vec<Project>> {
 /// this instead of a shared fallback so same-project reads stay meaningful.
 #[must_use]
 pub fn project_for_folder(cwd: &str) -> Option<String> {
-    let cwd = cwd.trim().replace('\\', "/");
-    let cwd = cwd.trim_end_matches('/');
-    if cwd.is_empty() {
-        return None;
-    }
-    let projects = projects().ok()?;
-    let mut best: Option<(usize, String)> = None;
-    for p in projects {
-        let folder = p.folder.trim().replace('\\', "/");
-        let folder = folder.trim_end_matches('/');
-        if folder.is_empty() {
-            continue;
-        }
-        if cwd == folder || cwd.starts_with(&format!("{folder}/")) {
-            if best.as_ref().is_none_or(|(l, _)| folder.len() > *l) {
-                best = Some((folder.len(), p.slug.clone()));
-            }
-        }
-    }
-    best.map(|(_, slug)| slug)
+    Vault::open().ok()?.project_at(cwd)
 }
 
 pub fn project_upsert(slug: Option<&str>, title: &str, folder: &str) -> Result<Project> {
@@ -185,7 +164,8 @@ impl Vault {
     }
 
     pub fn read(&self, path: &str) -> Result<String> {
-        Ok(std::fs::read_to_string(self.locate(path)?.1)?)
+        let full = self.locate(path)?.1;
+        Ok(String::from_utf8_lossy(&read_whole(&full, path)?).into_owned())
     }
 
     pub fn resolve(&self, path: &str) -> Result<PathBuf> {
@@ -198,6 +178,9 @@ impl Vault {
 
     pub fn write(&self, path: &str, content: &str) -> Result<NoteMeta> {
         let (rel, full) = self.locate(path)?;
+        if content.len() as u64 > MAX_BYTES {
+            return Err(too_big(path));
+        }
         atomic_write(&full, content.as_bytes())?;
         self.meta(rel, &full)
     }
@@ -241,17 +224,7 @@ impl Vault {
             return Err(ParziError::Validation("a project needs a folder".into()));
         }
         let slug = match slug.map(str::trim).filter(|s| !s.is_empty()) {
-            Some(s) if s.contains(['/', '\\']) => {
-                return Err(ParziError::Validation(format!(
-                    "project slug `{s}` must be a plain name"
-                )))
-            }
-            Some(s) if s.eq_ignore_ascii_case(EVERYWHERE) => {
-                return Err(ParziError::Validation(format!(
-                    "project slug `{s}` is reserved for notes that apply to every session"
-                )))
-            }
-            Some(s) => s.to_string(),
+            Some(s) => check_slug(s)?.to_string(),
             None => self.fresh_slug(title),
         };
         let title = match title.trim() {
@@ -259,19 +232,19 @@ impl Vault {
             t => t.to_string(),
         };
         let (rel, full) = self.locate(&format!("projects/{slug}.md"))?;
-        let raw = match std::fs::read_to_string(&full) {
+        let raw = match read_whole(&full, &rel) {
             Ok(raw) => raw,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(e) => return Err(e.into()),
+            Err(ParziError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => vec![],
+            Err(e) => return Err(e),
         };
-        let text = rewrite(
+        let text = rewrite_raw(
             &raw,
             &[
                 ("title", Some(format!("title: {}", quote(&title)))),
                 ("folder", Some(format!("folder: {}", quote(folder)))),
             ],
-        );
-        atomic_write(&full, text.as_bytes())?;
+        )?;
+        atomic_write(&full, &text)?;
         self.projects()
             .into_iter()
             .find(|p| p.note.eq_ignore_ascii_case(&rel))
@@ -284,8 +257,8 @@ impl Vault {
             return Err(ParziError::Validation("project slug is empty".into()));
         }
         let (rel, full) = self.locate(note_path)?;
-        let raw = std::fs::read_to_string(&full)?;
-        let found = split(&raw).0.map(blocks).unwrap_or_default();
+        let raw = read_whole(&full, &rel)?;
+        let found = front_blocks(&raw);
         let current = found.iter().find(|b| b.key.as_deref() == Some("projects"));
         let block_style = current.is_some_and(Block::is_block_list);
         let mut items = current.map(Block::list).unwrap_or_default();
@@ -295,48 +268,59 @@ impl Vault {
             } else {
                 items.retain(|p| !p.eq_ignore_ascii_case(slug));
             }
-            let text = rewrite(
+            let text = rewrite_raw(
                 &raw,
                 &[("projects", list_line("projects", &items, block_style))],
-            );
-            atomic_write(&full, text.as_bytes())?;
+            )?;
+            atomic_write(&full, &text)?;
         }
         self.meta(rel, &full)
     }
 
     fn set_pinned(&self, path: &str, on: bool) -> Result<NoteMeta> {
+        self.set_flag(path, "pinned", on)
+    }
+
+    fn set_archived(&self, path: &str, on: bool) -> Result<NoteMeta> {
+        self.set_flag(path, "archived", on)
+    }
+
+    /// Sets or clears a `key: true` flag; a cleared flag drops its line.
+    fn set_flag(&self, path: &str, key: &str, on: bool) -> Result<NoteMeta> {
         let (rel, full) = self.locate(path)?;
-        let raw = std::fs::read_to_string(&full)?;
-        let found = split(&raw).0.map(blocks).unwrap_or_default();
-        let keyed = found.iter().any(|b| b.key.as_deref() == Some("pinned"));
-        let pinned = fields(&found).pinned;
-        if on != pinned || (!on && keyed) {
-            let text = rewrite(&raw, &[("pinned", on.then(|| "pinned: true".to_string()))]);
-            atomic_write(&full, text.as_bytes())?;
+        let raw = read_whole(&full, &rel)?;
+        let found = front_blocks(&raw);
+        let block = found.iter().rfind(|b| b.key.as_deref() == Some(key));
+        let set = block
+            .and_then(Block::scalar)
+            .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+        if on != set || (!on && block.is_some()) {
+            let text = rewrite_raw(&raw, &[(key, on.then(|| format!("{key}: true")))])?;
+            atomic_write(&full, &text)?;
         }
         self.meta(rel, &full)
     }
 
-    fn set_archived(&self, path: &str, on: bool) -> Result<NoteMeta> {
-        let (rel, full) = self.locate(path)?;
-        let raw = std::fs::read_to_string(&full)?;
-        let found = split(&raw).0.map(blocks).unwrap_or_default();
-        let keyed = found.iter().any(|b| b.key.as_deref() == Some("archived"));
-        let archived = fields(&found).archived;
-        if on != archived || (!on && keyed) {
-            let text = rewrite(
-                &raw,
-                &[("archived", on.then(|| "archived: true".to_string()))],
-            );
-            atomic_write(&full, text.as_bytes())?;
+    /// The note of project `slug`. Plain notes (no `folder`) are refused so
+    /// archive and delete can never reach them.
+    fn project_note(&self, slug: &str) -> Result<(String, PathBuf)> {
+        let slug = check_slug(slug.trim())?;
+        let (rel, full) = self.locate(&format!("projects/{slug}.md"))?;
+        let folder = std::fs::symlink_metadata(&full)
+            .is_ok_and(|m| m.is_file())
+            .then(|| front_fields(&full))
+            .flatten()
+            .and_then(|f| f.folder);
+        if folder.is_none_or(|f| f.trim().is_empty()) {
+            return Err(ParziError::Validation(format!("no project `{slug}`")));
         }
-        self.meta(rel, &full)
+        Ok((rel, full))
     }
 
     /// Archive/unarchive a project. Archived projects vanish from routing and catalogs.
     fn project_archive(&self, slug: &str, on: bool) -> Result<Project> {
+        let (rel, _) = self.project_note(slug)?;
         let slug = slug.trim();
-        let rel = format!("projects/{slug}.md");
         let meta = self.set_archived(&rel, on)?;
         if !on {
             return self
@@ -360,16 +344,55 @@ impl Vault {
 
     /// Delete a project's note. Mappings to a missing slug are ignored.
     fn project_delete(&self, slug: &str) -> Result<String> {
-        let slug = slug.trim();
-        if slug.is_empty() {
-            return Err(ParziError::Validation("project slug is empty".into()));
-        }
-        let (rel, full) = self.locate(&format!("projects/{slug}.md"))?;
-        if !full.is_file() {
-            return Err(ParziError::Validation(format!("no project `{slug}`")));
-        }
+        let (rel, full) = self.project_note(slug)?;
         std::fs::remove_file(&full)?;
         Ok(rel)
+    }
+
+    /// Slug of the project holding `cwd`. Reads only the project notes, not
+    /// every note body, since new threads call this on the hot path.
+    fn project_at(&self, cwd: &str) -> Option<String> {
+        let homes = self.project_folders();
+        let at = deepest(cwd, homes.iter().map(|(s, f)| (s.as_str(), f.as_str())))?;
+        homes.into_iter().nth(at).map(|(slug, _)| slug)
+    }
+
+    /// (slug, folder) of every live project, from `projects/*.md` alone.
+    fn project_folders(&self) -> Vec<(String, String)> {
+        let mut out = vec![];
+        let Ok(top) = std::fs::read_dir(&self.root) else {
+            return out;
+        };
+        for dir in top.flatten() {
+            let name = dir.file_name().to_string_lossy().into_owned();
+            if !name.eq_ignore_ascii_case("projects") || !dir.file_type().is_ok_and(|t| t.is_dir())
+            {
+                continue;
+            }
+            let Ok(entries) = std::fs::read_dir(dir.path()) else {
+                continue;
+            };
+            for e in entries.flatten() {
+                let file = e.file_name().to_string_lossy().into_owned();
+                if file.starts_with('.')
+                    || !is_md(&file)
+                    || !e.file_type().is_ok_and(|t| t.is_file())
+                {
+                    continue;
+                }
+                let rel = format!("{name}/{file}");
+                let Some(slug) = project_slug(&rel) else {
+                    continue;
+                };
+                let Some(f) = front_fields(&e.path()).filter(|f| !f.archived) else {
+                    continue;
+                };
+                if let Some(folder) = f.folder.filter(|d| !d.trim().is_empty()) {
+                    out.push((slug.to_string(), folder.trim().to_string()));
+                }
+            }
+        }
+        out
     }
 
     #[must_use]
@@ -378,19 +401,12 @@ impl Vault {
             return None;
         }
         let notes = self.scan();
-        let project = Some(cwd)
-            .filter(|c| !c.as_os_str().to_string_lossy().trim().is_empty())
-            .and_then(|c| {
-                let here = normalize(c);
-                projects_of(&notes)
-                    .into_iter()
-                    .filter_map(|p| {
-                        let folder = normalize(&expand(&p.folder));
-                        within(&here, &folder).then_some((folder.len(), p))
-                    })
-                    .max_by_key(|(len, _)| *len)
-            })
-            .map(|(_, p)| p);
+        let all = projects_of(&notes);
+        let project = deepest(
+            &cwd.to_string_lossy(),
+            all.iter().map(|p| (p.slug.as_str(), p.folder.as_str())),
+        )
+        .and_then(|at| all.into_iter().nth(at));
         let by_path: HashMap<&str, &Note> =
             notes.iter().map(|n| (n.meta.path.as_str(), n)).collect();
         let home = project
@@ -446,18 +462,29 @@ impl Vault {
         }
         listed.extend(rest);
         if !listed.is_empty() {
-            text.push_str("\n\n## On demand");
+            const ON_DEMAND: &str = "\n\n## On demand";
+            text.push_str(ON_DEMAND);
+            chars += ON_DEMAND.len();
+            // The list counts against the same cap as the pinned notes.
+            let mut shown = 0;
             for n in listed.iter().take(MAX_LISTED) {
-                text.push_str(&format!("\n- {} — {}", n.meta.path, n.meta.title));
+                let mut line = format!("\n- {} — {}", n.meta.path, n.meta.title);
                 if !n.meta.summary.is_empty() {
-                    text.push_str(": ");
-                    text.push_str(&n.meta.summary);
+                    line.push_str(": ");
+                    line.push_str(&n.meta.summary);
                 }
+                let len = line.chars().count();
+                if chars + len > CONTEXT_CAP {
+                    break;
+                }
+                text.push_str(&line);
+                chars += len;
+                shown += 1;
             }
-            if listed.len() > MAX_LISTED {
+            if listed.len() > shown {
                 text.push_str(&format!(
                     "\n- …and {} more (brain_list)",
-                    listed.len() - MAX_LISTED
+                    listed.len() - shown
                 ));
             }
         }
@@ -643,6 +670,13 @@ fn walk(root: &Path) -> Vec<(String, PathBuf)> {
                 stack.push(e.path());
             } else if kind.is_file() && is_md(&name) {
                 if out.len() >= MAX_NOTES {
+                    static WARNED: AtomicBool = AtomicBool::new(false);
+                    if !WARNED.swap(true, Relaxed) {
+                        tracing::warn!(
+                            "brain vault {} holds over {MAX_NOTES} notes; the rest are skipped",
+                            root.display()
+                        );
+                    }
                     break 'walk;
                 }
                 let full = e.path();
@@ -663,11 +697,8 @@ fn walk(root: &Path) -> Vec<(String, PathBuf)> {
 
 fn load(path: String, full: &Path, resolver: &Resolver) -> std::io::Result<Note> {
     let md = std::fs::metadata(full)?;
-    let raw = if md.len() > MAX_BYTES {
-        String::new()
-    } else {
-        String::from_utf8_lossy(&std::fs::read(full)?).into_owned()
-    };
+    // An oversized note still lists with its title and summary.
+    let raw = String::from_utf8_lossy(&read_head(full, MAX_BYTES)?).into_owned();
     let modified = md
         .modified()
         .ok()
@@ -683,6 +714,7 @@ fn parse(path: String, raw: &str, modified: i64, bytes: u64, resolver: &Resolver
         .title
         .or_else(|| heading(body))
         .unwrap_or_else(|| stem(&path).to_string());
+    let title = ellipsize(&title, TITLE_MAX);
     let mut links: Vec<String> = vec![];
     for target in link_targets(raw) {
         if let Some(p) = resolver.resolve(&target) {
@@ -736,10 +768,15 @@ fn summary(description: Option<&str>, body: &str) -> String {
         .or_else(|| first_prose(body))
         .unwrap_or_default();
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if text.chars().count() <= SUMMARY_MAX {
-        return text;
+    ellipsize(&text, SUMMARY_MAX)
+}
+
+/// At most `max` chars, ending in `…` when cut.
+fn ellipsize(text: &str, max: usize) -> String {
+    if text.char_indices().nth(max).is_none() {
+        return text.to_string();
     }
-    let cut: String = text.chars().take(SUMMARY_MAX - 1).collect();
+    let cut: String = text.chars().take(max - 1).collect();
     format!("{}…", cut.trim_end())
 }
 
@@ -924,6 +961,58 @@ fn rewrite(raw: &str, edits: &[(&str, Option<String>)]) -> String {
     out
 }
 
+/// `rewrite` over raw bytes: the frontmatter is edited as text and the body
+/// keeps its exact bytes, so a stray non-UTF-8 byte survives a pin.
+fn rewrite_raw(raw: &[u8], edits: &[(&str, Option<String>)]) -> Result<Vec<u8>> {
+    let text = String::from_utf8_lossy(raw);
+    let body = split(&text).1.len();
+    let head = text.len() - body;
+    if raw.get(..head) != Some(&text.as_bytes()[..head]) {
+        return Err(ParziError::Validation(
+            "the note's frontmatter is not UTF-8 text".into(),
+        ));
+    }
+    let mut out = rewrite(&text, edits).into_bytes();
+    out.truncate(out.len() - body);
+    out.extend_from_slice(&raw[head..]);
+    Ok(out)
+}
+
+fn too_big(path: &str) -> ParziError {
+    ParziError::Validation(format!(
+        "note `{path}` is over the 1 MB note limit; edit it outside Parzi"
+    ))
+}
+
+/// The whole note, refused past the size cap so an edit never truncates it.
+fn read_whole(full: &Path, path: &str) -> Result<Vec<u8>> {
+    let raw = read_head(full, MAX_BYTES + 1)?;
+    if raw.len() as u64 > MAX_BYTES {
+        return Err(too_big(path));
+    }
+    Ok(raw)
+}
+
+/// At most `cap` bytes from the start of the file.
+fn read_head(full: &Path, cap: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut raw = vec![];
+    std::fs::File::open(full)?.take(cap).read_to_end(&mut raw)?;
+    Ok(raw)
+}
+
+fn front_blocks(raw: &[u8]) -> Vec<Block> {
+    split(&String::from_utf8_lossy(raw))
+        .0
+        .map(blocks)
+        .unwrap_or_default()
+}
+
+/// Frontmatter fields only, for callers that never need the body.
+fn front_fields(full: &Path) -> Option<Fields> {
+    Some(fields(&front_blocks(&read_head(full, MAX_BYTES).ok()?)))
+}
+
 fn list_line(key: &str, items: &[String], block: bool) -> Option<String> {
     if items.is_empty() {
         return None;
@@ -1055,13 +1144,14 @@ fn projects_of(notes: &[Note]) -> Vec<Project> {
                 .as_deref()
                 .map(str::trim)
                 .filter(|f| !f.is_empty())?;
+            let filed = format!("projects/{slug}/");
             let notes = notes
                 .iter()
                 .filter(|n| {
                     n.meta.path != home.meta.path
                         && (n.meta.projects.iter().any(|p| p.eq_ignore_ascii_case(slug))
                             || n.meta.links.contains(&home.meta.path)
-                            || note_in_project_folder(&n.meta.path, slug))
+                            || note_in_project_folder(&n.meta.path, &filed))
                 })
                 .map(|n| n.meta.path.clone())
                 .collect();
@@ -1076,13 +1166,32 @@ fn projects_of(notes: &[Note]) -> Vec<Project> {
         .collect()
 }
 
-/// A note filed under `projects/<slug>/…` belongs to that project even
-/// without frontmatter — placement implies membership.
-fn note_in_project_folder(path: &str, slug: &str) -> bool {
-    let prefix = format!("projects/{slug}/");
-    path.len() > prefix.len()
-        && path[..prefix.len()].eq_ignore_ascii_case(&prefix)
+/// A note filed directly under `prefix` (`projects/<slug>/`) belongs to that
+/// project even without frontmatter: placement implies membership.
+fn note_in_project_folder(path: &str, prefix: &str) -> bool {
+    // get() instead of slicing: a non-ASCII name may not split at prefix.len().
+    path.get(..prefix.len())
+        .is_some_and(|h| h.eq_ignore_ascii_case(prefix))
+        && path.len() > prefix.len()
         && !path[prefix.len()..].contains('/')
+}
+
+/// A project slug names `projects/<slug>.md`: one plain segment, never `all`.
+fn check_slug(slug: &str) -> Result<&str> {
+    if slug.is_empty() {
+        return Err(ParziError::Validation("project slug is empty".into()));
+    }
+    if slug.contains(['/', '\\']) {
+        return Err(ParziError::Validation(format!(
+            "project slug `{slug}` must be a plain name"
+        )));
+    }
+    if slug.eq_ignore_ascii_case(EVERYWHERE) {
+        return Err(ParziError::Validation(format!(
+            "project slug `{slug}` is reserved for notes that apply to every session"
+        )));
+    }
+    Ok(slug)
 }
 
 fn project_slug(path: &str) -> Option<&str> {
@@ -1130,15 +1239,47 @@ fn expand(folder: &str) -> PathBuf {
     match folder
         .strip_prefix("~/")
         .or_else(|| folder.strip_prefix("~\\"))
+        .or_else(|| (folder == "~").then_some(""))
         .zip(dirs::home_dir())
     {
+        Some(("", home)) => home,
         Some((rest, home)) => home.join(rest),
         None => PathBuf::from(folder),
     }
 }
 
+/// Index of the project whose folder holds `cwd`: the deepest folder wins,
+/// equal folders go to the first slug. Both sides expand `~`, resolve when
+/// they exist and ignore case on Windows, so thread routing and the brain
+/// context always pick the same project.
+fn deepest<'a>(cwd: &str, projects: impl IntoIterator<Item = (&'a str, &'a str)>) -> Option<usize> {
+    let cwd = cwd.trim();
+    if cwd.is_empty() {
+        return None;
+    }
+    let here = normalize(&expand(cwd));
+    projects
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, (slug, folder))| {
+            let folder = folder.trim();
+            if folder.is_empty() {
+                return None;
+            }
+            let folder = normalize(&expand(folder));
+            within(&here, &folder).then_some((i, folder.len(), slug))
+        })
+        .min_by(|a, b| b.1.cmp(&a.1).then_with(|| a.2.cmp(b.2)))
+        .map(|(i, _, _)| i)
+}
+
 fn normalize(p: &Path) -> String {
-    let real = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    // A project folder from a note is agent-writable: never resolve a share.
+    let real = if crate::paths::is_network_path(&p.to_string_lossy()) {
+        p.to_path_buf()
+    } else {
+        std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+    };
     let s = real.to_string_lossy().replace('\\', "/");
     let s = match s.strip_prefix("//?/") {
         Some(r) => r
@@ -1368,6 +1509,160 @@ mod tests {
         assert!(raw.ends_with("---\nbody stays\n"), "{raw}");
         assert!(v.project_upsert(Some("a/b"), "x", folder).is_err());
         assert!(v.project_upsert(None, "x", " ").is_err());
+    }
+
+    #[test]
+    fn non_ascii_note_names_do_not_split_inside_a_char() {
+        let prefix = "projects/a/";
+        let path = "Notizen/Größe.md";
+        assert!(
+            !path.is_char_boundary(prefix.len()),
+            "fixture must straddle"
+        );
+        assert!(!note_in_project_folder(path, prefix));
+        assert!(note_in_project_folder("projects/A/Größe.md", prefix));
+        assert!(!note_in_project_folder("projects/a/", prefix));
+        assert!(!note_in_project_folder("projects/a/sub/x.md", prefix));
+        let (_d, v) = vault();
+        v.project_upsert(Some("a"), "A", "C:\\code\\a").unwrap();
+        v.write("Notizen/Größe.md", "x").unwrap();
+        v.write("projects/a/Überblick.md", "y").unwrap();
+        assert_eq!(v.projects()[0].notes, ["projects/a/Überblick.md"]);
+    }
+
+    #[test]
+    fn routing_and_context_pick_the_same_project() {
+        let (d, v) = vault();
+        let code = d.path().join("code");
+        std::fs::create_dir_all(code.join("app").join("src")).unwrap();
+        let shown = |p: &Path| p.to_str().unwrap().to_string();
+        v.project_upsert(Some("beta"), "Beta", &shown(&code))
+            .unwrap();
+        v.project_upsert(Some("alpha"), "Alpha", &format!("{}/", shown(&code)))
+            .unwrap();
+        let app = code.join("app");
+        v.project_upsert(Some("app"), "App", &shown(&app)).unwrap();
+        v.write("n.md", "---\nprojects: [all]\n---\nx").unwrap();
+        let both = |cwd: &Path| {
+            let routed = v.project_at(&shown(cwd));
+            let ctx = v.context(cwd).and_then(|c| c.project).map(|p| p.slug);
+            assert_eq!(routed, ctx, "{}", cwd.display());
+            routed
+        };
+        assert_eq!(
+            both(&code).as_deref(),
+            Some("alpha"),
+            "equal folders: first slug"
+        );
+        assert_eq!(
+            both(&app.join("src")).as_deref(),
+            Some("app"),
+            "deepest wins"
+        );
+        assert_eq!(both(d.path()), None);
+        assert_eq!(v.project_at("  "), None);
+        if cfg!(windows) {
+            let upper = PathBuf::from(shown(&app.join("src")).to_uppercase());
+            assert_eq!(both(&upper).as_deref(), Some("app"));
+        }
+        v.project_archive("app", true).unwrap();
+        assert_eq!(
+            both(&app).as_deref(),
+            Some("alpha"),
+            "archived projects stop routing"
+        );
+    }
+
+    #[test]
+    fn notes_over_the_cap_are_refused_not_truncated() {
+        let (_d, v) = vault();
+        let big = "x".repeat(usize::try_from(MAX_BYTES).unwrap() + 1);
+        let err = v.write("big.md", &big).unwrap_err();
+        assert!(matches!(err, ParziError::Validation(_)), "{err}");
+        let full = v.root().join("huge.md");
+        std::fs::create_dir_all(v.root()).unwrap();
+        std::fs::write(&full, format!("# Huge\n\n{big}")).unwrap();
+        let meta = v.list().into_iter().find(|m| m.path == "huge.md").unwrap();
+        assert_eq!(meta.title, "Huge", "an oversized note still lists");
+        assert!(matches!(v.read("huge.md"), Err(ParziError::Validation(_))));
+        assert!(v.set_pinned("huge.md", true).is_err());
+        assert_eq!(
+            std::fs::metadata(&full).unwrap().len(),
+            big.len() as u64 + 8
+        );
+    }
+
+    #[test]
+    fn non_utf8_notes_read_leniently_and_keep_their_bytes_on_edit() {
+        let (_d, v) = vault();
+        let full = v.root().join("latin.md");
+        std::fs::create_dir_all(v.root()).unwrap();
+        std::fs::write(&full, b"---\ntitle: Old\n---\nK\xe4se\n").unwrap();
+        assert_eq!(
+            v.read("latin.md").unwrap(),
+            "---\ntitle: Old\n---\nK\u{fffd}se\n"
+        );
+        assert!(v.set_pinned("latin.md", true).unwrap().pinned);
+        assert_eq!(
+            std::fs::read(&full).unwrap(),
+            b"---\ntitle: Old\npinned: true\n---\nK\xe4se\n"
+        );
+        std::fs::write(&full, b"---\ntitle: K\xe4se\n---\nbody\n").unwrap();
+        assert!(matches!(
+            v.set_pinned("latin.md", true),
+            Err(ParziError::Validation(_))
+        ));
+        assert_eq!(
+            v.read("latin.md").unwrap(),
+            "---\ntitle: K\u{fffd}se\n---\nbody\n"
+        );
+    }
+
+    #[test]
+    fn project_ops_never_reach_plain_notes() {
+        let (_d, v) = vault();
+        v.write("projects/sub/note.md", "plain").unwrap();
+        v.write("projects/plain.md", "no folder").unwrap();
+        for slug in ["sub/note", "sub\\note", "all", " ", "../x"] {
+            assert!(v.project_delete(slug).is_err(), "{slug:?}");
+            assert!(v.project_archive(slug, true).is_err(), "{slug:?}");
+        }
+        assert!(matches!(
+            v.project_delete("plain"),
+            Err(ParziError::Validation(_))
+        ));
+        assert!(v.project_archive("plain", true).is_err());
+        assert_eq!(v.read("projects/sub/note.md").unwrap(), "plain");
+        assert_eq!(v.read("projects/plain.md").unwrap(), "no folder");
+    }
+
+    #[test]
+    fn long_titles_clip_and_the_on_demand_list_fits_the_cap() {
+        let (d, v) = vault();
+        let folder = d.path().join("code");
+        std::fs::create_dir_all(&folder).unwrap();
+        v.project_upsert(Some("demo"), "Demo", folder.to_str().unwrap())
+            .unwrap();
+        let title = "T".repeat(500);
+        let body = "word ".repeat(100);
+        for i in 0..50 {
+            v.write(
+                &format!("n{i:02}.md"),
+                &format!("---\ntitle: {title}\nprojects: [demo]\n---\n{body}"),
+            )
+            .unwrap();
+        }
+        let ctx = v.context(&folder).unwrap();
+        let first = v.list().into_iter().find(|m| m.path == "n00.md").unwrap();
+        assert_eq!(first.title.chars().count(), TITLE_MAX);
+        assert!(first.title.ends_with('…'));
+        assert_eq!(ctx.listed.len(), 50);
+        assert!(ctx.chars <= CONTEXT_CAP + 40, "{}", ctx.chars);
+        let shown = ctx.text.matches("\n- n").count();
+        assert!(shown < 50, "{shown}");
+        assert!(ctx
+            .text
+            .ends_with(&format!("\n- …and {} more (brain_list)", 50 - shown)));
     }
 
     #[test]

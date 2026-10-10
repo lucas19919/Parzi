@@ -234,3 +234,119 @@ fn the_event_cache_is_bounded_and_keeps_unflushed_runs() {
     assert!(matches!(&first[0], Event::User { text } if text == "m0"));
     assert_eq!(store.get(&live.id).unwrap().updated, live_updated);
 }
+
+#[test]
+fn a_torn_last_line_does_not_swallow_the_next_append() {
+    use std::io::Write;
+    let store = open();
+    let s = store
+        .create("torn tail", "t-torn-tail", "lane", "m")
+        .unwrap();
+    store.append(&s.id, &user("one")).unwrap();
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(events_file(&s.id))
+            .unwrap();
+        write!(f, "{{\"kind\":\"user\",\"text\":\"cut off").unwrap();
+    }
+    store.append(&s.id, &user("two")).unwrap();
+    let texts: Vec<String> = store
+        .events(&s.id)
+        .unwrap()
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::User { text } => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, ["one", "two"]);
+    let fresh = open();
+    assert_eq!(fresh.events(&s.id).unwrap().len(), 2, "a cold read agrees");
+}
+
+#[test]
+fn fork_keeps_the_working_folder_and_settings() {
+    let store = open();
+    let s = store
+        .create("src", "t-fork-cwd", "lane-x", "model-y")
+        .unwrap();
+    store.set_cwd(&s.id, "/work/repo").unwrap();
+    store.set_context(&s.id, 1200, 200_000).unwrap();
+    store.add_usage(&s.id, 10, 20, 0.5).unwrap();
+    store.append(&s.id, &user("hi")).unwrap();
+    let f = store.fork(&s.id, None).unwrap();
+    assert_eq!(f.cwd, "/work/repo");
+    assert_eq!(
+        (f.project.as_str(), f.lane.as_str(), f.model.as_str()),
+        ("t-fork-cwd", "lane-x", "model-y")
+    );
+    assert_eq!(f.context_limit, 200_000);
+    assert_eq!(
+        (f.tokens_in, f.tokens_out),
+        (0, 0),
+        "spend stays with the source"
+    );
+    assert_eq!(f.parent_id, None);
+    assert_eq!(store.events(&f.id).unwrap().len(), 1);
+}
+
+#[test]
+fn concurrent_setters_keep_every_update() {
+    let store = open();
+    let s = store.create("race", "t-race", "lane", "m").unwrap();
+    std::thread::scope(|scope| {
+        for t in 0..4 {
+            let (store, id) = (store.clone(), s.id.clone());
+            scope.spawn(move || {
+                for i in 0..25 {
+                    store.add_usage(&id, 1, 2, 0.0).unwrap();
+                    store.set_title(&id, &format!("title {t}-{i}")).unwrap();
+                }
+            });
+        }
+    });
+    let meta = store.get(&s.id).unwrap();
+    assert_eq!((meta.tokens_in, meta.tokens_out), (100, 200));
+    assert!(meta.title.starts_with("title "));
+}
+
+#[test]
+fn counts_and_tails_without_copying_the_transcript() {
+    let store = open();
+    let s = store.create("tail", "t-tail", "lane", "m").unwrap();
+    assert_eq!(store.event_count(&s.id).unwrap(), 0);
+    for i in 0..5 {
+        store.append(&s.id, &user(&format!("m{i}"))).unwrap();
+    }
+    assert_eq!(store.event_count(&s.id).unwrap(), 5);
+    let tail = store.events_from(&s.id, 3).unwrap();
+    assert_eq!(tail.len(), 2);
+    assert!(matches!(&tail[0], Event::User { text } if text == "m3"));
+    assert!(store.events_from(&s.id, 9).unwrap().is_empty());
+    let other = open();
+    other.append(&s.id, &user("m5")).unwrap();
+    assert_eq!(store.event_count(&s.id).unwrap(), 6, "sees another writer");
+    assert!(store.event_count("not-a-session").is_err());
+}
+
+#[test]
+fn a_corrupt_meta_is_skipped_by_list_until_healed() {
+    let store = open();
+    let bad = store.create("corrupt", "t-corrupt", "lane", "m").unwrap();
+    let path = parzi_core::paths::sessions_dir()
+        .unwrap()
+        .join(&bad.id)
+        .join("meta.json");
+    std::fs::write(&path, "{ not json").unwrap();
+    let has = |st: &SessionStore| st.list().unwrap().iter().any(|m| m.id == bad.id);
+    assert!(!has(&store));
+    assert!(!has(&store), "a cached failure stays skipped");
+    std::fs::remove_file(&path).unwrap();
+    let ok = serde_json::json!({
+        "id": bad.id, "title": "healed",
+        "created": "2026-01-01T00:00:00Z", "updated": "2026-01-01T00:00:00Z",
+    });
+    parzi_core::atomic_write(&path, ok.to_string().as_bytes()).unwrap();
+    assert!(has(&open()), "a healed meta.json lists again");
+}

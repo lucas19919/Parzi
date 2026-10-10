@@ -1,7 +1,7 @@
 <script lang="ts">
   import { mdHtml, richReady } from "../md";
   import { handleLinkClick } from "../links";
-  import { resolveColor } from "../theme";
+  import { chartPalette, themeRev, type ChartPalette } from "../theme";
   import Zoomable from "./Zoomable.svelte";
   import EChart from "./EChart.svelte";
 
@@ -44,27 +44,24 @@
   })();
   $: all = plotSer.flatMap((s) => s.points);
   $: maxLen = Math.max(1, ...plotSer.map((s) => s.points.length));
-  const cssVar = resolveColor;
-  $: INK = [
-    cssVar("--accent", "#E6E8EE"),
-    cssVar("--ok", "#22c55e"),
-    cssVar("--accent", "#5eb1ff"),
-    cssVar("--warn", "#f59e0b"),
-    cssVar("--bad", "#ef4444"),
-  ];
+  // Only charts read theme colours, and they share one cached palette.
+  const charted = ["chart-line", "chart-bar", "histogram", "scatter"].includes(type);
+  const NO_PALETTE: ChartPalette = { ink: [""], line: "", faint: "", muted: "", panel: "", text: "" };
+  $: pal = charted ? chartPalette($themeRev) : NO_PALETTE;
+  $: INK = pal.ink;
   $: serInk = (i: number): string => INK[i % INK.length];
   $: showLegend = plotSer.length > 1 && plotSer.some((s) => s.name);
   $: axisCommon = {
-    axisLine: { lineStyle: { color: cssVar("--line", "#333") } },
+    axisLine: { lineStyle: { color: pal.line } },
     axisTick: { show: false },
-    axisLabel: { color: cssVar("--faint", "#999"), fontSize: 10 },
-    splitLine: { lineStyle: { color: cssVar("--line", "#333") } },
+    axisLabel: { color: pal.faint, fontSize: 10 },
+    splitLine: { lineStyle: { color: pal.line } },
   };
   $: tipStyle = {
-    backgroundColor: cssVar("--panel", "#14141a"),
-    borderColor: cssVar("--line", "#333"),
+    backgroundColor: pal.panel,
+    borderColor: pal.line,
     borderWidth: 1,
-    textStyle: { color: cssVar("--text", "#eee"), fontSize: 11 },
+    textStyle: { color: pal.text, fontSize: 11 },
   };
   $: chartOpt = !all.length
     ? null
@@ -79,13 +76,13 @@
             name: xlabel,
             nameLocation: "middle",
             nameGap: 22,
-            nameTextStyle: { color: cssVar("--faint", "#999"), fontSize: 10 },
+            nameTextStyle: { color: pal.faint, fontSize: 10 },
             ...axisCommon,
           },
           yAxis: {
             type: "value",
             name: ylabel,
-            nameTextStyle: { color: cssVar("--faint", "#999"), fontSize: 10 },
+            nameTextStyle: { color: pal.faint, fontSize: 10 },
             ...axisCommon,
           },
           series: [
@@ -104,7 +101,7 @@
                     name: "trend",
                     type: "line",
                     data: Array.from({ length: trend.n }, (_, i) => trend.m * i + trend.b),
-                    color: cssVar("--muted", "#999"),
+                    color: pal.muted,
                     lineStyle: { width: 1.5, type: "dashed" },
                     showSymbol: false,
                   },
@@ -123,14 +120,14 @@
             name: xlabel,
             nameLocation: "middle",
             nameGap: 22,
-            nameTextStyle: { color: cssVar("--faint", "#999"), fontSize: 10 },
+            nameTextStyle: { color: pal.faint, fontSize: 10 },
             ...axisCommon,
           },
           yAxis: {
             type: "value",
             scale: true,
             name: ylabel,
-            nameTextStyle: { color: cssVar("--faint", "#999"), fontSize: 10 },
+            nameTextStyle: { color: pal.faint, fontSize: 10 },
             ...axisCommon,
           },
           series: scSer

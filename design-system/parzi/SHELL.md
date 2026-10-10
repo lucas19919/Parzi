@@ -42,7 +42,7 @@ Four tools, one registry (`shell.rs`, new file in parzi-runtime):
 | Tool | Args | Returns |
 |---|---|---|
 | `shell.exec` | `cmd`, `timeout_ms?` (default 120s, cap 600s), `workdir?` | exit, output (capped 12k chars), `truncated` + spill path when cut |
-| `shell.start` | `cmd`, `title?` | `shell_id`, "use shell.logs to poll" |
+| `shell.start` | `cmd` | `shell_id`, "use shell.logs to poll" |
 | `shell.logs` | `id`, `tail?` (default 4k chars) | new output since last read, `running` bool, exit if done |
 | `shell.kill` | `id` | killed/confirmed-dead |
 

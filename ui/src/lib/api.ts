@@ -109,7 +109,7 @@ export interface ProviderEntry {
 export interface ParziConfig {
   version: number;
   providers: Record<string, ProviderEntry>;
-  lanes: { default_mode: string; default_allowed_tools: string[]; max_steps: number };
+  lanes: { default_mode: string; default_allowed_tools: string[]; max_steps: number; no_shell?: boolean };
   mcp: { servers: Record<string, unknown> };
   orchestrator: { max_concurrent: number; mcp_idle_kill_secs: number; queue_when_busy: boolean };
   routing: { order: string[] };
@@ -206,13 +206,6 @@ export const api = {
   getConfig: () => invoke<ParziConfig>("get_config"),
   saveConfig: (cfg: ParziConfig) => invoke<void>("save_config", { cfg }),
   runDoctorQuick: () => invoke<Check[]>("run_doctor_quick"),
-  serveStatus: () => invoke<{ running: boolean; port: number | null }>("serve_status"),
-  remoteConnect: (user: string, host: string, password?: string) =>
-    invoke<{ connected: boolean; method: string; prepared: boolean; detail: string }>("remote_connect", {
-      user,
-      host,
-      password: password || null,
-    }),
 
   getTheme: () => invoke<Theme>("get_theme"),
   getThemeCss: () => invoke<string>("get_theme_css"),

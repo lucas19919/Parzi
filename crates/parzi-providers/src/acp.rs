@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,9 +12,9 @@ use crate::jsonrpc::{Incoming, Peer, RpcError};
 use crate::process::{self, Proc, STOP_GRACE};
 use crate::setup;
 use crate::types::{
-    sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
-    PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd,
-    TurnSpec,
+    or_cancel, sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision,
+    PermissionGate, PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus,
+    State, TurnEnd, TurnSpec,
 };
 
 const AUTH_REQUIRED: i64 = -32000;
@@ -27,7 +27,7 @@ pub struct Agent {
     name: &'static str,
     program: &'static str,
     args: &'static [&'static str],
-    env: fn(&Path) -> Vec<(String, String)>,
+    env: fn() -> Vec<(String, String)>,
     locate: fn() -> Option<PathBuf>,
     gated: bool,
     slow_start: bool,
@@ -45,11 +45,11 @@ enum Probe {
     GeminiSettings,
 }
 
-fn no_env(_: &Path) -> Vec<(String, String)> {
+fn no_env() -> Vec<(String, String)> {
     vec![]
 }
 
-fn opencode_env(_: &Path) -> Vec<(String, String)> {
+fn opencode_env() -> Vec<(String, String)> {
     vec![
         (
             "OPENCODE_PERMISSION".into(),
@@ -59,7 +59,7 @@ fn opencode_env(_: &Path) -> Vec<(String, String)> {
     ]
 }
 
-fn antigravity_env(_: &Path) -> Vec<(String, String)> {
+fn antigravity_env() -> Vec<(String, String)> {
     let Some(tmp) = process::private_temp("antigravity") else {
         return vec![];
     };
@@ -162,7 +162,7 @@ impl Acp {
 
     async fn open(&self, program: &Path, cwd: &Path) -> Result<Conn, ProviderError> {
         let args: Vec<String> = self.agent.args.iter().map(|a| (*a).to_string()).collect();
-        let env = (self.agent.env)(program);
+        let env = (self.agent.env)();
         let mut proc = Proc::spawn(program, &args, cwd, &env).map_err(|e| {
             ProviderError::process(format!("could not start {}: {e}", self.agent.name))
         })?;
@@ -174,7 +174,7 @@ impl Acp {
                 self.agent.name
             )));
         };
-        let (peer, incoming) = Peer::start(stdout, stdin);
+        let (peer, incoming) = Peer::start(self.agent.name, stdout, stdin);
         let wait = Duration::from_secs(if self.agent.slow_start { 240 } else { 60 });
         let init = peer
             .request_within(
@@ -206,17 +206,11 @@ impl Acp {
         }
     }
 
-    async fn connect(
-        &self,
-        program: &Path,
-        cwd: &Path,
-        events: Option<&EventTx>,
-    ) -> Result<Conn, ProviderError> {
+    async fn connect(&self, program: &Path, cwd: &Path) -> Result<Conn, ProviderError> {
         if self.agent.slow_start {
             if let Some(conn) = take_warm(program) {
                 return Ok(conn);
             }
-            let _ = events;
         }
         self.open(program, cwd).await
     }
@@ -238,7 +232,7 @@ impl Acp {
             )
         })?;
         let program = self.program().ok_or_else(|| self.not_installed())?;
-        let mut conn = self.connect(&program, &std::env::temp_dir(), None).await?;
+        let mut conn = self.connect(&program, &std::env::temp_dir()).await?;
         started();
         let answer = conn
             .peer
@@ -335,10 +329,7 @@ fn remember_models(agent: &str, models: &[ModelInfo]) {
     if std::fs::read_to_string(&path).ok().as_deref() == Some(text.as_str()) {
         return;
     }
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let _ = std::fs::write(path, text);
+    let _ = parzi_core::atomic_write(&path, text.as_bytes());
 }
 
 fn session_models(session: &Value) -> Vec<ModelInfo> {
@@ -484,7 +475,12 @@ impl Provider for Acp {
         cancel: CancellationToken,
     ) -> Result<TurnEnd, ProviderError> {
         let program = self.program().ok_or_else(|| self.not_installed())?;
-        let mut conn = self.connect(&program, &spec.cwd, Some(&events)).await?;
+        process::existing_folder(&spec.cwd)?;
+        // Dropping a half-open connection kills its process.
+        let Some(conn) = or_cancel(&cancel, self.connect(&program, &spec.cwd)).await else {
+            return Ok(TurnEnd::Interrupted);
+        };
+        let mut conn = conn?;
         let outcome = drive(
             &conn.peer,
             &mut conn.incoming,
@@ -566,9 +562,8 @@ fn remember_gemini_auth(method: &str) {
         return;
     };
     auth.insert("type".into(), json!(method));
-    if let (Some(dir), Ok(text)) = (path.parent(), serde_json::to_string_pretty(&settings)) {
-        let _ = std::fs::create_dir_all(dir);
-        let _ = std::fs::write(&path, text);
+    if let Ok(text) = serde_json::to_string_pretty(&settings) {
+        let _ = parzi_core::atomic_write(&path, text.as_bytes());
     }
 }
 
@@ -611,9 +606,14 @@ fn cursor_read(out: &str, agent: Agent) -> ProviderStatus {
 }
 
 async fn opencode_status(program: &Path, agent: Agent) -> ProviderStatus {
-    let Some(out) = process::output(program, &["models"], 60).await else {
+    // Stdout only: stderr log lines can look like model ids.
+    let Some(out) = process::stdout(program, &["models"], 60).await else {
         return ProviderStatus::new(agent.id, State::Error, "`opencode models` gave no answer.");
     };
+    opencode_read(&out, agent)
+}
+
+fn opencode_read(out: &str, agent: Agent) -> ProviderStatus {
     let models: Vec<ModelInfo> = out
         .lines()
         .map(str::trim)
@@ -628,11 +628,10 @@ async fn opencode_status(program: &Path, agent: Agent) -> ProviderStatus {
     if models.is_empty() {
         return ProviderStatus::new(agent.id, State::SignedOut, agent.login_hint);
     }
-    let mut providers: Vec<&str> = models
+    let providers: HashSet<&str> = models
         .iter()
         .filter_map(|m| m.id.split('/').next())
         .collect();
-    providers.dedup();
     let mut s = ProviderStatus::new(agent.id, State::Ready, "");
     s.account = Some(format!(
         "{} provider{} connected",
@@ -793,39 +792,45 @@ async fn drive(
     let mut session = Value::Null;
     let mut sid = String::new();
     if let Some(id) = earlier.filter(|_| can_resume) {
-        match peer
-            .request_within(
+        let resumed = or_cancel(
+            cancel,
+            peer.request_within(
                 "session/resume",
                 json!({"sessionId": id, "cwd": cwd, "mcpServers": mcp_servers}),
                 limit,
-            )
-            .await
-        {
-            Ok(v) => {
+            ),
+        )
+        .await;
+        match resumed {
+            None => return Ok(TurnEnd::Interrupted),
+            Some(Ok(v)) => {
                 session = v;
                 sid = id;
                 fresh = false;
             }
-            Err(e) if matches!(e.code, AUTH_REQUIRED | RpcError::CLOSED | RpcError::TIMEOUT) => {
-                return Err(rpc_failure(agent, e));
-            }
-            Err(e) => {
+            Some(Err(e)) if e.code != AUTH_REQUIRED && e.not_found() => {
                 return Err(ProviderError::new(
                     ErrorClass::SessionLost,
                     format!("{} could not resume the conversation: {e}", agent.name),
                 ));
             }
+            Some(Err(e)) => return Err(rpc_failure(agent, e)),
         }
     }
     if fresh {
-        session = peer
-            .request_within(
+        let opened = or_cancel(
+            cancel,
+            peer.request_within(
                 "session/new",
                 json!({"cwd": cwd, "mcpServers": mcp_servers}),
                 limit,
-            )
-            .await
-            .map_err(|e| rpc_failure(agent, e))?;
+            ),
+        )
+        .await;
+        let Some(opened) = opened else {
+            return Ok(TurnEnd::Interrupted);
+        };
+        session = opened.map_err(|e| rpc_failure(agent, e))?;
         sid = session
             .get("sessionId")
             .and_then(Value::as_str)
@@ -844,7 +849,10 @@ async fn drive(
         });
     }
     if let Some(model) = spec.model.as_deref().filter(|m| !m.is_empty()) {
-        select_model(peer, &session, &sid, model, agent, events).await;
+        let chosen = select_model(peer, &session, &sid, model, agent, events);
+        if or_cancel(cancel, chosen).await.is_none() {
+            return Ok(TurnEnd::Interrupted);
+        }
     }
     let mut text = spec.prompt.clone();
     if fresh {
@@ -877,6 +885,11 @@ async fn drive(
             agent.name
         )));
     }
+    if cancel.is_cancelled() {
+        return Ok(TurnEnd::Interrupted);
+    }
+    // Fires once session/cancel is out, so pending permission asks answer "cancelled".
+    let cancel_sent = CancellationToken::new();
     let (done_tx, mut done_rx) = tokio::sync::oneshot::channel();
     {
         let (peer, params) = (peer.clone(), json!({"sessionId": sid, "prompt": prompt}));
@@ -904,6 +917,7 @@ async fn drive(
                 interrupting = true;
                 stop_by = Some(tokio::time::Instant::now() + STOP_GRACE);
                 let _ = peer.notify("session/cancel", json!({"sessionId": sid})).await;
+                cancel_sent.cancel();
             }
             () = sleep_until(stop_by) => {
                 buffers.flush(events);
@@ -924,8 +938,8 @@ async fn drive(
                     }
                     Incoming::Request { id, method, params } => {
                         if method == "session/request_permission" {
-                            let (peer, gate) = (peer.clone(), gate.clone());
-                            tokio::spawn(async move { permission(&peer, id, &params, gate).await });
+                            let (peer, gate, sent) = (peer.clone(), gate.clone(), cancel_sent.clone());
+                            tokio::spawn(async move { permission(&peer, id, &params, gate, &sent).await });
                         } else {
                             let _ = peer.respond_error(id, -32601, &format!("Parzi does not offer {method}")).await;
                         }
@@ -1113,7 +1127,13 @@ fn finish_tool(u: &Value, id: &str, name: &str, events: &EventTx) {
     });
 }
 
-async fn permission(peer: &Peer, id: Value, params: &Value, gate: Arc<dyn PermissionGate>) {
+async fn permission(
+    peer: &Peer,
+    id: Value,
+    params: &Value,
+    gate: Arc<dyn PermissionGate>,
+    cancelled: &CancellationToken,
+) {
     let call = params.get("toolCall").unwrap_or(&Value::Null);
     let locations: Vec<String> = call
         .get("locations")
@@ -1152,8 +1172,11 @@ async fn permission(peer: &Peer, id: Value, params: &Value, gate: Arc<dyn Permis
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let decision = gate.decide(request).await;
-    let outcome = match option_for(&options, &decision) {
+    // After session/cancel the spec wants every pending ask answered "cancelled".
+    let decision = or_cancel(cancelled, gate.decide(request)).await;
+    let chosen =
+        decision.and_then(|d| option_for(&options, &d).filter(|_| !cancelled.is_cancelled()));
+    let outcome = match chosen {
         Some(option_id) => json!({"outcome": {"outcome": "selected", "optionId": option_id}}),
         None => json!({"outcome": {"outcome": "cancelled"}}),
     };
@@ -1271,7 +1294,7 @@ mod tests {
             .await;
         });
         let (r, w) = tokio::io::split(ours);
-        let (peer, mut incoming) = Peer::start(r, w);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let gate = Arc::new(Gate(
             PermissionDecision::Deny("lease held".into()),
@@ -1341,7 +1364,7 @@ mod tests {
             send(&mut w, json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "cancelled"}})).await;
         });
         let (r, w) = tokio::io::split(ours);
-        let (peer, mut incoming) = Peer::start(r, w);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
         let (tx, _rx) = mpsc::unbounded_channel();
         let gate = Arc::new(Gate(
             PermissionDecision::Allow,
@@ -1375,7 +1398,7 @@ mod tests {
             send(&mut w, json!({"jsonrpc": "2.0", "id": new["id"], "error": {"code": -32000, "message": "Authentication required"}})).await;
         });
         let (r, w) = tokio::io::split(ours);
-        let (peer, mut incoming) = Peer::start(r, w);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
         let (tx, _rx) = mpsc::unbounded_channel();
         let gate = Arc::new(Gate(
             PermissionDecision::Allow,
@@ -1396,6 +1419,156 @@ mod tests {
         assert_eq!(err.class, ErrorClass::Auth);
         assert!(err.message.contains("Grok"), "{err}");
         server.await.unwrap();
+    }
+
+    async fn resume_fails_with(code: i64, message: &'static str) -> ProviderError {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let resume = read(&mut lines).await;
+            assert_eq!(resume["method"], "session/resume");
+            send(&mut w, json!({"jsonrpc": "2.0", "id": resume["id"], "error": {"code": code, "message": message}})).await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let err = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent("opencode").unwrap(),
+            &spec(Some(json!({"session_id": "S0"}))),
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        server.await.unwrap();
+        err
+    }
+
+    #[tokio::test]
+    async fn only_a_missing_session_is_a_lost_conversation() {
+        let lost = resume_fails_with(-32603, "Session S0 not found").await;
+        assert_eq!(lost.class, ErrorClass::SessionLost);
+        let coded = resume_fails_with(RpcError::NOT_FOUND, "Resource").await;
+        assert_eq!(coded.class, ErrorClass::SessionLost);
+        let other = resume_fails_with(-32603, "Internal error: disk full").await;
+        assert_ne!(other.class, ErrorClass::SessionLost);
+        assert!(other.message.contains("disk full"), "{other}");
+    }
+
+    struct Undecided;
+
+    #[async_trait::async_trait]
+    impl PermissionGate for Undecided {
+        async fn decide(&self, _r: PermissionRequest) -> PermissionDecision {
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stop_answers_a_pending_permission_as_cancelled() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let cancel = CancellationToken::new();
+        let stop = cancel.clone();
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let new = read(&mut lines).await;
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": new["id"], "result": {"sessionId": "S1"}}),
+            )
+            .await;
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["method"], "session/prompt");
+            send(&mut w, json!({"jsonrpc": "2.0", "id": 5, "method": "session/request_permission", "params": {
+                "sessionId": "S1",
+                "toolCall": {"toolCallId": "c1", "title": "Run ls", "kind": "execute"},
+                "options": [{"optionId": "yes", "kind": "allow_once"}, {"optionId": "no", "kind": "reject_once"}]
+            }}))
+            .await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            stop.cancel();
+            assert_eq!(read(&mut lines).await["method"], "session/cancel");
+            let answer = read(&mut lines).await;
+            assert_eq!(answer["id"], 5);
+            assert_eq!(answer["result"]["outcome"]["outcome"], "cancelled");
+            send(&mut w, json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "cancelled"}})).await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut s = spec(None);
+        s.model = None;
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent("opencode").unwrap(),
+            &s,
+            Arc::new(Undecided),
+            &tx,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        assert_eq!(end, TurnEnd::Interrupted);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_stop_while_the_session_opens_sends_no_prompt() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let cancel = CancellationToken::new();
+        let stop = cancel.clone();
+        let server = tokio::spawn(async move {
+            let (r, _w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            assert_eq!(read(&mut lines).await["method"], "session/new");
+            stop.cancel();
+            let next = tokio::time::timeout(Duration::from_millis(300), lines.next_line()).await;
+            assert!(next.is_err(), "nothing follows a stop: {next:?}");
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent("opencode").unwrap(),
+            &spec(None),
+            gate,
+            &tx,
+            &cancel,
+        )
+        .await
+        .unwrap();
+        assert_eq!(end, TurnEnd::Interrupted);
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn opencode_counts_each_provider_once() {
+        let opencode = agent("opencode").unwrap();
+        let out = "anthropic/claude-sonnet-4-5\nopenai/gpt-5\nanthropic/claude-opus-4-1\n";
+        let s = opencode_read(out, opencode);
+        assert_eq!(s.state, State::Ready);
+        assert_eq!(s.models.len(), 3);
+        assert_eq!(s.account.as_deref(), Some("2 providers connected"));
+        assert_eq!(opencode_read("", opencode).state, State::SignedOut);
     }
 
     #[test]

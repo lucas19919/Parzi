@@ -105,8 +105,8 @@ export async function installUpdate() {
   try {
     await pending.install();
     updateState.set("ready");
-    updateMsg.set("Update installed — restart Parzi to use it.");
-    toast("Update installed — restart Parzi");
+    updateMsg.set("Update installed. Restart Parzi to finish.");
+    toast("Restart Parzi to finish");
   } catch (e) {
     updateState.set("error");
     updateMsg.set(`Install failed: ${e}`);

@@ -1,7 +1,8 @@
-use std::path::PathBuf;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::{io_at, toml_brief, ParziError, Result};
 use crate::paths;
 
 const HOOK_TIMEOUT_DEFAULT: u64 = 5;
@@ -50,27 +51,42 @@ pub struct HookSet {
 
 impl HookSet {
     fn capped(mut self) -> Self {
-        self.pre_tool.truncate(HOOK_MAX_ENTRIES);
-        self.post_tool.truncate(HOOK_MAX_ENTRIES);
+        // Blank entries first, so they never use up one of the 16 slots.
         self.pre_tool.retain(|h| !h.command.trim().is_empty());
         self.post_tool.retain(|h| !h.command.trim().is_empty());
+        self.pre_tool.truncate(HOOK_MAX_ENTRIES);
+        self.post_tool.truncate(HOOK_MAX_ENTRIES);
         self
     }
 }
 
-fn read_file(path: PathBuf) -> HookSet {
-    let raw = std::fs::read_to_string(path).unwrap_or_default();
+fn read_file(path: &Path) -> Result<HookSet> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(HookSet::default()),
+        Err(e) => return Err(io_at(path, e)),
+    };
     if raw.trim().is_empty() {
-        return HookSet::default();
+        return Ok(HookSet::default());
     }
-    toml::from_str::<HookSet>(&raw).unwrap_or_default().capped()
+    toml::from_str::<HookSet>(&raw)
+        .map(HookSet::capped)
+        .map_err(|e| ParziError::Config(format!("hooks.toml: {}", toml_brief(&e))))
 }
 
+/// The hooks in `~/.parzi/hooks.toml`, or why that file is unusable, for
+/// doctor to show. A missing or blank file is no hooks, not an error.
+pub fn load_global() -> Result<HookSet> {
+    read_file(&paths::parzi_dir()?.join("hooks.toml"))
+}
+
+/// Like `load_global`, but a broken file runs with no hooks and a warning.
 #[must_use]
 pub fn global() -> HookSet {
-    paths::parzi_dir()
-        .map(|root| read_file(root.join("hooks.toml")))
-        .unwrap_or_default()
+    load_global().unwrap_or_else(|e| {
+        tracing::warn!("hooks disabled: {e}");
+        HookSet::default()
+    })
 }
 
 #[cfg(test)]
@@ -125,5 +141,28 @@ mod tests {
         assert_eq!(set.pre_tool.len(), 1);
         assert_eq!(set.post_tool.len(), 1);
         assert_eq!(set.pre_tool[0].timeout(), super::HOOK_TIMEOUT_DEFAULT);
+    }
+
+    #[test]
+    fn a_broken_file_is_an_error_without_its_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hooks.toml");
+        assert_eq!(super::read_file(&path).unwrap(), HookSet::default());
+        std::fs::write(&path, "[[pre_tool]]\ncommand = token-abc123\n").unwrap();
+        let err = super::read_file(&path).unwrap_err().to_string();
+        assert!(
+            err.contains("hooks.toml") && err.contains("line 2"),
+            "{err}"
+        );
+        assert!(!err.contains("token-abc123"), "{err}");
+    }
+
+    #[test]
+    fn blank_entries_do_not_use_up_the_cap() {
+        let mut raw = "[[pre_tool]]\ncommand = \"\"\n".repeat(20);
+        raw.push_str("[[pre_tool]]\ncommand = \"guard\"\n");
+        let set = toml::from_str::<HookSet>(&raw).unwrap().capped();
+        assert_eq!(set.pre_tool.len(), 1);
+        assert_eq!(set.pre_tool[0].command, "guard");
     }
 }

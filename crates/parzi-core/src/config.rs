@@ -2,8 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{ParziError, Result};
-use crate::{atomic_write, paths};
+use crate::error::{atomic_write_private, io_at, ParziError, Result};
+use crate::paths;
 
 pub const CONFIG_VERSION: u32 = 2;
 
@@ -110,6 +110,9 @@ pub struct LaneDefaults {
     pub default_mode: String,
     #[serde(default)]
     pub default_allowed_tools: Vec<String>,
+    /// Settings › General's shell switch, off: no lane gets `shell.*`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_shell: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -221,6 +224,7 @@ impl Default for ParziConfig {
             lanes: LaneDefaults {
                 default_mode: default_mode(),
                 default_allowed_tools: vec![],
+                no_shell: false,
             },
             mcp: McpConfig::default(),
             orchestrator: OrchLimits::default(),
@@ -248,16 +252,17 @@ impl ParziConfig {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let text = std::fs::read_to_string(&path)?;
+        let text = std::fs::read_to_string(&path).map_err(|e| io_at(&path, e))?;
         let mut cfg: Self = toml::from_str(&text)?;
         cfg.check_version()?;
         cfg.migrate();
         Ok(cfg)
     }
 
+    /// Owner-only on unix: MCP server entries can carry secrets in `env`.
     pub fn save(&self) -> Result<()> {
         let path = paths::config_path()?;
-        atomic_write(&path, toml::to_string(self)?.as_bytes())
+        atomic_write_private(&path, toml::to_string(self)?.as_bytes())
     }
 
     fn check_version(&self) -> Result<()> {
@@ -396,5 +401,16 @@ order = ["codex", "claude"]
         assert!(cfg.provider("codex").enabled, "no entry = on");
         assert_eq!(cfg.favorite_models, vec!["claude/opus"]);
         assert_eq!(&cfg.routing.order[..2], ["codex", "claude"]);
+    }
+
+    #[test]
+    fn budget_round_trips_through_toml() {
+        let mut cfg = ParziConfig::default();
+        cfg.budget.max_cost_usd = Some(2.5);
+        cfg.budget.max_tokens = Some(1000);
+        let text = toml::to_string(&cfg).expect("serialize");
+        let back: ParziConfig = toml::from_str(&text).expect("parse");
+        assert_eq!(back.budget.max_cost_usd, Some(2.5));
+        assert_eq!(back.budget.max_tokens, Some(1000));
     }
 }

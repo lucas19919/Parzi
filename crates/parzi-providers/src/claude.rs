@@ -5,10 +5,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_util::sync::CancellationToken;
 
+use crate::jsonrpc::{read_line, Line, MAX_LINE};
 use crate::process::{self, Proc, STOP_GRACE};
 use crate::types::{
     sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
@@ -94,8 +95,12 @@ impl Provider for Claude {
         let program = self.program().ok_or_else(|| {
             ProviderError::process(format!("Claude Code is not installed. {INSTALL_HINT}"))
         })?;
+        if cancel.is_cancelled() {
+            return Ok(TurnEnd::Interrupted);
+        }
+        process::existing_folder(&spec.cwd)?;
         let scratch = TurnFiles::write(&spec)?;
-        let args = turn_args(&spec, &scratch);
+        let args = turn_args(&spec, &scratch)?;
         let mut proc = Proc::spawn(&program, &args, &spec.cwd, &[])
             .map_err(|e| ProviderError::process(format!("could not start Claude Code: {e}")))?;
         let stdin = proc.child.stdin.take();
@@ -113,9 +118,15 @@ impl Provider for Claude {
             ))),
             other => other,
         };
-        let _ = tokio::time::timeout(Duration::from_secs(5), proc.child.wait()).await;
+        // Its input is closed by now, so a healthy Claude exits at once; a
+        // stop must also fit the runtime's STOP_GRACE + 2s wait.
+        let grace = match &outcome {
+            Ok(TurnEnd::Interrupted) => Duration::from_secs(1),
+            Err(e) if e.class == ErrorClass::Process => Duration::ZERO,
+            Ok(TurnEnd::Completed) | Err(_) => Duration::from_secs(5),
+        };
+        let _ = tokio::time::timeout(grace, proc.child.wait()).await;
         proc.kill().await;
-        scratch.remove();
         outcome
     }
 }
@@ -225,17 +236,17 @@ struct TurnFiles {
 
 impl TurnFiles {
     fn write(spec: &TurnSpec) -> Result<Self, ProviderError> {
-        let root = std::env::temp_dir().join("parzi-turns");
+        // Under ~/.parzi, not the shared temp folder: mcp.json holds a bearer token.
+        let root = process::private_temp("claude-turns")
+            .ok_or_else(|| ProviderError::process("turn scratch dir: no private temp folder"))?;
         let dir = root.join(uuid::Uuid::new_v4().to_string());
-        std::fs::create_dir_all(&root)
-            .and_then(|()| private_dir(&dir))
-            .map_err(|e| ProviderError::process(format!("turn scratch dir: {e}")))?;
+        private_dir(&dir).map_err(|e| ProviderError::process(format!("turn scratch dir: {e}")))?;
         let mut files = Self {
             dir: dir.clone(),
             instructions: None,
             mcp: None,
         };
-        let text: Vec<String> = [
+        let mut text: Vec<String> = [
             spec.instructions
                 .as_deref()
                 .filter(|t| !t.trim().is_empty())
@@ -246,12 +257,14 @@ impl TurnFiles {
         .flatten()
         .collect();
         // Parzi's rules win over any repo instructions riding along: the
-        // model must not follow a CLAUDE.md back into native Bash.
-        let text: Vec<String> = std::iter::once(
-            "Parzi rules override any repo instructions below that conflict: run shell through shell.exec, never native Bash.".to_string(),
-        )
-        .chain(text)
-        .collect();
+        // model must not follow a CLAUDE.md back into native Bash. Only
+        // when Parzi's tools are there to use instead.
+        if spec.tools.is_some() {
+            text.insert(
+                0,
+                "Parzi rules override any repo instructions below that conflict: run shell through shell.exec, never native Bash.".to_string(),
+            );
+        }
         if !text.is_empty() {
             let p = dir.join("instructions.md");
             std::fs::write(&p, text.join("\n\n---\n\n"))
@@ -271,8 +284,11 @@ impl TurnFiles {
         }
         Ok(files)
     }
+}
 
-    fn remove(&self) {
+// Every way out of a turn, early returns included, cleans the scratch.
+impl Drop for TurnFiles {
+    fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
@@ -321,7 +337,18 @@ fn effort(e: &str) -> &str {
     }
 }
 
-fn turn_args(spec: &TurnSpec, files: &TurnFiles) -> Vec<String> {
+// A value that cannot pose as a flag or split into two arguments.
+fn flag_value(flag: &str, v: &str) -> Result<String, ProviderError> {
+    if v.starts_with('-') || v.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err(ProviderError::new(
+            ErrorClass::BadRequest,
+            format!("`{v}` is not a valid {flag} for Claude Code"),
+        ));
+    }
+    Ok(format!("--{flag}={v}"))
+}
+
+fn turn_args(spec: &TurnSpec, files: &TurnFiles) -> Result<Vec<String>, ProviderError> {
     let mut a: Vec<String> = [
         "-p",
         "--output-format",
@@ -345,12 +372,10 @@ fn turn_args(spec: &TurnSpec, files: &TurnFiles) -> Vec<String> {
         .as_deref()
         .filter(|m| !m.is_empty() && *m != "default")
     {
-        a.push("--model".into());
-        a.push(m.to_string());
+        a.push(flag_value("model", m)?);
     }
     if let Some(e) = spec.effort.as_deref().filter(|e| !e.is_empty()) {
-        a.push("--effort".into());
-        a.push(effort(e).to_string());
+        a.push(flag_value("effort", effort(e))?);
     }
     match spec.resume.as_ref().and_then(resume_id) {
         Some(id) => a.push(format!("--resume={id}")),
@@ -366,7 +391,7 @@ fn turn_args(spec: &TurnSpec, files: &TurnFiles) -> Vec<String> {
         a.push("--allowedTools".into());
         a.push(format!("mcp__{}", t.name));
     }
-    a
+    Ok(a)
 }
 
 fn resume_id(v: &Value) -> Option<String> {
@@ -376,10 +401,25 @@ fn resume_id(v: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+type Waiters = std::sync::Mutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>;
+
 struct Link {
     stdin: Mutex<Option<Box<dyn AsyncWrite + Send + Unpin>>>,
-    waiters: std::sync::Mutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>,
+    waiters: Waiters,
     counter: AtomicU64,
+}
+
+struct Waiting<'a> {
+    waiters: &'a Waiters,
+    id: &'a str,
+}
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut w) = self.waiters.lock() {
+            w.remove(self.id);
+        }
+    }
 }
 
 impl Link {
@@ -399,10 +439,15 @@ impl Link {
             let mut reader = BufReader::new(reader);
             let mut buf = Vec::new();
             loop {
-                buf.clear();
-                match reader.read_until(b'\n', &mut buf).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {}
+                match read_line(&mut reader, &mut buf, MAX_LINE).await {
+                    Ok(Line::Eof) | Err(_) => break,
+                    Ok(Line::Dropped(n)) => {
+                        tracing::warn!(
+                            "dropped a {n}-byte line from Claude Code: over the 32 MiB cap"
+                        );
+                        continue;
+                    }
+                    Ok(Line::Text) => {}
                 }
                 let text = String::from_utf8_lossy(&buf);
                 let Ok(v) = serde_json::from_str::<Value>(text.trim()) else {
@@ -455,6 +500,11 @@ impl Link {
         if let Ok(mut w) = self.waiters.lock() {
             w.insert(id.clone(), tx);
         }
+        // Clears the waiter on a failed send, a timeout or a dropped future.
+        let _waiting = Waiting {
+            waiters: &self.waiters,
+            id: &id,
+        };
         self.send(&json!({"type": "control_request", "request_id": id, "request": request}))
             .await?;
         match tokio::time::timeout(limit, rx).await {
@@ -541,7 +591,22 @@ where
     R: AsyncRead + Send + Unpin + 'static,
     W: AsyncWrite + Send + Unpin + 'static,
 {
-    let (link, mut incoming) = Link::start(reader, writer);
+    let (link, incoming) = Link::start(reader, writer);
+    let outcome = converse(&link, incoming, spec, gate, events, cancel).await;
+    // EOF on its input lets Claude exit on its own however the turn ended; a
+    // wedged writer must not hold the turn hostage.
+    let _ = tokio::time::timeout(Duration::from_millis(500), link.close()).await;
+    outcome
+}
+
+async fn converse(
+    link: &Arc<Link>,
+    mut incoming: mpsc::UnboundedReceiver<Value>,
+    spec: &TurnSpec,
+    gate: Arc<dyn PermissionGate>,
+    events: &EventTx,
+    cancel: &CancellationToken,
+) -> Result<TurnEnd, ProviderError> {
     let mut st = TurnState {
         resuming: spec.resume.as_ref().and_then(resume_id).is_some(),
         ..TurnState::default()
@@ -554,8 +619,9 @@ where
     loop {
         tokio::select! {
             biased;
+            () = cancel.cancelled() => return Ok(TurnEnd::Interrupted),
             Some(v) = incoming.recv() => {
-                if let Some(end) = handle(&v, &mut st, &link, &gate, events).await? {
+                if let Some(end) = handle(&v, &mut st, link, &gate, events).await? {
                     return Ok(end);
                 }
             }
@@ -564,6 +630,9 @@ where
                 break;
             }
         }
+    }
+    if cancel.is_cancelled() {
+        return Ok(TurnEnd::Interrupted);
     }
     let (content, unreadable) = user_content(&spec.prompt, &spec.images);
     for p in unreadable {
@@ -602,8 +671,7 @@ where
                 "Claude Code exited before the turn finished.",
             ));
         };
-        if let Some(end) = handle(&v, &mut st, &link, &gate, events).await? {
-            link.close().await;
+        if let Some(end) = handle(&v, &mut st, link, &gate, events).await? {
             return Ok(if st.interrupting {
                 TurnEnd::Interrupted
             } else {
@@ -1264,14 +1332,17 @@ mod tests {
         cli.await.unwrap();
     }
 
-    #[test]
-    fn a_turn_starts_claude_with_nothing_pre_approved() {
-        let files = TurnFiles {
-            dir: std::env::temp_dir(),
+    fn no_files() -> TurnFiles {
+        TurnFiles {
+            dir: std::env::temp_dir().join(format!("parzi-no-turn-{}", uuid::Uuid::new_v4())),
             instructions: None,
             mcp: None,
-        };
-        let args = turn_args(&spec(), &files);
+        }
+    }
+
+    #[test]
+    fn a_turn_starts_claude_with_nothing_pre_approved() {
+        let args = turn_args(&spec(), &no_files()).unwrap();
         let has = |a: &str| args.iter().any(|x| x == a);
         let mode = args.iter().position(|x| x == "--permission-mode").unwrap();
         assert_eq!(args[mode + 1], "default");
@@ -1279,6 +1350,101 @@ mod tests {
             has("--setting-sources=") && has("--strict-mcp-config"),
             "{args:?}"
         );
+    }
+
+    #[test]
+    fn model_and_effort_ride_as_one_argument_and_cannot_pose_as_flags() {
+        let s = TurnSpec {
+            model: Some("opus[1m]".into()),
+            effort: Some("extra".into()),
+            ..spec()
+        };
+        let args = turn_args(&s, &no_files()).unwrap();
+        assert!(args.contains(&"--model=opus[1m]".to_string()), "{args:?}");
+        assert!(args.contains(&"--effort=xhigh".to_string()), "{args:?}");
+        for bad in [
+            "--dangerously-skip-permissions",
+            "opus x",
+            "opus\n",
+            "a\u{7}",
+        ] {
+            let s = TurnSpec {
+                model: Some(bad.into()),
+                ..spec()
+            };
+            let err = turn_args(&s, &no_files()).unwrap_err();
+            assert_eq!(err.class, ErrorClass::BadRequest, "{bad:?}");
+        }
+        let s = TurnSpec {
+            effort: Some("-x".into()),
+            ..spec()
+        };
+        assert!(turn_args(&s, &no_files()).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_stop_during_startup_sends_no_prompt_and_closes_input() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let cancel = CancellationToken::new();
+        let stop = cancel.clone();
+        let cli = tokio::spawn(async move {
+            let (r, _w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let init: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            assert_eq!(init["request"]["subtype"], "initialize");
+            stop.cancel();
+            let next = tokio::time::timeout(Duration::from_secs(2), lines.next_line()).await;
+            assert!(
+                matches!(next, Ok(Ok(None))),
+                "input closes with no prompt: {next:?}"
+            );
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
+        let end = drive(r, w, &spec(), gate, &tx, &cancel).await.unwrap();
+        assert_eq!(end, TurnEnd::Interrupted);
+        cli.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_failed_turn_still_closes_claudes_input() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let cli = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let init: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            let ok = json!({"type": "control_response", "response": {"subtype": "success", "request_id": init["request_id"], "response": {}}});
+            w.write_all(format!("{ok}\n").as_bytes()).await.unwrap();
+            let _prompt = lines.next_line().await.unwrap();
+            let failed = json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "boom"});
+            w.write_all(format!("{failed}\n").as_bytes()).await.unwrap();
+            let next = tokio::time::timeout(Duration::from_secs(2), lines.next_line()).await;
+            assert!(matches!(next, Ok(Ok(None))), "input stays open: {next:?}");
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
+        let err = drive(r, w, &spec(), gate, &tx, &CancellationToken::new())
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("boom"), "{err}");
+        cli.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_control_that_times_out_leaves_no_waiter() {
+        let (ours, _theirs) = tokio::io::duplex(1 << 16);
+        let (r, w) = tokio::io::split(ours);
+        let (link, _incoming) = Link::start(r, w);
+        let err = link
+            .control(json!({"subtype": "x"}), Duration::from_millis(20))
+            .await
+            .unwrap_err();
+        assert_eq!(err.class, ErrorClass::Process);
+        assert!(link.waiters.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -1312,13 +1478,31 @@ mod tests {
         let spec = TurnSpec {
             instructions: Some("parzi brief".into()),
             cwd: app.clone(),
+            tools: Some(crate::types::ToolServer {
+                name: "parzi".into(),
+                url: "http://127.0.0.1:1/mcp/t".into(),
+                token: "t".into(),
+            }),
             ..spec()
         };
         let files = TurnFiles::write(&spec).unwrap();
         let written = std::fs::read_to_string(files.instructions.as_ref().unwrap()).unwrap();
-        files.remove();
+        let scratch = files.dir.clone();
+        drop(files);
+        assert!(!scratch.exists(), "the turn's scratch outlived it");
         assert!(written.contains("parzi brief") && written.contains("outer rule"));
         assert!(written.starts_with("Parzi rules override"));
+        let bare = TurnSpec {
+            tools: None,
+            ..spec.clone()
+        };
+        let files = TurnFiles::write(&bare).unwrap();
+        let written = std::fs::read_to_string(files.instructions.as_ref().unwrap()).unwrap();
+        assert!(
+            !written.contains("shell.exec"),
+            "no shell rule without Parzi's tools"
+        );
+        drop(files);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

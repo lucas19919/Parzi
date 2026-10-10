@@ -7,6 +7,8 @@
   import { folderName } from "./tabs";
   import { toast, toastError } from "./toast";
   import { targetBrainNote } from "./brainStore";
+  import { handleLinkClick } from "./links";
+  import { safeDecode } from "./linkRules";
 
   const UNUSED = "unused";
   const OPEN_KEY = "parzi.brain.open.v2";
@@ -111,7 +113,12 @@
 
   async function onFocus() {
     await refresh();
-    if (selected && !dirty) raw = await brain.read(selected).catch(() => raw);
+    const sel = selected;
+    if (!sel || dirty) return;
+    // Background reload: a failed read keeps the text on screen. Drop the
+    // result if the note changed or got edits while the read was out.
+    const text = await brain.read(sel).catch(() => null);
+    if (text !== null && selected === sel && !dirty) raw = text;
   }
 
   function onVisible() {
@@ -138,7 +145,7 @@
     try {
       if (!notes.length) await refresh();
       const normalized = path.replace(/\\/g, "/");
-      const resolved = resolve(normalized) ?? resolve(decodeURIComponent(normalized)) ?? normalized;
+      const resolved = resolve(normalized) ?? resolve(safeDecode(normalized)) ?? normalized;
       raw = await brain.read(resolved);
       selected = resolved;
       editing = false;
@@ -184,7 +191,8 @@
     try {
       const meta = await brain.pin(note.path, !note.pinned);
       notes = notes.map((x) => (x.path === meta.path ? meta : x));
-      raw = await brain.read(meta.path);
+      const text = await brain.read(meta.path);
+      if (selected === meta.path && !dirty) raw = text;
     } catch (e) {
       toastError(e);
     }
@@ -207,7 +215,10 @@
       if (to !== UNUSED) await brain.map(path, to, true);
       if (!copy && from !== UNUSED) await brain.map(path, from, false);
       await refresh();
-      if (selected === path) raw = await brain.read(path);
+      if (selected === path) {
+        const text = await brain.read(path);
+        if (selected === path && !dirty) raw = text;
+      }
       if (to !== UNUSED) toggle(to, true);
     } catch (e) {
       toastError(e);
@@ -350,13 +361,16 @@
   function onPreviewClick(e: MouseEvent) {
     const a = (e.target as HTMLElement).closest("a");
     if (!a) return;
-    e.preventDefault();
     const href = a.getAttribute("href") ?? "";
     if (href.startsWith("parzi:note/")) {
-      const path = resolve(decodeURIComponent(href.slice("parzi:note/".length)));
+      e.preventDefault();
+      const path = resolve(safeDecode(href.slice("parzi:note/".length)));
       if (path) void openNote(path);
       else toast("That note doesn't exist yet");
+      return;
     }
+    // Web, file and other links take the app-wide path (confirm first).
+    void handleLinkClick(e);
   }
 
   onMount(() => {

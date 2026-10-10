@@ -67,6 +67,14 @@ fn packs_rename_and_backgrounds_delete() {
         .is_empty());
     assert!(theme::delete_background("../evil.png").is_err());
     assert!(theme::delete_background("").is_err());
+    for escape in ["C:x", "C:x.png", "C:\\x.png", "/abs.png", "sub/pic.png"] {
+        assert!(theme::delete_background(escape).is_err(), "{escape:?}");
+        assert!(theme::set_background(escape).is_err(), "{escape:?}");
+    }
+    assert!(
+        theme::save_pack("light").is_err(),
+        "built-ins are not overwritten"
+    );
     std::fs::write(bgs.join("dusk.png"), [137u8, 80, 78, 71]).unwrap();
     let red = bgs.join("red-src.png");
     solid_png(&red, [220, 30, 30]);

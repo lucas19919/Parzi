@@ -84,16 +84,17 @@ pub fn adblock_state(url: &str) -> AdblockState {
     state(&host_of(url))
 }
 
+// Sync commands run on the main thread; the settings write must not.
 #[tauri::command]
-pub fn adblock_enable(on: bool) -> Result<AdblockState, String> {
+pub async fn adblock_enable(on: bool) -> Result<AdblockState, String> {
     ENABLED.store(on, Ordering::Relaxed);
-    save()?;
+    save_off_thread().await?;
     Ok(state(""))
 }
 
 #[tauri::command]
-pub fn adblock_site(url: &str, allow: bool) -> Result<AdblockState, String> {
-    let host = host_of(url);
+pub async fn adblock_site(url: String, allow: bool) -> Result<AdblockState, String> {
+    let host = host_of(&url);
     if host.is_empty() {
         return Err("no site to change".into());
     }
@@ -108,8 +109,14 @@ pub fn adblock_site(url: &str, allow: bool) -> Result<AdblockState, String> {
     if !allow {
         ENABLED.store(true, Ordering::Relaxed);
     }
-    save()?;
+    save_off_thread().await?;
     Ok(state(&host))
+}
+
+async fn save_off_thread() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(save)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 fn state(host: &str) -> AdblockState {
@@ -159,6 +166,10 @@ fn read_settings() -> Option<Settings> {
 }
 
 fn save() -> Result<(), String> {
+    // Saves race on the blocking pool: one at a time, each snapshotting
+    // the state once it holds the lock, so the last write is the newest.
+    static SAVE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = SAVE.lock().unwrap_or_else(PoisonError::into_inner);
     let path = settings_path().ok_or("no Parzi folder")?;
     let settings = Settings {
         enabled: ENABLED.load(Ordering::Relaxed),

@@ -271,7 +271,34 @@ impl Orchestrator {
         } else {
             allowed.retain(|t| !t.starts_with("shell."));
         }
+        if cfg.lanes.no_shell {
+            allowed.retain(|t| !t.starts_with("shell."));
+        }
+        // Browser tools drive the desk's tabs; a headless engine has none.
+        if super::headless() {
+            allowed.retain(|t| !t.starts_with("browser."));
+        }
         (mode, allowed)
+    }
+
+    /// The turn's mode, auto-accept-edits and full flags. A composer choice
+    /// only tightens the Settings floor; Full access lifts it, except
+    /// Lockdown, which nothing lifts.
+    fn effective_mode(floor: ApprovalMode, choice: Option<&str>) -> (ApprovalMode, bool, bool) {
+        match choice {
+            None => (floor, false, false),
+            Some(o) if ApprovalMode::is_full_override(Some(o)) && floor != ApprovalMode::Deny => {
+                (ApprovalMode::Auto, false, true)
+            }
+            Some(o) => {
+                let mode = Self::restrict_mode(floor, ApprovalMode::parse(o));
+                (
+                    mode,
+                    o.trim() == "edits" && mode != ApprovalMode::Deny,
+                    false,
+                )
+            }
+        }
     }
 
     fn restrict_mode(a: ApprovalMode, b: ApprovalMode) -> ApprovalMode {
@@ -302,7 +329,7 @@ impl Orchestrator {
                         task: None,
                     },
                 );
-                let seen = p.store.events(&sid).map_or(0, |e| e.len());
+                let seen = p.store.event_count(&sid).unwrap_or(0);
                 Some((id, seen))
             }
         };
@@ -364,18 +391,8 @@ impl Orchestrator {
         } else {
             q.cwd.clone()
         };
-        let (mut mode, allowed) = Self::lane_policy_for(&snap, &q.lane);
-        let mut edits_auto = false;
-        let mut full = false;
-        if let Some(o) = q.mode_override.as_deref() {
-            if ApprovalMode::is_full_override(Some(o)) {
-                mode = ApprovalMode::Auto;
-                full = true;
-            } else {
-                mode = Self::restrict_mode(mode, ApprovalMode::parse(o));
-                edits_auto = o.trim() == "edits";
-            }
-        }
+        let (floor, allowed) = Self::lane_policy_for(&snap, &q.lane);
+        let (mode, edits_auto, full) = Self::effective_mode(floor, q.mode_override.as_deref());
         let tools = Arc::new(ToolExecutor {
             cwd: cwd.clone(),
             mcp: p.mcp.clone(),
@@ -440,6 +457,7 @@ impl Orchestrator {
             sid: q.session_id.clone(),
             id,
             done: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            cancel: cancel.clone(),
         };
         let prompt = q.prompt.clone();
         let done = end.done.clone();
@@ -463,12 +481,14 @@ struct RunEnd {
     sid: String,
     id: u64,
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    cancel: CancellationToken,
 }
 
 impl Drop for RunEnd {
     fn drop(&mut self) {
         let (p, sid, id) = (self.parts.clone(), std::mem::take(&mut self.sid), self.id);
         let done = self.done.clone();
+        let cancel = self.cancel.clone();
         let Ok(rt) = tokio::runtime::Handle::try_current() else {
             return;
         };
@@ -480,7 +500,8 @@ impl Drop for RunEnd {
                 }
             }
             // A panicking task never settles: stand it down with an error.
-            if !done.load(std::sync::atomic::Ordering::SeqCst) {
+            // A killed (aborted) one is kill()'s to mark; never turn Killed into Idle.
+            if !done.load(std::sync::atomic::Ordering::SeqCst) && !cancel.is_cancelled() {
                 if let Ok(m) = p.store.get(&sid) {
                     if m.status == SessionStatus::Active {
                         let _ = p.store.set_status(&sid, SessionStatus::Idle);
@@ -532,6 +553,21 @@ mod tests {
     }
 
     #[test]
+    fn the_shell_switch_turns_shell_off_everywhere() {
+        let mut cfg = ParziConfig::default();
+        let (_, on) = Orchestrator::lane_policy_for(&cfg, "build");
+        assert!(
+            on.iter().any(|t| t == "shell.exec"),
+            "shell is on by default"
+        );
+        cfg.lanes.no_shell = true;
+        for lane in ["build", "work", ""] {
+            let (_, off) = Orchestrator::lane_policy_for(&cfg, lane);
+            assert!(off.iter().all(|t| !t.starts_with("shell.")), "{lane}");
+        }
+    }
+
+    #[test]
     fn both_lanes_orchestrate_but_only_build_dispatches() {
         let cfg = ParziConfig::default();
         for lane in ["build", "code", ""] {
@@ -570,6 +606,19 @@ mod tests {
                 "work lane must not offer {t}"
             );
         }
+    }
+
+    #[test]
+    fn full_access_lifts_every_floor_but_lockdown() {
+        use crate::tools::ApprovalMode::{Ask, Auto, Deny};
+        let eff = Orchestrator::effective_mode;
+        assert_eq!(eff(Ask, Some("full")), (Auto, false, true));
+        assert_eq!(eff(Auto, Some("full")), (Auto, false, true));
+        assert_eq!(eff(Deny, Some("full")), (Deny, false, false));
+        assert_eq!(eff(Deny, Some("edits")), (Deny, false, false));
+        assert_eq!(eff(Ask, Some("edits")), (Ask, true, false));
+        assert_eq!(eff(Ask, Some("auto")), (Ask, false, false));
+        assert_eq!(eff(Auto, None), (Auto, false, false));
     }
 
     #[test]

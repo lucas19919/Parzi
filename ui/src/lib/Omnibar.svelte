@@ -7,6 +7,7 @@
   import ModelPicker from "./ModelPicker.svelte";
   import { api, brain, MODE_META, type ComposerMode, type Project, type ProviderStatus } from "./api";
   import { effortsFor, fitEffort } from "./providerRows";
+  import { permissionBlocked } from "./lanes";
   import { folderName, toAddress } from "./tabs";
   import { relativeTo, sameDir, shortAttachment as shortName } from "./paths";
   import { popover, placeAbove } from "./popover";
@@ -18,7 +19,10 @@
   export let input = "";
   export let model = "";
   export let effort = "medium";
-  export let permission = "full";
+  // Never defaults to full access: App seeds it from Settings' default.
+  export let permission = "supervised";
+  // Settings' default_mode; options it would ignore are shown disabled.
+  export let policy = "";
   export let mode: ComposerMode = "build";
   export let attachments: string[] = [];
   export let folder = "";
@@ -46,11 +50,14 @@
     brain: void;
   }>();
 
-  const PERMS: { id: string; title: string; desc: string; icon: IconName }[] = [
-    { id: "supervised", title: "Supervised", desc: "Ask before commands and file changes.", icon: "lock" },
-    { id: "edits", title: "Auto-accept edits", desc: "Approve edits, ask before anything else.", icon: "pencil" },
-    { id: "auto", title: "Auto", desc: "Agents that support it approve routine actions.", icon: "spark" },
-    { id: "full", title: "Full access", desc: "Run commands and edits without asking.", icon: "unlock" },
+  // ids are the `mode` strings the backend reads (ApprovalMode::parse:
+  // "deny" blocks, "auto" and "full" run, anything else asks).
+  const PERMS: { id: string; title: string; label: string; desc: string; icon: IconName }[] = [
+    { id: "deny", title: "Read only", label: "Read only", desc: "Block commands and file changes.", icon: "shield" },
+    { id: "supervised", title: "Supervised", label: "Ask", desc: "Ask before commands and file changes.", icon: "lock" },
+    { id: "edits", title: "Auto-accept edits", label: "Edits", desc: "Approve edits, ask before anything else.", icon: "pencil" },
+    { id: "auto", title: "Auto", label: "Auto", desc: "Agents that support it approve routine actions.", icon: "spark" },
+    { id: "full", title: "Full access", label: "Full access", desc: "Run commands and edits without asking.", icon: "unlock" },
   ];
 
   const MODES: ComposerMode[] = ["search", "build", "work"];
@@ -82,6 +89,7 @@
   let projOpen = false;
   let projStyle = "";
   let projects: Project[] = [];
+  let projErr = "";
   let atItems: string[] = [];
   let atIndex = 0;
   let slashIndex = 0;
@@ -102,7 +110,7 @@
     const next = fitEffort(effort, efforts);
     if (next !== effort) effort = next;
   }
-  $: perm = PERMS.find((p) => p.id === permission) ?? PERMS[3];
+  $: perm = PERMS.find((p) => p.id === permission) ?? PERMS[1];
   $: slashQuery = /^\/\w*$/.test(input.trim()) ? input.trim().slice(1).toLowerCase() : null;
   $: slashItems = slashQuery === null ? [] : SLASH.filter((c) => c.name.startsWith(slashQuery));
   $: if (slashIndex >= slashItems.length) slashIndex = 0;
@@ -322,7 +330,13 @@
     projOpen = !projOpen;
     if (!projOpen || !projBtn) return;
     projStyle = placeAbove(projBtn, 260);
-    projects = await brain.projects().catch(() => []);
+    projErr = "";
+    try {
+      projects = await brain.projects();
+    } catch (e) {
+      projects = [];
+      projErr = String(e);
+    }
   }
 
   function chooseProject(p: Project | null) {
@@ -507,10 +521,23 @@
         {/each}
       {/if}
     </div>
-      {#if mode === "build" && !outsideProject}
-        <button bind:this={permBtn} class="ctl icon-only" class:open={permOpen} title={perm.title + " — " + perm.desc} on:click|stopPropagation={togglePerm}>
-          <Icon name={perm.icon} size={14} stroke={2} />
+      {#if mode !== "search"}
+        <!-- Every agent send carries this choice, so it shows for both lanes. -->
+        <button
+          bind:this={permBtn}
+          class="ctl perm-btn"
+          class:open={permOpen}
+          class:full={permission === "full"}
+          title={`${perm.title}: ${perm.desc}`}
+          aria-haspopup="menu"
+          aria-expanded={permOpen}
+          on:click|stopPropagation={togglePerm}
+        >
+          <Icon name={perm.icon} size={13} stroke={2} />
+          <span class="truncate">{perm.label}</span>
         </button>
+      {/if}
+      {#if mode === "build" && !outsideProject}
           <button
             bind:this={projBtn}
             class="ctl project"
@@ -546,7 +573,11 @@
           {#if p.notes.length}<span class="count">{p.notes.length} note{p.notes.length === 1 ? "" : "s"}</span>{/if}
         </button>
       {:else}
-        <p class="pop-empty">No projects yet. A project is a folder plus the notes your agents should know about it.</p>
+        {#if projErr}
+          <p class="pop-empty err">Couldn't load projects: {projErr}</p>
+        {:else}
+          <p class="pop-empty">No projects yet. A project is a folder plus the notes your agents should know about it.</p>
+        {/if}
       {/each}
       <div class="sep" />
       {#if folder && !project}
@@ -579,15 +610,18 @@
   {#if permOpen}
     <div class="menu-pop perms" style={permStyle} use:popover={{ anchor: permBtn, close: () => (permOpen = false) }} transition:fly={{ y: permStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
       {#each PERMS as p (p.id)}
+        {@const blocked = permissionBlocked(p.id, policy)}
         <button
           class="perm"
+          disabled={!!blocked}
+          title={blocked || undefined}
           on:click={() => {
             permission = p.id;
             permOpen = false;
           }}
         >
           <span class="perm-icon"><Icon name={p.icon} size={13} /></span>
-          <span class="meta"><span class="perm-name">{p.title}</span><span class="perm-sub">{p.desc}</span></span>
+          <span class="meta"><span class="perm-name">{p.title}</span><span class="perm-sub">{blocked || p.desc}</span></span>
           {#if permission === p.id}<span class="tick"><Icon name="check" size={13} stroke={2} /></span>{/if}
         </button>
       {/each}
@@ -886,6 +920,13 @@
   .bar :global(.ctl:active) {
     transform: scale(0.97);
   }
+  .perm-btn {
+    flex: none;
+    gap: 5px;
+  }
+  .perm-btn.full :global(svg) {
+    color: var(--warn);
+  }
   .project.set {
     color: var(--text);
   }
@@ -981,8 +1022,12 @@
     text-align: left;
     cursor: pointer;
   }
-  .perm:hover {
+  .perm:hover:not(:disabled) {
     background: color-mix(in srgb, var(--text) 7%, transparent);
+  }
+  .perm:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
   .perm-icon {
     display: inline-flex;
@@ -1013,6 +1058,9 @@
     font-size: 12px;
     line-height: 1.45;
     color: var(--muted);
+  }
+  .pop-empty.err {
+    color: var(--bad);
   }
   .sep {
     height: 1px;

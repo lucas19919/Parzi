@@ -18,16 +18,26 @@
   const dispatch = createEventDispatcher<{ open: { url: string }; openSession: { id: string }; deleteSession: { id: string }; clearSessions: void }>();
   const PLACEHOLDER = { sessions: "Search sessions", history: "Search history", bookmarks: "Search bookmarks" };
 
+  // Lists render a page at a time; "Show more" adds the next page.
+  const PAGE = 200;
+
   let query = "";
   let field: HTMLInputElement | null = null;
   let broken = new Set<string>();
+  let limit = PAGE;
 
   $: q = query.trim().toLowerCase();
-  $: sessionDays = byDay(
-    threads.filter((t) => matches(t.title, whereOf(t), q)).map((t) => ({ ...t, at: Date.parse(t.updated) || 0 })),
-  );
-  $: days = byDay($history.filter((v) => matches(v.title, v.url, q)));
-  $: folders = byFolder($bookmarks.filter((b) => matches(b.title, b.url, q)));
+  $: q, view, (limit = PAGE);
+  $: sessionHits = threads
+    .filter((t) => matches(t.title, whereOf(t), q))
+    .map((t) => ({ ...t, at: Date.parse(t.updated) || 0 }))
+    .sort((a, b) => b.at - a.at);
+  $: sessionDays = byDay(sessionHits.slice(0, limit));
+  $: visitHits = $history.filter((v) => matches(v.title, v.url, q));
+  $: days = byDay(visitHits.slice(0, limit));
+  $: markHits = $bookmarks.filter((b) => matches(b.title, b.url, q));
+  $: folders = byFolder(markHits.slice(0, limit));
+  $: total = view === "sessions" ? sessionHits.length : view === "history" ? visitHits.length : markHits.length;
 
   function matches(title: string, url: string, term: string) {
     return !term || title.toLowerCase().includes(term) || url.toLowerCase().includes(term);
@@ -114,7 +124,7 @@
               <span class="time">{time(v.at)}</span>
               <span class="icon">
                 {#if faviconUrl(v.url) && !broken.has(v.url)}
-                  <img src={faviconUrl(v.url)} alt="" on:error={() => (broken = new Set(broken).add(v.url))} />
+                  <img src={faviconUrl(v.url)} alt="" loading="lazy" on:error={() => (broken = new Set(broken).add(v.url))} />
                 {:else}
                   <Icon name="globe" size={13} />
                 {/if}
@@ -136,7 +146,7 @@
             <button class="open" title={b.url} on:click={() => dispatch("open", { url: b.url })}>
               <span class="icon">
                 {#if faviconUrl(b.url) && !broken.has(b.url)}
-                  <img src={faviconUrl(b.url)} alt="" on:error={() => (broken = new Set(broken).add(b.url))} />
+                  <img src={faviconUrl(b.url)} alt="" loading="lazy" on:error={() => (broken = new Set(broken).add(b.url))} />
                 {:else}
                   <Icon name="globe" size={13} />
                 {/if}
@@ -150,6 +160,9 @@
       {:else}
         <p class="empty">{q ? "Nothing matches." : "Bookmarks you import during setup show up here."}</p>
       {/each}
+    {/if}
+    {#if total > limit}
+      <button class="more" on:click={() => (limit += PAGE)}>Show more</button>
     {/if}
   </div>
 </div>
@@ -338,5 +351,24 @@
     text-align: center;
     font-size: 13px;
     color: var(--faint);
+  }
+  .more {
+    display: block;
+    margin: 16px auto 0;
+    padding: 5px 14px;
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: 12.5px;
+    cursor: pointer;
+    transition: color 140ms ease, background 140ms ease;
+  }
+  .more:hover {
+    background: var(--line);
+    color: var(--text);
+  }
+  .more:active {
+    transform: scale(0.97);
   }
 </style>

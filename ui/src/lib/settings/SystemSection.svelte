@@ -3,6 +3,8 @@
   import { api, type Check } from "../api";
   import Icon from "../Icon.svelte";
   import { check as checkUpdatesStore, dlDone, dlTotal, installUpdate, updateMsg, updateState, updateVersion } from "../updateStore";
+  import { clearFinishedSessions } from "../sessions";
+  import { toast } from "../toast";
   import "./shared.css";
 
   export let notify: (msg: string) => void = () => {};
@@ -12,7 +14,6 @@
   let diagTimedOut = false;
 
   let threadCount = 0;
-  let err = "";
 
   let appVersion = "";
 
@@ -31,14 +32,16 @@
   async function load() {
     loaded = false;
     diagTimedOut = false;
-    err = "";
+    let timer = 0;
     try {
       const all = Promise.all([
         api.runDoctorQuick(),
         api.listThreads(),
         api.appVersion().catch(() => ""),
       ]);
-      const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error("diagnostics timed out")), 12000));
+      const timeout = new Promise<never>((_, rej) => {
+        timer = window.setTimeout(() => rej(new Error("diagnostics timed out")), 12000);
+      });
       const [q, threads, v] = await Promise.race([all, timeout]);
       quick = q;
       threadCount = threads.length;
@@ -48,11 +51,12 @@
       quick = [];
       try {
         threadCount = (await api.listThreads()).length;
-      } catch {}
-      try {
-        appVersion = await api.appVersion().catch(() => "");
-      } catch {}
+      } catch (e2) {
+        notify(`Couldn't count sessions: ${e2}`);
+      }
+      appVersion = await api.appVersion().catch(() => "");
     } finally {
+      clearTimeout(timer);
       loaded = true;
     }
   }
@@ -62,24 +66,25 @@
   });
 
   function copyDiagnostics() {
-    navigator.clipboard.writeText((quick ?? []).map((c) => `${c.ok ? "PASS" : "FAIL"} [${c.name}] ${c.detail}`).join("\n"));
-    notify("Diagnostics copied to clipboard");
+    navigator.clipboard.writeText((quick ?? []).map((c) => `${c.ok ? "PASS" : "FAIL"} [${c.name}] ${c.detail}`).join("\n")).then(
+      () => notify("Diagnostics copied to clipboard"),
+      (e) => toast(`Couldn't copy: ${e}`, true),
+    );
   }
 
+  // Same flow as History's Clear sessions: asks first, keeps running
+  // ones, closes the tabs of the sessions it deleted.
   async function purgeSessions() {
     try {
-      const count = await api.purgeSessions();
-      notify(`Purged ${count} completed sessions`);
+      await clearFinishedSessions();
       threadCount = (await api.listThreads()).length;
     } catch (e) {
-      notify(`Purge failed: ${e}`);
+      toast(`Purge failed: ${e}`, true);
     }
   }
 </script>
 
-{#if err}
-  <div class="load-err"><span>{err}</span></div>
-{:else if !loaded}
+{#if !loaded}
   <div class="pref-section">
     <div class="skel tall" />
     <div class="skel" />
@@ -94,7 +99,7 @@
       </div>
       {#if $updateState === "ready"}
         <button class="sbtn" on:click={installUpdateClicked}>
-          <span>Install & restart v{$updateVersion}</span>
+          <span>Install v{$updateVersion}</span>
         </button>
       {:else if $updateState === "available" || $updateState === "downloading"}
         <button class="sbtn" disabled>

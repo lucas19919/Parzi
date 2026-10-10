@@ -4,6 +4,7 @@ use parzi_core::store::{Event, SessionMeta, SessionStatus};
 
 use crate::handler::HarnessBridge;
 use crate::inter;
+use crate::tools::clip;
 
 use super::normalize_effort;
 use super::queue::{Pump, QueuedRun};
@@ -48,32 +49,18 @@ impl Pump {
         None
     }
 
-    fn last_reply(&self, session_id: &str) -> String {
-        let mut reply = String::new();
-        if let Ok(events) = self.store.events(session_id) {
-            for e in events {
-                if let Event::Assistant { text, .. } = e {
-                    reply = text;
-                }
-            }
-        }
-        reply.chars().take(4_000).collect()
-    }
-
-    fn last_error(&self, session_id: &str) -> Option<String> {
-        if let Ok(events) = self.store.events(session_id) {
-            for e in events.iter().rev() {
-                if let Event::Error { message, .. } = e {
-                    return Some(message.chars().take(500).collect());
-                }
-            }
-        }
-        None
-    }
-
     fn reply_json(&self, session_id: &str, meta: &SessionMeta, note: Option<&str>) -> String {
+        // One read of the transcript serves reply, error, and outcome.
+        let events = self.store.events(session_id).unwrap_or_default();
         let status = format!("{:?}", meta.status).to_lowercase();
-        let reply = self.last_reply(session_id);
+        let reply: String = events
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                Event::Assistant { text, .. } => Some(text.chars().take(4_000).collect()),
+                _ => None,
+            })
+            .unwrap_or_default();
         let mut o = serde_json::json!({
             "session_id": session_id,
             "status": status,
@@ -81,44 +68,44 @@ impl Pump {
             "response": reply,
         });
         // Idle with an Error event is failure, not success: pass it on.
-        if let Some(err) = self.last_error(session_id) {
+        let last_error = events.iter().rev().find_map(|e| match e {
+            Event::Error { message, .. } => Some(message.chars().take(500).collect::<String>()),
+            _ => None,
+        });
+        if let Some(err) = last_error {
             o["error"] = err.into();
         }
         // Verifiable outcome alongside the last reply.
-        o["outcome"] = self.run_outcome(session_id).into();
+        o["outcome"] = run_outcome(&events).into();
         if let Some(n) = note {
             o["note"] = n.into();
         }
         o.to_string()
     }
+}
 
-    fn run_outcome(&self, session_id: &str) -> String {
-        let mut shells = 0;
-        let mut last_shell_ok: Option<bool> = None;
-        let mut artifacts = 0;
-        let mut errors = 0;
-        if let Ok(events) = self.store.events(session_id) {
-            for e in &events {
-                match e {
-                    Event::ToolResult { name, ok, .. }
-                        if name == "shell.exec" || name == "shell.start" =>
-                    {
-                        shells += 1;
-                        last_shell_ok = Some(*ok);
-                    }
-                    Event::Artifact { .. } => artifacts += 1,
-                    Event::Error { .. } => errors += 1,
-                    _ => {}
-                }
+fn run_outcome(events: &[Event]) -> String {
+    let mut shells = 0;
+    let mut last_shell_ok: Option<bool> = None;
+    let mut artifacts = 0;
+    let mut errors = 0;
+    for e in events {
+        match e {
+            Event::ToolResult { name, ok, .. } if name == "shell.exec" || name == "shell.start" => {
+                shells += 1;
+                last_shell_ok = Some(*ok);
             }
+            Event::Artifact { .. } => artifacts += 1,
+            Event::Error { .. } => errors += 1,
+            _ => {}
         }
-        let shell = match last_shell_ok {
-            Some(true) => format!("last shell ok ({shells} calls)"),
-            Some(false) => format!("last shell FAILED ({shells} calls)"),
-            None => "no shell calls".to_string(),
-        };
-        format!("{shell}, {artifacts} artifacts, {errors} errors")
     }
+    let shell = match last_shell_ok {
+        Some(true) => format!("last shell ok ({shells} calls)"),
+        Some(false) => format!("last shell FAILED ({shells} calls)"),
+        None => "no shell calls".to_string(),
+    };
+    format!("{shell}, {artifacts} artifacts, {errors} errors")
 }
 
 #[async_trait::async_trait]
@@ -233,11 +220,17 @@ impl HarnessBridge for Pump {
     ) -> Result<String> {
         let target = self.in_scope(caller_id, session_id)?;
         let caller = self.store.get(caller_id)?;
+        // Work has no shell; waking a Build session would hand it one.
+        if caller.lane == "work" && self.store.get(session_id)?.lane != "work" {
+            return Err(parzi_core::ParziError::Validation(
+                "a Work session can only message Work sessions".into(),
+            ));
+        }
         let msg = inter::from_caller(&caller, kind, message);
         let (at, still_live) = {
             let mut h = self.handles.lock().await;
             h.retain(|_, handle| !handle.finished());
-            let at = self.store.events(session_id)?.len();
+            let at = self.store.event_count(session_id)?;
             inter::deliver(&self.store, session_id, &msg)?;
             (at, h.contains_key(session_id))
         };
@@ -324,25 +317,22 @@ impl HarnessBridge for Pump {
         for e in events.iter().skip(start) {
             let line = match e {
                 Event::System { text } => match InterSessionMessage::decode(text) {
-                    Some(m) => format!("> inter: {}\n", truncate(&m.summary(), 500)),
+                    Some(m) => format!("> inter: {}\n", clip(&m.summary(), 500)),
                     None => format!("> system: {text}\n"),
                 },
-                Event::User { text } => format!("user: {}\n", truncate(text, 1_000)),
-                Event::Assistant { text, .. } => format!("assistant: {}\n", truncate(text, 2_000)),
+                Event::User { text } => format!("user: {}\n", clip(text, 1_000)),
+                Event::Assistant { text, .. } => format!("assistant: {}\n", clip(text, 2_000)),
                 Event::ToolCall { name, args, .. } => {
-                    format!("tool_call: {name} {}\n", truncate(&one_line(args), 120))
+                    format!("tool_call: {name} {}\n", clip(&one_line(args), 120))
                 }
                 Event::ToolResult {
                     name, ok, output, ..
                 } => {
-                    format!(
-                        "tool_result({name}, ok={ok}): {}\n",
-                        truncate(output, 1_500)
-                    )
+                    format!("tool_result({name}, ok={ok}): {}\n", clip(output, 1_500))
                 }
-                Event::Reasoning { text } => format!("reasoning: {}\n", truncate(text, 300)),
+                Event::Reasoning { text } => format!("reasoning: {}\n", clip(text, 300)),
                 Event::Checkpoint { summary } => {
-                    format!("checkpoint: {}\n", truncate(summary, 300))
+                    format!("checkpoint: {}\n", clip(summary, 300))
                 }
                 Event::Widget { .. } => "[widget]\n".to_string(),
                 Event::Artifact {
@@ -350,7 +340,7 @@ impl HarnessBridge for Pump {
                 } => {
                     format!("artifact: {title} ({id} v{version})\n")
                 }
-                Event::Error { message, .. } => format!("error: {}\n", truncate(message, 300)),
+                Event::Error { message, .. } => format!("error: {}\n", clip(message, 300)),
             };
             tail_text.push_str(&line);
             if tail_text.len() > 8_000 {
@@ -395,13 +385,4 @@ impl HarnessBridge for Pump {
 fn one_line(v: &serde_json::Value) -> String {
     let s = v.to_string();
     s.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn truncate(s: &str, n: usize) -> String {
-    let cut: String = s.chars().take(n).collect();
-    if s.chars().count() > n {
-        format!("{cut}…")
-    } else {
-        cut
-    }
 }

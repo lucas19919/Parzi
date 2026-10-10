@@ -31,8 +31,7 @@ mod settings;
 mod vault;
 
 pub(crate) type Pending = Arc<Mutex<HashMap<String, (String, oneshot::Sender<Approval>)>>>;
-pub(crate) type PendingQuestions =
-    Arc<Mutex<HashMap<String, (String, oneshot::Sender<String>)>>>;
+pub(crate) type PendingQuestions = Arc<Mutex<HashMap<String, (String, oneshot::Sender<String>)>>>;
 
 pub(crate) struct AppState {
     pub(crate) orch: Arc<Orchestrator>,
@@ -201,6 +200,7 @@ fn load_or_recover() -> anyhow::Result<(ParziConfig, Option<String>)> {
         Ok(cfg) => Ok((cfg, None)),
         Err(e) => {
             let path = parzi_core::paths::config_path()?;
+            let why = config_fault(&e, &path);
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
@@ -208,14 +208,18 @@ fn load_or_recover() -> anyhow::Result<(ParziConfig, Option<String>)> {
             let broken = path.with_extension(format!("broken-{stamp}.toml"));
             let _ = std::fs::rename(&path, &broken);
             if path.exists() {
-                let note = format!("config.toml was unreadable ({e}) and could not be moved aside; defaults loaded, your file left untouched.");
+                let note = format!(
+                    "{} was unreadable ({why}) and could not be moved aside; defaults loaded, your file left untouched.",
+                    path.display()
+                );
                 tracing::warn!("{note}");
                 return Ok((ParziConfig::default(), Some(note)));
             }
             let cfg = ParziConfig::default();
             let _ = cfg.save();
             let note = format!(
-                "config.toml was unreadable ({e}) and was set aside as {}. Defaults loaded.",
+                "{} was unreadable ({why}) and was set aside as {}. Defaults loaded.",
+                path.display(),
                 broken
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
@@ -225,6 +229,31 @@ fn load_or_recover() -> anyhow::Result<(ParziConfig, Option<String>)> {
             Ok((cfg, Some(note)))
         }
     }
+}
+
+/// Where the config broke, never what it says: a parse error quotes the
+/// offending line, which may hold an API key, into the log and the dialog.
+fn config_fault(e: &parzi_core::ParziError, path: &std::path::Path) -> String {
+    match e {
+        parzi_core::ParziError::TomlDe(de) => de
+            .span()
+            .and_then(|span| {
+                let text = std::fs::read_to_string(path).ok()?;
+                Some(line_col(&text, span.start))
+            })
+            .unwrap_or_else(|| "a syntax error".into()),
+        parzi_core::ParziError::Io(io) => format!("read failed: {}", io.kind()),
+        // Built by parzi-core from versions and paths, never file content.
+        parzi_core::ParziError::Config(msg) => msg.clone(),
+        _ => "an invalid value".into(),
+    }
+}
+
+fn line_col(text: &str, at: usize) -> String {
+    let head = text.get(..at).unwrap_or(text);
+    let line = head.matches('\n').count() + 1;
+    let col = head.rsplit('\n').next().map_or(0, |l| l.chars().count()) + 1;
+    format!("line {line}, column {col}")
 }
 
 #[tauri::command]
@@ -299,17 +328,26 @@ async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, R
         }
     }
 
+    // Fixed from when the buffer first fills: a timer re-armed per event
+    // would never fire while tokens stream faster than the interval.
+    let mut deadline: Option<tokio::time::Instant> = None;
     loop {
         let has_buf = bufs
             .values()
             .any(|b| !b.text.is_empty() || !b.reasoning.is_empty());
-        let next = if has_buf {
+        if !has_buf {
+            deadline = None;
+        } else if deadline.is_none() {
+            deadline = Some(tokio::time::Instant::now() + flush_interval);
+        }
+        let next = if let Some(at) = deadline {
             tokio::select! {
                 rec = rx.recv() => rec,
-                _ = tokio::time::sleep(flush_interval) => {
-                    for (sid, buf) in bufs.iter_mut() {
+                () = tokio::time::sleep_until(at) => {
+                    for (sid, buf) in &mut bufs {
                         flush_sid(&app, sid, buf);
                     }
+                    deadline = None;
                     continue;
                 }
             }
@@ -384,8 +422,34 @@ fn init_log() {
         .init();
 }
 
+/// Before the app is built there is no dialog plugin, and a release build
+/// has no console: a native box is the only way the user learns why.
+fn alert(title: &str, text: &str) {
+    #[cfg(target_os = "windows")]
+    dwm::alert(title, text);
+    #[cfg(not(target_os = "windows"))]
+    eprintln!("{title}: {text}");
+}
+
+fn fatal(text: &str) -> ! {
+    tracing::error!("{text}");
+    alert("Parzi could not start", text);
+    std::process::exit(1);
+}
+
 fn main() {
     init_log();
+    // Mutual exclusion with `parzi serve`: both own ~/.parzi, so the desk
+    // refuses to start while the headless lock is held. Checked before the
+    // store opens: recovery would flip serve's live sessions to idle.
+    if parzi_runtime::osserve::serve_locked() {
+        tracing::warn!("parzi serve holds the lock; the desk is not starting");
+        alert(
+            "Parzi is already running headless",
+            "parzi serve is running. The desk and serve must never own sessions at the same time. Stop serve first, then open Parzi.",
+        );
+        std::process::exit(2);
+    }
     parzi_providers::process::on_spawn(job::adopt);
     std::panic::set_hook(Box::new(|info| {
         let msg = format!("panic: {info}");
@@ -409,11 +473,15 @@ fn main() {
         .max_blocking_threads(8)
         .enable_all()
         .build()
-        .expect("tokio runtime");
+        .unwrap_or_else(|e| fatal(&format!("The task runtime did not start: {e}")));
     tauri::async_runtime::set(rt.handle().clone());
-    let (cfg, store, recovered) = boot().expect("parzi home");
+    let (cfg, store, recovered) = boot().unwrap_or_else(|e| {
+        let home = parzi_core::paths::parzi_dir()
+            .map(|d| d.display().to_string())
+            .unwrap_or_default();
+        fatal(&format!("Parzi could not open its data folder {home}: {e}"))
+    });
     let orch = Arc::new(Orchestrator::new(cfg, store));
-    orch.recover().ok();
     let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
     let questions: PendingQuestions = Arc::new(Mutex::new(HashMap::new()));
     let desk = Arc::new(control::Desk::new());
@@ -452,19 +520,13 @@ fn main() {
             }
         }))
         .setup(move |app| {
-            // Mutual exclusion with `parzi serve`: both own ~/.parzi, so the
-            // desk refuses to start while the headless lock is held.
-            if parzi_runtime::osserve::serve_locked() {
-                use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
-                let _ = app
-                    .dialog()
-                    .message("parzi serve is running. The desk and serve must never own sessions at the same time. Stop serve first, then open Parzi.")
-                    .title("Parzi is already running headless")
-                    .buttons(MessageDialogButtons::Ok)
-                    .blocking_show();
-                std::process::exit(2);
-            }
+            // Here, not in main: plugins initialize first, so a second
+            // launch has already handed off to the running desk and exited
+            // instead of marking that desk's live runs idle.
+            orch.recover().ok();
             let o = orch.clone();
+            parzi_runtime::remote::sweep_askpass();
+            app.manage(remote::RemoteState::default());
             app.manage(AppState {
                 orch,
                 pending,
@@ -581,7 +643,6 @@ fn main() {
             settings::refresh_providers,
             settings::warm_agent,
             settings::run_doctor_quick,
-            settings::serve_status,
             appearance::get_theme_css,
             appearance::get_theme,
             appearance::save_theme,
@@ -603,10 +664,14 @@ fn main() {
             onboard::onboard_import,
             onboard::agent_install,
             onboard::agent_login,
-            remote::remote_connect,
+            remote::remote_info,
+            remote::remote_setup,
+            remote::remote_call,
+            remote::remote_agent,
+            remote::remote_forget,
         ])
         .build(tauri::generate_context!())
-        .expect("parzi failed to start")
+        .unwrap_or_else(|e| fatal(&format!("Parzi failed to start: {e}")))
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 control::clear_gui_file();
@@ -621,4 +686,18 @@ fn main() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_faults_name_the_place_not_the_line() {
+        let text = "version = 2\n[mcp.servers.s]\nenv = { KEY = \"sk-secret\" \n";
+        let at = text.find("sk-secret").unwrap();
+        assert_eq!(line_col(text, at), "line 3, column 16");
+        assert_eq!(line_col(text, 0), "line 1, column 1");
+        assert_eq!(line_col("ab", 99), "line 1, column 3");
+    }
 }

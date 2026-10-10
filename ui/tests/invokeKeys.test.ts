@@ -26,7 +26,9 @@ function topKeys(src: string, from: number): string[] {
 }
 
 test("invoke argument keys are camelCase", async () => {
-  const src = await readFile(new URL("../src/lib/api.ts", import.meta.url), "utf8");
+  const src = (
+    await Promise.all(["api.ts", "remote.ts"].map((f) => readFile(new URL(`../src/lib/${f}`, import.meta.url), "utf8")))
+  ).join("\n");
   const call = /invoke<[^(]*>\(\s*"([a-z0-9_]+)"\s*,\s*\{/g;
   const bad: string[] = [];
   let seen = 0;
@@ -59,7 +61,9 @@ test("every invoke has a backend command", async () => {
     }
   }
   await walk(shell);
-  const api = await readFile(new URL("../src/lib/api.ts", import.meta.url), "utf8");
+  const api = (
+    await Promise.all(["api.ts", "remote.ts"].map((f) => readFile(new URL(`../src/lib/${f}`, import.meta.url), "utf8")))
+  ).join("\n");
   const call = /invoke<[^(]*>\(\s*"([a-z0-9_]+)"\s*(?:,|\))/g;
   const missing = [];
   let seen = 0;

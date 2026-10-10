@@ -11,7 +11,7 @@
   },
   "app": {
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https://asset.localhost data: https:; connect-src ipc: http://ipc.localhost https://ipc.localhost; font-src 'self' data:; object-src 'none'; base-uri 'none'; navigate-to 'self';",
+      "csp": "default-src 'self'; script-src 'self' 'sha256-9fMcsjENoZPteTGiimPPNEziPZ+NvDfa31spNHOPZXQ='; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https://asset.localhost data: https:; connect-src ipc: http://ipc.localhost https://ipc.localhost; font-src 'self' data:; object-src 'none'; base-uri 'none';",
       "assetProtocol": {
         "enable": true,
         "scope": ["$HOME/.parzi/backgrounds/*"]
@@ -72,8 +72,6 @@
   },
   "plugins": {
     "updater": {
-      "active": true,
-      "dialog": false,
       "endpoints": [
         "https://github.com/lucas19919/Parzi/releases/latest/download/latest.json"
       ],

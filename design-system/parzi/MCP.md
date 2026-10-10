@@ -4,6 +4,22 @@ Connectors are how Parzi reaches the outside world (email, calendar,
 databases, services). Today: config-file-only (`mcp.servers`), no UI,
 no discovery, no health. This plan takes it from hidden to first-class.
 
+## Built (2026-10-10)
+
+- Settings › Connections lists the configured servers (name, command
+  line, the env names it sets, never their values), with an on/off
+  switch, Remove, and Add (name, command line split like a shell,
+  optional NAME=value lines). Five presets fill the form (files, memory,
+  fetch, git, playwright); nothing installs or enables itself.
+- Saving goes through `save_config`, whose native confirm now also
+  fires when a connector's env changes, not only its command.
+- The side panel's empty state points at the real section.
+- Connectors never travel to a ParziOS server: the spec strips them and
+  the server keeps its own.
+
+Still open from the plan below: discovery scan, `connector.propose`,
+`connector_status` health dots, sealed secrets.
+
 ## 0. What exists (verified 2026-10-07)
 
 - `McpServerCfg { command, args, env, allow, deny, tool_modes,

@@ -3,6 +3,7 @@
   import ProvidersSection from "./settings/ProvidersSection.svelte";
   import AppearanceSection from "./settings/AppearanceSection.svelte";
   import SystemSection from "./settings/SystemSection.svelte";
+  import ConnectionsSection from "./settings/ConnectionsSection.svelte";
   import { toast } from "./toast";
 
   export let section = "general";
@@ -10,6 +11,7 @@
   const SECTIONS = [
     { id: "general", label: "General" },
     { id: "providers", label: "Providers" },
+    { id: "connections", label: "Connections" },
     { id: "appearance", label: "Appearance" },
     { id: "system", label: "System" },
   ];
@@ -31,6 +33,8 @@
     <div class="content">
       {#if section === "providers"}
         <ProvidersSection {notify} />
+      {:else if section === "connections"}
+        <ConnectionsSection {notify} on:openRemote on:setupRemote />
       {:else if section === "appearance"}
         <AppearanceSection {notify} />
       {:else if section === "system"}

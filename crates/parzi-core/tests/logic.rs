@@ -230,3 +230,16 @@ fn widget_histogram_and_scatter_validate() {
     let nan = serde_json::json!({"widget": 1, "type": "scatter", "points": [[1, 2], [3]]});
     assert!(v(&nan).is_err());
 }
+
+#[test]
+fn widget_number_strings_must_be_finite() {
+    use parzi_core::widgets::validate_widget as v;
+    for bad in ["NaN", "inf", "-inf", "infinity", " ", ""] {
+        let w = serde_json::json!({"widget": 1, "type": "chart-line", "points": [1, bad]});
+        assert!(v(&w).is_err(), "{bad:?}");
+    }
+    let ok = serde_json::json!({"widget": 1, "type": "chart-line", "points": [" 2.5 ", "-3", 1e3]});
+    assert!(v(&ok).is_ok());
+    let h = serde_json::json!({"widget": 1, "type": "histogram", "values": ["1", "NaN"]});
+    assert!(v(&h).is_err());
+}

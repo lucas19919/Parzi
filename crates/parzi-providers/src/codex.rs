@@ -10,9 +10,9 @@ use tokio_util::sync::CancellationToken;
 use crate::jsonrpc::{Incoming, Peer, RpcError};
 use crate::process::{self, Proc, STOP_GRACE};
 use crate::types::{
-    sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
-    PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd,
-    TurnSpec, UsageWindow,
+    or_cancel, sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision,
+    PermissionGate, PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus,
+    State, TurnEnd, TurnSpec, UsageWindow,
 };
 
 pub const ID: &str = "codex";
@@ -47,13 +47,14 @@ struct Server {
 }
 
 async fn open(program: &Path, cwd: &Path) -> Result<Server, ProviderError> {
+    process::existing_folder(cwd)?;
     let mut proc = Proc::spawn(program, &["app-server".to_string()], cwd, &[])
         .map_err(|e| ProviderError::process(format!("could not start Codex: {e}")))?;
     let (Some(stdin), Some(stdout)) = (proc.child.stdin.take(), proc.child.stdout.take()) else {
         proc.kill().await;
         return Err(ProviderError::process("Codex started without stdio"));
     };
-    let (peer, incoming) = Peer::start(stdout, stdin);
+    let (peer, incoming) = Peer::start("Codex", stdout, stdin);
     let init = peer
         .request_within(
             "initialize",
@@ -120,7 +121,11 @@ impl Provider for Codex {
         let program = self.program().ok_or_else(|| {
             ProviderError::process(format!("Codex is not installed. {INSTALL_HINT}"))
         })?;
-        let mut server = open(&program, &spec.cwd).await?;
+        // Dropping a half-open server kills it.
+        let Some(server) = or_cancel(&cancel, open(&program, &spec.cwd)).await else {
+            return Ok(TurnEnd::Interrupted);
+        };
+        let mut server = server?;
         let outcome = drive(
             &server.peer,
             &mut server.incoming,
@@ -332,18 +337,22 @@ async fn drive(
         Some(tid) => {
             let mut p = thread.clone();
             p["threadId"] = json!(tid);
-            match peer.request_within("thread/resume", p, limit).await {
-                Ok(v) => thread_id(&v).unwrap_or(tid),
-                Err(e) if e.code != RpcError::CLOSED && e.code != RpcError::TIMEOUT => {
+            match or_cancel(cancel, peer.request_within("thread/resume", p, limit)).await {
+                None => return Ok(TurnEnd::Interrupted),
+                Some(Ok(v)) => thread_id(&v).unwrap_or(tid),
+                Some(Err(e)) if e.not_found() => {
                     return Err(ProviderError::new(
                         ErrorClass::SessionLost,
                         format!("Codex could not resume the conversation: {e}"),
                     ));
                 }
-                Err(e) => return Err(rpc_failure(e)),
+                Some(Err(e)) => return Err(rpc_failure(e)),
             }
         }
-        None => start_thread(peer, thread, limit).await?,
+        None => match or_cancel(cancel, start_thread(peer, thread, limit)).await {
+            None => return Ok(TurnEnd::Interrupted),
+            Some(tid) => tid?,
+        },
     };
     let _ = events.send(ProviderEvent::Session {
         resume: json!({"thread_id": tid}),
@@ -364,10 +373,11 @@ async fn drive(
     if let Some(e) = spec.effort.as_deref().filter(|e| !e.is_empty()) {
         turn["effort"] = json!(effort(e));
     }
-    let started = peer
-        .request_within("turn/start", turn, limit)
-        .await
-        .map_err(rpc_failure)?;
+    let Some(started) = or_cancel(cancel, peer.request_within("turn/start", turn, limit)).await
+    else {
+        return Ok(TurnEnd::Interrupted);
+    };
+    let started = started.map_err(rpc_failure)?;
     let turn_id = started
         .pointer("/turn/id")
         .and_then(Value::as_str)
@@ -852,7 +862,7 @@ mod tests {
             send(&mut w, json!({"jsonrpc": "2.0", "method": "turn/completed", "params": {"threadId": "th1", "turn": {"id": "tu1", "status": "completed"}}})).await;
         });
         let (r, w) = tokio::io::split(ours);
-        let (peer, mut incoming) = Peer::start(r, w);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
         let (tx, mut rx) = mpsc::unbounded_channel();
         let gate = Arc::new(Gate(
             PermissionDecision::Allow,
@@ -927,7 +937,7 @@ mod tests {
             send(&mut w, json!({"jsonrpc": "2.0", "method": "turn/completed", "params": {"threadId": "th1", "turn": {"id": "tu1", "status": "failed", "error": {"message": "You've hit your usage limit.", "codexErrorInfo": "usageLimitExceeded"}}}})).await;
         });
         let (r, w) = tokio::io::split(ours);
-        let (peer, mut incoming) = Peer::start(r, w);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
         let (tx, _rx) = mpsc::unbounded_channel();
         let gate = Arc::new(Gate(
             PermissionDecision::Allow,
@@ -945,6 +955,75 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.class, ErrorClass::RateLimit);
         assert_eq!(err.message, "You've hit your usage limit.");
+        server.await.unwrap();
+    }
+
+    async fn resume_fails_with(message: &'static str) -> ProviderError {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let resume = read(&mut lines).await;
+            assert_eq!(resume["method"], "thread/resume");
+            send(&mut w, json!({"jsonrpc": "2.0", "id": resume["id"], "error": {"code": -32600, "message": message}})).await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let mut s = spec();
+        s.resume = Some(json!({"thread_id": "th0"}));
+        let err = drive(
+            &peer,
+            &mut incoming,
+            &s,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        server.await.unwrap();
+        err
+    }
+
+    #[tokio::test]
+    async fn only_a_missing_thread_is_a_lost_conversation() {
+        let lost = resume_fails_with("no rollout found for thread id th0").await;
+        assert_eq!(lost.class, ErrorClass::SessionLost);
+        let other = resume_fails_with("config.toml is malformed").await;
+        assert_ne!(other.class, ErrorClass::SessionLost);
+        assert!(other.message.contains("malformed"), "{other}");
+    }
+
+    #[tokio::test]
+    async fn a_stop_while_the_thread_starts_sends_no_turn() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let cancel = CancellationToken::new();
+        let stop = cancel.clone();
+        let server = tokio::spawn(async move {
+            let (r, _w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let start = read(&mut lines).await;
+            assert_eq!(start["method"], "thread/start");
+            stop.cancel();
+            let next = tokio::time::timeout(Duration::from_millis(300), lines.next_line()).await;
+            assert!(next.is_err(), "nothing follows a stop: {next:?}");
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let end = drive(&peer, &mut incoming, &spec(), gate, &tx, &cancel)
+            .await
+            .unwrap();
+        assert_eq!(end, TurnEnd::Interrupted);
         server.await.unwrap();
     }
 

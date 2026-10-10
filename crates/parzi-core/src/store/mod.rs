@@ -12,12 +12,16 @@ use uuid::Uuid;
 
 use crate::error::{ParziError, Result};
 use crate::paths;
-use cache::{atomic_write_sync, count_read, count_stat, count_write, fold_lines};
+use cache::{atomic_write_sync, count_read, count_stat, count_write, fold_lines, parse_lines};
 use cache::{IndexEntry, StoreCache};
 
 pub use cache::io_counts;
 pub use model::{Event, SessionMeta, SessionStatus};
 pub use tree::{cascade_kill_ids, subtree_ids};
+
+/// Serializes every read-modify-write of meta.json. Process-wide, so two
+/// handles on the same folder cannot drop each other's update either.
+static META_WRITE: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone)]
 pub struct SessionStore {
@@ -127,14 +131,13 @@ impl SessionStore {
         }
     }
 
+    /// Every session, newest first. The folder scan and meta.json reads run
+    /// outside the cache lock; the lock is only taken to look up and merge.
     pub fn list(&self) -> Result<Vec<SessionMeta>> {
         count_read(1);
-        let entries = std::fs::read_dir(&self.root)?;
-        let mut c = self.cache();
-        let mut out: Vec<SessionMeta> = vec![];
-        let mut seen: HashSet<String> = HashSet::new();
-        for e in entries.flatten() {
-            if !e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+        let mut dirs = vec![];
+        for e in std::fs::read_dir(&self.root)?.flatten() {
+            if !e.file_type().is_ok_and(|t| t.is_dir()) {
                 continue;
             }
             let Some(id) = e.file_name().to_str().map(str::to_string) else {
@@ -142,33 +145,50 @@ impl SessionStore {
             };
             count_stat(1);
             let dir_mtime = e.metadata().ok().and_then(|m| m.modified().ok());
-            seen.insert(id.clone());
-            if let Some(hit) = c.index.get(&id) {
-                if dir_mtime.is_some() && hit.dir_mtime == dir_mtime {
-                    out.push(hit.meta.clone());
-                    continue;
+            dirs.push((id, e.path(), dir_mtime));
+        }
+        let seen: HashSet<String> = dirs.iter().map(|(id, _, _)| id.clone()).collect();
+
+        let mut out: Vec<SessionMeta> = vec![];
+        let mut misses = vec![];
+        let writes_before = {
+            let c = self.cache();
+            for (id, path, dir_mtime) in dirs {
+                match c.index.get(&id) {
+                    Some(hit) if dir_mtime.is_some() && hit.dir_mtime == dir_mtime => {
+                        out.extend(hit.meta.clone());
+                    }
+                    _ => misses.push((id, path, dir_mtime)),
                 }
             }
-            let path = e.path().join("meta.json");
+            c.meta_writes
+        };
+
+        let mut fresh = vec![];
+        for (id, dir, dir_mtime) in misses {
+            let path = dir.join("meta.json");
             count_read(1);
             match std::fs::read_to_string(&path) {
                 Ok(text) => match serde_json::from_str::<SessionMeta>(&text) {
-                    Ok(m) => {
-                        c.index.insert(
-                            id,
-                            IndexEntry {
-                                dir_mtime,
-                                meta: m.clone(),
-                            },
-                        );
-                        out.push(m);
-                    }
+                    Ok(m) => fresh.push((id, dir_mtime, Some(m))),
                     Err(err) => {
                         tracing::warn!("unreadable meta.json at {}: {err}", path.display());
+                        fresh.push((id, dir_mtime, None));
                     }
                 },
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
                 Err(err) => tracing::warn!("cannot read {}: {err}", path.display()),
+            }
+        }
+
+        let mut c = self.cache();
+        // A meta write that landed mid-read may have been missed: return the
+        // rows, but let the next list() read them again.
+        let index = c.meta_writes == writes_before;
+        for (id, dir_mtime, meta) in fresh {
+            out.extend(meta.clone());
+            if index {
+                c.index.insert(id, IndexEntry { dir_mtime, meta });
             }
         }
         c.index.retain(|k, _| seen.contains(k));
@@ -191,23 +211,86 @@ impl SessionStore {
     }
 
     pub fn set_cwd(&self, id: &str, cwd: &str) -> Result<()> {
-        let mut meta = self.get(id)?;
-        meta.cwd = cwd.to_string();
-        meta.updated = Utc::now();
-        self.write_meta(&meta)
+        self.update_meta(id, |m| {
+            m.cwd = cwd.to_string();
+            m.updated = Utc::now();
+        })?;
+        Ok(())
     }
 
     pub fn events(&self, id: &str) -> Result<Vec<Event>> {
+        self.with_events(id, <[Event]>::to_vec)
+    }
+
+    /// Transcript length without copying it.
+    pub fn event_count(&self, id: &str) -> Result<usize> {
+        self.with_events(id, <[Event]>::len)
+    }
+
+    /// Events from index `from` on; empty when `from` is past the end.
+    pub fn events_from(&self, id: &str, from: usize) -> Result<Vec<Event>> {
+        self.with_events(id, |all| {
+            all.get(from..).map_or_else(Vec::new, <[Event]>::to_vec)
+        })
+    }
+
+    /// Runs `f` on the transcript after catching the cache up to the file's
+    /// last complete line. The tail is read and parsed outside the cache
+    /// lock, so a long read never stalls an append to another session.
+    fn with_events<T>(&self, id: &str, f: impl FnOnce(&[Event]) -> T) -> Result<T> {
         let path = self.events_path(id);
-        count_stat(1);
-        let len = std::fs::metadata(&path)
-            .map(|m| m.len())
-            .map_err(|_| ParziError::Store(format!("session not found: {id}")))?;
+        let file_len = || {
+            count_stat(1);
+            std::fs::metadata(&path)
+                .map(|m| m.len())
+                .map_err(|_| ParziError::Store(format!("session not found: {id}")))
+        };
+        for _ in 0..3 {
+            let len = file_len()?;
+            let from = {
+                let mut c = self.cache();
+                let entry = c.session_mut(id);
+                if entry.len == len {
+                    return Ok(f(&entry.events));
+                }
+                if len < entry.len {
+                    entry.events.clear();
+                    entry.len = 0;
+                }
+                entry.len
+            };
+            count_read(1);
+            let bytes = read_from(&path, from)?;
+            let cut = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+            let parsed = parse_lines(&bytes[..cut], &path);
+            let end = from + cut as u64;
+
+            let mut c = self.cache();
+            let entry = c.session_mut(id);
+            if entry.len > end {
+                return Ok(f(&entry.events));
+            }
+            // Another reader or an append may have cached part of this
+            // tail meanwhile; keep only the lines past what it holds.
+            if let Some(skip) = entry.len.checked_sub(from) {
+                let skip = usize::try_from(skip).unwrap_or(usize::MAX);
+                if skip == 0 || bytes.get(skip - 1) == Some(&b'\n') {
+                    entry.events.extend(
+                        parsed
+                            .into_iter()
+                            .filter(|(at, _)| *at > skip)
+                            .map(|(_, e)| e),
+                    );
+                    entry.len = end;
+                    return Ok(f(&entry.events));
+                }
+            }
+        }
+        // Still contended after three tries: read under the lock so the
+        // call always finishes.
+        let len = file_len()?;
         let mut c = self.cache();
         let entry = c.session_mut(id);
-        if entry.len == len {
-            return Ok(entry.events.clone());
-        }
         if len < entry.len {
             entry.events.clear();
             entry.len = 0;
@@ -218,19 +301,35 @@ impl SessionStore {
         let cut = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
         fold_lines(&bytes[..cut], &path, &mut entry.events);
         entry.len = from + cut as u64;
-        Ok(entry.events.clone())
+        Ok(f(&entry.events))
     }
 
     pub fn append(&self, id: &str, event: &Event) -> Result<()> {
-        use std::io::{Seek, Write};
+        use std::io::{Read, Seek, SeekFrom, Write};
         let mut line = serde_json::to_vec(event)?;
         line.push(b'\n');
         count_write(2);
         let mut f = std::fs::OpenOptions::new()
             .create(true)
+            .read(true)
             .append(true)
             .open(self.events_path(id))
             .map_err(|_| ParziError::Store(format!("session not found: {id}")))?;
+        // A line torn by a crash must not swallow this event: end it first.
+        // The cache already knows where its last whole line ends, so the
+        // tail byte is only read when the file grew behind its back.
+        let known = self.cache().sessions.get(id).map(|s| s.len);
+        count_stat(1);
+        let size = f.metadata()?.len();
+        if size > 0 && known != Some(size) {
+            count_read(1);
+            let mut last = [0u8; 1];
+            f.seek(SeekFrom::End(-1))?;
+            f.read_exact(&mut last)?;
+            if last[0] != b'\n' {
+                line.insert(0, b'\n');
+            }
+        }
         f.write_all(&line)?;
         let end = f.stream_position().unwrap_or(0);
 
@@ -241,33 +340,33 @@ impl SessionStore {
             entry.len = end;
         }
         entry.pending_updated = Some(Utc::now());
-        entry.md_dirty = true;
+        entry.mark_md();
         Ok(())
     }
 
     pub fn set_model(&self, id: &str, model: &str) -> Result<()> {
-        let mut meta = self.get(id)?;
-        meta.model = model.to_string();
-        meta.updated = Utc::now();
-        self.write_meta(&meta)?;
+        self.update_meta(id, |m| {
+            m.model = model.to_string();
+            m.updated = Utc::now();
+        })?;
         self.mark_md_dirty(id);
         Ok(())
     }
 
     pub fn set_title(&self, id: &str, title: &str) -> Result<()> {
-        let mut meta = self.get(id)?;
-        meta.title = title.chars().take(120).collect();
-        meta.updated = Utc::now();
-        self.write_meta(&meta)?;
+        self.update_meta(id, |m| {
+            m.title = title.chars().take(120).collect();
+            m.updated = Utc::now();
+        })?;
         self.mark_md_dirty(id);
         Ok(())
     }
 
     pub fn set_status(&self, id: &str, status: SessionStatus) -> Result<()> {
-        let mut meta = self.get(id)?;
-        meta.status = status;
-        meta.updated = Utc::now();
-        self.write_meta(&meta)?;
+        self.update_meta(id, |m| {
+            m.status = status;
+            m.updated = Utc::now();
+        })?;
         self.mark_md_dirty(id);
         if status.is_terminal() {
             if let Err(e) = self.transcript_md(id) {
@@ -284,23 +383,34 @@ impl SessionStore {
         tokens_out: u64,
         cost_usd: f64,
     ) -> Result<()> {
-        let mut meta = self.get(id)?;
-        meta.tokens_in += tokens_in;
-        meta.tokens_out += tokens_out;
-        meta.cost_usd += cost_usd;
-        meta.updated = Utc::now();
-        self.write_meta(&meta)?;
+        self.update_meta(id, |m| {
+            m.tokens_in += tokens_in;
+            m.tokens_out += tokens_out;
+            m.cost_usd += cost_usd;
+            m.updated = Utc::now();
+        })?;
         self.mark_md_dirty(id);
         Ok(())
     }
 
     pub fn set_context(&self, id: &str, tokens: u64, limit: u64) -> Result<()> {
+        self.update_meta(id, |m| {
+            m.context_tokens = tokens;
+            if limit > 0 {
+                m.context_limit = limit;
+            }
+        })?;
+        Ok(())
+    }
+
+    /// The one read-modify-write path for meta.json; the lock spans the
+    /// read and the write so concurrent setters cannot lose an update.
+    fn update_meta(&self, id: &str, edit: impl FnOnce(&mut SessionMeta)) -> Result<SessionMeta> {
+        let _held = META_WRITE.lock().unwrap_or_else(PoisonError::into_inner);
         let mut meta = self.get(id)?;
-        meta.context_tokens = tokens;
-        if limit > 0 {
-            meta.context_limit = limit;
-        }
-        self.write_meta(&meta)
+        edit(&mut meta);
+        self.write_meta(&meta)?;
+        Ok(meta)
     }
 
     fn write_meta(&self, meta: &SessionMeta) -> Result<()> {
@@ -310,14 +420,18 @@ impl SessionStore {
         )?;
         let mut c = self.cache();
         if let Some(s) = c.sessions.get_mut(&meta.id) {
-            s.pending_updated = None;
+            // An append stamped after our read stays pending for the next flush.
+            if s.pending_updated.is_some_and(|p| p <= meta.updated) {
+                s.pending_updated = None;
+            }
         }
         c.index.remove(&meta.id);
+        c.meta_writes += 1;
         Ok(())
     }
 
     fn mark_md_dirty(&self, id: &str) {
-        self.cache().session_mut(id).md_dirty = true;
+        self.cache().session_mut(id).mark_md();
     }
 
     pub fn cached_sessions(&self) -> usize {

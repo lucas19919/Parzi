@@ -1,5 +1,5 @@
 export type ComposerMode = "search" | "build" | "work";
-type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview";
+type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview" | "remote";
 
 export interface TabComposerState {
   input: string;
@@ -50,6 +50,10 @@ export function historyTab(): Tab {
 
 export function brainTab(): Tab {
   return { id: tabId(), kind: "brain", title: "Brain", composer: defaultComposer() };
+}
+
+export function remoteTab(): Tab {
+  return { id: tabId(), kind: "remote", title: "Remote", composer: defaultComposer() };
 }
 
 export function settingsTab(): Tab {

@@ -56,6 +56,7 @@ jobs:
             | Windows 10 / 11, 64-bit (recommended) | `Parzi_*_x64-setup.exe` — per-user install, no admin needed |
             | macOS, Apple Silicon | `Parzi_*_aarch64.dmg` — drag Parzi into Applications |
             | Command line | `parzi-windows-x64.exe` or `parzi-macos-arm64` — drives sessions and tabs from scripts |
+            | Your own Linux server (ParziOS) | `parzi-linux-x64` or `parzi-linux-arm64` — the desktop's *Set up remote* installs it for you |
 
             ### First launch (once per machine)
 
@@ -99,6 +100,14 @@ jobs:
           - platform: macos-latest
             exe: parzi-macos-arm64
             build: target/release/parzi
+          # ParziOS: `Set up remote` downloads these and checks the .sha256.
+          # Built on 22.04 so the glibc floor is 2.35 (Ubuntu 22.04, Debian 12).
+          - platform: ubuntu-22.04
+            exe: parzi-linux-x64
+            build: target/release/parzi
+          - platform: ubuntu-22.04-arm
+            exe: parzi-linux-arm64
+            build: target/release/parzi
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
@@ -124,4 +133,9 @@ jobs:
             sleep 30
           done
           cp "${{ matrix.build }}" "${{ matrix.exe }}"
-          gh release upload "${{ github.ref_name }}" "${{ matrix.exe }}" --clobber
+          files=("${{ matrix.exe }}")
+          if [[ "${{ matrix.exe }}" == parzi-linux-* ]]; then
+            sha256sum "${{ matrix.exe }}" > "${{ matrix.exe }}.sha256"
+            files+=("${{ matrix.exe }}.sha256")
+          fi
+          gh release upload "${{ github.ref_name }}" "${files[@]}" --clobber

@@ -1,9 +1,9 @@
-use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 
 use parzi_core::brain::{self, BrainContext, NoteMeta, Project, Vault};
+
+use crate::files::{launch, open_with_default, remote_or_device, reveal, Opener};
 
 async fn blocking<T, F>(f: F) -> Result<T, String>
 where
@@ -78,6 +78,10 @@ pub async fn brain_projects() -> Result<Vec<Project>, String> {
 
 #[tauri::command]
 pub async fn brain_project_upsert(title: String, folder: String) -> Result<Project, String> {
+    // The vault resolves project folders; a network one would be contacted.
+    if remote_or_device(&folder) {
+        return Err("network and device folders cannot be projects".into());
+    }
     blocking(move || brain::project_upsert(None, &title, &folder)).await
 }
 
@@ -88,6 +92,9 @@ pub async fn brain_map(note: String, project: String, on: bool) -> Result<NoteMe
 
 #[tauri::command]
 pub async fn brain_context(cwd: String) -> Result<Option<BrainContext>, String> {
+    if remote_or_device(&cwd) {
+        return Ok(None);
+    }
     blocking(move || Ok(brain::context_for(Path::new(cwd.trim())))).await
 }
 
@@ -122,20 +129,6 @@ pub async fn brain_obsidian() -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
-#[derive(Debug, PartialEq, Eq)]
-struct Opener {
-    program: &'static str,
-    args: Vec<OsString>,
-    wait: bool,
-}
-
-#[cfg(windows)]
-const OPEN: (&str, &[&str]) = ("rundll32", &["url.dll,FileProtocolHandler"]);
-#[cfg(target_os = "macos")]
-const OPEN: (&str, &[&str]) = ("open", &[]);
-#[cfg(not(any(windows, target_os = "macos")))]
-const OPEN: (&str, &[&str]) = ("xdg-open", &[]);
-
 fn plan(vault: &Vault, path: &str, target: &str) -> Result<Opener, String> {
     let root = path.trim().is_empty();
     let full = vault.resolve(path).map_err(|e| e.to_string())?;
@@ -145,85 +138,11 @@ fn plan(vault: &Vault, path: &str, target: &str) -> Result<Opener, String> {
     } else if !full.is_file() {
         return Err(format!("no note at {}", path.trim()));
     }
-    let open = |arg: OsString| Opener {
-        program: OPEN.0,
-        args: OPEN.1.iter().map(OsString::from).chain([arg]).collect(),
-        wait: true,
-    };
     match target {
-        "file" => Ok(open(full.into_os_string())),
+        "file" => Ok(open_with_default(full.into_os_string())),
         "folder" => Ok(reveal(&full, root)),
-        "obsidian" => Ok(open(obsidian_url(&full).into())),
+        "obsidian" => Ok(open_with_default(obsidian_url(&full).into())),
         other => Err(format!("cannot open a note in `{other}`")),
-    }
-}
-
-#[cfg(windows)]
-fn reveal(full: &Path, root: bool) -> Opener {
-    let args = if root {
-        vec![full.into()]
-    } else {
-        vec!["/select,".into(), full.into()]
-    };
-    Opener {
-        program: "explorer.exe",
-        args,
-        wait: false,
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn reveal(full: &Path, root: bool) -> Opener {
-    let args = if root {
-        vec![full.into()]
-    } else {
-        vec!["-R".into(), full.into()]
-    };
-    Opener {
-        program: "open",
-        args,
-        wait: true,
-    }
-}
-
-#[cfg(not(any(windows, target_os = "macos")))]
-fn reveal(full: &Path, root: bool) -> Opener {
-    let dir = if root {
-        full
-    } else {
-        full.parent().unwrap_or(full)
-    };
-    Opener {
-        program: "xdg-open",
-        args: vec![dir.into()],
-        wait: true,
-    }
-}
-
-fn launch(o: &Opener) -> Result<(), String> {
-    let mut cmd = std::process::Command::new(o.program);
-    cmd.args(&o.args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(parzi_providers::process::CREATE_NO_WINDOW);
-    }
-    if !o.wait {
-        return cmd
-            .spawn()
-            .map(drop)
-            .map_err(|e| format!("couldn't start {}: {e}", o.program));
-    }
-    let status = cmd
-        .status()
-        .map_err(|e| format!("couldn't start {}: {e}", o.program))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("{} couldn't open it", o.program))
     }
 }
 
@@ -295,6 +214,8 @@ fn sees(vault: &Path, brain: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::files::OPEN;
+    use std::ffi::OsString;
 
     fn temp(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("parzi-brain-{tag}-{}", std::process::id()));

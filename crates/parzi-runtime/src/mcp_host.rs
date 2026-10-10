@@ -120,16 +120,36 @@ fn token_of(req: &Request<Incoming>) -> Option<String> {
         .map(|t| t.trim().to_string())
 }
 
+/// `scheme://host[:port]` with the host exactly loopback; a prefix match
+/// would let `http://localhost.evil.com` through.
+fn local_origin(origin: &str) -> bool {
+    let Some(rest) = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let (host, port) = match rest.strip_prefix('[') {
+        Some(v6) => match v6.split_once(']') {
+            Some(pair) => pair,
+            None => return false,
+        },
+        None => rest.split_at(rest.find(':').unwrap_or(rest.len())),
+    };
+    let port_ok = port.is_empty()
+        || port
+            .strip_prefix(':')
+            .is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    port_ok && (host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1")
+}
+
 async fn handle(req: Request<Incoming>, runs: Runs) -> Result<Response<Full<Bytes>>, Infallible> {
     if let Some(origin) = req
         .headers()
         .get(hyper::header::ORIGIN)
         .and_then(|o| o.to_str().ok())
     {
-        let local = ["http://127.0.0.1", "http://localhost", "http://[::1]"]
-            .iter()
-            .any(|p| origin.starts_with(p));
-        if !local {
+        if !local_origin(origin) {
             return Ok(plain(StatusCode::FORBIDDEN));
         }
     }
@@ -235,4 +255,41 @@ async fn dispatch(msg: &Value, host: &ToolHost) -> Option<Value> {
         }
     };
     Some(json!({"jsonrpc": "2.0", "id": id, "result": result}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_origin;
+
+    #[test]
+    fn only_exact_loopback_origins_pass() {
+        for ok in [
+            "http://localhost",
+            "http://localhost:5173",
+            "http://LOCALHOST:1",
+            "http://127.0.0.1",
+            "http://127.0.0.1:8080",
+            "http://[::1]",
+            "http://[::1]:3000",
+            "https://localhost:443",
+        ] {
+            assert!(local_origin(ok), "{ok} is local");
+        }
+        for bad in [
+            "http://localhost.evil.com",
+            "http://localhost:80.evil.com",
+            "http://127.0.0.1.nip.io",
+            "http://127.0.0.10",
+            "http://[::1].evil.com",
+            "http://[::1]x",
+            "http://localhost:",
+            "http://localhost@evil.com",
+            "http://evil.com",
+            "null",
+            "file://",
+            "ws://localhost",
+        ] {
+            assert!(!local_origin(bad), "{bad} must be refused");
+        }
+    }
 }

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use parzi_runtime::desk::normalize_url;
 use parzi_runtime::handler::RunEvent;
@@ -9,11 +10,13 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 
 use crate::{AppState, GuiApprover, Pending};
 
 const MAX_REQUEST: u64 = 1024 * 1024;
+const IO_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_CLIENTS: usize = 64;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TabSnap {
@@ -84,13 +87,25 @@ pub async fn serve(app: AppHandle, orch: Arc<Orchestrator>, pending: Pending, de
         }
     };
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
-    if let Ok(dir) = parzi_core::paths::parzi_dir() {
+    if let Some(path) = parzi_runtime::desk::gui_path() {
         let body = json!({ "port": port, "token": desk.token });
-        let _ = std::fs::write(dir.join("gui.json"), body.to_string());
+        if let Err(e) = write_private(&path, &body.to_string()) {
+            tracing::warn!("desk control file not written: {e}");
+        }
     }
+    let slots = Arc::new(Semaphore::new(MAX_CLIENTS));
     loop {
-        let Ok((sock, _)) = listener.accept().await else {
-            continue;
+        let (sock, _) = match listener.accept().await {
+            Ok(pair) => pair,
+            Err(e) => {
+                // Persistent errors (fd exhaustion) would otherwise spin.
+                tracing::debug!("desk control accept: {e}");
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
+        let Ok(slot) = slots.clone().acquire_owned().await else {
+            return;
         };
         let app = app.clone();
         let orch = orch.clone();
@@ -98,8 +113,48 @@ pub async fn serve(app: AppHandle, orch: Arc<Orchestrator>, pending: Pending, de
         let desk = desk.clone();
         tokio::spawn(async move {
             let _ = answer(sock, &app, &orch, &pending, &desk).await;
+            drop(slot);
         });
     }
+}
+
+/// gui.json carries the bridge token: born owner-only (0600 on unix, the
+/// private profile folder on Windows) and swapped in whole, never half-written.
+fn write_private(path: &std::path::Path, body: &str) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt;
+        let tmp = path.with_file_name(format!(".gui.{}.tmp", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|e| e.to_string())?;
+        file.write_all(body.as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+    }
+    #[cfg(not(unix))]
+    {
+        parzi_core::atomic_write(path, body.as_bytes()).map_err(|e| e.to_string())
+    }
+}
+
+/// Constant-time: the reply time must not reveal how much of a guess matched.
+fn tokens_equal(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b) {
+        diff |= x ^ y;
+    }
+    diff == 0
 }
 
 async fn answer(
@@ -111,15 +166,20 @@ async fn answer(
 ) -> Result<(), String> {
     let (read, mut write) = sock.into_split();
     let mut line = String::new();
-    BufReader::new(read.take(MAX_REQUEST))
-        .read_line(&mut line)
-        .await
-        .map_err(|e| e.to_string())?;
+    // A client that connects and never finishes its line must not hold a slot.
+    tokio::time::timeout(
+        IO_TIMEOUT,
+        BufReader::new(read.take(MAX_REQUEST)).read_line(&mut line),
+    )
+    .await
+    .map_err(|_| "request timed out".to_string())?
+    .map_err(|e| e.to_string())?;
     let reply = if line.len() as u64 >= MAX_REQUEST {
         json!({ "ok": false, "error": "request too large" })
     } else {
         let req: Value = serde_json::from_str(&line).unwrap_or(json!({}));
-        if req.get("token").and_then(Value::as_str) == Some(desk.token.as_str()) {
+        let token = req.get("token").and_then(Value::as_str).unwrap_or("");
+        if tokens_equal(token, &desk.token) {
             dispatch(app, orch, pending, desk, &req).await
         } else {
             json!({ "ok": false, "error": "bad token" })
@@ -128,9 +188,9 @@ async fn answer(
     let mut out = serde_json::to_string(&reply)
         .unwrap_or_else(|_| "{\"ok\":false,\"error\":\"encode\"}".into());
     out.push('\n');
-    write
-        .write_all(out.as_bytes())
+    tokio::time::timeout(IO_TIMEOUT, write.write_all(out.as_bytes()))
         .await
+        .map_err(|_| "reply timed out".to_string())?
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -319,7 +379,7 @@ async fn open_connected(app: &AppHandle, desk: &Desk, session: &str, url: &str) 
         "parzi://desk",
         json!({ "op": "open", "id": id, "url": url, "rev": rev, "owner": session }),
     );
-    if let Err(e) = crate::browser::browser_prepare(app.clone(), id.clone(), url) {
+    if let Err(e) = crate::browser::prepare_for_agent(app.clone(), id.clone(), url) {
         return json!({ "ok": false, "error": e });
     }
     json!({ "ok": true, "id": id, "url": url, "rev": rev })
@@ -461,11 +521,7 @@ async fn session_send(
     let cwd = str_arg(req, "cwd");
     let effort = {
         let e = str_arg(req, "effort");
-        if e.is_empty() {
-            "medium".into()
-        } else {
-            e
-        }
+        parzi_runtime::orchestrator::normalize_effort(if e.is_empty() { "medium" } else { &e })
     };
     let yes = req.get("yes").and_then(Value::as_bool).unwrap_or(false);
     let approver: Arc<dyn Approver> = if yes {
@@ -477,8 +533,10 @@ async fn session_send(
         })
     };
     let sent = if target.is_empty() || target == "new" {
+        // Same filing as the desk: a thread belongs to its folder's project.
+        let project = crate::sessions::project_for(&cwd).await;
         orch.spawn(
-            "default",
+            &project,
             "",
             &model,
             &message,

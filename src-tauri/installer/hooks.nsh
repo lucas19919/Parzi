@@ -64,3 +64,16 @@ FunctionEnd
 !define MUI_ABORTWARNING
 !define MUI_ABORTWARNING_TEXT "Quit the Parzi installer?"
 !define MUI_ABORTWARNING_CANCELDEFAULT
+
+; ============ Uninstall: "delete my threads, settings and local data" ============
+; The template only clears the bundle-id folders under AppData; Parzi keeps
+; everything in the profile's .parzi folder. Never on an update: updates
+; rerun this uninstaller with /UPDATE, and passive runs skip the confirm
+; page, so the box stays unticked there.
+!macro NSIS_HOOK_POSTUNINSTALL
+  ${If} $DeleteAppDataCheckboxState = 1
+  ${AndIf} $UpdateMode <> 1
+  ${AndIf} $PROFILE != ""
+    RmDir /r "$PROFILE\.parzi"
+  ${EndIf}
+!macroend

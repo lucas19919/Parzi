@@ -211,10 +211,17 @@ impl EngineRun {
     }
 
     fn inbox(&self, from: usize, until: Option<usize>) -> (Vec<String>, usize) {
-        let events = self.p.store.events(&self.p.session_id).unwrap_or_default();
-        let end = until.map_or(events.len(), |u| u.min(events.len()));
-        let msgs = events[from.min(end)..end]
+        let total = self.p.store.event_count(&self.p.session_id).unwrap_or(0);
+        let end = until.map_or(total, |u| u.min(total));
+        let from = from.min(end);
+        let events = self
+            .p
+            .store
+            .events_from(&self.p.session_id, from)
+            .unwrap_or_default();
+        let msgs = events
             .iter()
+            .take(end - from)
             .filter_map(|e| match e {
                 Event::System { text } => InterSessionMessage::decode(text).map(|m| m.render()),
                 _ => None,

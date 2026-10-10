@@ -510,6 +510,24 @@ fn browser_key(
     Ok(Some((name, !status.WasKeyDown.as_bool())))
 }
 
+/// A blocking native message box: works before any window or event loop.
+pub fn alert(title: &str, text: &str) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND,
+    };
+    let (title, text) = (HSTRING::from(title), HSTRING::from(text));
+    // SAFETY: both strings outlive the call, and a box without an owner
+    // window needs no other state.
+    unsafe {
+        MessageBoxW(
+            None,
+            &text,
+            &title,
+            MB_OK | MB_ICONWARNING | MB_SETFOREGROUND,
+        );
+    }
+}
+
 pub fn round_window_corners(window: &tauri::WebviewWindow) {
     use windows::Win32::Graphics::Dwm::{
         DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,

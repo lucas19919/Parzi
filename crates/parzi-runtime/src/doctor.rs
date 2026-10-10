@@ -35,10 +35,12 @@ impl Doctor {
     }
 
     pub async fn run(&self) -> Vec<Check> {
-        let mut out = vec![];
-        out.push(self.check_dirs());
-        out.push(self.check_config());
-        out.push(self.check_theme());
+        let mut out = vec![
+            self.check_dirs(),
+            self.check_config(),
+            self.check_theme(),
+            Self::check_hooks(),
+        ];
         out.extend(self.check_providers().await);
         out.push(Self::check_routing());
         out.push(self.check_webview());
@@ -52,6 +54,7 @@ impl Doctor {
             self.check_dirs(),
             self.check_config(),
             self.check_theme(),
+            Self::check_hooks(),
             Self::check_routing(),
             self.check_webview(),
         ]
@@ -109,6 +112,14 @@ impl Doctor {
                 }
             })
             .collect()
+    }
+
+    /// A broken hooks.toml runs with no hooks at all, so say it here.
+    fn check_hooks() -> Check {
+        match parzi_core::hooks::load_global() {
+            Ok(_) => Check::ok("hooks", "hooks.toml ok or absent"),
+            Err(e) => Check::fail("hooks", format!("{e}. Hooks are off until it is fixed")),
+        }
     }
 
     fn check_routing() -> Check {

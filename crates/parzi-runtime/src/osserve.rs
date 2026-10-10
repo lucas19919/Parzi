@@ -1,7 +1,9 @@
 //! Headless ParziOS control socket.
 //!
-//! Bound to 127.0.0.1. A remote client arrives through an SSH tunnel.
-//! The desk and this process must not both own `~/.parzi`.
+//! Bound to 127.0.0.1. A remote client arrives over SSH through
+//! `parzi rpc`, which runs on this machine and relays stdio to the socket,
+//! so the token never leaves it. The desk and this process must not both
+//! own `~/.parzi`.
 
 use std::collections::HashMap;
 use std::fs::OpenOptions;
@@ -22,6 +24,16 @@ use crate::orchestrator::Orchestrator;
 use crate::tools::{humanize_tool_call, Approval, Approver, AutoApprover, ToolCallInfo};
 
 const MAX_REQUEST: u64 = 1024 * 1024;
+/// A parked approval nobody answers is denied after this long, so a
+/// forgotten run gives its slot back instead of holding it forever.
+const APPROVAL_TTL: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+/// Events per `session.events` reply: the newest ones. A client that has
+/// some asks with `from` for only what is new since.
+const EVENTS_PAGE: usize = 400;
+const MAX_CONNECTIONS: usize = 64;
+const REQUEST_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Tool output is cut to this many characters in `session.events`.
+const TOOL_OUTPUT_CAP: usize = 8_000;
 
 struct Pending {
     call: ToolCallInfo,
@@ -112,12 +124,16 @@ impl Approver for ParkedApprover {
             key: key.clone(),
             map: self.pending.clone(),
         };
-        let text = format!(
-            "waiting for approval {key}: {}",
-            humanize_tool_call(&call.name, &call.args)
-        );
+        let label = humanize_tool_call(&call.name, &call.args);
+        let text = format!("waiting for approval {key}: {label}");
         let _ = self.store.append(&call.session, &Event::System { text });
-        rx.await.unwrap_or(Approval::Deny)
+        if let Ok(answer) = tokio::time::timeout(APPROVAL_TTL, rx).await {
+            answer.unwrap_or(Approval::Deny)
+        } else {
+            let text = format!("approval {key} expired unanswered and was denied: {label}");
+            let _ = self.store.append(&call.session, &Event::System { text });
+            Approval::Deny
+        }
     }
 }
 
@@ -135,6 +151,7 @@ struct State {
     orch: Arc<Orchestrator>,
     token: String,
     approver: Arc<ParkedApprover>,
+    stop: CancellationToken,
 }
 
 /// A running localhost socket. Dropping it stops the accept loop and the queue.
@@ -147,6 +164,13 @@ pub struct Daemon {
     pump: Option<JoinHandle<()>>,
     file: PathBuf,
     _lock: std::fs::File,
+}
+
+impl Daemon {
+    /// Resolves when a client sent `shutdown`.
+    pub async fn stopped(&self) {
+        self.cancel.cancelled().await;
+    }
 }
 
 impl Drop for Daemon {
@@ -175,6 +199,7 @@ pub async fn start(orch: Arc<Orchestrator>) -> Result<Daemon, String> {
     if desk::desk_is_open().await {
         return Err("the desk is open. Close Parzi before `parzi serve`.".into());
     }
+    crate::orchestrator::set_headless();
     let recovered = orch.recover().map_err(|e| e.to_string())?;
     if recovered > 0 {
         tracing::info!("marked {recovered} interrupted run(s) idle");
@@ -200,8 +225,10 @@ pub async fn start(orch: Arc<Orchestrator>) -> Result<Daemon, String> {
         orch: orch.clone(),
         token,
         approver: approver.clone(),
+        stop: cancel.clone(),
     });
     let accept_cancel = cancel.clone();
+    let slots = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
     let accept = tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -211,9 +238,12 @@ pub async fn start(orch: Arc<Orchestrator>) -> Result<Daemon, String> {
                     if !peer.ip().is_loopback() {
                         continue;
                     }
+                    // Over the cap the connection is dropped unanswered.
+                    let Ok(slot) = slots.clone().try_acquire_owned() else { continue };
                     let state = state.clone();
                     tokio::spawn(async move {
                         let _ = answer(sock, &state).await;
+                        drop(slot);
                     });
                 }
             }
@@ -302,17 +332,36 @@ pub fn serve_locked() -> bool {
     !matches!(file.try_lock_exclusive(), Ok(true))
 }
 
+/// The token file is born 0600 inside a 0700 home: on a shared server it
+/// must never be readable by another account, not even for a moment.
 fn write_serve_file(path: &Path, body: &str) -> Result<(), String> {
     if path.exists() {
         let _ = std::fs::remove_file(path);
     }
-    parzi_core::atomic_write(path, body.as_bytes()).map_err(|e| e.to_string())?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        use std::io::Write;
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        }
+        let tmp = path.with_file_name(format!(".serve.{}.tmp", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|e| format!("serve file: {e}"))?;
+        file.write_all(body.as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|e| format!("serve file: {e}"))?;
+        std::fs::rename(&tmp, path).map_err(|e| format!("serve file: {e}"))
     }
-    Ok(())
+    #[cfg(not(unix))]
+    {
+        parzi_core::atomic_write(path, body.as_bytes()).map_err(|e| e.to_string())
+    }
 }
 
 fn tokens_equal(a: &str, b: &str) -> bool {
@@ -330,10 +379,14 @@ fn tokens_equal(a: &str, b: &str) -> bool {
 async fn answer(sock: tokio::net::TcpStream, state: &State) -> Result<(), String> {
     let (read, mut write) = sock.into_split();
     let mut line = String::new();
-    BufReader::new(read.take(MAX_REQUEST))
-        .read_line(&mut line)
-        .await
-        .map_err(|e| e.to_string())?;
+    // A client that never finishes its line loses the connection.
+    tokio::time::timeout(
+        REQUEST_WAIT,
+        BufReader::new(read.take(MAX_REQUEST)).read_line(&mut line),
+    )
+    .await
+    .map_err(|_| "request timed out".to_string())?
+    .map_err(|e| e.to_string())?;
     let reply = if line.len() as u64 >= MAX_REQUEST {
         json!({ "ok": false, "error": "request too large" })
     } else {
@@ -365,6 +418,7 @@ async fn dispatch(state: &State, req: &Value) -> Value {
         }),
         "session.list" => session_list(&state.orch),
         "session.show" | "session.export" => session_show(&state.orch, req, op == "session.export"),
+        "session.events" => session_events(&state.orch, req),
         "session.kill" => session_kill(&state.orch, req).await,
         "session.fork" => session_fork(&state.orch, req).await,
         "session.rename" => session_rename(&state.orch, req),
@@ -372,6 +426,20 @@ async fn dispatch(state: &State, req: &Value) -> Value {
         "session.send" => session_send(state, req).await,
         "approval.list" => json!({ "ok": true, "approvals": state.approver.list() }),
         "approval.answer" => approval_answer(&state.approver, req),
+        "providers" => providers(&state.orch, req).await,
+        "shutdown" => {
+            // Let this reply reach the client before the accept loop stops.
+            let stop = state.stop.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                stop.cancel();
+            });
+            json!({ "ok": true })
+        }
+        "doctor" => json!({
+            "ok": true,
+            "checks": crate::doctor::Doctor::new(state.orch.config()).run_quick().await,
+        }),
         _ => json!({ "ok": false, "error": format!("unknown op `{op}`") }),
     }
 }
@@ -418,6 +486,63 @@ fn session_show(orch: &Orchestrator, req: &Value, export: bool) -> Value {
     } else {
         json!({ "ok": true, "session": meta, "text": text })
     }
+}
+
+/// Metadata plus the stored events from `from` on, at most a page of them.
+/// Long tool output is cut: a remote client shows a thread, not a log.
+fn session_events(orch: &Orchestrator, req: &Value) -> Value {
+    let id = match resolve(orch, &str_arg(req, "id")) {
+        Ok(id) => id,
+        Err(v) => return v,
+    };
+    let meta = match orch.store().get(&id) {
+        Ok(m) => m,
+        Err(e) => return fail(e.to_string()),
+    };
+    let events = match orch.store().events(&id) {
+        Ok(ev) => ev,
+        Err(e) => return fail(e.to_string()),
+    };
+    let total = events.len();
+    let asked = req
+        .get("from")
+        .and_then(Value::as_u64)
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or(0)
+        .min(total);
+    let from = asked.max(total.saturating_sub(EVENTS_PAGE));
+    let page: Vec<Value> = events[from..].iter().map(capped_event).collect();
+    json!({ "ok": true, "session": meta, "events": page, "from": from, "total": total })
+}
+
+fn capped_event(ev: &Event) -> Value {
+    let mut v = serde_json::to_value(ev).unwrap_or(Value::Null);
+    if let Some(out) = v.get_mut("output") {
+        if let Some(text) = out.as_str() {
+            if text.chars().count() > TOOL_OUTPUT_CAP {
+                let cut: String = text.chars().take(TOOL_OUTPUT_CAP).collect();
+                *out = json!(format!("{cut}\n[cut]"));
+            }
+        }
+    }
+    v
+}
+
+/// Agent states on this machine. `refresh` probes the programs and spends no quota.
+async fn providers(orch: &Orchestrator, req: &Value) -> Value {
+    let refresh = req.get("refresh").and_then(Value::as_bool).unwrap_or(false);
+    let mut all = if refresh {
+        orch.refresh_providers(&[]).await
+    } else {
+        orch.provider_statuses()
+    };
+    all.sort_by_key(|s| {
+        parzi_providers::PROVIDERS
+            .iter()
+            .position(|p| *p == s.provider)
+            .unwrap_or(usize::MAX)
+    });
+    json!({ "ok": true, "providers": all })
 }
 
 async fn session_kill(orch: &Orchestrator, req: &Value) -> Value {

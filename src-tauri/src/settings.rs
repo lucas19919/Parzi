@@ -66,7 +66,12 @@ fn mcp_command_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
     let mut out = vec![];
     for (name, srv) in &new.mcp.servers {
         match old.mcp.servers.get(name) {
-            Some(prev) if prev.command == srv.command && prev.args == srv.args => {}
+            // An added or changed env var (PATH, NODE_OPTIONS, LD_PRELOAD...)
+            // can swap the program as surely as a new command line.
+            Some(prev)
+                if prev.command == srv.command
+                    && prev.args == srv.args
+                    && srv.env.iter().all(|(k, v)| prev.env.get(k) == Some(v)) => {}
             _ => out.push(name.clone()),
         }
     }
@@ -127,50 +132,6 @@ pub async fn run_doctor_quick(
     Ok(parzi_runtime::doctor::Doctor::new(cfg).run_quick().await)
 }
 
-#[derive(serde::Serialize)]
-pub struct ServeStatus {
-    pub running: bool,
-    pub port: Option<u16>,
-}
-
-/// Local `parzi serve` state for onboarding: reads serve.json and proves
-/// the socket answers. Never starts anything.
-#[tauri::command]
-pub async fn serve_status() -> Result<ServeStatus, String> {
-    let root = parzi_core::paths::parzi_dir().map_err(|e| e.to_string())?;
-    let raw = std::fs::read_to_string(root.join("serve.json")).map_err(|_| "no serve.json".to_string());
-    let raw = match raw {
-        Ok(r) => r,
-        Err(_) => {
-            return Ok(ServeStatus {
-                running: false,
-                port: None,
-            })
-        }
-    };
-    let v: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|_| "serve.json unreadable".to_string())?;
-    let port = v.get("port").and_then(|p| p.as_u64()).unwrap_or(0) as u16;
-    let token = v.get("token").and_then(|t| t.as_str()).unwrap_or("").to_string();
-    if port == 0 || token.is_empty() {
-        return Ok(ServeStatus {
-            running: false,
-            port: None,
-        });
-    }
-    let ok = parzi_runtime::desk::call_serve(
-        "health",
-        serde_json::json!({}),
-        std::time::Duration::from_secs(3),
-    )
-    .await
-    .is_ok();
-    Ok(ServeStatus {
-        running: ok,
-        port: ok.then_some(port),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +190,44 @@ mod tests {
         assert_eq!(mcp_command_changes(&old, &new), vec!["s".to_string()]);
         assert!(mcp_command_changes(&new, &new).is_empty());
         assert!(mcp_command_changes(&new, &old).is_empty());
+    }
+
+    #[test]
+    fn env_changes_count_as_command_changes() {
+        let with_env = |pairs: &[(&str, &str)]| {
+            let mut cfg = ParziConfig::default();
+            cfg.mcp.servers.insert(
+                "s".into(),
+                parzi_core::config::McpServerCfg {
+                    command: "npx".into(),
+                    args: vec!["-y".into()],
+                    env: pairs
+                        .iter()
+                        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+                        .collect(),
+                    ..Default::default()
+                },
+            );
+            cfg
+        };
+        let base = with_env(&[("TOKEN", "a")]);
+        assert!(mcp_command_changes(&base, &base).is_empty(), "same env");
+        assert_eq!(
+            mcp_command_changes(&base, &with_env(&[("TOKEN", "b")])),
+            vec!["s".to_string()],
+            "changed value"
+        );
+        assert_eq!(
+            mcp_command_changes(
+                &base,
+                &with_env(&[("TOKEN", "a"), ("NODE_OPTIONS", "-r x")])
+            ),
+            vec!["s".to_string()],
+            "added key"
+        );
+        assert!(
+            mcp_command_changes(&base, &with_env(&[])).is_empty(),
+            "a removed key does not prompt"
+        );
     }
 }

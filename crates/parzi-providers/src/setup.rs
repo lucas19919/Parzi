@@ -78,10 +78,29 @@ fn version_key(name: &str) -> Vec<u32> {
 fn invoke(program: &Path) -> String {
     let p = program.display().to_string();
     if cfg!(windows) {
-        format!("& '{}'", p.replace('\'', "''"))
+        format!("& {}", ps_quote(&p))
     } else {
-        format!("'{}'", p.replace('\'', r"'\''"))
+        sh_quote(&p)
     }
+}
+
+// PowerShell also ends a single-quoted string at the typographic quotes,
+// so each of those is doubled too.
+fn ps_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(c);
+        }
+        out.push(c);
+    }
+    out.push('\'');
+    out
+}
+
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
 }
 
 fn antigravity_install() -> Option<String> {
@@ -102,24 +121,32 @@ fn antigravity_install() -> Option<String> {
         .join(ANTIGRAVITY_VERSION)
         .display()
         .to_string();
-    Some(if cfg!(windows) {
-        let dir = dir.replace('\'', "''");
+    Some(antigravity_script(cfg!(windows), &url, &dir))
+}
+
+fn antigravity_script(windows: bool, url: &str, dir: &str) -> String {
+    if windows {
+        let dir = ps_quote(dir);
         format!(
             "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; \
              $zip = Join-Path $env:TEMP 'antigravity-acp.zip'; \
              Write-Host 'Downloading Google Antigravity (about 120 MB)...'; \
              Invoke-WebRequest -UseBasicParsing -Uri '{url}' -OutFile $zip; \
-             Expand-Archive -Force -Path $zip -DestinationPath '{dir}'; \
+             Expand-Archive -Force -Path $zip -DestinationPath {dir}; \
              Remove-Item $zip; Write-Host '{DONE}'"
         )
     } else {
-        let dir = dir.replace('\'', r"'\''");
+        // Straight into our own folder: a fixed name in the shared /tmp
+        // could be planted or swapped by another user.
+        let zip = sh_quote(&format!("{dir}/antigravity-acp.zip"));
+        let exe = sh_quote(&format!("{dir}/{ANTIGRAVITY_EXE}"));
+        let dir = sh_quote(dir);
         format!(
-            "curl -fL '{url}' -o /tmp/antigravity-acp.zip && mkdir -p '{dir}' && \
-             unzip -o -q /tmp/antigravity-acp.zip -d '{dir}' && \
-             chmod +x '{dir}/{ANTIGRAVITY_EXE}' && rm /tmp/antigravity-acp.zip && echo '{DONE}'"
+            "mkdir -p {dir} && curl -fL '{url}' -o {zip} && \
+             unzip -o -q {zip} -d {dir} && \
+             chmod +x {exe} && rm -f {zip} && echo '{DONE}'"
         )
-    })
+    }
 }
 
 #[cfg(test)]
@@ -128,13 +155,21 @@ mod tests {
 
     #[test]
     fn every_agent_has_an_official_install() {
+        // Google ships Antigravity's ACP server for Windows and macOS only.
+        let antigravity = cfg!(any(windows, target_os = "macos"));
         for id in crate::PROVIDERS {
+            if *id == "antigravity" && !antigravity {
+                assert!(install_script(id).is_none());
+                continue;
+            }
             let script = install_script(id).unwrap_or_else(|| panic!("{id}"));
             assert!(!script.contains('"'), "{id}: {script}");
         }
-        assert!(install_script("antigravity")
-            .unwrap()
-            .contains("dl.google.com/agy-extensions/releases/"));
+        if antigravity {
+            assert!(install_script("antigravity")
+                .unwrap()
+                .contains("dl.google.com/agy-extensions/releases/"));
+        }
     }
 
     #[test]
@@ -152,6 +187,31 @@ mod tests {
         } else {
             assert_eq!(line, r"'C:/it'\''s/agent.cmd'");
         }
+    }
+
+    #[test]
+    fn typographic_quotes_cannot_end_a_powershell_string() {
+        assert_eq!(ps_quote("it's"), "'it''s'");
+        assert_eq!(
+            ps_quote("a\u{2018}b\u{2019}c\u{201A}d\u{201B}e"),
+            "'a\u{2018}\u{2018}b\u{2019}\u{2019}c\u{201A}\u{201A}d\u{201B}\u{201B}e'"
+        );
+        let script = antigravity_script(true, "https://x/a.zip", "C:/Users/O\u{2019}Neil/agy");
+        assert!(
+            script.contains("-DestinationPath 'C:/Users/O\u{2019}\u{2019}Neil/agy'"),
+            "{script}"
+        );
+    }
+
+    #[test]
+    fn the_unix_install_never_touches_a_shared_tmp_name() {
+        let script = antigravity_script(false, "https://x/a.zip", "/home/o'neil/.parzi/agy");
+        assert!(!script.contains("/tmp/"), "{script}");
+        assert!(
+            script.contains(r"-o '/home/o'\''neil/.parzi/agy/antigravity-acp.zip'"),
+            "{script}"
+        );
+        assert!(!script.contains('"'), "{script}");
     }
 
     #[test]

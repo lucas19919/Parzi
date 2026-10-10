@@ -36,16 +36,25 @@
     }
   });
 
-  async function saveCfg() {
-    if (!cfg) return;
+  async function saveCfg(): Promise<boolean> {
+    if (!cfg) return false;
     try {
       await api.saveConfig(cfg);
+      return true;
     } catch (e) {
       notify(`Save failed: ${e}`);
       try {
         cfg = await api.getConfig();
       } catch {}
+      return false;
     }
+  }
+
+  // The composer's permission starts from this default; tell it.
+  async function pickMode(mode: string) {
+    if (!cfg) return;
+    cfg.lanes.default_mode = mode;
+    if (await saveCfg()) document.dispatchEvent(new CustomEvent("parzi:default-mode", { detail: mode }));
   }
 
   async function toggleAds() {
@@ -58,10 +67,7 @@
 
   function toggleShell() {
     if (!cfg) return;
-    const tools = cfg.lanes.default_allowed_tools || [];
-    cfg.lanes.default_allowed_tools = tools.includes("shell.exec")
-      ? tools.filter((t) => t !== "shell.exec")
-      : [...tools, "shell.exec"];
+    cfg.lanes.no_shell = !cfg.lanes.no_shell;
     saveCfg();
   }
 </script>
@@ -127,17 +133,17 @@
       <SegControl
         options={[{ value: "ask", label: "Ask" }, { value: "auto", label: "Turbo" }, { value: "deny", label: "Lockdown" }]}
         value={cfg.lanes.default_mode}
-        on:pick={(e) => { if (cfg) cfg.lanes.default_mode = e.detail; saveCfg(); }}
+        on:pick={(e) => void pickMode(e.detail)}
       />
     </div>
 
     <div class="field-card">
       <div class="field-info">
-        <span class="field-label">Shell Commands (shell.exec)</span>
-        <span class="field-hint">Allows agent to run bash / powershell scripts in your repository</span>
+        <span class="field-label">Shell commands</span>
+        <span class="field-hint">Lets Build agents run commands in the project folder. Off: no agent gets a shell.</span>
       </div>
       <Switch
-        on={cfg.lanes.default_allowed_tools?.includes("shell.exec") ?? false}
+        on={!cfg.lanes.no_shell}
         title="Allow the agent to run shell commands"
         on:toggle={toggleShell}
       />

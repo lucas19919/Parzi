@@ -28,6 +28,18 @@ jobs:
       - run: npm --prefix ui ci
       - run: npm --prefix ui run build
       - run: cargo check --manifest-path src-tauri/Cargo.toml
+  # The engine is what runs on a ParziOS server: it must build and pass on Linux.
+  linux-engine:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.98.0", components: "clippy" }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D clippy::correctness -D clippy::suspicious -D clippy::complexity -D clippy::perf
+      - run: cargo test --workspace --no-fail-fast
+        env:
+          PARZI_HOME: ${{ runner.temp }}/parzi-test-home
   ui:
     runs-on: ubuntu-latest
     steps:

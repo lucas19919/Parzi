@@ -73,30 +73,61 @@ pub fn encode_image(path: &str, bytes: &[u8]) -> Option<ImageData> {
     })
 }
 
-pub fn encode_image_file(path: &std::path::Path) -> Option<ImageData> {
-    let name = path.file_name()?.to_string_lossy().into_owned();
-    let bytes = std::fs::read(path).ok()?;
-    encode_image(&name, &bytes)
+/// Image files past this are skipped before they are read or decoded.
+pub const IMAGE_FILE_CAP: u64 = 20 * 1024 * 1024;
+/// Text attachments keep 12k chars; 48 KB holds that even at 4 bytes a char.
+const TEXT_READ_CAP: u64 = 48 * 1024;
+const TEXT_CHARS: usize = 12_000;
+
+fn read_image(path: &std::path::Path) -> Option<Vec<u8>> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > IMAGE_FILE_CAP {
+        return None;
+    }
+    std::fs::read(path).ok()
 }
+
+fn read_text_head(path: &std::path::Path) -> Option<String> {
+    use std::io::Read;
+    let mut bytes = vec![];
+    std::fs::File::open(path)
+        .ok()?
+        .take(TEXT_READ_CAP)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    Some(
+        String::from_utf8_lossy(&bytes)
+            .chars()
+            .take(TEXT_CHARS)
+            .collect(),
+    )
+}
+
+pub fn encode_image_file(path: &std::path::Path) -> Option<ImageData> {
+    if crate::paths::is_network_path(&path.to_string_lossy()) {
+        return None;
+    }
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    encode_image(&name, &read_image(path)?)
+}
+
 pub fn read_attachments(cwd: &std::path::Path, paths: &[String]) -> Vec<AttachedFile> {
     paths
         .iter()
         .take(8)
         .filter_map(|p| {
             let full = cwd.join(p);
-            let bytes = std::fs::read(&full).ok()?;
+            if crate::paths::is_network_path(&full.to_string_lossy()) {
+                return None;
+            }
             if image_media_type(p).is_some() {
-                return encode_image(p, &bytes).map(|image| AttachedFile {
+                return encode_image(p, &read_image(&full)?).map(|image| AttachedFile {
                     path: p.clone(),
                     snippet: String::new(),
                     image: Some(image),
                 });
             }
-            let text = String::from_utf8_lossy(&bytes);
-            Some(AttachedFile::text(
-                p.clone(),
-                text.chars().take(12_000).collect(),
-            ))
+            Some(AttachedFile::text(p.clone(), read_text_head(&full)?))
         })
         .collect()
 }

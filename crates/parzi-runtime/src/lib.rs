@@ -7,6 +7,8 @@ pub mod mcp;
 mod mcp_host;
 pub mod orchestrator;
 pub mod osserve;
+pub mod provision;
+pub mod remote;
 mod run;
 pub mod shell;
 pub mod status;

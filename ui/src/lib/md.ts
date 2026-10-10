@@ -1,7 +1,7 @@
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
 import { writable } from "svelte/store";
-import "katex/dist/katex.min.css";
+import { toast } from "./toast";
 
 // Rich renderers (KaTeX + highlight.js) load on first use, off the
 // startup path. Until then code renders plain and math renders as
@@ -39,6 +39,8 @@ export function ensureRich(): Promise<void> {
           import("highlight.js/lib/languages/c"),
           import("highlight.js/lib/languages/cpp"),
         ]),
+        // KaTeX's stylesheet ships with the lazy chunk, not the startup CSS.
+        import("katex/dist/katex.min.css"),
       ]);
       katex = ((k as any).default ?? k) as Katex;
       const core = ((h as any).default ?? h) as Hljs & { registerLanguage: (name: string, lang: unknown) => void };
@@ -77,8 +79,10 @@ export function ensureRich(): Promise<void> {
       hljs = core;
       mdCache.clear();
       richReady.set(true);
-    })().catch(() => {
-      richPromise = null;
+    })().catch((e) => {
+      // Keep the settled promise: a missing chunk stays missing, so one
+      // toast beats a failed import (and a retry) on every render.
+      toast(`Code highlighting and math are off: ${e}`, true);
     });
   }
   return richPromise;
@@ -91,7 +95,7 @@ const md = new MarkdownIt({
 
 const defaultValidateLink = md.validateLink.bind(md);
 md.validateLink = (url: string) => {
-  if (/^(?:file|brain|parzi|vscode):/i.test(url)) return true;
+  if (/^(?:file|brain|parzi):/i.test(url)) return true;
   return defaultValidateLink(url);
 };
 
@@ -193,6 +197,11 @@ const PLAIN_FENCES = new Set([
   "log",
 ]);
 
+// Set while LiveMarkdown renders a tail whose fence is still open: that
+// block re-renders on every streamed chunk, so it stays escaped text and
+// highlights once, after the fence closes.
+let streamingFence = false;
+
 md.renderer.rules.fence = (tokens, idx) => {
   const tok = tokens[idx];
   const lang = (tok.info || "").trim().split(/\s+/)[0] || "";
@@ -208,7 +217,7 @@ md.renderer.rules.fence = (tokens, idx) => {
       })
       .join("\n");
   } else {
-    const plain = !hljs || PLAIN_FENCES.has(lang.toLowerCase()) || !hljs.getLanguage(lang);
+    const plain = streamingFence || !hljs || PLAIN_FENCES.has(lang.toLowerCase()) || !hljs.getLanguage(lang);
     try {
       code = plain || !hljs ? escapeHtml(body) : hljs.highlight(body, { language: lang }).value;
     } catch {
@@ -270,22 +279,29 @@ md.renderer.rules.parzi_front = (tokens, idx) => {
 const mdCache = new Map<string, string>();
 const MD_CACHE_MAX = 400;
 
+const LOCAL_IMAGE = /^(data:image\/|asset:|https?:\/\/asset\.localhost\/)/i;
+
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-  if (node.tagName === "A") {
+  // HTML tagNames are upper-case, SVG ones (<image>) keep their case.
+  const tag = (node.tagName ?? "").toLowerCase();
+  if (tag === "a") {
     node.setAttribute("target", "_blank");
     node.setAttribute("rel", "noopener noreferrer");
-  } else if (node.tagName === "IMG" && !/^(data:image\/|asset:|https?:\/\/asset\.localhost\/)/i.test(node.getAttribute("src") ?? "")) {
-    node.removeAttribute("src");
-    node.removeAttribute("srcset");
-    node.setAttribute("title", "Remote image not loaded");
+  } else if (tag === "img" || tag === "image") {
+    const refs = ["src", "href", "xlink:href"].map((a) => node.getAttribute(a)).filter((v): v is string => v !== null);
+    if (node.hasAttribute("srcset") || !refs.length || refs.some((v) => !LOCAL_IMAGE.test(v))) {
+      for (const a of ["src", "srcset", "href", "xlink:href"]) node.removeAttribute(a);
+      node.setAttribute("title", "Remote image not loaded");
+    }
   }
 });
 
 export function renderMarkdown(src: string, cache = true): string {
-  // Kick the rich renderers off the startup path; the first render may
-  // fall back to plain code / escaped math and upgrades when they land
-  // (callers pass $richReady via mdHtml so markup re-renders then).
-  void ensureRich();
+  // Kick the rich renderers off the startup path, and only for text that
+  // can use them (a fence or math). The first render may fall back to
+  // plain code / escaped math and upgrades when they land (callers pass
+  // $richReady via mdHtml so markup re-renders then).
+  if (src.includes("```") || src.includes("~~~") || src.includes("$")) void ensureRich();
   if (cache) {
     const hit = mdCache.get(src);
     if (hit !== undefined) {
@@ -293,7 +309,7 @@ export function renderMarkdown(src: string, cache = true): string {
     }
   }
   const res = DOMPurify.sanitize(md.render(src), {
-    ALLOWED_URI_REGEXP: /^(?:(?:https?|parzi|brain|file|vscode):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|parzi|brain|file):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
   });
   if (!cache) return res;
   if (mdCache.size >= MD_CACHE_MAX) {
@@ -380,6 +396,19 @@ function stableCut(text: string): number {
   return cut;
 }
 
+// True when `text` ends inside a ``` / ~~~ fence (the closing line may
+// still be streaming in).
+function fenceOpen(text: string): boolean {
+  let mark = "";
+  for (const line of text.split("\n")) {
+    const f = /^(`{3,}|~{3,})/.exec(line.trim());
+    if (!f) continue;
+    if (!mark) mark = f[1][0];
+    else if (f[1][0] === mark) mark = "";
+  }
+  return !!mark;
+}
+
 export class LiveMarkdown {
   private src = "";
   private headHtml = "";
@@ -395,7 +424,13 @@ export class LiveMarkdown {
       this.src = text.slice(0, cut);
     }
     const tail = text.slice(this.src.length);
-    return { head: this.headHtml, tail: tail.trim() ? renderMarkdown(tail, false) : "" };
+    if (!tail.trim()) return { head: this.headHtml, tail: "" };
+    streamingFence = fenceOpen(tail);
+    try {
+      return { head: this.headHtml, tail: renderMarkdown(tail, false) };
+    } finally {
+      streamingFence = false;
+    }
   }
 
   reset(): void {

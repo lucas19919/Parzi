@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use tokio::io::AsyncReadExt;
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 
 use parzi_providers::process;
 #[cfg(windows)]
@@ -20,12 +20,16 @@ pub const OUTPUT_CAP: usize = 12 * 1024;
 const RING_KEEP: usize = 64 * 1024;
 /// Spill files stop growing here; the tool result says so when it happens.
 const SPILL_CAP: u64 = 8 * 1024 * 1024;
+/// Foreground stderr kept for the tool result.
+const STDERR_KEEP: usize = 16 * 1024;
+/// Pipes still open after exit (a grandchild holding them) are read this long, then dropped.
+const DRAIN_FOR: Duration = Duration::from_secs(2);
 /// Concurrent background shells per session before we refuse.
 pub const MAX_BACKGROUND_PER_SESSION: usize = 8;
 /// Background shells are killed past this age; servers are restarted, not squatted on.
 pub const BACKGROUND_MAX_LIFETIME: Duration = Duration::from_secs(30 * 60);
 
-/// Append one stdout chunk to the ring and the spill file.
+/// Append one chunk to the ring and the spill file (until `SPILL_CAP`).
 fn ingest_output(
     ring: &mut Vec<u8>,
     spill: &mut Option<std::fs::File>,
@@ -33,12 +37,15 @@ fn ingest_output(
     chunk: &[u8],
 ) {
     use std::io::Write as _;
-    let room =
-        usize::try_from((SPILL_CAP - *spilled).min(u64::try_from(chunk.len()).unwrap_or(u64::MAX)))
-            .unwrap_or(usize::MAX);
+    let room = usize::try_from(SPILL_CAP.saturating_sub(*spilled))
+        .unwrap_or(usize::MAX)
+        .min(chunk.len());
     if let Some(f) = spill.as_mut() {
-        if f.write_all(&chunk[..room]).is_ok() {
+        if room > 0 && f.write_all(&chunk[..room]).is_ok() {
             *spilled += room as u64;
+        } else {
+            // Capped or failing: stop touching the file.
+            *spill = None;
         }
     }
     ring.extend_from_slice(chunk);
@@ -48,20 +55,80 @@ fn ingest_output(
     }
 }
 
+/// Keep at most `keep` trailing bytes, cutting on a char boundary.
+fn keep_tail(text: &mut String, keep: usize) -> bool {
+    if text.len() <= keep {
+        return false;
+    }
+    let mut cut = text.len() - keep;
+    while !text.is_char_boundary(cut) {
+        cut += 1;
+    }
+    text.drain(..cut);
+    true
+}
+
 /// Collect output still in flight after the child is gone, so a fast
-/// exit never reports empty output. Bounded: grandchildren holding the
-/// pipe cannot hang the turn.
+/// exit never reports empty output. Bounded overall: a grandchild
+/// holding (or chattering on) the pipe cannot hang the turn.
 async fn drain_stdout(
-    stdout: &mut tokio::process::ChildStdout,
+    stdout: &mut ChildStdout,
     ring: &mut Vec<u8>,
     spill: &mut Option<std::fs::File>,
     spilled: &mut u64,
 ) {
+    let until = tokio::time::Instant::now() + DRAIN_FOR;
     let mut buf = [0u8; 8192];
-    loop {
-        match tokio::time::timeout(Duration::from_millis(2000), stdout.read(&mut buf)).await {
-            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
-            Ok(Ok(n)) => ingest_output(ring, spill, spilled, &buf[..n]),
+    while let Ok(Ok(n)) = tokio::time::timeout_at(until, stdout.read(&mut buf)).await {
+        if n == 0 {
+            break;
+        }
+        ingest_output(ring, spill, spilled, &buf[..n]);
+    }
+}
+
+/// Drain stderr off to the side so a chatty child never wedges stdout.
+fn drain_stderr<F>(mut stderr: ChildStderr, mut sink: F) -> tokio::task::JoinHandle<()>
+where
+    F: FnMut(&[u8]) + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut buf = [0u8; 4096];
+        loop {
+            match stderr.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => sink(&buf[..n]),
+            }
+        }
+    })
+}
+
+/// Kill a child's tree, then the child, off the async workers (taskkill
+/// and ps block). Tree first: taskkill /T cannot find it once the root is gone.
+fn reap(mut child: Child) {
+    if matches!(child.try_wait(), Ok(Some(_))) {
+        return;
+    }
+    let mut job = move || {
+        if let Some(pid) = child.id() {
+            process::kill_tree(pid);
+        }
+        let _ = child.start_kill();
+    };
+    match tokio::runtime::Handle::try_current() {
+        Ok(rt) => drop(rt.spawn_blocking(job)),
+        Err(_) => job(),
+    }
+}
+
+/// A foreground child. Dropped unfinished (Stop cancels the call) it
+/// takes its whole tree down instead of leaving it running.
+struct Fg(Option<Child>);
+
+impl Drop for Fg {
+    fn drop(&mut self) {
+        if let Some(child) = self.0.take() {
+            reap(child);
         }
     }
 }
@@ -82,22 +149,96 @@ pub struct LogTail {
 }
 
 struct LiveShell {
-    cmd: String,
+    /// None while the slot is reserved but the process is not up yet.
     child: Option<Child>,
     /// Last RING_KEEP bytes; `total` counts everything ever appended.
     buf: Vec<u8>,
     total: u64,
-    spill: PathBuf,
-    spill_capped: bool,
+    spill: Option<std::fs::File>,
+    spilled: u64,
     started: Instant,
     exit: Option<i32>,
-    killed: bool,
+    exited_at: Option<Instant>,
+    /// The pump read the last output after exit; only then is it done.
+    drained: bool,
+}
+
+impl LiveShell {
+    fn reserved() -> Self {
+        Self {
+            child: None,
+            buf: Vec::new(),
+            total: 0,
+            spill: None,
+            spilled: 0,
+            started: Instant::now(),
+            exit: None,
+            exited_at: None,
+            drained: false,
+        }
+    }
+
+    fn mark_exit(&mut self, code: i32) {
+        self.exit = Some(code);
+        self.exited_at.get_or_insert_with(Instant::now);
+    }
+
+    /// The exit code once the output after exit is in the log too. A pump
+    /// that never reports back is given up on after twice the drain time.
+    fn settled(&self) -> Option<i32> {
+        let late = self.exited_at.is_some_and(|t| t.elapsed() > DRAIN_FOR * 2);
+        self.exit.filter(|_| self.drained || late)
+    }
+
+    /// Mark killed; the child comes back to be reaped outside the lock.
+    fn kill(&mut self) -> Option<Child> {
+        self.mark_exit(-1);
+        self.child.take()
+    }
+
+    /// Lifetime + completion, enforced lazily on every touch. Says whether
+    /// it still runs, plus the child to reap when the lifetime cap just hit.
+    fn enforce(&mut self) -> (bool, Option<Child>) {
+        if self.exit.is_some() {
+            return (false, None);
+        }
+        if self.started.elapsed() > BACKGROUND_MAX_LIFETIME {
+            return (false, self.kill());
+        }
+        let Some(child) = self.child.as_mut() else {
+            return (true, None);
+        };
+        let code = match child.try_wait() {
+            Ok(None) => return (true, None),
+            // A signal death has no code; it is still done.
+            Ok(Some(status)) => status.code().unwrap_or(-1),
+            Err(_) => -1,
+        };
+        self.mark_exit(code);
+        (false, None)
+    }
+
+    fn ingest(&mut self, chunk: &[u8]) {
+        ingest_output(&mut self.buf, &mut self.spill, &mut self.spilled, chunk);
+        self.total += chunk.len() as u64;
+    }
 }
 
 #[derive(Default)]
 struct Registry {
     shells: HashMap<String, LiveShell>,
     seq: u64,
+}
+
+/// A panic while holding the lock must not brick every shell tool after it.
+fn lock(inner: &Mutex<Registry>) -> MutexGuard<'_, Registry> {
+    inner.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn append(inner: &Mutex<Registry>, id: &str, chunk: &[u8]) {
+    if let Some(sh) = lock(inner).shells.get_mut(id) {
+        sh.ingest(chunk);
+    }
 }
 
 /// The harness shell, per session. Cloned handles share one registry;
@@ -113,12 +254,13 @@ pub struct ShellRegistry {
 impl ShellRegistry {
     pub fn new(sid: &str) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(Registry {
-                shells: HashMap::new(),
-                seq: 0,
-            })),
+            inner: Arc::default(),
             sid: sid.to_string(),
         }
+    }
+
+    fn reg(&self) -> MutexGuard<'_, Registry> {
+        lock(&self.inner)
     }
 
     fn dir(&self) -> std::io::Result<PathBuf> {
@@ -131,18 +273,16 @@ impl ShellRegistry {
     }
 
     fn spawn_shell(
-        &self,
         cmd: &str,
         workdir: &std::path::Path,
-    ) -> std::io::Result<(
-        Child,
-        tokio::process::ChildStdout,
-        tokio::process::ChildStderr,
-    )> {
+    ) -> std::io::Result<(Child, ChildStdout, ChildStderr)> {
         let (program, mut args) = process::shell_program();
         args.push(cmd.to_string());
         let mut c = Command::new(program);
+        // Same scrubbed environment as hooks and MCP servers: no API keys.
         c.args(&args)
+            .env_clear()
+            .envs(crate::mcp::child_env(&HashMap::new()))
             .current_dir(workdir)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
@@ -171,99 +311,69 @@ impl ShellRegistry {
         timeout: Duration,
     ) -> std::io::Result<ExecResult> {
         let timeout = timeout.clamp(Duration::from_secs(1), FOREGROUND_MAX_TIMEOUT);
-        let (mut child, mut stdout, mut stderr) = self.spawn_shell(cmd, workdir)?;
-        let pid = child.id();
-        let dir = self.dir()?;
-        let spill_path = dir.join(format!(
-            "fg-{}.log",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0)
-        ));
+        // One deadline for the whole call: output must not keep pushing it back.
+        let deadline = tokio::time::Instant::now() + timeout;
+        let spill_path = self
+            .dir()?
+            .join(format!("fg-{}.log", uuid::Uuid::new_v4().simple()));
+        let (child, mut stdout, stderr) = Self::spawn_shell(cmd, workdir)?;
+        let mut fg = Fg(Some(child));
+        let Some(child) = fg.0.as_mut() else {
+            return Err(std::io::Error::other("the shell vanished"));
+        };
         let mut spill = std::fs::File::create(&spill_path).ok();
         let mut ring: Vec<u8> = Vec::new();
         let mut spilled: u64 = 0;
-        // Stderr drains in the background so a chatty child can never
-        // wedge the stdout reader (kept tail only, like Proc).
         let err_keep = Arc::new(Mutex::new(Vec::<u8>::new()));
         let err_sink = err_keep.clone();
-        let err_task = tokio::spawn(async move {
-            let mut buf = [0u8; 4096];
-            loop {
-                match stderr.read(&mut buf).await {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => {
-                        if let Ok(mut s) = err_sink.lock() {
-                            s.extend_from_slice(&buf[..n]);
-                            if s.len() > 16 * 1024 {
-                                let cut = s.len() - 16 * 1024;
-                                s.drain(..cut);
-                            }
-                        }
-                    }
-                }
+        let mut err_task = drain_stderr(stderr, move |chunk| {
+            let mut s = err_sink.lock().unwrap_or_else(PoisonError::into_inner);
+            s.extend_from_slice(chunk);
+            if s.len() > STDERR_KEEP {
+                let cut = s.len() - STDERR_KEEP;
+                s.drain(..cut);
             }
         });
         let mut timed_out = false;
+        let mut out_open = true;
         let exit = loop {
             let mut buf = [0u8; 8192];
             tokio::select! {
                 biased;
-                status = child.wait() => {
-                    let code = status.ok().and_then(|s| s.code());
-                    drain_stdout(&mut stdout, &mut ring, &mut spill, &mut spilled).await;
-                    break code;
-                }
-                n = stdout.read(&mut buf) => match n {
-                    Ok(0) => {
-                        // EOF is NOT completion (children may hold pipes);
-                        // keep waiting for real process exit.
-                        match child.try_wait() {
-                            Ok(Some(status)) => {
-                                drain_stdout(&mut stdout, &mut ring, &mut spill, &mut spilled).await;
-                                break status.code();
-                            }
-                            _ => continue,
-                        }
-                    }
-                    Ok(n) => {
-                        ingest_output(&mut ring, &mut spill, &mut spilled, &buf[..n]);
-                        continue;
-                    }
-                    Err(_) => continue,
+                status = child.wait() => break status.ok().and_then(|s| s.code()),
+                n = stdout.read(&mut buf), if out_open => match n {
+                    // EOF is NOT completion (children may hold pipes):
+                    // stop polling stdout and wait on the process instead.
+                    Ok(0) | Err(_) => out_open = false,
+                    Ok(n) => ingest_output(&mut ring, &mut spill, &mut spilled, &buf[..n]),
                 },
-                () = tokio::time::sleep(timeout) => {
+                () = tokio::time::sleep_until(deadline) => {
                     timed_out = true;
-                    if let Some(pid) = pid {
-                        process::kill_tree(pid);
+                    if let Some(pid) = child.id() {
+                        let _ = tokio::task::spawn_blocking(move || process::kill_tree(pid)).await;
                     }
                     let _ = child.start_kill();
                     let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-                    drain_stdout(&mut stdout, &mut ring, &mut spill, &mut spilled).await;
                     break None;
                 }
             }
         };
+        if out_open {
+            drain_stdout(&mut stdout, &mut ring, &mut spill, &mut spilled).await;
+        }
         drop(spill);
         // Let the stderr drain land (bounded like stdout) before composing.
-        let _ = tokio::time::timeout(Duration::from_secs(2), err_task).await;
+        let _ = tokio::time::timeout(DRAIN_FOR, &mut err_task).await;
+        err_task.abort();
         let mut text = String::from_utf8_lossy(&ring).into_owned();
-        if let Ok(err) = err_keep.lock() {
+        {
+            let err = err_keep.lock().unwrap_or_else(PoisonError::into_inner);
             if !err.is_empty() {
                 text.push_str("\n[stderr]\n");
                 text.push_str(&String::from_utf8_lossy(&err));
             }
         }
-        let truncated = text.len() > OUTPUT_CAP;
-        if truncated {
-            let cut = text.len() - OUTPUT_CAP;
-            text.drain(..cut);
-            text = format!(
-                "…[earlier output cut; full log: {}]\n{text}",
-                spill_path.display()
-            );
-        } else {
+        if !keep_tail(&mut text, OUTPUT_CAP) {
             let _ = std::fs::remove_file(&spill_path);
             return Ok(ExecResult {
                 exit,
@@ -273,6 +383,10 @@ impl ShellRegistry {
                 spill: None,
             });
         }
+        text = format!(
+            "…[earlier output cut; full log: {}]\n{text}",
+            spill_path.display()
+        );
         Ok(ExecResult {
             exit,
             timed_out,
@@ -283,52 +397,48 @@ impl ShellRegistry {
     }
 
     /// Start a background shell; returns its id immediately.
-    pub fn start(
-        &self,
-        cmd: &str,
-        workdir: &std::path::Path,
-        title: &str,
-    ) -> std::io::Result<String> {
-        let (child, stdout, stderr) = self.spawn_shell(cmd, workdir)?;
+    pub fn start(&self, cmd: &str, workdir: &std::path::Path) -> std::io::Result<String> {
         let dir = self.dir()?;
-        let mut reg = self
-            .inner
-            .lock()
-            .map_err(|_| std::io::Error::other("shell registry poisoned"))?;
-        let running = reg.shells.values().filter(|s| s.exit.is_none()).count();
-        if running >= MAX_BACKGROUND_PER_SESSION {
-            return Err(std::io::Error::other(format!(
-                "already running {running} background shells; kill one first"
-            )));
+        // Claim the slot before anything runs: a refused command never starts.
+        let id = {
+            let mut reg = self.reg();
+            let running = reg.shells.values().filter(|s| s.exit.is_none()).count();
+            if running >= MAX_BACKGROUND_PER_SESSION {
+                return Err(std::io::Error::other(format!(
+                    "already running {running} background shells; kill one first"
+                )));
+            }
+            reg.seq += 1;
+            let id = format!("sh-{}", reg.seq);
+            reg.shells.insert(id.clone(), LiveShell::reserved());
+            id
+        };
+        let spill = std::fs::File::create(dir.join(format!("{id}.log"))).ok();
+        let spawned = Self::spawn_shell(cmd, workdir);
+        let mut reg = self.reg();
+        let (child, stdout, stderr) = match spawned {
+            Ok(parts) => parts,
+            Err(e) => {
+                reg.shells.remove(&id);
+                return Err(e);
+            }
+        };
+        match reg.shells.get_mut(&id) {
+            Some(sh) if sh.exit.is_none() => {
+                sh.child = Some(child);
+                sh.spill = spill;
+            }
+            // Killed while starting (session deleted): never let it run on.
+            _ => {
+                drop(reg);
+                reap(child);
+                return Err(std::io::Error::other(
+                    "the shell was stopped while starting",
+                ));
+            }
         }
-        reg.seq += 1;
-        let id = format!("sh-{}", reg.seq);
-        let spill = dir.join(format!("{id}.log"));
-        let _ = std::fs::File::create(&spill);
-        reg.shells.insert(
-            id.clone(),
-            LiveShell {
-                cmd: if title.trim().is_empty() {
-                    cmd.to_string()
-                } else {
-                    title.to_string()
-                },
-                child: Some(child),
-                buf: Vec::new(),
-                total: 0,
-                spill,
-                spill_capped: false,
-                started: Instant::now(),
-                exit: None,
-                killed: false,
-            },
-        );
         drop(reg);
-        let inner = self.inner.clone();
-        let sid = id.clone();
-        tokio::spawn(async move {
-            pump(inner, sid, stdout, stderr).await;
-        });
+        tokio::spawn(pump(self.inner.clone(), id.clone(), stdout, stderr));
         Ok(id)
     }
 
@@ -336,268 +446,117 @@ impl ShellRegistry {
     where
         F: FnOnce(&mut LiveShell) -> T,
     {
-        self.inner.lock().ok().and_then(|mut reg| {
-            // Lifetime + completion are enforced lazily on every touch.
-            if let Some(sh) = reg.shells.get_mut(id) {
-                if sh.exit.is_none() {
-                    if sh.started.elapsed() > BACKGROUND_MAX_LIFETIME {
-                        if let Some(child) = sh.child.as_mut() {
-                            if let Some(pid) = child.id() {
-                                process::kill_tree(pid);
-                            }
-                            let _ = child.start_kill();
-                        }
-                        sh.exit = Some(-1);
-                        sh.killed = true;
-                    } else if let Some(child) = sh.child.as_mut() {
-                        match child.try_wait() {
-                            Ok(Some(status)) => {
-                                sh.exit = status.code();
-                            }
-                            Ok(None) => {}
-                            Err(_) => {
-                                sh.exit = Some(-1);
-                            }
-                        }
-                    }
-                }
-                Some(f(sh))
-            } else {
-                None
-            }
-        })
+        let (out, expired) = {
+            let mut reg = self.reg();
+            let sh = reg.shells.get_mut(id)?;
+            let (_, expired) = sh.enforce();
+            (f(sh), expired)
+        };
+        if let Some(child) = expired {
+            reap(child);
+        }
+        Some(out)
     }
 
     /// Bytes appended since `offset` (clamped to the ring), plus the new
     /// cursor, liveness, and exit code when done.
     pub fn logs(&self, id: &str, offset: u64, tail: usize) -> Option<LogTail> {
-        self.with(id, |sh| {
-            let start = offset.min(sh.total);
+        let (bytes, total, exit) = self.with(id, |sh| {
             let buf_start = sh.total.saturating_sub(sh.buf.len() as u64);
-            let from = start.max(buf_start);
-            let mut text = {
-                let at = usize::try_from(from - buf_start).unwrap_or(usize::MAX);
-                String::from_utf8_lossy(&sh.buf[at.min(sh.buf.len())..]).into_owned()
-            };
-            if text.len() > tail {
-                let cut = text.len() - tail;
-                text.drain(..cut);
-            }
-            LogTail {
-                text,
-                next_offset: sh.total,
-                running: sh.exit.is_none(),
-                exit: sh.exit,
-            }
+            let from = offset.min(sh.total).max(buf_start);
+            let at = usize::try_from(from - buf_start)
+                .unwrap_or(usize::MAX)
+                .min(sh.buf.len());
+            (sh.buf[at..].to_vec(), sh.total, sh.settled())
+        })?;
+        let mut text = String::from_utf8_lossy(&bytes).into_owned();
+        keep_tail(&mut text, tail);
+        Some(LogTail {
+            text,
+            next_offset: total,
+            running: exit.is_none(),
+            exit,
         })
     }
 
     pub fn kill(&self, id: &str) -> bool {
-        self.with(id, |sh| {
-            if sh.exit.is_some() {
-                return false;
-            }
-            if let Some(child) = sh.child.as_mut() {
-                if let Some(pid) = child.id() {
-                    process::kill_tree(pid);
+        match self.with(id, |sh| sh.exit.is_none().then(|| sh.kill())) {
+            Some(Some(child)) => {
+                if let Some(child) = child {
+                    reap(child);
                 }
-                let _ = child.start_kill();
+                true
             }
-            sh.exit = Some(-1);
-            sh.killed = true;
-            true
-        })
-        .unwrap_or(false)
+            _ => false,
+        }
     }
 
     /// Kill every live shell in this registry. Used when the owning
     /// session is deleted or purged so nothing outlives it.
     pub fn kill_all(&self) {
-        let Ok(mut reg) = self.inner.lock() else {
-            return;
-        };
-        for sh in reg.shells.values_mut() {
-            if sh.exit.is_some() {
-                continue;
-            }
-            if let Some(child) = sh.child.as_mut() {
-                if let Some(pid) = child.id() {
-                    process::kill_tree(pid);
-                }
-                let _ = child.start_kill();
-            }
-            sh.exit = Some(-1);
-            sh.killed = true;
+        let doomed: Vec<Child> = self
+            .reg()
+            .shells
+            .values_mut()
+            .filter(|s| s.exit.is_none())
+            .filter_map(LiveShell::kill)
+            .collect();
+        for child in doomed {
+            reap(child);
         }
-    }
-
-    pub fn describe(&self, id: &str) -> Option<(String, bool, Option<i32>)> {
-        self.with(id, |sh| (sh.cmd.clone(), sh.exit.is_none(), sh.exit))
     }
 }
 
-/// Pump a background shell: stream stdout into ring + spill until the
-/// PROCESS exits (never pipe EOF — children inherit stdio), then drain
-/// the remainder and record the exit code.
+/// Pump a background shell: stream stdout and stderr into ring + spill
+/// until the PROCESS exits (never pipe EOF — children inherit stdio),
+/// then drain the remainder briefly.
 async fn pump(
     inner: Arc<Mutex<Registry>>,
     id: String,
-    mut stdout: tokio::process::ChildStdout,
-    mut stderr: tokio::process::ChildStderr,
+    mut stdout: ChildStdout,
+    stderr: ChildStderr,
 ) {
-    let err_keep = Arc::new(Mutex::new(Vec::<u8>::new()));
-    let err_sink = err_keep.clone();
-    tokio::spawn(async move {
-        let mut buf = [0u8; 4096];
-        loop {
-            match stderr.read(&mut buf).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    if let Ok(mut s) = err_sink.lock() {
-                        s.extend_from_slice(&buf[..n]);
-                        if s.len() > 16 * 1024 {
-                            let cut = s.len() - 16 * 1024;
-                            s.drain(..cut);
-                        }
-                    }
-                }
-            }
-        }
-    });
+    let (err_inner, err_id) = (inner.clone(), id.clone());
+    let mut err_task = drain_stderr(stderr, move |chunk| append(&err_inner, &err_id, chunk));
     let mut buf = [0u8; 8192];
-    // Wait for process exit; keep draining in the meantime. try_wait is
-    // polled cheaply because reads also wake us.
-    let exit: Option<i32> = loop {
-        // Lifetime cap, checked without needing output.
-        let over = inner.lock().map(|reg| {
-            reg.shells.get(&id).is_some_and(|sh| {
-                sh.exit.is_none() && sh.started.elapsed() > BACKGROUND_MAX_LIFETIME
-            })
-        });
-        if over.unwrap_or(false) {
-            let _ = inner.lock().map(|mut reg| {
-                if let Some(sh) = reg.shells.get_mut(&id) {
-                    if let Some(child) = sh.child.as_mut() {
-                        if let Some(pid) = child.id() {
-                            process::kill_tree(pid);
-                        }
-                        let _ = child.start_kill();
-                    }
-                    sh.exit = Some(-1);
-                    sh.killed = true;
-                }
-            });
-            break Some(-1);
-        }
+    let mut out_open = true;
+    loop {
         tokio::select! {
             biased;
-            n = stdout.read(&mut buf) => match n {
-                Ok(0) => {
-                    // Pipe EOF: someone still alive out there, or the
-                    // process exited. Only process exit counts.
-                    let done: Option<i32> = inner
-                        .lock()
-                        .map(|mut reg| {
-                            let mut code = None;
-                            if let Some(sh) = reg.shells.get_mut(&id) {
-                                if let Some(child) = sh.child.as_mut() {
-                                    if let Ok(Some(status)) = child.try_wait() {
-                                        code = status.code();
-                                        sh.exit = code;
-                                    }
-                                } else if sh.exit.is_some() {
-                                    code = sh.exit;
-                                }
-                            }
-                            code
-                        })
-                        .unwrap_or(None);
-                    match done {
-                        Some(code) => break Some(code),
-                        _ => {
-                            // Nobody home on stdout but the process lives
-                            // (children holding pipes). Park briefly.
-                            tokio::time::sleep(Duration::from_millis(200)).await;
-                            continue;
-                        }
-                    }
-                }
-                Ok(n) => {
-                    append(&inner, &id, &buf[..n]);
-                    continue;
-                }
-                Err(_) => {
-                    tokio::time::sleep(Duration::from_millis(200)).await;
-                    continue;
-                }
+            n = stdout.read(&mut buf), if out_open => match n {
+                // Pipe EOF: only process exit counts, so stop reading and keep checking.
+                Ok(0) | Err(_) => out_open = false,
+                Ok(n) => append(&inner, &id, &buf[..n]),
             },
-            () = tokio::time::sleep(Duration::from_millis(500)) => {
-                // Wake periodically to re-check exit even when silent.
-                let done: Option<i32> = inner
-                    .lock()
-                    .map(|mut reg| {
-                        let mut code = None;
-                        if let Some(sh) = reg.shells.get_mut(&id) {
-                            if let Some(child) = sh.child.as_mut() {
-                                if let Ok(Some(status)) = child.try_wait() {
-                                    code = status.code();
-                                    sh.exit = code;
-                                }
-                            } else if sh.exit.is_some() {
-                                code = sh.exit;
-                            }
-                        }
-                        code
-                    })
-                    .unwrap_or(None);
-                if let Some(code) = done {
-                    break Some(code);
-                }
-                continue;
+            // Wake to re-check exit even when silent.
+            () = tokio::time::sleep(Duration::from_millis(250)) => {}
+        }
+        let (live, expired) = lock(&inner)
+            .shells
+            .get_mut(&id)
+            .map_or((false, None), LiveShell::enforce);
+        if let Some(child) = expired {
+            reap(child);
+        }
+        if !live {
+            break;
+        }
+    }
+    if out_open {
+        let until = tokio::time::Instant::now() + DRAIN_FOR;
+        while let Ok(Ok(n)) = tokio::time::timeout_at(until, stdout.read(&mut buf)).await {
+            if n == 0 {
+                break;
             }
-        }
-    };
-    // Drain whatever the pipes still hold, then close out.
-    loop {
-        match tokio::time::timeout(Duration::from_millis(300), stdout.read(&mut buf)).await {
-            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
-            Ok(Ok(n)) => append(&inner, &id, &buf[..n]),
+            append(&inner, &id, &buf[..n]);
         }
     }
-    if let Ok(mut reg) = inner.lock() {
-        if let Some(sh) = reg.shells.get_mut(&id) {
-            sh.child.take();
-            if sh.exit.is_none() {
-                sh.exit = exit;
-            }
-        }
-    }
-}
-
-fn append(inner: &Arc<Mutex<Registry>>, id: &str, chunk: &[u8]) {
-    use std::io::Write as _;
-    let Ok(mut reg) = inner.lock() else { return };
-    let Some(sh) = reg.shells.get_mut(id) else {
-        return;
-    };
-    if !sh.spill_capped {
-        let append_ok = std::fs::OpenOptions::new()
-            .append(true)
-            .open(&sh.spill)
-            .map(|mut f| f.write_all(chunk).is_ok())
-            .unwrap_or(false);
-        let capped = std::fs::metadata(&sh.spill)
-            .map(|m| m.len() > SPILL_CAP)
-            .unwrap_or(false);
-        if !append_ok || capped {
-            sh.spill_capped = true;
-        }
-    }
-    sh.buf.extend_from_slice(chunk);
-    sh.total += chunk.len() as u64;
-    if sh.buf.len() > RING_KEEP {
-        let cut = sh.buf.len() - RING_KEEP;
-        sh.buf.drain(..cut);
+    let _ = tokio::time::timeout(DRAIN_FOR, &mut err_task).await;
+    err_task.abort();
+    if let Some(sh) = lock(&inner).shells.get_mut(&id) {
+        sh.child.take();
+        sh.drained = true;
+        sh.spill = None;
     }
 }
 
@@ -606,11 +565,7 @@ mod tests {
     use super::*;
 
     fn cmd_echo() -> &'static str {
-        if cfg!(windows) {
-            "echo hello-shell"
-        } else {
-            "echo hello-shell"
-        }
+        "echo hello-shell"
     }
 
     fn cmd_sleep(secs: u64) -> String {
@@ -658,9 +613,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn foreground_chatty_command_still_times_out() {
+        // Steady output used to re-arm the deadline on every chunk.
+        let reg = ShellRegistry::new("test-chatty");
+        let chatty = if cfg!(windows) {
+            "while ($true) { 'tick'; Start-Sleep -Milliseconds 20 }"
+        } else {
+            "while true; do echo tick; sleep 0.02; done"
+        };
+        let t0 = std::time::Instant::now();
+        let out = tokio::time::timeout(
+            Duration::from_secs(60),
+            reg.exec(chatty, &tmp(), Duration::from_secs(4)),
+        )
+        .await
+        .expect("a chatty command must not outlive its deadline")
+        .unwrap();
+        assert!(out.timed_out);
+        assert!(t0.elapsed() < Duration::from_secs(20), "{:?}", t0.elapsed());
+        assert!(out.text.contains("tick"), "{}", out.text);
+        scrub("test-chatty");
+    }
+
+    #[test]
+    fn tails_cut_on_char_boundaries() {
+        let mut s = "é".repeat(10);
+        assert!(keep_tail(&mut s, 5));
+        assert_eq!(s, "éé");
+        let mut short = String::from("ok");
+        assert!(!keep_tail(&mut short, 5));
+        assert_eq!(short, "ok");
+    }
+
+    #[test]
+    fn logs_tail_never_splits_a_char() {
+        let reg = ShellRegistry::new("test-utf8");
+        let mut sh = LiveShell::reserved();
+        sh.ingest("é".repeat(100).as_bytes());
+        sh.exit = Some(0);
+        sh.drained = true;
+        reg.reg().shells.insert("sh-1".into(), sh);
+        for tail in [1, 7, 33] {
+            let t = reg.logs("sh-1", 0, tail).unwrap();
+            assert!(t.text.len() <= tail, "{tail}: {:?}", t.text);
+            assert!(t.text.chars().all(|c| c == 'é'), "{tail}: {:?}", t.text);
+        }
+        assert!(!reg.inner.is_poisoned());
+    }
+
+    #[tokio::test]
     async fn background_lifecycle() {
         let reg = ShellRegistry::new("test-bg");
-        let id = reg.start(&cmd_sleep(30), &tmp(), "sleeper").unwrap();
+        let id = reg.start(&cmd_sleep(30), &tmp()).unwrap();
         tokio::time::sleep(Duration::from_millis(300)).await;
         let tail = reg.logs(&id, 0, 4096).unwrap();
         assert!(tail.running);
@@ -677,24 +681,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn background_cap_refuses_the_ninth() {
+    async fn background_cap_refuses_the_ninth_before_it_runs() {
         let reg = ShellRegistry::new("test-cap");
         for _ in 0..MAX_BACKGROUND_PER_SESSION {
-            reg.start(&cmd_sleep(30), &tmp(), "sleeper").unwrap();
+            reg.start(&cmd_sleep(30), &tmp()).unwrap();
         }
-        assert!(reg.start(&cmd_sleep(30), &tmp(), "one-more").is_err());
-        // Reap everything so temp shells don't linger past the test.
-        let ids: Vec<String> = reg.inner.lock().unwrap().shells.keys().cloned().collect();
-        for id in ids {
-            reg.kill(&id);
-        }
+        let dir = tmp().join(format!("parzi-cap-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("ran.txt");
+        let _ = std::fs::remove_file(&marker);
+        assert!(reg.start("echo ran > ran.txt", &dir).is_err());
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert!(!marker.exists(), "a refused command must never start");
+        reg.kill_all();
+        let _ = std::fs::remove_dir_all(&dir);
         scrub("test-cap");
     }
 
     #[tokio::test]
     async fn logs_offset_walks_forward() {
         let reg = ShellRegistry::new("test-offset");
-        let id = reg.start(cmd_echo(), &tmp(), "echo").unwrap();
+        let id = reg.start(cmd_echo(), &tmp()).unwrap();
         let mut off = 0;
         for _ in 0..50 {
             if let Some(t) = reg.logs(&id, off, 4096) {
@@ -709,5 +716,27 @@ mod tests {
         assert!(tail.text.contains("hello-shell"), "{:?}", tail.text);
         reg.kill(&id);
         scrub("test-offset");
+    }
+
+    #[tokio::test]
+    async fn background_stderr_reaches_the_log() {
+        let reg = ShellRegistry::new("test-stderr");
+        let cmd = if cfg!(windows) {
+            "[Console]::Error.WriteLine('err-marker')"
+        } else {
+            "echo err-marker 1>&2"
+        };
+        let id = reg.start(cmd, &tmp()).unwrap();
+        let mut seen = String::new();
+        for _ in 0..100 {
+            let t = reg.logs(&id, 0, 4096).unwrap();
+            seen = t.text;
+            if !t.running && seen.contains("err-marker") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(seen.contains("err-marker"), "{seen:?}");
+        scrub("test-stderr");
     }
 }

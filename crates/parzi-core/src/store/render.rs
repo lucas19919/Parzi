@@ -1,4 +1,4 @@
-use super::cache::count_write;
+use super::cache::atomic_write_sync;
 use super::model::{Event, SessionMeta};
 use super::SessionStore;
 use crate::error::Result;
@@ -83,19 +83,22 @@ pub(crate) fn session_md(meta: &SessionMeta, events: &[Event]) -> String {
 
 impl SessionStore {
     pub fn transcript_md(&self, id: &str) -> Result<String> {
+        // Snapshot the marks before reading, so an append that lands while
+        // this renders keeps the flag for the next flush.
+        let (dirty, seq) = match self.cache().sessions.get(id) {
+            Some(s) => (s.md_dirty, Some(s.md_seq)),
+            None => (true, None),
+        };
         let meta = self.get(id)?;
         let events = self.events(id)?;
         let md = session_md(&meta, &events);
         let path = self.dir(id).join("session.md");
-        let dirty = match self.cache().sessions.get(id) {
-            Some(s) => s.md_dirty,
-            None => true,
-        };
         if dirty || !path.exists() {
-            count_write(1);
-            std::fs::write(&path, md.as_bytes())?;
+            atomic_write_sync(&path, md.as_bytes())?;
             if let Some(s) = self.cache().sessions.get_mut(id) {
-                s.md_dirty = false;
+                if Some(s.md_seq) == seq {
+                    s.md_dirty = false;
+                }
             }
         }
         Ok(md)
@@ -111,8 +114,7 @@ impl SessionStore {
             )
         };
         if pending.is_some() {
-            let meta = self.get(id)?;
-            self.write_meta(&meta)?;
+            self.update_meta(id, |_| {})?;
         }
         if dirty {
             self.transcript_md(id)?;

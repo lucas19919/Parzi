@@ -1,6 +1,7 @@
 import { writable, type Writable } from "svelte/store";
 import { bare } from "./suggest";
 import type { Tab } from "./tabs";
+import { toast } from "./toast";
 
 export interface Visit {
   url: string;
@@ -15,6 +16,7 @@ export interface Pin {
 }
 
 const HISTORY_MAX = 2000;
+const BOOKMARKS_MAX = 5000;
 
 function read<T>(key: string, fallback: T): T {
   try {
@@ -25,14 +27,24 @@ function read<T>(key: string, fallback: T): T {
   }
 }
 
+// A full (or blocked) localStorage fails every write after the first;
+// say so once instead of on every keystroke-sized save.
+let warnedFull = false;
+
+function store(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (e) {
+    if (warnedFull) return;
+    warnedFull = true;
+    toast(`Couldn't save browser data (storage full?): ${e}`, true);
+  }
+}
+
 function persisted<T>(key: string, fallback: T): Writable<T> {
-  const store = writable<T>(read(key, fallback));
-  store.subscribe((value) => {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-    } catch {}
-  });
-  return store;
+  const s = writable<T>(read(key, fallback));
+  s.subscribe((value) => store(key, value));
+  return s;
 }
 
 export const history = persisted<Visit[]>("parzi.history.v1", []);
@@ -93,10 +105,8 @@ export function removePin(url: string) {
 const TABS_KEY = "parzi.tabs.v1";
 
 export function saveTabs(tabs: Tab[], active: string) {
-  try {
-    const slim = tabs.map(({ id, kind, title, sessionId, url, cwd }) => ({ id, kind, title, sessionId, url, cwd }));
-    localStorage.setItem(TABS_KEY, JSON.stringify({ tabs: slim, active }));
-  } catch {}
+  const slim = tabs.map(({ id, kind, title, sessionId, url, cwd }) => ({ id, kind, title, sessionId, url, cwd }));
+  store(TABS_KEY, { tabs: slim, active });
 }
 
 export function loadTabs(): { tabs: Tab[]; active: string } | null {
@@ -135,7 +145,7 @@ export function importBrowser(data: {
   const marks = data.bookmarks.filter((b) => /^https?:\/\//i.test(b.url));
   bookmarks.update((all) => {
     const seen = new Set(all.map((b) => b.url));
-    return [...all, ...marks.filter((b) => !seen.has(b.url))];
+    return [...all, ...marks.filter((b) => !seen.has(b.url))].slice(0, BOOKMARKS_MAX);
   });
   pins.update((all) => {
     if (all.length) return all;

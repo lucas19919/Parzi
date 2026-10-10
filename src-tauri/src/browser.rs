@@ -65,10 +65,38 @@ pub fn page_label(tab: &str) -> Result<String, String> {
 
 fn http_page(raw: &str) -> Result<Url, String> {
     let url = Url::parse(raw).map_err(|e| e.to_string())?;
-    if url.scheme() == "http" || url.scheme() == "https" {
-        Ok(url)
-    } else {
-        Err("only http and https".into())
+    if !(url.scheme() == "http" || url.scheme() == "https") {
+        return Err("only http and https".into());
+    }
+    if app_origin(&url) {
+        return Err("that address belongs to Parzi itself".into());
+    }
+    Ok(url)
+}
+
+/// Tauri serves the app UI, IPC and assets on `http(s)://<scheme>.localhost`
+/// (Windows) and `<scheme>://` elsewhere. A tab there would run as the app's
+/// own local origin, which app commands trust.
+fn app_origin(url: &Url) -> bool {
+    const OWN: &[&str] = &["tauri", "ipc", "asset", "isolation"];
+    if OWN.contains(&url.scheme()) {
+        return true;
+    }
+    let host = url
+        .host_str()
+        .unwrap_or("")
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    host.strip_suffix(".localhost").is_some_and(|sub| {
+        OWN.iter()
+            .any(|own| sub == *own || sub.ends_with(&format!(".{own}")))
+    })
+}
+
+fn page_navigation(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https" | "about" | "blob" | "data") && !app_origin(url) && {
+        // blob:http://tauri.localhost/... carries the app origin inside.
+        url.scheme() != "blob" || Url::parse(url.path()).map_or(true, |inner| !app_origin(&inner))
     }
 }
 
@@ -128,38 +156,45 @@ fn touch_lru(label: &str) {
     lru.insert(0, label.to_string());
 }
 
-fn evict_lru(app: &AppHandle, keep: &str) {
-    let live: Vec<String> = app
-        .webviews()
+fn live_pages(app: &AppHandle) -> Vec<String> {
+    app.webviews()
         .into_keys()
         .filter(|l| l.starts_with(PAGE_PREFIX))
-        .collect();
-    if live.len() <= PAGE_CAP {
-        return;
-    }
-    let victim = {
-        let lru = locked(&LRU);
-        lru.iter()
-            .rev()
-            .find(|l| *l != keep && live.iter().any(|v| v == *l))
-            .cloned()
-            .or_else(|| live.into_iter().find(|l| l != keep))
-    };
-    let Some(label) = victim else {
-        return;
-    };
-    if let Some(wv) = app.get_webview(&label) {
-        // Keep the tab's current URL so reopening restores it.
-        if let Ok(url) = wv.url() {
-            if url.scheme() == "http" || url.scheme() == "https" {
-                if let Some(slot) = locked(&TABS).get_mut(&label) {
-                    slot.1 = url;
+        .collect()
+}
+
+/// Closes least-recently-shown pages past the cap, never one in `keep`.
+/// Counted once up front: a closing webview may still be listed.
+fn evict_lru(app: &AppHandle, keep: &[&str]) {
+    let mut live = live_pages(app);
+    let mut excess = live.len().saturating_sub(PAGE_CAP);
+    while excess > 0 {
+        let victim = {
+            let lru = locked(&LRU);
+            lru.iter()
+                .rev()
+                .find(|l| !keep.contains(&l.as_str()) && live.contains(l))
+                .cloned()
+                .or_else(|| live.iter().find(|l| !keep.contains(&l.as_str())).cloned())
+        };
+        let Some(label) = victim else {
+            return;
+        };
+        live.retain(|l| l != &label);
+        excess -= 1;
+        if let Some(wv) = app.get_webview(&label) {
+            // Keep the tab's current URL so reopening restores it.
+            if let Ok(url) = wv.url() {
+                if (url.scheme() == "http" || url.scheme() == "https") && !app_origin(&url) {
+                    if let Some(slot) = locked(&TABS).get_mut(&label) {
+                        slot.1 = url;
+                    }
                 }
             }
+            let _ = wv.close();
         }
-        let _ = wv.close();
+        locked(&LRU).retain(|l| l != &label);
     }
-    locked(&LRU).retain(|l| l != &label);
 }
 
 #[tauri::command]
@@ -200,30 +235,51 @@ pub fn browser_show(
     Ok(())
 }
 
+/// UI warm-up of a background tab.
 #[tauri::command]
 pub fn browser_prepare(app: AppHandle, tab: String, url: &str) -> Result<(), String> {
+    prepare(app, tab, url, false)
+}
+
+/// A background tab an agent is about to drive: it has to be live.
+pub fn prepare_for_agent(app: AppHandle, tab: String, url: &str) -> Result<(), String> {
+    prepare(app, tab, url, true)
+}
+
+/// Brings back an agent's tab whose page was evicted since it last drove it.
+pub fn revive(app: &AppHandle, tab: &str) {
+    let Ok(label) = page_label(tab) else {
+        return;
+    };
+    if app.get_webview(&label).is_none() && locked(&TABS).contains_key(&label) {
+        open_background(app.clone(), label, true);
+    }
+}
+
+fn prepare(app: AppHandle, tab: String, url: &str, evict: bool) -> Result<(), String> {
     let label = page_label(&tab)?;
     if app.get_webview(&label).is_some() {
         return Ok(());
     }
     let url = http_page(url)?;
     locked(&TABS).entry(label.clone()).or_insert((tab, url));
-    // Warming past the cap only records the entry; the webview is
-    // created lazily on first show so background tabs stay bounded.
-    let live = app
-        .webviews()
-        .into_iter()
-        .filter(|(l, _)| l.starts_with(PAGE_PREFIX))
-        .count();
-    if live >= PAGE_CAP {
-        return Ok(());
-    }
+    open_background(app, label, evict);
+    Ok(())
+}
+
+fn open_background(app: AppHandle, label: String, evict: bool) {
     let Some(window) = app.get_window("main") else {
-        return Ok(());
+        return;
     };
     std::thread::spawn(move || {
         let _op = locked(&OP);
         if app.get_webview(&label).is_some() || !locked(&TABS).contains_key(&label) {
+            return;
+        }
+        // Counted under OP so racing prepares cannot both slip under the
+        // cap. A warm-up past it only records the entry (the page is made
+        // on first show); an agent's page evicts the stalest background one.
+        if !evict && live_pages(&app).len() >= PAGE_CAP {
             return;
         }
         let scale = window.scale_factor().unwrap_or(1.0).max(0.01);
@@ -239,13 +295,18 @@ pub fn browser_prepare(app: AppHandle, tab: String, url: &str) -> Result<(), Str
             height: f64::from(inner.height) / scale,
             scale,
         };
-        if let Some(wv) = open_page(&app, &window, &job) {
-            if *locked(&SHOWN) != job.label {
-                let _ = wv.hide();
-            }
+        let Some(wv) = open_page(&app, &window, &job) else {
+            return;
+        };
+        let shown = locked(&SHOWN).clone();
+        if shown != job.label {
+            let _ = wv.hide();
+        }
+        if evict {
+            touch_lru(&job.label);
+            evict_lru(&app, &[&shown, &job.label]);
         }
     });
-    Ok(())
 }
 
 fn mount_page(app: &AppHandle, window: &tauri::Window, job: Fit) {
@@ -267,7 +328,7 @@ fn mount_page(app: &AppHandle, window: &tauri::Window, job: Fit) {
     };
     if fit_page(&wv, &job) {
         hide_pages(app, &job.label);
-        evict_lru(app, &job.label);
+        evict_lru(app, &[&job.label]);
         let mut shown = locked(&SHOWN);
         if *shown != job.label {
             shown.clone_from(&job.label);
@@ -309,8 +370,11 @@ fn page_builder(app: &AppHandle, label: &str, tab: &str, url: Url) -> WebviewBui
     let builder = WebviewBuilder::new(label, WebviewUrl::External(url))
         .devtools(false)
         .background_color(backdrop())
-        .on_navigation(|url| matches!(url.scheme(), "http" | "https" | "about" | "blob" | "data"))
+        .on_navigation(page_navigation)
         .on_new_window(move |url, features| {
+            if app_origin(&url) {
+                return NewWindowResponse::Deny;
+            }
             if features.size().is_some() {
                 return NewWindowResponse::Allow;
             }
@@ -450,7 +514,13 @@ fn place_page(wv: &Webview, job: &Fit) -> Result<(), String> {
         // Overscan 1 device px per side: CSS/device rounding otherwise
         // leaves a hairline of Parzi background around the page.
         let px = |v: f64| (v * scale).round() as i32;
-        crate::dwm::fit_page_surface(wv, px(job.x) - 1, px(job.y) - 1, px(job.width) + 2, px(job.height) + 2)
+        crate::dwm::fit_page_surface(
+            wv,
+            px(job.x) - 1,
+            px(job.y) - 1,
+            px(job.width) + 2,
+            px(job.height) + 2,
+        )
     }
     #[cfg(not(windows))]
     {
@@ -562,5 +632,45 @@ pub fn browser_nav(app: AppHandle, tab: &str, action: String) -> Result<(), Stri
     #[cfg(not(windows))]
     {
         wv.eval(js).map_err(|e| e.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tabs_never_load_the_app_origin() {
+        for bad in [
+            "http://tauri.localhost/",
+            "https://tauri.localhost/index.html",
+            "http://TAURI.localhost./",
+            "http://ipc.localhost/browser_show",
+            "http://asset.localhost/C:/x.png",
+            "http://x.tauri.localhost/",
+            "tauri://localhost/",
+            "asset://localhost/x",
+            "ipc://localhost/x",
+        ] {
+            let url = Url::parse(bad).unwrap();
+            assert!(app_origin(&url), "{bad}");
+            assert!(http_page(bad).is_err(), "{bad}");
+            assert!(!page_navigation(&url), "{bad}");
+        }
+        let blob = Url::parse("blob:http://tauri.localhost/0b6c").unwrap();
+        assert!(!page_navigation(&blob));
+        for ok in [
+            "https://example.com/",
+            "http://localhost:3000/",
+            "http://app.localhost/",
+            "http://tauri.example.com/",
+            "about:blank",
+            "blob:https://example.com/0b6c",
+        ] {
+            let url = Url::parse(ok).unwrap();
+            assert!(!app_origin(&url), "{ok}");
+            assert!(page_navigation(&url), "{ok}");
+        }
+        assert!(http_page("file:///C:/x").is_err());
     }
 }

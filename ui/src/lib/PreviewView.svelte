@@ -17,7 +17,7 @@
   {:else}
     <p class="hint">No preview named "{which}" yet.</p>
   {/each}
-  <p class="hint">Open this gallery with <span class="mono">Ctrl+P → Component previews</span>. Tell Lucas which number wins and what to change.</p>
+  <p class="hint">Dev builds open this gallery with <span class="mono">Ctrl+P → Component previews</span>.</p>
 </div>
 
 <style>

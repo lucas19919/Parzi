@@ -32,8 +32,9 @@ fn valid_numbers(arr: &[serde_json::Value]) -> bool {
     arr.iter().all(|p| {
         p.is_null()
             || p.is_number()
+            // "NaN" and "inf" parse as f64 but cannot be plotted.
             || p.as_str()
-                .is_some_and(|s| !s.trim().is_empty() && s.trim().parse::<f64>().is_ok())
+                .is_some_and(|s| s.trim().parse::<f64>().is_ok_and(f64::is_finite))
     })
 }
 

@@ -6,7 +6,68 @@ onboarding climax: **Set up remote → type `user@ip` → Parzi does the
 rest over your SSH** — sends the package, the package reads the specs
 and sets itself up optimally.
 
-## 0. Where we stand (verified 2026-10-07)
+## Built (2026-10-10)
+
+The one-button flow exists end to end. What shipped, and where it
+departs from the plan below:
+
+- **Transport: `parzi rpc` over SSH stdio, not `ssh -L`.** The desktop
+  runs `ssh … ~/.local/bin/parzi rpc`; that process reads the 0600
+  `serve.json` on the server and relays newline JSON (with request ids)
+  to `parzi serve` on 127.0.0.1. No port forward to manage, and the
+  token never leaves the server. Every other remote action is
+  `ssh … sh -s` with the script on stdin, so fish or zsh login shells
+  only ever parse `sh -s`. (`parzi_runtime::remote`)
+- **Setup** (`remote::setup`, desktop wizard and `parzi remote setup`):
+  key login, else password once via a throwaway askpass helper, after
+  which Parzi's own key (`~/.parzi/ssh/id_ed25519`) is added to
+  `authorized_keys`; probe (Linux x64/arm64, curl/wget, systemd);
+  install to `~/.local/bin/parzi` from the GitHub release with a
+  `.sha256` check (or upload a local build); spec upload; then
+  `parzi setup --spec … --enable --json`, whose JSON steps stream into
+  the wizard; link and save `~/.parzi/remote.json`.
+- **Spec v1** (`parzi_runtime::provision::Spec`): the portable config
+  (connectors and agent program paths stripped; the server keeps its
+  own) and brain notes minus project notes and archived ones. Notes are
+  add-only on the server. The spec file is deleted once applied.
+- **Server side** (`parzi_runtime::provision`): systemd user unit at
+  `~/.config/systemd/user/parzi-os.service`, enabled; lingering checked
+  and explained (never sudo); without user systemd the engine starts
+  detached and `parzi rpc` restarts it when it is down. An engine of an
+  older version is asked to `shutdown` and replaced, so upgrades are a
+  re-run of setup.
+- **Approvals: `ParkedApprover`, in memory.** Not durable, on purpose: a
+  run cannot outlive its engine anyway (`recover()` marks it idle). A
+  parked approval nobody answers is denied after 6 hours.
+- **Serve ops added:** `session.events` (newest page, then deltas by
+  `from`), `providers`, `doctor`, `shutdown`. The socket has a 10 s
+  request timeout and a 64-connection cap; `serve.json` is born 0600 in
+  a 0700 home.
+- **Desktop:** the Remote tab (sessions, thread, composer, approvals,
+  agents with Install/Sign in in a visible `ssh -t` terminal), the
+  onboarding step, Settings › System remote row.
+- **Agents on the server:** `parzi agent install|login <id>` runs the
+  vendor's own installer or login on that OS.
+- **Release:** `parzi-linux-x64` and `parzi-linux-arm64` (+ `.sha256`),
+  built on Ubuntu 22.04 (glibc 2.35 floor). CI tests the engine on Linux.
+- Tested end to end against WSL standing in for the server
+  (`crates/parzi-runtime/tests/remote_wsl.rs`, ignored by default).
+
+Still open, in order:
+
+1. Connector onboarding beyond the Settings list: the manifest scan and
+   `connector.propose`.
+2. Browser tools on the server (headless Chromium over CDP). Today
+   sessions on a server simply have no browser tools.
+3. Provider API keys sealed on the server (keyring or 0600 file). Today
+   agents sign in with their own login in the `ssh -t` terminal and
+   Parzi stores no secret.
+4. Live text streaming to the Remote tab. Today the tab polls and shows
+   a turn's text when the turn ends (the store writes assistant text at
+   turn end).
+5. Mobile: the same Remote tab with no local engine.
+
+## 0. Where we stood (verified 2026-10-07)
 
 - `parzi-core` / `parzi-providers` / `parzi-runtime` are **Tauri-free**
   (no tauri dep). The engine travels; only `src-tauri` doesn't.

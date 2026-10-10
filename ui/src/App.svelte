@@ -21,17 +21,19 @@
   import HomeView from "./lib/HomeView.svelte";
   import PreviewView from "./lib/PreviewView.svelte";
   import BrainView from "./lib/BrainView.svelte";
+  import RemoteView from "./lib/RemoteView.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
   import RequestPopup from "./lib/RequestPopup.svelte";
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
   import Settings from "./lib/Settings.svelte";
   import Icon from "./lib/Icon.svelte";
   import { board, ensureBoard } from "./lib/providerStore";
-  import { normLane } from "./lib/lanes";
+  import { normLane, permissionFor } from "./lib/lanes";
+  import { provideClearSessions } from "./lib/sessions";
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, toAddress, type Tab } from "./lib/tabs";
+  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, remoteTab, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
   import { toast, toastError, toasts, notify, chime } from "./lib/toast";
   import { covered } from "./lib/overlay";
@@ -74,15 +76,28 @@
 
   let model = "";
   let warmed = "";
-  let permission = "full";
+  // Sent as `mode` with every agent message. Starts from Settings'
+  // default (lanes.default_mode, loaded on mount); never full by default.
+  let permission = permissionFor("");
+  // Settings' default_mode: the floor the composer's choice cannot lift.
+  let policy = "";
   let mode: ComposerMode = "build";
   let sending = false;
 
-  // Omnibar binds directly to the active tab's composer (see markup
-  // below), so each tab keeps its own draft, mode, model, effort and
-  // attachments without cross-contamination. Only mode/model are mirrored
-  // out (lane hint, agent warmup); the rest would fan every keystroke
-  // through the whole reactive graph for no readers.
+  // The Omnibar binds to `comp`, the active tab's own composer object
+  // (tab.composer, same reference), so each tab keeps its draft, mode,
+  // model, effort and attachments. `comp` is only ever assigned inside
+  // functions, never by a `$:` statement: a binding to a reactive value
+  // invalidates everything that value derives from, which put every
+  // keystroke through `tabs` (desk sync, tab save, switcher rebuild).
+  let comp: TabComposerState = tabs.find((t) => t.id === activeId)?.composer ?? tabs[0].composer;
+  let compFor = "";
+
+  function syncComposer(t: Tab) {
+    if (compFor === t.id && comp === t.composer) return;
+    compFor = t.id;
+    comp = t.composer;
+  }
 
   function laneOf(sessionId: string | null | undefined): string {
     if (!sessionId) return "";
@@ -101,12 +116,24 @@
     return false;
   }
 
+  // One parent map per threads change instead of a find() per hop.
   $: familyActive = (() => {
     if (!shown) return 0;
-    const focus: string = shown;
-    return threads.filter(
-      (t) => t.id !== focus && isDescendant(t.id, focus) && (t.status === "active" || t.status === "queued" || running.has(t.id)),
-    ).length;
+    const parent = new Map(threads.map((t) => [t.id, t.parent_id]));
+    let n = 0;
+    for (const t of threads) {
+      if (t.id === shown || !(t.status === "active" || t.status === "queued" || running.has(t.id))) continue;
+      let cur = t.parent_id;
+      let guard = 0;
+      while (cur && guard++ < 50) {
+        if (cur === shown) {
+          n++;
+          break;
+        }
+        cur = parent.get(cur);
+      }
+    }
+    return n;
   })();
 
   // Composer state lives on the tab: switching tabs preserves each
@@ -125,15 +152,16 @@
   let immersive = false;
   let layout: "topbar" | "sidebar" = "topbar";
   let setupOpen = false;
+  let setupStep = 0;
   let project: { slug: string; title: string; tokens: number } | null = null;
   let navSeq = 0;
   let deskRev = 0;
 
   $: tab = tabs.find((t) => t.id === activeId) ?? tabs[0];
-  // Only mode/model mirror out (lane hint, agent warmup). Mirroring the
-  // whole composer would re-dirty the graph on every keystroke.
-  $: mode = tab.composer.mode;
-  $: model = tab.composer.model;
+  $: syncComposer(tab);
+  // Only mode/model mirror out (lane hint, agent warmup).
+  $: mode = comp.mode;
+  $: model = comp.model;
   $: streaming = !!shown && running.has(shown);
   $: hasSession = tab.kind === "session" && (!!shown || sending || events.length > 0);
   $: folder = tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
@@ -157,8 +185,15 @@
     void loadBranch(folder);
     void loadProject(folder);
   }
-  $: syncDesk(tabs, activeId);
-  $: saveTabs(tabs, activeId);
+  // Page events (loading, back/forward, blocked counts) patch tabs all
+  // the time; the desk and the saved tab list only care about this.
+  $: tabsKey = JSON.stringify([activeId, tabs.map((t) => [t.id, t.kind, t.title, t.url ?? "", t.sessionId ?? "", t.cwd ?? ""])]);
+  let lastTabsKey = "";
+  $: if (tabsKey !== lastTabsKey) {
+    lastTabsKey = tabsKey;
+    syncDesk(tabs, activeId);
+    saveTabs(tabs, activeId);
+  }
   $: pageVisible = tab.kind === "page";
   let lastPageVisible: boolean | null = null;
   $: if (pageVisible !== lastPageVisible) {
@@ -188,6 +223,8 @@
 
   async function loadProject(dir: string) {
     const ctx = dir ? await brain.context(dir).catch(() => null) : null;
+    // A quick tab switch can land an older folder's answer last.
+    if (dir !== folder) return;
     project = ctx?.project ? { slug: ctx.project.slug, title: ctx.project.title, tokens: ctx.tokens } : null;
   }
 
@@ -216,8 +253,26 @@
     else addTab(brainTab());
   }
 
+  function openRemote() {
+    const existing = tabs.find((t) => t.kind === "remote");
+    if (existing) selectTab(existing.id);
+    else addTab(remoteTab());
+  }
+
+  // Set up Parzi, opened straight at its Remote step.
+  function openRemoteSetup() {
+    setupStep = 4;
+    setupOpen = true;
+  }
+
+  function openSetup() {
+    setupStep = 0;
+    setupOpen = true;
+  }
+
   async function loadBranch(dir: string) {
-    branch = dir ? await api.gitBranch(dir).catch(() => "") : "";
+    const name = dir ? await api.gitBranch(dir).catch(() => "") : "";
+    if (dir === folder) branch = name;
   }
 
   function clearLive() {
@@ -266,10 +321,9 @@
       meta = m;
       events = ev;
       context = { used: m.context_tokens ?? 0, limit: m.context_limit ?? 0 };
-      const comp = tab.composer;
       if (m.model.includes("/")) {
-        comp.model = m.model;
-        tabs = tabs;
+        tab.composer.model = m.model;
+        comp = comp;
       }
       if (m.status === "active" || m.status === "queued") running = new Set(running).add(id);
       if (tab.sessionId === id && m.title) patchTab(tab.id, { title: m.title });
@@ -283,8 +337,15 @@
     if (!shown) return;
     const id = shown;
     const my = navSeq;
-    const [m, ev] = await api.getThread(id).catch(() => [null, null] as const);
-    if (!m || !ev || my !== navSeq || shown !== id) return;
+    let got: [SessionMeta, ChatEvent[]];
+    try {
+      got = await api.getThread(id);
+    } catch (e) {
+      if (my === navSeq && shown === id) toastError(e);
+      return;
+    }
+    const [m, ev] = got;
+    if (my !== navSeq || shown !== id) return;
     meta = m;
     events = ev;
     context = { used: m.context_tokens ?? context.used, limit: m.context_limit ?? context.limit };
@@ -406,7 +467,7 @@
   function navigatePage(url: string) {
     const id = tab.id;
     patchTab(id, { url, title: hostOf(url) });
-    api.browserNavigate(id, url).catch(() => {});
+    api.browserNavigate(id, url).catch(toastError);
   }
 
   const pendingTitles = new Map<string, string>();
@@ -509,50 +570,50 @@
 
   async function send() {
     const target = tab;
-    const comp = target.composer;
-    const prompt = comp.input.trim();
+    const draft = target.composer;
+    const prompt = draft.input.trim();
     if (!prompt || sending || streaming) return;
-    if (!comp.model && comp.mode !== "search") {
+    if (!draft.model && draft.mode !== "search") {
       toast("Pick a model first");
       omnibar?.openModels();
       return;
     }
     if (isExplicitUrl(prompt)) {
-      comp.input = "";
-      tabs = tabs;
+      draft.input = "";
+      comp = comp;
       browse(toAddress(prompt));
       return;
     }
-    const files = [...comp.attachments];
+    const files = [...draft.attachments];
     const sessionLane = normLane(laneOf(target.sessionId));
-    const fresh = !target.sessionId || (sessionLane !== "" && sessionLane !== comp.mode);
+    const fresh = !target.sessionId || (sessionLane !== "" && sessionLane !== draft.mode);
     if (fresh) {
       navTrail = [];
       navTab = "";
     }
     const optimistic: ChatEvent = { kind: "user", text: prompt };
     sending = true;
-    comp.input = "";
-    comp.attachments = [];
-    tabs = tabs;
+    draft.input = "";
+    draft.attachments = [];
+    comp = comp;
     events = [...events, optimistic];
     try {
       const sid = await api.sendMessage({
         sessionId: fresh ? null : target.sessionId,
-        model: comp.model,
+        model: draft.model,
         prompt,
         cwd: folder,
-        effort: comp.effort,
+        effort: draft.effort,
         attachments: files,
         mode: permission,
-        lane: comp.mode,
+        lane: draft.mode,
       });
       running = new Set(running).add(sid);
       // The field was cleared before the await. Drop the stored draft
       // for the tab that sent, not whichever tab is active now.
-      target.composer.input = "";
-      target.composer.attachments = [];
-      tabs = tabs;
+      draft.input = "";
+      draft.attachments = [];
+      comp = comp;
       if (fresh) patchTab(target.id, { sessionId: sid, title: prompt.slice(0, 40) });
       if (activeId === target.id) {
         shown = sid;
@@ -561,9 +622,9 @@
       }
       void refreshThreads();
     } catch (e) {
-      target.composer.input = prompt;
-      target.composer.attachments = files;
-      tabs = tabs;
+      draft.input = prompt;
+      draft.attachments = files;
+      comp = comp;
       events = events.filter((ev) => ev !== optimistic);
       toastError(e);
     } finally {
@@ -665,8 +726,10 @@
 
   function copyId() {
     if (!shown) return;
-    navigator.clipboard.writeText(shown).catch(() => {});
-    toast("Session ID copied");
+    navigator.clipboard.writeText(shown).then(
+      () => toast("Session ID copied"),
+      (e) => toast(`Couldn't copy: ${e}`, true),
+    );
   }
 
   // Agent requests share the question answer path: answering resumes the
@@ -735,13 +798,26 @@
     if (follow) void scrollToBottom();
   }
 
+  // Approvals and questions render inline in their own session only, and
+  // the backend denies them after a while: flag ones you can't see.
+  function flagElsewhere(session: string, what: string) {
+    if (session === shown && tab.kind === "session") return;
+    const title = threads.find((t) => t.id === session)?.title || "Agent";
+    notify(`${title} ${what}`, session);
+    chime(false);
+  }
+
   function onEvent(e: UiEvent) {
     if (e.kind === "approval") {
+      const fresh = !approvals.some((a) => a.key === e.key);
       approvals = [...approvals.filter((a) => a.key !== e.key), { key: e.key, session: e.session, call: e.call }];
+      if (fresh) flagElsewhere(e.session, "needs approval");
       return;
     }
     if (e.kind === "question") {
+      const fresh = !questions.some((q) => q.key === e.key);
       questions = [...questions.filter((q) => q.key !== e.key), { key: e.key, session: e.session, question: e.question, options: e.options }];
+      if (fresh) flagElsewhere(e.session, "has a question");
       return;
     }
     if (e.kind === "request") {
@@ -784,6 +860,8 @@
       liveTools = liveTools.map((t) => (t.running && t.id === e.id ? { ...t, running: false, ok: e.ok, ms: e.ms } : t));
     } else if (e.kind === "context") {
       context = { used: e.used, limit: e.limit };
+    } else if (e.kind === "notice") {
+      toast(e.text);
     }
   }
 
@@ -803,8 +881,8 @@
     else if (name === "ctrl+l") {
       if (tab.kind === "page") {        void setImmersive(false);
         void page?.focusAddress();
-      } else {
-        mode = "search";
+      } else if (tab.kind === "session") {
+        if (!lockMode) comp.mode = "search";
         omnibar?.focus();
       }
     } else if (name === "ctrl+tab" || name === "ctrl+shift+tab") {
@@ -891,12 +969,29 @@
     void warmPages();
     const onBg = (e: Event) => (bg = (e as CustomEvent<string>).detail);
     document.addEventListener("parzi:bg", onBg);
+    // Settings › General changed the tool policy: the composer follows.
+    const onDefaultMode = (e: Event) => {
+      policy = (e as CustomEvent<string>).detail ?? "";
+      permission = permissionFor(policy);
+    };
+    document.addEventListener("parzi:default-mode", onDefaultMode);
+    const unClear = provideClearSessions(clearFinishedSessions);
+    api
+      .getConfig()
+      .then((cfg) => {
+        policy = cfg.lanes?.default_mode ?? "";
+        permission = permissionFor(policy);
+      })
+      .catch((e) => toast(`Couldn't read the tool policy, so agents will ask first: ${e}`, true));
+    api
+      .listThreads()
+      .then((list) => (threads = list))
+      .catch((e) => toast(`Couldn't load sessions: ${e}`, true));
     (async () => {
       try {
         applyThemeCss(await api.getThemeCss());
         bg = await api.backgroundUrl();
         await ensureBoard();
-        await refreshThreads();
         checkForUpdatesSoon();
       } catch (e) {
         toast(`Startup: ${e}`, true);
@@ -904,6 +999,8 @@
     })();
     return () => {
       unBrain();
+      unClear();
+      document.removeEventListener("parzi:default-mode", onDefaultMode);
       unRun.then((f) => f()).catch(() => {});
       unDesk.then((f) => f()).catch(() => {});
       for (const un of [unPage, unOpen, unKey]) un.then((f) => f()).catch(() => {});
@@ -934,8 +1031,9 @@
       on:settings={() => openSettings()}
       on:update={() => openSettings("system")}
       on:brain={openBrain}
+      on:remote={openRemote}
       on:history={() => openHistory()}
-      on:setup={() => (setupOpen = true)}
+      on:setup={openSetup}
     />
   {/if}
 
@@ -955,12 +1053,17 @@
     {#if tab.kind === "settings"}
       <div class="fill col" in:fly={{ y: 8, ...motion }}>
         <PanelHeader title="Settings" on:close={() => closeTab(activeId)} />
-        <Settings bind:section={settingsSection} on:close={() => closeTab(activeId)} />
+        <Settings bind:section={settingsSection} on:close={() => closeTab(activeId)} on:openRemote={openRemote} on:setupRemote={openRemoteSetup} />
       </div>
     {:else if tab.kind === "brain"}
       <div class="fill col" in:fade={{ duration: 150 }}>
         <PanelHeader title="Brain" on:close={() => closeTab(activeId)} />
         <BrainView />
+      </div>
+    {:else if tab.kind === "remote"}
+      <div class="fill col" in:fade={{ duration: 150 }}>
+        <PanelHeader title="Remote" on:close={() => closeTab(activeId)} />
+        <RemoteView on:setup={openRemoteSetup} />
       </div>
     {:else if tab.kind === "history"}
       <div class="fill col" in:fade={{ duration: 150 }}>
@@ -1033,10 +1136,9 @@
                 on:voted={(e) => (approvals = approvals.filter((a) => a.key !== e.detail.key))}
                 on:answered={(e) => (questions = questions.filter((q) => q.key !== e.detail.key))}
                 on:edited={(e) => {
-                  tab.composer.input = e.detail.text;
-                  tabs = tabs;
+                  comp.input = e.detail.text;
                   omnibar?.focus();
-                  toast("Loaded into composer — edit and send");
+                  toast("Loaded into composer. Edit and send.");
                 }}
                 on:forked={() => fork()}
               />
@@ -1083,12 +1185,13 @@
         {/if}
         <Omnibar
           bind:this={omnibar}
-          bind:input={tab.composer.input}
-          bind:model={tab.composer.model}
-          bind:effort={tab.composer.effort}
+          bind:input={comp.input}
+          bind:model={comp.model}
+          bind:effort={comp.effort}
           bind:permission
-          bind:mode={tab.composer.mode}
-          bind:attachments={tab.composer.attachments}
+          {policy}
+          bind:mode={comp.mode}
+          bind:attachments={comp.attachments}
           {folder}
           lockMode={lockMode}
           folderLocked={!!tab.sessionId}
@@ -1128,23 +1231,14 @@
     on:newPage={() => addTab(pageTab())}
     on:settings={() => openSettings()}
     on:previews={() => openPreview()}
-    on:setup={() => (setupOpen = true)}
+    on:setup={openSetup}
     on:brain={openBrain}
+    on:remote={openRemote}
     on:history={() => openHistory()}
   />
 
   {#if setupOpen}
-    <Onboarding on:close={() => (setupOpen = false)} on:openBrain={openBrain} />
-  {/if}
-
-  {#if openRequest}
-    <RequestPopup
-      request={openRequest}
-      title={openRequestTitle}
-      pending={requests.length}
-      on:answer={(e) => answerRequest(e.detail.key, e.detail.text)}
-      on:decline={(e) => declineRequest(e.detail.key)}
-    />
+    <Onboarding startStep={setupStep} on:close={() => (setupOpen = false)} on:openBrain={openBrain} on:openRemote={openRemote} />
   {/if}
 
   {#if openRequest}

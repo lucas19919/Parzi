@@ -179,7 +179,7 @@ async fn blocking<T: Send + 'static>(
 }
 
 #[cfg(windows)]
-fn open_terminal(title: &str, script: &str) -> Result<(), String> {
+pub(crate) fn open_terminal(title: &str, script: &str) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
     let title = title.replace('\'', "''");
@@ -199,7 +199,7 @@ fn open_terminal(title: &str, script: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn open_terminal(_title: &str, script: &str) -> Result<(), String> {
+pub(crate) fn open_terminal(_title: &str, script: &str) -> Result<(), String> {
     let script = script.replace('\\', "\\\\").replace('"', "\\\"");
     let tell = format!("tell application \"Terminal\" to do script \"{script}\"");
     let mut child = Command::new("osascript")
@@ -218,7 +218,7 @@ fn open_terminal(_title: &str, script: &str) -> Result<(), String> {
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]
-fn open_terminal(_title: &str, script: &str) -> Result<(), String> {
+pub(crate) fn open_terminal(_title: &str, script: &str) -> Result<(), String> {
     Err(format!("Open a terminal and run: {script}"))
 }
 

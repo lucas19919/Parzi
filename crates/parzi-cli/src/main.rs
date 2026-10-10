@@ -47,13 +47,72 @@ enum Cmd {
     },
     #[command(about = "Run the engine with no window. Listens on 127.0.0.1")]
     Serve,
-    #[command(about = "Prepare ~/.parzi for ParziOS. Does not start the engine")]
-    Setup,
+    #[command(about = "Set this machine up for ParziOS: ~/.parzi, a spec, the engine")]
+    Setup {
+        #[arg(
+            long,
+            help = "Settings and notes sent by the desktop. Deleted once applied"
+        )]
+        spec: Option<std::path::PathBuf>,
+        #[arg(long, help = "Install and start the engine as a user service")]
+        enable: bool,
+        #[arg(long, help = "One JSON line per step")]
+        json: bool,
+    },
+    #[command(about = "Relay newline JSON on stdio to parzi serve. Parzi runs this over SSH")]
+    Rpc,
     #[command(about = "Answer a parked approval on parzi serve")]
     Approval {
         #[command(subcommand)]
         action: ApprovalCmd,
     },
+    #[command(about = "Install an agent or sign in to it, on this machine")]
+    Agent {
+        #[command(subcommand)]
+        action: AgentCmd,
+    },
+    #[command(about = "ParziOS on another machine, over your SSH")]
+    Remote {
+        #[command(subcommand)]
+        action: RemoteCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum AgentCmd {
+    #[command(about = "Run the vendor's official installer")]
+    Install {
+        #[arg(help = "claude, codex, opencode, grok, antigravity, cursor")]
+        provider: String,
+    },
+    #[command(about = "Sign in with the agent's own login")]
+    Login { provider: String },
+}
+
+#[derive(Subcommand)]
+enum RemoteCmd {
+    #[command(about = "Install Parzi on a Linux machine and link to it. Needs key login")]
+    Setup {
+        #[arg(help = "user@host or user@host:port")]
+        target: String,
+        #[arg(long, help = "Keep brain notes on this machine")]
+        no_notes: bool,
+        #[arg(
+            long,
+            help = "Upload this Linux build instead of downloading the release"
+        )]
+        binary: Option<std::path::PathBuf>,
+    },
+    #[command(about = "The linked remote and whether its engine answers")]
+    Status,
+    #[command(about = "Send one op to the remote engine and print the reply")]
+    Call {
+        op: String,
+        #[arg(help = "JSON object with the op's fields")]
+        body: Option<String>,
+    },
+    #[command(about = "Unlink this machine from the remote")]
+    Forget,
 }
 
 #[derive(Subcommand)]
@@ -177,8 +236,16 @@ async fn main() -> Result<()> {
         Cmd::Session { action } => cmd_session(action).await,
         Cmd::Tab { action } => cmd_tab(action).await,
         Cmd::Serve => cmd_serve().await,
-        Cmd::Setup => cmd_setup(),
+        Cmd::Setup { spec, enable, json } => cmd_setup(spec.as_deref(), enable, json).await,
+        Cmd::Rpc => {
+            let exe = std::env::current_exe().context("finding the parzi binary")?;
+            parzi_runtime::provision::relay(&exe)
+                .await
+                .context("relaying to parzi serve")
+        }
         Cmd::Approval { action } => cmd_approval(action).await,
+        Cmd::Agent { action } => cmd_agent(action).await,
+        Cmd::Remote { action } => cmd_remote(action).await,
     }
 }
 
@@ -210,33 +277,287 @@ async fn cmd_serve() -> Result<()> {
         eprintln!("token file: {}", path.display());
     }
     eprintln!("this socket is local. A remote machine is reached through SSH.");
-    tokio::signal::ctrl_c()
-        .await
-        .context("waiting for ctrl-c")?;
+    tokio::select! {
+        r = tokio::signal::ctrl_c() => r.context("waiting for ctrl-c")?,
+        () = terminated() => {}
+        () = daemon.stopped() => eprintln!("asked to stop"),
+    }
     drop(daemon);
     eprintln!("stopped");
     Ok(())
 }
 
-fn cmd_setup() -> Result<()> {
-    cmd_init()?;
-    #[cfg(target_os = "linux")]
+/// SIGTERM, which is how systemd stops the service.
+async fn terminated() {
+    #[cfg(unix)]
     {
-        let exe = std::env::current_exe().context("finding the parzi binary")?;
-        let unit = parzi_runtime::osserve::systemd_unit(&exe);
-        let path = paths::parzi_dir()?.join("parzi-os.service");
-        parzi_core::atomic_write(&path, unit.as_bytes()).context("writing the service file")?;
-        println!("service file: {}", path.display());
-        println!("it is not enabled. To start it on login:");
-        println!("  systemctl --user link {}", path.display());
-        println!("  systemctl --user enable --now parzi-os.service");
+        use tokio::signal::unix::{signal, SignalKind};
+        if let Ok(mut term) = signal(SignalKind::terminate()) {
+            term.recv().await;
+            return;
+        }
     }
-    #[cfg(not(target_os = "linux"))]
-    {
-        println!("the user service file is written when setup runs on Linux.");
-        println!("on this PC: parzi serve");
+    std::future::pending::<()>().await;
+}
+
+async fn cmd_setup(spec: Option<&std::path::Path>, enable: bool, json: bool) -> Result<()> {
+    use parzi_runtime::provision::{self, Step};
+    let report = |s: &Step| {
+        if json {
+            println!("{}", serde_json::to_string(s).unwrap_or_default());
+        } else {
+            println!(
+                "{} {:<8} {}",
+                if s.ok { "ok  " } else { "FAIL" },
+                s.step,
+                s.detail
+            );
+        }
+    };
+    let mut failed = false;
+    let mut emit = |s: Step| {
+        failed |= !s.ok;
+        report(&s);
+    };
+    match cmd_init_quiet() {
+        Ok(root) => emit(Step::ok("home", root.display().to_string())),
+        Err(e) => emit(Step::fail("home", format!("{e:#}"))),
+    }
+    if let Some(path) = spec {
+        let parsed = std::fs::read_to_string(path)
+            .map_err(|e| format!("could not read {}: {e}", path.display()))
+            .and_then(|raw| {
+                serde_json::from_str::<provision::Spec>(&raw)
+                    .map_err(|e| format!("the spec is not valid: {e}"))
+            });
+        match parsed {
+            Ok(spec) => {
+                if !spec.from.is_empty() {
+                    emit(Step::ok("spec", format!("from {}", spec.from)));
+                }
+                for step in provision::apply_spec(&spec) {
+                    emit(step);
+                }
+                let _ = std::fs::remove_file(path);
+            }
+            Err(e) => emit(Step::fail("spec", e)),
+        }
+    }
+    if enable {
+        let exe = std::env::current_exe().context("finding the parzi binary")?;
+        for step in provision::install_service(&exe).await {
+            emit(step);
+        }
+        match provision::ensure_serving(&exe, Duration::from_secs(20)).await {
+            Ok(v) => emit(Step::ok(
+                "engine",
+                format!("Parzi {v} answers on this machine"),
+            )),
+            Err(e) => emit(Step::fail("engine", e)),
+        }
+        match parzi_runtime::desk::call_serve(
+            "providers",
+            json!({ "refresh": true }),
+            Duration::from_secs(90),
+        )
+        .await
+        {
+            Ok(v) => emit(Step::ok("agents", agents_line(&v))),
+            Err(e) => emit(Step::ok("agents", format!("not checked: {e}"))),
+        }
+    } else if cfg!(target_os = "linux") {
+        emit(Step::ok(
+            "service",
+            "not installed; run `parzi setup --enable` to start the engine as a user service",
+        ));
+    } else {
+        emit(Step::ok(
+            "service",
+            "on this machine, start the engine with `parzi serve`",
+        ));
+    }
+    let done = Step {
+        step: "done".into(),
+        ok: !failed,
+        detail: String::new(),
+    };
+    if json {
+        report(&done);
+    }
+    if failed {
+        anyhow::bail!("setup did not finish");
     }
     Ok(())
+}
+
+/// "2 of 6 ready: Claude, Codex" from a `providers` reply.
+fn agents_line(v: &Value) -> String {
+    let rows = v
+        .get("providers")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let ready: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.get("state").and_then(Value::as_str) == Some("ready"))
+        .filter_map(|r| r.get("provider").and_then(Value::as_str))
+        .map(parzi_providers::display_name)
+        .collect();
+    if ready.is_empty() {
+        "no agent is signed in here yet. Install and sign in from Parzi, or run `parzi agent install claude`".into()
+    } else {
+        format!(
+            "{} of {} ready: {}",
+            ready.len(),
+            rows.len(),
+            ready.join(", ")
+        )
+    }
+}
+
+fn cmd_init_quiet() -> Result<std::path::PathBuf> {
+    let root = paths::ensure_dirs().context("creating ~/.parzi")?;
+    if !paths::config_path()?.exists() {
+        ParziConfig::default().save().context("writing config")?;
+    }
+    let theme = parzi_core::theme::Theme::load().unwrap_or_default();
+    theme.save().context("writing theme")?;
+    Ok(root)
+}
+
+async fn cmd_agent(action: AgentCmd) -> Result<()> {
+    let (id, install) = match &action {
+        AgentCmd::Install { provider } => (provider, true),
+        AgentCmd::Login { provider } => (provider, false),
+    };
+    let id = parzi_providers::canonical_id(id).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown agent `{id}` (one of: {})",
+            parzi_providers::PROVIDERS.join(", ")
+        )
+    })?;
+    let name = parzi_providers::display_name(id);
+    let (cfg, _) = boot()?;
+    let script = if install {
+        parzi_providers::install_script(id)
+    } else {
+        parzi_providers::login_script(id, &cfg)
+    };
+    let Some(script) = script else {
+        if install {
+            anyhow::bail!("no installer is known for {name}");
+        }
+        eprintln!("{name} signs in through your browser. If none opens here, sign in on a machine with a browser.");
+        return parzi_providers::sign_in(id, &cfg, || {
+            eprintln!("waiting for the browser sign-in…")
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!(e.message));
+    };
+    eprintln!(
+        "{}: {script}",
+        if install { "installing" } else { "signing in" }
+    );
+    let mut cmd = if cfg!(windows) {
+        let mut c = std::process::Command::new("powershell.exe");
+        c.args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ]);
+        c
+    } else {
+        let mut c = std::process::Command::new("sh");
+        c.args(["-c", &script]);
+        c
+    };
+    let status = cmd.status().context("starting the shell")?;
+    if !status.success() {
+        anyhow::bail!("{name}: the command failed ({status})");
+    }
+    Ok(())
+}
+
+fn parse_target(raw: &str) -> Result<parzi_runtime::remote::Target> {
+    let (user, host) = raw
+        .split_once('@')
+        .ok_or_else(|| anyhow::anyhow!("write the remote as user@host"))?;
+    parzi_runtime::remote::Target::parse(user, host).map_err(|e| anyhow::anyhow!(e))
+}
+
+async fn remote_link() -> Result<(parzi_runtime::remote::Saved, parzi_runtime::remote::Link)> {
+    use parzi_runtime::remote;
+    let saved = remote::load_saved()
+        .ok_or_else(|| anyhow::anyhow!("no remote yet: `parzi remote setup user@host`"))?;
+    let link = remote::Link::open(&remote::Transport::ssh(&saved.target))
+        .await
+        .map_err(|e| anyhow::anyhow!("{}: {e}", saved.target.label()))?;
+    Ok((saved, link))
+}
+
+async fn cmd_remote(action: RemoteCmd) -> Result<()> {
+    use parzi_runtime::remote;
+    match action {
+        RemoteCmd::Setup {
+            target,
+            no_notes,
+            binary,
+        } => {
+            let target = parse_target(&target)?;
+            let opts = remote::SetupOptions {
+                notes: !no_notes,
+                binary,
+                ..Default::default()
+            };
+            let print = |p: remote::Progress| {
+                let mark = match p.state {
+                    "ok" => "ok  ",
+                    "fail" => "FAIL",
+                    "run" => "... ",
+                    _ => "    ",
+                };
+                eprintln!("{mark} {:<8} {}", p.step, p.detail);
+            };
+            remote::setup(target, opts, &print)
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            Ok(())
+        }
+        RemoteCmd::Status => {
+            let (saved, link) = remote_link().await?;
+            let v = link
+                .call("health", json!({}), Duration::from_secs(10))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            println!(
+                "{}  Parzi {}",
+                saved.target.label(),
+                v.get("version").and_then(Value::as_str).unwrap_or("?")
+            );
+            Ok(())
+        }
+        RemoteCmd::Call { op, body } => {
+            let body: Value = match body {
+                Some(raw) => {
+                    serde_json::from_str(&raw).context("the body must be a JSON object")?
+                }
+                None => json!({}),
+            };
+            let (_, link) = remote_link().await?;
+            let v = link
+                .call(&op, body, Duration::from_secs(120))
+                .await
+                .map_err(|e| anyhow::anyhow!(e))?;
+            print_json(&v)
+        }
+        RemoteCmd::Forget => {
+            remote::forget().map_err(|e| anyhow::anyhow!(e))?;
+            println!("unlinked. The remote keeps running until you stop it there.");
+            Ok(())
+        }
+    }
 }
 
 async fn cmd_approval(action: ApprovalCmd) -> Result<()> {

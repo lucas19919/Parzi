@@ -248,7 +248,10 @@ pub fn read_user_css() -> Result<String> {
     }
 }
 
-const BUILTIN_PACKS: &[&str] = &["tokyo-night", "full-dark", "grey", "light"];
+/// Position in the builtin list, or None for a user pack.
+fn builtin_rank(name: &str) -> Option<usize> {
+    paths::BUILTIN_PACKS.iter().position(|(n, _)| *n == name)
+}
 
 pub fn themes_dir() -> Result<std::path::PathBuf> {
     Ok(paths::parzi_dir()?.join("themes"))
@@ -318,24 +321,52 @@ pub fn list_pack_infos() -> Result<Vec<PackInfo>> {
         };
         let has_art = !pack_art(&dir).is_empty() || !theme.background.image.is_empty();
         out.push(PackInfo {
-            builtin: BUILTIN_PACKS.contains(&name.as_str()),
+            builtin: builtin_rank(&name).is_some(),
             name,
             colors: theme.colors,
             has_art,
         });
     }
     out.sort_by_key(|p| {
-        let rank = BUILTIN_PACKS
-            .iter()
-            .position(|b| *b == p.name)
-            .unwrap_or(usize::MAX);
+        let rank = builtin_rank(&p.name).unwrap_or(usize::MAX);
         (!p.builtin, rank, p.name.clone())
     });
     Ok(out)
 }
 
+/// `abs` if it is a regular file inside backgrounds/: no `..`, no escape
+/// through an absolute theme value, no symlink.
+#[must_use]
+pub fn checked_background(abs: std::path::PathBuf) -> Option<std::path::PathBuf> {
+    let bgs = paths::backgrounds_dir().ok()?;
+    if abs
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+        || !abs.starts_with(&bgs)
+    {
+        return None;
+    }
+    std::fs::symlink_metadata(&abs)
+        .is_ok_and(|m| m.is_file())
+        .then_some(abs)
+}
+
+/// The file a theme's `background.image` names, when it is a safe one.
+#[must_use]
+pub fn background_file(image: &str) -> Option<std::path::PathBuf> {
+    if image.trim().is_empty() {
+        return None;
+    }
+    checked_background(paths::parzi_dir().ok()?.join(image))
+}
+
 pub fn save_pack(name: &str) -> Result<()> {
     check_pack_name(name)?;
+    if builtin_rank(name).is_some() {
+        return Err(ParziError::Config(
+            "built-in themes can't be overwritten; save under a new name".into(),
+        ));
+    }
     let dir = themes_dir()?.join(name);
     std::fs::create_dir_all(&dir)?;
     let theme = Theme::load()?;
@@ -343,12 +374,9 @@ pub fn save_pack(name: &str) -> Result<()> {
         &dir.join("theme.toml"),
         toml::to_string(&theme.normalized())?.as_bytes(),
     )?;
-    if !theme.background.image.is_empty() {
-        let bg_src = paths::parzi_dir()?.join(&theme.background.image);
-        if bg_src.exists() {
-            if let Some(fname) = bg_src.file_name() {
-                std::fs::copy(&bg_src, dir.join(fname))?;
-            }
+    if let Some(bg_src) = background_file(&theme.background.image) {
+        if let Some(fname) = bg_src.file_name() {
+            std::fs::copy(&bg_src, dir.join(fname))?;
         }
     }
     let css_src = paths::user_css_path()?;
@@ -361,7 +389,7 @@ pub fn save_pack(name: &str) -> Result<()> {
 pub fn rename_pack(old: &str, new: &str) -> Result<()> {
     check_pack_name(old)?;
     check_pack_name(new)?;
-    if BUILTIN_PACKS.contains(&old) {
+    if builtin_rank(old).is_some() {
         return Err(ParziError::Config(
             "built-in themes can't be renamed".into(),
         ));
@@ -383,7 +411,7 @@ pub fn rename_pack(old: &str, new: &str) -> Result<()> {
 
 pub fn delete_pack(name: &str) -> Result<()> {
     check_pack_name(name)?;
-    if BUILTIN_PACKS.contains(&name) {
+    if builtin_rank(name).is_some() {
         return Err(ParziError::Config(
             "built-in themes can't be deleted".into(),
         ));
@@ -402,15 +430,32 @@ pub fn apply_pack(name: &str) -> Result<Theme> {
     let mut theme: Theme = toml::from_str(&std::fs::read_to_string(dir.join("theme.toml"))?)?;
     let current = Theme::load().unwrap_or_default();
 
-    let art = pack_art(&dir);
-    for fname in &art {
-        let dest = paths::backgrounds_dir()?.join(fname);
-        if !dest.exists() {
-            std::fs::copy(dir.join(fname), &dest)?;
+    // Copies carry the pack's name, so two packs shipping `wall.jpg` never
+    // show each other's picture; a changed file is copied again.
+    let bgs = paths::backgrounds_dir()?;
+    let mut art = vec![];
+    for fname in pack_art(&dir) {
+        let src = dir.join(&fname);
+        if !is_bg_file(&src) {
+            continue;
         }
+        let local = if fname.starts_with(&format!("{name}-")) {
+            fname
+        } else {
+            format!("{name}-{fname}")
+        };
+        let dest = bgs.join(&local);
+        let same = std::fs::metadata(&dest)
+            .ok()
+            .zip(std::fs::metadata(&src).ok())
+            .is_some_and(|(d, s)| d.len() == s.len());
+        if !same {
+            std::fs::create_dir_all(&bgs)?;
+            std::fs::copy(&src, &dest)?;
+        }
+        art.push(local);
     }
-    let named_exists = !theme.background.image.is_empty()
-        && paths::parzi_dir()?.join(&theme.background.image).exists();
+    let named_exists = background_file(&theme.background.image).is_some();
     if let Some(first) = art.first() {
         theme.background.image = format!("backgrounds/{first}");
     } else if !named_exists {
@@ -444,10 +489,28 @@ fn is_bg_file(p: &std::path::Path) -> bool {
     }
 }
 
-pub fn delete_background(name: &str) -> Result<Theme> {
-    if name.trim().is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+/// A background is named by one plain file name with an image extension:
+/// no separators, no drive prefix (`C:x` would leave backgrounds/), no `..`.
+fn check_bg_name(name: &str) -> Result<()> {
+    let p = std::path::Path::new(name);
+    let mut parts = p.components();
+    let plain = matches!(
+        (parts.next(), parts.next()),
+        (Some(std::path::Component::Normal(n)), None) if n == p.as_os_str()
+    );
+    let ext = p
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    if !plain || name.contains([':', '/', '\\']) || !BG_EXTS.contains(&ext.as_str()) {
         return Err(ParziError::Config("bad background name".into()));
     }
+    Ok(())
+}
+
+pub fn delete_background(name: &str) -> Result<Theme> {
+    check_bg_name(name)?;
     let p = paths::backgrounds_dir()?.join(name);
     if p.exists() {
         std::fs::remove_file(&p).map_err(ParziError::Io)?;
@@ -476,9 +539,7 @@ pub fn list_backgrounds() -> Result<Vec<String>> {
 
 pub fn set_background(name: &str) -> Result<Theme> {
     if !name.is_empty() {
-        if name.contains('/') || name.contains('\\') || name.contains("..") {
-            return Err(ParziError::Config("bad background name".into()));
-        }
+        check_bg_name(name)?;
         let p = paths::backgrounds_dir()?.join(name);
         if !is_bg_file(&p) {
             return Err(ParziError::Config(format!("background not found: {name}")));
@@ -671,6 +732,36 @@ mod css_tests {
 }
 
 #[cfg(test)]
+mod background_name_tests {
+    use super::check_bg_name;
+
+    #[test]
+    fn only_one_plain_image_name_is_a_background() {
+        for ok in ["pic.png", "Dusk-2.JPG", "a b.webp", "x.jpeg"] {
+            assert!(check_bg_name(ok).is_ok(), "{ok:?}");
+        }
+        for bad in [
+            "",
+            " ",
+            "C:x",
+            "C:x.png",
+            "C:\\x.png",
+            "/abs.png",
+            "../x.png",
+            "..",
+            "a/b.png",
+            "a\\b.png",
+            "notes.txt",
+            "noext",
+            ".",
+            "x.png/",
+        ] {
+            assert!(check_bg_name(bad).is_err(), "{bad:?}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod palette_tests {
     use super::extract_palette;
 
@@ -690,7 +781,7 @@ mod palette_tests {
     }
 
     #[test]
-    fn monochrome_art_falls_back_to_indigo() {
+    fn monochrome_art_falls_back_to_the_neutral_accent() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("gray.png");
         solid_png(&p, [120, 120, 120]);

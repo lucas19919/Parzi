@@ -23,6 +23,7 @@
     brain: void;
     history: void;
     previews: void;
+    remote: void;
     setup: void;
   }>();
 
@@ -59,46 +60,58 @@
     return n >= 1000 ? `${Math.round(n / 1000)}k tokens` : `${n} tokens`;
   }
 
-  $: q = query.trim().toLowerCase();
-  $: openSessions = new Set(tabs.map((t) => t.sessionId).filter(Boolean));
-  $: items = [
-    ...[
-      { id: "new-session", icon: "chat", title: "New session", sub: "Start a draft", run: () => dispatch("newSession") },
-      { id: "new-page", icon: "globe", title: "New page", sub: "Open a web page", run: () => dispatch("newPage") },
-      { id: "history", icon: "clock", title: "History", sub: "Pages you visited and bookmarks", run: () => dispatch("history") },
-      { id: "brain", icon: "brain", title: "Brain", sub: "Notes and projects", run: () => dispatch("brain") },
-      { id: "previews", icon: "spark", title: "Component previews", sub: "Live Omnibar variants, side by side", run: () => dispatch("previews") },
-      { id: "settings", icon: "settings", title: "Settings", sub: "Agents, appearance, system", run: () => dispatch("settings") },
-      { id: "setup", icon: "spark", title: "Set up Parzi", sub: "Agents, browser, tools, brain, remote", run: () => dispatch("setup") },
-    ]
-      .filter((c) => hit(q, c.title, c.sub))
-      .map((c) => ({ ...c, group: "Actions" }) as Item),
-    ...tabs
-      .filter((t) => hit(q, t.title, t.url))
-      .map(
-        (t): Item => ({
-          id: `tab:${t.id}`,
-          group: "Tabs",
-          icon: t.kind === "page" ? "globe" : "chat",
-          title: t.title || "New session",
-          sub: t.id === activeTabId ? "Current tab" : t.url || "Open tab",
-          run: () => dispatch("selectTab", { id: t.id }),
-        }),
-      ),
-    ...threads
-      .filter((t) => !openSessions.has(t.id) && hit(q, t.title, t.model, t.cwd))
-      .map(
-        (t): Item => ({
-          id: `session:${t.id}`,
-          group: "Sessions",
-          icon: "chat",
-          title: t.title || "Untitled session",
-          sub: [t.model && t.model !== "auto" ? t.model : "no model yet", t.cwd ? folderName(t.cwd) : "", tokens(t)].filter(Boolean).join(" · "),
-          run: () => dispatch("openSession", { id: t.id }),
-          remove: () => dispatch("deleteSession", { id: t.id }),
-        }),
-      ),
+  // The component gallery is a design tool: dev builds only.
+  const ACTIONS: Omit<Item, "group">[] = [
+    { id: "new-session", icon: "chat", title: "New session", sub: "Start a draft", run: () => dispatch("newSession") },
+    { id: "new-page", icon: "globe", title: "New page", sub: "Open a web page", run: () => dispatch("newPage") },
+    { id: "history", icon: "clock", title: "History", sub: "Pages you visited and bookmarks", run: () => dispatch("history") },
+    { id: "brain", icon: "brain", title: "Brain", sub: "Notes and projects", run: () => dispatch("brain") },
+    { id: "remote", icon: "server", title: "Remote", sub: "Sessions on your own server", run: () => dispatch("remote") },
+    ...(import.meta.env.DEV
+      ? [{ id: "previews", icon: "spark" as IconName, title: "Component previews", sub: "Live Omnibar variants, side by side", run: () => dispatch("previews") }]
+      : []),
+    { id: "settings", icon: "settings", title: "Settings", sub: "Agents, appearance, system", run: () => dispatch("settings") },
+    { id: "setup", icon: "spark", title: "Set up Parzi", sub: "Agents, browser, tools, brain, remote", run: () => dispatch("setup") },
   ];
+  const MAX_SESSIONS = 50;
+
+  function build(q: string, tabs: Tab[], threads: SessionMeta[], activeTabId: string): Item[] {
+    const openSessions = new Set(tabs.map((t) => t.sessionId).filter(Boolean));
+    return [
+      ...ACTIONS.filter((c) => hit(q, c.title, c.sub)).map((c): Item => ({ ...c, group: "Actions" })),
+      ...tabs
+        .filter((t) => hit(q, t.title, t.url))
+        .map(
+          (t): Item => ({
+            id: `tab:${t.id}`,
+            group: "Tabs",
+            icon: t.kind === "page" ? "globe" : "chat",
+            title: t.title || "New session",
+            sub: t.id === activeTabId ? "Current tab" : t.url || "Open tab",
+            run: () => dispatch("selectTab", { id: t.id }),
+          }),
+        ),
+      ...threads
+        .filter((t) => !openSessions.has(t.id) && hit(q, t.title, t.model, t.cwd))
+        .slice(0, MAX_SESSIONS)
+        .map(
+          (t): Item => ({
+            id: `session:${t.id}`,
+            group: "Sessions",
+            icon: "chat",
+            title: t.title || "Untitled session",
+            sub: [t.model && t.model !== "auto" ? t.model : "no model yet", t.cwd ? folderName(t.cwd) : "", tokens(t)].filter(Boolean).join(" · "),
+            run: () => dispatch("openSession", { id: t.id }),
+            remove: () => dispatch("deleteSession", { id: t.id }),
+          }),
+        ),
+    ];
+  }
+
+  $: q = query.trim().toLowerCase();
+  // Closed, the list costs nothing: tab and thread churn (every page
+  // event, every refresh) only rebuilds it while the switcher is up.
+  $: items = open ? build(q, tabs, threads, activeTabId) : [];
   $: if (index >= items.length) index = 0;
 
   function choose(item: Item | undefined) {

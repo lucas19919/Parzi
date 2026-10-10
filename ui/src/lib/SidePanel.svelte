@@ -6,6 +6,7 @@
   import { api, brain, type SessionMeta } from "./api";
   import { toast } from "./toast";
   import { mdHtml, richReady } from "./md";
+  import { handleLinkClick } from "./links";
   import { agentOf, isLiveSession, whereOf } from "./sessions";
   import { laneIcon } from "./lanes";
   import { formatTime as time } from "./time";
@@ -37,7 +38,6 @@
     on: boolean;
   }
 
-  let q = "";
   let poller = 0;
   export let dockW = 360;
 
@@ -90,9 +90,7 @@
     }
     return out;
   })();
-  $: pool = family
-    .filter((t) => !q || t.title.toLowerCase().includes(q) || t.model.toLowerCase().includes(q))
-    .map((t) => ({ ...t, at: Date.parse(t.updated) || 0 }));
+  $: pool = family.map((t) => ({ ...t, at: Date.parse(t.updated) || 0 }));
   $: activeList = pool.filter((t) => isLive(t) || t.status === "queued").sort((a, b) => b.at - a.at);
   $: rows = (() => {
     const kids = new Map<string, typeof pool>();
@@ -127,6 +125,7 @@
 
   let conns: McpConn[] = [];
   let connsFor = "";
+  let connsErr = "";
 
   async function loadConns() {
     if (connsFor) return;
@@ -135,8 +134,11 @@
       const cfg = await api.getConfig();
       const servers = (cfg.mcp?.servers ?? {}) as Record<string, { enabled?: boolean }>;
       conns = Object.entries(servers).map(([name, s]) => ({ name, on: s.enabled !== false }));
+      connsErr = "";
       connsFor = "done";
-    } catch {
+    } catch (e) {
+      // Shown in place of the list; reopening the tab tries again.
+      connsErr = String(e);
       connsFor = "";
     }
   }
@@ -337,7 +339,11 @@
           <span class="url">{c.on ? "connected" : "off"}</span>
         </div>
       {:else}
-        <p class="empty">No connectors configured. Add one in Settings › System.</p>
+        {#if connsErr}
+          <p class="empty err">Couldn't load connectors: {connsErr}</p>
+        {:else}
+          <p class="empty">No connectors yet. Add one in Settings › Connections.</p>
+        {/if}
       {/each}
     </div>
   {:else if tab === "agents"}
@@ -378,7 +384,7 @@
           </div>
         {/each}
       {:else}
-        <p class="empty">{q ? "Nothing matches." : "No subagents yet — this session hasn't fanned anything out."}</p>
+        <p class="empty">No subagents yet. This session hasn't fanned anything out.</p>
       {/if}
     </div>
   {:else if tab === "projects"}
@@ -394,7 +400,7 @@
               <div class="proj-bar"><i style:width="{Math.round((planDone / Math.max(1, sessionPlan.steps.length)) * 100)}%" /></div>
               <div class="prog">{planDone}/{sessionPlan.steps.length} steps done</div>
             {/if}
-            {#each sessionPlan.steps as st (st.title)}
+            {#each sessionPlan.steps as st, i (i)}
               <div class="trow">
                 <span class="box" class:doing={st.status === "doing"} class:done={st.status === "done"}>{#if st.status === "done"}x{/if}</span>
                 <span class="ttext" class:done={st.status === "done"}>{st.title}</span>
@@ -407,7 +413,7 @@
                 <span>{sessionPlan.decisions.length} decision{sessionPlan.decisions.length === 1 ? "" : "s"}</span>
               </button>
               {#if showDecisions}
-                {#each sessionPlan.decisions as d (d.decision)}
+                {#each sessionPlan.decisions as d, i (i)}
                   <div class="dec"><b>{d.decision}</b>{#if d.why}<span> — {d.why}</span>{/if}</div>
                 {/each}
               {/if}
@@ -422,11 +428,12 @@
               <div class="prog">{taskDone}/{taskTotal} tracks done</div>
             {/if}
             {#if goalsMd}
-              <div class="goals">{@html mdHtml(stripFront(goalsMd), $richReady)}</div>
+              <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
+              <div class="goals" on:click={(e) => void handleLinkClick(e)}>{@html mdHtml(stripFront(goalsMd), $richReady)}</div>
             {/if}
-            {#each taskSections as sec (sec.title || "top")}
+            {#each taskSections as sec, si (si)}
               {#if sec.title}<h4>{sec.title}</h4>{/if}
-              {#each sec.items as item (item.text)}
+              {#each sec.items as item, ii (ii)}
                 <div class="trow" style:padding-left="{8 + item.depth * 14}px">
                   <span class="box" class:done={item.done}>{#if item.done}x{/if}</span>
                   <span class="ttext" class:done={item.done}>{item.text}</span>
@@ -538,6 +545,7 @@
     color: var(--faint);
   }
   .empty { margin: 24px 16px; font-size: 12.5px; color: var(--faint); line-height: 1.6; }
+  .empty.err { color: var(--bad); }
   .agents { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 16px; }
   .dot {
     flex: none;

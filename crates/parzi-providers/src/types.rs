@@ -64,9 +64,26 @@ impl ProviderError {
     }
 }
 
+// A status code counts only as a whole number: "429" is not in "14290".
+fn has_number(text: &str, n: &str) -> bool {
+    text.match_indices(n).any(|(i, _)| {
+        let before = text[..i].chars().next_back();
+        let after = text[i + n.len()..].chars().next();
+        !before.is_some_and(|c| c.is_ascii_digit()) && !after.is_some_and(|c| c.is_ascii_digit())
+    })
+}
+
 fn sniff_class(message: &str) -> Option<ErrorClass> {
     let m = message.to_lowercase();
-    let has = |s: &[&str]| s.iter().any(|w| m.contains(w));
+    let has = |s: &[&str]| {
+        s.iter().any(|w| {
+            if w.bytes().all(|b| b.is_ascii_digit()) {
+                has_number(&m, w)
+            } else {
+                m.contains(w)
+            }
+        })
+    };
     if has(&[
         "rate limit",
         "rate_limit",
@@ -307,5 +324,46 @@ pub(crate) async fn sleep_until(deadline: Option<tokio::time::Instant>) {
     match deadline {
         Some(d) => tokio::time::sleep_until(d).await,
         None => std::future::pending().await,
+    }
+}
+
+// None when Stop came first; an already cancelled token never starts `work`.
+pub(crate) async fn or_cancel<T>(
+    cancel: &CancellationToken,
+    work: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    tokio::select! {
+        biased;
+        () = cancel.cancelled() => None,
+        v = work => Some(v),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_codes_match_only_as_whole_numbers() {
+        let class = |m: &str| ProviderError::sniffed(ErrorClass::Unknown, m).class;
+        assert_eq!(class("HTTP 429 Too Many"), ErrorClass::RateLimit);
+        assert_eq!(class("status: 401."), ErrorClass::Auth);
+        assert_eq!(class("upstream said 503"), ErrorClass::Overloaded);
+        assert_eq!(class("request id 14290 failed"), ErrorClass::Unknown);
+        assert_eq!(class("took 5030ms"), ErrorClass::Unknown);
+        assert_eq!(class("line 4012"), ErrorClass::Unknown);
+    }
+
+    #[tokio::test]
+    async fn a_stop_before_the_work_never_starts_it() {
+        let cancel = CancellationToken::new();
+        assert_eq!(or_cancel(&cancel, async { 1 }).await, Some(1));
+        cancel.cancel();
+        let started = std::sync::atomic::AtomicBool::new(false);
+        let got = or_cancel(&cancel, async {
+            started.store(true, std::sync::atomic::Ordering::SeqCst);
+        })
+        .await;
+        assert!(got.is_none() && !started.load(std::sync::atomic::Ordering::SeqCst));
     }
 }

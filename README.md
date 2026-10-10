@@ -15,6 +15,7 @@ Grab the latest release from
 | --- | --- |
 | Windows 10 / 11, 64-bit (recommended) | `Parzi_*_x64-setup.exe` — per-user install, no admin needed |
 | macOS, Apple Silicon | `Parzi_*_aarch64.dmg` — drag Parzi into Applications |
+| Your own Linux server | nothing to download: *Set up remote* installs `parzi-linux-x64` / `-arm64` there ([ParziOS](#parzios-your-own-server)) |
 
 First launch asks once: on Windows SmartScreen wants
 *More info → Run anyway*. On macOS (builds are not Apple-notarized), run
@@ -140,6 +141,57 @@ parzi providers --json
 
 Sessions are plain files under `~/.parzi/sessions/<id>/` (`meta.json`,
 append-only `events.jsonl`, rendered `session.md`), readable by anything.
+
+## ParziOS: your own server
+
+ParziOS is Parzi's engine running on a Linux machine you own (a VPS, a
+home server, a GPU box), so sessions keep going while this PC sleeps. It
+opens no port: the desktop reaches it with your own `ssh`, and nothing
+else.
+
+**Set up remote** (the last step of *Set up Parzi*) asks for `user`,
+`host` (`host:port` works) and, only if the server takes no key, a
+password. Parzi then:
+
+1. connects with your SSH keys, or with the password once. With a
+   password it adds its own key (`~/.parzi/ssh/id_ed25519`) to that
+   account so it can reconnect without one; the password is never stored;
+2. checks the machine (Linux x64 or arm64, curl or wget, systemd);
+3. puts the matching `parzi` in `~/.local/bin`, downloaded from this
+   repo's release and checked against its `.sha256`;
+4. sends your settings and, if you leave the box ticked, your brain notes.
+   Connectors, agent program paths and project notes stay on this PC.
+   A note that already exists on the server is never overwritten;
+5. runs `parzi setup --enable` there: a systemd user service
+   (`parzi-os.service`), or a detached engine when the machine has no
+   user systemd. The service stops at logout unless lingering is on
+   (`sudo loginctl enable-linger $USER`, setup says so);
+6. links back and remembers the remote in `~/.parzi/remote.json`.
+
+The **Remote** tab then lists the server's sessions, starts and continues
+them, stops them, and answers their approvals. Agents on the server are
+installed and signed in from the same tab, in a terminal you watch
+(`ssh -t … parzi agent install claude`). Browser tools need a window, so
+they are not available to sessions on a server.
+
+How the link works: the desktop runs `ssh … ~/.local/bin/parzi rpc`. That
+process lives on the server, reads the engine's token file there (0600)
+and relays newline JSON to `parzi serve` on 127.0.0.1. SSH is the
+authentication; the token never leaves the server.
+
+Without the desktop:
+
+```bash
+parzi remote setup you@box          # key login only
+parzi remote status
+parzi remote call session.list
+parzi remote forget
+```
+
+On the server itself, `parzi approval list` and `parzi approval allow <key>`
+answer parked approvals; an approval nobody answers is denied after six
+hours. `parzi serve` and the desktop window never own the same `~/.parzi`
+at once.
 
 ## Standing instructions and hooks
 

@@ -34,9 +34,15 @@ impl SessionStore {
             let entry = c.session_mut(&meta.id);
             entry.events.clear();
             entry.len = 0;
-            entry.md_dirty = true;
-            entry.pending_updated = Some(Utc::now());
+            entry.mark_md();
         }
+        // create() starts in a scratch folder; a fork keeps working where its
+        // source did. Tokens and cost stay with the source that spent them.
+        self.update_meta(&meta.id, |m| {
+            m.cwd.clone_from(&src.cwd);
+            m.context_limit = src.context_limit;
+            m.updated = Utc::now();
+        })?;
         self.flush(&meta.id)?;
         self.get(&meta.id)
     }

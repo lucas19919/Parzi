@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import DOMPurify from "dompurify";
   import { api } from "../api";
   import { mdHtml, richReady } from "../md";
   import { handleLinkClick } from "../links";
   import { previewSpecOf, previewProblem } from "../previewRegistry";
+  import { svgDataUrl } from "../svgImage";
+  import { toast } from "../toast";
 
   export let data: any;
   export let fallbackId = "";
@@ -18,8 +19,12 @@
   const language: string = String(d.language ?? "");
   const content: string = String(d.content ?? "");
 
-  const LOCAL_ONLY = `<meta http-equiv="Content-Security-Policy" content="img-src data: blob:; media-src data: blob:; connect-src 'none'">`;
+  // The frame stays sandboxed (scripts, no same-origin). Its own CSP
+  // keeps it offline; if the height script is still blocked the frame
+  // scrolls instead of cutting tall artifacts off.
+  const LOCAL_ONLY = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:">`;
   const RESIZE = `<script>function tell(){try{var h=document.documentElement.scrollHeight;parent.postMessage({parziArt:1,height:h},"*")}catch(e){}}addEventListener("load",tell);setTimeout(tell,400);setTimeout(tell,1500);<\/script>`;
+  const MAX_FRAME = 4000;
   const lines = content ? content.split("\n").length : 0;
   const bad = !content.trim() && kind !== "preview";
   let expanded = false;
@@ -30,23 +35,30 @@
   $: preview = kind === "preview" ? previewSpecOf(content) : null;
   $: previewProps = preview ? preview.entry.props(preview.variant, preview.extra) : {};
   $: canRender = (kind === "html" || kind === "svg") && !!content.trim();
-  // SVG renders inline (scripts/handlers stripped) so diagrams size
-  // naturally with zero chrome and zero scrollbars. HTML stays in the
-  // sandboxed frame since it can carry live scripts.
-  $: safeSvg =
-    kind === "svg" && content.trim()
-      ? DOMPurify.sanitize(content, {
-          ALLOWED_URI_REGEXP: /^(?:(?:https?|parzi):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
-        })
-      : "";
-  $: imageUrl = kind === "image" && content.trim() ? api.readImageDataUrl(content, "").catch(() => null) : null;
+  // SVG renders as an image, never inline: inline markup keeps its style
+  // element, which would restyle the whole app. The browser's lenient
+  // HTML parse + XML serialize turns sloppy agent SVG into a valid file.
+  // HTML stays in the sandboxed frame since it can carry live scripts.
+  $: svgUrl = kind === "svg" && content.trim() ? svgImage(content) : "";
+  $: imageUrl = kind === "image" && content.trim() ? api.readImageDataUrl(content, "") : null;
   let showCode = false;
   let frame: HTMLIFrameElement | null = null;
 
+  let svgBroken = false;
+
+  function svgImage(src: string): string {
+    const svg = new DOMParser().parseFromString(src, "text/html").querySelector("svg");
+    return svg ? svgDataUrl(new XMLSerializer().serializeToString(svg)) : "";
+  }
+
   function copy() {
-    navigator.clipboard.writeText(content);
-    copied = true;
-    setTimeout(() => (copied = false), 1200);
+    navigator.clipboard.writeText(content).then(
+      () => {
+        copied = true;
+        setTimeout(() => (copied = false), 1200);
+      },
+      (e) => toast(`Couldn't copy: ${e}`, true),
+    );
   }
 
   function download() {
@@ -63,7 +75,7 @@
     const onMsg = (e: MessageEvent) => {
       if (!frame || e.source !== frame.contentWindow) return;
       const h = (e.data as { parziArt?: unknown; height?: unknown } | null)?.height;
-      if (typeof h === "number" && h > 0) frame.style.height = `${Math.max(160, Math.round(h))}px`;
+      if (typeof h === "number" && h > 0) frame.style.height = `${Math.min(MAX_FRAME, Math.max(160, Math.round(h)))}px`;
     };
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
@@ -92,15 +104,20 @@
   {:else if kind === "markdown"}
     <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
     <div class="art-md" on:click={(e) => void handleLinkClick(e)}>{@html mdHtml(content, $richReady)}</div>
-  {:else if kind === "svg"}
-    <div class="art-svg">{@html safeSvg}</div>
+  {:else if kind === "svg" && !showCode && svgUrl && !svgBroken}
+    <img class="art-svg" src={svgUrl} alt={title} on:error={() => (svgBroken = true)} />
   {:else if kind === "image" && imageUrl}
     {#await imageUrl then url}
-      {#if url}<img class="art-img" src={url} alt={title} />{/if}
+      <img class="art-img" src={url} alt={title} />
+    {:catch e}
+      <div class="art-error">Couldn't load the image: {e}</div>
     {/await}
-  {:else if canRender && !showCode}
-    <iframe bind:this={frame} class="art-render" {title} sandbox="allow-scripts" scrolling="no" srcdoc={LOCAL_ONLY + RESIZE + content}></iframe>
+  {:else if kind === "html" && canRender && !showCode}
+    <iframe bind:this={frame} class="art-render" {title} sandbox="allow-scripts" scrolling="auto" srcdoc={LOCAL_ONLY + RESIZE + content}></iframe>
   {:else}
+    {#if kind === "svg" && !showCode}
+      <div class="art-error">Couldn't draw this SVG. Showing its source.</div>
+    {/if}
     <div class="art-code" class:clamped={!expanded && lines > 30}>
       {@html mdHtml("```" + (language || kind) + "\n" + content.slice(0, 60000) + "\n```", $richReady)}
     </div>
@@ -155,9 +172,9 @@
     margin: 0 auto;
     padding: 12px 0 4px;
   }
-  .art-svg :global(svg) { width: 100%; height: auto; display: block; }
+  .art-svg { width: 100%; height: auto; display: block; }
   .art-img { width: 100%; height: auto; display: block; border-radius: 8px; }
-  .art-render { width: 100%; min-height: 320px; border: none; background: transparent; display: block; overflow: hidden; }
+  .art-render { width: 100%; height: 320px; min-height: 160px; border: none; background: transparent; display: block; overflow: auto; }
   .art-code { font-size: 11.5px; }
   .art-code.clamped :global(.codeblock.clamped) { max-height: 420px; }
   .art-error { padding: 8px 12px; font-size: 11px; color: var(--bad); }

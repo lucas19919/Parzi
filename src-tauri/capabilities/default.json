@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Parzi default capabilities: window chrome + app events.",
+  "description": "Parzi default capabilities: window chrome + app events + app commands, for the shell webview only.",
   "webviews": ["main"],
   "permissions": [
+    "default",
     "core:default",
     "dialog:default",
     "updater:default",

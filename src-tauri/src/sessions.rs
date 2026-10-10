@@ -36,7 +36,12 @@ pub async fn send_message(
 ) -> Result<String, String> {
     let effort =
         parzi_runtime::orchestrator::normalize_effort(effort.as_deref().unwrap_or("medium"));
-    let attached = read_attachments(&cwd, &attachments.unwrap_or_default());
+    let attached = {
+        let (cwd, paths) = (cwd.clone(), attachments.unwrap_or_default());
+        tauri::async_runtime::spawn_blocking(move || read_attachments(&cwd, &paths))
+            .await
+            .map_err(|e| e.to_string())?
+    };
     let approver: Arc<dyn Approver> = Arc::new(GuiApprover {
         app: state.app.clone(),
         pending: state.pending.clone(),
@@ -60,9 +65,7 @@ pub async fn send_message(
             id
         }
         None => {
-            // Threads belong to their folder's project, not shared "default".
-            let project =
-                parzi_core::brain::project_for_folder(&cwd).unwrap_or_else(|| "default".into());
+            let project = project_for(&cwd).await;
             state
                 .orch
                 .spawn(
@@ -85,13 +88,54 @@ pub async fn send_message(
     Ok(sid)
 }
 
+/// Threads belong to their folder's project, not shared "default". The
+/// vault scan reads notes, so it runs on the blocking pool.
+pub(crate) async fn project_for(cwd: &str) -> String {
+    if cwd.trim().is_empty() || crate::files::remote_or_device(cwd) {
+        return "default".into();
+    }
+    let cwd = cwd.to_string();
+    tauri::async_runtime::spawn_blocking(move || parzi_core::brain::project_for_folder(&cwd))
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "default".into())
+}
+
+const ATTACH_MAX: u64 = 20 * 1024 * 1024;
+
+/// Network paths are never read (Windows would authenticate to the host)
+/// and nothing over 20 MiB is loaded into memory to be cut down later.
 fn read_attachments(cwd: &str, paths: &[String]) -> Vec<parzi_core::context::AttachedFile> {
     let base = if cwd.is_empty() {
         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
     } else {
         std::path::PathBuf::from(cwd)
     };
-    parzi_core::context::read_attachments(&base, paths)
+    if crate::files::remote_or_device(&base.to_string_lossy()) {
+        return vec![];
+    }
+    let fit: Vec<String> = paths
+        .iter()
+        .filter(|p| {
+            let full = base.join(p.as_str());
+            if crate::files::remote_or_device(p)
+                || crate::files::remote_or_device(&full.to_string_lossy())
+            {
+                tracing::warn!("attachment skipped: network or device path");
+                return false;
+            }
+            match std::fs::metadata(&full) {
+                Ok(m) if m.len() > ATTACH_MAX => {
+                    tracing::warn!("attachment skipped: {} is over 20 MiB", full.display());
+                    false
+                }
+                _ => true,
+            }
+        })
+        .cloned()
+        .collect();
+    parzi_core::context::read_attachments(&base, &fit)
 }
 
 #[tauri::command]
@@ -203,7 +247,9 @@ pub async fn spawn_track(
     state
         .orch
         .harness()
-        .spawn_session(&parent, &title, &prompt, true, None, None, false, None, None)
+        .spawn_session(
+            &parent, &title, &prompt, true, None, None, false, None, None,
+        )
         .await
         .map_err(|e| e.to_string())
 }
