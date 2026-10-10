@@ -40,9 +40,11 @@
   .shade {
     position: absolute;
     inset: 0;
+    /* The dim is always black: a light stage must darken the picture,
+       never veil it white. */
     background:
       radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, var(--vignette)) 100%),
-      color-mix(in srgb, var(--bg) calc(var(--bg-dim) * 100%), transparent);
+      color-mix(in srgb, #000 calc(var(--bg-dim) * 100%), transparent);
   }
   .grain {
     position: absolute;
