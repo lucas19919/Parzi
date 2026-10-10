@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { ChatEvent, ProviderStatus, SessionMeta } from "./api";
+import { writable } from "svelte/store";
+import type { ProviderStatus } from "./api";
 
 export interface RemoteInfo {
   label: string;
@@ -17,48 +18,48 @@ export interface RemoteProgress {
   detail: string;
 }
 
-export interface RemoteApproval {
-  key: string;
-  session: string;
-  name: string;
-  lane: string;
-  label: string;
+export interface RemoteStatus {
+  state: "up" | "down" | "updating" | "ready" | "error" | "resync";
+  detail: string;
 }
 
-export interface RemoteEvents {
-  session: SessionMeta;
-  events: ChatEvent[];
-  from: number;
-  total: number;
-}
+// A session on the linked server is an ordinary session whose id starts
+// with "r:"; every session call routes it there (src-tauri/src/remote.rs).
+export const isRemote = (id: string | null | undefined): boolean => !!id && id.startsWith("r:");
 
-// The remote engine answers the same shapes the local one stores; only
-// the ops in parzi_runtime::remote::OPS pass the desk.
+/** The linked server, or null. Loaded once at startup, kept fresh by setup and unlink. */
+export const remoteInfo = writable<RemoteInfo | null>(null);
+/** Agents on the server, for the composer's model list while Remote is on. */
+export const remoteBoard = writable<ProviderStatus[]>([]);
+
 export const remote = {
   info: () => invoke<RemoteInfo | null>("remote_info"),
+  connect: () => invoke<RemoteInfo>("remote_connect"),
   setup: (user: string, host: string, password: string, notes: boolean) =>
     invoke<RemoteInfo>("remote_setup", { user, host, password: password || null, notes }),
   forget: () => invoke<void>("remote_forget"),
   agent: (provider: string, action: "install" | "login") => invoke<void>("remote_agent", { provider, action }),
-  sessions: () => call<{ sessions: SessionMeta[] }>("session.list").then((r) => r.sessions),
-  events: (id: string, from = 0) => call<RemoteEvents>("session.events", { id, from }),
-  send: (target: string, message: string, model: string, effort = "medium") =>
-    call<{ id: string; status: string }>("session.send", { target, message, model, effort, cwd: "" }),
-  kill: (id: string) => call<{ id: string }>("session.kill", { id }),
-  rename: (id: string, title: string) => call<{ id: string }>("session.rename", { id, title }),
-  remove: (id: string) => call<{ id: string }>("session.delete", { id }),
-  approvals: () => call<{ approvals: RemoteApproval[] }>("approval.list").then((r) => r.approvals),
-  answer: (key: string, allow: boolean) => call<{ key: string }>("approval.answer", { key, allow }),
-  providers: (refresh = false) =>
-    call<{ providers: ProviderStatus[] }>("providers", { refresh }).then((r) => r.providers),
+  providers: (refresh = false) => invoke<ProviderStatus[]>("remote_providers", { refresh }),
 };
 
-function call<T>(op: string, body: Record<string, unknown> = {}): Promise<T> {
-  return invoke<T>("remote_call", { op, body });
+export async function loadRemoteInfo(): Promise<RemoteInfo | null> {
+  const info = await remote.info();
+  remoteInfo.set(info);
+  return info;
+}
+
+export async function refreshRemoteBoard(refresh = false): Promise<ProviderStatus[]> {
+  const all = await remote.providers(refresh);
+  remoteBoard.set(all);
+  return all;
 }
 
 export function onRemoteProgress(fn: (p: RemoteProgress) => void) {
   return listen<RemoteProgress>("parzi://remote-setup", (e) => fn(e.payload));
+}
+
+export function onRemoteStatus(fn: (s: RemoteStatus) => void) {
+  return listen<RemoteStatus>("parzi://remote", (e) => fn(e.payload));
 }
 
 const STEP_NAMES: Record<string, string> = {

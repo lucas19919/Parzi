@@ -21,19 +21,19 @@
   import HomeView from "./lib/HomeView.svelte";
   import PreviewView from "./lib/PreviewView.svelte";
   import BrainView from "./lib/BrainView.svelte";
-  import RemoteView from "./lib/RemoteView.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
   import RequestPopup from "./lib/RequestPopup.svelte";
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
   import Settings from "./lib/Settings.svelte";
   import Icon from "./lib/Icon.svelte";
   import { board, ensureBoard } from "./lib/providerStore";
+  import { isRemote, loadRemoteInfo, onRemoteStatus, refreshRemoteBoard, remote, remoteBoard, remoteInfo } from "./lib/remote";
   import { normLane, permissionFor } from "./lib/lanes";
   import { provideClearSessions } from "./lib/sessions";
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, remoteTab, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
+  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
   import { toast, toastError, toasts, notify, chime } from "./lib/toast";
   import { covered } from "./lib/overlay";
@@ -153,6 +153,34 @@
   let layout: "topbar" | "sidebar" = "topbar";
   let setupOpen = false;
   let setupStep = 0;
+  // The last Remote switch position; new drafts start from it.
+  let preferRemote = false;
+  try {
+    preferRemote = localStorage.getItem("parzi.remote.prefer") === "1";
+  } catch {}
+
+  async function setRemote(on: boolean) {
+    comp.remote = on;
+    comp = comp;
+    preferRemote = on;
+    try {
+      localStorage.setItem("parzi.remote.prefer", on ? "1" : "0");
+    } catch {}
+    if (!on) return;
+    try {
+      // Opens the link, updating Parzi on the server when it is older.
+      remoteInfo.set(await remote.connect());
+      await refreshRemoteBoard();
+    } catch (e) {
+      toast(`Can't reach the server, so this stays on this PC: ${e}`, true);
+      comp.remote = false;
+      comp = comp;
+      preferRemote = false;
+      try {
+        localStorage.setItem("parzi.remote.prefer", "0");
+      } catch {}
+    }
+  }
   let project: { slug: string; title: string; tokens: number } | null = null;
   let navSeq = 0;
   let deskRev = 0;
@@ -164,7 +192,11 @@
   $: model = comp.model;
   $: streaming = !!shown && running.has(shown);
   $: hasSession = tab.kind === "session" && (!!shown || sending || events.length > 0);
-  $: folder = tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
+  // Where this composer sends: a started session stays where it began; a
+  // draft follows its own switch, else the last choice.
+  $: remoteOn = tab.kind === "session" && tab.sessionId ? isRemote(tab.sessionId) : !!$remoteInfo && (comp.remote ?? preferRemote);
+  // A server session's folder is on the server: nothing to list or branch here.
+  $: folder = remoteOn ? "" : tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
   $: approval = approvals.find((a) => a.session === shown) ?? null;
   $: openQuestion = questions.find((q) => q.session === shown) ?? null;
   // The popup shows the visible session's request first, else the oldest.
@@ -251,12 +283,6 @@
     const existing = tabs.find((t) => t.kind === "brain");
     if (existing) selectTab(existing.id);
     else addTab(brainTab());
-  }
-
-  function openRemote() {
-    const existing = tabs.find((t) => t.kind === "remote");
-    if (existing) selectTab(existing.id);
-    else addTab(remoteTab());
   }
 
   // Set up Parzi, opened straight at its Remote step.
@@ -602,11 +628,12 @@
         sessionId: fresh ? null : target.sessionId,
         model: draft.model,
         prompt,
-        cwd: folder,
+        cwd: remoteOn ? "" : folder,
         effort: draft.effort,
         attachments: files,
         mode: permission,
         lane: draft.mode,
+        remote: remoteOn,
       });
       running = new Set(running).add(sid);
       // The field was cleared before the await. Drop the stored draft
@@ -987,6 +1014,17 @@
       .listThreads()
       .then((list) => (threads = list))
       .catch((e) => toast(`Couldn't load sessions: ${e}`, true));
+    void loadRemoteInfo().catch(() => {});
+    // The link to the server: updates, and a stream that restarted.
+    const unRemote = onRemoteStatus((s) => {
+      if (s.state === "updating" || s.state === "ready") toast(s.detail);
+      else if (s.state === "error") toast(s.detail, true);
+      if (s.state === "up" || s.state === "resync" || s.state === "ready") {
+        void refreshThreads();
+        if (remoteOn) void refreshRemoteBoard().catch(() => {});
+        if (isRemote(shown)) void reload();
+      }
+    });
     (async () => {
       try {
         applyThemeCss(await api.getThemeCss());
@@ -1003,6 +1041,7 @@
       document.removeEventListener("parzi:default-mode", onDefaultMode);
       unRun.then((f) => f()).catch(() => {});
       unDesk.then((f) => f()).catch(() => {});
+      unRemote.then((f) => f()).catch(() => {});
       for (const un of [unPage, unOpen, unKey]) un.then((f) => f()).catch(() => {});
       document.removeEventListener("parzi:bg", onBg);
       document.removeEventListener("parzi:layout", onLayout);
@@ -1031,7 +1070,6 @@
       on:settings={() => openSettings()}
       on:update={() => openSettings("system")}
       on:brain={openBrain}
-      on:remote={openRemote}
       on:history={() => openHistory()}
       on:setup={openSetup}
     />
@@ -1053,17 +1091,12 @@
     {#if tab.kind === "settings"}
       <div class="fill col" in:fly={{ y: 8, ...motion }}>
         <PanelHeader title="Settings" on:close={() => closeTab(activeId)} />
-        <Settings bind:section={settingsSection} on:close={() => closeTab(activeId)} on:openRemote={openRemote} on:setupRemote={openRemoteSetup} />
+        <Settings bind:section={settingsSection} on:close={() => closeTab(activeId)} on:setupRemote={openRemoteSetup} />
       </div>
     {:else if tab.kind === "brain"}
       <div class="fill col" in:fade={{ duration: 150 }}>
         <PanelHeader title="Brain" on:close={() => closeTab(activeId)} />
         <BrainView />
-      </div>
-    {:else if tab.kind === "remote"}
-      <div class="fill col" in:fade={{ duration: 150 }}>
-        <PanelHeader title="Remote" on:close={() => closeTab(activeId)} />
-        <RemoteView on:setup={openRemoteSetup} />
       </div>
     {:else if tab.kind === "history"}
       <div class="fill col" in:fade={{ duration: 150 }}>
@@ -1197,7 +1230,11 @@
           folderLocked={!!tab.sessionId}
           {branch}
           {streaming}
-          board={$board}
+          board={remoteOn ? $remoteBoard : $board}
+          remoteHost={$remoteInfo?.host ?? ""}
+          remote={remoteOn}
+          remoteLocked={!!tab.sessionId}
+          on:remote={(e) => setRemote(e.detail.on)}
           hero={!hasSession}
           {project}
           variant={6}
@@ -1205,7 +1242,7 @@
           on:browse={(e) => browse(e.detail.url)}
           on:stop={stop}
           on:command={(e) => onCommand(e.detail.name)}
-          on:unavailable={() => openSettings("providers")}
+          on:unavailable={() => openSettings(remoteOn ? "connections" : "providers")}
           on:folder={(e) => patchTab(tab.id, { cwd: e.detail.path })}
           on:project={() => loadProject(folder)}
           on:brain={openBrain}
@@ -1233,12 +1270,11 @@
     on:previews={() => openPreview()}
     on:setup={openSetup}
     on:brain={openBrain}
-    on:remote={openRemote}
     on:history={() => openHistory()}
   />
 
   {#if setupOpen}
-    <Onboarding startStep={setupStep} on:close={() => (setupOpen = false)} on:openBrain={openBrain} on:openRemote={openRemote} />
+    <Onboarding startStep={setupStep} on:close={() => (setupOpen = false)} on:openBrain={openBrain} />
   {/if}
 
   {#if openRequest}

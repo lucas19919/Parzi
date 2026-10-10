@@ -10,10 +10,10 @@
   import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "./providerRows";
   import { importBrowser, onboarded } from "./browserData";
   import { setOverlay } from "./overlay";
-  import { mergeProgress, onRemoteProgress, remote, stepName, type RemoteInfo, type RemoteProgress } from "./remote";
+  import { mergeProgress, onRemoteProgress, remote, remoteInfo as linked, stepName, type RemoteInfo, type RemoteProgress } from "./remote";
   import { toastError } from "./toast";
 
-  const dispatch = createEventDispatcher<{ close: void; openBrain: void; openRemote: void }>();
+  const dispatch = createEventDispatcher<{ close: void; openBrain: void }>();
 
   const STEPS = ["Agents", "Browser", "Your tools", "Brain", "Remote"];
   const WATCH_EVERY = 5_000;
@@ -158,11 +158,10 @@
     }
   }
 
-  function finish(openBrain = false, openRemote = false) {
+  function finish(openBrain = false) {
     onboarded.set(true);
     dispatch("close");
     if (openBrain) dispatch("openBrain");
-    if (openRemote) dispatch("openRemote");
   }
 
   function ago(ms?: number | null) {
@@ -211,6 +210,7 @@
     const off = await onRemoteProgress((p) => (setupRows = mergeProgress(setupRows, p)));
     try {
       remoteInfo = await remote.setup(user, host, password, bringNotes);
+      linked.set(remoteInfo);
       setupState = "done";
       setupMsg = `Linked to ${remoteInfo.label}.`;
     } catch (e) {
@@ -366,9 +366,8 @@
           <div class="item">
             <span class="grow">
               <span class="title">{remoteInfo.label}</span>
-              <span class="sub ok">Linked{remoteInfo.version ? ` · Parzi ${remoteInfo.version}` : ""}</span>
+              <span class="sub ok">Linked{remoteInfo.version ? ` · Parzi ${remoteInfo.version}` : ""}. Turn on Remote in the composer to run a session there.</span>
             </span>
-            <button class="btn" on:click={() => finish(false, true)}>Open</button>
           </div>
         {/if}
         <div class="remote-form">

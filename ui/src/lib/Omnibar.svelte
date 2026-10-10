@@ -33,6 +33,11 @@
   export let hero = false;
   export let project: { slug: string; title: string; tokens: number } | null = null;
   export let lockMode: ComposerMode | null = null;
+  // The linked server ("" when none). `remote` sends this composer's
+  // sessions there; a started session stays where it began (`remoteLocked`).
+  export let remoteHost = "";
+  export let remote = false;
+  export let remoteLocked = false;
   // Preview variants for live design iteration (Preview tab renders the
   // real component with variant 1-7). The live composer ships 6:
   // fused project tab on the top edge, project outside the box.
@@ -48,6 +53,7 @@
     folder: { path: string };
     project: void;
     brain: void;
+    remote: { on: boolean };
   }>();
 
   // ids are the `mode` strings the backend reads (ApprovalMode::parse:
@@ -411,7 +417,12 @@
 </script>
 
 <div class="ob" class:hero class:v2={variant === 2} class:v3={variant === 3} class:v4={variant === 4} class:v5={variant === 5} class:v6={variant === 6} class:v7={variant === 7}>
-  {#if outsideProject}
+  {#if outsideProject && remote}
+    <span class="proj-out set remote-tab" title={`Runs on ${remoteHost}, in its own folder there`}>
+      <Icon name="server" size={14} stroke={2} />
+      <span class="proj-title">{remoteHost}</span>
+    </span>
+  {:else if outsideProject}
     <button bind:this={projBtn} class="proj-out" class:set={!!project} on:click|stopPropagation={toggleProject} title={project ? `Project ${project.title}${branch ? ` · ${branch}` : ""}` : "Pick the project this session works on"}>
       <Icon name={project || !folder ? "project" : "folder"} size={14} stroke={2} />
       <span class="proj-title">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
@@ -535,6 +546,25 @@
         >
           <Icon name={perm.icon} size={13} stroke={2} />
           <span class="truncate">{perm.label}</span>
+        </button>
+      {/if}
+      {#if remoteHost && mode !== "search"}
+        <button
+          class="ctl remote-btn"
+          class:on={remote}
+          disabled={remoteLocked}
+          aria-pressed={remote}
+          title={remoteLocked
+            ? remote
+              ? `This session runs on ${remoteHost}`
+              : "This session runs on this PC"
+            : remote
+              ? `Runs on ${remoteHost}. Click to run on this PC`
+              : `Run on ${remoteHost}`}
+          on:click|stopPropagation={() => dispatch("remote", { on: !remote })}
+        >
+          <Icon name="server" size={13} stroke={2} />
+          {#if remote}<span class="truncate">Remote</span>{/if}
         </button>
       {/if}
       {#if mode === "build" && !outsideProject}
@@ -926,6 +956,22 @@
   }
   .perm-btn.full :global(svg) {
     color: var(--warn);
+  }
+  .remote-btn {
+    flex: none;
+    gap: 5px;
+  }
+  .remote-btn.on {
+    color: var(--text);
+  }
+  .remote-btn.on :global(svg) {
+    color: var(--accent);
+  }
+  .remote-btn:disabled {
+    cursor: default;
+  }
+  .remote-tab {
+    cursor: default;
   }
   .project.set {
     color: var(--text);

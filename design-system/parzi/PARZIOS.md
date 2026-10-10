@@ -40,12 +40,30 @@ departs from the plan below:
   run cannot outlive its engine anyway (`recover()` marks it idle). A
   parked approval nobody answers is denied after 6 hours.
 - **Serve ops added:** `session.events` (newest page, then deltas by
-  `from`), `providers`, `doctor`, `shutdown`. The socket has a 10 s
-  request timeout and a 64-connection cap; `serve.json` is born 0600 in
-  a 0700 home.
-- **Desktop:** the Remote tab (sessions, thread, composer, approvals,
-  agents with Install/Sign in in a visible `ssh -t` terminal), the
-  onboarding step, Settings › System remote row.
+  `from`), `session.compact`, `question.answer` (a `ParkedAsker` serves
+  `ask.user`/`request.user`), `providers`, `doctor`, `shutdown`, and
+  `subscribe`: the connection stays open and carries every run event,
+  approval and question as one JSON line in the desk's own UI shape
+  (`handler::ui_event`). `session.send` takes lane, mode and inline
+  attachments. The socket has a 10 s request timeout and a 64-connection
+  cap; `serve.json` is born 0600 in a 0700 home.
+- **The link's envelope:** requests carry their number as `rid` (never
+  `id`, which the session ops use); `{"op":"subscribe"}` makes `parzi rpc`
+  follow the engine's stream and write `{"event": …}` lines, reconnecting
+  after an engine restart and saying `resync`.
+- **Desktop: one harness, a Remote switch.** No separate view. A server
+  session is an ordinary session whose id starts with `r:`; every session
+  command (`src-tauri/src/sessions.rs`) routes such ids to the server, and
+  the server's events are re-tagged and emitted on `parzi://run-event`,
+  so the thread, approvals, questions, Stop, rename, fork, delete and the
+  session list work unchanged. The composer's switch (shown once a server
+  is linked) sends new sessions there and swaps the model list for the
+  server's agents; the last position is remembered. The link opens in the
+  background on the first list refresh and retries after a minute when
+  the server is away. A server older than the desk is upgraded on connect
+  (`remote::upgrade`: install the matching build, `parzi setup --enable`
+  without a spec). Settings › Connections lists the server's agents with
+  Install/Sign in in a visible `ssh -t` terminal.
 - **Agents on the server:** `parzi agent install|login <id>` runs the
   vendor's own installer or login on that OS.
 - **Release:** `parzi-linux-x64` and `parzi-linux-arm64` (+ `.sha256`),
@@ -62,10 +80,9 @@ Still open, in order:
 3. Provider API keys sealed on the server (keyring or 0600 file). Today
    agents sign in with their own login in the `ssh -t` terminal and
    Parzi stores no secret.
-4. Live text streaming to the Remote tab. Today the tab polls and shows
-   a turn's text when the turn ends (the store writes assistant text at
-   turn end).
-5. Mobile: the same Remote tab with no local engine.
+4. Projects on the server: a server session runs in its own scratch
+   folder there; picking a folder on the server is not built yet.
+5. Mobile: the same harness with only the remote engine.
 
 ## 0. Where we stood (verified 2026-10-07)
 

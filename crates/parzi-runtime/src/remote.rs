@@ -36,22 +36,6 @@ const DOWNLOAD: Duration = Duration::from_secs(600);
 const MAX_SPEC_NOTES_BYTES: usize = 8 * 1024 * 1024;
 const MAX_REPLY: usize = 32 * 1024 * 1024;
 
-/// Ops a desktop may relay. Everything else stays on the server.
-pub const OPS: &[&str] = &[
-    "health",
-    "doctor",
-    "providers",
-    "session.list",
-    "session.events",
-    "session.send",
-    "session.kill",
-    "session.rename",
-    "session.delete",
-    "session.fork",
-    "approval.list",
-    "approval.answer",
-];
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Target {
     pub user: String,
@@ -666,6 +650,8 @@ fn spec_script(spec_json: &str) -> String {
 
 const SETUP: &str =
     "\"$HOME/.local/bin/parzi\" setup --spec \"$HOME/.parzi/setup-spec.json\" --enable --json\n";
+/// An upgrade keeps the server's own settings: no spec.
+const UPGRADE: &str = "\"$HOME/.local/bin/parzi\" setup --enable --json\n";
 
 /// What travels: the portable config, plus brain notes when asked.
 /// Project notes stay home: they point at folders on this machine.
@@ -846,6 +832,54 @@ pub async fn setup(
         }
     }
 
+    provision_remote(&ssh, &opts, true, on).await?;
+
+    on(Progress::new("link", "run", "Linking this desktop"));
+    let link = match Link::open(&ssh).await {
+        Ok(l) => l,
+        Err(e) => return fail("link", e),
+    };
+    let version = match link
+        .call("health", json!({}), Duration::from_secs(10))
+        .await
+    {
+        Ok(v) => v
+            .get("version")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        Err(e) => return fail("link", e),
+    };
+    let saved = Saved {
+        target,
+        version: version.clone(),
+        linked_at: chrono_now(),
+    };
+    if opts.transport.is_none() {
+        if let Err(e) = save(&saved) {
+            return fail("link", e);
+        }
+    }
+    on(Progress::new(
+        "link",
+        "ok",
+        format!("linked to Parzi {version} on {label}"),
+    ));
+    Ok((saved, link))
+}
+
+/// Probe the machine, install the matching build, send the spec when asked,
+/// and run `parzi setup --enable` there. Each failure is reported via `on`.
+async fn provision_remote(
+    ssh: &Transport,
+    opts: &SetupOptions,
+    with_spec: bool,
+    on: &(dyn Fn(Progress) + Send + Sync),
+) -> Result<(), String> {
+    let fail = |step: &str, why: String| {
+        on(Progress::new(step, "fail", why.clone()));
+        Err::<(), String>(why)
+    };
     on(Progress::new("probe", "run", "Looking at the machine"));
     let probe = match ssh.script(PROBE, CONNECT).await {
         Ok(r) if r.ok => Probe::parse(&r.stdout),
@@ -904,94 +938,85 @@ pub async fn setup(
         }
     }
 
-    on(Progress::new(
-        "spec",
-        "run",
-        if opts.notes {
-            "Sending your settings and brain notes"
-        } else {
-            "Sending your settings"
-        },
-    ));
-    let spec = local_spec(opts.notes);
-    let count = spec.notes.len();
-    let body = match serde_json::to_string(&spec) {
-        Ok(b) => b,
-        Err(e) => return fail("spec", e.to_string()),
-    };
-    match ssh.script(&spec_script(&body), STEP).await {
-        Ok(r) if r.ok => on(Progress::new(
+    if with_spec {
+        on(Progress::new(
             "spec",
-            "ok",
+            "run",
             if opts.notes {
-                format!("settings and {count} notes sent")
+                "Sending your settings and brain notes"
             } else {
-                "settings sent".into()
+                "Sending your settings"
             },
-        )),
-        Ok(r) => return fail("spec", r.why()),
-        Err(e) => return fail("spec", e),
+        ));
+        let spec = local_spec(opts.notes);
+        let count = spec.notes.len();
+        let body = match serde_json::to_string(&spec) {
+            Ok(b) => b,
+            Err(e) => return fail("spec", e.to_string()),
+        };
+        match ssh.script(&spec_script(&body), STEP).await {
+            Ok(r) if r.ok => on(Progress::new(
+                "spec",
+                "ok",
+                if opts.notes {
+                    format!("settings and {count} notes sent")
+                } else {
+                    "settings sent".into()
+                },
+            )),
+            Ok(r) => return fail("spec", r.why()),
+            Err(e) => return fail("spec", e),
+        }
     }
 
     on(Progress::new("setup", "run", "Setting Parzi up there"));
     let mut failed: Option<String> = None;
     let ran = ssh
-        .script_lines(SETUP, SETUP_WAIT, |line| {
-            let Ok(step) = serde_json::from_str::<Step>(line) else {
-                return;
-            };
-            // The desk already reported its own spec and home rows.
-            if step.step == "done" || (step.ok && (step.step == "spec" || step.step == "home")) {
-                return;
-            }
-            if !step.ok && failed.is_none() {
-                failed = Some(format!("{}: {}", step.step, step.detail));
-            }
-            on(Progress::new(
-                &step.step,
-                if step.ok { "ok" } else { "fail" },
-                step.detail,
-            ));
-        })
+        .script_lines(
+            if with_spec { SETUP } else { UPGRADE },
+            SETUP_WAIT,
+            |line| {
+                let Ok(step) = serde_json::from_str::<Step>(line) else {
+                    return;
+                };
+                // The desk already reported its own spec and home rows.
+                if step.step == "done" || (step.ok && (step.step == "spec" || step.step == "home"))
+                {
+                    return;
+                }
+                if !step.ok && failed.is_none() {
+                    failed = Some(format!("{}: {}", step.step, step.detail));
+                }
+                on(Progress::new(
+                    &step.step,
+                    if step.ok { "ok" } else { "fail" },
+                    step.detail,
+                ));
+            },
+        )
         .await;
     match ran {
         Ok(r) if r.ok => on(Progress::new("setup", "ok", "the engine is running")),
         Ok(r) => return fail("setup", failed.unwrap_or_else(|| r.why())),
         Err(e) => return fail("setup", e),
     }
+    Ok(())
+}
 
-    on(Progress::new("link", "run", "Linking this desktop"));
-    let link = match Link::open(&ssh).await {
-        Ok(l) => l,
-        Err(e) => return fail("link", e),
+/// Bring the linked server to this desk's version: install the matching
+/// build and restart its engine, keeping the server's own settings.
+pub async fn upgrade(
+    saved: &Saved,
+    on: &(dyn Fn(Progress) + Send + Sync),
+) -> Result<Saved, String> {
+    let ssh = Transport::ssh(&saved.target);
+    provision_remote(&ssh, &SetupOptions::default(), false, on).await?;
+    let next = Saved {
+        version: env!("CARGO_PKG_VERSION").into(),
+        ..saved.clone()
     };
-    let version = match link
-        .call("health", json!({}), Duration::from_secs(10))
-        .await
-    {
-        Ok(v) => v
-            .get("version")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        Err(e) => return fail("link", e),
-    };
-    let saved = Saved {
-        target,
-        version: version.clone(),
-        linked_at: chrono_now(),
-    };
-    if opts.transport.is_none() {
-        if let Err(e) = save(&saved) {
-            return fail("link", e);
-        }
-    }
-    on(Progress::new(
-        "link",
-        "ok",
-        format!("linked to Parzi {version} on {label}"),
-    ));
-    Ok((saved, link))
+    save(&next)?;
+    Ok(next)
 }
 
 fn chrono_now() -> i64 {
@@ -1002,6 +1027,7 @@ fn chrono_now() -> i64 {
 }
 
 type Waiters = Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>;
+type EventSink = Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Value>>>>;
 
 /// One live `parzi rpc` over ssh. Calls are matched to replies by id; a
 /// dead link fails every waiting call and reports `alive() == false`.
@@ -1010,6 +1036,7 @@ pub struct Link {
     waiters: Waiters,
     next: AtomicU64,
     alive: Arc<AtomicBool>,
+    events: EventSink,
     stderr: Arc<Mutex<String>>,
     _child: Child,
     reader: tokio::task::JoinHandle<()>,
@@ -1085,17 +1112,33 @@ impl Link {
             .to_string();
         let waiters: Waiters = Arc::default();
         let alive = Arc::new(AtomicBool::new(true));
-        let reader = tokio::spawn(pump(reader, waiters.clone(), alive.clone()));
+        let events: EventSink = Arc::default();
+        let reader = tokio::spawn(pump(reader, waiters.clone(), alive.clone(), events.clone()));
         Ok(Self {
             stdin: tokio::sync::Mutex::new(stdin),
             waiters,
             next: AtomicU64::new(1),
             alive,
+            events,
             stderr,
             _child: child,
             reader,
             version,
         })
+    }
+
+    /// Live run events, approvals and questions from the server, in the
+    /// desk's UI shape. The receiver ends when the link closes.
+    pub async fn subscribe(&self) -> Result<tokio::sync::mpsc::UnboundedReceiver<Value>, String> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        *self.events.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
+        let mut stdin = self.stdin.lock().await;
+        let sent = match stdin.write_all(b"{\"op\":\"subscribe\"}\n").await {
+            Ok(()) => stdin.flush().await,
+            Err(e) => Err(e),
+        };
+        sent.map_err(|_| self.dead_reason())?;
+        Ok(rx)
     }
 
     #[must_use]
@@ -1110,7 +1153,8 @@ impl Link {
         }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let mut req = if body.is_object() { body } else { json!({}) };
-        req["id"] = json!(id);
+        // `rid`, not `id`: session ops already use `id` for the session.
+        req["rid"] = json!(id);
         req["op"] = json!(op);
         let mut line = serde_json::to_string(&req).map_err(|e| e.to_string())?;
         line.push('\n');
@@ -1174,6 +1218,7 @@ async fn pump(
     mut reader: BufReader<tokio::process::ChildStdout>,
     waiters: Waiters,
     alive: Arc<AtomicBool>,
+    events: EventSink,
 ) {
     let mut buf = Vec::new();
     loop {
@@ -1185,12 +1230,30 @@ async fn pump(
         let Ok(mut v) = serde_json::from_slice::<Value>(&buf) else {
             continue;
         };
-        let Some(id) = v.get("id").and_then(Value::as_u64) else {
+        if let Some(ev) = v.get_mut("event").map(Value::take) {
+            if let Some(tx) = events.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                let _ = tx.send(ev);
+            }
+            continue;
+        }
+        let Some(obj) = v.as_object_mut() else {
             continue;
         };
-        if let Some(obj) = v.as_object_mut() {
-            obj.remove("id");
-        }
+        // `rid` from this release on; an older `parzi rpc` echoed a numeric
+        // `id` (session ids are uuids, so the two never mix).
+        let id = match obj.get("rid").and_then(Value::as_u64) {
+            Some(rid) => {
+                obj.remove("rid");
+                rid
+            }
+            None => match obj.get("id").and_then(Value::as_u64) {
+                Some(old) => {
+                    obj.remove("id");
+                    old
+                }
+                None => continue,
+            },
+        };
         let tx = waiters
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -1201,6 +1264,8 @@ async fn pump(
     }
     alive.store(false, Ordering::Relaxed);
     waiters.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    // Closing the sink ends the subscriber's loop, so it can reconnect.
+    events.lock().unwrap_or_else(|e| e.into_inner()).take();
 }
 
 #[cfg(test)]

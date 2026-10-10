@@ -3,13 +3,15 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import { api, type ParziConfig } from "../api";
   import { parseEnv, splitLine } from "../cmdline";
-  import { remote, type RemoteInfo } from "../remote";
+  import type { ProviderStatus } from "../api";
+  import { remote, remoteBoard, remoteInfo as linked, type RemoteInfo } from "../remote";
+  import { PROVIDER_ORDER, nameOf } from "../providerRows";
   import Switch from "./Switch.svelte";
   import "./shared.css";
 
   export let notify: (msg: string) => void = () => {};
 
-  const dispatch = createEventDispatcher<{ openRemote: void; setupRemote: void }>();
+  const dispatch = createEventDispatcher<{ setupRemote: void }>();
 
   interface Server {
     command: string;
@@ -125,6 +127,41 @@
     adding = true;
   }
 
+  // Agents on the server: shown only after a check, since it connects.
+  let agents: ProviderStatus[] = [];
+  let checking = false;
+
+  async function checkAgents(refresh: boolean) {
+    checking = true;
+    try {
+      const all = await remote.providers(refresh);
+      remoteBoard.set(all);
+      agents = PROVIDER_ORDER.map((id) => all.find((a) => a.provider === id)).filter((a): a is ProviderStatus => !!a);
+    } catch (e) {
+      notify(`Can't reach the server: ${e}`);
+    } finally {
+      checking = false;
+    }
+  }
+
+  async function agentAction(provider: string, action: "install" | "login") {
+    try {
+      await remote.agent(provider, action);
+      notify(action === "install" ? "Installing in a terminal. Check again when it is done." : "Sign in in the terminal, then check again.");
+    } catch (e) {
+      notify(String(e));
+    }
+  }
+
+  function agentState(a: ProviderStatus): string {
+    if (a.state === "ready") return a.account ? `Ready · ${a.account}` : "Ready";
+    if (a.state === "signed_out") return "Not signed in";
+    if (a.state === "not_installed") return "Not installed";
+    if (a.state === "disabled") return "Switched off";
+    if (a.state === "error") return a.hint || "Error";
+    return "Installed";
+  }
+
   async function unlink() {
     if (!info) return;
     const ok = await ask(`Unlink ${info.label}? Parzi keeps running there; set it up again to link back.`, {
@@ -135,6 +172,9 @@
     try {
       await remote.forget();
       info = null;
+      linked.set(null);
+      remoteBoard.set([]);
+      agents = [];
       notify("Unlinked");
     } catch (e) {
       notify(`Could not unlink: ${e}`);
@@ -169,10 +209,30 @@
           <span class="field-label">{info.label}</span>
           <span class="field-hint">Parzi {info.version || "?"}{info.linked_at ? ` · linked ${when(info.linked_at)}` : ""}</span>
         </div>
-        <button class="sbtn" on:click={() => dispatch("openRemote")}>Open</button>
         <button class="sbtn" on:click={() => dispatch("setupRemote")}>Set up again</button>
         <button class="sbtn danger" on:click={unlink}>Unlink</button>
       </div>
+      <p class="section-desc">Turn on Remote in the composer to start a session there. It shows in your session list like any other.</p>
+      <div class="section-head-with-action">
+        <div>
+          <h3 class="section-title">Agents on the server</h3>
+          <p class="section-desc">Install and sign in run in a terminal you watch, with each agent's own login.</p>
+        </div>
+        <button class="sbtn" disabled={checking} on:click={() => checkAgents(true)}>{checking ? "Checking…" : agents.length ? "Check again" : "Check"}</button>
+      </div>
+      {#each agents as a (a.provider)}
+        <div class="field-card">
+          <div class="field-info">
+            <span class="field-label">{nameOf(a.provider)}</span>
+            <span class="field-hint" class:ok={a.state === "ready"}>{agentState(a)}</span>
+          </div>
+          {#if a.state === "not_installed"}
+            <button class="sbtn" on:click={() => agentAction(a.provider, "install")}>Install</button>
+          {:else if a.state !== "ready" && a.state !== "disabled"}
+            <button class="sbtn" on:click={() => agentAction(a.provider, "login")}>Sign in</button>
+          {/if}
+        </div>
+      {/each}
     {/if}
   </div>
 
@@ -242,6 +302,9 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+  .field-hint.ok {
+    color: var(--ok);
   }
   .mono {
     font-family: var(--mono);

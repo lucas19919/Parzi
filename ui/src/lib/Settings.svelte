@@ -34,7 +34,7 @@
       {#if section === "providers"}
         <ProvidersSection {notify} />
       {:else if section === "connections"}
-        <ConnectionsSection {notify} on:openRemote on:setupRemote />
+        <ConnectionsSection {notify} on:setupRemote />
       {:else if section === "appearance"}
         <AppearanceSection {notify} />
       {:else if section === "system"}

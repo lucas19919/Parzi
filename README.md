@@ -168,11 +168,20 @@ password. Parzi then:
    (`sudo loginctl enable-linger $USER`, setup says so);
 6. links back and remembers the remote in `~/.parzi/remote.json`.
 
-The **Remote** tab then lists the server's sessions, starts and continues
-them, stops them, and answers their approvals. Agents on the server are
-installed and signed in from the same tab, in a terminal you watch
+Then the composer gets a **Remote** switch (the server icon next to the
+permissions). With it on, a new session runs on the server; everything
+else is the harness you know: the thread streams live, approvals and
+questions appear as usual, Stop, rename, fork and delete work, and the
+session sits in your list with a server icon. A session stays where it
+started. Attachments are read on this PC and sent along. The model list
+shows the server's agents; install and sign them in from
+Settings › Connections, in a terminal you watch
 (`ssh -t … parzi agent install claude`). Browser tools need a window, so
-they are not available to sessions on a server.
+sessions on a server have none.
+
+When the desktop updates, the server follows on the next connect: Parzi
+installs the matching build there and restarts its engine, keeping the
+server's own settings.
 
 How the link works: the desktop runs `ssh … ~/.local/bin/parzi rpc`. That
 process lives on the server, reads the engine's token file there (0600)

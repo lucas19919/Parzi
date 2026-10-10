@@ -150,6 +150,7 @@ interface SendArgs {
   attachments: string[];
   mode: string;
   lane: string;
+  remote?: boolean;
 }
 
 export type ComposerMode = "search" | "build" | "work";
@@ -177,6 +178,7 @@ export const api = {
       attachments: a.attachments,
       mode: a.mode,
       lane: a.lane,
+      remote: a.remote ?? false,
     }),
   saveAnswer: (content: string) => invoke<NoteMeta>("brain_save_answer", { content }),
   renameThread: (id: string, title: string) => invoke<void>("rename_thread", { id, title }),

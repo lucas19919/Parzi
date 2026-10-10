@@ -22,7 +22,8 @@ pub const SPEC_VERSION: u32 = 1;
 pub const SERVICE_NAME: &str = "parzi-os.service";
 const MAX_NOTES: usize = 2_000;
 const MAX_NOTE_BYTES: usize = 256 * 1024;
-const MAX_RPC_LINE: usize = 1024 * 1024;
+/// A message with its attachments inlined fits.
+const MAX_RPC_LINE: usize = 32 * 1024 * 1024;
 
 /// What the desktop sends once at setup. Connectors and agent program
 /// paths are per machine and never travel; neither do secrets.
@@ -359,6 +360,7 @@ pub async fn relay(exe: &Path) -> std::io::Result<()> {
     let mut input = BufReader::new(tokio::io::stdin());
     let mut buf = Vec::new();
     let mut inflight = tokio::task::JoinSet::new();
+    let mut follower: Option<tokio::task::JoinHandle<()>> = None;
     loop {
         buf.clear();
         let n = read_line_capped(&mut input, &mut buf, MAX_RPC_LINE).await?;
@@ -370,6 +372,16 @@ pub async fn relay(exe: &Path) -> std::io::Result<()> {
         if line.is_empty() {
             continue;
         }
+        if is_subscribe(&line) {
+            // One stream per link; asking twice changes nothing.
+            if follower
+                .as_ref()
+                .is_none_or(tokio::task::JoinHandle::is_finished)
+            {
+                follower = Some(tokio::spawn(follow(out.clone(), exe.to_path_buf())));
+            }
+            continue;
+        }
         let out = out.clone();
         inflight.spawn(async move {
             let reply = relay_one(&line).await;
@@ -377,15 +389,103 @@ pub async fn relay(exe: &Path) -> std::io::Result<()> {
         });
     }
     // stdin closed: answer what was already asked before exiting.
+    if let Some(f) = follower {
+        f.abort();
+    }
     while inflight.join_next().await.is_some() {}
     Ok(())
+}
+
+fn is_subscribe(line: &str) -> bool {
+    serde_json::from_str::<Value>(line)
+        .ok()
+        .and_then(|v| {
+            v.get("op")
+                .and_then(Value::as_str)
+                .map(|op| op == "subscribe")
+        })
+        .unwrap_or(false)
+}
+
+/// Hold a `subscribe` stream to the engine and write each event to stdout
+/// as `{"event": …}`. When the engine restarts, start it if needed and
+/// follow again; the client is told with a `resync` event so it can reload.
+async fn follow(out: Arc<tokio::sync::Mutex<tokio::io::Stdout>>, exe: PathBuf) {
+    let mut first = true;
+    loop {
+        if !first {
+            let _ = write_line(&out, &json!({ "event": { "kind": "resync" } })).await;
+        }
+        first = false;
+        if let Err(e) = stream_once(&out).await {
+            tracing::debug!("event stream ended: {e}");
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let _ = ensure_serving(&exe, Duration::from_secs(15)).await;
+    }
+}
+
+async fn stream_once(out: &tokio::sync::Mutex<tokio::io::Stdout>) -> Result<(), String> {
+    let path = desk::serve_path().ok_or("no home directory")?;
+    let raw = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let meta: Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+    let port = meta.get("port").and_then(Value::as_u64).ok_or("no port")?;
+    let token = meta.get("token").and_then(Value::as_str).unwrap_or("");
+    let sock = tokio::net::TcpStream::connect((
+        "127.0.0.1",
+        u16::try_from(port).map_err(|e| e.to_string())?,
+    ))
+    .await
+    .map_err(|e| e.to_string())?;
+    let (read, mut write) = sock.into_split();
+    let mut req = json!({ "op": "subscribe", "token": token }).to_string();
+    req.push('\n');
+    write
+        .write_all(req.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut reader = BufReader::new(read);
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        let n = read_line_capped(&mut reader, &mut buf, MAX_RPC_LINE)
+            .await
+            .map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("the engine closed the stream".into());
+        }
+        let Ok(v) = serde_json::from_slice::<Value>(&buf) else {
+            continue;
+        };
+        if v.get("stream").is_some() {
+            continue;
+        }
+        if v.get("ok").and_then(Value::as_bool) == Some(false) {
+            return Err(v
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("refused")
+                .to_string());
+        }
+        write_line(out, &json!({ "event": v }))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
 }
 
 async fn relay_one(line: &str) -> Value {
     let Ok(Value::Object(mut req)) = serde_json::from_str::<Value>(line) else {
         return json!({ "ok": false, "error": "not a JSON object" });
     };
-    let id = req.remove("id").unwrap_or(Value::Null);
+    // The request number travels as `rid`; `id` belongs to the op (a
+    // session id). A client from 0.1.23 sent a numeric `id` instead.
+    let (key, rid) = match req.remove("rid") {
+        Some(rid) => ("rid", rid),
+        None if req.get("id").is_some_and(Value::is_u64) => {
+            ("id", req.remove("id").unwrap_or(Value::Null))
+        }
+        None => ("rid", Value::Null),
+    };
     req.remove("token");
     let op = req
         .remove("op")
@@ -395,7 +495,7 @@ async fn relay_one(line: &str) -> Value {
         Ok(v) => v,
         Err(e) => json!({ "ok": false, "error": e }),
     };
-    reply["id"] = id;
+    reply[key] = rid;
     reply
 }
 

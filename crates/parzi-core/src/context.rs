@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use base64::Engine as _;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageData {
     pub media_type: String,
     pub data_b64: String,
@@ -14,7 +14,7 @@ impl ImageData {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttachedFile {
     pub path: String,
     pub snippet: String,

@@ -106,6 +106,51 @@ async fn setup_link_and_answer_through_wsl() {
         "the spec is deleted after setup"
     );
 
+    // Live stream: a run on an agent that is not installed there still
+    // starts and streams its end. Nothing reaches a vendor, so no quota.
+    let missing = agents["providers"]
+        .as_array()
+        .and_then(|all| {
+            all.iter()
+                .find(|a| a["state"] == json!("not_installed"))
+                .and_then(|a| a["provider"].as_str())
+        })
+        .expect("an agent that is not installed in the test home")
+        .to_string();
+    let mut events = link.subscribe().await.expect("subscribe");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let sent = link
+        .call(
+            "session.send",
+            json!({ "target": "new", "message": "hello", "model": missing, "lane": "build", "mode": "supervised" }),
+            Duration::from_secs(30),
+        )
+        .await
+        .expect("the run starts");
+    let sid = sent["id"].as_str().unwrap().to_string();
+    let end = tokio::time::timeout(Duration::from_secs(60), async {
+        while let Some(ev) = events.recv().await {
+            if ev["session"] == json!(sid) && matches!(ev["kind"].as_str(), Some("error" | "done"))
+            {
+                return Some(ev);
+            }
+        }
+        None
+    })
+    .await
+    .expect("an end event within a minute")
+    .expect("the stream stays open");
+    eprintln!("streamed: {end}");
+    let thread = link
+        .call(
+            "session.events",
+            json!({ "id": sid }),
+            Duration::from_secs(10),
+        )
+        .await
+        .unwrap();
+    assert!(thread["events"].as_array().is_some_and(|e| !e.is_empty()));
+
     // A second link while the first is open: both answer.
     let second = remote::Link::open(&transport).await.unwrap();
     assert!(second
@@ -119,8 +164,12 @@ async fn setup_link_and_answer_through_wsl() {
     drop(link);
     drop(second);
     tokio::time::sleep(Duration::from_millis(500)).await;
+    // The engine may still write its log while it stops: retry.
     let _ = transport
-        .script("rm -rf \"$HOME\"\n", Duration::from_secs(20))
+        .script(
+            "for i in 1 2 3 4 5; do rm -rf \"$HOME\"; [ -e \"$HOME\" ] || exit 0; sleep 1; done\n",
+            Duration::from_secs(20),
+        )
         .await;
     let _ = std::fs::remove_dir_all(&local);
 }

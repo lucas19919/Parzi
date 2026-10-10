@@ -23,7 +23,6 @@
     brain: void;
     history: void;
     previews: void;
-    remote: void;
     setup: void;
   }>();
 
@@ -66,7 +65,6 @@
     { id: "new-page", icon: "globe", title: "New page", sub: "Open a web page", run: () => dispatch("newPage") },
     { id: "history", icon: "clock", title: "History", sub: "Pages you visited and bookmarks", run: () => dispatch("history") },
     { id: "brain", icon: "brain", title: "Brain", sub: "Notes and projects", run: () => dispatch("brain") },
-    { id: "remote", icon: "server", title: "Remote", sub: "Sessions on your own server", run: () => dispatch("remote") },
     ...(import.meta.env.DEV
       ? [{ id: "previews", icon: "spark" as IconName, title: "Component previews", sub: "Live Omnibar variants, side by side", run: () => dispatch("previews") }]
       : []),

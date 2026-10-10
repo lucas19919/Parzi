@@ -24,7 +24,6 @@
     search: void;
     update: void;
     brain: void;
-    remote: void;
     history: void;
     setup: void;
   }>();
@@ -38,7 +37,6 @@
     { label: "Search", key: "Ctrl+P", icon: "search", run: () => dispatch("search") },
     { label: "History", key: "Ctrl+H", icon: "clock", run: () => dispatch("history") },
     { label: "Brain", key: "Ctrl+B", icon: "brain", run: () => dispatch("brain") },
-    { label: "Remote", key: "", icon: "server", run: () => dispatch("remote") },
     { label: "Settings", key: "Ctrl+,", icon: "settings", run: () => dispatch("settings") },
     { label: "Set up Parzi", key: "", icon: "spark", run: () => dispatch("setup") },
   ] as const;

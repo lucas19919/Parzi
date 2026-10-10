@@ -2,29 +2,44 @@ use std::sync::Arc;
 
 use parzi_core::store::{Event, SessionMeta};
 use parzi_runtime::tools::{Approval, Approver};
+use serde_json::json;
 use tauri::State;
 
+use crate::remote::{self, remote_id, RemoteState};
 use crate::{AppState, GuiApprover};
 
+/// This machine's sessions, then the linked server's (ids tagged `r:`).
 #[tauri::command]
-pub async fn list_threads(state: State<'_, AppState>) -> Result<Vec<SessionMeta>, String> {
-    state.orch.store().list().map_err(|e| e.to_string())
+pub async fn list_threads(
+    state: State<'_, AppState>,
+    far: State<'_, RemoteState>,
+) -> Result<Vec<SessionMeta>, String> {
+    let mut all = state.orch.store().list().map_err(|e| e.to_string())?;
+    all.extend(remote::sessions(&state.app, &far).await);
+    Ok(all)
 }
 
 #[tauri::command]
 pub async fn get_thread(
     state: State<'_, AppState>,
+    far: State<'_, RemoteState>,
     id: String,
 ) -> Result<(SessionMeta, Vec<Event>), String> {
+    if let Some(rid) = remote_id(&id) {
+        return remote::thread(&state.app, &far, rid).await;
+    }
     let meta = state.orch.store().get(&id).map_err(|e| e.to_string())?;
     let events = state.orch.store().events(&id).map_err(|e| e.to_string())?;
     Ok((meta, events))
 }
 
+/// `remote` starts a new session on the linked server; an `r:` id continues
+/// one there. Either way the reply is the session's (tagged) id.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn send_message(
     state: State<'_, AppState>,
+    far: State<'_, RemoteState>,
     session_id: Option<String>,
     model: String,
     prompt: String,
@@ -33,6 +48,7 @@ pub async fn send_message(
     attachments: Option<Vec<String>>,
     mode: Option<String>,
     lane: Option<String>,
+    remote: Option<bool>,
 ) -> Result<String, String> {
     let effort =
         parzi_runtime::orchestrator::normalize_effort(effort.as_deref().unwrap_or("medium"));
@@ -42,6 +58,17 @@ pub async fn send_message(
             .await
             .map_err(|e| e.to_string())?
     };
+    let far_target = match session_id.as_deref() {
+        Some(id) => remote_id(id).map(Some),
+        None if remote == Some(true) => Some(None),
+        None => None,
+    };
+    if let Some(target) = far_target {
+        return remote::send(
+            &state.app, &far, target, &model, &prompt, &effort, attached, mode, lane,
+        )
+        .await;
+    }
     let approver: Arc<dyn Approver> = Arc::new(GuiApprover {
         app: state.app.clone(),
         pending: state.pending.clone(),
@@ -139,26 +166,65 @@ fn read_attachments(cwd: &str, paths: &[String]) -> Vec<parzi_core::context::Att
 }
 
 #[tauri::command]
-pub async fn kill_run(state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub async fn kill_run(
+    state: State<'_, AppState>,
+    far: State<'_, RemoteState>,
+    id: String,
+) -> Result<(), String> {
+    if let Some(rid) = remote_id(&id) {
+        return remote::call(&state.app, &far, "session.kill", json!({ "id": rid }))
+            .await
+            .map(drop);
+    }
     state.orch.kill(&id).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn compact_thread(state: State<'_, AppState>, id: String) -> Result<String, String> {
+pub async fn compact_thread(
+    state: State<'_, AppState>,
+    far: State<'_, RemoteState>,
+    id: String,
+) -> Result<String, String> {
+    if let Some(rid) = remote_id(&id) {
+        let v = remote::call(&state.app, &far, "session.compact", json!({ "id": rid })).await?;
+        return Ok(v
+            .get("summary")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_string());
+    }
     state.orch.compact(&id, "").await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn fork_thread(state: State<'_, AppState>, id: String) -> Result<SessionMeta, String> {
+pub async fn fork_thread(
+    state: State<'_, AppState>,
+    far: State<'_, RemoteState>,
+    id: String,
+) -> Result<SessionMeta, String> {
+    if let Some(rid) = remote_id(&id) {
+        return remote::fork(&state.app, &far, rid).await;
+    }
     state.orch.fork(&id, None).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn rename_thread(
     state: State<'_, AppState>,
+    far: State<'_, RemoteState>,
     id: String,
     title: String,
 ) -> Result<(), String> {
+    if let Some(rid) = remote_id(&id) {
+        return remote::call(
+            &state.app,
+            &far,
+            "session.rename",
+            json!({ "id": rid, "title": title }),
+        )
+        .await
+        .map(drop);
+    }
     state
         .orch
         .store()
@@ -167,7 +233,19 @@ pub async fn rename_thread(
 }
 
 #[tauri::command]
-pub async fn delete_thread(state: State<'_, AppState>, id: String) -> Result<usize, String> {
+pub async fn delete_thread(
+    state: State<'_, AppState>,
+    far: State<'_, RemoteState>,
+    id: String,
+) -> Result<usize, String> {
+    if let Some(rid) = remote_id(&id) {
+        let v = remote::call(&state.app, &far, "session.delete", json!({ "id": rid })).await?;
+        let removed = v
+            .get("removed")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(1);
+        return Ok(usize::try_from(removed).unwrap_or(1));
+    }
     delete_with_runs(&state.orch, &id).await
 }
 
@@ -231,6 +309,10 @@ pub async fn purge_sessions(state: State<'_, AppState>) -> Result<usize, String>
 
 #[tauri::command]
 pub async fn plan_get(id: String) -> Result<String, String> {
+    // A server session's plan lives on the server; the side panel shows none.
+    if remote_id(&id).is_some() {
+        return Ok(String::new());
+    }
     let dir = parzi_core::paths::sessions_dir()
         .map(|d| d.join(&id))
         .map_err(|e| e.to_string())?;
@@ -244,6 +326,9 @@ pub async fn spawn_track(
     title: String,
     prompt: String,
 ) -> Result<String, String> {
+    if remote_id(&parent).is_some() {
+        return Err("tracks start from sessions on this PC".into());
+    }
     state
         .orch
         .harness()
@@ -257,10 +342,22 @@ pub async fn spawn_track(
 #[tauri::command]
 pub async fn answer_question(
     state: State<'_, AppState>,
+    far: State<'_, RemoteState>,
     key: String,
     session: String,
     answer: String,
 ) -> Result<(), String> {
+    if let Some(rkey) = remote_id(&key) {
+        let sid = remote_id(&session).unwrap_or("");
+        return remote::call(
+            &state.app,
+            &far,
+            "question.answer",
+            json!({ "key": rkey, "session": sid, "text": answer }),
+        )
+        .await
+        .map(drop);
+    }
     let entry = state.questions.lock().await.remove(&key);
     match entry {
         Some((bound, tx)) => {
@@ -277,10 +374,21 @@ pub async fn answer_question(
 #[tauri::command]
 pub async fn approve_tool(
     state: State<'_, AppState>,
+    far: State<'_, RemoteState>,
     key: String,
     session: String,
     allow: bool,
 ) -> Result<(), String> {
+    if let Some(rkey) = remote_id(&key) {
+        return remote::call(
+            &state.app,
+            &far,
+            "approval.answer",
+            json!({ "key": rkey, "allow": allow }),
+        )
+        .await
+        .map(drop);
+    }
     let entry = state.pending.lock().await.remove(&key);
     match entry {
         Some((bound, tx)) => {

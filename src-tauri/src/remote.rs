@@ -1,20 +1,41 @@
-//! The desk's door to ParziOS. All the work lives in
-//! `parzi_runtime::remote`; this file keeps one live link and relays the
-//! few ops the remote tab needs.
+//! The desk's door to ParziOS. A remote session is an ordinary session
+//! whose id carries the `r:` prefix: the session commands route it here,
+//! and its live events arrive on `parzi://run-event` like local ones. The
+//! work itself lives in `parzi_runtime::remote`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use parzi_core::store::{Event, SessionMeta};
+use parzi_providers::ProviderStatus;
 use parzi_runtime::remote::{self, Link, Progress, SetupOptions, Target, Transport, REMOTE_BIN};
-use serde_json::Value;
-use tauri::{AppHandle, Emitter, State};
+use serde_json::{json, Value};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
+
+pub const PREFIX: &str = "r:";
+/// After a failed connect, background refreshes wait this long to retry.
+const RETRY_AFTER: Duration = Duration::from_secs(60);
+
+/// The server's own id for a remote session id, or None for a local one.
+#[must_use]
+pub fn remote_id(id: &str) -> Option<&str> {
+    id.strip_prefix(PREFIX)
+}
+
+fn tag(id: &str) -> String {
+    format!("{PREFIX}{id}")
+}
 
 #[derive(Default)]
 pub struct RemoteState {
     link: Mutex<Option<Arc<Link>>>,
     busy: AtomicBool,
+    /// The server's sessions as last listed, ids already tagged.
+    sessions: std::sync::Mutex<Vec<SessionMeta>>,
+    failed_at: std::sync::Mutex<Option<Instant>>,
+    opening: AtomicBool,
 }
 
 #[derive(serde::Serialize)]
@@ -41,11 +62,290 @@ fn info(saved: &remote::Saved, alive: bool) -> RemoteInfo {
     }
 }
 
+/// Connection news for the UI: `up`, `down`, `updating`, `ready`, `error`,
+/// `resync` (the stream restarted, reload what is shown).
+fn status(app: &AppHandle, state: &str, detail: impl Into<String>) {
+    let _ = app.emit(
+        "parzi://remote",
+        json!({ "state": state, "detail": detail.into() }),
+    );
+}
+
+/// `0.1.9 < 0.1.23`: dotted numbers compared as numbers.
+fn older(a: &str, b: &str) -> bool {
+    let key = |v: &str| -> Vec<u64> { v.split('.').map(|p| p.parse().unwrap_or(0)).collect() };
+    key(a) < key(b)
+}
+
+/// The live link, opened on first use. A server older than this desk is
+/// brought up to date first; if that fails the old one is still used.
+pub(crate) async fn link(app: &AppHandle, state: &RemoteState) -> Result<Arc<Link>, String> {
+    let mut slot = state.link.lock().await;
+    if let Some(l) = slot.as_ref().filter(|l| l.alive()) {
+        return Ok(l.clone());
+    }
+    let mut saved = remote::load_saved().ok_or("no remote is set up")?;
+    let label = saved.target.label();
+    let opened = Link::open(&Transport::ssh(&saved.target)).await;
+    let mut link = match opened {
+        Ok(l) => l,
+        Err(e) => {
+            *state.failed_at.lock().unwrap_or_else(|p| p.into_inner()) = Some(Instant::now());
+            return Err(format!("{label}: {e}"));
+        }
+    };
+    let ours = env!("CARGO_PKG_VERSION");
+    if older(&link.version, ours) {
+        status(
+            app,
+            "updating",
+            format!("Updating Parzi on {label} to {ours}…"),
+        );
+        drop(link);
+        let quiet = |_: Progress| {};
+        match remote::upgrade(&saved, &quiet).await {
+            Ok(next) => {
+                saved = next;
+                status(app, "ready", format!("Parzi on {label} is now {ours}"));
+            }
+            Err(e) => status(
+                app,
+                "error",
+                format!("Could not update Parzi on {label}: {e}"),
+            ),
+        }
+        link = Link::open(&Transport::ssh(&saved.target))
+            .await
+            .map_err(|e| format!("{label}: {e}"))?;
+    }
+    let events = link.subscribe().await?;
+    let link = Arc::new(link);
+    *slot = Some(link.clone());
+    *state.failed_at.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    tokio::spawn(forward(app.clone(), events));
+    status(app, "up", label);
+    Ok(link)
+}
+
+/// Remote events to the desk's event channel, with ids tagged `r:`.
+async fn forward(app: AppHandle, mut rx: tokio::sync::mpsc::UnboundedReceiver<Value>) {
+    while let Some(mut ev) = rx.recv().await {
+        match ev.get("kind").and_then(Value::as_str) {
+            Some("resync" | "lagged") => {
+                status(&app, "resync", "");
+                continue;
+            }
+            None => continue,
+            Some(_) => {}
+        }
+        retag(&mut ev);
+        let _ = app.emit("parzi://run-event", &ev);
+    }
+    status(&app, "down", "");
+}
+
+fn retag(ev: &mut Value) {
+    for field in ["session", "key"] {
+        if let Some(s) = ev.get(field).and_then(Value::as_str).map(tag) {
+            ev[field] = json!(s);
+        }
+    }
+    if let Some(call) = ev.get_mut("call") {
+        if let Some(s) = call.get("session").and_then(Value::as_str).map(tag) {
+            call["session"] = json!(s);
+        }
+    }
+}
+
+fn wait_for(op: &str) -> Duration {
+    match op {
+        "providers" | "doctor" | "session.compact" => Duration::from_secs(100),
+        "session.send" | "session.kill" | "session.delete" => Duration::from_secs(70),
+        _ => Duration::from_secs(30),
+    }
+}
+
+pub(crate) async fn call(
+    app: &AppHandle,
+    state: &RemoteState,
+    op: &str,
+    body: Value,
+) -> Result<Value, String> {
+    link(app, state).await?.call(op, body, wait_for(op)).await
+}
+
+fn tagged_meta(v: Value) -> Option<SessionMeta> {
+    let mut meta: SessionMeta = serde_json::from_value(v).ok()?;
+    meta.id = tag(&meta.id);
+    meta.parent_id = meta.parent_id.as_deref().map(tag);
+    Some(meta)
+}
+
+/// The server's sessions for the desk's list. Never waits on a connect:
+/// without a live link it starts one in the background and answers from
+/// the last list.
+pub(crate) async fn sessions(app: &AppHandle, state: &RemoteState) -> Vec<SessionMeta> {
+    if remote::load_saved().is_none() {
+        return vec![];
+    }
+    let live = match state.link.try_lock() {
+        Ok(slot) => slot.as_ref().filter(|l| l.alive()).cloned(),
+        Err(_) => None,
+    };
+    let Some(link) = live else {
+        connect_in_background(app, state);
+        return state
+            .sessions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+    };
+    let fresh = tokio::time::timeout(
+        Duration::from_secs(4),
+        link.call("session.list", json!({}), Duration::from_secs(4)),
+    )
+    .await;
+    if let Ok(Ok(v)) = fresh {
+        let rows: Vec<SessionMeta> = v
+            .get("sessions")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().cloned().filter_map(tagged_meta).collect())
+            .unwrap_or_default();
+        *state.sessions.lock().unwrap_or_else(|p| p.into_inner()) = rows;
+    }
+    state
+        .sessions
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clone()
+}
+
+fn connect_in_background(app: &AppHandle, state: &RemoteState) {
+    let recent = state
+        .failed_at
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .is_some_and(|t| t.elapsed() < RETRY_AFTER);
+    if recent || state.opening.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let st = app.state::<RemoteState>();
+        if let Err(e) = link(&app, &st).await {
+            tracing::info!("remote not linked: {e}");
+        }
+        st.opening.store(false, Ordering::Release);
+    });
+}
+
+pub(crate) async fn thread(
+    app: &AppHandle,
+    state: &RemoteState,
+    id: &str,
+) -> Result<(SessionMeta, Vec<Event>), String> {
+    let v = call(app, state, "session.events", json!({ "id": id, "from": 0 })).await?;
+    let meta = v
+        .get("session")
+        .cloned()
+        .and_then(tagged_meta)
+        .ok_or("the server sent no session")?;
+    let events = v
+        .get("events")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| serde_json::from_value(e.clone()).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok((meta, events))
+}
+
+/// Start or continue a session on the server. Attachments were read here;
+/// they travel inline.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn send(
+    app: &AppHandle,
+    state: &RemoteState,
+    target: Option<&str>,
+    model: &str,
+    prompt: &str,
+    effort: &str,
+    attachments: Vec<parzi_core::context::AttachedFile>,
+    mode: Option<String>,
+    lane: Option<String>,
+) -> Result<String, String> {
+    let body = json!({
+        "target": target.unwrap_or("new"),
+        "message": prompt,
+        "model": model,
+        "effort": effort,
+        "mode": mode.unwrap_or_default(),
+        "lane": lane.unwrap_or_default(),
+        "attachments": attachments,
+        "cwd": "",
+    });
+    let v = call(app, state, "session.send", body).await?;
+    let id = v
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or("the server sent no id")?;
+    Ok(tag(id))
+}
+
+pub(crate) async fn fork(
+    app: &AppHandle,
+    state: &RemoteState,
+    id: &str,
+) -> Result<SessionMeta, String> {
+    let v = call(app, state, "session.fork", json!({ "id": id })).await?;
+    v.get("session")
+        .cloned()
+        .and_then(tagged_meta)
+        .ok_or_else(|| "update Parzi on the server to fork there".into())
+}
+
 /// The saved remote, if any. Never opens a connection.
 #[tauri::command]
 pub async fn remote_info(state: State<'_, RemoteState>) -> Result<Option<RemoteInfo>, String> {
-    let alive = state.link.lock().await.as_ref().is_some_and(|l| l.alive());
+    let alive = state
+        .link
+        .try_lock()
+        .ok()
+        .and_then(|l| l.as_ref().map(|l| l.alive()))
+        .unwrap_or(false);
     Ok(remote::load_saved().map(|s| info(&s, alive)))
+}
+
+/// Open the link now (the composer's switch): connects, updates the
+/// server when it is older, and starts the event stream.
+#[tauri::command]
+pub async fn remote_connect(
+    app: AppHandle,
+    state: State<'_, RemoteState>,
+) -> Result<RemoteInfo, String> {
+    link(&app, &state).await?;
+    let saved = remote::load_saved().ok_or("no remote is set up")?;
+    Ok(info(&saved, true))
+}
+
+/// The agents on the server, for the composer's model list.
+#[tauri::command]
+pub async fn remote_providers(
+    app: AppHandle,
+    state: State<'_, RemoteState>,
+    refresh: Option<bool>,
+) -> Result<Vec<ProviderStatus>, String> {
+    let v = call(
+        &app,
+        &state,
+        "providers",
+        json!({ "refresh": refresh.unwrap_or(false) }),
+    )
+    .await?;
+    serde_json::from_value(v.get("providers").cloned().unwrap_or(Value::Null))
+        .map_err(|e| format!("the server's agent list is unreadable: {e}"))
 }
 
 struct Busy<'a>(&'a AtomicBool);
@@ -81,44 +381,16 @@ pub async fn remote_setup(
     let emit = |p: Progress| {
         let _ = app.emit("parzi://remote-setup", &p);
     };
-    let (saved, link) = remote::setup(target, opts, &emit).await?;
-    *state.link.lock().await = Some(Arc::new(link));
+    let (saved, setup_link) = remote::setup(target, opts, &emit).await?;
+    drop(setup_link);
+    *state.link.lock().await = None;
+    state
+        .sessions
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clear();
+    link(&app, &state).await?;
     Ok(info(&saved, true))
-}
-
-async fn live_link(state: &RemoteState) -> Result<Arc<Link>, String> {
-    let mut slot = state.link.lock().await;
-    if let Some(link) = slot.as_ref().filter(|l| l.alive()) {
-        return Ok(link.clone());
-    }
-    let saved = remote::load_saved().ok_or("no remote is set up")?;
-    let link = Arc::new(Link::open(&Transport::ssh(&saved.target)).await?);
-    *slot = Some(link.clone());
-    Ok(link)
-}
-
-fn wait_for(op: &str) -> Duration {
-    match op {
-        "providers" | "doctor" => Duration::from_secs(100),
-        "session.send" | "session.kill" | "session.delete" => Duration::from_secs(70),
-        _ => Duration::from_secs(30),
-    }
-}
-
-/// Relay one op to the remote engine. Only the ops the remote tab uses
-/// pass; the engine checks everything again on its side.
-#[tauri::command]
-pub async fn remote_call(
-    state: State<'_, RemoteState>,
-    op: String,
-    body: Option<Value>,
-) -> Result<Value, String> {
-    if !remote::OPS.contains(&op.as_str()) {
-        return Err(format!("`{op}` is not a remote op"));
-    }
-    let link = live_link(&state).await?;
-    link.call(&op, body.unwrap_or(Value::Null), wait_for(&op))
-        .await
 }
 
 /// Install an agent on the remote, or sign in to it, in a terminal the
@@ -172,6 +444,11 @@ fn quote(arg: &str) -> String {
 #[tauri::command]
 pub async fn remote_forget(state: State<'_, RemoteState>) -> Result<(), String> {
     *state.link.lock().await = None;
+    state
+        .sessions
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clear();
     remote::forget()
 }
 
@@ -191,5 +468,31 @@ mod tests {
         } else {
             assert_eq!(quote("it's"), r"'it'\''s'");
         }
+    }
+
+    #[test]
+    fn remote_ids_carry_their_prefix_both_ways() {
+        assert_eq!(remote_id("r:abc"), Some("abc"));
+        assert_eq!(remote_id("abc"), None);
+        let mut ev = json!({
+            "kind": "approval", "key": "k1", "session": "s1",
+            "call": { "session": "s1", "name": "shell.exec" },
+        });
+        retag(&mut ev);
+        assert_eq!(ev["key"], "r:k1");
+        assert_eq!(ev["session"], "r:s1");
+        assert_eq!(ev["call"]["session"], "r:s1");
+        let mut text = json!({ "kind": "text", "session": "s2", "text": "hi" });
+        retag(&mut text);
+        assert_eq!(text["session"], "r:s2");
+        assert_eq!(text["text"], "hi");
+    }
+
+    #[test]
+    fn only_an_older_server_is_upgraded() {
+        assert!(older("0.1.9", "0.1.23"));
+        assert!(older("0.1.23", "0.1.24"));
+        assert!(!older("0.1.24", "0.1.24"));
+        assert!(!older("0.2.0", "0.1.24"));
     }
 }

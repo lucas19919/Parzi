@@ -666,7 +666,8 @@ fn main() {
             onboard::agent_login,
             remote::remote_info,
             remote::remote_setup,
-            remote::remote_call,
+            remote::remote_connect,
+            remote::remote_providers,
             remote::remote_agent,
             remote::remote_forget,
         ])

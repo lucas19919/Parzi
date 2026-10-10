@@ -145,6 +145,34 @@ fn harness_intro() -> String {
     HARNESS_DOC[..end].trim().to_string()
 }
 
+/// A run event in the shape the desk's UI reads from `parzi://run-event`
+/// (`kind` tagged, snake case). `parzi serve` streams these to a remote
+/// desk, which forwards them unchanged. Usage and approval requests have
+/// their own paths and map to None.
+#[must_use]
+pub fn ui_event(session: &str, ev: &RunEvent) -> Option<serde_json::Value> {
+    use serde_json::json;
+    Some(match ev {
+        RunEvent::Text(text) => json!({ "kind": "text", "session": session, "text": text }),
+        RunEvent::Reasoning { text } => {
+            json!({ "kind": "reasoning", "session": session, "text": text })
+        }
+        RunEvent::ToolCall { id, name, label } => {
+            json!({ "kind": "tool_call", "session": session, "id": id, "name": name, "label": label })
+        }
+        RunEvent::ToolResult { id, name, ok, ms } => {
+            json!({ "kind": "tool_result", "session": session, "id": id, "name": name, "ok": ok, "ms": ms })
+        }
+        RunEvent::Notice { text } => json!({ "kind": "notice", "session": session, "text": text }),
+        RunEvent::Context { used, limit } => {
+            json!({ "kind": "context", "session": session, "used": used, "limit": limit })
+        }
+        RunEvent::Done { turns } => json!({ "kind": "done", "session": session, "turns": turns }),
+        RunEvent::Error(error) => json!({ "kind": "error", "session": session, "error": error }),
+        RunEvent::Usage { .. } | RunEvent::ApprovalRequest { .. } => return None,
+    })
+}
+
 pub fn system_parts(lane: &str, cwd: &str) -> Vec<String> {
     let mut parts = vec![if lane.is_empty() {
         harness_intro()

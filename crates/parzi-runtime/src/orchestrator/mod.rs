@@ -147,6 +147,11 @@ impl Orchestrator {
         *self.asker.blocking_lock() = Some(asker);
     }
 
+    /// `set_asker` for async callers such as `parzi serve`'s start.
+    pub async fn install_asker(&self, asker: Arc<dyn crate::tools::Asker>) {
+        *self.asker.lock().await = Some(asker);
+    }
+
     /// Kill every background shell of a session and forget its registry.
     /// Called when sessions are deleted or purged so nothing outlives them.
     pub fn drop_shells(&self, id: &str) {

@@ -1,5 +1,5 @@
 export type ComposerMode = "search" | "build" | "work";
-type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview" | "remote";
+type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview";
 
 export interface TabComposerState {
   input: string;
@@ -7,6 +7,8 @@ export interface TabComposerState {
   model: string;
   effort: string;
   attachments: string[];
+  // A new session here starts on the linked server.
+  remote?: boolean;
 }
 
 function defaultComposer(): TabComposerState {
@@ -50,10 +52,6 @@ export function historyTab(): Tab {
 
 export function brainTab(): Tab {
   return { id: tabId(), kind: "brain", title: "Brain", composer: defaultComposer() };
-}
-
-export function remoteTab(): Tab {
-  return { id: tabId(), kind: "remote", title: "Remote", composer: defaultComposer() };
 }
 
 export function settingsTab(): Tab {

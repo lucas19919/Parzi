@@ -15,15 +15,19 @@ use parzi_core::store::{Event, SessionMeta, SessionStore};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use tokio::sync::{broadcast, oneshot};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::desk;
+use crate::handler::ui_event;
 use crate::orchestrator::Orchestrator;
-use crate::tools::{humanize_tool_call, Approval, Approver, AutoApprover, ToolCallInfo};
+use crate::tools::{
+    humanize_tool_call, Approval, Approver, AskRequest, Asker, AutoApprover, ToolCallInfo,
+};
 
-const MAX_REQUEST: u64 = 1024 * 1024;
+/// Large enough for a message with its attachments inlined.
+const MAX_REQUEST: u64 = 16 * 1024 * 1024;
 /// A parked approval nobody answers is denied after this long, so a
 /// forgotten run gives its slot back instead of holding it forever.
 const APPROVAL_TTL: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
@@ -54,17 +58,20 @@ impl Drop for SlotGuard {
     }
 }
 
-/// Approvals that wait until a client answers on the socket.
+/// Approvals that wait until a client answers on the socket. Each one is
+/// also announced on the event stream, shaped like the desk's own cards.
 pub struct ParkedApprover {
     pending: Arc<std::sync::Mutex<HashMap<String, Pending>>>,
     store: SessionStore,
+    events: broadcast::Sender<Value>,
 }
 
 impl ParkedApprover {
-    fn new(store: SessionStore) -> Arc<Self> {
+    fn new(store: SessionStore, events: broadcast::Sender<Value>) -> Arc<Self> {
         Arc::new(Self {
             pending: Arc::default(),
             store,
+            events,
         })
     }
 
@@ -127,12 +134,90 @@ impl Approver for ParkedApprover {
         let label = humanize_tool_call(&call.name, &call.args);
         let text = format!("waiting for approval {key}: {label}");
         let _ = self.store.append(&call.session, &Event::System { text });
+        let _ = self.events.send(json!({
+            "kind": "approval",
+            "key": key,
+            "session": call.session,
+            "call": {
+                "id": call.id,
+                "name": call.name,
+                "args": call.args,
+                "lane": call.lane,
+                "session": call.session,
+            },
+        }));
         if let Ok(answer) = tokio::time::timeout(APPROVAL_TTL, rx).await {
             answer.unwrap_or(Approval::Deny)
         } else {
             let text = format!("approval {key} expired unanswered and was denied: {label}");
             let _ = self.store.append(&call.session, &Event::System { text });
             Approval::Deny
+        }
+    }
+}
+
+type Questions = std::sync::Mutex<HashMap<String, (String, oneshot::Sender<String>)>>;
+
+/// `ask.user` and `request.user` on a headless engine: the question is
+/// announced on the event stream and waits for `question.answer`.
+pub struct ParkedAsker {
+    pending: Questions,
+    events: broadcast::Sender<Value>,
+}
+
+impl ParkedAsker {
+    fn new(events: broadcast::Sender<Value>) -> Arc<Self> {
+        Arc::new(Self {
+            pending: std::sync::Mutex::default(),
+            events,
+        })
+    }
+
+    fn answer(&self, key: &str, session: &str, text: &str) -> Result<(), String> {
+        let entry = self
+            .pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(key);
+        let Some((bound, tx)) = entry else {
+            return Err("question expired or unknown".into());
+        };
+        if !session.is_empty() && bound != session {
+            return Err("answer is for another session".into());
+        }
+        tx.send(text.to_string())
+            .map_err(|_| "the run is no longer waiting".into())
+    }
+}
+
+#[async_trait::async_trait]
+impl Asker for ParkedAsker {
+    async fn ask(&self, req: &AskRequest) -> String {
+        let key = uuid::Uuid::new_v4().to_string();
+        let (tx, rx) = oneshot::channel();
+        self.pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key.clone(), (req.session.clone(), tx));
+        let _ = self.events.send(if req.kind.is_empty() {
+            json!({
+                "kind": "question", "key": key, "session": req.session,
+                "question": req.question, "options": req.options,
+            })
+        } else {
+            json!({
+                "kind": "request", "key": key, "session": req.session,
+                "request": req.question, "req_kind": req.kind,
+            })
+        });
+        let out = tokio::time::timeout(APPROVAL_TTL, rx).await;
+        self.pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&key);
+        match out {
+            Ok(Ok(a)) if !a.trim().is_empty() => a,
+            _ => "the user didn't answer. Decide yourself and say what you assumed".into(),
         }
     }
 }
@@ -151,6 +236,9 @@ struct State {
     orch: Arc<Orchestrator>,
     token: String,
     approver: Arc<ParkedApprover>,
+    asker: Arc<ParkedAsker>,
+    /// Approvals and questions, for `subscribe` streams.
+    events: broadcast::Sender<Value>,
     stop: CancellationToken,
 }
 
@@ -219,12 +307,17 @@ pub async fn start(orch: Arc<Orchestrator>) -> Result<Daemon, String> {
         &file,
         &json!({ "port": addr.port(), "token": token }).to_string(),
     )?;
-    let approver = ParkedApprover::new(orch.store().clone());
+    let (events, _) = broadcast::channel(256);
+    let approver = ParkedApprover::new(orch.store().clone(), events.clone());
+    let asker = ParkedAsker::new(events.clone());
+    orch.install_asker(asker.clone()).await;
     let cancel = CancellationToken::new();
     let state = Arc::new(State {
         orch: orch.clone(),
         token,
         approver: approver.clone(),
+        asker,
+        events,
         stop: cancel.clone(),
     });
     let accept_cancel = cancel.clone();
@@ -392,10 +485,12 @@ async fn answer(sock: tokio::net::TcpStream, state: &State) -> Result<(), String
     } else {
         let req: Value = serde_json::from_str(line.trim()).unwrap_or_else(|_| json!({}));
         let token = req.get("token").and_then(Value::as_str).unwrap_or("");
-        if tokens_equal(token, &state.token) {
-            dispatch(state, &req).await
-        } else {
+        if !tokens_equal(token, &state.token) {
             json!({ "ok": false, "error": "bad token" })
+        } else if req.get("op").and_then(Value::as_str) == Some("subscribe") {
+            return stream(write, state).await;
+        } else {
+            dispatch(state, &req).await
         }
     };
     let mut out = serde_json::to_string(&reply)
@@ -406,6 +501,45 @@ async fn answer(sock: tokio::net::TcpStream, state: &State) -> Result<(), String
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Keep the connection open and write every run event, approval and
+/// question as one JSON line until the client goes away or serve stops.
+async fn stream(mut write: tokio::net::tcp::OwnedWriteHalf, state: &State) -> Result<(), String> {
+    let mut runs = state.orch.subscribe();
+    let mut side = state.events.subscribe();
+    let send = |v: &Value| {
+        let mut line = serde_json::to_string(v).unwrap_or_default();
+        line.push('\n');
+        line
+    };
+    write
+        .write_all(send(&json!({ "ok": true, "stream": true })).as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    loop {
+        let next = tokio::select! {
+            () = state.stop.cancelled() => return Ok(()),
+            run = runs.recv() => match run {
+                Ok((session, ev)) => ui_event(&session, &ev),
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    Some(json!({ "kind": "lagged", "missed": n }))
+                }
+                Err(broadcast::error::RecvError::Closed) => return Ok(()),
+            },
+            other = side.recv() => match other {
+                Ok(v) => Some(v),
+                Err(broadcast::error::RecvError::Lagged(_)) => None,
+                Err(broadcast::error::RecvError::Closed) => return Ok(()),
+            },
+        };
+        if let Some(v) = next {
+            write
+                .write_all(send(&v).as_bytes())
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
 }
 
 async fn dispatch(state: &State, req: &Value) -> Value {
@@ -426,6 +560,17 @@ async fn dispatch(state: &State, req: &Value) -> Value {
         "session.send" => session_send(state, req).await,
         "approval.list" => json!({ "ok": true, "approvals": state.approver.list() }),
         "approval.answer" => approval_answer(&state.approver, req),
+        "question.answer" => {
+            match state.asker.answer(
+                &str_arg(req, "key"),
+                &str_arg(req, "session"),
+                &str_arg(req, "text"),
+            ) {
+                Ok(()) => json!({ "ok": true }),
+                Err(e) => fail(e),
+            }
+        }
+        "session.compact" => session_compact(&state.orch, req).await,
         "providers" => providers(&state.orch, req).await,
         "shutdown" => {
             // Let this reply reach the client before the accept loop stops.
@@ -566,7 +711,18 @@ async fn session_fork(orch: &Orchestrator, req: &Value) -> Value {
         .and_then(Value::as_u64)
         .and_then(|n| usize::try_from(n).ok());
     match orch.fork(&id, at).await {
-        Ok(meta) => json!({ "ok": true, "id": meta.id }),
+        Ok(meta) => json!({ "ok": true, "id": meta.id, "session": meta }),
+        Err(e) => fail(e.to_string()),
+    }
+}
+
+async fn session_compact(orch: &Orchestrator, req: &Value) -> Value {
+    let id = match resolve(orch, &str_arg(req, "id")) {
+        Ok(id) => id,
+        Err(v) => return v,
+    };
+    match orch.compact(&id, &str_arg(req, "focus")).await {
+        Ok(summary) => json!({ "ok": true, "id": id, "summary": summary }),
         Err(e) => fail(e.to_string()),
     }
 }
@@ -630,8 +786,16 @@ async fn session_send(state: &State, req: &Value) -> Value {
     let target = str_arg(req, "target");
     let model = str_arg(req, "model");
     let cwd = str_arg(req, "cwd");
+    let lane = str_arg(req, "lane");
+    let mode = Some(str_arg(req, "mode")).filter(|m| !m.is_empty());
     let effort = crate::orchestrator::normalize_effort(&str_arg(req, "effort"));
     let yes = req.get("yes").and_then(Value::as_bool).unwrap_or(false);
+    // Read on the desk and sent inline: the desk's files are not here.
+    let attachments: Vec<parzi_core::context::AttachedFile> = req
+        .get("attachments")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_default();
     let approver: Arc<dyn Approver> = if yes {
         Arc::new(AutoApprover)
     } else {
@@ -643,14 +807,14 @@ async fn session_send(state: &State, req: &Value) -> Value {
             .orch
             .spawn(
                 &project,
-                "",
+                &lane,
                 &model,
                 &message,
                 Some(approver),
                 &cwd,
                 &effort,
-                vec![],
-                None,
+                attachments,
+                mode,
             )
             .await
             .map(|(meta, rx)| {
@@ -667,9 +831,9 @@ async fn session_send(state: &State, req: &Value) -> Value {
                     Some(approver),
                     &cwd,
                     &effort,
-                    vec![],
-                    Some(model),
-                    None,
+                    attachments,
+                    Some(model).filter(|m| !m.is_empty()),
+                    mode,
                 )
                 .await
                 .map(|rx| {
