@@ -80,8 +80,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           shopt -s nullglob
-          files=(src-tauri/target/release/bundle/nsis/* \
-                 src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*)
+          # Only the installers and their updater signatures: the dmg folder
+          # also holds bundle_dmg.sh and icon.icns, which are build helpers.
+          files=(src-tauri/target/release/bundle/nsis/*-setup.exe \
+                 src-tauri/target/release/bundle/nsis/*-setup.exe.sig \
+                 src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg)
           for f in "${files[@]}"; do
             [ -f "$f" ] || continue
             gh release upload "${{ github.ref_name }}" "$f" --clobber
