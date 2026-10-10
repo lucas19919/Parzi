@@ -373,8 +373,13 @@ async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, R
                 if let Some(buf) = bufs.get_mut(&sid) {
                     flush_sid(&app, &sid, buf);
                 }
+                // A finished local run goes to the server's mirror.
+                let ended = matches!(other, RunEvent::Done { .. } | RunEvent::Error(_));
                 if let Some(ui) = ui_from_run(sid, other) {
                     let _ = app.emit("parzi://run-event", ui);
+                }
+                if ended {
+                    remote::sync_soon(&app);
                 }
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -526,7 +531,11 @@ fn main() {
             orch.recover().ok();
             let o = orch.clone();
             parzi_runtime::remote::sweep_askpass();
+            if let Err(e) = parzi_core::device::ensure() {
+                tracing::warn!("device id not saved: {e}");
+            }
             app.manage(remote::RemoteState::default());
+            remote::start_ticker(app.handle());
             app.manage(AppState {
                 orch,
                 pending,
@@ -668,6 +677,9 @@ fn main() {
             remote::remote_setup,
             remote::remote_connect,
             remote::remote_providers,
+            remote::remote_projects,
+            remote::remote_project_folder,
+            remote::remote_sync,
             remote::remote_agent,
             remote::remote_forget,
         ])

@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use parzi_runtime::remote::{self, Progress, SetupOptions, Target, Transport};
+use parzi_runtime::sync;
 use serde_json::json;
 
 #[tokio::test]
@@ -37,7 +38,16 @@ async fn setup_link_and_answer_through_wsl() {
     let home_env = format!("HOME={home}");
     let transport = Transport::custom(
         "wsl.exe",
-        &["-d", &distro, "-e", "env", &home_env, "sh", "-c"],
+        &[
+            "-d",
+            &distro,
+            "-e",
+            "env",
+            &home_env,
+            "PARZI_DEVICE=wsl-e2e",
+            "sh",
+            "-c",
+        ],
     );
     let seen: Mutex<Vec<Progress>> = Mutex::default();
     let opts = SetupOptions {
@@ -151,6 +161,137 @@ async fn setup_link_and_answer_through_wsl() {
         .unwrap();
     assert!(thread["events"].as_array().is_some_and(|e| !e.is_empty()));
 
+    // Sync: notes both ways, a project folder per device, a conflict, a
+    // delete, settings, and this device's sessions in the server's mirror.
+    let wait = Duration::from_secs(20);
+    let server = "e2e@wsl";
+    let store = parzi_core::store::SessionStore::open().unwrap();
+    let desk_sid = store
+        .create("desk session", "default", "build", "claude")
+        .unwrap()
+        .id;
+    store
+        .append(
+            &desk_sid,
+            &parzi_core::store::Event::User {
+                text: "from the desk".into(),
+            },
+        )
+        .unwrap();
+    std::fs::write(local.join("brain").join("shared.md"), "v1\n").unwrap();
+    let first = sync::everything(&link, &store, server).await;
+    eprintln!("first sync: {}", first.summary());
+    assert!(first.errors.is_empty(), "{:?}", first.errors);
+    assert!(
+        matches!(first.settings, sync::SettingsOutcome::Pushed),
+        "an empty server takes the desk's settings"
+    );
+    let there = manifest_there(&link).await;
+    assert!(
+        there.contains_key("shared.md") && there.contains_key("projects/app.md"),
+        "{there:?}"
+    );
+    let app_here =
+        std::fs::read_to_string(local.join("brain").join("projects").join("app.md")).unwrap();
+    assert!(
+        app_here.contains("folder@") && !app_here.contains("\nfolder:"),
+        "claimed: {app_here}"
+    );
+    let projects = link.call("project.list", json!({}), wait).await.unwrap();
+    let app = projects["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["slug"] == json!("app"))
+        .expect("the server sees the project")
+        .clone();
+    assert_eq!(app["folder"], json!(""), "no folder on the server yet");
+    link.call(
+        "project.folder",
+        json!({ "slug": "app", "title": "App", "folder": "/srv/app" }),
+        wait,
+    )
+    .await
+    .unwrap();
+    link.call(
+        "brain.apply",
+        json!({ "put": [
+            { "path": "server.md", "text": "made there\n" },
+            { "path": "shared.md", "text": "v2 there\n" },
+        ] }),
+        wait,
+    )
+    .await
+    .unwrap();
+    std::fs::write(local.join("brain").join("shared.md"), "v2 here\n").unwrap();
+    std::fs::remove_file(local.join("brain").join("hello.md")).unwrap();
+    let second = sync::everything(&link, &store, server).await;
+    eprintln!("second sync: {}", second.summary());
+    assert!(second.errors.is_empty(), "{:?}", second.errors);
+    assert_eq!(second.brain.conflicts, 1);
+    let brain = local.join("brain");
+    assert_eq!(
+        std::fs::read_to_string(brain.join("shared.md")).unwrap(),
+        "v2 there\n",
+        "the server's text keeps the name"
+    );
+    let aside = std::fs::read_dir(&brain)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .find(|n| n.starts_with("shared.conflict-"))
+        .expect("this device's text is kept beside it");
+    assert_eq!(
+        std::fs::read_to_string(brain.join(&aside)).unwrap(),
+        "v2 here\n"
+    );
+    assert!(brain.join("server.md").exists());
+    let there = manifest_there(&link).await;
+    assert!(there.contains_key(&aside), "the copy reached the server");
+    assert!(
+        !there.contains_key("hello.md"),
+        "the delete reached the server"
+    );
+    let app_here = std::fs::read_to_string(brain.join("projects").join("app.md")).unwrap();
+    assert!(
+        app_here.contains("folder@wsl-e2e"),
+        "both folders: {app_here}"
+    );
+    let mirrors = link.call("mirror.list", json!({}), wait).await.unwrap();
+    let card = mirrors["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["session"]["id"] == json!(desk_sid))
+        .expect("this device's session is mirrored")
+        .clone();
+    let device = card["device"].as_str().unwrap().to_string();
+    let read = link
+        .call(
+            "mirror.events",
+            json!({ "device": device, "id": desk_sid }),
+            wait,
+        )
+        .await
+        .unwrap();
+    assert_eq!(read["total"], json!(1));
+    let adopted = link
+        .call(
+            "mirror.adopt",
+            json!({ "device": device, "id": desk_sid }),
+            wait,
+        )
+        .await
+        .unwrap();
+    let on_server = link
+        .call("session.events", json!({ "id": adopted["id"] }), wait)
+        .await
+        .unwrap();
+    assert_eq!(on_server["total"], json!(1), "the history came along");
+    let third = sync::everything(&link, &store, server).await;
+    assert!(third.errors.is_empty(), "{:?}", third.errors);
+    assert_eq!(third.summary(), "", "nothing left to move");
+
     // A second link while the first is open: both answer.
     let second = remote::Link::open(&transport).await.unwrap();
     assert!(second
@@ -172,4 +313,12 @@ async fn setup_link_and_answer_through_wsl() {
         )
         .await;
     let _ = std::fs::remove_dir_all(&local);
+}
+
+async fn manifest_there(link: &remote::Link) -> std::collections::BTreeMap<String, String> {
+    let v = link
+        .call("brain.manifest", json!({}), Duration::from_secs(20))
+        .await
+        .unwrap();
+    serde_json::from_value(v["notes"].clone()).unwrap()
 }

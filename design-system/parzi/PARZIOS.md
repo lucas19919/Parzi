@@ -71,6 +71,44 @@ departs from the plan below:
 - Tested end to end against WSL standing in for the server
   (`crates/parzi-runtime/tests/remote_wsl.rs`, ignored by default).
 
+### The server is home (0.1.25)
+
+Lucas's call: the server holds brain, settings and sessions; PC, laptop and
+phone are windows onto it. Projects share their notes, each device keeps
+its own folder.
+
+- **Device identity** (`parzi_core::device`): host-name slug plus OS
+  (`lucas-pc-windows`), written once to `~/.parzi/device.json`.
+  `PARZI_DEVICE` overrides it.
+- **Per-device project folders**: a project note holds
+  `folder@<device>: <path>` per machine. A plain `folder:` from before is
+  read only while no device key exists, and `Vault::claim_plain_folders`
+  turns it into this device's key before the first push. A project with no
+  folder on this device still lists (folder ""), so it can be given one.
+- **Sync engine** (`parzi_runtime::sync`): a pure three-way `plan` (here,
+  there, last agreement in `~/.parzi/sync/brain.json`, FNV-1a hashes).
+  Changes on one side move to the other; a delete untouched on the other
+  side deletes; an edit beats a delete; both changed keeps the server's
+  text and this device's as `<name>.conflict-<device>.md` on both sides.
+  Settings: portable config, newest wins (`settings_direction`); at first
+  contact a server that already has settings wins. Sessions: each device
+  appends its own sessions' events to `~/.parzi/mirrors/<device>/<id>/` on
+  the server; others read them as `m:<device>:<id>` and continuing one
+  runs `mirror.adopt` (a copy into the server's store).
+- **Server ops** (`parzi_runtime::hub`): `brain.manifest/read/apply`,
+  `settings.get/put` (with a `sync/settings-rev`), `mirror.put/list/
+  events/delete/adopt`, `project.list/folder`; `health` names the device.
+  Setup applies a spec's settings only while the server has none.
+- **Desk**: sync on link, every 2 minutes, 3 s after a brain edit, a
+  settings save or a run ending (here or on the server); pulled settings
+  go straight into the running engine. Remote is on by default once
+  linked; with it on, the composer's project tab lists the server's
+  projects and can give one a folder there. Settings › Connections shows
+  the last sync and has Sync now. `parzi remote sync` does the same.
+- Tested end to end against WSL (`tests/remote_wsl.rs`): notes both ways,
+  a conflict, a delete, settings, the mirror, adopt, a project folder on
+  the server, and a third sync that moves nothing.
+
 Still open, in order:
 
 1. Connector onboarding beyond the Settings list: the manifest scan and
@@ -80,9 +118,10 @@ Still open, in order:
 3. Provider API keys sealed on the server (keyring or 0600 file). Today
    agents sign in with their own login in the `ssh -t` terminal and
    Parzi stores no secret.
-4. Projects on the server: a server session runs in its own scratch
-   folder there; picking a folder on the server is not built yet.
-5. Mobile: the same harness with only the remote engine.
+4. Mobile: the same harness with only the remote engine (the sync and
+   the `r:`/`m:` routing already make a phone just another device).
+5. Sync of chat attachments and generated images (notes and session
+   history sync; files under `attachments/` and `generated/` do not).
 
 ## 0. Where we stood (verified 2026-10-07)
 

@@ -54,7 +54,8 @@ GUI: `cd ui; npm install; npm run build`, then `cargo tauri dev` in `src-tauri`
   plain markdown in `~/.parzi/brain` (open it in Obsidian or any editor; edits
   show up when you come back to Parzi). A note goes to **All sessions** or to
   any number of projects (frontmatter `projects: [all, parzi]`, or a link to
-  the project note); a project is a note with a `folder:`. Pinned notes
+  the project note); a project is a note with a folder (`folder@<device>:`,
+  one per machine; see [ParziOS](#parzios-your-own-server)). Pinned notes
   (`pinned: true`) are sent in full; every other note is listed with a
   one-line summary (`description:` or its first line), and the agent reads it
   with `brain_read` when the task needs it. Full text is capped at about 12k
@@ -145,9 +146,10 @@ append-only `events.jsonl`, rendered `session.md`), readable by anything.
 ## ParziOS: your own server
 
 ParziOS is Parzi's engine running on a Linux machine you own (a VPS, a
-home server, a GPU box), so sessions keep going while this PC sleeps. It
-opens no port: the desktop reaches it with your own `ssh`, and nothing
-else.
+home server, a GPU box). It becomes the home of your brain, settings and
+sessions: every device you link to it (this PC, a laptop) stays in step
+with it, and sessions there keep going while your machines sleep. It opens
+no port: each device reaches it with your own `ssh`, and nothing else.
 
 **Set up remote** (the last step of *Set up Parzi*) asks for `user`,
 `host` (`host:port` works) and, only if the server takes no key, a
@@ -159,22 +161,41 @@ password. Parzi then:
 2. checks the machine (Linux x64 or arm64, curl or wget, systemd);
 3. puts the matching `parzi` in `~/.local/bin`, downloaded from this
    repo's release and checked against its `.sha256`;
-4. sends your settings and, if you leave the box ticked, your brain notes.
-   Connectors, agent program paths and project notes stay on this PC.
-   A note that already exists on the server is never overwritten;
-5. runs `parzi setup --enable` there: a systemd user service
+4. runs `parzi setup --enable` there: a systemd user service
    (`parzi-os.service`), or a detached engine when the machine has no
    user systemd. The service stops at logout unless lingering is on
    (`sudo loginctl enable-linger $USER`, setup says so);
-6. links back and remembers the remote in `~/.parzi/remote.json`.
+5. links back, remembers the remote in `~/.parzi/remote.json`, and syncs.
 
-Then the composer gets a **Remote** switch (the server icon next to the
-permissions). With it on, a new session runs on the server; everything
-else is the harness you know: the thread streams live, approvals and
-questions appear as usual, Stop, rename, fork and delete work, and the
-session sits in your list with a server icon. A session stays where it
-started. Attachments are read on this PC and sent along. The model list
-shows the server's agents; install and sign them in from
+Set up a second device against the same server and it joins: the server's
+settings win, and the notes merge.
+
+**What syncs** (on link, every two minutes, and a few seconds after any
+change here):
+
+- **Brain notes**, both ways. A note changed on one side moves to the
+  other; one deleted on one side and untouched on the other is deleted.
+  A note changed on two sides at once keeps the server's text under its
+  name and this device's beside it as `<name>.conflict-<device>.md`.
+- **Projects**: the notes are shared; the folder is per device. A project
+  note holds one `folder@<device>` line per machine, so the PC, the
+  laptop and the server each run it in their own folder. A project from
+  another device lists here with no folder until you pick one.
+- **Settings**: the newest change wins. Connectors and agent program
+  paths stay per machine.
+- **Sessions**: sessions on the server are the same on every device.
+  Sessions run on a PC are mirrored to the server, so every device sees
+  them (named with the device they ran on); sending to one of those
+  continues it on the server.
+
+The composer has a **Remote** switch (the server icon next to the
+permissions), on by default once a server is linked. With it on, a new
+session runs on the server, in a project folder there (the tab above the
+box picks one) or its scratch folder; turn it off to work in a folder on
+this PC. Everything else is the harness you know: the thread streams
+live, approvals and questions appear as usual, Stop, rename, fork and
+delete work. Attachments are read on this PC and sent along. The model
+list shows the server's agents; install and sign them in from
 Settings › Connections, in a terminal you watch
 (`ssh -t … parzi agent install claude`). Browser tools need a window, so
 sessions on a server have none.
@@ -191,7 +212,8 @@ authentication; the token never leaves the server.
 Without the desktop:
 
 ```bash
-parzi remote setup you@box          # key login only
+parzi remote setup you@box          # key login only; syncs when linked
+parzi remote sync
 parzi remote status
 parzi remote call session.list
 parzi remote forget

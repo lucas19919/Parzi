@@ -6,6 +6,7 @@
   import Icon from "./Icon.svelte";
   import ModelPicker from "./ModelPicker.svelte";
   import { api, brain, MODE_META, type ComposerMode, type Project, type ProviderStatus } from "./api";
+  import { remote as server } from "./remote";
   import { effortsFor, fitEffort } from "./providerRows";
   import { permissionBlocked } from "./lanes";
   import { folderName, toAddress } from "./tabs";
@@ -38,6 +39,8 @@
   export let remoteHost = "";
   export let remote = false;
   export let remoteLocked = false;
+  // The server folder this composer's new session runs in ("" = scratch).
+  export let remoteCwd = "";
   // Preview variants for live design iteration (Preview tab renders the
   // real component with variant 1-7). The live composer ships 6:
   // fused project tab on the top edge, project outside the box.
@@ -54,6 +57,7 @@
     project: void;
     brain: void;
     remote: { on: boolean };
+    remoteFolder: { path: string };
   }>();
 
   // ids are the `mode` strings the backend reads (ApprovalMode::parse:
@@ -338,17 +342,55 @@
     projStyle = placeAbove(projBtn, 260);
     projErr = "";
     try {
-      projects = await brain.projects();
+      // With Remote on these are the server's projects: same notes, its folders.
+      projects = remote ? await server.projects() : await brain.projects();
     } catch (e) {
       projects = [];
       projErr = String(e);
     }
   }
 
-  function chooseProject(p: Project | null) {
+  // A project synced from elsewhere may have no folder on this machine
+  // (or on the server) yet: choosing it asks for one first.
+  async function chooseProject(p: Project | null) {
     projOpen = false;
-    dispatch("folder", { path: p ? p.folder : "" });
+    try {
+      if (remote) {
+        let path = p?.folder ?? "";
+        if (p && !path) {
+          const typed = window.prompt(`Folder for ${p.title} on ${remoteHost}`, "/home/");
+          if (!typed?.trim()) return;
+          path = (await server.projectFolder(p.slug, p.title, typed.trim())).folder;
+        }
+        dispatch("remoteFolder", { path });
+        return;
+      }
+      let path = p?.folder ?? "";
+      if (p && !path) {
+        const picked = await api.pickFolder(folder);
+        if (!picked) return;
+        path = (await brain.upsertProject(p.title, picked, p.slug)).folder;
+        dispatch("project");
+      }
+      dispatch("folder", { path });
+    } catch (e) {
+      attachError = String(e);
+    }
   }
+
+  async function newRemoteProject() {
+    projOpen = false;
+    const typed = window.prompt(`Folder on ${remoteHost} for the new project`, "/home/");
+    if (!typed?.trim()) return;
+    try {
+      const p = await server.projectFolder(null, folderName(typed.trim()), typed.trim());
+      dispatch("remoteFolder", { path: p.folder });
+    } catch (e) {
+      attachError = String(e);
+    }
+  }
+
+  $: remoteProject = remote && remoteCwd ? folderName(remoteCwd) : "";
 
   async function adopt(dir: string) {
     const known = projects.find((p) => sameDir(p.folder, dir));
@@ -418,10 +460,16 @@
 
 <div class="ob" class:hero class:v2={variant === 2} class:v3={variant === 3} class:v4={variant === 4} class:v5={variant === 5} class:v6={variant === 6} class:v7={variant === 7}>
   {#if outsideProject && remote}
-    <span class="proj-out set remote-tab" title={`Runs on ${remoteHost}, in its own folder there`}>
+    <button
+      bind:this={projBtn}
+      class="proj-out set"
+      on:click|stopPropagation={toggleProject}
+      title={remoteCwd ? `Runs on ${remoteHost} in ${remoteCwd}` : `Runs on ${remoteHost}, in its own scratch folder`}
+    >
       <Icon name="server" size={14} stroke={2} />
-      <span class="proj-title">{remoteHost}</span>
-    </span>
+      <span class="proj-title">{remoteProject ? `${remoteProject} · ${remoteHost}` : remoteHost}</span>
+      {#if !folderLocked}<Icon name="chevDown" size={10} stroke={2} />{/if}
+    </button>
   {:else if outsideProject}
     <button bind:this={projBtn} class="proj-out" class:set={!!project} on:click|stopPropagation={toggleProject} title={project ? `Project ${project.title}${branch ? ` · ${branch}` : ""}` : "Pick the project this session works on"}>
       <Icon name={project || !folder ? "project" : "folder"} size={14} stroke={2} />
@@ -595,11 +643,26 @@
 
   {#if projOpen}
     <div class="menu-pop" style={projStyle} use:popover={{ anchor: projBtn, close: () => (projOpen = false) }} transition:fly={{ y: projStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
-      <div class="pop-head">Project</div>
+      <div class="pop-head">{remote ? `Project on ${remoteHost}` : "Project"}</div>
       {#each projects as p (p.slug)}
-        <button class="opt" class:on={project?.slug === p.slug} on:click={() => chooseProject(p)}>
+        <button
+          class="opt"
+          class:on={remote ? !!p.folder && p.folder === remoteCwd : project?.slug === p.slug}
+          on:click={() => chooseProject(p)}
+        >
           <Icon name="project" size={14} stroke={2} />
-          <span class="meta"><span class="name">{p.title}</span><span class="sub truncate">{sameDir(p.folder, folder) && branch ? `${folderName(p.folder)} · ${branch}` : folderName(p.folder)}</span></span>
+          <span class="meta">
+            <span class="name">{p.title}</span>
+            <span class="sub truncate">
+              {#if !p.folder}
+                {remote ? `No folder on ${remoteHost} yet: choose one` : "No folder on this PC yet: pick one"}
+              {:else if !remote && sameDir(p.folder, folder) && branch}
+                {folderName(p.folder)} · {branch}
+              {:else}
+                {remote ? p.folder : folderName(p.folder)}
+              {/if}
+            </span>
+          </span>
           {#if p.notes.length}<span class="count">{p.notes.length} note{p.notes.length === 1 ? "" : "s"}</span>{/if}
         </button>
       {:else}
@@ -610,17 +673,24 @@
         {/if}
       {/each}
       <div class="sep" />
-      {#if folder && !project}
-        <button class="opt" on:click={makeProject}>
+      {#if remote}
+        <button class="opt" on:click={newRemoteProject}>
           <Icon name="plus" size={14} stroke={2} />
-          <span class="meta"><span class="name">Make {folderName(folder)} a project</span><span class="sub">Notes you map to it come along to every session here</span></span>
+          <span class="meta"><span class="name">New project…</span><span class="sub">A folder on {remoteHost}</span></span>
+        </button>
+      {:else}
+        {#if folder && !project}
+          <button class="opt" on:click={makeProject}>
+            <Icon name="plus" size={14} stroke={2} />
+            <span class="meta"><span class="name">Make {folderName(folder)} a project</span><span class="sub">Notes you map to it come along to every session here</span></span>
+          </button>
+        {/if}
+        <button class="opt" on:click={newProject}>
+          <Icon name="plus" size={14} stroke={2} />
+          <span class="meta"><span class="name">New project…</span><span class="sub">Pick the folder it lives in</span></span>
         </button>
       {/if}
-      <button class="opt" on:click={newProject}>
-        <Icon name="plus" size={14} stroke={2} />
-        <span class="meta"><span class="name">New project…</span><span class="sub">Pick the folder it lives in</span></span>
-      </button>
-      <button class="opt" class:on={!folder} on:click={() => chooseProject(null)}>
+      <button class="opt" class:on={remote ? !remoteCwd : !folder} on:click={() => chooseProject(null)}>
         <Icon name="close" size={14} stroke={2} />
         <span class="meta"><span class="name">No project</span><span class="sub">Run in an empty scratch folder</span></span>
       </button>
@@ -968,9 +1038,6 @@
     color: var(--accent);
   }
   .remote-btn:disabled {
-    cursor: default;
-  }
-  .remote-tab {
     cursor: default;
   }
   .project.set {

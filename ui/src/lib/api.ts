@@ -332,7 +332,9 @@ export const brain = {
   write: (path: string, content: string) => invoke<NoteMeta>("brain_write", { path, content }),
   remove: (path: string) => invoke<void>("brain_delete", { path }),
   projects: () => invoke<Project[]>("brain_projects"),
-  upsertProject: (title: string, folder: string) => invoke<Project>("brain_project_upsert", { title, folder }),
+  // A slug gives an existing (perhaps synced) project this PC's folder.
+  upsertProject: (title: string, folder: string, slug?: string) =>
+    invoke<Project>("brain_project_upsert", { title, folder, slug: slug ?? null }),
   map: (note: string, project: string, on: boolean) => invoke<NoteMeta>("brain_map", { note, project, on }),
   context: (cwd: string) => invoke<BrainContext | null>("brain_context", { cwd }),
   pin: (path: string, on: boolean) => invoke<NoteMeta>("brain_pin", { path, on }),

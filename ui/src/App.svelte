@@ -156,7 +156,8 @@
   // The last Remote switch position; new drafts start from it.
   let preferRemote = false;
   try {
-    preferRemote = localStorage.getItem("parzi.remote.prefer") === "1";
+    // Linked means the server is home: Remote is on until switched off.
+    preferRemote = localStorage.getItem("parzi.remote.prefer") !== "0";
   } catch {}
 
   async function setRemote(on: boolean) {
@@ -628,7 +629,9 @@
         sessionId: fresh ? null : target.sessionId,
         model: draft.model,
         prompt,
-        cwd: remoteOn ? "" : folder,
+        // A started server session keeps its folder there; a draft uses the
+        // server folder picked for it.
+        cwd: remoteOn ? (target.sessionId ? (meta?.cwd ?? "") : (draft.remoteCwd ?? "")) : folder,
         effort: draft.effort,
         attachments: files,
         mode: permission,
@@ -642,6 +645,8 @@
       draft.attachments = [];
       comp = comp;
       if (fresh) patchTab(target.id, { sessionId: sid, title: prompt.slice(0, 40) });
+      // Another device's session continues on the server under a new id.
+      else if (sid !== target.sessionId) patchTab(target.id, { sessionId: sid });
       if (activeId === target.id) {
         shown = sid;
         await reload();
@@ -1024,6 +1029,17 @@
         if (remoteOn) void refreshRemoteBoard().catch(() => {});
         if (isRemote(shown)) void reload();
       }
+      // Another device's sessions and the shared settings arrive by sync.
+      if (s.state === "synced") void refreshThreads();
+      if (s.state === "settings") {
+        void api
+          .getConfig()
+          .then((cfg) => {
+            policy = cfg.lanes?.default_mode ?? "";
+            permission = permissionFor(policy);
+          })
+          .catch(() => {});
+      }
     });
     (async () => {
       try {
@@ -1235,6 +1251,11 @@
           remote={remoteOn}
           remoteLocked={!!tab.sessionId}
           on:remote={(e) => setRemote(e.detail.on)}
+          remoteCwd={comp.remoteCwd ?? ""}
+          on:remoteFolder={(e) => {
+            comp.remoteCwd = e.detail.path;
+            comp = comp;
+          }}
           hero={!hasSession}
           {project}
           variant={6}

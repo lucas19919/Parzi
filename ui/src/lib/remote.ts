@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { writable } from "svelte/store";
-import type { ProviderStatus } from "./api";
+import type { Project, ProviderStatus } from "./api";
 
 export interface RemoteInfo {
   label: string;
@@ -10,6 +10,9 @@ export interface RemoteInfo {
   version: string;
   linked_at: number;
   alive: boolean;
+  // Last finished sync (ms), 0 for not yet.
+  synced_at: number;
+  device: string;
 }
 
 export interface RemoteProgress {
@@ -19,13 +22,15 @@ export interface RemoteProgress {
 }
 
 export interface RemoteStatus {
-  state: "up" | "down" | "updating" | "ready" | "error" | "resync";
+  state: "up" | "down" | "updating" | "ready" | "error" | "resync" | "synced" | "settings" | "brain";
   detail: string;
 }
 
 // A session on the linked server is an ordinary session whose id starts
 // with "r:"; every session call routes it there (src-tauri/src/remote.rs).
-export const isRemote = (id: string | null | undefined): boolean => !!id && id.startsWith("r:");
+export const isRemote = (id: string | null | undefined): boolean => !!id && (id.startsWith("r:") || id.startsWith("m:"));
+// A session another device ran: read here, continued on the server.
+export const isMirror = (id: string | null | undefined): boolean => !!id && id.startsWith("m:");
 
 /** The linked server, or null. Loaded once at startup, kept fresh by setup and unlink. */
 export const remoteInfo = writable<RemoteInfo | null>(null);
@@ -40,6 +45,10 @@ export const remote = {
   forget: () => invoke<void>("remote_forget"),
   agent: (provider: string, action: "install" | "login") => invoke<void>("remote_agent", { provider, action }),
   providers: (refresh = false) => invoke<ProviderStatus[]>("remote_providers", { refresh }),
+  projects: () => invoke<Project[]>("remote_projects"),
+  projectFolder: (slug: string | null, title: string, folder: string) =>
+    invoke<Project>("remote_project_folder", { slug, title, folder }),
+  sync: () => invoke<string>("remote_sync"),
 };
 
 export async function loadRemoteInfo(): Promise<RemoteInfo | null> {

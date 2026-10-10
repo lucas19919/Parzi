@@ -30,8 +30,9 @@ pub async fn save_config(
             "Changed: {}. A malicious program runs with your user account on every agent turn. Save anyway?",
             changed.join(", ")
         );
+        let ask = app.clone();
         let allow = tokio::task::spawn_blocking(move || {
-            app.dialog()
+            ask.dialog()
                 .message(msg)
                 .title("Parzi — confirm connector")
                 .buttons(MessageDialogButtons::OkCancel)
@@ -45,6 +46,7 @@ pub async fn save_config(
     }
     cfg.save().map_err(|e| e.to_string())?;
     state.orch.apply_config(cfg).await;
+    crate::remote::sync_soon(&app);
     Ok(())
 }
 

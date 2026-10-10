@@ -2,6 +2,7 @@ pub mod desk;
 pub mod doctor;
 pub mod handler;
 mod hooks;
+pub mod hub;
 pub mod inter;
 pub mod mcp;
 mod mcp_host;
@@ -12,6 +13,7 @@ pub mod remote;
 mod run;
 pub mod shell;
 pub mod status;
+pub mod sync;
 pub mod toolhost;
 pub mod tools;
 

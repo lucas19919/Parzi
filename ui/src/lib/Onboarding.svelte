@@ -175,7 +175,6 @@
   let remoteUser = "";
   let remoteHost = "";
   let remotePass = "";
-  let bringNotes = true;
   let setupRows: RemoteProgress[] = [];
   let setupState: "idle" | "running" | "done" | "error" = "idle";
   let setupMsg = "";
@@ -209,7 +208,8 @@
     remotePass = "";
     const off = await onRemoteProgress((p) => (setupRows = mergeProgress(setupRows, p)));
     try {
-      remoteInfo = await remote.setup(user, host, password, bringNotes);
+      // Notes and settings move by sync once linked, not in setup.
+      remoteInfo = await remote.setup(user, host, password, false);
       linked.set(remoteInfo);
       setupState = "done";
       setupMsg = `Linked to ${remoteInfo.label}.`;
@@ -360,7 +360,7 @@
       {:else}
         <h2>Work from anywhere</h2>
         <p class="lead">
-          Run Parzi on your own Linux server so sessions keep going while this PC sleeps. Enter how you reach it over SSH. Parzi installs itself there, starts its engine and links back.
+          Run Parzi on your own Linux server. It becomes the home of your brain, settings and sessions, and every device you link (this PC, a laptop) stays in step with it. Enter how you reach it over SSH; Parzi installs itself there and links back.
         </p>
         {#if remoteInfo && setupState !== "running"}
           <div class="item">
@@ -384,10 +384,6 @@
             <input type="password" placeholder="only if there is no key login" autocomplete="current-password" bind:value={remotePass} />
           </label>
         </div>
-        <label class="check">
-          <input type="checkbox" bind:checked={bringNotes} />
-          <span>Bring my brain notes (project notes stay here)</span>
-        </label>
         <div class="action">
           <button
             class="btn primary"
@@ -633,15 +629,6 @@
   }
   .remote-form input:focus {
     border-color: var(--accent);
-  }
-  .check {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 10px;
-    font-size: 13px;
-    color: var(--muted);
-    cursor: pointer;
   }
   .result.bad {
     color: var(--bad);

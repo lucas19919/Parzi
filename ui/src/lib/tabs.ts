@@ -9,6 +9,8 @@ export interface TabComposerState {
   attachments: string[];
   // A new session here starts on the linked server.
   remote?: boolean;
+  // The server folder for that new session ("" = scratch there).
+  remoteCwd?: string;
 }
 
 function defaultComposer(): TabComposerState {

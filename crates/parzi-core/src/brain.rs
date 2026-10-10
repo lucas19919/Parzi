@@ -25,7 +25,12 @@ pub struct NoteMeta {
     pub title: String,
     pub projects: Vec<String>,
     pub tags: Vec<String>,
+    /// This device's folder (a project note only): `folder@<device>`, else
+    /// a plain `folder` from before folders were per device.
     pub folder: Option<String>,
+    /// Every device's folder, keyed by device id ("" for a plain `folder`).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub folders: std::collections::BTreeMap<String, String>,
     pub source: Option<String>,
     pub pinned: bool,
     #[serde(default)]
@@ -130,6 +135,8 @@ pub fn inside(folder: &Path, path: &Path) -> bool {
 
 pub struct Vault {
     root: PathBuf,
+    /// Whose `folder@` keys this vault reads; None is this machine.
+    device: Option<String>,
 }
 
 impl Vault {
@@ -138,7 +145,55 @@ impl Vault {
     }
 
     pub fn at(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            device: None,
+        }
+    }
+
+    /// A vault read as another device would (tests, and the sync's view).
+    pub fn at_device(root: impl Into<PathBuf>, device: &str) -> Self {
+        Self {
+            root: root.into(),
+            device: Some(device.to_string()),
+        }
+    }
+
+    fn device(&self) -> String {
+        self.device.clone().unwrap_or_else(crate::device::id)
+    }
+
+    /// Move every plain `folder:` (no device keys yet) to this device's
+    /// `folder@<id>` key. A note made before folders were per device was
+    /// made here; before it syncs anywhere it must say so. Returns how many
+    /// notes changed.
+    pub fn claim_plain_folders(&self) -> usize {
+        let key = format!("folder@{}", self.device());
+        let mut changed = 0;
+        for (rel, full) in walk(&self.root) {
+            let Ok(raw) = read_head(&full, MAX_BYTES + 1) else {
+                continue;
+            };
+            if raw.len() as u64 > MAX_BYTES {
+                continue;
+            }
+            let f = fields_raw(&front_blocks(&raw));
+            let Some(plain) = f.folders.get("").filter(|_| f.folders.len() == 1) else {
+                continue;
+            };
+            let edits = [
+                ("folder", None),
+                (key.as_str(), Some(format!("{key}: {}", quote(plain)))),
+            ];
+            if let Ok(text) = rewrite_raw(&raw, &edits) {
+                if atomic_write(&full, &text).is_ok() {
+                    changed += 1;
+                } else {
+                    tracing::warn!("could not claim the folder of {rel}");
+                }
+            }
+        }
+        changed
     }
 
     #[must_use]
@@ -237,11 +292,15 @@ impl Vault {
             Err(ParziError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => vec![],
             Err(e) => return Err(e),
         };
+        // This device's folder; a plain `folder` from before is this device's
+        // too (it resolved here), so it moves to the device key.
+        let key = format!("folder@{}", self.device());
         let text = rewrite_raw(
             &raw,
             &[
                 ("title", Some(format!("title: {}", quote(&title)))),
-                ("folder", Some(format!("folder: {}", quote(folder)))),
+                ("folder", None),
+                (key.as_str(), Some(format!("{key}: {}", quote(folder)))),
             ],
         )?;
         atomic_write(&full, &text)?;
@@ -306,12 +365,12 @@ impl Vault {
     fn project_note(&self, slug: &str) -> Result<(String, PathBuf)> {
         let slug = check_slug(slug.trim())?;
         let (rel, full) = self.locate(&format!("projects/{slug}.md"))?;
-        let folder = std::fs::symlink_metadata(&full)
+        let homed = std::fs::symlink_metadata(&full)
             .is_ok_and(|m| m.is_file())
-            .then(|| front_fields(&full))
+            .then(|| front_fields(&full, &self.device()))
             .flatten()
-            .and_then(|f| f.folder);
-        if folder.is_none_or(|f| f.trim().is_empty()) {
+            .is_some_and(|f| !f.folders.is_empty());
+        if !homed {
             return Err(ParziError::Validation(format!("no project `{slug}`")));
         }
         Ok((rel, full))
@@ -359,6 +418,7 @@ impl Vault {
 
     /// (slug, folder) of every live project, from `projects/*.md` alone.
     fn project_folders(&self) -> Vec<(String, String)> {
+        let device = self.device();
         let mut out = vec![];
         let Ok(top) = std::fs::read_dir(&self.root) else {
             return out;
@@ -384,7 +444,7 @@ impl Vault {
                 let Some(slug) = project_slug(&rel) else {
                     continue;
                 };
-                let Some(f) = front_fields(&e.path()).filter(|f| !f.archived) else {
+                let Some(f) = front_fields(&e.path(), &device).filter(|f| !f.archived) else {
                     continue;
                 };
                 if let Some(folder) = f.folder.filter(|d| !d.trim().is_empty()) {
@@ -512,15 +572,16 @@ impl Vault {
 
     fn meta(&self, rel: String, full: &Path) -> Result<NoteMeta> {
         let resolver = Resolver::new(&walk(&self.root));
-        Ok(load(rel, full, &resolver)?.meta)
+        Ok(load(rel, full, &resolver, &self.device())?.meta)
     }
 
     fn scan(&self) -> Vec<Note> {
+        let device = self.device();
         let files = walk(&self.root);
         let resolver = Resolver::new(&files);
         files
             .into_iter()
-            .filter_map(|(rel, full)| load(rel, &full, &resolver).ok())
+            .filter_map(|(rel, full)| load(rel, &full, &resolver, &device).ok())
             .collect()
     }
 
@@ -590,6 +651,7 @@ struct Fields {
     projects: Vec<String>,
     tags: Vec<String>,
     folder: Option<String>,
+    folders: std::collections::BTreeMap<String, String>,
     source: Option<String>,
     description: Option<String>,
     pinned: bool,
@@ -695,7 +757,7 @@ fn walk(root: &Path) -> Vec<(String, PathBuf)> {
     out
 }
 
-fn load(path: String, full: &Path, resolver: &Resolver) -> std::io::Result<Note> {
+fn load(path: String, full: &Path, resolver: &Resolver, device: &str) -> std::io::Result<Note> {
     let md = std::fs::metadata(full)?;
     // An oversized note still lists with its title and summary.
     let raw = String::from_utf8_lossy(&read_head(full, MAX_BYTES)?).into_owned();
@@ -704,12 +766,21 @@ fn load(path: String, full: &Path, resolver: &Resolver) -> std::io::Result<Note>
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX));
-    Ok(parse(path, &raw, modified, md.len(), resolver))
+    Ok(parse(path, &raw, modified, md.len(), resolver, device))
 }
 
-fn parse(path: String, raw: &str, modified: i64, bytes: u64, resolver: &Resolver) -> Note {
+fn parse(
+    path: String,
+    raw: &str,
+    modified: i64,
+    bytes: u64,
+    resolver: &Resolver,
+    device: &str,
+) -> Note {
     let (front, body) = split(raw);
-    let f = front.map(|t| fields(&blocks(t))).unwrap_or_default();
+    let f = front
+        .map(|t| fields_for(&blocks(t), device))
+        .unwrap_or_default();
     let title = f
         .title
         .or_else(|| heading(body))
@@ -730,6 +801,7 @@ fn parse(path: String, raw: &str, modified: i64, bytes: u64, resolver: &Resolver
             projects: f.projects,
             tags: f.tags,
             folder: f.folder,
+            folders: f.folders,
             source: f.source,
             pinned: f.pinned,
             archived: f.archived,
@@ -909,12 +981,36 @@ fn key_of(line: &str) -> Option<String> {
     (!key.is_empty()).then(|| key.to_string())
 }
 
-fn fields(blocks: &[Block]) -> Fields {
+/// `folder@<device>` keys hold each device's folder for a project; a plain
+/// `folder` predates them and counts only while no device key exists.
+fn fields_for(blocks: &[Block], device: &str) -> Fields {
+    let mut f = fields_raw(blocks);
+    f.folder = f
+        .folders
+        .get(device)
+        .cloned()
+        .or_else(|| f.folders.get("").cloned().filter(|_| f.folders.len() == 1));
+    f
+}
+
+fn fields_raw(blocks: &[Block]) -> Fields {
     let mut f = Fields::default();
     for b in blocks {
         match b.key.as_deref() {
             Some("title") => f.title = b.scalar(),
-            Some("folder") => f.folder = b.scalar(),
+            Some("folder") => {
+                if let Some(path) = b.scalar().filter(|p| !p.trim().is_empty()) {
+                    f.folders.insert(String::new(), path);
+                }
+            }
+            Some(k) if k.starts_with("folder@") => {
+                let dev = &k["folder@".len()..];
+                if let Some(path) = b.scalar().filter(|p| !p.trim().is_empty()) {
+                    if crate::device::valid_id(dev) {
+                        f.folders.insert(dev.to_string(), path);
+                    }
+                }
+            }
             Some("source") => f.source = b.scalar(),
             Some("description") => f.description = b.text(),
             Some("projects") => f.projects = b.list(),
@@ -1009,8 +1105,11 @@ fn front_blocks(raw: &[u8]) -> Vec<Block> {
 }
 
 /// Frontmatter fields only, for callers that never need the body.
-fn front_fields(full: &Path) -> Option<Fields> {
-    Some(fields(&front_blocks(&read_head(full, MAX_BYTES).ok()?)))
+fn front_fields(full: &Path, device: &str) -> Option<Fields> {
+    Some(fields_for(
+        &front_blocks(&read_head(full, MAX_BYTES).ok()?),
+        device,
+    ))
 }
 
 fn list_line(key: &str, items: &[String], block: bool) -> Option<String> {
@@ -1138,12 +1237,12 @@ fn projects_of(notes: &[Note]) -> Vec<Project> {
             if home.meta.archived {
                 return None;
             }
-            let folder = home
-                .meta
-                .folder
-                .as_deref()
-                .map(str::trim)
-                .filter(|f| !f.is_empty())?;
+            // A project is a note with a folder on any device. Here it may
+            // have none yet: it still lists, with an empty folder.
+            if home.meta.folders.is_empty() {
+                return None;
+            }
+            let folder = home.meta.folder.as_deref().map_or("", str::trim);
             let filed = format!("projects/{slug}/");
             let notes = notes
                 .iter()
@@ -1365,7 +1464,7 @@ mod tests {
     }
 
     fn summary_of(raw: &str) -> String {
-        parse("n.md".into(), raw, 0, 0, &Resolver::new(&[]))
+        parse("n.md".into(), raw, 0, 0, &Resolver::new(&[]), "test-device")
             .meta
             .summary
     }
@@ -1374,7 +1473,7 @@ mod tests {
     fn frontmatter_parses_and_rewrites_only_owned_keys() {
         let raw = "---\ntitle: \"Auth: notes\"\nprojects:\n  - parzi\n  - 'web'\ntags: [rust, \"a, b\"]\nfolder: C:\\code\\parzi\nsource: obsidian # imported\npinned: true\nextra:\n  nested: 1\n---\n# Heading\n\nBody [[x]]\n";
         let (front, body) = split(raw);
-        let f = fields(&blocks(front.unwrap()));
+        let f = fields_for(&blocks(front.unwrap()), "pc");
         assert_eq!(f.title.as_deref(), Some("Auth: notes"));
         assert_eq!(f.projects, ["parzi", "web"]);
         assert_eq!(f.tags, ["rust", "a, b"]);
@@ -1440,6 +1539,62 @@ mod tests {
     }
 
     #[test]
+    fn each_device_keeps_its_own_project_folder() {
+        let d = tempfile::tempdir().unwrap();
+        let pc = Vault::at_device(d.path(), "pc-windows");
+        let laptop = Vault::at_device(d.path(), "laptop-macos");
+        let p = pc
+            .project_upsert(Some("app"), "App", "C:\\src\\app")
+            .unwrap();
+        assert_eq!(p.folder, "C:\\src\\app");
+        // Synced to the laptop it is still a project, with no folder there yet.
+        let seen = laptop.projects();
+        assert_eq!((seen.len(), seen[0].folder.as_str()), (1, ""));
+        assert_eq!(laptop.project_at("/Users/l/src/app"), None);
+        laptop
+            .project_upsert(Some("app"), "App", "/Users/l/src/app")
+            .unwrap();
+        assert_eq!(laptop.projects()[0].folder, "/Users/l/src/app");
+        assert_eq!(
+            pc.projects()[0].folder,
+            "C:\\src\\app",
+            "the PC keeps its folder"
+        );
+        let raw = pc.read("projects/app.md").unwrap();
+        assert!(
+            raw.contains("folder@pc-windows:") && raw.contains("folder@laptop-macos:"),
+            "{raw}"
+        );
+        assert!(!raw.contains("\nfolder:"), "{raw}");
+    }
+
+    #[test]
+    fn a_plain_folder_is_claimed_by_the_device_that_has_it() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join("projects")).unwrap();
+        std::fs::write(
+            d.path().join("projects").join("old.md"),
+            "---\ntitle: Old\nfolder: C:\\old\n---\nbody\n",
+        )
+        .unwrap();
+        let pc = Vault::at_device(d.path(), "pc-windows");
+        assert_eq!(
+            pc.projects()[0].folder,
+            "C:\\old",
+            "a plain folder still counts"
+        );
+        assert_eq!(pc.claim_plain_folders(), 1);
+        assert_eq!(pc.claim_plain_folders(), 0, "claimed once");
+        let raw = pc.read("projects/old.md").unwrap();
+        assert!(
+            raw.contains("folder@pc-windows:") && raw.ends_with("body\n"),
+            "{raw}"
+        );
+        let other = Vault::at_device(d.path(), "server-linux");
+        assert_eq!(other.projects()[0].folder, "", "not the server's folder");
+    }
+
+    #[test]
     fn projects_collect_notes_by_frontmatter_and_by_link() {
         let (d, v) = vault();
         let folder = d.path().join("code");
@@ -1502,10 +1657,12 @@ mod tests {
             .unwrap();
         assert_eq!(updated.title, "Parzi");
         let raw = v.read("projects/parzi-app.md").unwrap();
+        // Unknown keys stay put; the plain folder became this device's.
         assert!(
-            raw.starts_with("---\ntitle: Parzi\nowner: lucas\nfolder: "),
+            raw.starts_with("---\ntitle: Parzi\nowner: lucas\nfolder@"),
             "{raw}"
         );
+        assert!(!raw.contains("\nfolder: "), "{raw}");
         assert!(raw.ends_with("---\nbody stays\n"), "{raw}");
         assert!(v.project_upsert(Some("a/b"), "x", folder).is_err());
         assert!(v.project_upsert(None, "x", " ").is_err());

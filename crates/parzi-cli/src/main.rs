@@ -111,6 +111,8 @@ enum RemoteCmd {
         #[arg(help = "JSON object with the op's fields")]
         body: Option<String>,
     },
+    #[command(about = "Sync brain notes, settings and this machine's sessions with the remote")]
+    Sync,
     #[command(about = "Unlink this machine from the remote")]
     Forget,
 }
@@ -480,6 +482,28 @@ async fn cmd_agent(action: AgentCmd) -> Result<()> {
     Ok(())
 }
 
+async fn report_sync(link: &parzi_runtime::remote::Link, server: &str) -> Result<()> {
+    let (_, store) = boot()?;
+    let done = parzi_runtime::sync::everything(link, &store, server).await;
+    let summary = done.summary();
+    println!(
+        "synced with {server}: {}",
+        if summary.is_empty() {
+            "already in step"
+        } else {
+            &summary
+        }
+    );
+    for e in &done.errors {
+        eprintln!("FAIL {e}");
+    }
+    if done.errors.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!("sync did not finish")
+    }
+}
+
 fn parse_target(raw: &str) -> Result<parzi_runtime::remote::Target> {
     let (user, host) = raw
         .split_once('@')
@@ -520,10 +544,14 @@ async fn cmd_remote(action: RemoteCmd) -> Result<()> {
                 };
                 eprintln!("{mark} {:<8} {}", p.step, p.detail);
             };
-            remote::setup(target, opts, &print)
+            let (saved, link) = remote::setup(target, opts, &print)
                 .await
                 .map_err(|e| anyhow::anyhow!(e))?;
-            Ok(())
+            report_sync(&link, &saved.target.label()).await
+        }
+        RemoteCmd::Sync => {
+            let (saved, link) = remote_link().await?;
+            report_sync(&link, &saved.target.label()).await
         }
         RemoteCmd::Status => {
             let (saved, link) = remote_link().await?;

@@ -288,6 +288,7 @@ pub async fn start(orch: Arc<Orchestrator>) -> Result<Daemon, String> {
         return Err("the desk is open. Close Parzi before `parzi serve`.".into());
     }
     crate::orchestrator::set_headless();
+    let _ = parzi_core::device::ensure();
     let recovered = orch.recover().map_err(|e| e.to_string())?;
     if recovered > 0 {
         tracing::info!("marked {recovered} interrupted run(s) idle");
@@ -549,6 +550,7 @@ async fn dispatch(state: &State, req: &Value) -> Value {
             "ok": true,
             "serve": "parzi-os",
             "version": env!("CARGO_PKG_VERSION"),
+            "device": parzi_core::device::this(),
         }),
         "session.list" => session_list(&state.orch),
         "session.show" | "session.export" => session_show(&state.orch, req, op == "session.export"),
@@ -571,6 +573,18 @@ async fn dispatch(state: &State, req: &Value) -> Value {
             }
         }
         "session.compact" => session_compact(&state.orch, req).await,
+        "brain.manifest" => crate::hub::brain_manifest(),
+        "brain.read" => crate::hub::brain_read(req),
+        "brain.apply" => crate::hub::brain_apply(req),
+        "settings.get" => crate::hub::settings_get(&state.orch),
+        "settings.put" => crate::hub::settings_put(&state.orch, req).await,
+        "mirror.put" => crate::hub::mirror_put(req),
+        "mirror.list" => crate::hub::mirror_list(),
+        "mirror.events" => crate::hub::mirror_events(req),
+        "mirror.delete" => crate::hub::mirror_delete(req),
+        "mirror.adopt" => crate::hub::mirror_adopt(&state.orch, req),
+        "project.list" => crate::hub::project_list(),
+        "project.folder" => crate::hub::project_folder(req),
         "providers" => providers(&state.orch, req).await,
         "shutdown" => {
             // Let this reply reach the client before the accept loop stops.

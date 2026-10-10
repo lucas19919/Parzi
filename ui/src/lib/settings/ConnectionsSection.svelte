@@ -181,6 +181,22 @@
     }
   }
 
+  let syncing = false;
+  $: syncedLine = info?.synced_at ? `Last synced ${new Date(info.synced_at).toLocaleTimeString()}.` : "Not synced yet.";
+
+  async function syncNow() {
+    syncing = true;
+    try {
+      const moved = await remote.sync();
+      notify(moved ? `Synced: ${moved}` : "Already in step");
+      info = await remote.info();
+    } catch (e) {
+      notify(`Sync failed: ${e}`);
+    } finally {
+      syncing = false;
+    }
+  }
+
   function when(ms: number): string {
     return ms ? new Date(ms).toLocaleDateString() : "";
   }
@@ -212,7 +228,13 @@
         <button class="sbtn" on:click={() => dispatch("setupRemote")}>Set up again</button>
         <button class="sbtn danger" on:click={unlink}>Unlink</button>
       </div>
-      <p class="section-desc">Turn on Remote in the composer to start a session there. It shows in your session list like any other.</p>
+      <div class="field-card">
+        <div class="field-info">
+          <span class="field-label">Everything syncs through it</span>
+          <span class="field-hint">Brain notes, settings and every device's sessions. A note changed on two devices at once keeps both copies. Connectors and agent paths stay per machine. {syncedLine}</span>
+        </div>
+        <button class="sbtn" disabled={syncing} on:click={syncNow}>{syncing ? "Syncing…" : "Sync now"}</button>
+      </div>
       <div class="section-head-with-action">
         <div>
           <h3 class="section-title">Agents on the server</h3>

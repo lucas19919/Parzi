@@ -2,6 +2,7 @@ pub mod artifacts;
 pub mod brain;
 pub mod config;
 pub mod context;
+pub mod device;
 pub mod error;
 pub mod hooks;
 pub mod paths;

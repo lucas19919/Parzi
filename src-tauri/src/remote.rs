@@ -15,13 +15,26 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 
 pub const PREFIX: &str = "r:";
+/// A session another device ran and mirrored to the server:
+/// `m:<device>:<session>`. Read here; continuing it moves it to the server.
+pub const MIRROR: &str = "m:";
 /// After a failed connect, background refreshes wait this long to retry.
 const RETRY_AFTER: Duration = Duration::from_secs(60);
+/// While linked, everything syncs at least this often.
+const SYNC_EVERY: Duration = Duration::from_secs(120);
+/// A change here waits this long for more before it syncs.
+const SYNC_SETTLE: Duration = Duration::from_secs(3);
 
 /// The server's own id for a remote session id, or None for a local one.
 #[must_use]
 pub fn remote_id(id: &str) -> Option<&str> {
     id.strip_prefix(PREFIX)
+}
+
+/// (device, session) of a mirrored session id.
+#[must_use]
+pub fn mirror_id(id: &str) -> Option<(&str, &str)> {
+    id.strip_prefix(MIRROR)?.split_once(':')
 }
 
 fn tag(id: &str) -> String {
@@ -32,10 +45,14 @@ fn tag(id: &str) -> String {
 pub struct RemoteState {
     link: Mutex<Option<Arc<Link>>>,
     busy: AtomicBool,
-    /// The server's sessions as last listed, ids already tagged.
+    /// The server's sessions and other devices' mirrors as last listed,
+    /// ids already tagged.
     sessions: std::sync::Mutex<Vec<SessionMeta>>,
     failed_at: std::sync::Mutex<Option<Instant>>,
     opening: AtomicBool,
+    syncing: Mutex<()>,
+    sync_pending: AtomicBool,
+    synced_at: std::sync::Mutex<i64>,
 }
 
 #[derive(serde::Serialize)]
@@ -46,9 +63,13 @@ pub struct RemoteInfo {
     pub version: String,
     pub linked_at: i64,
     pub alive: bool,
+    /// Last finished sync (ms), 0 for not yet.
+    pub synced_at: i64,
+    /// This machine's device id.
+    pub device: String,
 }
 
-fn info(saved: &remote::Saved, alive: bool) -> RemoteInfo {
+fn info(saved: &remote::Saved, alive: bool, synced_at: i64) -> RemoteInfo {
     RemoteInfo {
         label: saved.target.label(),
         user: saved.target.user.clone(),
@@ -59,7 +80,83 @@ fn info(saved: &remote::Saved, alive: bool) -> RemoteInfo {
         version: saved.version.clone(),
         linked_at: saved.linked_at,
         alive,
+        synced_at,
+        device: parzi_core::device::id(),
     }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+/// Settings, notes and this device's sessions, once; never two at a time.
+pub(crate) async fn sync_now(app: &AppHandle) -> Result<String, String> {
+    let st = app.state::<RemoteState>();
+    let _one = st.syncing.lock().await;
+    let link = link(app, &st).await?;
+    let server = remote::load_saved()
+        .map(|s| s.target.label())
+        .ok_or("no remote is set up")?;
+    let local = app.state::<crate::AppState>();
+    let done = parzi_runtime::sync::everything(&link, local.orch.store(), &server).await;
+    if let parzi_runtime::sync::SettingsOutcome::Pulled(cfg) = &done.settings {
+        local.orch.apply_config((**cfg).clone()).await;
+        status(app, "settings", "");
+    }
+    if done.brain.changed() {
+        status(app, "brain", "");
+    }
+    *st.synced_at.lock().unwrap_or_else(|p| p.into_inner()) = now_ms();
+    let summary = done.summary();
+    if done.errors.is_empty() {
+        status(app, "synced", summary.clone());
+        Ok(summary)
+    } else {
+        let why = done.errors.join("; ");
+        status(app, "error", format!("Sync with {server}: {why}"));
+        Err(why)
+    }
+}
+
+/// Sync a few seconds from now; changes in between ride along.
+pub(crate) fn sync_soon(app: &AppHandle) {
+    if remote::load_saved().is_none() {
+        return;
+    }
+    let st = app.state::<RemoteState>();
+    if st.sync_pending.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(SYNC_SETTLE).await;
+        app.state::<RemoteState>()
+            .sync_pending
+            .store(false, Ordering::Release);
+        if let Err(e) = sync_now(&app).await {
+            tracing::info!("sync skipped: {e}");
+        }
+    });
+}
+
+/// While a server is linked and reachable, sync on a timer.
+pub(crate) fn start_ticker(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(SYNC_EVERY).await;
+            let live = {
+                let st = app.state::<RemoteState>();
+                let slot = st.link.lock().await;
+                slot.as_ref().is_some_and(|l| l.alive())
+            };
+            if live {
+                let _ = sync_now(&app).await;
+            }
+        }
+    });
 }
 
 /// Connection news for the UI: `up`, `down`, `updating`, `ready`, `error`,
@@ -124,6 +221,7 @@ pub(crate) async fn link(app: &AppHandle, state: &RemoteState) -> Result<Arc<Lin
     *state.failed_at.lock().unwrap_or_else(|p| p.into_inner()) = None;
     tokio::spawn(forward(app.clone(), events));
     status(app, "up", label);
+    sync_soon(app);
     Ok(link)
 }
 
@@ -138,8 +236,16 @@ async fn forward(app: AppHandle, mut rx: tokio::sync::mpsc::UnboundedReceiver<Va
             None => continue,
             Some(_) => {}
         }
+        // A finished run on the server may have written notes there.
+        let ended = matches!(
+            ev.get("kind").and_then(Value::as_str),
+            Some("done" | "error")
+        );
         retag(&mut ev);
         let _ = app.emit("parzi://run-event", &ev);
+        if ended {
+            sync_soon(&app);
+        }
     }
     status(&app, "down", "");
 }
@@ -206,11 +312,35 @@ pub(crate) async fn sessions(app: &AppHandle, state: &RemoteState) -> Vec<Sessio
     )
     .await;
     if let Ok(Ok(v)) = fresh {
-        let rows: Vec<SessionMeta> = v
+        let mut rows: Vec<SessionMeta> = v
             .get("sessions")
             .and_then(Value::as_array)
             .map(|a| a.iter().cloned().filter_map(tagged_meta).collect())
             .unwrap_or_default();
+        // Other devices' sessions, as their mirrors. This device's own
+        // mirrors are its local sessions, already listed.
+        let me = parzi_core::device::id();
+        if let Ok(Ok(m)) = tokio::time::timeout(
+            Duration::from_secs(4),
+            link.call("mirror.list", json!({}), Duration::from_secs(4)),
+        )
+        .await
+        {
+            for card in m
+                .get("sessions")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let device = card.get("device").and_then(Value::as_str).unwrap_or("");
+                if device.is_empty() || device == me {
+                    continue;
+                }
+                if let Some(meta) = mirrored_meta(card) {
+                    rows.push(meta);
+                }
+            }
+        }
         *state.sessions.lock().unwrap_or_else(|p| p.into_inner()) = rows;
     }
     state
@@ -237,6 +367,74 @@ fn connect_in_background(app: &AppHandle, state: &RemoteState) {
         }
         st.opening.store(false, Ordering::Release);
     });
+}
+
+/// A mirror card's session, its id tagged `m:<device>:` and its title
+/// saying where it ran. It reads as done: its run lives on that device.
+fn mirrored_meta(card: &Value) -> Option<SessionMeta> {
+    let device = card.get("device").and_then(Value::as_str)?;
+    let name = card.get("name").and_then(Value::as_str).unwrap_or(device);
+    let mut meta: SessionMeta = serde_json::from_value(card.get("session")?.clone()).ok()?;
+    meta.id = format!("{MIRROR}{device}:{}", meta.id);
+    meta.parent_id = meta.parent_id.map(|p| format!("{MIRROR}{device}:{p}"));
+    meta.title = format!("{} · {name}", meta.title);
+    if matches!(
+        meta.status,
+        parzi_core::store::SessionStatus::Active | parzi_core::store::SessionStatus::Queued
+    ) {
+        meta.status = parzi_core::store::SessionStatus::Idle;
+    }
+    Some(meta)
+}
+
+fn events_of(v: &Value) -> Vec<Event> {
+    v.get("events")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| serde_json::from_value(e.clone()).ok())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub(crate) async fn mirror_thread(
+    app: &AppHandle,
+    state: &RemoteState,
+    device: &str,
+    id: &str,
+) -> Result<(SessionMeta, Vec<Event>), String> {
+    let v = call(
+        app,
+        state,
+        "mirror.events",
+        json!({ "device": device, "id": id }),
+    )
+    .await?;
+    let card = json!({ "device": device, "name": v.get("name"), "session": v.get("session") });
+    let meta = mirrored_meta(&card).ok_or("the server sent no session")?;
+    Ok((meta, events_of(&v)))
+}
+
+/// Copy another device's session into the server's own store so it can go
+/// on there. Returns the server's id for it (untagged).
+pub(crate) async fn adopt(
+    app: &AppHandle,
+    state: &RemoteState,
+    device: &str,
+    id: &str,
+) -> Result<String, String> {
+    let v = call(
+        app,
+        state,
+        "mirror.adopt",
+        json!({ "device": device, "id": id }),
+    )
+    .await?;
+    v.get("id")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "the server could not take the session over".into())
 }
 
 pub(crate) async fn thread(
@@ -271,6 +469,7 @@ pub(crate) async fn send(
     target: Option<&str>,
     model: &str,
     prompt: &str,
+    cwd: &str,
     effort: &str,
     attachments: Vec<parzi_core::context::AttachedFile>,
     mode: Option<String>,
@@ -284,7 +483,8 @@ pub(crate) async fn send(
         "mode": mode.unwrap_or_default(),
         "lane": lane.unwrap_or_default(),
         "attachments": attachments,
-        "cwd": "",
+        // A folder on the server (a project there), or its scratch folder.
+        "cwd": if cwd.starts_with('/') || cwd.starts_with('~') { cwd } else { "" },
     });
     let v = call(app, state, "session.send", body).await?;
     let id = v
@@ -315,7 +515,8 @@ pub async fn remote_info(state: State<'_, RemoteState>) -> Result<Option<RemoteI
         .ok()
         .and_then(|l| l.as_ref().map(|l| l.alive()))
         .unwrap_or(false);
-    Ok(remote::load_saved().map(|s| info(&s, alive)))
+    let synced = *state.synced_at.lock().unwrap_or_else(|p| p.into_inner());
+    Ok(remote::load_saved().map(|s| info(&s, alive, synced)))
 }
 
 /// Open the link now (the composer's switch): connects, updates the
@@ -327,7 +528,47 @@ pub async fn remote_connect(
 ) -> Result<RemoteInfo, String> {
     link(&app, &state).await?;
     let saved = remote::load_saved().ok_or("no remote is set up")?;
-    Ok(info(&saved, true))
+    let synced = *state.synced_at.lock().unwrap_or_else(|p| p.into_inner());
+    Ok(info(&saved, true, synced))
+}
+
+/// Projects as the server sees them; `folder` is its own folder for each
+/// ("" when the server has none yet).
+#[tauri::command]
+pub async fn remote_projects(
+    app: AppHandle,
+    state: State<'_, RemoteState>,
+) -> Result<Vec<parzi_core::brain::Project>, String> {
+    let v = call(&app, &state, "project.list", json!({})).await?;
+    serde_json::from_value(v.get("projects").cloned().unwrap_or(Value::Null))
+        .map_err(|e| format!("the server's project list is unreadable: {e}"))
+}
+
+/// Give a project a folder on the server (a path there), or start one.
+#[tauri::command]
+pub async fn remote_project_folder(
+    app: AppHandle,
+    state: State<'_, RemoteState>,
+    slug: Option<String>,
+    title: String,
+    folder: String,
+) -> Result<parzi_core::brain::Project, String> {
+    let v = call(
+        &app,
+        &state,
+        "project.folder",
+        json!({ "slug": slug, "title": title, "folder": folder }),
+    )
+    .await?;
+    sync_soon(&app);
+    serde_json::from_value(v.get("project").cloned().unwrap_or(Value::Null))
+        .map_err(|e| e.to_string())
+}
+
+/// Sync now (Settings › Connections). Answers what moved.
+#[tauri::command]
+pub async fn remote_sync(app: AppHandle) -> Result<String, String> {
+    sync_now(&app).await
 }
 
 /// The agents on the server, for the composer's model list.
@@ -390,7 +631,8 @@ pub async fn remote_setup(
         .unwrap_or_else(|p| p.into_inner())
         .clear();
     link(&app, &state).await?;
-    Ok(info(&saved, true))
+    let synced = *state.synced_at.lock().unwrap_or_else(|p| p.into_inner());
+    Ok(info(&saved, true, synced))
 }
 
 /// Install an agent on the remote, or sign in to it, in a terminal the

@@ -107,7 +107,14 @@ pub fn apply_spec(spec: &Spec) -> Vec<Step> {
         )];
     }
     let mut out = vec![];
-    if let Some(incoming) = spec.config.clone() {
+    // Once any device has synced settings here, they are the home copy: a
+    // second device joining must not overwrite them with its own.
+    if crate::hub::settings_rev() > 0 {
+        out.push(Step::ok(
+            "config",
+            "this server already holds your settings; they sync from here",
+        ));
+    } else if let Some(incoming) = spec.config.clone() {
         let local = ParziConfig::load().unwrap_or_default();
         out.push(match merge_config(local, incoming).save() {
             Ok(()) => Step::ok("config", "settings copied; connectors stay per machine"),

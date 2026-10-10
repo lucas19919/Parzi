@@ -34,13 +34,17 @@ pub async fn brain_read(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn brain_write(path: String, content: String) -> Result<NoteMeta, String> {
-    blocking(move || brain::write(&path, &content)).await
+pub async fn brain_write(
+    app: tauri::AppHandle,
+    path: String,
+    content: String,
+) -> Result<NoteMeta, String> {
+    synced(&app, blocking(move || brain::write(&path, &content)).await)
 }
 
 #[tauri::command]
-pub async fn brain_save_answer(content: String) -> Result<NoteMeta, String> {
-    blocking(move || {
+pub async fn brain_save_answer(app: tauri::AppHandle, content: String) -> Result<NoteMeta, String> {
+    let saved = blocking(move || {
         let slug: String = content
             .lines()
             .map(str::trim)
@@ -63,12 +67,21 @@ pub async fn brain_save_answer(content: String) -> Result<NoteMeta, String> {
             .unwrap_or(0);
         brain::write(&format!("research/{slug}-{stamp}"), &content)
     })
-    .await
+    .await;
+    synced(&app, saved)
+}
+
+/// A brain edit here goes to the linked server a moment later.
+fn synced<T>(app: &tauri::AppHandle, out: Result<T, String>) -> Result<T, String> {
+    if out.is_ok() {
+        crate::remote::sync_soon(app);
+    }
+    out
 }
 
 #[tauri::command]
-pub async fn brain_delete(path: String) -> Result<(), String> {
-    blocking(move || brain::delete(&path)).await
+pub async fn brain_delete(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    synced(&app, blocking(move || brain::delete(&path)).await)
 }
 
 #[tauri::command]
@@ -77,17 +90,34 @@ pub async fn brain_projects() -> Result<Vec<Project>, String> {
 }
 
 #[tauri::command]
-pub async fn brain_project_upsert(title: String, folder: String) -> Result<Project, String> {
+pub async fn brain_project_upsert(
+    app: tauri::AppHandle,
+    title: String,
+    folder: String,
+    slug: Option<String>,
+) -> Result<Project, String> {
     // The vault resolves project folders; a network one would be contacted.
     if remote_or_device(&folder) {
         return Err("network and device folders cannot be projects".into());
     }
-    blocking(move || brain::project_upsert(None, &title, &folder)).await
+    // A slug gives an existing (perhaps synced) project this PC's folder.
+    synced(
+        &app,
+        blocking(move || brain::project_upsert(slug.as_deref(), &title, &folder)).await,
+    )
 }
 
 #[tauri::command]
-pub async fn brain_map(note: String, project: String, on: bool) -> Result<NoteMeta, String> {
-    blocking(move || brain::map(&note, &project, on)).await
+pub async fn brain_map(
+    app: tauri::AppHandle,
+    note: String,
+    project: String,
+    on: bool,
+) -> Result<NoteMeta, String> {
+    synced(
+        &app,
+        blocking(move || brain::map(&note, &project, on)).await,
+    )
 }
 
 #[tauri::command]
@@ -99,8 +129,8 @@ pub async fn brain_context(cwd: String) -> Result<Option<BrainContext>, String> 
 }
 
 #[tauri::command]
-pub async fn brain_pin(path: String, on: bool) -> Result<NoteMeta, String> {
-    blocking(move || brain::pin(&path, on)).await
+pub async fn brain_pin(app: tauri::AppHandle, path: String, on: bool) -> Result<NoteMeta, String> {
+    synced(&app, blocking(move || brain::pin(&path, on)).await)
 }
 
 #[tauri::command]

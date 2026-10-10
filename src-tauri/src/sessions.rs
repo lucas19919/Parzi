@@ -5,7 +5,7 @@ use parzi_runtime::tools::{Approval, Approver};
 use serde_json::json;
 use tauri::State;
 
-use crate::remote::{self, remote_id, RemoteState};
+use crate::remote::{self, mirror_id, remote_id, RemoteState};
 use crate::{AppState, GuiApprover};
 
 /// This machine's sessions, then the linked server's (ids tagged `r:`).
@@ -25,6 +25,9 @@ pub async fn get_thread(
     far: State<'_, RemoteState>,
     id: String,
 ) -> Result<(SessionMeta, Vec<Event>), String> {
+    if let Some((device, sid)) = mirror_id(&id) {
+        return remote::mirror_thread(&state.app, &far, device, sid).await;
+    }
     if let Some(rid) = remote_id(&id) {
         return remote::thread(&state.app, &far, rid).await;
     }
@@ -58,14 +61,20 @@ pub async fn send_message(
             .await
             .map_err(|e| e.to_string())?
     };
-    let far_target = match session_id.as_deref() {
-        Some(id) => remote_id(id).map(Some),
-        None if remote == Some(true) => Some(None),
-        None => None,
+    // Another device's session goes on on the server: copy it there first.
+    let mut adopted = None;
+    if let Some((device, sid)) = session_id.as_deref().and_then(mirror_id) {
+        adopted = Some(remote::adopt(&state.app, &far, device, sid).await?);
+    }
+    let far_target = match (adopted.as_deref(), session_id.as_deref()) {
+        (Some(a), _) => Some(Some(a)),
+        (None, Some(id)) => remote_id(id).map(Some),
+        (None, None) if remote == Some(true) => Some(None),
+        (None, None) => None,
     };
     if let Some(target) = far_target {
         return remote::send(
-            &state.app, &far, target, &model, &prompt, &effort, attached, mode, lane,
+            &state.app, &far, target, &model, &prompt, &cwd, &effort, attached, mode, lane,
         )
         .await;
     }
@@ -171,6 +180,7 @@ pub async fn kill_run(
     far: State<'_, RemoteState>,
     id: String,
 ) -> Result<(), String> {
+    read_only(&id)?;
     if let Some(rid) = remote_id(&id) {
         return remote::call(&state.app, &far, "session.kill", json!({ "id": rid }))
             .await
@@ -185,6 +195,7 @@ pub async fn compact_thread(
     far: State<'_, RemoteState>,
     id: String,
 ) -> Result<String, String> {
+    read_only(&id)?;
     if let Some(rid) = remote_id(&id) {
         let v = remote::call(&state.app, &far, "session.compact", json!({ "id": rid })).await?;
         return Ok(v
@@ -202,10 +213,27 @@ pub async fn fork_thread(
     far: State<'_, RemoteState>,
     id: String,
 ) -> Result<SessionMeta, String> {
+    // Forking another device's session copies it to the server.
+    if let Some((device, sid)) = mirror_id(&id) {
+        let new = remote::adopt(&state.app, &far, device, sid).await?;
+        return remote::thread(&state.app, &far, &new).await.map(|(m, _)| m);
+    }
     if let Some(rid) = remote_id(&id) {
         return remote::fork(&state.app, &far, rid).await;
     }
     state.orch.fork(&id, None).await.map_err(|e| e.to_string())
+}
+
+/// Another device's session is read here, not changed: its run lives
+/// there. Sending to it or forking it copies it to the server instead.
+fn read_only(id: &str) -> Result<(), String> {
+    if mirror_id(id).is_some() {
+        return Err(
+            "This session ran on another device. Send a message to continue it on the server."
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -215,6 +243,7 @@ pub async fn rename_thread(
     id: String,
     title: String,
 ) -> Result<(), String> {
+    read_only(&id)?;
     if let Some(rid) = remote_id(&id) {
         return remote::call(
             &state.app,
@@ -238,6 +267,7 @@ pub async fn delete_thread(
     far: State<'_, RemoteState>,
     id: String,
 ) -> Result<usize, String> {
+    read_only(&id)?;
     if let Some(rid) = remote_id(&id) {
         let v = remote::call(&state.app, &far, "session.delete", json!({ "id": rid })).await?;
         let removed = v
