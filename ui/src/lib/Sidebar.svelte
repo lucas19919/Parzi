@@ -13,7 +13,6 @@
     close: { id: string };
     move: { id: string; to: number };
     newTab: void;
-    home: void;
   }>();
 
   $: workTabs = tabs.filter((t) => !isSystemTab(t));
@@ -33,9 +32,6 @@
 
 <aside class="sidebar">
   <div class="side-head">
-    <button class="icon-btn" title="Home" on:click={() => dispatch("home")}>
-      <Icon name="home" />
-    </button>
     <button class="icon-btn wide" title="New tab (Ctrl+T)" on:click={() => dispatch("newTab")}>
       <Icon name="plus" size={13} stroke={2.2} />
       <span>New tab</span>
