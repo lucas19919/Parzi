@@ -64,39 +64,18 @@ pub fn ensure_dirs() -> Result<PathBuf> {
 fn seed_builtin_packs(root: &std::path::Path) -> Result<()> {
     let packs: &[(&str, &str)] = &[
         (
-            "ember",
+            "tokyo-night",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#0D0708\"\nstage = \"#120B0C\"\naccent = \"#E5484D\"\ntext = \"#F5EDED\"\n\
-text_dim = \"#A89A9B\"\nbar = \"#1D1214\"\nborder = \"#33201F\"\n\n\
-[background]\nimage = \"\"\ndim = 0.62\nvignette = 0.48\nblur = 0.0\n",
-        ),
-        (
-            "midnight",
-            "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#0A0C12\"\nstage = \"#0E1118\"\naccent = \"#7C8CFF\"\ntext = \"#E8EAF0\"\n\
-text_dim = \"#8B93A7\"\nbar = \"#161B26\"\nborder = \"#262D3D\"\n\n\
+[colors]\nsidebar = \"#16161E\"\nstage = \"#1A1B26\"\naccent = \"#7AA2F7\"\ntext = \"#C0CAF5\"\n\
+text_dim = \"#8B93B8\"\nbar = \"#1F2330\"\nborder = \"#2A2E3F\"\n\n\
 [background]\nimage = \"\"\ndim = 0.60\nvignette = 0.45\nblur = 0.0\n",
         ),
         (
-            "forest",
+            "full-dark",
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#0A0F0C\"\nstage = \"#0E1511\"\naccent = \"#34D399\"\ntext = \"#E9F2EC\"\n\
-text_dim = \"#8AA395\"\nbar = \"#16211B\"\nborder = \"#24352B\"\n\n\
-[background]\nimage = \"\"\ndim = 0.62\nvignette = 0.48\nblur = 0.0\n",
-        ),
-        (
-            "grape",
-            "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#0D0A14\"\nstage = \"#120E1C\"\naccent = \"#A78BFA\"\ntext = \"#EFEAFB\"\n\
-text_dim = \"#9C92B8\"\nbar = \"#1B1428\"\nborder = \"#2E2342\"\n\n\
-[background]\nimage = \"\"\ndim = 0.62\nvignette = 0.48\nblur = 0.0\n",
-        ),
-        (
-            "sand",
-            "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#100C08\"\nstage = \"#171209\"\naccent = \"#E8B64C\"\ntext = \"#F3EDE2\"\n\
-text_dim = \"#A89A86\"\nbar = \"#211A10\"\nborder = \"#37291A\"\n\n\
-[background]\nimage = \"\"\ndim = 0.62\nvignette = 0.48\nblur = 0.0\n",
+[colors]\nsidebar = \"#000000\"\nstage = \"#000000\"\naccent = \"#5EEAD4\"\ntext = \"#F2F2F2\"\n\
+text_dim = \"#8A8A8A\"\nbar = \"#0A0A0A\"\nborder = \"#1F1F1F\"\n\n\
+[background]\nimage = \"\"\ndim = 0.60\nvignette = 0.40\nblur = 0.0\n",
         ),
         (
             "grey",
@@ -110,9 +89,12 @@ text_dim = \"#9A9AA2\"\nbar = \"#1F1F23\"\nborder = \"#2E2E35\"\n\n\
             "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
 [colors]\nsidebar = \"#F2F3F5\"\nstage = \"#FFFFFF\"\naccent = \"#4F5EE0\"\ntext = \"#1A1D24\"\n\
 text_dim = \"#5B6472\"\nbar = \"#E9EBEF\"\nborder = \"#D5D9E0\"\n\n\
-[background]\nimage = \"\"\ndim = 0.50\nvignette = 0.35\nblur = 0.0\n",
+[background]\nimage = \"\"\ndim = 0.40\nvignette = 0.12\nblur = 0.0\n",
         ),
     ];
+    // Retire first so removed packs reseed fresh below instead of
+    // vanishing for a launch.
+    retire_legacy_packs(root);
     for (name, toml) in packs {
         let dir = root.join("themes").join(name);
         let marker = dir.join("theme.toml");
@@ -122,15 +104,39 @@ text_dim = \"#5B6472\"\nbar = \"#E9EBEF\"\nborder = \"#D5D9E0\"\n\n\
         std::fs::create_dir_all(&dir)?;
         std::fs::write(marker, toml)?;
     }
-    retire_legacy_packs(root);
+    refresh_builtin_defaults(root);
     Ok(())
+}
+
+/// Builtins are defaults: when a seeded pack still matches the previous
+/// seed byte-for-byte, move it to the current seed so refreshed defaults
+/// (like light's gentler veil) reach existing installs. Anything the
+/// user touched is left alone.
+fn refresh_builtin_defaults(root: &std::path::Path) {
+    const REFRESH: &[(&str, &str, &str)] = &[
+        ("light", "vignette = 0.35", "vignette = 0.12"),
+        ("light", "dim = 0.50", "dim = 0.40"),
+    ];
+    for (name, old, new) in REFRESH {
+        let marker = root.join("themes").join(name).join("theme.toml");
+        let Ok(raw) = std::fs::read_to_string(&marker) else {
+            continue;
+        };
+        if raw.contains(old) {
+            let _ = std::fs::write(&marker, raw.replacen(old, new, 1));
+        }
+    }
 }
 
 fn retire_legacy_packs(root: &std::path::Path) {
     const LEGACY: &[(&str, &str)] = &[
+        ("ember", "accent = \"#E5484D\""),
+        ("midnight", "accent = \"#7C8CFF\""),
+        ("forest", "accent = \"#34D399\""),
+        ("grape", "accent = \"#A78BFA\""),
+        ("sand", "accent = \"#E8B64C\""),
         ("eva-crosses", "accent = \"#E5484D\""),
         ("moody-midnight", "accent = \"#7C8CFF\""),
-        ("tokyo-night", "accent = \"#7AA2F7\""),
         ("catppuccin-mocha", "accent = \"#CBA6F7\""),
         ("dracula", "accent = \"#BD93F9\""),
         ("nordic-frost", "accent = \"#88C0D0\""),
