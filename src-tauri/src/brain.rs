@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -131,6 +132,26 @@ pub async fn brain_context(cwd: String) -> Result<Option<BrainContext>, String> 
 #[tauri::command]
 pub async fn brain_pin(app: tauri::AppHandle, path: String, on: bool) -> Result<NoteMeta, String> {
     synced(&app, blocking(move || brain::pin(&path, on)).await)
+}
+
+/// Pinned notes too long to send in full: path -> project slugs (`all`
+/// for sessions outside every project).
+#[tauri::command]
+pub async fn brain_overflow() -> Result<BTreeMap<String, Vec<String>>, String> {
+    blocking(brain::overflow).await
+}
+
+/// Keep one side of a sync conflict; returns the original note's path.
+#[tauri::command]
+pub async fn brain_resolve_conflict(
+    app: tauri::AppHandle,
+    path: String,
+    keep_copy: bool,
+) -> Result<String, String> {
+    synced(
+        &app,
+        blocking(move || brain::resolve_conflict(&path, keep_copy)).await,
+    )
 }
 
 #[tauri::command]

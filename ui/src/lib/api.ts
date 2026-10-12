@@ -276,6 +276,8 @@ export interface NoteMeta {
   modified: number;
   bytes: number;
   summary: string;
+  /** Set on a sync conflict copy: the note it is a copy of. */
+  conflict_of?: string | null;
 }
 
 export interface Project {
@@ -291,6 +293,7 @@ interface BrainContext {
   text: string;
   attached: string[];
   listed: string[];
+  overflow: string[];
   chars: number;
   tokens: number;
 }
@@ -360,6 +363,10 @@ export const brain = {
   map: (note: string, project: string, on: boolean) => invoke<NoteMeta>("brain_map", { note, project, on }),
   context: (cwd: string) => invoke<BrainContext | null>("brain_context", { cwd }),
   pin: (path: string, on: boolean) => invoke<NoteMeta>("brain_pin", { path, on }),
+  // Pinned notes too long to send in full: path -> project slugs ("all" outside projects).
+  overflow: () => invoke<Record<string, string[]>>("brain_overflow"),
+  // Keep one side of a sync conflict; resolves to the original note's path.
+  resolveConflict: (path: string, keepCopy: boolean) => invoke<string>("brain_resolve_conflict", { path, keepCopy }),
   open: (path: string, target: "file" | "folder" | "obsidian") => invoke<void>("brain_open", { path, target }),
   obsidian: () => invoke<ObsidianState>("brain_obsidian"),
 };

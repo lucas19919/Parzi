@@ -30,7 +30,7 @@ const STATES = {
     click("session actions", '.session .menu button[aria-haspopup="menu"]', '.dropdown[role="menu"]'),
     click("context usage", ".icon-btn.ctx", ".ctx-pop"),
   ],
-  brain: [click("pinned note", ".note:has(.pin)", ".titles h2")],
+  brain: [click("pinned note", ".note:has(.pin)", ".titles h2"), click("conflict copy", ".note.copy", ".conflict")],
   history: [2, 3].map((i) => click(`library ${i}`, nth(".seg", i), `${nth(".seg", i)}[aria-pressed="true"]`)),
   settings: [2, 3, 4, 5].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
   setup: [2, 3, 4, 5].map((i) => click(`step ${i}`, nth("header .steps", i), `${nth("header .steps", i)}[aria-current="step"]`)),

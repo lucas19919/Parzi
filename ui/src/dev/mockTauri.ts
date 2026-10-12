@@ -95,10 +95,12 @@ const theme = {
   background: { image: params.get("bg") ? "backgrounds/mock.png" : "", dim: 0.66, vignette: 0.5, blur: 0, grain: 0.16, grain_size: 32, height: 1 },
 };
 
-const project = { slug: "parzi", title: "Parzi", folder: "D:\\Repos\\Parzi", note: "projects/parzi.md", notes: ["notes/style.md", "notes/release.md"] };
+const project = { slug: "parzi", title: "Parzi", folder: "D:\\Repos\\Parzi", note: "projects/parzi.md", notes: ["notes/style.md", "notes/release.conflict-laptop-macos.md", "notes/release.md"] };
 const notes = [
   { path: "notes/style.md", title: "Writing style", projects: ["all"], tags: [], pinned: true, links: [], modified: now / 1000, bytes: 1200, summary: "Short sentences. No em dashes." },
   { path: "notes/release.md", title: "Release checklist", projects: ["parzi"], tags: [], pinned: false, links: [], modified: now / 1000, bytes: 900, summary: "Bump versions, tag, attach installers." },
+  // A sync conflict copy (both devices edited the checklist).
+  { path: "notes/release.conflict-laptop-macos.md", title: "Release checklist", projects: ["parzi"], tags: [], pinned: false, links: [], modified: now / 1000, bytes: 950, summary: "Bump versions, tag, sign, attach installers.", conflict_of: "notes/release.md" },
   { path: "projects/parzi.md", title: "Parzi", projects: [], tags: [], folder: "D:\\Repos\\Parzi", pinned: false, links: [], modified: now / 1000, bytes: 300, summary: "The harness itself." },
 ];
 
@@ -122,7 +124,10 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   remote_sync: () => "synced",
   remote_providers: () => [],
   remote_projects: () => [],
-  brain_context: () => ({ project, text: "", attached: [], listed: [], chars: 0, tokens: 1840 }),
+  brain_context: () => ({ project, text: "", attached: [], listed: [], overflow: [], chars: 0, tokens: 1840 }),
+  // The pinned style note is too big to send in full in Thesis sessions.
+  brain_overflow: () => ({ "notes/style.md": ["thesis"] }),
+  brain_resolve_conflict: () => "notes/release.md",
   brain_projects: () => [
     project,
     { slug: "memory-ai", title: "memory-ai", folder: "D:\\Repos\\memory-ai", note: "projects/memory-ai.md", notes: [] },
