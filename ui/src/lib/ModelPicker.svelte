@@ -197,9 +197,10 @@
         <div class="empty">{busy ? "Checking your agents…" : "No matching models"}</div>
       {/each}
     </div>
-    {#if modelEfforts.length > 1 || (idle.length && !q)}
+    {#if (value && modelEfforts.length > 1) || (idle.length && !q)}
       <div class="foot">
-        {#if modelEfforts.length > 1}
+        <!-- Effort belongs to a model: none until one is picked. -->
+        {#if value && modelEfforts.length > 1}
           <div class="effort-line">
             <span class="foot-label">Effort</span>
             <div class="effort-row" role="group" aria-label="Effort" data-ui-segmented>

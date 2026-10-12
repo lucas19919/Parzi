@@ -45,6 +45,9 @@ const MAP = {
   branch: "git-branch",
   panel: "split-view",
   server: "server",
+  tasks: "tasklist",
+  play: "play",
+  blocked: "blocked",
 };
 
 const out = [];

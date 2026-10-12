@@ -1,5 +1,5 @@
 export type ComposerMode = "search" | "build" | "work";
-type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview";
+type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview" | "tasks";
 
 export interface TabComposerState {
   input: string;
@@ -56,6 +56,10 @@ export function brainTab(): Tab {
   return { id: tabId(), kind: "brain", title: "Brain", composer: defaultComposer() };
 }
 
+export function tasksTab(): Tab {
+  return { id: tabId(), kind: "tasks", title: "Tasks", composer: defaultComposer() };
+}
+
 export function settingsTab(): Tab {
   return { id: tabId(), kind: "settings", title: "Settings", composer: defaultComposer() };
 }
@@ -90,7 +94,7 @@ export function folderName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-/// Brain/history/settings/preview live apart from working tabs.
+/// Brain/history/settings/preview/tasks live apart from working tabs.
 export function isSystemTab(t: Tab): boolean {
   return t.kind !== "session" && t.kind !== "page";
 }

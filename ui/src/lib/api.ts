@@ -200,9 +200,6 @@ export const api = {
     invoke<void>("approve_tool", { key, session, allow }),
   answerQuestion: (key: string, session: string, answer: string) =>
     invoke<void>("answer_question", { key, session, answer }),
-  spawnTrack: (parent: string, title: string, prompt: string) =>
-    invoke<string>("spawn_track", { parent, title, prompt }),
-  planGet: (id: string) => invoke<string>("plan_get", { id }),
   purgeSessions: () => invoke<number>("purge_sessions"),
 
   pickFolder: (start?: string) => invoke<string | null>("pick_folder", { start: start || null }),
@@ -468,4 +465,75 @@ export function deskSync(tabs: DeskTab[], rev: number, active: string) {
 
 export function onDesk(cb: (cmd: DeskCmd) => void) {
   return listen<DeskCmd>("parzi://desk", (ev) => cb(ev.payload));
+}
+
+export type TaskStatus = "todo" | "doing" | "review" | "done" | "failed";
+
+// A task with what its project says about it (ready, what it waits on).
+export interface Task {
+  id: string;
+  title: string;
+  notes: string;
+  status: TaskStatus;
+  // The project slug; null is the Inbox.
+  project: string | null;
+  needs: string[];
+  lane: string;
+  session: string | null;
+  created: number;
+  updated: number;
+  created_by: string;
+  order: number;
+  ready: boolean;
+  blocked_by: string[];
+}
+
+export interface TaskPatch {
+  title?: string;
+  notes?: string;
+  status?: TaskStatus;
+  // A slug; "" moves the task to the Inbox.
+  project?: string;
+  needs?: string[];
+  lane?: string;
+  // A session id; "" unlinks.
+  session?: string;
+}
+
+export interface TaskChange {
+  ids: string[];
+  // Tasks a run just handed back (review, done or failed).
+  finished: Task[];
+}
+
+export interface AssignArgs {
+  id: string;
+  model: string;
+  effort: string;
+  mode: string;
+  cwd?: string;
+  lane?: string;
+}
+
+export const taskApi = {
+  // undefined: every project; null: the Inbox; a slug: that project.
+  list: (project?: string | null) => invoke<Task[]>("tasks_list", { all: project === undefined, project: project ?? null }),
+  create: (title: string, project: string | null, notes = "", needs: string[] = [], lane = "") =>
+    invoke<Task>("tasks_create", { title, project, notes, needs, lane }),
+  update: (id: string, patch: TaskPatch) => invoke<Task>("tasks_update", { id, patch }),
+  remove: (id: string) => invoke<void>("tasks_delete", { id }),
+  reorder: (ids: string[]) => invoke<void>("tasks_reorder", { ids }),
+  assign: (a: AssignArgs) =>
+    invoke<{ session: string; warning: string | null }>("tasks_assign", {
+      id: a.id,
+      model: a.model,
+      effort: a.effort,
+      mode: a.mode,
+      cwd: a.cwd ?? null,
+      lane: a.lane ?? null,
+    }),
+};
+
+export function onTasks(cb: (c: TaskChange) => void) {
+  return listen<TaskChange>("parzi://tasks", (ev) => cb(ev.payload));
 }

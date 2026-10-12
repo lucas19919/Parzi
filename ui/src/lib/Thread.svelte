@@ -121,6 +121,12 @@
         return "Writing the plan";
       case "plan.read":
         return "Reading the plan";
+      case "task.list":
+        return "Reading the task list";
+      case "task.add":
+        return "Adding tasks";
+      case "task.update":
+        return `Updating task ${arg(args, "id") || ""}`.trim();
       case "session.spawn":
         return `Delegating: ${arg(args, "title") || "a subsession"}`;
       case "session.send":

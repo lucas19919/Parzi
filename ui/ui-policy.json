@@ -63,6 +63,16 @@
       "reason": "Reviewed: placeholder is --muted on an opaque --bg (at least 5.6:1 in every built-in theme). axe can't sample the background of fields below the fold."
     },
     {
+      "selector": ".panel .open .title",
+      "rules": ["content-clipping"],
+      "reason": "Dock rows share the panel's width; a long session or task title ends in an ellipsis and shows in full on hover."
+    },
+    {
+      "selector": ".picker .foot .row.idle .name",
+      "rules": ["text-contrast"],
+      "reason": "Reviewed: --muted on the picker's opaque --panel, the same row that passes over the composer. Opened over the Tasks board as it fades in, axe can't sample its background through the cards behind it."
+    },
+    {
       "selector": ".ob textarea",
       "rules": ["text-contrast"],
       "reason": "Reviewed: the placeholder sits on blurred glass (backdrop-filter), which axe can't measure. It is --muted, at least 4.7:1 on that glass in every built-in theme."

@@ -5,16 +5,23 @@ interface Toast {
   text: string;
   err: boolean;
   session?: string;
+  // Clicking the toast runs this (open the task it is about).
+  run?: () => void;
 }
 
 export const toasts = writable<Toast[]>([]);
 
 let seq = 0;
 
-function push(text: string, err: boolean, session: string | undefined, ms: number) {
+function push(text: string, err: boolean, session: string | undefined, ms: number, run?: () => void) {
   const id = ++seq;
-  toasts.update((all) => [...all, { id, text, err, session }]);
+  toasts.update((all) => [...all, { id, text, err, session, run }]);
   setTimeout(() => toasts.update((all) => all.filter((t) => t.id !== id)), ms);
+}
+
+// A toast that does something when clicked; stays a little longer.
+export function notifyAction(text: string, run: () => void, err = false) {
+  push(text, err, undefined, 8000, run);
 }
 
 export function toast(text: string, err = false) {

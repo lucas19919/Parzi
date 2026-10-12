@@ -3,14 +3,16 @@
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
-  import { api, brain, type SessionMeta } from "./api";
-  import { toast } from "./toast";
+  import { api, brain, taskApi, type SessionMeta, type Task } from "./api";
+  import { toastError } from "./toast";
   import { mdHtml, richReady } from "./md";
   import { handleLinkClick } from "./links";
   import { agentOf, isLiveSession, whereOf } from "./sessions";
   import { laneIcon } from "./lanes";
   import { formatTime as time } from "./time";
   import { tooltip } from "./tooltip";
+  import { openTask, refreshTasks, tasks, tasksError } from "./taskStore";
+  import { byOrder, inScope, statusLabel, waitsOn } from "./taskModel";
 
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
@@ -157,140 +159,67 @@
 
   onDestroy(() => clearInterval(poller));
 
-  interface TaskItem {
-    done: boolean;
-    text: string;
-    depth: number;
-  }
-  interface TaskSection {
-    title: string;
-    items: TaskItem[];
-  }
-  interface SessionPlan {
-    goal: string;
-    decisions: { decision: string; why: string }[];
-    steps: { title: string; status: string }[];
-  }
-
   let goalsMd = "";
-  let taskSections: TaskSection[] = [];
   let projState: "idle" | "loading" | "missing" = "idle";
   let projFor = "";
-  let sessionPlan: SessionPlan | null = null;
-  let planFor = "";
 
   function stripFront(src: string): string {
     return src.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, "");
   }
 
-  let showDecisions = false;
-
-  function parseTasks(src: string): TaskSection[] {
-    const sections: TaskSection[] = [];
-    let current: TaskSection = { title: "", items: [] };
-    for (const line of stripFront(src).split("\n")) {
-      const head = /^#{1,3}\s+(.*)\s*$/.exec(line);
-      if (head) {
-        if (current.items.length || current.title) sections.push(current);
-        current = { title: head[1].trim(), items: [] };
-        continue;
-      }
-      const m = /^(\s*)[-*]\s+\[([ xX])\]\s+(.*)$/.exec(line);
-      if (m) {
-        current.items.push({
-          done: m[2] !== " ",
-          text: m[3].trim(),
-          depth: Math.min(3, Math.floor(m[1].replace(/\t/g, "  ").length / 2)),
-        });
-      }
-    }
-    if (current.items.length || current.title) sections.push(current);
-    return sections;
-  }
-
-  $: taskTotal = taskSections.reduce((n, s) => n + s.items.length, 0);
-  $: taskDone = taskSections.reduce((n, s) => n + s.items.filter((i) => i.done).length, 0);
-
   async function loadProject(slug: string) {
     if (!slug) {
       projState = "idle";
       goalsMd = "";
-      taskSections = [];
       projFor = "";
       return;
     }
     if (projFor === slug && projState !== "idle") return;
     projFor = slug;
     projState = "loading";
-    const [goals, tasks] = await Promise.all([
-      brain.read(`projects/${slug}/GOALS.md`).catch(() => ""),
-      brain.read(`projects/${slug}/TASKS.md`).catch(() => ""),
-    ]);
+    const goals = await brain.read(`projects/${slug}/GOALS.md`).catch(() => "");
     if (projFor !== slug) return;
     goalsMd = goals;
-    taskSections = tasks ? parseTasks(tasks) : [];
-    projState = !goals && !tasks ? "missing" : "idle";
+    projState = goals ? "idle" : "missing";
   }
 
-  $: if (tab === "projects") {
-    void loadProject(projectSlug);
-    void loadSessionPlan(sessionId);
-  }
-
-  async function loadSessionPlan(sid: string) {
-    if (!sid || planFor === sid) return;
-    planFor = sid;
-    sessionPlan = null;
-    try {
-      const raw = await api.planGet(sid);
-      if (!raw.trim() || planFor !== sid) return;
-      const p = JSON.parse(raw);
-      sessionPlan = {
-        goal: String(p.goal ?? ""),
-        decisions: Array.isArray(p.decisions)
-          ? p.decisions.map((d: { decision?: unknown; why?: unknown }) => ({
-              decision: String(d.decision ?? ""),
-              why: String(d.why ?? ""),
-            }))
-          : [],
-        steps: Array.isArray(p.steps)
-          ? p.steps.map((s: { title?: unknown; status?: unknown }) => ({
-              title: String(s.title ?? ""),
-              status: String(s.status ?? "todo"),
-            }))
-          : [],
-      };
-    } catch {
-      if (planFor === sid) sessionPlan = null;
-    }
-  }
-
-  $: planDone = sessionPlan?.steps.filter((s) => s.status === "done").length ?? 0;
+  $: if (tab === "projects") void loadProject(projectSlug);
 
   function refreshProject() {
     projFor = "";
-    planFor = "";
-    sessionPlan = null;
     void loadProject(projectSlug);
-    void loadSessionPlan(sessionId);
   }
 
-  async function assignTrack(section: string, text: string) {
-    if (!sessionId) return;
-    const where = section ? `${section}: ` : "";
+  // This session's project tasks, live: in progress first, then what came
+  // back for review, then what is left to do (ready before blocked).
+  const RANK: Record<string, number> = { doing: 0, review: 1, failed: 1, todo: 2 };
+  $: projectTasks = $tasks
+    .filter((t) => t.status !== "done" && inScope(t, projectSlug))
+    .sort((a, b) => RANK[a.status] - RANK[b.status] || Number(b.ready) - Number(a.ready) || byOrder(a, b));
+  $: doneCount = $tasks.filter((t) => t.status === "done" && inScope(t, projectSlug)).length;
+  let taskDraft = "";
+
+  async function addTask() {
+    const title = taskDraft.trim();
+    if (!title) return;
     try {
-      await api.spawnTrack(
-        sessionId,
-        text.slice(0, 60),
-        `Work this track from ${projectSlug || "the project"}: ${where}${text}. Do the work, then reply with your result as the final message. Do not edit TASKS.md or GOALS.md: the orchestrator owns those files. Just report back.`,
-      );
-      toast("Agent assigned. Watch the Agents tab.");
-      tab = "agents";
-      dispatch("settled");
+      await taskApi.create(title, projectSlug || null);
+      taskDraft = "";
+      void refreshTasks();
     } catch (e) {
-      toast(String(e), true);
+      toastError(e);
     }
   }
+
+  async function markDone(t: Task) {
+    try {
+      await taskApi.update(t.id, { status: "done" });
+      void refreshTasks();
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
 </script>
 
 <div class="panel" style:width="{dockW}px">
@@ -313,6 +242,29 @@
 
   {#if tab === "tasks"}
     <div class="agents">
+      <div class="t-head">
+        <h3>{projectSlug ? `Tasks in ${projectSlug}` : "Inbox tasks"}</h3>
+        <button class="mini" on:click={() => openTask()}>Open tasks</button>
+      </div>
+      <form class="t-new" on:submit|preventDefault={addTask}>
+        <Icon name="plus" size={12} />
+        <input aria-label="Add a task" placeholder="Add a task" bind:value={taskDraft} />
+      </form>
+      {#each projectTasks as t (t.id)}
+        <div class="row">
+          <button class="check" role="checkbox" aria-checked="false" use:tooltip={"Mark done"} on:click={() => markDone(t)} />
+          <button class="open" title={t.blocked_by.length ? waitsOn(t, $tasks) : t.title} on:click={() => openTask(t.id)}>
+            <span class="title">{t.title}</span>
+            {#if t.status !== "todo"}
+              <span class="pill {t.status === 'doing' ? 'live' : t.status === 'failed' ? 'bad' : 'queue'}">{statusLabel(t.status)}</span>
+            {:else if t.blocked_by.length}
+              <span class="url">Blocked</span>
+            {/if}
+          </button>
+        </div>
+      {:else}
+        <p class="empty">{$tasksError ? `Couldn't load tasks: ${$tasksError}` : doneCount ? "Everything here is done." : "No tasks yet. Add one, or ask the agent to plan with tasks."}</p>
+      {/each}
       {#if busyRuns.length}
         <h3>Running now</h3>
         {#each busyRuns as s (s.id)}
@@ -390,63 +342,19 @@
     </div>
   {:else if tab === "projects"}
     <div class="proj">
-      {#if !projectSlug && !sessionPlan}
-        <p class="empty">No GOALS.md yet. Ask the agent to draft the goal and break it into tasks.</p>
+      {#if !projectSlug}
+        <p class="empty">This session has no project. Pick a folder in the composer to give it one.</p>
       {:else}
-        {#if sessionPlan}
-          <section class="card" aria-label="Session plan">
-            <div class="eyebrow">This session</div>
-            <div class="card-title">{sessionPlan.goal || "Session plan"}</div>
-            {#if sessionPlan.steps.length}
-              <div class="proj-bar"><i style:width="{Math.round((planDone / Math.max(1, sessionPlan.steps.length)) * 100)}%" /></div>
-              <div class="prog">{planDone}/{sessionPlan.steps.length} steps done</div>
-            {/if}
-            {#each sessionPlan.steps as st, i (i)}
-              <div class="trow">
-                <span class="box" class:doing={st.status === "doing"} class:done={st.status === "done"}>{#if st.status === "done"}<Icon name="check" size={12} />{/if}</span>
-                <span class="ttext" class:done={st.status === "done"}>{st.title}</span>
-                {#if st.status === "doing"}<span class="pill live">doing</span>{/if}
-              </div>
-            {/each}
-            {#if sessionPlan.decisions.length}
-              <button class="disclosure" aria-expanded={showDecisions} on:click={() => (showDecisions = !showDecisions)}>
-                <span class="tri" class:open={showDecisions}><Icon name="chevRight" size={12} /></span>
-                <span>{sessionPlan.decisions.length} decision{sessionPlan.decisions.length === 1 ? "" : "s"}</span>
-              </button>
-              {#if showDecisions}
-                {#each sessionPlan.decisions as d, i (i)}
-                  <div class="dec"><b>{d.decision}</b>{#if d.why}<span>: {d.why}</span>{/if}</div>
-                {/each}
-              {/if}
-            {/if}
-          </section>
-        {/if}
-        {#if projectSlug}
-          <section class="card" aria-label="Project plan">
-            <div class="eyebrow">Project · {projectSlug}</div>
-            {#if taskTotal}
-              <div class="proj-bar"><i style:width="{Math.round((taskDone / Math.max(1, taskTotal)) * 100)}%" /></div>
-              <div class="prog">{taskDone}/{taskTotal} tracks done</div>
-            {/if}
-            {#if goalsMd}
-              <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
-              <div class="goals" on:click={(e) => void handleLinkClick(e)}>{@html mdHtml(stripFront(goalsMd), $richReady)}</div>
-            {/if}
-            {#each taskSections as sec, si (si)}
-              {#if sec.title}<h4>{sec.title}</h4>{/if}
-              {#each sec.items as item, ii (ii)}
-                <div class="trow" style:padding-left="{8 + item.depth * 14}px">
-                  <span class="box" class:done={item.done}>{#if item.done}x{/if}</span>
-                  <span class="ttext" class:done={item.done}>{item.text}</span>
-                  {#if !item.done}
-                    <button class="assign" use:tooltip={"Assign an agent to this track"} on:click={() => assignTrack(sec.title, item.text)}>Assign</button>
-                  {/if}
-                </div>
-              {/each}
-            {/each}
-            <button class="mini" use:tooltip={"Reload GOALS.md and TASKS.md"} on:click={refreshProject}>Reload files</button>
-          </section>
-        {/if}
+        <section class="card" aria-label="Project goals">
+          <div class="eyebrow">Project · {projectSlug}</div>
+          {#if goalsMd}
+            <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
+            <div class="goals" on:click={(e) => void handleLinkClick(e)}>{@html mdHtml(stripFront(goalsMd), $richReady)}</div>
+          {:else if projState === "missing"}
+            <p class="goals">No GOALS.md in this project's notes yet. Tasks live in the Tasks tab.</p>
+          {/if}
+          <button class="mini" use:tooltip={"Reload GOALS.md"} on:click={refreshProject}>Reload</button>
+        </section>
       {/if}
     </div>
   {/if}
@@ -602,24 +510,8 @@
     color: var(--muted);
     margin-bottom: 6px;
   }
-  .card-title { font-weight: 650; font-size: var(--fs-base); color: var(--text); margin-bottom: 8px; }
-  .prog { font-size: var(--fs-xs); color: var(--muted); margin: 4px 2px 2px; font-variant-numeric: tabular-nums; }
-  .disclosure {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin-top: 8px;
-    padding: 2px 0;
-    background: none;
-    border: none;
-    color: var(--muted);
-    font-size: var(--fs-sm);
-    cursor: pointer;
-  }
-  .disclosure:hover { color: var(--text); }
-  .tri { display: inline-flex; transition: transform 140ms ease; }
-  .tri.open { transform: rotate(90deg); }
   .mini {
+    min-height: 24px;
     padding: 3px 9px;
     background: none;
     border: 1px solid var(--line);
@@ -629,52 +521,49 @@
     cursor: pointer;
   }
   .mini:hover { color: var(--text); }
-  .proj-bar {
-    height: 5px;
-    margin: 0 12px 4px;
-    border-radius: 3px;
-    background: var(--line);
-    overflow: hidden;
-  }
-  .proj-bar i { display: block; height: 100%; background: var(--ok); border-radius: inherit; }
-  .proj h4 {
-    margin: 12px 12px 2px;
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    color: var(--muted);
-  }
   .goals { margin: 0 12px; font-size: var(--fs-md); line-height: 1.6; color: var(--muted); }
-  .trow { display: flex; align-items: baseline; gap: 8px; padding: 3px 12px 3px 0; }
-  .trow .box {
-    flex: none;
-    width: 14px;
-    height: 14px;
-    border: 1px solid var(--faint);
-    border-radius: var(--radius-sm);
-    display: inline-flex;
+  .goals + .mini { margin-top: 10px; }
+  .t-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 12px; }
+  .t-new {
+    display: flex;
     align-items: center;
-    justify-content: center;
-    color: var(--on-ok);
-    transform: translateY(2px);
-  }
-  .trow .box.done { background: var(--ok); border-color: var(--ok); }
-  .trow .box.doing { border-color: var(--warn); }
-  .dec { margin: 2px 12px; font-size: var(--fs-md); line-height: 1.5; color: var(--muted); }
-  .dec b { color: var(--text); font-weight: 600; }
-  .ttext { font-size: var(--fs-md); color: var(--text); flex: 1; min-width: 0; }
-  .ttext.done { color: var(--muted); text-decoration: line-through; }
-  .assign {
-    flex: none;
-    padding: 2px 8px;
-    background: none;
+    gap: 8px;
+    margin: 4px 12px 6px;
+    height: 30px;
+    padding: 0 10px;
     border: 1px solid var(--line);
-    border-radius: 999px;
+    border-radius: var(--radius);
     color: var(--muted);
-    font-size: var(--fs-xs);
-    cursor: pointer;
-    opacity: 0;
   }
-  .trow:hover .assign,
-  .assign:focus-visible { opacity: 1; }
-  .assign:hover { color: var(--text); border-color: var(--faint); }
+  .t-new input {
+    flex: 1;
+    min-width: 0;
+    background: none;
+    border: none;
+    outline: none;
+    box-shadow: none !important;
+    color: var(--text);
+    font-size: var(--fs-md);
+  }
+  .check {
+    position: relative;
+    flex: none;
+    width: 24px;
+    height: 24px;
+    margin-left: 4px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .check::before {
+    content: "";
+    position: absolute;
+    inset: 5px;
+    border: 1px solid var(--muted);
+    border-radius: var(--radius-sm);
+  }
+  .check:hover { background: var(--hover); }
+  .pill.bad { background: color-mix(in srgb, var(--bad) 24%, transparent); color: var(--text); }
 </style>

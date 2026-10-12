@@ -5,11 +5,15 @@
   import { api, brain, type GitStatus, type Project, type ProviderStatus, type SessionMeta } from "./api";
   import { faviconUrl, history, pins } from "./browserData";
   import { hasMark } from "./providerMarks";
-  import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "./providerRows";
+  import { PROVIDER_ORDER, isUsable, nameOf, shownOf, stateLabel } from "./providerRows";
   import { loadRemoteInfo, remote as server, remoteInfo } from "./remote";
   import { folderName, hostOf } from "./tabs";
   import { HOME_WIDGETS, hiddenWidgets, toggleWidget, type HomeWidget } from "./homeWidgets";
   import { popover, placeAbove } from "./popover";
+  import { assignPrefs, openTask, quickAssign, tasks } from "./taskStore";
+  import { homeTasks, projectLabel } from "./taskModel";
+  import type { Task } from "./api";
+  import { tooltip } from "./tooltip";
 
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
@@ -129,6 +133,15 @@
     (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
   }
 
+  // What came back for review, then what is ready to start.
+  $: taskRows = homeTasks($tasks, ROWS);
+  $: openCount = $tasks.filter((t) => t.status !== "done").length;
+
+  async function assignTask(t: Task) {
+    // No model picked yet: the Tasks view has the full assign form.
+    if (!(await quickAssign(t, $assignPrefs))) openTask(t.id);
+  }
+
   function usage(p: ProviderStatus) {
     const u = p.usage[0];
     return u ? { label: u.label, pct: Math.max(0, Math.min(100, Math.round(u.used_percent))) } : null;
@@ -154,6 +167,35 @@
       </div>
     {:else}
       <p class="empty">Your sessions show up here.</p>
+    {/if}
+  </section>
+  {/if}
+
+  {#if shown("tasks")}
+  <section class="card" aria-labelledby="home-tasks">
+    <header>
+      <h3 id="home-tasks"><Icon name="tasks" />Tasks</h3>
+      <button class="more" on:click={() => openTask()}>{openCount ? `All ${openCount}` : "Open"}</button>
+    </header>
+    {#if taskRows.length}
+      <div class="rows">
+        {#each taskRows as t (t.id)}
+          <div class="trow">
+            <button class="row" on:click={() => openTask(t.id)}>
+              <span class="dot" class:review={t.status === "review"} class:bad={t.status === "failed"} />
+              <span class="name">{t.title}</span>
+              <span class="meta">{t.status === "review" ? "To review" : t.status === "failed" ? "Failed" : projectLabel(t.project)}</span>
+            </button>
+            {#if t.status === "todo"}
+              <button class="act" use:tooltip={$assignPrefs.model ? `Start ${shownOf($assignPrefs.model, board).name} on it` : "Pick a model and start an agent"} on:click={() => assignTask(t)}>
+                <Icon name="play" size={12} />Assign
+              </button>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    {:else}
+      <p class="empty">{openCount ? "Everything open is in progress or waiting on other tasks." : "Tasks you or your agents add show up here."}</p>
     {/if}
   </section>
   {/if}
@@ -382,6 +424,39 @@
   }
   .row.on {
     background: var(--selected);
+  }
+  .trow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .trow .row {
+    flex: 1;
+    min-width: 0;
+  }
+  .act {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+    padding: 0 8px;
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+  }
+  .act:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .dot.review {
+    background: var(--warn);
+  }
+  .dot.bad {
+    background: var(--bad);
   }
   .name {
     flex: 1;
