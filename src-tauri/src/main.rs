@@ -20,6 +20,7 @@ mod appearance;
 mod brain;
 mod browser;
 mod control;
+mod downloads;
 mod files;
 mod job;
 mod onboard;
@@ -28,6 +29,7 @@ mod remote;
 mod search;
 mod sessions;
 mod settings;
+mod siteprefs;
 mod vault;
 
 pub(crate) type Pending = Arc<Mutex<HashMap<String, (String, oneshot::Sender<Approval>)>>>;
@@ -574,6 +576,7 @@ fn main() {
                 dwm::round_window_corners(&w);
             }
             adblock::start();
+            browser::warm_up();
             let bus_rx = o.subscribe();
             let bus_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -606,6 +609,17 @@ fn main() {
             browser::browser_nav,
             browser::browser_prepare,
             browser::browser_snapshot,
+            browser::browser_focus,
+            browser::browser_recover,
+            browser::browser_external,
+            browser::browser_permission,
+            siteprefs::browser_prefs,
+            siteprefs::browser_set_pref,
+            siteprefs::browser_forget_site,
+            downloads::browser_downloads,
+            downloads::browser_download_reveal,
+            downloads::browser_download_cancel,
+            downloads::browser_downloads_clear,
             search::search_suggest,
             adblock::adblock_state,
             adblock::adblock_enable,

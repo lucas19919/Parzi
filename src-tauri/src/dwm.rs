@@ -1,15 +1,36 @@
 #![allow(unsafe_code, reason = "Win32 window and WebView2 calls")]
 
 use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2, ICoreWebView2AcceleratorKeyPressedEventArgs, ICoreWebView2Controller,
-    ICoreWebView2Environment, ICoreWebView2_2, COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG,
-    COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
-    COREWEBVIEW2_PHYSICAL_KEY_STATUS, COREWEBVIEW2_WEB_RESOURCE_CONTEXT,
-    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_CSP_VIOLATION_REPORT,
+    ICoreWebView2Deferral, ICoreWebView2DownloadOperation, ICoreWebView2Environment,
+    ICoreWebView2PermissionRequestedEventArgs, ICoreWebView2PermissionRequestedEventArgs3,
+    ICoreWebView2_15, ICoreWebView2_19, ICoreWebView2_2, ICoreWebView2_3, ICoreWebView2_4,
+    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG, COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON,
+    COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_USER_CANCELED, COREWEBVIEW2_DOWNLOAD_STATE,
+    COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED, COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS,
+    COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
+    COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+    COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL, COREWEBVIEW2_PERMISSION_KIND,
+    COREWEBVIEW2_PERMISSION_KIND_CAMERA, COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ,
+    COREWEBVIEW2_PERMISSION_KIND_FILE_READ_WRITE, COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION,
+    COREWEBVIEW2_PERMISSION_KIND_LOCAL_FONTS, COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+    COREWEBVIEW2_PERMISSION_KIND_MIDI_SYSTEM_EXCLUSIVE_MESSAGES,
+    COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS,
+    COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS, COREWEBVIEW2_PERMISSION_KIND_OTHER_SENSORS,
+    COREWEBVIEW2_PERMISSION_KIND_WINDOW_MANAGEMENT, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+    COREWEBVIEW2_PERMISSION_STATE_DENY, COREWEBVIEW2_PHYSICAL_KEY_STATUS,
+    COREWEBVIEW2_PROCESS_FAILED_KIND, COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE,
+    COREWEBVIEW2_WEB_RESOURCE_CONTEXT, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+    COREWEBVIEW2_WEB_RESOURCE_CONTEXT_CSP_VIOLATION_REPORT,
     COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FETCH,
     COREWEBVIEW2_WEB_RESOURCE_CONTEXT_FONT, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE,
     COREWEBVIEW2_WEB_RESOURCE_CONTEXT_MEDIA, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_PING,
@@ -18,10 +39,15 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_WEB_RESOURCE_CONTEXT_XML_HTTP_REQUEST,
 };
 use webview2_com::{
-    take_pwstr, AcceleratorKeyPressedEventHandler, CapturePreviewCompletedHandler,
-    ContainsFullScreenElementChangedEventHandler, ExecuteScriptCompletedHandler,
-    HistoryChangedEventHandler, NavigationCompletedEventHandler, NavigationStartingEventHandler,
-    WebResourceRequestedEventHandler,
+    take_pwstr, AcceleratorKeyPressedEventHandler,
+    AddScriptToExecuteOnDocumentCreatedCompletedHandler, BytesReceivedChangedEventHandler,
+    CapturePreviewCompletedHandler, ContainsFullScreenElementChangedEventHandler,
+    DOMContentLoadedEventHandler, DownloadStartingEventHandler, ExecuteScriptCompletedHandler,
+    FaviconChangedEventHandler, GetFaviconCompletedHandler, HistoryChangedEventHandler,
+    NavigationCompletedEventHandler, NavigationStartingEventHandler,
+    NewWindowRequestedEventHandler, PermissionRequestedEventHandler, ProcessFailedEventHandler,
+    StateChangedEventHandler, TrySuspendCompletedHandler, WebMessageReceivedEventHandler,
+    WebResourceRequestedEventHandler, WindowCloseRequestedEventHandler,
 };
 use windows::core::{w, Interface, BOOL, HSTRING, PWSTR};
 use windows::Win32::Foundation::{HGLOBAL, HWND, RECT};
@@ -29,13 +55,31 @@ use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
 use windows::Win32::System::Com::{IStream, STREAM_SEEK_END, STREAM_SEEK_SET};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, VIRTUAL_KEY, VK_B, VK_CONTROL, VK_F11, VK_H, VK_K, VK_L, VK_MENU, VK_OEM_COMMA,
-    VK_P, VK_SHIFT, VK_T, VK_TAB, VK_W,
+    VK_SHIFT, VK_T, VK_TAB, VK_W,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_SHOWWINDOW,
 };
 
+use crate::downloads::State as DownloadState;
+
 static PAGE_ENV: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+static NEXT: AtomicU64 = AtomicU64::new(1);
+
+/// A permission prompt the page is waiting on.
+struct Asked {
+    args: ICoreWebView2PermissionRequestedEventArgs,
+    deferral: ICoreWebView2Deferral,
+    tab: String,
+}
+
+// WebView2 objects live on the UI thread that made them, so do these.
+thread_local! {
+    static ASKED: RefCell<HashMap<String, Asked>> = RefCell::new(HashMap::new());
+    static DOWNLOADS: RefCell<HashMap<String, ICoreWebView2DownloadOperation>> =
+        RefCell::new(HashMap::new());
+    static NEW_WINDOW: RefCell<Option<(String, bool)>> = const { RefCell::new(None) };
+}
 
 pub fn stash_page_environment(env: ICoreWebView2Environment) {
     let raw = Interface::into_raw(env) as isize;
@@ -165,6 +209,16 @@ pub fn page_source<R: tauri::Runtime>(wv: &tauri::Webview<R>) -> Result<String, 
         .map_err(|_| "the page did not answer".to_string())?
 }
 
+/// A suspended background page runs no script and paints nothing: wake it
+/// before anything that needs either.
+///
+/// SAFETY: call on the UI thread that owns `core`.
+unsafe fn resume(core: &ICoreWebView2) {
+    if let Ok(core) = core.cast::<ICoreWebView2_3>() {
+        let _ = core.Resume();
+    }
+}
+
 pub fn run_page_script<R: tauri::Runtime>(
     wv: &tauri::Webview<R>,
     script: String,
@@ -177,6 +231,7 @@ pub fn run_page_script<R: tauri::Runtime>(
         // thread; the script string outlives the ExecuteScript call.
         let started = unsafe {
             platform.controller().CoreWebView2().and_then(|core| {
+                resume(&core);
                 core.ExecuteScript(
                     &HSTRING::from(script),
                     &ExecuteScriptCompletedHandler::create(Box::new(move |result, json| {
@@ -205,7 +260,9 @@ pub fn capture_page<R: tauri::Runtime>(wv: &tauri::Webview<R>) -> Result<Vec<u8>
         let started = unsafe {
             CreateStreamOnHGlobal(HGLOBAL::default(), true).and_then(|stream| {
                 let image = stream.clone();
-                platform.controller().CoreWebView2()?.CapturePreview(
+                let core = platform.controller().CoreWebView2()?;
+                resume(&core);
+                core.CapturePreview(
                     COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG,
                     &stream,
                     &CapturePreviewCompletedHandler::create(Box::new(move |result| {
@@ -239,27 +296,201 @@ unsafe fn stream_bytes(stream: &IStream) -> windows::core::Result<Vec<u8>> {
     Ok(buf)
 }
 
+/// A hidden page gives memory back: a low memory target soon, and after a
+/// while a suspend (which `WebView2` refuses while media plays). Showing it
+/// again resumes it.
+pub fn rest_page<R: tauri::Runtime>(wv: &tauri::Webview<R>, deep: bool) {
+    let _ = wv.with_webview(move |platform| {
+        // SAFETY: with_webview runs this on the UI thread that owns the
+        // controller; the suspend handler runs on that thread too.
+        unsafe {
+            let Ok(core) = platform.controller().CoreWebView2() else {
+                return;
+            };
+            if let Ok(core) = core.cast::<ICoreWebView2_19>() {
+                let _ = core.SetMemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW);
+            }
+            if deep {
+                if let Ok(core) = core.cast::<ICoreWebView2_3>() {
+                    let _ = core
+                        .TrySuspend(&TrySuspendCompletedHandler::create(Box::new(|_, _| Ok(()))));
+                }
+            }
+        }
+    });
+}
+
+pub fn wake_page<R: tauri::Runtime>(wv: &tauri::Webview<R>) {
+    let _ = wv.with_webview(move |platform| {
+        // SAFETY: with_webview runs this on the UI thread that owns the controller.
+        unsafe {
+            let Ok(core) = platform.controller().CoreWebView2() else {
+                return;
+            };
+            if let Ok(core) = core.cast::<ICoreWebView2_19>() {
+                let _ =
+                    core.SetMemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL);
+            }
+            resume(&core);
+        }
+    });
+}
+
+/// F12 and Inspect. Set directly: Tauri drops `devtools(true)` in release
+/// builds without its devtools feature.
+pub fn set_devtools<R: tauri::Runtime>(wv: &tauri::Webview<R>, on: bool) {
+    let _ = wv.with_webview(move |platform| {
+        // SAFETY: with_webview runs this on the UI thread that owns the controller.
+        let done = unsafe {
+            platform
+                .controller()
+                .CoreWebView2()
+                .and_then(|core| core.Settings())
+                .and_then(|settings| settings.SetAreDevToolsEnabled(on))
+        };
+        if let Err(e) = done {
+            tracing::debug!("page devtools not set: {e}");
+        }
+    });
+}
+
+/// Answers a permission prompt. Call on the UI thread.
+pub fn answer_permission(id: &str, allow: bool) {
+    let Some(asked) = ASKED.with(|m| m.borrow_mut().remove(id)) else {
+        return;
+    };
+    let state = if allow {
+        COREWEBVIEW2_PERMISSION_STATE_ALLOW
+    } else {
+        COREWEBVIEW2_PERMISSION_STATE_DENY
+    };
+    // SAFETY: on the UI thread that raised the request, whose deferral is
+    // still open; completing it hands the decision back to the page.
+    unsafe {
+        let _ = asked.args.SetState(state);
+        let _ = asked.deferral.Complete();
+    }
+}
+
+/// A closed tab's unanswered prompts are refused. Call on the UI thread.
+pub fn drop_permissions(tab: &str) {
+    let ids: Vec<String> = ASKED.with(|m| {
+        m.borrow()
+            .iter()
+            .filter(|(_, a)| a.tab == tab)
+            .map(|(id, _)| id.clone())
+            .collect()
+    });
+    for id in ids {
+        answer_permission(&id, false);
+    }
+}
+
+/// Call on the UI thread.
+pub fn cancel_download(id: &str) {
+    if let Some(op) = DOWNLOADS.with(|m| m.borrow().get(id).cloned()) {
+        // SAFETY: on the UI thread that owns the download operation.
+        if let Err(e) = unsafe { op.Cancel() } {
+            tracing::debug!("download not cancelled: {e}");
+        }
+    }
+}
+
+/// Whether the last new-window request (a link with a target, `window.open`)
+/// came from a click or key press. `WebView2` has no popup blocker of its own.
+/// Unknown counts as yes: a missed record must not break a site's links.
+pub fn user_opened(url: &str) -> bool {
+    NEW_WINDOW.with(|slot| match slot.borrow_mut().take() {
+        Some((asked, user)) if crate::browser::same_page(&asked, url) => user,
+        _ => true,
+    })
+}
+
 pub enum PageSignal {
     Loading,
     Loaded {
         url: String,
         back: bool,
         forward: bool,
+        ok: bool,
     },
     Fullscreen(bool),
     Key(&'static str),
     Blocked(u32),
     Background(String),
+    Crashed(&'static str),
+    Favicon(String),
+    Permission {
+        id: String,
+        origin: String,
+        kind: &'static str,
+    },
+    DownloadStarted {
+        id: String,
+        url: String,
+        path: PathBuf,
+        total: u64,
+    },
+    DownloadProgress {
+        id: String,
+        received: u64,
+        total: u64,
+    },
+    DownloadFinished {
+        id: String,
+        state: DownloadState,
+        path: String,
+    },
+    CloseRequested,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    /// A tab's page: everything.
+    Page,
+    /// A window a page opened (sign-in popups): filtering, downloads and
+    /// prompts, but none of the tab's own signals or app keys.
+    Popup,
+}
+
+pub struct Hook {
+    pub tab: String,
+    /// The URL the page was created with: its first navigation may start
+    /// before the hooks are attached.
+    pub seed: String,
+    pub role: Role,
+    pub downloads: Option<PathBuf>,
+    pub devtools: bool,
 }
 
 const BLOCKED_EVERY: Duration = Duration::from_millis(400);
+// A page's own Ctrl+B/H/K handler had this long to claim the key.
+const KEY_CLAIM: Duration = Duration::from_millis(1500);
+// Ctrl+B, Ctrl+H and Ctrl+K belong to the page first (bold in editors, the
+// command palettes of GitHub, Slack or Linear). This reports the key back
+// only when nothing on the page used it. An object, not a string: Tauri's
+// own IPC listener reads string messages and would log an error for it.
+const KEY_SCRIPT: &str = r#"(() => {
+  if (window.top !== window || window.__parziKeys) return;
+  Object.defineProperty(window, "__parziKeys", { value: true });
+  const names = { b: "ctrl+b", h: "ctrl+h", k: "ctrl+k" };
+  const editable = (t) => t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ""));
+  addEventListener("keydown", (e) => {
+    const name = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && names[String(e.key).toLowerCase()];
+    if (!name || !e.isTrusted || editable(e.composedPath()[0])) return;
+    setTimeout(() => {
+      if (!e.defaultPrevented && window.chrome && chrome.webview) chrome.webview.postMessage({ parzi: "key", key: name });
+    }, 0);
+  });
+})();"#;
 
 pub fn watch_page<R: tauri::Runtime>(
     wv: &tauri::Webview<R>,
+    hook: Hook,
     signal: impl Fn(PageSignal) + Send + 'static,
 ) -> Result<(), String> {
     wv.with_webview(move |platform| {
-        if let Err(e) = hook_page(&platform.controller(), Rc::new(signal)) {
+        if let Err(e) = hook_page(&platform.controller(), &hook, Rc::new(signal)) {
             tracing::debug!("page hooks failed: {e}");
         }
     })
@@ -268,20 +499,44 @@ pub fn watch_page<R: tauri::Runtime>(
 
 const ANY_NAV: u64 = u64::MAX;
 
+/// Per-navigation state the handlers share.
+struct Nav {
+    id: Cell<Option<u64>>,
+    top: RefCell<String>,
+    filtering: Cell<bool>,
+    blocked: Cell<u32>,
+    // Kept from the DOMContentLoaded pass for the second generic pass after
+    // load; None when the site turns generic hiding off.
+    exceptions: RefCell<Option<Rc<HashSet<String>>>>,
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one place attaches every page handler"
+)]
 fn hook_page(
     controller: &ICoreWebView2Controller,
+    hook: &Hook,
     signal: Rc<dyn Fn(PageSignal)>,
 ) -> windows::core::Result<()> {
-    let nav = Rc::new(Cell::new(Some(ANY_NAV)));
-    let top = Rc::new(RefCell::new(String::new()));
-    let blocked = Rc::new(Cell::new(0u32));
+    let nav = Rc::new(Nav {
+        id: Cell::new(Some(ANY_NAV)),
+        top: RefCell::new(hook.seed.clone()),
+        filtering: Cell::new(crate::adblock::filtering(&hook.seed)),
+        blocked: Cell::new(0),
+        exceptions: RefCell::new(None),
+    });
+    let page = hook.role == Role::Page;
     let mut token = 0i64;
     // SAFETY: this runs on the UI thread that owns the controller; WebView2
     // invokes every handler on that same thread, and each out-param outlives
     // the call that writes it.
     unsafe {
         let core = controller.CoreWebView2()?;
-        let (s, n, t, b) = (signal.clone(), nav.clone(), top.clone(), blocked.clone());
+        if let Ok(settings) = core.Settings() {
+            let _ = settings.SetAreDevToolsEnabled(hook.devtools);
+        }
+        let (s, n) = (signal.clone(), nav.clone());
         core.add_NavigationStarting(
             &NavigationStartingEventHandler::create(Box::new(move |_, args| {
                 let Some(args) = args else { return Ok(()) };
@@ -293,49 +548,136 @@ fn hook_page(
                 args.Uri(&raw mut uri)?;
                 let uri = take_pwstr(uri);
                 if !cancel.as_bool() {
-                    *t.borrow_mut() = uri;
-                    b.set(0);
-                    n.set(Some(id));
-                    s(PageSignal::Loading);
-                }
-                Ok(())
-            })),
-            &raw mut token,
-        )?;
-        let (s, n, b) = (signal.clone(), nav.clone(), blocked.clone());
-        core.add_NavigationCompleted(
-            &NavigationCompletedEventHandler::create(Box::new(move |core, args| {
-                let mut id = ANY_NAV;
-                if let Some(args) = args {
-                    args.NavigationId(&raw mut id)?;
-                }
-                if matches!(n.get(), Some(cur) if cur == id || cur == ANY_NAV) {
-                    n.set(None);
-                    if let Some(core) = core {
-                        s(loaded(&core));
-                        s(PageSignal::Blocked(b.get()));
-                        let paint = s.clone();
-                        let _ = core.ExecuteScript(
-                            w!("(() => { const c = (e) => { const v = e && getComputedStyle(e).backgroundColor; return v && v !== 'transparent' && !v.endsWith(', 0)') ? v : ''; }; return c(document.documentElement) || c(document.body) || 'rgb(255, 255, 255)'; })()"),
-                            &ExecuteScriptCompletedHandler::create(Box::new(move |_, json| {
-                                if let Some(color) = page_color(&json) {
-                                    paint(PageSignal::Background(color));
-                                }
-                                Ok(())
-                            })),
-                        );
+                    n.filtering.set(crate::adblock::filtering(&uri));
+                    n.exceptions.borrow_mut().take();
+                    *n.top.borrow_mut() = uri;
+                    n.blocked.set(0);
+                    n.id.set(Some(id));
+                    if page {
+                        s(PageSignal::Loading);
                     }
                 }
                 Ok(())
             })),
             &raw mut token,
         )?;
-        hook_blocker(&core, signal.clone(), top, blocked)?;
-        let (s, n) = (signal.clone(), nav);
+        let (s, n) = (signal.clone(), nav.clone());
+        core.add_NavigationCompleted(
+            &NavigationCompletedEventHandler::create(Box::new(move |core, args| {
+                let mut id = ANY_NAV;
+                let mut ok = BOOL::from(true);
+                if let Some(args) = &args {
+                    args.NavigationId(&raw mut id)?;
+                    let _ = args.IsSuccess(&raw mut ok);
+                }
+                if !matches!(n.id.get(), Some(cur) if cur == id || cur == ANY_NAV) {
+                    return Ok(());
+                }
+                n.id.set(None);
+                let Some(core) = core else { return Ok(()) };
+                if let Some(exceptions) = n.exceptions.borrow_mut().take() {
+                    hide_generic(&core, exceptions);
+                }
+                if !page {
+                    return Ok(());
+                }
+                s(loaded(&core, ok.as_bool()));
+                s(PageSignal::Blocked(n.blocked.get()));
+                // Pages committed before the document-created script was
+                // added (the first one) still get the key listener.
+                let _ = core.ExecuteScript(
+                    &HSTRING::from(KEY_SCRIPT),
+                    &ExecuteScriptCompletedHandler::create(Box::new(|_, _| Ok(()))),
+                );
+                let paint = s.clone();
+                let _ = core.ExecuteScript(
+                    w!("(() => { const c = (e) => { const v = e && getComputedStyle(e).backgroundColor; return v && v !== 'transparent' && !v.endsWith(', 0)') ? v : ''; }; return c(document.documentElement) || c(document.body) || 'rgb(255, 255, 255)'; })()"),
+                    &ExecuteScriptCompletedHandler::create(Box::new(move |_, json| {
+                        if let Some(color) = page_color(&json) {
+                            paint(PageSignal::Background(color));
+                        }
+                        Ok(())
+                    })),
+                );
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
+        let n = nav.clone();
+        core.cast::<ICoreWebView2_2>()?.add_DOMContentLoaded(
+            &DOMContentLoadedEventHandler::create(Box::new(move |core, _| {
+                if let (true, Some(core)) = (n.filtering.get(), core) {
+                    let top = n.top.borrow().clone();
+                    if let Some(found) = crate::adblock::cosmetic(&top) {
+                        inject_css(&core, &found.css);
+                        if found.generic {
+                            let exceptions = Rc::new(found.exceptions);
+                            *n.exceptions.borrow_mut() = Some(exceptions.clone());
+                            hide_generic(&core, exceptions);
+                        }
+                    }
+                }
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
+        hook_blocker(&core, signal.clone(), nav.clone())?;
+        hook_downloads(&core, signal.clone(), hook.downloads.clone())?;
+        hook_permissions(&core, signal.clone(), hook.tab.clone())?;
+        core.add_NewWindowRequested(
+            &NewWindowRequestedEventHandler::create(Box::new(|_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let mut user = BOOL::default();
+                let mut uri = PWSTR::null();
+                args.IsUserInitiated(&raw mut user)?;
+                args.Uri(&raw mut uri)?;
+                let uri = take_pwstr(uri);
+                NEW_WINDOW.with(|slot| *slot.borrow_mut() = Some((uri, user.as_bool())));
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
+        if !page {
+            let s = signal.clone();
+            core.add_WindowCloseRequested(
+                &WindowCloseRequestedEventHandler::create(Box::new(move |_, _| {
+                    s(PageSignal::CloseRequested);
+                    Ok(())
+                })),
+                &raw mut token,
+            )?;
+            return Ok(());
+        }
+        let s = signal.clone();
+        core.add_ProcessFailed(
+            &ProcessFailedEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+                args.ProcessFailedKind(&raw mut kind)?;
+                if let Some(what) = crash_kind(kind) {
+                    s(PageSignal::Crashed(what));
+                }
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
+        if let Ok(core15) = core.cast::<ICoreWebView2_15>() {
+            let s = signal.clone();
+            core15.add_FaviconChanged(
+                &FaviconChangedEventHandler::create(Box::new(move |core, _| {
+                    if let Some(core) = core.and_then(|c| c.cast::<ICoreWebView2_15>().ok()) {
+                        favicon(&core, s.clone());
+                    }
+                    Ok(())
+                })),
+                &raw mut token,
+            )?;
+        }
+        let (s, n) = (signal.clone(), nav.clone());
         core.add_HistoryChanged(
             &HistoryChangedEventHandler::create(Box::new(move |core, _| {
-                if let (None, Some(core)) = (n.get(), core) {
-                    s(loaded(&core));
+                if let (None, Some(core)) = (n.id.get(), core) {
+                    s(loaded(&core, true));
                 }
                 Ok(())
             })),
@@ -353,13 +695,47 @@ fn hook_page(
             })),
             &raw mut token,
         )?;
+        core.AddScriptToExecuteOnDocumentCreated(
+            &HSTRING::from(KEY_SCRIPT),
+            &AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(|_, _| Ok(()))),
+        )?;
+        let claimed: Rc<Cell<Option<(&'static str, Instant)>>> = Rc::new(Cell::new(None));
+        let (s, waiting) = (signal.clone(), claimed.clone());
+        core.add_WebMessageReceived(
+            &WebMessageReceivedEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let mut raw = PWSTR::null();
+                if args.WebMessageAsJson(&raw mut raw).is_err() {
+                    return Ok(());
+                }
+                let Some(name) = key_message(&take_pwstr(raw)) else {
+                    return Ok(());
+                };
+                // Only a key the user really pressed a moment ago: a page
+                // can't post its way into app shortcuts.
+                if let Some((key, at)) = waiting.get() {
+                    if key == name && at.elapsed() < KEY_CLAIM {
+                        waiting.set(None);
+                        s(PageSignal::Key(key));
+                    }
+                }
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
         controller.add_AcceleratorKeyPressed(
             &AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
                 let Some(args) = args else { return Ok(()) };
                 if let Some((key, first)) = browser_key(&args)? {
-                    args.SetHandled(true)?;
-                    if first {
-                        signal(PageSignal::Key(key));
+                    if page_first(key) {
+                        if first {
+                            claimed.set(Some((key, Instant::now())));
+                        }
+                    } else {
+                        args.SetHandled(true)?;
+                        if first {
+                            signal(PageSignal::Key(key));
+                        }
                     }
                 }
                 Ok(())
@@ -370,11 +746,103 @@ fn hook_page(
     Ok(())
 }
 
+fn crash_kind(kind: COREWEBVIEW2_PROCESS_FAILED_KIND) -> Option<&'static str> {
+    match kind {
+        COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED => Some("browser"),
+        COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED => Some("exited"),
+        COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE => Some("unresponsive"),
+        // A frame's, the GPU's or a helper's process: the page recovers.
+        _ => None,
+    }
+}
+
+/// The page's own icon: its URL when the shell can load it (https), else
+/// the decoded image as a data URL.
+///
+/// SAFETY: call on the UI thread that owns `core`.
+unsafe fn favicon(core: &ICoreWebView2_15, signal: Rc<dyn Fn(PageSignal)>) {
+    let mut uri = PWSTR::null();
+    let uri = if core.FaviconUri(&raw mut uri).is_ok() {
+        take_pwstr(uri)
+    } else {
+        String::new()
+    };
+    if uri.starts_with("https://") && uri.len() <= 1024 {
+        signal(PageSignal::Favicon(uri));
+        return;
+    }
+    let _ = core.GetFavicon(
+        COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG,
+        &GetFaviconCompletedHandler::create(Box::new(move |result, stream| {
+            let Some(stream) = stream.filter(|_| result.is_ok()) else {
+                return Ok(());
+            };
+            let bytes = stream_bytes(&stream)?;
+            if !bytes.is_empty() && bytes.len() <= 16 * 1024 {
+                use base64::Engine as _;
+                let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+                signal(PageSignal::Favicon(format!("data:image/png;base64,{data}")));
+            }
+            Ok(())
+        })),
+    );
+}
+
+/// Adds a hide stylesheet. A constructed sheet is not subject to the page's
+/// CSP; a `<style>` is the fallback for engines without one.
+///
+/// SAFETY: call on the UI thread that owns `core`.
+unsafe fn inject_css(core: &ICoreWebView2, css: &str) {
+    if css.is_empty() {
+        return;
+    }
+    let Ok(css) = serde_json::to_string(css) else {
+        return;
+    };
+    let script = format!(
+        "(() => {{ const css = {css}; try {{ const sheet = new CSSStyleSheet(); sheet.replaceSync(css); \
+         document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet]; }} catch {{ \
+         const s = document.createElement('style'); s.textContent = css; (document.head || document.documentElement).appendChild(s); }} }})()"
+    );
+    let _ = core.ExecuteScript(
+        &HSTRING::from(script),
+        &ExecuteScriptCompletedHandler::create(Box::new(|_, _| Ok(()))),
+    );
+}
+
+const CLASS_ID_SCRIPT: &str = "(() => { const c = new Set(), i = new Set(); \
+  for (const e of document.querySelectorAll('[class],[id]')) { if (c.size + i.size > 4000) break; \
+  if (e.id) i.add(e.id); for (const k of e.classList) c.add(k); } return [[...c], [...i]]; })()";
+
+/// Generic class and id rules, for the classes and ids the page uses now.
+/// Runs at `DOMContentLoaded` and again after load for late ad slots.
+///
+/// SAFETY: call on the UI thread that owns `core`.
+unsafe fn hide_generic(core: &ICoreWebView2, exceptions: Rc<HashSet<String>>) {
+    let target = core.clone();
+    let _ = core.ExecuteScript(
+        &HSTRING::from(CLASS_ID_SCRIPT),
+        &ExecuteScriptCompletedHandler::create(Box::new(move |result, json| {
+            if result.is_err() {
+                return Ok(());
+            }
+            let Ok((classes, ids)) = serde_json::from_str::<(Vec<String>, Vec<String>)>(&json)
+            else {
+                return Ok(());
+            };
+            inject_css(
+                &target,
+                &crate::adblock::class_id_css(&classes, &ids, &exceptions),
+            );
+            Ok(())
+        })),
+    );
+}
+
 fn hook_blocker(
     core: &ICoreWebView2,
     signal: Rc<dyn Fn(PageSignal)>,
-    top: Rc<RefCell<String>>,
-    blocked: Rc<Cell<u32>>,
+    nav: Rc<Nav>,
 ) -> windows::core::Result<()> {
     let mut token = 0i64;
     // SAFETY: this runs on the UI thread that owns the webview; WebView2
@@ -382,10 +850,19 @@ fn hook_blocker(
     // outlives the call that writes it.
     unsafe {
         let env = core.cast::<ICoreWebView2_2>()?.Environment()?;
-        core.AddWebResourceRequestedFilter(w!("*"), COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)?;
+        // Web requests only: data:, blob: and the like are never filtered,
+        // so they need not cross to this thread at all.
+        for filter in [w!("http://*"), w!("https://*"), w!("ws://*"), w!("wss://*")] {
+            core.AddWebResourceRequestedFilter(filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)?;
+        }
         let last = Rc::new(Cell::new(Instant::now()));
         core.add_WebResourceRequested(
             &WebResourceRequestedEventHandler::create(Box::new(move |_, args| {
+                // Decided per navigation: an allowed site or a disabled
+                // blocker costs no string work per request.
+                if !nav.filtering.get() || !crate::adblock::enabled() {
+                    return Ok(());
+                }
                 let Some(args) = args else { return Ok(()) };
                 let mut uri = PWSTR::null();
                 let mut context = COREWEBVIEW2_WEB_RESOURCE_CONTEXT::default();
@@ -393,9 +870,9 @@ fn hook_blocker(
                 args.ResourceContext(&raw mut context)?;
                 let uri = take_pwstr(uri);
                 let block = {
-                    let source = top.borrow();
+                    let source = nav.top.borrow();
                     resource_kind(context, &uri, &source)
-                        .is_some_and(|kind| crate::adblock::should_block(&uri, &source, kind))
+                        .is_some_and(|kind| crate::adblock::block_request(&uri, &source, kind))
                 };
                 if !block {
                     return Ok(());
@@ -403,12 +880,185 @@ fn hook_blocker(
                 let response =
                     env.CreateWebResourceResponse(None::<&IStream>, 403, w!("Blocked"), w!(""))?;
                 args.SetResponse(&response)?;
-                blocked.set(blocked.get().saturating_add(1));
+                nav.blocked.set(nav.blocked.get().saturating_add(1));
                 if last.get().elapsed() >= BLOCKED_EVERY {
                     last.set(Instant::now());
-                    signal(PageSignal::Blocked(blocked.get()));
+                    signal(PageSignal::Blocked(nav.blocked.get()));
                 }
                 Ok(())
+            })),
+            &raw mut token,
+        )?;
+    }
+    Ok(())
+}
+
+fn hook_downloads(
+    core: &ICoreWebView2,
+    signal: Rc<dyn Fn(PageSignal)>,
+    dir: Option<PathBuf>,
+) -> windows::core::Result<()> {
+    let mut token = 0i64;
+    // SAFETY: this runs on the UI thread that owns the webview; WebView2
+    // invokes the download handlers on that same thread, and each out-param
+    // outlives the call that writes it.
+    unsafe {
+        core.cast::<ICoreWebView2_4>()?.add_DownloadStarting(
+            &DownloadStartingEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let op = args.DownloadOperation()?;
+                let mut suggested = PWSTR::null();
+                args.ResultFilePath(&raw mut suggested)?;
+                let suggested = PathBuf::from(take_pwstr(suggested));
+                let name = suggested
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let folder = dir
+                    .clone()
+                    .or_else(|| suggested.parent().map(Path::to_path_buf));
+                let Some(folder) = folder else { return Ok(()) };
+                let path = crate::downloads::target(&folder, &name);
+                args.SetResultFilePath(&HSTRING::from(path.as_os_str()))?;
+                // Parzi shows the download; Edge's own panel stays shut.
+                args.SetHandled(true)?;
+                let mut uri = PWSTR::null();
+                op.Uri(&raw mut uri)?;
+                let mut total = 0i64;
+                let _ = op.TotalBytesToReceive(&raw mut total);
+                let id = crate::downloads::new_id();
+                signal(PageSignal::DownloadStarted {
+                    id: id.clone(),
+                    url: take_pwstr(uri),
+                    path,
+                    total: u64::try_from(total).unwrap_or(0),
+                });
+                let (s, at) = (signal.clone(), id.clone());
+                op.add_BytesReceivedChanged(
+                    &BytesReceivedChangedEventHandler::create(Box::new(move |op, _| {
+                        let Some(op) = op else { return Ok(()) };
+                        let (mut got, mut total) = (0i64, 0i64);
+                        op.BytesReceived(&raw mut got)?;
+                        let _ = op.TotalBytesToReceive(&raw mut total);
+                        s(PageSignal::DownloadProgress {
+                            id: at.clone(),
+                            received: u64::try_from(got).unwrap_or(0),
+                            total: u64::try_from(total).unwrap_or(0),
+                        });
+                        Ok(())
+                    })),
+                    &raw mut token,
+                )?;
+                let (s, at) = (signal.clone(), id.clone());
+                op.add_StateChanged(
+                    &StateChangedEventHandler::create(Box::new(move |op, _| {
+                        let Some(op) = op else { return Ok(()) };
+                        let mut state = COREWEBVIEW2_DOWNLOAD_STATE::default();
+                        op.State(&raw mut state)?;
+                        if state == COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS {
+                            return Ok(());
+                        }
+                        let mut why = COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON::default();
+                        let _ = op.InterruptReason(&raw mut why);
+                        let mut path = PWSTR::null();
+                        let _ = op.ResultFilePath(&raw mut path);
+                        let state = if state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED {
+                            DownloadState::Done
+                        } else if why == COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_USER_CANCELED {
+                            DownloadState::Canceled
+                        } else {
+                            DownloadState::Failed
+                        };
+                        DOWNLOADS.with(|m| m.borrow_mut().remove(&at));
+                        s(PageSignal::DownloadFinished {
+                            id: at.clone(),
+                            state,
+                            path: take_pwstr(path),
+                        });
+                        Ok(())
+                    })),
+                    &raw mut token,
+                )?;
+                DOWNLOADS.with(|m| m.borrow_mut().insert(id, op));
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
+    }
+    Ok(())
+}
+
+fn permission_name(kind: COREWEBVIEW2_PERMISSION_KIND) -> Option<&'static str> {
+    Some(match kind {
+        COREWEBVIEW2_PERMISSION_KIND_CAMERA => "camera",
+        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE => "microphone",
+        COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION => "geolocation",
+        COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS => "notifications",
+        COREWEBVIEW2_PERMISSION_KIND_OTHER_SENSORS => "sensors",
+        COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ => "clipboard",
+        COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS => "downloads",
+        COREWEBVIEW2_PERMISSION_KIND_FILE_READ_WRITE => "files",
+        COREWEBVIEW2_PERMISSION_KIND_LOCAL_FONTS => "fonts",
+        COREWEBVIEW2_PERMISSION_KIND_MIDI_SYSTEM_EXCLUSIVE_MESSAGES => "midi",
+        COREWEBVIEW2_PERMISSION_KIND_WINDOW_MANAGEMENT => "windows",
+        // Autoplay and kinds newer than this list keep WebView2's default.
+        _ => return None,
+    })
+}
+
+fn hook_permissions(
+    core: &ICoreWebView2,
+    signal: Rc<dyn Fn(PageSignal)>,
+    tab: String,
+) -> windows::core::Result<()> {
+    let mut token = 0i64;
+    // SAFETY: this runs on the UI thread that owns the webview; WebView2
+    // invokes the handler on that same thread, the deferral keeps the args
+    // alive until answer_permission completes it, and each out-param
+    // outlives the call that writes it.
+    unsafe {
+        core.add_PermissionRequested(
+            &PermissionRequestedEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+                args.PermissionKind(&raw mut kind)?;
+                let Some(name) = permission_name(kind) else {
+                    return Ok(());
+                };
+                // Parzi remembers decisions itself, per site, where Settings
+                // can show and forget them.
+                if let Ok(args3) = args.cast::<ICoreWebView2PermissionRequestedEventArgs3>() {
+                    let _ = args3.SetSavesInProfile(false);
+                }
+                let mut uri = PWSTR::null();
+                args.Uri(&raw mut uri)?;
+                let Some(origin) = crate::siteprefs::site_origin(&take_pwstr(uri)) else {
+                    return args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY);
+                };
+                match crate::siteprefs::decision(&origin, name) {
+                    Some(true) => args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW),
+                    Some(false) => args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY),
+                    None => {
+                        let deferral = args.GetDeferral()?;
+                        let id = format!("p{}", NEXT.fetch_add(1, Ordering::Relaxed));
+                        ASKED.with(|m| {
+                            m.borrow_mut().insert(
+                                id.clone(),
+                                Asked {
+                                    args: args.clone(),
+                                    deferral,
+                                    tab: tab.clone(),
+                                },
+                            )
+                        });
+                        signal(PageSignal::Permission {
+                            id,
+                            origin,
+                            kind: name,
+                        });
+                        Ok(())
+                    }
+                }
             })),
             &raw mut token,
         )?;
@@ -422,7 +1072,11 @@ fn resource_kind(
     top: &str,
 ) -> Option<&'static str> {
     Some(match context {
-        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT if uri == top => return None,
+        // The page's own document (an in-page #fragment link reloads it
+        // with a fragment the top URL may not have) is never filtered.
+        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT if crate::browser::same_page(uri, top) => {
+            return None
+        }
         COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT => "sub_frame",
         COREWEBVIEW2_WEB_RESOURCE_CONTEXT_STYLESHEET => "stylesheet",
         COREWEBVIEW2_WEB_RESOURCE_CONTEXT_IMAGE => "image",
@@ -448,7 +1102,7 @@ fn page_color(json: &str) -> Option<String> {
     plain.then_some(color)
 }
 
-fn loaded(core: &ICoreWebView2) -> PageSignal {
+fn loaded(core: &ICoreWebView2, ok: bool) -> PageSignal {
     let mut url = PWSTR::null();
     let mut back = BOOL::default();
     let mut forward = BOOL::default();
@@ -463,7 +1117,41 @@ fn loaded(core: &ICoreWebView2) -> PageSignal {
         url: take_pwstr(url),
         back: back.as_bool(),
         forward: forward.as_bool(),
+        ok,
     }
+}
+
+/// `{"parzi":"key","key":"ctrl+k"}` from the key script: the key's name.
+fn key_message(json: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    if v.get("parzi")?.as_str()? != "key" {
+        return None;
+    }
+    v.get("key")?.as_str().map(str::to_string)
+}
+
+/// App keys a page sees first; the rest are the app's, like Chrome's
+/// Ctrl+T, Ctrl+W or Ctrl+L, which no page can take.
+fn page_first(name: &str) -> bool {
+    matches!(name, "ctrl+b" | "ctrl+h" | "ctrl+k")
+}
+
+/// Ctrl+P is not here: in a page it prints, as in any browser.
+fn key_name(ctrl: bool, shift: bool, key: VIRTUAL_KEY) -> Option<&'static str> {
+    Some(match (ctrl, shift, key) {
+        (false, false, VK_F11) => "f11",
+        (true, false, VK_T) => "ctrl+t",
+        (true, false, VK_W) => "ctrl+w",
+        (true, false, VK_L) => "ctrl+l",
+        (true, false, VK_K) => "ctrl+k",
+        (true, false, VK_B) => "ctrl+b",
+        (true, false, VK_H) => "ctrl+h",
+        (true, true, VK_T) => "ctrl+shift+t",
+        (true, false, VK_OEM_COMMA) => "ctrl+comma",
+        (true, false, VK_TAB) => "ctrl+tab",
+        (true, true, VK_TAB) => "ctrl+shift+tab",
+        _ => return None,
+    })
 }
 
 fn browser_key(
@@ -488,26 +1176,8 @@ fn browser_key(
     if kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN || alt {
         return Ok(None);
     }
-    let name = match (
-        ctrl,
-        shift,
-        VIRTUAL_KEY(u16::try_from(key).unwrap_or_default()),
-    ) {
-        (false, false, VK_F11) => "f11",
-        (true, false, VK_T) => "ctrl+t",
-        (true, false, VK_W) => "ctrl+w",
-        (true, false, VK_L) => "ctrl+l",
-        (true, false, VK_P) => "ctrl+p",
-        (true, false, VK_K) => "ctrl+k",
-        (true, false, VK_B) => "ctrl+b",
-        (true, false, VK_H) => "ctrl+h",
-        (true, true, VK_T) => "ctrl+shift+t",
-        (true, false, VK_OEM_COMMA) => "ctrl+comma",
-        (true, false, VK_TAB) => "ctrl+tab",
-        (true, true, VK_TAB) => "ctrl+shift+tab",
-        _ => return Ok(None),
-    };
-    Ok(Some((name, !status.WasKeyDown.as_bool())))
+    let vk = VIRTUAL_KEY(u16::try_from(key).unwrap_or_default());
+    Ok(key_name(ctrl, shift, vk).map(|name| (name, !status.WasKeyDown.as_bool())))
 }
 
 /// A blocking native message box: works before any window or event loop.
@@ -545,5 +1215,96 @@ pub fn round_window_corners(window: &tauri::WebviewWindow) {
             std::ptr::from_ref(&pref).cast(),
             size,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_P, VK_R};
+
+    #[test]
+    fn page_keys_go_to_the_page_first_and_print_stays_the_pages() {
+        assert_eq!(key_name(true, false, VK_K), Some("ctrl+k"));
+        assert!(page_first("ctrl+k") && page_first("ctrl+b") && page_first("ctrl+h"));
+        for reserved in [
+            "ctrl+t",
+            "ctrl+w",
+            "ctrl+l",
+            "ctrl+tab",
+            "ctrl+shift+t",
+            "f11",
+        ] {
+            assert!(!page_first(reserved), "{reserved}");
+        }
+        assert_eq!(key_name(true, false, VK_P), None, "Ctrl+P prints");
+        assert_eq!(key_name(true, false, VK_R), None);
+        assert_eq!(key_name(false, false, VK_T), None);
+        assert_eq!(key_name(true, true, VK_T), Some("ctrl+shift+t"));
+        assert_eq!(
+            key_message(r#"{"parzi":"key","key":"ctrl+k"}"#).as_deref(),
+            Some("ctrl+k")
+        );
+        assert_eq!(key_message(r#"{"key":"ctrl+k"}"#), None);
+        assert_eq!(key_message(r#""parzi:key:ctrl+k""#), None);
+    }
+
+    #[test]
+    fn documents_with_a_fragment_are_the_page_itself() {
+        let top = "https://example.com/docs";
+        assert_eq!(
+            resource_kind(
+                COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
+                "https://example.com/docs#intro",
+                top
+            ),
+            None
+        );
+        assert_eq!(
+            resource_kind(
+                COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
+                "https://ads.example.net/frame",
+                top
+            ),
+            Some("sub_frame")
+        );
+        assert_eq!(
+            resource_kind(COREWEBVIEW2_WEB_RESOURCE_CONTEXT_SCRIPT, top, top),
+            Some("script")
+        );
+    }
+
+    #[test]
+    fn crashes_that_need_the_user() {
+        assert_eq!(
+            crash_kind(COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED),
+            Some("exited")
+        );
+        assert_eq!(
+            crash_kind(
+                webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PROCESS_FAILED_KIND_GPU_PROCESS_EXITED
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn every_prompted_permission_can_be_remembered() {
+        for kind in [
+            COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+            COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+            COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION,
+            COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS,
+            COREWEBVIEW2_PERMISSION_KIND_OTHER_SENSORS,
+            COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ,
+            COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS,
+            COREWEBVIEW2_PERMISSION_KIND_FILE_READ_WRITE,
+            COREWEBVIEW2_PERMISSION_KIND_LOCAL_FONTS,
+            COREWEBVIEW2_PERMISSION_KIND_MIDI_SYSTEM_EXCLUSIVE_MESSAGES,
+            COREWEBVIEW2_PERMISSION_KIND_WINDOW_MANAGEMENT,
+        ] {
+            let name = permission_name(kind).unwrap();
+            assert!(crate::siteprefs::KINDS.contains(&name), "{name}");
+        }
     }
 }
