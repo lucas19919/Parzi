@@ -53,15 +53,12 @@ their reason.
 - **Home** is where a new tab lands: the composer, pinned sites (pin any page
   from its toolbar; until you do, your most visited sites show), and recent
   sessions.
-- **Tasks** (`Ctrl+J`) is one list across your projects that you and your
-  agents share: To do, Doing, Review and Done, filtered by project (or the
-  Inbox). Add and check off tasks by hand, say what a task needs first, and
-  start an agent on one with the model and permissions you pick; when its run
-  ends the task moves to Review (or Done or Failed, if the agent said so) and a
-  notification takes you to it. Agents plan with the same tasks
-  (`task.list`, `task.add`, `task.update`) and staff them with
-  `session.spawn`. Tasks live in `~/.parzi/tasks`, one file per project, and
-  sync with your ParziOS server.
+- **Work** (`Ctrl+J`) shows what your agents are doing for you. Ask for
+  something in the composer: once a run does real work (edits, commands,
+  sub-agents, or a few tool calls) it becomes a goal with what it changed, the
+  checks it ran and what it cost. Chats stay in History. A run that needs you
+  (failed, or paused at the budget) says so. Goals live in an append-only
+  ledger under `~/.parzi/work`.
 - **Set up Parzi** (first launch, or the menu) signs you in to each agent with
   its own login, imports Brave/Chrome/Edge bookmarks and history (never
   passwords or cookies), and turns your other agents' instructions, memories

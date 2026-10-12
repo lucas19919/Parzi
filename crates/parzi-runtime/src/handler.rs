@@ -41,6 +41,10 @@ pub enum RunEvent {
     Done {
         turns: u32,
     },
+    /// The run stopped at the budget: not running, not done either.
+    Paused {
+        reason: String,
+    },
     Error(String),
 }
 
@@ -83,20 +87,12 @@ pub struct SpawnSpec {
     pub wait: bool,
     pub mode_override: Option<String>,
     pub effort: Option<String>,
-    /// A task the child works: linked (and moved to doing) before it starts.
-    pub task: Option<String>,
 }
 
 #[async_trait::async_trait]
 pub trait HarnessBridge: Send + Sync {
-    /// `spawn_session` plus an optional task. Bridges that know no tasks
-    /// refuse one rather than start an unlinked child.
+    /// `spawn_session` taking its arguments as one spec.
     async fn spawn(&self, caller_id: &str, spec: SpawnSpec) -> Result<String> {
-        if spec.task.is_some() {
-            return Err(parzi_core::ParziError::Validation(
-                "tasks are not available in this run".into(),
-            ));
-        }
         self.spawn_session(
             caller_id,
             &spec.title,
@@ -205,6 +201,9 @@ pub fn ui_event(session: &str, ev: &RunEvent) -> Option<serde_json::Value> {
             json!({ "kind": "context", "session": session, "used": used, "limit": limit })
         }
         RunEvent::Done { turns } => json!({ "kind": "done", "session": session, "turns": turns }),
+        RunEvent::Paused { reason } => {
+            json!({ "kind": "paused", "session": session, "reason": reason })
+        }
         RunEvent::Error(error) => json!({ "kind": "error", "session": session, "error": error }),
         RunEvent::Usage { .. } | RunEvent::ApprovalRequest { .. } => return None,
     })

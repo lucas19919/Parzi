@@ -8,6 +8,7 @@ use parzi_core::config::Budget;
 use parzi_core::context::{AttachedFile, InterSessionMessage};
 use parzi_core::error::{ParziError, Result};
 use parzi_core::store::{Event, SessionStatus, SessionStore};
+use parzi_core::work::{Check, RunCause, RunEndKind};
 use parzi_providers::{
     ErrorClass, PermissionGate, Provider, ProviderError, ProviderEvent, TurnEnd, TurnSpec,
 };
@@ -19,7 +20,8 @@ use crate::mcp_host::McpHost;
 use crate::orchestrator::{set_run_session, SessionSlot, VendorSession};
 use crate::status::StatusBoard;
 use crate::toolhost::ToolHost;
-use crate::tools::{display_name, humanize_tool_call};
+use crate::tools::{category, display_name, edit_paths, humanize_tool_call, shell_command};
+use crate::work_hooks::Tally;
 
 const MAX_TURNS: u32 = 8;
 const HISTORY_CHARS: usize = 12_000;
@@ -45,6 +47,7 @@ pub struct EngineRunParts {
     pub(crate) slot: SessionSlot,
     pub seen: usize,
     pub inbox_from: Option<usize>,
+    pub(crate) tally: Tally,
 }
 
 pub struct EngineRun {
@@ -122,6 +125,7 @@ impl EngineRun {
         let mut cap_noted = false;
         loop {
             turns += 1;
+            self.tally(|t| t.turns = turns);
             if let Some(reason) = self.budget_hit() {
                 self.pause_for_budget(&reason);
                 return Ok(());
@@ -129,6 +133,7 @@ impl EngineRun {
             match self.turn(&text).await {
                 Outcome::Completed => {}
                 Outcome::Interrupted => {
+                    self.tally(|t| t.end = Some((RunEndKind::Stopped, None)));
                     self.settle(SessionStatus::Killed);
                     self.p.sink.emit(RunEvent::Error("cancelled".into()));
                     return Ok(());
@@ -164,6 +169,7 @@ impl EngineRun {
                         },
                     );
                     self.p.sink.emit(RunEvent::Error(e.message.clone()));
+                    self.tally(|t| t.end = Some((RunEndKind::Failed, Some(e.message.clone()))));
                     self.settle(SessionStatus::Idle);
                     return Err(ParziError::Provider(self.p.provider_id.clone(), e.message));
                 }
@@ -205,9 +211,16 @@ impl EngineRun {
         if !released {
             self.settle(SessionStatus::Done);
         }
+        self.tally(|t| t.end = Some((RunEndKind::Completed, None)));
         tracing::info!(session = %sid, turns, "run done");
         self.p.sink.emit(RunEvent::Done { turns });
         Ok(())
+    }
+
+    fn tally(&self, f: impl FnOnce(&mut RunTally)) {
+        if let Ok(mut t) = self.p.tally.lock() {
+            f(&mut t);
+        }
     }
 
     fn inbox(&self, from: usize, until: Option<usize>) -> (Vec<String>, usize) {
@@ -438,6 +451,7 @@ impl EngineRun {
                 turn.started.insert(id.clone(), Instant::now());
                 let shown = display_name(&name);
                 let label = humanize_tool_call(&name, &input);
+                crate::work_hooks::tool_started(&self.p.tally, &id, &shown, &input);
                 let _ = self.p.store.append(
                     sid,
                     &Event::ToolCall {
@@ -462,6 +476,7 @@ impl EngineRun {
                     t.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
                 });
                 let shown = display_name(&name);
+                self.tally(|t| t.tool_finished(&id, ok));
                 let output: String = output.chars().take(OUTPUT_CHARS).collect();
                 let _ = self.p.store.append(
                     sid,
@@ -490,6 +505,7 @@ impl EngineRun {
                     self.cost_seen.store(true, Ordering::Relaxed);
                 }
                 let cost = cost_usd.unwrap_or(0.0);
+                self.tally(|t| t.usage(input, output, cost_usd));
                 let _ = self.p.store.add_usage(sid, input, output, cost);
                 self.p.sink.emit(RunEvent::Usage {
                     tokens_in: input,
@@ -555,7 +571,13 @@ impl EngineRun {
             Some(crate::orchestrator::BUDGET_NOTE),
         );
         self.p.sink.emit(RunEvent::Notice { text });
+        self.tally(|t| t.end = Some((RunEndKind::Paused, Some(reason.to_string()))));
+        crate::work_hooks::budget_paused(&self.p.session_id, reason);
         self.settle(SessionStatus::Idle);
+        // The UI's running set clears on this, as it does on done.
+        self.p.sink.emit(RunEvent::Paused {
+            reason: reason.to_string(),
+        });
     }
 
     fn settle(&self, status: SessionStatus) {
@@ -570,5 +592,353 @@ impl EngineRun {
             status
         };
         let _ = self.p.store.set_status(&self.p.session_id, status);
+    }
+}
+
+/// The Parzi tools that are real work on their own: a run that calls one
+/// becomes a goal. Anything else counts toward the three-call rule.
+const REAL_WORK: &[&str] = &[
+    "work.plan",
+    "session.spawn",
+    "lane.dispatch",
+    "shell.exec",
+    "shell.start",
+    "image.generate",
+    "brain.write",
+    "ui.show_artifact",
+    "browser.click",
+    "browser.type",
+    "project.create",
+];
+
+/// Tool calls a run may make and still be a chat.
+const CHAT_TOOLS: usize = 2;
+
+/// Whether one call (by its shown name) is real work: an edit or a command
+/// of the agent's own, or one of Parzi's acting tools.
+#[must_use]
+pub(crate) fn real_work(name: &str) -> bool {
+    if crate::tools::is_parzi_tool(name) || name.starts_with("work.") {
+        return REAL_WORK.contains(&name);
+    }
+    matches!(category(name), Some("fs.write" | "shell.exec"))
+}
+
+/// Whether a command line builds, tests or lints: its result is a check.
+#[must_use]
+pub(crate) fn is_check(cmd: &str) -> bool {
+    cmd.split([';', '|', '&', '\n'])
+        .any(|part| check_words(part.split_whitespace().collect()))
+}
+
+fn check_words(mut words: Vec<&str>) -> bool {
+    // `FOO=1 npx tsc`, `python -m pytest`, `uv run pytest`: look past the wrapper.
+    while let Some(first) = words.first().copied() {
+        let env = first.contains('=') && !first.starts_with('-');
+        let module = matches!(first, "python" | "python3" | "py") && words.get(1) == Some(&"-m");
+        let runner = matches!(first, "uv" | "poetry" | "pipenv") && words.get(1) == Some(&"run");
+        let plain = matches!(first, "npx" | "bunx" | "pnpx" | "time" | "sudo");
+        let skip = if module || runner {
+            2
+        } else if env || plain {
+            1
+        } else {
+            break;
+        };
+        words.drain(..skip.min(words.len()));
+    }
+    let Some(tool) = words.first() else {
+        return false;
+    };
+    let tool = tool
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(tool)
+        .trim_end_matches(".exe")
+        .trim_end_matches(".cmd")
+        .trim_end_matches(".bat");
+    let rest = &words[1..];
+    let any = |names: &[&str]| rest.iter().any(|w| names.contains(w));
+    match tool {
+        "cargo" => any(&["test", "build", "check", "clippy", "fmt", "nextest"]),
+        "npm" | "pnpm" | "yarn" | "bun" => {
+            rest.first() == Some(&"t")
+                || rest.iter().any(|w| {
+                    ["test", "build", "check", "lint"]
+                        .iter()
+                        .any(|k| w.contains(k))
+                })
+        }
+        "go" => any(&["test", "build", "vet"]),
+        "dotnet" => any(&["test", "build"]),
+        "pytest" | "py.test" | "make" | "tsc" | "eslint" | "ruff" | "mvn" | "gradle"
+        | "gradlew" | "vitest" | "jest" | "unittest" => true,
+        _ => false,
+    }
+}
+
+/// A command shown as a check: one line, at most 120 chars.
+fn check_label(cmd: &str) -> String {
+    crate::tools::clip(&cmd.split_whitespace().collect::<Vec<_>>().join(" "), 120)
+}
+
+/// A file path as the run's folder sees it: relative inside it, with
+/// forward slashes; anything outside stays absolute.
+#[must_use]
+pub(crate) fn display_path(cwd: &str, path: &str) -> String {
+    let p = path.trim().replace('\\', "/");
+    let c = cwd.trim().replace('\\', "/");
+    let c = c.trim_end_matches('/');
+    if !c.is_empty() {
+        let same = p.get(..c.len()).is_some_and(|h| {
+            if cfg!(windows) {
+                h.eq_ignore_ascii_case(c)
+            } else {
+                h == c
+            }
+        });
+        if same && p[c.len()..].starts_with('/') {
+            return p[c.len() + 1..].to_string();
+        }
+    }
+    p.trim_start_matches("./").to_string()
+}
+
+/// What a run did, gathered while it runs: the work ledger's `RunEnded`
+/// comes from this, and its first real tool call makes the goal.
+pub(crate) struct RunTally {
+    pub(crate) run: String,
+    pub(crate) session: String,
+    pub(crate) cause: RunCause,
+    pub(crate) prompt: String,
+    /// The session's title, for a goal whose prompt has no words.
+    pub(crate) title_hint: String,
+    pub(crate) project: Option<String>,
+    pub(crate) cwd: String,
+    /// Where the run's events start in the transcript.
+    pub(crate) first_event: usize,
+    pub(crate) started: Instant,
+    pub(crate) goal: Option<String>,
+    tools: usize,
+    qualified: bool,
+    edits: Vec<String>,
+    shells: HashMap<String, String>,
+    pub(crate) checks: Vec<Check>,
+    pub(crate) tokens_in: u64,
+    pub(crate) tokens_out: u64,
+    pub(crate) cost: Option<f64>,
+    pub(crate) turns: u32,
+    /// How it ended (and the error), set by the run itself.
+    pub(crate) end: Option<(RunEndKind, Option<String>)>,
+    pub(crate) git: Option<tokio::task::JoinHandle<Option<crate::gitmark::GitMark>>>,
+}
+
+impl RunTally {
+    pub(crate) fn new(run: &str, session: &str, cause: RunCause, cwd: &str) -> Self {
+        Self {
+            run: run.to_string(),
+            session: session.to_string(),
+            cause,
+            prompt: String::new(),
+            title_hint: String::new(),
+            project: None,
+            cwd: cwd.to_string(),
+            first_event: 0,
+            started: Instant::now(),
+            goal: None,
+            tools: 0,
+            qualified: false,
+            edits: vec![],
+            shells: HashMap::new(),
+            checks: vec![],
+            tokens_in: 0,
+            tokens_out: 0,
+            cost: None,
+            turns: 0,
+            end: None,
+            git: None,
+        }
+    }
+
+    /// Counts a call; true when it is the one that makes the run real work.
+    pub(crate) fn tool_started(&mut self, id: &str, name: &str, input: &Value) -> bool {
+        self.tools += 1;
+        for p in edit_paths(name, input) {
+            let shown = display_path(&self.cwd, &p);
+            if !self
+                .edits
+                .iter()
+                .any(|e| crate::gitmark::same_path(e, &shown))
+            {
+                self.edits.push(shown);
+            }
+        }
+        if let Some(cmd) = shell_command(name, input).filter(|c| is_check(c)) {
+            self.shells.insert(id.to_string(), check_label(&cmd));
+        }
+        let was = self.qualified;
+        self.qualified = was || real_work(name) || self.tools > CHAT_TOOLS;
+        self.qualified && !was
+    }
+
+    pub(crate) fn tool_finished(&mut self, id: &str, ok: bool) {
+        if let Some(cmd) = self.shells.remove(id) {
+            self.checks.push(Check { cmd, ok });
+        }
+    }
+
+    pub(crate) fn usage(&mut self, input: u64, output: u64, cost: Option<f64>) {
+        self.tokens_in = self.tokens_in.saturating_add(input);
+        self.tokens_out = self.tokens_out.saturating_add(output);
+        if let Some(c) = cost {
+            self.cost = Some(self.cost.unwrap_or(0.0) + c);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn qualifies(&self) -> bool {
+        self.qualified
+    }
+
+    /// Files the run's tool calls edited, relative to its folder.
+    pub(crate) fn edits(&self) -> &[String] {
+        &self.edits
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn tally() -> RunTally {
+        RunTally::new("r1", "s1", RunCause::Send, r"D:\Repos\app")
+    }
+
+    #[test]
+    fn chat_and_a_couple_of_reads_stay_chat() {
+        let mut t = tally();
+        assert!(!t.qualifies(), "no tools at all");
+        assert!(!t.tool_started("1", "Read", &json!({"file_path": "a.rs"})));
+        assert!(!t.tool_started("2", "Grep", &json!({"pattern": "x"})));
+        assert!(!t.qualifies(), "two reads are a question, not work");
+        assert!(
+            t.tool_started("3", "Glob", &json!({"pattern": "*"})),
+            "the third call"
+        );
+        assert!(!t.tool_started("4", "Read", &json!({})), "only once");
+        assert!(t.qualifies());
+    }
+
+    #[test]
+    fn one_edit_or_command_is_work() {
+        for (name, input) in [
+            ("Edit", json!({"file_path": "a.rs"})),
+            ("edit", json!({"paths": ["a.rs"]})),
+            ("shell.exec", json!({"cmd": "ls"})),
+            ("Bash", json!({"command": "ls"})),
+            ("shell", json!({"command": "ls"})),
+            ("session.spawn", json!({"prompt": "x"})),
+            ("brain.write", json!({"path": "n.md"})),
+            ("work.plan", json!({})),
+        ] {
+            assert!(tally().tool_started("1", name, &input), "{name}");
+        }
+        for name in [
+            "brain.read",
+            "shell.logs",
+            "browser.read",
+            "desk.state",
+            "gh.issue_get",
+        ] {
+            assert!(!tally().tool_started("1", name, &json!({})), "{name}");
+        }
+    }
+
+    #[test]
+    fn edits_from_claude_and_codex_are_named_once() {
+        let mut t = tally();
+        t.tool_started("1", "Edit", &json!({"file_path": r"D:\Repos\app\src\a.rs"}));
+        t.tool_started(
+            "2",
+            "Write",
+            &json!({"file_path": "D:/Repos/app/README.md"}),
+        );
+        t.tool_started("3", "MultiEdit", &json!({"file_path": "src/a.rs"}));
+        t.tool_started("4", "NotebookEdit", &json!({"notebook_path": "nb/x.ipynb"}));
+        t.tool_started("5", "edit", &json!({"paths": ["src/b.rs", "./src/c.rs"]}));
+        t.tool_started("6", "Read", &json!({"file_path": "src/z.rs"}));
+        t.tool_started("7", "Write", &json!({"file_path": "C:/elsewhere/y.txt"}));
+        assert_eq!(
+            t.edits(),
+            [
+                "src/a.rs",
+                "README.md",
+                "nb/x.ipynb",
+                "src/b.rs",
+                "src/c.rs",
+                "C:/elsewhere/y.txt"
+            ]
+        );
+    }
+
+    #[test]
+    fn checks_are_the_builds_and_tests_and_how_they_went() {
+        for cmd in [
+            "cargo test -p parzi-core",
+            "cd ui && npm run check",
+            "npm test",
+            "pnpm build",
+            "PARZI_HOME=/tmp cargo clippy --workspace",
+            "python -m pytest tests/",
+            "npx tsc --noEmit",
+            "go test ./...",
+            "make",
+            "./gradlew build",
+            "dotnet test",
+            "uv run pytest",
+        ] {
+            assert!(is_check(cmd), "{cmd}");
+        }
+        for cmd in [
+            "ls -la",
+            "git status",
+            "npm install",
+            "cargo run",
+            "echo test",
+            "cat Makefile",
+        ] {
+            assert!(!is_check(cmd), "{cmd}");
+        }
+        let mut t = tally();
+        t.tool_started("1", "shell.exec", &json!({"cmd": "cargo  test\n"}));
+        t.tool_started("2", "shell", &json!({"command": ["npm", "test"]}));
+        t.tool_started("3", "Bash", &json!({"command": "ls"}));
+        t.tool_finished("2", false);
+        t.tool_finished("1", true);
+        t.tool_finished("3", true);
+        assert_eq!(
+            t.checks,
+            [
+                Check {
+                    cmd: "npm test".into(),
+                    ok: false
+                },
+                Check {
+                    cmd: "cargo test".into(),
+                    ok: true
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn usage_adds_up_and_cost_stays_unknown_until_reported() {
+        let mut t = tally();
+        t.usage(10, 5, None);
+        assert_eq!(t.cost, None);
+        t.usage(1, 1, Some(0.25));
+        t.usage(1, 1, Some(0.25));
+        assert_eq!((t.tokens_in, t.tokens_out, t.cost), (12, 7, Some(0.5)));
     }
 }

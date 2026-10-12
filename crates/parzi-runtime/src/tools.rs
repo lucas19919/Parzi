@@ -121,7 +121,6 @@ impl ToolExecutor {
         d.extend(doc_defs());
         d.extend(team_defs());
         d.extend(question_defs());
-        d.extend(task_defs());
         d.extend(project_defs());
         d.extend(shell_defs());
         d.retain(|t| self.is_allowed(&t.name));
@@ -165,6 +164,81 @@ pub(crate) fn is_vendor_category(name: &str) -> bool {
     matches!(name, "fs.read" | "fs.write" | "fs.list" | "shell.exec")
 }
 
+/// The vendor category of an agent's own tool: shell, write or read.
+pub(crate) fn category(tool: &str) -> Option<&'static str> {
+    match tool {
+        "Bash" | "BashOutput" | "KillShell" | "shell" | "execute" => Some("shell.exec"),
+        "Edit" | "MultiEdit" | "Write" | "NotebookEdit" | "edit" | "delete" | "move" => {
+            Some("fs.write")
+        }
+        "Read" | "Glob" | "Grep" | "LS" | "NotebookRead" | "read" | "search" => Some("fs.read"),
+        _ => {
+            // The vendor shell list can never be complete: any tool whose
+            // name smells like command execution routes to the shell gate
+            // instead of slipping through as unknown.
+            let l = tool.to_lowercase();
+            if l.contains("shell")
+                || l.contains("bash")
+                || l.contains("terminal")
+                || l.contains("powershell")
+                || matches!(
+                    l.as_str(),
+                    "cmd" | "exec" | "execute" | "command" | "run_command"
+                )
+            {
+                Some("shell.exec")
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// The files an edit tool call names: Claude's `file_path` (and
+/// `notebook_path`), Codex's `paths`, and the usual spellings of others.
+#[must_use]
+pub fn edit_paths(tool: &str, args: &serde_json::Value) -> Vec<String> {
+    if category(tool) != Some("fs.write") {
+        return vec![];
+    }
+    let mut out: Vec<String> = vec![];
+    for key in ["file_path", "notebook_path", "path", "filePath", "file"] {
+        if let Some(p) = args.get(key).and_then(serde_json::Value::as_str) {
+            out.push(p.to_string());
+        }
+    }
+    for key in ["paths", "files"] {
+        if let Some(list) = args.get(key).and_then(serde_json::Value::as_array) {
+            out.extend(
+                list.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_string),
+            );
+        }
+    }
+    out.retain(|p| !p.trim().is_empty());
+    out.dedup();
+    out
+}
+
+/// The command line a shell tool call runs, Parzi's or an agent's own.
+#[must_use]
+pub fn shell_command(tool: &str, args: &serde_json::Value) -> Option<String> {
+    if !matches!(tool, "shell.exec" | "shell.start") && category(tool) != Some("shell.exec") {
+        return None;
+    }
+    let cmd = match args.get("command").or_else(|| args.get("cmd")) {
+        Some(serde_json::Value::Array(parts)) => parts
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>()
+            .join(" "),
+        Some(v) => v.as_str().unwrap_or_default().to_string(),
+        None => String::new(),
+    };
+    Some(cmd.trim().to_string()).filter(|c| !c.is_empty())
+}
+
 /// Every tool Parzi itself offers. Used to tell lane-allowlist entries
 /// that name our own tools apart from entries that speak in vendor
 /// categories (e.g. "fs.*") — "shell.exec" is unfortunately both.
@@ -178,7 +252,6 @@ pub(crate) fn is_parzi_tool(name: &str) -> bool {
         || is_doc_tool(name)
         || is_models_tool(name)
         || is_question_tool(name)
-        || is_task_tool(name)
         || is_project_tool(name)
         || is_shell_tool(name)
         || is_brain_tool(name)
@@ -390,11 +463,11 @@ fn desk_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "desk.open".into(),
-            description: "Open something in the Parzi window for the human: what=session (id; default this session), settings (section: general, providers, connections, appearance, system), brain (path of a note), history, tasks, or home. Opens in the background unless focus=true.".into(),
+            description: "Open something in the Parzi window for the human: what=session (id; default this session), settings (section: general, providers, connections, appearance, system), brain (path of a note), history, work (goals agents are working on), or home. Opens in the background unless focus=true.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "what": {"type": "string", "enum": ["session", "settings", "brain", "history", "tasks", "home"]},
+                    "what": {"type": "string", "enum": ["session", "settings", "brain", "history", "work", "home"]},
                     "id": {"type": "string"},
                     "section": {"type": "string"},
                     "path": {"type": "string"},
@@ -603,10 +676,6 @@ pub(crate) fn is_question_tool(name: &str) -> bool {
     matches!(name, "ask.user" | "request.user" | "memory.review")
 }
 
-pub(crate) fn is_task_tool(name: &str) -> bool {
-    matches!(name, "task.list" | "task.add" | "task.update")
-}
-
 pub(crate) fn is_project_tool(name: &str) -> bool {
     matches!(
         name,
@@ -647,59 +716,6 @@ fn question_defs() -> Vec<ToolDef> {
                     "kind": {"type": "string", "enum": ["text", "file", "image"]},
                 },
                 "required": ["request"],
-            }),
-        },
-    ]
-}
-
-fn task_defs() -> Vec<ToolDef> {
-    vec![
-        ToolDef {
-            name: "task.list".into(),
-            description: "List the shared task list the human also sees and edits: what is ready to start, what is blocked and on which tasks, what is in progress, in review, failed and done, each with its id and linked session. Defaults to this session's project; pass project (a slug, inbox, or all) for another.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {"project": {"type": "string"}},
-            }),
-        },
-        ToolDef {
-            name: "task.add".into(),
-            description: "Add tasks to the shared task list, in this session's project unless project is given (inbox for none). Each task takes a title, optional notes (markdown), needs (ids of tasks that must be done first, or the key of another task in this same call), lane (build or work), and key (a name other tasks in this call can need). Returns the new ids. Plan work that spans sessions this way, then staff each task with session.spawn and its id.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "project": {"type": "string"},
-                    "tasks": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "title": {"type": "string"},
-                                "notes": {"type": "string"},
-                                "needs": {"type": "array", "items": {"type": "string"}},
-                                "lane": {"type": "string", "enum": ["build", "work"]},
-                                "key": {"type": "string"},
-                            },
-                            "required": ["title"],
-                        },
-                    },
-                },
-                "required": ["tasks"],
-            }),
-        },
-        ToolDef {
-            name: "task.update".into(),
-            description: "Change a task by id: status (todo, doing, review, done, failed), title, notes (replaces them), or note (adds a line to them). When you finish the task you were given, mark it done, or review when a person should check it first, or failed with a note saying what stopped you. A task cannot be done while a task it needs is still open.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": {"type": "string"},
-                    "status": {"type": "string", "enum": ["todo", "doing", "review", "done", "failed"]},
-                    "title": {"type": "string"},
-                    "notes": {"type": "string"},
-                    "note": {"type": "string"},
-                },
-                "required": ["id"],
             }),
         },
     ]
@@ -792,7 +808,7 @@ fn session_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "session.spawn".into(),
-            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder, lane, and model unless overridden. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id immediately for background work you check later with session.read_session. Pass task (a task id) to staff a task: the child is linked to it and told about it, the task moves to doing, and when the child's run ends it moves to review unless the child marked it done or failed. task.list then shows the outcome, so there is no need to poll.".into(),
+            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder, lane, and model unless overridden. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id immediately for background work you check later with session.read_session.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -803,7 +819,6 @@ fn session_defs() -> Vec<ToolDef> {
                     "effort": {"type": "string"},
                     "lane": {"type": "string"},
                     "wait": {"type": "boolean"},
-                    "task": {"type": "string"},
                 },
                 "required": ["prompt"],
             }),
@@ -860,7 +875,6 @@ fn lane_defs() -> Vec<ToolDef> {
                     "model": {"type": "string"},
                     "effort": {"type": "string"},
                     "wait": {"type": "boolean"},
-                    "task": {"type": "string"},
                 },
                 "required": ["prompt"],
             }),
@@ -1048,22 +1062,6 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
                 60
             )
         ),
-        "task.list" => "Reading the task list".into(),
-        "task.add" => match args.get("tasks").and_then(serde_json::Value::as_array) {
-            Some(t) if t.len() > 1 => format!("Adding {} tasks", t.len()),
-            _ => "Adding a task".into(),
-        },
-        "task.update" => match str_arg("status") {
-            Some(s) => format!(
-                "Marking task {} {}",
-                one_line(&str_arg("id").unwrap_or_default(), 12),
-                one_line(&s, 12)
-            ),
-            None => format!(
-                "Updating task {}",
-                one_line(&str_arg("id").unwrap_or_default(), 12)
-            ),
-        },
         "project.create" => format!(
             "Creating project {}",
             one_line(&str_arg("title").unwrap_or_else(|| "untitled".into()), 40)
@@ -1136,7 +1134,7 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
     }
 }
 
-const NAMESPACES: &[&str] = &["ui", "browser", "desk", "brain", "session", "lane", "task"];
+const NAMESPACES: &[&str] = &["ui", "browser", "desk", "brain", "session", "lane"];
 
 pub fn to_mcp(name: &str) -> String {
     name.replace('.', "_")

@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
+use parzi_core::work::RunCause;
 use parzi_runtime::desk::{check_page_url, GuiFile};
 use parzi_runtime::handler::{ui_event, RunEvent};
 use parzi_runtime::tools::{humanize_tool_call, Approval, Approver, AutoApprover, ToolCallInfo};
@@ -1129,16 +1130,17 @@ async fn desk_open(ctx: &Ctx, req: &Value) -> Value {
                 "opened history".to_string(),
             )
         }
-        "tasks" => (
-            json!({ "op": "show", "what": "tasks", "focus": true }),
-            "opened tasks".to_string(),
+        // "tasks" is what the view was called before Work.
+        "work" | "tasks" => (
+            json!({ "op": "show", "what": "work", "focus": true }),
+            "opened work".to_string(),
         ),
         "home" => (
             json!({ "op": "show", "what": "home", "focus": true }),
             "opened home".to_string(),
         ),
         _ => {
-            return fail("what must be session, settings, brain, history, tasks, home or url");
+            return fail("what must be session, settings, brain, history, work, home or url");
         }
     };
     if bool_arg(req, "raise", false) {
@@ -1416,7 +1418,8 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
             // Same filing as the desk: a thread belongs to its folder's project.
             let project = crate::sessions::project_for(&cwd).await;
             ctx.orch
-                .spawn(
+                .spawn_as(
+                    RunCause::Cli,
                     &project,
                     "",
                     &model,
@@ -1432,7 +1435,8 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
         }
         Some(id) => ctx
             .orch
-            .send_to(
+            .send_as(
+                RunCause::Cli,
                 &id,
                 &message,
                 Some(approver),
@@ -1479,7 +1483,10 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
                         RunEvent::Error(e) => failed = Some(e.clone()),
                         _ => {}
                     }
-                    let end = matches!(ev, RunEvent::Done { .. } | RunEvent::Error(_));
+                    let end = matches!(
+                        ev,
+                        RunEvent::Done { .. } | RunEvent::Paused { .. } | RunEvent::Error(_)
+                    );
                     if stream {
                         if let Some(v) = ui_event(&id, &ev) {
                             // The client left: the run goes on in the window.

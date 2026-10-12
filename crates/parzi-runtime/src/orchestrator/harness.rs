@@ -1,6 +1,7 @@
 use parzi_core::context::{InterKind, InterSessionMessage};
 use parzi_core::error::{ParziError, Result};
 use parzi_core::store::{Event, SessionMeta, SessionStatus};
+use parzi_core::work::RunCause;
 
 use crate::handler::{HarnessBridge, SpawnSpec};
 use crate::inter;
@@ -109,9 +110,8 @@ fn run_outcome(events: &[Event]) -> String {
 }
 
 impl Pump {
-    /// A child session, staffed on a task when the spec names one: the task
-    /// is linked and moved to doing before the child can start, so its run
-    /// end always finds it.
+    /// A child session. It works a step of the caller's goal, added (and
+    /// linked) before the child can start, so its run end always finds it.
     async fn spawn_child(&self, caller_id: &str, spec: SpawnSpec) -> Result<String> {
         let SpawnSpec {
             title,
@@ -122,23 +122,17 @@ impl Pump {
             wait,
             mode_override,
             effort,
-            task,
         } = spec;
         let caller = self.store.get(caller_id)?;
-        let task = match task {
-            Some(id) => Some(parzi_core::tasks::TaskStore::open()?.get(&id)?),
-            None => None,
-        };
-        let title: String = match (title.trim(), &task) {
-            ("", Some(t)) => t.title.chars().take(80).collect(),
-            ("", None) => prompt
+        let title: String = match title.trim() {
+            "" => prompt
                 .lines()
                 .next()
                 .unwrap_or("subsession")
                 .chars()
                 .take(80)
                 .collect(),
-            (t, _) => t.chars().take(80).collect(),
+            t => t.chars().take(80).collect(),
         };
         let model_spec = model.unwrap_or_else(|| caller.model.clone());
         let lane_name = lane.unwrap_or_else(|| caller.lane.clone());
@@ -155,21 +149,7 @@ impl Pump {
         if !caller.cwd.is_empty() {
             let _ = self.store.set_cwd(&meta.id, &caller.cwd);
         }
-        let prompt = match &task {
-            Some(t) => match crate::task_tools::link(&t.id, &meta.id) {
-                Ok(linked) => {
-                    let scope = parzi_core::tasks::TaskStore::open()?
-                        .scope(linked.project.as_deref())
-                        .unwrap_or_default();
-                    format!("{prompt}\n\n{}", crate::task_tools::brief(&linked, &scope))
-                }
-                Err(e) => {
-                    let _ = self.store.set_status(&meta.id, SessionStatus::Idle);
-                    return Err(e);
-                }
-            },
-            None => prompt,
-        };
+        crate::work_hooks::spawned(caller_id, &meta.id, &title, &lane_name);
         let q = QueuedRun {
             session_id: meta.id.clone(),
             project: caller.project.clone(),
@@ -184,15 +164,12 @@ impl Pump {
             prompt_recorded: false,
             inbox_from: None,
             mode_override,
+            cause: RunCause::Message,
         };
         let launched = self.dispatch(q).await;
         if !launched && !self.cfg_snapshot().orchestrator.queue_when_busy {
-            // Nothing will run it: stand it down, and its task is to do
-            // again instead of stuck in doing.
+            // Nothing will run it: stand it down.
             let _ = self.store.set_status(&meta.id, SessionStatus::Idle);
-            if task.is_some() {
-                crate::task_tools::runs_interrupted(std::slice::from_ref(&meta.id));
-            }
         }
         let meta = self.store.get(&meta.id)?;
         // Say it now instead of a mute child discovered 180s later.
@@ -269,7 +246,6 @@ impl HarnessBridge for Pump {
                 wait,
                 mode_override,
                 effort,
-                task: None,
             },
         )
         .await
@@ -333,6 +309,7 @@ impl HarnessBridge for Pump {
             prompt_recorded: true,
             mode_override: None,
             inbox_from: Some(at),
+            cause: RunCause::Message,
         };
         let launched = self.dispatch(q).await;
         if !wait {

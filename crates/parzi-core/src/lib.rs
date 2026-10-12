@@ -8,7 +8,6 @@ pub mod hooks;
 pub mod paths;
 pub mod store;
 pub mod system;
-pub mod tasks;
 pub mod theme;
 pub mod urls;
 pub mod wallpaper;
