@@ -282,6 +282,29 @@ pub fn mirror_events(req: &Value) -> Value {
     })
 }
 
+/// Every task on this server, for a device's sync.
+pub fn tasks_list() -> Value {
+    match parzi_core::tasks::TaskStore::open().and_then(|s| s.all()) {
+        Ok(tasks) => json!({ "ok": true, "tasks": tasks }),
+        Err(e) => fail(e.to_string()),
+    }
+}
+
+/// A device's merged list replaces the server's (see `sync::merge_tasks`).
+pub fn tasks_replace(req: &Value) -> Value {
+    let Some(tasks) = req
+        .get("tasks")
+        .cloned()
+        .and_then(|t| serde_json::from_value::<Vec<parzi_core::tasks::Task>>(t).ok())
+    else {
+        return fail("tasks are missing or unreadable");
+    };
+    match parzi_core::tasks::TaskStore::open().and_then(|s| s.replace_all(tasks)) {
+        Ok(()) => json!({ "ok": true }),
+        Err(e) => fail(e.to_string()),
+    }
+}
+
 pub fn mirror_delete(req: &Value) -> Value {
     let device = req.get("device").and_then(Value::as_str).unwrap_or("");
     let id = req.get("id").and_then(Value::as_str).unwrap_or("");

@@ -58,6 +58,7 @@ impl Orchestrator {
             effort,
             attachments,
             approver,
+            restore_approver: false,
             prompt_recorded: false,
             inbox_from: None,
             mode_override,
@@ -120,6 +121,7 @@ impl Orchestrator {
             effort,
             attachments,
             approver,
+            restore_approver: false,
             prompt_recorded: false,
             inbox_from: None,
             mode_override,
@@ -232,8 +234,9 @@ impl Orchestrator {
             "models.list",
             "ask.user",
             "request.user",
-            "plan.write",
-            "plan.read",
+            "task.list",
+            "task.add",
+            "task.update",
             "shell.exec",
             "shell.start",
             "shell.logs",
@@ -359,6 +362,7 @@ impl Orchestrator {
                         text: format!("run failed to start: {e}"),
                     },
                 )?;
+                crate::task_tools::run_ended(&p.store, &sid, parzi_core::tasks::now_ms(), false);
                 let _ = p.bus.send((sid, RunEvent::Error(e.to_string())));
                 Err(e)
             }
@@ -417,7 +421,11 @@ impl Orchestrator {
             cfg: snap.clone(),
             store: p.store.clone(),
             tools,
-            approver: q.approver.clone().unwrap_or_else(|| Arc::new(DenyApprover)),
+            approver: q
+                .approver
+                .clone()
+                .or_else(|| q.restore_approver.then(|| p.host_approver()).flatten())
+                .unwrap_or_else(|| Arc::new(DenyApprover)),
             asker: p.asker.lock().await.clone(),
             shell: p.shells_for(&q.session_id),
             harness: Some(bridge),
@@ -452,12 +460,15 @@ impl Orchestrator {
         });
         set_run_note(&q.session_id, None);
         p.store.set_status(&q.session_id, SessionStatus::Active)?;
+        let started = parzi_core::tasks::now_ms();
+        crate::task_tools::run_started(&q.session_id);
         let end = RunEnd {
             parts: p.clone(),
             sid: q.session_id.clone(),
             id,
             done: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             cancel: cancel.clone(),
+            started,
         };
         let prompt = q.prompt.clone();
         let done = end.done.clone();
@@ -482,6 +493,8 @@ struct RunEnd {
     id: u64,
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
     cancel: CancellationToken,
+    /// When the run began (ms): tasks its agent settled after this are news.
+    started: u64,
 }
 
 impl Drop for RunEnd {
@@ -489,6 +502,7 @@ impl Drop for RunEnd {
         let (p, sid, id) = (self.parts.clone(), std::mem::take(&mut self.sid), self.id);
         let done = self.done.clone();
         let cancel = self.cancel.clone();
+        let started = self.started;
         let Ok(rt) = tokio::runtime::Handle::try_current() else {
             return;
         };
@@ -515,6 +529,15 @@ impl Drop for RunEnd {
                     }
                 }
             }
+            // A task this session worked is handed back: review, failed, or
+            // to do again when it was stopped.
+            let store = p.store.clone();
+            let stopped = cancel.is_cancelled();
+            let tasks_sid = sid.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                crate::task_tools::run_ended(&store, &tasks_sid, started, stopped);
+            })
+            .await;
             p.notify.notify_one();
         });
     }
@@ -546,10 +569,14 @@ mod tests {
             "session.read_session",
             "session.list_sessions",
             "project.create",
+            "task.list",
+            "task.add",
+            "task.update",
         ] {
             assert!(allowed.iter().any(|a| a == t), "lane missing {t}");
         }
         assert!(allowed.iter().all(|a| a != "lane.dispatch"));
+        assert!(allowed.iter().all(|a| !a.starts_with("plan.")));
     }
 
     #[test]

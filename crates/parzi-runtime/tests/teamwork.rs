@@ -462,29 +462,6 @@ fn build_host(asker: Option<Arc<dyn Asker>>) -> (ToolHost, SessionStore, String)
 }
 
 #[tokio::test]
-async fn plan_write_then_read_roundtrips() {
-    let (host, _store, _sid) = build_host(None);
-    let (ok, out) = host
-        .call(
-            "plan.write",
-            &json!({
-                "goal": "ship v1",
-                "decisions": [{"decision": "sqlite", "why": "single file"}],
-                "steps": [{"title": "migrate", "status": "doing"}],
-            }),
-        )
-        .await;
-    assert!(ok, "{out}");
-    assert!(out.contains("1 steps"), "{out}");
-    let (ok, back) = host.call("plan.read", &json!({})).await;
-    assert!(ok, "{back}");
-    assert!(
-        back.contains("ship v1") && back.contains("sqlite"),
-        "{back}"
-    );
-}
-
-#[tokio::test]
 async fn ask_user_returns_the_answer_or_says_so() {
     let (host, _store, _sid) = build_host(Some(Arc::new(Echo("blue".into()))));
     let (ok, out) = host
@@ -555,87 +532,4 @@ async fn project_create_makes_a_home() {
         folder.display().to_string(),
         "session moved there"
     );
-}
-
-#[tokio::test]
-async fn plan_deps_are_enforced_and_reported() {
-    let (host, _store, _sid) = build_host(None);
-    // Unknown need.
-    let (ok, out) = host
-        .call(
-            "plan.write",
-            &json!({
-                "goal": "deps",
-                "steps": [{"id": "b", "title": "lane B work", "needs": ["a"]}],
-            }),
-        )
-        .await;
-    assert!(!ok, "{out}");
-    assert!(out.contains("unknown step"), "{out}");
-    // Done while its need is unfinished.
-    let (ok, out) = host
-        .call(
-            "plan.write",
-            &json!({
-                "goal": "deps",
-                "lanes": [{"id": "a", "title": "Lane A"}, {"id": "b", "title": "Lane B"}],
-                "steps": [
-                    {"id": "a1", "title": "module", "lane": "a", "status": "todo"},
-                    {"id": "b1", "title": "consume it", "lane": "b", "status": "done", "needs": ["a1"]},
-                ],
-            }),
-        )
-        .await;
-    assert!(!ok, "{out}");
-    assert!(out.contains("needs unfinished"), "{out}");
-    // A circle.
-    let (ok, out) = host
-        .call(
-            "plan.write",
-            &json!({
-                "goal": "deps",
-                "steps": [
-                    {"id": "x", "title": "x", "needs": ["y"]},
-                    {"id": "y", "title": "y", "needs": ["x"]},
-                ],
-            }),
-        )
-        .await;
-    assert!(!ok, "{out}");
-    assert!(out.contains("circle"), "{out}");
-    // Valid: B waits on A, rollup says so.
-    let (ok, out) = host
-        .call(
-            "plan.write",
-            &json!({
-                "goal": "deps",
-                "lanes": [{"id": "a", "title": "Lane A"}, {"id": "b", "title": "Lane B"}],
-                "steps": [
-                    {"id": "a1", "title": "module", "lane": "a", "status": "todo"},
-                    {"id": "b1", "title": "consume it", "lane": "b", "status": "todo", "needs": ["a1"]},
-                ],
-            }),
-        )
-        .await;
-    assert!(ok, "{out}");
-    assert!(out.contains("2 lanes"), "{out}");
-    assert!(out.contains("blocked: b1 waits on a1"), "{out}");
-    // Finish A: B becomes ready.
-    let (ok, out) = host
-        .call(
-            "plan.write",
-            &json!({
-                "goal": "deps",
-                "steps": [
-                    {"id": "a1", "title": "module", "lane": "a", "status": "done"},
-                    {"id": "b1", "title": "consume it", "lane": "b", "status": "todo", "needs": ["a1"]},
-                ],
-            }),
-        )
-        .await;
-    assert!(ok, "{out}");
-    assert!(out.contains("ready: b1 [b]"), "{out}");
-    let (ok, back) = host.call("plan.read", &json!({})).await;
-    assert!(ok, "{back}");
-    assert!(back.contains("plan: 1/2 done"), "{back}");
 }

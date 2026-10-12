@@ -35,7 +35,7 @@ async fn the_tool_list_is_built_once_per_run() {
                 assert!(a.tool_names().await.iter().any(|n| n == "browser_open"));
                 assert!(a.tool_names().await.iter().all(|n| n != "ui_show_widget"));
             }
-            let (ok, out) = a.parzi("plan.read", json!({})).await;
+            let (ok, out) = a.parzi("task.list", json!({})).await;
             a.say(&format!("{ok} {out}"));
             Ok(TurnEnd::Completed)
         }),

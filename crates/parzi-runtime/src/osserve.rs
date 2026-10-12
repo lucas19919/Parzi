@@ -582,6 +582,8 @@ async fn dispatch(state: &State, req: &Value) -> Value {
         "mirror.list" => crate::hub::mirror_list(),
         "mirror.events" => crate::hub::mirror_events(req),
         "mirror.delete" => crate::hub::mirror_delete(req),
+        "tasks.list" => crate::hub::tasks_list(),
+        "tasks.replace" => crate::hub::tasks_replace(req),
         "mirror.adopt" => crate::hub::mirror_adopt(&state.orch, req),
         "project.list" => crate::hub::project_list(),
         "project.folder" => crate::hub::project_folder(req),

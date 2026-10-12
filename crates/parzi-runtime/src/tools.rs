@@ -120,7 +120,7 @@ impl ToolExecutor {
         d.extend(doc_defs());
         d.extend(team_defs());
         d.extend(question_defs());
-        d.extend(plan_defs());
+        d.extend(task_defs());
         d.extend(project_defs());
         d.extend(shell_defs());
         d.retain(|t| self.is_allowed(&t.name));
@@ -176,7 +176,7 @@ pub(crate) fn is_parzi_tool(name: &str) -> bool {
         || is_doc_tool(name)
         || is_models_tool(name)
         || is_question_tool(name)
-        || is_plan_tool(name)
+        || is_task_tool(name)
         || is_project_tool(name)
         || is_shell_tool(name)
         || is_brain_tool(name)
@@ -420,8 +420,8 @@ pub(crate) fn is_question_tool(name: &str) -> bool {
     matches!(name, "ask.user" | "request.user" | "memory.review")
 }
 
-pub(crate) fn is_plan_tool(name: &str) -> bool {
-    matches!(name, "plan.write" | "plan.read")
+pub(crate) fn is_task_tool(name: &str) -> bool {
+    matches!(name, "task.list" | "task.add" | "task.update")
 }
 
 pub(crate) fn is_project_tool(name: &str) -> bool {
@@ -469,64 +469,54 @@ fn question_defs() -> Vec<ToolDef> {
     ]
 }
 
-fn plan_defs() -> Vec<ToolDef> {
+fn task_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
-            name: "plan.write".into(),
-            description: "Write or replace this session's build plan for work that spans sessions or parallel lanes: goal, decisions with why, lanes, and steps with status. Steps take an id, an optional lane, and needs (ids of steps that must finish first). A lane B step that needs a lane A step cannot be marked done until A is done — the system enforces this. Decisions take an optional status (active/contested/retired). Set archived true to retire the plan. Read it back with plan.read when resuming.".into(),
+            name: "task.list".into(),
+            description: "List the shared task list the human also sees and edits: what is ready to start, what is blocked and on which tasks, what is in progress, in review, failed and done, each with its id and linked session. Defaults to this session's project; pass project (a slug, inbox, or all) for another.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"project": {"type": "string"}},
+            }),
+        },
+        ToolDef {
+            name: "task.add".into(),
+            description: "Add tasks to the shared task list, in this session's project unless project is given (inbox for none). Each task takes a title, optional notes (markdown), needs (ids of tasks that must be done first, or the key of another task in this same call), lane (build or work), and key (a name other tasks in this call can need). Returns the new ids. Plan work that spans sessions this way, then staff each task with session.spawn and its id.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "goal": {"type": "string"},
                     "project": {"type": "string"},
-                    "archived": {"type": "boolean"},
-                    "decisions": {
+                    "tasks": {
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "decision": {"type": "string"},
-                                "why": {"type": "string"},
-                                "status": {"type": "string"},
-                            },
-                        },
-                    },
-                    "lanes": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "id": {"type": "string"},
                                 "title": {"type": "string"},
-                                "status": {"type": "string"},
-                            },
-                            "required": ["id"],
-                        },
-                    },
-                    "steps": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "id": {"type": "string"},
-                                "title": {"type": "string"},
-                                "status": {"type": "string"},
-                                "lane": {"type": "string"},
+                                "notes": {"type": "string"},
                                 "needs": {"type": "array", "items": {"type": "string"}},
-                                "note": {"type": "string"},
+                                "lane": {"type": "string", "enum": ["build", "work"]},
+                                "key": {"type": "string"},
                             },
                             "required": ["title"],
                         },
                     },
                 },
+                "required": ["tasks"],
             }),
         },
         ToolDef {
-            name: "plan.read".into(),
-            description: "Read this session's build plan back (goal, lanes, decisions, step statuses) plus a computed rollup: what is ready, what is blocked and on what.".into(),
+            name: "task.update".into(),
+            description: "Change a task by id: status (todo, doing, review, done, failed), title, notes (replaces them), or note (adds a line to them). When you finish the task you were given, mark it done, or review when a person should check it first, or failed with a note saying what stopped you. A task cannot be done while a task it needs is still open.".into(),
             schema: serde_json::json!({
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "id": {"type": "string"},
+                    "status": {"type": "string", "enum": ["todo", "doing", "review", "done", "failed"]},
+                    "title": {"type": "string"},
+                    "notes": {"type": "string"},
+                    "note": {"type": "string"},
+                },
+                "required": ["id"],
             }),
         },
     ]
@@ -619,7 +609,7 @@ fn session_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "session.spawn".into(),
-            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder, lane, and model unless overridden. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id immediately for background work you check later with session.read_session.".into(),
+            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder, lane, and model unless overridden. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id immediately for background work you check later with session.read_session. Pass task (a task id) to staff a task: the child is linked to it and told about it, the task moves to doing, and when the child's run ends it moves to review unless the child marked it done or failed. task.list then shows the outcome, so there is no need to poll.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -630,6 +620,7 @@ fn session_defs() -> Vec<ToolDef> {
                     "effort": {"type": "string"},
                     "lane": {"type": "string"},
                     "wait": {"type": "boolean"},
+                    "task": {"type": "string"},
                 },
                 "required": ["prompt"],
             }),
@@ -686,6 +677,7 @@ fn lane_defs() -> Vec<ToolDef> {
                     "model": {"type": "string"},
                     "effort": {"type": "string"},
                     "wait": {"type": "boolean"},
+                    "task": {"type": "string"},
                 },
                 "required": ["prompt"],
             }),
@@ -835,8 +827,22 @@ pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String
                 60
             )
         ),
-        "plan.write" => "Writing the plan".into(),
-        "plan.read" => "Reading the plan".into(),
+        "task.list" => "Reading the task list".into(),
+        "task.add" => match args.get("tasks").and_then(serde_json::Value::as_array) {
+            Some(t) if t.len() > 1 => format!("Adding {} tasks", t.len()),
+            _ => "Adding a task".into(),
+        },
+        "task.update" => match str_arg("status") {
+            Some(s) => format!(
+                "Marking task {} {}",
+                one_line(&str_arg("id").unwrap_or_default(), 12),
+                one_line(&s, 12)
+            ),
+            None => format!(
+                "Updating task {}",
+                one_line(&str_arg("id").unwrap_or_default(), 12)
+            ),
+        },
         "project.create" => format!(
             "Creating project {}",
             one_line(&str_arg("title").unwrap_or_else(|| "untitled".into()), 40)
@@ -909,7 +915,7 @@ pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String
     }
 }
 
-const NAMESPACES: &[&str] = &["ui", "browser", "brain", "session", "lane"];
+const NAMESPACES: &[&str] = &["ui", "browser", "brain", "session", "lane", "task"];
 
 pub fn to_mcp(name: &str) -> String {
     name.replace('.', "_")
