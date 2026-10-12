@@ -1592,17 +1592,24 @@
   }
   /* Home: the composer sits a little above centre (.composer's hero
      bottom) and the widgets fill the space below it, 16px apart. The cards
-     line up with the composer; the padding leaves room for their shadows. */
+     are exactly as wide as the composer and scroll under it, fading out in
+     the gap; with no scrollbar, the bottom fade says there is more. The
+     side padding leaves room for their shadows. */
   .home {
     position: absolute;
-    top: calc(36% + 74px);
+    top: calc(36% + 58px);
     bottom: 0;
     left: 50%;
     z-index: 10;
-    width: calc(min(1080px, 92%) + 48px);
-    padding: 0 24px 24px;
+    width: calc(min(720px, 90%) + 48px);
+    padding: 16px 24px 32px;
     overflow-y: auto;
+    scrollbar-width: none;
+    mask-image: linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 32px), transparent);
     transform: translateX(-50%);
+  }
+  .home::-webkit-scrollbar {
+    display: none;
   }
   /* Search suggestions drop over the widgets: hide them meanwhile rather
      than leave half-covered cards peeking out. */
