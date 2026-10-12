@@ -65,12 +65,22 @@
     {
       "selector": ".panel .open .title",
       "rules": ["content-clipping"],
-      "reason": "Dock rows share the panel's width; a long session or task title ends in an ellipsis and shows in full on hover."
+      "reason": "Dock rows share the panel's width; a long session title ends in an ellipsis and shows in full on hover."
     },
     {
-      "selector": ".picker .foot .row.idle .name",
+      "selector": ".goal-card .line .text",
+      "rules": ["content-clipping"],
+      "reason": "Cards share the grid; what the agent is doing ends in an ellipsis and the goal page shows it in full."
+    },
+    {
+      "selector": ".goal-page .r-sum.clamped, .goal-page .r-sum.clamped *",
+      "rules": ["content-clipping"],
+      "reason": "A long run summary shows its first lines with Show more under it, which opens it in full."
+    },
+    {
+      "selector": ".strip .open, .strip .status, .ctx-pop .ctx-cost",
       "rules": ["text-contrast"],
-      "reason": "Reviewed: --muted on the picker's opaque --panel, the same row that passes over the composer. Opened over the Tasks board as it fades in, axe can't sample its background through the cards behind it."
+      "reason": "Reviewed: the session header's menus open over the goal strip, and axe can't sample text under or straddling them. The strip is --text and --muted on the glass, the menus opaque --panel, both at least 4.5:1."
     },
     {
       "selector": ".ob textarea",

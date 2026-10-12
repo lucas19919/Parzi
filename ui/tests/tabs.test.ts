@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { folderName, hostOf, isExplicitUrl, isSystemTab, sessionTab, pageTab, historyTab, brainTab, settingsTab, toAddress } from "../src/lib/tabs.ts";
+import { folderName, hostOf, isExplicitUrl, isSystemTab, sessionTab, pageTab, historyTab, brainTab, settingsTab, toAddress, restoreTab, workTab } from "../src/lib/tabs.ts";
 import { normLane } from "../src/lib/lanes.ts";
 
 test("hostOf strips protocol and path", () => {
@@ -39,4 +39,12 @@ test("system tabs split from working tabs", () => {
   assert.equal(isSystemTab(historyTab()), true);
   assert.equal(isSystemTab(brainTab()), true);
   assert.equal(isSystemTab(settingsTab()), true);
+  assert.equal(isSystemTab(workTab()), true);
+});
+
+test("a saved Tasks tab comes back as Work", () => {
+  assert.deepEqual(restoreTab({ id: "t1", kind: "tasks", title: "Tasks" }), { id: "t1", kind: "work", title: "Work" });
+  assert.deepEqual(restoreTab({ id: "t2", kind: "work", title: "Work" }), { id: "t2", kind: "work", title: "Work" });
+  assert.equal(restoreTab({ id: "t3", kind: "settings", title: "Settings" }), null);
+  assert.equal(restoreTab({ id: "t4", kind: "mystery", title: "?" }), null);
 });

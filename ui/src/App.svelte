@@ -25,7 +25,8 @@
   import HomeView from "./lib/HomeView.svelte";
   import PreviewView from "./lib/PreviewView.svelte";
   import BrainView from "./lib/BrainView.svelte";
-  import TasksView from "./lib/TasksView.svelte";
+  import WorkView from "./lib/WorkView.svelte";
+  import SessionStrip from "./lib/SessionStrip.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
   import RequestPopup from "./lib/RequestPopup.svelte";
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
@@ -38,9 +39,10 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, tasksTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
+  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, workTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
-  import { taskTabRequested, watchTasks } from "./lib/taskStore";
+  import { markToasted, openGoal, refreshWork, toastedRecently, watchWork, watching, work, workTabRequested } from "./lib/workStore";
+  import { placeOf } from "./lib/workModel";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
   import { covered } from "./lib/overlay";
   import type { Approval, LiveTool } from "./lib/live";
@@ -149,7 +151,7 @@
   let switcherOpen = false;
   let panelOpen = false;
   let panelW = 360;
-  let panelTab: "agents" | "projects" | "tasks" = "agents";
+  let panelTab: "agents" | "projects" | "work" = "agents";
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
   let farFromBottom = false;
@@ -286,11 +288,56 @@
     else addTab(brainTab());
   }
 
-  // One Tasks tab; openTask() (toasts, Home, the side panel) lands here too.
-  function openTasks() {
-    const existing = tabs.find((t) => t.kind === "tasks");
+  // One Work tab; openGoal() (toasts, Home, the dock, the strip) lands here too.
+  function openWork() {
+    const existing = tabs.find((t) => t.kind === "work");
     if (existing) selectTab(existing.id);
-    else addTab(tasksTab());
+    else addTab(workTab());
+  }
+
+  // The goal the shown session leads or works a step of, for the strip.
+  $: place = tab.kind === "session" ? placeOf($work.goals.filter((g) => g.status !== "archived"), shown) : null;
+  // The window shows this session: its goal finishing needs no toast.
+  $: watching.set(tab.kind === "session" ? shown : null);
+  // The strip slides in above the thread (180 ms): a thread read at its end
+  // stays there, during the slide and after it.
+  let placeKey = "";
+  $: if ((place ? `${place.goal.id}|${shown}` : "") !== placeKey) {
+    placeKey = place ? `${place.goal.id}|${shown}` : "";
+    if (nearBottom()) {
+      void scrollToBottom();
+      setTimeout(() => void scrollToBottom(), 200);
+    }
+  }
+
+  // A follow-up from a goal's page goes to its lead session, as if typed in
+  // that session's composer: its model, the effort its tab uses, the
+  // composer's permissions.
+  async function followUp(session: string, prompt: string): Promise<boolean> {
+    const m = threads.find((t) => t.id === session) ?? null;
+    const model = m?.model && m.model !== "auto" ? m.model : ($work.goals.find((g) => g.root === session)?.last?.model ?? "");
+    const effort = tabs.find((t) => t.sessionId === session)?.composer.effort ?? "medium";
+    try {
+      const sid = await api.sendMessage({
+        sessionId: session,
+        model,
+        prompt,
+        cwd: m?.cwd ?? "",
+        effort,
+        attachments: [],
+        mode: permission,
+        lane: normLane(m?.lane ?? "") || "build",
+        remote: isRemote(session),
+      });
+      running = new Set(running).add(sid);
+      void refreshThreads();
+      if (shown === session) void reload();
+      toast(`Sent to ${m?.title || "the lead agent"}`);
+      return true;
+    } catch (e) {
+      toastError(e);
+      return false;
+    }
   }
 
   // Set up Parzi, opened straight at its Remote step.
@@ -938,19 +985,25 @@
       chime(false);
       return;
     }
-    if (e.kind === "done" || e.kind === "error") {
+    if (e.kind === "done" || e.kind === "error" || e.kind === "paused") {
       running.delete(e.session);
       running = running;
       approvals = approvals.filter((a) => a.session !== e.session);
       questions = questions.filter((q) => q.session !== e.session);
       requests = requests.filter((r) => r.session !== e.session);
       void refreshThreads();
+      const title = threads.find((t) => t.id === e.session)?.title || "Agent";
       if (e.session === shown) {
         flushLive();
         clearLive();
         void reload();
-      } else {
-        const title = threads.find((t) => t.id === e.session)?.title || "Agent";
+        if (e.kind === "paused") toast("Paused: budget");
+      } else if (e.kind === "paused") {
+        notify(`Paused: budget. ${title}`, e.session);
+        chime(false);
+      } else if (!toastedRecently(e.session) && !$work.goals.some((g) => g.root === e.session && g.running.includes(e.session))) {
+        // A goal's lead run says so itself when its goal settles (workStore).
+        markToasted(e.session);
         notify(e.kind === "done" ? `${title} finished` : `${title} stopped`, e.session);
         chime(e.kind === "done");
       }
@@ -984,7 +1037,7 @@
     else if (name === "ctrl+w") closeTab(activeId);
     else if (name === "ctrl+comma") tab.kind === "settings" ? closeTab(activeId) : openSettings();
     else if (name === "ctrl+b") openBrain();
-    else if (name === "ctrl+j") openTasks();
+    else if (name === "ctrl+j") openWork();
     else if (name === "ctrl+h") openHistory();
     else if (name === "ctrl+shift+a") {
       panelTab = "agents";
@@ -1072,7 +1125,7 @@
     } else if (cmd.what === "settings") openSettings(cmd.section || "general");
     else if (cmd.what === "brain") openBrain(cmd.path ?? "");
     else if (cmd.what === "history") openHistory(cmd.view ?? "sessions");
-    else if (cmd.what === "tasks") openTasks();
+    else if (cmd.what === "work" || cmd.what === "tasks") openWork();
     else if (cmd.what === "home") goHome();
   }
 
@@ -1116,13 +1169,13 @@
       .then((list) => downloadList.set(list))
       .catch(() => {});
     let brainSeen = 0;
-    const unTasks = watchTasks();
-    let tasksSeen = 0;
-    const unTaskTab = taskTabRequested.subscribe((n) => {
-      if (n > 0 && n !== tasksSeen) {
-        tasksSeen = n;
+    const unWork = watchWork();
+    let workSeen = 0;
+    const unWorkTab = workTabRequested.subscribe((n) => {
+      if (n > 0 && n !== workSeen) {
+        workSeen = n;
         if (immersive) void setImmersive(false);
-        openTasks();
+        openWork();
       }
     });
     const unBrain = brainTabRequested.subscribe((n) => {
@@ -1161,11 +1214,15 @@
       else if (s.state === "error") toast(s.detail, true);
       if (s.state === "up" || s.state === "resync" || s.state === "ready") {
         void refreshThreads();
+        void refreshWork();
         if (remoteOn) void refreshRemoteBoard().catch(() => {});
         if (isRemote(shown)) void reload();
       }
       // Another device's sessions and the shared settings arrive by sync.
-      if (s.state === "synced") void refreshThreads();
+      if (s.state === "synced") {
+        void refreshThreads();
+        void refreshWork();
+      }
       if (s.state === "settings") {
         void api
           .getConfig()
@@ -1188,8 +1245,8 @@
     })();
     return () => {
       unBrain();
-      unTasks();
-      unTaskTab();
+      unWork();
+      unWorkTab();
       unClear();
       document.removeEventListener("parzi:default-mode", onDefaultMode);
       unRun.then((f) => f()).catch(() => {});
@@ -1224,7 +1281,7 @@
       on:update={() => openSettings("system")}
       on:brain={openBrain}
       on:history={() => openHistory()}
-      on:tasks={() => openTasks()}
+      on:work={() => openWork()}
       on:setup={openSetup}
     />
   {/if}
@@ -1252,10 +1309,10 @@
         <PanelHeader title="Brain" on:close={() => closeTab(activeId)} />
         <BrainView />
       </div>
-    {:else if tab.kind === "tasks"}
+    {:else if tab.kind === "work"}
       <div class="fill col" in:fade={{ duration: 150 }}>
-        <PanelHeader title="Tasks" on:close={() => closeTab(activeId)} />
-        <TasksView {threads} {running} on:openSession={(e) => openSession(e.detail.id)} />
+        <PanelHeader title="Work" on:close={() => closeTab(activeId)} />
+        <WorkView {threads} {running} {followUp} on:openSession={(e) => openSession(e.detail.id)} on:newSession={newSession} />
       </div>
     {:else if tab.kind === "history"}
       <div class="fill col" in:fade={{ duration: 150 }}>
@@ -1317,6 +1374,9 @@
               panelOpen = !panelOpen;
             }}
           />
+          {#if place}
+            <SessionStrip {place} on:open={(e) => openGoal(e.detail.id)} />
+          {/if}
           <div class="workarea">
             <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl} on:scroll={() => (farFromBottom = !nearBottom())}>
               <Thread
@@ -1445,7 +1505,7 @@
     on:setup={openSetup}
     on:brain={openBrain}
     on:history={() => openHistory()}
-    on:tasks={() => openTasks()}
+    on:work={() => openWork()}
   />
 
   {#if setupOpen}

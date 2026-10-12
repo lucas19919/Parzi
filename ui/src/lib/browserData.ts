@@ -1,7 +1,7 @@
 import { writable, type Writable } from "svelte/store";
 import { iconFor, rememberIcon, type Closed } from "./pageRules";
 import { bare } from "./suggest";
-import type { Tab } from "./tabs";
+import { restoreTab, type Tab } from "./tabs";
 import { toast } from "./toast";
 
 export interface Visit {
@@ -113,7 +113,7 @@ export function saveTabs(tabs: Tab[], active: string) {
 export function loadTabs(): { tabs: Tab[]; active: string } | null {
   const saved = read<{ tabs: Tab[]; active: string } | null>(TABS_KEY, null);
   if (!saved || !Array.isArray(saved.tabs) || !saved.tabs.length) return null;
-  const tabs = saved.tabs.filter((t) => t && typeof t.id === "string" && (t.kind === "session" || t.kind === "page" || t.kind === "brain" || t.kind === "history" || t.kind === "tasks"));
+  const tabs = saved.tabs.flatMap((t) => (t && typeof t.id === "string" ? (restoreTab(t) ?? []) : []));
   if (!tabs.length) return null;
   return { tabs, active: tabs.some((t) => t.id === saved.active) ? saved.active : tabs[0].id };
 }

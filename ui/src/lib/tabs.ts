@@ -1,5 +1,5 @@
 export type ComposerMode = "search" | "build" | "work";
-type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview" | "tasks";
+type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview" | "work";
 
 export interface TabComposerState {
   input: string;
@@ -59,8 +59,17 @@ export function brainTab(): Tab {
   return { id: tabId(), kind: "brain", title: "Brain", composer: defaultComposer() };
 }
 
-export function tasksTab(): Tab {
-  return { id: tabId(), kind: "tasks", title: "Tasks", composer: defaultComposer() };
+export function workTab(): Tab {
+  return { id: tabId(), kind: "work", title: "Work", composer: defaultComposer() };
+}
+
+const RESTORED = new Set(["session", "page", "brain", "history", "work"]);
+
+/// A saved tab as it comes back, or null for kinds that don't reopen. The
+/// Tasks tab of 0.1.27 builds reopens as Work, which replaced it.
+export function restoreTab<T extends { kind?: unknown; title?: unknown }>(t: T): T | null {
+  if (t.kind === "tasks") return { ...t, kind: "work", title: "Work" } as T;
+  return typeof t.kind === "string" && RESTORED.has(t.kind) ? t : null;
 }
 
 export function settingsTab(): Tab {
@@ -97,7 +106,7 @@ export function folderName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-/// Brain/history/settings/preview/tasks live apart from working tabs.
+/// Brain/history/settings/preview/work live apart from working tabs.
 export function isSystemTab(t: Tab): boolean {
   return t.kind !== "session" && t.kind !== "page";
 }
