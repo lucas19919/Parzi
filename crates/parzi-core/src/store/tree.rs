@@ -19,6 +19,9 @@ pub fn subtree_ids(all: &[SessionMeta], root: &str) -> HashSet<String> {
     out
 }
 
+/// Finished sessions and everything under them, except what a live run
+/// still needs: a running or queued session stays, and so does every
+/// ancestor of one (the parent it reports to, its links, its folder).
 pub fn cascade_kill_ids(all: &[SessionMeta]) -> HashSet<String> {
     let by_parent = children_map(all);
     let done: HashSet<&str> = all
@@ -37,6 +40,24 @@ pub fn cascade_kill_ids(all: &[SessionMeta]) -> HashSet<String> {
             }
         }
     }
+    let parent_of: HashMap<&str, Option<&str>> = all
+        .iter()
+        .map(|m| (m.id.as_str(), m.parent_id.as_deref()))
+        .collect();
+    let mut keep: HashSet<&str> = HashSet::new();
+    for live in all
+        .iter()
+        .filter(|m| matches!(m.status, SessionStatus::Active | SessionStatus::Queued))
+    {
+        let mut cur = Some(live.id.as_str());
+        while let Some(id) = cur {
+            if !keep.insert(id) {
+                break;
+            }
+            cur = parent_of.get(id).copied().flatten();
+        }
+    }
+    kill.retain(|id| !keep.contains(id.as_str()));
     kill
 }
 

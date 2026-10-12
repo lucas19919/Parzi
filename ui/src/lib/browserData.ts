@@ -113,7 +113,7 @@ export function saveTabs(tabs: Tab[], active: string) {
 export function loadTabs(): { tabs: Tab[]; active: string } | null {
   const saved = read<{ tabs: Tab[]; active: string } | null>(TABS_KEY, null);
   if (!saved || !Array.isArray(saved.tabs) || !saved.tabs.length) return null;
-  const tabs = saved.tabs.filter((t) => t && typeof t.id === "string" && (t.kind === "session" || t.kind === "page" || t.kind === "brain" || t.kind === "history"));
+  const tabs = saved.tabs.filter((t) => t && typeof t.id === "string" && (t.kind === "session" || t.kind === "page" || t.kind === "brain" || t.kind === "history" || t.kind === "tasks"));
   if (!tabs.length) return null;
   return { tabs, active: tabs.some((t) => t.id === saved.active) ? saved.active : tabs[0].id };
 }

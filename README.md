@@ -36,7 +36,7 @@ GUI: `cd ui; npm install; npm run build`, then `cargo tauri dev` in `src-tauri`
 (requires `cargo install tauri-cli --locked`).
 
 UI without the app: `npm run dev` in `ui`, then open
-`http://localhost:1420/mock.html` (a fake backend; `?view=home|session|brain|history|settings|setup`,
+`http://localhost:1420/mock.html` (a fake backend; `?view=home|session|brain|history|tasks|settings|setup`,
 `&turns=300` for a long thread). With that running, `npm run lint:ui` checks every view and its
 menus against `ui/ui-policy.json` with [lintapple](https://github.com/gholtzap/lintapple): the type
 scale, contrast, control size and spacing, labels and tooltips. Exceptions in the policy carry
@@ -53,6 +53,15 @@ their reason.
 - **Home** is where a new tab lands: the composer, pinned sites (pin any page
   from its toolbar; until you do, your most visited sites show), and recent
   sessions.
+- **Tasks** (`Ctrl+J`) is one list across your projects that you and your
+  agents share: To do, Doing, Review and Done, filtered by project (or the
+  Inbox). Add and check off tasks by hand, say what a task needs first, and
+  start an agent on one with the model and permissions you pick; when its run
+  ends the task moves to Review (or Done or Failed, if the agent said so) and a
+  notification takes you to it. Agents plan with the same tasks
+  (`task.list`, `task.add`, `task.update`) and staff them with
+  `session.spawn`. Tasks live in `~/.parzi/tasks`, one file per project, and
+  sync with your ParziOS server.
 - **Set up Parzi** (first launch, or the menu) signs you in to each agent with
   its own login, imports Brave/Chrome/Edge bookmarks and history (never
   passwords or cookies), and turns your other agents' instructions, memories

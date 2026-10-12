@@ -2,7 +2,7 @@ use parzi_core::context::{InterKind, InterSessionMessage};
 use parzi_core::error::{ParziError, Result};
 use parzi_core::store::{Event, SessionMeta, SessionStatus};
 
-use crate::handler::HarnessBridge;
+use crate::handler::{HarnessBridge, SpawnSpec};
 use crate::inter;
 use crate::tools::clip;
 
@@ -108,31 +108,37 @@ fn run_outcome(events: &[Event]) -> String {
     format!("{shell}, {artifacts} artifacts, {errors} errors")
 }
 
-#[async_trait::async_trait]
-impl HarnessBridge for Pump {
-    async fn spawn_session(
-        &self,
-        caller_id: &str,
-        title: &str,
-        prompt: &str,
-        is_subsession: bool,
-        model: Option<String>,
-        lane: Option<String>,
-        wait: bool,
-        mode_override: Option<String>,
-        effort: Option<String>,
-    ) -> Result<String> {
+impl Pump {
+    /// A child session, staffed on a task when the spec names one: the task
+    /// is linked and moved to doing before the child can start, so its run
+    /// end always finds it.
+    async fn spawn_child(&self, caller_id: &str, spec: SpawnSpec) -> Result<String> {
+        let SpawnSpec {
+            title,
+            prompt,
+            is_subsession,
+            model,
+            lane,
+            wait,
+            mode_override,
+            effort,
+            task,
+        } = spec;
         let caller = self.store.get(caller_id)?;
-        let title: String = if title.trim().is_empty() {
-            prompt
+        let task = match task {
+            Some(id) => Some(parzi_core::tasks::TaskStore::open()?.get(&id)?),
+            None => None,
+        };
+        let title: String = match (title.trim(), &task) {
+            ("", Some(t)) => t.title.chars().take(80).collect(),
+            ("", None) => prompt
                 .lines()
                 .next()
                 .unwrap_or("subsession")
                 .chars()
                 .take(80)
-                .collect()
-        } else {
-            title.chars().take(80).collect()
+                .collect(),
+            (t, _) => t.chars().take(80).collect(),
         };
         let model_spec = model.unwrap_or_else(|| caller.model.clone());
         let lane_name = lane.unwrap_or_else(|| caller.lane.clone());
@@ -149,21 +155,45 @@ impl HarnessBridge for Pump {
         if !caller.cwd.is_empty() {
             let _ = self.store.set_cwd(&meta.id, &caller.cwd);
         }
+        let prompt = match &task {
+            Some(t) => match crate::task_tools::link(&t.id, &meta.id) {
+                Ok(linked) => {
+                    let scope = parzi_core::tasks::TaskStore::open()?
+                        .scope(linked.project.as_deref())
+                        .unwrap_or_default();
+                    format!("{prompt}\n\n{}", crate::task_tools::brief(&linked, &scope))
+                }
+                Err(e) => {
+                    let _ = self.store.set_status(&meta.id, SessionStatus::Idle);
+                    return Err(e);
+                }
+            },
+            None => prompt,
+        };
         let q = QueuedRun {
             session_id: meta.id.clone(),
             project: caller.project.clone(),
             lane: lane_name,
             model_spec,
-            prompt: prompt.to_string(),
+            prompt,
             cwd: caller.cwd.clone(),
             effort: normalize_effort(&effort.unwrap_or_default()),
             attachments: vec![],
             approver: None,
+            restore_approver: false,
             prompt_recorded: false,
             inbox_from: None,
             mode_override,
         };
         let launched = self.dispatch(q).await;
+        if !launched && !self.cfg_snapshot().orchestrator.queue_when_busy {
+            // Nothing will run it: stand it down, and its task is to do
+            // again instead of stuck in doing.
+            let _ = self.store.set_status(&meta.id, SessionStatus::Idle);
+            if task.is_some() {
+                crate::task_tools::runs_interrupted(std::slice::from_ref(&meta.id));
+            }
+        }
         let meta = self.store.get(&meta.id)?;
         // Say it now instead of a mute child discovered 180s later.
         let crippled_note = "child runs Ask with no approver: approval-gated tools are denied. Staff autonomous work from a Full session.";
@@ -207,6 +237,42 @@ impl HarnessBridge for Pump {
             })
             .to_string()),
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl HarnessBridge for Pump {
+    async fn spawn(&self, caller_id: &str, spec: SpawnSpec) -> Result<String> {
+        self.spawn_child(caller_id, spec).await
+    }
+
+    async fn spawn_session(
+        &self,
+        caller_id: &str,
+        title: &str,
+        prompt: &str,
+        is_subsession: bool,
+        model: Option<String>,
+        lane: Option<String>,
+        wait: bool,
+        mode_override: Option<String>,
+        effort: Option<String>,
+    ) -> Result<String> {
+        self.spawn_child(
+            caller_id,
+            SpawnSpec {
+                title: title.to_string(),
+                prompt: prompt.to_string(),
+                is_subsession,
+                model,
+                lane,
+                wait,
+                mode_override,
+                effort,
+                task: None,
+            },
+        )
+        .await
     }
 
     async fn send_message(
@@ -263,6 +329,7 @@ impl HarnessBridge for Pump {
             effort: normalize_effort(&effort.unwrap_or_default()),
             attachments: vec![],
             approver: None,
+            restore_approver: false,
             prompt_recorded: true,
             mode_override: None,
             inbox_from: Some(at),

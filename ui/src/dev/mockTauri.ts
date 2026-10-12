@@ -5,7 +5,7 @@
 import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 
 const params = new URLSearchParams(location.search);
-// ?view=home | session | settings | brain | history | setup (default: session)
+// ?view=home | session | settings | brain | history | tasks | setup (default: session)
 const view = params.get("view") ?? "session";
 // ?turns=N sizes the open session's transcript (default 40).
 // ?bg=1 shows a wallpaper, served at http://asset.localhost/ (route it to a file).
@@ -121,7 +121,89 @@ const downloadsList = [
   { id: "d3", tab: "t", url: "https://example.com/old.iso", name: "old.iso", path: "C:\\Users\\dev\\Downloads\\old.iso", received: 0, total: 0, state: "failed", started: now - 90_000_000 },
 ];
 
+// The shared task list, kept in memory so the Tasks view's edits stick.
+type MockTask = {
+  id: string;
+  title: string;
+  notes: string;
+  status: string;
+  project: string | null;
+  needs: string[];
+  lane: string;
+  session: string | null;
+  created: number;
+  updated: number;
+  created_by: string;
+  order: number;
+};
+let taskSeq = 0;
+const mkTask = (title: string, over: Partial<MockTask> = {}): MockTask => ({
+  id: `t${(++taskSeq).toString(36)}mk`,
+  title,
+  notes: "",
+  status: "todo",
+  project: "parzi",
+  needs: [],
+  lane: "",
+  session: null,
+  created: now - taskSeq * 3_600_000,
+  updated: now - taskSeq * 600_000,
+  created_by: "you",
+  order: taskSeq,
+  ...over,
+});
+const parser = mkTask("Write the task parser", { lane: "build", notes: "Parse ids, needs and lanes.\n\nKeep the old plan files readable." });
+const taskList: MockTask[] = [
+  parser,
+  mkTask("Wire the Tasks view to the store", { needs: [parser.id] }),
+  mkTask("Refactor the sync hub", { status: "doing", session: "s3", lane: "build", created_by: "s1" }),
+  mkTask("Draft release notes", { status: "review", session: "s4", lane: "work" }),
+  mkTask("Fix the flaky queue test", { status: "failed", notes: "The run stopped: budget reached." }),
+  mkTask("Bump versions", { status: "done" }),
+  mkTask("Read the compilers chapter", { project: null, lane: "work" }),
+  mkTask("Outline chapter two", { project: "thesis" }),
+];
+function taskViews() {
+  return taskList.map((t) => {
+    const blocked_by = t.status === "done" ? [] : t.needs.filter((n) => taskList.find((x) => x.id === n)?.status !== "done");
+    return { ...t, ready: t.status === "todo" && !blocked_by.length, blocked_by };
+  });
+}
+const sameScope = (a: string | null, b: string | null) => (a ?? "").toLowerCase() === (b ?? "").toLowerCase();
+
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
+  tasks_list: (a) => taskViews().filter((t) => a.all || sameScope(t.project, (a.project as string | null) ?? null)),
+  tasks_create: (a) => {
+    const t = mkTask(String(a.title), { project: (a.project as string | null) || null, notes: String(a.notes ?? ""), created: Date.now(), updated: Date.now() });
+    taskList.push(t);
+    return taskViews().find((x) => x.id === t.id);
+  },
+  tasks_update: (a) => {
+    const t = taskList.find((x) => x.id === a.id);
+    if (!t) throw new Error(`no task ${a.id}`);
+    const p = a.patch as Partial<MockTask> & { project?: string; session?: string };
+    Object.assign(t, p, { updated: Date.now() });
+    if (p.project !== undefined) t.project = p.project || null;
+    if (p.session !== undefined) t.session = p.session || null;
+    return taskViews().find((x) => x.id === t.id);
+  },
+  tasks_delete: (a) => {
+    const at = taskList.findIndex((x) => x.id === a.id);
+    if (at >= 0) taskList.splice(at, 1);
+    return null;
+  },
+  tasks_reorder: (a) => {
+    (a.ids as string[]).forEach((id, i) => {
+      const t = taskList.find((x) => x.id === id);
+      if (t) t.order = i;
+    });
+    return null;
+  },
+  tasks_assign: (a) => {
+    const t = taskList.find((x) => x.id === a.id);
+    if (t) Object.assign(t, { status: "doing", session: "s3" });
+    return { session: "s3", warning: "It will ask before it edits files or runs commands. Approvals show up in its session, so keep an eye out." };
+  },
   app_version: () => "0.1.25-dev",
   list_threads: () => sessions,
   get_thread: (a) => [sessions.find((s) => s.id === a.id) ?? sessions[0], transcript()],
@@ -189,10 +271,11 @@ try {
   const tabs = [tab("t-home", "session", "New session"), tab("t-s1", "session", sessions[0].title, "s1"), tab("t-s2", "session", sessions[1].title, "s2")];
   if (view === "brain") tabs.push(tab("t-brain", "brain", "Brain"));
   if (view === "history") tabs.push(tab("t-history", "history", "History"));
+  if (view === "tasks") tabs.push(tab("t-tasks", "tasks", "Tasks"));
   // ?view=page: a web page tab (no native page here), asking for the camera.
   const saved: unknown[] = [...tabs];
   if (view === "page") saved.push({ id: "t-page", kind: "page", title: "Example", url: "https://example.com/" });
-  const active = { home: "t-home", session: "t-s1", brain: "t-brain", history: "t-history", page: "t-page" }[view] ?? "t-s1";
+  const active = { home: "t-home", session: "t-s1", brain: "t-brain", history: "t-history", tasks: "t-tasks", page: "t-page" }[view] ?? "t-s1";
   localStorage.setItem("parzi.tabs.v1", JSON.stringify({ tabs: saved, active }));
   const sites = [
     ["https://github.com/lucas19919/Parzi", "Parzi on GitHub"],

@@ -72,8 +72,45 @@ impl RunSink {
     }
 }
 
+/// A child session to start, as `HarnessBridge::spawn` takes it.
+#[derive(Debug, Clone, Default)]
+pub struct SpawnSpec {
+    pub title: String,
+    pub prompt: String,
+    pub is_subsession: bool,
+    pub model: Option<String>,
+    pub lane: Option<String>,
+    pub wait: bool,
+    pub mode_override: Option<String>,
+    pub effort: Option<String>,
+    /// A task the child works: linked (and moved to doing) before it starts.
+    pub task: Option<String>,
+}
+
 #[async_trait::async_trait]
 pub trait HarnessBridge: Send + Sync {
+    /// `spawn_session` plus an optional task. Bridges that know no tasks
+    /// refuse one rather than start an unlinked child.
+    async fn spawn(&self, caller_id: &str, spec: SpawnSpec) -> Result<String> {
+        if spec.task.is_some() {
+            return Err(parzi_core::ParziError::Validation(
+                "tasks are not available in this run".into(),
+            ));
+        }
+        self.spawn_session(
+            caller_id,
+            &spec.title,
+            &spec.prompt,
+            spec.is_subsession,
+            spec.model,
+            spec.lane,
+            spec.wait,
+            spec.mode_override,
+            spec.effort,
+        )
+        .await
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn spawn_session(
         &self,

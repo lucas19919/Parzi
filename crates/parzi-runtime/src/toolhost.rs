@@ -12,11 +12,11 @@ use parzi_providers::{PermissionDecision, PermissionGate, PermissionRequest};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::handler::{HarnessBridge, RunEvent, RunSink};
+use crate::handler::{HarnessBridge, RunEvent, RunSink, SpawnSpec};
 use crate::tools::{
     clip, display_name, is_brain_tool, is_browser_tool, is_doc_tool, is_image_tool, is_lane_tool,
-    is_models_tool, is_plan_tool, is_project_tool, is_question_tool, is_session_tool,
-    is_shell_tool, is_ui_tool, Approval, ApprovalMode, Approver, AskRequest, Asker, ToolCallInfo,
+    is_models_tool, is_project_tool, is_question_tool, is_session_tool, is_shell_tool,
+    is_task_tool, is_ui_tool, Approval, ApprovalMode, Approver, AskRequest, Asker, ToolCallInfo,
     ToolDef, ToolExecutor,
 };
 
@@ -273,185 +273,6 @@ fn execute_brain(name: &str, args: &Value) -> (bool, String) {
         Ok(text) => (true, text),
         Err(e) => (false, e.to_string()),
     }
-}
-
-/// Formal plans: steps have stable ids, an optional lane, and needs.
-/// Done-steps with unfinished needs, unknown needs, and cycles are rejected.
-fn plan_step_id(step: &Value, index: usize) -> String {
-    step.get("id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("s{}", index + 1))
-}
-
-fn plan_step_done(step: &Value) -> bool {
-    step.get("status")
-        .and_then(Value::as_str)
-        .is_some_and(|s| s.trim().eq_ignore_ascii_case("done"))
-}
-
-fn plan_needs(step: &Value) -> Vec<String> {
-    step.get("needs")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn validate_plan(args: &Value) -> std::result::Result<(), String> {
-    let steps = args
-        .get("steps")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let ids: Vec<String> = steps
-        .iter()
-        .enumerate()
-        .map(|(i, s)| plan_step_id(s, i))
-        .collect();
-    let mut seen = std::collections::HashSet::new();
-    for id in &ids {
-        if !seen.insert(id) {
-            return Err(format!("plan step id `{id}` is used twice"));
-        }
-    }
-    let by_id: std::collections::HashMap<&str, &Value> = ids
-        .iter()
-        .zip(steps.iter())
-        .map(|(id, s)| (id.as_str(), s))
-        .collect();
-    for (id, step) in ids.iter().zip(steps.iter()) {
-        for need in plan_needs(step) {
-            if !by_id.contains_key(need.as_str()) {
-                return Err(format!("plan step `{id}` needs unknown step `{need}`"));
-            }
-        }
-    }
-    // Cycle check (iterative DFS over step indices).
-    let pos: std::collections::HashMap<&str, usize> = ids
-        .iter()
-        .enumerate()
-        .map(|(i, id)| (id.as_str(), i))
-        .collect();
-    let mut color = vec![0u8; steps.len()];
-    for start in 0..steps.len() {
-        if color[start] != 0 {
-            continue;
-        }
-        let mut stack: Vec<(usize, bool)> = vec![(start, false)];
-        while let Some((i, closing)) = stack.pop() {
-            if closing {
-                color[i] = 2;
-                continue;
-            }
-            if color[i] == 2 {
-                continue;
-            }
-            if color[i] == 1 {
-                return Err(format!(
-                    "plan steps depend in a circle through `{}`",
-                    ids[i]
-                ));
-            }
-            color[i] = 1;
-            stack.push((i, true));
-            for need in plan_needs(&steps[i]) {
-                if let Some(&j) = pos.get(need.as_str()) {
-                    stack.push((j, false));
-                }
-            }
-        }
-    }
-    // Done-gating: a done step's needs must all be done.
-    for (id, step) in ids.iter().zip(steps.iter()) {
-        if plan_step_done(step) {
-            let open: Vec<String> = plan_needs(step)
-                .into_iter()
-                .filter(|n| !by_id.get(n.as_str()).is_some_and(|s| plan_step_done(s)))
-                .collect();
-            if !open.is_empty() {
-                return Err(format!(
-                    "plan step `{id}` is marked done but needs unfinished: {}",
-                    open.join(", ")
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Computed rollup appended to plan reads and write replies.
-fn plan_rollup(args: &Value) -> String {
-    let steps = args
-        .get("steps")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    if steps.is_empty() {
-        return String::new();
-    }
-    let ids: Vec<String> = steps
-        .iter()
-        .enumerate()
-        .map(|(i, s)| plan_step_id(s, i))
-        .collect();
-    let by_id: std::collections::HashMap<&str, &Value> = ids
-        .iter()
-        .zip(steps.iter())
-        .map(|(id, s)| (id.as_str(), s))
-        .collect();
-    let lane_of = |s: &Value| {
-        s.get("lane")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .map(str::to_string)
-    };
-    let mut ready: Vec<String> = vec![];
-    let mut blocked: Vec<(&str, Vec<String>)> = vec![];
-    let mut done = 0;
-    for (id, step) in ids.iter().zip(steps.iter()) {
-        if plan_step_done(step) {
-            done += 1;
-            continue;
-        }
-        let open: Vec<String> = plan_needs(step)
-            .into_iter()
-            .filter(|n| !by_id.get(n.as_str()).is_some_and(|s| plan_step_done(s)))
-            .collect();
-        let label = match lane_of(step) {
-            Some(l) => format!("{id} [{l}]"),
-            None => id.clone(),
-        };
-        if open.is_empty() {
-            ready.push(label);
-        } else {
-            blocked.push((id.as_str(), open));
-        }
-    }
-    let mut out = format!("\nplan: {done}/{} done", steps.len());
-    if args
-        .get("archived")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        out.push_str(" (archived)");
-    }
-    if !ready.is_empty() {
-        out.push_str(&format!("\nready: {}", ready.join(", ")));
-    }
-    for (id, open) in blocked {
-        out.push_str(&format!("\nblocked: {id} waits on {}", open.join(", ")));
-    }
-    out
 }
 
 fn note_line(n: &brain::NoteMeta, projects: bool) -> String {
@@ -752,8 +573,9 @@ impl ToolHost {
                 | "models.list"
                 | "ask.user"
                 | "request.user"
-                | "plan.write"
-                | "plan.read"
+                | "task.list"
+                | "task.add"
+                | "task.update"
                 | "session.spawn"
                 | "session.send_message"
                 | "session.read_session"
@@ -876,18 +698,22 @@ impl ToolHost {
             }
             return self.execute_image(args).await;
         }
-        if is_question_tool(name) || is_plan_tool(name) {
+        if is_task_tool(name) {
+            // Parzi's own list, which the human sees: allowlist only.
             if !self.p.tools.is_allowed(name) {
                 return (
                     false,
                     format!("tool `{name}` denied (lane mode / approver)"),
                 );
             }
-            if name == "plan.read" {
-                return self.execute_plan_read().await;
-            }
-            if name == "plan.write" {
-                return self.execute_plan_write(args).await;
+            return crate::task_tools::execute(&self.p.store, &self.p.session_id, name, args).await;
+        }
+        if is_question_tool(name) {
+            if !self.p.tools.is_allowed(name) {
+                return (
+                    false,
+                    format!("tool `{name}` denied (lane mode / approver)"),
+                );
             }
             if name == "memory.review" {
                 return self.execute_memory_review(id, args).await;
@@ -1123,17 +949,24 @@ impl ToolHost {
                 if prompt.trim().is_empty() {
                     return (false, "session.spawn needs a `prompt`".into());
                 }
+                let task = match self.task_to_staff(args).await {
+                    Ok(t) => t,
+                    Err(e) => return (false, e),
+                };
                 bridge
-                    .spawn_session(
+                    .spawn(
                         sid,
-                        &title,
-                        &prompt,
-                        bool_arg("is_subsession", true),
-                        str_arg("model").filter(|s| !s.trim().is_empty()),
-                        self.child_lane(str_arg("lane")),
-                        bool_arg("wait", true),
-                        self.child_mode(),
-                        str_arg("effort").filter(|s| !s.trim().is_empty()),
+                        SpawnSpec {
+                            title,
+                            prompt,
+                            is_subsession: bool_arg("is_subsession", true),
+                            model: str_arg("model").filter(|s| !s.trim().is_empty()),
+                            lane: self.child_lane(str_arg("lane")),
+                            wait: bool_arg("wait", true),
+                            mode_override: self.child_mode(),
+                            effort: str_arg("effort").filter(|s| !s.trim().is_empty()),
+                            task,
+                        },
                     )
                     .await
             }
@@ -1205,17 +1038,24 @@ impl ToolHost {
         }
         let lane = self.child_lane(str_arg("lane"));
         let wait = args.get("wait").and_then(Value::as_bool).unwrap_or(true);
+        let task = match self.task_to_staff(args).await {
+            Ok(t) => t,
+            Err(e) => return (false, e),
+        };
         match bridge
-            .spawn_session(
+            .spawn(
                 &self.p.session_id,
-                &title,
-                &prompt,
-                true,
-                str_arg("model").filter(|s| !s.trim().is_empty()),
-                lane,
-                wait,
-                self.child_mode(),
-                str_arg("effort").filter(|s| !s.trim().is_empty()),
+                SpawnSpec {
+                    title,
+                    prompt,
+                    is_subsession: true,
+                    model: str_arg("model").filter(|s| !s.trim().is_empty()),
+                    lane,
+                    wait,
+                    mode_override: self.child_mode(),
+                    effort: str_arg("effort").filter(|s| !s.trim().is_empty()),
+                    task,
+                },
             )
             .await
         {
@@ -1262,6 +1102,25 @@ impl ToolHost {
             out.push_str(&format!("\n- {lane}: {}", runs.join("; ")));
         }
         out
+    }
+
+    /// The task a spawn staffs, checked: this session may hand it out, it
+    /// is not done, and nothing it needs is still open.
+    async fn task_to_staff(&self, args: &Value) -> std::result::Result<Option<String>, String> {
+        let Some(id) = args
+            .get("task")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+        else {
+            return Ok(None);
+        };
+        let (store, sid) = (self.p.store.clone(), self.p.session_id.clone());
+        tokio::task::spawn_blocking(move || crate::task_tools::staffable(&store, &sid, &id))
+            .await
+            .map_err(|e| e.to_string())?
+            .map(|t| Some(t.id))
     }
 
     /// Lane a child runs in. Work children stay work: a build child would
@@ -1527,71 +1386,6 @@ impl ToolHost {
             };
         }
         (true, format!("kept {note_path}: {answer}"))
-    }
-
-    fn plan_path(&self) -> std::result::Result<PathBuf, String> {
-        let dir = parzi_core::paths::sessions_dir()
-            .map(|d| d.join(&self.p.session_id))
-            .map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(&dir).map_err(|e| format!("cannot keep a plan: {e}"))?;
-        Ok(dir.join("plan.json"))
-    }
-
-    async fn execute_plan_read(&self) -> (bool, String) {
-        let path = match self.plan_path() {
-            Ok(p) => p,
-            Err(e) => return (false, e.to_string()),
-        };
-        match std::fs::read_to_string(&path) {
-            Ok(text) if !text.trim().is_empty() => {
-                let mut out = text;
-                out.push_str(&plan_rollup(
-                    &serde_json::from_str(&out).unwrap_or_default(),
-                ));
-                (true, out)
-            }
-            _ => (true, "no plan on file.".into()),
-        }
-    }
-
-    async fn execute_plan_write(&self, args: &Value) -> (bool, String) {
-        if !args.is_object() {
-            return (
-                false,
-                "plan.write needs an object with goal, decisions, steps".into(),
-            );
-        }
-        // Formal plans: done-steps with unfinished needs are rejected here.
-        if let Err(e) = validate_plan(args) {
-            return (false, e);
-        }
-        let path = match self.plan_path() {
-            Ok(p) => p,
-            Err(e) => return (false, e.to_string()),
-        };
-        let pretty = serde_json::to_string_pretty(args).unwrap_or_else(|_| args.to_string());
-        if let Err(e) = std::fs::write(&path, &pretty) {
-            return (false, format!("cannot save the plan: {e}"));
-        }
-        let steps = args
-            .get("steps")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len);
-        let decisions = args
-            .get("decisions")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len);
-        let lanes = args
-            .get("lanes")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len);
-        let mut reply = format!("plan saved ({steps} steps, {decisions} decisions");
-        if lanes > 0 {
-            reply.push_str(&format!(", {lanes} lanes"));
-        }
-        reply.push(')');
-        reply.push_str(&plan_rollup(args));
-        (true, reply)
     }
 
     /// project.create's folder made absolute and `..`-free: `~` expanded,

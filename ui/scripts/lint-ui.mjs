@@ -6,7 +6,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { checkUrl } from "lintapple";
 
 const BASE = process.env.PARZI_UI_URL ?? "http://localhost:1420/mock.html";
-const VIEWS = ["home", "session", "brain", "history", "settings", "setup", "page"];
+const VIEWS = ["home", "session", "brain", "history", "tasks", "settings", "setup", "page"];
 
 // More states per view, each checked again after its action (run in order
 // on one page). Selectors are CSS and must match exactly one element.
@@ -15,7 +15,8 @@ const nth = (list, i) => `${list} > :nth-child(${i})`;
 const STATES = {
   home: [
     click("project menu", ".proj-out", ".menu-pop"),
-    { name: "project menu closed", action: "press", selector: ".menu-pop", key: "Escape", ready: { selector: ".menu-pop", state: "hidden" } },
+    // Pressed in the composer: the audit may already have scrolled the menu shut.
+    { name: "project menu closed", action: "press", selector: ".ob textarea", key: "Escape", ready: { selector: ".menu-pop", state: "hidden" } },
     // The audit scrolls, which closes popovers: the next state starts from the page.
     click("customize home", ".customize", ".home-menu"),
     { name: "customize closed", action: "press", selector: ".ob textarea", key: "Escape", ready: { selector: ".home-menu", state: "hidden" } },
@@ -29,8 +30,18 @@ const STATES = {
     click("permission menu", ".perm-btn", ".menu-pop.perms"),
     click("session actions", '.session .menu button[aria-haspopup="menu"]', '.dropdown[role="menu"]'),
     click("context usage", ".icon-btn.ctx", ".ctx-pop"),
+    { name: "context closed", action: "press", selector: ".ob textarea", key: "Escape", ready: { selector: ".ctx-pop", state: "hidden" } },
+    click("dock", '.session button[aria-pressed][aria-label^="Toggle dock"]', ".panel .p-tabs"),
+    click("dock tasks", '.panel .p-tabs > button:nth-child(3)', ".panel .t-new"),
   ],
   brain: [click("pinned note", ".note:has(.pin)", ".titles h2"), click("conflict copy", ".note.copy", ".conflict")],
+  tasks: [
+    { name: "new task typed", action: "fill", selector: ".new input", value: "Check the release build", ready: { selector: ".new input" } },
+    click("task details", '[data-task]:has(.wait) .title', ".detail"),
+    click("assign model picker", ".detail .model", ".picker"),
+    click("linked task", '[data-task]:has(.pill.live) .title', ".detail .agent"),
+    click("failed task", '[data-task]:has(.pill.bad) .title', '.detail .seg button[aria-pressed="true"]:last-child'),
+  ],
   history: [2, 3, 4].map((i) => click(`library ${i}`, nth(".seg", i), `${nth(".seg", i)}[aria-pressed="true"]`)),
   settings: [2, 3, 4, 5].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
   setup: [2, 3, 4, 5].map((i) => click(`step ${i}`, nth("header .steps", i), `${nth("header .steps", i)}[aria-current="step"]`)),

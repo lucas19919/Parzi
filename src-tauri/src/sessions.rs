@@ -312,20 +312,9 @@ pub(crate) async fn delete_with_runs(
 
 #[tauri::command]
 pub async fn purge_sessions(state: State<'_, AppState>) -> Result<usize, String> {
-    let gone: Vec<String> = state
-        .orch
-        .store()
-        .list()
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .filter(|m| {
-            matches!(
-                m.status,
-                parzi_core::store::SessionStatus::Done | parzi_core::store::SessionStatus::Killed
-            )
-        })
-        .map(|m| m.id)
-        .collect();
+    // The same set the store removes: live runs and their ancestors stay.
+    let gone =
+        parzi_core::store::cascade_kill_ids(&state.orch.store().list().map_err(|e| e.to_string())?);
     let n = state
         .orch
         .store()
@@ -335,38 +324,6 @@ pub async fn purge_sessions(state: State<'_, AppState>) -> Result<usize, String>
         state.orch.drop_shells(sid);
     }
     Ok(n)
-}
-
-#[tauri::command]
-pub async fn plan_get(id: String) -> Result<String, String> {
-    // A server session's plan lives on the server; the side panel shows none.
-    if remote_id(&id).is_some() {
-        return Ok(String::new());
-    }
-    let dir = parzi_core::paths::sessions_dir()
-        .map(|d| d.join(&id))
-        .map_err(|e| e.to_string())?;
-    Ok(std::fs::read_to_string(dir.join("plan.json")).unwrap_or_default())
-}
-
-#[tauri::command]
-pub async fn spawn_track(
-    state: State<'_, AppState>,
-    parent: String,
-    title: String,
-    prompt: String,
-) -> Result<String, String> {
-    if remote_id(&parent).is_some() {
-        return Err("tracks start from sessions on this PC".into());
-    }
-    state
-        .orch
-        .harness()
-        .spawn_session(
-            &parent, &title, &prompt, true, None, None, false, None, None,
-        )
-        .await
-        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

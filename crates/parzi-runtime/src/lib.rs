@@ -14,6 +14,7 @@ mod run;
 pub mod shell;
 pub mod status;
 pub mod sync;
+pub mod task_tools;
 pub mod toolhost;
 pub mod tools;
 

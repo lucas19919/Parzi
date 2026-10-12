@@ -10,6 +10,8 @@ interface Toast {
   // 0..1 shows a progress bar.
   progress?: number;
   action?: { label: string; run: () => void };
+  // Clicking the toast runs this (open the task it is about).
+  run?: () => void;
 }
 
 export const toasts = writable<Toast[]>([]);
@@ -23,9 +25,9 @@ function expire(id: number, ms: number) {
   if (ms > 0) timers.set(id, window.setTimeout(() => dismissToast(id), ms));
 }
 
-function push(text: string, err: boolean, session: string | undefined, ms: number) {
+function push(text: string, err: boolean, session: string | undefined, ms: number, run?: () => void) {
   const id = ++seq;
-  toasts.update((all) => [...all, { id, text, err, session }]);
+  toasts.update((all) => [...all, { id, text, err, session, run }]);
   expire(id, ms);
 }
 
@@ -60,6 +62,11 @@ export function keyedToast(
     return;
   }
   expire(id, opts.ms ?? (opts.err ? 5000 : 3000));
+}
+
+// A toast that does something when clicked; stays a little longer.
+export function notifyAction(text: string, run: () => void, err = false) {
+  push(text, err, undefined, 8000, run);
 }
 
 export function toast(text: string, err = false) {

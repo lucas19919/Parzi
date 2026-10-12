@@ -269,7 +269,7 @@ impl parzi_runtime::handler::HarnessBridge for NoHarness {
 #[tokio::test]
 async fn session_tools_obey_the_lane_allowlist() {
     home("approval");
-    let without = host(vec!["plan.read".into()], ApprovalMode::Auto);
+    let without = host(vec!["task.list".into()], ApprovalMode::Auto);
     let (ok, out) = without.call("session.list_sessions", &json!({})).await;
     assert!(!ok, "not in the allowlist, not run: {out}");
     let with = host(vec!["session.*".into()], ApprovalMode::Auto);

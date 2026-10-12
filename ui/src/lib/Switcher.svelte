@@ -23,6 +23,7 @@
     settings: void;
     brain: void;
     history: void;
+    tasks: void;
     previews: void;
     setup: void;
   }>();
@@ -66,6 +67,7 @@
     { id: "new-page", icon: "globe", title: "New page", sub: "Open a web page", run: () => dispatch("newPage") },
     { id: "history", icon: "clock", title: "History", sub: "Pages you visited and bookmarks", run: () => dispatch("history") },
     { id: "brain", icon: "brain", title: "Brain", sub: "Notes and projects", run: () => dispatch("brain") },
+    { id: "tasks", icon: "tasks", title: "Tasks", sub: "Every project's tasks, to do and with agents", run: () => dispatch("tasks") },
     ...(import.meta.env.DEV
       ? [{ id: "previews", icon: "spark" as IconName, title: "Component previews", sub: "Live Omnibar variants, side by side", run: () => dispatch("previews") }]
       : []),

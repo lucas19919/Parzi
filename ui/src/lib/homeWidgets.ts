@@ -3,6 +3,7 @@ import { persisted } from "./browserData";
 // The cards under the composer on Home, in the order they show.
 export const HOME_WIDGETS = [
   { id: "recent", label: "Recent sessions" },
+  { id: "tasks", label: "Tasks" },
   { id: "agents", label: "Agents" },
   { id: "projects", label: "Projects" },
   { id: "sites", label: "Pinned sites" },

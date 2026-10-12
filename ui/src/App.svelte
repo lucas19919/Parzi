@@ -25,6 +25,7 @@
   import HomeView from "./lib/HomeView.svelte";
   import PreviewView from "./lib/PreviewView.svelte";
   import BrainView from "./lib/BrainView.svelte";
+  import TasksView from "./lib/TasksView.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
   import RequestPopup from "./lib/RequestPopup.svelte";
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
@@ -37,8 +38,9 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
+  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, tasksTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
+  import { taskTabRequested, watchTasks } from "./lib/taskStore";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
   import { covered } from "./lib/overlay";
   import type { Approval, LiveTool } from "./lib/live";
@@ -288,6 +290,13 @@
     const existing = tabs.find((t) => t.kind === "brain");
     if (existing) selectTab(existing.id);
     else addTab(brainTab());
+  }
+
+  // One Tasks tab; openTask() (toasts, Home, the side panel) lands here too.
+  function openTasks() {
+    const existing = tabs.find((t) => t.kind === "tasks");
+    if (existing) selectTab(existing.id);
+    else addTab(tasksTab());
   }
 
   // Set up Parzi, opened straight at its Remote step.
@@ -980,6 +989,7 @@
     else if (name === "ctrl+w") closeTab(activeId);
     else if (name === "ctrl+comma") tab.kind === "settings" ? closeTab(activeId) : openSettings();
     else if (name === "ctrl+b") openBrain();
+    else if (name === "ctrl+j") openTasks();
     else if (name === "ctrl+h") openHistory();
     else if (name === "ctrl+shift+a") {
       panelTab = "agents";
@@ -1017,7 +1027,7 @@
             ? "ctrl+shift+t"
             : mod && e.shiftKey && key === "a"
               ? "ctrl+shift+a"
-              : mod && ["p", "k", "t", "w", "l", "b", "h"].includes(key)
+              : mod && ["p", "k", "t", "w", "l", "b", "h", "j"].includes(key)
                   ? `ctrl+${key}`
                   : "";
     if (name && shortcut(name)) {
@@ -1075,6 +1085,15 @@
       .then((list) => downloadList.set(list))
       .catch(() => {});
     let brainSeen = 0;
+    const unTasks = watchTasks();
+    let tasksSeen = 0;
+    const unTaskTab = taskTabRequested.subscribe((n) => {
+      if (n > 0 && n !== tasksSeen) {
+        tasksSeen = n;
+        if (immersive) void setImmersive(false);
+        openTasks();
+      }
+    });
     const unBrain = brainTabRequested.subscribe((n) => {
       if (n > 0 && n !== brainSeen) {
         brainSeen = n;
@@ -1138,6 +1157,8 @@
     })();
     return () => {
       unBrain();
+      unTasks();
+      unTaskTab();
       unClear();
       document.removeEventListener("parzi:default-mode", onDefaultMode);
       unRun.then((f) => f()).catch(() => {});
@@ -1172,6 +1193,7 @@
       on:update={() => openSettings("system")}
       on:brain={openBrain}
       on:history={() => openHistory()}
+      on:tasks={() => openTasks()}
       on:setup={openSetup}
     />
   {/if}
@@ -1198,6 +1220,11 @@
       <div class="fill col" in:fade={{ duration: 150 }}>
         <PanelHeader title="Brain" on:close={() => closeTab(activeId)} />
         <BrainView />
+      </div>
+    {:else if tab.kind === "tasks"}
+      <div class="fill col" in:fade={{ duration: 150 }}>
+        <PanelHeader title="Tasks" on:close={() => closeTab(activeId)} />
+        <TasksView {threads} {running} on:openSession={(e) => openSession(e.detail.id)} />
       </div>
     {:else if tab.kind === "history"}
       <div class="fill col" in:fade={{ duration: 150 }}>
@@ -1387,6 +1414,7 @@
     on:setup={openSetup}
     on:brain={openBrain}
     on:history={() => openHistory()}
+    on:tasks={() => openTasks()}
   />
 
   {#if setupOpen}
@@ -1407,7 +1435,17 @@
        toasts move up into the window chrome, newest only. -->
   <div class="toasts" class:chrome={toastsUp} aria-live="polite">
     {#each toastsUp ? $toasts.slice(-1) : $toasts as t (t.id)}
-      {#if t.session}
+      {#if t.run}
+        <button
+          class="toast go"
+          class:err={t.err}
+          transition:fade={{ duration: 140 }}
+          on:click={() => {
+            dismissToast(t.id);
+            t.run?.();
+          }}>{t.text}</button
+        >
+      {:else if t.session}
         <button
           class="toast go"
           transition:fade={{ duration: 140 }}
@@ -1554,7 +1592,8 @@
   }
   .composer.docked {
     bottom: 14px;
-    width: min(740px, calc(100% - 40px));
+    /* With the dock open it fits the thread beside it, not the window. */
+    width: min(740px, calc(100% - 40px - 2 * var(--shift, 0px)));
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
   }
   .lane-hint {

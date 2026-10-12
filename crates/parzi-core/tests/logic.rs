@@ -191,7 +191,7 @@ fn purge_cascade_kills_descendants_at_any_depth() {
     let all = vec![
         mk("p", None, SessionStatus::Done),
         mk("c", Some("p"), SessionStatus::Idle),
-        mk("g", Some("c"), SessionStatus::Active),
+        mk("g", Some("c"), SessionStatus::Done),
         mk("solo", None, SessionStatus::Done),
         mk("keep", None, SessionStatus::Idle),
         mk("keepkid", Some("keep"), SessionStatus::Idle),
@@ -203,6 +203,48 @@ fn purge_cascade_kills_descendants_at_any_depth() {
     for id in ["keep", "keepkid"] {
         assert!(!kill.contains(id), "{id} should survive");
     }
+}
+
+#[test]
+fn purge_spares_live_runs_and_the_ancestors_they_report_to() {
+    use chrono::Utc;
+    use parzi_core::store::{cascade_kill_ids, SessionMeta, SessionStatus};
+    let mk = |id: &str, parent: Option<&str>, status: SessionStatus| SessionMeta {
+        id: id.into(),
+        title: id.into(),
+        pinned: false,
+        project: "t".into(),
+        lane: "".into(),
+        model: "m".into(),
+        parent_id: parent.map(|s| s.into()),
+        status,
+        tokens_in: 0,
+        tokens_out: 0,
+        cost_usd: 0.0,
+        context_tokens: 0,
+        context_limit: 0,
+        cwd: "".into(),
+        created: Utc::now(),
+        updated: Utc::now(),
+    };
+    // A finished parent whose background child still runs, with a done
+    // sibling; and a killed parent whose child waits in the queue.
+    let all = vec![
+        mk("boss", None, SessionStatus::Done),
+        mk("mid", Some("boss"), SessionStatus::Idle),
+        mk("worker", Some("mid"), SessionStatus::Active),
+        mk("sibling", Some("boss"), SessionStatus::Done),
+        mk("stopped", None, SessionStatus::Killed),
+        mk("waiting", Some("stopped"), SessionStatus::Queued),
+    ];
+    let kill = cascade_kill_ids(&all);
+    for id in ["boss", "mid", "worker", "stopped", "waiting"] {
+        assert!(!kill.contains(id), "{id} is live or a live run's ancestor");
+    }
+    assert!(
+        kill.contains("sibling"),
+        "a finished branch beside it still goes"
+    );
 }
 
 #[test]

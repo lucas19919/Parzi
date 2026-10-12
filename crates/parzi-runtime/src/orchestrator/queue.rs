@@ -54,9 +54,13 @@ struct PersistedRun {
     #[serde(default)]
     inbox_from: Option<usize>,
     // Attachment paths only (snippets already live in the user event).
-    // Approvers cannot persist: restored runs fail closed.
     #[serde(default)]
     attachments: Vec<String>,
+    /// Queued with someone to ask. An approver cannot persist, so a
+    /// restored run asks through the one the host installs; runs queued
+    /// without one (agent-spawned children) stay without.
+    #[serde(default)]
+    ask: bool,
 }
 
 /// run.json is load-modify-saved from several tasks: one writer at a time.
@@ -143,6 +147,9 @@ pub(super) struct QueuedRun {
     pub(super) effort: String,
     pub(super) attachments: Vec<parzi_core::context::AttachedFile>,
     pub(super) approver: Option<Arc<dyn Approver>>,
+    /// Restored from disk after asking through an approver: launch hands it
+    /// the host's (see `Orchestrator::set_approver`).
+    pub(super) restore_approver: bool,
     pub(super) mode_override: Option<String>,
     pub(super) prompt_recorded: bool,
     pub(super) inbox_from: Option<usize>,
@@ -161,6 +168,7 @@ impl QueuedRun {
             mode_override: self.mode_override.clone(),
             inbox_from: self.inbox_from,
             attachments: self.attachments.iter().map(|a| a.path.clone()).collect(),
+            ask: self.approver.is_some() || self.restore_approver,
         }
     }
 
@@ -183,6 +191,7 @@ impl QueuedRun {
                 })
                 .collect(),
             approver: None,
+            restore_approver: p.ask,
             prompt_recorded: p.prompt_recorded,
             mode_override: p.mode_override,
             inbox_from: p.inbox_from,
@@ -204,6 +213,7 @@ pub(super) struct Pump {
     pub(super) bus: RunEventBus,
     pub(super) marks: super::ReadMarks,
     pub(super) asker: Arc<Mutex<Option<Arc<dyn crate::tools::Asker>>>>,
+    pub(super) approver: super::HostApprover,
     pub(super) shells: Arc<std::sync::Mutex<HashMap<String, Arc<crate::shell::ShellRegistry>>>>,
 }
 
@@ -222,6 +232,10 @@ impl Pump {
 }
 
 impl Pump {
+    pub(super) fn host_approver(&self) -> Option<Arc<dyn Approver>> {
+        self.approver.read().ok().and_then(|a| a.clone())
+    }
+
     pub(super) fn cfg_snapshot(&self) -> ParziConfig {
         self.cfg.read().map(|c| c.clone()).unwrap_or_default()
     }
@@ -290,7 +304,10 @@ impl Orchestrator {
                         .push_back(QueuedRun::from_persisted(&m.id, p));
                     n += 1;
                 }
-                None => self.store.set_status(&m.id, SessionStatus::Idle)?,
+                None => {
+                    self.store.set_status(&m.id, SessionStatus::Idle)?;
+                    crate::task_tools::runs_interrupted(std::slice::from_ref(&m.id));
+                }
             }
         }
         if n > 0 {

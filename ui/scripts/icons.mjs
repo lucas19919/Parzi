@@ -49,6 +49,9 @@ const MAP = {
   download: "download",
   external: "link-external",
   browser: "browser",
+  tasks: "tasklist",
+  play: "play",
+  blocked: "blocked",
 };
 
 const out = [];

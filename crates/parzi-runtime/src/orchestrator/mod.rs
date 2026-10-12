@@ -64,6 +64,9 @@ fn next_run_id() -> u64 {
 
 type ReadMarks = Arc<std::sync::Mutex<HashMap<String, usize>>>;
 
+/// The approver a host installs for runs restored from disk.
+pub(crate) type HostApprover = Arc<std::sync::RwLock<Option<Arc<dyn crate::tools::Approver>>>>;
+
 pub(crate) struct SessionSlot {
     handles: Arc<Mutex<HashMap<String, Handle>>>,
     marks: ReadMarks,
@@ -113,6 +116,7 @@ pub struct Orchestrator {
     bus: RunEventBus,
     marks: ReadMarks,
     asker: Arc<Mutex<Option<Arc<dyn crate::tools::Asker>>>>,
+    approver: HostApprover,
     shells: Arc<std::sync::Mutex<HashMap<String, Arc<crate::shell::ShellRegistry>>>>,
 }
 
@@ -136,7 +140,17 @@ impl Orchestrator {
             bus,
             marks: ReadMarks::default(),
             asker: Arc::new(Mutex::new(None)),
+            approver: HostApprover::default(),
             shells: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// The approver queued runs restored after a restart ask through, when
+    /// they were queued with one: without it they would come back unable to
+    /// write or run anything in Ask mode.
+    pub fn set_approver(&self, approver: Arc<dyn crate::tools::Approver>) {
+        if let Ok(mut a) = self.approver.write() {
+            *a = Some(approver);
         }
     }
 
@@ -187,6 +201,7 @@ impl Orchestrator {
             bus: self.bus.clone(),
             marks: self.marks.clone(),
             asker: self.asker.clone(),
+            approver: self.approver.clone(),
             shells: self.shells.clone(),
         }
     }
@@ -215,14 +230,16 @@ impl Orchestrator {
     }
 
     pub fn recover(&self) -> Result<usize> {
-        let mut n = 0;
+        let mut cut = vec![];
         for m in self.store.list()? {
             if m.status == SessionStatus::Active {
                 self.store.set_status(&m.id, SessionStatus::Idle)?;
-                n += 1;
+                cut.push(m.id);
             }
         }
-        Ok(n)
+        // Their tasks were in progress when the app closed: to do again.
+        crate::task_tools::runs_interrupted(&cut);
+        Ok(cut.len())
     }
 
     pub fn provider_statuses(&self) -> Vec<parzi_providers::ProviderStatus> {
