@@ -30,6 +30,9 @@ export interface Tab {
   canGoForward?: boolean;
   blocked?: number;
   bg?: string;
+  // The page's own icon (https or data URL) and why its renderer died.
+  favicon?: string;
+  crashed?: string;
   composer: TabComposerState;
 }
 

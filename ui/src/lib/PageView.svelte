@@ -4,17 +4,25 @@
   import { adblock, api, vault, BITWARDEN_INSTALL, type AdblockState, type VaultLogin } from "./api";
   import { popover, placeAbove } from "./popover";
   import { toast } from "./toast";
-  import { covered, setOverlay } from "./overlay";
+  import { covered, setOverlay, setPageArea } from "./overlay";
   import SuggestList from "./SuggestList.svelte";
   import { boxText, firstRows, looksLikeUrl, mergeRows, pageRows, phraseRows, type Suggestion } from "./suggest";
   import { addPin, bookmarks, completeAddress, history, pins, removePin } from "./browserData";
+  import { prompts, removePrompt, type PagePrompt } from "./browserState";
+  import { appFor, permissionText } from "./pageRules";
   import { toAddress, type Tab } from "./tabs";
   import { tooltip } from "./tooltip";
 
   export let tab: Tab;
   export let immersive = false;
 
-  const dispatch = createEventDispatcher<{ navigate: { url: string }; error: { text: string } }>();
+  const dispatch = createEventDispatcher<{
+    navigate: { url: string };
+    error: { text: string };
+    openTab: { url: string };
+    recover: void;
+    resume: void;
+  }>();
 
   let slot: HTMLDivElement | null = null;
   let field: HTMLInputElement | null = null;
@@ -34,6 +42,9 @@
   let active = -1;
   let typed = "";
   let snapshot = "";
+  let snapAt = 0;
+  // The native page is up right now (the last sync showed it).
+  let shownNow = false;
   let remoteSeq = 0;
   let remoteTimer = 0;
   let listStyle = "";
@@ -42,11 +53,12 @@
   $: if (!editing) address = url;
   $: secure = url.startsWith("https://");
   $: pinned = $pins.some((p) => p.url === url);
-  $: url, immersive, $covered, slot, schedule();
+  $: url, immersive, $covered, slot, tab.crashed, schedule();
   $: void loadShield(hostOf(url));
   $: open = editing && rows.length > 0;
   $: setOverlay(`address-${tab.id}`, open);
   $: if (open && form) listStyle = `left:${form.offsetLeft}px;width:${form.offsetWidth}px`;
+  $: prompt = immersive ? null : ($prompts.find((p) => p.tab === tab.id) ?? null);
 
   function hostOf(u: string) {
     try {
@@ -62,6 +74,10 @@
 
   async function toggleShield() {
     if (!shield || !url) return;
+    if (shield.supported === false) {
+      toast("Ad blocking works on Windows only for now");
+      return;
+    }
     try {
       const blocking = shield.enabled && !shield.allowed;
       shield = await adblock.site(url, blocking);
@@ -84,11 +100,36 @@
     });
   }
 
+  // Someone typing in the shell keeps the keyboard when the page reappears.
+  function typing() {
+    const el = document.activeElement;
+    return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || (el instanceof HTMLElement && el.isContentEditable);
+  }
+
+  // A picture of the page to show while HTML covers it, taken while it is
+  // still up. Waits briefly: past that the page hides anyway and the
+  // picture lands when it is ready.
+  function freshSnapshot(): Promise<void> {
+    if (!shownNow || Date.now() - snapAt < 1500) return Promise.resolve();
+    snapAt = Date.now();
+    const shot = api
+      .browserSnapshot(tab.id)
+      .then((s) => {
+        if (alive) snapshot = s;
+      })
+      .catch(() => {});
+    return Promise.race([shot, new Promise<void>((done) => setTimeout(done, 300))]);
+  }
+
   async function sync() {
+    if (!alive || !slot) return;
+    if ($covered && url && !tab.crashed) await freshSnapshot();
     if (!alive || !slot) return;
     const r = slot.getBoundingClientRect();
     try {
-      if ($covered || !url || r.width < 8 || r.height < 8) {
+      if ($covered || tab.crashed || !url || r.width < 8 || r.height < 8) {
+        shownNow = false;
+        setPageArea(null);
         await api.browserHide();
         return;
       }
@@ -97,7 +138,9 @@
       const x = Math.floor(r.x);
       const y = Math.floor(r.y);
       const rect = { x, y, width: Math.ceil(r.x + r.width) - x, height: Math.ceil(r.y + r.height) - y };
-      await api.browserShow(tab.id, rect, url);
+      await api.browserShow(tab.id, rect, url, tab.owner ?? null, !editing && !typing());
+      shownNow = true;
+      setPageArea({ left: rect.x, top: rect.y, right: rect.x + rect.width, bottom: rect.y + rect.height });
     } catch (e) {
       if (!reported) {
         reported = true;
@@ -152,8 +195,14 @@
     rows = [];
     active = -1;
     field?.select();
-    snapshot = "";
-    if (url) api.browserSnapshot(tab.id).then((s) => (snapshot = s)).catch(() => {});
+    // Taken now, while the page is up: the suggestions cover it soon.
+    if (url && shownNow) {
+      snapAt = Date.now();
+      api
+        .browserSnapshot(tab.id)
+        .then((s) => alive && (snapshot = s))
+        .catch(() => {});
+    }
   }
 
   function stopEditing() {
@@ -194,10 +243,17 @@
     }, 120);
   }
 
-  function pick(row: Suggestion) {
+  // After Enter the keyboard belongs to the page (Space, Page Down, Ctrl+F),
+  // as in any browser.
+  function leaveFor(next: string) {
     stopEditing();
     field?.blur();
-    dispatch("navigate", { url: row.url });
+    dispatch("navigate", { url: next });
+    api.browserFocus(tab.id).catch(() => {});
+  }
+
+  function pick(row: Suggestion) {
+    leaveFor(row.url);
   }
 
   function go() {
@@ -206,10 +262,7 @@
       return;
     }
     const next = toAddress(address);
-    if (!next) return;
-    stopEditing();
-    field?.blur();
-    dispatch("navigate", { url: next });
+    if (next) leaveFor(next);
   }
 
   function nav(action: "back" | "forward" | "reload" | "stop") {
@@ -242,6 +295,13 @@
     else addPin(url, tab.title);
   }
 
+  function answer(p: PagePrompt, yes: boolean) {
+    removePrompt(p.id);
+    if (p.kind === "permission") api.browserPermission(p.id, yes).catch((e) => dispatch("error", { text: String(e) }));
+    else if (p.kind === "external") api.browserExternal(p.id, yes).catch((e) => dispatch("error", { text: String(e) }));
+    else if (yes && p.url) dispatch("openTab", { url: p.url });
+  }
+
   onMount(() => {
     const ro = new ResizeObserver(schedule);
     if (slot) ro.observe(slot);
@@ -251,6 +311,7 @@
       alive = false;
       clearTimeout(remoteTimer);
       setOverlay(`address-${tab.id}`, false);
+      setPageArea(null);
       cancelAnimationFrame(frame);
       ro.disconnect();
       window.removeEventListener("resize", schedule);
@@ -295,17 +356,19 @@
         {#if tab.loading}<span class="progress" />{/if}
       </form>
       {#if shield}
-        {@const blocking = shield.enabled && !shield.allowed}
+        {@const blocking = shield.supported !== false && shield.enabled && !shield.allowed}
         {@const count = blocking && tab.blocked ? (tab.blocked > 99 ? "99+" : String(tab.blocked)) : ""}
         <button
           class="nav shield"
           class:off={!blocking}
           aria-label={count ? `Ad blocker, ${count} blocked` : "Ad blocker"}
-          use:tooltip={blocking
-            ? `Blocking ads and trackers${tab.blocked ? ` (${tab.blocked} on this page)` : ""}. Click to allow them on ${shield.host}.`
-            : shield.enabled
-              ? `Ads allowed on ${shield.host}. Click to block them.`
-              : "The ad blocker is off. Click to turn it on."}
+          use:tooltip={shield.supported === false
+            ? "Ad blocking works on Windows only for now"
+            : blocking
+              ? `Blocking ads and trackers${tab.blocked ? ` (${tab.blocked} on this page)` : ""}. Click to allow them on ${shield.host}.`
+              : shield.enabled
+                ? `Ads allowed on ${shield.host}. Click to block them.`
+                : "The ad blocker is off. Click to turn it on."}
           on:click={toggleShield}
         >
           <Icon name="shield" />
@@ -327,6 +390,31 @@
       </button>
     </div>
   {/if}
+  {#if prompt}
+    {@const p = prompt}
+    <!-- Asks live in the window chrome, above the page: nothing here has to
+         hide the page or wait for it. -->
+    <div class="infobar" role="status">
+      {#if p.kind === "permission"}
+        <Icon name="shield" />
+        <span class="ask"><b>{hostOf(p.origin ?? "")}</b> wants to {permissionText(p.permission ?? "")}</span>
+        <button class="btn" on:click={() => answer(p, false)}>Block</button>
+        <button class="btn primary" on:click={() => answer(p, true)}>Allow</button>
+      {:else if p.kind === "external"}
+        <Icon name="external" />
+        <span class="ask">Open this link in {appFor(p.url ?? "")}? <span class="link">{p.url}</span></span>
+        <button class="btn" on:click={() => answer(p, false)}>Cancel</button>
+        <button class="btn primary" on:click={() => answer(p, true)}>Open</button>
+      {:else}
+        <Icon name="browser" />
+        <span class="ask">Blocked a pop-up <span class="link">{p.url}</span></span>
+        {#if /^https?:\/\//i.test(p.url ?? "")}
+          <button class="btn" on:click={() => answer(p, true)}>Open in a tab</button>
+        {/if}
+        <button class="nav" use:tooltip={"Dismiss"} on:click={() => answer(p, false)}><Icon name="close" /></button>
+      {/if}
+    </div>
+  {/if}
   {#if open && !immersive}
     <div class="suggest" style={listStyle}>
       <SuggestList {rows} {active} typed={typed} on:pick={(e) => pick(e.detail.row)} on:hover={(e) => (active = e.detail.index)} />
@@ -342,10 +430,30 @@
       {/each}
     </div>
   {/if}
-  <div class="slot" class:empty={!url} class:dark={immersive} style={!immersive && tab.bg ? `background:${tab.bg}` : ""} bind:this={slot}>
+  <div
+    class="slot"
+    class:empty={!url}
+    class:dark={immersive}
+    style={!immersive && tab.bg && !tab.crashed ? `background:${tab.bg}` : ""}
+    bind:this={slot}
+  >
     {#if !url}
       <div class="blank">Type an address or a search above</div>
-    {:else if open && snapshot}
+    {:else if tab.crashed}
+      <div class="crash">
+        <Icon name="alert" />
+        <p class="crash-title">{tab.crashed === "unresponsive" ? "This page isn't responding" : "This page crashed"}</p>
+        <p class="crash-hint">
+          {tab.crashed === "unresponsive" ? "You can wait for it or reload it." : "Reload it to pick up where it was."}
+        </p>
+        <div class="crash-actions">
+          {#if tab.crashed === "unresponsive"}
+            <button class="btn" on:click={() => dispatch("resume")}>Wait</button>
+          {/if}
+          <button class="btn primary" on:click={() => dispatch("recover")}>Reload</button>
+        </div>
+      </div>
+    {:else if ($covered || open) && snapshot}
       <img class="snap" src={snapshot} alt="" draggable="false" />
     {/if}
   </div>
@@ -502,6 +610,32 @@
       transform: translateX(340%);
     }
   }
+  .infobar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 6px 8px 6px 14px;
+    border-bottom: 1px solid var(--line);
+    color: var(--muted);
+    font-size: var(--fs-md);
+  }
+  .ask {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+  }
+  .ask b {
+    font-weight: 600;
+  }
+  .link {
+    margin-left: 4px;
+    color: var(--muted);
+  }
   .slot {
     flex: 1;
     min-height: 0;
@@ -518,6 +652,30 @@
     height: 100%;
     display: block;
     object-fit: fill;
+  }
+  .crash {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 24px;
+    color: var(--muted);
+    text-align: center;
+  }
+  .crash-title {
+    margin: 4px 0 0;
+    font-size: var(--fs-lg);
+    font-weight: 600;
+    color: var(--text);
+  }
+  .crash-hint {
+    margin: 0;
+    font-size: var(--fs-md);
+  }
+  .crash-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
   }
   .suggest {
     position: absolute;

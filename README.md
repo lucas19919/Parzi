@@ -76,14 +76,27 @@ their reason.
   text that looks like an address), then matching history and bookmarks;
   arrows to move, Enter to go, Esc to close. `Ctrl+L`
   address bar, `Alt+←/→` back and forward, `Ctrl+R` reload, `F11` full
-  screen. Links that open a new window open a new tab.
+  screen. Links that open a new window open a new tab (behind, for an
+  agent's page); sign-in pop-ups open as windows, and pop-ups nobody clicked
+  for are blocked. Links for other apps (`mailto:`, Zoom, VS Code) ask
+  first. `Ctrl+B`, `Ctrl+H` and `Ctrl+K` go to the page first and reach
+  Parzi only when the page doesn't use them; `Ctrl+P` prints. Hidden tabs
+  give memory back after a while, and `Ctrl+Shift+T` reopens closed pages,
+  also after a restart.
+- **Downloads** go to your Downloads folder, with progress in a toast and a
+  list under History › Downloads. A site asking for the camera, microphone,
+  location and the like asks in a bar above the page; Settings › General
+  lists and forgets those choices, turns on developer tools for pages, and
+  decides whether pages an agent opens share your sign-ins (off: they get
+  their own profile).
 - **Passwords** come from Bitwarden; Parzi stores none. Install the CLI
   (`winget install Bitwarden.CLI`), then Settings › General › Passwords signs
   in or unlocks in Bitwarden's own prompt, so Parzi never sees the master
   password. The key in the page toolbar fills a login for the site you are
   on, only on https and only when you click it.
 - **Ad blocker**: Brave's engine with EasyList and EasyPrivacy, downloaded to
-  `~/.parzi/cache/adblock` and refreshed every four days. The shield in the
+  `~/.parzi/cache/adblock` and refreshed every four days; it blocks ad and
+  tracker requests and hides the lists' ad boxes on the page. The shield in the
   page toolbar shows how many requests it blocked; click it to allow ads on
   that site. Settings › General turns it off.
 - **Composer**: `Tab` switches between Agent and Web. In Agent mode pick the

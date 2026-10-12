@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
@@ -18,7 +18,10 @@ const LISTS: &[(&str, &str)] = &[
     ),
 ];
 const STALE: Duration = Duration::from_hours(96);
-const ENGINE_FILE: &str = "engine.dat";
+// Network and cosmetic rules; the old network-only engine.dat is rebuilt.
+const ENGINE_FILE: &str = "engine2.dat";
+// Bounds the hide stylesheet a page gets (and the script that carries it).
+const MAX_SELECTORS: usize = 4000;
 const SETTINGS_FILE: &str = "adblock.json";
 
 static ENGINE: RwLock<Option<Arc<Engine>>> = RwLock::new(None);
@@ -42,6 +45,8 @@ pub struct AdblockState {
     enabled: bool,
     allowed: bool,
     host: String,
+    /// Pages are filtered through `WebView2` hooks: Windows only for now.
+    supported: bool,
 }
 
 pub fn start() {
@@ -53,6 +58,7 @@ pub fn start() {
         let Some(dir) = lists_dir() else {
             return;
         };
+        let _ = std::fs::remove_file(dir.join("engine.dat"));
         if let Some(engine) = cached_engine(&dir) {
             install(engine);
         }
@@ -65,18 +71,82 @@ pub fn start() {
     });
 }
 
+#[cfg(test)]
 pub fn should_block(url: &str, source: &str, kind: &str) -> bool {
-    if !ENABLED.load(Ordering::Relaxed) || source.is_empty() {
-        return false;
-    }
+    filtering(source) && block_request(url, source, kind)
+}
+
+// The page hooks that call these are WebView2's (Windows) for now.
+#[cfg_attr(not(windows), allow(dead_code, reason = "WebView2 hooks only"))]
+pub fn enabled() -> bool {
+    ENABLED.load(Ordering::Relaxed)
+}
+
+/// Whether requests of a page at `source` are checked at all: decided once
+/// per navigation so each request skips the host lookup.
+#[cfg_attr(not(windows), allow(dead_code, reason = "WebView2 hooks only"))]
+pub fn filtering(source: &str) -> bool {
+    enabled() && !source.is_empty() && current().is_some() && !allowed(&host_of(source))
+}
+
+/// One request of a page `filtering` said yes to.
+#[cfg_attr(not(windows), allow(dead_code, reason = "WebView2 hooks only"))]
+pub fn block_request(url: &str, source: &str, kind: &str) -> bool {
     let Some(engine) = current() else {
         return false;
     };
-    if allowed(&host_of(source)) {
-        return false;
-    }
     Request::new(url, source, kind, "GET")
         .is_ok_and(|request| engine.check_network_request(&request).should_block())
+}
+
+/// Element hiding for one page: the site's own rules now, generic class and
+/// id rules once the page reports what it uses.
+#[cfg_attr(not(windows), allow(dead_code, reason = "WebView2 hooks only"))]
+pub struct Cosmetic {
+    pub css: String,
+    pub exceptions: HashSet<String>,
+    pub generic: bool,
+}
+
+#[cfg_attr(not(windows), allow(dead_code, reason = "WebView2 hooks only"))]
+pub fn cosmetic(url: &str) -> Option<Cosmetic> {
+    if !filtering(url) {
+        return None;
+    }
+    current().map(|engine| cosmetic_with(&engine, url))
+}
+
+fn cosmetic_with(engine: &Engine, url: &str) -> Cosmetic {
+    let found = engine.url_cosmetic_resources(url);
+    Cosmetic {
+        css: hide_css(found.hide_selectors.iter().map(String::as_str)),
+        exceptions: found.exceptions,
+        generic: !found.generichide,
+    }
+}
+
+#[cfg_attr(not(windows), allow(dead_code, reason = "WebView2 hooks only"))]
+pub fn class_id_css(classes: &[String], ids: &[String], exceptions: &HashSet<String>) -> String {
+    let Some(engine) = current() else {
+        return String::new();
+    };
+    let found = engine.hidden_class_id_selectors(classes, ids, exceptions);
+    hide_css(found.iter().map(String::as_str))
+}
+
+/// One rule per selector, so a selector the page's CSS parser rejects drops
+/// only itself; braces could close the rule and restyle the page.
+fn hide_css<'a>(selectors: impl Iterator<Item = &'a str>) -> String {
+    let mut css = String::new();
+    for sel in selectors
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && s.len() <= 1000 && !s.contains(['{', '}', '<']))
+        .take(MAX_SELECTORS)
+    {
+        css.push_str(sel);
+        css.push_str("{display:none!important}\n");
+    }
+    css
 }
 
 #[tauri::command]
@@ -124,6 +194,7 @@ fn state(host: &str) -> AdblockState {
         enabled: ENABLED.load(Ordering::Relaxed),
         allowed: allowed(host),
         host: host.to_string(),
+        supported: cfg!(windows),
     }
 }
 
@@ -208,7 +279,7 @@ fn stale(dir: &Path) -> bool {
 fn rebuild(dir: &Path) -> Result<Engine, String> {
     let mut set = FilterSet::new(false);
     let options = ParseOptions {
-        rule_types: RuleTypes::NetworkOnly,
+        rule_types: RuleTypes::All,
         ..ParseOptions::default()
     };
     for (name, url) in LISTS {
@@ -273,6 +344,37 @@ mod tests {
             "https://www.news.example.com/",
             "script"
         ));
+    }
+
+    #[test]
+    fn cosmetic_rules_hide_site_and_generic_selectors() {
+        let mut set = FilterSet::new(false);
+        set.add_filter_list(
+            "news.example.com##.promo-box\n##.adsbygoogle\n##div[data-ad]".into(),
+            ParseOptions::default(),
+        );
+        let engine = Engine::new_with_filter_set(set);
+        let page = cosmetic_with(&engine, "https://news.example.com/story");
+        assert!(
+            page.css.contains(".promo-box{display:none!important}"),
+            "{}",
+            page.css
+        );
+        assert!(page.generic);
+        let other = cosmetic_with(&engine, "https://elsewhere.example.org/");
+        assert!(!other.css.contains(".promo-box"));
+        let generic = engine.hidden_class_id_selectors(
+            ["adsbygoogle", "story"],
+            [] as [&str; 0],
+            &page.exceptions,
+        );
+        assert_eq!(generic, vec![".adsbygoogle".to_string()]);
+    }
+
+    #[test]
+    fn hide_css_skips_rules_that_could_escape() {
+        let css = hide_css(["#ad", " ", "x{color:red} body", "<style>"].into_iter());
+        assert_eq!(css, "#ad{display:none!important}\n");
     }
 
     #[test]

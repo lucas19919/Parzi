@@ -240,10 +240,21 @@ export const api = {
   deleteBackground: (name: string) => invoke<string>("delete_background", { name }),
   paletteFromBackground: () => invoke<Palette>("palette_from_background"),
 
-  browserShow: (tab: string, rect: { x: number; y: number; width: number; height: number }, url: string) =>
-    invoke<void>("browser_show", { tab, ...rect, url }),
+  // `owner`: the agent session a page belongs to; `focus`: hand it the
+  // keyboard when it appears (never while the user types in the shell).
+  browserShow: (
+    tab: string,
+    rect: { x: number; y: number; width: number; height: number },
+    url: string,
+    owner: string | null = null,
+    focus = true,
+  ) => invoke<void>("browser_show", { tab, ...rect, url, owner, focus }),
   browserHide: () => invoke<void>("browser_hide"),
-  browserPrepare: (tab: string, url: string) => invoke<void>("browser_prepare", { tab, url }),
+  browserPrepare: (tab: string, url: string, owner: string | null = null) => invoke<void>("browser_prepare", { tab, url, owner }),
+  browserFocus: (tab: string) => invoke<void>("browser_focus", { tab }),
+  browserRecover: (tab: string) => invoke<void>("browser_recover", { tab }),
+  browserExternal: (id: string, open: boolean) => invoke<void>("browser_external", { id, open }),
+  browserPermission: (id: string, allow: boolean, remember = true) => invoke<void>("browser_permission", { id, allow, remember }),
   browserSnapshot: (tab: string) => invoke<string>("browser_snapshot", { tab }),
   searchSuggest: (query: string) => invoke<string[]>("search_suggest", { query }),
   browserClose: (tab: string) => invoke<void>("browser_close", { tab }),
@@ -389,12 +400,73 @@ export interface PageEvent {
   fullscreen?: boolean;
   blocked?: number;
   bg?: string;
+  // false: the load failed (no network, DNS, an error page): not history.
+  ok?: boolean;
+  favicon?: string;
+  crashed?: "browser" | "exited" | "unresponsive";
+  popupBlocked?: string;
 }
 
 export interface AdblockState {
   enabled: boolean;
   allowed: boolean;
   host: string;
+  supported?: boolean;
+}
+
+export interface BrowserAsk {
+  kind: "permission" | "external";
+  id: string;
+  tab: string;
+  origin?: string;
+  permission?: string;
+  url?: string;
+}
+
+export interface SitePermission {
+  origin: string;
+  kind: string;
+  allow: boolean;
+}
+
+export interface BrowserPrefs {
+  devtools: boolean;
+  agentSignIns: boolean;
+  sites: SitePermission[];
+  windows: boolean;
+}
+
+export const browserPrefs = {
+  get: () => invoke<BrowserPrefs>("browser_prefs"),
+  set: (name: "devtools" | "agentSignIns", on: boolean) => invoke<BrowserPrefs>("browser_set_pref", { name, on }),
+  forget: (origin: string, kind: string | null = null) => invoke<BrowserPrefs>("browser_forget_site", { origin, kind }),
+};
+
+export interface Download {
+  id: string;
+  tab: string;
+  url: string;
+  name: string;
+  path: string;
+  received: number;
+  total: number;
+  state: "progress" | "done" | "failed" | "canceled";
+  started: number;
+}
+
+export const downloads = {
+  list: () => invoke<Download[]>("browser_downloads"),
+  reveal: (id: string) => invoke<void>("browser_download_reveal", { id }),
+  cancel: (id: string) => invoke<void>("browser_download_cancel", { id }),
+  clear: () => invoke<Download[]>("browser_downloads_clear"),
+};
+
+export function onDownload(cb: (d: Download) => void) {
+  return listen<Download>("parzi://download", (ev) => cb(ev.payload));
+}
+
+export function onBrowserAsk(cb: (a: BrowserAsk) => void) {
+  return listen<BrowserAsk>("parzi://browser-ask", (ev) => cb(ev.payload));
 }
 
 export interface VaultState {

@@ -7,6 +7,10 @@
     api, brain, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onRunEvent,
     MODE_META, type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type Question, type SessionMeta, type UiEvent,
   } from "./lib/api";
+  import { downloads as downloadApi, onBrowserAsk, onDownload, type Download } from "./lib/api";
+  import { addPrompt, downloadList, dropTabPrompts, upsertDownload } from "./lib/browserState";
+  import { closedTabs, recordFavicon } from "./lib/browserData";
+  import { downloadShare, popClosed, pushClosed } from "./lib/pageRules";
   import TopBar from "./lib/TopBar.svelte";
   import Sidebar from "./lib/Sidebar.svelte";
   import Switcher from "./lib/Switcher.svelte";
@@ -35,7 +39,7 @@
   import { checkForUpdatesSoon } from "./lib/updateStore";
   import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
-  import { toast, toastError, toasts, notify, chime } from "./lib/toast";
+  import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
   import { covered } from "./lib/overlay";
   import type { Approval, LiveTool } from "./lib/live";
 
@@ -228,6 +232,8 @@
     saveTabs(tabs, activeId);
   }
   $: pageVisible = tab.kind === "page";
+  $: toastsUp = pageVisible && !immersive;
+  const LAST_PAGE = "parzi.lastPage";
   let lastPageVisible: boolean | null = null;
   $: if (pageVisible !== lastPageVisible) {
     lastPageVisible = pageVisible;
@@ -261,9 +267,7 @@
     project = ctx?.project ? { slug: ctx.project.slug, title: ctx.project.title, tokens: ctx.tokens } : null;
   }
 
-  let closed: { url: string; title: string }[] = [];
-
-  let historyView: "sessions" | "history" | "bookmarks" = "sessions";
+  let historyView: "sessions" | "history" | "bookmarks" | "downloads" = "sessions";
 
   function openHistory(view = historyView) {
     historyView = view;
@@ -273,9 +277,9 @@
   }
 
   function reopenClosed() {
-    const last = closed[closed.length - 1];
+    const [last, rest] = popClosed($closedTabs);
     if (!last) return;
-    closed = closed.slice(0, -1);
+    closedTabs.set(rest);
     openPageNext(last.url);
   }
 
@@ -399,6 +403,12 @@
       if (next.sessionId) void showSession(next.sessionId);
       else showDraft();
     }
+    // The page warmed at the next launch: the one used last.
+    if (next.kind === "page") {
+      try {
+        localStorage.setItem(LAST_PAGE, id);
+      } catch {}
+    }
   }
 
   function addTab(t: Tab) {
@@ -430,7 +440,9 @@
       const t = tabs.find((x) => x.id === dead);
       if (t?.kind === "page") {
         api.browserClose(dead).catch(() => {});
-        if (t.url) closed = [...closed, { url: t.url, title: t.title }].slice(-20);
+        dropTabPrompts(dead);
+        const url = t.url;
+        if (url) closedTabs.update((list) => pushClosed(list, { url, title: t.title, at: Date.now() }));
       }
     }
     if (settingsReturn && doomed.has(settingsReturn)) settingsReturn = null;
@@ -502,6 +514,48 @@
     selectTab(t.id);
   }
 
+  // A link that opens a new window: your page's opens in front, next to it;
+  // an agent's page keeps its owner and opens behind, like the agent's own.
+  function openFromPage(opener: string, url: string) {
+    const from = tabs.find((t) => t.id === opener);
+    if (!from?.owner) {
+      openPageNext(url);
+      return;
+    }
+    const t = pageTab(url, undefined, from.owner);
+    const idx = tabs.findIndex((x) => x.id === opener);
+    tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
+    api.browserPrepare(t.id, url, from.owner).catch(() => {});
+  }
+
+  async function recoverPage(id: string) {
+    try {
+      await api.browserRecover(id);
+    } catch (e) {
+      toastError(e);
+    }
+    // The old page has to be gone before the next show makes a new one.
+    await new Promise((r) => setTimeout(r, 250));
+    patchTab(id, { crashed: undefined, loading: false });
+  }
+
+  function onDownloadEvent(d: Download) {
+    upsertDownload(d);
+    const key = `download-${d.id}`;
+    if (d.state === "progress") {
+      keyedToast(key, `Downloading ${d.name}`, { progress: downloadShare(d), ms: 0 });
+    } else if (d.state === "done") {
+      keyedToast(key, `Downloaded ${d.name}`, {
+        ms: 8000,
+        action: { label: "Show in folder", run: () => void downloadApi.reveal(d.id).catch(toastError) },
+      });
+    } else if (d.state === "failed") {
+      keyedToast(key, `Download failed: ${d.name}`, { err: true, ms: 6000 });
+    } else {
+      keyedToast(key, null);
+    }
+  }
+
   function navigatePage(url: string) {
     const id = tab.id;
     patchTab(id, { url, title: hostOf(url) });
@@ -519,6 +573,16 @@
     if (e.canGoForward !== undefined) patch.canGoForward = e.canGoForward;
     if (e.blocked !== undefined) patch.blocked = e.blocked;
     if (e.bg) patch.bg = e.bg;
+    if (e.crashed) patch.crashed = e.crashed;
+    if (e.favicon) {
+      patch.favicon = e.favicon;
+      const at = e.url ?? t.url;
+      if (at) recordFavicon(at, e.favicon);
+    }
+    // A new load starts without the last site's icon or questions.
+    if (e.loading === true && t.favicon) patch.favicon = undefined;
+    if (e.loading === true) dropTabPrompts(e.tab);
+    if (e.popupBlocked) addPrompt({ id: `popup-${e.tab}-${Date.now()}`, tab: e.tab, kind: "popup", url: e.popupBlocked });
     if (e.title) {
       patch.title = e.title.slice(0, 80);
       if (t.loading) pendingTitles.set(e.tab, e.title);
@@ -529,7 +593,9 @@
       patch.url = e.url;
       if (e.url !== t.url && !e.title) patch.title = (pending ?? hostOf(e.url)).slice(0, 80);
       if (e.loading === false) {
-        recordVisit(e.url, pending ?? "");
+        // Failed loads (offline, no such host) stay out of history and
+        // address completion.
+        if (e.ok !== false) recordVisit(e.url, pending ?? "");
         pendingTitles.delete(e.tab);
       }
     }
@@ -963,14 +1029,16 @@
     }
   }
 
+  // Only the page used last loads ahead at launch: every renderer costs
+  // memory, and the other tabs load when opened.
   async function warmPages() {
     await new Promise((r) => setTimeout(r, 1500));
-    const later = tabs.filter((t) => t.kind === "page" && t.url && t.id !== activeId).slice(0, 8);
-    for (const t of later) {
-      if (!tabs.some((x) => x.id === t.id)) continue;
-      await api.browserPrepare(t.id, t.url ?? "").catch(() => {});
-      await new Promise((r) => setTimeout(r, 500));
-    }
+    let last = "";
+    try {
+      last = localStorage.getItem(LAST_PAGE) ?? "";
+    } catch {}
+    const t = tabs.find((x) => x.id === last && x.kind === "page" && x.url && x.id !== activeId);
+    if (t) await api.browserPrepare(t.id, t.url ?? "", t.owner ?? null).catch(() => {});
   }
 
   onMount(() => {
@@ -998,8 +1066,14 @@
       else if (cmd.op === "close" && cmd.id) closeTab(cmd.id);
     });
     const unPage = onBrowser(onPage);
-    const unOpen = onBrowserOpen((e) => openPageNext(e.url));
+    const unOpen = onBrowserOpen((e) => openFromPage(e.tab, e.url));
     const unKey = onBrowserKey((name) => void shortcut(name));
+    const unAsk = onBrowserAsk((a) => addPrompt({ ...a }));
+    const unDownload = onDownload(onDownloadEvent);
+    downloadApi
+      .list()
+      .then((list) => downloadList.set(list))
+      .catch(() => {});
     let brainSeen = 0;
     const unBrain = brainTabRequested.subscribe((n) => {
       if (n > 0 && n !== brainSeen) {
@@ -1069,7 +1143,7 @@
       unRun.then((f) => f()).catch(() => {});
       unDesk.then((f) => f()).catch(() => {});
       unRemote.then((f) => f()).catch(() => {});
-      for (const un of [unPage, unOpen, unKey]) un.then((f) => f()).catch(() => {});
+      for (const un of [unPage, unOpen, unKey, unAsk, unDownload]) un.then((f) => f()).catch(() => {});
       document.removeEventListener("parzi:bg", onBg);
       document.removeEventListener("parzi:layout", onLayout);
     };
@@ -1151,6 +1225,9 @@
           {immersive}
           on:navigate={(e) => navigatePage(e.detail.url)}
           on:error={(e) => toast(e.detail.text, true)}
+          on:openTab={(e) => openPageNext(e.detail.url)}
+          on:recover={() => recoverPage(tab.id)}
+          on:resume={() => patchTab(tab.id, { crashed: undefined })}
         />
       {/key}
     {:else}
@@ -1326,20 +1403,37 @@
     />
   {/if}
 
-  <div class="toasts" aria-live="polite">
-    {#each $toasts as t (t.id)}
+  <!-- While a web page is shown its native view covers the bottom corner:
+       toasts move up into the window chrome, newest only. -->
+  <div class="toasts" class:chrome={toastsUp} aria-live="polite">
+    {#each toastsUp ? $toasts.slice(-1) : $toasts as t (t.id)}
       {#if t.session}
         <button
           class="toast go"
           transition:fade={{ duration: 140 }}
           on:click={() => {
-            toasts.update((all) => all.filter((x) => x.id !== t.id));
+            dismissToast(t.id);
             if (immersive) void setImmersive(false);
             openSession(t.session ?? "");
           }}>{t.text}</button
         >
       {:else}
-        <div class="toast" class:err={t.err} transition:fade={{ duration: 140 }}>{t.text}</div>
+        <div class="toast" class:err={t.err} class:acts={!!t.action || t.progress !== undefined} transition:fade={{ duration: 140 }}>
+          <span class="toast-text">{t.text}</span>
+          {#if t.progress !== undefined}
+            <span class="toast-bar" aria-hidden="true"><span style:width="{Math.round(t.progress * 100)}%" /></span>
+          {/if}
+          {#if t.action}
+            {@const act = t.action}
+            <button
+              class="toast-act"
+              on:click={() => {
+                dismissToast(t.id);
+                act.run();
+              }}>{act.label}</button
+            >
+          {/if}
+        </div>
       {/if}
     {/each}
   </div>
@@ -1502,5 +1596,64 @@
   .toast.err {
     border-color: var(--bad);
     color: var(--bad);
+  }
+  .toast.acts {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    pointer-events: auto;
+  }
+  .toast-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .toast-bar {
+    display: block;
+    flex: none;
+    width: 64px;
+    height: 4px;
+    margin-left: 8px;
+    border-radius: 999px;
+    background: var(--line);
+    overflow: hidden;
+  }
+  .toast-bar span {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+    transition: width 200ms var(--ease-out);
+  }
+  .toast-act {
+    flex: none;
+    min-height: 24px;
+    padding: 2px 10px;
+    background: var(--hover);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--fs-sm);
+    cursor: pointer;
+  }
+  .toast-act:hover {
+    background: var(--selected);
+  }
+  /* Over a page: one line in the top bar, left of the window buttons. */
+  .toasts.chrome {
+    top: 5px;
+    right: 150px;
+    bottom: auto;
+  }
+  .toasts.chrome .toast {
+    display: flex;
+    align-items: center;
+    max-width: min(440px, 45vw);
+    min-height: 28px;
+    padding: 2px 6px 2px 12px;
+    white-space: nowrap;
+  }
+  .toasts.chrome .toast:not(.acts) {
+    padding-right: 12px;
   }
 </style>

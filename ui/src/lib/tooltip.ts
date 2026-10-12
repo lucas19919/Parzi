@@ -5,6 +5,9 @@
 // hover or on keyboard focus. Use it instead of `title`, whose native popup
 // ignores the theme and is invisible to keyboard users.
 
+import { pageArea } from "./overlay";
+import { tipSpot } from "./pageRules";
+
 const DELAY = 450;
 // Moving between controls within this window shows the next tip at once.
 const WARM = 400;
@@ -19,14 +22,14 @@ function hideOpen() {
   openTip?.hide();
 }
 
+// A web page tab's native view is drawn above all HTML: a tip over it would
+// be hidden, so tips there flip above or beside their control.
 function place(tip: HTMLElement, anchor: HTMLElement) {
   const r = anchor.getBoundingClientRect();
   const t = tip.getBoundingClientRect();
-  const left = Math.max(6, Math.min(r.left + r.width / 2 - t.width / 2, window.innerWidth - t.width - 6));
-  const below = r.bottom + 6;
-  const top = below + t.height <= window.innerHeight - 6 ? below : Math.max(6, r.top - t.height - 6);
-  tip.style.left = `${Math.round(left)}px`;
-  tip.style.top = `${Math.round(top)}px`;
+  const spot = tipSpot(r, t, { width: window.innerWidth, height: window.innerHeight }, pageArea());
+  tip.style.left = `${spot.left}px`;
+  tip.style.top = `${spot.top}px`;
 }
 
 export function tooltip(node: HTMLElement, text: string | null | undefined) {
