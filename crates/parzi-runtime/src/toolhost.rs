@@ -459,6 +459,13 @@ fn note_line(n: &brain::NoteMeta, projects: bool) -> String {
     if projects && !n.projects.is_empty() {
         line.push_str(&format!(" [{}]", n.projects.join(", ")));
     }
+    // A copy is never attached, pinned or not; the user keeps one version.
+    if let Some(original) = &n.conflict_of {
+        line.push_str(&format!(
+            " (sync conflict copy of {original}; the user settles it in the Brain view)"
+        ));
+        return line;
+    }
     if n.pinned {
         line.push_str(" (pinned)");
     }
@@ -469,16 +476,34 @@ fn note_line(n: &brain::NoteMeta, projects: bool) -> String {
     line
 }
 
+/// Notes one brain.list shows: one curious list must not evict the task.
+const SHOWN: usize = 50;
+
+/// Up to `SHOWN` note lines, then how many more there are.
+fn note_lines<'a>(
+    out: &mut String,
+    notes: impl Iterator<Item = &'a brain::NoteMeta>,
+    projects: bool,
+) {
+    let mut more = 0;
+    for (i, n) in notes.enumerate() {
+        if i < SHOWN {
+            out.push_str(&note_line(n, projects));
+        } else {
+            more += 1;
+        }
+    }
+    if more > 0 {
+        out.push_str(&format!("\n- …and {more} more; use brain.search"));
+    }
+}
+
 fn brain_listing(vault: &brain::Vault, project: &str) -> Result<String> {
-    // Capped: one curious unfiltered list must not evict the task.
-    const SHOWN: usize = 50;
     let (notes, projects) = vault.catalog();
     if project.eq_ignore_ascii_case(brain::EVERYWHERE) {
         let mut out = String::from("Notes for every session:");
         let before = out.len();
-        for n in notes.iter().filter(|n| n.everywhere()) {
-            out.push_str(&note_line(n, false));
-        }
+        note_lines(&mut out, notes.iter().filter(|n| n.everywhere()), false);
         if out.len() == before {
             out.push_str(" none");
         }
@@ -499,12 +524,12 @@ fn brain_listing(vault: &brain::Vault, project: &str) -> Result<String> {
             "{} ({}), folder {}\n- {} — project note",
             p.title, p.slug, p.folder, p.note
         );
-        for n in &p.notes {
-            match by_path.get(n.as_str()) {
-                Some(meta) => out.push_str(&note_line(meta, false)),
-                None => out.push_str(&format!("\n- {n}")),
-            }
-        }
+        // The project's notes come from the same scan, so each one is here.
+        let mapped = p
+            .notes
+            .iter()
+            .filter_map(|n| by_path.get(n.as_str()).copied());
+        note_lines(&mut out, mapped, false);
         return Ok(out);
     }
     if notes.is_empty() {
@@ -524,15 +549,7 @@ fn brain_listing(vault: &brain::Vault, project: &str) -> Result<String> {
         ));
     }
     out.push_str("\n\nNotes:");
-    for n in notes.iter().take(SHOWN) {
-        out.push_str(&note_line(n, true));
-    }
-    if notes.len() > SHOWN {
-        out.push_str(&format!(
-            "\n- …and {} more; use brain.search",
-            notes.len() - SHOWN
-        ));
-    }
+    note_lines(&mut out, notes.iter(), true);
     Ok(out)
 }
 

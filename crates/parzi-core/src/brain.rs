@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::time::UNIX_EPOCH;
@@ -18,6 +18,7 @@ const SUMMARY_MAX: usize = 140;
 const TITLE_MAX: usize = 120;
 const CONTEXT_HEAD: &str = "# The user's notes (Parzi brain)\nPinned notes are included in full. \
 On-demand notes are listed with a one-line summary; read one with brain.read when the task needs it.";
+const ON_DEMAND: &str = "\n\n## On demand";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteMeta {
@@ -39,6 +40,10 @@ pub struct NoteMeta {
     pub modified: i64,
     pub bytes: u64,
     pub summary: String,
+    /// The note this is a sync conflict copy of, while that note exists.
+    /// Copies stay out of agent context and search until the user keeps one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict_of: Option<String>,
 }
 
 impl NoteMeta {
@@ -72,6 +77,9 @@ pub struct BrainContext {
     pub text: String,
     pub attached: Vec<String>,
     pub listed: Vec<String>,
+    /// Pinned notes too long to fit in full: listed on demand instead.
+    #[serde(default)]
+    pub overflow: Vec<String>,
     pub chars: usize,
     pub tokens: usize,
 }
@@ -126,6 +134,31 @@ pub fn delete_project(slug: &str) -> Result<String> {
 #[must_use]
 pub fn context_for(cwd: &Path) -> Option<BrainContext> {
     Vault::open().ok()?.context(cwd)
+}
+
+pub fn overflow() -> Result<BTreeMap<String, Vec<String>>> {
+    Ok(Vault::open()?.overflow())
+}
+
+pub fn resolve_conflict(copy: &str, keep_copy: bool) -> Result<String> {
+    Vault::open()?.resolve_conflict(copy, keep_copy)
+}
+
+/// The note a sync conflict copy stands for: the sync saves a device's side
+/// of a two-sided edit of `notes/a.md` as `notes/a.conflict-<device>.md`
+/// (`-2`, `-3`... when taken). None for any other name.
+#[must_use]
+pub fn conflict_original(path: &str) -> Option<String> {
+    let (base, device) = strip_md(path).rsplit_once(".conflict-")?;
+    let name = base.rsplit('/').next().unwrap_or(base);
+    if name.is_empty() || !crate::device::valid_id(device) {
+        return None;
+    }
+    Some(if is_md(name) {
+        base.to_string()
+    } else {
+        format!("{base}.md")
+    })
 }
 
 #[must_use]
@@ -244,33 +277,37 @@ impl Vault {
         Ok(std::fs::remove_file(self.locate(path)?.1)?)
     }
 
+    /// Notes holding every word of `query` in their title or body. More
+    /// words in the title rank first, then more hits overall; ties keep
+    /// vault order. Sync conflict copies would only repeat their original.
     #[must_use]
     pub fn search(&self, query: &str) -> Vec<SearchHit> {
-        let q = query.trim().to_lowercase();
-        if q.is_empty() {
+        let mut terms: Vec<String> = vec![];
+        for t in query.split_whitespace().map(str::to_lowercase) {
+            if !terms.contains(&t) {
+                terms.push(t);
+            }
+        }
+        if terms.is_empty() {
             return vec![];
         }
-        let (mut titled, mut bodied) = (vec![], vec![]);
+        let mut found = vec![];
         for n in self.scan() {
-            let at = find_folded(&n.body, &q);
-            let in_title = n.meta.title.to_lowercase().contains(&q);
-            if !in_title && at.is_none() {
+            if n.meta.conflict_of.is_some() {
                 continue;
             }
+            let Some((titled, hits, at)) = score(&n.meta.title, &n.body, &terms) else {
+                continue;
+            };
             let hit = SearchHit {
                 snippet: snippet(&n.body, at.unwrap_or(0)),
                 path: n.meta.path,
                 title: n.meta.title,
             };
-            if in_title {
-                titled.push(hit);
-            } else {
-                bodied.push(hit);
-            }
+            found.push((titled, hits, hit));
         }
-        titled.extend(bodied);
-        titled.truncate(MAX_HITS);
-        titled
+        found.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+        found.into_iter().take(MAX_HITS).map(|f| f.2).collect()
     }
 
     fn project_upsert(&self, slug: Option<&str>, title: &str, folder: &str) -> Result<Project> {
@@ -444,6 +481,10 @@ impl Vault {
                 let Some(slug) = project_slug(&rel) else {
                     continue;
                 };
+                // Same rule as projects_of: a conflict copy routes nothing.
+                if conflict_original(&rel).is_some_and(|o| self.root.join(o).is_file()) {
+                    continue;
+                }
                 let Some(f) = front_fields(&e.path(), &device).filter(|f| !f.archived) else {
                     continue;
                 };
@@ -467,96 +508,48 @@ impl Vault {
             all.iter().map(|p| (p.slug.as_str(), p.folder.as_str())),
         )
         .and_then(|at| all.into_iter().nth(at));
-        let by_path: HashMap<&str, &Note> =
-            notes.iter().map(|n| (n.meta.path.as_str(), n)).collect();
-        let home = project
-            .as_ref()
-            .and_then(|p| by_path.get(p.note.as_str()).copied());
-        let mut everywhere: Vec<&Note> = notes
-            .iter()
-            .filter(|n| n.meta.everywhere())
-            .filter(|n| home.is_none_or(|h| h.meta.path != n.meta.path))
-            .collect();
-        if project.is_none() && everywhere.is_empty() {
-            return None;
-        }
-        let mut mapped: Vec<&Note> = project
-            .iter()
-            .flat_map(|p| &p.notes)
-            .filter_map(|p| by_path.get(p.as_str()).copied())
-            .filter(|n| !n.meta.everywhere())
-            .collect();
-        everywhere.sort_by_cached_key(|n| (n.meta.title.to_lowercase(), n.meta.path.clone()));
-        mapped.sort_by_cached_key(|n| (n.meta.title.to_lowercase(), n.meta.path.clone()));
-        let mut text = CONTEXT_HEAD.to_string();
-        if let Some(p) = &project {
-            text.push_str(&format!(
-                "\n\n## Project: {}\nFolder: {}",
-                p.title, p.folder
-            ));
-            if let Some(h) = home.filter(|h| !h.body.is_empty()) {
-                text.push_str("\n\n");
-                text.push_str(&clip(&h.body, CONTEXT_CAP / 2));
+        assemble(&notes, project)
+    }
+
+    /// Pinned notes too long to send in full, each with where that happens:
+    /// project slugs, and `all` for sessions outside every project.
+    #[must_use]
+    pub fn overflow(&self) -> BTreeMap<String, Vec<String>> {
+        let notes = self.scan();
+        let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let places = projects_of(&notes)
+            .into_iter()
+            .map(|p| (p.slug.clone(), Some(p)))
+            .chain([(EVERYWHERE.to_string(), None)]);
+        for (slug, project) in places {
+            for path in assemble(&notes, project)
+                .map(|c| c.overflow)
+                .unwrap_or_default()
+            {
+                out.entry(path).or_default().push(slug.clone());
             }
         }
-        let mut chars = text.chars().count();
-        let (mut attached, mut listed, mut rest) = (vec![], vec![], vec![]);
-        for n in everywhere.into_iter().chain(mapped) {
-            if !n.meta.pinned {
-                rest.push(n);
-                continue;
-            }
-            let mut section = format!("\n\n## {} ({})", n.meta.title, n.meta.path);
-            if !n.body.is_empty() {
-                section.push_str("\n\n");
-                section.push_str(&n.body);
-            }
-            let len = section.chars().count();
-            if chars + len <= CONTEXT_CAP {
-                text.push_str(&section);
-                chars += len;
-                attached.push(n.meta.path.clone());
-            } else {
-                listed.push(n);
-            }
+        out
+    }
+
+    /// Settle a sync conflict: keep the copy (it replaces the original) or
+    /// the original (the copy goes). Returns the original's path.
+    pub fn resolve_conflict(&self, copy: &str, keep_copy: bool) -> Result<String> {
+        let (rel, full) = self.locate(copy)?;
+        let original = conflict_original(&rel).ok_or_else(|| {
+            ParziError::Validation(format!("`{rel}` is not a sync conflict copy"))
+        })?;
+        let (_, home) = self.locate(&original)?;
+        if keep_copy {
+            atomic_write(&home, &read_whole(&full, &rel)?)?;
+        } else if !home.is_file() {
+            // Dropping the copy would lose the only version left.
+            return Err(ParziError::Validation(format!(
+                "`{original}` is gone; keep the copy instead"
+            )));
         }
-        listed.extend(rest);
-        if !listed.is_empty() {
-            const ON_DEMAND: &str = "\n\n## On demand";
-            text.push_str(ON_DEMAND);
-            chars += ON_DEMAND.len();
-            // The list counts against the same cap as the pinned notes.
-            let mut shown = 0;
-            for n in listed.iter().take(MAX_LISTED) {
-                let mut line = format!("\n- {} — {}", n.meta.path, n.meta.title);
-                if !n.meta.summary.is_empty() {
-                    line.push_str(": ");
-                    line.push_str(&n.meta.summary);
-                }
-                let len = line.chars().count();
-                if chars + len > CONTEXT_CAP {
-                    break;
-                }
-                text.push_str(&line);
-                chars += len;
-                shown += 1;
-            }
-            if listed.len() > shown {
-                text.push_str(&format!(
-                    "\n- …and {} more (brain_list)",
-                    listed.len() - shown
-                ));
-            }
-        }
-        let chars = text.chars().count();
-        Some(BrainContext {
-            project,
-            text,
-            attached,
-            listed: listed.into_iter().map(|n| n.meta.path.clone()).collect(),
-            chars,
-            tokens: chars.div_ceil(4),
-        })
+        std::fs::remove_file(&full)?;
+        Ok(original)
     }
 
     fn locate(&self, path: &str) -> Result<(String, PathBuf)> {
@@ -612,6 +605,131 @@ impl Vault {
     }
 }
 
+/// The brain part of the system prompt for sessions in `project` (None:
+/// outside every project), within `CONTEXT_CAP` chars. Pinned notes go in
+/// full while they fit, this project's before the ones for every session
+/// since they matter more here. The rest are listed with a summary, pinned
+/// notes that did not fit first.
+fn assemble(notes: &[Note], project: Option<Project>) -> Option<BrainContext> {
+    // A conflict copy would repeat its original; the user settles it first.
+    let by_path: HashMap<&str, &Note> = notes
+        .iter()
+        .filter(|n| n.meta.conflict_of.is_none())
+        .map(|n| (n.meta.path.as_str(), n))
+        .collect();
+    let home = project
+        .as_ref()
+        .and_then(|p| by_path.get(p.note.as_str()).copied());
+    let mut mapped: Vec<&Note> = project
+        .iter()
+        .flat_map(|p| &p.notes)
+        .filter_map(|p| by_path.get(p.as_str()).copied())
+        .collect();
+    let taken: HashSet<&str> = mapped
+        .iter()
+        .chain(&home)
+        .map(|n| n.meta.path.as_str())
+        .collect();
+    let mut everywhere: Vec<&Note> = notes
+        .iter()
+        .filter(|n| n.meta.conflict_of.is_none() && n.meta.everywhere())
+        .filter(|n| !taken.contains(n.meta.path.as_str()))
+        .collect();
+    if project.is_none() && everywhere.is_empty() {
+        return None;
+    }
+    let by_title = |n: &&Note| (n.meta.title.to_lowercase(), n.meta.path.clone());
+    mapped.sort_by_cached_key(by_title);
+    everywhere.sort_by_cached_key(by_title);
+    let mut text = CONTEXT_HEAD.to_string();
+    if let Some(p) = &project {
+        text.push_str(&format!(
+            "\n\n## Project: {}\nFolder: {}",
+            p.title, p.folder
+        ));
+        if let Some(h) = home.filter(|h| !h.body.is_empty()) {
+            text.push_str("\n\n");
+            text.push_str(&clip(&h.body, CONTEXT_CAP / 2));
+        }
+    }
+    let mut chars = text.chars().count();
+    let order: Vec<&Note> = mapped.into_iter().chain(everywhere).collect();
+    // Room for the on-demand header and its last line, whatever is listed.
+    let reserve = ON_DEMAND.len() + more_line(order.len()).chars().count();
+    let (mut attached, mut overflow, mut rest) = (vec![], vec![], vec![]);
+    for n in order {
+        if !n.meta.pinned {
+            rest.push(n);
+            continue;
+        }
+        let mut section = format!("\n\n## {} ({})", n.meta.title, n.meta.path);
+        if !n.body.is_empty() {
+            section.push_str("\n\n");
+            section.push_str(&n.body);
+        }
+        let len = section.chars().count();
+        if chars + len + reserve <= CONTEXT_CAP {
+            text.push_str(&section);
+            chars += len;
+            attached.push(n.meta.path.clone());
+        } else {
+            overflow.push(n);
+        }
+    }
+    let listed: Vec<&Note> = overflow.iter().chain(&rest).copied().collect();
+    if !listed.is_empty() {
+        text.push_str(ON_DEMAND);
+        chars += ON_DEMAND.len();
+        let mut shown = 0;
+        for (i, n) in listed.iter().take(MAX_LISTED).enumerate() {
+            let line = demand_line(n, i < overflow.len());
+            // Each line leaves room for the "…and N more" that may follow.
+            let after = match listed.len() - i - 1 {
+                0 => 0,
+                left => more_line(left).chars().count(),
+            };
+            let len = line.chars().count();
+            if chars + len + after > CONTEXT_CAP {
+                break;
+            }
+            text.push_str(&line);
+            chars += len;
+            shown += 1;
+        }
+        if listed.len() > shown {
+            text.push_str(&more_line(listed.len() - shown));
+        }
+    }
+    let paths =
+        |list: &[&Note]| -> Vec<String> { list.iter().map(|n| n.meta.path.clone()).collect() };
+    let chars = text.chars().count();
+    Some(BrainContext {
+        project,
+        text,
+        attached,
+        listed: paths(&listed),
+        overflow: paths(&overflow),
+        chars,
+        tokens: chars.div_ceil(4),
+    })
+}
+
+fn demand_line(n: &Note, pinned: bool) -> String {
+    let mut line = format!("\n- {} — {}", n.meta.path, n.meta.title);
+    if pinned {
+        line.push_str(" (pinned, too long to include in full)");
+    }
+    if !n.meta.summary.is_empty() {
+        line.push_str(": ");
+        line.push_str(&n.meta.summary);
+    }
+    line
+}
+
+fn more_line(left: usize) -> String {
+    format!("\n- …and {left} more (brain_list)")
+}
+
 struct Note {
     meta: NoteMeta,
     body: String,
@@ -642,6 +760,12 @@ impl Resolver {
             .get(&key)
             .or_else(|| self.stems.get(&key)?.as_ref())
             .map(String::as_str)
+    }
+
+    /// The original of a conflict copy at `path`, while it exists.
+    fn original_of(&self, path: &str) -> Option<String> {
+        let original = conflict_original(path)?;
+        self.paths.get(&strip_md(&original).to_lowercase()).cloned()
     }
 }
 
@@ -786,6 +910,7 @@ fn parse(
         .or_else(|| heading(body))
         .unwrap_or_else(|| stem(&path).to_string());
     let title = ellipsize(&title, TITLE_MAX);
+    let conflict_of = resolver.original_of(&path);
     let mut links: Vec<String> = vec![];
     for target in link_targets(raw) {
         if let Some(p) = resolver.resolve(&target) {
@@ -809,6 +934,7 @@ fn parse(
             modified,
             bytes,
             summary: summary(f.description.as_deref(), body),
+            conflict_of,
         },
         body: body.trim().to_string(),
     }
@@ -1233,8 +1359,9 @@ fn projects_of(notes: &[Note]) -> Vec<Project> {
         .iter()
         .filter_map(|home| {
             let slug = project_slug(&home.meta.path)?;
-            // Archived notes stay on disk but leave every project list.
-            if home.meta.archived {
+            // Archived notes stay on disk but leave every project list, and
+            // a conflict copy of a project note is no second project.
+            if home.meta.archived || home.meta.conflict_of.is_some() {
                 return None;
             }
             // A project is a note with a folder on any device. Here it may
@@ -1417,16 +1544,38 @@ fn stem(path: &str) -> &str {
     strip_md(path.rsplit('/').next().unwrap_or(path))
 }
 
-fn find_folded(hay: &str, needle: &str) -> Option<usize> {
-    let pos = hay.to_lowercase().find(needle)?;
+/// How lowercase `terms` match a note: (terms in the title, hits in title
+/// and body, byte offset in `body` of the first body hit). None when any
+/// term is in neither.
+fn score(title: &str, body: &str, terms: &[String]) -> Option<(usize, usize, Option<usize>)> {
+    let (title, folded) = (title.to_lowercase(), body.to_lowercase());
+    let (mut titled, mut hits, mut first) = (0, 0, None::<usize>);
+    for t in terms {
+        let in_title = title.matches(t.as_str()).count();
+        let in_body = folded.matches(t.as_str()).count();
+        if in_title + in_body == 0 {
+            return None;
+        }
+        titled += usize::from(in_title > 0);
+        hits += in_title + in_body;
+        if let Some(at) = folded.find(t.as_str()) {
+            first = Some(first.map_or(at, |f: usize| f.min(at)));
+        }
+    }
+    Some((titled, hits, first.map(|at| unfold(body, at))))
+}
+
+/// The byte in `hay` where byte `pos` of `hay.to_lowercase()` comes from
+/// (lowercasing can change a char's length).
+fn unfold(hay: &str, pos: usize) -> usize {
     let mut seen = 0;
     for (i, c) in hay.char_indices() {
         seen += c.to_lowercase().map(char::len_utf8).sum::<usize>();
         if seen > pos {
-            return Some(i);
+            return i;
         }
     }
-    Some(hay.len())
+    hay.len()
 }
 
 fn snippet(body: &str, at: usize) -> String {
@@ -1814,7 +1963,7 @@ mod tests {
         assert_eq!(first.title.chars().count(), TITLE_MAX);
         assert!(first.title.ends_with('…'));
         assert_eq!(ctx.listed.len(), 50);
-        assert!(ctx.chars <= CONTEXT_CAP + 40, "{}", ctx.chars);
+        assert!(ctx.chars <= CONTEXT_CAP, "{}", ctx.chars);
         let shown = ctx.text.matches("\n- n").count();
         assert!(shown < 50, "{shown}");
         assert!(ctx
@@ -1876,8 +2025,10 @@ mod tests {
         v.write("notes/other.md", "Unrelated.").unwrap();
         let ctx = v.context(&folder.join("src")).unwrap();
         assert_eq!(ctx.project.as_ref().map(|p| p.slug.as_str()), Some("demo"));
-        assert_eq!(ctx.attached, ["notes/me.md", "notes/style.md"]);
-        assert_eq!(ctx.listed, ["notes/machines.md", "notes/release.md"]);
+        // The project's notes come before the ones for every session.
+        assert_eq!(ctx.attached, ["notes/style.md", "notes/me.md"]);
+        assert_eq!(ctx.listed, ["notes/release.md", "notes/machines.md"]);
+        assert!(ctx.overflow.is_empty());
         assert_eq!(
             ctx.text,
             format!(
@@ -1889,19 +2040,19 @@ mod tests {
                  \n\
                  Rust CLI. Run `cargo xtask` before a commit.\n\
                  \n\
-                 ## About me (notes/me.md)\n\
-                 \n\
-                 I like short answers.\n\
-                 \n\
                  ## Code style (notes/style.md)\n\
                  \n\
                  # Code style\n\
                  \n\
                  No comments; match the file around you.\n\
                  \n\
+                 ## About me (notes/me.md)\n\
+                 \n\
+                 I like short answers.\n\
+                 \n\
                  ## On demand\n\
-                 - notes/machines.md — machines: Which machines and shells I use\n\
-                 - notes/release.md — Release: Bump the version, then tag it.",
+                 - notes/release.md — Release: Bump the version, then tag it.\n\
+                 - notes/machines.md — machines: Which machines and shells I use",
                 folder.display()
             )
         );
@@ -1962,9 +2113,10 @@ mod tests {
         let ctx = v.context(&folder).unwrap();
         assert_eq!(ctx.attached, ["a.md", "b.md", "d.md"]);
         assert_eq!(ctx.listed, ["c.md", "e.md"]);
-        assert!(ctx.chars <= CONTEXT_CAP + 400, "{}", ctx.chars);
+        assert_eq!(ctx.overflow, ["c.md"]);
+        assert!(ctx.chars <= CONTEXT_CAP, "{}", ctx.chars);
         assert!(ctx.text.ends_with(&format!(
-            "\n\n## On demand\n- c.md — c: {}…\n- e.md — e: not pinned",
+            "\n\n## On demand\n- c.md — c (pinned, too long to include in full): {}…\n- e.md — e: not pinned",
             "x".repeat(SUMMARY_MAX - 1)
         )));
         for i in 0..50 {
@@ -1972,8 +2124,79 @@ mod tests {
         }
         let ctx = v.context(&folder).unwrap();
         assert_eq!(ctx.listed.len(), 52);
-        assert_eq!(ctx.text.matches("\n- more/").count(), 48);
-        assert!(ctx.text.ends_with("\n- …and 2 more (brain_list)"));
+        assert!(ctx.chars <= CONTEXT_CAP, "{}", ctx.chars);
+        let shown = ctx.text.matches("\n- more/").count();
+        assert!((40..50).contains(&shown), "{shown}");
+        assert!(ctx
+            .text
+            .ends_with(&format!("\n- …and {} more (brain_list)", 50 - shown)));
+        let report = v.overflow();
+        assert_eq!(report.len(), 1, "{report:?}");
+        assert_eq!(report["c.md"], ["demo"]);
+    }
+
+    #[test]
+    fn project_pins_come_first_and_the_cap_holds_to_the_last_char() {
+        let (d, v) = vault();
+        let folder = d.path().join("code");
+        std::fs::create_dir_all(&folder).unwrap();
+        v.project_upsert(Some("demo"), "Demo", folder.to_str().unwrap())
+            .unwrap();
+        // A big note for every session sorts first by title but must not
+        // push this project's own pinned note out.
+        let big = "y".repeat(CONTEXT_CAP - 1_000);
+        v.write(
+            "aaa.md",
+            &format!("---\nprojects: [all]\npinned: true\n---\n{big}"),
+        )
+        .unwrap();
+        v.write(
+            "zzz.md",
+            &format!(
+                "---\nprojects: [demo]\npinned: true\n---\n{}",
+                "z".repeat(2_000)
+            ),
+        )
+        .unwrap();
+        let ctx = v.context(&folder).unwrap();
+        assert_eq!(ctx.attached, ["zzz.md"]);
+        assert_eq!(ctx.overflow, ["aaa.md"]);
+        assert!(ctx.text.contains("\n- aaa.md — aaa (pinned, too long"));
+        // Outside the project the big note fits.
+        let bare = v.context(d.path()).unwrap();
+        assert_eq!(bare.attached, ["aaa.md"]);
+        assert!(bare.overflow.is_empty());
+        assert_eq!(v.overflow()["aaa.md"], ["demo"]);
+
+        // Fill the room exactly: the on-demand header and its last line
+        // still fit within the cap, whatever the pinned notes left.
+        for pad in [0, 1, 7, 30, 60, 200] {
+            let (d, v) = vault();
+            let folder = d.path().join("code");
+            std::fs::create_dir_all(&folder).unwrap();
+            v.project_upsert(Some("demo"), "Demo", folder.to_str().unwrap())
+                .unwrap();
+            let used = v.context(&folder).unwrap().chars;
+            let section = "\n\n## p (p.md)\n\n".chars().count();
+            let fill = CONTEXT_CAP - used - section - pad;
+            v.write(
+                "p.md",
+                &format!(
+                    "---\nprojects: [demo]\npinned: true\n---\n{}",
+                    "p".repeat(fill)
+                ),
+            )
+            .unwrap();
+            for i in 0..80 {
+                v.write(&format!("n/{i:02}.md"), "---\nprojects: [demo]\n---\nshort")
+                    .unwrap();
+            }
+            let ctx = v.context(&folder).unwrap();
+            assert!(ctx.chars <= CONTEXT_CAP, "pad {pad}: {}", ctx.chars);
+            assert!(ctx.text.contains("\n\n## On demand"), "pad {pad}");
+            assert!(ctx.text.ends_with(" more (brain_list)"), "pad {pad}");
+            assert_eq!(ctx.listed.len() + ctx.attached.len(), 81, "pad {pad}");
+        }
     }
 
     #[test]
@@ -2005,7 +2228,8 @@ mod tests {
             .unwrap();
         let ctx = v.context(&inner.join("src")).unwrap();
         assert_eq!(ctx.project.as_ref().unwrap().slug, "inner");
-        assert_eq!(ctx.attached, ["both.md", "global.md", "local.md"]);
+        // Both is mapped here too, so it counts with the project's notes.
+        assert_eq!(ctx.attached, ["local.md", "both.md", "global.md"]);
         assert!(ctx.listed.is_empty());
         assert_eq!(ctx.text.matches("(both.md)").count(), 1);
         assert!(!ctx.text.contains("## On demand"));
@@ -2119,6 +2343,169 @@ mod tests {
         );
         assert!(v.search("  ").is_empty());
         assert!(Vault::at("/no/such/vault").search("x").is_empty());
+    }
+
+    #[test]
+    fn search_needs_every_word_and_ranks_title_words_then_hits() {
+        let (_d, v) = vault();
+        v.write("apart.md", "Run xtask first, then cargo build.")
+            .unwrap();
+        v.write("half.md", "cargo only").unwrap();
+        v.write("titled.md", "# Cargo notes\nuse xtask").unwrap();
+        v.write("both.md", "---\ntitle: Cargo xtask\n---\nbody")
+            .unwrap();
+        v.write("many.md", "xtask cargo xtask cargo xtask").unwrap();
+        let paths = |q: &str| -> Vec<String> { v.search(q).into_iter().map(|h| h.path).collect() };
+        let ranked = ["both.md", "titled.md", "many.md", "apart.md"];
+        assert_eq!(paths("cargo  XTASK"), ranked);
+        assert_eq!(
+            paths("xtask cargo cargo"),
+            ranked,
+            "order and repeats do not matter"
+        );
+        assert!(paths("cargo nope").is_empty());
+        // One word: a title hit first, then more hits (the heading counts).
+        assert_eq!(
+            paths("cargo"),
+            ["titled.md", "both.md", "many.md", "apart.md", "half.md"]
+        );
+        let hit = v.search("build then").remove(0);
+        assert_eq!(hit.path, "apart.md");
+        assert_eq!(hit.snippet, "Run xtask first, then cargo build.");
+        for i in 0..25 {
+            v.write(&format!("many/{i:02}.md"), "cargo xtask").unwrap();
+        }
+        assert_eq!(v.search("cargo xtask").len(), MAX_HITS);
+        // Lowercasing can lengthen a char; the snippet still lands on it.
+        let wide = "İ".repeat(80);
+        let hay = format!("{wide} needle");
+        let at = unfold(&hay, hay.to_lowercase().find("needle").unwrap());
+        assert_eq!(&hay[at..], "needle");
+    }
+
+    #[test]
+    fn conflict_copies_are_named_by_the_sync() {
+        for (copy, original) in [
+            ("notes/a.conflict-pc.md", Some("notes/a.md")),
+            ("a.conflict-laptop-macos-2.md", Some("a.md")),
+            ("a.MD.conflict-pc.md", Some("a.MD")),
+            ("a.conflict-pc.MD", Some("a.md")),
+            ("a.conflict-.md", None),
+            ("a.conflict-PC.md", None),
+            ("notes/.conflict-pc.md", None),
+            ("a.conflicts-pc.md", None),
+            ("a.md", None),
+        ] {
+            assert_eq!(conflict_original(copy).as_deref(), original, "{copy}");
+        }
+    }
+
+    #[test]
+    fn conflict_copies_stay_out_of_context_and_search_until_settled() {
+        let (d, v) = vault();
+        let folder = d.path().join("code");
+        std::fs::create_dir_all(&folder).unwrap();
+        let f = folder.to_str().unwrap();
+        v.project_upsert(Some("demo"), "Demo", f).unwrap();
+        let home = v.read("projects/demo.md").unwrap();
+        v.write("projects/demo.conflict-laptop-macos.md", &home)
+            .unwrap();
+        v.write(
+            "notes/rule.md",
+            "---\nprojects: [demo]\npinned: true\n---\nuse tabs",
+        )
+        .unwrap();
+        v.write(
+            "notes/rule.conflict-laptop-macos.md",
+            "---\nprojects: [demo]\npinned: true\n---\nuse spaces",
+        )
+        .unwrap();
+        v.write("notes/me.md", "---\nprojects: [all]\n---\nshort answers")
+            .unwrap();
+        v.write(
+            "notes/me.conflict-pc-2.md",
+            "---\nprojects: [all]\n---\nlong answers",
+        )
+        .unwrap();
+        v.write("orphan.conflict-pc.md", "use the only copy")
+            .unwrap();
+
+        let of = |p: &str| {
+            v.list()
+                .into_iter()
+                .find(|m| m.path == p)
+                .unwrap()
+                .conflict_of
+        };
+        assert_eq!(
+            of("notes/rule.conflict-laptop-macos.md").as_deref(),
+            Some("notes/rule.md")
+        );
+        assert_eq!(
+            of("notes/me.conflict-pc-2.md").as_deref(),
+            Some("notes/me.md")
+        );
+        assert_eq!(
+            of("orphan.conflict-pc.md"),
+            None,
+            "no original: a plain note"
+        );
+        assert_eq!(of("notes/rule.md"), None);
+        let projects = v.projects();
+        assert_eq!(projects.len(), 1, "a copy of a project note is no project");
+        assert_eq!(
+            projects[0].notes,
+            ["notes/rule.conflict-laptop-macos.md", "notes/rule.md"],
+            "the view still files the copy with its project"
+        );
+        assert_eq!(v.project_at(f).as_deref(), Some("demo"));
+
+        let ctx = v.context(&folder).unwrap();
+        assert_eq!(ctx.attached, ["notes/rule.md"]);
+        assert_eq!(ctx.listed, ["notes/me.md"]);
+        assert!(!ctx.text.contains("conflict"), "{}", ctx.text);
+        assert!(!ctx.text.contains("spaces") && !ctx.text.contains("long answers"));
+        let found: Vec<String> = v.search("use").into_iter().map(|h| h.path).collect();
+        assert_eq!(found, ["notes/rule.md", "orphan.conflict-pc.md"]);
+
+        assert!(
+            v.resolve_conflict("notes/me.md", true).is_err(),
+            "not a copy"
+        );
+        assert_eq!(
+            v.resolve_conflict("notes/me.conflict-pc-2.md", false)
+                .unwrap(),
+            "notes/me.md"
+        );
+        assert!(v.read("notes/me.conflict-pc-2.md").is_err());
+        assert!(v.read("notes/me.md").unwrap().ends_with("short answers"));
+        assert_eq!(
+            v.resolve_conflict("notes/rule.conflict-laptop-macos.md", true)
+                .unwrap(),
+            "notes/rule.md"
+        );
+        assert!(v.read("notes/rule.md").unwrap().ends_with("use spaces"));
+        assert!(v.read("notes/rule.conflict-laptop-macos.md").is_err());
+        v.resolve_conflict("projects/demo.conflict-laptop-macos.md", false)
+            .unwrap();
+        // Dropping a copy whose original is gone would lose the only text.
+        assert!(v.resolve_conflict("orphan.conflict-pc.md", false).is_err());
+        assert!(v.read("orphan.conflict-pc.md").is_ok());
+        assert_eq!(
+            v.resolve_conflict("orphan.conflict-pc.md", true).unwrap(),
+            "orphan.md"
+        );
+        assert_eq!(v.read("orphan.md").unwrap(), "use the only copy");
+        let left: Vec<String> = v.list().into_iter().map(|m| m.path).collect();
+        assert_eq!(
+            left,
+            [
+                "notes/me.md",
+                "notes/rule.md",
+                "orphan.md",
+                "projects/demo.md"
+            ]
+        );
     }
 
     #[test]

@@ -626,6 +626,8 @@ fn main() {
             brain::brain_map,
             brain::brain_context,
             brain::brain_pin,
+            brain::brain_overflow,
+            brain::brain_resolve_conflict,
             brain::brain_open,
             brain::brain_obsidian,
             sessions::list_threads,

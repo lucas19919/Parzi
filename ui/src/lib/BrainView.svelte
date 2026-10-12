@@ -12,6 +12,7 @@
   import { tooltip } from "./tooltip";
 
   const UNUSED = "unused";
+  const CONFLICTS = "conflicts";
   const OPEN_KEY = "parzi.brain.open.v2";
   const DRAG_START = 5;
 
@@ -19,6 +20,9 @@
 
   let notes: NoteMeta[] = [];
   let projects: Project[] = [];
+  // Pinned notes too long to send in full: path -> project slugs.
+  let overflow: Record<string, string[]> = {};
+  let conflictsShown = false;
   let folder = EVERYWHERE;
   let selected = "";
   let raw = "";
@@ -42,12 +46,18 @@
   $: current = folders.find((f) => f.key === folder) ?? null;
   $: note = byPath.get(selected) ?? null;
   $: noteProject = projects.find((p) => p.note === selected) ?? null;
+  $: copyOf = note?.conflict_of ?? "";
+  $: copies = notes.filter((n) => n.conflict_of === selected);
+  $: tooBig = note?.pinned ? (overflow[note.path] ?? []) : [];
 
   function buildFolders(list: NoteMeta[], all: Project[], q: string): Folder[] {
-    const map = new Map(list.map((n) => [n.path, n]));
+    // Sync conflict copies wait in their own folder until one version is kept.
+    const conflicts = list.filter((n) => n.conflict_of);
+    const plain = list.filter((n) => !n.conflict_of);
+    const map = new Map(plain.map((n) => [n.path, n]));
     const used = new Set<string>();
     const pick = (paths: string[]) => paths.map((p) => map.get(p)).filter((n): n is NoteMeta => !!n);
-    const everywhere = list.filter(inEverywhere);
+    const everywhere = plain.filter(inEverywhere);
     everywhere.forEach((n) => used.add(n.path));
     const projectFolders = [...all]
       .sort((a, b) => a.title.localeCompare(b.title))
@@ -55,8 +65,9 @@
         p.notes.forEach((path) => used.add(path));
         return { key: p.slug, title: p.title, project: p, items: pick(p.notes) };
       });
-    const unused = list.filter((n) => !isProjectNote(n) && !used.has(n.path));
+    const unused = plain.filter((n) => !isProjectNote(n) && !used.has(n.path));
     const out: Folder[] = [
+      ...(conflicts.length ? [{ key: CONFLICTS, title: "Sync conflicts", project: null, items: conflicts }] : []),
       { key: EVERYWHERE, title: "All sessions", project: null, items: everywhere },
       ...projectFolders,
       { key: UNUSED, title: "Not used", project: null, items: unused },
@@ -81,8 +92,23 @@
   }
 
   function twin(n: NoteMeta, f: Folder) {
+    if (n.conflict_of) return device(n);
     if (!f.items.some((x) => x !== n && x.title === n.title)) return "";
     return /^imported\/([^/]+)\//.exec(n.path)?.[1] ?? "";
+  }
+
+  // The device a conflict copy came from: `a.conflict-<device>.md`.
+  function device(n: NoteMeta) {
+    return /\.conflict-([a-z0-9-]+)\.md$/i.exec(n.path)?.[1] ?? "another device";
+  }
+
+  function pinTip(n: NoteMeta, over: string[]) {
+    if (!n.pinned) return "Not pinned: the agent sees the title and opens the note when it needs it. Click to pin.";
+    if (!over.length) return "Pinned: the agent always gets the whole note. Click to unpin.";
+    const names = over.filter((s) => s !== EVERYWHERE).map((s) => projects.find((p) => p.slug === s)?.title ?? s);
+    const where = names.length ? [`${names.join(", ")} sessions`] : [];
+    if (over.includes(EVERYWHERE)) where.push("sessions outside a project");
+    return `Pinned, but too big to send in full in ${where.join(" and ")}, so the agent gets it listed instead. Click to unpin.`;
   }
 
   function loadExpanded(): string[] {
@@ -106,7 +132,12 @@
 
   async function refresh() {
     try {
-      [notes, projects] = await Promise.all([brain.list(), brain.projects()]);
+      [notes, projects, overflow] = await Promise.all([brain.list(), brain.projects(), brain.overflow().catch(() => overflow)]);
+      // New conflicts open their folder once, so the user sees them.
+      if (!conflictsShown && notes.some((n) => n.conflict_of)) {
+        conflictsShown = true;
+        toggle(CONFLICTS, true);
+      }
     } catch (e) {
       toastError(e);
     }
@@ -180,7 +211,7 @@
     try {
       const meta = await brain.write(selected, raw);
       notes = notes.map((n) => (n.path === meta.path ? meta : n));
-      projects = await brain.projects();
+      [projects, overflow] = await Promise.all([brain.projects(), brain.overflow().catch(() => overflow)]);
     } catch (e) {
       toastError(e);
     }
@@ -192,6 +223,7 @@
     try {
       const meta = await brain.pin(note.path, !note.pinned);
       notes = notes.map((x) => (x.path === meta.path ? meta : x));
+      overflow = await brain.overflow().catch(() => overflow);
       const text = await brain.read(meta.path);
       if (selected === meta.path && !dirty) raw = text;
     } catch (e) {
@@ -206,7 +238,8 @@
 
   async function moveNote(path: string, from: string, to: string, copy: boolean) {
     const n = byPath.get(path);
-    if (!n || from === to) return;
+    // A conflict copy only goes away by keeping one version.
+    if (!n || from === to || n.conflict_of || to === CONFLICTS) return;
     if (!copy && from !== UNUSED && viaLink(n, from)) {
       toast("This note links to that project, so it stays there. Remove the [[link]] to move it.");
       return;
@@ -232,7 +265,7 @@
   }
 
   function onMove(e: PointerEvent) {
-    if (!press) return;
+    if (!press || byPath.get(press.path)?.conflict_of) return;
     if (!dragging && Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_START) return;
     dragging = true;
     dragX = e.clientX;
@@ -330,6 +363,25 @@
     }
   }
 
+  async function settle(keepCopy: boolean) {
+    if (!note?.conflict_of) return;
+    const { path, conflict_of: original } = note;
+    const question = keepCopy ? `Replace ${original} with this copy? The other version is deleted.` : `Delete this copy and keep ${original}?`;
+    const ok = await ask(question, { title: keepCopy ? "Keep this copy" : "Keep original", kind: "warning" }).catch(() => false);
+    if (!ok) return;
+    await flush();
+    try {
+      const kept = await brain.resolveConflict(path, keepCopy);
+      selected = "";
+      raw = "";
+      dirty = false;
+      await refresh();
+      await openNote(kept);
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
   async function openOutside(path: string, target: "file" | "folder" | "obsidian") {
     if (target === "obsidian" && obsidian === "unregistered") {
       toast("In Obsidian, choose Open folder as vault and pick the brain folder once. After that this opens the note directly.");
@@ -409,30 +461,35 @@
     <div class="tree">
       {#each folders as f (f.key)}
         {@const open = !!query.trim() || expanded.has(f.key)}
-        {#if f.key !== UNUSED || f.items.length || !query.trim()}
-          <div class="folder" class:on={isCurrent(f, selected, folder)} class:drop={dragging && dropOn === f.key} data-folder={f.key}>
+        {@const fixed = f.key === UNUSED || f.key === CONFLICTS}
+        {@const drop = f.key === CONFLICTS ? undefined : f.key}
+        {#if !fixed || f.items.length || !query.trim()}
+          <div class="folder" class:on={isCurrent(f, selected, folder)} class:drop={dragging && dropOn === f.key} data-folder={drop}>
             <button class="folder-name" title={f.project?.folder ?? ""} aria-expanded={open} on:click={() => openFolder(f)}>
               <span class="chev"><Icon name={open ? "chevDown" : "chevRight"} size={12} /></span>
-              <Icon name={f.key === EVERYWHERE ? "globe" : "folder"} />
+              <Icon name={f.key === EVERYWHERE ? "globe" : f.key === CONFLICTS ? "fork" : "folder"} />
               <span class="name">{f.title}</span>
             </button>
-            {#if f.key !== UNUSED}
+            {#if !fixed}
               <button class="add" use:tooltip={`New note in ${f.title}`} on:click={() => startNote(f.key)}><Icon name="plus" size={12} /></button>
             {/if}
           </div>
           {#if open}
-            <div class="kids" data-folder={f.key} data-ui-list>
+            <div class="kids" data-folder={drop} data-ui-list>
               {#each f.items as n (n.path)}
                 <button
                   class="note"
                   class:on={n.path === selected}
-                  title={n.summary || n.path}
+                  class:copy={!!n.conflict_of}
+                  title={n.conflict_of ? `Sync conflict copy of ${n.conflict_of}` : n.summary || n.path}
                   on:pointerdown={(e) => onRowDown(e, n, f.key)}
                   on:keydown={(e) => e.key === "Enter" && openNote(n.path)}
                 >
                   <span class="name">{n.title}</span>
                   {#if twin(n, f)}<span class="from">{twin(n, f)}</span>{/if}
-                  {#if n.pinned}<span class="pin" title="Always included in full"><Icon name="pin" size={12} /></span>{/if}
+                  {#if n.pinned && !n.conflict_of}
+                    <span class="pin" class:over={!!overflow[n.path]} title={overflow[n.path] ? "Too big to send in full, listed instead" : "Always included in full"}><Icon name="pin" size={12} /></span>
+                  {/if}
                 </button>
               {/each}
               {#if creatingIn === f.key}
@@ -440,7 +497,7 @@
                   <input bind:this={draftField} bind:value={draftName} placeholder="Note name" aria-label="Note name" on:blur={createNote} />
                 </form>
               {:else if !f.items.length}
-                <p class="empty">{f.key === UNUSED ? "Nothing here." : "Empty. Drag notes here."}</p>
+                <p class="empty">{fixed ? "Nothing here." : "Empty. Drag notes here."}</p>
               {/if}
             </div>
           {/if}
@@ -454,16 +511,20 @@
     {#if note}
       <div class="bar">
         <div class="titles">
-          <h2>{note.title}</h2>
+          <div class="title-row">
+            <h2>{note.title}</h2>
+            {#if copyOf}<span class="badge">Conflict</span>{/if}
+          </div>
           <span class="path">{noteProject ? `Project · ${noteProject.folder}` : note.path}</span>
         </div>
-        {#if !noteProject}
+        {#if !noteProject && !copyOf}
           <button
             class="icon"
             class:pinned={note.pinned}
+            class:over={tooBig.length > 0}
             aria-label="Pin note"
             aria-pressed={note.pinned}
-            use:tooltip={note.pinned ? "Pinned: the agent always gets the whole note. Click to unpin." : "Not pinned: the agent sees the title and opens the note when it needs it. Click to pin."}
+            use:tooltip={pinTip(note, tooBig)}
             on:click={togglePin}
           >
             <Icon name="pin" />
@@ -479,6 +540,25 @@
         <button class="icon" use:tooltip={"Open the file"} on:click={() => openOutside(note?.path ?? "", "file")}><Icon name="file" /></button>
         <button class="icon danger" use:tooltip={noteProject ? "Remove project (its notes stay)" : "Delete note"} on:click={removeNote}><Icon name="trash" /></button>
       </div>
+      {#if copyOf}
+        <div class="conflict">
+          <p>
+            This note changed on two devices before they synced. This is the version from {device(note)}; agents skip it until you keep one.
+          </p>
+          <div class="actions">
+            <button class="btn" on:click={() => openNote(copyOf)}>Open original</button>
+            <button class="btn" on:click={() => settle(false)}>Keep original</button>
+            <button class="btn primary" on:click={() => settle(true)}>Keep this copy</button>
+          </div>
+        </div>
+      {:else if copies.length}
+        <div class="conflict">
+          <p>Another device saved a different version of this note. Open it to keep one.</p>
+          <div class="actions">
+            <button class="btn" on:click={() => openNote(copies[0].path)}>Open the other version</button>
+          </div>
+        </div>
+      {/if}
       <div class="content">
         {#if editing}
           <textarea bind:value={raw} aria-label="Note text" on:input={onEdit} on:blur={flush} spellcheck="true" />
@@ -491,7 +571,9 @@
       <div class="page">
         <h2>{current.title}</h2>
         <p class="lead">
-          {#if current.key === UNUSED}
+          {#if current.key === CONFLICTS}
+            These notes changed on two devices before they synced. Open each one and keep one version; agents skip the copies until then.
+          {:else if current.key === UNUSED}
             No session gets these notes. Drag one onto a folder to use it.
           {:else if current.project}
             Sessions started in <span class="mono">{current.project.folder}</span> get these notes.
@@ -499,7 +581,7 @@
             Every session gets these notes.
           {/if}
         </p>
-        <p class="hint">Drag a note onto a folder to move it; hold Ctrl to copy it. Pin a note to always send all of it.</p>
+        <p class="hint">Drag a note onto a folder to move it; hold Ctrl to copy it. Pin a note to send all of it; one too big to fit is listed instead.</p>
       </div>
     {/if}
   </section>
@@ -679,6 +761,9 @@
     display: inline-flex;
     color: var(--accent);
   }
+  .pin.over {
+    color: var(--warn);
+  }
   .empty {
     margin: 2px 8px 4px;
     font-size: var(--fs-sm);
@@ -738,12 +823,50 @@
     flex-direction: column;
     gap: 2px;
   }
+  .title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
   .titles h2 {
     margin: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: var(--fs-lg);
+  }
+  .badge {
+    flex: none;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--warn) 16%, transparent);
+    color: var(--warn);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+  }
+  .conflict {
+    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    margin: 12px 24px 0;
+    padding: 12px 16px;
+    border: 1px solid var(--warn);
+    border-radius: var(--radius-lg);
+  }
+  .conflict p {
+    flex: 1 1 280px;
+    margin: 0;
+    font-size: var(--fs-md);
+    line-height: 1.5;
+    color: var(--text);
+  }
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
   }
   .path {
     overflow: hidden;
@@ -796,6 +919,9 @@
   }
   .icon.pinned {
     color: var(--accent);
+  }
+  .icon.pinned.over {
+    color: var(--warn);
   }
   .content {
     flex: 1;

@@ -63,13 +63,32 @@ fn host(approver: Arc<Person>) -> ToolHost {
 
 #[test]
 fn brain_tools_round_trip_their_mcp_names() {
-    for d in brain_defs() {
-        assert!(is_brain_tool(&d.name));
+    let names: Vec<String> = brain_defs().into_iter().map(|d| d.name).collect();
+    // Every brain tool the host runs is offered to agents (tools/list).
+    assert_eq!(
+        names,
+        [
+            "brain.search",
+            "brain.read",
+            "brain.list",
+            "brain.write",
+            "brain.delete"
+        ]
+    );
+    for name in &names {
+        assert!(is_brain_tool(name));
         assert_eq!(
-            display_name(&format!("mcp__parzi__{}", to_mcp(&d.name))),
-            d.name
+            &display_name(&format!("mcp__parzi__{}", to_mcp(name))),
+            name
         );
     }
+    let offered = ToolExecutor {
+        cwd: String::new(),
+        mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
+        allowed: vec!["brain.*".into()],
+    }
+    .defs();
+    assert!(offered.iter().any(|d| d.name == "brain.delete"));
 }
 
 #[tokio::test]
@@ -167,5 +186,67 @@ async fn brain_reads_freely_writes_with_approval_and_attaches_project_notes() {
         last.find("## me (notes/me.md)").unwrap(),
         last.find("## setup (notes/setup.md)").unwrap(),
     );
-    assert!(me < setup, "{last}");
+    assert!(setup < me, "the project's pinned notes go first: {last}");
+
+    // Search wants every word, in any order.
+    let (ok, out) = h.call("brain.search", &json!({"query": "xtask run"})).await;
+    assert!(ok && out.starts_with("- notes/setup.md — setup\n"), "{out}");
+
+    // A sync conflict copy is listed as one, but never searched or attached.
+    brain::write(
+        "notes/setup.conflict-laptop-macos.md",
+        "---\nprojects: [demo]\npinned: true\n---\nRun make.",
+    )
+    .unwrap();
+    let (ok, out) = h.call("brain.list", &json!({"project": "demo"})).await;
+    assert!(
+        ok && out.contains("\n- notes/setup.conflict-laptop-macos.md — setup.conflict-laptop-macos (sync conflict copy of notes/setup.md; the user settles it in the Brain view)"),
+        "{out}"
+    );
+    let (ok, out) = h.call("brain.search", &json!({"query": "run"})).await;
+    assert!(ok && !out.contains("conflict"), "{out}");
+    let last = system_parts("", src).pop().unwrap();
+    assert!(
+        !last.contains("conflict") && !last.contains("make"),
+        "{last}"
+    );
+    assert_eq!(
+        brain::resolve_conflict("notes/setup.conflict-laptop-macos.md", false).unwrap(),
+        "notes/setup.md"
+    );
+
+    // brain.delete is gated like brain.write.
+    let (ok, _) = h.call("brain.delete", &json!({"path": "notes/new"})).await;
+    assert!(!ok);
+    assert_eq!(
+        *nobody.seen.lock().unwrap(),
+        ["brain.write", "brain.delete"]
+    );
+    assert!(brain::read("notes/new.md").is_ok());
+    let (ok, out) = host(person(Approval::Allow))
+        .call("brain.delete", &json!({"path": "notes/new"}))
+        .await;
+    assert!(ok && out == "deleted notes/new.md", "{out}");
+    assert!(brain::read("notes/new.md").is_err());
+
+    // Every listing stops at 50 notes.
+    for i in 0..60 {
+        brain::write(
+            &format!("bulk/n{i:02}.md"),
+            "---\nprojects: [demo, all]\n---\nbulk",
+        )
+        .unwrap();
+    }
+    for args in [
+        json!({"project": "demo"}),
+        json!({"project": "all"}),
+        json!({}),
+    ] {
+        let (ok, out) = h.call("brain.list", &args).await;
+        assert!(ok, "{out}");
+        assert_eq!(out.matches("\n- bulk/").count(), 50, "{args}: {out}");
+        assert!(out.ends_with(" more; use brain.search"), "{args}: {out}");
+    }
+    let (_, out) = h.call("brain.list", &json!({"project": "demo"})).await;
+    assert!(out.ends_with("\n- …and 11 more; use brain.search"), "{out}");
 }
