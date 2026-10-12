@@ -1,0 +1,62 @@
+name: Release cache
+
+# GitHub scopes caches by ref: a tag build can restore what main saved, but
+# never what an earlier tag saved, so every release compiled from scratch.
+# This builds the release app on main (same toolchain, args and cache key as
+# release.yml) when dependencies change, and weekly so the cache outlives
+# GitHub's 7-day eviction. Release jobs restore it and rebuild only Parzi.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "**/Cargo.toml"
+      - "src-tauri/Cargo.lock"
+      - "ui/package-lock.json"
+      - ".github/workflows/cache.yml"
+      - ".github/workflows/release.yml"
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: release-cache
+  cancel-in-progress: true
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: "--bundles nsis"
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin --bundles dmg"
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      # Keep in step with release.yml (and ci.yml): the version is part of the cache key.
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.98.0" }
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-app
+          workspaces: src-tauri -> target
+
+      - run: npm --prefix ui ci
+
+      # No tagName: tauri-action only builds, nothing is published.
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        with:
+          args: ${{ matrix.args }}

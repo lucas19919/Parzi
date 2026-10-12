@@ -27,11 +27,17 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Same toolchain as ci.yml and cache.yml: it is part of the cache key.
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.98.0" }
 
+      # Restores what cache.yml saved on main. A cache saved here would be
+      # scoped to this tag, which no later release can read: don't save.
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: release-app
           workspaces: src-tauri -> target
+          save-if: false
 
       - run: npm --prefix ui ci
 
@@ -115,11 +121,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with: { toolchain: "1.98.0" }
 
+      # The CLI waits for the app job's release anyway, so it builds cold;
+      # saving a tag-scoped cache here would only crowd out main's caches.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
+          save-if: false
 
       - name: Build parzi CLI
         run: cargo build --release -p parzi-cli
