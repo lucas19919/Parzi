@@ -1,5 +1,6 @@
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { DeskCmd, DeskTab } from "./desk";
 
 export interface SessionMeta {
   id: string;
@@ -520,22 +521,6 @@ export function onSignIn(cb: (s: SignInStep) => void) {
 
 export function onBrowser(cb: (page: PageEvent) => void) {
   return listen<PageEvent>("parzi://browser", (ev) => cb(ev.payload));
-}
-
-interface DeskTab {
-  id: string;
-  kind: "harness" | "browser" | "brain" | "history";
-  title: string;
-  url: string;
-  session_id: string;
-}
-
-interface DeskCmd {
-  op: "open" | "focus" | "close" | "navigate";
-  id?: string;
-  url?: string;
-  rev?: number;
-  owner?: string | null;
 }
 
 export function deskSync(tabs: DeskTab[], rev: number, active: string) {

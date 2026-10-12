@@ -54,8 +54,8 @@ use windows::Win32::Foundation::{HGLOBAL, HWND, RECT};
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
 use windows::Win32::System::Com::{IStream, STREAM_SEEK_END, STREAM_SEEK_SET};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, VIRTUAL_KEY, VK_B, VK_CONTROL, VK_F11, VK_H, VK_K, VK_L, VK_MENU, VK_OEM_COMMA,
-    VK_SHIFT, VK_T, VK_TAB, VK_W,
+    GetKeyState, VIRTUAL_KEY, VK_B, VK_CONTROL, VK_F11, VK_H, VK_J, VK_K, VK_L, VK_MENU,
+    VK_OEM_COMMA, VK_SHIFT, VK_T, VK_TAB, VK_W,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_SHOWWINDOW,
@@ -1146,6 +1146,8 @@ fn key_name(ctrl: bool, shift: bool, key: VIRTUAL_KEY) -> Option<&'static str> {
         (true, false, VK_K) => "ctrl+k",
         (true, false, VK_B) => "ctrl+b",
         (true, false, VK_H) => "ctrl+h",
+        // Tasks; in Chrome it is downloads, so no page expects it.
+        (true, false, VK_J) => "ctrl+j",
         (true, true, VK_T) => "ctrl+shift+t",
         (true, false, VK_OEM_COMMA) => "ctrl+comma",
         (true, false, VK_TAB) => "ctrl+tab",
@@ -1226,6 +1228,8 @@ mod tests {
     #[test]
     fn page_keys_go_to_the_page_first_and_print_stays_the_pages() {
         assert_eq!(key_name(true, false, VK_K), Some("ctrl+k"));
+        assert_eq!(key_name(true, false, VK_J), Some("ctrl+j"));
+        assert!(!page_first("ctrl+j"));
         assert!(page_first("ctrl+k") && page_first("ctrl+b") && page_first("ctrl+h"));
         for reserved in [
             "ctrl+t",
