@@ -457,6 +457,17 @@
     selectTab(kept[Math.max(0, Math.min(idx, kept.length - 1))].id);
   }
 
+  // Home's project cards set the draft's folder, as the composer's picker does.
+  function useFolder(path: string) {
+    if (remoteOn) {
+      comp.remoteCwd = path;
+      comp = comp;
+    } else {
+      patchTab(tab.id, { cwd: path });
+    }
+    omnibar?.focus();
+  }
+
   function newSession() {
     addTab({ ...sessionTab(), cwd: folder || undefined });
     void tick().then(() => omnibar?.focus());
@@ -1215,9 +1226,15 @@
           <HomeView
             {threads}
             {running}
+            board={remoteOn ? $remoteBoard : $board}
+            remote={remoteOn}
+            folder={remoteOn ? (comp.remoteCwd ?? "") : folder}
             on:open={(e) => browse(e.detail.url)}
             on:openSession={(e) => openSession(e.detail.id)}
             on:allSessions={() => openHistory("sessions")}
+            on:folder={(e) => useFolder(e.detail.path)}
+            on:agents={() => openSettings(remoteOn ? "connections" : "providers")}
+            on:brain={() => openBrain()}
           />
         </div>
       {/if}
@@ -1409,25 +1426,29 @@
       transparent calc(100% - var(--dock) - 4px)
     );
   }
+  /* Home: the composer sits a little above centre (.composer's hero
+     bottom) and the widgets fill the space below it, 16px apart. The cards
+     line up with the composer; the padding leaves room for their shadows. */
   .home {
     position: absolute;
-    top: calc(50% + 4px);
+    top: calc(36% + 74px);
+    bottom: 0;
     left: 50%;
     z-index: 10;
-    width: min(720px, 90%);
-    max-height: calc(50% - 24px);
+    width: calc(min(720px, 90%) + 48px);
+    padding: 0 24px 24px;
     overflow-y: auto;
     transform: translateX(-50%);
   }
-  /* Search suggestions drop over the recents: hide them meanwhile rather
-     than leave a half-covered list peeking out. */
+  /* Search suggestions drop over the widgets: hide them meanwhile rather
+     than leave half-covered cards peeking out. */
   :global(main:has(.web-suggest)) .home {
-    visibility: hidden;
+    display: none;
   }
   .composer {
     position: absolute;
     left: 50%;
-    bottom: calc(54% - 58px);
+    bottom: calc(64% - 58px);
     z-index: 20;
     width: min(720px, 90%);
     transform: translate(calc(-50% - var(--shift, 0px)), 0);

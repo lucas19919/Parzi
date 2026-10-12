@@ -67,7 +67,7 @@
         use:tooltip={$updateVersion ? "Menu, update available" : "Menu"}
         on:click={() => (menuOpen = !menuOpen)}
       >
-        <Icon name="menu" />
+        <Icon name="menu" size={14} />
         {#if $updateVersion}<span class="dot" />{/if}
       </button>
       {#if menuOpen}
@@ -103,7 +103,7 @@
       {/if}
     </div>
     <button class="icon-btn" use:tooltip={"Home"} on:click={() => dispatch("home")}>
-      <Icon name="home" />
+      <Icon name="home" size={14} />
     </button>
     {#if tabsVisible}
       <TabBar
@@ -168,7 +168,7 @@
     justify-content: center;
     padding: 0;
     background: transparent;
-    border: 1px solid transparent;
+    border: none;
     border-radius: var(--radius);
     color: var(--muted);
     cursor: pointer;
@@ -185,10 +185,12 @@
   .menu-item.update {
     color: var(--accent);
   }
-  .icon-btn:hover,
+  .icon-btn:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
   .icon-btn.active {
-    background: var(--panel);
-    border-color: var(--line);
+    background: var(--selected);
     color: var(--text);
   }
   .dropdown {

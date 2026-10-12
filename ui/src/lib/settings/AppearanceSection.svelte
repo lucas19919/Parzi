@@ -8,6 +8,7 @@
   import Slider from "./Slider.svelte";
   import ColorField from "./ColorField.svelte";
   import { tooltip } from "../tooltip";
+  import { HOME_WIDGETS, hiddenWidgets, toggleWidget } from "../homeWidgets";
   import "./shared.css";
 
   export let notify: (msg: string) => void = () => {};
@@ -25,6 +26,8 @@
 
   let dimPct = 66;
   let vignettePct = 50;
+  let grainPct = 16;
+  let heightPct = 100;
 
   const ACCENTS = ["#E6E8EE", "#7AA2F7", "#88C0D0", "#34D399", "#A6DA95", "#5EEAD4", "#EB6F92", "#F5A97F", "#E8B64C"];
   const UI_FONTS = ["Inter", "system-ui", "Segoe UI", "SF Pro Text", "Roboto", "IBM Plex Sans"];
@@ -71,6 +74,8 @@
     if (!theme) return;
     dimPct = Math.round(theme.background.dim * 100);
     vignettePct = Math.round(theme.background.vignette * 100);
+    grainPct = Math.round((theme.background.grain ?? 0.16) * 100);
+    heightPct = Math.round((theme.background.height ?? 1) * 100);
   }
 
   function sameColors(a: Theme["colors"], b: Theme["colors"]): boolean {
@@ -294,6 +299,18 @@
       touch();
     }
   }
+  function onGrain() {
+    if (theme) {
+      theme.background.grain = grainPct / 100;
+      touch();
+    }
+  }
+  function onHeight() {
+    if (theme) {
+      theme.background.height = heightPct / 100;
+      touch();
+    }
+  }
   function setColor(key: ColorKey, hex: string) {
     if (!theme) return;
     theme.colors[key] = hex;
@@ -416,6 +433,9 @@
       <Slider label="Dim" bind:value={dimPct} min={0} max={95} unit="%" on:input={onDim} />
       <Slider label="Blur" bind:value={theme.background.blur} min={0} max={20} step={0.5} unit="px" on:input={touch} />
       <Slider label="Vignette" bind:value={vignettePct} min={0} max={90} unit="%" on:input={onVignette} />
+      <Slider label="Height" bind:value={heightPct} min={30} max={100} step={5} unit="%" on:input={onHeight} />
+      <Slider label="Dither" bind:value={grainPct} min={0} max={60} unit="%" on:input={onGrain} />
+      <Slider label="Dither size" bind:value={theme.background.grain_size} min={16} max={128} step={8} unit="px" on:input={touch} />
     </div>
     <div class="field-card">
       <div class="field-info">
@@ -429,6 +449,19 @@
         <Switch on={theme.background.auto_accent ?? false} title="Accent follows the wallpaper" on:toggle={toggleAutoAccent} />
       </div>
     </div>
+  </section>
+
+  <section class="pref-section">
+    <h3 class="section-title">Home</h3>
+    <p class="section-desc">The cards under the composer on a new tab.</p>
+    {#each HOME_WIDGETS as w (w.id)}
+      <div class="field-card">
+        <div class="field-info">
+          <span class="field-label">{w.label}</span>
+        </div>
+        <Switch on={!$hiddenWidgets.includes(w.id)} title={`Show ${w.label.toLowerCase()} on Home`} on:toggle={() => toggleWidget(w.id)} />
+      </div>
+    {/each}
   </section>
 
   <section class="pref-section">

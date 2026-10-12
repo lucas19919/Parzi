@@ -38,6 +38,11 @@
       "reason": "Options show their title as text; a row half scrolled out of its list reads as unlabeled to the check."
     },
     {
+      "selector": ".tab .title",
+      "rules": ["content-clipping"],
+      "reason": "Tabs share the strip at equal widths; a long title ends in an ellipsis and shows in full on hover."
+    },
+    {
       "selector": ".window-controls > button",
       "rules": ["control-gap"],
       "reason": "Window caption buttons sit edge to edge, as in the OS title bar."

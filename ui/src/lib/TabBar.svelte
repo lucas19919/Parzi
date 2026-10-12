@@ -192,7 +192,7 @@
               {#if tab.loading}
                 <span class="spinner" />
               {:else}
-                <Icon name={laneIcon(lane)} size={12} />
+                <Icon name={laneIcon(lane)} size={14} />
               {/if}
             </span>
             <span class="title">{tab.title || "New session"}</span>
@@ -204,7 +204,7 @@
             use:tooltip={`Hide ${linked}`}
             on:click|stopPropagation={() => tab.sessionId && toggleGroup(tab.sessionId)}
           >
-            <Icon name="chevDown" size={10} stroke={2.2} />
+            <Icon name="chevDown" size={12} />
             <span class="n">{attached.length}</span>
           </button>
           {#if tabs.length > 1}
@@ -215,7 +215,7 @@
               use:tooltip={"Close tab"}
               on:click|stopPropagation={() => dispatch("close", { id: tab.id })}
             >
-              <Icon name="close" size={11} stroke={2.2} />
+              <Icon name="close" size={12} />
             </button>
           {/if}
         </div>
@@ -236,7 +236,7 @@
                 {:else if sub.url && !broken.has(sub.url)}
                   <img src={faviconUrl(sub.url)} alt="" on:error={() => sub.url && (broken = new Set(broken).add(sub.url))} />
                 {:else}
-                  <Icon name="globe" size={11} />
+                  <Icon name="globe" size={14} />
                 {/if}
               </span>
               <span class="title">{sub.title || "New page"}</span>
@@ -248,7 +248,7 @@
               use:tooltip={"Close tab"}
               on:click|stopPropagation={() => dispatch("close", { id: sub.id })}
             >
-              <Icon name="close" size={10} stroke={2.2} />
+              <Icon name="close" size={12} />
             </button>
           </div>
         {/each}
@@ -278,7 +278,7 @@
           {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
             <img src={faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
           {:else}
-            <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : laneIcon(lane)} size={12} />
+            <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : laneIcon(lane)} size={14} />
           {/if}
         </span>
         <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>
@@ -291,7 +291,7 @@
           use:tooltip={`Show ${linked}`}
           on:click|stopPropagation={() => tab.sessionId && toggleGroup(tab.sessionId)}
         >
-          <Icon name="chevDown" size={10} stroke={2.2} />
+          <Icon name="chevDown" size={12} />
           <span class="n">{attached.length}</span>
         </button>
       {/if}
@@ -303,7 +303,7 @@
           use:tooltip={"Close tab"}
           on:click|stopPropagation={() => dispatch("close", { id: tab.id })}
         >
-          <Icon name="close" size={11} stroke={2.2} />
+          <Icon name="close" size={12} />
         </button>
       {/if}
     </div>
@@ -312,7 +312,7 @@
 </div>
 {#if !vertical}
   <button class="new" use:tooltip={"New tab (Ctrl+T)"} on:click={() => dispatch("newTab")}>
-    <Icon name="plus" size={13} stroke={2.2} />
+    <Icon name="plus" size={14} />
   </button>
 {/if}
 
@@ -344,15 +344,15 @@
   .tabs.vertical .tab.sub {
     max-width: none;
   }
+  /* Equal widths keep the strip's rhythm even; the fill is the only state. */
   .tab {
     display: inline-flex;
     align-items: center;
-    height: 29px;
+    height: 28px;
+    flex: 0 1 220px;
     max-width: 220px;
-    flex: 0 1 auto;
-    min-width: 72px;
+    min-width: 96px;
     padding: 0 2px 0 0;
-    border: 1px solid transparent;
     border-radius: var(--radius);
     color: var(--muted);
     font-size: var(--fs-sm);
@@ -366,18 +366,20 @@
     position: relative;
     z-index: 2;
     background: var(--panel);
-    border-color: var(--line);
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
     cursor: grabbing;
     transition: background 140ms ease, color 140ms ease;
   }
   .tab:hover {
-    background: color-mix(in srgb, var(--panel) 65%, transparent);
+    background: var(--hover);
     color: var(--text);
   }
+  /* Glass tinted with the theme's panel, not a white veil: the title stays
+     readable when a light theme's dark text sits over a dimmed picture. */
   .tab.active {
-    background: var(--panel);
-    border-color: var(--line);
+    background: color-mix(in srgb, var(--panel) 82%, transparent);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
     color: var(--text);
   }
   /* The tab proper: fills the pill up to its buttons. Focus rings the pill. */
@@ -387,8 +389,8 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 7px;
-    padding: 0 3px 0 9px;
+    gap: 8px;
+    padding: 0 4px 0 10px;
     border-radius: inherit;
   }
   .pick:focus-visible {
@@ -425,8 +427,9 @@
   }
   .tab.sub {
     height: 24px;
-    max-width: 170px;
-    min-width: 60px;
+    flex-basis: 160px;
+    max-width: 160px;
+    min-width: 72px;
     font-size: var(--fs-xs);
     opacity: 0.85;
   }
@@ -436,17 +439,7 @@
     gap: 2px;
     padding: 2px;
     border-radius: var(--radius-lg);
-    background: color-mix(in srgb, var(--text) 6%, transparent);
-    border: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
-  }
-  .group .tab {
-    border-color: transparent;
-  }
-  .group .tab.active {
-    border-color: var(--line);
-  }
-  .group:has(.tab.active) {
-    border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+    background: var(--hover);
   }
   .close.group-caret {
     opacity: 1;
@@ -495,27 +488,30 @@
   .tab.active .close {
     opacity: 1;
   }
+  /* An idle tab lends its close button's room to the title. */
+  .tab:not(:hover):not(.active) .close:not(.group-caret) {
+    display: none;
+  }
   .close:hover {
-    background: var(--line);
+    background: var(--selected);
     color: var(--text);
   }
   .new {
-    width: 26px;
-    height: 26px;
+    width: 28px;
+    height: 28px;
     flex: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     padding: 0;
     background: transparent;
-    border: 1px solid transparent;
+    border: none;
     border-radius: var(--radius);
     color: var(--muted);
     cursor: pointer;
   }
   .new:hover {
-    background: var(--panel);
-    border-color: var(--line);
+    background: var(--hover);
     color: var(--text);
   }
 </style>

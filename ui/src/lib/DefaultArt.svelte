@@ -5,9 +5,13 @@
 
 <div class="backdrop" class:blurred>
   {#if bg}
-    <img src={bg} alt="" />
-    <div class="grain" />
-    <div class="shade" />
+    <!-- The picture, its shade and the dither reach --bg-height down the
+         window and fade into the stage colour there. -->
+    <div class="art">
+      <img src={bg} alt="" />
+      <div class="grain" />
+      <div class="shade" />
+    </div>
   {/if}
 </div>
 
@@ -28,6 +32,16 @@
     transform: translateY(-32px) scale(1.03);
     opacity: 0;
     filter: blur(16px);
+  }
+  .art {
+    position: absolute;
+    inset: 0 0 auto;
+    height: var(--bg-height, 100%);
+    overflow: hidden;
+    /* No fade at full height; the shorter the picture, the longer its fade. */
+    --fade: calc((100% - var(--bg-height, 100%)) * 0.8);
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--fade)), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--fade)), transparent);
   }
   img {
     position: absolute;
@@ -50,8 +64,8 @@
     position: absolute;
     inset: 0;
     background: url("/dither-bayer.png");
-    background-size: 32px 32px;
+    background-size: var(--grain-size, 32px) var(--grain-size, 32px);
     image-rendering: pixelated;
-    opacity: 0.16;
+    opacity: var(--grain, 0.16);
   }
 </style>

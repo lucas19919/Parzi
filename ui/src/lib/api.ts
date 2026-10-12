@@ -120,7 +120,17 @@ export interface ParziConfig {
 export interface Theme {
   font: { family: string; size: number; mono: string; mono_size: number };
   colors: { sidebar: string; stage: string; accent: string; text: string; text_dim: string; bar: string; border: string };
-  background: { image: string; dim: number; vignette: number; blur: number; auto_accent?: boolean };
+  background: {
+    image: string;
+    dim: number;
+    vignette: number;
+    blur: number;
+    auto_accent?: boolean;
+    // Dither strength (0-1) and tile size (px); how far down the wallpaper reaches (0.3-1).
+    grain: number;
+    grain_size: number;
+    height: number;
+  };
 }
 
 interface Palette {

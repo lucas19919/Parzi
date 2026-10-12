@@ -16,6 +16,9 @@ const STATES = {
   home: [
     click("project menu", ".proj-out", ".menu-pop"),
     { name: "project menu closed", action: "press", selector: ".menu-pop", key: "Escape", ready: { selector: ".menu-pop", state: "hidden" } },
+    // The audit scrolls, which closes popovers: the next state starts from the page.
+    click("customize home", ".customize", ".home-menu"),
+    { name: "customize closed", action: "press", selector: ".ob textarea", key: "Escape", ready: { selector: ".home-menu", state: "hidden" } },
     click("search mode", ".modes > button:first-child", ".box.web"),
     { name: "web suggestions", action: "fill", selector: ".ob textarea", value: "parzi docs", ready: { selector: ".web-suggest" } },
   ],

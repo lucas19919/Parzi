@@ -129,7 +129,7 @@
             open = false;
           }}
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
             <circle class="track" cx="8" cy="8" r="6" />
             <circle class="fill" cx="8" cy="8" r="6" stroke-dasharray={RING} stroke-dashoffset={compacting ? RING * 0.7 : RING * (1 - contextPct / 100)} />
           </svg>
@@ -151,7 +151,7 @@
           open = !open;
           ctxOpen = false;
         }}>
-        <Icon name="more" stroke={3} />
+        <Icon name="more" size={14} stroke={2.4} />
       </button>
       {#if open}
         <div class="dropdown" role="menu" data-ui-list>
@@ -259,8 +259,8 @@
   }
   .icon-btn {
     position: relative;
-    width: 26px;
-    height: 26px;
+    width: 28px;
+    height: 28px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -272,11 +272,11 @@
     cursor: pointer;
   }
   .icon-btn:hover {
-    background: var(--line);
+    background: var(--hover);
     color: var(--text);
   }
   .icon-btn.on {
-    background: var(--line);
+    background: var(--selected);
     color: var(--text);
   }
   .count {

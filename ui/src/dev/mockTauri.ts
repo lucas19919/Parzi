@@ -2,12 +2,13 @@
 // browser (`npm run dev`, then open /mock.html). Used to profile the UI and
 // to run `npm run lint:ui`. Only mock.html loads this; index.html and the
 // app build never do.
-import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 
 const params = new URLSearchParams(location.search);
 // ?view=home | session | settings | brain | history | setup (default: session)
 const view = params.get("view") ?? "session";
 // ?turns=N sizes the open session's transcript (default 40).
+// ?bg=1 shows a wallpaper, served at http://asset.localhost/ (route it to a file).
 const turns = Math.max(1, Number(params.get("turns")) || 40);
 
 const now = Date.now();
@@ -91,7 +92,7 @@ const config = {
 const theme = {
   font: { family: "Inter", size: 14, mono: "JetBrains Mono", mono_size: 13 },
   colors: { sidebar: "#0b0b10", stage: "#0b0b10", accent: "#e6e8ee", text: "#ededf2", text_dim: "#9aa0ae", bar: "#0b0b10", border: "#24242c" },
-  background: { image: "", dim: 0.66, vignette: 0.5, blur: 3 },
+  background: { image: params.get("bg") ? "backgrounds/mock.png" : "", dim: 0.66, vignette: 0.5, blur: 0, grain: 0.16, grain_size: 32, height: 1 },
 };
 
 const project = { slug: "parzi", title: "Parzi", folder: "D:\\Repos\\Parzi", note: "projects/parzi.md", notes: ["notes/style.md", "notes/release.md"] };
@@ -110,14 +111,18 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   get_config: () => config,
   get_theme: () => theme,
   get_theme_css: () => "",
-  background_url: () => "",
+  background_url: () => (params.get("bg") ? "C:/mock/wallpaper.png" : ""),
   list_background_urls: () => [],
   list_pack_infos: () => [{ name: "Default", builtin: true, colors: theme.colors, has_art: false }],
   remote_info: () => null,
   remote_providers: () => [],
   remote_projects: () => [],
   brain_context: () => ({ project, text: "", attached: [], listed: [], chars: 0, tokens: 1840 }),
-  brain_projects: () => [project],
+  brain_projects: () => [
+    project,
+    { slug: "memory-ai", title: "memory-ai", folder: "D:\\Repos\\memory-ai", note: "projects/memory-ai.md", notes: [] },
+    { slug: "thesis", title: "Thesis", folder: "D:\\Uni\\thesis", note: "projects/thesis.md", notes: ["notes/style.md"] },
+  ],
   brain_list: () => notes,
   brain_read: (a) => `# ${String(a.path)}\n\nA note for the mock backend.\n`,
   brain_dir: () => "C:\\Users\\dev\\.parzi\\brain",
@@ -134,6 +139,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
 
 // Backend events (`listen`) are mocked too, so subscriptions resolve.
 mockWindows("main");
+mockConvertFileSrc("windows");
 mockIPC((cmd, payload) => handlers[cmd]?.((payload ?? {}) as Record<string, unknown>) ?? null, { shouldMockEvents: true });
 
 try {
@@ -145,6 +151,13 @@ try {
   if (view === "history") tabs.push(tab("t-history", "history", "History"));
   const active = { home: "t-home", session: "t-s1", brain: "t-brain", history: "t-history" }[view] ?? "t-s1";
   localStorage.setItem("parzi.tabs.v1", JSON.stringify({ tabs, active }));
+  const sites = [
+    ["https://github.com/lucas19919/Parzi", "Parzi on GitHub"],
+    ["https://docs.rs/tauri", "tauri - Rust docs"],
+    ["https://svelte.dev/docs", "Svelte docs"],
+    ["https://news.ycombinator.com", "Hacker News"],
+  ];
+  localStorage.setItem("parzi.pins.v1", JSON.stringify(sites.map(([url, title]) => ({ url, title }))));
 } catch {}
 
 export const mockView = view;

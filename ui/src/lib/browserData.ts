@@ -41,7 +41,7 @@ function store(key: string, value: unknown) {
   }
 }
 
-function persisted<T>(key: string, fallback: T): Writable<T> {
+export function persisted<T>(key: string, fallback: T): Writable<T> {
   const s = writable<T>(read(key, fallback));
   s.subscribe((value) => store(key, value));
   return s;

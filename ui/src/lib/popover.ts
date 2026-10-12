@@ -46,10 +46,15 @@ export function popover(node: HTMLElement, opts: PopoverOptions) {
     current.close();
   }
 
+  // A scroll still settling when the panel opens (trackpad momentum, a
+  // click that scrolled its anchor into view) must not close it at once.
+  const opened = performance.now();
+
   function onScroll(e: Event) {
     // The anchor scrolls but the panel is body-fixed: close instead of
     // floating detached. Ignore scrolls inside the panel itself.
     if (e.target instanceof Node && node.contains(e.target)) return;
+    if (performance.now() - opened < 150) return;
     current.close();
   }
 

@@ -767,9 +767,7 @@
     backdrop-filter: var(--glass-strong-blur);
     border: var(--glass-hairline);
     border-radius: var(--radius-lg);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.07),
-      var(--glass-shadow);
+    box-shadow: var(--glass-shadow);
     outline: none;
   }
   .box:focus,

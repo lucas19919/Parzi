@@ -39,14 +39,19 @@
   --link-hover: #aecbff;
   --scrim: rgba(0, 0, 0, 0.6);
 
-  --glass-bg: color-mix(in srgb, var(--panel) 60%, transparent);
-  --glass-bg-solid: color-mix(in srgb, var(--panel) 88%, transparent);
-  --glass-strong-bg: color-mix(in srgb, var(--panel) 58%, transparent);
-  --glass-blur: blur(24px) saturate(1.2);
-  --glass-strong-blur: blur(22px) saturate(1.25);
-  --glass-border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
-  --glass-hairline: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
-  --glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  /* Surfaces are matte: a tint, a blur and a quiet edge. No rim light, no
+     inset highlights: over a wallpaper those read as shine. */
+  --glass-bg: color-mix(in srgb, var(--panel) 72%, transparent);
+  --glass-bg-solid: color-mix(in srgb, var(--panel) 90%, transparent);
+  --glass-strong-bg: color-mix(in srgb, var(--panel) 82%, transparent);
+  --glass-blur: blur(28px) saturate(1.05);
+  --glass-strong-blur: blur(32px) saturate(1.05);
+  --glass-border: 1px solid color-mix(in srgb, var(--text) 7%, transparent);
+  --glass-hairline: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  --glass-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+  /* Hover and selected fills for controls sitting on glass or wallpaper. */
+  --hover: color-mix(in srgb, var(--text) 6%, transparent);
+  --selected: color-mix(in srgb, var(--text) 10%, transparent);
 
   --font: "Inter";
   --font-size: 14px;
@@ -55,6 +60,9 @@
   --bg-dim: 0.66;
   --bg-blur: 3px;
   --vignette: 0.5;
+  --grain: 0.16;
+  --grain-size: 32px;
+  --bg-height: 100%;
   --radius: 8px;
   --radius-lg: 12px;
 
@@ -163,7 +171,6 @@ kbd {
   border: 1px solid color-mix(in srgb, var(--text) 14%, var(--bg));
   border-radius: var(--radius); color: var(--text); padding: 6px 13px; cursor: pointer;
   font-size: var(--fs-md); font-weight: 500;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 7%, transparent);
 }
 .btn:hover:not(:disabled) {
   background: color-mix(in srgb, var(--text) 15%, var(--bg));
@@ -171,12 +178,9 @@ kbd {
 }
 .btn.primary {
   background: var(--accent); color: var(--bg); border-color: transparent; font-weight: 600;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 .btn.primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 80%, #fff);
-  transform: translateY(-1px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), 0 3px 6px rgba(0, 0, 0, 0.35);
+  background: color-mix(in srgb, var(--accent) 86%, var(--text));
 }
 .btn:active:not(:disabled) { transform: translateY(0) scale(0.97); transition-duration: 60ms; }
 .btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
