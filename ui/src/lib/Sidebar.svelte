@@ -3,6 +3,7 @@
   import Icon from "./Icon.svelte";
   import TabBar from "./TabBar.svelte";
   import { isSystemTab, type Tab } from "./tabs";
+  import { tooltip } from "./tooltip";
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
@@ -32,7 +33,7 @@
 
 <aside class="sidebar">
   <div class="side-head">
-    <button class="icon-btn wide" title="New tab (Ctrl+T)" on:click={() => dispatch("newTab")}>
+    <button class="icon-btn wide" use:tooltip={"New tab (Ctrl+T)"} on:click={() => dispatch("newTab")}>
       <Icon name="plus" size={13} stroke={2.2} />
       <span>New tab</span>
     </button>
@@ -99,7 +100,7 @@
     border: 1px solid transparent;
     border-radius: var(--radius);
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
   .icon-btn.wide {
@@ -125,10 +126,8 @@
   }
   .sys-label {
     margin: 6px 4px 2px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--faint);
+    color: var(--muted);
   }
 </style>

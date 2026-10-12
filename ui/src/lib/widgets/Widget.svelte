@@ -4,6 +4,7 @@
   import { chartPalette, themeRev, type ChartPalette } from "../theme";
   import Zoomable from "./Zoomable.svelte";
   import EChart from "./EChart.svelte";
+  import { tooltip } from "../tooltip";
 
   export let data: any;
   const d = data && typeof data === "object" ? data : {};
@@ -54,7 +55,7 @@
   $: axisCommon = {
     axisLine: { lineStyle: { color: pal.line } },
     axisTick: { show: false },
-    axisLabel: { color: pal.faint, fontSize: 10 },
+    axisLabel: { color: pal.muted, fontSize: 11 },
     splitLine: { lineStyle: { color: pal.line } },
   };
   $: tipStyle = {
@@ -76,18 +77,18 @@
             name: xlabel,
             nameLocation: "middle",
             nameGap: 22,
-            nameTextStyle: { color: pal.faint, fontSize: 10 },
+            nameTextStyle: { color: pal.muted, fontSize: 11 },
             ...axisCommon,
           },
           yAxis: {
             type: "value",
             name: ylabel,
-            nameTextStyle: { color: pal.faint, fontSize: 10 },
+            nameTextStyle: { color: pal.muted, fontSize: 11 },
             ...axisCommon,
           },
           series: [
             ...plotSer.map((s, si) => ({
-              name: s.name || (plotSer.length > 1 ? `series ${si + 1}` : "value"),
+              name: s.name || (plotSer.length > 1 ? `Series ${si + 1}` : "Value"),
               type: plotType === "chart-line" ? "line" : "bar",
               data: s.points,
               color: INK[si % INK.length],
@@ -98,7 +99,7 @@
             ...(trend
               ? [
                   {
-                    name: "trend",
+                    name: "Trend",
                     type: "line",
                     data: Array.from({ length: trend.n }, (_, i) => trend.m * i + trend.b),
                     color: pal.muted,
@@ -120,20 +121,20 @@
             name: xlabel,
             nameLocation: "middle",
             nameGap: 22,
-            nameTextStyle: { color: pal.faint, fontSize: 10 },
+            nameTextStyle: { color: pal.muted, fontSize: 11 },
             ...axisCommon,
           },
           yAxis: {
             type: "value",
             scale: true,
             name: ylabel,
-            nameTextStyle: { color: pal.faint, fontSize: 10 },
+            nameTextStyle: { color: pal.muted, fontSize: 11 },
             ...axisCommon,
           },
           series: scSer
             .filter((s) => s.points.length)
             .map((s, si) => ({
-              name: s.name || `series ${si + 1}`,
+              name: s.name || `Series ${si + 1}`,
               type: "scatter",
               data: s.points,
               color: INK[si % INK.length],
@@ -274,12 +275,12 @@
 <div class="widget-card" class:bad>
   {#if bad || title}
   <div class="w-head">
-    {#if bad}<span class="w-kind">widget</span>{/if}
+    {#if bad}<span class="w-kind">Widget</span>{/if}
     {#if title}<span class="w-title">{title}</span>{/if}
   </div>
   {/if}
   {#if bad}
-    <div class="w-error">Couldn't render widget type "{type}" — showing source.</div>
+    <div class="w-error">Couldn't render widget type "{type}". Showing source.</div>
     <pre class="w-source">{JSON.stringify(d, null, 2)?.slice(0, 3000)}</pre>
   {:else if type === "stat"}
     <div class="stat-big">{text || value}</div>
@@ -292,13 +293,13 @@
     <div class="w-md" on:click={(e) => void handleLinkClick(e)}>{@html mdHtml(text, $richReady)}</div>
   {:else if type === "list"}
     {#if !items.length}
-      <div class="w-empty">empty list</div>
+      <div class="w-empty">Empty list</div>
     {:else}
       <ul class="w-list">{#each items.slice(0, 50) as it}<li>{typeof it === "string" ? it : JSON.stringify(it)}</li>{/each}</ul>
     {/if}
   {:else if type === "table"}
     {#if !rows.length}
-      <div class="w-empty">empty table</div>
+      <div class="w-empty">Empty table</div>
     {:else}
       <div class="table-wrap">
       <table>
@@ -310,7 +311,7 @@
     {/if}
   {:else if type === "chart-line" || type === "chart-bar" || type === "histogram"}
     {#if !chartOpt}
-      <div class="w-empty">no data points</div>
+      <div class="w-empty">No data points</div>
     {:else}
       {#if showLegend}
         <div class="legend">
@@ -324,8 +325,8 @@
       {/if}
       {#if open}
         <div class="xbar">
-          <button class="xbtn" on:click={dlCsv} title="Download CSV">csv</button>
-          <button class="xbtn" on:click={dlSvg} title="Download SVG">svg</button>
+          <button class="xbtn" on:click={dlCsv} use:tooltip={"Download CSV"}>CSV</button>
+          <button class="xbtn" on:click={dlSvg} use:tooltip={"Download SVG"}>SVG</button>
         </div>
       {/if}
       <div class="ezoom" role="button" tabindex="0" aria-label="Zoom chart"
@@ -335,7 +336,7 @@
     {/if}
   {:else if type === "scatter"}
     {#if !scatterOpt}
-      <div class="w-empty">no data points</div>
+      <div class="w-empty">No data points</div>
     {:else}
       {#if scSer.length > 1 && scSer.some((s) => s.name)}
         <div class="legend">
@@ -346,8 +347,8 @@
       {/if}
       {#if open}
         <div class="xbar">
-          <button class="xbtn" on:click={dlCsv} title="Download CSV">csv</button>
-          <button class="xbtn" on:click={dlSvg} title="Download SVG">svg</button>
+          <button class="xbtn" on:click={dlCsv} use:tooltip={"Download CSV"}>CSV</button>
+          <button class="xbtn" on:click={dlSvg} use:tooltip={"Download SVG"}>SVG</button>
         </div>
       {/if}
       <div class="ezoom" role="button" tabindex="0" aria-label="Zoom chart"
@@ -357,7 +358,7 @@
     {/if}
   {:else if type === "kanban"}
     {#if !kanbanCols.length}
-      <div class="w-empty">no columns</div>
+      <div class="w-empty">No columns</div>
     {:else}
       <div class="kanban">
         {#each kanbanCols.slice(0, 8) as col}
@@ -386,37 +387,37 @@
     background: var(--panel);
     overflow: hidden;
   }
-  .w-head { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 11px; }
-  .w-kind { font-family: var(--mono), ui-monospace, monospace; font-size: 10px; color: var(--faint); }
-  .w-title { font-weight: 600; color: var(--text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .xbar { display: flex; gap: 2px; padding: 2px 0 4px; }
-  .w-error { padding: 8px 12px; font-size: 11px; color: var(--bad); }
-  .w-source { margin: 0 12px; padding: 8px; font-size: 10px; overflow: auto; background: var(--bg); border-radius: 6px; }
-  .w-sub { padding: 4px 0; font-size: 11px; color: var(--muted); }
-  .w-empty { padding: 8px 0; font-size: 11px; font-style: italic; color: var(--muted); }
-  .w-md { padding: 6px 0; font-size: 13px; }
-  .w-list { margin: 4px 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; }
-  .stat-big { padding: 8px 0; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; color: var(--text); }
+  .w-head { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: var(--fs-xs); }
+  .w-kind { font-family: var(--mono), ui-monospace, monospace; font-size: var(--fs-xs); color: var(--muted); }
+  .w-title { font-weight: 600; color: var(--text); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .xbar { display: flex; gap: 8px; padding: 2px 0 4px; }
+  .w-error { padding: 8px 12px; font-size: var(--fs-xs); color: var(--bad); }
+  .w-source { margin: 0 12px; padding: 8px; font-size: var(--fs-xs); overflow: auto; background: var(--bg); border-radius: 6px; }
+  .w-sub { padding: 4px 0; font-size: var(--fs-xs); color: var(--muted); }
+  .w-empty { padding: 8px 0; font-size: var(--fs-xs); font-style: italic; color: var(--muted); }
+  .w-md { padding: 6px 0; font-size: var(--fs-md); }
+  .w-list { margin: 4px 0; padding-left: 18px; font-size: var(--fs-md); line-height: 1.6; }
+  .stat-big { padding: 8px 0; font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -0.02em; color: var(--text); }
   .progress-track { margin: 8px 0 4px; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
   .progress-fill { height: 100%; background: var(--accent); border-radius: 4px; transition: width 300ms ease; }
   .table-wrap { overflow-x: auto; margin: 8px 0 0; border-radius: 8px; border: 1px solid var(--line); }
   .ezoom { cursor: zoom-in; border-radius: 8px; }
   .ezoom:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 2px 0 4px; }
-  .leg { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+  .leg { display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); color: var(--muted); }
   .leg i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
-  .leg.trend-leg { color: var(--faint); }
+  .leg.trend-leg { color: var(--muted); }
   .trend-sw { width: 14px !important; height: 0 !important; border-radius: 0 !important; border-top: 2px dashed var(--muted); }
   .xbtn {
     background: transparent; border: none; border-radius: 4px;
-    color: var(--faint); font-family: var(--mono), ui-monospace, monospace;
-    font-size: 10px; padding: 2px 6px; cursor: pointer; flex: none;
+    color: var(--muted); font-family: var(--mono), ui-monospace, monospace;
+    font-size: var(--fs-xs); padding: 2px 6px; cursor: pointer; flex: none;
   }
   .xbtn:hover { color: var(--text); background: var(--panel); }
-  table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
   th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; }
   th { color: var(--muted); font-weight: 600; background: var(--panel); }
   .kanban { display: flex; gap: 8px; padding: 6px 0 0; overflow-x: auto; }
   .kcol { flex: 1; min-width: 140px; }
-  .pill { display: block; margin: 4px 0; background: transparent; border: none; border-left: 2px solid var(--line); border-radius: 0; padding: 3px 8px; font-size: 11px; }
+  .pill { display: block; margin: 4px 0; background: transparent; border: none; border-left: 2px solid var(--line); border-radius: 0; padding: 3px 8px; font-size: var(--fs-xs); }
 </style>

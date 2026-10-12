@@ -7,6 +7,7 @@
   import SegControl from "./SegControl.svelte";
   import Slider from "./Slider.svelte";
   import ColorField from "./ColorField.svelte";
+  import { tooltip } from "../tooltip";
   import "./shared.css";
 
   export let notify: (msg: string) => void = () => {};
@@ -352,15 +353,15 @@
               <span class="pp-line" /><span class="pp-line short" />
               <span class="pp-bar"><i /></span>
             </span>
-            <span class="pack-name">{#if renamingPack === p.name && !p.builtin}<input class="pack-rename" bind:value={renameDraft} use:focusRename on:click|stopPropagation on:keydown={(e) => { if (e.key === "Enter") commitPackRename(p); else if (e.key === "Escape") renamingPack = null; }} />{:else}{titleCase(p.name)}{/if}{#if p.has_art}<span class="art-dot" title="Switches the wallpaper too"> + wallpaper</span>{/if}</span>
+            <span class="pack-name">{#if renamingPack === p.name && !p.builtin}<input class="pack-rename" aria-label="New name for {titleCase(p.name)}" bind:value={renameDraft} use:focusRename on:click|stopPropagation on:keydown={(e) => { if (e.key === "Enter") commitPackRename(p); else if (e.key === "Escape") renamingPack = null; }} />{:else}{titleCase(p.name)}{/if}{#if p.has_art}<span class="art-dot" title="Switches the wallpaper too"> + wallpaper</span>{/if}</span>
           </button>
           {#if !p.builtin}
             <div class="pack-actions">
-              <button class="pack-act" title="Rename {titleCase(p.name)}" aria-label="Rename {titleCase(p.name)}"
+              <button class="pack-act" use:tooltip={`Rename ${titleCase(p.name)}`}
                 on:click={() => { renamingPack = p.name; renameDraft = p.name; delPack = null; }}>✎</button>
               <button class="pack-del" class:armed={delPack === p.name}
-                title={delPack === p.name ? "Click again to delete this theme" : "Delete this theme"}
-                aria-label="Delete {titleCase(p.name)}" on:click={() => deletePack(p)}>{delPack === p.name ? "sure?" : "×"}</button>
+                use:tooltip={delPack === p.name ? "Click again to delete this theme" : "Delete this theme"}
+                aria-label="Delete {titleCase(p.name)}" on:click={() => deletePack(p)}>{delPack === p.name ? "Sure?" : "×"}</button>
             </div>
           {/if}
         </div>
@@ -370,6 +371,7 @@
       <input
         class="text"
         placeholder="Save the current look as…"
+        aria-label="Theme name"
         bind:value={packName}
         on:keydown={(e) => e.key === "Enter" && savePack()}
         spellcheck="false"
@@ -404,9 +406,9 @@
             <span class="wall-name">{b.name}</span>
           </button>
           <button class="wall-del" class:armed={delWall === b.name}
-            title={delWall === b.name ? "Click again to delete this image" : `Delete ${b.name}`}
+            use:tooltip={delWall === b.name ? "Click again to delete this image" : `Delete ${b.name}`}
             aria-label={delWall === b.name ? `Confirm delete ${b.name}` : `Delete ${b.name}`}
-            on:click={() => deleteWall(b)}>{delWall === b.name ? "sure?" : "×"}</button>
+            on:click={() => deleteWall(b)}>{delWall === b.name ? "Sure?" : "×"}</button>
         </div>
       {/each}
     </div>
@@ -439,7 +441,7 @@
             class="swatch"
             class:on={theme.colors.accent.toLowerCase() === hex.toLowerCase()}
             style="--sw:{hex}"
-            title={hex}
+            use:tooltip={hex}
             aria-label="Accent {hex}"
             on:click={() => setColor("accent", hex)}
           />
@@ -470,7 +472,7 @@
       </label>
       <div class="fld">
         <span>Size</span>
-        <SegControl options={SIZES_UI} value={String(theme.font.size)} on:pick={(e) => setSize("size", e.detail)} />
+        <SegControl label="Interface font size" options={SIZES_UI} value={String(theme.font.size)} on:pick={(e) => setSize("size", e.detail)} />
       </div>
       <label class="fld">
         <span>Code font</span>
@@ -478,7 +480,7 @@
       </label>
       <div class="fld">
         <span>Code size</span>
-        <SegControl options={SIZES_MONO} value={String(theme.font.mono_size)} on:pick={(e) => setSize("mono_size", e.detail)} />
+        <SegControl label="Code font size" options={SIZES_MONO} value={String(theme.font.mono_size)} on:pick={(e) => setSize("mono_size", e.detail)} />
       </div>
     </div>
     <datalist id="parzi-ui-fonts">{#each UI_FONTS as f}<option value={f} />{/each}</datalist>
@@ -493,6 +495,7 @@
         <span class="field-hint">Tabs across the top, or down a sidebar.</span>
       </div>
       <SegControl
+        label="Window layout"
         options={[{ value: "topbar", label: "Top bar" }, { value: "sidebar", label: "Sidebar" }]}
         value={layout}
         on:pick={(e) => {
@@ -551,29 +554,29 @@
     border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
   }
   .pp-bar i { position: absolute; right: 4px; top: 3px; width: 8px; height: 8px; border-radius: 3px; background: var(--pp-ac); }
-  .pack-name { font-size: 12px; padding: 0 3px; }
-  .art-dot { font-size: 11px; opacity: 0.75; }
+  .pack-name { font-size: var(--fs-sm); padding: 0 3px; }
+  .art-dot { font-size: var(--fs-xs); opacity: 0.75; }
   .pack-actions {
-    position: absolute; top: 6px; right: 6px; display: flex; gap: 2px; opacity: 0;
+    position: absolute; top: 6px; right: 6px; display: flex; gap: 8px; opacity: 0;
   }
   .pack:hover .pack-actions, .pack-actions:focus-within { opacity: 1; }
   .pack-actions .pack-del { position: static; opacity: 1; }
   .pack-act {
     width: 20px; height: 20px; line-height: 1;
     border-radius: var(--radius); border: none; background: var(--panel); color: var(--muted);
-    font: inherit; font-size: 11px; cursor: pointer; padding: 0;
+    font: inherit; font-size: var(--fs-xs); cursor: pointer; padding: 0;
     display: inline-flex; align-items: center; justify-content: center;
   }
   .pack-act:hover { color: var(--text); }
   .pack-rename {
-    font: inherit; font-size: 12px; color: var(--text);
+    font: inherit; font-size: var(--fs-sm); color: var(--text);
     background: var(--bg); border: 1px solid var(--accent); border-radius: 5px;
     padding: 1px 5px; width: 100%; box-sizing: border-box; outline: none;
   }
   .pack-del {
     position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; line-height: 1;
     border-radius: var(--radius); border: none; background: var(--panel); color: var(--muted);
-    font: inherit; font-size: 14px; cursor: pointer; opacity: 0;
+    font: inherit; font-size: var(--fs-base); cursor: pointer; opacity: 0;
   }
   .pack:hover .pack-del, .pack-del:focus-visible { opacity: 1; }
   .pack-del:hover { color: var(--bad); }
@@ -582,9 +585,9 @@
   .text {
     flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line);
     border-radius: var(--radius); color: var(--text); padding: 7px 10px;
-    font: inherit; font-size: 12.5px; outline: none;
+    font: inherit; font-size: var(--fs-md); outline: none;
   }
-  .text::placeholder { color: var(--faint); }
+  .text::placeholder { color: var(--muted); }
   .text:focus { border-color: var(--accent) !important; box-shadow: none; }
 
   .walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 10px; }
@@ -601,19 +604,19 @@
   }
   .wall-pre.none {
     background: var(--bg); display: flex; align-items: center; justify-content: center;
-    font-size: 11px; color: var(--faint);
+    font-size: var(--fs-xs); color: var(--muted);
   }
-  .wall-name { font-size: 11.5px; padding: 0 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wall-name { font-size: var(--fs-sm); padding: 0 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wall-wrap { position: relative; min-width: 0; }
   .wall-wrap .wall { width: 100%; }
   .wall-del {
     position: absolute; top: 8px; right: 8px; min-width: 20px; height: 20px; line-height: 1;
     border-radius: var(--radius); border: none; background: var(--panel); color: var(--muted);
-    font: inherit; font-size: 12px; cursor: pointer; opacity: 0; padding: 0 3px;
+    font: inherit; font-size: var(--fs-sm); cursor: pointer; opacity: 0; padding: 0 3px;
   }
   .wall-wrap:hover .wall-del, .wall-del:focus-visible { opacity: 1; }
   .wall-del:hover { color: var(--bad); }
-  .wall-del.armed { opacity: 1; color: var(--bad); font-size: 10px; font-weight: 600; padding: 0 7px; }
+  .wall-del.armed { opacity: 1; color: var(--bad); font-size: var(--fs-xs); font-weight: 600; padding: 0 7px; }
 
   .field-card.stack { flex-direction: column; align-items: stretch; gap: 12px; }
   .field-card.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px 24px; align-items: center; }
@@ -630,7 +633,7 @@
   .swatch:hover { transform: scale(1.1); }
   .swatch.on { border-color: var(--text); }
 
-  .fld { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--muted); min-width: 0; }
+  .fld { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: var(--fs-md); color: var(--muted); min-width: 0; }
   .fld > span { flex: none; }
   .fld .text { max-width: 190px; }
 

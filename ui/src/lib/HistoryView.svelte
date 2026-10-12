@@ -10,6 +10,7 @@
   import { agentOf, whereOf } from "./sessions";
   import { laneIcon, normLane } from "./lanes";
   import { byDay, formatTime as time } from "./time";
+  import { tooltip } from "./tooltip";
 
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
@@ -78,14 +79,14 @@
 
 <div class="library">
   <header>
-    <div class="seg">
-      <button class:on={view === "sessions"} on:click={() => show("sessions")}>Sessions</button>
-      <button class:on={view === "history"} on:click={() => show("history")}>Pages</button>
-      <button class:on={view === "bookmarks"} on:click={() => show("bookmarks")}>Bookmarks</button>
+    <div class="seg" role="group" aria-label="Library" data-ui-segmented>
+      <button class:on={view === "sessions"} aria-pressed={view === "sessions"} on:click={() => show("sessions")}>Sessions</button>
+      <button class:on={view === "history"} aria-pressed={view === "history"} on:click={() => show("history")}>Pages</button>
+      <button class:on={view === "bookmarks"} aria-pressed={view === "bookmarks"} on:click={() => show("bookmarks")}>Bookmarks</button>
     </div>
     <div class="search">
       <Icon name="search" size={13} />
-      <input bind:this={field} bind:value={query} placeholder={PLACEHOLDER[view]} spellcheck="false" />
+      <input bind:this={field} bind:value={query} placeholder={PLACEHOLDER[view]} aria-label={PLACEHOLDER[view]} spellcheck="false" />
     </div>
     {#if view === "sessions" && threads.length}
       <button class="link" on:click={() => dispatch("clearSessions")}>Clear sessions</button>
@@ -109,7 +110,7 @@
               <span class="title">{s.title || "Untitled session"}</span>
               <span class="url" class:live={running.has(s.id)}>{running.has(s.id) ? "Running" : whereOf(s)}</span>
             </button>
-            <button class="x" title="Delete session" on:click={() => dispatch("deleteSession", { id: s.id })}><Icon name="close" size={12} /></button>
+            <button class="x" use:tooltip={"Delete session"} on:click={() => dispatch("deleteSession", { id: s.id })}><Icon name="close" size={12} /></button>
           </div>
         {/each}
       {:else}
@@ -132,7 +133,7 @@
               <span class="title">{v.title || bare(v.url)}</span>
               <span class="url">{bare(v.url)}</span>
             </button>
-            <button class="x" title="Remove from history" on:click={() => removeVisit(v.url)}><Icon name="close" size={12} /></button>
+            <button class="x" use:tooltip={"Remove from history"} on:click={() => removeVisit(v.url)}><Icon name="close" size={12} /></button>
           </div>
         {/each}
       {:else}
@@ -154,7 +155,7 @@
               <span class="title">{b.title || bare(b.url)}</span>
               <span class="url">{bare(b.url)}</span>
             </button>
-            <button class="x" title="Remove bookmark" on:click={() => removeBookmark(b.url)}><Icon name="close" size={12} /></button>
+            <button class="x" use:tooltip={"Remove bookmark"} on:click={() => removeBookmark(b.url)}><Icon name="close" size={12} /></button>
           </div>
         {/each}
       {:else}
@@ -198,7 +199,7 @@
     border: none;
     border-radius: 999px;
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     cursor: pointer;
   }
   .seg button:hover {
@@ -219,7 +220,7 @@
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: 999px;
-    color: var(--faint);
+    color: var(--muted);
   }
   .search input {
     flex: 1;
@@ -229,7 +230,7 @@
     outline: none;
     box-shadow: none !important;
     color: var(--text);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .link {
     flex: none;
@@ -238,7 +239,7 @@
     border: none;
     border-radius: var(--radius);
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     cursor: pointer;
   }
   .link:hover {
@@ -255,15 +256,14 @@
   }
   h3 {
     margin: 18px 0 6px 10px;
-    font-size: 11px;
+    font-size: var(--fs-md);
     font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--faint);
+    color: var(--muted);
   }
   .row {
     display: flex;
     align-items: center;
+    gap: 8px;
     border-radius: var(--radius);
   }
   .row:hover {
@@ -280,7 +280,7 @@
     background: none;
     border: none;
     color: var(--text);
-    font-size: 13px;
+    font-size: var(--fs-md);
     text-align: left;
     cursor: pointer;
   }
@@ -288,16 +288,16 @@
     flex: none;
     min-width: 44px;
     white-space: nowrap;
-    font-size: 11.5px;
+    font-size: var(--fs-sm);
     font-variant-numeric: tabular-nums;
-    color: var(--faint);
+    color: var(--muted);
   }
   .icon {
     flex: none;
     width: 16px;
     display: inline-flex;
     justify-content: center;
-    color: var(--faint);
+    color: var(--muted);
   }
   .icon img {
     width: 14px;
@@ -316,8 +316,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .url.live {
     color: var(--ok);
@@ -334,7 +334,7 @@
     background: none;
     border: none;
     border-radius: var(--radius);
-    color: var(--faint);
+    color: var(--muted);
     cursor: pointer;
     opacity: 0;
   }
@@ -349,8 +349,8 @@
   .empty {
     margin: 40px 0;
     text-align: center;
-    font-size: 13px;
-    color: var(--faint);
+    font-size: var(--fs-md);
+    color: var(--muted);
   }
   .more {
     display: block;
@@ -360,7 +360,7 @@
     border: 1px solid var(--line);
     border-radius: 999px;
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     cursor: pointer;
     transition: color 140ms ease, background 140ms ease;
   }

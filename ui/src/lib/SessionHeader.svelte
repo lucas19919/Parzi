@@ -2,6 +2,7 @@
   import { createEventDispatcher, onMount, tick } from "svelte";
   import Icon from "./Icon.svelte";
   import type { IconName } from "./icons";
+  import { tooltip } from "./tooltip";
 
   export let title = "";
   export let branch = "";
@@ -42,6 +43,7 @@
 
   const RING = 2 * Math.PI * 6;
   $: contextPct = contextLimit > 0 ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : 0;
+  $: agents = agentCount > 99 ? "99+" : String(agentCount);
   let ctxOpen = false;
 
   async function run(id: Action) {
@@ -72,18 +74,29 @@
   }
 
   onMount(() => {
+    // One popup at a time; a click anywhere else closes it.
     const onDoc = (e: MouseEvent) => {
-      if (menu && !menu.contains(e.target as Node)) open = false;
+      if (menu && !menu.contains(e.target as Node)) open = ctxOpen = false;
+    };
+    // Capture phase, so Escape closes a popup before App reads it as "stop the run".
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !(open || ctxOpen)) return;
+      e.preventDefault();
+      open = ctxOpen = false;
     };
     document.addEventListener("click", onDoc);
-    return () => document.removeEventListener("click", onDoc);
+    window.addEventListener("keydown", onEsc, true);
+    return () => {
+      document.removeEventListener("click", onDoc);
+      window.removeEventListener("keydown", onEsc, true);
+    };
   });
 </script>
 
 <div class="head">
   <div class="left">
     {#if backTitle}
-      <button class="icon-btn" title="Back to {backTitle}" on:click={() => dispatch("back")}>
+      <button class="icon-btn" use:tooltip={`Back to ${backTitle}`} on:click={() => dispatch("back")}>
         <Icon name="arrowLeft" size={14} />
       </button>
     {/if}
@@ -108,8 +121,13 @@
           class:warn={contextPct >= 70}
           class:bad={contextPct >= 90}
           disabled={compacting || streaming}
-          title={compacting ? "Compacting…" : `Context ${contextPct}% full. Click for breakdown.`}
-          on:click={() => (ctxOpen = !ctxOpen)}
+          aria-haspopup="dialog"
+          aria-expanded={ctxOpen}
+          use:tooltip={compacting ? "Compacting…" : `Context ${contextPct}% full. Click for breakdown.`}
+          on:click={() => {
+            ctxOpen = !ctxOpen;
+            open = false;
+          }}
         >
           <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
             <circle class="track" cx="8" cy="8" r="6" />
@@ -117,15 +135,26 @@
           </svg>
         </button>
       {/if}
-      <button class="icon-btn" class:on={panelOpen} title="Toggle dock (Ctrl+Shift+A)" on:click={() => dispatch("agents")}>
+      <!-- The badge is visible text, so the name has to include it. -->
+      <button
+        class="icon-btn"
+        class:on={panelOpen}
+        aria-pressed={panelOpen}
+        aria-label={agentCount > 0 ? `Toggle dock, ${agents} agents running` : "Toggle dock"}
+        use:tooltip={"Toggle dock (Ctrl+Shift+A)"}
+        on:click={() => dispatch("agents")}
+      >
         <Icon name="panel" size={14} />
-        {#if agentCount > 0}<span class="count">{agentCount > 99 ? "99+" : agentCount}</span>{/if}
+        {#if agentCount > 0}<span class="count">{agents}</span>{/if}
       </button>
-      <button class="icon-btn" title="Session actions" aria-expanded={open} on:click={() => (open = !open)}>
+      <button class="icon-btn" aria-haspopup="menu" aria-expanded={open} use:tooltip={"Session actions"} on:click={() => {
+          open = !open;
+          ctxOpen = false;
+        }}>
         <Icon name="more" stroke={3} />
       </button>
       {#if open}
-        <div class="dropdown" role="menu">
+        <div class="dropdown" role="menu" data-ui-list>
           {#each ITEMS as item (item.id)}
             {#if item.id === "delete"}<div class="sep" />{/if}
             <button class="item" class:danger={item.id === "delete"} role="menuitem" on:click={() => run(item.id)}>
@@ -182,7 +211,7 @@
   input {
     margin: 0;
     min-width: 0;
-    font-size: 14.5px;
+    font-size: var(--fs-base);
     font-weight: 600;
     letter-spacing: -0.2px;
     color: var(--text);
@@ -205,7 +234,7 @@
     align-items: center;
     gap: 4px;
     flex: none;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--muted);
   }
   .lane {
@@ -214,7 +243,7 @@
     border-radius: 999px;
     background: color-mix(in srgb, var(--text) 8%, transparent);
     color: var(--muted);
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     letter-spacing: 0.2px;
   }
@@ -226,7 +255,7 @@
     position: relative;
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 8px;
   }
   .icon-btn {
     position: relative;
@@ -260,7 +289,7 @@
     border-radius: 999px;
     background: var(--ok);
     color: var(--on-ok);
-    font-size: 9px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     line-height: 14px;
     text-align: center;
@@ -290,7 +319,7 @@
     border: none;
     border-radius: var(--radius);
     color: var(--text);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     text-align: left;
     cursor: pointer;
   }
@@ -314,15 +343,15 @@
   .ctx.warn { --ctx: var(--warn); }
   .ctx.bad { --ctx: var(--bad); }
   .ctx-pop { padding: 10px 12px 12px; width: 220px; }
-  .ctx-head { display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+  .ctx-head { display: flex; justify-content: space-between; font-size: var(--fs-sm); font-weight: 600; margin-bottom: 8px; }
   .ctx-cost { color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
   .ctx-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin-bottom: 8px; }
   .ctx-bar i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
-  .ctx-rows { display: flex; flex-direction: column; gap: 4px; font-size: 12px; margin-bottom: 10px; }
+  .ctx-rows { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); margin-bottom: 10px; }
   .ctx-rows div { display: flex; justify-content: space-between; }
-  .ctx-rows span { color: var(--faint); }
+  .ctx-rows span { color: var(--muted); }
   .ctx-rows b { font-weight: 550; font-variant-numeric: tabular-nums; }
-  .ctx-compact { width: 100%; padding: 5px; background: var(--line); border: none; border-radius: var(--radius); font-size: 12px; font-weight: 600; cursor: pointer; color: var(--text); }
+  .ctx-compact { width: 100%; padding: 5px; background: var(--line); border: none; border-radius: var(--radius); font-size: var(--fs-sm); font-weight: 600; cursor: pointer; color: var(--text); }
   .ctx-compact:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 16%, transparent); }
   .ctx-compact:disabled { opacity: 0.45; cursor: default; }
 </style>

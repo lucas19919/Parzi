@@ -80,7 +80,7 @@
     min-width: 0;
   }
   .echart-err {
-    font-size: 12px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
 </style>

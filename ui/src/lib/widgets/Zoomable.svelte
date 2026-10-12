@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { setOverlay } from "../overlay";
+  import { tooltip } from "../tooltip";
 
   export let enabled = false;
   let open = false;
@@ -26,7 +27,7 @@
 <svelte:window on:keydown={onKey} />
 
 {#if open}
-  <button class="zback" aria-label="Close zoomed view" on:click={() => set(false)} />
+  <button class="zback" use:tooltip={"Close zoomed view"} on:click={() => set(false)} />
 {/if}
 <div class="zwrap" class:open>
   <slot {open} {toggle} />

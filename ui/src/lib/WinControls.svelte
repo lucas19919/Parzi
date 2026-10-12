@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { tooltip } from "./tooltip";
   import { windowClose, windowMaximize, windowMinimize } from "./windowChrome";
 
   let maximized = false;
@@ -22,10 +23,10 @@
 </script>
 
 <div class="window-controls">
-  <button class="win-btn" title="Minimize" tabindex="-1" on:click={windowMinimize}>
+  <button class="win-btn" use:tooltip={"Minimize"} tabindex="-1" on:click={windowMinimize}>
     <svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" /></svg>
   </button>
-  <button class="win-btn" title={maximized ? "Restore" : "Maximize"} tabindex="-1" on:click={windowMaximize}>
+  <button class="win-btn" use:tooltip={maximized ? "Restore" : "Maximize"} tabindex="-1" on:click={windowMaximize}>
     {#if maximized}
       <svg width="10" height="10" viewBox="0 0 10 10">
         <path d="M2.5 2V.5h7v7H8M.5 2.5h7v7h-7z" fill="none" stroke="currentColor" />
@@ -34,7 +35,7 @@
       <svg width="10" height="10" viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9" fill="none" stroke="currentColor" /></svg>
     {/if}
   </button>
-  <button class="win-btn close" title="Close" tabindex="-1" on:click={windowClose}>
+  <button class="win-btn close" use:tooltip={"Close"} tabindex="-1" on:click={windowClose}>
     <svg width="10" height="10" viewBox="0 0 10 10"><path d="M1 1l8 8M9 1L1 9" stroke="currentColor" stroke-width="1.1" /></svg>
   </button>
 </div>

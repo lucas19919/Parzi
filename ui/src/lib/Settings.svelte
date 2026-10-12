@@ -21,7 +21,7 @@
 
 <div class="settings">
   <nav>
-    <div class="sections" role="tablist">
+    <div class="sections" role="tablist" aria-label="Settings sections">
       {#each SECTIONS as s (s.id)}
         <button role="tab" aria-selected={section === s.id} class:active={section === s.id} on:click={() => (section = s.id)}>
           {s.label}
@@ -63,7 +63,7 @@
   }
   .sections {
     display: flex;
-    gap: 4px;
+    gap: 8px;
     overflow-x: auto;
   }
   .sections button {
@@ -72,7 +72,7 @@
     border: none;
     border-radius: var(--radius);
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
   .sections button:hover {

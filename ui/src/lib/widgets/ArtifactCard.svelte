@@ -6,6 +6,7 @@
   import { previewSpecOf, previewProblem } from "../previewRegistry";
   import { svgDataUrl } from "../svgImage";
   import { toast } from "../toast";
+  import { tooltip } from "../tooltip";
 
   export let data: any;
   export let fallbackId = "";
@@ -73,9 +74,11 @@
 
   onMount(() => {
     const onMsg = (e: MessageEvent) => {
-      if (!frame || e.source !== frame.contentWindow) return;
+      // Through a local: writing via `frame` would mark it dirty and re-render the card.
+      const el = frame;
+      if (!el || e.source !== el.contentWindow) return;
       const h = (e.data as { parziArt?: unknown; height?: unknown } | null)?.height;
-      if (typeof h === "number" && h > 0) frame.style.height = `${Math.min(MAX_FRAME, Math.max(160, Math.round(h)))}px`;
+      if (typeof h === "number" && h > 0) el.style.height = `${Math.min(MAX_FRAME, Math.max(160, Math.round(h)))}px`;
     };
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
@@ -85,22 +88,22 @@
 <div class="artifact-card" class:bad title={title}>
   <div class="art-tools">
     {#if canRender}
-      <button class="mini-btn" title={showCode ? "Show preview" : "Show source"} on:click={() => (showCode = !showCode)}>
-        {showCode ? "preview" : "source"}
+      <button class="mini-btn" use:tooltip={showCode ? "Show preview" : "Show source"} on:click={() => (showCode = !showCode)}>
+        {showCode ? "Preview" : "Source"}
       </button>
     {/if}
-    <button class="mini-btn" on:click={copy}>{copied ? "copied" : "copy"}</button>
-    <button class="mini-btn" on:click={download}>save</button>
+    <button class="mini-btn" on:click={copy}>{copied ? "Copied" : "Copy"}</button>
+    <button class="mini-btn" on:click={download}>Save</button>
   </div>
   {#if bad}
-    <div class="art-error">Couldn't render artifact — showing source.</div>
+    <div class="art-error">Couldn't render artifact. Showing source.</div>
     <pre class="art-source">{JSON.stringify(d, null, 2)?.slice(0, 4000)}</pre>
   {:else if kind === "preview" && preview}
     <div class="art-preview">
       <svelte:component this={preview.entry.component} {...previewProps} />
     </div>
   {:else if kind === "preview"}
-    <div class="art-error">Unknown preview — {previewProblem(content)}.</div>
+    <div class="art-error">Unknown preview: {previewProblem(content)}.</div>
   {:else if kind === "markdown"}
     <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
     <div class="art-md" on:click={(e) => void handleLinkClick(e)}>{@html mdHtml(content, $richReady)}</div>
@@ -123,7 +126,7 @@
     </div>
     {#if lines > 30}
       <button class="expand-btn" on:click={() => (expanded = !expanded)}>
-        {expanded ? "collapse" : `show full (${lines} lines)`}
+        {expanded ? "Collapse" : `Show full (${lines} lines)`}
       </button>
     {/if}
   {/if}
@@ -146,7 +149,7 @@
     right: 6px;
     z-index: 5;
     display: flex;
-    gap: 4px;
+    gap: 8px;
     opacity: 0;
     transition: opacity 140ms ease;
   }
@@ -159,13 +162,13 @@
     border: 1px solid var(--line);
     border-radius: 6px;
     color: var(--muted);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     padding: 3px 8px;
     cursor: pointer;
     backdrop-filter: blur(6px);
   }
   .mini-btn:hover { color: var(--text); }
-  .art-md { padding: 2px 0; font-size: 13px; }
+  .art-md { padding: 2px 0; font-size: var(--fs-md); }
   .art-preview {
     width: 100%;
     max-width: 720px;
@@ -175,16 +178,16 @@
   .art-svg { width: 100%; height: auto; display: block; }
   .art-img { width: 100%; height: auto; display: block; border-radius: 8px; }
   .art-render { width: 100%; height: 320px; min-height: 160px; border: none; background: transparent; display: block; overflow: auto; }
-  .art-code { font-size: 11.5px; }
+  .art-code { font-size: var(--fs-sm); }
   .art-code.clamped :global(.codeblock.clamped) { max-height: 420px; }
-  .art-error { padding: 8px 12px; font-size: 11px; color: var(--bad); }
-  .art-source { margin: 0 12px 12px; padding: 8px; font-size: 10px; overflow: auto; background: var(--bg); border-radius: 6px; }
+  .art-error { padding: 8px 12px; font-size: var(--fs-xs); color: var(--bad); }
+  .art-source { margin: 0 12px 12px; padding: 8px; font-size: var(--fs-xs); overflow: auto; background: var(--bg); border-radius: 6px; }
   .expand-btn {
     background: transparent;
     border: none;
     border-top: 1px solid var(--line);
     color: var(--accent);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     padding: 6px;
     cursor: pointer;
   }

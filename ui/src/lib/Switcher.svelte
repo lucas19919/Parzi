@@ -6,6 +6,7 @@
   import type { SessionMeta } from "./api";
   import { folderName, type Tab } from "./tabs";
   import { setOverlay } from "./overlay";
+  import { tooltip } from "./tooltip";
 
   export let open = false;
   export let threads: SessionMeta[] = [];
@@ -143,11 +144,14 @@
     <div class="box" role="dialog" aria-modal="true" aria-label="Search" transition:fly={{ y: -10, duration: 160 }}>
       <div class="head">
         <Icon name="search" />
-        <input bind:this={inputEl} bind:value={query} placeholder="Search sessions, tabs, or actions" />
+        <input bind:this={inputEl} bind:value={query} aria-label="Search" placeholder="Search sessions, tabs, or actions" />
         <kbd>esc</kbd>
       </div>
 
-      <div class="list" role="listbox">
+      <!-- A listbox may only own options: delete is pointer-only here (sessions
+           can also be deleted from the session's own menu), and the empty
+           state lives outside it. -->
+      <div class="list" role="listbox" aria-label="Results" hidden={!items.length}>
         {#each items as item, i (item.id)}
           {#if i === 0 || items[i - 1].group !== item.group}
             <div class="group">{item.group}</div>
@@ -167,19 +171,20 @@
               </span>
             </button>
             {#if item.remove}
-              <button class="del" title="Delete session" on:click={item.remove}>
+              <button class="del" tabindex="-1" aria-hidden="true" use:tooltip={"Delete session"} on:click={item.remove}>
                 <Icon name="trash" size={12} />
               </button>
             {/if}
           </div>
-        {:else}
-          <div class="empty">Nothing matches</div>
         {/each}
       </div>
+      {#if !items.length}
+        <div class="empty">Nothing matches</div>
+      {/if}
 
       <div class="foot">
-        <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
-        <span><kbd>↵</kbd> open</span>
+        <span><kbd><Icon name="arrowUp" size={11} /></kbd><kbd><Icon name="arrowDown" size={11} /></kbd> move</span>
+        <span><kbd>enter</kbd> open</span>
         <span><kbd>esc</kbd> close</span>
       </div>
     </div>
@@ -222,15 +227,19 @@
     outline: none;
     box-shadow: none;
     color: var(--text);
-    font-size: 14px;
+    font-size: var(--fs-base);
   }
   .head input::placeholder {
-    color: var(--faint);
+    color: var(--muted);
   }
   kbd {
-    padding: 1px 5px;
+    display: inline-flex;
+    align-items: center;
+    height: 17px;
+    vertical-align: middle;
+    padding: 0 5px;
     margin-right: 3px;
-    font-size: 10px;
+    font-size: var(--fs-xs);
     color: var(--muted);
     background: var(--line);
     border: 1px solid var(--line);
@@ -243,15 +252,14 @@
   }
   .group {
     padding: 8px 10px 4px;
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--faint);
+    color: var(--muted);
   }
   .row {
     display: flex;
     align-items: center;
+    gap: 8px;
     border-radius: 7px;
   }
   .row.on {
@@ -295,12 +303,12 @@
     white-space: nowrap;
   }
   .title {
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     font-weight: 500;
     color: var(--text);
   }
   .sub {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--muted);
   }
   .del {
@@ -314,7 +322,7 @@
     background: transparent;
     border: none;
     border-radius: 5px;
-    color: var(--faint);
+    color: var(--muted);
     cursor: pointer;
     opacity: 0;
   }
@@ -329,14 +337,14 @@
   .empty {
     padding: 32px 16px;
     text-align: center;
-    font-size: 13px;
+    font-size: var(--fs-md);
     color: var(--muted);
   }
   .foot {
     display: flex;
     gap: 14px;
     padding: 8px 16px;
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     color: var(--muted);
     border-top: 1px solid var(--line);
   }

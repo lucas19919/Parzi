@@ -10,7 +10,7 @@
   {#each entries as entry (entry.name)}
     {#each entry.variants as v (v.n)}
       <section>
-        <header><b>{v.n} · {v.label}</b><span>{entry.title} — {v.blurb}</span></header>
+        <header><b>{v.n} · {v.label}</b><span>{entry.title}: {v.blurb}</span></header>
         <svelte:component this={entry.component} {...entry.props(v.n, {})} />
       </section>
     {/each}
@@ -44,16 +44,16 @@
     padding: 0 4px;
   }
   header b {
-    font-size: 13px;
+    font-size: var(--fs-md);
     color: var(--text);
   }
   header span {
-    font-size: 12px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .hint {
-    font-size: 12px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .mono {
     font-family: var(--mono);

@@ -10,6 +10,7 @@
   import { PROVIDER_ORDER, allRows, isUsable, nameOf, shownOf, stateLabel, type PickRow } from "./providerRows";
   import { effortLabel, effortsFor } from "./providerRows";
   import { popover, placeAbove } from "./popover";
+  import { tooltip } from "./tooltip";
 
   export let value = "";
   export let board: ProviderStatus[] = [];
@@ -146,7 +147,8 @@
   bind:this={trigger}
   class="ctl model"
   class:open
-  title={shown.name}
+  use:tooltip={shown.name}
+  aria-haspopup="dialog"
   aria-expanded={open}
   on:click|stopPropagation={() => (open ? (open = false) : show())}
 >
@@ -158,21 +160,23 @@
   <div
     class="picker"
     class:above
+    role="dialog"
+    aria-label="Model"
     {style}
     use:popover={{ anchor: trigger, close: () => (open = false) }}
     transition:fly={{ y: above ? 6 : -6, duration: 140, easing: cubicOut }}
   >
     <div class="search">
       <Icon name="search" size={13} />
-      <input bind:this={searchEl} bind:value={query} on:keydown={onKey} placeholder="Search models" spellcheck="false" />
+      <input bind:this={searchEl} bind:value={query} on:keydown={onKey} aria-label="Search models" placeholder="Search models" spellcheck="false" />
       {#if busy}<span class="spin" title="Checking your agents" />{/if}
     </div>
-    <div class="list" bind:this={listEl}>
+    <div class="list" data-ui-list bind:this={listEl}>
       {#if modelEfforts.length > 1}
         <div class="head">Effort</div>
-        <div class="effort-row">
+        <div class="effort-row" role="group" aria-label="Effort" data-ui-segmented>
           {#each modelEfforts as e (e)}
-            <button class="effort" class:on={effort === e} on:click={() => (effort = e)}>
+            <button class="effort" class:on={effort === e} aria-pressed={effort === e} on:click={() => (effort = e)}>
               {effortLabel(e)}
             </button>
           {/each}
@@ -244,7 +248,7 @@
     gap: 8px;
     flex: none;
     padding: 7px 12px;
-    color: var(--faint);
+    color: var(--muted);
     border-bottom: 1px solid var(--line);
   }
   .search input {
@@ -255,10 +259,10 @@
     outline: none;
     box-shadow: none !important;
     color: var(--text);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .search input::placeholder {
-    color: var(--faint);
+    color: var(--muted);
   }
   .spin {
     width: 11px;
@@ -286,9 +290,9 @@
     align-items: center;
     gap: 7px;
     padding: 8px 8px 2px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
-    color: var(--faint);
+    color: var(--muted);
   }
   .head .note {
     margin-left: auto;
@@ -306,7 +310,7 @@
     border: 1px solid var(--line);
     border-radius: 999px;
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
   .effort:hover {
@@ -327,7 +331,7 @@
     border: none;
     border-radius: var(--radius);
     color: var(--text);
-    font-size: 13px;
+    font-size: var(--fs-md);
     text-align: left;
     cursor: pointer;
   }
@@ -343,8 +347,8 @@
   }
   .note {
     flex: none;
-    font-size: 11.5px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .tick {
     display: inline-flex;
@@ -359,7 +363,7 @@
   .empty {
     padding: 16px;
     text-align: center;
-    font-size: 12px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
 </style>

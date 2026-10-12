@@ -7,6 +7,7 @@
   import { setOverlay } from "./overlay";
   import { updateVersion } from "./updateStore";
   import { startWindowDrag } from "./windowChrome";
+  import { tooltip } from "./tooltip";
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
@@ -58,12 +59,19 @@
 <header class="topbar" on:mousedown={startWindowDrag}>
   <div class="left">
     <div class="menu">
-      <button class="icon-btn" class:active={menuOpen} title="Menu" on:click={() => (menuOpen = !menuOpen)}>
+      <button
+        class="icon-btn"
+        class:active={menuOpen}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        use:tooltip={$updateVersion ? "Menu, update available" : "Menu"}
+        on:click={() => (menuOpen = !menuOpen)}
+      >
         <Icon name="menu" />
         {#if $updateVersion}<span class="dot" />{/if}
       </button>
       {#if menuOpen}
-        <div class="dropdown" role="menu">
+        <div class="dropdown" role="menu" data-ui-list>
           {#each MENU as item}
             <button
               class="menu-item"
@@ -94,7 +102,7 @@
         </div>
       {/if}
     </div>
-    <button class="icon-btn" title="Home" on:click={() => dispatch("home")}>
+    <button class="icon-btn" use:tooltip={"Home"} on:click={() => dispatch("home")}>
       <Icon name="home" />
     </button>
     {#if tabsVisible}
@@ -129,7 +137,7 @@
   .left {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     height: 100%;
     flex: 1;
     min-width: 0;
@@ -141,7 +149,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     text-align: center;
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     font-weight: 600;
     color: var(--muted);
     user-select: none;
@@ -208,7 +216,7 @@
     border: none;
     border-radius: var(--radius);
     color: var(--text);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     text-align: left;
     cursor: pointer;
   }
@@ -219,7 +227,7 @@
     flex: 1;
   }
   .key {
-    font-size: 10px;
-    color: var(--faint);
+    font-size: var(--fs-xs);
+    color: var(--muted);
   }
 </style>

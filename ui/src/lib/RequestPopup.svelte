@@ -69,6 +69,7 @@
       bind:this={field}
       bind:value={draft}
       rows="3"
+      aria-label="Reply"
       placeholder={request.kind === "file" ? "Paste the file path…" : request.kind === "image" ? "Describe it, or drop the picture in the composer…" : "Type your reply… (Ctrl+Enter sends)"}
       spellcheck="true"
     />
@@ -116,19 +117,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 13px;
+    font-size: var(--fs-md);
     font-weight: 650;
     color: var(--text);
   }
   .count {
     flex: none;
-    font-size: 11px;
-    color: var(--faint);
+    font-size: var(--fs-xs);
+    color: var(--muted);
     font-variant-numeric: tabular-nums;
   }
   .body {
     margin: 0 0 10px;
-    font-size: 13.5px;
+    font-size: var(--fs-base);
     line-height: 1.55;
     color: var(--text);
     white-space: pre-wrap;
@@ -142,7 +143,7 @@
     border: 1px solid var(--line);
     border-radius: var(--radius);
     color: var(--text);
-    font-size: 13px;
+    font-size: var(--fs-md);
     line-height: 1.5;
     resize: vertical;
     outline: none;

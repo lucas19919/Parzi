@@ -10,6 +10,7 @@
   import { agentOf, isLiveSession, whereOf } from "./sessions";
   import { laneIcon } from "./lanes";
   import { formatTime as time } from "./time";
+  import { tooltip } from "./tooltip";
 
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
@@ -276,14 +277,14 @@
 
   async function assignTrack(section: string, text: string) {
     if (!sessionId) return;
-    const where = section ? `${section} — ` : "";
+    const where = section ? `${section}: ` : "";
     try {
       await api.spawnTrack(
         sessionId,
         text.slice(0, 60),
-        `Work this track from ${projectSlug || "the project"}: ${where}${text}. Do the work, then reply with your result as the final message. Do not edit TASKS.md or GOALS.md — the orchestrator owns those files; just report back.`,
+        `Work this track from ${projectSlug || "the project"}: ${where}${text}. Do the work, then reply with your result as the final message. Do not edit TASKS.md or GOALS.md: the orchestrator owns those files. Just report back.`,
       );
-      toast("Agent assigned — watch the Agents tab");
+      toast("Agent assigned. Watch the Agents tab.");
       tab = "agents";
       dispatch("settled");
     } catch (e) {
@@ -295,7 +296,7 @@
 <div class="panel" style:width="{dockW}px">
   <div class="grip" on:pointerdown={startResize} title="Drag to resize the dock" />
   <div class="p-head">
-    <div class="p-tabs" role="tablist" aria-label="Dock">
+    <div class="p-tabs" role="tablist" aria-label="Dock" data-ui-segmented>
       {#each DOCK_TABS as t (t.id)}
         <button
           role="tab"
@@ -307,7 +308,7 @@
         </button>
       {/each}
     </div>
-    <button class="x" title="Close panel" on:click={() => dispatch("close")}><Icon name="close" size={12} /></button>
+    <button class="x" use:tooltip={"Close panel"} on:click={() => dispatch("close")}><Icon name="close" size={12} /></button>
   </div>
 
   {#if tab === "tasks"}
@@ -325,7 +326,7 @@
               <span class="title">{s.title || "Untitled session"}</span>
               {#if pill}<span class="pill {pill.cls}">{pill.label}</span>{/if}
             </button>
-            <button class="stop" title="Stop this run (keeps the transcript)" on:click={() => dispatch("stopSession", { id: s.id })}>Stop</button>
+            <button class="stop" use:tooltip={"Stop this run (keeps the transcript)"} on:click={() => dispatch("stopSession", { id: s.id })}>Stop</button>
           </div>
         {/each}
       {:else}
@@ -361,7 +362,7 @@
               <span class="title">{s.title || "Untitled session"}</span>
               {#if pill}<span class="pill {pill.cls}">{pill.label}</span>{/if}
             </button>
-            <button class="stop" title="Stop this run (keeps the transcript)" on:click={() => dispatch("stopSession", { id: s.id })}>Stop</button>
+            <button class="stop" use:tooltip={"Stop this run (keeps the transcript)"} on:click={() => dispatch("stopSession", { id: s.id })}>Stop</button>
           </div>
         {/each}
       {/if}
@@ -379,7 +380,7 @@
               {#if sub}<span class="pill {sub.cls}">{sub.label}</span>{:else}<span class="url">{whereOf(s)}</span>{/if}
             </button>
             {#if sub}
-              <button class="stop" title="Stop this run (keeps the transcript)" on:click={() => dispatch("stopSession", { id: s.id })}>Stop</button>
+              <button class="stop" use:tooltip={"Stop this run (keeps the transcript)"} on:click={() => dispatch("stopSession", { id: s.id })}>Stop</button>
             {/if}
           </div>
         {/each}
@@ -402,19 +403,19 @@
             {/if}
             {#each sessionPlan.steps as st, i (i)}
               <div class="trow">
-                <span class="box" class:doing={st.status === "doing"} class:done={st.status === "done"}>{#if st.status === "done"}x{/if}</span>
+                <span class="box" class:doing={st.status === "doing"} class:done={st.status === "done"}>{#if st.status === "done"}<Icon name="check" size={10} stroke={2.6} />{/if}</span>
                 <span class="ttext" class:done={st.status === "done"}>{st.title}</span>
                 {#if st.status === "doing"}<span class="pill live">doing</span>{/if}
               </div>
             {/each}
             {#if sessionPlan.decisions.length}
               <button class="disclosure" aria-expanded={showDecisions} on:click={() => (showDecisions = !showDecisions)}>
-                <span class="tri" class:open={showDecisions}>▸</span>
+                <span class="tri" class:open={showDecisions}><Icon name="chevRight" size={11} stroke={2} /></span>
                 <span>{sessionPlan.decisions.length} decision{sessionPlan.decisions.length === 1 ? "" : "s"}</span>
               </button>
               {#if showDecisions}
                 {#each sessionPlan.decisions as d, i (i)}
-                  <div class="dec"><b>{d.decision}</b>{#if d.why}<span> — {d.why}</span>{/if}</div>
+                  <div class="dec"><b>{d.decision}</b>{#if d.why}<span>: {d.why}</span>{/if}</div>
                 {/each}
               {/if}
             {/if}
@@ -438,12 +439,12 @@
                   <span class="box" class:done={item.done}>{#if item.done}x{/if}</span>
                   <span class="ttext" class:done={item.done}>{item.text}</span>
                   {#if !item.done}
-                    <button class="assign" title="Assign an agent to this track" on:click={() => assignTrack(sec.title, item.text)}>Assign</button>
+                    <button class="assign" use:tooltip={"Assign an agent to this track"} on:click={() => assignTrack(sec.title, item.text)}>Assign</button>
                   {/if}
                 </div>
               {/each}
             {/each}
-            <button class="mini" title="Reload GOALS.md and TASKS.md" on:click={refreshProject}>Reload files</button>
+            <button class="mini" use:tooltip={"Reload GOALS.md and TASKS.md"} on:click={refreshProject}>Reload files</button>
           </section>
         {/if}
       {/if}
@@ -504,8 +505,8 @@
     background: none;
     border: none;
     border-radius: calc(var(--radius) - 2px);
-    color: var(--faint);
-    font-size: 12px;
+    color: var(--muted);
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
   .p-tabs button.on {
@@ -519,7 +520,7 @@
     border-radius: 999px;
     background: var(--ok);
     color: var(--on-ok);
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-weight: 700;
     line-height: 16px;
   }
@@ -532,19 +533,17 @@
     background: none;
     border: none;
     border-radius: var(--radius);
-    color: var(--faint);
+    color: var(--muted);
     cursor: pointer;
   }
   .x:hover { background: var(--line); color: var(--text); }
   h3 {
     margin: 12px 12px 4px;
-    font-size: 11px;
+    font-size: var(--fs-md);
     font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--faint);
+    color: var(--muted);
   }
-  .empty { margin: 24px 16px; font-size: 12.5px; color: var(--faint); line-height: 1.6; }
+  .empty { margin: 24px 16px; font-size: var(--fs-md); color: var(--muted); line-height: 1.6; }
   .empty.err { color: var(--bad); }
   .agents { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 16px; }
   .dot {
@@ -556,7 +555,7 @@
     background: var(--faint);
   }
   .dot.on { background: var(--ok); }
-  .row { display: flex; align-items: center; gap: 2px; padding: 2px 8px 2px 4px; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 2px 8px 2px 4px; }
   .open {
     flex: 1;
     min-width: 0;
@@ -572,11 +571,11 @@
     cursor: pointer;
   }
   .open:hover { background: var(--line); color: var(--text); }
-  .time { flex: none; font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .time { flex: none; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
   .icon { flex: none; display: inline-flex; color: var(--muted); }
-  .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
-  .url { flex: none; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--faint); }
-  .pill { flex: none; padding: 1px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600; }
+  .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-md); }
+  .url { flex: none; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); color: var(--muted); }
+  .pill { flex: none; padding: 1px 8px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; }
   .pill.live { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
   .pill.queue { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
   .stop {
@@ -586,7 +585,7 @@
     border: 1px solid var(--line);
     border-radius: var(--radius);
     color: var(--muted);
-    font-size: 11.5px;
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
   .stop:hover { border-color: var(--bad); color: var(--bad); }
@@ -598,15 +597,13 @@
     padding: 10px 12px 12px;
   }
   .eyebrow {
-    font-size: 10.5px;
+    font-size: var(--fs-xs);
     font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--faint);
+    color: var(--muted);
     margin-bottom: 6px;
   }
-  .card-title { font-weight: 650; font-size: 13.5px; color: var(--text); margin-bottom: 8px; }
-  .prog { font-size: 11px; color: var(--faint); margin: 4px 2px 2px; font-variant-numeric: tabular-nums; }
+  .card-title { font-weight: 650; font-size: var(--fs-base); color: var(--text); margin-bottom: 8px; }
+  .prog { font-size: var(--fs-xs); color: var(--muted); margin: 4px 2px 2px; font-variant-numeric: tabular-nums; }
   .disclosure {
     display: inline-flex;
     align-items: center;
@@ -615,12 +612,12 @@
     padding: 2px 0;
     background: none;
     border: none;
-    color: var(--faint);
-    font-size: 11.5px;
+    color: var(--muted);
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
   .disclosure:hover { color: var(--text); }
-  .tri { display: inline-block; font-size: 10px; transition: transform 140ms ease; }
+  .tri { display: inline-flex; transition: transform 140ms ease; }
   .tri.open { transform: rotate(90deg); }
   .mini {
     padding: 3px 9px;
@@ -628,7 +625,7 @@
     border: 1px solid var(--line);
     border-radius: var(--radius);
     color: var(--muted);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     cursor: pointer;
   }
   .mini:hover { color: var(--text); }
@@ -642,13 +639,11 @@
   .proj-bar i { display: block; height: 100%; background: var(--ok); border-radius: inherit; }
   .proj h4 {
     margin: 12px 12px 2px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--faint);
+    color: var(--muted);
   }
-  .goals { margin: 0 12px; font-size: 12.5px; line-height: 1.6; color: var(--muted); }
+  .goals { margin: 0 12px; font-size: var(--fs-md); line-height: 1.6; color: var(--muted); }
   .trow { display: flex; align-items: baseline; gap: 8px; padding: 3px 12px 3px 0; }
   .trow .box {
     flex: none;
@@ -656,29 +651,30 @@
     height: 14px;
     border: 1px solid var(--faint);
     border-radius: 4px;
-    font-size: 10px;
-    line-height: 13px;
-    text-align: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     color: var(--on-ok);
     transform: translateY(2px);
   }
   .trow .box.done { background: var(--ok); border-color: var(--ok); }
   .trow .box.doing { border-color: var(--warn); }
-  .dec { margin: 2px 12px; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+  .dec { margin: 2px 12px; font-size: var(--fs-md); line-height: 1.5; color: var(--muted); }
   .dec b { color: var(--text); font-weight: 600; }
-  .ttext { font-size: 12.5px; color: var(--text); flex: 1; min-width: 0; }
-  .ttext.done { color: var(--faint); text-decoration: line-through; }
+  .ttext { font-size: var(--fs-md); color: var(--text); flex: 1; min-width: 0; }
+  .ttext.done { color: var(--muted); text-decoration: line-through; }
   .assign {
     flex: none;
     padding: 2px 8px;
     background: none;
     border: 1px solid var(--line);
     border-radius: 999px;
-    color: var(--faint);
-    font-size: 10.5px;
+    color: var(--muted);
+    font-size: var(--fs-xs);
     cursor: pointer;
     opacity: 0;
   }
-  .trow:hover .assign { opacity: 1; }
+  .trow:hover .assign,
+  .assign:focus-visible { opacity: 1; }
   .assign:hover { color: var(--text); border-color: var(--faint); }
 </style>

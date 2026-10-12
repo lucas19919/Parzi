@@ -116,21 +116,22 @@
   </div>
 
   <div class="pref-section">
-    <h3 class="section-title">Agent Autonomy Policy</h3>
+    <h3 class="section-title">Agent autonomy</h3>
     <p class="section-desc">Controls how terminal commands and local tools require approval before running.</p>
 
     <div class="field-card">
       <div class="field-info">
-        <span class="field-label">Tool Execution Policy</span>
+        <span class="field-label">Tool policy</span>
         <span class="field-hint">
           {cfg.lanes.default_mode === "ask"
-            ? "Ask: Prompts for confirmation on each tool execution"
+            ? "Ask: asks before each tool call."
             : cfg.lanes.default_mode === "auto"
-            ? "Turbo: Runs tool calls in the session folder without asking"
-            : "Lockdown: Strictly blocks all local shell & mutating tool execution"}
+            ? "Turbo: runs tool calls in the session folder without asking."
+            : "Lockdown: blocks shell commands and file changes."}
         </span>
       </div>
       <SegControl
+        label="Tool policy"
         options={[{ value: "ask", label: "Ask" }, { value: "auto", label: "Turbo" }, { value: "deny", label: "Lockdown" }]}
         value={cfg.lanes.default_mode}
         on:pick={(e) => void pickMode(e.detail)}
@@ -151,13 +152,14 @@
   </div>
 
   <div class="pref-section">
-    <h3 class="section-title">Orchestration & Limits</h3>
+    <h3 class="section-title">Orchestration and limits</h3>
     <div class="field-card">
       <div class="field-info">
         <span class="field-label">Follow-up messages while busy</span>
         <span class="field-hint">Behavior when sending prompts while an agent is currently running</span>
       </div>
       <SegControl
+        label="Follow-up messages while busy"
         options={[{ value: "queue", label: "Queue" }, { value: "reject", label: "Reject" }]}
         value={cfg.orchestrator.queue_when_busy ? "queue" : "reject"}
         on:pick={(e) => { if (cfg) cfg.orchestrator.queue_when_busy = e.detail === "queue"; saveCfg(); }}
@@ -166,22 +168,22 @@
 
     <div class="field-card">
       <div class="field-info">
-        <span class="field-label">Maximum Parallel Agent Runs</span>
+        <span class="field-label">Parallel agent runs</span>
         <span class="field-hint">Concurrent background agents allowed: <b>{cfg.orchestrator.max_concurrent}</b></span>
       </div>
       <div class="slider-wrapper">
-        <input type="range" min="1" max="8" bind:value={cfg.orchestrator.max_concurrent} on:change={saveCfg} />
+        <input type="range" min="1" max="8" aria-label="Parallel agent runs" bind:value={cfg.orchestrator.max_concurrent} on:change={saveCfg} />
         <span class="slider-val">{cfg.orchestrator.max_concurrent}</span>
       </div>
     </div>
 
     <div class="field-card">
       <div class="field-info">
-        <span class="field-label">Maximum Reasoning Steps Per Turn</span>
+        <span class="field-label">Reasoning steps per turn</span>
         <span class="field-hint">Prevents infinite agent run loops: <b>{cfg.lanes.max_steps} steps</b></span>
       </div>
       <div class="slider-wrapper">
-        <input type="range" min="4" max="64" bind:value={cfg.lanes.max_steps} on:change={saveCfg} />
+        <input type="range" min="4" max="64" aria-label="Reasoning steps per turn" bind:value={cfg.lanes.max_steps} on:change={saveCfg} />
         <span class="slider-val">{cfg.lanes.max_steps}</span>
       </div>
     </div>
@@ -192,7 +194,7 @@
   .slider-wrapper { display: flex; align-items: center; gap: 10px; min-width: 180px; }
   .slider-wrapper input[type="range"] { flex: 1; accent-color: var(--accent); }
   .slider-val {
-    font-family: var(--mono), ui-monospace, monospace; font-size: 11px; color: var(--muted);
+    font-family: var(--mono), ui-monospace, monospace; font-size: var(--fs-xs); color: var(--muted);
     width: 38px; text-align: right;
   }
 </style>

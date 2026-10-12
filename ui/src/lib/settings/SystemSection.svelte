@@ -116,7 +116,7 @@
     {/if}
     {#if $updateMsg && $updateState !== "idle"}
       <div class="check-row">
-        <span class="check-icon {$updateState === "ready" || $updateState === "uptodate" ? "pass" : $updateState === "error" ? "fail" : ""}">{$updateState === "ready" || $updateState === "uptodate" ? "✓" : $updateState === "error" ? "✗" : "○"}</span>
+        <span class="check-icon {$updateState === "ready" || $updateState === "uptodate" ? "pass" : $updateState === "error" ? "fail" : ""}"><Icon name={$updateState === "ready" || $updateState === "uptodate" ? "check" : $updateState === "error" ? "close" : "clock"} size={13} stroke={2.2} /></span>
         <span class="check-detail">{$updateMsg}</span>
       </div>
     {/if}
@@ -125,19 +125,19 @@
   <div class="pref-section">
     <div class="section-head-with-action">
       <div>
-        <h3 class="section-title">System & Doctor Health Checks</h3>
+        <h3 class="section-title">Health checks</h3>
         <p class="section-desc">Config, agents, and the window.</p>
       </div>
       <button class="sbtn" on:click={copyDiagnostics}>
         <Icon name="copy" size={12} />
-        <span>Copy Diagnostics</span>
+        <span>Copy diagnostics</span>
       </button>
     </div>
 
     <div class="checks-list">
       {#if diagTimedOut}
         <div class="check-row">
-          <span class="check-icon fail">✗</span>
+          <span class="check-icon fail"><Icon name="close" size={13} stroke={2.2} /></span>
           <span class="check-name">diagnostics</span>
           <span class="check-detail">Timed out after 12s. Providers check themselves live under Agents.</span>
           <button class="sbtn" on:click={() => void load()}>Run again</button>
@@ -145,7 +145,7 @@
       {/if}
       {#each quick ?? [] as c}
         <div class="check-row">
-          <span class="check-icon {c.ok ? 'pass' : 'fail'}">{c.ok ? "✓" : "✗"}</span>
+          <span class="check-icon {c.ok ? 'pass' : 'fail'}"><Icon name={c.ok ? "check" : "close"} size={13} stroke={2.2} /></span>
           <span class="check-name">{c.name}</span>
           <span class="check-detail">{c.detail}</span>
         </div>
@@ -155,21 +155,21 @@
   </div>
 
   <div class="pref-section">
-    <h3 class="section-title">Session Management</h3>
+    <h3 class="section-title">Sessions</h3>
     <div class="field-card">
       <div class="field-info">
-        <span class="field-label">Stored Conversations</span>
+        <span class="field-label">Stored conversations</span>
         <span class="field-hint">{threadCount} total threads recorded under <code>~/.parzi/sessions</code></span>
       </div>
       <button class="sbtn danger" on:click={purgeSessions}>
         <Icon name="trash" size={12} />
-        <span>Purge Finished Sessions</span>
+        <span>Purge finished sessions</span>
       </button>
     </div>
   </div>
 
   <div class="pref-section">
-    <h3 class="section-title">Keyboard Shortcuts</h3>
+    <h3 class="section-title">Keyboard shortcuts</h3>
     <div class="shortcuts-grid">
       {#each [
         ["Ctrl + T", "New tab"],
@@ -194,12 +194,13 @@
   .checks-list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
   .check-row {
     display: flex; align-items: center; gap: 8px; padding: 6px 10px;
-    background: var(--panel); border-radius: 6px; font-size: 12px;
+    background: var(--panel); border-radius: 6px; font-size: var(--fs-sm);
   }
-  .check-icon.pass { color: var(--ok); font-weight: 700; }
-  .check-icon.fail { color: var(--bad); font-weight: 700; }
+  .check-icon { display: inline-flex; flex: none; color: var(--muted); }
+  .check-icon.pass { color: var(--ok); }
+  .check-icon.fail { color: var(--bad); }
   .check-name { color: var(--text); font-weight: 500; min-width: 120px; flex: none; }
-  .check-detail { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .check-detail { color: var(--muted); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .upd-bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; margin-top: 8px; }
   .upd-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.2s ease; }
   .shortcuts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; }
@@ -208,9 +209,9 @@
     padding: 6px 0; border-bottom: 1px solid var(--line);
   }
   kbd {
-    font-family: var(--mono), ui-monospace, monospace; font-size: 11px;
+    font-family: var(--mono), ui-monospace, monospace; font-size: var(--fs-xs);
     background: var(--line); border: 1px solid var(--line);
     padding: 2px 6px; border-radius: 4px; color: var(--text);
   }
-  .shortcut-action { font-size: 12px; color: var(--muted); }
+  .shortcut-action { font-size: var(--fs-sm); color: var(--muted); }
 </style>

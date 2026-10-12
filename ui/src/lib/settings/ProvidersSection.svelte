@@ -1,10 +1,12 @@
 <script lang="ts">
+  import Icon from "../Icon.svelte";
   import ProviderLogo from "../ProviderLogo.svelte";
   import { onMount } from "svelte";
   import { api, type ParziConfig, type ProviderEntry, type ProviderStatus } from "../api";
   import { board, checking, ensureBoard, refreshBoard } from "../providerStore";
   import { PROVIDER_ORDER, effortLabel, isUsable, modelLabel, nameOf, stateLabel } from "../providerRows";
   import Switch from "./Switch.svelte";
+  import { tooltip } from "../tooltip";
   import "./shared.css";
 
   export let notify: (msg: string) => void = () => {};
@@ -67,10 +69,10 @@
   function resetsIn(at?: number): string {
     if (!at) return "";
     const s = at - Date.now() / 1000;
-    if (s <= 0) return "resets now";
-    if (s < 3600) return `resets in ${Math.round(s / 60)} min`;
-    if (s < 86400) return `resets in ${Math.round(s / 3600)} h`;
-    return `resets in ${Math.round(s / 86400)} d`;
+    if (s <= 0) return "Resets now";
+    if (s < 3600) return `Resets in ${Math.round(s / 60)} min`;
+    if (s < 86400) return `Resets in ${Math.round(s / 3600)} h`;
+    return `Resets in ${Math.round(s / 86400)} d`;
   }
 
   function toggle(set: Set<string>, id: string): Set<string> {
@@ -170,11 +172,12 @@
     <div class="models-toolbar">
       <div class="models-search">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3" /></svg>
-        <input placeholder="Search models…" bind:value={query} />
-        {#if query}<button class="clear-btn" on:click={() => (query = "")}>✕</button>{/if}
+        <input placeholder="Search models…" aria-label="Search models" bind:value={query} />
+        {#if query}<button class="clear-btn" use:tooltip={"Clear search"} on:click={() => (query = "")}><Icon name="close" size={11} stroke={2} /></button>{/if}
       </div>
       <button class="sbtn" on:click={() => checkAgain()} disabled={allChecking} title="Ask every agent's own program where it stands. Spends no quota.">
-        {allChecking ? "Checking…" : "↻ Check again"}
+        <Icon name="reload" size={12} />
+        <span>{allChecking ? "Checking…" : "Check again"}</span>
       </button>
     </div>
   </div>
@@ -192,7 +195,7 @@
       </div>
       <div class="spend">
         <span class="cur">$</span>
-        <input class="spend-in" inputmode="decimal" placeholder="none" bind:value={spendUsd} on:change={saveSpend} />
+        <input class="spend-in" inputmode="decimal" placeholder="None" aria-label="Max spend per run in US dollars" bind:value={spendUsd} on:change={saveSpend} />
       </div>
     </div>
     <div class="field-card">
@@ -200,7 +203,7 @@
         <span class="field-label">Max tokens per run</span>
         <span class="field-hint">In plus out. Empty is no cap.</span>
       </div>
-      <input class="spend-in wide" inputmode="numeric" placeholder="none" bind:value={spendTok} on:change={saveSpend} />
+      <input class="spend-in wide" inputmode="numeric" placeholder="None" aria-label="Max tokens per run" bind:value={spendTok} on:change={saveSpend} />
     </div>
   </div>
 
@@ -231,7 +234,7 @@
                   {#if p?.version}<span class="version">{p.version}</span>{/if}
                 </div>
                 <span class="provider-sub">
-                  {p ? `checked ${ago(p.checked_at)}` : "not checked yet"}
+                  {p ? `Checked ${ago(p.checked_at)}` : "Not checked yet"}
                 </span>
               </div>
               <span class="head-spacer" />
@@ -269,6 +272,7 @@
               <input
                 class="path-in"
                 placeholder="{PROGRAM[id]} (from PATH)"
+                aria-label="{nameOf(id)} program"
                 spellcheck="false"
                 bind:value={paths[id]}
                 on:change={() => savePath(id)}
@@ -277,8 +281,8 @@
             </div>
 
             {#if p && p.models.length}
-              <button class="models-toggle" on:click={() => (expanded = toggle(expanded, id))}>
-                <span class="disclosure">{isOpen ? "▾" : "▸"}</span>
+              <button class="models-toggle" aria-expanded={isOpen} on:click={() => (expanded = toggle(expanded, id))}>
+                <span class="disclosure"><Icon name={isOpen ? "chevDown" : "chevRight"} size={11} stroke={2} /></span>
                 <span>{p.models.length} model{p.models.length === 1 ? "" : "s"}</span>
                 {#if def}<span class="def-tag" title="New threads start here">◉ {def}</span>{/if}
               </button>
@@ -288,19 +292,19 @@
                     {#each list as m (m.id)}
                       {@const spec = `${id}/${m.id}`}
                       <div class="model-row">
-                        <button class="fav-btn" title={favs.has(spec) ? "Unstar" : "Star as favorite"} on:click={() => toggleFav(spec)}>
+                        <button class="fav-btn" use:tooltip={favs.has(spec) ? "Unstar" : "Star as favorite"} on:click={() => toggleFav(spec)}>
                           {favs.has(spec) ? "★" : "☆"}
                         </button>
                         <span class="model-main">
                           <span class="model-name">{modelLabel(m)}</span>
                           <span class="model-meta">
                             <span class="mono">{m.id}</span>
-                            {#if m.efforts.length}<span>effort: {m.efforts.map(effortLabel).join(" · ")}</span>{/if}
+                            {#if m.efforts.length}<span>Effort: {m.efforts.map(effortLabel).join(" · ")}</span>{/if}
                           </span>
                         </span>
-                        {#if m.is_default}<span class="pill hot" title="The agent's own default">agent default</span>{/if}
+                        {#if m.is_default}<span class="pill hot" title="The agent's own default">Agent default</span>{/if}
                         {#if def === m.id}
-                          <span class="pill on">new threads</span>
+                          <span class="pill on">New threads</span>
                         {:else}
                           <button class="def-btn" title="Start new {nameOf(id)} threads on this model" on:click={() => setDefault(id, m.id)}>Default</button>
                         {/if}
@@ -322,16 +326,19 @@
 <style>
   .models-toolbar { display: flex; gap: 8px; align-items: center; }
   .models-search {
-    flex: 1; display: flex; align-items: center; gap: 7px; padding: 7px 10px;
+    flex: 1; display: flex; align-items: center; gap: 8px; padding: 7px 10px;
     background: var(--panel); border: 1px solid var(--line);
     border-radius: 8px; color: var(--muted);
   }
   .models-search input {
     flex: 1; min-width: 0; background: transparent; border: none; outline: none;
-    color: var(--text); font: inherit; font-size: 12.5px;
+    color: var(--text); font: inherit; font-size: var(--fs-md);
   }
-  .models-search input::placeholder { color: var(--faint); }
-  .clear-btn { background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: 11px; padding: 0 2px; }
+  .models-search input::placeholder { color: var(--muted); }
+  .clear-btn {
+    width: 18px; height: 18px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: none; border-radius: 4px; color: var(--muted); cursor: pointer; font-size: var(--fs-xs); padding: 0;
+  }
   .clear-btn:hover { color: var(--text); }
   .skel.search { flex: 1; min-height: 34px; }
   .skel.btn { width: 110px; min-height: 34px; }
@@ -350,47 +357,47 @@
   .provider-head { display: flex; align-items: center; gap: 10px; }
   .provider-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .provider-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .provider-name { font-size: 13px; font-weight: 650; color: var(--text); }
-  .provider-sub { font-size: 11.5px; color: var(--muted); }
-  .version { font-size: 10.5px; color: var(--faint); font-family: var(--mono), ui-monospace, monospace; }
-  .provider-how { font-size: 12px; color: var(--muted); line-height: 1.45; }
+  .provider-name { font-size: var(--fs-md); font-weight: 650; color: var(--text); }
+  .provider-sub { font-size: var(--fs-sm); color: var(--muted); }
+  .version { font-size: var(--fs-xs); color: var(--muted); font-family: var(--mono), ui-monospace, monospace; }
+  .provider-how { font-size: var(--fs-sm); color: var(--muted); line-height: 1.45; }
   .provider-ungated {
-    font-size: 12px; line-height: 1.45; color: var(--warn);
+    font-size: var(--fs-sm); line-height: 1.45; color: var(--warn);
     background: transparent; border: 1px solid var(--warn); border-radius: 6px; padding: 6px 9px;
   }
   .head-spacer { flex: 1; }
   .def-tag {
-    font-size: 10.5px; color: var(--accent); font-family: var(--mono), ui-monospace, monospace;
+    font-size: var(--fs-xs); color: var(--accent); font-family: var(--mono), ui-monospace, monospace;
     max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 
   .usage { display: flex; flex-direction: column; gap: 5px; }
-  .usage-row { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--muted); }
+  .usage-row { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--muted); }
   .usage-label { width: 96px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .usage-bar { flex: 1; height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
   .usage-fill { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
   .usage-fill.hot { background: var(--warn); }
   .usage-num { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
-  .usage-reset { font-size: 10.5px; color: var(--faint); flex: none; }
+  .usage-reset { font-size: var(--fs-xs); color: var(--muted); flex: none; }
 
   .path-row { display: flex; align-items: center; gap: 8px; }
-  .path-label { font-size: 11.5px; color: var(--muted); flex: none; width: 58px; }
+  .path-label { font-size: var(--fs-sm); color: var(--muted); flex: none; width: 58px; }
   .path-in {
     flex: 1; min-width: 0; background: var(--bg);
     border: 1px solid var(--line); border-radius: 6px;
-    color: var(--text); font-size: 12px; padding: 5px 9px; outline: none;
+    color: var(--text); font-size: var(--fs-sm); padding: 5px 9px; outline: none;
     font-family: var(--mono), ui-monospace, monospace;
   }
   .path-in:focus { border-color: var(--accent); }
-  .path-in::placeholder { color: var(--faint); }
+  .path-in::placeholder { color: var(--muted); }
 
   .models-toggle {
     display: flex; align-items: center; gap: 8px; width: 100%;
     background: transparent; border: none; cursor: pointer; padding: 2px 0 0;
-    font: inherit; font-size: 11.5px; text-align: left; color: var(--muted);
+    font: inherit; font-size: var(--fs-sm); text-align: left; color: var(--muted);
   }
   .models-toggle:hover { color: var(--text); }
-  .disclosure { font-size: 10px; width: 10px; flex: none; text-align: center; }
+  .disclosure { display: inline-flex; flex: none; }
 
   .model-list {
     display: flex; flex-direction: column; gap: 2px;
@@ -399,35 +406,36 @@
   }
   .model-row {
     display: flex; align-items: center; gap: 8px; padding: 5px 8px;
-    border-radius: 6px; font-size: 12px;
+    border-radius: 6px; font-size: var(--fs-sm);
   }
   .model-row:hover { background: var(--line); }
   .fav-btn {
+    width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
     background: transparent; border: none; color: var(--muted); cursor: pointer;
-    font-size: 13px; padding: 0 2px; flex: none; line-height: 1;
+    font-size: var(--fs-md); padding: 0; flex: none; line-height: 1;
   }
   .fav-btn:hover { color: var(--warn); }
   .model-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .model-name { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .model-meta { display: flex; align-items: center; gap: 7px; font-size: 10.5px; color: var(--faint); overflow: hidden; white-space: nowrap; }
+  .model-meta { display: flex; align-items: center; gap: 7px; font-size: var(--fs-xs); color: var(--muted); overflow: hidden; white-space: nowrap; }
   .model-meta .mono { font-family: var(--mono), ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; }
   .pill {
-    font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 4px; flex: none;
+    font-size: var(--fs-xs); font-weight: 600; padding: 1px 5px; border-radius: 4px; flex: none;
     background: var(--line); border: 1px solid var(--line); color: var(--muted);
   }
   .pill.hot { background: var(--line); border-color: var(--accent); color: var(--accent); }
   .pill.on { background: transparent; border-color: var(--ok); color: var(--ok); }
   .def-btn {
     background: transparent; border: 1px solid transparent; border-radius: 5px;
-    color: var(--faint); font: inherit; font-size: 10.5px; cursor: pointer; padding: 3px 8px; flex: none;
+    color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer; padding: 3px 8px; flex: none;
   }
   .def-btn:hover { color: var(--text); border-color: var(--line); background: var(--line); }
-  .empty-note { padding: 10px; font-size: 12px; color: var(--faint); }
+  .empty-note { padding: 10px; font-size: var(--fs-sm); color: var(--muted); }
   .spend { display: flex; align-items: center; gap: 6px; }
-  .cur { font-size: 13px; color: var(--muted); }
+  .cur { font-size: var(--fs-md); color: var(--muted); }
   .spend-in {
     width: 88px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
-    color: var(--text); font: inherit; font-size: 13px; padding: 6px 8px; outline: none;
+    color: var(--text); font: inherit; font-size: var(--fs-md); padding: 6px 8px; outline: none;
     font-variant-numeric: tabular-nums;
   }
   .spend-in.wide { width: 120px; }

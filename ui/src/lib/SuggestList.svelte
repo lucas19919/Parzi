@@ -19,7 +19,7 @@
   }
 </script>
 
-<div class="list" role="listbox" aria-label="Suggestions">
+<div class="list" role="listbox" aria-label="Suggestions" data-ui-list>
   {#each rows as row, i (row.kind + row.url + row.text)}
     <button
       class="row"
@@ -76,7 +76,7 @@
     border: none;
     border-radius: var(--radius);
     color: var(--text);
-    font-size: 13.5px;
+    font-size: var(--fs-base);
     text-align: left;
     cursor: pointer;
   }
@@ -88,7 +88,7 @@
     flex: none;
     display: inline-flex;
     justify-content: center;
-    color: var(--faint);
+    color: var(--muted);
   }
   .icon img {
     width: 16px;
@@ -111,11 +111,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .sub::before {
-    content: "— ";
+    content: "· ";
   }
   .url {
     color: color-mix(in srgb, var(--accent) 70%, var(--muted));

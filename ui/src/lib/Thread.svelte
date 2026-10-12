@@ -11,6 +11,7 @@
   import { api, type ChatEvent, type Question } from "./api";
   import type { Approval, LiveTool, Step } from "./live";
   import { toast, toastError } from "./toast";
+  import { tooltip } from "./tooltip";
 
   export let events: ChatEvent[] = [];
   export let liveText = "";
@@ -25,15 +26,15 @@
 
   const ERROR_WORDS: Record<string, string> = {
     auth: "Not signed in",
-    rate_limit: "Plan limit reached — wait a bit, then send again",
-    overloaded: "The service is overloaded — wait a bit, then send again",
+    rate_limit: "Plan limit reached. Wait a bit, then send again",
+    overloaded: "The service is overloaded. Wait a bit, then send again",
     context_overflow: "The conversation is too long",
     bad_request: "The agent refused the request",
     process: "The agent's program stopped",
     unknown: "The turn failed",
   };
   const ERROR_HINT: Record<string, string> = {
-    rate_limit: "Your prompt is kept — nothing was lost.",
+    rate_limit: "Your prompt is kept. Nothing was lost.",
   };
 
   // Vendor errors often trail a raw JSON blob; cut it, it never helped.
@@ -337,10 +338,10 @@ ${e.text}` : e.text;
       {@const images = attachedImages(item.text)}
       <div class="row user">
         <div class="user-line">
-          <button class="copy" title="Copy" on:click={() => copy(stripMarker(item.text), item.key)}>
+          <button class="copy" use:tooltip={"Copy"} on:click={() => copy(stripMarker(item.text), item.key)}>
             <Icon name={copied === item.key ? "check" : "copy"} size={13} />
           </button>
-          <button class="copy" title="Edit in composer" on:click={() => dispatch("edited", { text: stripMarker(item.text) })}>
+          <button class="copy" use:tooltip={"Edit in composer"} on:click={() => dispatch("edited", { text: stripMarker(item.text) })}>
             <Icon name="pencil" size={13} />
           </button>
           <div class="bubble msg">{@html mdHtml(stripMarker(item.text), $richReady)}</div>
@@ -369,13 +370,13 @@ ${e.text}` : e.text;
           {/each}
         </div>
         <div class="actions">
-          <button class="copy" title="Copy" on:click={() => copy(item.text, item.key)}>
+          <button class="copy" use:tooltip={"Copy"} on:click={() => copy(item.text, item.key)}>
             <Icon name={copied === item.key ? "check" : "copy"} size={13} />
           </button>
-          <button class="copy" title="Save to brain" on:click={() => save(item.text, item.key)}>
+          <button class="copy" use:tooltip={"Save to brain"} on:click={() => save(item.text, item.key)}>
             <Icon name={saved === item.key ? "check" : "brain"} size={13} />
           </button>
-          <button class="copy" title="Fork thread to try again" on:click={() => dispatch("forked")}>
+          <button class="copy" use:tooltip={"Fork thread to try again"} on:click={() => dispatch("forked")}>
             <Icon name="fork" size={13} />
           </button>
         </div>
@@ -456,6 +457,7 @@ ${e.text}` : e.text;
       {/if}
       <div class="ask-free">
         <input
+          aria-label="Answer"
           placeholder="Or type an answer… (Enter sends)"
           bind:value={answerText}
           on:keydown={(e) => {
@@ -500,7 +502,7 @@ ${e.text}` : e.text;
     border: 1px solid var(--line);
     border-radius: 14px;
     color: var(--text);
-    font-size: 13.5px;
+    font-size: var(--fs-base);
     line-height: 1.5;
     overflow-wrap: break-word;
   }
@@ -511,7 +513,7 @@ ${e.text}` : e.text;
   .bubble :global(h2),
   .bubble :global(h3) {
     margin: 0.5em 0 0.3em;
-    font-size: 1.02em;
+    font-size: var(--fs-base);
   }
   .bubble :global(ul),
   .bubble :global(ol) {
@@ -543,6 +545,7 @@ ${e.text}` : e.text;
     margin-left: -4px;
     display: flex;
     align-items: center;
+    gap: 8px;
   }
   .copy {
     width: 24px;
@@ -555,7 +558,7 @@ ${e.text}` : e.text;
     background: none;
     border: none;
     border-radius: var(--radius);
-    color: var(--faint);
+    color: var(--muted);
     cursor: pointer;
     opacity: 0;
     transition: opacity 140ms ease;
@@ -579,12 +582,12 @@ ${e.text}` : e.text;
   }
   .system {
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--muted);
   }
   .sysline {
-    font-size: 12px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
     padding-left: 2px;
   }
   .turn-error {
@@ -595,7 +598,7 @@ ${e.text}` : e.text;
     background: transparent;
     border: 1px solid var(--bad);
     border-radius: var(--radius);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .err-class {
     font-weight: 600;
@@ -607,8 +610,8 @@ ${e.text}` : e.text;
     word-break: break-word;
   }
   .err-hint {
-    color: var(--faint);
-    font-size: 11.5px;
+    color: var(--muted);
+    font-size: var(--fs-sm);
   }
   .approval {
     display: flex;
@@ -618,7 +621,7 @@ ${e.text}` : e.text;
     background: transparent;
     border: 1px solid var(--warn);
     border-radius: var(--radius-lg);
-    font-size: 13px;
+    font-size: var(--fs-md);
     color: var(--text);
   }
   .approval pre {
@@ -629,7 +632,7 @@ ${e.text}` : e.text;
     background: var(--bg);
     border-radius: var(--radius);
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .approval-actions {
     display: flex;
@@ -656,7 +659,7 @@ ${e.text}` : e.text;
     border-radius: var(--radius);
     color: var(--text);
     font: inherit;
-    font-size: 13px;
+    font-size: var(--fs-md);
     outline: none;
   }
   .ask-free input:focus {

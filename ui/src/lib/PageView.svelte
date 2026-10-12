@@ -9,6 +9,7 @@
   import { boxText, firstRows, looksLikeUrl, mergeRows, pageRows, phraseRows, type Suggestion } from "./suggest";
   import { addPin, bookmarks, completeAddress, history, pins, removePin } from "./browserData";
   import { toAddress, type Tab } from "./tabs";
+  import { tooltip } from "./tooltip";
 
   export let tab: Tab;
   export let immersive = false;
@@ -260,16 +261,16 @@
 <div class="page">
   {#if !immersive}
     <div class="toolbar">
-      <button class="nav" title="Back (Alt+Left)" disabled={!tab.canGoBack} on:click={() => nav("back")}>
+      <button class="nav" use:tooltip={"Back (Alt+Left)"} disabled={!tab.canGoBack} on:click={() => nav("back")}>
         <Icon name="arrowLeft" size={15} />
       </button>
-      <button class="nav" title="Forward (Alt+Right)" disabled={!tab.canGoForward} on:click={() => nav("forward")}>
+      <button class="nav" use:tooltip={"Forward (Alt+Right)"} disabled={!tab.canGoForward} on:click={() => nav("forward")}>
         <Icon name="arrowRight" size={15} />
       </button>
       {#if tab.loading}
-        <button class="nav" title="Stop" on:click={() => nav("stop")}><Icon name="close" size={15} /></button>
+        <button class="nav" use:tooltip={"Stop loading"} on:click={() => nav("stop")}><Icon name="close" size={15} /></button>
       {:else}
-        <button class="nav" title="Reload (Ctrl+R)" disabled={!url} on:click={() => nav("reload")}>
+        <button class="nav" use:tooltip={"Reload (Ctrl+R)"} disabled={!url} on:click={() => nav("reload")}>
           <Icon name="reload" size={14} />
         </button>
       {/if}
@@ -287,6 +288,7 @@
           on:keydown={onKey}
           on:input={onAddressInput}
           placeholder="Search or enter an address"
+          aria-label="Address and search"
           spellcheck="false"
           autocomplete="off"
         />
@@ -294,10 +296,12 @@
       </form>
       {#if shield}
         {@const blocking = shield.enabled && !shield.allowed}
+        {@const count = blocking && tab.blocked ? (tab.blocked > 99 ? "99+" : String(tab.blocked)) : ""}
         <button
           class="nav shield"
           class:off={!blocking}
-          title={blocking
+          aria-label={count ? `Ad blocker, ${count} blocked` : "Ad blocker"}
+          use:tooltip={blocking
             ? `Blocking ads and trackers${tab.blocked ? ` (${tab.blocked} on this page)` : ""}. Click to allow them on ${shield.host}.`
             : shield.enabled
               ? `Ads allowed on ${shield.host}. Click to block them.`
@@ -305,20 +309,20 @@
           on:click={toggleShield}
         >
           <Icon name="shield" size={14} />
-          {#if blocking && tab.blocked}<span class="count">{tab.blocked > 99 ? "99+" : tab.blocked}</span>{/if}
+          {#if count}<span class="count">{count}</span>{/if}
         </button>
       {/if}
       <button
         bind:this={keyBtn}
         class="nav"
         class:busy={filling}
-        title="Fill a login from Bitwarden"
+        use:tooltip={"Fill a login from Bitwarden"}
         disabled={!url.startsWith("https://")}
         on:click={fillLogin}
       >
         <Icon name="key" size={14} />
       </button>
-      <button class="nav" class:on={pinned} title={pinned ? "Unpin from Home" : "Pin to Home"} disabled={!url} on:click={togglePin}>
+      <button class="nav" class:on={pinned} use:tooltip={pinned ? "Unpin from Home" : "Pin to Home"} disabled={!url} on:click={togglePin}>
         <Icon name="pin" size={14} />
       </button>
     </div>
@@ -329,7 +333,7 @@
     </div>
   {/if}
   {#if choices.length}
-    <div class="logins" style={choiceStyle} use:popover={{ anchor: keyBtn, close: () => (choices = []) }}>
+    <div class="logins" style={choiceStyle} data-ui-list use:popover={{ anchor: keyBtn, close: () => (choices = []) }}>
       {#each choices as login (login.id)}
         <button class="login" on:click={() => fillWith(login)}>
           <span class="login-name">{login.name}</span>
@@ -360,7 +364,7 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 8px;
     padding: 0 8px;
     border-bottom: 1px solid var(--line);
   }
@@ -383,7 +387,7 @@
     color: var(--text);
   }
   .nav:disabled {
-    color: var(--faint);
+    color: var(--muted);
     cursor: default;
   }
   .nav.on {
@@ -415,10 +419,10 @@
     background: var(--line);
   }
   .login-name {
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .login-user {
-    font-size: 11.5px;
+    font-size: var(--fs-sm);
     color: var(--muted);
   }
   .shield {
@@ -430,10 +434,10 @@
     color: var(--accent);
   }
   .shield.off {
-    color: var(--faint);
+    color: var(--muted);
   }
   .count {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     font-variant-numeric: tabular-nums;
   }
@@ -445,7 +449,6 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    margin: 0 6px;
     padding: 0 10px;
     background: var(--panel);
     border: 1px solid transparent;
@@ -465,7 +468,7 @@
     color: var(--warn);
   }
   .scheme.secure {
-    color: var(--faint);
+    color: var(--muted);
   }
   .address input {
     flex: 1;
@@ -477,10 +480,10 @@
     outline: none;
     box-shadow: none !important;
     color: var(--text);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .address input::placeholder {
-    color: var(--faint);
+    color: var(--muted);
   }
   .progress {
     position: absolute;
@@ -526,7 +529,7 @@
     background: transparent;
   }
   .blank {
-    font-size: 12.5px;
-    color: var(--faint);
+    font-size: var(--fs-md);
+    color: var(--muted);
   }
 </style>

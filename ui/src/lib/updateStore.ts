@@ -59,17 +59,17 @@ export async function check(force = false) {
     }
     if (u.version === readyVersion) {
       updateState.set("ready");
-      updateMsg.set("Update downloaded — restart Parzi to use it.");
+      updateMsg.set("Update downloaded. Restart Parzi to use it.");
       return;
     }
     pending = u;
     updateVersion.set(u.version);
     updateState.set("available");
-    updateMsg.set(`v${u.version} is available — downloading in the background…`);
+    updateMsg.set(`v${u.version} is available, downloading in the background…`);
     void downloadInBackground();
   } catch (e) {
     updateState.set("error");
-    updateMsg.set(`Update check failed (${e}). Dev builds check nothing — install from a release to update.`);
+    updateMsg.set(`Update check failed (${e}). Dev builds check nothing: install from a release to update.`);
   }
 }
 
@@ -89,8 +89,8 @@ async function downloadInBackground() {
     downloading = false;
     readyVersion = pending.version;
     updateState.set("ready");
-    updateMsg.set("Update downloaded — restart Parzi to use it.");
-    toast("Update downloaded — restart Parzi to use it");
+    updateMsg.set("Update downloaded. Restart Parzi to use it.");
+    toast("Update downloaded. Restart Parzi to use it");
   } catch (e) {
     downloading = false;
     updateState.set("error");

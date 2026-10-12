@@ -91,7 +91,7 @@ export function previewProblem(raw: string): string {
     return `not JSON: "${raw.slice(0, 120)}"`;
   }
   const entry = typeof p?.component === "string" ? PREVIEWS[p.component] : undefined;
-  if (!entry) return `unknown component "${String(p?.component).slice(0, 40)}" — known: ${previewNames()}`;
+  if (!entry) return `unknown component "${String(p?.component).slice(0, 40)}". Known: ${previewNames()}`;
   const ns = entry.variants.map((v) => v.n);
-  return `unknown variant ${String(p?.variant).slice(0, 40)} for ${entry.name} — valid: ${ns.join(", ")}`;
+  return `unknown variant ${String(p?.variant).slice(0, 40)} for ${entry.name}. Valid: ${ns.join(", ")}`;
 }

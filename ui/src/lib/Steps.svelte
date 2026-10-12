@@ -69,13 +69,13 @@
 
 <div class="steps">
   <button class="head" class:live={!!status} disabled={!expandable} aria-expanded={open} on:click={() => (open = !open)}>
-    <span class="text">{status || summary}{#if live && elapsed >= 10_000} · {clock(elapsed)}{#if elapsed >= 120_000} · still going — Esc stops it{/if}{/if}</span>
+    <span class="text">{status || summary}{#if live && elapsed >= 10_000} · {clock(elapsed)}{#if elapsed >= 120_000} · still going, Esc stops it{/if}{/if}</span>
     {#if failed && !status}<span class="failed">{failed} failed</span>{/if}
     {#if expandable}<span class="chev" class:open><Icon name="chevDown" size={12} /></span>{/if}
   </button>
 
   {#if open}
-    <div class="body" transition:slide={{ duration: 160, easing: cubicOut }}>
+    <div class="body" data-ui-list transition:slide={{ duration: 160, easing: cubicOut }}>
       {#if reasoning}
         <div class="reasoning">{reasoning}</div>
       {/if}
@@ -83,9 +83,9 @@
         <button class="tool" disabled={!t.output} on:click={() => toggle(t.id)}>
           <span class="label">{t.label}</span>
           {#if t.running}
-            <span class="meta live">running</span>
+            <span class="meta live">Running</span>
           {:else if t.ok === false}
-            <span class="meta bad">failed</span>
+            <span class="meta bad">Failed</span>
           {:else if t.ms}
             <span class="meta">{duration(t.ms)}</span>
           {/if}
@@ -114,12 +114,12 @@
     background: none;
     border: none;
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     text-align: left;
     cursor: pointer;
   }
   .head:hover:not(:disabled) {
-    color: var(--muted);
+    color: var(--text);
   }
   .head:disabled {
     cursor: default;
@@ -157,7 +157,7 @@
     overflow-y: auto;
     padding: 2px 0 6px;
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     line-height: 1.6;
     white-space: pre-wrap;
     word-break: break-word;
@@ -171,7 +171,7 @@
     background: none;
     border: none;
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     text-align: left;
     cursor: pointer;
   }
@@ -191,8 +191,8 @@
   .meta {
     flex: none;
     font-family: var(--mono);
-    font-size: 11px;
-    color: var(--faint);
+    font-size: var(--fs-xs);
+    color: var(--muted);
   }
   .meta.bad {
     color: var(--bad);
@@ -201,7 +201,7 @@
     animation: breathe 1.6s ease-in-out infinite;
   }
   .output {
-    font-size: 11.5px;
+    font-size: var(--fs-sm);
   }
   .output :global(.codeblock) {
     margin: 2px 0 6px;

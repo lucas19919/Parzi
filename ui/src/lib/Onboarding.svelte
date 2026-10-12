@@ -12,10 +12,12 @@
   import { setOverlay } from "./overlay";
   import { mergeProgress, onRemoteProgress, remote, remoteInfo as linked, stepName, type RemoteInfo, type RemoteProgress } from "./remote";
   import { toastError } from "./toast";
+  import { tooltip } from "./tooltip";
 
   const dispatch = createEventDispatcher<{ close: void; openBrain: void }>();
 
   const STEPS = ["Agents", "Browser", "Your tools", "Brain", "Remote"];
+  const TITLES = ["Your agents", "Bring your browser", "Bring your other tools", "Your brain", "Work from anywhere"];
   const WATCH_EVERY = 5_000;
   const INSTALL_WAIT = 600_000;
   const SIGN_IN_WAIT = 180_000;
@@ -42,6 +44,7 @@
   let vault = "";
   let waiting = new Map<string, Wait>();
   let alive = true;
+  let card: HTMLDivElement;
 
   $: agents = PROVIDER_ORDER.map((id) => $board.find((b) => b.provider === id)).filter((b) => !!b);
   $: browsers = scan?.browsers ?? [];
@@ -50,6 +53,9 @@
 
   onMount(() => {
     setOverlay("onboarding", true);
+    // A modal takes focus while open and hands it back on close.
+    const before = document.activeElement as HTMLElement | null;
+    card.focus();
     void load();
     const unlisten = onSignIn(({ provider, step }) => {
       if (!waiting.has(provider)) return;
@@ -64,6 +70,7 @@
       alive = false;
       void unlisten.then((off) => off());
       setOverlay("onboarding", false);
+      before?.focus?.();
     };
   });
 
@@ -164,6 +171,13 @@
     if (openBrain) dispatch("openBrain");
   }
 
+  function onKey(e: KeyboardEvent) {
+    if (e.key === "Escape" && !e.defaultPrevented) {
+      e.preventDefault();
+      finish();
+    }
+  }
+
   function ago(ms?: number | null) {
     if (!ms) return "";
     const days = Math.floor((Date.now() - ms) / 86_400_000);
@@ -228,20 +242,30 @@
   }
 </script>
 
+<svelte:window on:keydown={onKey} />
+
 <div class="backdrop" transition:fade={{ duration: 150 }} role="presentation">
-  <div class="card" role="dialog" aria-modal="true" aria-label="Set up Parzi" transition:fly={{ y: 10, duration: 180 }}>
+  <div
+    class="card"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="onboarding-title"
+    tabindex="-1"
+    bind:this={card}
+    transition:fly={{ y: 10, duration: 180 }}
+  >
     <header>
       <div class="steps">
         {#each STEPS as s, i}
-          <button class:on={i === step} class:done={i < step} on:click={() => (step = i)}>{s}</button>
+          <button class:on={i === step} class:done={i < step} aria-current={i === step ? "step" : undefined} on:click={() => (step = i)}>{s}</button>
         {/each}
       </div>
-      <button class="x" title="Close" on:click={() => finish()}><Icon name="close" size={13} stroke={2} /></button>
+      <button class="x" use:tooltip={"Close"} on:click={() => finish()}><Icon name="close" size={13} stroke={2} /></button>
     </header>
 
     <div class="body">
+      <h2 id="onboarding-title">{TITLES[step]}</h2>
       {#if step === 0}
-        <h2>Your agents</h2>
         <p class="lead">Parzi drives each agent on your own subscription. Install and sign in right here; each agent keeps its own login, so Parzi never sees your tokens.</p>
         <div class="list">
           {#each agents as a (a.provider)}
@@ -275,7 +299,6 @@
           {$checking.size ? "Checking…" : "Check again"}
         </button>
       {:else if step === 1}
-        <h2>Bring your browser</h2>
         <p class="lead">Bookmarks and history only. Passwords and cookies stay where they are.</p>
         {#if !browsers.length}
           <p class="empty">{scanError || (scan ? "No Brave, Chrome or Edge profile found." : "Looking…")}</p>
@@ -303,7 +326,6 @@
           </div>
         {/if}
       {:else if step === 2}
-        <h2>Bring your other tools</h2>
         <p class="lead">Instructions, memories and skills from your other agents become notes in your brain. Folders you've worked in become projects.</p>
         {#if !scan}
           <p class="empty">{scanError || "Looking…"}</p>
@@ -321,7 +343,7 @@
                     </span>
                   </label>
                 {:else}
-                  <div class="item compact"><span class="grow"><span class="title">{t.name}</span><span class="sub">found, nothing to import</span></span></div>
+                  <div class="item compact"><span class="grow"><span class="title">{t.name}</span><span class="sub">Found, nothing to import</span></span></div>
                 {/each}
               {/each}
             </div>
@@ -348,7 +370,6 @@
           </div>
         {/if}
       {:else if step === 3}
-        <h2>Your brain</h2>
         <p class="lead">
           Plain markdown notes in <code>{vault || "~/.parzi/brain"}</code>. Link them with <code>[[wikilinks]]</code>; any Obsidian install can open the folder as a vault.
         </p>
@@ -358,7 +379,6 @@
           <li>Agents can search, read and write the brain while they work. Writes ask first unless you allow them.</li>
         </ul>
       {:else}
-        <h2>Work from anywhere</h2>
         <p class="lead">
           Run Parzi on your own Linux server. It becomes the home of your brain, settings and sessions, and every device you link (this PC, a laptop) stays in step with it. Enter how you reach it over SSH; Parzi installs itself there and links back.
         </p>
@@ -381,7 +401,7 @@
           </label>
           <label>
             <span>Password <em>(optional)</em></span>
-            <input type="password" placeholder="only if there is no key login" autocomplete="current-password" bind:value={remotePass} />
+            <input type="password" placeholder="Only if there is no key login" autocomplete="current-password" bind:value={remotePass} />
           </label>
         </div>
         <div class="action">
@@ -446,6 +466,7 @@
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow);
     overflow: hidden;
+    outline: none;
   }
   header,
   footer {
@@ -463,7 +484,7 @@
   }
   .steps {
     display: flex;
-    gap: 4px;
+    gap: 8px;
     flex: 1;
   }
   .steps button {
@@ -471,8 +492,8 @@
     background: none;
     border: none;
     border-radius: 999px;
-    color: var(--faint);
-    font-size: 12px;
+    color: var(--muted);
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
   .steps button.done {
@@ -510,21 +531,19 @@
   }
   h2 {
     margin: 0 0 6px;
-    font-size: 17px;
+    font-size: var(--fs-xl);
     font-weight: 600;
     color: var(--text);
   }
   h3 {
     margin: 16px 0 6px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--faint);
+    color: var(--muted);
   }
   .lead {
     margin: 0 0 16px;
-    font-size: 13px;
+    font-size: var(--fs-md);
     line-height: 1.5;
     color: var(--muted);
   }
@@ -571,7 +590,7 @@
     background: var(--bg);
     border: 1px solid var(--line);
     border-radius: var(--radius);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     font-weight: 600;
     color: var(--muted);
   }
@@ -586,15 +605,15 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 13px;
+    font-size: var(--fs-md);
     color: var(--text);
   }
   .sub {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 11.5px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .sub.ok {
     color: var(--ok);
@@ -614,8 +633,8 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    font-size: 11.5px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .remote-form input {
     padding: 7px 10px;
@@ -624,7 +643,7 @@
     border-radius: var(--radius);
     color: var(--text);
     font: inherit;
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     outline: none;
   }
   .remote-form input:focus {
@@ -646,7 +665,7 @@
     grid-template-columns: 18px 130px 1fr;
     align-items: baseline;
     gap: 6px;
-    font-size: 12.5px;
+    font-size: var(--fs-md);
   }
   .setup-log .name {
     color: var(--text);
@@ -685,8 +704,8 @@
   }
   .fine {
     margin: 12px 0 0;
-    font-size: 12px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .progress {
     position: absolute;
@@ -731,7 +750,7 @@
     display: flex;
     gap: 18px;
     margin: 12px 10px 0;
-    font-size: 13px;
+    font-size: var(--fs-md);
     color: var(--muted);
   }
   .checks label {
@@ -751,22 +770,22 @@
     white-space: nowrap;
   }
   .result {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     color: var(--ok);
   }
   .empty {
-    font-size: 13px;
-    color: var(--faint);
+    font-size: var(--fs-md);
+    color: var(--muted);
   }
   .points {
     margin: 0;
     padding-left: 18px;
-    font-size: 13px;
+    font-size: var(--fs-md);
     line-height: 1.6;
     color: var(--muted);
   }
   code {
-    font-size: 12px;
+    font-size: var(--fs-sm);
     padding: 1px 5px;
     background: var(--bg);
     border-radius: 4px;
@@ -776,7 +795,7 @@
     background: none;
     border: none;
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     cursor: pointer;
   }
   .link:hover:not(:disabled) {

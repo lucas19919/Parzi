@@ -29,13 +29,13 @@
       <span>Recent sessions</span>
       <button class="all" on:click={() => dispatch("allSessions")}>All sessions</button>
     </div>
-    <div class="sessions">
+    <div class="sessions" data-ui-list>
       {#each recent as s (s.id)}
         <button class="session" on:click={() => dispatch("openSession", { id: s.id })}>
           <span class="dot" class:live={running.has(s.id)} />
           <span class="title">{s.title || "Untitled session"}</span>
           <span class="meta">{[s.cwd ? folderName(s.cwd) : "", ago(s.updated)].filter(Boolean).join(" · ")}</span>
-          <span class="go">›</span>
+          <span class="go" aria-hidden="true">›</span>
         </button>
       {/each}
     </div>
@@ -59,18 +59,17 @@
     align-items: baseline;
     justify-content: space-between;
     padding: 0 10px 2px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--faint);
+    color: var(--muted);
   }
   .all {
-    padding: 0 4px;
+    padding: 2px 4px;
     background: none;
     border: none;
-    color: var(--faint);
-    font-size: 11.5px;
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
   .all:hover {
@@ -104,12 +103,12 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .meta {
     flex: none;
-    font-size: 11.5px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .dot {
     width: 6px;
@@ -125,8 +124,8 @@
   }
   .go {
     flex: none;
-    color: var(--faint);
-    font-size: 15px;
+    color: var(--muted);
+    font-size: var(--fs-base);
     line-height: 1;
   }
   .session:hover .go {

@@ -4,6 +4,7 @@
   import type { Tab } from "./tabs";
   import { faviconUrl } from "./browserData";
   import { laneIcon, normLane } from "./lanes";
+  import { tooltip } from "./tooltip";
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
@@ -90,7 +91,7 @@
       const back = e.key === "ArrowLeft" || e.key === "ArrowUp";
       dispatch("move", { id, to: Math.max(0, at + (back ? -1 : 1)) });
       await tick();
-      els[id]?.focus();
+      els[id]?.querySelector<HTMLElement>('[role="tab"]')?.focus();
     }
   }
 
@@ -158,40 +159,49 @@
 
 <svelte:window on:pointermove={onMove} on:pointerup={onUp} on:pointercancel={onUp} />
 
+<!-- A tablist may only own tabs, so each tab is a plain pill holding the
+     role="tab" element and, beside it, pointer-only caret and close
+     buttons (hidden from assistive tech; Ctrl+W closes the active tab). -->
 <div class="tabs" class:vertical role="tablist" bind:this={strip}>
   {#each groups.lone as tab (tab.id)}
     {@const lane = laneOf(tab)}
     {@const attached = tab.kind === "session" && tab.sessionId ? (groups.kids.get(tab.sessionId) ?? []) : []}
     {@const shut = tab.sessionId ? collapsed.has(tab.sessionId) : false}
+    {@const linked = `${attached.length} linked page${attached.length === 1 ? "" : "s"}`}
     {#if attached.length && !shut}
-      <div class="group" role="group" aria-label="Linked tabs">
+      <div class="group">
         <div
           bind:this={els[tab.id]}
           class="tab"
           class:active={tab.id === activeTabId}
           class:dragging={tab.id === dragId}
           style={tab.id === dragId ? `transform: ${vertical ? "translateY" : "translateX"}(${dragX}px)` : ""}
-          role="tab"
-          tabindex="0"
-          aria-selected={tab.id === activeTabId}
-          title={tab.title}
           on:pointerdown={(e) => onDown(e, tab.id)}
-          on:click={() => dispatch("select", { id: tab.id })}
-          on:keydown={(e) => onKey(e, tab.id)}
           on:auxclick={(e) => onAux(e, tab.id)}
         >
-          <span class="kind">
-            {#if tab.loading}
-              <span class="spinner" />
-            {:else}
-              <Icon name={laneIcon(lane)} size={12} />
-            {/if}
-          </span>
-          <span class="title">{tab.title || "New session"}</span>
+          <div
+            class="pick"
+            role="tab"
+            tabindex="0"
+            aria-selected={tab.id === activeTabId}
+            title={tab.title}
+            on:click={() => dispatch("select", { id: tab.id })}
+            on:keydown={(e) => onKey(e, tab.id)}
+          >
+            <span class="kind">
+              {#if tab.loading}
+                <span class="spinner" />
+              {:else}
+                <Icon name={laneIcon(lane)} size={12} />
+              {/if}
+            </span>
+            <span class="title">{tab.title || "New session"}</span>
+          </div>
           <button
             class="close group-caret"
-            title={`Hide ${attached.length} linked page${attached.length === 1 ? "" : "s"}`}
-            aria-label="Hide linked pages"
+            tabindex="-1"
+            aria-hidden="true"
+            use:tooltip={`Hide ${linked}`}
             on:click|stopPropagation={() => tab.sessionId && toggleGroup(tab.sessionId)}
           >
             <Icon name="chevDown" size={10} stroke={2.2} />
@@ -200,8 +210,9 @@
           {#if tabs.length > 1}
             <button
               class="close"
-              title="Close tab"
-              aria-label="Close tab"
+              tabindex="-1"
+              aria-hidden="true"
+              use:tooltip={"Close tab"}
               on:click|stopPropagation={() => dispatch("close", { id: tab.id })}
             >
               <Icon name="close" size={11} stroke={2.2} />
@@ -209,31 +220,32 @@
           {/if}
         </div>
         {#each attached as sub (sub.id)}
-          <div
-            class="tab sub"
-            class:active={sub.id === activeTabId}
-            role="tab"
-            tabindex="0"
-            aria-selected={sub.id === activeTabId}
-            title={sub.url || sub.title}
-            on:click={() => dispatch("select", { id: sub.id })}
-            on:keydown={(e) => onKey(e, sub.id)}
-            on:auxclick={(e) => onAux(e, sub.id)}
-          >
-            <span class="kind">
-              {#if sub.loading}
-                <span class="spinner" />
-              {:else if sub.url && !broken.has(sub.url)}
-                <img src={faviconUrl(sub.url)} alt="" on:error={() => sub.url && (broken = new Set(broken).add(sub.url))} />
-              {:else}
-                <Icon name="globe" size={11} />
-              {/if}
-            </span>
-            <span class="title">{sub.title || "New page"}</span>
+          <div class="tab sub" class:active={sub.id === activeTabId} on:auxclick={(e) => onAux(e, sub.id)}>
+            <div
+              class="pick"
+              role="tab"
+              tabindex="0"
+              aria-selected={sub.id === activeTabId}
+              title={sub.url || sub.title}
+              on:click={() => dispatch("select", { id: sub.id })}
+              on:keydown={(e) => onKey(e, sub.id)}
+            >
+              <span class="kind">
+                {#if sub.loading}
+                  <span class="spinner" />
+                {:else if sub.url && !broken.has(sub.url)}
+                  <img src={faviconUrl(sub.url)} alt="" on:error={() => sub.url && (broken = new Set(broken).add(sub.url))} />
+                {:else}
+                  <Icon name="globe" size={11} />
+                {/if}
+              </span>
+              <span class="title">{sub.title || "New page"}</span>
+            </div>
             <button
               class="close"
-              title="Close tab"
-              aria-label="Close tab"
+              tabindex="-1"
+              aria-hidden="true"
+              use:tooltip={"Close tab"}
               on:click|stopPropagation={() => dispatch("close", { id: sub.id })}
             >
               <Icon name="close" size={10} stroke={2.2} />
@@ -248,30 +260,35 @@
       class:active={tab.id === activeTabId}
       class:dragging={tab.id === dragId}
       style={tab.id === dragId ? `transform: ${vertical ? "translateY" : "translateX"}(${dragX}px)` : ""}
-      role="tab"
-      tabindex="0"
-      aria-selected={tab.id === activeTabId}
-      title={tab.kind === "page" ? tab.url || tab.title : tab.title}
       on:pointerdown={(e) => onDown(e, tab.id)}
-      on:click={() => dispatch("select", { id: tab.id })}
-      on:keydown={(e) => onKey(e, tab.id)}
       on:auxclick={(e) => onAux(e, tab.id)}
     >
-      <span class="kind">
-        {#if tab.loading}
-          <span class="spinner" />
-        {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
-          <img src={faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
-        {:else}
-          <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : laneIcon(lane)} size={12} />
-        {/if}
-      </span>
-      <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>
+      <div
+        class="pick"
+        role="tab"
+        tabindex="0"
+        aria-selected={tab.id === activeTabId}
+        title={tab.kind === "page" ? tab.url || tab.title : tab.title}
+        on:click={() => dispatch("select", { id: tab.id })}
+        on:keydown={(e) => onKey(e, tab.id)}
+      >
+        <span class="kind">
+          {#if tab.loading}
+            <span class="spinner" />
+          {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
+            <img src={faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
+          {:else}
+            <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : laneIcon(lane)} size={12} />
+          {/if}
+        </span>
+        <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>
+      </div>
       {#if attached.length}
         <button
           class="close group-caret shut"
-          title={`Show ${attached.length} linked page${attached.length === 1 ? "" : "s"}`}
-          aria-label="Show linked pages"
+          tabindex="-1"
+          aria-hidden="true"
+          use:tooltip={`Show ${linked}`}
           on:click|stopPropagation={() => tab.sessionId && toggleGroup(tab.sessionId)}
         >
           <Icon name="chevDown" size={10} stroke={2.2} />
@@ -281,8 +298,9 @@
       {#if tabs.length > 1}
         <button
           class="close"
-          title="Close tab"
-          aria-label="Close tab"
+          tabindex="-1"
+          aria-hidden="true"
+          use:tooltip={"Close tab"}
           on:click|stopPropagation={() => dispatch("close", { id: tab.id })}
         >
           <Icon name="close" size={11} stroke={2.2} />
@@ -291,10 +309,12 @@
     </div>
     {/if}
   {/each}
-  <button class="new" title="New tab (Ctrl+T)" on:click={() => dispatch("newTab")}>
+</div>
+{#if !vertical}
+  <button class="new" use:tooltip={"New tab (Ctrl+T)"} on:click={() => dispatch("newTab")}>
     <Icon name="plus" size={13} stroke={2.2} />
   </button>
-</div>
+{/if}
 
 <style>
   .tabs {
@@ -324,22 +344,18 @@
   .tabs.vertical .tab.sub {
     max-width: none;
   }
-  .tabs.vertical .new {
-    display: none;
-  }
   .tab {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
     height: 29px;
     max-width: 220px;
     flex: 0 1 auto;
     min-width: 72px;
-    padding: 0 6px 0 9px;
+    padding: 0 2px 0 0;
     border: 1px solid transparent;
     border-radius: var(--radius);
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     font-weight: 500;
     white-space: nowrap;
     cursor: pointer;
@@ -364,10 +380,28 @@
     border-color: var(--line);
     color: var(--text);
   }
+  /* The tab proper: fills the pill up to its buttons. Focus rings the pill. */
+  .pick {
+    flex: 1;
+    align-self: stretch;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 3px 0 9px;
+    border-radius: inherit;
+  }
+  .pick:focus-visible {
+    outline: none;
+  }
+  .tab:has(> .pick:focus-visible) {
+    outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+    outline-offset: 2px;
+  }
   .kind {
     display: inline-flex;
     flex: none;
-    color: var(--faint);
+    color: var(--muted);
   }
   .kind img {
     width: 14px;
@@ -393,7 +427,7 @@
     height: 24px;
     max-width: 170px;
     min-width: 60px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     opacity: 0.85;
   }
   .group {
@@ -414,11 +448,12 @@
   .group:has(.tab.active) {
     border-color: color-mix(in srgb, var(--accent) 38%, transparent);
   }
-  .group-caret {
+  .close.group-caret {
     opacity: 1;
     gap: 1px;
     width: auto;
-    padding: 0 3px;
+    min-width: 24px;
+    padding: 4px 2px;
   }
   .group-caret :global(svg) {
     transition: transform 140ms ease;
@@ -427,7 +462,7 @@
     transform: rotate(-90deg);
   }
   .group-caret .n {
-    font-size: 10px;
+    font-size: var(--fs-xs);
     font-variant-numeric: tabular-nums;
   }
   .title {
@@ -436,20 +471,25 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* 24px hit area; the padding is clipped so the hover chip stays 16px. */
   .close {
-    width: 16px;
-    height: 16px;
+    width: 24px;
+    height: 24px;
     flex: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0;
+    padding: 4px;
     background: transparent;
+    background-clip: content-box;
     border: none;
-    border-radius: 4px;
-    color: var(--faint);
+    border-radius: 8px;
+    color: var(--muted);
     cursor: pointer;
     opacity: 0;
+  }
+  .close + .close {
+    margin-left: 8px;
   }
   .tab:hover .close,
   .tab.active .close {

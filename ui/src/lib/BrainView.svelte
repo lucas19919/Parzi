@@ -9,6 +9,7 @@
   import { targetBrainNote } from "./brainStore";
   import { handleLinkClick } from "./links";
   import { safeDecode } from "./linkRules";
+  import { tooltip } from "./tooltip";
 
   const UNUSED = "unused";
   const OPEN_KEY = "parzi.brain.open.v2";
@@ -400,9 +401,9 @@
     <div class="top">
       <div class="search">
         <Icon name="search" size={13} />
-        <input bind:value={query} placeholder="Search" spellcheck="false" />
+        <input bind:value={query} placeholder="Search" aria-label="Search notes" spellcheck="false" />
       </div>
-      <button class="icon" title="Open the brain folder" on:click={() => openOutside("", "folder")}><Icon name="folder" size={14} /></button>
+      <button class="icon" use:tooltip={"Open the brain folder"} on:click={() => openOutside("", "folder")}><Icon name="folder" size={14} /></button>
     </div>
 
     <div class="tree">
@@ -416,11 +417,11 @@
               <span class="name">{f.title}</span>
             </button>
             {#if f.key !== UNUSED}
-              <button class="add" title={`New note in ${f.title}`} on:click={() => startNote(f.key)}><Icon name="plus" size={12} /></button>
+              <button class="add" use:tooltip={`New note in ${f.title}`} on:click={() => startNote(f.key)}><Icon name="plus" size={12} /></button>
             {/if}
           </div>
           {#if open}
-            <div class="kids" data-folder={f.key}>
+            <div class="kids" data-folder={f.key} data-ui-list>
               {#each f.items as n (n.path)}
                 <button
                   class="note"
@@ -436,7 +437,7 @@
               {/each}
               {#if creatingIn === f.key}
                 <form class="draft" on:submit|preventDefault={createNote}>
-                  <input bind:this={draftField} bind:value={draftName} placeholder="Note name" on:blur={createNote} />
+                  <input bind:this={draftField} bind:value={draftName} placeholder="Note name" aria-label="Note name" on:blur={createNote} />
                 </form>
               {:else if !f.items.length}
                 <p class="empty">{f.key === UNUSED ? "Nothing here." : "Empty. Drag notes here."}</p>
@@ -460,25 +461,27 @@
           <button
             class="icon"
             class:pinned={note.pinned}
-            title={note.pinned ? "Pinned: the agent always gets the whole note. Click to unpin." : "Not pinned: the agent sees the title and opens the note when it needs it. Click to pin."}
+            aria-label="Pin note"
+            aria-pressed={note.pinned}
+            use:tooltip={note.pinned ? "Pinned: the agent always gets the whole note. Click to unpin." : "Not pinned: the agent sees the title and opens the note when it needs it. Click to pin."}
             on:click={togglePin}
           >
             <Icon name="pin" size={14} />
           </button>
         {/if}
-        <div class="seg">
-          <button class:on={!editing} on:click={() => (editing = false)}>Read</button>
-          <button class:on={editing} on:click={() => (editing = true)}>Edit</button>
+        <div class="seg" role="group" aria-label="View" data-ui-segmented>
+          <button class:on={!editing} aria-pressed={!editing} on:click={() => (editing = false)}>Read</button>
+          <button class:on={editing} aria-pressed={editing} on:click={() => (editing = true)}>Edit</button>
         </div>
         {#if obsidian !== "missing"}
-          <button class="icon" title="Open in Obsidian" on:click={() => openOutside(note?.path ?? "", "obsidian")}><Icon name="arrowRight" size={14} /></button>
+          <button class="icon" use:tooltip={"Open in Obsidian"} on:click={() => openOutside(note?.path ?? "", "obsidian")}><Icon name="arrowRight" size={14} /></button>
         {/if}
-        <button class="icon" title="Open the file" on:click={() => openOutside(note?.path ?? "", "file")}><Icon name="file" size={14} /></button>
-        <button class="icon danger" title={noteProject ? "Remove project (its notes stay)" : "Delete note"} on:click={removeNote}><Icon name="trash" size={14} /></button>
+        <button class="icon" use:tooltip={"Open the file"} on:click={() => openOutside(note?.path ?? "", "file")}><Icon name="file" size={14} /></button>
+        <button class="icon danger" use:tooltip={noteProject ? "Remove project (its notes stay)" : "Delete note"} on:click={removeNote}><Icon name="trash" size={14} /></button>
       </div>
       <div class="content">
         {#if editing}
-          <textarea bind:value={raw} on:input={onEdit} on:blur={flush} spellcheck="true" />
+          <textarea bind:value={raw} aria-label="Note text" on:input={onEdit} on:blur={flush} spellcheck="true" />
         {:else}
           <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
           <div class="msg doc" on:click={onPreviewClick}>{@html mdHtml(withLinks(body(raw)), $richReady, false)}</div>
@@ -542,7 +545,7 @@
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius);
-    color: var(--faint);
+    color: var(--muted);
   }
   .search input {
     flex: 1;
@@ -552,7 +555,7 @@
     outline: none;
     box-shadow: none !important;
     color: var(--text);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .tree {
     flex: 1;
@@ -563,6 +566,7 @@
   .folder {
     display: flex;
     align-items: center;
+    gap: 8px;
     border: 1px solid transparent;
     border-radius: var(--radius);
   }
@@ -585,7 +589,7 @@
     background: none;
     border: none;
     border-radius: var(--radius);
-    color: var(--faint);
+    color: var(--muted);
     cursor: pointer;
   }
   .add:hover {
@@ -609,13 +613,13 @@
     background: none;
     border: none;
     color: var(--muted);
-    font-size: 13px;
+    font-size: var(--fs-md);
     text-align: left;
     cursor: pointer;
   }
   .folder-name :global(svg) {
     flex: none;
-    color: var(--faint);
+    color: var(--muted);
   }
   .folder:hover .folder-name,
   .folder.on .folder-name {
@@ -652,7 +656,7 @@
     border: none;
     border-radius: var(--radius);
     color: var(--muted);
-    font-size: 13px;
+    font-size: var(--fs-md);
     text-align: left;
     cursor: pointer;
     touch-action: none;
@@ -667,8 +671,8 @@
   }
   .from {
     flex: none;
-    font-size: 11px;
-    color: var(--faint);
+    font-size: var(--fs-xs);
+    color: var(--muted);
   }
   .pin {
     flex: none;
@@ -677,8 +681,8 @@
   }
   .empty {
     margin: 2px 8px 4px;
-    font-size: 12px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .draft {
     padding: 2px 0;
@@ -691,7 +695,7 @@
     border: 1px solid var(--accent);
     border-radius: var(--radius);
     color: var(--text);
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .new-project {
     display: flex;
@@ -704,8 +708,8 @@
     background: none;
     border: none;
     border-radius: var(--radius);
-    color: var(--faint);
-    font-size: 12.5px;
+    color: var(--muted);
+    font-size: var(--fs-md);
     cursor: pointer;
   }
   .new-project:hover {
@@ -739,15 +743,15 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 15px;
+    font-size: var(--fs-lg);
   }
   .path {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: var(--mono);
-    font-size: 11px;
-    color: var(--faint);
+    font-size: var(--fs-xs);
+    color: var(--muted);
   }
   .seg {
     flex: none;
@@ -761,8 +765,8 @@
     background: none;
     border: none;
     border-radius: 999px;
-    color: var(--faint);
-    font-size: 12px;
+    color: var(--muted);
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
   .seg button.on {
@@ -780,7 +784,7 @@
     background: none;
     border: none;
     border-radius: var(--radius);
-    color: var(--faint);
+    color: var(--muted);
     cursor: pointer;
   }
   .icon:hover {
@@ -801,7 +805,7 @@
   .doc {
     max-width: 760px;
     padding: 20px 28px 40px;
-    font-size: 14px;
+    font-size: var(--fs-base);
   }
   textarea {
     width: 100%;
@@ -828,24 +832,24 @@
   }
   .page h2 {
     margin: 0 0 8px;
-    font-size: 18px;
+    font-size: var(--fs-xl);
     font-weight: 600;
   }
   .lead {
     margin: 0 0 8px;
-    font-size: 13.5px;
+    font-size: var(--fs-base);
     line-height: 1.55;
     color: var(--muted);
   }
   .hint {
     margin: 0 0 16px;
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     line-height: 1.55;
-    color: var(--faint);
+    color: var(--muted);
   }
   .mono {
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .ghost {
     position: fixed;
@@ -860,7 +864,7 @@
     border-radius: var(--radius);
     box-shadow: var(--shadow);
     color: var(--text);
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     pointer-events: none;
   }
 </style>

@@ -713,7 +713,7 @@
         })(),
         new Promise<never>((_, reject) => {
           timer = window.setTimeout(
-            () => reject(new Error("Compact timed out — the summarizer is taking too long. You can try again.")),
+            () => reject(new Error("Compact timed out: the summarizer is taking too long. You can try again.")),
             300_000,
           );
         }),
@@ -1144,7 +1144,7 @@
       {/key}
     {:else}
       {#if hasSession}
-        <section class="session" style:--dock="{dockHeight}px">
+        <section class="session">
           <SessionHeader
             title={meta?.title || tab.title}
             {branch}
@@ -1172,7 +1172,7 @@
             }}
           />
           <div class="workarea">
-            <div class="scroll" bind:this={scrollEl} on:scroll={() => (farFromBottom = !nearBottom())}>
+            <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl} on:scroll={() => (farFromBottom = !nearBottom())}>
               <Thread
                 {events}
                 liveText={live}
@@ -1399,7 +1399,8 @@
     display: flex;
   }
   .scroll {
-    flex: 1;    overflow-x: hidden;
+    flex: 1;
+    overflow-x: hidden;
     overflow-y: auto;
     padding-bottom: calc(var(--dock) + 30px);
     mask-image: linear-gradient(
@@ -1417,6 +1418,11 @@
     max-height: calc(50% - 24px);
     overflow-y: auto;
     transform: translateX(-50%);
+  }
+  /* Search suggestions drop over the recents: hide them meanwhile rather
+     than leave a half-covered list peeking out. */
+  :global(main:has(.web-suggest)) .home {
+    visibility: hidden;
   }
   .composer {
     position: absolute;
@@ -1438,8 +1444,8 @@
   .lane-hint {
     margin: 0 0 6px;
     text-align: center;
-    font-size: 11.5px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .toasts {
     position: fixed;
@@ -1460,7 +1466,7 @@
     box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
     color: var(--text);
     font: inherit;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     text-align: left;
   }
   .toast.go {

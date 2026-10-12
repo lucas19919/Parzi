@@ -42,11 +42,11 @@
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--line); cursor: pointer;
   }
   .sw input { position: absolute; inset: -10px; width: 44px; height: 44px; opacity: 0; cursor: pointer; padding: 0; border: none; }
-  .lab { flex: 1; min-width: 0; font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lab { flex: 1; min-width: 0; font-size: var(--fs-md); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hex {
     width: 84px; flex: none; background: var(--bg); border: 1px solid var(--line);
     border-radius: var(--radius); color: var(--muted); padding: 4px 7px; outline: none;
-    font-family: var(--mono), ui-monospace, monospace; font-size: 11px; text-transform: uppercase;
+    font-family: var(--mono), ui-monospace, monospace; font-size: var(--fs-xs); text-transform: uppercase;
   }
   .hex:focus { border-color: var(--accent); color: var(--text); box-shadow: none; }
 </style>

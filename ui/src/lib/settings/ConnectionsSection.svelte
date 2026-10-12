@@ -354,7 +354,7 @@
     border: 1px solid var(--line);
     border-radius: var(--radius);
     padding: 6px 8px;
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     resize: vertical;
   }
   input:focus,

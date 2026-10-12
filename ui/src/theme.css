@@ -11,6 +11,15 @@
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-display: swap; font-weight: 500; src: url(../node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2) format("woff2"); }
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-display: swap; font-weight: 500; src: url(../node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-ext-500-normal.woff2) format("woff2"); }
 
+/* The composer's height, set on the thread's scroller. Not inherited: a
+   change would otherwise restyle every node of a long thread (~80ms per
+   new line of draft at 300 turns). */
+@property --dock {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 90px;
+}
+
 :root {
   --bg: #0b0b10;
   --text: #ededf2;
@@ -18,6 +27,8 @@
   --accent: #e6e8ee;
   --panel: color-mix(in srgb, var(--text) 6%, var(--bg));
   --line: color-mix(in srgb, var(--text) 12%, var(--bg));
+  /* Decoration only (dots, rules, idle icons). Text is --text or --muted:
+     a third, dimmer text tier can't keep 4.5:1 contrast on every theme. */
   --faint: color-mix(in srgb, var(--muted) 62%, var(--bg));
   --ok: #22c55e;
   --warn: #f59e0b;
@@ -46,6 +57,16 @@
   --vignette: 0.5;
   --radius: 8px;
   --radius-lg: 12px;
+
+  /* Type scale: every font-size in the UI is one of these (ui/ui-policy.json,
+     checked by `npm run lint:ui`). */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-base: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 18px;
+  --fs-2xl: 22px;
   --shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 2px 10px rgba(0, 0, 0, 0.35);
 }
 
@@ -64,6 +85,7 @@ html.scanlines .shell::after {
 }
 
 * { box-sizing: border-box; }
+/* Transparent so the rounded .shell is the window's shape; .shell paints the background. */
 html, body, #app { height: 100%; margin: 0; background: transparent; }
 body {
   font-family: var(--font), Inter, system-ui, sans-serif;
@@ -77,6 +99,8 @@ code, pre, kbd { font-family: var(--mono), ui-monospace, monospace; }
 *::-webkit-scrollbar { width: 0; height: 0; }
 * { scrollbar-width: none; }
 button, input, textarea, select { font-family: inherit; }
+input, textarea, select { font-size: inherit; }
+::placeholder { color: var(--muted); opacity: 1; }
 button {
   transition:
     background 140ms ease,
@@ -109,7 +133,7 @@ input[type="color"] { background: transparent; border: 1px solid var(--line); bo
 .ctl {
   display: inline-flex; align-items: center; gap: 4px; height: 26px; min-width: 0; max-width: 180px;
   padding: 0 7px; background: transparent; border: 1px solid transparent; border-radius: var(--radius);
-  color: var(--muted); font-size: 12px; text-align: left; cursor: pointer; overflow: hidden;
+  color: var(--muted); font-size: var(--fs-sm); text-align: left; cursor: pointer; overflow: hidden;
 }
 .ctl:hover { background: var(--line); color: var(--text); }
 .ctl.open { background: var(--line); color: var(--text); }
@@ -120,9 +144,16 @@ input[type="color"] { background: transparent; border: 1px solid var(--line); bo
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg);
   box-shadow: var(--shadow); overflow: hidden;
 }
+/* lib/tooltip.ts */
+.tip {
+  position: fixed; z-index: 2000; max-width: 280px; padding: 4px 8px; pointer-events: none;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); color: var(--text); font-size: var(--fs-sm); line-height: 1.4;
+}
+.tip[hidden] { display: none; }
 
 kbd {
-  font-family: var(--mono); font-size: 11px; padding: 2px 7px;
+  font-family: var(--mono); font-size: var(--fs-xs); padding: 2px 7px;
   border: 1px solid var(--line); border-bottom-width: 2px; border-radius: var(--radius);
   background: var(--panel); color: var(--text);
 }
@@ -131,7 +162,7 @@ kbd {
   background: color-mix(in srgb, var(--text) 9%, var(--bg));
   border: 1px solid color-mix(in srgb, var(--text) 14%, var(--bg));
   border-radius: var(--radius); color: var(--text); padding: 6px 13px; cursor: pointer;
-  font-size: 12.5px; font-weight: 500;
+  font-size: var(--fs-md); font-weight: 500;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 7%, transparent);
 }
 .btn:hover:not(:disabled) {
@@ -150,11 +181,14 @@ kbd {
 .btn:active:not(:disabled) { transform: translateY(0) scale(0.97); transition-duration: 60ms; }
 .btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
 
-.thread-col { line-height: 1.65; font-size: 14px; }
+.thread-col { line-height: 1.65; font-size: var(--fs-base); }
 .msg { line-height: 1.65; }
 .msg p { margin: 0 0 0.55em; }
 .msg p:last-child { margin-bottom: 0; }
-.msg h1, .msg h2, .msg h3 { letter-spacing: -0.01em; margin: 0.9em 0 0.4em; }
+.msg h1, .msg h2, .msg h3, .msg h4, .msg h5, .msg h6 { letter-spacing: -0.01em; margin: 0.9em 0 0.4em; }
+.msg h1 { font-size: var(--fs-xl); }
+.msg h2 { font-size: var(--fs-lg); }
+.msg h3, .msg h4, .msg h5, .msg h6 { font-size: var(--fs-base); }
 .msg a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: color-mix(in srgb, var(--link) 55%, transparent); }
 .msg a:hover { color: var(--link-hover); text-decoration-color: currentColor; }
 .msg :not(pre) > code { background: var(--line); border-radius: 5px; padding: 1px 5px; font-family: var(--mono); font-size: 0.92em; }
@@ -171,7 +205,7 @@ kbd {
 .hljs-string, .hljs-regexp, .hljs-meta .hljs-string { color: var(--ok); }
 .hljs-number, .hljs-literal { color: var(--warn); }
 .hljs-title, .hljs-title.function_, .hljs-section { color: var(--text); }
-.hljs-comment, .hljs-quote { color: var(--faint); font-style: italic; }
+.hljs-comment, .hljs-quote { color: var(--muted); font-style: italic; }
 .hljs-variable, .hljs-template-variable, .hljs-attr, .hljs-attribute,
 .hljs-name, .hljs-selector-id, .hljs-selector-class { color: var(--accent); }
 .hljs-type, .hljs-built_in { color: var(--warn); }
@@ -187,10 +221,10 @@ kbd {
   opacity: 0; transition: opacity 140ms ease;
 }
 .codeblock:hover .code-tools, .code-tools:focus-within { opacity: 1; }
-.code-lang { font-family: var(--mono); font-size: 10.5px; color: var(--faint); }
+.code-lang { font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted); }
 .code-tools button {
   padding: 2px 8px; background: var(--line); border: 1px solid var(--line); border-radius: 5px;
-  color: var(--muted); font-size: 11px; cursor: pointer;
+  color: var(--muted); font-size: var(--fs-xs); cursor: pointer;
 }
 .code-tools button:hover { background: var(--line); color: var(--text); }
 .codeblock pre {
@@ -207,11 +241,11 @@ kbd {
 }
 .code-expand {
   display: block; width: 100%; padding: 7px; background: transparent; border: none;
-  border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; cursor: pointer;
+  border-top: 1px solid var(--line); color: var(--muted); font-size: var(--fs-sm); cursor: pointer;
 }
 .code-expand:hover { color: var(--text); background: var(--panel); }
 
-.msg table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 0.8em 0; font-size: 12.5px; border: 1px solid var(--line); border-radius: 8px; }
+.msg table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 0.8em 0; font-size: var(--fs-md); border: 1px solid var(--line); border-radius: 8px; }
 .msg th, .msg td { padding: 6px 12px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); text-align: left; white-space: nowrap; }
 .msg th:last-child, .msg td:last-child { border-right: none; }
 .msg tr:last-child td { border-bottom: none; }

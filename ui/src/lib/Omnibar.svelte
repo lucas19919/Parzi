@@ -14,6 +14,7 @@
   import { popover, placeAbove } from "./popover";
   import { bookmarks, completeAddress, history, pins } from "./browserData";
   import SuggestList from "./SuggestList.svelte";
+  import { tooltip } from "./tooltip";
   import { boxText, firstRows, looksLikeUrl, mergeRows, pageRows, phraseRows, type Suggestion } from "./suggest";
   import type { IconName } from "./icons";
 
@@ -73,17 +74,17 @@
   const MODES: ComposerMode[] = ["search", "build", "work"];
 
   const SLASH = [
-    { name: "search", hint: "search mode" },
-    { name: "build", hint: "build mode" },
-    { name: "work", hint: "work mode" },
-    { name: "new", hint: "new session" },
-    { name: "fork", hint: "branch this session" },
-    { name: "compact", hint: "summarize to free context" },
-    { name: "stop", hint: "stop the run" },
-    { name: "model", hint: "pick a model" },
-    { name: "effort", hint: "cycle effort" },
-    { name: "page", hint: "open a web page" },
-    { name: "settings", hint: "open settings" },
+    { name: "search", hint: "Search mode" },
+    { name: "build", hint: "Build mode" },
+    { name: "work", hint: "Work mode" },
+    { name: "new", hint: "New session" },
+    { name: "fork", hint: "Branch this session" },
+    { name: "compact", hint: "Summarize to free context" },
+    { name: "stop", hint: "Stop the run" },
+    { name: "model", hint: "Pick a model" },
+    { name: "effort", hint: "Cycle effort" },
+    { name: "page", hint: "Open a web page" },
+    { name: "settings", hint: "Open settings" },
   ];
 
   const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
@@ -223,18 +224,25 @@
     }
   }
 
-  async function autosize() {
+  // Fits the box to its text (up to 180px). Writes go through a local:
+  // `textarea.style.x = …` marks `textarea` dirty in Svelte, which re-ran
+  // the `$:` below after every await and froze the composer on the first
+  // keystroke (an endless microtask loop).
+  async function autosize(text: string) {
     await tick();
-    if (!textarea) return;
-    textarea.style.height = "auto";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
+    const el = textarea;
+    if (!el) return;
+    if (!text) {
+      el.style.height = "";
+      return;
+    }
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
   }
 
   $: if (lockMode && mode !== lockMode) mode = lockMode;
-  $: if (textarea && !input) textarea.style.height = "";
-  // Keystrokes call autosize via onInput; this covers programmatic fills
-  // (edit-load, tab drafts) so the box always fits its text.
-  $: if (textarea && input) void autosize();
+  // Keystrokes and programmatic fills (edit-load, tab drafts) both land here.
+  $: if (textarea) void autosize(input);
   $: if (mode !== "search" || !input.trim()) clearWeb();
   $: webOpen = focused && mode === "search" && webRows.length > 0;
 
@@ -264,7 +272,6 @@
   }
 
   async function onInput(e: Event) {
-    void autosize();
     if (mode === "search" && textarea) {
       const typed = textarea.value;
       webTyped = typed;
@@ -463,15 +470,25 @@
     <button
       bind:this={projBtn}
       class="proj-out set"
+      aria-haspopup={folderLocked ? undefined : "menu"}
+      aria-expanded={folderLocked ? undefined : projOpen}
       on:click|stopPropagation={toggleProject}
-      title={remoteCwd ? `Runs on ${remoteHost} in ${remoteCwd}` : `Runs on ${remoteHost}, in its own scratch folder`}
+      use:tooltip={remoteCwd ? `Runs on ${remoteHost} in ${remoteCwd}` : `Runs on ${remoteHost}, in its own scratch folder`}
     >
       <Icon name="server" size={14} stroke={2} />
       <span class="proj-title">{remoteProject ? `${remoteProject} · ${remoteHost}` : remoteHost}</span>
       {#if !folderLocked}<Icon name="chevDown" size={10} stroke={2} />{/if}
     </button>
   {:else if outsideProject}
-    <button bind:this={projBtn} class="proj-out" class:set={!!project} on:click|stopPropagation={toggleProject} title={project ? `Project ${project.title}${branch ? ` · ${branch}` : ""}` : "Pick the project this session works on"}>
+    <button
+      bind:this={projBtn}
+      class="proj-out"
+      class:set={!!project}
+      aria-haspopup={folderLocked ? undefined : "menu"}
+      aria-expanded={folderLocked ? undefined : projOpen}
+      on:click|stopPropagation={toggleProject}
+      use:tooltip={project ? `Project ${project.title}${branch ? ` · ${branch}` : ""}` : "Pick the project this session works on"}
+    >
       <Icon name={project || !folder ? "project" : "folder"} size={14} stroke={2} />
       <span class="proj-title">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
       {#if branch}<span class="proj-branch">{branch}</span>{/if}
@@ -492,7 +509,7 @@
       </div>
     {/if}
     {#if slashItems.length || atItems.length}
-      <div class="suggest" transition:fade={{ duration: 100 }}>
+      <div class="suggest" data-ui-list transition:fade={{ duration: 100 }}>
         {#each slashItems as cmd, i (cmd.name)}
           <button class:on={i === slashIndex} on:click={() => runSlash(cmd.name)} on:mousemove={() => (slashIndex = i)}>
             <span class="mono">/{cmd.name}</span><span class="hint">{cmd.hint}</span>
@@ -507,10 +524,10 @@
     {#if attachments.length}
       <div class="attachments" transition:slide={{ duration: 160, easing: cubicOut }}>
         {#each attachments as a (a)}
-          <span class="chip" title={a} transition:scale={{ duration: 140, start: 0.9 }}>
+          <span class="chip" transition:scale={{ duration: 140, start: 0.9 }}>
             {#if thumbs[a]}<img src={thumbs[a]} alt="" draggable="false" />{:else}<Icon name="file" size={12} />{/if}
-            <span class="chip-name">{shortName(a)}</span>
-            <button aria-label="Remove {a}" on:click={() => (attachments = attachments.filter((x) => x !== a))}>
+            <span class="chip-name" title={a}>{shortName(a)}</span>
+            <button use:tooltip={`Remove ${a}`} on:click={() => (attachments = attachments.filter((x) => x !== a))}>
               <Icon name="close" size={10} stroke={2.2} />
             </button>
           </span>
@@ -529,6 +546,7 @@
         bind:this={textarea}
         bind:value={input}
         rows="1"
+        aria-label={mode === "search" ? "Search or address" : "Message"}
         placeholder={streaming ? "Working · Esc to stop" : MODE_META[mode].hint}
         on:keydown={onKeydown}
         on:input={onInput}
@@ -537,17 +555,17 @@
         on:paste={onPaste}
       />
       {#if streaming}
-        <button class="go stop" title="Stop (Esc)" on:click={() => dispatch("stop")}><span class="square" /></button>
+        <button class="go stop" use:tooltip={"Stop (Esc)"} on:click={() => dispatch("stop")}><span class="square" /></button>
       {:else}
-        <button class="go" class:ready={!!input.trim()} title={mode === "search" ? "Open (Enter)" : "Send (Enter)"} disabled={!input.trim()} on:click={submit}>
+        <button class="go" class:ready={!!input.trim()} use:tooltip={mode === "search" ? "Open (Enter)" : "Send (Enter)"} disabled={!input.trim()} on:click={submit}>
           <Icon name="arrowUp" size={14} stroke={2} />
         </button>
       {/if}
     </div>
 
     <div class="bar">
-      <button class="ctl icon-only" title="Attach files" on:click={pickFiles}><Icon name="plus" size={14} stroke={2} /></button>
-    <div class="modes" role="tablist" aria-label="Mode">
+      <button class="ctl icon-only" use:tooltip={"Attach files"} on:click={pickFiles}><Icon name="plus" size={14} stroke={2} /></button>
+    <div class="modes" role="group" aria-label="Mode" data-ui-segmented>
       {#if lockMode}
         <span class="mode on solo" style:--tint={MODE_META[lockMode].tint} title={MODE_META[lockMode].label}>
           <Icon name={MODE_META[lockMode].icon} size={14} stroke={2} />
@@ -555,14 +573,16 @@
       {:else}
         {#each MODES as m, i (m)}
           {@const locked = lockMode !== null && m !== lockMode}
+          <!-- Named explicitly: some variants hide the label span, and hidden
+               text doesn't name a button. -->
           <button
-            role="tab"
-            aria-selected={mode === m}
+            aria-label={MODE_META[m].label}
+            aria-pressed={mode === m}
             class="mode"
             class:on={mode === m}
             class:off={locked}
             style:--tint={MODE_META[m].tint}
-            title={locked ? `${MODE_META[m].label} (unavailable here)` : `${MODE_META[m].label} (Ctrl+${i + 1}, Tab cycles)`}
+            use:tooltip={locked ? `${MODE_META[m].label} (unavailable here)` : `${MODE_META[m].label} (Ctrl+${i + 1}, Tab cycles)`}
             disabled={locked}
             on:click={() => {
               if (locked) return;
@@ -587,7 +607,7 @@
           class="ctl perm-btn"
           class:open={permOpen}
           class:full={permission === "full"}
-          title={`${perm.title}: ${perm.desc}`}
+          use:tooltip={`${perm.title}: ${perm.desc}`}
           aria-haspopup="menu"
           aria-expanded={permOpen}
           on:click|stopPropagation={togglePerm}
@@ -601,8 +621,9 @@
           class="ctl remote-btn"
           class:on={remote}
           disabled={remoteLocked}
+          aria-label="Remote"
           aria-pressed={remote}
-          title={remoteLocked
+          use:tooltip={remoteLocked
             ? remote
               ? `This session runs on ${remoteHost}`
               : "This session runs on this PC"
@@ -622,7 +643,9 @@
             class:open={projOpen}
             class:set={!!project}
             class:locked={folderLocked}
-            title={project ? `Project ${project.title} · ${folder} · about ${project.tokens} tokens of notes per session` : folder ? `${folder} · not a project yet` : "Pick the project this session works on"}
+            aria-haspopup={folderLocked ? undefined : "menu"}
+            aria-expanded={folderLocked ? undefined : projOpen}
+            use:tooltip={project ? `Project ${project.title} · ${folder} · about ${project.tokens} tokens of notes per session` : folder ? `${folder} · not a project yet` : "Pick the project this session works on"}
             on:click|stopPropagation={toggleProject}
           >
             <Icon name={project || !folder ? "project" : "folder"} size={14} stroke={2} />
@@ -642,7 +665,7 @@
   {#if attachError}<div class="error" role="alert">{attachError}</div>{/if}
 
   {#if projOpen}
-    <div class="menu-pop" style={projStyle} use:popover={{ anchor: projBtn, close: () => (projOpen = false) }} transition:fly={{ y: projStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
+    <div class="menu-pop" data-ui-list style={projStyle} use:popover={{ anchor: projBtn, close: () => (projOpen = false) }} transition:fly={{ y: projStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
       <div class="pop-head">{remote ? `Project on ${remoteHost}` : "Project"}</div>
       {#each projects as p (p.slug)}
         <button
@@ -708,13 +731,12 @@
   {/if}
 
   {#if permOpen}
-    <div class="menu-pop perms" style={permStyle} use:popover={{ anchor: permBtn, close: () => (permOpen = false) }} transition:fly={{ y: permStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
+    <div class="menu-pop perms" data-ui-list style={permStyle} use:popover={{ anchor: permBtn, close: () => (permOpen = false) }} transition:fly={{ y: permStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
       {#each PERMS as p (p.id)}
         {@const blocked = permissionBlocked(p.id, policy)}
         <button
           class="perm"
           disabled={!!blocked}
-          title={blocked || undefined}
           on:click={() => {
             permission = p.id;
             permOpen = false;
@@ -818,7 +840,7 @@
     outline: none;
     resize: none;
     color: var(--text);
-    font-size: 14px;
+    font-size: var(--fs-base);
     line-height: 1.45;
   }
   textarea:focus {
@@ -826,10 +848,10 @@
     box-shadow: none !important;
   }
   textarea::placeholder {
-    color: var(--faint);
+    color: var(--muted);
   }
   .hero textarea {
-    font-size: 15px;
+    font-size: var(--fs-lg);
     padding: 9px 0;
   }
   .go {
@@ -843,7 +865,7 @@
     background: color-mix(in srgb, var(--text) 6%, transparent);
     border: 1px solid transparent;
     border-radius: 999px;
-    color: var(--faint);
+    color: var(--muted);
     cursor: pointer;
   }
   .go.ready:not(:disabled) {
@@ -893,7 +915,7 @@
     border: 1px solid var(--line);
     border-radius: var(--radius);
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .chip img {
     width: 18px;
@@ -906,7 +928,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .chip button {
     width: 18px;
@@ -918,7 +940,7 @@
     background: none;
     border: none;
     border-radius: 4px;
-    color: var(--faint);
+    color: var(--muted);
     cursor: pointer;
   }
   .chip button:hover {
@@ -926,7 +948,7 @@
   }
   .error {
     padding: 4px 12px 0;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     color: var(--bad);
   }
   .web-suggest {
@@ -966,7 +988,7 @@
     border: none;
     border-radius: var(--radius);
     color: var(--muted);
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     text-align: left;
     cursor: pointer;
   }
@@ -977,17 +999,17 @@
   }
   .mono {
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   .hint {
     margin-left: auto;
-    font-size: 11px;
-    color: var(--faint);
+    font-size: var(--fs-xs);
+    color: var(--muted);
   }
   .bar {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 8px;
     min-width: 0;
     margin-top: 6px;
     padding: 7px 6px 1px;
@@ -1002,7 +1024,7 @@
     height: 26px;
     padding: 0 8px;
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     border-radius: 999px;
     background: color-mix(in srgb, var(--text) 6%, transparent);
     border: 1px solid transparent;
@@ -1078,8 +1100,8 @@
     background: transparent;
     border: none;
     border-radius: 999px;
-    color: var(--faint);
-    font-size: 12px;
+    color: var(--muted);
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
   .mode:hover {
@@ -1106,7 +1128,7 @@
   .dim {
     flex: none;
     white-space: nowrap;
-    color: var(--faint);
+    color: var(--muted);
     opacity: 0.8;
   }
   .spacer {
@@ -1147,11 +1169,11 @@
     color: var(--muted);
   }
   .perm-name {
-    font-size: 13px;
+    font-size: var(--fs-md);
   }
   .perm-sub {
-    font-size: 11.5px;
-    color: var(--faint);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .tick {
     display: inline-flex;
@@ -1159,16 +1181,14 @@
   }
   .pop-head {
     padding: 6px 8px 4px;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 600;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--faint);
+    color: var(--muted);
   }
   .pop-empty {
     margin: 0;
     padding: 6px 8px 8px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 1.45;
     color: var(--muted);
   }
@@ -1182,8 +1202,8 @@
   }
   .count {
     flex: none;
-    font-size: 11px;
-    color: var(--faint);
+    font-size: var(--fs-xs);
+    color: var(--muted);
   }
   .opt {
     display: flex;
@@ -1214,11 +1234,11 @@
     gap: 1px;
   }
   .name {
-    font-size: 12.5px;
+    font-size: var(--fs-md);
     font-weight: 600;
   }
   .sub {
-    font-size: 11px;
+    font-size: var(--fs-xs);
     line-height: 1.4;
     color: var(--muted);
   }
@@ -1251,19 +1271,18 @@
   }
   /* Edition C — compact: tighter pills, everything kept, nothing hidden. */  .ob.v4 .bar {
     flex-wrap: nowrap;
-    gap: 3px;
   }
   .ob.v4 .mode {
     height: 22px;
     padding: 0 7px;
-    font-size: 11.5px;
+    font-size: var(--fs-sm);
   }
   .ob.v4 .modes {
     padding: 1px;
   }
   .ob.v4 .bar :global(.ctl) {
     height: 24px;
-    font-size: 11.5px;
+    font-size: var(--fs-sm);
   }
   .ob.v4 .bar :global(.ctl.icon-only) {
     width: 24px;
@@ -1291,14 +1310,14 @@
     background: none;
     border: none;
     color: var(--muted);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     cursor: pointer;
     text-align: left;
   }
   .proj-out:hover { color: var(--text); }
   .proj-out.set :global(svg:first-child) { color: var(--accent); }
   .proj-title { font-weight: 650; color: var(--text); white-space: nowrap; }
-  .proj-branch { flex: none; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--text) 7%, transparent); font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  .proj-branch { flex: none; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--text) 7%, transparent); font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted); }
   /* v5: quiet eyebrow row, inline project hidden, box slimmer. */
   .ob.v5 .bar .project, .ob.v6 .bar .project, .ob.v7 .bar .project { display: none; }
   .ob.v5 .box { padding-top: 8px; }
@@ -1329,7 +1348,7 @@
     background: color-mix(in srgb, var(--accent) 16%, transparent);
     color: var(--text);
     font-family: var(--mono);
-    font-size: 11.5px;
+    font-size: var(--fs-sm);
     font-weight: 600;
   }
   .ob.v7 .mode span:last-child, .ob.v7 .bar :global(.model .lbl) { display: none; }
