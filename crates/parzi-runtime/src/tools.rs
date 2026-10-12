@@ -295,7 +295,7 @@ pub fn brain_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "brain.search".into(),
-            description: "Search the user's notes vault by title and text. Returns up to 20 notes with a snippet each.".into(),
+            description: "Search the user's notes vault by title and text. A note matches when it holds every word of the query; title matches rank first. Returns up to 20 notes with a snippet each.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {"query": {"type": "string"}},
@@ -313,7 +313,7 @@ pub fn brain_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "brain.list".into(),
-            description: "List the user's notes vault (the brain): projects with the folders they map to, and each note's path, title, one-line summary, and whether it is pinned (pinned notes are attached to sessions in full). Pass project (a project slug, or all for the notes attached to every session) to list only those notes.".into(),
+            description: "List the user's notes vault (the brain): projects with the folders they map to, and each note's path, title, one-line summary, and whether it is pinned (pinned notes are attached to sessions in full). Pass project (a project slug, or all for the notes attached to every session) to list only those notes. Shows at most 50 notes; use brain.search for the rest.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {"project": {"type": "string"}},
@@ -329,6 +329,15 @@ pub fn brain_defs() -> Vec<ToolDef> {
                     "content": {"type": "string"},
                 },
                 "required": ["path", "content"],
+            }),
+        },
+        ToolDef {
+            name: "brain.delete".into(),
+            description: "Delete a note from the user's notes vault (path relative to the vault, as given by brain.search or brain.list). Use it for notes that are wrong or obsolete; a project goes with project.delete.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
             }),
         },
     ]
