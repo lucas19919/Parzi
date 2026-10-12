@@ -198,6 +198,9 @@ pub struct OrchLimits {
     pub mcp_idle_kill_secs: u64,
     #[serde(default = "default_true")]
     pub queue_when_busy: bool,
+    /// How long the desk holds a run at an approval card before denying.
+    #[serde(default = "default_approval_wait")]
+    pub approval_wait_secs: u64,
 }
 
 fn default_mode() -> String {
@@ -214,6 +217,9 @@ fn default_concurrent() -> usize {
 }
 fn default_idle_kill() -> u64 {
     60
+}
+fn default_approval_wait() -> u64 {
+    900
 }
 
 impl Default for ParziConfig {
@@ -242,6 +248,7 @@ impl Default for OrchLimits {
             max_concurrent: 4,
             mcp_idle_kill_secs: 60,
             queue_when_busy: true,
+            approval_wait_secs: default_approval_wait(),
         }
     }
 }
@@ -412,5 +419,13 @@ order = ["codex", "claude"]
         let back: ParziConfig = toml::from_str(&text).expect("parse");
         assert_eq!(back.budget.max_cost_usd, Some(2.5));
         assert_eq!(back.budget.max_tokens, Some(1000));
+    }
+
+    #[test]
+    fn an_older_file_waits_fifteen_minutes_for_approvals() {
+        let cfg: ParziConfig =
+            toml::from_str("version = 2\n[orchestrator]\nmax_concurrent = 2\n").expect("parse");
+        assert_eq!(cfg.orchestrator.approval_wait_secs, 900);
+        assert_eq!(cfg.orchestrator.max_concurrent, 2);
     }
 }

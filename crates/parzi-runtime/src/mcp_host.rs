@@ -217,7 +217,7 @@ async fn dispatch(msg: &Value, host: &ToolHost) -> Option<Value> {
                 "protocolVersion": version,
                 "capabilities": {"tools": {"listChanged": false}},
                 "serverInfo": {"name": SERVER_NAME, "title": "Parzi", "version": env!("CARGO_PKG_VERSION")},
-                "instructions": "Parzi's own tools: widgets and artifacts in the thread, teamwork across sessions, the shared task list, knowledge and leases.",
+                "instructions": "Parzi's own tools: widgets and artifacts in the thread, teamwork across sessions, knowledge and leases.",
             })
         }
         "ping" => json!({}),

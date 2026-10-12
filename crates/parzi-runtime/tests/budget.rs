@@ -71,11 +71,16 @@ async fn token_budget_pauses_the_run_and_marks_it() {
         .await
         .unwrap();
     let mut notices = vec![];
+    let mut paused = vec![];
     while let Some(ev) = rx.recv().await {
-        if let RunEvent::Notice { text } = ev {
-            notices.push(text);
+        match ev {
+            RunEvent::Notice { text } => notices.push(text),
+            RunEvent::Paused { reason } => paused.push(reason),
+            _ => {}
         }
     }
+    assert_eq!(paused.len(), 1, "the run says it paused, once: {paused:?}");
+    assert!(paused[0].contains("token budget"), "{paused:?}");
     assert_eq!(settle(&store, &meta.id).await.status, SessionStatus::Idle);
     assert_eq!(run_note(&meta.id).as_deref(), Some(BUDGET_NOTE));
     assert!(

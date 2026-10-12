@@ -312,6 +312,9 @@ pub async fn start(orch: Arc<Orchestrator>) -> Result<Daemon, String> {
     let approver = ParkedApprover::new(orch.store().clone(), events.clone());
     let asker = ParkedAsker::new(events.clone());
     orch.install_asker(asker.clone()).await;
+    // Queued runs restored after a restart (and later starts) ask a client
+    // through the socket instead of being denied every gated call.
+    orch.set_approver(approver.clone());
     let cancel = CancellationToken::new();
     let state = Arc::new(State {
         orch: orch.clone(),
@@ -582,8 +585,6 @@ async fn dispatch(state: &State, req: &Value) -> Value {
         "mirror.list" => crate::hub::mirror_list(),
         "mirror.events" => crate::hub::mirror_events(req),
         "mirror.delete" => crate::hub::mirror_delete(req),
-        "tasks.list" => crate::hub::tasks_list(),
-        "tasks.replace" => crate::hub::tasks_replace(req),
         "mirror.adopt" => crate::hub::mirror_adopt(&state.orch, req),
         "project.list" => crate::hub::project_list(),
         "project.folder" => crate::hub::project_folder(req),
@@ -818,10 +819,15 @@ async fn session_send(state: &State, req: &Value) -> Value {
         state.approver.clone()
     };
     let project = parzi_core::brain::project_for_folder(&cwd).unwrap_or_else(|| "default".into());
+    // A desktop sends as the person; the CLI says it is the CLI.
+    let cause = parzi_core::work::RunCause::parse(&str_arg(req, "cause"))
+        .filter(|c| c.makes_goals())
+        .unwrap_or_default();
     let sent = if target.is_empty() || target == "new" {
         state
             .orch
-            .spawn(
+            .spawn_as(
+                cause,
                 &project,
                 &lane,
                 &model,
@@ -841,7 +847,8 @@ async fn session_send(state: &State, req: &Value) -> Value {
         match resolve(&state.orch, &target) {
             Ok(id) => state
                 .orch
-                .send_to(
+                .send_as(
+                    cause,
                     &id,
                     &message,
                     Some(approver),

@@ -239,7 +239,7 @@ async fn forward(app: AppHandle, mut rx: tokio::sync::mpsc::UnboundedReceiver<Va
         // A finished run on the server may have written notes there.
         let ended = matches!(
             ev.get("kind").and_then(Value::as_str),
-            Some("done" | "error")
+            Some("done" | "paused" | "error")
         );
         retag(&mut ev);
         let _ = app.emit("parzi://run-event", &ev);
@@ -504,6 +504,16 @@ pub(crate) async fn fork(
         .cloned()
         .and_then(tagged_meta)
         .ok_or_else(|| "update Parzi on the server to fork there".into())
+}
+
+/// Whether the server link is up right now. Never opens one.
+pub(crate) fn linked(state: &RemoteState) -> bool {
+    state
+        .link
+        .try_lock()
+        .ok()
+        .and_then(|l| l.as_ref().map(|l| l.alive()))
+        .unwrap_or(false)
 }
 
 /// The saved remote, if any. Never opens a connection.

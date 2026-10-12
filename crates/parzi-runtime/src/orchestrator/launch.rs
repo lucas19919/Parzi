@@ -3,11 +3,12 @@ use std::sync::Arc;
 use parzi_core::config::ParziConfig;
 use parzi_core::error::{ParziError, Result};
 use parzi_core::store::{Event, SessionMeta, SessionStatus};
+use parzi_core::work::RunCause;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::handler::{system_parts, HarnessBridge, RunEvent, RunSink};
-use crate::run::{EngineRun, EngineRunParts};
+use crate::run::{EngineRun, EngineRunParts, RunTally};
 use crate::toolhost::{ToolHost, ToolHostParts};
 use crate::tools::{ApprovalMode, Approver, DenyApprover, ToolExecutor};
 use parzi_providers::display_name;
@@ -16,9 +17,40 @@ use super::queue::{clear_queued, run_session, set_run_note, Pump, QueuedRun};
 use super::{next_run_id, normalize_effort, Handle, Orchestrator, SessionSlot};
 
 impl Orchestrator {
+    /// A new session with a first run the person sent.
     #[allow(clippy::too_many_arguments)]
     pub async fn spawn(
         &self,
+        project: &str,
+        lane: &str,
+        model_spec: &str,
+        prompt: &str,
+        approver: Option<Arc<dyn Approver>>,
+        cwd: &str,
+        effort: &str,
+        attachments: Vec<parzi_core::context::AttachedFile>,
+        mode_override: Option<String>,
+    ) -> Result<(SessionMeta, mpsc::UnboundedReceiver<RunEvent>)> {
+        self.spawn_as(
+            RunCause::Send,
+            project,
+            lane,
+            model_spec,
+            prompt,
+            approver,
+            cwd,
+            effort,
+            attachments,
+            mode_override,
+        )
+        .await
+    }
+
+    /// `spawn` for a run with another cause (the CLI's, say).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn spawn_as(
+        &self,
+        cause: RunCause,
         project: &str,
         lane: &str,
         model_spec: &str,
@@ -62,6 +94,7 @@ impl Orchestrator {
             prompt_recorded: false,
             inbox_from: None,
             mode_override,
+            cause,
         };
         let snap = self.config();
         if live >= snap.orchestrator.max_concurrent.max(1) {
@@ -81,9 +114,38 @@ impl Orchestrator {
         Ok((meta, rx))
     }
 
+    /// A new run of an existing session that the person sent.
     #[allow(clippy::too_many_arguments)]
     pub async fn send_to(
         &self,
+        id: &str,
+        prompt: &str,
+        approver: Option<Arc<dyn Approver>>,
+        cwd: &str,
+        effort: &str,
+        attachments: Vec<parzi_core::context::AttachedFile>,
+        model_override: Option<String>,
+        mode_override: Option<String>,
+    ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
+        self.send_as(
+            RunCause::Send,
+            id,
+            prompt,
+            approver,
+            cwd,
+            effort,
+            attachments,
+            model_override,
+            mode_override,
+        )
+        .await
+    }
+
+    /// `send_to` for a run with another cause.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_as(
+        &self,
+        cause: RunCause,
         id: &str,
         prompt: &str,
         approver: Option<Arc<dyn Approver>>,
@@ -125,6 +187,7 @@ impl Orchestrator {
             prompt_recorded: false,
             inbox_from: None,
             mode_override,
+            cause,
         };
         let live = {
             let mut h = self.handles.lock().await;
@@ -157,7 +220,8 @@ impl Orchestrator {
         }
         let prompt = format!("/compact {}", focus.trim()).trim_end().to_string();
         let _rx = self
-            .send_to(
+            .send_as(
+                RunCause::Compact,
                 id,
                 &prompt,
                 Some(Arc::new(DenyApprover)),
@@ -234,9 +298,6 @@ impl Orchestrator {
             "models.list",
             "ask.user",
             "request.user",
-            "task.list",
-            "task.add",
-            "task.update",
             "shell.exec",
             "shell.start",
             "shell.logs",
@@ -369,7 +430,7 @@ impl Orchestrator {
                         text: format!("run failed to start: {e}"),
                     },
                 )?;
-                crate::task_tools::run_ended(&p.store, &sid, parzi_core::tasks::now_ms(), false);
+                crate::work_hooks::launch_failed(&sid, &e.to_string());
                 let _ = p.bus.send((sid, RunEvent::Error(e.to_string())));
                 Err(e)
             }
@@ -411,6 +472,16 @@ impl Orchestrator {
         });
         let (tx, rx) = mpsc::unbounded_channel();
         let sink = RunSink::new(&q.session_id, tx, Some(p.bus.clone()));
+        let meta = p.store.get(&q.session_id)?;
+        let tally = {
+            let run = parzi_core::work::graph::fresh_id(8, &|_| false);
+            let mut t = RunTally::new(&run, &q.session_id, q.cause, &cwd);
+            t.prompt.clone_from(&q.prompt);
+            t.title_hint = meta.title.clone();
+            t.project = parzi_core::work::project_of_session(&meta.project);
+            t.first_event = seen;
+            Arc::new(std::sync::Mutex::new(t))
+        };
         let bridge: Arc<dyn HarnessBridge> = Arc::new(p.clone());
         let instructions = system_parts(&q.lane, &cwd);
         if mode == ApprovalMode::Deny && !provider.gated() {
@@ -464,18 +535,18 @@ impl Orchestrator {
             },
             seen,
             inbox_from: q.inbox_from,
+            tally: tally.clone(),
         });
         set_run_note(&q.session_id, None);
         p.store.set_status(&q.session_id, SessionStatus::Active)?;
-        let started = parzi_core::tasks::now_ms();
-        crate::task_tools::run_started(&q.session_id);
+        crate::work_hooks::run_started(&tally, &shown, &q.lane);
         let end = RunEnd {
             parts: p.clone(),
             sid: q.session_id.clone(),
             id,
             done: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             cancel: cancel.clone(),
-            started,
+            tally,
         };
         let prompt = q.prompt.clone();
         let done = end.done.clone();
@@ -500,8 +571,8 @@ struct RunEnd {
     id: u64,
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
     cancel: CancellationToken,
-    /// When the run began (ms): tasks its agent settled after this are news.
-    started: u64,
+    /// What the run did, for its entry in the work ledger.
+    tally: crate::work_hooks::Tally,
 }
 
 impl Drop for RunEnd {
@@ -509,7 +580,7 @@ impl Drop for RunEnd {
         let (p, sid, id) = (self.parts.clone(), std::mem::take(&mut self.sid), self.id);
         let done = self.done.clone();
         let cancel = self.cancel.clone();
-        let started = self.started;
+        let tally = self.tally.clone();
         let Ok(rt) = tokio::runtime::Handle::try_current() else {
             return;
         };
@@ -536,16 +607,10 @@ impl Drop for RunEnd {
                     }
                 }
             }
-            // A task this session worked is handed back: review, failed, or
-            // to do again when it was stopped.
-            let store = p.store.clone();
-            let stopped = cancel.is_cancelled();
-            let tasks_sid = sid.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                crate::task_tools::run_ended(&store, &tasks_sid, started, stopped);
-            })
-            .await;
+            // The slot is free: a queued run need not wait for the ledger.
             p.notify.notify_one();
+            let settled = done.load(std::sync::atomic::Ordering::SeqCst);
+            crate::work_hooks::run_ended(&p.store, &tally, cancel.is_cancelled(), settled).await;
         });
     }
 }
@@ -576,12 +641,10 @@ mod tests {
             "session.read_session",
             "session.list_sessions",
             "project.create",
-            "task.list",
-            "task.add",
-            "task.update",
         ] {
             assert!(allowed.iter().any(|a| a == t), "lane missing {t}");
         }
+        assert!(allowed.iter().all(|a| !a.starts_with("task.")));
         assert!(allowed.iter().all(|a| a != "lane.dispatch"));
         assert!(allowed.iter().all(|a| !a.starts_with("plan.")));
     }

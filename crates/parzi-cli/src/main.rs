@@ -6,6 +6,7 @@ use clap::{ArgGroup, Parser, Subcommand};
 use parzi_core::config::ParziConfig;
 use parzi_core::paths;
 use parzi_core::store::SessionStore;
+use parzi_core::work::RunCause;
 use parzi_providers::State;
 use parzi_runtime::desk::{self, normalize_url, DeskError, Probe};
 use parzi_runtime::tools::{Approval, Approver, AutoApprover, ToolCallInfo};
@@ -235,8 +236,11 @@ enum OpenCmd {
     Brain { path: Option<String> },
     #[command(about = "History: sessions, history, bookmarks or downloads")]
     History { view: Option<String> },
-    #[command(about = "The task list")]
-    Tasks,
+    #[command(
+        about = "The Work view: goals your agents are working on",
+        alias = "tasks"
+    )]
+    Work,
     #[command(about = "The home tab")]
     Home,
     #[command(about = "A web page")]
@@ -996,6 +1000,7 @@ async fn session_send(
         Err(DeskError::NotOpen) => {
             let mut body = body;
             body["stream"] = json!(false);
+            body["cause"] = json!("cli");
             match desk::call_serve("session.send", body, Duration::from_secs(60)).await {
                 Ok(v) => {
                     if let Some(id) = v.get("id").and_then(Value::as_str) {
@@ -1040,7 +1045,8 @@ async fn send_local(
     let cwd = cwd.display().to_string();
     let (id, mut rx) = if let Some(id) = continued {
         let rx = orch
-            .send_to(
+            .send_as(
+                RunCause::Cli,
                 &id,
                 message,
                 Some(approver),
@@ -1055,7 +1061,8 @@ async fn send_local(
         (id, rx)
     } else {
         let (meta, rx) = orch
-            .spawn(
+            .spawn_as(
+                RunCause::Cli,
                 "default",
                 "",
                 model.unwrap_or_default(),
@@ -1106,6 +1113,10 @@ async fn send_local(
             }
             RunEvent::Error(e) => {
                 eprintln!("\nerror: {e}");
+                break;
+            }
+            RunEvent::Paused { reason } => {
+                eprintln!("\npaused: {reason}");
                 break;
             }
             _ => {}
@@ -1318,7 +1329,7 @@ fn open_body(what: OpenCmd, background: bool, raise: bool) -> Value {
         OpenCmd::Settings { section } => ("settings", json!({ "section": section })),
         OpenCmd::Brain { path } => ("brain", json!({ "path": path })),
         OpenCmd::History { view } => ("history", json!({ "view": view })),
-        OpenCmd::Tasks => ("tasks", json!({})),
+        OpenCmd::Work => ("work", json!({})),
         OpenCmd::Home => ("home", json!({})),
         OpenCmd::Url { url } => ("url", json!({ "url": normalize_url(&url) })),
     };

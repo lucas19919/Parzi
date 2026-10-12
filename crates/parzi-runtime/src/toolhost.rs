@@ -14,10 +14,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::handler::{HarnessBridge, RunEvent, RunSink, SpawnSpec};
 use crate::tools::{
-    clip, display_name, is_brain_tool, is_browser_tool, is_desk_tool, is_doc_tool, is_image_tool,
-    is_lane_tool, is_models_tool, is_project_tool, is_question_tool, is_session_tool,
-    is_shell_tool, is_task_tool, is_ui_tool, window_tool_offered, Approval, ApprovalMode, Approver,
-    AskRequest, Asker, ToolCallInfo, ToolDef, ToolExecutor,
+    category, clip, display_name, is_brain_tool, is_browser_tool, is_desk_tool, is_doc_tool,
+    is_image_tool, is_lane_tool, is_models_tool, is_project_tool, is_question_tool,
+    is_session_tool, is_shell_tool, is_ui_tool, window_tool_offered, Approval, ApprovalMode,
+    Approver, AskRequest, Asker, ToolCallInfo, ToolDef, ToolExecutor,
 };
 
 pub struct ToolHostParts {
@@ -40,35 +40,6 @@ pub struct ToolHostParts {
 pub struct ToolHost {
     p: ToolHostParts,
     defs: tokio::sync::OnceCell<Vec<ToolDef>>,
-}
-
-fn category(tool: &str) -> Option<&'static str> {
-    match tool {
-        "Bash" | "BashOutput" | "KillShell" | "shell" | "execute" => Some("shell.exec"),
-        "Edit" | "MultiEdit" | "Write" | "NotebookEdit" | "edit" | "delete" | "move" => {
-            Some("fs.write")
-        }
-        "Read" | "Glob" | "Grep" | "LS" | "NotebookRead" | "read" | "search" => Some("fs.read"),
-        _ => {
-            // The vendor shell list can never be complete: any tool whose
-            // name smells like command execution routes to the shell gate
-            // instead of slipping through as unknown.
-            let l = tool.to_lowercase();
-            if l.contains("shell")
-                || l.contains("bash")
-                || l.contains("terminal")
-                || l.contains("powershell")
-                || matches!(
-                    l.as_str(),
-                    "cmd" | "exec" | "execute" | "command" | "run_command"
-                )
-            {
-                Some("shell.exec")
-            } else {
-                None
-            }
-        }
-    }
 }
 
 fn worktree_relative(cwd: &str, path: &str) -> Option<String> {
@@ -741,9 +712,6 @@ impl ToolHost {
                 | "models.list"
                 | "ask.user"
                 | "request.user"
-                | "task.list"
-                | "task.add"
-                | "task.update"
                 | "session.spawn"
                 | "session.send_message"
                 | "session.read_session"
@@ -914,16 +882,6 @@ impl ToolHost {
                 );
             }
             return self.execute_image(args).await;
-        }
-        if is_task_tool(name) {
-            // Parzi's own list, which the human sees: allowlist only.
-            if !self.p.tools.is_allowed(name) {
-                return (
-                    false,
-                    format!("tool `{name}` denied (lane mode / approver)"),
-                );
-            }
-            return crate::task_tools::execute(&self.p.store, &self.p.session_id, name, args).await;
         }
         if is_question_tool(name) {
             if !self.p.tools.is_allowed(name) {
@@ -1219,10 +1177,6 @@ impl ToolHost {
                 if prompt.trim().is_empty() {
                     return (false, "session.spawn needs a `prompt`".into());
                 }
-                let task = match self.task_to_staff(args).await {
-                    Ok(t) => t,
-                    Err(e) => return (false, e),
-                };
                 bridge
                     .spawn(
                         sid,
@@ -1235,7 +1189,6 @@ impl ToolHost {
                             wait: bool_arg("wait", true),
                             mode_override: self.child_mode(),
                             effort: str_arg("effort").filter(|s| !s.trim().is_empty()),
-                            task,
                         },
                     )
                     .await
@@ -1308,10 +1261,6 @@ impl ToolHost {
         }
         let lane = self.child_lane(str_arg("lane"));
         let wait = args.get("wait").and_then(Value::as_bool).unwrap_or(true);
-        let task = match self.task_to_staff(args).await {
-            Ok(t) => t,
-            Err(e) => return (false, e),
-        };
         match bridge
             .spawn(
                 &self.p.session_id,
@@ -1324,7 +1273,6 @@ impl ToolHost {
                     wait,
                     mode_override: self.child_mode(),
                     effort: str_arg("effort").filter(|s| !s.trim().is_empty()),
-                    task,
                 },
             )
             .await
@@ -1372,25 +1320,6 @@ impl ToolHost {
             out.push_str(&format!("\n- {lane}: {}", runs.join("; ")));
         }
         out
-    }
-
-    /// The task a spawn staffs, checked: this session may hand it out, it
-    /// is not done, and nothing it needs is still open.
-    async fn task_to_staff(&self, args: &Value) -> std::result::Result<Option<String>, String> {
-        let Some(id) = args
-            .get("task")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-        else {
-            return Ok(None);
-        };
-        let (store, sid) = (self.p.store.clone(), self.p.session_id.clone());
-        tokio::task::spawn_blocking(move || crate::task_tools::staffable(&store, &sid, &id))
-            .await
-            .map_err(|e| e.to_string())?
-            .map(|t| Some(t.id))
     }
 
     /// Lane a child runs in. Work children stay work: a build child would

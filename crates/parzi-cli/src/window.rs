@@ -414,6 +414,7 @@ impl WatchView {
             "approval_done" => Some(format!("approval {} answered", short(s(v, "key")))),
             "question" => Some(format!("{id} asks: {}", s(v, "question"))),
             "done" => Some(format!("{id} finished")),
+            "paused" => Some(format!("{id} paused: {}", s(v, "reason"))),
             "error" => Some(format!("{id} stopped: {}", s(v, "error"))),
             "tabs" => {
                 let tabs = v.get("tabs").and_then(Value::as_array);

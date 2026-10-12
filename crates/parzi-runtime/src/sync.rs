@@ -9,10 +9,8 @@
 //! both sides. Nothing is ever dropped silently.
 //!
 //! Settings: the portable config (connectors and agent paths stay per
-//! machine), newest change wins. Tasks: per task, the newest change wins;
-//! one deleted on a side and untouched on the other is deleted on both.
-//! Sessions: each device mirrors its own history to the server, which any
-//! device can read and continue there.
+//! machine), newest change wins. Sessions: each device mirrors its own
+//! history to the server, which any device can read and continue there.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -21,7 +19,6 @@ use std::time::Duration;
 use parzi_core::brain::Vault;
 use parzi_core::config::ParziConfig;
 use parzi_core::store::SessionStore;
-use parzi_core::tasks::{Task, TaskStore};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -498,7 +495,6 @@ pub async fn mirror_sessions(
 pub struct Synced {
     pub settings: SettingsOutcome,
     pub brain: BrainReport,
-    pub tasks: TaskReport,
     pub sessions: usize,
     /// A part that failed does not stop the others; each says why here.
     pub errors: Vec<String>,
@@ -522,13 +518,6 @@ impl Synced {
                 b.conflicts
             ));
         }
-        let t = &self.tasks;
-        if t.pulled + t.deleted_here > 0 {
-            parts.push(format!("{} tasks in", t.pulled + t.deleted_here));
-        }
-        if t.pushed + t.deleted_there > 0 {
-            parts.push(format!("{} tasks out", t.pushed + t.deleted_there));
-        }
         match self.settings {
             SettingsOutcome::Pulled(_) => parts.push("settings from the server".into()),
             SettingsOutcome::Pushed => parts.push("settings to the server".into()),
@@ -541,7 +530,7 @@ impl Synced {
     }
 }
 
-/// Settings, then notes, then tasks, then this device's sessions.
+/// Settings, then notes, then this device's sessions.
 pub async fn everything(link: &Link, store: &SessionStore, server: &str) -> Synced {
     let mut errors = vec![];
     let settings = sync_settings(link, server).await.unwrap_or_else(|e| {
@@ -552,10 +541,6 @@ pub async fn everything(link: &Link, store: &SessionStore, server: &str) -> Sync
         errors.push(format!("brain: {e}"));
         BrainReport::default()
     });
-    let tasks = sync_tasks(link, server).await.unwrap_or_else(|e| {
-        errors.push(format!("tasks: {e}"));
-        TaskReport::default()
-    });
     let sessions = mirror_sessions(link, store, server)
         .await
         .unwrap_or_else(|e| {
@@ -565,89 +550,9 @@ pub async fn everything(link: &Link, store: &SessionStore, server: &str) -> Sync
     Synced {
         settings,
         brain,
-        tasks,
         sessions,
         errors,
     }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct TaskReport {
-    pub pulled: usize,
-    pub pushed: usize,
-    pub deleted_here: usize,
-    pub deleted_there: usize,
-}
-
-/// Both sides' tasks merged: the newer copy of each (by `updated`), and a
-/// task missing on one side deleted only when the other side has not
-/// touched it since the last sync (`base` holds each id's `updated` then).
-#[must_use]
-pub fn merge_tasks(
-    here: &[Task],
-    there: &[Task],
-    base: &BTreeMap<String, u64>,
-) -> (Vec<Task>, TaskReport) {
-    let mine: BTreeMap<&str, &Task> = here.iter().map(|t| (t.id.as_str(), t)).collect();
-    let theirs: BTreeMap<&str, &Task> = there.iter().map(|t| (t.id.as_str(), t)).collect();
-    let ids: BTreeSet<&str> = mine.keys().chain(theirs.keys()).copied().collect();
-    let mut out = vec![];
-    let mut r = TaskReport::default();
-    for id in ids {
-        let seen = base.get(id).copied();
-        match (mine.get(id), theirs.get(id)) {
-            (Some(h), Some(t)) => {
-                if t.updated > h.updated {
-                    r.pulled += 1;
-                    out.push((*t).clone());
-                } else {
-                    if h.updated > t.updated {
-                        r.pushed += 1;
-                    }
-                    out.push((*h).clone());
-                }
-            }
-            (Some(h), None) if seen == Some(h.updated) => r.deleted_here += 1,
-            (Some(h), None) => {
-                r.pushed += 1;
-                out.push((*h).clone());
-            }
-            (None, Some(t)) if seen == Some(t.updated) => r.deleted_there += 1,
-            (None, Some(t)) => {
-                r.pulled += 1;
-                out.push((*t).clone());
-            }
-            (None, None) => {}
-        }
-    }
-    (out, r)
-}
-
-/// Brings this device's tasks and the server's into step. A server from
-/// before tasks synced says so with "unknown op": then nothing moves.
-pub async fn sync_tasks(link: &Link, server: &str) -> Result<TaskReport, String> {
-    let there: Vec<Task> = match link.call("tasks.list", json!({}), CALL).await {
-        Ok(v) => serde_json::from_value(v.get("tasks").cloned().unwrap_or(Value::Null))
-            .map_err(|e| format!("the server's tasks are unreadable: {e}"))?,
-        Err(e) if e.starts_with("unknown op") => return Ok(TaskReport::default()),
-        Err(e) => return Err(e),
-    };
-    let store = TaskStore::open().map_err(|e| e.to_string())?;
-    let here = store.all().map_err(|e| e.to_string())?;
-    let base: BTreeMap<String, u64> = load_state("tasks.json", server);
-    let (merged, report) = merge_tasks(&here, &there, &base);
-    if report.pulled + report.deleted_here > 0 {
-        store
-            .replace_all(merged.clone())
-            .map_err(|e| e.to_string())?;
-    }
-    if report.pushed + report.deleted_there > 0 {
-        link.call("tasks.replace", json!({ "tasks": merged }), CALL)
-            .await?;
-    }
-    let agreed: BTreeMap<String, u64> = merged.iter().map(|t| (t.id.clone(), t.updated)).collect();
-    save_state("tasks.json", server, &agreed)?;
-    Ok(report)
 }
 
 /// One `mirror.put`; the server answers how many events it now holds.
@@ -676,78 +581,6 @@ mod tests {
             .find(|(p, _)| p == path)
             .map(|(_, a)| *a)
             .unwrap()
-    }
-
-    fn task(id: &str, updated: u64) -> Task {
-        Task {
-            id: id.into(),
-            title: id.into(),
-            notes: String::new(),
-            status: parzi_core::tasks::TaskStatus::Todo,
-            project: None,
-            needs: vec![],
-            lane: String::new(),
-            session: None,
-            created: 0,
-            updated,
-            created_by: "you".into(),
-            order: 0,
-        }
-    }
-
-    #[test]
-    fn tasks_merge_newest_wins_and_deletes_stick() {
-        let base: BTreeMap<String, u64> = [
-            ("same", 1),
-            ("edited-here", 1),
-            ("edited-there", 1),
-            ("gone-there", 1),
-            ("gone-here", 1),
-            ("edit-vs-gone", 1),
-        ]
-        .into_iter()
-        .map(|(k, v)| (k.to_string(), v))
-        .collect();
-        let here = vec![
-            task("same", 1),
-            task("edited-here", 3),
-            task("edited-there", 1),
-            task("gone-there", 1),
-            task("edit-vs-gone", 4),
-            task("new-here", 2),
-        ];
-        let there = vec![
-            task("same", 1),
-            task("edited-here", 1),
-            task("edited-there", 5),
-            task("gone-here", 1),
-            task("new-there", 2),
-        ];
-        let (merged, r) = merge_tasks(&here, &there, &base);
-        let ids: Vec<&str> = merged.iter().map(|t| t.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            [
-                "edit-vs-gone",
-                "edited-here",
-                "edited-there",
-                "new-here",
-                "new-there",
-                "same"
-            ]
-        );
-        let at = |id: &str| merged.iter().find(|t| t.id == id).unwrap().updated;
-        assert_eq!(at("edited-here"), 3);
-        assert_eq!(at("edited-there"), 5);
-        assert_eq!(
-            r,
-            TaskReport {
-                pulled: 2,
-                pushed: 3,
-                deleted_here: 1,
-                deleted_there: 1,
-            }
-        );
     }
 
     #[test]

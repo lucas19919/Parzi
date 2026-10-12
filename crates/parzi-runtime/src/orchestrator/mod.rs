@@ -237,8 +237,8 @@ impl Orchestrator {
                 cut.push(m.id);
             }
         }
-        // Their tasks were in progress when the app closed: to do again.
-        crate::task_tools::runs_interrupted(&cut);
+        // Their runs were cut off when the app closed: the ledger says so.
+        crate::work_hooks::recover();
         Ok(cut.len())
     }
 

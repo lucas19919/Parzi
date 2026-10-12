@@ -30,8 +30,8 @@ mod search;
 mod sessions;
 mod settings;
 mod siteprefs;
-mod tasks;
 mod vault;
+mod work;
 
 pub(crate) type Pending = Arc<Mutex<HashMap<String, (String, oneshot::Sender<Approval>)>>>;
 pub(crate) type PendingQuestions = Arc<Mutex<HashMap<String, (String, oneshot::Sender<String>)>>>;
@@ -98,6 +98,11 @@ pub(crate) enum UiEvent {
         session: String,
         turns: u32,
     },
+    /// Stopped at the budget: no longer running, and not done either.
+    Paused {
+        session: String,
+        reason: String,
+    },
     Error {
         session: String,
         error: String,
@@ -147,7 +152,13 @@ impl Approver for GuiApprover {
         if let Some(desk) = &desk {
             desk.approval_opened(&key, call);
         }
-        let out = tokio::time::timeout(std::time::Duration::from_secs(120), rx).await;
+        // Long enough to come back to the desk; then the run moves on denied.
+        let wait = self
+            .app
+            .try_state::<AppState>()
+            .map_or(900, |s| s.orch.config().orchestrator.approval_wait_secs)
+            .max(10);
+        let out = tokio::time::timeout(std::time::Duration::from_secs(wait), rx).await;
         self.pending.lock().await.remove(&key);
         if let Some(desk) = &desk {
             desk.approval_closed(&key);
@@ -303,6 +314,7 @@ fn ui_from_run(session: String, ev: RunEvent) -> Option<UiEvent> {
             limit,
         },
         RunEvent::Done { turns } => UiEvent::Done { session, turns },
+        RunEvent::Paused { reason } => UiEvent::Paused { session, reason },
         RunEvent::Error(error) => UiEvent::Error { session, error },
     })
 }
@@ -385,7 +397,10 @@ async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, R
                     flush_sid(&app, &sid, buf);
                 }
                 // A finished local run goes to the server's mirror.
-                let ended = matches!(other, RunEvent::Done { .. } | RunEvent::Error(_));
+                let ended = matches!(
+                    other,
+                    RunEvent::Done { .. } | RunEvent::Paused { .. } | RunEvent::Error(_)
+                );
                 if let Some(ui) = ui_from_run(sid, other) {
                     let _ = app.emit("parzi://run-event", ui);
                 }
@@ -566,7 +581,7 @@ fn main() {
                 app: app.handle().clone(),
                 pending: app.state::<AppState>().pending.clone(),
             }));
-            tasks::watch(app.handle());
+            work::watch(app.handle());
             let ctl_app = app.handle().clone();
             let ctl_orch = o.clone();
             let ctl_pending = app.state::<AppState>().pending.clone();
@@ -670,12 +685,8 @@ fn main() {
             sessions::purge_sessions,
             sessions::approve_tool,
             sessions::answer_question,
-            tasks::tasks_list,
-            tasks::tasks_create,
-            tasks::tasks_update,
-            tasks::tasks_delete,
-            tasks::tasks_reorder,
-            tasks::tasks_assign,
+            work::work_view,
+            work::work_goal,
             files::pick_folder,
             files::list_files,
             files::git_branch,
@@ -743,6 +754,32 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_budget_pause_reaches_the_window_as_paused() {
+        let ui = ui_from_run(
+            "s1".into(),
+            RunEvent::Paused {
+                reason: "token budget reached".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(ui).unwrap(),
+            serde_json::json!({"kind": "paused", "session": "s1", "reason": "token budget reached"})
+        );
+        let served = parzi_runtime::handler::ui_event(
+            "s1",
+            &RunEvent::Paused {
+                reason: "token budget reached".into(),
+            },
+        );
+        assert_eq!(
+            served.unwrap()["kind"],
+            "paused",
+            "the server streams it too"
+        );
+    }
 
     #[test]
     fn config_faults_name_the_place_not_the_line() {

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use parzi_core::config::ParziConfig;
 use parzi_core::error::Result;
 use parzi_core::store::{Event, SessionStatus, SessionStore};
+use parzi_core::work::RunCause;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex, Notify};
 
@@ -61,6 +62,13 @@ struct PersistedRun {
     /// without one (agent-spawned children) stay without.
     #[serde(default)]
     ask: bool,
+    /// Why it was queued. Files from before causes were kept say Restart.
+    #[serde(default = "restarted")]
+    cause: RunCause,
+}
+
+fn restarted() -> RunCause {
+    RunCause::Restart
 }
 
 /// run.json is load-modify-saved from several tasks: one writer at a time.
@@ -153,6 +161,7 @@ pub(super) struct QueuedRun {
     pub(super) mode_override: Option<String>,
     pub(super) prompt_recorded: bool,
     pub(super) inbox_from: Option<usize>,
+    pub(super) cause: RunCause,
 }
 
 impl QueuedRun {
@@ -169,6 +178,7 @@ impl QueuedRun {
             inbox_from: self.inbox_from,
             attachments: self.attachments.iter().map(|a| a.path.clone()).collect(),
             ask: self.approver.is_some() || self.restore_approver,
+            cause: self.cause,
         }
     }
 
@@ -195,6 +205,7 @@ impl QueuedRun {
             prompt_recorded: p.prompt_recorded,
             mode_override: p.mode_override,
             inbox_from: p.inbox_from,
+            cause: p.cause,
         }
     }
 }
@@ -219,7 +230,7 @@ pub(super) struct Pump {
 
 impl Pump {
     /// One shell registry per session, so background shells survive
-    /// across turns and the Tasks tab can read them later.
+    /// across turns and a later run can read them.
     pub(super) fn shells_for(&self, sid: &str) -> Arc<crate::shell::ShellRegistry> {
         let mut shells = self.shells.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(reg) = shells.get(sid) {
@@ -306,7 +317,6 @@ impl Orchestrator {
                 }
                 None => {
                     self.store.set_status(&m.id, SessionStatus::Idle)?;
-                    crate::task_tools::runs_interrupted(std::slice::from_ref(&m.id));
                 }
             }
         }
