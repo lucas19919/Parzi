@@ -26,6 +26,7 @@
     sameProject,
     scopeOptions,
     statusLabel,
+    upsert,
     waitsOn,
     type Column,
   } from "./taskModel";
@@ -136,7 +137,7 @@
   async function save(t: Task, patch: TaskPatch): Promise<boolean> {
     try {
       const next = await taskApi.update(t.id, patch);
-      tasks.update((all) => all.map((x) => (x.id === next.id ? next : x)));
+      tasks.update((all) => upsert(all, next));
       void refreshTasks();
       return true;
     } catch (e) {
@@ -151,7 +152,7 @@
     try {
       const t = await taskApi.create(title, projectFor($scope));
       draft = "";
-      tasks.update((all) => [...all, t]);
+      tasks.update((all) => upsert(all, t));
       void refreshTasks();
     } catch (e) {
       toastError(e);

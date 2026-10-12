@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ALL, board, columnOf, dropped, homeTasks, inScope, moved, needCandidates, nextStatus, projectFor, scopeOptions, waitsOn } from "../src/lib/taskModel.ts";
+import { ALL, board, columnOf, dropped, homeTasks, inScope, moved, needCandidates, nextStatus, projectFor, scopeOptions, upsert, waitsOn } from "../src/lib/taskModel.ts";
 import type { Task } from "../src/lib/api.ts";
 
 function task(id: string, over: Partial<Task> = {}): Task {
@@ -22,6 +22,12 @@ function task(id: string, over: Partial<Task> = {}): Task {
     ...over,
   };
 }
+
+test("a created task the refresh already listed is not added twice", () => {
+  const listed = [task("a"), task("b")];
+  assert.deepEqual(upsert(listed, task("b", { title: "New" })).map((t) => [t.id, t.title]), [["a", "A"], ["b", "New"]]);
+  assert.deepEqual(upsert(listed, task("c")).map((t) => t.id), ["a", "b", "c"]);
+});
 
 test("failed tasks wait in the Review column", () => {
   assert.equal(columnOf("failed"), "review");

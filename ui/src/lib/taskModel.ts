@@ -45,6 +45,13 @@ export function projectFor(scope: string): string | null {
   return scope === ALL || scope === "" ? null : scope;
 }
 
+// Puts a task the backend returned into the list, replacing its old copy.
+// A save's answer can arrive after the refresh its own change event started,
+// so appending blindly would list the task twice (and break keyed lists).
+export function upsert(list: Task[], t: Task): Task[] {
+  return list.some((x) => x.id === t.id) ? list.map((x) => (x.id === t.id ? t : x)) : [...list, t];
+}
+
 export function byOrder(a: Task, b: Task): number {
   return a.order - b.order || a.created - b.created;
 }
