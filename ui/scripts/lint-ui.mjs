@@ -6,7 +6,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { checkUrl } from "lintapple";
 
 const BASE = process.env.PARZI_UI_URL ?? "http://localhost:1420/mock.html";
-const VIEWS = ["home", "session", "brain", "history", "tasks", "settings", "setup", "page"];
+const VIEWS = ["home", "session", "brain", "history", "work", "settings", "setup", "page"];
 
 // More states per view, each checked again after its action (run in order
 // on one page). Selectors are CSS and must match exactly one element.
@@ -32,15 +32,20 @@ const STATES = {
     click("context usage", ".icon-btn.ctx", ".ctx-pop"),
     { name: "context closed", action: "press", selector: ".ob textarea", key: "Escape", ready: { selector: ".ctx-pop", state: "hidden" } },
     click("dock", '.session button[aria-pressed][aria-label^="Toggle dock"]', ".panel .p-tabs"),
-    click("dock tasks", '.panel .p-tabs > button:nth-child(3)', ".panel .t-new"),
+    // The open session leads a goal (the strip above the thread); this is a
+    // step's session, opened from the dock.
+    click("step session", '.panel .row[style] .open[title="Find what runs on every keystroke"]', ".strip.child"),
+    click("dock work", ".panel .p-tabs > button:nth-child(3)", ".panel .work-dock"),
+    click("goal from strip", ".strip .open", ".goal-page"),
   ],
   brain: [click("pinned note", ".note:has(.pin)", ".titles h2"), click("conflict copy", ".note.copy", ".conflict")],
-  tasks: [
-    { name: "new task typed", action: "fill", selector: ".new input", value: "Check the release build", ready: { selector: ".new input" } },
-    click("task details", '[data-task]:has(.wait) .title', ".detail"),
-    click("assign model picker", ".detail .model", ".picker"),
-    click("linked task", '[data-task]:has(.pill.live) .title', ".detail .agent"),
-    click("failed task", '[data-task]:has(.pill.bad) .title', '.detail .seg button[aria-pressed="true"]:last-child'),
+  work: [
+    click("goal page", '[data-goal="g-plan"]', '.goal-page [aria-labelledby="g-plan"]'),
+    { name: "follow-up typed", action: "fill", selector: ".follow input", value: "Keep the old autosize as a fallback", ready: { selector: ".follow .send:not(:disabled)" } },
+    click("finished goal", '[data-goal="g-done"]', ".goal-page .files"),
+    click("goal needing you", '[data-goal="g-check"]', ".goal-page .checks"),
+    { name: "project filter", action: "press", selector: ".bar .chip select", key: "ArrowDown", ready: { selector: '.work:not([data-project="*"])' } },
+    click("engine filter", ".engines > button:nth-child(3)", '.work[data-engine="server"]'),
   ],
   history: [2, 3, 4].map((i) => click(`library ${i}`, nth(".seg", i), `${nth(".seg", i)}[aria-pressed="true"]`)),
   settings: [2, 3, 4, 5].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),

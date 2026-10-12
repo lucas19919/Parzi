@@ -36,8 +36,8 @@ GUI: `cd ui; npm install; npm run build`, then `cargo tauri dev` in `src-tauri`
 (requires `cargo install tauri-cli --locked`).
 
 UI without the app: `npm run dev` in `ui`, then open
-`http://localhost:1420/mock.html` (a fake backend; `?view=home|session|brain|history|tasks|settings|setup`,
-`&turns=300` for a long thread). With that running, `npm run lint:ui` checks every view and its
+`http://localhost:1420/mock.html` (a fake backend; `?view=home|session|brain|history|work|settings|setup`,
+`&turns=300` for a long thread, `&live=1` for agents at work). With that running, `npm run lint:ui` checks every view and its
 menus against `ui/ui-policy.json` with [lintapple](https://github.com/gholtzap/lintapple): the type
 scale, contrast, control size and spacing, labels and tooltips. Exceptions in the policy carry
 their reason.

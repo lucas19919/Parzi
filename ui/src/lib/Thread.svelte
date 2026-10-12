@@ -121,12 +121,14 @@
         return "Writing the plan";
       case "plan.read":
         return "Reading the plan";
-      case "task.list":
-        return "Reading the task list";
-      case "task.add":
-        return "Adding tasks";
-      case "task.update":
-        return `Updating task ${arg(args, "id") || ""}`.trim();
+      case "work.plan":
+        return Array.isArray((args as { steps?: unknown })?.steps)
+          ? `Planning ${(args as { steps: unknown[] }).steps.length} steps`
+          : "Updating the plan";
+      case "work.step":
+        return `Marking step ${arg(args, "step") || ""} ${arg(args, "status")}`.replace(/\s+/g, " ").trim();
+      case "work.list":
+        return "Reading open work";
       case "session.spawn":
         return `Delegating: ${arg(args, "title") || "a subsession"}`;
       case "session.send":

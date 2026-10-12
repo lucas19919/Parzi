@@ -93,6 +93,8 @@ export type UiEvent =
   | { kind: "question"; key: string; session: string; question: string; options: string[] }
   | { kind: "request"; key: string; session: string; request: string; req_kind: string }
   | { kind: "done"; session: string; turns: number }
+  // The run stopped at its budget; like done for the running set.
+  | { kind: "paused"; session: string; reason: string }
   | { kind: "error"; session: string; error: string };
 
 export interface Check {
@@ -531,73 +533,156 @@ export function onDesk(cb: (cmd: DeskCmd) => void) {
   return listen<DeskCmd>("parzi://desk", (ev) => cb(ev.payload));
 }
 
-export type TaskStatus = "todo" | "doing" | "review" | "done" | "failed";
+// Work: goals the agents fill in (WORK_CONTRACT.md). Session ids are tagged
+// like everywhere else: raw for this PC, "r:" for the server, "m:<device>:"
+// for another device.
+export type EngineKind = "here" | "server" | "device";
+export interface Engine {
+  kind: EngineKind;
+  // "This PC", the server's host label, or the other device's name.
+  name: string;
+}
 
-// A task with what its project says about it (ready, what it waits on).
-export interface Task {
-  id: string;
+export type GoalStatus = "later" | "working" | "needs_you" | "paused" | "check" | "done" | "failed" | "stopped" | "cut_off" | "archived";
+export type StepStatus = "todo" | "running" | "done" | "failed" | "skipped" | "check";
+export type RunEnd = "completed" | "failed" | "paused" | "stopped" | "crashed" | "interrupted" | "not_started";
+
+export interface StepView {
+  key: string;
   title: string;
-  notes: string;
-  status: TaskStatus;
-  // The project slug; null is the Inbox.
-  project: string | null;
   needs: string[];
   lane: string;
-  session: string | null;
-  created: number;
-  updated: number;
-  created_by: string;
-  order: number;
+  status: StepStatus;
+  note: string | null;
+  outcome: string | null;
+  // Tagged ids of the sessions that worked this step.
+  sessions: string[];
+  // Made from a spawn, not from a plan.
+  auto: boolean;
+  // To do with every need done.
   ready: boolean;
+  // Needs still open.
   blocked_by: string[];
 }
 
-export interface TaskPatch {
-  title?: string;
-  notes?: string;
-  status?: TaskStatus;
-  // A slug; "" moves the task to the Inbox.
-  project?: string;
-  needs?: string[];
-  lane?: string;
-  // A session id; "" unlinks.
-  session?: string;
+export interface FileTouch {
+  path: string;
+  via: "tool" | "git";
 }
 
-export interface TaskChange {
-  ids: string[];
-  // Tasks a run just handed back (review, done or failed).
-  finished: Task[];
+// A test or build command a run ran ("Check" in the contract).
+export interface RunCheck {
+  cmd: string;
+  ok: boolean;
 }
 
-export interface AssignArgs {
+export interface RunView {
   id: string;
+  session: string;
+  step: string | null;
   model: string;
-  effort: string;
-  mode: string;
-  cwd?: string;
-  lane?: string;
+  lane: string;
+  cause: "send" | "later" | "wake" | "message" | "cli" | "restart";
+  started: number;
+  // null while running.
+  ended: number | null;
+  end: RunEnd | null;
+  error: string | null;
+  ms: number;
+  turns: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number | null;
+  // The last assistant message, cleaned (at most 600 chars).
+  summary: string;
+  files: FileTouch[];
+  files_more: number;
+  checks: RunCheck[];
+  artifacts: number;
 }
 
-export const taskApi = {
-  // undefined: every project; null: the Inbox; a slug: that project.
-  list: (project?: string | null) => invoke<Task[]>("tasks_list", { all: project === undefined, project: project ?? null }),
-  create: (title: string, project: string | null, notes = "", needs: string[] = [], lane = "") =>
-    invoke<Task>("tasks_create", { title, project, notes, needs, lane }),
-  update: (id: string, patch: TaskPatch) => invoke<Task>("tasks_update", { id, patch }),
-  remove: (id: string) => invoke<void>("tasks_delete", { id }),
-  reorder: (ids: string[]) => invoke<void>("tasks_reorder", { ids }),
-  assign: (a: AssignArgs) =>
-    invoke<{ session: string; warning: string | null }>("tasks_assign", {
-      id: a.id,
-      model: a.model,
-      effort: a.effort,
-      mode: a.mode,
-      cwd: a.cwd ?? null,
-      lane: a.lane ?? null,
-    }),
+export interface AskView {
+  id: string;
+  session: string;
+  goal: string | null;
+  kind: "approval" | "question" | "request" | "budget" | "continue";
+  label: string;
+  detail: unknown;
+  opened: number;
+  expires: number | null;
+}
+
+export interface GoalView {
+  id: string;
+  title: string;
+  status: GoalStatus;
+  // A project slug; null is no project.
+  project: string | null;
+  // The session that leads the goal.
+  root: string | null;
+  // What the person asked (clipped).
+  prompt: string;
+  created: number;
+  updated: number;
+  engine: Engine;
+  // Empty when the agent never planned or spawned.
+  steps: StepView[];
+  // Sessions with an open run (the root or step children).
+  running: string[];
+  // The goal's latest run, for card summaries.
+  last: RunView | null;
+  cost_usd: number | null;
+  // Distinct files changed across runs.
+  files: number;
+  // Open asks on the goal's sessions.
+  asks: number;
+  later: { auto_start: boolean } | null;
+  // false: another device's goal, read only here.
+  owned: boolean;
+}
+
+export interface Digest {
+  since: number;
+  done: number;
+  steps: number;
+  needs_you: number;
+  failed: number;
+  goals: string[];
+}
+
+export interface WorkView {
+  // Newest updated first.
+  goals: GoalView[];
+  asks: AskView[];
+  digest: Digest | null;
+  server: { linked: boolean; ops: boolean };
+}
+
+export interface GoalNote {
+  at: number;
+  by: string;
+  text: string;
+  step: string | null;
+}
+
+export interface GoalDetail extends GoalView {
+  // Oldest first.
+  runs: RunView[];
+  notes: GoalNote[];
+}
+
+export interface WorkChange {
+  // Goals that changed.
+  goals: string[];
+  // Goals whose root run just ended.
+  settled: { goal: string; title: string; status: GoalStatus }[];
+}
+
+export const workApi = {
+  view: () => invoke<WorkView>("work_view"),
+  goal: (id: string) => invoke<GoalDetail>("work_goal", { id }),
 };
 
-export function onTasks(cb: (c: TaskChange) => void) {
-  return listen<TaskChange>("parzi://tasks", (ev) => cb(ev.payload));
+export function onWork(cb: (c: WorkChange) => void) {
+  return listen<WorkChange>("parzi://work", (ev) => cb(ev.payload));
 }

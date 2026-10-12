@@ -3,16 +3,16 @@
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
-  import { api, brain, taskApi, type SessionMeta, type Task } from "./api";
-  import { toastError } from "./toast";
+  import { api, brain, type SessionMeta } from "./api";
   import { mdHtml, richReady } from "./md";
   import { handleLinkClick } from "./links";
   import { agentOf, isLiveSession, whereOf } from "./sessions";
   import { laneIcon } from "./lanes";
   import { formatTime as time } from "./time";
   import { tooltip } from "./tooltip";
-  import { openTask, refreshTasks, tasks, tasksError } from "./taskStore";
-  import { byOrder, inScope, statusLabel, waitsOn } from "./taskModel";
+  import GoalCard from "./GoalCard.svelte";
+  import { openGoal, work, workError } from "./workStore";
+  import { groupBands, inProject } from "./workModel";
 
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
@@ -20,11 +20,11 @@
   export let projectSlug = "";
   // Dock tabs are a registry: append { id, label } plus a content branch
   // below to add projects, checklists, etc. without touching the shell.
-  type DockTab = "agents" | "projects" | "tasks";
+  type DockTab = "agents" | "projects" | "work";
   const DOCK_TABS: { id: DockTab; label: string }[] = [
     { id: "agents", label: "Agents" },
     { id: "projects", label: "Projects" },
-    { id: "tasks", label: "Tasks" },
+    { id: "work", label: "Work" },
   ];
 
   export let tab: DockTab = "agents";
@@ -148,7 +148,7 @@
 
   function poke() {
     clearInterval(poller);
-    if (tab === "tasks") {
+    if (tab === "work") {
       void loadConns();
       dispatch("settled");
       poller = window.setInterval(() => dispatch("settled"), 3000);
@@ -190,36 +190,10 @@
     void loadProject(projectSlug);
   }
 
-  // This session's project tasks, live: in progress first, then what came
-  // back for review, then what is left to do (ready before blocked).
-  const RANK: Record<string, number> = { doing: 0, review: 1, failed: 1, todo: 2 };
-  $: projectTasks = $tasks
-    .filter((t) => t.status !== "done" && inScope(t, projectSlug))
-    .sort((a, b) => RANK[a.status] - RANK[b.status] || Number(b.ready) - Number(a.ready) || byOrder(a, b));
-  $: doneCount = $tasks.filter((t) => t.status === "done" && inScope(t, projectSlug)).length;
-  let taskDraft = "";
-
-  async function addTask() {
-    const title = taskDraft.trim();
-    if (!title) return;
-    try {
-      await taskApi.create(title, projectSlug || null);
-      taskDraft = "";
-      void refreshTasks();
-    } catch (e) {
-      toastError(e);
-    }
-  }
-
-  async function markDone(t: Task) {
-    try {
-      await taskApi.update(t.id, { status: "done" });
-      void refreshTasks();
-    } catch (e) {
-      toastError(e);
-    }
-  }
-
+  // This project's work, live: what needs you, what runs, what is queued,
+  // then the last few finished.
+  $: bands = groupBands($work.goals.filter((g) => inProject(g, projectSlug)), $work.asks);
+  $: projectWork = [...bands.needs, ...bands.working, ...bands.later, ...bands.done.slice(0, 3)];
 </script>
 
 <div class="panel" style:width="{dockW}px">
@@ -240,31 +214,19 @@
     <button class="x" use:tooltip={"Close panel"} on:click={() => dispatch("close")}><Icon name="close" size={12} /></button>
   </div>
 
-  {#if tab === "tasks"}
+  {#if tab === "work"}
     <div class="agents">
       <div class="t-head">
-        <h3>{projectSlug ? `Tasks in ${projectSlug}` : "Inbox tasks"}</h3>
-        <button class="mini" on:click={() => openTask()}>Open tasks</button>
+        <h3>{projectSlug ? `Work in ${projectSlug}` : "Work without a project"}</h3>
+        <button class="mini" on:click={() => openGoal()}>Open Work</button>
       </div>
-      <form class="t-new" on:submit|preventDefault={addTask}>
-        <Icon name="plus" size={12} />
-        <input aria-label="Add a task" placeholder="Add a task" bind:value={taskDraft} />
-      </form>
-      {#each projectTasks as t (t.id)}
-        <div class="row">
-          <button class="check" role="checkbox" aria-checked="false" use:tooltip={"Mark done"} on:click={() => markDone(t)} />
-          <button class="open" title={t.blocked_by.length ? waitsOn(t, $tasks) : t.title} on:click={() => openTask(t.id)}>
-            <span class="title">{t.title}</span>
-            {#if t.status !== "todo"}
-              <span class="pill {t.status === 'doing' ? 'live' : t.status === 'failed' ? 'bad' : 'queue'}">{statusLabel(t.status)}</span>
-            {:else if t.blocked_by.length}
-              <span class="url">Blocked</span>
-            {/if}
-          </button>
-        </div>
-      {:else}
-        <p class="empty">{$tasksError ? `Couldn't load tasks: ${$tasksError}` : doneCount ? "Everything here is done." : "No tasks yet. Add one, or ask the agent to plan with tasks."}</p>
-      {/each}
+      <div class="work-dock">
+        {#each projectWork as g (g.id)}
+          <GoalCard goal={g} compact on:open={(e) => openGoal(e.detail.id)} />
+        {:else}
+          <p class="empty">{$workError ? `Couldn't load work: ${$workError}` : "No work here yet. Ask for something and it shows up here."}</p>
+        {/each}
+      </div>
       {#if busyRuns.length}
         <h3>Running now</h3>
         {#each busyRuns as s (s.id)}
@@ -351,7 +313,7 @@
             <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
             <div class="goals" on:click={(e) => void handleLinkClick(e)}>{@html mdHtml(stripFront(goalsMd), $richReady)}</div>
           {:else if projState === "missing"}
-            <p class="goals">No GOALS.md in this project's notes yet. Tasks live in the Tasks tab.</p>
+            <p class="goals">No GOALS.md in this project's notes yet. What agents work on shows in the Work tab.</p>
           {/if}
           <button class="mini" use:tooltip={"Reload GOALS.md"} on:click={refreshProject}>Reload</button>
         </section>
@@ -524,46 +486,6 @@
   .goals { margin: 0 12px; font-size: var(--fs-md); line-height: 1.6; color: var(--muted); }
   .goals + .mini { margin-top: 10px; }
   .t-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 12px; }
-  .t-new {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 4px 12px 6px;
-    height: 30px;
-    padding: 0 10px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    color: var(--muted);
-  }
-  .t-new input {
-    flex: 1;
-    min-width: 0;
-    background: none;
-    border: none;
-    outline: none;
-    box-shadow: none !important;
-    color: var(--text);
-    font-size: var(--fs-md);
-  }
-  .check {
-    position: relative;
-    flex: none;
-    width: 24px;
-    height: 24px;
-    margin-left: 4px;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-  }
-  .check::before {
-    content: "";
-    position: absolute;
-    inset: 5px;
-    border: 1px solid var(--muted);
-    border-radius: var(--radius-sm);
-  }
-  .check:hover { background: var(--hover); }
-  .pill.bad { background: color-mix(in srgb, var(--bad) 24%, transparent); color: var(--text); }
+  .work-dock { display: flex; flex-direction: column; gap: 8px; padding: 4px 12px 4px; }
+  .work-dock .empty { margin: 8px 4px; }
 </style>

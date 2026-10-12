@@ -49,9 +49,11 @@ const MAP = {
   download: "download",
   external: "link-external",
   browser: "browser",
-  tasks: "tasklist",
-  play: "play",
-  blocked: "blocked",
+  goal: "goal",
+  send: "paper-airplane",
+  desktop: "device-desktop",
+  checkCircle: "check-circle",
+  xCircle: "x-circle",
 };
 
 const out = [];
