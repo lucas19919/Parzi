@@ -2,15 +2,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use parzi_core::config::ParziConfig;
 use parzi_core::paths;
 use parzi_core::store::SessionStore;
 use parzi_providers::State;
-use parzi_runtime::desk::{self, normalize_url};
+use parzi_runtime::desk::{self, normalize_url, DeskError, Probe};
 use parzi_runtime::tools::{Approval, Approver, AutoApprover, ToolCallInfo};
 use parzi_runtime::{handler::RunEvent, Orchestrator};
 use serde_json::{json, Value};
+
+mod window;
+
+use window::{page, page_body, print_json, short};
 
 #[derive(Parser)]
 #[command(name = "parzi", version, about = "Lean agent harness")]
@@ -23,7 +27,7 @@ struct Cli {
 enum Cmd {
     #[command(about = "Create ~/.parzi (never overwrites)")]
     Init,
-    #[command(about = "Health: config, agents, the window")]
+    #[command(about = "Health: config, agents, the window, parzi serve")]
     Doctor {
         #[arg(long)]
         json: bool,
@@ -40,10 +44,43 @@ enum Cmd {
         #[command(subcommand)]
         action: SessionCmd,
     },
-    #[command(about = "Tabs in the open window")]
+    #[command(about = "Tabs in the open window, and the pages in them")]
     Tab {
         #[command(subcommand)]
         action: TabCmd,
+    },
+    #[command(about = "Show something in the open window")]
+    Open {
+        #[command(subcommand)]
+        what: OpenCmd,
+        #[arg(long, global = true, help = "Open it without switching to it")]
+        background: bool,
+        #[arg(long, global = true, help = "Also bring the window to the front")]
+        raise: bool,
+    },
+    #[command(about = "A notification in the open window")]
+    Notify {
+        #[arg(required = true)]
+        text: Vec<String>,
+        #[arg(long, help = "The session it is about: the notice opens it")]
+        session: Option<String>,
+    },
+    #[command(about = "What the open window shows: tabs, folder, running sessions")]
+    State {
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Screenshot of the open window as a JPEG")]
+    Screenshot {
+        #[arg(long, help = "Where to save it. Default: ~/.parzi/shots/cli/")]
+        out: Option<std::path::PathBuf>,
+    },
+    #[command(about = "Follow runs, approvals and tabs as they happen. Ctrl-C stops")]
+    Watch {
+        #[arg(long, help = "Only this session")]
+        session: Option<String>,
+        #[arg(long, help = "One JSON object per line")]
+        json: bool,
     },
     #[command(about = "Run the engine with no window. Listens on 127.0.0.1")]
     Serve,
@@ -61,7 +98,7 @@ enum Cmd {
     },
     #[command(about = "Relay newline JSON on stdio to parzi serve. Parzi runs this over SSH")]
     Rpc,
-    #[command(about = "Answer a parked approval on parzi serve")]
+    #[command(about = "Tool calls waiting for a yes, in the window or on parzi serve")]
     Approval {
         #[command(subcommand)]
         action: ApprovalCmd,
@@ -132,18 +169,27 @@ enum SessionCmd {
     },
     #[command(about = "Transcript to stdout")]
     Export { id: String },
-    #[command(about = "`new` starts a session. An id continues one")]
+    #[command(
+        about = "`new` starts a session. An id continues one. Streams the reply; Ctrl-C stops the run"
+    )]
     Send {
         target: String,
+        #[arg(required = true)]
         message: Vec<String>,
-        #[arg(long, help = "Agent and model: `claude`, `claude/opus`")]
+        #[arg(
+            long,
+            help = "Agent and model: `claude`, `claude/opus`. Needed for a new session"
+        )]
         model: Option<String>,
         #[arg(
             long,
             help = "Folder the agent works in. Default: the current directory"
         )]
         cwd: Option<String>,
-        #[arg(long, help = "Approve tool calls without asking")]
+        #[arg(
+            long,
+            help = "Approve tool calls without asking. With the window open, you confirm this there"
+        )]
         yes: bool,
         #[arg(
             long,
@@ -168,31 +214,139 @@ enum SessionCmd {
 
 #[derive(Subcommand)]
 enum ApprovalCmd {
-    #[command(about = "Approvals waiting on parzi serve")]
-    List,
-    Allow {
-        key: String,
+    #[command(about = "Tool calls waiting for a yes")]
+    List {
+        #[arg(long)]
+        json: bool,
     },
-    Deny {
-        key: String,
-    },
+    #[command(about = "Allow one. A key prefix works in the window")]
+    Allow { key: String },
+    #[command(about = "Deny one")]
+    Deny { key: String },
 }
 
+#[derive(Subcommand)]
+enum OpenCmd {
+    #[command(about = "A session, in its own tab")]
+    Session { id: String },
+    #[command(about = "Settings: general, providers, connections, appearance or system")]
+    Settings { section: Option<String> },
+    #[command(about = "The brain, at a note (a path inside the vault)")]
+    Brain { path: Option<String> },
+    #[command(about = "History: sessions, history or bookmarks")]
+    History { view: Option<String> },
+    #[command(about = "The home tab")]
+    Home,
+    #[command(about = "A web page")]
+    Url { url: String },
+}
+
+/// Page commands work on the tab in front unless `--tab` names one. A tab
+/// no agent opened is yours: the window asks you before a command reads
+/// or drives it.
 #[derive(Subcommand)]
 enum TabCmd {
     List {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Open a URL, or focus the tab that already has it")]
+    #[command(about = "Open a URL, or switch to the tab that already has it")]
     Open {
         url: String,
+        #[arg(long, help = "Open it without switching to it")]
+        background: bool,
+        #[arg(long, help = "Also bring the window to the front")]
+        raise: bool,
     },
     Focus {
         id: String,
+        #[arg(long, help = "Also bring the window to the front")]
+        raise: bool,
     },
     Close {
         id: String,
+    },
+    #[command(about = "A page's text and controls")]
+    Read {
+        #[arg(long)]
+        tab: Option<String>,
+        #[arg(long, help = "Where the text starts, in characters")]
+        offset: Option<u64>,
+        #[arg(long, help = "How much text, 200 to 20000 characters (default 4000)")]
+        limit: Option<u64>,
+        #[arg(long)]
+        json: bool,
+    },
+    #[command(about = "Click a control by its text or a CSS selector")]
+    #[command(group(ArgGroup::new("target").required(true).args(["text", "selector"])))]
+    Click {
+        text: Option<String>,
+        #[arg(long)]
+        selector: Option<String>,
+        #[arg(long)]
+        tab: Option<String>,
+    },
+    #[command(about = "Type into a field: by its label, a CSS selector, or the focused one")]
+    Type {
+        text: String,
+        #[arg(long)]
+        field: Option<String>,
+        #[arg(long)]
+        selector: Option<String>,
+        #[arg(long, help = "Add to the text instead of replacing it")]
+        append: bool,
+        #[arg(long, help = "Then press Enter once")]
+        submit: bool,
+        #[arg(long)]
+        tab: Option<String>,
+    },
+    #[command(about = "Press a key: Enter, Tab, Escape, ArrowDown, a letter, ctrl+a")]
+    Press {
+        key: String,
+        #[arg(long)]
+        selector: Option<String>,
+        #[arg(long)]
+        tab: Option<String>,
+    },
+    #[command(about = "Choose an option in a dropdown")]
+    Select {
+        option: String,
+        #[arg(long)]
+        field: Option<String>,
+        #[arg(long)]
+        selector: Option<String>,
+        #[arg(long)]
+        tab: Option<String>,
+    },
+    #[command(about = "Scroll: down, up, top or bottom, or to an element")]
+    Scroll {
+        #[arg(default_value = "down", value_parser = ["down", "up", "top", "bottom"])]
+        to: String,
+        #[arg(long)]
+        selector: Option<String>,
+        #[arg(long)]
+        tab: Option<String>,
+    },
+    #[command(about = "Wait for a CSS selector or a text to show up (or go)")]
+    #[command(group(ArgGroup::new("what").required(true).args(["selector", "text"])))]
+    Wait {
+        #[arg(long)]
+        selector: Option<String>,
+        #[arg(long)]
+        text: Option<String>,
+        #[arg(long, help = "Wait until it is gone instead")]
+        gone: bool,
+        #[arg(long, default_value_t = 10, help = "Seconds, at most 60")]
+        timeout: u64,
+        #[arg(long)]
+        tab: Option<String>,
+    },
+    #[command(about = "Screenshot a page as a JPEG")]
+    Shot {
+        #[arg(long)]
+        tab: Option<String>,
+        #[arg(long, help = "Where to save it. Default: ~/.parzi/shots/cli/")]
+        out: Option<std::path::PathBuf>,
     },
 }
 
@@ -237,6 +391,21 @@ async fn main() -> Result<()> {
         Cmd::Providers { provider, json } => cmd_providers(provider.as_deref(), json).await,
         Cmd::Session { action } => cmd_session(action).await,
         Cmd::Tab { action } => cmd_tab(action).await,
+        Cmd::Open {
+            what,
+            background,
+            raise,
+        } => cmd_open(what, background, raise).await,
+        Cmd::Notify { text, session } => {
+            window::simple(
+                "desk.notify",
+                json!({ "text": text.join(" "), "session": session.unwrap_or_default() }),
+            )
+            .await
+        }
+        Cmd::State { json } => window::state(json).await,
+        Cmd::Screenshot { out } => window::screenshot(out).await,
+        Cmd::Watch { session, json } => window::watch(session, json).await,
         Cmd::Serve => cmd_serve().await,
         Cmd::Setup { spec, enable, json } => cmd_setup(spec.as_deref(), enable, json).await,
         Cmd::Rpc => {
@@ -589,14 +758,12 @@ async fn cmd_remote(action: RemoteCmd) -> Result<()> {
 }
 
 async fn cmd_approval(action: ApprovalCmd) -> Result<()> {
-    if desk::desk_is_open().await {
-        anyhow::bail!("the desk is open and handles its own approvals");
-    }
     match action {
-        ApprovalCmd::List => {
-            let v = desk::call_serve("approval.list", json!({}), Duration::from_secs(5))
-                .await
-                .map_err(|e| anyhow::anyhow!(e))?;
+        ApprovalCmd::List { json } => {
+            let v = window::approvals("approval.list", json!({})).await?;
+            if json {
+                return print_json(&v);
+            }
             let rows = v
                 .get("approvals")
                 .and_then(Value::as_array)
@@ -610,7 +777,7 @@ async fn cmd_approval(action: ApprovalCmd) -> Result<()> {
                 let key = row.get("key").and_then(Value::as_str).unwrap_or("");
                 let session = row.get("session").and_then(Value::as_str).unwrap_or("");
                 let label = row.get("label").and_then(Value::as_str).unwrap_or("");
-                println!("{key}  {session}  {label}");
+                println!("{key}  {}  {label}", short(session));
             }
             Ok(())
         }
@@ -620,32 +787,22 @@ async fn cmd_approval(action: ApprovalCmd) -> Result<()> {
 }
 
 async fn answer_approval(key: &str, allow: bool) -> Result<()> {
-    desk::call_serve(
-        "approval.answer",
-        json!({ "key": key, "allow": allow }),
-        Duration::from_secs(5),
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!(e))?;
-    println!("{key}");
+    let v = window::approvals("approval.answer", json!({ "key": key, "allow": allow })).await?;
+    println!(
+        "{} {}",
+        if allow { "allowed" } else { "denied" },
+        v.get("key").and_then(Value::as_str).unwrap_or(key)
+    );
     Ok(())
 }
 
+/// Neither the window nor `parzi serve` answers: the files are ours.
 fn offline(err: &str) -> bool {
-    err.contains("not open")
-}
-
-async fn window(op: &str, body: Value, wait: Duration) -> Result<Value, String> {
-    desk::call_within(op, body, wait).await
+    desk::is_not_open(err)
 }
 
 async fn engine(op: &str, body: Value, wait: Duration) -> Result<Value, String> {
     desk::call_desk_or_serve(op, body, wait).await
-}
-
-fn print_json(v: &Value) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(v)?);
-    Ok(())
 }
 
 async fn cmd_session(action: SessionCmd) -> Result<()> {
@@ -771,34 +928,88 @@ async fn session_send(
     if message.trim().is_empty() {
         anyhow::bail!("empty message");
     }
+    // No automatic models: a new thread is told which agent runs it.
+    let model = model.map(str::trim).filter(|m| !m.is_empty());
+    if target == "new" && model.is_none() {
+        anyhow::bail!(
+            "a new session needs a model: --model claude (or claude/opus, codex, ...). `parzi providers` lists them"
+        );
+    }
     let base = match cwd.filter(|c| !c.trim().is_empty()) {
         Some(c) => std::path::PathBuf::from(c),
         None => std::env::current_dir().context("reading the current directory")?,
     };
-    let body = json!({
-        "target": target,
-        "message": message,
-        "model": model.unwrap_or_default(),
-        "cwd": base.display().to_string(),
-        "yes": yes,
-        "effort": effort,
-    });
-    match engine("session.send", body, Duration::from_secs(3600)).await {
+    let body = window::send_body(
+        target,
+        message,
+        model,
+        &base.display().to_string(),
+        yes,
+        effort,
+    );
+    let view = Arc::new(std::sync::Mutex::new(window::SendView::default()));
+    let shown = view.clone();
+    let mut on_event = move |v: &Value| {
+        if let Ok(mut view) = shown.lock() {
+            view.show(v);
+        }
+    };
+    let sent = desk::request_within("session.send", body.clone(), None, &mut on_event);
+    let got = tokio::select! {
+        r = sent => r,
+        r = tokio::signal::ctrl_c() => {
+            r.context("waiting for ctrl-c")?;
+            // Ctrl-C stops the run in the window too, not just this command.
+            let id = view.lock().ok().and_then(|v| v.session.clone());
+            if let Some(id) = id {
+                let _ = desk::request("session.kill", json!({ "id": id })).await;
+                eprintln!("\nstopped {id}");
+            }
+            std::process::exit(130);
+        }
+    };
+    let view = view
+        .lock()
+        .map(|v| (v.printed, v.ended_line))
+        .unwrap_or_default();
+    match got {
         Ok(v) => {
-            if let Some(id) = v.get("id").and_then(Value::as_str) {
-                eprintln!("session {id}");
+            if !view.0 {
+                // A window from before streaming answers with the whole text.
+                if let Some(id) = v.get("id").and_then(Value::as_str) {
+                    eprintln!("session {id}");
+                }
+                println!("{}", v.get("text").and_then(Value::as_str).unwrap_or(""));
+            } else if !view.1 {
+                println!();
             }
-            if v.get("serve").and_then(Value::as_bool) == Some(true) {
-                let status = v.get("status").and_then(Value::as_str).unwrap_or("active");
-                eprintln!("{status} on parzi serve");
-                eprintln!("parzi approval list");
-                return Ok(());
-            }
-            println!("{}", v.get("text").and_then(Value::as_str).unwrap_or(""));
             Ok(())
         }
-        Err(e) if offline(&e) => send_local(target, message, model, &base, yes, effort).await,
-        Err(e) => anyhow::bail!(e),
+        Err(DeskError::Failed(e)) => {
+            if view.0 && !view.1 {
+                println!();
+            }
+            anyhow::bail!(e)
+        }
+        Err(DeskError::NotOpen) => {
+            let mut body = body;
+            body["stream"] = json!(false);
+            match desk::call_serve("session.send", body, Duration::from_secs(60)).await {
+                Ok(v) => {
+                    if let Some(id) = v.get("id").and_then(Value::as_str) {
+                        eprintln!("session {id}");
+                    }
+                    let status = v.get("status").and_then(Value::as_str).unwrap_or("active");
+                    eprintln!("{status} on parzi serve");
+                    eprintln!("parzi approval list");
+                    Ok(())
+                }
+                Err(e) if e.contains("not running") => {
+                    send_local(target, message, model, &base, yes, effort).await
+                }
+                Err(e) => anyhow::bail!(e),
+            }
+        }
     }
 }
 
@@ -825,19 +1036,21 @@ async fn send_local(
         Arc::new(CliApprover)
     };
     let cwd = cwd.display().to_string();
-    let mut rx = if let Some(id) = continued {
-        orch.send_to(
-            &id,
-            message,
-            Some(approver),
-            &cwd,
-            effort,
-            vec![],
-            model.map(str::to_string),
-            None,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?
+    let (id, mut rx) = if let Some(id) = continued {
+        let rx = orch
+            .send_to(
+                &id,
+                message,
+                Some(approver),
+                &cwd,
+                effort,
+                vec![],
+                model.map(str::to_string),
+                None,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        (id, rx)
     } else {
         let (meta, rx) = orch
             .spawn(
@@ -854,9 +1067,20 @@ async fn send_local(
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         eprintln!("session {}", meta.id);
-        rx
+        (meta.id, rx)
     };
-    while let Some(ev) = rx.recv().await {
+    loop {
+        let ev = tokio::select! {
+            ev = rx.recv() => ev,
+            r = tokio::signal::ctrl_c() => {
+                r.context("waiting for ctrl-c")?;
+                // The run and its agent process stop with this command.
+                let _ = orch.kill(&id).await;
+                eprintln!("\nstopped {id}");
+                std::process::exit(130);
+            }
+        };
+        let Some(ev) = ev else { break };
         match ev {
             RunEvent::Text(t) => {
                 use std::io::Write;
@@ -981,48 +1205,192 @@ async fn session_delete(id: &str) -> Result<()> {
     }
 }
 
-async fn cmd_tab(action: TabCmd) -> Result<()> {
-    let (op, body) = match action {
-        TabCmd::List { json } => {
-            let v = window("tab.list", json!({}), Duration::from_secs(5))
-                .await
-                .map_err(|e| anyhow::anyhow!(e))?;
-            if json {
-                return print_json(&v);
-            }
-            let rows = v
-                .get("tabs")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let active = v.get("active").and_then(Value::as_str).unwrap_or("");
-            if rows.is_empty() {
-                println!("no tabs");
-                return Ok(());
-            }
-            for row in rows {
-                let id = row.get("id").and_then(Value::as_str).unwrap_or("");
-                let kind = row.get("kind").and_then(Value::as_str).unwrap_or("");
-                let title = row.get("title").and_then(Value::as_str).unwrap_or("");
-                let url = row.get("url").and_then(Value::as_str).unwrap_or("");
-                let mark = if id == active { "*" } else { " " };
-                println!("{mark} {id}  {kind}  {title}  {url}");
-            }
-            return Ok(());
-        }
-        TabCmd::Open { url } => ("tab.open", json!({ "url": normalize_url(&url) })),
-        TabCmd::Focus { id } => ("tab.focus", json!({ "id": id })),
+/// The op and body a tab command sends; None for the ones that print
+/// something richer (list, read, shot).
+fn tab_body(cmd: TabCmd) -> Option<(&'static str, Value)> {
+    let opt = |v: Option<String>| v.map_or(Value::Null, Value::String);
+    Some(match cmd {
+        TabCmd::Open {
+            url,
+            background,
+            raise,
+        } => (
+            "tab.open",
+            json!({ "url": normalize_url(&url), "focus": !background, "raise": raise }),
+        ),
+        TabCmd::Focus { id, raise } => ("tab.focus", json!({ "id": id, "raise": raise })),
         TabCmd::Close { id } => ("tab.close", json!({ "id": id })),
+        TabCmd::Click {
+            text,
+            selector,
+            tab,
+        } => (
+            "tab.click",
+            page_body(tab, json!({ "text": opt(text), "selector": opt(selector) })),
+        ),
+        TabCmd::Type {
+            text,
+            field,
+            selector,
+            append,
+            submit,
+            tab,
+        } => (
+            "tab.type",
+            page_body(
+                tab,
+                json!({
+                    "text": text,
+                    "field": opt(field),
+                    "selector": opt(selector),
+                    "append": append,
+                    "submit": submit,
+                }),
+            ),
+        ),
+        TabCmd::Press { key, selector, tab } => (
+            "tab.press",
+            page_body(tab, json!({ "key": key, "selector": opt(selector) })),
+        ),
+        TabCmd::Select {
+            option,
+            field,
+            selector,
+            tab,
+        } => (
+            "tab.select",
+            page_body(
+                tab,
+                json!({ "option": option, "field": opt(field), "selector": opt(selector) }),
+            ),
+        ),
+        TabCmd::Scroll { to, selector, tab } => (
+            "tab.scroll",
+            page_body(tab, json!({ "to": to, "selector": opt(selector) })),
+        ),
+        TabCmd::Wait {
+            selector,
+            text,
+            gone,
+            timeout,
+            tab,
+        } => (
+            "tab.wait",
+            page_body(
+                tab,
+                json!({
+                    "selector": opt(selector),
+                    "text": opt(text),
+                    "gone": gone,
+                    "timeout_ms": timeout.min(60) * 1000,
+                }),
+            ),
+        ),
+        TabCmd::List { .. } | TabCmd::Read { .. } | TabCmd::Shot { .. } => return None,
+    })
+}
+
+async fn cmd_tab(action: TabCmd) -> Result<()> {
+    match action {
+        TabCmd::List { json } => window::tab_list(json).await,
+        TabCmd::Read {
+            tab,
+            offset,
+            limit,
+            json,
+        } => window::tab_read(tab, offset, limit, json).await,
+        TabCmd::Shot { tab, out } => window::tab_shot(tab, out).await,
+        other => match tab_body(other) {
+            Some((op @ ("tab.open" | "tab.focus" | "tab.close"), body)) => {
+                window::simple(op, body).await
+            }
+            Some((op, body)) => page(op, body).await,
+            None => Ok(()),
+        },
+    }
+}
+
+fn open_body(what: OpenCmd, background: bool, raise: bool) -> Value {
+    let (kind, extra) = match what {
+        OpenCmd::Session { id } => ("session", json!({ "id": id })),
+        OpenCmd::Settings { section } => ("settings", json!({ "section": section })),
+        OpenCmd::Brain { path } => ("brain", json!({ "path": path })),
+        OpenCmd::History { view } => ("history", json!({ "view": view })),
+        OpenCmd::Home => ("home", json!({})),
+        OpenCmd::Url { url } => ("url", json!({ "url": normalize_url(&url) })),
     };
-    let v = window(op, body, Duration::from_secs(5))
-        .await
-        .map_err(|e| anyhow::anyhow!(e))?;
-    print_json(&v)
+    let mut body = json!({ "what": kind, "focus": !background, "raise": raise });
+    if let (Value::Object(b), Value::Object(e)) = (&mut body, extra) {
+        b.extend(e.into_iter().filter(|(_, v)| !v.is_null()));
+    }
+    body
+}
+
+async fn cmd_open(what: OpenCmd, background: bool, raise: bool) -> Result<()> {
+    window::simple("desk.open", open_body(what, background, raise)).await
+}
+
+/// The window, checked for real: the file, the hello, then the token.
+async fn window_check() -> parzi_runtime::doctor::Check {
+    let check = |ok: bool, detail: String| parzi_runtime::doctor::Check {
+        name: "window".into(),
+        ok,
+        detail,
+    };
+    match desk::probe().await {
+        Probe::Open(file) => match desk::request("ping", json!({})).await {
+            Ok(_) => check(
+                true,
+                format!(
+                    "Parzi {} answers on 127.0.0.1:{} (pid {})",
+                    if file.version.is_empty() {
+                        "(older)"
+                    } else {
+                        &file.version
+                    },
+                    file.port,
+                    file.pid
+                ),
+            ),
+            Err(DeskError::Failed(e)) if e.contains("unknown op") => check(
+                true,
+                format!("an older Parzi answers on 127.0.0.1:{}", file.port),
+            ),
+            Err(e) => check(false, format!("the window did not take its token: {e}")),
+        },
+        Probe::Cleared => check(
+            true,
+            "not open (removed a gui.json a crash left behind)".into(),
+        ),
+        Probe::NotOpen => check(true, "not open".into()),
+        Probe::Stuck(why) => check(false, why),
+    }
+}
+
+async fn serve_check() -> parzi_runtime::doctor::Check {
+    let (ok, detail) = match desk::call_serve("health", json!({}), Duration::from_secs(3)).await {
+        Ok(v) => (
+            true,
+            format!(
+                "parzi serve {} answers",
+                v.get("version").and_then(Value::as_str).unwrap_or("?")
+            ),
+        ),
+        Err(e) if e.contains("not running") => (true, "not running".into()),
+        Err(e) => (false, e),
+    };
+    parzi_runtime::doctor::Check {
+        name: "serve".into(),
+        ok,
+        detail,
+    }
 }
 
 async fn cmd_doctor(json: bool) -> Result<()> {
     let (cfg, _) = boot()?;
-    let checks = parzi_runtime::doctor::Doctor::new(cfg).run().await;
+    let mut checks = parzi_runtime::doctor::Doctor::new(cfg).run().await;
+    checks.push(window_check().await);
+    checks.push(serve_check().await);
     if json {
         println!("{}", serde_json::to_string_pretty(&checks)?);
         return Ok(());
@@ -1059,7 +1427,21 @@ async fn cmd_providers(only: Option<&str>, json: bool) -> Result<()> {
         }
         None => vec![],
     };
-    let mut all = Orchestrator::new(cfg, store).refresh_providers(&ids).await;
+    // The window's board when it is open: one set of probes, the same
+    // answer the window shows.
+    let shown = desk::request("providers", json!({ "refresh": true, "ids": ids }))
+        .await
+        .ok()
+        .and_then(|v| {
+            serde_json::from_value::<Vec<parzi_providers::ProviderStatus>>(
+                v.get("providers")?.clone(),
+            )
+            .ok()
+        });
+    let mut all = match shown {
+        Some(all) => all,
+        None => Orchestrator::new(cfg, store).refresh_providers(&ids).await,
+    };
     all.retain(|s| ids.is_empty() || ids.contains(&s.provider));
     all.sort_by_key(|s| {
         parzi_providers::PROVIDERS
@@ -1091,10 +1473,117 @@ async fn cmd_providers(only: Option<&str>, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn short(id: &str) -> &str {
-    id.get(..8).unwrap_or(id)
-}
-
 fn resolve_id(store: &SessionStore, id: &str) -> Result<String> {
     Ok(store.resolve_id(id)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        Cli::try_parse_from(std::iter::once("parzi").chain(args.iter().copied()))
+    }
+
+    fn tab(args: &[&str]) -> (&'static str, Value) {
+        let Cmd::Tab { action } = parse(args).unwrap().cmd else {
+            panic!("not a tab command: {args:?}");
+        };
+        tab_body(action).unwrap()
+    }
+
+    #[test]
+    fn page_commands_build_their_requests() {
+        let (op, body) = tab(&["tab", "click", "Sign in", "--tab", "tab-1"]);
+        assert_eq!(op, "tab.click");
+        assert_eq!(body["tab"], "tab-1");
+        assert_eq!(body["args"]["text"], "Sign in");
+        let (_, body) = tab(&["tab", "click", "--selector", "#go"]);
+        assert_eq!(body["args"]["selector"], "#go");
+        assert!(body.get("tab").is_none(), "default: the tab in front");
+        let (op, body) = tab(&["tab", "type", "hello", "--field", "Search", "--submit"]);
+        assert_eq!(op, "tab.type");
+        assert_eq!(body["args"]["submit"], true);
+        assert_eq!(body["args"]["append"], false);
+        let (op, body) = tab(&["tab", "press", "ctrl+a"]);
+        assert_eq!((op, &body["args"]["key"]), ("tab.press", &json!("ctrl+a")));
+        let (op, body) = tab(&["tab", "select", "Blue", "--field", "Color"]);
+        assert_eq!(
+            (op, &body["args"]["option"]),
+            ("tab.select", &json!("Blue"))
+        );
+        let (_, body) = tab(&["tab", "scroll"]);
+        assert_eq!(body["args"]["to"], "down");
+        let (op, body) = tab(&["tab", "wait", "--text", "Done", "--timeout", "500"]);
+        assert_eq!(op, "tab.wait");
+        assert_eq!(body["args"]["timeout_ms"], 60_000, "capped at a minute");
+        let (op, body) = tab(&["tab", "open", "github.com", "--background"]);
+        assert_eq!(op, "tab.open");
+        assert_eq!(body["url"], "https://github.com");
+        assert_eq!(body["focus"], false);
+        let (_, body) = tab(&["tab", "open", "github.com"]);
+        assert_eq!(body["focus"], true, "the CLI's own tab comes forward");
+    }
+
+    #[test]
+    fn page_commands_need_a_target() {
+        assert!(parse(&["tab", "click"]).is_err());
+        assert!(parse(&["tab", "wait"]).is_err());
+        assert!(parse(&["tab", "scroll", "sideways"]).is_err());
+        assert!(parse(&["tab", "read", "--offset", "4000", "--limit", "500"]).is_ok());
+        assert!(parse(&["tab", "shot", "--out", "x.jpg"]).is_ok());
+    }
+
+    #[test]
+    fn open_names_what_to_show() {
+        let open = |args: &[&str]| {
+            let Cmd::Open {
+                what,
+                background,
+                raise,
+            } = parse(args).unwrap().cmd
+            else {
+                panic!("not open");
+            };
+            open_body(what, background, raise)
+        };
+        let body = open(&["open", "settings", "providers"]);
+        assert_eq!(body["what"], "settings");
+        assert_eq!(body["section"], "providers");
+        assert_eq!(body["focus"], true);
+        let body = open(&["open", "session", "abc123", "--background", "--raise"]);
+        assert_eq!(body["id"], "abc123");
+        assert_eq!(body["focus"], false);
+        assert_eq!(body["raise"], true);
+        let body = open(&["open", "brain"]);
+        assert!(body.get("path").is_none());
+        let body = open(&["open", "url", "localhost:1420"]);
+        assert_eq!(body["url"], "http://localhost:1420");
+        assert!(parse(&["open", "nowhere"]).is_err());
+    }
+
+    #[test]
+    fn the_rest_of_the_window_commands_parse() {
+        assert!(parse(&["watch", "--session", "abc", "--json"]).is_ok());
+        assert!(parse(&["state", "--json"]).is_ok());
+        assert!(parse(&["screenshot"]).is_ok());
+        assert!(parse(&["notify", "build", "is", "green"]).is_ok());
+        assert!(parse(&["notify"]).is_err());
+        assert!(parse(&["approval", "list", "--json"]).is_ok());
+        assert!(parse(&["approval", "allow", "1a2b"]).is_ok());
+        assert!(
+            parse(&["session", "send", "new"]).is_err(),
+            "needs a message"
+        );
+        let Cmd::Session {
+            action: SessionCmd::Send { model, yes, .. },
+        } = parse(&["session", "send", "new", "hi", "--yes"])
+            .unwrap()
+            .cmd
+        else {
+            panic!("not send");
+        };
+        assert_eq!(model, None, "no default model, never `auto`");
+        assert!(yes);
+    }
 }

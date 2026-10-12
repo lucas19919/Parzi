@@ -129,23 +129,56 @@ quota. New threads use the default model picked in Settings › Providers; a
 started thread stays with its agent. A turn that fails says so in the thread,
 in the vendor's own words.
 
-An agent may read anywhere, but a write outside the session's folder is never
+An agent may read anywhere except Parzi's and the agents' own token files
+(see CLI below), but a write outside the session's folder is never
 approved on your behalf: you are asked, and a run with nobody to ask is
 refused. The desktop app logs to `~/.parzi/logs/parzi-<date>.log`.
 
 ## CLI
 
-When the window is open the CLI drives it (it finds the window through
-`~/.parzi/gui.json`); otherwise session commands work on the files directly.
+When the window is open the CLI drives it: it finds the window through
+`~/.parzi/gui.json` and checks that the window itself answers before it
+sends the token (a file left by a crash is removed). Otherwise session
+commands go to `parzi serve` if it runs, or work on the files directly.
 
 ```powershell
 parzi session list
-parzi session send new "hello" --model claude --cwd C:\src\app   # asks before tools
+parzi session send new "hello" --model claude --cwd C:\src\app   # streams the reply; Ctrl-C stops the run
 parzi session send <id> "and now the tests" --yes                # approves every tool call
 parzi session export <id>                                        # transcript to stdout
-parzi tab open github.com                                        # opens a page tab
+parzi approval list                                              # tool calls waiting for a yes
+parzi approval allow 1a2b                                        # a key prefix is enough
+parzi watch                                                      # runs, approvals, tabs as they happen
+parzi state                                                      # tabs, folder, running sessions
+parzi open session <id>                                          # also: settings providers, brain <note>, history, home
+parzi notify "deploy is green"
+parzi screenshot                                                 # the window, to ~/.parzi/shots/cli/
 parzi providers --json
+parzi doctor                                                     # also checks the window and parzi serve
 ```
+
+Page tabs, from the command line. Each works on the tab in front unless
+`--tab <id>` names one (`parzi tab list` shows ids):
+
+```powershell
+parzi tab open github.com                       # --background keeps your current tab
+parzi tab read --offset 4000                    # text in pages, plus the controls
+parzi tab click "Sign in"                       # or --selector "#login"
+parzi tab type "rust tauri" --field Search --submit
+parzi tab press Escape                          # Enter, Tab, ArrowDown, ctrl+a ...
+parzi tab select Blue --field Color
+parzi tab scroll bottom
+parzi tab wait --text "Results" --timeout 20
+parzi tab shot --out page.jpg
+```
+
+Some commands wait for you in the window, whoever holds the token:
+`--yes` (a run that approves its own shell commands and file writes),
+`session delete`, and reading or driving a page tab that no agent opened
+(you can allow that for 10 minutes at a time). The CLI says when it is
+waiting. Agents cannot open `gui.json`, `serve.json`, `config.toml`, the
+server's SSH key or the agents' own sign-in files with their file tools,
+and shell commands that name them are refused.
 
 Sessions are plain files under `~/.parzi/sessions/<id>/` (`meta.json`,
 append-only `events.jsonl`, rendered `session.md`), readable by anything.
