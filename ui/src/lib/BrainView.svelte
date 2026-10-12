@@ -400,10 +400,10 @@
   <aside>
     <div class="top">
       <div class="search">
-        <Icon name="search" size={13} />
+        <Icon name="search" />
         <input bind:value={query} placeholder="Search" aria-label="Search notes" spellcheck="false" />
       </div>
-      <button class="icon" use:tooltip={"Open the brain folder"} on:click={() => openOutside("", "folder")}><Icon name="folder" size={14} /></button>
+      <button class="icon" use:tooltip={"Open the brain folder"} on:click={() => openOutside("", "folder")}><Icon name="folder" /></button>
     </div>
 
     <div class="tree">
@@ -412,8 +412,8 @@
         {#if f.key !== UNUSED || f.items.length || !query.trim()}
           <div class="folder" class:on={isCurrent(f, selected, folder)} class:drop={dragging && dropOn === f.key} data-folder={f.key}>
             <button class="folder-name" title={f.project?.folder ?? ""} aria-expanded={open} on:click={() => openFolder(f)}>
-              <span class="chev"><Icon name={open ? "chevDown" : "chevRight"} size={11} stroke={2} /></span>
-              <Icon name={f.key === EVERYWHERE ? "globe" : "folder"} size={14} />
+              <span class="chev"><Icon name={open ? "chevDown" : "chevRight"} size={12} /></span>
+              <Icon name={f.key === EVERYWHERE ? "globe" : "folder"} />
               <span class="name">{f.title}</span>
             </button>
             {#if f.key !== UNUSED}
@@ -432,7 +432,7 @@
                 >
                   <span class="name">{n.title}</span>
                   {#if twin(n, f)}<span class="from">{twin(n, f)}</span>{/if}
-                  {#if n.pinned}<span class="pin" title="Always included in full"><Icon name="pin" size={11} /></span>{/if}
+                  {#if n.pinned}<span class="pin" title="Always included in full"><Icon name="pin" size={12} /></span>{/if}
                 </button>
               {/each}
               {#if creatingIn === f.key}
@@ -466,7 +466,7 @@
             use:tooltip={note.pinned ? "Pinned: the agent always gets the whole note. Click to unpin." : "Not pinned: the agent sees the title and opens the note when it needs it. Click to pin."}
             on:click={togglePin}
           >
-            <Icon name="pin" size={14} />
+            <Icon name="pin" />
           </button>
         {/if}
         <div class="seg" role="group" aria-label="View" data-ui-segmented>
@@ -474,10 +474,10 @@
           <button class:on={editing} aria-pressed={editing} on:click={() => (editing = true)}>Edit</button>
         </div>
         {#if obsidian !== "missing"}
-          <button class="icon" use:tooltip={"Open in Obsidian"} on:click={() => openOutside(note?.path ?? "", "obsidian")}><Icon name="arrowRight" size={14} /></button>
+          <button class="icon" use:tooltip={"Open in Obsidian"} on:click={() => openOutside(note?.path ?? "", "obsidian")}><Icon name="arrowRight" /></button>
         {/if}
-        <button class="icon" use:tooltip={"Open the file"} on:click={() => openOutside(note?.path ?? "", "file")}><Icon name="file" size={14} /></button>
-        <button class="icon danger" use:tooltip={noteProject ? "Remove project (its notes stay)" : "Delete note"} on:click={removeNote}><Icon name="trash" size={14} /></button>
+        <button class="icon" use:tooltip={"Open the file"} on:click={() => openOutside(note?.path ?? "", "file")}><Icon name="file" /></button>
+        <button class="icon danger" use:tooltip={noteProject ? "Remove project (its notes stay)" : "Delete note"} on:click={removeNote}><Icon name="trash" /></button>
       </div>
       <div class="content">
         {#if editing}

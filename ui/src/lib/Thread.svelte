@@ -339,10 +339,10 @@ ${e.text}` : e.text;
       <div class="row user">
         <div class="user-line">
           <button class="copy" use:tooltip={"Copy"} on:click={() => copy(stripMarker(item.text), item.key)}>
-            <Icon name={copied === item.key ? "check" : "copy"} size={13} />
+            <Icon name={copied === item.key ? "check" : "copy"} />
           </button>
           <button class="copy" use:tooltip={"Edit in composer"} on:click={() => dispatch("edited", { text: stripMarker(item.text) })}>
-            <Icon name="pencil" size={13} />
+            <Icon name="pencil" />
           </button>
           <div class="bubble msg">{@html mdHtml(stripMarker(item.text), $richReady)}</div>
         </div>
@@ -371,13 +371,13 @@ ${e.text}` : e.text;
         </div>
         <div class="actions">
           <button class="copy" use:tooltip={"Copy"} on:click={() => copy(item.text, item.key)}>
-            <Icon name={copied === item.key ? "check" : "copy"} size={13} />
+            <Icon name={copied === item.key ? "check" : "copy"} />
           </button>
           <button class="copy" use:tooltip={"Save to brain"} on:click={() => save(item.text, item.key)}>
-            <Icon name={saved === item.key ? "check" : "brain"} size={13} />
+            <Icon name={saved === item.key ? "check" : "brain"} />
           </button>
           <button class="copy" use:tooltip={"Fork thread to try again"} on:click={() => dispatch("forked")}>
-            <Icon name="fork" size={13} />
+            <Icon name="fork" />
           </button>
         </div>
       </div>
@@ -500,14 +500,14 @@ ${e.text}` : e.text;
     padding: 8px 16px;
     background: var(--line);
     border: 1px solid var(--line);
-    border-radius: 14px;
+    border-radius: var(--radius-lg);
     color: var(--text);
     font-size: var(--fs-base);
     line-height: 1.5;
     overflow-wrap: break-word;
   }
   .bubble:has(p + p, pre, ul, ol, blockquote) {
-    border-radius: 12px;
+    border-radius: var(--radius-lg);
   }
   .bubble :global(h1),
   .bubble :global(h2),

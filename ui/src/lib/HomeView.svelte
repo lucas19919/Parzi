@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
-  import { brain, type Project, type ProviderStatus, type SessionMeta } from "./api";
+  import { api, brain, type GitStatus, type Project, type ProviderStatus, type SessionMeta } from "./api";
   import { faviconUrl, history, pins } from "./browserData";
   import { hasMark } from "./providerMarks";
   import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "./providerRows";
-  import { remote as server } from "./remote";
+  import { loadRemoteInfo, remote as server, remoteInfo } from "./remote";
   import { folderName, hostOf } from "./tabs";
   import { HOME_WIDGETS, hiddenWidgets, toggleWidget, type HomeWidget } from "./homeWidgets";
   import { popover, placeAbove } from "./popover";
@@ -27,6 +27,7 @@
     folder: { path: string };
     agents: void;
     brain: void;
+    remoteSetup: void;
   }>();
 
   const ROWS = 4;
@@ -78,6 +79,51 @@
     return p.notes.length ? `${p.notes.length} note${p.notes.length === 1 ? "" : "s"}` : "";
   }
 
+  // Git: the draft's folder on this PC (a server folder has no status here).
+  let git: GitStatus | null = null;
+  let gitFor: string | null = null;
+  $: gitFolder = remote ? "" : folder;
+  $: if (gitFolder !== gitFor) {
+    gitFor = gitFolder;
+    void loadGit();
+  }
+
+  async function loadGit() {
+    const dir = gitFor;
+    const s = dir ? await api.gitStatus(dir).catch(() => null) : null;
+    if (dir === gitFor) git = s;
+  }
+
+  let syncing = false;
+  async function syncNow() {
+    syncing = true;
+    try {
+      await server.sync();
+      await loadRemoteInfo();
+    } catch {
+      // The card shows the server as offline; nothing else to say here.
+    } finally {
+      syncing = false;
+    }
+  }
+
+  // Branches and remotes change outside Parzi: refresh while Home is up.
+  onMount(() => {
+    const refresh = () => {
+      if (shown("git")) void loadGit();
+    };
+    const timer = window.setInterval(refresh, 30_000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  });
+
+  function agoSecs(t: number) {
+    return t ? ago(new Date(t * 1000).toISOString()) : "";
+  }
+
   // A site without a favicon keeps its row, just no picture.
   function noIcon(e: Event) {
     (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
@@ -93,7 +139,7 @@
   {#if shown("recent")}
   <section class="card" aria-labelledby="home-recent">
     <header>
-      <h3 id="home-recent"><Icon name="chat" size={14} />Recent sessions</h3>
+      <h3 id="home-recent"><Icon name="chat" />Recent sessions</h3>
       {#if threads.length}<button class="more" on:click={() => dispatch("allSessions")}>All</button>{/if}
     </header>
     {#if recent.length}
@@ -115,7 +161,7 @@
   {#if shown("agents")}
   <section class="card" aria-labelledby="home-agents">
     <header>
-      <h3 id="home-agents"><Icon name="bot" size={14} />Agents</h3>
+      <h3 id="home-agents"><Icon name="bot" />Agents</h3>
       <button class="more" on:click={() => dispatch("agents")}>Manage</button>
     </header>
     {#if agents.length}
@@ -143,7 +189,7 @@
   {#if shown("projects")}
   <section class="card" aria-labelledby="home-projects">
     <header>
-      <h3 id="home-projects"><Icon name="project" size={14} />Projects</h3>
+      <h3 id="home-projects"><Icon name="project" />Projects</h3>
       <button class="more" on:click={() => dispatch("brain")}>Brain</button>
     </header>
     {#if projects.length}
@@ -161,10 +207,64 @@
   </section>
   {/if}
 
+  {#if shown("git")}
+  <section class="card" aria-labelledby="home-git">
+    <header>
+      <h3 id="home-git"><Icon name="branch" />Git</h3>
+      {#if gitFolder}<button class="more" on:click={() => loadGit()}>Refresh</button>{/if}
+    </header>
+    {#if git}
+      <div class="lines">
+        <div class="line">
+          <span class="name">{git.branch}</span>
+          <span class="meta num">{git.upstream ? (git.ahead || git.behind ? `${git.ahead} ahead, ${git.behind} behind` : "Up to date") : "No upstream"}</span>
+        </div>
+        <div class="line">
+          <span class="name" class:quiet={!git.changed && !git.untracked}>{git.changed || git.untracked ? `${git.changed} changed, ${git.untracked} new` : "Clean"}</span>
+          <span class="meta">{folderName(gitFolder)}</span>
+        </div>
+        {#if git.last_subject}
+          <div class="line">
+            <span class="name quiet">{git.last_subject}</span>
+            <span class="meta">{agoSecs(git.last_time)}</span>
+          </div>
+        {/if}
+      </div>
+    {:else}
+      <p class="empty">{remote ? "Git status shows for folders on this PC." : gitFolder ? `${folderName(gitFolder)} isn't a git repository.` : "Pick a project to see its branch and changes."}</p>
+    {/if}
+  </section>
+  {/if}
+
+  {#if shown("server")}
+  <section class="card" aria-labelledby="home-server">
+    <header>
+      <h3 id="home-server"><Icon name="server" />Server</h3>
+      {#if $remoteInfo}<button class="more" disabled={syncing} on:click={syncNow}>{syncing ? "Syncing…" : "Sync now"}</button>{/if}
+    </header>
+    {#if $remoteInfo}
+      <div class="lines">
+        <div class="line">
+          <span class="dot" class:live={$remoteInfo.alive} />
+          <span class="name">{$remoteInfo.user}@{$remoteInfo.host}</span>
+          <span class="meta">{$remoteInfo.alive ? "Online" : "Offline"}</span>
+        </div>
+        <div class="line">
+          <span class="name quiet">{$remoteInfo.synced_at ? `Synced ${ago(new Date($remoteInfo.synced_at).toISOString())}` : "Not synced yet"}</span>
+          <span class="meta">{$remoteInfo.version ? `Parzi ${$remoteInfo.version}` : ""}</span>
+        </div>
+      </div>
+    {:else}
+      <p class="empty">Run sessions on your own Linux server and keep notes, settings and sessions in step across devices.</p>
+      <div class="cta"><button class="more" on:click={() => dispatch("remoteSetup")}>Set up a server</button></div>
+    {/if}
+  </section>
+  {/if}
+
   {#if shown("sites")}
   <section class="card" aria-labelledby="home-sites">
     <header>
-      <h3 id="home-sites"><Icon name="globe" size={14} />{$pins.length ? "Pinned" : "Most visited"}</h3>
+      <h3 id="home-sites"><Icon name="globe" />{$pins.length ? "Pinned" : "Most visited"}</h3>
     </header>
     {#if sites.length}
       <div class="sites" data-ui-list>
@@ -211,16 +311,9 @@
 <style>
   .home {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 12px;
     width: 100%;
-  }
-  /* An odd card out takes the full width. */
-  .card:last-child:nth-child(odd) {
-    grid-column: 1 / -1;
-  }
-  .card:last-child:nth-child(odd) .sites {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
   .card {
     display: flex;
@@ -254,7 +347,7 @@
     color: var(--muted);
   }
   .more {
-    height: 22px;
+    height: 24px;
     padding: 0 8px;
     background: none;
     border: none;
@@ -412,6 +505,24 @@
   }
   .opt:hover {
     background: var(--hover);
+  }
+  .lines {
+    display: flex;
+    flex-direction: column;
+  }
+  .line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 32px;
+    padding: 0 8px;
+    color: var(--text);
+  }
+  .quiet {
+    color: var(--muted);
+  }
+  .cta {
+    padding: 4px;
   }
   .sites {
     display: grid;

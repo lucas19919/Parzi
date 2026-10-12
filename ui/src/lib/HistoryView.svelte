@@ -85,7 +85,7 @@
       <button class:on={view === "bookmarks"} aria-pressed={view === "bookmarks"} on:click={() => show("bookmarks")}>Bookmarks</button>
     </div>
     <div class="search">
-      <Icon name="search" size={13} />
+      <Icon name="search" />
       <input bind:this={field} bind:value={query} placeholder={PLACEHOLDER[view]} aria-label={PLACEHOLDER[view]} spellcheck="false" />
     </div>
     {#if view === "sessions" && threads.length}
@@ -105,7 +105,7 @@
             <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
               <span class="time">{time(s.at)}</span>
               <span class="icon">
-                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneIconFor(s)} size={13} />{/if}
+                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneIconFor(s)} />{/if}
               </span>
               <span class="title">{s.title || "Untitled session"}</span>
               <span class="url" class:live={running.has(s.id)}>{running.has(s.id) ? "Running" : whereOf(s)}</span>
@@ -127,7 +127,7 @@
                 {#if faviconUrl(v.url) && !broken.has(v.url)}
                   <img src={faviconUrl(v.url)} alt="" loading="lazy" on:error={() => (broken = new Set(broken).add(v.url))} />
                 {:else}
-                  <Icon name="globe" size={13} />
+                  <Icon name="globe" />
                 {/if}
               </span>
               <span class="title">{v.title || bare(v.url)}</span>
@@ -149,7 +149,7 @@
                 {#if faviconUrl(b.url) && !broken.has(b.url)}
                   <img src={faviconUrl(b.url)} alt="" loading="lazy" on:error={() => (broken = new Set(broken).add(b.url))} />
                 {:else}
-                  <Icon name="globe" size={13} />
+                  <Icon name="globe" />
                 {/if}
               </span>
               <span class="title">{b.title || bare(b.url)}</span>

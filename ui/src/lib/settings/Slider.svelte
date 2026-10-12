@@ -36,7 +36,7 @@
   .ctl { display: flex; align-items: center; gap: 12px; }
   input[type="range"] {
     -webkit-appearance: none; appearance: none;
-    flex: 1; height: 4px; margin: 0; border-radius: 999px; outline: none; cursor: pointer; font-size: var(--fs-sm);
+    flex: 1; min-width: 0; height: 4px; margin: 0; border-radius: 999px; outline: none; cursor: pointer; font-size: var(--fs-sm);
     background: linear-gradient(90deg, var(--accent) var(--p), var(--line) var(--p));
   }
   input[type="range"]::-webkit-slider-thumb {
@@ -48,7 +48,7 @@
   input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.15); }
   input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
   .val {
-    font-family: var(--mono), ui-monospace, monospace; font-size: var(--fs-xs); color: var(--muted);
+    flex: none; font-size: var(--fs-xs); color: var(--muted);
     width: 44px; text-align: right; font-variant-numeric: tabular-nums;
   }
 </style>

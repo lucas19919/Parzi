@@ -6,6 +6,8 @@ export const HOME_WIDGETS = [
   { id: "agents", label: "Agents" },
   { id: "projects", label: "Projects" },
   { id: "sites", label: "Pinned sites" },
+  { id: "git", label: "Git" },
+  { id: "server", label: "Server" },
 ] as const;
 
 export type HomeWidget = (typeof HOME_WIDGETS)[number]["id"];

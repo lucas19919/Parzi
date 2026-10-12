@@ -132,10 +132,3 @@ export async function refreshBackground() {
   document.dispatchEvent(new CustomEvent("parzi:bg", { detail: url }));
 }
 
-export function titleCase(slug: string): string {
-  return slug
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map((w) => w[0].toUpperCase() + w.slice(1))
-    .join(" ");
-}

@@ -277,6 +277,81 @@ pub async fn git_branch(state: State<'_, AppState>, cwd: String) -> Result<Strin
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// What Home's Git card shows for a folder.
+#[derive(serde::Serialize, Default, Debug, PartialEq)]
+pub struct GitStatus {
+    pub branch: String,
+    pub upstream: bool,
+    pub ahead: u32,
+    pub behind: u32,
+    /// Tracked files with staged or unstaged changes, conflicts included.
+    pub changed: u32,
+    pub untracked: u32,
+    pub last_subject: String,
+    /// Unix seconds of the last commit, 0 when the branch has none.
+    pub last_time: i64,
+}
+
+/// Reads `git status --porcelain=v2 --branch`.
+fn parse_git_status(out: &str) -> GitStatus {
+    let mut s = GitStatus::default();
+    for line in out.lines() {
+        if let Some(head) = line.strip_prefix("# branch.head ") {
+            s.branch = head.trim().to_string();
+        } else if line.starts_with("# branch.upstream ") {
+            s.upstream = true;
+        } else if let Some(ab) = line.strip_prefix("# branch.ab ") {
+            for part in ab.split_whitespace() {
+                if let Some(n) = part.strip_prefix('+') {
+                    s.ahead = n.parse().unwrap_or(0);
+                } else if let Some(n) = part.strip_prefix('-') {
+                    s.behind = n.parse().unwrap_or(0);
+                }
+            }
+        } else if line.starts_with("1 ") || line.starts_with("2 ") || line.starts_with("u ") {
+            s.changed += 1;
+        } else if line.starts_with("? ") {
+            s.untracked += 1;
+        }
+    }
+    s
+}
+
+async fn git_out(cwd: &Path, args: &[&str]) -> Option<String> {
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.args(args).current_dir(cwd).stdin(Stdio::null());
+    #[cfg(windows)]
+    cmd.creation_flags(parzi_providers::process::CREATE_NO_WINDOW);
+    let out = cmd.output().await.ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// `None` for an empty path or a folder that isn't in a git repository.
+#[tauri::command]
+pub async fn git_status(
+    state: State<'_, AppState>,
+    cwd: String,
+) -> Result<Option<GitStatus>, String> {
+    if cwd.is_empty() {
+        return Ok(None);
+    }
+    let orch = state.orch.clone();
+    let cwd = off_thread(move || confined_path(orch.store(), &cwd)).await?;
+    let Some(out) = git_out(&cwd, &["status", "--porcelain=v2", "--branch"]).await else {
+        return Ok(None);
+    };
+    let mut s = parse_git_status(&out);
+    if let Some(log) = git_out(&cwd, &["log", "-1", "--format=%ct%x1f%s"]).await {
+        if let Some((time, subject)) = log.trim().split_once('\u{1f}') {
+            s.last_time = time.parse().unwrap_or(0);
+            s.last_subject = subject.to_string();
+        }
+    }
+    Ok(Some(s))
+}
+
 #[tauri::command]
 pub async fn list_files(
     state: State<'_, AppState>,
@@ -706,6 +781,36 @@ pub(crate) fn launch(o: &Opener) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_status_counts_branch_changes_and_untracked_files() {
+        let out = "# branch.oid 0123abcd\n\
+                   # branch.head main\n\
+                   # branch.upstream origin/main\n\
+                   # branch.ab +2 -1\n\
+                   1 .M N... 100644 100644 100644 aaaa bbbb src/a.rs\n\
+                   2 R. N... 100644 100644 100644 aaaa bbbb R100 b.rs\told.rs\n\
+                   u UU N... 100644 100644 100644 100644 aaaa bbbb cccc c.rs\n\
+                   ? notes.txt\n\
+                   ? tmp/\n";
+        let s = parse_git_status(out);
+        assert_eq!(
+            (
+                s.branch.as_str(),
+                s.upstream,
+                s.ahead,
+                s.behind,
+                s.changed,
+                s.untracked
+            ),
+            ("main", true, 2, 1, 3, 2)
+        );
+        let fresh = parse_git_status("# branch.oid (initial)\n# branch.head (detached)\n");
+        assert_eq!(
+            (fresh.upstream, fresh.changed, fresh.untracked),
+            (false, 0, 0)
+        );
+    }
 
     #[test]
     fn lexical_normalize_floors_at_root() {

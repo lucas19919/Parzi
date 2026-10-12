@@ -192,7 +192,7 @@
               {#if tab.loading}
                 <span class="spinner" />
               {:else}
-                <Icon name={laneIcon(lane)} size={14} />
+                <Icon name={laneIcon(lane)} />
               {/if}
             </span>
             <span class="title">{tab.title || "New session"}</span>
@@ -236,7 +236,7 @@
                 {:else if sub.url && !broken.has(sub.url)}
                   <img src={faviconUrl(sub.url)} alt="" on:error={() => sub.url && (broken = new Set(broken).add(sub.url))} />
                 {:else}
-                  <Icon name="globe" size={14} />
+                  <Icon name="globe" />
                 {/if}
               </span>
               <span class="title">{sub.title || "New page"}</span>
@@ -278,7 +278,7 @@
           {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
             <img src={faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
           {:else}
-            <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : laneIcon(lane)} size={14} />
+            <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : laneIcon(lane)} />
           {/if}
         </span>
         <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>
@@ -312,7 +312,7 @@
 </div>
 {#if !vertical}
   <button class="new" use:tooltip={"New tab (Ctrl+T)"} on:click={() => dispatch("newTab")}>
-    <Icon name="plus" size={14} />
+    <Icon name="plus" />
   </button>
 {/if}
 
@@ -349,10 +349,10 @@
     display: inline-flex;
     align-items: center;
     height: 28px;
-    flex: 0 1 220px;
-    max-width: 220px;
+    width: 220px;
+    flex: 0 1 auto;
     min-width: 96px;
-    padding: 0 2px 0 0;
+    padding: 0 4px 0 0;
     border-radius: var(--radius);
     color: var(--muted);
     font-size: var(--fs-sm);
@@ -390,7 +390,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 0 4px 0 10px;
+    padding: 0 6px 0 10px;
     border-radius: inherit;
   }
   .pick:focus-visible {
@@ -427,8 +427,7 @@
   }
   .tab.sub {
     height: 24px;
-    flex-basis: 160px;
-    max-width: 160px;
+    width: 160px;
     min-width: 72px;
     font-size: var(--fs-xs);
     opacity: 0.85;
@@ -476,7 +475,7 @@
     background: transparent;
     background-clip: content-box;
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius);
     color: var(--muted);
     cursor: pointer;
     opacity: 0;

@@ -380,6 +380,18 @@ pub fn checked_background(abs: std::path::PathBuf) -> Option<std::path::PathBuf>
 
 /// The file a theme's `background.image` names, when it is a safe one.
 #[must_use]
+fn same_content(a: &std::path::Path, b: &std::path::Path) -> bool {
+    let same_len = std::fs::metadata(a)
+        .ok()
+        .zip(std::fs::metadata(b).ok())
+        .is_some_and(|(x, y)| x.is_file() && x.len() == y.len());
+    same_len
+        && std::fs::read(a)
+            .ok()
+            .zip(std::fs::read(b).ok())
+            .is_some_and(|(x, y)| x == y)
+}
+
 pub fn background_file(image: &str) -> Option<std::path::PathBuf> {
     if image.trim().is_empty() {
         return None;
@@ -464,6 +476,12 @@ pub fn apply_pack(name: &str) -> Result<Theme> {
     for fname in pack_art(&dir) {
         let src = dir.join(&fname);
         if !is_bg_file(&src) {
+            continue;
+        }
+        // A pack saved here carries the wallpaper it was saved with: when
+        // that very picture is still in backgrounds/, use it, not a copy.
+        if same_content(&bgs.join(&fname), &src) {
+            art.push(fname);
             continue;
         }
         let local = if fname.starts_with(&format!("{name}-")) {

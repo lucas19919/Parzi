@@ -171,9 +171,9 @@
   <div class="pref-section">
     <div class="models-toolbar">
       <div class="models-search">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3" /></svg>
+        <Icon name="search" size={12} />
         <input placeholder="Search models…" aria-label="Search models" bind:value={query} />
-        {#if query}<button class="clear-btn" use:tooltip={"Clear search"} on:click={() => (query = "")}><Icon name="close" size={11} stroke={2} /></button>{/if}
+        {#if query}<button class="clear-btn" use:tooltip={"Clear search"} on:click={() => (query = "")}><Icon name="close" size={12} /></button>{/if}
       </div>
       <button class="sbtn" on:click={() => checkAgain()} disabled={allChecking} title="Ask every agent's own program where it stands. Spends no quota.">
         <Icon name="reload" size={12} />
@@ -282,7 +282,7 @@
 
             {#if p && p.models.length}
               <button class="models-toggle" aria-expanded={isOpen} on:click={() => (expanded = toggle(expanded, id))}>
-                <span class="disclosure"><Icon name={isOpen ? "chevDown" : "chevRight"} size={11} stroke={2} /></span>
+                <span class="disclosure"><Icon name={isOpen ? "chevDown" : "chevRight"} size={12} /></span>
                 <span>{p.models.length} model{p.models.length === 1 ? "" : "s"}</span>
                 {#if def}<span class="def-tag" title="New threads start here">◉ {def}</span>{/if}
               </button>
@@ -328,7 +328,7 @@
   .models-search {
     flex: 1; display: flex; align-items: center; gap: 8px; padding: 7px 10px;
     background: var(--panel); border: 1px solid var(--line);
-    border-radius: 8px; color: var(--muted);
+    border-radius: var(--radius); color: var(--muted);
   }
   .models-search input {
     flex: 1; min-width: 0; background: transparent; border: none; outline: none;
@@ -337,7 +337,7 @@
   .models-search input::placeholder { color: var(--muted); }
   .clear-btn {
     width: 18px; height: 18px; flex: none; display: inline-flex; align-items: center; justify-content: center;
-    background: transparent; border: none; border-radius: 4px; color: var(--muted); cursor: pointer; font-size: var(--fs-xs); padding: 0;
+    background: transparent; border: none; border-radius: var(--radius-sm); color: var(--muted); cursor: pointer; font-size: var(--fs-xs); padding: 0;
   }
   .clear-btn:hover { color: var(--text); }
   .skel.search { flex: 1; min-height: 34px; }
@@ -363,7 +363,7 @@
   .provider-how { font-size: var(--fs-sm); color: var(--muted); line-height: 1.45; }
   .provider-ungated {
     font-size: var(--fs-sm); line-height: 1.45; color: var(--warn);
-    background: transparent; border: 1px solid var(--warn); border-radius: 6px; padding: 6px 9px;
+    background: transparent; border: 1px solid var(--warn); border-radius: var(--radius); padding: 6px 9px;
   }
   .head-spacer { flex: 1; }
   .def-tag {
@@ -384,7 +384,7 @@
   .path-label { font-size: var(--fs-sm); color: var(--muted); flex: none; width: 58px; }
   .path-in {
     flex: 1; min-width: 0; background: var(--bg);
-    border: 1px solid var(--line); border-radius: 6px;
+    border: 1px solid var(--line); border-radius: var(--radius);
     color: var(--text); font-size: var(--fs-sm); padding: 5px 9px; outline: none;
     font-family: var(--mono), ui-monospace, monospace;
   }
@@ -393,7 +393,7 @@
 
   .models-toggle {
     display: flex; align-items: center; gap: 8px; width: 100%;
-    background: transparent; border: none; cursor: pointer; padding: 2px 0 0;
+    background: transparent; border: none; cursor: pointer; min-height: 24px; padding: 0;
     font: inherit; font-size: var(--fs-sm); text-align: left; color: var(--muted);
   }
   .models-toggle:hover { color: var(--text); }
@@ -406,7 +406,7 @@
   }
   .model-row {
     display: flex; align-items: center; gap: 8px; padding: 5px 8px;
-    border-radius: 6px; font-size: var(--fs-sm);
+    border-radius: var(--radius); font-size: var(--fs-sm);
   }
   .model-row:hover { background: var(--line); }
   .fav-btn {
@@ -420,13 +420,13 @@
   .model-meta { display: flex; align-items: center; gap: 7px; font-size: var(--fs-xs); color: var(--muted); overflow: hidden; white-space: nowrap; }
   .model-meta .mono { font-family: var(--mono), ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; }
   .pill {
-    font-size: var(--fs-xs); font-weight: 600; padding: 1px 5px; border-radius: 4px; flex: none;
+    font-size: var(--fs-xs); font-weight: 600; padding: 1px 5px; border-radius: var(--radius-sm); flex: none;
     background: var(--line); border: 1px solid var(--line); color: var(--muted);
   }
   .pill.hot { background: var(--line); border-color: var(--accent); color: var(--accent); }
   .pill.on { background: transparent; border-color: var(--ok); color: var(--ok); }
   .def-btn {
-    background: transparent; border: 1px solid transparent; border-radius: 5px;
+    background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm);
     color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer; padding: 3px 8px; flex: none;
   }
   .def-btn:hover { color: var(--text); border-color: var(--line); background: var(--line); }
@@ -434,7 +434,7 @@
   .spend { display: flex; align-items: center; gap: 6px; }
   .cur { font-size: var(--fs-md); color: var(--muted); }
   .spend-in {
-    width: 88px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+    width: 88px; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius);
     color: var(--text); font: inherit; font-size: var(--fs-md); padding: 6px 8px; outline: none;
     font-variant-numeric: tabular-nums;
   }

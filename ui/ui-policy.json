@@ -13,7 +13,7 @@
   "minControlInset": 8,
   "controlContainers": ["[data-ui-container]"],
   "minLayoutGap": 8,
-  "bannedCopy": ["seamlessly", "unlock your potential", "game-changing", "—"],
+  "bannedCopy": ["seamlessly", "unlock your potential", "game-changing", "—", "–", "elevate", "unleash", "revolutionize", "cutting-edge", "next-gen", "synergy", "pixel perfect", "passionate about"],
   "viewports": [{ "width": 960, "height": 640 }, { "width": 1280, "height": 800 }],
   "colorSchemes": ["dark"],
   "exceptions": [
@@ -41,6 +41,11 @@
       "selector": ".tab .title",
       "rules": ["content-clipping"],
       "reason": "Tabs share the strip at equal widths; a long title ends in an ellipsis and shows in full on hover."
+    },
+    {
+      "selector": ".steps > button.head",
+      "rules": ["icon-button-tooltip"],
+      "reason": "The step summary is its visible label; the check misreads it when the thread's scroll cuts it at the top edge."
     },
     {
       "selector": ".window-controls > button",

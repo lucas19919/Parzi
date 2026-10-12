@@ -67,7 +67,7 @@
         use:tooltip={$updateVersion ? "Menu, update available" : "Menu"}
         on:click={() => (menuOpen = !menuOpen)}
       >
-        <Icon name="menu" size={14} />
+        <Icon name="menu" />
         {#if $updateVersion}<span class="dot" />{/if}
       </button>
       {#if menuOpen}
@@ -81,7 +81,7 @@
                 item.run();
               }}
             >
-              <Icon name={item.icon} size={13} />
+              <Icon name={item.icon} />
               <span class="label">{item.label}</span>
               <span class="key">{item.key}</span>
             </button>
@@ -95,7 +95,7 @@
                 dispatch("update");
               }}
             >
-              <Icon name="arrowDown" size={13} />
+              <Icon name="arrowDown" />
               <span class="label">Update to v{$updateVersion}</span>
             </button>
           {/if}
@@ -103,7 +103,7 @@
       {/if}
     </div>
     <button class="icon-btn" use:tooltip={"Home"} on:click={() => dispatch("home")}>
-      <Icon name="home" size={14} />
+      <Icon name="home" />
     </button>
     {#if tabsVisible}
       <TabBar

@@ -34,7 +34,7 @@
         {#if (row.kind === "history" || row.kind === "bookmark") && faviconUrl(row.url) && !broken.has(row.url)}
           <img src={faviconUrl(row.url)} alt="" on:error={() => (broken = new Set(broken).add(row.url))} />
         {:else}
-          <Icon name={row.kind === "search" || row.kind === "phrase" ? "search" : row.kind === "bookmark" ? "pin" : "globe"} size={14} />
+          <Icon name={row.kind === "search" || row.kind === "phrase" ? "search" : row.kind === "bookmark" ? "pin" : "globe"} />
         {/if}
       </span>
       {#if row.kind === "phrase"}

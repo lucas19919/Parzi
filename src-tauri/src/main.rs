@@ -494,7 +494,10 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
+            // The window, not the webview window: with page tabs open it holds
+            // several webviews and get_webview_window finds nothing, so a second
+            // launch tried to rebuild it, failed, and quit the running desk.
+            if let Some(w) = app.get_window("main") {
                 let _ = w.unminimize();
                 let _ = w.show();
                 let _ = w.set_focus();
@@ -641,6 +644,7 @@ fn main() {
             files::pick_folder,
             files::list_files,
             files::git_branch,
+            files::git_status,
             files::read_image_data_url,
             files::stage_image,
             files::open_confirmed_url,

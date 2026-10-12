@@ -142,7 +142,7 @@
     display: flex;
     flex-direction: column;
   }
-  .artifact-card.bad { border: 1px solid var(--bad); border-radius: 12px; }
+  .artifact-card.bad { border: 1px solid var(--bad); border-radius: var(--radius-lg); }
   .art-tools {
     position: absolute;
     top: 6px;
@@ -160,7 +160,7 @@
   .mini-btn {
     background: color-mix(in srgb, var(--bg) 82%, transparent);
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: var(--radius);
     color: var(--muted);
     font-size: var(--fs-xs);
     padding: 3px 8px;
@@ -176,12 +176,12 @@
     padding: 12px 0 4px;
   }
   .art-svg { width: 100%; height: auto; display: block; }
-  .art-img { width: 100%; height: auto; display: block; border-radius: 8px; }
+  .art-img { width: 100%; height: auto; display: block; border-radius: var(--radius); }
   .art-render { width: 100%; height: 320px; min-height: 160px; border: none; background: transparent; display: block; overflow: auto; }
   .art-code { font-size: var(--fs-sm); }
   .art-code.clamped :global(.codeblock.clamped) { max-height: 420px; }
   .art-error { padding: 8px 12px; font-size: var(--fs-xs); color: var(--bad); }
-  .art-source { margin: 0 12px 12px; padding: 8px; font-size: var(--fs-xs); overflow: auto; background: var(--bg); border-radius: 6px; }
+  .art-source { margin: 0 12px 12px; padding: 8px; font-size: var(--fs-xs); overflow: auto; background: var(--bg); border-radius: var(--radius); }
   .expand-btn {
     background: transparent;
     border: none;

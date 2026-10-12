@@ -475,9 +475,9 @@
       on:click|stopPropagation={toggleProject}
       use:tooltip={remoteCwd ? `Runs on ${remoteHost} in ${remoteCwd}` : `Runs on ${remoteHost}, in its own scratch folder`}
     >
-      <Icon name="server" size={14} stroke={2} />
+      <Icon name="server" />
       <span class="proj-title">{remoteProject ? `${remoteProject} · ${remoteHost}` : remoteHost}</span>
-      {#if !folderLocked}<Icon name="chevDown" size={10} stroke={2} />{/if}
+      {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
     </button>
   {:else if outsideProject}
     <button
@@ -489,10 +489,10 @@
       on:click|stopPropagation={toggleProject}
       use:tooltip={project ? `Project ${project.title}${branch ? ` · ${branch}` : ""}` : "Pick the project this session works on"}
     >
-      <Icon name={project || !folder ? "project" : "folder"} size={14} stroke={2} />
+      <Icon name={project || !folder ? "project" : "folder"} />
       <span class="proj-title">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
       {#if branch}<span class="proj-branch">{branch}</span>{/if}
-      {#if !folderLocked}<Icon name="chevDown" size={10} stroke={2} />{/if}
+      {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
     </button>
   {/if}
   <div
@@ -528,7 +528,7 @@
             {#if thumbs[a]}<img src={thumbs[a]} alt="" draggable="false" />{:else}<Icon name="file" size={12} />{/if}
             <span class="chip-name" title={a}>{shortName(a)}</span>
             <button use:tooltip={`Remove ${a}`} on:click={() => (attachments = attachments.filter((x) => x !== a))}>
-              <Icon name="close" size={10} stroke={2.2} />
+              <Icon name="close" size={12} />
             </button>
           </span>
         {/each}
@@ -558,17 +558,17 @@
         <button class="go stop" use:tooltip={"Stop (Esc)"} on:click={() => dispatch("stop")}><span class="square" /></button>
       {:else}
         <button class="go" class:ready={!!input.trim()} use:tooltip={mode === "search" ? "Open (Enter)" : "Send (Enter)"} disabled={!input.trim()} on:click={submit}>
-          <Icon name="arrowUp" size={14} stroke={2} />
+          <Icon name="arrowUp" />
         </button>
       {/if}
     </div>
 
     <div class="bar">
-      <button class="ctl icon-only" use:tooltip={"Attach files"} on:click={pickFiles}><Icon name="plus" size={14} stroke={2} /></button>
+      <button class="ctl icon-only" use:tooltip={"Attach files"} on:click={pickFiles}><Icon name="plus" /></button>
     <div class="modes" role="group" aria-label="Mode" data-ui-segmented>
       {#if lockMode}
         <span class="mode on solo" style:--tint={MODE_META[lockMode].tint} title={MODE_META[lockMode].label}>
-          <Icon name={MODE_META[lockMode].icon} size={14} stroke={2} />
+          <Icon name={MODE_META[lockMode].icon} />
         </span>
       {:else}
         {#each MODES as m, i (m)}
@@ -594,7 +594,7 @@
               }
             }}
           >
-            <Icon name={MODE_META[m].icon} size={14} stroke={2} />
+            <Icon name={MODE_META[m].icon} />
             <span>{MODE_META[m].label}</span>
           </button>
         {/each}
@@ -612,7 +612,7 @@
           aria-expanded={permOpen}
           on:click|stopPropagation={togglePerm}
         >
-          <Icon name={perm.icon} size={13} stroke={2} />
+          <Icon name={perm.icon} />
           <span class="truncate">{perm.label}</span>
         </button>
       {/if}
@@ -632,7 +632,7 @@
               : `Run on ${remoteHost}`}
           on:click|stopPropagation={() => dispatch("remote", { on: !remote })}
         >
-          <Icon name="server" size={13} stroke={2} />
+          <Icon name="server" />
           {#if remote}<span class="truncate">Remote</span>{/if}
         </button>
       {/if}
@@ -648,10 +648,10 @@
             use:tooltip={project ? `Project ${project.title} · ${folder} · about ${project.tokens} tokens of notes per session` : folder ? `${folder} · not a project yet` : "Pick the project this session works on"}
             on:click|stopPropagation={toggleProject}
           >
-            <Icon name={project || !folder ? "project" : "folder"} size={14} stroke={2} />
+            <Icon name={project || !folder ? "project" : "folder"} />
             <span class="truncate">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
             {#if branch}<span class="dim">{branch}</span>{/if}
-            {#if !folderLocked}<Icon name="chevDown" size={10} stroke={2} />{/if}
+            {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
           </button>
       {/if}
 
@@ -673,7 +673,7 @@
           class:on={remote ? !!p.folder && p.folder === remoteCwd : project?.slug === p.slug}
           on:click={() => chooseProject(p)}
         >
-          <Icon name="project" size={14} stroke={2} />
+          <Icon name="project" />
           <span class="meta">
             <span class="name">{p.title}</span>
             <span class="sub truncate">
@@ -698,23 +698,23 @@
       <div class="sep" />
       {#if remote}
         <button class="opt" on:click={newRemoteProject}>
-          <Icon name="plus" size={14} stroke={2} />
+          <Icon name="plus" />
           <span class="meta"><span class="name">New project…</span><span class="sub">A folder on {remoteHost}</span></span>
         </button>
       {:else}
         {#if folder && !project}
           <button class="opt" on:click={makeProject}>
-            <Icon name="plus" size={14} stroke={2} />
+            <Icon name="plus" />
             <span class="meta"><span class="name">Make {folderName(folder)} a project</span><span class="sub">Notes you map to it come along to every session here</span></span>
           </button>
         {/if}
         <button class="opt" on:click={newProject}>
-          <Icon name="plus" size={14} stroke={2} />
+          <Icon name="plus" />
           <span class="meta"><span class="name">New project…</span><span class="sub">Pick the folder it lives in</span></span>
         </button>
       {/if}
       <button class="opt" class:on={remote ? !remoteCwd : !folder} on:click={() => chooseProject(null)}>
-        <Icon name="close" size={14} stroke={2} />
+        <Icon name="close" />
         <span class="meta"><span class="name">No project</span><span class="sub">Run in an empty scratch folder</span></span>
       </button>
       <button
@@ -724,7 +724,7 @@
           dispatch("brain");
         }}
       >
-        <Icon name="brain" size={14} stroke={2} />
+        <Icon name="brain" />
         <span class="meta"><span class="name">Manage projects in Brain</span></span>
       </button>
     </div>
@@ -742,9 +742,9 @@
             permOpen = false;
           }}
         >
-          <span class="perm-icon"><Icon name={p.icon} size={13} /></span>
+          <span class="perm-icon"><Icon name={p.icon} /></span>
           <span class="meta"><span class="perm-name">{p.title}</span><span class="perm-sub">{blocked || p.desc}</span></span>
-          {#if permission === p.id}<span class="tick"><Icon name="check" size={13} stroke={2} /></span>{/if}
+          {#if permission === p.id}<span class="tick"><Icon name="check" /></span>{/if}
         </button>
       {/each}
     </div>
@@ -937,7 +937,7 @@
     padding: 0;
     background: none;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     color: var(--muted);
     cursor: pointer;
   }
@@ -1324,16 +1324,17 @@
   /* v6: tab fused to box top edge. */
   .ob.v6 .proj-out {
     margin: 0 0 0 10px;
-    padding: 3px 10px;
+    height: 24px;
+    padding: 0 10px;
     transform: translateY(1px);
     background: var(--glass-strong-bg);
     border: var(--glass-hairline);
     border-bottom: none;
-    border-radius: 9px 9px 0 0;
+    border-radius: var(--radius) var(--radius) 0 0;
     width: fit-content;
     max-width: calc(100% - 20px);
   }
-  .ob.v6 .box { border-radius: 12px; }
+  .ob.v6 .box { border-radius: var(--radius-lg); }
   .ob.v6 .mode span:last-child { display: none; }
   .ob.v6 .mode { padding: 0 7px; }
   /* v7: innovative inline @mention, minimal bar, icons only. */

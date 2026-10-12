@@ -110,7 +110,8 @@
     align-items: center;
     gap: 6px;
     max-width: 100%;
-    padding: 2px 0;
+    min-height: 24px;
+    padding: 0;
     background: none;
     border: none;
     color: var(--muted);

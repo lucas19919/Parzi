@@ -208,6 +208,7 @@ export const api = {
   pickFolder: (start?: string) => invoke<string | null>("pick_folder", { start: start || null }),
   listFiles: (root: string, query: string) => invoke<string[]>("list_files", { root, query }),
   gitBranch: (cwd: string) => invoke<string>("git_branch", { cwd }),
+  gitStatus: (cwd: string) => invoke<GitStatus | null>("git_status", { cwd }),
   stageImage: (name: string, base64Data: string) => invoke<string>("stage_image", { name, base64Data }),
   readImageDataUrl: (path: string, cwd: string) => invoke<string>("read_image_data_url", { path, cwd }),
 
@@ -251,6 +252,17 @@ export const api = {
     invoke<void>("browser_nav", { tab, action }),
   windowFullscreen: (on: boolean) => invoke<void>("window_fullscreen", { on }),
 };
+
+export interface GitStatus {
+  branch: string;
+  upstream: boolean;
+  ahead: number;
+  behind: number;
+  changed: number;
+  untracked: number;
+  last_subject: string;
+  last_time: number;
+}
 
 export interface NoteMeta {
   path: string;

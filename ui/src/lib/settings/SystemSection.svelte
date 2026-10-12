@@ -116,7 +116,7 @@
     {/if}
     {#if $updateMsg && $updateState !== "idle"}
       <div class="check-row">
-        <span class="check-icon {$updateState === "ready" || $updateState === "uptodate" ? "pass" : $updateState === "error" ? "fail" : ""}"><Icon name={$updateState === "ready" || $updateState === "uptodate" ? "check" : $updateState === "error" ? "close" : "clock"} size={13} stroke={2.2} /></span>
+        <span class="check-icon {$updateState === "ready" || $updateState === "uptodate" ? "pass" : $updateState === "error" ? "fail" : ""}"><Icon name={$updateState === "ready" || $updateState === "uptodate" ? "check" : $updateState === "error" ? "close" : "clock"} /></span>
         <span class="check-detail">{$updateMsg}</span>
       </div>
     {/if}
@@ -137,7 +137,7 @@
     <div class="checks-list">
       {#if diagTimedOut}
         <div class="check-row">
-          <span class="check-icon fail"><Icon name="close" size={13} stroke={2.2} /></span>
+          <span class="check-icon fail"><Icon name="close" /></span>
           <span class="check-name">diagnostics</span>
           <span class="check-detail">Timed out after 12s. Providers check themselves live under Agents.</span>
           <button class="sbtn" on:click={() => void load()}>Run again</button>
@@ -145,7 +145,7 @@
       {/if}
       {#each quick ?? [] as c}
         <div class="check-row">
-          <span class="check-icon {c.ok ? 'pass' : 'fail'}"><Icon name={c.ok ? "check" : "close"} size={13} stroke={2.2} /></span>
+          <span class="check-icon {c.ok ? 'pass' : 'fail'}"><Icon name={c.ok ? "check" : "close"} /></span>
           <span class="check-name">{c.name}</span>
           <span class="check-detail">{c.detail}</span>
         </div>
@@ -194,7 +194,7 @@
   .checks-list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
   .check-row {
     display: flex; align-items: center; gap: 8px; padding: 6px 10px;
-    background: var(--panel); border-radius: 6px; font-size: var(--fs-sm);
+    background: var(--panel); border-radius: var(--radius); font-size: var(--fs-sm);
   }
   .check-icon { display: inline-flex; flex: none; color: var(--muted); }
   .check-icon.pass { color: var(--ok); }
@@ -211,7 +211,7 @@
   kbd {
     font-family: var(--mono), ui-monospace, monospace; font-size: var(--fs-xs);
     background: var(--line); border: 1px solid var(--line);
-    padding: 2px 6px; border-radius: 4px; color: var(--text);
+    padding: 2px 6px; border-radius: var(--radius-sm); color: var(--text);
   }
   .shortcut-action { font-size: var(--fs-sm); color: var(--muted); }
 </style>

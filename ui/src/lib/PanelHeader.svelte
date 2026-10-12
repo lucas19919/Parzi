@@ -13,7 +13,7 @@
     <h2>{title}</h2>
   </div>
   <button class="icon-btn" use:tooltip={"Close"} on:click={() => dispatch("close")}>
-    <Icon name="close" size={13} stroke={2} />
+    <Icon name="close" />
   </button>
 </div>
 
@@ -24,7 +24,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 12px 0 20px;
+    padding: 0 14px 0 20px;
     border-bottom: 1px solid var(--line);
     user-select: none;
   }
@@ -55,7 +55,7 @@
     padding: 0;
     background: transparent;
     border: none;
-    border-radius: 5px;
+    border-radius: var(--radius-sm);
     color: var(--muted);
     cursor: pointer;
   }

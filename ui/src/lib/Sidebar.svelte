@@ -34,7 +34,7 @@
 <aside class="sidebar">
   <div class="side-head">
     <button class="icon-btn wide" use:tooltip={"New tab (Ctrl+T)"} on:click={() => dispatch("newTab")}>
-      <Icon name="plus" size={13} stroke={2.2} />
+      <Icon name="plus" />
       <span>New tab</span>
     </button>
   </div>

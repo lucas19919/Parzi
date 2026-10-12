@@ -24,7 +24,7 @@
     pointer-events: none;
     background: var(--bg);
     transition:
-      transform 750ms cubic-bezier(0.16, 1, 0.3, 1),
+      transform 750ms var(--ease-out),
       opacity 650ms ease,
       filter 650ms ease;
   }
@@ -56,7 +56,10 @@
     inset: 0;
     /* The dim is always black: a light stage must darken the picture,
        never veil it white. */
+    /* A scrim under the top bar: tabs and window buttons stay readable
+       over a bright picture, whatever the dim. */
     background:
+      linear-gradient(to bottom, rgba(0, 0, 0, 0.45), transparent 80px),
       radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, var(--vignette)) 100%),
       color-mix(in srgb, #000 calc(var(--bg-dim) * 100%), transparent);
   }

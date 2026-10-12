@@ -60,7 +60,7 @@
     transition:fly={{ y: 10, duration: 180, easing: cubicOut }}
   >
     <div class="head">
-      <span class="kind"><Icon name={kind.icon} size={14} /></span>
+      <span class="kind"><Icon name={kind.icon} /></span>
       <span class="who">{title} {kind.label}</span>
       {#if pending > 1}<span class="count">{pending} waiting</span>{/if}
     </div>

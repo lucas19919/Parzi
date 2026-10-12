@@ -260,7 +260,7 @@
           <button class:on={i === step} class:done={i < step} aria-current={i === step ? "step" : undefined} on:click={() => (step = i)}>{s}</button>
         {/each}
       </div>
-      <button class="x" use:tooltip={"Close"} on:click={() => finish()}><Icon name="close" size={13} stroke={2} /></button>
+      <button class="x" use:tooltip={"Close"} on:click={() => finish()}><Icon name="close" /></button>
     </header>
 
     <div class="body">
@@ -419,7 +419,7 @@
             {#each setupRows as r (r.step)}
               <li>
                 <span class="mark {r.state}">
-                  {#if r.state === "ok"}<Icon name="check" size={13} />{:else if r.state === "fail"}<Icon name="close" size={13} />{:else if r.state === "run"}<span class="spin" />{/if}
+                  {#if r.state === "ok"}<Icon name="check" />{:else if r.state === "fail"}<Icon name="close" />{:else if r.state === "run"}<span class="spin" />{/if}
                 </span>
                 <span class="name">{stepName(r.step)}</span>
                 <span class="detail">{r.detail}</span>
@@ -474,9 +474,11 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 12px 16px;
+    padding: 12px 20px;
   }
+  /* The close button's glyph, not its box, lines up with the 20px inset. */
   header {
+    padding-right: 14px;
     border-bottom: 1px solid var(--line);
   }
   footer {
@@ -488,6 +490,7 @@
     flex: 1;
   }
   .steps button {
+    min-height: 24px;
     padding: 4px 10px;
     background: none;
     border: none;
@@ -507,8 +510,8 @@
     color: var(--text);
   }
   .x {
-    width: 26px;
-    height: 26px;
+    width: 28px;
+    height: 28px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -527,7 +530,7 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 20px 22px;
+    padding: 20px;
   }
   h2 {
     margin: 0 0 6px;
@@ -723,7 +726,7 @@
     border-radius: inherit;
     background: var(--accent);
     transform-origin: left;
-    animation: fill var(--eta) cubic-bezier(0.2, 0.6, 0.3, 1) forwards;
+    animation: fill var(--eta) var(--ease-out) forwards;
   }
   .progress.sweep span {
     inset: 0 auto 0 0;
@@ -788,7 +791,7 @@
     font-size: var(--fs-sm);
     padding: 1px 5px;
     background: var(--bg);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
   }
   .link {
     padding: 4px 8px;

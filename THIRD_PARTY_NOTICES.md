@@ -7,6 +7,13 @@ lobehub icon set, rendered inline by `ProviderLogo.svelte`.
 
 Upstream: https://github.com/lobehub/lobehub
 
+## Octicons (MIT)
+
+Interface icons in `ui/src/lib/icons.ts` are GitHub's Octicons, generated
+from the `@primer/octicons` package by `ui/scripts/icons.mjs`.
+
+Upstream: https://github.com/primer/octicons
+
 ## Fonts (SIL Open Font License 1.1)
 
 The bundle compiles Inter and JetBrains Mono (via their Fontsource packages,

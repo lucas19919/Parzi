@@ -164,7 +164,7 @@
               on:click={() => choose(item)}
               on:mouseenter={() => (index = i)}
             >
-              <span class="ico"><Icon name={item.icon} size={13} /></span>
+              <span class="ico"><Icon name={item.icon} /></span>
               <span class="info">
                 <span class="title">{item.title}</span>
                 <span class="sub">{item.sub}</span>
@@ -183,7 +183,7 @@
       {/if}
 
       <div class="foot">
-        <span><kbd><Icon name="arrowUp" size={11} /></kbd><kbd><Icon name="arrowDown" size={11} /></kbd> move</span>
+        <span><kbd><Icon name="arrowUp" size={12} /></kbd><kbd><Icon name="arrowDown" size={12} /></kbd> move</span>
         <span><kbd>enter</kbd> open</span>
         <span><kbd>esc</kbd> close</span>
       </div>
@@ -216,7 +216,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 12px 16px;
+    padding: 12px 20px;
     color: var(--muted);
     border-bottom: 1px solid var(--line);
   }
@@ -243,7 +243,7 @@
     color: var(--muted);
     background: var(--line);
     border: 1px solid var(--line);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
   }
   .list {
     flex: 1;
@@ -260,7 +260,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    border-radius: 7px;
+    border-radius: var(--radius);
   }
   .row.on {
     background: var(--line);
@@ -285,7 +285,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 6px;
+    border-radius: var(--radius);
     background: var(--line);
     color: var(--muted);
   }
@@ -321,7 +321,7 @@
     justify-content: center;
     background: transparent;
     border: none;
-    border-radius: 5px;
+    border-radius: var(--radius-sm);
     color: var(--muted);
     cursor: pointer;
     opacity: 0;
@@ -343,7 +343,7 @@
   .foot {
     display: flex;
     gap: 14px;
-    padding: 8px 16px;
+    padding: 8px 20px;
     font-size: var(--fs-xs);
     color: var(--muted);
     border-top: 1px solid var(--line);

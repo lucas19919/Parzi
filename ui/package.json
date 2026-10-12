@@ -23,6 +23,7 @@
     "markdown-it": "^14"
   },
   "devDependencies": {
+    "@primer/octicons": "^19.40.0",
     "@sveltejs/vite-plugin-svelte": "^3",
     "@tsconfig/svelte": "^5",
     "@types/markdown-it": "^14",

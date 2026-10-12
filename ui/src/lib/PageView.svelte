@@ -262,16 +262,16 @@
   {#if !immersive}
     <div class="toolbar">
       <button class="nav" use:tooltip={"Back (Alt+Left)"} disabled={!tab.canGoBack} on:click={() => nav("back")}>
-        <Icon name="arrowLeft" size={15} />
+        <Icon name="arrowLeft" />
       </button>
       <button class="nav" use:tooltip={"Forward (Alt+Right)"} disabled={!tab.canGoForward} on:click={() => nav("forward")}>
-        <Icon name="arrowRight" size={15} />
+        <Icon name="arrowRight" />
       </button>
       {#if tab.loading}
-        <button class="nav" use:tooltip={"Stop loading"} on:click={() => nav("stop")}><Icon name="close" size={15} /></button>
+        <button class="nav" use:tooltip={"Stop loading"} on:click={() => nav("stop")}><Icon name="close" /></button>
       {:else}
         <button class="nav" use:tooltip={"Reload (Ctrl+R)"} disabled={!url} on:click={() => nav("reload")}>
-          <Icon name="reload" size={14} />
+          <Icon name="reload" />
         </button>
       {/if}
       <form bind:this={form} class="address" class:editing on:submit|preventDefault={go}>
@@ -308,7 +308,7 @@
               : "The ad blocker is off. Click to turn it on."}
           on:click={toggleShield}
         >
-          <Icon name="shield" size={14} />
+          <Icon name="shield" />
           {#if count}<span class="count">{count}</span>{/if}
         </button>
       {/if}
@@ -320,10 +320,10 @@
         disabled={!url.startsWith("https://")}
         on:click={fillLogin}
       >
-        <Icon name="key" size={14} />
+        <Icon name="key" />
       </button>
       <button class="nav" class:on={pinned} use:tooltip={pinned ? "Unpin from Home" : "Pin to Home"} disabled={!url} on:click={togglePin}>
-        <Icon name="pin" size={14} />
+        <Icon name="pin" />
       </button>
     </div>
   {/if}

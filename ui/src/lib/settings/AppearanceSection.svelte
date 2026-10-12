@@ -2,7 +2,8 @@
   import { onMount, onDestroy } from "svelte";
   import { convertFileSrc } from "@tauri-apps/api/core";
   import { api, type Theme, type PackInfo, type BackgroundFile } from "../api";
-  import { applyThemeCss, previewTheme, refreshBackground, titleCase } from "../theme";
+  import { applyThemeCss, previewTheme, refreshBackground } from "../theme";
+  import Icon from "../Icon.svelte";
   import Switch from "./Switch.svelte";
   import SegControl from "./SegControl.svelte";
   import Slider from "./Slider.svelte";
@@ -130,7 +131,7 @@
       theme = await api.getTheme();
       syncPercents();
       lastBlur = theme.background.blur;
-      notify(`Theme: ${titleCase(p.name)}`);
+      notify(`Theme: ${packLabel(p.name)}`);
       const [b] = await Promise.all([api.listBackgroundUrls(), refreshBackground()]);
       backgrounds = b;
       if (theme.background.auto_accent && theme.background.image) {
@@ -143,6 +144,11 @@
     } catch (e) {
       notify(`Could not apply theme: ${e}`);
     }
+  }
+  // Pack folders are slugs (tokyo-night); show them as words, sentence case.
+  function packLabel(slug: string): string {
+    const words = slug.replace(/[-_]+/g, " ").trim();
+    return words ? words[0].toUpperCase() + words.slice(1) : slug;
   }
   function cleanPackName(raw: string): string {
     return raw
@@ -159,7 +165,7 @@
       await api.savePack(name);
       packs = await api.listPackInfos();
       packName = "";
-      notify(`Saved theme: ${titleCase(name)}`);
+      notify(`Saved theme: ${packLabel(name)}`);
     } catch (e) {
       notify(`Could not save theme: ${e}`);
     }
@@ -174,7 +180,7 @@
     try {
       await api.deletePack(p.name);
       packs = await api.listPackInfos();
-      notify(`Deleted ${titleCase(p.name)}`);
+      notify(`Deleted ${packLabel(p.name)}`);
     } catch (e) {
       notify(`Could not delete theme: ${e}`);
     }
@@ -193,7 +199,7 @@
     try {
       await api.renamePack(p.name, name);
       packs = await api.listPackInfos();
-      notify(`Renamed to ${titleCase(name)}`);
+      notify(`Renamed to ${packLabel(name)}`);
     } catch (e) {
       notify(`Could not rename: ${e}`);
     }
@@ -360,7 +366,7 @@
           <button
             class="pack-btn"
             on:click={() => applyPack(p)}
-            title={p.builtin ? titleCase(p.name) : `${titleCase(p.name)} (yours)`}
+            title={p.builtin ? packLabel(p.name) : `${packLabel(p.name)} (yours)`}
             aria-pressed={activePack === p.name}
           >
             <span
@@ -370,15 +376,15 @@
               <span class="pp-line" /><span class="pp-line short" />
               <span class="pp-bar"><i /></span>
             </span>
-            <span class="pack-name">{#if renamingPack === p.name && !p.builtin}<input class="pack-rename" aria-label="New name for {titleCase(p.name)}" bind:value={renameDraft} use:focusRename on:click|stopPropagation on:keydown={(e) => { if (e.key === "Enter") commitPackRename(p); else if (e.key === "Escape") renamingPack = null; }} />{:else}{titleCase(p.name)}{/if}{#if p.has_art}<span class="art-dot" title="Switches the wallpaper too"> + wallpaper</span>{/if}</span>
+            <span class="pack-name">{#if renamingPack === p.name && !p.builtin}<input class="pack-rename" aria-label="New name for {packLabel(p.name)}" bind:value={renameDraft} use:focusRename on:click|stopPropagation on:keydown={(e) => { if (e.key === "Enter") commitPackRename(p); else if (e.key === "Escape") renamingPack = null; }} />{:else}{packLabel(p.name)}{/if}</span>{#if p.has_art}<span class="art-dot" use:tooltip={"Includes a wallpaper"}><Icon name="image" size={12} /></span>{/if}
           </button>
           {#if !p.builtin}
             <div class="pack-actions">
-              <button class="pack-act" use:tooltip={`Rename ${titleCase(p.name)}`}
+              <button class="pack-act" use:tooltip={`Rename ${packLabel(p.name)}`}
                 on:click={() => { renamingPack = p.name; renameDraft = p.name; delPack = null; }}>✎</button>
               <button class="pack-del" class:armed={delPack === p.name}
                 use:tooltip={delPack === p.name ? "Click again to delete this theme" : "Delete this theme"}
-                aria-label="Delete {titleCase(p.name)}" on:click={() => deletePack(p)}>{delPack === p.name ? "Sure?" : "×"}</button>
+                aria-label="Delete {packLabel(p.name)}" on:click={() => deletePack(p)}>{#if delPack === p.name}Sure?{:else}<Icon name="close" size={12} />{/if}</button>
             </div>
           {/if}
         </div>
@@ -583,12 +589,12 @@
   .pp-line.short { width: 40%; background: var(--pp-td); }
   .pp-bar {
     position: absolute; left: 10px; right: 10px; bottom: 8px; height: 16px;
-    border-radius: 5px; background: color-mix(in srgb, var(--pp-tx) 6%, var(--pp-st));
+    border-radius: var(--radius-sm); background: color-mix(in srgb, var(--pp-tx) 6%, var(--pp-st));
     border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
   }
   .pp-bar i { position: absolute; right: 4px; top: 3px; width: 8px; height: 8px; border-radius: 3px; background: var(--pp-ac); }
   .pack-name { font-size: var(--fs-sm); padding: 0 3px; }
-  .art-dot { font-size: var(--fs-xs); opacity: 0.75; }
+  .art-dot { display: inline-flex; flex: none; color: var(--muted); }
   .pack-actions {
     position: absolute; top: 6px; right: 6px; display: flex; gap: 8px; opacity: 0;
   }
@@ -603,7 +609,7 @@
   .pack-act:hover { color: var(--text); }
   .pack-rename {
     font: inherit; font-size: var(--fs-sm); color: var(--text);
-    background: var(--bg); border: 1px solid var(--accent); border-radius: 5px;
+    background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius-sm);
     padding: 1px 5px; width: 100%; box-sizing: border-box; outline: none;
   }
   .pack-del {

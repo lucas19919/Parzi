@@ -321,7 +321,7 @@
             <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
               <span class="time">{time(s.updated)}</span>
               <span class="icon">
-                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneFallback(s)} size={13} />{/if}
+                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneFallback(s)} />{/if}
               </span>
               <span class="title">{s.title || "Untitled session"}</span>
               {#if pill}<span class="pill {pill.cls}">{pill.label}</span>{/if}
@@ -357,7 +357,7 @@
             <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
               <span class="time">{time(s.updated)}</span>
               <span class="icon">
-                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneFallback(s)} size={13} />{/if}
+                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneFallback(s)} />{/if}
               </span>
               <span class="title">{s.title || "Untitled session"}</span>
               {#if pill}<span class="pill {pill.cls}">{pill.label}</span>{/if}
@@ -374,7 +374,7 @@
             <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
               <span class="time">{time(s.updated)}</span>
               <span class="icon">
-                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneFallback(s)} size={13} />{/if}
+                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneFallback(s)} />{/if}
               </span>
               <span class="title">{s.title || "Untitled session"}</span>
               {#if sub}<span class="pill {sub.cls}">{sub.label}</span>{:else}<span class="url">{whereOf(s)}</span>{/if}
@@ -403,14 +403,14 @@
             {/if}
             {#each sessionPlan.steps as st, i (i)}
               <div class="trow">
-                <span class="box" class:doing={st.status === "doing"} class:done={st.status === "done"}>{#if st.status === "done"}<Icon name="check" size={10} stroke={2.6} />{/if}</span>
+                <span class="box" class:doing={st.status === "doing"} class:done={st.status === "done"}>{#if st.status === "done"}<Icon name="check" size={12} />{/if}</span>
                 <span class="ttext" class:done={st.status === "done"}>{st.title}</span>
                 {#if st.status === "doing"}<span class="pill live">doing</span>{/if}
               </div>
             {/each}
             {#if sessionPlan.decisions.length}
               <button class="disclosure" aria-expanded={showDecisions} on:click={() => (showDecisions = !showDecisions)}>
-                <span class="tri" class:open={showDecisions}><Icon name="chevRight" size={11} stroke={2} /></span>
+                <span class="tri" class:open={showDecisions}><Icon name="chevRight" size={12} /></span>
                 <span>{sessionPlan.decisions.length} decision{sessionPlan.decisions.length === 1 ? "" : "s"}</span>
               </button>
               {#if showDecisions}
@@ -650,7 +650,7 @@
     width: 14px;
     height: 14px;
     border: 1px solid var(--faint);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     display: inline-flex;
     align-items: center;
     justify-content: center;

@@ -194,7 +194,7 @@
   .slider-wrapper { display: flex; align-items: center; gap: 10px; min-width: 180px; }
   .slider-wrapper input[type="range"] { flex: 1; accent-color: var(--accent); }
   .slider-val {
-    font-family: var(--mono), ui-monospace, monospace; font-size: var(--fs-xs); color: var(--muted);
+    font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums;
     width: 38px; text-align: right;
   }
 </style>

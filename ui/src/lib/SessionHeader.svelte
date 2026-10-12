@@ -97,7 +97,7 @@
   <div class="left">
     {#if backTitle}
       <button class="icon-btn" use:tooltip={`Back to ${backTitle}`} on:click={() => dispatch("back")}>
-        <Icon name="arrowLeft" size={14} />
+        <Icon name="arrowLeft" />
       </button>
     {/if}
     {#if editing}
@@ -106,7 +106,7 @@
       <h2>{title || "New session"}</h2>
     {/if}
     {#if branch}
-      <span class="branch"><Icon name="branch" size={11} />{branch}</span>
+      <span class="branch"><Icon name="branch" size={12} />{branch}</span>
     {/if}
     {#if lane === "work" || lane === "build"}
       {@const work = lane === "work"}
@@ -129,7 +129,7 @@
             open = false;
           }}
         >
-          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
             <circle class="track" cx="8" cy="8" r="6" />
             <circle class="fill" cx="8" cy="8" r="6" stroke-dasharray={RING} stroke-dashoffset={compacting ? RING * 0.7 : RING * (1 - contextPct / 100)} />
           </svg>
@@ -144,21 +144,21 @@
         use:tooltip={"Toggle dock (Ctrl+Shift+A)"}
         on:click={() => dispatch("agents")}
       >
-        <Icon name="panel" size={14} />
+        <Icon name="panel" />
         {#if agentCount > 0}<span class="count">{agents}</span>{/if}
       </button>
       <button class="icon-btn" aria-haspopup="menu" aria-expanded={open} use:tooltip={"Session actions"} on:click={() => {
           open = !open;
           ctxOpen = false;
         }}>
-        <Icon name="more" size={14} stroke={2.4} />
+        <Icon name="more" />
       </button>
       {#if open}
         <div class="dropdown" role="menu" data-ui-list>
           {#each ITEMS as item (item.id)}
             {#if item.id === "delete"}<div class="sep" />{/if}
             <button class="item" class:danger={item.id === "delete"} role="menuitem" on:click={() => run(item.id)}>
-              <Icon name={item.icon} size={13} />
+              <Icon name={item.icon} />
               <span>{item.label}</span>
             </button>
           {/each}
@@ -196,7 +196,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 12px 0 20px;
+    padding: 0 14px 0 20px;
     border-bottom: 1px solid var(--line);
     user-select: none;
   }

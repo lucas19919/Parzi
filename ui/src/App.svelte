@@ -249,7 +249,7 @@
       kind: t.kind === "page" ? ("browser" as const) : t.kind === "brain" || t.kind === "history" ? t.kind : ("harness" as const),
       title: t.title,
       url: t.url ?? "",
-      session_id: t.sessionId ?? "",
+      session_id: t.sessionId ?? t.owner ?? "",
     }));
     deskSync(rows, deskRev, active).catch(() => {});
   }
@@ -1235,6 +1235,7 @@
             on:folder={(e) => useFolder(e.detail.path)}
             on:agents={() => openSettings(remoteOn ? "connections" : "providers")}
             on:brain={() => openBrain()}
+            on:remoteSetup={openRemoteSetup}
           />
         </div>
       {/if}
@@ -1352,7 +1353,7 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    border-radius: 10px;
+    border-radius: var(--radius);
     background: var(--bg);
   }
   :global(html.parzi-maximized) .shell {
@@ -1402,7 +1403,7 @@
     border: var(--glass-border);
     border-bottom: none;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    animation: enter 600ms cubic-bezier(0.22, 1, 0.36, 1);
+    animation: enter 600ms var(--ease-out);
   }
   @keyframes enter {
     from {
@@ -1435,7 +1436,7 @@
     bottom: 0;
     left: 50%;
     z-index: 10;
-    width: calc(min(720px, 90%) + 48px);
+    width: calc(min(1080px, 92%) + 48px);
     padding: 0 24px 24px;
     overflow-y: auto;
     transform: translateX(-50%);
@@ -1453,8 +1454,8 @@
     width: min(720px, 90%);
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
     transition:
-      bottom 1050ms cubic-bezier(0.22, 1, 0.36, 1),
-      transform 1050ms cubic-bezier(0.22, 1, 0.36, 1),
+      bottom 1050ms var(--ease-out),
+      transform 1050ms var(--ease-out),
       width 700ms ease;
   }
   .composer.docked {

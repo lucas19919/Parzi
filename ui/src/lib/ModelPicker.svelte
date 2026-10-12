@@ -7,7 +7,7 @@
   import { hasMark } from "./providerMarks";
   import { api, type ProviderStatus } from "./api";
   import { ageOf, checking, refreshBoard } from "./providerStore";
-  import { PROVIDER_ORDER, allRows, isUsable, nameOf, shownOf, stateLabel, type PickRow } from "./providerRows";
+  import { PROVIDER_ORDER, allRows, isUsable, nameOf, shownOf, type PickRow } from "./providerRows";
   import { effortLabel, effortsFor } from "./providerRows";
   import { popover, placeAbove } from "./popover";
   import { tooltip } from "./tooltip";
@@ -25,8 +25,6 @@
   interface Group {
     key: string;
     label: string;
-    provider: string;
-    note: string;
     rows: PickRow[];
   }
 
@@ -57,12 +55,12 @@
     const rows = allRows(board).filter((r) => r.usable);
     const out: Group[] = [];
     const starred = favorites.map((v) => rows.find((r) => r.value === v)).filter((r): r is PickRow => !!r && matches(r, q));
-    if (starred.length) out.push({ key: "starred", label: "Starred", provider: "", note: "", rows: starred });
+    if (starred.length) out.push({ key: "starred", label: "Starred", rows: starred });
     for (const id of PROVIDER_ORDER) {
       const status = board.find((b) => b.provider === id);
       if (!status || !isUsable(status)) continue;
-      const mine = rows.filter((r) => r.provider === id && matches(r, q));
-      if (mine.length) out.push({ key: id, label: nameOf(id), provider: id, note: stateLabel(status), rows: mine });
+      const mine = rows.filter((r) => r.provider === id && !favorites.includes(r.value) && matches(r, q));
+      if (mine.length) out.push({ key: id, label: nameOf(id), rows: mine });
     }
     return out;
   }
@@ -100,7 +98,7 @@
     query = "";
     open = true;
     if (trigger) {
-      style = placeAbove(trigger, 240);
+      style = placeAbove(trigger, 280, true);
       above = style.includes("bottom:");
     }
     index = 0;
@@ -119,6 +117,10 @@
   function pick(row: PickRow) {
     open = false;
     value = row.value;
+  }
+
+  function setupLabel(b: ProviderStatus) {
+    return b.state === "not_installed" ? "install" : b.state === "disabled" ? "turn on" : "sign in";
   }
 
   function setUp(provider: string) {
@@ -153,7 +155,7 @@
   on:click|stopPropagation={() => (open ? (open = false) : show())}
 >
   <span class="truncate">{shortModel(shown.name)}</span>
-  <Icon name="chevDown" size={10} />
+  <Icon name="chevDown" size={12} />
 </button>
 
 {#if open}
@@ -167,57 +169,62 @@
     transition:fly={{ y: above ? 6 : -6, duration: 140, easing: cubicOut }}
   >
     <div class="search">
-      <Icon name="search" size={13} />
+      <Icon name="search" />
       <input bind:this={searchEl} bind:value={query} on:keydown={onKey} aria-label="Search models" placeholder="Search models" spellcheck="false" />
-      {#if busy}<span class="spin" title="Checking your agents" />{/if}
+      {#if busy}<span class="spin" use:tooltip={"Checking your agents"} />{/if}
     </div>
-    <div class="list" data-ui-list bind:this={listEl}>
-      {#if modelEfforts.length > 1}
-        <div class="head">Effort</div>
-        <div class="effort-row" role="group" aria-label="Effort" data-ui-segmented>
-          {#each modelEfforts as e (e)}
-            <button class="effort" class:on={effort === e} aria-pressed={effort === e} on:click={() => (effort = e)}>
-              {effortLabel(e)}
+    <div class="list" bind:this={listEl}>
+      {#each groups as g (g.key)}
+        <div class="head">{g.label}</div>
+        <div class="rows" data-ui-list>
+          {#each g.rows as row (g.key + row.value)}
+            {@const i = flat.indexOf(row)}
+            <button
+              class="row"
+              class:active={i === index}
+              class:picked={row.value === value}
+              on:click={() => pick(row)}
+              on:mousemove={() => (index = i)}
+            >
+              <span class="logo">{#if hasMark(row.provider)}<ProviderLogo provider={row.provider} size={14} />{/if}</span>
+              <span class="name">{labelOf(row)}</span>
+              {#if row.note}<span class="note">{row.note}</span>{/if}
+              <span class="tick">{#if row.value === value}<Icon name="check" />{/if}</span>
             </button>
           {/each}
         </div>
-      {/if}
-      {#each groups as g (g.key)}
-        {#if g.label}
-          <div class="head">
-            {#if g.provider && hasMark(g.provider)}<ProviderLogo provider={g.provider} size={13} />{/if}
-            <span>{g.label}</span>
-            {#if g.note}<span class="note">{g.note}</span>{/if}
-          </div>
-        {/if}
-        {#each g.rows as row (g.key + row.value)}
-          {@const i = flat.indexOf(row)}
-          <button
-            class="row"
-            class:active={i === index}
-            class:picked={row.value === value}
-            on:click={() => pick(row)}
-            on:mousemove={() => (index = i)}
-          >
-            <span class="name">{labelOf(row)}</span>
-            {#if row.note}<span class="note">{row.note}</span>{/if}
-            {#if row.value === value}<span class="tick"><Icon name="check" size={13} stroke={2} /></span>{/if}
-          </button>
-        {/each}
       {:else}
         <div class="empty">{busy ? "Checking your agents…" : "No matching models"}</div>
       {/each}
-      {#if idle.length && !q}
-        <div class="head">Not set up</div>
-        {#each idle as b (b.provider)}
-          <button class="row idle" on:click={() => setUp(b.provider)}>
-            {#if hasMark(b.provider)}<ProviderLogo provider={b.provider} size={13} />{/if}
-            <span class="name">{nameOf(b.provider)}</span>
-            <span class="note">{b.state === "not_installed" ? "Install" : "Sign in"}</span>
-          </button>
-        {/each}
-      {/if}
     </div>
+    {#if modelEfforts.length > 1 || (idle.length && !q)}
+      <div class="foot">
+        {#if modelEfforts.length > 1}
+          <div class="effort-line">
+            <span class="foot-label">Effort</span>
+            <div class="effort-row" role="group" aria-label="Effort" data-ui-segmented>
+              {#each modelEfforts as e (e)}
+                <button class="effort" class:on={effort === e} aria-pressed={effort === e} on:click={() => (effort = e)}>
+                  {effortLabel(e)}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+        {#if idle.length && !q}
+          <!-- One row for every agent not ready yet; Settings sets them up. -->
+          <button class="row idle" use:tooltip={idle.map((b) => `${nameOf(b.provider)}: ${setupLabel(b)}`).join(", ")} on:click={() => setUp(idle[0].provider)}>
+            <span class="logos">
+              {#each idle.slice(0, 3) as b (b.provider)}
+                {#if hasMark(b.provider)}<ProviderLogo provider={b.provider} size={14} />{/if}
+              {/each}
+            </span>
+            <span class="name">Set up {idle.length === 1 ? nameOf(idle[0].provider) : `${idle.length} more agents`}</span>
+            <Icon name="chevRight" size={12} />
+          </button>
+        {/if}
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -234,7 +241,7 @@
     min-width: 0;
   }
   .picker {
-    width: 240px;
+    width: 280px;
     display: flex;
     flex-direction: column;
     transform-origin: bottom left;
@@ -245,9 +252,10 @@
   .search {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     flex: none;
-    padding: 7px 12px;
+    height: 40px;
+    padding: 0 12px;
     color: var(--muted);
     border-bottom: 1px solid var(--line);
   }
@@ -261,15 +269,12 @@
     color: var(--text);
     font-size: var(--fs-md);
   }
-  .search input::placeholder {
-    color: var(--muted);
-  }
   .spin {
-    width: 11px;
-    height: 11px;
+    width: 12px;
+    height: 12px;
     flex: none;
     border-radius: 50%;
-    border: 1.6px solid var(--line);
+    border: 2px solid var(--line);
     border-top-color: var(--muted);
     animation: spin 0.8s linear infinite;
   }
@@ -281,51 +286,29 @@
   .list {
     flex: 1;
     min-height: 0;
-    max-height: 420px;
+    max-height: 360px;
     overflow-y: auto;
     padding: 4px;
   }
   .head {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding: 8px 8px 2px;
+    padding: 10px 8px 4px;
     font-size: var(--fs-xs);
     font-weight: 600;
     color: var(--muted);
   }
-  .head .note {
-    margin-left: auto;
-    font-weight: 400;
+  .head:first-child {
+    padding-top: 6px;
   }
-  .effort-row {
+  .rows {
     display: flex;
-    gap: 4px;
-    padding: 2px 8px 8px;
-  }
-  .effort {
-    flex: 1;
-    height: 26px;
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    color: var(--muted);
-    font-size: var(--fs-sm);
-    cursor: pointer;
-  }
-  .effort:hover {
-    color: var(--text);
-  }
-  .effort.on {
-    border-color: var(--accent);
-    color: var(--text);
+    flex-direction: column;
   }
   .row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     width: 100%;
-    height: 30px;
+    height: 32px;
     padding: 0 8px;
     background: transparent;
     border: none;
@@ -336,7 +319,12 @@
     cursor: pointer;
   }
   .row.active {
-    background: color-mix(in srgb, var(--text) 7%, transparent);
+    background: var(--hover);
+  }
+  .logo {
+    display: inline-flex;
+    width: 14px;
+    flex: none;
   }
   .name {
     flex: 1;
@@ -347,18 +335,74 @@
   }
   .note {
     flex: none;
+    max-width: 40%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: var(--fs-sm);
     color: var(--muted);
   }
   .tick {
     display: inline-flex;
+    width: 16px;
+    flex: none;
     color: var(--accent);
+  }
+  .foot {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: none;
+    padding: 8px 4px 4px;
+    border-top: 1px solid var(--line);
+  }
+  .effort-line {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 4px 0 8px;
+  }
+  .foot-label {
+    flex: 1;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .effort-row {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: 999px;
+    background: var(--hover);
+  }
+  .effort {
+    height: 24px;
+    padding: 0 10px;
+    background: transparent;
+    border: none;
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+  }
+  .effort:hover {
+    color: var(--text);
+  }
+  .effort.on {
+    background: var(--selected);
+    color: var(--text);
   }
   .row.idle {
     color: var(--muted);
   }
-  .row.idle .note {
-    color: var(--accent);
+  .row.idle:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .logos {
+    display: inline-flex;
+    gap: 4px;
+    flex: none;
+    opacity: 0.8;
   }
   .empty {
     padding: 16px;

@@ -114,7 +114,12 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   background_url: () => (params.get("bg") ? "C:/mock/wallpaper.png" : ""),
   list_background_urls: () => [],
   list_pack_infos: () => [{ name: "Default", builtin: true, colors: theme.colors, has_art: false }],
-  remote_info: () => null,
+  // ?remote=1 links a server.
+  remote_info: () =>
+    params.get("remote")
+      ? { label: "box", user: "lucas", host: "box.example.net", version: "0.1.27", linked_at: now, alive: true, synced_at: now - 180_000, device: "pc" }
+      : null,
+  remote_sync: () => "synced",
   remote_providers: () => [],
   remote_projects: () => [],
   brain_context: () => ({ project, text: "", attached: [], listed: [], chars: 0, tokens: 1840 }),
@@ -128,6 +133,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   brain_dir: () => "C:\\Users\\dev\\.parzi\\brain",
   brain_obsidian: () => "missing",
   git_branch: () => "main",
+  git_status: () => ({ branch: "main", upstream: true, ahead: 2, behind: 0, changed: 3, untracked: 1, last_subject: "matte surfaces, one icon size", last_time: Math.floor(now / 1000) - 3600 }),
   list_files: (a) => ["src/App.svelte", "src/lib/Omnibar.svelte", "src/lib/Thread.svelte"].filter((f) => f.includes(String(a.query ?? ""))),
   search_suggest: (a) => [`${a.query} docs`, `${a.query} tutorial`],
   run_doctor_quick: () => [{ name: "Sessions folder", ok: true, detail: "~/.parzi/sessions" }],

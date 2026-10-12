@@ -18,10 +18,10 @@
 .segmented-control {
   display: inline-flex; background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 7px; padding: 2px; gap: 2px; flex: none;
+  border-radius: var(--radius); padding: 2px; gap: 2px; flex: none;
 }
 .seg-btn {
-  background: transparent; border: none; border-radius: 5px; color: var(--muted);
+  background: transparent; border: none; border-radius: var(--radius-sm); color: var(--muted);
   font-size: var(--fs-sm); font-weight: 500; padding: 5px 11px; cursor: pointer;
   transition: background 140ms ease, color 140ms ease; font-family: inherit;
 }
@@ -29,19 +29,19 @@
 .seg-btn.active { background: var(--line); color: var(--text); }
 
 .switch {
-  width: 36px; height: 20px; flex: none; padding: 0; position: relative;
-  border-radius: 999px; background: var(--line);
-  border: 1px solid var(--line); cursor: pointer;
-  transition: background 140ms ease, border-color 140ms ease;
+  width: 40px; height: 24px; flex: none; padding: 0; position: relative;
+  border: 2px solid transparent; border-radius: 999px; background: var(--line);
+  background-clip: content-box; cursor: pointer;
+  transition: background 140ms ease;
 }
 .switch .knob {
-  position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+  position: absolute; top: 3px; left: 3px; width: 14px; height: 14px;
   border-radius: 50%; background: var(--muted);
   transition: left 140ms ease, background 140ms ease;
 }
 .switch:hover .knob { background: var(--muted); }
-.switch.on { background: var(--accent); border-color: transparent; }
-.switch.on .knob { left: 18px; background: var(--bg); }
+.switch.on { background-color: var(--accent); }
+.switch.on .knob { left: 19px; background: var(--bg); }
 
 .sbtn {
   background: var(--line);

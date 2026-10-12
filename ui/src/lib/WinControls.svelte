@@ -55,7 +55,7 @@
     justify-content: center;
     background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     color: var(--muted);
     cursor: pointer;
   }
