@@ -579,8 +579,9 @@
       const at = e.url ?? t.url;
       if (at) recordFavicon(at, e.favicon);
     }
-    // A new load starts without the last site's icon.
+    // A new load starts without the last site's icon or questions.
     if (e.loading === true && t.favicon) patch.favicon = undefined;
+    if (e.loading === true) dropTabPrompts(e.tab);
     if (e.popupBlocked) addPrompt({ id: `popup-${e.tab}-${Date.now()}`, tab: e.tab, kind: "popup", url: e.popupBlocked });
     if (e.title) {
       patch.title = e.title.slice(0, 80);
