@@ -113,6 +113,7 @@ impl ToolExecutor {
     pub fn defs(&self) -> Vec<ToolDef> {
         let mut d = ui_defs();
         d.extend(browser_defs());
+        d.extend(desk_defs());
         d.extend(brain_defs());
         d.extend(session_defs());
         d.extend(lane_defs());
@@ -170,6 +171,7 @@ pub(crate) fn is_vendor_category(name: &str) -> bool {
 pub(crate) fn is_parzi_tool(name: &str) -> bool {
     is_ui_tool(name)
         || is_browser_tool(name)
+        || is_desk_tool(name)
         || is_session_tool(name)
         || is_lane_tool(name)
         || is_image_tool(name)
@@ -216,64 +218,144 @@ pub(crate) fn is_ui_tool(name: &str) -> bool {
     matches!(name, "ui.show_markdown" | "ui.show_artifact")
 }
 
+/// The optional `tab` every page tool takes: one of this session's tab ids
+/// from browser.open. Without it the tool works on the tab used last.
+fn tab_arg() -> serde_json::Value {
+    serde_json::json!({"type": "string", "description": "a tab id from browser.open; default: the tab you used last"})
+}
+
 fn browser_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "browser.open".into(),
-            description: "Open a URL in a browser tab, or focus that tab if the URL is already open. A bare host is https. A phrase is a search.".into(),
+            description: "Open a URL in one of your page tabs and return its tab id. Without tab or new, your last tab navigates (a first call opens one). new=true opens another tab; tab=<id> navigates that one. Tabs open in the background; focus=true also shows the tab to the human. A bare host is https, a phrase is a search.".into(),
             schema: serde_json::json!({
                 "type": "object",
-                "properties": {"url": {"type": "string"}},
+                "properties": {
+                    "url": {"type": "string"},
+                    "new": {"type": "boolean"},
+                    "tab": tab_arg(),
+                    "focus": {"type": "boolean"},
+                },
                 "required": ["url"],
             }),
         },
         ToolDef {
             name: "browser.tabs".into(),
-            description: "List the open tabs: id, title, and URL.".into(),
+            description: "List your page tabs (id, title, URL) and the title of the tab the human is looking at. all=true asks the human first and lists every tab with its URL.".into(),
             schema: serde_json::json!({
                 "type": "object",
-                "properties": {},
+                "properties": {"all": {"type": "boolean"}},
             }),
         },
         ToolDef {
             name: "browser.read".into(),
-            description: "Read the session's browser tab: title, URL, page text, and clickable controls. Needs a tab opened with browser.open first.".into(),
+            description: "Read a page tab: title, URL, text (same-origin frames included) and the controls you can click or type into. Text comes in pages: offset and limit (default 4000, max 20000 chars); the reply says where the next page starts. tab=active reads the human's own current page, which they must allow.".into(),
             schema: serde_json::json!({
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "tab": tab_arg(),
+                    "offset": {"type": "number"},
+                    "limit": {"type": "number"},
+                },
             }),
         },
         ToolDef {
             name: "browser.click".into(),
-            description: "Click a control on the session's browser tab. Pick it by its visible text, or by a CSS selector.".into(),
+            description: "Click a control on a page tab, picked by its visible text or a CSS selector.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "text": {"type": "string"},
                     "selector": {"type": "string"},
+                    "tab": tab_arg(),
                 },
             }),
         },
         ToolDef {
             name: "browser.type".into(),
-            description: "Type into a field on the session's browser tab, optionally submitting (Enter + form submit). Pick the field by its label, or by a CSS selector.".into(),
+            description: "Type into a field on a page tab (inputs, text areas and rich editors), picked by its label or a CSS selector; default: the focused field. Replaces the text unless append=true. submit=true then presses Enter once.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "text": {"type": "string"},
                     "field": {"type": "string"},
                     "selector": {"type": "string"},
+                    "append": {"type": "boolean"},
                     "submit": {"type": "boolean"},
+                    "tab": tab_arg(),
                 },
                 "required": ["text"],
             }),
         },
         ToolDef {
-            name: "browser.shot".into(),
-            description: "Screenshot the session's browser tab and save it as a JPEG file. Returns the file path — open it with your own vision (Read) to actually see the pixels and verify layouts, diagrams, and rendered pages.".into(),
+            name: "browser.press".into(),
+            description: "Press a key on a page tab: Enter, Tab, Escape, Backspace, Delete, Space, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, a single character, or a chord like ctrl+a. Goes to the element a selector picks, else the focused one.".into(),
             schema: serde_json::json!({
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "key": {"type": "string"},
+                    "selector": {"type": "string"},
+                    "tab": tab_arg(),
+                },
+                "required": ["key"],
+            }),
+        },
+        ToolDef {
+            name: "browser.select".into(),
+            description: "Choose an option in a dropdown (a select element) on a page tab, by the option's text or value. Pick the dropdown by its label or a CSS selector.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "option": {"type": "string"},
+                    "field": {"type": "string"},
+                    "selector": {"type": "string"},
+                    "tab": tab_arg(),
+                },
+                "required": ["option"],
+            }),
+        },
+        ToolDef {
+            name: "browser.scroll".into(),
+            description: "Scroll a page tab: to is down (default), up, top or bottom; or bring the element a CSS selector picks into view.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string", "enum": ["down", "up", "top", "bottom"]},
+                    "selector": {"type": "string"},
+                    "tab": tab_arg(),
+                },
+            }),
+        },
+        ToolDef {
+            name: "browser.wait".into(),
+            description: "Wait until a CSS selector matches a visible element, or a text appears on the page (gone=true: until it disappears). timeout_ms defaults to 10000, at most 60000.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string"},
+                    "text": {"type": "string"},
+                    "gone": {"type": "boolean"},
+                    "timeout_ms": {"type": "number"},
+                    "tab": tab_arg(),
+                },
+            }),
+        },
+        ToolDef {
+            name: "browser.shot".into(),
+            description: "Screenshot a page tab as a JPEG under ~/.parzi/shots. Returns the file path: open it with your own vision (Read) to see the pixels and verify layouts, diagrams, and rendered pages.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"tab": tab_arg()},
+            }),
+        },
+        ToolDef {
+            name: "browser.close".into(),
+            description: "Close one of your page tabs.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"tab": tab_arg()},
+                "required": ["tab"],
             }),
         },
     ]
@@ -287,8 +369,100 @@ pub(crate) fn is_browser_tool(name: &str) -> bool {
             | "browser.read"
             | "browser.click"
             | "browser.type"
+            | "browser.press"
+            | "browser.select"
+            | "browser.scroll"
+            | "browser.wait"
             | "browser.shot"
+            | "browser.close"
     )
+}
+
+fn desk_defs() -> Vec<ToolDef> {
+    vec![
+        ToolDef {
+            name: "desk.state".into(),
+            description: "What the Parzi window shows: your own page tabs, the title of the tab the human is on, whether the window has focus, the sessions running now, and the folder and project of the human's current tab.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+            }),
+        },
+        ToolDef {
+            name: "desk.open".into(),
+            description: "Open something in the Parzi window for the human: what=session (id; default this session), settings (section: general, providers, connections, appearance, system), brain (path of a note), history, or home. Opens in the background unless focus=true.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "what": {"type": "string", "enum": ["session", "settings", "brain", "history", "home"]},
+                    "id": {"type": "string"},
+                    "section": {"type": "string"},
+                    "path": {"type": "string"},
+                    "focus": {"type": "boolean"},
+                },
+                "required": ["what"],
+            }),
+        },
+        ToolDef {
+            name: "desk.notify".into(),
+            description: "Tell the human something with a notification in the Parzi window; when the window is in the background its taskbar button flashes too. Keep it to one short line.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string"},
+                },
+                "required": ["text"],
+            }),
+        },
+        ToolDef {
+            name: "desk.screenshot".into(),
+            description: "Screenshot the Parzi window itself (its tabs, threads and panels; page tabs show as blank) as a JPEG under ~/.parzi/shots. Returns the path to open with your own vision.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {},
+            }),
+        },
+    ]
+}
+
+pub(crate) fn is_desk_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "desk.state" | "desk.open" | "desk.notify" | "desk.screenshot"
+    )
+}
+
+/// Every desk and page tool name, for lane allowlists.
+pub const DESK_TOOLS: &[&str] = &[
+    "browser.open",
+    "browser.tabs",
+    "browser.read",
+    "browser.click",
+    "browser.type",
+    "browser.press",
+    "browser.select",
+    "browser.scroll",
+    "browser.wait",
+    "browser.shot",
+    "browser.close",
+    "desk.state",
+    "desk.open",
+    "desk.notify",
+    "desk.screenshot",
+];
+
+/// Desk tools need a window in this process; page tools also need the
+/// Windows page engine. `parzi serve`, a CLI run with no window, a server
+/// session and macOS get neither.
+#[must_use]
+pub fn window_tool_offered(name: &str, attached: bool, pages: bool) -> bool {
+    if is_browser_tool(name) {
+        pages
+    } else if is_desk_tool(name) {
+        attached && (name != "desk.screenshot" || pages)
+    } else {
+        true
+    }
 }
 
 pub fn brain_defs() -> Vec<ToolDef> {
@@ -701,7 +875,7 @@ fn lane_defs() -> Vec<ToolDef> {
     ]
 }
 
-pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
+pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
     let str_arg = |k: &str| {
         args.get(k)
             .and_then(|v| v.as_str())
@@ -800,9 +974,47 @@ pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String
             "Opening {}",
             one_line(&str_arg("url").unwrap_or_else(|| "a page".into()), 60)
         ),
+        "browser.tabs" if args.get("all").and_then(serde_json::Value::as_bool) == Some(true) => {
+            "Listing every open tab".into()
+        }
         "browser.tabs" => "Listing tabs".into(),
+        "browser.read" if str_arg("tab").as_deref() == Some("active") => {
+            "Reading the page you have open".into()
+        }
         "browser.read" => "Reading the open page".into(),
         "browser.shot" => "Looking at the open page".into(),
+        "browser.press" => format!(
+            "Pressing {}",
+            one_line(&str_arg("key").unwrap_or_else(|| "a key".into()), 30)
+        ),
+        "browser.select" => format!(
+            "Choosing {}",
+            one_line(&str_arg("option").unwrap_or_else(|| "an option".into()), 60)
+        ),
+        "browser.scroll" => format!(
+            "Scrolling {}",
+            str_arg("to").unwrap_or_else(|| "down".into())
+        ),
+        "browser.wait" => format!(
+            "Waiting for {}",
+            one_line(
+                &str_arg("text")
+                    .or_else(|| str_arg("selector"))
+                    .unwrap_or_else(|| "the page".into()),
+                60
+            )
+        ),
+        "browser.close" => "Closing a tab".into(),
+        "desk.state" => "Looking at the window".into(),
+        "desk.open" => format!(
+            "Opening {}",
+            str_arg("what").unwrap_or_else(|| "a view".into())
+        ),
+        "desk.notify" => format!(
+            "Notifying: {}",
+            one_line(&str_arg("text").unwrap_or_default(), 60)
+        ),
+        "desk.screenshot" => "Taking a screenshot of the window".into(),
         "image.generate" => format!(
             "Drawing {}",
             one_line(&str_arg("prompt").unwrap_or_else(|| "an image".into()), 60)
@@ -909,7 +1121,7 @@ pub(crate) fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String
     }
 }
 
-const NAMESPACES: &[&str] = &["ui", "browser", "brain", "session", "lane"];
+const NAMESPACES: &[&str] = &["ui", "browser", "desk", "brain", "session", "lane"];
 
 pub fn to_mcp(name: &str) -> String {
     name.replace('.', "_")
@@ -1023,6 +1235,29 @@ mod tests {
             tools.approval_override("gh.issue_get"),
             Some(ApprovalMode::Auto)
         );
+    }
+
+    #[test]
+    fn window_tools_need_a_window() {
+        for t in DESK_TOOLS {
+            assert!(is_parzi_tool(t), "{t}");
+            assert!(!window_tool_offered(t, false, false), "{t} with no window");
+            assert!(window_tool_offered(t, true, true), "{t} on Windows");
+        }
+        // A window without the page engine (macOS) keeps the desk itself.
+        assert!(window_tool_offered("desk.notify", true, false));
+        assert!(window_tool_offered("desk.open", true, false));
+        assert!(!window_tool_offered("desk.screenshot", true, false));
+        assert!(!window_tool_offered("browser.read", true, false));
+        assert!(window_tool_offered("brain.read", false, false));
+        let all: Vec<String> = browser_defs()
+            .into_iter()
+            .chain(desk_defs())
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(all.len(), DESK_TOOLS.len());
+        assert!(all.iter().all(|n| DESK_TOOLS.contains(&n.as_str())));
+        assert_eq!(display_name("mcp__parzi__desk_notify"), "desk.notify");
     }
 
     #[test]

@@ -274,9 +274,16 @@ impl Orchestrator {
         if cfg.lanes.no_shell {
             allowed.retain(|t| !t.starts_with("shell."));
         }
+        // The window's own tools. ToolHost offers them only when a window
+        // is attached to this process.
+        for u in crate::tools::DESK_TOOLS {
+            if !allowed.iter().any(|a| a == u) {
+                allowed.push((*u).to_string());
+            }
+        }
         // Browser tools drive the desk's tabs; a headless engine has none.
         if super::headless() {
-            allowed.retain(|t| !t.starts_with("browser."));
+            allowed.retain(|t| !t.starts_with("browser.") && !t.starts_with("desk."));
         }
         (mode, allowed)
     }
