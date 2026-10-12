@@ -45,6 +45,10 @@ const MAP = {
   branch: "git-branch",
   panel: "split-view",
   server: "server",
+  alert: "alert",
+  download: "download",
+  external: "link-external",
+  browser: "browser",
 };
 
 const out = [];

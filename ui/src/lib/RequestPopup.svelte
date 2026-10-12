@@ -1,9 +1,17 @@
 <script lang="ts">
-  import { createEventDispatcher, tick } from "svelte";
+  import { createEventDispatcher, onMount, tick } from "svelte";
   import { fade, fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
   import type { AgentRequest } from "./api";
+  import { setOverlay } from "./overlay";
+
+  // Over a web page tab the native page would hide this dialog: the page
+  // steps aside for a snapshot while it is open.
+  onMount(() => {
+    setOverlay("agent-request", true);
+    return () => setOverlay("agent-request", false);
+  });
 
   export let request: AgentRequest;
   export let title = "Agent";

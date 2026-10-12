@@ -234,7 +234,7 @@
                 {#if sub.loading}
                   <span class="spinner" />
                 {:else if sub.url && !broken.has(sub.url)}
-                  <img src={faviconUrl(sub.url)} alt="" on:error={() => sub.url && (broken = new Set(broken).add(sub.url))} />
+                  <img src={sub.favicon || faviconUrl(sub.url)} alt="" on:error={() => sub.url && (broken = new Set(broken).add(sub.url))} />
                 {:else}
                   <Icon name="globe" />
                 {/if}
@@ -276,7 +276,7 @@
           {#if tab.loading}
             <span class="spinner" />
           {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
-            <img src={faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
+            <img src={tab.favicon || faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
           {:else}
             <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : laneIcon(lane)} />
           {/if}

@@ -1,4 +1,5 @@
 import { writable, type Writable } from "svelte/store";
+import { iconFor, rememberIcon, type Closed } from "./pageRules";
 import { bare } from "./suggest";
 import type { Tab } from "./tabs";
 import { toast } from "./toast";
@@ -117,14 +118,24 @@ export function loadTabs(): { tabs: Tab[]; active: string } | null {
   return { tabs, active: tabs.some((t) => t.id === saved.active) ? saved.active : tabs[0].id };
 }
 
-export function faviconUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    return /^https?:$/.test(u.protocol) ? `${u.origin}/favicon.ico` : "";
-  } catch {
-    return "";
-  }
+// Each site's real icon (from the page's <link rel=icon>, reported by
+// WebView2), so lists don't guess /favicon.ico for sites that have none.
+export const favicons = persisted<Record<string, string>>("parzi.favicons.v1", {});
+// Read in templates for every row: one subscription, not one per call.
+let iconMap: Record<string, string> = {};
+favicons.subscribe((m) => (iconMap = m));
+
+export function recordFavicon(pageUrl: string, icon: string) {
+  const next = rememberIcon(iconMap, pageUrl, icon);
+  if (next) favicons.set(next);
 }
+
+export function faviconUrl(url: string): string {
+  return iconFor(iconMap, url);
+}
+
+// Recently closed pages for Ctrl+Shift+T, kept across restarts.
+export const closedTabs = persisted<Closed[]>("parzi.closed.v1", []);
 
 export interface Bookmark {
   title: string;

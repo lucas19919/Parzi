@@ -6,6 +6,10 @@
   import { hasMark } from "./providerMarks";
   import type { SessionMeta } from "./api";
   import { bookmarks, clearHistory, faviconUrl, history, removeBookmark, removeVisit, type Bookmark, type Visit } from "./browserData";
+  import { downloads, type Download } from "./api";
+  import { downloadList } from "./browserState";
+  import { downloadNote, downloadShare } from "./pageRules";
+  import { toast } from "./toast";
   import { bare } from "./suggest";
   import { agentOf, whereOf } from "./sessions";
   import { laneIcon, normLane } from "./lanes";
@@ -14,10 +18,10 @@
 
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
-  export let view: "sessions" | "history" | "bookmarks" = "sessions";
+  export let view: "sessions" | "history" | "bookmarks" | "downloads" = "sessions";
 
   const dispatch = createEventDispatcher<{ open: { url: string }; openSession: { id: string }; deleteSession: { id: string }; clearSessions: void }>();
-  const PLACEHOLDER = { sessions: "Search sessions", history: "Search history", bookmarks: "Search bookmarks" };
+  const PLACEHOLDER = { sessions: "Search sessions", history: "Search history", bookmarks: "Search bookmarks", downloads: "Search downloads" };
 
   // Lists render a page at a time; "Show more" adds the next page.
   const PAGE = 200;
@@ -38,7 +42,10 @@
   $: days = byDay(visitHits.slice(0, limit));
   $: markHits = $bookmarks.filter((b) => matches(b.title, b.url, q));
   $: folders = byFolder(markHits.slice(0, limit));
-  $: total = view === "sessions" ? sessionHits.length : view === "history" ? visitHits.length : markHits.length;
+  $: fileHits = $downloadList.filter((d) => matches(d.name, d.url, q));
+  $: fileDays = byDay(fileHits.slice(0, limit).map((d) => ({ ...d, at: d.started })));
+  $: total =
+    view === "sessions" ? sessionHits.length : view === "history" ? visitHits.length : view === "bookmarks" ? markHits.length : fileHits.length;
 
   function matches(title: string, url: string, term: string) {
     return !term || title.toLowerCase().includes(term) || url.toLowerCase().includes(term);
@@ -66,6 +73,30 @@
     if (ok) clearHistory();
   }
 
+  async function reveal(d: Download) {
+    try {
+      await downloads.reveal(d.id);
+    } catch (e) {
+      toast(String(e), true);
+    }
+  }
+
+  async function cancel(d: Download) {
+    try {
+      await downloads.cancel(d.id);
+    } catch (e) {
+      toast(String(e), true);
+    }
+  }
+
+  async function clearFiles() {
+    try {
+      downloadList.set(await downloads.clear());
+    } catch (e) {
+      toast(String(e), true);
+    }
+  }
+
   async function show(next: typeof view) {
     view = next;
     await tick();
@@ -83,6 +114,7 @@
       <button class:on={view === "sessions"} aria-pressed={view === "sessions"} on:click={() => show("sessions")}>Sessions</button>
       <button class:on={view === "history"} aria-pressed={view === "history"} on:click={() => show("history")}>Pages</button>
       <button class:on={view === "bookmarks"} aria-pressed={view === "bookmarks"} on:click={() => show("bookmarks")}>Bookmarks</button>
+      <button class:on={view === "downloads"} aria-pressed={view === "downloads"} on:click={() => show("downloads")}>Downloads</button>
     </div>
     <div class="search">
       <Icon name="search" />
@@ -93,6 +125,9 @@
     {/if}
     {#if view === "history" && $history.length}
       <button class="link" on:click={clearAll}>Clear history</button>
+    {/if}
+    {#if view === "downloads" && $downloadList.some((d) => d.state !== "progress")}
+      <button class="link" use:tooltip={"Clears the list; the files stay"} on:click={clearFiles}>Clear list</button>
     {/if}
   </header>
 
@@ -138,6 +173,29 @@
         {/each}
       {:else}
         <p class="empty">{q ? "Nothing matches." : "Pages you visit show up here."}</p>
+      {/each}
+    {:else if view === "downloads"}
+      {#each fileDays as day (day.label)}
+        <h3>{day.label}</h3>
+        {#each day.items as d (d.id)}
+          {@const share = downloadShare(d)}
+          <div class="row">
+            <button class="open" title={d.path} disabled={d.state !== "done"} on:click={() => reveal(d)}>
+              <span class="time">{time(d.at)}</span>
+              <span class="icon"><Icon name="download" /></span>
+              <span class="title">{d.name}</span>
+              <span class="url" class:live={d.state === "progress"} class:bad={d.state === "failed"}>{downloadNote(d)}</span>
+              {#if share !== undefined}<span class="meter" aria-hidden="true"><span style:width="{Math.round(share * 100)}%" /></span>{/if}
+            </button>
+            {#if d.state === "progress"}
+              <button class="x shown" use:tooltip={"Cancel download"} on:click={() => cancel(d)}><Icon name="close" size={12} /></button>
+            {:else if d.state === "done"}
+              <button class="x" use:tooltip={"Show in folder"} on:click={() => reveal(d)}><Icon name="folder" size={12} /></button>
+            {/if}
+          </div>
+        {/each}
+      {:else}
+        <p class="empty">{q ? "Nothing matches." : "Files you download from pages show up here."}</p>
       {/each}
     {:else}
       {#each folders as folder (folder.label)}
@@ -322,6 +380,25 @@
   .url.live {
     color: var(--ok);
   }
+  .url.bad {
+    color: var(--bad);
+  }
+  .open:disabled {
+    cursor: default;
+  }
+  .meter {
+    flex: none;
+    width: 80px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--line);
+    overflow: hidden;
+  }
+  .meter span {
+    display: block;
+    height: 100%;
+    background: var(--accent);
+  }
   .x {
     width: 28px;
     height: 28px;
@@ -339,6 +416,7 @@
     opacity: 0;
   }
   .row:hover .x,
+  .x.shown,
   .x:focus-visible {
     opacity: 1;
   }

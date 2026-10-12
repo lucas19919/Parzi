@@ -102,6 +102,23 @@ const notes = [
   { path: "projects/parzi.md", title: "Parzi", projects: [], tags: [], folder: "D:\\Repos\\Parzi", pinned: false, links: [], modified: now / 1000, bytes: 300, summary: "The harness itself." },
 ];
 
+const browserPrefs = {
+  devtools: false,
+  agentSignIns: false,
+  windows: true,
+  sites: [
+    { origin: "https://meet.google.com", kind: "camera", allow: true },
+    { origin: "https://meet.google.com", kind: "microphone", allow: true },
+    { origin: "https://news.example.com", kind: "notifications", allow: false },
+  ],
+};
+
+const downloadsList = [
+  { id: "d1", tab: "t", url: "https://example.com/report.pdf", name: "report.pdf", path: "C:\\Users\\dev\\Downloads\\report.pdf", received: 2_400_000, total: 2_400_000, state: "done", started: now - 600_000 },
+  { id: "d2", tab: "t", url: "https://example.com/big.zip", name: "big.zip", path: "C:\\Users\\dev\\Downloads\\big.zip", received: 31_000_000, total: 88_000_000, state: "progress", started: now - 60_000 },
+  { id: "d3", tab: "t", url: "https://example.com/old.iso", name: "old.iso", path: "C:\\Users\\dev\\Downloads\\old.iso", received: 0, total: 0, state: "failed", started: now - 90_000_000 },
+];
+
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   app_version: () => "0.1.25-dev",
   list_threads: () => sessions,
@@ -138,7 +155,19 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   search_suggest: (a) => [`${a.query} docs`, `${a.query} tutorial`],
   run_doctor_quick: () => [{ name: "Sessions folder", ok: true, detail: "~/.parzi/sessions" }],
   vault_state: () => ({ status: "missing", email: "" }),
-  adblock_state: () => ({ enabled: true, allowed: false, host: "" }),
+  adblock_state: () => ({ enabled: true, allowed: false, host: "", supported: true }),
+  browser_prefs: () => browserPrefs,
+  browser_set_pref: (a) => {
+    if (a.name === "devtools") browserPrefs.devtools = !!a.on;
+    if (a.name === "agentSignIns") browserPrefs.agentSignIns = !!a.on;
+    return browserPrefs;
+  },
+  browser_forget_site: (a) => {
+    browserPrefs.sites = browserPrefs.sites.filter((s) => !(s.origin === a.origin && (!a.kind || s.kind === a.kind)));
+    return browserPrefs;
+  },
+  browser_downloads: () => downloadsList,
+  browser_downloads_clear: () => downloadsList.filter((d) => d.state === "progress"),
   onboard_scan: () => ({ browsers: [], tools: [], folders: [] }),
   send_message: () => "s1",
 };
@@ -155,8 +184,11 @@ try {
   const tabs = [tab("t-home", "session", "New session"), tab("t-s1", "session", sessions[0].title, "s1"), tab("t-s2", "session", sessions[1].title, "s2")];
   if (view === "brain") tabs.push(tab("t-brain", "brain", "Brain"));
   if (view === "history") tabs.push(tab("t-history", "history", "History"));
-  const active = { home: "t-home", session: "t-s1", brain: "t-brain", history: "t-history" }[view] ?? "t-s1";
-  localStorage.setItem("parzi.tabs.v1", JSON.stringify({ tabs, active }));
+  // ?view=page: a web page tab (no native page here), asking for the camera.
+  const saved: unknown[] = [...tabs];
+  if (view === "page") saved.push({ id: "t-page", kind: "page", title: "Example", url: "https://example.com/" });
+  const active = { home: "t-home", session: "t-s1", brain: "t-brain", history: "t-history", page: "t-page" }[view] ?? "t-s1";
+  localStorage.setItem("parzi.tabs.v1", JSON.stringify({ tabs: saved, active }));
   const sites = [
     ["https://github.com/lucas19919/Parzi", "Parzi on GitHub"],
     ["https://docs.rs/tauri", "tauri - Rust docs"],

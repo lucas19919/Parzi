@@ -5,16 +5,61 @@ interface Toast {
   text: string;
   err: boolean;
   session?: string;
+  // A toast that updates in place (a download) carries a key.
+  key?: string;
+  // 0..1 shows a progress bar.
+  progress?: number;
+  action?: { label: string; run: () => void };
 }
 
 export const toasts = writable<Toast[]>([]);
 
 let seq = 0;
+const timers = new Map<number, number>();
+
+function expire(id: number, ms: number) {
+  clearTimeout(timers.get(id));
+  timers.delete(id);
+  if (ms > 0) timers.set(id, window.setTimeout(() => dismissToast(id), ms));
+}
 
 function push(text: string, err: boolean, session: string | undefined, ms: number) {
   const id = ++seq;
   toasts.update((all) => [...all, { id, text, err, session }]);
-  setTimeout(() => toasts.update((all) => all.filter((t) => t.id !== id)), ms);
+  expire(id, ms);
+}
+
+export function dismissToast(id: number) {
+  clearTimeout(timers.get(id));
+  timers.delete(id);
+  toasts.update((all) => all.filter((t) => t.id !== id));
+}
+
+/**
+ * Shows or updates the toast with this key. `ms` 0 keeps it until the next
+ * update; `null` text removes it.
+ */
+export function keyedToast(
+  key: string,
+  text: string | null,
+  opts: { err?: boolean; progress?: number; action?: Toast["action"]; ms?: number } = {},
+) {
+  let id = 0;
+  toasts.update((all) => {
+    const prev = all.find((t) => t.key === key);
+    if (text === null) {
+      if (prev) id = prev.id;
+      return all.filter((t) => t.key !== key);
+    }
+    const next: Toast = { id: prev?.id ?? ++seq, key, text, err: !!opts.err, progress: opts.progress, action: opts.action };
+    id = next.id;
+    return prev ? all.map((t) => (t.key === key ? next : t)) : [...all, next];
+  });
+  if (text === null) {
+    if (id) expire(id, 0);
+    return;
+  }
+  expire(id, opts.ms ?? (opts.err ? 5000 : 3000));
 }
 
 export function toast(text: string, err = false) {

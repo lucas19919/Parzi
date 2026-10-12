@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { adblock, api, vault, BITWARDEN_INSTALL, type ParziConfig, type VaultState } from "../api";
+  import { adblock, api, browserPrefs, vault, BITWARDEN_INSTALL, type BrowserPrefs, type ParziConfig, type VaultState } from "../api";
+  import Icon from "../Icon.svelte";
+  import { permissionName } from "../pageRules";
+  import { tooltip } from "../tooltip";
   import Switch from "./Switch.svelte";
   import SegControl from "./SegControl.svelte";
   import "./shared.css";
@@ -12,6 +15,24 @@
   let blockAds = true;
   let pw: VaultState | null = null;
   let pwBusy = false;
+  let web: BrowserPrefs | null = null;
+
+  async function setWeb(name: "devtools" | "agentSignIns") {
+    if (!web) return;
+    try {
+      web = await browserPrefs.set(name, !web[name]);
+    } catch (e) {
+      notify(`Save failed: ${e}`);
+    }
+  }
+
+  async function forgetSite(origin: string, kind: string) {
+    try {
+      web = await browserPrefs.forget(origin, kind);
+    } catch (e) {
+      notify(`Save failed: ${e}`);
+    }
+  }
 
   async function pwAction() {
     if (!pw || pwBusy) return;
@@ -29,6 +50,7 @@
   onMount(async () => {
     adblock.state("").then((s) => (blockAds = s.enabled)).catch(() => {});
     vault.state().then((s) => (pw = s)).catch(() => {});
+    browserPrefs.get().then((p) => (web = p)).catch(() => {});
     try {
       cfg = await api.getConfig();
     } catch (e) {
@@ -86,7 +108,11 @@
     <div class="field-card">
       <div class="field-info">
         <span class="field-label">Block ads and trackers</span>
-        <span class="field-hint">Uses the EasyList and EasyPrivacy lists. Allow a single site from the shield in the page toolbar.</span>
+        <span class="field-hint">
+          Uses the EasyList and EasyPrivacy lists. Allow a single site from the shield in the page toolbar.{web && !web.windows
+            ? " Works on Windows only for now."
+            : ""}
+        </span>
       </div>
       <Switch on={blockAds} title="Block ads and trackers" on:toggle={toggleAds} />
     </div>
@@ -113,6 +139,51 @@
         </button>
       {/if}
     </div>
+    {#if web}
+      <div class="field-card">
+        <div class="field-info">
+          <span class="field-label">Agent tabs use your sign-ins</span>
+          <span class="field-hint">
+            Off: pages an agent opens get their own browser profile, without your cookies and accounts. Applies to agent pages
+            opened from now on.
+          </span>
+        </div>
+        <Switch on={web.agentSignIns} title="Agent tabs use your sign-ins" on:toggle={() => setWeb("agentSignIns")} />
+      </div>
+      <div class="field-card">
+        <div class="field-info">
+          <span class="field-label">Developer tools for pages</span>
+          <span class="field-hint">{web.windows ? "F12 and Inspect in web page tabs." : "Needs Windows for now."}</span>
+        </div>
+        <Switch on={web.devtools} title="Developer tools for pages" on:toggle={() => setWeb("devtools")} />
+      </div>
+      <div class="field-card sites">
+        <div class="field-info">
+          <span class="field-label">Site permissions</span>
+          <span class="field-hint">
+            {web.sites.length
+              ? "What you allowed or blocked when a page asked. Remove one to be asked again."
+              : web.windows
+                ? "Sites you allow or block when they ask for your camera, location and the like show up here."
+                : "Pages ask with the system prompt on this computer."}
+          </span>
+          {#if web.sites.length}
+            <ul class="site-list">
+              {#each web.sites as s (s.origin + s.kind)}
+                <li class="site">
+                  <span class="site-origin">{s.origin.replace(/^https:\/\//, "")}</span>
+                  <span class="site-kind">{permissionName(s.kind)}</span>
+                  <span class="site-state" class:allow={s.allow}>{s.allow ? "Allowed" : "Blocked"}</span>
+                  <button class="forget" use:tooltip={"Forget this choice"} on:click={() => forgetSite(s.origin, s.kind)}>
+                    <Icon name="close" size={12} />
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      </div>
+    {/if}
   </div>
 
   <div class="pref-section">
@@ -191,6 +262,66 @@
 {/if}
 
 <style>
+  .field-card.sites {
+    align-items: flex-start;
+  }
+  .site-list {
+    display: flex;
+    flex-direction: column;
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .site {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 32px;
+    padding: 0 4px 0 8px;
+    border-radius: var(--radius);
+    font-size: var(--fs-md);
+  }
+  .site:hover {
+    background: var(--hover);
+  }
+  .site-origin {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+  }
+  .site-kind {
+    flex: none;
+    color: var(--muted);
+  }
+  .site-state {
+    flex: none;
+    width: 64px;
+    color: var(--muted);
+  }
+  .site-state.allow {
+    color: var(--text);
+  }
+  .forget {
+    flex: none;
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .forget:hover {
+    background: var(--selected);
+    color: var(--text);
+  }
   .slider-wrapper { display: flex; align-items: center; gap: 10px; min-width: 180px; }
   .slider-wrapper input[type="range"] { flex: 1; accent-color: var(--accent); }
   .slider-val {
