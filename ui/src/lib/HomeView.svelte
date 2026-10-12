@@ -2,7 +2,7 @@
   import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
-  import { api, brain, type GitStatus, type Project, type ProviderStatus, type SessionMeta } from "./api";
+  import { api, brain, type GitStatus, type GoalView, type Project, type ProviderStatus, type SessionMeta } from "./api";
   import { faviconUrl, history, pins } from "./browserData";
   import { hasMark } from "./providerMarks";
   import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "./providerRows";
@@ -12,7 +12,6 @@
   import { popover, placeAbove } from "./popover";
   import { activity, openGoal, work } from "./workStore";
   import { cardLine, clip, homeSummary, statusWord, stepProgress, toneOf, type Activity } from "./workModel";
-  import type { GoalView } from "./api";
 
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
@@ -147,7 +146,7 @@
   // plan is) for running work, else the status word.
   function workMeta(g: GoalView, act: Map<string, Activity>): { text: string; live: boolean } {
     if (toneOf(g) !== "live") return { text: statusWord(g), live: false };
-    const line = cardLine(g, act);
+    const line = cardLine(g, act, $work.asks);
     if (line.live) return { text: clip(line.text, 30), live: true };
     const p = stepProgress(g.steps);
     return { text: p.current ? `Step ${p.index} of ${p.total}` : statusWord(g), live: false };

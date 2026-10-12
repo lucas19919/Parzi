@@ -7,6 +7,7 @@
   import GoalPage from "./GoalPage.svelte";
   import { brain, type Project, type SessionMeta } from "./api";
   import { persisted } from "./browserData";
+  import { covered } from "./overlay";
   import { refreshWork, targetGoal, work, workError, workLoaded } from "./workStore";
   import { ALL, BANDS, engineMatch, groupBands, inProject, otherEngines, projectOptions, type EngineFilter } from "./workModel";
 
@@ -31,7 +32,7 @@
   $: options = projectOptions($work.goals, projects);
   // A remembered project without work any more falls back to All.
   $: if ($workLoaded && !options.some((o) => o.value === $scope)) scope.set(ALL);
-  $: showEngines = otherEngines($work.goals, $work.server.linked);
+  $: showEngines = otherEngines($work.goals, !!$work.server?.linked);
   $: engineNow = showEngines ? $engine : "all";
   $: shown = $work.goals.filter((g) => inProject(g, $scope) && engineMatch(g, engineNow));
   $: bands = groupBands(shown, $work.asks);
@@ -48,6 +49,15 @@
       .projects()
       .then((p) => (projects = p))
       .catch(() => {});
+    // Escape closes the goal page. Capture phase, so App doesn't also read
+    // it as "stop the run"; the switcher and menus (covered) come first.
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !selected || e.defaultPrevented || $covered) return;
+      e.preventDefault();
+      selected = "";
+    };
+    window.addEventListener("keydown", onEsc, true);
+    return () => window.removeEventListener("keydown", onEsc, true);
   });
 
   // Opened at a goal (a toast, Home, the dock, the session strip).

@@ -335,10 +335,15 @@ export function goalActivity(g: Pick<GoalView, "running">, act: ReadonlyMap<stri
   return latest ? { text: shortLabel(latest.label), more: g.running.length - 1 } : null;
 }
 
-// A card's second line: what its agents are doing right now, else why it
-// needs you, the step being worked, or what the last run said.
-export function cardLine(g: GoalView, act: ReadonlyMap<string, Activity>): { text: string; live: boolean; more: number } {
+// A card's second line: what it waits on you for, else what its agents are
+// doing right now, why it stopped, the step being worked, or what the last
+// run said.
+export function cardLine(g: GoalView, act: ReadonlyMap<string, Activity>, asks: AskView[] = []): { text: string; live: boolean; more: number } {
   const quiet = (text: string) => ({ text, live: false, more: 0 });
+  if (g.status === "needs_you" || (g.status === "working" && hasOpenAsk(g, asks))) {
+    const ask = asks.find((a) => a.goal === g.id);
+    return quiet(firstLine(ask?.label) || "Waiting for your answer in its session");
+  }
   if (g.status === "working") {
     const a = goalActivity(g, act);
     if (a) return { ...a, live: true };

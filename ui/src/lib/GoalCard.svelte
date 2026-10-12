@@ -6,7 +6,7 @@
   import StepRail from "./StepRail.svelte";
   import type { GoalView } from "./api";
   import { prettyModel } from "./providerRows";
-  import { activity, now } from "./workStore";
+  import { activity, now, work } from "./workStore";
   import { cardLine, engineLabel, formatCost, statusWord, stepProgress, timeOf, toneOf } from "./workModel";
 
   export let goal: GoalView;
@@ -18,7 +18,7 @@
   const dispatch = createEventDispatcher<{ open: { id: string } }>();
 
   $: tone = toneOf(goal);
-  $: line = cardLine(goal, $activity);
+  $: line = cardLine(goal, $activity, $work.asks);
   $: progress = stepProgress(goal.steps);
   $: model = goal.last?.model ? prettyModel(goal.last.model) : "";
   $: meta = [model, formatCost(goal.cost_usd), goal.files ? `${goal.files} file${goal.files === 1 ? "" : "s"}` : ""].filter(Boolean);
@@ -36,7 +36,7 @@
   {#if goal.steps.length}
     <span class="plan">
       <StepRail steps={goal.steps} />
-      <span class="count">{progress.done} of {progress.total}</span>
+      <span class="count">{progress.done} of {progress.total} done</span>
     </span>
   {/if}
   {#if line.text}

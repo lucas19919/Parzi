@@ -29,10 +29,12 @@ import {
   shortLabel,
   statusWord,
   stepProgress,
+  stepTone,
   stepWord,
   timeOf,
   toneOf,
   waitsOn,
+  whenOf,
 } from "../src/lib/workModel.ts";
 import type { GoalView, RunView, StepView } from "../src/lib/api.ts";
 
@@ -393,8 +395,10 @@ test("a card's line says what is happening, else why it waits", () => {
   assert.equal(cardLine(goal("g", { status: "paused", last: run() }), act).text, "Reached its budget");
   assert.equal(cardLine(goal("g", { status: "later", prompt: "Clean up the screenshots\nin docs" }), act).text, "Clean up the screenshots");
   assert.equal(cardLine(goal("g", { status: "done", last: run({ summary: "## Done\nAll good" }) }), act).text, "Done");
-  // A goal that waits on you does not show a stale tool call.
-  assert.equal(cardLine(goal("g", { status: "needs_you", running: ["s6"], prompt: "Fix it" }), act).live, false);
+  // A goal that waits on you says for what, not its last tool call.
+  assert.deepEqual(cardLine(goal("g", { status: "needs_you", running: ["s6"] }), act), { text: "Waiting for your answer in its session", live: false, more: 0 });
+  const ask = { id: "k", session: "s6", goal: "g", kind: "approval" as const, label: "Run npm install", detail: null, opened: NOW, expires: null };
+  assert.equal(cardLine(goal("g", { running: ["s6"], asks: 1 }), act, [ask]).text, "Run npm install");
 });
 
 test("runs say how they ended and how long they took", () => {
@@ -414,4 +418,18 @@ test("clip cuts at a word", () => {
   assert.equal(clip("Editing Omnibar.svelte", 30), "Editing Omnibar.svelte");
   assert.equal(clip("Running cargo test -p parzi-core sync", 24), "Running cargo test -p…");
   assert.equal(clip("Supercalifragilisticexpialidocious", 10), "Supercali…");
+});
+
+test("a step's session reads its step's state", () => {
+  assert.equal(stepTone(PLAN[0]), "ok");
+  assert.equal(stepTone(PLAN[1]), "live");
+  assert.equal(stepTone(step("x", { status: "check" })), "need");
+  assert.equal(stepTone(step("x", { status: "failed" })), "bad");
+  assert.equal(stepTone(PLAN[3]), "idle");
+});
+
+test("times today read as a time, older ones with the date", () => {
+  const noon = new Date(2026, 9, 12, 12, 0).getTime();
+  assert.doesNotMatch(whenOf(noon - 3_600_000, noon), /,/);
+  assert.match(whenOf(noon - 2 * DAY_MS, noon), /,/);
 });

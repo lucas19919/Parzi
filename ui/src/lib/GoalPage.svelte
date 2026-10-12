@@ -89,7 +89,7 @@
   $: runs = [...(detail?.id === id ? detail.runs : [])].reverse();
   $: notes = detail?.id === id ? detail.notes : [];
   $: live = g && g.status === "working" ? goalActivity(g, $activity) : null;
-  $: reason = g && (g.status === "check" || g.status === "failed" || g.status === "paused" || g.status === "needs_you") ? cardLine(g, $activity).text : "";
+  $: reason = g && (tone === "need" || tone === "bad") ? cardLine(g, $activity, $work.asks).text : "";
   $: rootBusy = !!g?.root && (running.has(g.root) || g.running.includes(g.root));
   $: canSend = !!g && g.owned && !!g.root && !rootBusy && !sending;
   $: placeholder = !g?.owned
@@ -188,10 +188,10 @@
       <h2 class="g-title">{g.title}</h2>
       <p class="g-meta">{meta.join(" · ")}</p>
 
-      {#if live}
-        <p class="g-live"><i class="pulse" />{live.text}{#if live.more > 0}<span class="also">and {live.more} more agent{live.more === 1 ? "" : "s"}</span>{/if}</p>
-      {:else if reason}
+      {#if reason}
         <p class="g-reason {tone}">{reason}</p>
+      {:else if live}
+        <p class="g-live"><i class="pulse" />{live.text}{#if live.more > 0}<span class="also">and {live.more} more agent{live.more === 1 ? "" : "s"}</span>{/if}</p>
       {/if}
       {#if error && !detail}<p class="g-err">Couldn't load this goal: {error}</p>{/if}
 

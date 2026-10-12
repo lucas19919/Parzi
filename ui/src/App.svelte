@@ -299,11 +299,15 @@
   $: place = tab.kind === "session" ? placeOf($work.goals.filter((g) => g.status !== "archived"), shown) : null;
   // The window shows this session: its goal finishing needs no toast.
   $: watching.set(tab.kind === "session" ? shown : null);
-  // The strip slides in above the thread: keep a thread read at its end there.
+  // The strip slides in above the thread (180 ms): a thread read at its end
+  // stays there, during the slide and after it.
   let placeKey = "";
   $: if ((place ? `${place.goal.id}|${shown}` : "") !== placeKey) {
     placeKey = place ? `${place.goal.id}|${shown}` : "";
-    if (nearBottom()) void scrollToBottom();
+    if (nearBottom()) {
+      void scrollToBottom();
+      setTimeout(() => void scrollToBottom(), 200);
+    }
   }
 
   // A follow-up from a goal's page goes to its lead session, as if typed in
