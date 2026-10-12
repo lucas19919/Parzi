@@ -38,6 +38,7 @@
   import { toast, toastError, toasts, notify, chime } from "./lib/toast";
   import { covered } from "./lib/overlay";
   import type { Approval, LiveTool } from "./lib/live";
+  import { deskRows, type DeskCmd } from "./lib/desk";
 
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
@@ -220,7 +221,7 @@
   }
   // Page events (loading, back/forward, blocked counts) patch tabs all
   // the time; the desk and the saved tab list only care about this.
-  $: tabsKey = JSON.stringify([activeId, tabs.map((t) => [t.id, t.kind, t.title, t.url ?? "", t.sessionId ?? "", t.cwd ?? ""])]);
+  $: tabsKey = JSON.stringify([activeId, tabs.map((t) => [t.id, t.kind, t.title, t.url ?? "", t.sessionId ?? "", t.owner ?? "", t.cwd ?? ""])]);
   let lastTabsKey = "";
   $: if (tabsKey !== lastTabsKey) {
     lastTabsKey = tabsKey;
@@ -244,14 +245,7 @@
   }
 
   function syncDesk(list: Tab[], active: string) {
-    const rows = list.map((t) => ({
-      id: t.id,
-      kind: t.kind === "page" ? ("browser" as const) : t.kind === "brain" || t.kind === "history" ? t.kind : ("harness" as const),
-      title: t.title,
-      url: t.url ?? "",
-      session_id: t.sessionId ?? t.owner ?? "",
-    }));
-    deskSync(rows, deskRev, active).catch(() => {});
+    deskSync(deskRows(list), deskRev, active).catch(() => {});
   }
 
   async function loadProject(dir: string) {
@@ -963,6 +957,46 @@
     }
   }
 
+  // Commands from the control socket (the CLI and agents). A page opens
+  // behind the current tab unless the command asked for focus; the CLI
+  // asks by default, agents do not.
+  function onDeskCmd(cmd: DeskCmd) {
+    if (cmd.op === "open" && cmd.url) openPage(cmd.url, cmd.id, cmd.owner ?? null, !cmd.focus);
+    else if (cmd.op === "navigate" && cmd.id && cmd.url) patchTab(cmd.id, { url: cmd.url, title: hostOf(cmd.url) });
+    else if (cmd.op === "focus" && cmd.id) selectTab(cmd.id);
+    else if (cmd.op === "close" && cmd.id) closeTab(cmd.id);
+    else if (cmd.op === "show") showFromDesk(cmd);
+    else if (cmd.op === "notify" && cmd.text) {
+      notify(cmd.text, cmd.session ?? "");
+      chime(true);
+    } else if (cmd.op === "approval" && cmd.key) {
+      // Answered from the command line: the card goes, and says why.
+      approvals = approvals.filter((a) => a.key !== cmd.key);
+      if (cmd.label) toast(`${cmd.allow ? "Allowed" : "Denied"} from the command line: ${cmd.label}`);
+    } else if (cmd.op === "deleted" && cmd.id) {
+      const gone = cmd.id;
+      running.delete(gone);
+      running = running;
+      for (const t of tabs.filter((x) => x.sessionId === gone)) closeTab(t.id);
+      void refreshThreads();
+    }
+  }
+
+  function showFromDesk(cmd: DeskCmd) {
+    if (cmd.what === "session" && cmd.id) {
+      const id = cmd.id;
+      if (cmd.focus !== false) openSession(id);
+      else if (!tabs.some((t) => t.sessionId === id)) {
+        const t = sessionTab(id, cmd.title || "Session");
+        const idx = tabs.findIndex((x) => x.id === activeId);
+        tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
+      }
+    } else if (cmd.what === "settings") openSettings(cmd.section || "general");
+    else if (cmd.what === "brain") openBrain(cmd.path ?? "");
+    else if (cmd.what === "history") openHistory(cmd.view ?? "sessions");
+    else if (cmd.what === "home") goHome();
+  }
+
   async function warmPages() {
     await new Promise((r) => setTimeout(r, 1500));
     const later = tabs.filter((t) => t.kind === "page" && t.url && t.id !== activeId).slice(0, 8);
@@ -989,13 +1023,7 @@
     document.addEventListener("parzi:layout", onLayout);    const unRun = onRunEvent(onEvent);
     const unDesk = onDesk((cmd) => {
       if (typeof cmd.rev === "number") deskRev = Math.max(deskRev, cmd.rev);
-      // Agent-driven tab events never steal focus: pages open in the
-      // background attached to their session; navigations patch in place.
-      if (cmd.op === "open" && cmd.url) openPage(cmd.url, cmd.id, cmd.owner ?? null, true);
-      else if (cmd.op === "navigate" && cmd.id && cmd.url) {
-        patchTab(cmd.id, { url: cmd.url, title: hostOf(cmd.url) });
-      } else if (cmd.op === "focus" && cmd.id) selectTab(cmd.id);
-      else if (cmd.op === "close" && cmd.id) closeTab(cmd.id);
+      onDeskCmd(cmd);
     });
     const unPage = onBrowser(onPage);
     const unOpen = onBrowserOpen((e) => openPageNext(e.url));

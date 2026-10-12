@@ -139,8 +139,16 @@ impl Approver for GuiApprover {
                 call: view,
             },
         );
+        // Listed for `parzi approval` and streamed to `parzi watch`.
+        let desk = self.app.try_state::<AppState>().map(|s| s.desk.clone());
+        if let Some(desk) = &desk {
+            desk.approval_opened(&key, call);
+        }
         let out = tokio::time::timeout(std::time::Duration::from_secs(120), rx).await;
         self.pending.lock().await.remove(&key);
+        if let Some(desk) = &desk {
+            desk.approval_closed(&key);
+        }
         match out {
             Ok(Ok(a)) => a,
             _ => Approval::Deny,
