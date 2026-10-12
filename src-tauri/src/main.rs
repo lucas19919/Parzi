@@ -28,6 +28,7 @@ mod remote;
 mod search;
 mod sessions;
 mod settings;
+mod tasks;
 mod vault;
 
 pub(crate) type Pending = Arc<Mutex<HashMap<String, (String, oneshot::Sender<Approval>)>>>;
@@ -550,6 +551,12 @@ fn main() {
                 app: app.handle().clone(),
                 pending: questions.clone(),
             }));
+            // Queued runs restored after a restart ask the desk, as they did.
+            o.set_approver(Arc::new(GuiApprover {
+                app: app.handle().clone(),
+                pending: app.state::<AppState>().pending.clone(),
+            }));
+            tasks::watch(app.handle());
             let ctl_app = app.handle().clone();
             let ctl_orch = o.clone();
             let ctl_pending = app.state::<AppState>().pending.clone();
@@ -639,8 +646,12 @@ fn main() {
             sessions::purge_sessions,
             sessions::approve_tool,
             sessions::answer_question,
-            sessions::spawn_track,
-            sessions::plan_get,
+            tasks::tasks_list,
+            tasks::tasks_create,
+            tasks::tasks_update,
+            tasks::tasks_delete,
+            tasks::tasks_reorder,
+            tasks::tasks_assign,
             files::pick_folder,
             files::list_files,
             files::git_branch,
