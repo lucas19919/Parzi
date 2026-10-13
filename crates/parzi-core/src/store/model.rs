@@ -16,6 +16,19 @@ impl SessionStatus {
     pub(crate) fn is_terminal(self) -> bool {
         matches!(self, Self::Idle | Self::Done | Self::Killed)
     }
+
+    /// How the status reads to an agent or a person: the one word every
+    /// tool reply and listing uses (the stored form stays `serde`'s).
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Active => "running",
+            Self::Queued => "queued",
+            Self::Idle => "idle",
+            Self::Done => "done",
+            Self::Killed => "stopped",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,7 +82,6 @@ pub struct SessionMeta {
 #[serde(rename_all = "snake_case")]
 pub enum RunCause {
     #[default]
-    #[serde(alias = "later")]
     Send,
     Wake,
     Message,
@@ -116,6 +128,23 @@ pub enum RunEndKind {
     Crashed,
     Interrupted,
     NotStarted,
+}
+
+impl RunEndKind {
+    /// How a run's end reads after "the run" or a session's name: one
+    /// wording for reports, listings and replies.
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Completed => "finished",
+            Self::Failed => "failed",
+            Self::Paused => "paused at the budget",
+            Self::Stopped => "was stopped",
+            Self::Crashed => "crashed",
+            Self::Interrupted => "was cut off",
+            Self::NotStarted => "did not start",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -317,8 +346,8 @@ mod tests {
         assert_eq!(RunCause::parse("CLI"), Some(RunCause::Cli));
         assert!(RunCause::Send.from_person() && !RunCause::Wake.from_person());
         assert!(!RunCause::Compact.recorded());
-        let old: RunCause = serde_json::from_str(r#""later""#).unwrap();
-        assert_eq!(old, RunCause::Send, "a queued run from before still loads");
+        assert_eq!(SessionStatus::Killed.word(), "stopped");
+        assert_eq!(RunEndKind::NotStarted.word(), "did not start");
     }
 
     #[test]

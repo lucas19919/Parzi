@@ -380,6 +380,14 @@ pub fn checked_background(abs: std::path::PathBuf) -> Option<std::path::PathBuf>
 
 /// The file a theme's `background.image` names, when it is a safe one.
 #[must_use]
+pub fn background_file(image: &str) -> Option<std::path::PathBuf> {
+    if image.trim().is_empty() {
+        return None;
+    }
+    checked_background(paths::parzi_dir().ok()?.join(image))
+}
+
+/// Two files with the same bytes.
 fn same_content(a: &std::path::Path, b: &std::path::Path) -> bool {
     let same_len = std::fs::metadata(a)
         .ok()
@@ -390,13 +398,6 @@ fn same_content(a: &std::path::Path, b: &std::path::Path) -> bool {
             .ok()
             .zip(std::fs::read(b).ok())
             .is_some_and(|(x, y)| x == y)
-}
-
-pub fn background_file(image: &str) -> Option<std::path::PathBuf> {
-    if image.trim().is_empty() {
-        return None;
-    }
-    checked_background(paths::parzi_dir().ok()?.join(image))
 }
 
 pub fn save_pack(name: &str) -> Result<()> {

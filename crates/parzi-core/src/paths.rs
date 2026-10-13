@@ -47,6 +47,68 @@ mod network_tests {
     }
 }
 
+/// Whether this platform's file systems ignore case (by default).
+const FOLDS_CASE: bool = cfg!(any(windows, target_os = "macos"));
+
+/// One spelling of a path for comparing two: forward slashes, no `./` in
+/// front, no verbatim prefix (`\\?\`), no slash at the end, and case folded
+/// where the file system folds it.
+#[must_use]
+pub fn path_key(raw: &str) -> String {
+    let s = raw.replace('\\', "/");
+    let s = s
+        .strip_prefix("//?/UNC/")
+        .map(|r| format!("//{r}"))
+        .or_else(|| s.strip_prefix("//?/").map(str::to_string))
+        .unwrap_or(s);
+    let s = s.trim_start_matches("./").trim_end_matches('/');
+    if FOLDS_CASE {
+        s.to_lowercase()
+    } else {
+        s.to_string()
+    }
+}
+
+/// Whether two paths name the same file, by their `path_key`.
+#[must_use]
+pub fn same_path(a: &str, b: &str) -> bool {
+    path_key(a) == path_key(b)
+}
+
+/// `s` without `prefix`, compared char by char and without case where the
+/// file system folds it. Byte offsets stay `s`'s own, so the rest keeps its
+/// spelling.
+#[must_use]
+pub fn strip_prefix_fold<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    let mut rest = s.char_indices();
+    for want in prefix.chars() {
+        let (_, got) = rest.next()?;
+        let same = want == got || (FOLDS_CASE && want.to_lowercase().eq(got.to_lowercase()));
+        if !same {
+            return None;
+        }
+    }
+    Some(rest.next().map_or("", |(i, _)| &s[i..]))
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    #[test]
+    fn paths_compare_by_one_spelling() {
+        assert!(same_path("./src\\a.rs", "src/a.rs"));
+        assert!(same_path("src/", "src"));
+        assert_eq!(path_key(r"\\?\C:\x\"), path_key("C:/x"));
+        assert_eq!(path_key(r"\\?\UNC\host\s"), "//host/s");
+        assert_eq!(same_path("SRC/A.rs", "src/a.rs"), FOLDS_CASE);
+        assert_eq!(strip_prefix_fold("src/a.rs", "src"), Some("/a.rs"));
+        assert_eq!(strip_prefix_fold("src", "src"), Some(""));
+        assert_eq!(strip_prefix_fold("sr", "src"), None);
+        assert_eq!(strip_prefix_fold("SRC/x", "src").is_some(), FOLDS_CASE);
+    }
+}
+
 pub fn config_path() -> Result<PathBuf> {
     Ok(parzi_dir()?.join("config.toml"))
 }

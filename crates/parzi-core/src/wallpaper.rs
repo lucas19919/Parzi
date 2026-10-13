@@ -117,16 +117,8 @@ fn blur_sigma(blur: f64, scale: f64, out_w: u32, screen_w: u32) -> f32 {
     (device * out_w as f64 / screen_w as f64).max(0.0) as f32
 }
 
-fn fnv1a(bytes: &[u8], mut h: u64) -> u64 {
-    for b in bytes {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x0000_0100_0000_01B3);
-    }
-    h
-}
-
 fn cache_key(src: &Path, mtime: u64, len: u64, sigma: f32, out_w: u32, out_h: u32) -> String {
-    let mut h = fnv1a(src.to_string_lossy().as_bytes(), 0xcbf2_9ce4_8422_2325);
+    let mut h = crate::hash::fnv1a(src.to_string_lossy().as_bytes());
     for n in [
         mtime,
         len,
@@ -134,7 +126,7 @@ fn cache_key(src: &Path, mtime: u64, len: u64, sigma: f32, out_w: u32, out_h: u3
         out_h as u64,
         (sigma * 100.0).round().max(0.0) as u64,
     ] {
-        h = fnv1a(&n.to_le_bytes(), h);
+        h = crate::hash::fnv1a_from(h, &n.to_le_bytes());
     }
     format!("{h:016x}")
 }
