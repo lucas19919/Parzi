@@ -1,0 +1,2 @@
+# Vite writes these next to its config while it loads it; one was committed once.
+*.timestamp-*.mjs

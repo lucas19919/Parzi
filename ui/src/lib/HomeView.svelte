@@ -594,7 +594,8 @@
 <style>
   /* The list scrolls with no scrollbar; its edges fade (sizes from
      homeLayout.fades): the top once scrolled, the bottom deeper while more
-     is below. The side padding leaves room for the cards' shadows. */
+     is below. The bottom padding is the fade kept at the end (END_FADE);
+     the side padding leaves room for the cards' shadows. */
   .home-scroll {
     position: relative;
     flex: 0 1 auto;

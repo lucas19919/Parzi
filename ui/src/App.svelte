@@ -1397,17 +1397,7 @@
        toasts move up into the window chrome, newest only. -->
   <div class="toasts" class:chrome={toastsUp} aria-live="polite">
     {#each toastsUp ? $toasts.slice(-1) : $toasts as t (t.id)}
-      {#if t.run}
-        <button
-          class="toast go"
-          class:err={t.err}
-          transition:fade={{ duration: 140 }}
-          on:click={() => {
-            dismissToast(t.id);
-            t.run?.();
-          }}>{t.text}</button
-        >
-      {:else if t.session}
+      {#if t.session}
         <button
           class="toast go"
           transition:fade={{ duration: 140 }}
