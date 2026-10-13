@@ -53,6 +53,16 @@
       "reason": "Window caption buttons sit edge to edge, as in the OS title bar."
     },
     {
+      "selector": ".viz svg text",
+      "rules": ["text-contrast"],
+      "reason": "Reviewed: chart labels are --text or --muted SVG text on the chart's own --glass-bg card (at least 4.5:1 in every built-in theme). axe can't sample the background behind SVG text."
+    },
+    {
+      "selector": ".viz-data, .viz-data *",
+      "rules": ["content-clipping"],
+      "reason": "Visually hidden on purpose: a chart's values as a table for screen readers; the chart shows the same values to the eye."
+    },
+    {
       "selector": ".katex, .katex *",
       "rules": ["font-size", "font-family"],
       "reason": "Math follows TeX metrics and fonts."

@@ -6,6 +6,7 @@
   import { mdHtml, richReady, splitSegments, LiveMarkdown } from "./md";
   import Widget from "./widgets/Widget.svelte";
   import ArtifactCard from "./widgets/ArtifactCard.svelte";
+  import Viz from "./viz/Viz.svelte";
   import Steps from "./Steps.svelte";
   import Icon from "./Icon.svelte";
   import { api, type ChatEvent, type PlanQuote, type Question } from "./api";
@@ -379,6 +380,8 @@ ${e.text}` : e.text;
               <Widget data={seg.body} />
             {:else if seg.kind === "artifact"}
               <ArtifactCard data={seg.body} />
+            {:else if seg.kind === "viz"}
+              <Viz spec={seg.body} />
             {/if}
           {/each}
         </div>
@@ -413,6 +416,8 @@ ${e.text}` : e.text;
     {:else if item.kind === "widget"}
       {#if item.fence === "parzi-widget"}
         <Widget data={item.payload} />
+      {:else if item.fence === "viz"}
+        <Viz spec={item.payload} />
       {:else}
         <div class="msg">{@html mdHtml("```" + item.fence + "\n" + JSON.stringify(item.payload, null, 2) + "\n```", $richReady)}</div>
       {/if}
@@ -444,6 +449,8 @@ ${e.text}` : e.text;
       <Widget data={seg.body} />
     {:else if seg.kind === "artifact"}
       <ArtifactCard data={seg.body} />
+    {:else if seg.kind === "viz"}
+      <Viz spec={seg.body} />
     {/if}
   {/each}
 

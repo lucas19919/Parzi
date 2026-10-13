@@ -164,6 +164,13 @@ input[type="color"] { background: transparent; border: 1px solid var(--line); bo
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); color: var(--text); font-size: var(--fs-sm); line-height: 1.4;
 }
 .tip[hidden] { display: none; }
+/* lib/viz/tip.ts: a chart's readout, the value first. */
+.viz-tip { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; }
+.viz-tip-head { color: var(--muted); font-size: var(--fs-xs); }
+.viz-tip-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.viz-tip-row i { width: 10px; height: 2px; flex: none; border-radius: 1px; }
+.viz-tip-row b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.viz-tip-row span { color: var(--muted); }
 
 kbd {
   font-family: var(--mono); font-size: var(--fs-xs); padding: 2px 7px;
