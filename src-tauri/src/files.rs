@@ -264,17 +264,10 @@ pub async fn git_branch(state: State<'_, AppState>, cwd: String) -> Result<Strin
     }
     let orch = state.orch.clone();
     let cwd = off_thread(move || confined_path(orch.store(), &cwd)).await?;
-    let mut cmd = tokio::process::Command::new("git");
-    cmd.args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(&cwd)
-        .stdin(std::process::Stdio::null());
-    #[cfg(windows)]
-    cmd.creation_flags(parzi_providers::process::CREATE_NO_WINDOW);
-    let out = cmd.output().await.map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Ok(String::new());
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    Ok(git_out(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .await
+        .map(|out| out.trim().to_string())
+        .unwrap_or_default())
 }
 
 /// What Home's Git card shows for a folder.
@@ -317,12 +310,35 @@ fn parse_git_status(out: &str) -> GitStatus {
     s
 }
 
+/// `git` gets this long; a slow folder just shows nothing this time.
+const GIT_BUDGET: Duration = Duration::from_secs(10);
+
+/// What the desk runs: a read that never takes git's optional locks (a
+/// `status` would otherwise refresh `.git/index.lock` under an agent's own
+/// `git add` or `commit`), never prompts, and dies with its caller.
+fn git_args<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let mut all = vec!["--no-optional-locks"];
+    all.extend_from_slice(args);
+    all
+}
+
+/// `git <args>` in `cwd`, in a hidden console. None when git fails, is
+/// missing, or takes longer than `GIT_BUDGET` (it is killed then).
 async fn git_out(cwd: &Path, args: &[&str]) -> Option<String> {
     let mut cmd = tokio::process::Command::new("git");
-    cmd.args(args).current_dir(cwd).stdin(Stdio::null());
+    cmd.args(git_args(args))
+        .current_dir(cwd)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
     #[cfg(windows)]
     cmd.creation_flags(parzi_providers::process::CREATE_NO_WINDOW);
-    let out = cmd.output().await.ok()?;
+    let out = tokio::time::timeout(GIT_BUDGET, cmd.output())
+        .await
+        .ok()?
+        .ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
@@ -810,6 +826,20 @@ mod tests {
             (fresh.upstream, fresh.changed, fresh.untracked),
             (false, 0, 0)
         );
+    }
+
+    #[test]
+    fn the_desks_git_never_takes_the_index_lock() {
+        assert_eq!(
+            git_args(&["status", "--porcelain=v2", "--branch"]),
+            [
+                "--no-optional-locks",
+                "status",
+                "--porcelain=v2",
+                "--branch"
+            ]
+        );
+        assert_eq!(git_args(&[]), ["--no-optional-locks"]);
     }
 
     #[test]

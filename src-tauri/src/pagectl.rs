@@ -1,6 +1,6 @@
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use parzi_runtime::desk::{WAIT_DEFAULT_MS, WAIT_MAX_MS};
+use parzi_runtime::desk::{PAGE_STEP, WAIT_DEFAULT_MS, WAIT_MAX_MS};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, Webview};
 
@@ -307,48 +307,119 @@ const WAIT: &str = r#"
   return { error: "say what to wait for: a selector or a text" };
 "#;
 
-async fn webview(app: &AppHandle, tab: &str) -> Result<Webview, String> {
+/// The tab's page coming up (made again if it was evicted).
+const PAGE_UP: Duration = Duration::from_secs(10);
+/// The page finishing its load before a step acts on it.
+const SETTLE: Duration = Duration::from_secs(10);
+/// One script in the page.
+const SCRIPT: Duration = Duration::from_secs(5);
+const LATE: &str = "the page took too long; nothing was done";
+const MOVED: &str = "the page moved to another site since it was allowed; ask again";
+
+/// One page step's limits: when the window stops waiting for it (it is
+/// refused in the page after that too, so a slow page never acts after the
+/// caller gave up), and the site it was allowed for, if it needed allowing.
+pub struct Step {
+    until: Instant,
+    origin: Option<String>,
+}
+
+impl Step {
+    /// The window's whole budget for one step, under the client's deadline:
+    /// `parzi_runtime::desk::PAGE_STEP` (page up, settle, script).
+    pub fn new(origin: Option<String>) -> Self {
+        Self::within(PAGE_STEP, origin)
+    }
+
+    fn within(budget: Duration, origin: Option<String>) -> Self {
+        Self {
+            until: Instant::now() + budget,
+            origin,
+        }
+    }
+
+    fn left(&self) -> Duration {
+        self.until.saturating_duration_since(Instant::now())
+    }
+
+    /// The deadline as the page's clock reads it.
+    fn until_ms(&self) -> u128 {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        (now + self.left()).as_millis()
+    }
+}
+
+async fn webview(app: &AppHandle, tab: &str, step: &Step) -> Result<Webview, String> {
     let label = crate::browser::page_label(tab)?;
     if app.get_webview(&label).is_none() {
         crate::browser::revive(app, tab);
     }
-    for _ in 0..40 {
+    let up = Instant::now() + PAGE_UP.min(step.left());
+    loop {
         if let Some(wv) = app.get_webview(&label) {
             return Ok(wv);
         }
+        if Instant::now() >= up {
+            return Err("the tab did not load".into());
+        }
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
-    Err("the tab did not load".into())
 }
 
-async fn run(wv: &Webview, script: String) -> Result<Value, String> {
-    let wv = wv.clone();
-    let raw = tauri::async_runtime::spawn_blocking(move || script_result(&wv, script))
-        .await
-        .map_err(|e| e.to_string())??;
+async fn eval(wv: &Webview, script: String, wait: Duration) -> Result<Value, String> {
+    let raw = script_result(wv, script, wait).await?;
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
 
+/// A step's script, refused in the page once the step is out of time or
+/// the page is on another site than the one allowed.
+async fn run(wv: &Webview, script: &str, step: &Step) -> Result<Value, String> {
+    let left = step.left();
+    if left.is_zero() {
+        return Err(LATE.into());
+    }
+    let guarded = guarded(script, step.until_ms(), step.origin.as_deref());
+    eval(wv, guarded, left.min(SCRIPT)).await
+}
+
+fn guarded(script: &str, until_ms: u128, origin: Option<&str>) -> String {
+    let origin = origin
+        .and_then(|o| serde_json::to_string(o).ok())
+        .unwrap_or_else(|| "null".into());
+    format!(
+        "((until, origin) => Date.now() > until ? {{ error: {LATE:?} }} : origin !== null && location.origin !== origin ? {{ error: {MOVED:?} }} : {script})({until_ms}, {origin})"
+    )
+}
+
 #[cfg(windows)]
-fn script_result(wv: &Webview, script: String) -> Result<String, String> {
-    crate::dwm::run_page_script(wv, script)
+async fn script_result(wv: &Webview, script: String, wait: Duration) -> Result<String, String> {
+    crate::dwm::run_page_script(wv, script, wait).await
 }
 
 #[cfg(not(windows))]
-fn script_result(_: &Webview, _: String) -> Result<String, String> {
+async fn script_result(_: &Webview, _: String, _: Duration) -> Result<String, String> {
     Err("page control needs Windows".into())
 }
 
-/// Up to 10s for the page to finish loading. Together with the 10s for the
-/// tab to come up and the 5s script limit this stays under
-/// `parzi_runtime::desk::PAGE_STEP`.
-async fn settle(wv: &Webview) {
-    for _ in 0..20 {
-        let state = run(wv, "document.readyState".into()).await.ok();
+/// Up to `SETTLE` for the page to finish loading, within the step's time.
+/// The page coming up, this and the script stay under `PAGE_STEP`.
+async fn settle(wv: &Webview, step: &Step) {
+    let until = Instant::now() + SETTLE.min(step.left());
+    loop {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        let state = eval(wv, "document.readyState".into(), left.min(SCRIPT))
+            .await
+            .ok();
         if state.as_ref().and_then(Value::as_str) == Some("complete") {
             return;
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let left = until.saturating_duration_since(Instant::now());
+        tokio::time::sleep(left.min(Duration::from_millis(500))).await;
     }
 }
 
@@ -367,14 +438,20 @@ fn answer(v: Value) -> Result<Value, String> {
 }
 
 /// Title, URL, a window of the text (`offset`, `limit`) and the controls.
-pub async fn read(app: &AppHandle, tab: &str, window: &Value) -> Result<Value, String> {
-    let wv = webview(app, tab).await?;
-    settle(&wv).await;
-    answer(run(&wv, script(window, READ)).await?)
+pub async fn read(app: &AppHandle, tab: &str, window: &Value, step: Step) -> Result<Value, String> {
+    let wv = webview(app, tab, &step).await?;
+    settle(&wv, &step).await;
+    answer(run(&wv, &script(window, READ), &step).await?)
 }
 
 /// click, type, press, select or scroll; `{done, label}` on success.
-pub async fn act(app: &AppHandle, tab: &str, kind: &str, args: &Value) -> Result<Value, String> {
+pub async fn act(
+    app: &AppHandle,
+    tab: &str,
+    kind: &str,
+    args: &Value,
+    step: Step,
+) -> Result<Value, String> {
     let body = match kind {
         "click" => CLICK,
         "type" => TYPE,
@@ -383,26 +460,28 @@ pub async fn act(app: &AppHandle, tab: &str, kind: &str, args: &Value) -> Result
         "scroll" => SCROLL,
         _ => return Err(format!("unknown page action `{kind}`")),
     };
-    let wv = webview(app, tab).await?;
-    settle(&wv).await;
-    answer(run(&wv, script(args, body)).await?)
+    let wv = webview(app, tab, &step).await?;
+    settle(&wv, &step).await;
+    answer(run(&wv, &script(args, body), &step).await?)
 }
 
 /// Polls until the selector or text shows up (or, with `gone`, leaves).
-pub async fn wait(app: &AppHandle, tab: &str, args: &Value) -> Result<Value, String> {
+/// Its budget is the step's plus the wait the caller asked for.
+pub async fn wait(app: &AppHandle, tab: &str, args: &Value, step: Step) -> Result<Value, String> {
     let limit = Duration::from_millis(
         args.get("timeout_ms")
             .and_then(Value::as_u64)
             .unwrap_or(WAIT_DEFAULT_MS)
             .clamp(100, WAIT_MAX_MS),
     );
+    let step = Step::within(step.left() + limit, step.origin);
     let gone = args.get("gone").and_then(Value::as_bool).unwrap_or(false);
-    let wv = webview(app, tab).await?;
+    let wv = webview(app, tab, &step).await?;
     let started = Instant::now();
     let probe = script(args, WAIT);
     loop {
         // A page mid-navigation fails the script: that is "not yet".
-        if let Ok(v) = run(&wv, probe.clone()).await {
+        if let Ok(v) = run(&wv, &probe, &step).await {
             let v = answer(v)?;
             if v.get("found").and_then(Value::as_bool) == Some(!gone) {
                 let secs = started.elapsed().as_secs_f32();
@@ -411,7 +490,7 @@ pub async fn wait(app: &AppHandle, tab: &str, args: &Value) -> Result<Value, Str
                 }));
             }
         }
-        if started.elapsed() >= limit {
+        if started.elapsed() >= limit || step.left().is_zero() {
             return Err(format!(
                 "{} after {}s",
                 if gone { "still there" } else { "not there" },
@@ -422,20 +501,28 @@ pub async fn wait(app: &AppHandle, tab: &str, args: &Value) -> Result<Value, Str
     }
 }
 
-pub async fn shot(app: &AppHandle, tab: &str) -> Result<String, String> {
-    let wv = webview(app, tab).await?;
-    settle(&wv).await;
+pub async fn shot(app: &AppHandle, tab: &str, step: Step) -> Result<String, String> {
+    let wv = webview(app, tab, &step).await?;
+    settle(&wv, &step).await;
     #[cfg(windows)]
     {
         use base64::Engine as _;
-        let jpeg = tauri::async_runtime::spawn_blocking(move || crate::dwm::capture_page(&wv))
-            .await
-            .map_err(|e| e.to_string())??;
+        if let Some(want) = &step.origin {
+            let now = crate::dwm::page_source(&wv).await?;
+            if crate::urls::origin(&now) != *want {
+                return Err(MOVED.into());
+            }
+        }
+        let left = step.left();
+        if left.is_zero() {
+            return Err(LATE.into());
+        }
+        let jpeg = crate::dwm::capture_page(&wv, left.min(SCRIPT)).await?;
         Ok(base64::engine::general_purpose::STANDARD.encode(jpeg))
     }
     #[cfg(not(windows))]
     {
-        let _ = wv;
+        let _ = (wv, step);
         Err("screenshots need Windows".into())
     }
 }
@@ -456,7 +543,7 @@ mod tests {
             ("wait", WAIT),
         ]
         .into_iter()
-        .map(|(n, body)| (n, script(&a, body)))
+        .map(|(n, body)| (n, guarded(&script(&a, body), 1, Some("https://a.example"))))
         .collect()
     }
 
@@ -496,6 +583,48 @@ mod tests {
         assert!(s.starts_with("(() => { const a = {"), "{s}");
         assert!(s.contains(&evil.to_string()));
         assert!(s.ends_with("})()"));
+    }
+
+    #[test]
+    fn a_late_or_moved_step_does_nothing_in_the_page() {
+        let s = guarded(
+            "(() => 1)()",
+            1_700_000_000_000,
+            Some("https://bank.example"),
+        );
+        assert!(
+            s.starts_with("((until, origin) => Date.now() > until ? { error: "),
+            "{s}"
+        );
+        assert!(
+            s.ends_with(r#"(1700000000000, "https://bank.example")"#),
+            "{s}"
+        );
+        let late = s.find("Date.now() > until").unwrap();
+        let moved = s.find("location.origin !== origin").unwrap();
+        let act = s.find("(() => 1)()").unwrap();
+        assert!(
+            late < act && moved < act,
+            "both checks come before the step"
+        );
+        let free = guarded("(() => 1)()", 1, None);
+        assert!(free.ends_with("(1, null)"), "{free}");
+        // An origin can't break out of its string either.
+        let odd = guarded("x", 1, Some(r#""); alert(1); (""#));
+        assert!(odd.ends_with(r#"(1, "\"); alert(1); (\"")"#), "{odd}");
+    }
+
+    #[test]
+    fn a_step_stays_inside_the_clients_deadline() {
+        assert!(PAGE_UP + SETTLE + SCRIPT <= PAGE_STEP);
+        let step = Step::new(None);
+        assert!(step.left() <= PAGE_STEP);
+        let ms = step.until_ms();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        assert!(ms > now && ms <= now + PAGE_STEP.as_millis() + 50);
     }
 
     #[test]

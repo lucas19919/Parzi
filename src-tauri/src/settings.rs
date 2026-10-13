@@ -1,6 +1,6 @@
 use parzi_core::config::ParziConfig;
 use parzi_providers::ProviderStatus;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 use crate::AppState;
@@ -116,7 +116,7 @@ pub async fn refresh_providers(
     ids: Option<Vec<String>>,
 ) -> Result<Vec<ProviderStatus>, String> {
     let all = in_roster_order(state.orch.refresh_providers(&ids.unwrap_or_default()).await);
-    let _ = app.emit("parzi://providers", &all);
+    crate::emit(&app, "parzi://providers", &all);
     Ok(all)
 }
 

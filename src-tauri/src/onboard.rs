@@ -7,7 +7,7 @@ use std::process::Command;
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 
 use crate::AppState;
 
@@ -156,7 +156,8 @@ pub async fn agent_login(
         }
         None => {
             let step = |step: &str| {
-                let _ = app.emit(
+                crate::emit(
+                    &app,
                     "parzi://sign-in",
                     serde_json::json!({ "provider": provider, "step": step }),
                 );
