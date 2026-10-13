@@ -1,6 +1,7 @@
 mod harness;
 mod launch;
 mod queue;
+mod wake;
 
 pub(crate) use queue::{
     brief_hash, run_session, set_brief_hash, set_run_note, set_run_session, VendorSession,
@@ -120,6 +121,7 @@ pub struct Orchestrator {
     asker: Arc<Mutex<Option<Arc<dyn crate::tools::Asker>>>>,
     approver: HostApprover,
     shells: Arc<std::sync::Mutex<HashMap<String, Arc<crate::shell::ShellRegistry>>>>,
+    wakes: wake::Wakes,
 }
 
 impl Orchestrator {
@@ -144,6 +146,7 @@ impl Orchestrator {
             asker: Arc::new(Mutex::new(None)),
             approver: HostApprover::default(),
             shells: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            wakes: wake::Wakes::default(),
         }
     }
 
@@ -205,6 +208,7 @@ impl Orchestrator {
             asker: self.asker.clone(),
             approver: self.approver.clone(),
             shells: self.shells.clone(),
+            wakes: self.wakes.clone(),
         }
     }
 

@@ -28,6 +28,22 @@ struct RunSidecar {
     /// The plan summary this session's conversation last saw.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     brief_hash: Option<String>,
+    /// The session that started this one in the background: told (and
+    /// woken) when its run ends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    report_to: Option<String>,
+    /// How its last run was set up, so a wake runs the same way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last: Option<Posture>,
+}
+
+/// A run's permissions and effort, as the person (or its parent) chose.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Posture {
+    #[serde(default)]
+    pub(crate) mode_override: Option<String>,
+    #[serde(default)]
+    pub(crate) effort: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -42,6 +58,8 @@ impl RunSidecar {
             && self.note.is_none()
             && self.session.is_none()
             && self.brief_hash.is_none()
+            && self.report_to.is_none()
+            && self.last.is_none()
     }
 }
 
@@ -170,6 +188,24 @@ pub(crate) fn set_brief_hash(session_id: &str, hash: &str) {
     edit_sidecar(session_id, |s| s.brief_hash = Some(hash.to_string()));
 }
 
+/// Who hears about this session's next run end (None: nobody).
+pub(crate) fn set_report_to(session_id: &str, parent: Option<&str>) {
+    edit_sidecar(session_id, |s| s.report_to = parent.map(str::to_string));
+}
+
+/// Who hears about this run end, cleared: only one report goes out.
+pub(crate) fn take_report_to(session_id: &str) -> Option<String> {
+    edit_sidecar(session_id, |s| s.report_to.take())
+}
+
+pub(crate) fn posture(session_id: &str) -> Option<Posture> {
+    load_sidecar(session_id).last
+}
+
+pub(crate) fn set_posture(session_id: &str, posture: Posture) {
+    edit_sidecar(session_id, |s| s.last = Some(posture));
+}
+
 pub(super) struct QueuedRun {
     pub(super) session_id: String,
     pub(super) project: String,
@@ -251,6 +287,7 @@ pub(super) struct Pump {
     pub(super) asker: Arc<Mutex<Option<Arc<dyn crate::tools::Asker>>>>,
     pub(super) approver: super::HostApprover,
     pub(super) shells: Arc<std::sync::Mutex<HashMap<String, Arc<crate::shell::ShellRegistry>>>>,
+    pub(super) wakes: super::wake::Wakes,
 }
 
 impl Pump {

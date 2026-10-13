@@ -12,7 +12,9 @@ use crate::toolhost::{ToolHost, ToolHostParts};
 use crate::tools::{ApprovalMode, Approver, DenyApprover, ToolExecutor};
 use parzi_providers::display_name;
 
-use super::queue::{clear_queued, run_session, set_run_note, Pump, QueuedRun};
+use super::queue::{
+    clear_queued, run_session, set_posture, set_run_note, Posture, Pump, QueuedRun,
+};
 use super::{next_run_id, normalize_effort, Handle, Orchestrator, SessionSlot};
 
 impl Orchestrator {
@@ -552,6 +554,17 @@ impl Orchestrator {
         set_run_note(&q.session_id, None);
         if q.cause.recorded() {
             let _ = p.store.set_effort(&q.session_id, &q.effort);
+            // A run another session's message started, with no posture of
+            // its own, leaves the saved one alone: a wake restores it.
+            if q.cause != RunCause::Message || q.mode_override.is_some() {
+                set_posture(
+                    &q.session_id,
+                    Posture {
+                        mode_override: q.mode_override.clone(),
+                        effort: q.effort.clone(),
+                    },
+                );
+            }
         }
         p.store.set_status(&q.session_id, SessionStatus::Active)?;
         crate::run_hooks::run_started(&tally);
@@ -627,7 +640,11 @@ impl Drop for RunEnd {
             // A run that returned has kept its outcome already; this one
             // panicked or was aborted.
             let settled = done.load(std::sync::atomic::Ordering::SeqCst);
-            crate::run_hooks::run_ended(&p.store, &tally, cancel.is_cancelled(), settled).await;
+            let stopped = cancel.is_cancelled();
+            crate::run_hooks::run_ended(&p.store, &tally, stopped, settled).await;
+            // The session that started this one in the background hears how
+            // it went (after its outcome is kept, so the report has it).
+            p.report_to_parent(&sid, stopped).await;
         });
     }
 }
