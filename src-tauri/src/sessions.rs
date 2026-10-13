@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use parzi_core::store::{Event, SessionMeta};
@@ -318,27 +317,16 @@ pub(crate) async fn delete_with_runs(orch: &Arc<Orchestrator>, id: &str) -> Resu
 
 #[tauri::command]
 pub async fn purge_sessions(state: State<'_, AppState>) -> Result<usize, String> {
-    // What the purge really removed, not a set worked out beside it: a
-    // session that started meanwhile keeps its shells.
-    let (n, gone) = on_store(&state.orch, |o| {
-        let ids = |o: &Orchestrator| -> Result<HashSet<String>, String> {
-            let all = o.store().list().map_err(|e| e.to_string())?;
-            Ok(all.into_iter().map(|m| m.id).collect())
-        };
-        let before = ids(o)?;
-        let n = o.store().purge_finished().map_err(|e| e.to_string())?;
-        let after = ids(o)?;
-        Ok((n, removed(&before, &after)))
+    // What the purge really removed: a session that started meanwhile keeps
+    // its shells.
+    let gone = on_store(&state.orch, |o| {
+        o.store().purge_finished_ids().map_err(|e| e.to_string())
     })
     .await?;
     for sid in &gone {
         state.orch.drop_shells(sid);
     }
-    Ok(n)
-}
-
-fn removed(before: &HashSet<String>, after: &HashSet<String>) -> Vec<String> {
-    before.difference(after).cloned().collect()
+    Ok(gone.len())
 }
 
 #[tauri::command]
@@ -401,18 +389,5 @@ pub async fn approve_tool(
         }
         Err(Mismatch::Other) => Err("approval is for another session".into()),
         Err(Mismatch::Gone) => Err("approval expired or unknown".into()),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn shells_go_only_with_sessions_the_purge_removed() {
-        let set = |ids: &[&str]| ids.iter().map(|s| (*s).to_string()).collect::<HashSet<_>>();
-        let mut gone = removed(&set(&["a", "b", "c"]), &set(&["b", "d"]));
-        gone.sort();
-        assert_eq!(gone, ["a", "c"], "d started meanwhile, b stayed");
     }
 }

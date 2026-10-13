@@ -53,16 +53,10 @@ their reason.
 - **Home** is where a new tab lands: the composer, pinned sites (pin any page
   from its toolbar; until you do, your most visited sites show), and recent
   sessions.
-- **Plan** (`Ctrl+J`, or the panel button in a session) shows the project's
-  plan beside the thread, or beside Home once a draft has a folder. Agents
-  write it (ask one to "plan the next release") and keep it current; the panel
-  only shows it: each item reads as working, needing you, in review (with the
-  PR of its `plan/<id>` branch and its checks), started or not started, and
-  done items fold away. Hover an item for its sessions, last run and PR; click
-  it to quote it into the composer, then say what you want ("start this",
-  "split this"). The plan is a note in the Brain (`projects/<slug>/plan.md`),
-  so it syncs like the rest. Every session keeps how its latest run went: what
-  it changed, the checks it ran, what it cost.
+- **Plans**: agents can keep a living plan for a project (ask one to "plan
+  the next release"). It is a note in the Brain (`projects/<slug>/plan.md`)
+  that agents read and update with their plan tools; every session also
+  keeps how its latest run went: what it changed, the checks it ran, the cost.
 - **Set up Parzi** (first launch, or the menu) signs you in to each agent with
   its own login, imports Brave/Chrome/Edge bookmarks and history (never
   passwords or cookies), and turns your other agents' instructions, memories

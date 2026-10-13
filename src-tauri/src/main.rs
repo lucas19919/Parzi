@@ -240,9 +240,15 @@ impl Asker for GuiAsker {
                 }
             },
         );
-        match tokio::time::timeout(Duration::from_secs(300), rx).await {
+        // The same wait as approvals (Settings), so serve and the desk agree.
+        let wait = self
+            .app
+            .try_state::<AppState>()
+            .map_or(900, |s| s.orch.config().orchestrator.approval_wait_secs)
+            .max(10);
+        match tokio::time::timeout(Duration::from_secs(wait), rx).await {
             Ok(Ok(a)) if !a.trim().is_empty() => a,
-            _ => "the user didn't answer — decide yourself and say what you assumed".into(),
+            _ => "the user didn't answer. Decide yourself and say what you assumed.".into(),
         }
     }
 }
