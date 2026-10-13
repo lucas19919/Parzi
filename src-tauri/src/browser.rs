@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tauri::webview::{NewWindowFeatures, NewWindowResponse, WebviewBuilder};
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, Webview, WebviewUrl};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Url, Webview, WebviewUrl};
 
 const BROWSER: &str = "parzi://browser";
 const ASK: &str = "parzi://browser-ask";
@@ -33,8 +33,21 @@ static SHOWN: Mutex<String> = Mutex::new(String::new());
 static LRU: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static RESTING: Mutex<BTreeMap<String, Rest>> = Mutex::new(BTreeMap::new());
 static OFFERS: Mutex<BTreeMap<String, Offer>> = Mutex::new(BTreeMap::new());
-static ASKING: Mutex<BTreeMap<String, (String, String)>> = Mutex::new(BTreeMap::new());
+/// Permission prompts waiting on the person: id -> what `remember` saves.
+static ASKING: Mutex<BTreeMap<String, Asking>> = Mutex::new(BTreeMap::new());
+/// Popup windows a page opened: window label -> the tab that opened it.
+static POPUPS: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
 static WORKER: OnceLock<Sender<Work>> = OnceLock::new();
+
+/// A permission prompt and what remembering its answer would save.
+struct Asking {
+    tab: String,
+    origin: String,
+    kind: String,
+    /// Asked by a page an agent drives: an allow is never remembered from
+    /// it, or the next agent page there would get it without a prompt.
+    agent: bool,
+}
 
 #[derive(Clone)]
 struct Slot {
@@ -85,7 +98,7 @@ fn stale(gen: u64) -> bool {
 }
 
 fn tell(app: &AppHandle, event: &str, payload: serde_json::Value) {
-    let _ = app.emit_to("main", event, payload);
+    crate::emit(app, event, payload);
 }
 
 fn work(job: Work) {
@@ -279,6 +292,48 @@ pub(crate) fn classify(url: &Url) -> Target {
     }
 }
 
+/// How long a page's new-window request is remembered for the popup blocker.
+const ASKED_FOR: Duration = Duration::from_secs(10);
+const ASKED_KEEP: usize = 16;
+
+/// A page's recent new-window requests (a link with a target,
+/// `window.open`) and whether a click or key made each, by URL: two
+/// `window.open` calls in a row must each find their own.
+#[derive(Default)]
+#[cfg_attr(not(windows), allow(dead_code, reason = "WebView2 hooks only"))]
+pub(crate) struct NewWindows {
+    asked: VecDeque<(String, bool, Instant)>,
+}
+
+#[cfg_attr(not(windows), allow(dead_code, reason = "WebView2 hooks only"))]
+impl NewWindows {
+    pub(crate) fn record(&mut self, url: String, user: bool, now: Instant) {
+        self.forget_old(now);
+        if self.asked.len() >= ASKED_KEEP {
+            self.asked.pop_front();
+        }
+        self.asked.push_back((url, user, now));
+    }
+
+    /// Whether the request for `url` came from the user; it is used up.
+    /// Unknown counts as yes: a missed record must not break a site's links.
+    pub(crate) fn user(&mut self, url: &str, now: Instant) -> bool {
+        self.forget_old(now);
+        let found = self
+            .asked
+            .iter()
+            .position(|(asked, _, _)| same_page(asked, url));
+        found
+            .and_then(|i| self.asked.remove(i))
+            .is_none_or(|(_, user, _)| user)
+    }
+
+    fn forget_old(&mut self, now: Instant) {
+        self.asked
+            .retain(|(_, _, at)| now.saturating_duration_since(*at) < ASKED_FOR);
+    }
+}
+
 /// Same document, ignoring the #fragment (and URL spelling differences).
 pub(crate) fn same_page(a: &str, b: &str) -> bool {
     let bare = |raw: &str| match Url::parse(raw) {
@@ -405,9 +460,15 @@ fn keep_url(label: &str, url: &Url) {
     }
 }
 
-/// Closes least-recently-shown pages past the cap, never one in `keep`.
+/// Closes least-recently-shown pages past the cap, never one in `keep` nor
+/// one still downloading (closing its page may end the download).
 /// Counted once up front: a closing webview may still be listed.
 fn evict_lru(app: &AppHandle, keep: &[&str]) {
+    let busy: Vec<String> = crate::downloads::running_tabs()
+        .iter()
+        .filter_map(|tab| page_label(tab).ok())
+        .collect();
+    let spare = |l: &String| !keep.contains(&l.as_str()) && !busy.contains(l);
     let mut live = live_pages(app);
     let mut excess = live.len().saturating_sub(PAGE_CAP);
     while excess > 0 {
@@ -415,9 +476,9 @@ fn evict_lru(app: &AppHandle, keep: &[&str]) {
             let lru = locked(&LRU);
             lru.iter()
                 .rev()
-                .find(|l| !keep.contains(&l.as_str()) && live.contains(l))
+                .find(|l| spare(l) && live.contains(l))
                 .cloned()
-                .or_else(|| live.iter().find(|l| !keep.contains(&l.as_str())).cloned())
+                .or_else(|| live.iter().find(|l| spare(l)).cloned())
         };
         let Some(label) = victim else {
             return;
@@ -428,10 +489,59 @@ fn evict_lru(app: &AppHandle, keep: &[&str]) {
             if let Ok(url) = wv.url() {
                 keep_url(&label, &url);
             }
-            let _ = wv.close();
         }
-        locked(&LRU).retain(|l| l != &label);
-        locked(&RESTING).remove(&label);
+        let tab = locked(&TABS).get(&label).map(|s| s.tab.clone());
+        let tab = tab.unwrap_or_else(|| label.trim_start_matches(PAGE_PREFIX).to_string());
+        close_page(app, &label, &tab);
+    }
+}
+
+/// A page webview goes (evicted, crashed and reloaded, its tab closed):
+/// its open prompts are refused and its download handles let go on the UI
+/// thread that owns them, then the webview closes. The tab's entry stays,
+/// so it can be made again.
+fn close_page(app: &AppHandle, label: &str, tab: &str) {
+    locked(&LRU).retain(|l| l != label);
+    locked(&RESTING).remove(label);
+    {
+        let mut shown = locked(&SHOWN);
+        if shown.as_str() == label {
+            shown.clear();
+        }
+    }
+    locked(&ASKING).retain(|_, a| a.tab != tab);
+    #[cfg(windows)]
+    {
+        let tab = tab.to_string();
+        let _ = app.run_on_main_thread(move || crate::dwm::drop_page(&tab));
+    }
+    #[cfg(not(windows))]
+    let _ = tab;
+    if let Some(wv) = app.get_webview(label) {
+        if let Err(e) = wv.close() {
+            tracing::debug!("page webview did not close: {e}");
+        }
+    }
+}
+
+/// Closes the popup windows `tab` opened, or every popup without a tab.
+pub fn close_popups(app: &AppHandle, tab: Option<&str>) {
+    let labels: Vec<String> = {
+        let mut popups = locked(&POPUPS);
+        let gone: Vec<String> = popups
+            .iter()
+            .filter(|(_, t)| tab.is_none_or(|want| want == t.as_str()))
+            .map(|(label, _)| label.clone())
+            .collect();
+        popups.retain(|label, _| !gone.contains(label));
+        gone
+    };
+    for label in labels {
+        if let Some(window) = app.get_webview_window(&label) {
+            if let Err(e) = window.close() {
+                tracing::debug!("popup did not close: {e}");
+            }
+        }
     }
 }
 
@@ -742,6 +852,7 @@ fn open_popup(
             return None;
         }
     };
+    locked(&POPUPS).insert(label, tab.to_string());
     #[cfg(windows)]
     watch_popup(app, &window, tab.to_string());
     Some(window)
@@ -783,6 +894,7 @@ fn page_builder(
                 }
                 tauri::webview::PageLoadEvent::Finished => {
                     let url = payload.url().as_str().to_string();
+                    page_moved(&load_app, &load_tab, &url);
                     let (back, forward) = guess_history(&load_label, &url);
                     json!({
                         "tab": load_tab,
@@ -896,14 +1008,25 @@ fn guess_history(label: &str, url: &str) -> (bool, bool) {
         .loaded(url)
 }
 
+/// Whether an agent drives the tab's page (its own profile or not).
+fn agent_tab(tab: &str) -> bool {
+    page_label(tab)
+        .ok()
+        .and_then(|label| locked(&TABS).get(&label).map(|s| s.agent))
+        .unwrap_or(false)
+}
+
 #[cfg(windows)]
 fn hook_for(
     app: &AppHandle,
+    label: &str,
     tab: String,
     seed: String,
     role: crate::dwm::Role,
 ) -> crate::dwm::Hook {
     crate::dwm::Hook {
+        label: label.to_string(),
+        agent: agent_tab(&tab),
         tab,
         seed,
         role,
@@ -915,7 +1038,7 @@ fn hook_for(
 #[cfg(windows)]
 fn watch_page(app: &AppHandle, wv: &Webview, tab: String, seed: String) {
     let label = wv.label().to_string();
-    let hook = hook_for(app, tab.clone(), seed, crate::dwm::Role::Page);
+    let hook = hook_for(app, &label, tab.clone(), seed, crate::dwm::Role::Page);
     let app = app.clone();
     let hooked = crate::dwm::watch_page(wv, hook, move |signal| {
         on_signal(&app, &label, &tab, signal);
@@ -930,6 +1053,7 @@ fn watch_popup(app: &AppHandle, window: &tauri::WebviewWindow, tab: String) {
     let label = window.label().to_string();
     let hook = hook_for(
         app,
+        &label,
         tab.clone(),
         "about:blank".into(),
         crate::dwm::Role::Popup,
@@ -963,6 +1087,7 @@ fn on_signal(app: &AppHandle, label: &str, tab: &str, signal: crate::dwm::PageSi
             if let Ok(parsed) = Url::parse(&url) {
                 keep_url(label, &parsed);
             }
+            page_moved(app, tab, &url);
             tell(
                 app,
                 BROWSER,
@@ -986,7 +1111,15 @@ fn on_signal(app: &AppHandle, label: &str, tab: &str, signal: crate::dwm::PageSi
             tell(app, BROWSER, json!({ "tab": tab, "favicon": icon }));
         }
         PageSignal::Permission { id, origin, kind } => {
-            locked(&ASKING).insert(id.clone(), (origin.clone(), kind.to_string()));
+            locked(&ASKING).insert(
+                id.clone(),
+                Asking {
+                    tab: tab.to_string(),
+                    origin: origin.clone(),
+                    kind: kind.to_string(),
+                    agent: agent_tab(tab),
+                },
+            );
             tell(
                 app,
                 ASK,
@@ -1009,6 +1142,7 @@ fn on_signal(app: &AppHandle, label: &str, tab: &str, signal: crate::dwm::PageSi
         }
         PageSignal::CloseRequested => {
             let (app, label) = (app.clone(), label.to_string());
+            locked(&POPUPS).remove(&label);
             // Not from inside the WebView2 handler that asked.
             std::thread::spawn(move || {
                 if let Some(window) = app.get_webview_window(&label) {
@@ -1087,8 +1221,8 @@ pub async fn browser_permission(
     remember: bool,
 ) -> Result<(), String> {
     let asked = locked(&ASKING).remove(&id);
-    if let (true, Some((origin, kind))) = (remember, asked) {
-        crate::siteprefs::remember(origin, kind, allow).await?;
+    if let Some(asked) = asked.filter(|a| remember && remembered(a, allow)) {
+        crate::siteprefs::remember(asked.origin, asked.kind, allow).await?;
     }
     #[cfg(windows)]
     {
@@ -1099,6 +1233,49 @@ pub async fn browser_permission(
     {
         let _ = (app, id);
         Ok(())
+    }
+}
+
+/// Whether an answer is saved for the site: never an allow an agent's
+/// page asked for. A deny is safe to keep from anywhere.
+fn remembered(asked: &Asking, allow: bool) -> bool {
+    !(asked.agent && allow)
+}
+
+/// A page went to `url`: consent the person gave for another site ends.
+fn page_moved(app: &AppHandle, tab: &str, url: &str) {
+    if let Some(state) = app.try_state::<crate::AppState>() {
+        state.desk.page_moved(tab, url);
+    }
+}
+
+/// The URL a tab's page shows now; for a page not made yet (or evicted),
+/// the one it will open at.
+pub async fn page_url(app: &AppHandle, tab: &str) -> Option<String> {
+    let label = page_label(tab).ok()?;
+    #[cfg(windows)]
+    if let Some(wv) = app.get_webview(&label) {
+        if let Ok(url) = crate::dwm::page_source(&wv).await {
+            return Some(url);
+        }
+    }
+    #[cfg(not(windows))]
+    if let Some(url) = app.get_webview(&label).and_then(|wv| wv.url().ok()) {
+        return Some(url.to_string());
+    }
+    locked(&TABS).get(&label).map(|s| s.url.to_string())
+}
+
+/// The ad blocker or a site's allow-list changed: live pages register
+/// their request filters (or drop them) to match.
+pub fn refilter(app: &AppHandle) {
+    for (label, wv) in app.webviews() {
+        if label.starts_with(PAGE_PREFIX) || label.starts_with(POPUP_PREFIX) {
+            #[cfg(windows)]
+            crate::dwm::sync_filters(&wv);
+            #[cfg(not(windows))]
+            let _ = wv;
+        }
     }
 }
 
@@ -1204,9 +1381,7 @@ pub async fn browser_snapshot(app: AppHandle, tab: String) -> Result<String, Str
     #[cfg(windows)]
     {
         use base64::Engine as _;
-        let jpeg = tauri::async_runtime::spawn_blocking(move || crate::dwm::capture_page(&wv))
-            .await
-            .map_err(|e| e.to_string())??;
+        let jpeg = crate::dwm::capture_page(&wv, Duration::from_secs(3)).await?;
         Ok(format!(
             "data:image/jpeg;base64,{}",
             base64::engine::general_purpose::STANDARD.encode(jpeg)
@@ -1244,35 +1419,22 @@ pub fn browser_focus(app: AppHandle, tab: &str) -> Result<(), String> {
 #[tauri::command]
 pub fn browser_recover(app: AppHandle, tab: &str) -> Result<(), String> {
     let label = page_label(tab)?;
-    locked(&LRU).retain(|l| l != &label);
-    locked(&RESTING).remove(&label);
-    if *locked(&SHOWN) == label {
-        locked(&SHOWN).clear();
-    }
-    match app.get_webview(&label) {
-        Some(wv) => wv.close().map_err(|e| e.to_string()),
-        None => Ok(()),
-    }
+    // Its popups lost their opener with the crash.
+    close_popups(&app, Some(tab));
+    close_page(&app, &label, tab);
+    Ok(())
 }
 
 #[tauri::command]
 pub fn browser_close(app: AppHandle, tab: &str) -> Result<(), String> {
     let label = page_label(tab)?;
     locked(&TABS).remove(&label);
-    locked(&LRU).retain(|l| l != &label);
-    locked(&RESTING).remove(&label);
     locked(&OFFERS).retain(|_, o| o.tab != tab);
     #[cfg(not(windows))]
     locked(&GUESSES).remove(&label);
-    #[cfg(windows)]
-    {
-        let tab = tab.to_string();
-        let _ = app.run_on_main_thread(move || crate::dwm::drop_permissions(&tab));
-    }
-    match app.get_webview(&label) {
-        Some(wv) => wv.close().map_err(|e| e.to_string()),
-        None => Ok(()),
-    }
+    close_popups(&app, Some(tab));
+    close_page(&app, &label, tab);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1295,20 +1457,21 @@ pub fn browser_navigate(app: AppHandle, tab: &str, url: &str) -> Result<(), Stri
 pub fn browser_nav(app: AppHandle, tab: &str, action: String) -> Result<(), String> {
     let label = page_label(tab)?;
     let wv = app.get_webview(&label).ok_or("no such tab")?;
-    let js = match action.as_str() {
-        "back" => "history.back()",
-        "forward" => "history.forward()",
-        "reload" => "location.reload()",
-        "stop" => "window.stop()",
-        _ => return Err(format!("unknown action {action}")),
-    };
+    if !matches!(action.as_str(), "back" | "forward" | "reload" | "stop") {
+        return Err(format!("unknown action {action}"));
+    }
     #[cfg(windows)]
     {
-        let _ = (js, label);
         crate::dwm::steer_page(&wv, action)
     }
     #[cfg(not(windows))]
     {
+        let js = match action.as_str() {
+            "back" => "history.back()",
+            "forward" => "history.forward()",
+            "reload" => "location.reload()",
+            _ => "window.stop()",
+        };
         locked(&GUESSES).entry(label).or_default().step(&action);
         wv.eval(js).map_err(|e| e.to_string())
     }
@@ -1433,6 +1596,44 @@ mod tests {
             (true, true),
             "one step per load"
         );
+    }
+
+    #[test]
+    fn each_popup_request_finds_its_own_record() {
+        let t0 = Instant::now();
+        let mut asked = NewWindows::default();
+        // A click opens a sign-in; the page's own script races a second one.
+        asked.record("https://login.example/".into(), true, t0);
+        asked.record("https://ads.example/pop".into(), false, t0);
+        assert!(!asked.user("https://ads.example/pop", t0), "blocked");
+        assert!(asked.user("https://login.example/#x", t0), "allowed");
+        // Used up: the same URL again is unknown, which never blocks.
+        assert!(asked.user("https://ads.example/pop", t0));
+        asked.record("https://ads.example/pop".into(), false, t0);
+        assert!(
+            asked.user("https://ads.example/pop", t0 + ASKED_FOR),
+            "an old record is gone"
+        );
+        for i in 0..(ASKED_KEEP + 4) {
+            asked.record(format!("https://x.example/{i}"), false, t0);
+        }
+        assert_eq!(asked.asked.len(), ASKED_KEEP);
+        assert!(asked.user("https://x.example/0", t0), "the oldest fell off");
+        assert!(!asked.user(&format!("https://x.example/{}", ASKED_KEEP + 3), t0));
+    }
+
+    #[test]
+    fn an_agent_page_never_saves_an_allow() {
+        let asked = |agent| Asking {
+            tab: "t".into(),
+            origin: "https://meet.example".into(),
+            kind: "camera".into(),
+            agent,
+        };
+        assert!(remembered(&asked(false), true));
+        assert!(remembered(&asked(false), false));
+        assert!(!remembered(&asked(true), true));
+        assert!(remembered(&asked(true), false), "a deny is kept");
     }
 
     #[test]

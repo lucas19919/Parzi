@@ -300,19 +300,17 @@ fn origin_of(url: &str) -> Option<(String, String)> {
 
 async fn page_origin(app: &AppHandle, tab: &str) -> Result<(String, String), String> {
     let wv = page(app, tab)?;
-    let source = tauri::async_runtime::spawn_blocking(move || page_source(&wv))
-        .await
-        .map_err(|e| e.to_string())??;
+    let source = page_source(&wv).await?;
     origin_of(&source).ok_or_else(|| "Passwords are only filled on https pages".into())
 }
 
 #[cfg(windows)]
-fn page_source(wv: &Webview) -> Result<String, String> {
-    crate::dwm::page_source(wv)
+async fn page_source(wv: &Webview) -> Result<String, String> {
+    crate::dwm::page_source(wv).await
 }
 
 #[cfg(not(windows))]
-fn page_source(wv: &Webview) -> Result<String, String> {
+async fn page_source(wv: &Webview) -> Result<String, String> {
     wv.url().map(|u| u.to_string()).map_err(|e| e.to_string())
 }
 
@@ -378,19 +376,17 @@ pub async fn vault_fill(
         &login.password.unwrap_or_default(),
     );
     let wv = page(&app, &tab)?;
-    let result = tauri::async_runtime::spawn_blocking(move || run_script(&wv, script))
-        .await
-        .map_err(|e| e.to_string())??;
+    let result = run_script(&wv, script).await?;
     Ok(serde_json::from_str::<String>(&result).unwrap_or_default())
 }
 
 #[cfg(windows)]
-fn run_script(wv: &Webview, script: String) -> Result<String, String> {
-    crate::dwm::run_page_script(wv, script)
+async fn run_script(wv: &Webview, script: String) -> Result<String, String> {
+    crate::dwm::run_page_script(wv, script, std::time::Duration::from_secs(5)).await
 }
 
 #[cfg(not(windows))]
-fn run_script(wv: &Webview, script: String) -> Result<String, String> {
+async fn run_script(wv: &Webview, script: String) -> Result<String, String> {
     wv.eval(&script)
         .map(|()| "\"filled\"".to_string())
         .map_err(|e| e.to_string())
