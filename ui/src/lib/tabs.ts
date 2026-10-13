@@ -1,5 +1,7 @@
+import type { PlanQuote } from "./api";
+
 export type ComposerMode = "search" | "build" | "work";
-type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview" | "work";
+type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview";
 
 export interface TabComposerState {
   input: string;
@@ -7,6 +9,8 @@ export interface TabComposerState {
   model: string;
   effort: string;
   attachments: string[];
+  // Plan items quoted into the next message (at most 4).
+  quotes?: PlanQuote[];
   // A new session here starts on the linked server.
   remote?: boolean;
   // The server folder for that new session ("" = scratch there).
@@ -59,16 +63,11 @@ export function brainTab(): Tab {
   return { id: tabId(), kind: "brain", title: "Brain", composer: defaultComposer() };
 }
 
-export function workTab(): Tab {
-  return { id: tabId(), kind: "work", title: "Work", composer: defaultComposer() };
-}
+const RESTORED = new Set(["session", "page", "brain", "history"]);
 
-const RESTORED = new Set(["session", "page", "brain", "history", "work"]);
-
-/// A saved tab as it comes back, or null for kinds that don't reopen. The
-/// Tasks tab of 0.1.27 builds reopens as Work, which replaced it.
+/// A saved tab as it comes back, or null for kinds that don't reopen (the
+/// Work and Tasks tabs of earlier builds are gone: the plan panel took over).
 export function restoreTab<T extends { kind?: unknown; title?: unknown }>(t: T): T | null {
-  if (t.kind === "tasks") return { ...t, kind: "work", title: "Work" } as T;
   return typeof t.kind === "string" && RESTORED.has(t.kind) ? t : null;
 }
 
@@ -106,7 +105,7 @@ export function folderName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-/// Brain/history/settings/preview/work live apart from working tabs.
+/// Brain/history/settings/preview live apart from working tabs.
 export function isSystemTab(t: Tab): boolean {
   return t.kind !== "session" && t.kind !== "page";
 }

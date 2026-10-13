@@ -5,7 +5,7 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import Icon from "./Icon.svelte";
   import ModelPicker from "./ModelPicker.svelte";
-  import { api, brain, MODE_META, type ComposerMode, type Project, type ProviderStatus } from "./api";
+  import { api, brain, MODE_META, type ComposerMode, type PlanQuote, type Project, type ProviderStatus } from "./api";
   import { remote as server } from "./remote";
   import { effortsFor, fitEffort } from "./providerRows";
   import { permissionBlocked } from "./lanes";
@@ -27,6 +27,8 @@
   export let policy = "";
   export let mode: ComposerMode = "build";
   export let attachments: string[] = [];
+  // Plan items quoted from the plan panel: a message can be just these.
+  export let quotes: PlanQuote[] = [];
   export let folder = "";
   export let folderLocked = false;
   export let branch = "";
@@ -143,9 +145,11 @@
     picker?.show();
   }
 
+  $: canSubmit = !!input.trim() || (quotes.length > 0 && mode !== "search");
+
   function submit() {
     const text = input.trim();
-    if (!text || streaming) return;
+    if (!canSubmit || streaming) return;
     if (mode === "search") {
       if (webActive >= 0 && webRows[webActive]) {
         pickWeb(webRows[webActive]);
@@ -521,8 +525,17 @@
       </div>
     {/if}
 
-    {#if attachments.length}
+    {#if attachments.length || quotes.length}
       <div class="attachments" transition:slide={{ duration: 160, easing: cubicOut }}>
+        {#each quotes as q (`${q.project}/${q.id}`)}
+          <span class="chip quote" transition:scale={{ duration: 140, start: 0.9 }}>
+            <Icon name="plan" size={12} />
+            <span class="chip-name">Plan · {q.title}</span>
+            <button use:tooltip={`Remove ${q.title}`} on:click={() => (quotes = quotes.filter((x) => x !== q))}>
+              <Icon name="close" size={12} />
+            </button>
+          </span>
+        {/each}
         {#each attachments as a (a)}
           <span class="chip" transition:scale={{ duration: 140, start: 0.9 }}>
             {#if thumbs[a]}<img src={thumbs[a]} alt="" draggable="false" />{:else}<Icon name="file" size={12} />{/if}
@@ -557,7 +570,7 @@
       {#if streaming}
         <button class="go stop" use:tooltip={"Stop (Esc)"} on:click={() => dispatch("stop")}><span class="square" /></button>
       {:else}
-        <button class="go" class:ready={!!input.trim()} use:tooltip={mode === "search" ? "Open (Enter)" : "Send (Enter)"} disabled={!input.trim()} on:click={submit}>
+        <button class="go" class:ready={canSubmit} use:tooltip={mode === "search" ? "Open (Enter)" : "Send (Enter)"} disabled={!canSubmit} on:click={submit}>
           <Icon name="arrowUp" />
         </button>
       {/if}
@@ -942,6 +955,26 @@
     cursor: pointer;
   }
   .chip button:hover {
+    color: var(--text);
+  }
+  .chip.quote {
+    height: 28px;
+    max-width: 260px;
+    padding: 0 1px 0 10px;
+    border-radius: 999px;
+    color: var(--muted);
+  }
+  .chip.quote button {
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+  }
+  .chip.quote button:hover {
+    background: var(--hover);
+  }
+  .chip.quote .chip-name {
+    font-family: inherit;
+    font-size: var(--fs-sm);
     color: var(--text);
   }
   .error {

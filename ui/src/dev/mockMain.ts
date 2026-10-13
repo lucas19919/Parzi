@@ -2,29 +2,39 @@
 const { mockView, mockLive } = await import("./mockTauri");
 await import("../main");
 
+const { emit } = await import("@tauri-apps/api/event");
+// The app subscribes on mount.
+await new Promise((r) => setTimeout(r, 300));
+
 if (mockView === "settings") {
   window.dispatchEvent(new KeyboardEvent("keydown", { key: ",", ctrlKey: true }));
 }
 if (mockView === "page") {
-  // The app subscribes on mount; then a page asks for the camera.
-  const { emit } = await import("@tauri-apps/api/event");
-  await new Promise((r) => setTimeout(r, 300));
+  // A page asks for the camera.
   await emit("parzi://browser-ask", { kind: "permission", id: "p1", tab: "t-page", origin: "https://meet.google.com", permission: "camera" });
 }
+// The plan panel's agent waits on an approval (its item needs you).
+await emit("parzi://run-event", {
+  kind: "approval",
+  key: "a1",
+  session: "s9",
+  call: { id: "c1", name: "shell.exec", args: { cmd: "npm install --save-dev @primer/octicons" }, lane: "build", session: "s9" },
+});
+// Its toast would come and go while the UI lint audits the page.
+await new Promise((r) => setTimeout(r, 50));
+(await import("../lib/toast")).toasts.set([]);
 if (mockLive) {
-  // What the running goals' agents are doing, as their tool calls stream in.
-  const { emit } = await import("@tauri-apps/api/event");
+  // What the running agents are doing, as their tool calls stream in.
   const LIVE: [string, string[]][] = [
-    ["s6", ["Editing D:\\Repos\\Parzi\\ui\\src\\lib\\Omnibar.svelte", "Running `npm test -- autosize`", "Reading ui/src/lib/Omnibar.svelte"]],
-    ["s3", ["Editing crates/parzi-core/src/sync.rs", "Running `cargo test -p parzi-core sync`"]],
-    ["r:a2", ["Running `cargo update -p serde`", "Running `cargo test`"]],
+    ["s3", ["Editing D:\\Repos\\Parzi\\ui\\src\\lib\\SidePanel.svelte", "Running `npm run check`", "Reading ui/src/lib/planModel.ts"]],
+    ["s6", ["Editing ui/src/lib/SidePanel.svelte", "Running `npm test`"]],
+    ["s2", ["Running `cargo test -p parzi-core plan`", "Reading crates/parzi-core/src/plan.rs"]],
   ];
   let beat = 0;
   const tick = () => {
     for (const [session, labels] of LIVE) void emit("parzi://run-event", { kind: "tool_call", session, id: `live-${beat}`, name: "Edit", label: labels[beat % labels.length] });
     beat++;
   };
-  await new Promise((r) => setTimeout(r, 300));
   tick();
   setInterval(tick, 4000);
 }

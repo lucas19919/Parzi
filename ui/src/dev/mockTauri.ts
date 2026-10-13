@@ -5,10 +5,11 @@
 import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 
 const params = new URLSearchParams(location.search);
-// ?view=home | session | settings | brain | history | work | setup (default: session)
-// ?work=none starts with no work at all.
-// ?live=1 streams tool calls for the running goals (activity lines); off for
-// the UI lint, which needs a still page.
+// ?view=home | session | settings | brain | history | setup | page (default: session)
+// ?plan=none: the project has no plan yet (the empty plan panel).
+// ?quote=1: the open session's composer has two plan items quoted.
+// ?live=1 streams tool calls for the running sessions (the plan's live
+// lines); off for the UI lint, which needs a still page.
 const view = params.get("view") ?? "session";
 // ?turns=N sizes the open session's transcript (default 40).
 // ?bg=1 shows a wallpaper, served at http://asset.localhost/ (route it to a file).
@@ -16,38 +17,133 @@ const turns = Math.max(1, Number(params.get("turns")) || 40);
 
 const now = Date.now();
 const iso = (ago: number) => new Date(now - ago).toISOString();
+const MIN = 60_000;
+const HOUR = 60 * MIN;
 
-const sessions = [
-  { id: "s1", title: "Fix the composer freeze", lane: "build", model: "claude/claude-opus-5-5", status: "idle" },
-  { id: "s2", title: "Reading list for compilers", lane: "work", model: "codex/gpt-5", status: "done" },
-  { id: "s3", title: "Refactor the sync hub", lane: "build", model: "claude/claude-sonnet-5-5", status: "active" },
-  { id: "s4", title: "Draft release notes", lane: "work", model: "opencode", status: "done" },
-].map((s, i) => ({
+// How a session's last run ended (PLAN_CONTRACT.md RunOutcome).
+const outcome = (over: Record<string, unknown> = {}) => ({
+  end: "completed",
+  summary: "",
+  files: [] as { path: string; via: string }[],
+  files_more: 0,
+  checks: [] as { cmd: string; ok: boolean }[],
+  cost_usd: 0.12,
+  ms: 5 * MIN,
+  ended: now - 30 * MIN,
+  ...over,
+});
+const files = (...paths: string[]) => paths.map((path) => ({ path, via: "tool" }));
+
+// Newest first, as list_threads sends them. The first four are Home's
+// recent sessions: running, waiting on an approval, failed, done.
+const session = (id: string, title: string, ago: number, over: Record<string, unknown> = {}) => ({
+  id,
+  title,
   pinned: false,
-  project: i === 0 ? "parzi" : "",
-  tokens_in: 12000 + i * 900,
-  tokens_out: 4000 + i * 300,
-  cost_usd: 0.42 + i / 10,
+  project: "parzi",
+  lane: "build",
+  model: "claude/claude-opus-5-5",
+  status: "idle",
+  tokens_in: 12000,
+  tokens_out: 4000,
+  cost_usd: 0.42,
   context_tokens: 48000,
   context_limit: 200000,
   cwd: "D:\\Repos\\Parzi",
   parent_id: null as string | null,
-  created: iso((i + 2) * 3_600_000),
-  updated: iso((i + 1) * 600_000),
-  ...s,
-}));
-// The goals' helpers and other sessions, after the four Home lists.
-sessions.push(
-  ...[
-    { id: "s5", title: "Find what runs on every keystroke", lane: "build", model: "claude/claude-sonnet-5-5", status: "done", parent_id: "s1" },
-    { id: "s6", title: "Make autosize measure once", lane: "build", model: "codex/gpt-5", status: "active", parent_id: "s1" },
-    { id: "s7", title: "Bump the app version to 0.1.28", lane: "build", model: "claude/claude-opus-5-5", status: "idle", parent_id: null },
-    { id: "s8", title: "Add Octicons to the side panel", lane: "build", model: "claude/claude-opus-5-5", status: "done", parent_id: null },
-    { id: "s9", title: "Fix the flaky queue test", lane: "build", model: "claude/claude-opus-5-5", status: "idle", parent_id: null },
-    { id: "r:a1", title: "Update outdated crates in memory-ai", lane: "build", model: "claude/claude-opus-5-5", status: "idle", parent_id: null },
-    { id: "r:a2", title: "Bump them and run the tests", lane: "build", model: "claude/claude-sonnet-5-5", status: "active", parent_id: "r:a1" },
-  ].map((s, i) => ({ ...sessions[0], ...s, project: "parzi", created: iso((i + 6) * 3_600_000), updated: iso((i + 6) * 600_000) })),
-);
+  created: iso(ago + 2 * HOUR),
+  updated: iso(ago),
+  last_run: null as ReturnType<typeof outcome> | null,
+  plan_item: null as string | null,
+  branch: "",
+  effort: "medium",
+  ...over,
+});
+const sessions = [
+  session("s3", "Sidebar cleanup", MIN, { status: "active", plan_item: "sidebar", branch: "plan/sidebar", model: "claude/claude-sonnet-5-5" }),
+  session("s9", "Draw the plan panel", 2 * MIN, { status: "active", plan_item: "panel", branch: "plan/panel" }),
+  session("s10", "Fix the flaky queue test", 40 * MIN, {
+    last_run: outcome({ end: "failed", summary: "The test waits on a timer the queue doesn't own; I couldn't make it fail on demand yet.", ended: now - 40 * MIN }),
+  }),
+  session("s7", "Name sessions in a few words", 55 * MIN, {
+    plan_item: "names",
+    branch: "plan/names",
+    last_run: outcome({
+      summary:
+        "Sessions get a name from the first clause of the prompt, and agents rename their own session in the first turn.\n\n- `name_from_prompt` drops openers like *hey* and *can you*.\n- A quoted item names the session after the item.",
+      files: files("crates/parzi-core/src/names.rs", "crates/parzi-runtime/src/launch.rs", "crates/parzi-core/src/tools.rs", "parzi.md", "ui/src/App.svelte", "ui/src/lib/Thread.svelte"),
+      files_more: 2,
+      checks: [
+        { cmd: "cargo test -p parzi-core names", ok: true },
+        { cmd: "npm test", ok: true },
+      ],
+      cost_usd: 0.31,
+      ended: now - 55 * MIN,
+    }),
+  }),
+  session("s1", "Fix the composer freeze", 70 * MIN, { last_run: outcome({ summary: "Autosize measures once per key now.", ended: now - 70 * MIN }) }),
+  session("s2", "Lets test something", 3 * MIN, { status: "active", lane: "work", model: "codex/gpt-5" }),
+  session("s6", "Trim the old panel tabs", 4 * MIN, { status: "active", parent_id: "s3", model: "codex/gpt-5" }),
+  session("s5", "Badges from gh pr list", 90 * MIN, {
+    plan_item: "prs",
+    branch: "plan/prs",
+    last_run: outcome({ summary: "PR badges read `gh pr list`; the desk caches it for a minute.", checks: [{ cmd: "cargo test --bin parzi-app", ok: true }], ended: now - 90 * MIN }),
+  }),
+  session("s8", "Strip the Work view", 3 * HOUR, { status: "done", plan_item: "strip", branch: "plan/strip", last_run: outcome({ ended: now - 3 * HOUR }) }),
+  session("s11", "Store run outcomes on sessions", 5 * HOUR, { plan_item: "outcomes", last_run: outcome({ ended: now - 5 * HOUR }) }),
+  session("s4", "Draft release notes", 6 * HOUR, { project: "", lane: "work", model: "opencode", status: "done" }),
+  session("r:a1", "Update outdated crates in memory-ai", 8 * HOUR, { project: "memory-ai" }),
+  session("r:a2", "Bump them and run the tests", 7 * HOUR, { project: "memory-ai", parent_id: "r:a1", status: "active", model: "claude/claude-sonnet-5-5" }),
+];
+
+// Parzi's plan (PLAN_CONTRACT.md): nine items, one per state the panel
+// reads. Done by its state (outcomes) and by a merged PR (strip), dropped
+// (tasks), needs you through an approval (panel, emitted by mockMain),
+// working with two agents (sidebar), in review with checks passing (names)
+// and failing (prs), started (quotes), and not started with open needs
+// (widgets). s2 runs outside the plan.
+const item = (id: string, title: string, over: Record<string, unknown> = {}) => ({
+  id,
+  title,
+  detail: "",
+  phase: "Now",
+  needs: [] as string[],
+  state: "active",
+  branch: `plan/${id}`,
+  note: "",
+  ...over,
+});
+const parziPlan = {
+  version: 1,
+  title: "0.1.28",
+  goal: "A calmer sidebar driven by plans",
+  phases: ["Now", "Next"],
+  items: [
+    item("names", "Session names", { detail: "Name sessions in 3 to 5 words, and let agents rename their own session in the first turn." }),
+    item("panel", "Plan panel", { detail: "Show the project's plan in the right panel: phases, live states, needs as connectors.", needs: ["strip"] }),
+    item("sidebar", "Sidebar cleanup", { detail: "One panel instead of tabs: the plan, then what else runs.", needs: ["names"] }),
+    item("prs", "PR badges", { detail: "Read PRs with gh and badge the items whose branch has one.", needs: ["names"], note: "Keep it to one gh call a minute." }),
+    item("quotes", "Quote chips", { detail: "Click an item to quote it into the composer.", branch: "" }),
+    item("outcomes", "Run outcomes on sessions", { state: "done", branch: "" }),
+    item("strip", "Strip the Work view", { detail: "Remove the goals, the Work tab and the ledger." }),
+    item("widgets", "Movable Home widgets", { phase: "Next", state: "planned", branch: "", needs: ["panel", "quotes"], detail: "Drag Home's cards into the order you want." }),
+    item("tasks", "Task tools in the panel", { phase: "Next", state: "dropped", branch: "", note: "The plan replaces them." }),
+  ],
+  updated: now - 20 * MIN,
+  by: "s9",
+};
+const prs = [
+  { number: 42, title: "Name sessions from the prompt, and let agents rename them", url: "https://github.com/lucas19919/Parzi/pull/42", head: "plan/names", state: "open", draft: false, checks: "pass" },
+  { number: 44, title: "PR badges on plan items", url: "https://github.com/lucas19919/Parzi/pull/44", head: "plan/prs", state: "open", draft: false, checks: "fail" },
+  { number: 39, title: "Remove the Work view", url: "https://github.com/lucas19919/Parzi/pull/39", head: "plan/strip", state: "merged", draft: false, checks: "pass" },
+  { number: 31, title: "Old experiment", url: "https://github.com/lucas19919/Parzi/pull/31", head: "try/webgpu", state: "closed", draft: false, checks: "none" },
+];
+const planView = (project: string) => ({
+  project,
+  path: `projects/${project}/plan.md`,
+  plan: project === "parzi" && params.get("plan") !== "none" ? parziPlan : null,
+  error: null,
+});
 
 const ANSWER = [
   "## What I found",
@@ -74,7 +170,10 @@ const ANSWER = [
 function transcript() {
   const out: unknown[] = [];
   for (let i = 0; i < turns; i++) {
-    out.push({ kind: "user", text: `Turn ${i + 1}: look at why typing stalls, and check the thread too.` });
+    // The last turn quotes a plan item, as the desk sends it.
+    const last = i === turns - 1;
+    const quote = `\n\n<plan-item project="parzi" id="quotes" title="Quote chips">\nClick an item to quote it into the composer.\nState: active. Needs: none. Branch: none.\n</plan-item>`;
+    out.push({ kind: "user", text: last ? `Start this, and keep it small.${quote}` : `Turn ${i + 1}: look at why typing stalls, and check the thread too.` });
     out.push({ kind: "reasoning", text: "Checking the composer and the thread renderer." });
     out.push({ kind: "tool_call", id: `t${i}`, name: "fs.read", args: { path: "ui/src/lib/Omnibar.svelte" } });
     out.push({ kind: "tool_result", id: `t${i}`, name: "fs.read", ok: true, output: "ok", ms: 12 });
@@ -136,301 +235,9 @@ const downloadsList = [
   { id: "d3", tab: "t", url: "https://example.com/old.iso", name: "old.iso", path: "C:\\Users\\dev\\Downloads\\old.iso", received: 0, total: 0, state: "failed", started: now - 90_000_000 },
 ];
 
-// Work (WORK_CONTRACT.md): one goal per band and then some. A 4-step plan
-// with needs (done, running, blocked, ready), a failed check, a budget
-// pause, a failure, two Later goals, finished ones with files and checks, a
-// server goal and another device's goal.
-const MIN = 60_000;
-const HOUR = 60 * MIN;
-const here = { kind: "here", name: "This PC" };
-const step = (key: string, title: string, over: Record<string, unknown> = {}) => ({
-  key,
-  title,
-  needs: [] as string[],
-  lane: "build",
-  status: "todo",
-  note: null,
-  outcome: null,
-  sessions: [] as string[],
-  auto: false,
-  ready: true,
-  blocked_by: [] as string[],
-  ...over,
-});
-const run = (id: string, session: string, over: Record<string, unknown> = {}) => ({
-  id,
-  session,
-  step: null,
-  model: "claude/claude-opus-5-5",
-  lane: "build",
-  cause: "send",
-  started: now - 10 * MIN,
-  ended: now - 5 * MIN,
-  end: "completed",
-  error: null,
-  ms: 5 * MIN,
-  turns: 6,
-  tokens_in: 42_000,
-  tokens_out: 3_100,
-  cost_usd: 0.12,
-  summary: "",
-  files: [] as { path: string; via: string }[],
-  files_more: 0,
-  checks: [] as { cmd: string; ok: boolean }[],
-  artifacts: 0,
-  ...over,
-});
-const goal = (id: string, title: string, over: Record<string, unknown> = {}) => ({
-  id,
-  title,
-  status: "working",
-  project: "parzi",
-  root: null as string | null,
-  prompt: title,
-  created: now - HOUR,
-  updated: now - 5 * MIN,
-  engine: here,
-  steps: [] as ReturnType<typeof step>[],
-  running: [] as string[],
-  last: null as ReturnType<typeof run> | null,
-  cost_usd: null as number | null,
-  files: 0,
-  asks: 0,
-  later: null as { auto_start: boolean } | null,
-  owned: true,
-  ...over,
-});
-const files = (...paths: string[]) => paths.map((path) => ({ path, via: "tool" }));
-
-const planRuns = [
-  run("p1", "s1", {
-    started: now - 25 * MIN,
-    ended: now - 24 * MIN,
-    ms: 95_000,
-    cost_usd: 0.18,
-    summary: "I split this into four steps. Step a finds what runs on every keystroke; the others wait on what it finds.",
-  }),
-  run("p2", "s5", {
-    step: "a",
-    model: "claude/claude-sonnet-5-5",
-    started: now - 23 * MIN,
-    ended: now - 17 * MIN,
-    ms: 6 * MIN,
-    cost_usd: 0.29,
-    summary:
-      "Found it: the composer measures its own height twice per key, and every draft change re-renders the **model picker** and the project chip.\n\nThe thread does not re-parse markdown; that was a guess in the issue.",
-  }),
-  run("p3", "s1", {
-    cause: "wake",
-    started: now - 16 * MIN,
-    ended: now - 15 * MIN,
-    ms: 40_000,
-    cost_usd: 0.05,
-    summary: "Step a is done. Started b on the autosize fix and kept d for after it.",
-  }),
-  run("p4", "s6", {
-    step: "b",
-    model: "codex/gpt-5",
-    started: now - 4 * MIN,
-    ended: null,
-    end: null,
-    ms: 0,
-    cost_usd: null,
-    summary: "",
-  }),
-];
-
-const doneRun = run("d1", "s8", {
-  started: now - 2 * HOUR - 14 * MIN,
-  ended: now - 2 * HOUR,
-  ms: 14 * MIN,
-  cost_usd: 0.31,
-  summary:
-    "Swapped the hand-drawn dock icons for Octicons and regenerated `icons.ts`.\n\n- Every icon is 16px, or 12px where Octicons draws a 12px one.\n- The panel toggle uses `split-view`.\n\nBoth checks pass.",
-  files: files(
-    "ui/scripts/icons.mjs",
-    "ui/src/lib/icons.ts",
-    "ui/src/lib/SidePanel.svelte",
-    "ui/src/lib/SessionHeader.svelte",
-    "ui/src/lib/TabBar.svelte",
-    "ui/src/lib/TopBar.svelte",
-    "ui/src/lib/Switcher.svelte",
-    "ui/src/lib/HomeView.svelte",
-    "ui/src/lib/Icon.svelte",
-    "ui/src/theme.css",
-    "README.md",
-  ),
-  files_more: 2,
-  checks: [
-    { cmd: "npm run check", ok: true },
-    { cmd: "npm test", ok: true },
-  ],
-});
-
-const goals = [
-  goal("g-plan", "Fix the composer freeze when typing", {
-    root: "s1",
-    prompt: "Typing in the composer freezes the window for a moment on long threads. Find out why and fix it, then check it stays fast with 300 turns.",
-    created: now - 25 * MIN,
-    updated: now - 40_000,
-    steps: [
-      step("a", "Find what runs on every keystroke", {
-        status: "done",
-        sessions: ["s5"],
-        outcome: "The composer measured its height twice per key and re-rendered the model picker on every change.",
-      }),
-      step("b", "Make autosize measure once", { status: "running", needs: ["a"], sessions: ["s6"] }),
-      step("c", "Check typing stays fast at 300 turns", { needs: ["b"], ready: false, blocked_by: ["b"] }),
-      step("d", "Note the fix in the changelog", { needs: ["a"], lane: "work" }),
-    ],
-    running: ["s6"],
-    last: planRuns[3],
-    cost_usd: 0.52,
-    files: 2,
-  }),
-  goal("g-server", "Update outdated crates in memory-ai", {
-    project: "memory-ai",
-    root: "r:a1",
-    engine: { kind: "server", name: "box" },
-    prompt: "Update the outdated crates in memory-ai and make sure the tests still pass.",
-    created: now - 50 * MIN,
-    updated: now - 3 * MIN,
-    steps: [
-      step("a", "List outdated crates", { status: "done", sessions: ["r:a1"], outcome: "Seven crates are behind; two have breaking changes." }),
-      step("b", "Bump them and run the tests", { status: "running", needs: ["a"], sessions: ["r:a2"] }),
-    ],
-    running: ["r:a2"],
-    last: run("sv2", "r:a2", { step: "b", started: now - 9 * MIN, ended: null, end: null, ms: 0, cost_usd: null }),
-    cost_usd: 0.37,
-    files: 1,
-  }),
-  goal("g-sync", "Refactor the sync hub", {
-    root: "s3",
-    prompt: "Split the sync hub into smaller pieces so pushes and pulls stop blocking each other.",
-    created: now - 12 * MIN,
-    updated: now - MIN,
-    running: ["s3"],
-    last: run("y1", "s3", { model: "claude/claude-sonnet-5-5", started: now - 2 * MIN, ended: null, end: null, ms: 0, cost_usd: null }),
-    cost_usd: 0.44,
-    files: 4,
-  }),
-  goal("g-check", "Bump the app version to 0.1.28", {
-    status: "check",
-    root: "s7",
-    prompt: "Bump Parzi to 0.1.28 everywhere the version lives.",
-    created: now - 30 * MIN,
-    updated: now - 18 * MIN,
-    last: run("c1", "s7", {
-      started: now - 26 * MIN,
-      ended: now - 18 * MIN,
-      ms: 8 * MIN,
-      cost_usd: 0.21,
-      summary: "Bumped the version in package.json, Cargo.toml and tauri.conf.json.\n\nOne UI test fails: `tabs.test.ts` still expects 0.1.27 in the About text.",
-      files: files("ui/package.json", "src-tauri/Cargo.toml", "src-tauri/tauri.conf.json", "crates/parzi-core/Cargo.toml"),
-      checks: [
-        { cmd: "npm test", ok: false },
-        { cmd: "cargo test --workspace", ok: true },
-        { cmd: "npm run check", ok: true },
-      ],
-    }),
-    cost_usd: 0.21,
-    files: 4,
-  }),
-  goal("g-paused", "Draft the 0.1.28 release notes", {
-    status: "paused",
-    root: "s4",
-    prompt: "Draft release notes for 0.1.28 from the commits since 0.1.27.",
-    created: now - 70 * MIN,
-    updated: now - 35 * MIN,
-    last: run("n1", "s4", {
-      model: "opencode",
-      lane: "work",
-      end: "paused",
-      started: now - 60 * MIN,
-      ended: now - 35 * MIN,
-      ms: 25 * MIN,
-      cost_usd: 2,
-      summary: "I grouped the changes since 0.1.27 into Work, Browser and Fixes. Next: write the notes for each group.",
-    }),
-    cost_usd: 2,
-  }),
-  goal("g-failed", "Fix the flaky queue test", {
-    status: "failed",
-    root: "s9",
-    prompt: "The queue test fails about one run in five. Find out why.",
-    created: now - 3 * HOUR,
-    updated: now - 2 * HOUR,
-    last: run("f1", "s9", {
-      end: "failed",
-      started: now - 2 * HOUR - 20 * MIN,
-      ended: now - 2 * HOUR,
-      ms: 20 * MIN,
-      error: "The agent stopped after 3 tool errors in a row.",
-      summary: "The test waits on a timer that the queue does not own; I could not make it fail on demand yet.",
-    }),
-    cost_usd: 0.63,
-  }),
-  goal("g-later", "Clean up old screenshots in docs", {
-    status: "later",
-    later: { auto_start: true },
-    prompt: "Remove the screenshots in docs/ that no page links to any more.",
-    created: now - 3 * HOUR,
-    updated: now - 3 * HOUR,
-  }),
-  goal("g-later2", "Try a faster markdown renderer", {
-    status: "later",
-    later: { auto_start: false },
-    prompt: "Compare markdown-it with a faster renderer on a 300 turn thread and tell me if it is worth switching.",
-    created: now - 26 * HOUR,
-    updated: now - 26 * HOUR,
-  }),
-  goal("g-done", "Add Octicons to the side panel", {
-    status: "done",
-    root: "s8",
-    prompt: "Use Octicons for the side panel icons, at their own pixel sizes.",
-    created: now - 2 * HOUR - 15 * MIN,
-    updated: now - 2 * HOUR,
-    last: doneRun,
-    cost_usd: 0.31,
-    files: 13,
-  }),
-  goal("g-device", "Outline chapter two", {
-    status: "done",
-    project: "thesis",
-    root: "m:laptop:b1",
-    engine: { kind: "device", name: "laptop" },
-    owned: false,
-    prompt: "Outline chapter two from my notes on type inference.",
-    created: now - 6 * HOUR,
-    updated: now - 5 * HOUR,
-    last: run("b1", "m:laptop:b1", { lane: "work", started: now - 6 * HOUR, ended: now - 5 * HOUR, ms: 18 * MIN, summary: "An outline in five sections, saved to the thesis notes." }),
-    cost_usd: 0.4,
-  }),
-  goal("g-stopped", "Try WebGPU for the wallpaper blur", {
-    status: "stopped",
-    root: "s2",
-    prompt: "See if the wallpaper blur can run on WebGPU.",
-    created: now - 30 * HOUR,
-    updated: now - 28 * HOUR,
-    last: run("w1", "s2", { end: "stopped", started: now - 29 * HOUR, ended: now - 28 * HOUR, summary: "Stopped before it found a WebGPU path in WebView2." }),
-    cost_usd: 0.09,
-  }),
-];
-const runsOf: Record<string, unknown[]> = { "g-plan": planRuns };
-const notesOf: Record<string, unknown[]> = {
-  "g-plan": [{ at: now - 20 * MIN, by: "you", text: "Keep the fix small, no new dependencies.", step: null }],
-};
-// ?work=none: nobody has asked for real work yet (the empty Work tab).
-const workView = () =>
-  params.get("work") === "none" ? { goals: [], asks: [], digest: null, server: { linked: false, ops: true } } : { goals, asks: [], digest: null, server: { linked: true, ops: true } };
-
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
-  work_view: () => workView(),
-  work_goal: (a) => {
-    const g = goals.find((x) => x.id === a.id);
-    if (!g) throw new Error(`no goal \`${String(a.id)}\``);
-    return { ...g, runs: runsOf[g.id] ?? (g.last ? [g.last] : []), notes: notesOf[g.id] ?? [] };
-  },
+  plan_view: (a) => planView(String(a.project ?? "")),
+  plan_prs: () => (params.get("plan") === "none" ? [] : prs),
   app_version: () => "0.1.25-dev",
   list_threads: () => sessions,
   get_thread: (a) => [sessions.find((s) => s.id === a.id) ?? sessions[0], transcript()],
@@ -494,15 +301,30 @@ mockIPC((cmd, payload) => handlers[cmd]?.((payload ?? {}) as Record<string, unkn
 try {
   localStorage.setItem("parzi.onboarded.v1", view === "setup" ? "false" : "true");
   const composer = { input: "", mode: "build", model: "claude/claude-opus-5-5", effort: "medium", attachments: [] };
-  const tab = (id: string, kind: string, title: string, sessionId: string | null = null) => ({ id, kind, title, sessionId, cwd: "D:\\Repos\\Parzi", composer });
-  const tabs = [tab("t-home", "session", "New session"), tab("t-s1", "session", sessions[0].title, "s1"), tab("t-s2", "session", sessions[1].title, "s2")];
+  const tab = (id: string, kind: string, title: string, sessionId: string | null = null, extra: Record<string, unknown> = {}) => ({
+    id,
+    kind,
+    title,
+    sessionId,
+    cwd: "D:\\Repos\\Parzi",
+    composer: { ...composer, ...extra },
+  });
+  const quotes = params.get("quote")
+    ? [
+        { project: "parzi", id: "prs", title: "PR badges" },
+        { project: "parzi", id: "widgets", title: "Movable Home widgets" },
+      ]
+    : [];
+  const title = (id: string) => sessions.find((x) => x.id === id)?.title ?? "Session";
+  const tabs = [tab("t-home", "session", "New session"), tab("t-s1", "session", title("s1"), "s1", { quotes }), tab("t-s2", "session", title("s2"), "s2")];
   if (view === "brain") tabs.push(tab("t-brain", "brain", "Brain"));
   if (view === "history") tabs.push(tab("t-history", "history", "History"));
-  if (view === "work") tabs.push(tab("t-work", "work", "Work"));
+  // Earlier builds saved a Work tab: it is dropped on load.
+  tabs.push(tab("t-work", "work", "Work"));
   // ?view=page: a web page tab (no native page here), asking for the camera.
   const saved: unknown[] = [...tabs];
   if (view === "page") saved.push({ id: "t-page", kind: "page", title: "Example", url: "https://example.com/" });
-  const active = { home: "t-home", session: "t-s1", brain: "t-brain", history: "t-history", work: "t-work", page: "t-page" }[view] ?? "t-s1";
+  const active = { home: "t-home", session: "t-s1", brain: "t-brain", history: "t-history", page: "t-page" }[view] ?? "t-s1";
   localStorage.setItem("parzi.tabs.v1", JSON.stringify({ tabs: saved, active }));
   const sites = [
     ["https://github.com/lucas19919/Parzi", "Parzi on GitHub"],

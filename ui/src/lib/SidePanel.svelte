@@ -1,48 +1,57 @@
 <script lang="ts">
-  import { createEventDispatcher, onDestroy } from "svelte";
+  // The plan panel: the project's living plan as a picture. Items read their
+  // state live (planModel); the only things to click are an item (it becomes
+  // a quote in the composer), a PR badge (the PR opens in a tab) and a
+  // session in Also running. Agents change the plan, not this panel.
+  import { createEventDispatcher, onDestroy, onMount } from "svelte";
   import Icon from "./Icon.svelte";
-  import ProviderLogo from "./ProviderLogo.svelte";
-  import { hasMark } from "./providerMarks";
-  import { api, brain, type SessionMeta } from "./api";
-  import { mdHtml, richReady } from "./md";
-  import { handleLinkClick } from "./links";
-  import { agentOf, isLiveSession, whereOf } from "./sessions";
-  import { laneIcon } from "./lanes";
-  import { formatTime as time } from "./time";
+  import PlanCard from "./PlanCard.svelte";
+  import PlanNode, { railWidth } from "./PlanNode.svelte";
+  import { brain, onPlan, onRunEvent, planApi, type PlanQuote, type PlanView, type PrInfo, type Project, type Question, type SessionMeta } from "./api";
+  import type { Approval } from "./live";
+  import { activity } from "./activity";
+  import { clip, shortLabel } from "./format";
+  import { coalesce } from "./threadList";
+  import { folderName } from "./tabs";
   import { tooltip } from "./tooltip";
-  import GoalCard from "./GoalCard.svelte";
-  import { openGoal, work, workError } from "./workStore";
-  import { groupBands, inProject } from "./workModel";
+  import {
+    alsoRunning,
+    deriveItems,
+    groupItems,
+    newestActivity,
+    progress,
+    railLayout,
+    sameSlug,
+    sessionTone,
+    STATE_WORDS,
+    type ItemView,
+    type RailRow,
+  } from "./planModel";
 
+  // The project's slug ("" when the folder isn't a project) and its name.
+  export let project = "";
+  export let projectTitle = "";
+  // The composer's folder: where `gh` looks for PRs.
+  export let folder = "";
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
-  export let sessionId = "";
-  export let projectSlug = "";
-  // Dock tabs are a registry: append { id, label } plus a content branch
-  // below to add projects, checklists, etc. without touching the shell.
-  type DockTab = "agents" | "projects" | "work";
-  const DOCK_TABS: { id: DockTab; label: string }[] = [
-    { id: "agents", label: "Agents" },
-    { id: "projects", label: "Projects" },
-    { id: "work", label: "Work" },
-  ];
-
-  export let tab: DockTab = "agents";
+  export let approvals: Approval[] = [];
+  export let questions: Question[] = [];
+  // On a draft the panel is its own glass card; in a session it shares the
+  // session's surface.
+  export let floating = false;
+  export let dockW = 360;
 
   const dispatch = createEventDispatcher<{
+    quote: PlanQuote;
+    example: { text: string };
+    openUrl: { url: string };
     openSession: { id: string };
-    stopSession: { id: string };
     close: void;
-    settled: void;
   }>();
 
-  interface McpConn {
-    name: string;
-    on: boolean;
-  }
-
-  let poller = 0;
-  export let dockW = 360;
+  const EXAMPLE = "Plan the next release.";
+  const PR_EVERY = 120_000;
 
   function startResize(e: PointerEvent) {
     e.preventDefault();
@@ -62,265 +71,292 @@
     window.addEventListener("pointerup", up);
   }
 
-  function laneFallback(s: SessionMeta): "brain" | "bot" | "chat" {
-    return laneIcon(s.lane ?? "");
-  }
+  // The plan: loaded when the panel opens or the project changes, and again
+  // whenever it changes on disk or a run ends.
+  let view: PlanView | null = null;
+  let loadError = "";
+  let viewFor: string | null = null;
 
-  function isLive(s: SessionMeta) {
-    return isLiveSession(s, running);
-  }
-
-  function pillOf(s: SessionMeta): { label: string; cls: string } | null {
-    if (isLive(s)) return { label: "Running", cls: "live" };
-    if (s.status === "queued") return { label: "Queued", cls: "queue" };
-    return null;
-  }
-
-  $: family = (() => {
-    if (!sessionId) return [];
-    const byId = new Map(threads.map((t) => [t.id, t]));
-    const out: SessionMeta[] = [];
-    for (const t of threads) {
-      let cur = t.parent_id;
-      let guard = 0;
-      while (cur && guard++ < 50) {
-        if (cur === sessionId) {
-          out.push(t);
-          break;
-        }
-        cur = byId.get(cur)?.parent_id;
-      }
-    }
-    return out;
-  })();
-  $: pool = family.map((t) => ({ ...t, at: Date.parse(t.updated) || 0 }));
-  $: activeList = pool.filter((t) => isLive(t) || t.status === "queued").sort((a, b) => b.at - a.at);
-  $: rows = (() => {
-    const kids = new Map<string, typeof pool>();
-    for (const t of pool) {
-      const p = t.parent_id ?? "";
-      if (!kids.has(p)) kids.set(p, []);
-      kids.get(p)?.push(t);
-    }
-    const byId = new Map(pool.map((t) => [t.id, t]));
-    const roots = (kids.get(sessionId) ?? []).concat(pool.filter((t) => t.parent_id && t.parent_id !== sessionId && !byId.has(t.parent_id)));
-    const byTime = (a: { at: number }, b: { at: number }) => b.at - a.at;
-    roots.sort(byTime);
-    for (const arr of kids.values()) arr.sort(byTime);
-    const out: { s: (typeof pool)[number]; depth: number }[] = [];
-    const walk = (id: string, depth: number) => {
-      for (const c of kids.get(id) ?? []) {
-        out.push({ s: c, depth });
-        walk(c.id, depth + 1);
-      }
-    };
-    for (const r of roots) {
-      out.push({ s: r, depth: 0 });
-      walk(r.id, 1);
-    }
-    return out;
-  })();
-
-  $: busyRuns = threads
-    .filter((t) => isLive(t) || t.status === "queued")
-    .map((t) => ({ ...t, at: Date.parse(t.updated) || 0 }))
-    .sort((a, b) => b.at - a.at);
-
-  let conns: McpConn[] = [];
-  let connsFor = "";
-  let connsErr = "";
-
-  async function loadConns() {
-    if (connsFor) return;
-    connsFor = "loading";
-    try {
-      const cfg = await api.getConfig();
-      const servers = (cfg.mcp?.servers ?? {}) as Record<string, { enabled?: boolean }>;
-      conns = Object.entries(servers).map(([name, s]) => ({ name, on: s.enabled !== false }));
-      connsErr = "";
-      connsFor = "done";
-    } catch (e) {
-      // Shown in place of the list; reopening the tab tries again.
-      connsErr = String(e);
-      connsFor = "";
-    }
-  }
-
-  function poke() {
-    clearInterval(poller);
-    if (tab === "work") {
-      void loadConns();
-      dispatch("settled");
-      poller = window.setInterval(() => dispatch("settled"), 3000);
-    }
-  }
-
-  $: tab, poke();
-
-  onDestroy(() => clearInterval(poller));
-
-  let goalsMd = "";
-  let projState: "idle" | "loading" | "missing" = "idle";
-  let projFor = "";
-
-  function stripFront(src: string): string {
-    return src.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, "");
-  }
-
-  async function loadProject(slug: string) {
+  const loadPlan = coalesce(async () => {
+    const slug = project;
     if (!slug) {
-      projState = "idle";
-      goalsMd = "";
-      projFor = "";
+      view = null;
       return;
     }
-    if (projFor === slug && projState !== "idle") return;
-    projFor = slug;
-    projState = "loading";
-    const goals = await brain.read(`projects/${slug}/GOALS.md`).catch(() => "");
-    if (projFor !== slug) return;
-    goalsMd = goals;
-    projState = goals ? "idle" : "missing";
+    try {
+      const next = await planApi.view(slug);
+      if (slug !== project) return;
+      view = next;
+      loadError = "";
+    } catch (e) {
+      if (slug === project) loadError = String(e);
+    }
+  }, 150);
+
+  $: if (project !== viewFor) {
+    viewFor = project;
+    view = null;
+    loadError = "";
+    hide();
+    void loadPlan();
   }
 
-  $: if (tab === "projects") void loadProject(projectSlug);
+  // Projects, for the name and the folder of a project opened from a server
+  // session (whose folder isn't on this PC's composer).
+  let projects: Project[] = [];
+  $: known = projects.find((p) => sameSlug(p.slug, project)) ?? null;
+  $: title = projectTitle || known?.title || project;
+  $: prDir = folder || known?.folder || "";
 
-  function refreshProject() {
-    projFor = "";
-    void loadProject(projectSlug);
+  // PRs on the items' branches, from `gh` (an empty list without it).
+  let prs: PrInfo[] = [];
+  let prsFor: string | null = null;
+  const loadPrs = coalesce(async () => {
+    const dir = prDir;
+    if (!dir || !plan) return;
+    const list = await planApi.prs(dir).catch(() => [] as PrInfo[]);
+    if (dir === prDir) prs = list;
+  }, 500);
+
+  $: plan = view?.plan ?? null;
+  $: if (plan && prDir !== prsFor) {
+    prsFor = prDir;
+    prs = [];
+    void loadPrs();
   }
 
-  // This project's work, live: what needs you, what runs, what is queued,
-  // then the last few finished.
-  $: bands = groupBands($work.goals.filter((g) => inProject(g, projectSlug)), $work.asks);
-  $: projectWork = [...bands.needs, ...bands.working, ...bands.later, ...bands.done.slice(0, 3)];
+  $: waiting = new Map<string, string>([
+    ...approvals.map((a): [string, string] => [a.session, "Waiting for your approval"]),
+    ...questions.map((q): [string, string] => [q.session, `Asks: ${clip(q.question, 80)}`]),
+  ]);
+  $: views = plan ? deriveItems(plan, { project, threads, running, waiting, prs, activity: $activity }) : [];
+  $: groups = plan ? groupItems(plan, views) : { open: [], closed: [] };
+  $: count = progress(views);
+  $: pct = count.total ? Math.round((count.done / count.total) * 100) : 0;
+  $: rows = groups.open.flatMap((g) => [
+    ...(groups.open.length > 1 || g.phase ? [{ kind: "phase" as const, key: `phase:${g.phase}`, phase: g.phase }] : []),
+    ...g.items.map((v) => ({ kind: "item" as const, key: v.item.id, v })),
+  ]);
+  $: layout = railLayout(
+    rows.map((r) => (r.kind === "item" ? r.v.item.id : null)),
+    new Map(views.map((v) => [v.item.id, v.item.needs])),
+  );
+  $: closedLayout = railLayout(
+    groups.closed.map((v) => v.item.id),
+    new Map(),
+  );
+  $: lanes = layout.lanes;
+  $: gutter = railWidth(lanes);
+
+  let showClosed = false;
+
+  // This project's sessions outside the plan while they run or wait on you.
+  $: linked = new Set(views.flatMap((v) => v.sessions.map((s) => s.id)));
+  $: also = project ? alsoRunning(threads, project, linked, running, waiting) : [];
+
+  function subLine(v: ItemView): { text: string; strong: boolean } {
+    if (v.state === "needs") return { text: v.reason, strong: true };
+    if (v.state === "working") {
+      const doing = v.doing ? clip(shortLabel(v.doing), 60) : v.agents > 1 ? "" : "Working";
+      return { text: [doing, v.agents > 1 ? `${v.agents} agents` : ""].filter(Boolean).join(" · "), strong: false };
+    }
+    if ((v.state === "todo" || v.state === "started") && v.after.length) {
+      const first = clip(v.after[0], 40);
+      return { text: v.after.length > 1 ? `after ${first} and ${v.after.length - 1} more` : `after ${first}`, strong: false };
+    }
+    return { text: "", strong: false };
+  }
+
+  function alsoLine(ids: string[], first: SessionMeta): string {
+    const ask = ids.map((id) => waiting.get(id) ?? "").find(Boolean);
+    if (ask) return ask;
+    const doing = newestActivity(ids, $activity);
+    const agents = ids.length > 1 ? `${ids.length} agents` : "";
+    return [doing ? clip(shortLabel(doing), 60) : agents ? "" : first.status === "queued" ? "Queued" : "Running", agents].filter(Boolean).join(" · ");
+  }
+
+  const CHECKS: Record<PrInfo["checks"], string> = { pass: "Checks pass", fail: "Checks fail", pending: "Checks running", none: "No checks" };
+
+  function quote(v: ItemView) {
+    hide();
+    dispatch("quote", { project, id: v.item.id, title: v.item.title });
+  }
+
+  // The hover card: after a short rest on an item, at once when moving from
+  // one item to the next.
+  let hovered: { v: ItemView; anchor: HTMLElement } | null = null;
+  let hoverTimer = 0;
+  let closedAt = 0;
+
+  function hoverIn(v: ItemView, anchor: HTMLElement) {
+    clearTimeout(hoverTimer);
+    const show = () => (hovered = { v, anchor });
+    if (hovered || performance.now() - closedAt < 300) show();
+    else hoverTimer = window.setTimeout(show, 350);
+  }
+
+  function hide() {
+    clearTimeout(hoverTimer);
+    if (hovered) closedAt = performance.now();
+    hovered = null;
+  }
+
+  function focusIn(v: ItemView, e: FocusEvent) {
+    const btn = e.currentTarget as HTMLElement;
+    if (btn.matches(":focus-visible") && btn.parentElement) hoverIn(v, btn.parentElement);
+  }
+
+  // The card follows the live item (its state can change while it shows).
+  $: card = hovered ? (views.find((v) => v.item.id === hovered?.v.item.id) ?? null) : null;
+
+  onMount(() => {
+    void brain
+      .projects()
+      .then((list) => (projects = list))
+      .catch(() => {});
+    void loadPlan();
+    const unPlan = onPlan((e) => {
+      if (sameSlug(e.project, project)) void loadPlan();
+    });
+    const unRun = onRunEvent((e) => {
+      if (e.kind !== "done" && e.kind !== "error" && e.kind !== "paused") return;
+      void loadPlan();
+      void loadPrs();
+    });
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadPrs();
+    }, PR_EVERY);
+    return () => {
+      window.clearInterval(timer);
+      for (const un of [unPlan, unRun]) un.then((f) => f()).catch(() => {});
+    };
+  });
+
+  onDestroy(() => clearTimeout(hoverTimer));
 </script>
 
-<div class="panel" style:width="{dockW}px">
-  <div class="grip" on:pointerdown={startResize} title="Drag to resize the dock" />
-  <div class="p-head">
-    <div class="p-tabs" role="tablist" aria-label="Dock" data-ui-segmented>
-      {#each DOCK_TABS as t (t.id)}
-        <button
-          role="tab"
-          aria-selected={tab === t.id}
-          class:on={tab === t.id}
-          on:click={() => (tab = t.id)}
-        >
-          {t.label}{#if t.id === "agents" && activeList.length}<span class="n">{activeList.length}</span>{/if}
-        </button>
-      {/each}
+<aside class="panel" class:floating style:width="{dockW}px" aria-label="Plan">
+  <div class="grip" on:pointerdown={startResize} title="Drag to resize the plan" />
+  <header class="p-head">
+    <div class="top">
+      <h2>
+        {#if plan}<span class="proj">{`${title} · `}</span>{plan.title}{:else}{title || "Plan"}{/if}
+      </h2>
+      <button class="x" use:tooltip={"Close plan (Ctrl+J)"} on:click={() => dispatch("close")}><Icon name="close" size={12} /></button>
     </div>
-    <button class="x" use:tooltip={"Close panel"} on:click={() => dispatch("close")}><Icon name="close" size={12} /></button>
-  </div>
+    {#if plan}
+      {#if plan.goal}<p class="goal">{plan.goal}</p>{/if}
+      <div class="meter">
+        <span class="bar" aria-hidden="true"><i style:width="{pct}%" /></span>
+        <span class="count">{count.done} of {count.total} done</span>
+      </div>
+    {/if}
+  </header>
 
-  {#if tab === "work"}
-    <div class="agents">
-      <div class="t-head">
-        <h3>{projectSlug ? `Work in ${projectSlug}` : "Work without a project"}</h3>
-        <button class="mini" on:click={() => openGoal()}>Open Work</button>
-      </div>
-      <div class="work-dock">
-        {#each projectWork as g (g.id)}
-          <GoalCard goal={g} compact on:open={(e) => openGoal(e.detail.id)} />
-        {:else}
-          <p class="empty">{$workError ? `Couldn't load work: ${$workError}` : "No work here yet. Ask for something and it shows up here."}</p>
-        {/each}
-      </div>
-      {#if busyRuns.length}
-        <h3>Running now</h3>
-        {#each busyRuns as s (s.id)}
-          {@const pill = pillOf(s)}
-          <div class="row">
-            <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
-              <span class="time">{time(s.updated)}</span>
-              <span class="icon">
-                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneFallback(s)} />{/if}
-              </span>
-              <span class="title">{s.title || "Untitled session"}</span>
-              {#if pill}<span class="pill {pill.cls}">{pill.label}</span>{/if}
-            </button>
-            <button class="stop" use:tooltip={"Stop this run (keeps the transcript)"} on:click={() => dispatch("stopSession", { id: s.id })}>Stop</button>
-          </div>
-        {/each}
+  <div class="body" on:scroll={hide}>
+    {#if !project}
+      <p class="empty">
+        {#if !floating}This session has no project, so it has no plan.{:else if folder}{folderName(folder)} isn't a project yet, so it has no plan.{:else}Pick a folder in the composer to see its plan.{/if}
+      </p>
+    {:else if loadError && !view}
+      <p class="empty">Couldn't load the plan: {loadError}</p>
+    {:else if view && !plan}
+      {#if view.error}
+        <p class="empty">This project's plan can't be read: {view.error}</p>
       {:else}
-        <p class="empty">Nothing running. Spawned agents and queued runs land here.</p>
-      {/if}
-      <h3>Connections</h3>
-      {#each conns as c (c.name)}
-        <div class="row">
-          <span class="dot" class:on={c.on} />
-          <span class="title">{c.name}</span>
-          <span class="url">{c.on ? "connected" : "off"}</span>
+        <div class="empty">
+          <p>No plan for this project. Ask an agent to plan it, for example:</p>
+          <button class="example" on:click={() => dispatch("example", { text: EXAMPLE })}>{EXAMPLE}</button>
         </div>
-      {:else}
-        {#if connsErr}
-          <p class="empty err">Couldn't load connectors: {connsErr}</p>
-        {:else}
-          <p class="empty">No connectors yet. Add one in Settings › Connections.</p>
-        {/if}
-      {/each}
-    </div>
-  {:else if tab === "agents"}
-    <div class="agents">
-      {#if activeList.length}
-        <h3>Active now</h3>
-        {#each activeList as s (s.id)}
-          {@const pill = pillOf(s)}
-          <div class="row">
-            <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
-              <span class="time">{time(s.updated)}</span>
-              <span class="icon">
-                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneFallback(s)} />{/if}
-              </span>
-              <span class="title">{s.title || "Untitled session"}</span>
-              {#if pill}<span class="pill {pill.cls}">{pill.label}</span>{/if}
-            </button>
-            <button class="stop" use:tooltip={"Stop this run (keeps the transcript)"} on:click={() => dispatch("stopSession", { id: s.id })}>Stop</button>
-          </div>
-        {/each}
       {/if}
-      {#if rows.length}
-        <h3>This session</h3>
-        {#each rows as { s, depth } (s.id)}
-          {@const sub = pillOf(s)}
-          <div class="row" style:padding-left="{depth * 16}px">
-            <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
-              <span class="time">{time(s.updated)}</span>
-              <span class="icon">
-                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneFallback(s)} />{/if}
-              </span>
-              <span class="title">{s.title || "Untitled session"}</span>
-              {#if sub}<span class="pill {sub.cls}">{sub.label}</span>{:else}<span class="url">{whereOf(s)}</span>{/if}
-            </button>
-            {#if sub}
-              <button class="stop" use:tooltip={"Stop this run (keeps the transcript)"} on:click={() => dispatch("stopSession", { id: s.id })}>Stop</button>
-            {/if}
-          </div>
-        {/each}
-      {:else}
-        <p class="empty">No subagents yet. This session hasn't fanned anything out.</p>
-      {/if}
-    </div>
-  {:else if tab === "projects"}
-    <div class="proj">
-      {#if !projectSlug}
-        <p class="empty">This session has no project. Pick a folder in the composer to give it one.</p>
-      {:else}
-        <section class="card" aria-label="Project goals">
-          <div class="eyebrow">Project · {projectSlug}</div>
-          {#if goalsMd}
-            <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
-            <div class="goals" on:click={(e) => void handleLinkClick(e)}>{@html mdHtml(stripFront(goalsMd), $richReady)}</div>
-          {:else if projState === "missing"}
-            <p class="goals">No GOALS.md in this project's notes yet. What agents work on shows in the Work tab.</p>
+    {:else if plan}
+      <ol class="items" style:--gutter="{gutter}px">
+        {#each rows as r, i (r.key)}
+          {@const geo = layout.rows[i]}
+          {#if r.kind === "phase"}
+            <li class="phase">
+              <PlanNode row={geo} {lanes} />
+              <span role="heading" aria-level="3">{r.phase || "Plan"}</span>
+            </li>
+          {:else}
+            {@const v = r.v}
+            {@const sub = subLine(v)}
+            <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+            <li class="item" on:pointerenter={(e) => hoverIn(v, e.currentTarget)} on:pointerleave={hide}>
+              <PlanNode row={geo} {lanes} node={v.state} checks={v.pr?.state === "open" ? v.pr.checks : ""} />
+              <button
+                class="pick"
+                aria-describedby={hovered?.v.item.id === v.item.id ? "plan-card" : undefined}
+                on:click={() => quote(v)}
+                on:focus={(e) => focusIn(v, e)}
+                on:blur={hide}
+              >
+                <span class="t">{v.item.title}</span>
+                <span class="state" role="img" aria-label={STATE_WORDS[v.state]} />
+                {#if sub.text}<span class="sub" class:strong={sub.strong}>{sub.text}</span>{/if}
+              </button>
+              {#if v.pr && v.pr.state === "open"}
+                {@const pr = v.pr}
+                <button
+                  class="pr"
+                  use:tooltip={`Open ${pr.draft ? "draft " : ""}PR #${pr.number}: ${pr.title}. ${CHECKS[pr.checks]}`}
+                  on:click={() => dispatch("openUrl", { url: pr.url })}
+                >
+                  <Icon name="pr" size={12} />
+                  <span>PR #{pr.number}</span>
+                  {#if pr.checks !== "none"}
+                    <span class="checks {pr.checks}"><Icon name={pr.checks === "pass" ? "checkCircle" : pr.checks === "fail" ? "xCircle" : "clock"} size={12} /></span>
+                  {/if}
+                </button>
+              {/if}
+            </li>
           {/if}
-          <button class="mini" use:tooltip={"Reload GOALS.md"} on:click={refreshProject}>Reload</button>
-        </section>
+        {/each}
+      </ol>
+      {#if groups.closed.length}
+        {@const done = groups.closed.filter((v) => v.state === "done").length}
+        <button class="fold" aria-expanded={showClosed} on:click={() => (showClosed = !showClosed)}>
+          <Icon name={showClosed ? "chevDown" : "chevRight"} size={12} />
+          <span>Done · {done}</span>
+        </button>
+        {#if showClosed}
+          <ol class="items closed" style:--gutter="{gutter}px">
+            {#each groups.closed as v, i (v.item.id)}
+              <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+              <li class="item" on:pointerenter={(e) => hoverIn(v, e.currentTarget)} on:pointerleave={hide}>
+                <PlanNode row={closedLayout.rows[i]} {lanes} node={v.state} />
+                <button class="pick" on:click={() => quote(v)} on:focus={(e) => focusIn(v, e)} on:blur={hide}>
+                  <span class="t" class:struck={v.state === "dropped"}>{v.item.title}</span>
+                  <span class="state" role="img" aria-label={STATE_WORDS[v.state]} />
+                </button>
+              </li>
+            {/each}
+          </ol>
+        {/if}
       {/if}
-    </div>
-  {/if}
-</div>
+    {/if}
+
+    {#if also.length}
+      <h3 class="also-head">Also running</h3>
+      <div class="also" data-ui-list>
+        {#each also as row (row.session.id)}
+          {@const tone = sessionTone(row.session, running, waiting)}
+          <button class="also-row" on:click={() => dispatch("openSession", { id: row.session.id })}>
+            <i class="dot t-{tone}" />
+            <span class="a-text">
+              <span class="t">{row.session.title || "Untitled session"}</span>
+              <span class="sub">{alsoLine(row.ids, row.session)}</span>
+            </span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+  </div>
+</aside>
+
+{#if card && hovered}
+  <PlanCard id="plan-card" view={card} anchor={hovered.anchor} {running} {waiting} />
+{/if}
 
 <style>
   .panel {
@@ -331,6 +367,9 @@
     flex-direction: column;
     border-left: 1px solid var(--line);
     background: transparent;
+  }
+  .panel.floating {
+    border-left: none;
   }
   .grip {
     position: absolute;
@@ -356,45 +395,63 @@
   .p-head {
     flex: none;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 10px 6px;
-  }
-  .p-tabs {
-    display: inline-flex;
-    gap: 2px;
-    padding: 2px;
-    border-radius: var(--radius);
-    background: color-mix(in srgb, var(--text) 5%, transparent);
-  }
-  .p-tabs button {
-    display: inline-flex;
-    align-items: center;
+    flex-direction: column;
     gap: 6px;
-    padding: 4px 12px;
-    background: none;
-    border: none;
-    border-radius: calc(var(--radius) - 2px);
-    color: var(--muted);
-    font-size: var(--fs-sm);
-    cursor: pointer;
+    padding: 12px 12px 10px 16px;
   }
-  .p-tabs button.on {
-    background: color-mix(in srgb, var(--text) 10%, transparent);
+  .top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  h2 {
+    min-width: 0;
+    margin: 3px 0 0;
+    font-size: var(--fs-base);
+    font-weight: 600;
+    line-height: 1.4;
     color: var(--text);
+    overflow-wrap: anywhere;
   }
-  .n {
-    min-width: 16px;
-    height: 16px;
-    padding: 0 4px;
+  .proj {
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .goal {
+    margin: 0;
+    font-size: var(--fs-md);
+    line-height: 1.45;
+    color: var(--muted);
+  }
+  .meter {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 2px;
+  }
+  .bar {
+    flex: 1;
+    height: 3px;
+    overflow: hidden;
     border-radius: 999px;
-    background: var(--ok);
-    color: var(--on-ok);
-    font-size: var(--fs-xs);
-    font-weight: 700;
-    line-height: 16px;
+    background: var(--selected);
+  }
+  .bar i {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--muted);
+    transition: width 400ms var(--ease-out);
+  }
+  .count {
+    flex: none;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
   }
   .x {
+    flex: none;
     width: 26px;
     height: 26px;
     display: inline-flex;
@@ -406,86 +463,206 @@
     color: var(--muted);
     cursor: pointer;
   }
-  .x:hover { background: var(--line); color: var(--text); }
-  h3 {
-    margin: 12px 12px 4px;
+  .x:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 2px 8px 24px;
+  }
+  .empty {
+    margin: 16px 8px;
     font-size: var(--fs-md);
+    line-height: 1.6;
+    color: var(--muted);
+  }
+  .empty p {
+    margin: 0 0 8px;
+  }
+  .example {
+    min-height: 28px;
+    padding: 4px 12px;
+    background: var(--hover);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--text);
+    font-size: var(--fs-md);
+    cursor: pointer;
+  }
+  .example:hover {
+    background: var(--selected);
+  }
+  .items {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .items li {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding-left: var(--gutter);
+  }
+  .items li.phase {
+    min-height: 30px;
+    align-items: flex-end;
+    padding-bottom: 4px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     color: var(--muted);
   }
-  .empty { margin: 24px 16px; font-size: var(--fs-md); color: var(--muted); line-height: 1.6; }
-  .empty.err { color: var(--bad); }
-  .agents { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 16px; }
-  .dot {
-    flex: none;
-    width: 8px;
-    height: 8px;
-    margin-left: 8px;
-    border-radius: 50%;
-    background: var(--faint);
+  .phase span {
+    padding-left: 8px;
   }
-  .dot.on { background: var(--ok); }
-  .row { display: flex; align-items: center; gap: 8px; padding: 2px 8px 2px 4px; }
-  .open {
+  .pick {
     flex: 1;
     min-width: 0;
+    min-height: 28px;
     display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 7px 8px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    padding: 5px 8px;
     background: none;
     border: none;
     border-radius: var(--radius);
-    color: var(--muted);
+    color: var(--text);
+    font-size: var(--fs-md);
+    line-height: 18px;
     text-align: left;
     cursor: pointer;
   }
-  .open:hover { background: var(--line); color: var(--text); }
-  .time { flex: none; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
-  .icon { flex: none; display: inline-flex; color: var(--muted); }
-  .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-md); }
-  .url { flex: none; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-xs); color: var(--muted); }
-  .pill { flex: none; padding: 1px 8px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; }
-  .pill.live { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
-  .pill.queue { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
-  .stop {
+  .pick:hover {
+    background: var(--hover);
+  }
+  .t {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+  .struck {
+    color: var(--muted);
+    text-decoration: line-through;
+  }
+  .sub {
+    max-width: 100%;
+    font-size: var(--fs-sm);
+    line-height: 16px;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .sub.strong {
+    color: var(--text);
+  }
+  /* The state, for screen readers: the node beside the row shows it. */
+  .state {
+    position: absolute;
+    width: 0;
+    height: 0;
+  }
+  .pr {
     flex: none;
-    padding: 4px 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    margin-top: 2px;
+    padding: 0 8px;
     background: none;
     border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+  }
+  .pr:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .checks {
+    display: inline-flex;
+  }
+  .checks.pass {
+    color: var(--ok);
+  }
+  .checks.fail {
+    color: var(--bad);
+  }
+  .fold {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 28px;
+    margin: 10px 0 2px;
+    padding: 0 8px;
+    background: none;
+    border: none;
     border-radius: var(--radius);
     color: var(--muted);
     font-size: var(--fs-sm);
     cursor: pointer;
   }
-  .stop:hover { border-color: var(--bad); color: var(--bad); }
-  .proj { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 10px 16px; display: flex; flex-direction: column; gap: 10px; }
-  .card {
-    background: color-mix(in srgb, var(--panel) 60%, transparent);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
-    padding: 10px 12px 12px;
+  .fold:hover {
+    background: var(--hover);
+    color: var(--text);
   }
-  .eyebrow {
-    font-size: var(--fs-xs);
-    font-weight: 700;
+  .also-head {
+    margin: 18px 8px 4px;
+    font-size: var(--fs-md);
+    font-weight: 600;
     color: var(--muted);
-    margin-bottom: 6px;
   }
-  .mini {
-    min-height: 24px;
-    padding: 3px 9px;
+  .also {
+    display: flex;
+    flex-direction: column;
+  }
+  .also-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    min-height: 28px;
+    padding: 6px 8px;
     background: none;
-    border: 1px solid var(--line);
+    border: none;
     border-radius: var(--radius);
-    color: var(--muted);
-    font-size: var(--fs-xs);
+    color: var(--text);
+    font-size: var(--fs-md);
+    line-height: 18px;
+    text-align: left;
     cursor: pointer;
   }
-  .mini:hover { color: var(--text); }
-  .goals { margin: 0 12px; font-size: var(--fs-md); line-height: 1.6; color: var(--muted); }
-  .goals + .mini { margin-top: 10px; }
-  .t-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 12px; }
-  .work-dock { display: flex; flex-direction: column; gap: 8px; padding: 4px 12px 4px; }
-  .work-dock .empty { margin: 8px 4px; }
+  .also-row:hover {
+    background: var(--hover);
+  }
+  .a-text {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    margin-top: 5px;
+    border-radius: 50%;
+    background: var(--faint);
+  }
+  .t-live {
+    background: var(--ok);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent);
+  }
+  .t-need {
+    background: var(--warn);
+  }
+  .t-bad {
+    background: var(--bad);
+  }
+  .t-ok {
+    background: var(--muted);
+  }
 </style>

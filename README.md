@@ -36,8 +36,8 @@ GUI: `cd ui; npm install; npm run build`, then `cargo tauri dev` in `src-tauri`
 (requires `cargo install tauri-cli --locked`).
 
 UI without the app: `npm run dev` in `ui`, then open
-`http://localhost:1420/mock.html` (a fake backend; `?view=home|session|brain|history|work|settings|setup`,
-`&turns=300` for a long thread, `&live=1` for agents at work). With that running, `npm run lint:ui` checks every view and its
+`http://localhost:1420/mock.html` (a fake backend; `?view=home|session|brain|history|settings|setup`,
+`&turns=300` for a long thread, `&live=1` for agents at work, `&plan=none` for a project without a plan). With that running, `npm run lint:ui` checks every view and its
 menus against `ui/ui-policy.json` with [lintapple](https://github.com/gholtzap/lintapple): the type
 scale, contrast, control size and spacing, labels and tooltips. Exceptions in the policy carry
 their reason.
@@ -53,12 +53,13 @@ their reason.
 - **Home** is where a new tab lands: the composer, pinned sites (pin any page
   from its toolbar; until you do, your most visited sites show), and recent
   sessions.
-- **Work** (`Ctrl+J`) shows what your agents are doing for you. Ask for
-  something in the composer: once a run does real work (edits, commands,
-  sub-agents, or a few tool calls) it becomes a goal with what it changed, the
-  checks it ran and what it cost. Chats stay in History. A run that needs you
-  (failed, or paused at the budget) says so. Goals live in an append-only
-  ledger under `~/.parzi/work`.
+- **Plan** (`Ctrl+J`, or the panel button in a session) shows the project's
+  plan beside the thread, or beside Home once a draft has a folder. Agents
+  write it (ask one to "plan the next release"); the panel only shows it:
+  each item reads as working, needing you, in review (with its PR and
+  checks), started or not started, and done items fold away. Hover an item
+  for its sessions, last run and PR; click it to quote it into the composer,
+  then say what you want ("start this", "split this").
 - **Set up Parzi** (first launch, or the menu) signs you in to each agent with
   its own login, imports Brave/Chrome/Edge bookmarks and history (never
   passwords or cookies), and turns your other agents' instructions, memories

@@ -2,7 +2,7 @@
   import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
-  import { api, brain, type GitStatus, type GoalView, type Project, type ProviderStatus, type SessionMeta } from "./api";
+  import { api, brain, type GitStatus, type Project, type ProviderStatus, type SessionMeta } from "./api";
   import { faviconUrl, history, pins } from "./browserData";
   import { hasMark } from "./providerMarks";
   import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "./providerRows";
@@ -10,11 +10,12 @@
   import { folderName, hostOf } from "./tabs";
   import { HOME_WIDGETS, hiddenWidgets, toggleWidget, type HomeWidget } from "./homeWidgets";
   import { popover, placeAbove } from "./popover";
-  import { activity, openGoal, work } from "./workStore";
-  import { cardLine, clip, homeSummary, statusWord, stepProgress, toneOf, type Activity } from "./workModel";
+  import { sessionTone, TONE_WORDS } from "./planModel";
 
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
+  // Sessions waiting on an approval or a question.
+  export let waiting: Set<string> = new Set();
   // The agents a new session here can use (the server's when Remote is on).
   export let board: ProviderStatus[] = [];
   // Remote on: projects are the server's, with their server folders.
@@ -131,27 +132,6 @@
     (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
   }
 
-  // Work: what needs you first, then what the agents are on, then what
-  // finished today. The counts line takes a row.
-  $: sum = homeSummary($work.goals, $work.asks);
-  // Both kinds show when both exist: at most two that need you.
-  $: workRows = [...sum.needs.slice(0, sum.working.length ? 2 : ROWS), ...sum.working, ...sum.doneToday].slice(0, ROWS - 1);
-  $: workCounts = [
-    sum.needs.length ? { n: sum.needs.length, label: sum.needs.length === 1 ? "needs you" : "need you", cls: "need" } : null,
-    sum.working.length ? { n: sum.working.length, label: "working", cls: "live" } : null,
-    sum.doneToday.length ? { n: sum.doneToday.length, label: "done today", cls: "ok" } : null,
-  ].filter((c): c is { n: number; label: string; cls: string } => !!c);
-
-  // A row's right side stays short: what the agent does now (or how far the
-  // plan is) for running work, else the status word.
-  function workMeta(g: GoalView, act: Map<string, Activity>): { text: string; live: boolean } {
-    if (toneOf(g) !== "live") return { text: statusWord(g), live: false };
-    const line = cardLine(g, act, $work.asks);
-    if (line.live) return { text: clip(line.text, 30), live: true };
-    const p = stepProgress(g.steps);
-    return { text: p.current ? `Step ${p.index} of ${p.total}` : statusWord(g), live: false };
-  }
-
   function usage(p: ProviderStatus) {
     const u = p.usage[0];
     return u ? { label: u.label, pct: Math.max(0, Math.min(100, Math.round(u.used_percent))) } : null;
@@ -168,8 +148,9 @@
     {#if recent.length}
       <div class="rows" data-ui-list>
         {#each recent as s (s.id)}
+          {@const tone = sessionTone(s, running, waiting)}
           <button class="row" on:click={() => dispatch("openSession", { id: s.id })}>
-            <span class="dot" class:live={running.has(s.id)} />
+            <span class="dot {tone}" role="img" aria-label={TONE_WORDS[tone]} />
             <span class="name">{s.title || "Untitled session"}</span>
             <span class="meta">{ago(s.updated)}</span>
           </button>
@@ -177,35 +158,6 @@
       </div>
     {:else}
       <p class="empty">Your sessions show up here.</p>
-    {/if}
-  </section>
-  {/if}
-
-  {#if shown("work")}
-  <section class="card" aria-labelledby="home-work">
-    <header>
-      <h3 id="home-work"><Icon name="goal" />Work</h3>
-      <button class="more" on:click={() => openGoal()}>Open</button>
-    </header>
-    {#if workCounts.length}
-      <p class="counts">
-        {#each workCounts as c (c.cls)}<span><i class="dot {c.cls}" />{c.n} {c.label}</span>{/each}
-      </p>
-    {/if}
-    {#if workRows.length}
-      <div class="rows" data-ui-list>
-        {#each workRows as g (g.id)}
-          {@const tone = toneOf(g)}
-          {@const meta = workMeta(g, $activity)}
-          <button class="row" on:click={() => openGoal(g.id)}>
-            <span class="dot {tone}" class:live={tone === "live"} />
-            <span class="name">{g.title}</span>
-            <span class="meta" class:now={meta.live}>{meta.text}</span>
-          </button>
-        {/each}
-      </div>
-    {:else}
-      <p class="empty">Ask for something in the composer. Real work shows up here; chats stay in History.</p>
     {/if}
   </section>
   {/if}
@@ -435,21 +387,7 @@
   .row.on {
     background: var(--selected);
   }
-  .counts {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px 14px;
-    margin: 0;
-    padding: 2px 8px 4px;
-    font-size: var(--fs-sm);
-    color: var(--muted);
-    font-variant-numeric: tabular-nums;
-  }
-  .counts span {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-  }
+  /* A session's state: running, needs you, failed, done. */
   .dot.need {
     background: var(--warn);
   }
@@ -458,9 +396,6 @@
   }
   .dot.ok {
     background: var(--muted);
-  }
-  .meta.now {
-    color: var(--text);
   }
   .name {
     flex: 1;
