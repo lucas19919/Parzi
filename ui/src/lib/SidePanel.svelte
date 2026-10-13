@@ -240,7 +240,8 @@
   <header class="p-head">
     <div class="top">
       <h2>
-        {#if plan}<span class="proj">{`${title} · `}</span>{plan.title}{:else}{title || "Plan"}{/if}
+        <!-- A plan named after its project says the name once. -->
+        {#if plan && plan.title.trim().toLowerCase() !== title.trim().toLowerCase()}<span class="proj">{`${title} · `}</span>{plan.title}{:else}{plan?.title || title || "Plan"}{/if}
       </h2>
       <button class="x" use:tooltip={"Close plan (Ctrl+J)"} on:click={() => dispatch("close")}><Icon name="close" size={12} /></button>
     </div>
