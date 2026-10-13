@@ -177,6 +177,10 @@ pub struct BrainReport {
     pub deleted_here: usize,
     pub deleted_there: usize,
     pub conflicts: usize,
+    /// Notes this sync changed on this device (pulled, deleted, or set to
+    /// the server's side of a conflict), for whoever shows them.
+    #[serde(skip)]
+    pub changed: Vec<String>,
 }
 
 impl BrainReport {
@@ -186,12 +190,28 @@ impl BrainReport {
     }
 }
 
-async fn read_there(link: &Link, paths: &[String]) -> Result<BTreeMap<String, String>, String> {
+/// The server end of a brain sync: `parzi serve`'s socket over a link, or
+/// anything else that answers `brain.manifest`, `brain.read` and
+/// `brain.apply` the same way.
+#[async_trait::async_trait]
+pub trait NoteServer: Send + Sync {
+    async fn call(&self, op: &str, body: Value) -> Result<Value, String>;
+}
+
+#[async_trait::async_trait]
+impl NoteServer for Link {
+    async fn call(&self, op: &str, body: Value) -> Result<Value, String> {
+        Link::call(self, op, body, CALL).await
+    }
+}
+
+async fn read_there(
+    server: &dyn NoteServer,
+    paths: &[String],
+) -> Result<BTreeMap<String, String>, String> {
     let mut out = BTreeMap::new();
     for chunk in paths.chunks(BATCH_PATHS) {
-        let v = link
-            .call("brain.read", json!({ "paths": chunk }), CALL)
-            .await?;
+        let v = server.call("brain.read", json!({ "paths": chunk })).await?;
         for n in v
             .get("notes")
             .and_then(Value::as_array)
@@ -209,44 +229,90 @@ async fn read_there(link: &Link, paths: &[String]) -> Result<BTreeMap<String, St
     Ok(out)
 }
 
-async fn push_there(link: &Link, notes: &[(String, String)]) -> Result<(), String> {
+/// A note going to the server, with the hash the server held for it when
+/// this sync listed it ("" for none): a server whose copy changed since
+/// refuses it.
+struct Put {
+    path: String,
+    text: String,
+    expect: String,
+}
+
+/// What the server refused as stale (an old server refuses nothing).
+fn stale_of(v: &Value) -> Vec<String> {
+    v.get("stale")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect()
+}
+
+async fn push_there(server: &dyn NoteServer, notes: &[Put]) -> Result<Vec<String>, String> {
+    let mut stale = vec![];
     let mut batch: Vec<Value> = vec![];
     let mut size = 0;
-    for (path, text) in notes {
-        if size + text.len() > BATCH_BYTES && !batch.is_empty() {
-            link.call("brain.apply", json!({ "put": batch }), CALL)
-                .await?;
+    for n in notes {
+        if size + n.text.len() > BATCH_BYTES && !batch.is_empty() {
+            let v = server.call("brain.apply", json!({ "put": batch })).await?;
+            stale.extend(stale_of(&v));
             batch = vec![];
             size = 0;
         }
-        size += text.len();
-        batch.push(json!({ "path": path, "text": text }));
+        size += n.text.len();
+        batch.push(json!({ "path": n.path, "text": n.text, "expect": n.expect }));
     }
     if !batch.is_empty() {
-        link.call("brain.apply", json!({ "put": batch }), CALL)
-            .await?;
+        let v = server.call("brain.apply", json!({ "put": batch })).await?;
+        stale.extend(stale_of(&v));
     }
-    Ok(())
+    Ok(stale)
+}
+
+/// The hash of a note on disk now; None when it is gone.
+fn hash_now(full: &Path) -> Option<String> {
+    std::fs::read(full).ok().map(|b| fnv(&b))
 }
 
 /// Bring this device's brain and the server's into step. `server` names the
 /// link (user@host) so a different server starts from no agreement.
 pub async fn sync_brain(link: &Link, server: &str) -> Result<BrainReport, String> {
     let vault = Vault::open().map_err(|e| e.to_string())?;
-    let root = vault.root().to_path_buf();
-    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(vault.root()).map_err(|e| e.to_string())?;
     vault.claim_plain_folders();
+    let base: BTreeMap<String, String> = load_state("brain.json", server);
+    let (report, agreed) = sync_notes(&vault, link, &base).await?;
+    save_state("brain.json", server, &agreed)?;
+    Ok(report)
+}
+
+/// One sync of `vault` with `server` from the last agreement `base`: the
+/// report, and the new agreement. The agreement is built path by path from
+/// what both sides really held, never from a fresh listing: an edit made
+/// here while the sync ran is not in it, so the next sync sends it on. A
+/// path the sync could not settle (the server refused it, a note changed
+/// under it) keeps its old agreement and is planned again next time.
+pub async fn sync_notes(
+    vault: &Vault,
+    server: &dyn NoteServer,
+    base: &BTreeMap<String, String>,
+) -> Result<(BrainReport, BTreeMap<String, String>), String> {
     let device = parzi_core::device::id();
-    let here = manifest(&root);
-    let there: BTreeMap<String, String> = link
-        .call("brain.manifest", json!({}), CALL)
+    let here = manifest(vault.root());
+    let there: BTreeMap<String, String> = server
+        .call("brain.manifest", json!({}))
         .await?
         .get("notes")
         .cloned()
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    let base: BTreeMap<String, String> = load_state("brain.json", server);
-    let steps = plan(&here, &there, &base);
+    let steps = plan(&here, &there, base);
+    let mut agreed: BTreeMap<String, String> = base
+        .iter()
+        .filter(|(p, _)| here.contains_key(*p) || there.contains_key(*p))
+        .map(|(p, h)| (p.clone(), h.clone()))
+        .collect();
 
     let mut report = BrainReport::default();
     let wanted: Vec<String> = steps
@@ -254,29 +320,52 @@ pub async fn sync_brain(link: &Link, server: &str) -> Result<BrainReport, String
         .filter(|(_, a)| matches!(a, Act::Pull | Act::Conflict))
         .map(|(p, _)| p.clone())
         .collect();
-    let fetched = read_there(link, &wanted).await?;
-    let mut puts: Vec<(String, String)> = vec![];
+    let fetched = read_there(server, &wanted).await?;
+    let mut puts: Vec<Put> = vec![];
     let mut deletes: Vec<String> = vec![];
     let local =
         |p: &str| -> Result<PathBuf, String> { vault.resolve(p).map_err(|e| e.to_string()) };
+    // A note edited here since the listing is left for the next sync.
+    let untouched = |p: &str, full: &Path| hash_now(full).as_ref() == here.get(p);
     for (path, act) in &steps {
         match act {
-            Act::Keep => {}
-            Act::Pull => {
-                if let Some(text) = fetched.get(path) {
-                    parzi_core::atomic_write(&local(path)?, text.as_bytes())
-                        .map_err(|e| format!("{path}: {e}"))?;
-                    report.pulled += 1;
+            Act::Keep => {
+                if let Some(h) = here.get(path) {
+                    agreed.insert(path.clone(), h.clone());
                 }
+            }
+            Act::Pull => {
+                let Some(text) = fetched.get(path) else {
+                    continue;
+                };
+                let full = local(path)?;
+                if !untouched(path, &full) {
+                    continue;
+                }
+                parzi_core::atomic_write(&full, text.as_bytes())
+                    .map_err(|e| format!("{path}: {e}"))?;
+                agreed.insert(path.clone(), fnv(text.as_bytes()));
+                report.pulled += 1;
+                report.changed.push(path.clone());
             }
             Act::Push => {
                 let text = std::fs::read(local(path)?).map_err(|e| format!("{path}: {e}"))?;
-                puts.push((path.clone(), String::from_utf8_lossy(&text).into_owned()));
+                puts.push(Put {
+                    path: path.clone(),
+                    text: String::from_utf8_lossy(&text).into_owned(),
+                    expect: there.get(path).cloned().unwrap_or_default(),
+                });
                 report.pushed += 1;
             }
             Act::DeleteHere => {
-                let _ = std::fs::remove_file(local(path)?);
+                let full = local(path)?;
+                if !untouched(path, &full) {
+                    continue;
+                }
+                let _ = std::fs::remove_file(&full);
+                agreed.remove(path);
                 report.deleted_here += 1;
+                report.changed.push(path.clone());
             }
             Act::DeleteThere => {
                 deletes.push(path.clone());
@@ -294,18 +383,47 @@ pub async fn sync_brain(link: &Link, server: &str) -> Result<BrainReport, String
                     .map_err(|e| format!("{aside}: {e}"))?;
                 parzi_core::atomic_write(&full, theirs.as_bytes())
                     .map_err(|e| format!("{path}: {e}"))?;
-                puts.push((aside, String::from_utf8_lossy(&mine).into_owned()));
+                agreed.insert(path.clone(), fnv(theirs.as_bytes()));
+                puts.push(Put {
+                    path: aside.clone(),
+                    text: String::from_utf8_lossy(&mine).into_owned(),
+                    expect: String::new(),
+                });
                 report.conflicts += 1;
+                report.changed.push(path.clone());
+                report.changed.push(aside);
             }
         }
     }
-    push_there(link, &puts).await?;
-    if !deletes.is_empty() {
-        link.call("brain.apply", json!({ "delete": deletes }), CALL)
-            .await?;
+    let stale = push_there(server, &puts).await?;
+    for p in &puts {
+        if stale.contains(&p.path) {
+            report.pushed = report.pushed.saturating_sub(1);
+        } else {
+            agreed.insert(p.path.clone(), fnv(p.text.as_bytes()));
+        }
     }
-    save_state("brain.json", server, &manifest(&root))?;
-    Ok(report)
+    if !deletes.is_empty() {
+        let expect: serde_json::Map<String, Value> = deletes
+            .iter()
+            .filter_map(|p| Some((p.clone(), json!(there.get(p)?))))
+            .collect();
+        let v = server
+            .call(
+                "brain.apply",
+                json!({ "delete": deletes, "delete_expect": expect }),
+            )
+            .await?;
+        let refused = stale_of(&v);
+        for p in &deletes {
+            if refused.contains(p) {
+                report.deleted_there = report.deleted_there.saturating_sub(1);
+            } else {
+                agreed.remove(p);
+            }
+        }
+    }
+    Ok((report, agreed))
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -666,6 +784,173 @@ mod tests {
             "both: newer wins"
         );
         assert_eq!(settings_direction(6, 8, Some((7, 5))), Some(false));
+    }
+
+    type Hook = Box<dyn FnOnce() + Send>;
+
+    /// A server over a second vault, answering as `parzi serve` does. A
+    /// hook runs once just before the server answers its op: something
+    /// that happens while a sync is under way.
+    struct Server {
+        vault: Vault,
+        hooks: std::sync::Mutex<Vec<(&'static str, Hook)>>,
+    }
+
+    impl Server {
+        fn new(root: &Path) -> Self {
+            Self {
+                vault: Vault::at(root),
+                hooks: std::sync::Mutex::default(),
+            }
+        }
+
+        fn on(&self, op: &'static str, f: impl FnOnce() + Send + 'static) {
+            self.hooks.lock().unwrap().push((op, Box::new(f)));
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl NoteServer for Server {
+        async fn call(&self, op: &str, body: Value) -> Result<Value, String> {
+            let hook = {
+                let mut hooks = self.hooks.lock().unwrap();
+                hooks
+                    .iter()
+                    .position(|(o, _)| *o == op)
+                    .map(|at| hooks.remove(at).1)
+            };
+            if let Some(h) = hook {
+                h();
+            }
+            Ok(match op {
+                "brain.manifest" => crate::hub::brain_manifest_at(&self.vault),
+                "brain.read" => crate::hub::brain_read_at(&self.vault, &body),
+                "brain.apply" => crate::hub::brain_apply_at(&self.vault, &body),
+                _ => return Err(format!("unknown op `{op}`")),
+            })
+        }
+    }
+
+    fn put(root: &Path, path: &str, text: &str) {
+        let full = root.join(path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(full, text).unwrap();
+    }
+
+    fn get(root: &Path, path: &str) -> Option<String> {
+        std::fs::read_to_string(root.join(path)).ok()
+    }
+
+    #[tokio::test]
+    async fn an_edit_made_during_a_sync_survives_the_next_one() {
+        let (h, t) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (here, there) = (h.path().to_path_buf(), t.path().to_path_buf());
+        put(&here, "a.md", "v1");
+        put(&here, "c.md", "same");
+        put(&there, "c.md", "same");
+        put(&there, "projects/p/plan.md", "theirs");
+        let server = Server::new(&there);
+        // While the notes go out, the person (or an agent) edits two here.
+        let (a, c) = (here.join("a.md"), here.join("c.md"));
+        server.on("brain.apply", move || {
+            std::fs::write(&a, "v2").unwrap();
+            std::fs::write(&c, "edited").unwrap();
+        });
+        let vault = Vault::at(&here);
+        let (report, agreed) = sync_notes(&vault, &server, &BTreeMap::new()).await.unwrap();
+        assert_eq!((report.pushed, report.pulled), (1, 1));
+        assert_eq!(report.changed, ["projects/p/plan.md"]);
+        assert_eq!(
+            agreed["a.md"],
+            fnv(b"v1"),
+            "what was sent, not what is there now"
+        );
+        assert_eq!(agreed["c.md"], fnv(b"same"));
+        assert_eq!(get(&there, "a.md").as_deref(), Some("v1"));
+
+        let (report, agreed) = sync_notes(&vault, &server, &agreed).await.unwrap();
+        assert_eq!(report.pushed, 2, "both edits go out");
+        assert_eq!(report.pulled, 0, "nothing comes back over them");
+        assert_eq!(get(&there, "a.md").as_deref(), Some("v2"));
+        assert_eq!(get(&there, "c.md").as_deref(), Some("edited"));
+        assert_eq!(get(&here, "c.md").as_deref(), Some("edited"));
+        assert_eq!(agreed["c.md"], fnv(b"edited"));
+    }
+
+    #[tokio::test]
+    async fn a_pull_never_lands_on_an_edit_made_meanwhile() {
+        let (h, t) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (here, there) = (h.path().to_path_buf(), t.path().to_path_buf());
+        put(&here, "n.md", "orig");
+        put(&there, "n.md", "server edit");
+        let base = BTreeMap::from([("n.md".to_string(), fnv(b"orig"))]);
+        let server = Server::new(&there);
+        let n = here.join("n.md");
+        server.on("brain.read", move || {
+            std::fs::write(&n, "local edit").unwrap()
+        });
+        let vault = Vault::at(&here);
+        let (report, agreed) = sync_notes(&vault, &server, &base).await.unwrap();
+        assert_eq!(report.pulled, 0);
+        assert_eq!(get(&here, "n.md").as_deref(), Some("local edit"));
+        assert_eq!(agreed["n.md"], fnv(b"orig"), "planned again next time");
+        let (report, _) = sync_notes(&vault, &server, &agreed).await.unwrap();
+        assert_eq!(report.conflicts, 1, "both changed: both kept");
+        assert_eq!(get(&here, "n.md").as_deref(), Some("server edit"));
+        let device = parzi_core::device::id();
+        let aside = format!("n.conflict-{device}.md");
+        assert_eq!(get(&here, &aside).as_deref(), Some("local edit"));
+        assert_eq!(get(&there, &aside).as_deref(), Some("local edit"));
+    }
+
+    #[tokio::test]
+    async fn the_server_refuses_a_note_that_changed_since_it_was_listed() {
+        let t = tempfile::tempdir().unwrap();
+        let there = t.path().to_path_buf();
+        put(&there, "n.md", "orig");
+        let v = Vault::at(&there);
+        let apply = |body: Value| crate::hub::brain_apply_at(&v, &body);
+        let r = apply(json!({"put": [{"path": "n.md", "text": "x", "expect": fnv(b"old")}]}));
+        assert_eq!(r["stale"], json!(["n.md"]));
+        assert_eq!(r["put"], 0);
+        assert_eq!(get(&there, "n.md").as_deref(), Some("orig"));
+        let r = apply(json!({"put": [{"path": "n.md", "text": "x", "expect": ""}]}));
+        assert_eq!(r["stale"], json!(["n.md"]), "expected new, but it is there");
+        let r = apply(json!({"put": [{"path": "n.md", "text": "y", "expect": fnv(b"orig")}]}));
+        assert_eq!(
+            (r["put"].as_u64(), r["stale"].clone()),
+            (Some(1), json!([]))
+        );
+        let r = apply(json!({"put": [{"path": "n.md", "text": "z"}]}));
+        assert_eq!(r["put"], 1, "a device from before is not checked");
+        assert_eq!(get(&there, "n.md").as_deref(), Some("z"));
+        let r = apply(json!({"delete": ["n.md"], "delete_expect": {"n.md": fnv(b"y")}}));
+        assert_eq!(r["stale"], json!(["n.md"]));
+        assert!(
+            get(&there, "n.md").is_some(),
+            "a changed note is not deleted"
+        );
+
+        // In a sync: another device's edit lands between the listing and
+        // the push. The push is refused; the next sync keeps both sides.
+        let h = tempfile::tempdir().unwrap();
+        let here = h.path().to_path_buf();
+        put(&there, "m.md", "orig");
+        put(&here, "m.md", "mine");
+        let base = BTreeMap::from([("m.md".to_string(), fnv(b"orig"))]);
+        let server = Server::new(&there);
+        let m = there.join("m.md");
+        server.on("brain.apply", move || std::fs::write(&m, "theirs").unwrap());
+        let vault = Vault::at(&here);
+        let (report, agreed) = sync_notes(&vault, &server, &base).await.unwrap();
+        assert_eq!(report.pushed, 0, "refused");
+        assert_eq!(get(&there, "m.md").as_deref(), Some("theirs"));
+        assert_eq!(agreed.get("m.md"), base.get("m.md"));
+        let (report, _) = sync_notes(&vault, &server, &agreed).await.unwrap();
+        assert_eq!(report.conflicts, 1);
+        assert_eq!(get(&here, "m.md").as_deref(), Some("theirs"));
+        let aside = format!("m.conflict-{}.md", parzi_core::device::id());
+        assert_eq!(get(&there, &aside).as_deref(), Some("mine"), "nothing lost");
     }
 
     #[test]

@@ -26,17 +26,24 @@ fn now_ms() -> u64 {
 }
 
 pub fn brain_manifest() -> Value {
-    match parzi_core::paths::brain_dir() {
-        Ok(root) => json!({ "ok": true, "notes": crate::sync::manifest(&root) }),
+    match Vault::open() {
+        Ok(v) => brain_manifest_at(&v),
         Err(e) => fail(e.to_string()),
     }
 }
 
+pub fn brain_manifest_at(vault: &Vault) -> Value {
+    json!({ "ok": true, "notes": crate::sync::manifest(vault.root()) })
+}
+
 pub fn brain_read(req: &Value) -> Value {
-    let vault = match Vault::open() {
-        Ok(v) => v,
-        Err(e) => return fail(e.to_string()),
-    };
+    match Vault::open() {
+        Ok(v) => brain_read_at(&v, req),
+        Err(e) => fail(e.to_string()),
+    }
+}
+
+pub fn brain_read_at(vault: &Vault, req: &Value) -> Value {
     let mut notes = vec![];
     let mut size = 0;
     for p in req
@@ -64,11 +71,31 @@ pub fn brain_read(req: &Value) -> Value {
 /// Put and delete notes. Paths go through the vault's own checks: `.md`,
 /// inside the vault, no hidden folders.
 pub fn brain_apply(req: &Value) -> Value {
-    let vault = match Vault::open() {
-        Ok(v) => v,
-        Err(e) => return fail(e.to_string()),
+    match Vault::open() {
+        Ok(v) => brain_apply_at(&v, req),
+        Err(e) => fail(e.to_string()),
+    }
+}
+
+/// Whether a note stands as a device last saw it: `expect` is its hash,
+/// "" for no note at all. No `expect` (a device from before) is no check.
+fn as_expected(full: &Path, expect: Option<&str>) -> bool {
+    let Some(want) = expect else {
+        return true;
     };
+    let now = std::fs::read(full).ok().map(|b| crate::sync::fnv(&b));
+    match now {
+        Some(h) => h == want,
+        None => want.is_empty(),
+    }
+}
+
+/// `brain_apply` on `vault`. A put or delete whose note changed since the
+/// device listed it is refused and named in `stale`: the device plans that
+/// path again on its next sync instead of overwriting the change.
+pub fn brain_apply_at(vault: &Vault, req: &Value) -> Value {
     let (mut put, mut deleted) = (0, 0);
+    let mut stale: Vec<String> = vec![];
     for n in req
         .get("put")
         .and_then(Value::as_array)
@@ -86,11 +113,16 @@ pub fn brain_apply(req: &Value) -> Value {
             Ok(_) => continue,
             Err(e) => return fail(e.to_string()),
         };
+        if !as_expected(&full, n.get("expect").and_then(Value::as_str)) {
+            stale.push(path.to_string());
+            continue;
+        }
         if let Err(e) = parzi_core::atomic_write(&full, text.as_bytes()) {
             return fail(format!("{path}: {e}"));
         }
         put += 1;
     }
+    let expected = req.get("delete_expect").and_then(Value::as_object);
     for p in req
         .get("delete")
         .and_then(Value::as_array)
@@ -99,12 +131,20 @@ pub fn brain_apply(req: &Value) -> Value {
     {
         let Some(path) = p.as_str() else { continue };
         if let Ok(full) = vault.resolve(path) {
+            let expect = expected.and_then(|m| m.get(path)).and_then(Value::as_str);
+            if !full.is_file() {
+                continue;
+            }
+            if !as_expected(&full, expect) {
+                stale.push(path.to_string());
+                continue;
+            }
             if full != vault.root() && std::fs::remove_file(&full).is_ok() {
                 deleted += 1;
             }
         }
     }
-    json!({ "ok": true, "put": put, "deleted": deleted })
+    json!({ "ok": true, "put": put, "deleted": deleted, "stale": stale })
 }
 
 fn rev_file() -> Option<PathBuf> {
