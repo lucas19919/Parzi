@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use parzi_core::work::RunCause;
+use parzi_core::store::RunCause;
 use parzi_runtime::desk::{check_page_url, GuiFile};
 use parzi_runtime::handler::{ui_event, RunEvent};
 use parzi_runtime::tools::{humanize_tool_call, Approval, Approver, AutoApprover, ToolCallInfo};
@@ -1130,17 +1130,18 @@ async fn desk_open(ctx: &Ctx, req: &Value) -> Value {
                 "opened history".to_string(),
             )
         }
-        // "tasks" is what the view was called before Work.
-        "work" | "tasks" => (
-            json!({ "op": "show", "what": "work", "focus": true }),
-            "opened work".to_string(),
+        // The plan panel beside the session; "work" and "tasks" are what
+        // it was called before.
+        "plan" | "work" | "tasks" => (
+            json!({ "op": "show", "what": "plan", "focus": true }),
+            "opened the plan".to_string(),
         ),
         "home" => (
             json!({ "op": "show", "what": "home", "focus": true }),
             "opened home".to_string(),
         ),
         _ => {
-            return fail("what must be session, settings, brain, history, work, home or url");
+            return fail("what must be session, settings, brain, history, plan, home or url");
         }
     };
     if bool_arg(req, "raise", false) {

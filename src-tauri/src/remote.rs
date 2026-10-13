@@ -108,6 +108,7 @@ pub(crate) async fn sync_now(app: &AppHandle) -> Result<String, String> {
     if done.brain.changed() {
         status(app, "brain", "");
     }
+    crate::plans::synced(app, &done.brain.changed);
     *st.synced_at.lock().unwrap_or_else(|p| p.into_inner()) = now_ms();
     let summary = done.summary();
     if done.errors.is_empty() {
@@ -474,9 +475,12 @@ pub(crate) async fn send(
     attachments: Vec<parzi_core::context::AttachedFile>,
     mode: Option<String>,
     lane: Option<String>,
+    plan_item: Option<&str>,
 ) -> Result<String, String> {
     let body = json!({
         "target": target.unwrap_or("new"),
+        // The plan item the person quoted: the server links the session.
+        "plan_item": plan_item.unwrap_or_default(),
         "message": prompt,
         "model": model,
         "effort": effort,
@@ -504,16 +508,6 @@ pub(crate) async fn fork(
         .cloned()
         .and_then(tagged_meta)
         .ok_or_else(|| "update Parzi on the server to fork there".into())
-}
-
-/// Whether the server link is up right now. Never opens one.
-pub(crate) fn linked(state: &RemoteState) -> bool {
-    state
-        .link
-        .try_lock()
-        .ok()
-        .and_then(|l| l.as_ref().map(|l| l.alive()))
-        .unwrap_or(false)
 }
 
 /// The saved remote, if any. Never opens a connection.

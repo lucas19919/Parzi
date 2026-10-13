@@ -25,13 +25,13 @@ mod files;
 mod job;
 mod onboard;
 mod pagectl;
+mod plans;
 mod remote;
 mod search;
 mod sessions;
 mod settings;
 mod siteprefs;
 mod vault;
-mod work;
 
 pub(crate) type Pending = Arc<Mutex<HashMap<String, (String, oneshot::Sender<Approval>)>>>;
 pub(crate) type PendingQuestions = Arc<Mutex<HashMap<String, (String, oneshot::Sender<String>)>>>;
@@ -581,7 +581,7 @@ fn main() {
                 app: app.handle().clone(),
                 pending: app.state::<AppState>().pending.clone(),
             }));
-            work::watch(app.handle());
+            plans::watch(app.handle());
             let ctl_app = app.handle().clone();
             let ctl_orch = o.clone();
             let ctl_pending = app.state::<AppState>().pending.clone();
@@ -685,8 +685,8 @@ fn main() {
             sessions::purge_sessions,
             sessions::approve_tool,
             sessions::answer_question,
-            work::work_view,
-            work::work_goal,
+            plans::plan_view,
+            plans::plan_prs,
             files::pick_folder,
             files::list_files,
             files::git_branch,
