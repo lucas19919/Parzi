@@ -6,10 +6,9 @@
 
 use parzi_core::brain::Vault;
 use parzi_core::plan::{self, Plan, PlanWrite};
-use parzi_core::store::{SessionMeta, SessionStatus, SessionStore};
+use parzi_core::store::{SessionMeta, SessionStore};
+use parzi_core::text::{fold, short_id, NAME_CHARS, NAME_WORDS};
 use serde_json::Value;
-
-use crate::tools::SESSION_NAME_CAP;
 
 /// One of the three tools, for the session `sid`. Runs on a blocking
 /// thread: it reads and writes notes and session files.
@@ -38,14 +37,16 @@ fn vault() -> Result<Vault, String> {
     Vault::open().map_err(|e| e.to_string())
 }
 
+/// A session's name, held to the one rule automatic names follow too:
+/// at most `NAME_WORDS` words and `NAME_CHARS` chars.
 fn rename(store: &SessionStore, sid: &str, args: &Value) -> Result<String, String> {
     let title = str_arg(args, "title")
-        .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
+        .map(|t| fold(&t))
         .ok_or("session.rename needs a `title`")?;
-    let len = title.chars().count();
-    if len > SESSION_NAME_CAP {
+    let (len, words) = (title.chars().count(), title.split(' ').count());
+    if len > NAME_CHARS || words > NAME_WORDS {
         return Err(format!(
-            "that name is {len} chars; keep it to {SESSION_NAME_CAP}, 2 to 5 words"
+            "that name is {len} chars in {words} words; keep it to {NAME_CHARS} chars, 2 to {NAME_WORDS} words"
         ));
     }
     store.set_title(sid, &title).map_err(|e| e.to_string())?;
@@ -87,16 +88,6 @@ fn item_of<'a>(m: &'a SessionMeta, all: &'a [SessionMeta]) -> Option<&'a str> {
     })
 }
 
-fn status_word(s: SessionStatus) -> &'static str {
-    match s {
-        SessionStatus::Active => "running",
-        SessionStatus::Queued => "queued",
-        SessionStatus::Idle => "idle",
-        SessionStatus::Done => "done",
-        SessionStatus::Killed => "stopped",
-    }
-}
-
 /// Branches that say nothing about an item.
 fn shared_branch(b: &str) -> bool {
     matches!(b, "" | "main" | "master" | "HEAD" | "develop" | "trunk")
@@ -109,17 +100,13 @@ fn when(ms: u64) -> String {
         .map_or_else(String::new, |t| t.format("%Y-%m-%d %H:%M UTC").to_string())
 }
 
-fn short(id: &str) -> &str {
-    id.get(..8).unwrap_or(id)
-}
-
 /// The plan in full for an agent, with the sessions working on each item.
 fn listing(slug: &str, path: &str, p: &Plan, sessions: &[SessionMeta]) -> String {
     let (done, counted) = p.progress();
     let by = match p.by.as_str() {
         "" => String::new(),
         "you" => " by you".into(),
-        s => format!(" by session {}", short(s)),
+        s => format!(" by session {}", short_id(s)),
     };
     let mut out = vec![format!(
         "Plan \"{}\" of project {slug} ({path}), changed {}{by}. {done} of {counted} done.",
@@ -132,90 +119,70 @@ fn listing(slug: &str, path: &str, p: &Plan, sessions: &[SessionMeta]) -> String
     if !p.phases.is_empty() {
         out.push(format!("Phases: {}.", p.phases.join(", ")));
     }
-    let first = p.phases.first().cloned().unwrap_or_default();
-    let mut phase_shown: Option<String> = None;
-    let mut order: Vec<&plan::PlanItem> = vec![];
-    for ph in p.phases.iter().chain(std::iter::once(&String::new())) {
-        for i in &p.items {
-            let mine = if i.phase.is_empty() { &first } else { &i.phase };
-            let known = p.phases.contains(mine);
-            if (known && mine == ph) || (!known && ph.is_empty()) {
-                order.push(i);
-            }
+    // The same grouping the plan note shows.
+    for (phase, items) in plan::grouped(p) {
+        if items.is_empty() {
+            continue;
         }
-    }
-    for i in order {
-        let phase = if i.phase.is_empty() {
-            first.clone()
-        } else {
-            i.phase.clone()
-        };
-        if phase_shown.as_deref() != Some(phase.as_str()) && !phase.is_empty() {
+        if !phase.is_empty() {
             out.push(format!("\n{phase}"));
-            phase_shown = Some(phase);
         }
-        let mut head = format!("- {}: {} [{}]", i.id, i.title, i.state.word());
-        if !i.needs.is_empty() {
-            head.push_str(&format!(", after {}", i.needs.join(", ")));
-        }
-        let linked: Vec<&SessionMeta> = sessions
-            .iter()
-            .filter(|m| item_of(m, sessions) == Some(i.id.as_str()))
-            .collect();
-        let mut branches: Vec<String> = vec![];
-        for b in std::iter::once(i.branch.as_str()).chain(linked.iter().map(|m| m.branch.as_str()))
-        {
-            if !shared_branch(b) && !branches.iter().any(|x| x == b) {
-                branches.push(b.to_string());
-            }
-        }
-        if !branches.is_empty() {
-            head.push_str(&format!(", branch {}", branches.join(", ")));
-        }
-        out.push(head);
-        if !i.detail.is_empty() {
-            out.push(format!("  {}", i.detail));
-        }
-        if !i.note.is_empty() {
-            out.push(format!("  Note: {}", i.note));
-        }
-        if !linked.is_empty() {
-            let rows: Vec<String> = linked
-                .iter()
-                .take(6)
-                .map(|m| {
-                    let mut s = format!(
-                        "{} \"{}\" ({}",
-                        short(&m.id),
-                        m.title,
-                        status_word(m.status)
-                    );
-                    if !shared_branch(&m.branch) {
-                        s.push_str(&format!(", on {}", m.branch));
-                    }
-                    if let Some(r) = &m.last_run {
-                        s.push_str(&format!(
-                            ", last run {}",
-                            serde_json::to_value(r.end)
-                                .ok()
-                                .and_then(|v| v.as_str().map(str::to_string))
-                                .unwrap_or_default()
-                                .replace('_', " ")
-                        ));
-                    }
-                    s.push(')');
-                    s
-                })
-                .collect();
-            let more = linked.len().saturating_sub(rows.len());
-            let mut line = format!("  Sessions: {}", rows.join("; "));
-            if more > 0 {
-                line.push_str(&format!("; and {more} more"));
-            }
-            out.push(line);
+        for i in items {
+            listed(&mut out, i, sessions);
         }
     }
     out.join("\n")
+}
+
+/// One item of `listing`: its line, detail, note and sessions.
+fn listed(out: &mut Vec<String>, i: &plan::PlanItem, sessions: &[SessionMeta]) {
+    let mut head = format!("- {}: {} [{}]", i.id, i.title, i.state.word());
+    if !i.needs.is_empty() {
+        head.push_str(&format!(", after {}", i.needs.join(", ")));
+    }
+    let linked: Vec<&SessionMeta> = sessions
+        .iter()
+        .filter(|m| item_of(m, sessions) == Some(i.id.as_str()))
+        .collect();
+    let mut branches: Vec<String> = vec![];
+    for b in std::iter::once(i.branch.as_str()).chain(linked.iter().map(|m| m.branch.as_str())) {
+        if !shared_branch(b) && !branches.iter().any(|x| x == b) {
+            branches.push(b.to_string());
+        }
+    }
+    if !branches.is_empty() {
+        head.push_str(&format!(", branch {}", branches.join(", ")));
+    }
+    out.push(head);
+    if !i.detail.is_empty() {
+        out.push(format!("  {}", i.detail));
+    }
+    if !i.note.is_empty() {
+        out.push(format!("  Note: {}", i.note));
+    }
+    if !linked.is_empty() {
+        let rows: Vec<String> = linked
+            .iter()
+            .take(6)
+            .map(|m| {
+                let mut s = format!("{} \"{}\" ({}", short_id(&m.id), m.title, m.status.word());
+                if !shared_branch(&m.branch) {
+                    s.push_str(&format!(", on {}", m.branch));
+                }
+                if let Some(r) = &m.last_run {
+                    s.push_str(&format!(", last run {}", r.end.word()));
+                }
+                s.push(')');
+                s
+            })
+            .collect();
+        let more = linked.len().saturating_sub(rows.len());
+        let mut line = format!("  Sessions: {}", rows.join("; "));
+        if more > 0 {
+            line.push_str(&format!("; and {more} more"));
+        }
+        out.push(line);
+    }
 }
 
 fn read(store: &SessionStore, sid: &str, args: &Value) -> Result<String, String> {
@@ -263,6 +230,7 @@ pub(crate) fn brief_for(project: &str, item: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use parzi_core::store::SessionStatus;
 
     fn meta(id: &str, item: Option<&str>, parent: Option<&str>, branch: &str) -> SessionMeta {
         let now = chrono::Utc::now();

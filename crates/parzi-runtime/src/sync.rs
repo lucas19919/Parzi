@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use parzi_core::brain::Vault;
 use parzi_core::config::ParziConfig;
+use parzi_core::hash::fnv_hex as fnv;
 use parzi_core::store::SessionStore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -30,17 +31,6 @@ const MAX_NOTE: u64 = 1024 * 1024;
 const BATCH_PATHS: usize = 200;
 const BATCH_BYTES: usize = 4 * 1024 * 1024;
 const CALL: Duration = Duration::from_secs(60);
-
-/// FNV-1a 64: tiny, fixed forever, plenty for telling note versions apart.
-#[must_use]
-pub fn fnv(bytes: &[u8]) -> String {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in bytes {
-        h ^= u64::from(*b);
-        h = h.wrapping_mul(0x0100_0000_01b3);
-    }
-    format!("{h:016x}")
-}
 
 /// Every `.md` note under `root` (forward-slash paths) with its hash.
 /// Hidden folders, links and notes over 1 MB are left out.
@@ -236,6 +226,8 @@ struct Put {
     path: String,
     text: String,
     expect: String,
+    /// A note pushed as such (counted in `pushed`), not a conflict copy.
+    counted: bool,
 }
 
 /// What the server refused as stale (an old server refuses nothing).
@@ -339,11 +331,15 @@ pub async fn sync_notes(
                     continue;
                 };
                 let full = local(path)?;
+                // Checked and written under the plan lock: a plan.write here
+                // cannot land between the check and the write.
+                let plan_lock = parzi_core::plan::lock_if_plan(path);
                 if !untouched(path, &full) {
                     continue;
                 }
                 parzi_core::atomic_write(&full, text.as_bytes())
                     .map_err(|e| format!("{path}: {e}"))?;
+                drop(plan_lock);
                 agreed.insert(path.clone(), fnv(text.as_bytes()));
                 report.pulled += 1;
                 report.changed.push(path.clone());
@@ -359,11 +355,13 @@ pub async fn sync_notes(
                     path: path.clone(),
                     text: String::from_utf8_lossy(&text).into_owned(),
                     expect: there.get(path).cloned().unwrap_or_default(),
+                    counted: true,
                 });
                 report.pushed += 1;
             }
             Act::DeleteHere => {
                 let full = local(path)?;
+                let _plan = parzi_core::plan::lock_if_plan(path);
                 if !untouched(path, &full) {
                     continue;
                 }
@@ -381,6 +379,7 @@ pub async fn sync_notes(
                     continue;
                 };
                 let full = local(path)?;
+                let plan_lock = parzi_core::plan::lock_if_plan(path);
                 let mine = std::fs::read(&full).map_err(|e| format!("{path}: {e}"))?;
                 let taken = |p: &str| here.contains_key(p) || there.contains_key(p);
                 let aside = conflict_path(path, &device, &taken);
@@ -388,11 +387,13 @@ pub async fn sync_notes(
                     .map_err(|e| format!("{aside}: {e}"))?;
                 parzi_core::atomic_write(&full, theirs.as_bytes())
                     .map_err(|e| format!("{path}: {e}"))?;
+                drop(plan_lock);
                 agreed.insert(path.clone(), fnv(theirs.as_bytes()));
                 puts.push(Put {
                     path: aside.clone(),
                     text: String::from_utf8_lossy(&mine).into_owned(),
                     expect: String::new(),
+                    counted: false,
                 });
                 report.conflicts += 1;
                 report.changed.push(path.clone());
@@ -403,7 +404,11 @@ pub async fn sync_notes(
     let stale = push_there(server, &puts).await?;
     for p in &puts {
         if stale.contains(&p.path) {
-            report.pushed = report.pushed.saturating_sub(1);
+            // Only a counted push is taken back; a refused conflict copy
+            // was never counted.
+            if p.counted {
+                report.pushed = report.pushed.saturating_sub(1);
+            }
         } else {
             agreed.insert(p.path.clone(), fnv(p.text.as_bytes()));
         }
@@ -956,6 +961,35 @@ mod tests {
         assert_eq!(get(&here, "m.md").as_deref(), Some("theirs"));
         let aside = format!("m.conflict-{}.md", parzi_core::device::id());
         assert_eq!(get(&there, &aside).as_deref(), Some("mine"), "nothing lost");
+    }
+
+    #[tokio::test]
+    async fn a_refused_conflict_copy_takes_no_push_back() {
+        let (h, t) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (here, there) = (h.path().to_path_buf(), t.path().to_path_buf());
+        put(&here, "a.md", "mine");
+        put(&there, "a.md", "orig");
+        put(&here, "n.md", "local");
+        put(&there, "n.md", "server");
+        let base = BTreeMap::from([
+            ("a.md".to_string(), fnv(b"orig")),
+            ("n.md".to_string(), fnv(b"orig")),
+        ]);
+        let server = Server::new(&there);
+        // Another device's copy lands first: this one's is refused.
+        let aside = format!("n.conflict-{}.md", parzi_core::device::id());
+        let taken = there.join(&aside);
+        server.on("brain.apply", move || {
+            std::fs::write(&taken, "theirs").unwrap();
+        });
+        let vault = Vault::at(&here);
+        let (report, _) = sync_notes(&vault, &server, &base).await.unwrap();
+        assert_eq!(report.conflicts, 1);
+        assert_eq!(
+            report.pushed, 1,
+            "a.md went out; the copy was never counted"
+        );
+        assert_eq!(get(&there, "a.md").as_deref(), Some("mine"));
     }
 
     #[test]

@@ -1,19 +1,20 @@
 //! A project's living plan: one brain note per project,
 //! `projects/<slug>/plan.md`. Its frontmatter names it, a short summary
 //! reads for people, and a fenced `parzi-plan` JSON block holds the plan
-//! itself. Agents change it with `plan.write`; people read it and quote its
-//! items into prompts. A replaced plan moves to `projects/<slug>/plans/`,
+//! itself: the shared structure agents across the project's sessions work
+//! from, read and changed with `plan.read` and `plan.write`. A replaced
+//! plan moves to `projects/<slug>/plans/`,
 //! history that stays out of agent context. Living in the brain, it syncs
 //! to the server and other devices with the rest of the notes.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::brain::Vault;
-use crate::text::clip;
+use crate::text::{clip, fold};
 
 pub const MAX_ITEMS: usize = 40;
 pub const TITLE_CAP: usize = 80;
@@ -162,8 +163,10 @@ pub struct PlanView {
 }
 
 /// What `plan.write` asks for: any field left out stays as it is, and
-/// items merge by id (a partial item changes only what it names).
+/// items merge by id (a partial item changes only what it names). A field
+/// it does not know is an error, never silently dropped.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PlanWrite {
     #[serde(default)]
     pub title: Option<String>,
@@ -179,6 +182,7 @@ pub struct PlanWrite {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ItemWrite {
     pub id: String,
     #[serde(default)]
@@ -189,7 +193,8 @@ pub struct ItemWrite {
     pub phase: Option<String>,
     #[serde(default)]
     pub needs: Option<Vec<String>>,
-    #[serde(default)]
+    /// `status` is the name an earlier version of the tool used.
+    #[serde(default, alias = "status")]
     pub state: Option<String>,
     #[serde(default)]
     pub branch: Option<String>,
@@ -218,11 +223,6 @@ pub fn valid_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-}
-
-/// One line, whitespace folded.
-fn line(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Every graph rule holds, or the first one broken in words an agent can
@@ -366,7 +366,7 @@ fn block(note: &str) -> Option<String> {
 }
 
 fn text_of(v: &Value, key: &str, cap: usize) -> String {
-    clip(&line(v.get(key).and_then(Value::as_str).unwrap_or("")), cap)
+    clip(&fold(v.get(key).and_then(Value::as_str).unwrap_or("")), cap)
 }
 
 fn strings_of(v: &Value, key: &str) -> Vec<String> {
@@ -392,7 +392,7 @@ pub fn parse(note: &str) -> Result<Plan, String> {
     }
     let mut phases: Vec<String> = vec![];
     for p in strings_of(&v, "phases") {
-        let p = clip(&line(&p), PHASE_CAP);
+        let p = clip(&fold(&p), PHASE_CAP);
         if !phases.contains(&p) && phases.len() < MAX_PHASES {
             phases.push(p);
         }
@@ -471,8 +471,11 @@ fn yaml_str(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into())
 }
 
-/// The items of each phase, in plan order; "" holds items of no phase.
-fn grouped(plan: &Plan) -> Vec<(String, Vec<&PlanItem>)> {
+/// The items of each phase, in plan order. An item of no phase, or of a
+/// phase the plan does not list, counts for the first phase; a plan with
+/// no phases has one group, "".
+#[must_use]
+pub fn grouped(plan: &Plan) -> Vec<(String, Vec<&PlanItem>)> {
     let first = plan.phases.first().cloned().unwrap_or_default();
     let mut groups: Vec<(String, Vec<&PlanItem>)> =
         plan.phases.iter().map(|p| (p.clone(), vec![])).collect();
@@ -505,7 +508,7 @@ pub fn render(plan: &Plan) -> String {
         title
     );
     if !plan.goal.trim().is_empty() {
-        out.push_str(&format!("{}\n\n", line(&plan.goal)));
+        out.push_str(&format!("{}\n\n", fold(&plan.goal)));
     }
     let (done, counted) = plan.progress();
     out.push_str(&format!("{done} of {counted} done.\n"));
@@ -565,7 +568,7 @@ pub fn apply(
         _ => Plan::default(),
     };
     if let Some(t) = &w.title {
-        plan.title = line(&capped("the title", t, TITLE_CAP)?);
+        plan.title = fold(&capped("the title", t, TITLE_CAP)?);
     }
     if let Some(g) = &w.goal {
         plan.goal = capped("the goal", g, GOAL_CAP)?;
@@ -573,7 +576,7 @@ pub fn apply(
     if let Some(phases) = &w.phases {
         let mut list: Vec<String> = vec![];
         for p in phases {
-            let p = line(&capped("a phase name", p, PHASE_CAP)?);
+            let p = fold(&capped("a phase name", p, PHASE_CAP)?);
             if !p.is_empty() && !list.contains(&p) {
                 list.push(p);
             }
@@ -626,7 +629,7 @@ pub fn apply(
         };
         let item = &mut plan.items[at];
         if let Some(t) = &iw.title {
-            let t = line(&capped(&format!("item `{id}`'s title"), t, TITLE_CAP)?);
+            let t = fold(&capped(&format!("item `{id}`'s title"), t, TITLE_CAP)?);
             if t.is_empty() {
                 return Err(format!("item `{id}` needs a title"));
             }
@@ -639,10 +642,12 @@ pub fn apply(
             item.note = capped(&format!("item `{id}`'s note"), n, NOTE_CAP)?;
         }
         if let Some(b) = &iw.branch {
-            item.branch = line(&capped(&format!("item `{id}`'s branch"), b, BRANCH_CAP)?);
+            item.branch = fold(&capped(&format!("item `{id}`'s branch"), b, BRANCH_CAP)?);
         }
         if let Some(p) = &iw.phase {
-            let p = line(p);
+            // Checked like the plan's own phases: a long name is an error,
+            // never cut (a cut name would not match it on the next write).
+            let p = fold(&capped(&format!("item `{id}`'s phase"), p, PHASE_CAP)?);
             if !p.is_empty() && !plan.phases.contains(&p) {
                 if plan.phases.len() >= MAX_PHASES {
                     return Err(format!(
@@ -650,9 +655,9 @@ pub fn apply(
                         plan.phases.join(", ")
                     ));
                 }
-                plan.phases.push(clip(&p, PHASE_CAP));
+                plan.phases.push(p.clone());
             }
-            plan.items[at].phase = clip(&p, PHASE_CAP);
+            plan.items[at].phase = p;
         }
         let item = &mut plan.items[at];
         if let Some(needs) = &iw.needs {
@@ -691,9 +696,9 @@ pub fn apply(
 #[must_use]
 pub fn summary(plan: &Plan) -> String {
     let (done, counted) = plan.progress();
-    let mut head = format!("Plan \"{}\"", line(&plan.title));
+    let mut head = format!("Plan \"{}\"", fold(&plan.title));
     if !plan.goal.trim().is_empty() {
-        head.push_str(&format!(": {}", clip(&line(&plan.goal), 200)));
+        head.push_str(&format!(": {}", clip(&fold(&plan.goal), 200)));
     }
     head.push_str(&format!(". {done} of {counted} done."));
     let mut groups: Vec<(String, Vec<(String, String)>)> = vec![];
@@ -720,7 +725,7 @@ pub fn summary(plan: &Plan) -> String {
                 let detail = if i.detail.is_empty() {
                     String::new()
                 } else {
-                    format!(". {}", clip(&line(&i.detail), 100))
+                    format!(". {}", clip(&fold(&i.detail), 100))
                 };
                 (base, detail)
             })
@@ -792,7 +797,7 @@ pub fn summary(plan: &Plan) -> String {
 /// request stands ("PR #42 open, checks pass."), when known.
 #[must_use]
 pub fn quote_block(project: &str, item: &PlanItem, pr: Option<&str>) -> String {
-    let attr = |s: &str| line(s).replace('"', "&quot;");
+    let attr = |s: &str| fold(s).replace('"', "&quot;");
     let mut body = vec![];
     if !item.detail.trim().is_empty() {
         body.push(item.detail.trim().to_string());
@@ -889,12 +894,6 @@ fn read_note(vault: &Vault, path: &str) -> Result<Option<String>, String> {
     vault.read(path).map(Some).map_err(|e| e.to_string())
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-}
-
 /// A name for a file: lowercase words joined by `-`, at most 40 chars.
 fn file_slug(s: &str) -> String {
     let mut out = String::new();
@@ -941,6 +940,20 @@ fn archive(vault: &Vault, slug: &str, text: &str, title: &str) -> Result<String,
 /// Writes are read-change-save: one at a time in this process.
 static WRITING: Mutex<()> = Mutex::new(());
 
+/// Held while a plan note is read, changed and saved. Every other writer of
+/// a plan note in this process (a sync pull, the server's `brain.apply`, an
+/// agent's `brain.write`) takes it around its own check and write, so the
+/// two never interleave and neither loses the other's change.
+pub fn write_lock() -> MutexGuard<'static, ()> {
+    WRITING.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// `write_lock` when `path` (a brain path) is a plan note, else nothing.
+#[must_use]
+pub fn lock_if_plan(path: &str) -> Option<MutexGuard<'static, ()>> {
+    project_of_note(path).map(|_| write_lock())
+}
+
 type Watcher = Arc<dyn Fn(&str) + Send + Sync>;
 static WATCHER: RwLock<Option<Watcher>> = RwLock::new(None);
 
@@ -964,7 +977,7 @@ fn changed(slug: &str) {
 /// never merged into; a replaced note moves to the project's history.
 pub fn write(vault: &Vault, slug: &str, w: PlanWrite, by: &str) -> Result<Written, String> {
     let slug = check_slug(slug)?.to_string();
-    let one = WRITING.lock().unwrap_or_else(PoisonError::into_inner);
+    let one = write_lock();
     let path = note_path(&slug);
     let old_text = read_note(vault, &path)?;
     let old = match &old_text {
@@ -980,8 +993,10 @@ pub fn write(vault: &Vault, slug: &str, w: PlanWrite, by: &str) -> Result<Writte
         },
     };
     let replace = w.replace;
-    let (plan, activated) = apply(old.clone(), w, by, now_ms())?;
-    if plan.items.is_empty() && plan.title.is_empty() && old.is_none() {
+    let (plan, activated) = apply(old.clone(), w, by, crate::now_ms())?;
+    // A replace starts a new plan as surely as a first write: it must not
+    // archive the old one and leave a blank in its place.
+    if plan.items.is_empty() && plan.title.is_empty() && (old.is_none() || replace) {
         return Err("a new plan needs a title and its items".into());
     }
     let archived = match (&old_text, replace) {
@@ -1001,17 +1016,6 @@ pub fn write(vault: &Vault, slug: &str, w: PlanWrite, by: &str) -> Result<Writte
         activated,
         archived,
     })
-}
-
-/// FNV-1a 64 of `text`: tells one version of a summary from another.
-#[must_use]
-pub fn digest(text: &str) -> String {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in text.bytes() {
-        h ^= u64::from(b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("{h:016x}")
 }
 
 #[cfg(test)]
@@ -1320,8 +1324,6 @@ mod tests {
         assert_eq!(project_of_note("notes/plan.md"), None);
         assert!(check_slug("default").is_err() && check_slug("").is_err());
         assert!(check_slug("all").is_err() && check_slug("a/b").is_err());
-        assert_eq!(digest("x"), digest("x"));
-        assert_ne!(digest("x"), digest("y"));
     }
 
     #[test]
@@ -1408,5 +1410,86 @@ mod tests {
         assert_eq!(load(&v, "demo").plan.unwrap().title, "Fresh");
         assert!(load(&v, "nothing-here").plan.is_none());
         assert!(load(&v, "nothing-here").error.is_none());
+    }
+
+    #[test]
+    fn a_bare_replace_keeps_the_plan_it_would_blank() {
+        let dir = tempfile::tempdir().unwrap();
+        let v = Vault::at(dir.path());
+        let first = PlanWrite {
+            title: Some("Kept".into()),
+            items: Some(vec![item("a", &[])]),
+            ..PlanWrite::default()
+        };
+        write(&v, "demo", first, "s1").unwrap();
+        let bare = PlanWrite {
+            replace: true,
+            ..PlanWrite::default()
+        };
+        let err = write(&v, "demo", bare, "s2").unwrap_err();
+        assert!(err.contains("needs a title"), "{err}");
+        assert_eq!(load(&v, "demo").plan.unwrap().title, "Kept");
+        let history = dir.path().join("projects/demo/plans");
+        assert!(!history.exists(), "nothing was archived");
+    }
+
+    #[test]
+    fn a_long_item_phase_is_refused_like_a_plan_phase() {
+        let long = "p".repeat(PHASE_CAP + 1);
+        let w = PlanWrite {
+            title: Some("T".into()),
+            items: Some(vec![ItemWrite {
+                phase: Some(long.clone()),
+                ..item("a", &[])
+            }]),
+            ..PlanWrite::default()
+        };
+        let err = apply(None, w, "s", 1).unwrap_err();
+        assert!(err.contains(&format!("keep it to {PHASE_CAP}")), "{err}");
+        // A phase at the cap is one phase, however often it is written.
+        let at_cap = "q".repeat(PHASE_CAP);
+        let mut plan = None;
+        for n in 0..3 {
+            let w = PlanWrite {
+                title: Some("T".into()),
+                items: Some(vec![ItemWrite {
+                    phase: Some(at_cap.clone()),
+                    ..item("a", &[])
+                }]),
+                ..PlanWrite::default()
+            };
+            plan = Some(apply(plan, w, "s", n).unwrap().0);
+        }
+        assert_eq!(plan.unwrap().phases, [at_cap]);
+    }
+
+    #[test]
+    fn plan_write_names_what_it_does_not_know() {
+        let old: PlanWrite = serde_json::from_value(serde_json::json!({
+            "items": [{"id": "a", "status": "done"}]
+        }))
+        .unwrap();
+        let items = old.items.unwrap();
+        assert_eq!(
+            items[0].state.as_deref(),
+            Some("done"),
+            "the old name works"
+        );
+        let err = serde_json::from_value::<PlanWrite>(serde_json::json!({
+            "items": [{"id": "a", "progress": "done"}]
+        }))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("unknown field `progress`"), "{err}");
+        let err = serde_json::from_value::<PlanWrite>(serde_json::json!({"project": "x"}))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown field `project`"), "{err}");
+    }
+
+    #[test]
+    fn plan_notes_take_the_write_lock() {
+        assert!(lock_if_plan("projects/demo/plan.md").is_some());
+        assert!(lock_if_plan("notes/a.md").is_none());
     }
 }
