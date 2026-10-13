@@ -40,12 +40,7 @@ pub async fn brain_write(
     path: String,
     content: String,
 ) -> Result<NoteMeta, String> {
-    let note = path.clone();
-    let out = synced(&app, blocking(move || brain::write(&path, &content)).await);
-    if out.is_ok() {
-        crate::plans::synced(&app, &[note]);
-    }
-    out
+    synced(&app, blocking(move || brain::write(&path, &content)).await)
 }
 
 #[tauri::command]
@@ -87,12 +82,7 @@ fn synced<T>(app: &tauri::AppHandle, out: Result<T, String>) -> Result<T, String
 
 #[tauri::command]
 pub async fn brain_delete(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    let note = path.clone();
-    let out = synced(&app, blocking(move || brain::delete(&path)).await);
-    if out.is_ok() {
-        crate::plans::synced(&app, &[note]);
-    }
-    out
+    synced(&app, blocking(move || brain::delete(&path)).await)
 }
 
 #[tauri::command]
