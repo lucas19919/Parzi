@@ -19,7 +19,7 @@ export interface DeskCmd {
   url?: string;
   rev?: number;
   owner?: string | null;
-  /** open, show: switch to it. Agents' pages open behind unless they ask. */
+  /** open, show: switch to it; false opens it behind the current tab (agents' pages and views, unless they ask). */
   focus?: boolean;
   what?: "session" | "settings" | "brain" | "history" | "home";
   title?: string;

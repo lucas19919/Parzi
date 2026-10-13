@@ -232,11 +232,14 @@
 
   let historyView: "sessions" | "history" | "bookmarks" | "downloads" = "sessions";
 
-  function openHistory(view = historyView) {
+  // `focus` false (an agent's desk command): the tab opens behind the
+  // current one, or an open one stays where it is.
+  function openHistory(view = historyView, focus = true) {
     historyView = view;
     const existing = tabs.find((t) => t.kind === "history");
-    if (existing) selectTab(existing.id);
-    else addTab(historyTab());
+    if (existing) {
+      if (focus) selectTab(existing.id);
+    } else addTab(historyTab(), focus);
   }
 
   function reopenClosed() {
@@ -246,11 +249,12 @@
     openPageNext(last.url);
   }
 
-  function openBrain(path: string | unknown = "") {
-    if (typeof path === "string" && path) openBrainNote(path);
+  function openBrain(path = "", focus = true) {
+    if (path) openBrainNote(path);
     const existing = tabs.find((t) => t.kind === "brain");
-    if (existing) selectTab(existing.id);
-    else addTab(brainTab());
+    if (existing) {
+      if (focus) selectTab(existing.id);
+    } else addTab(brainTab(), focus);
   }
 
   // Sessions waiting on an approval or a question.
@@ -403,8 +407,14 @@
     }
   }
 
-  function addTab(t: Tab) {
-    if (!t.composer) t.composer = { input: "", mode: "build", model: "", effort: "medium", attachments: [] };
+  // A tab opened without focus goes right after the current one.
+  function addTab(t: Tab, focus = true) {
+    if (!t.composer) t.composer = restoreComposer(null);
+    if (!focus) {
+      const idx = tabs.findIndex((x) => x.id === activeId);
+      tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
+      return;
+    }
     tabs = [...tabs, t];
     selectTab(t.id);
   }
@@ -472,15 +482,16 @@
     omnibar?.focus();
   }
 
-  function newSession() {
-    addTab({ ...sessionTab(), cwd: folder || undefined });
-    void tick().then(() => omnibar?.focus());
+  function newSession(focus = true) {
+    addTab({ ...sessionTab(), cwd: folder || undefined }, focus);
+    if (focus) void tick().then(() => omnibar?.focus());
   }
 
-  function goHome() {
+  function goHome(focus = true) {
     const draft = tabs.find((t) => t.kind === "session" && !t.sessionId);
-    if (draft) selectTab(draft.id);
-    else newSession();
+    if (draft) {
+      if (focus) selectTab(draft.id);
+    } else newSession(focus);
   }
 
   function openPage(url: string, id?: string, owner?: string | null, background = false) {
@@ -653,16 +664,16 @@
   // Closing settings always lands back where you came from.
   let settingsReturn: string | null = null;
 
-  function openSettings(section = "general") {
+  function openSettings(section = "general", focus = true) {
     settingsSection = section;
-    switcherOpen = false;
+    if (focus) switcherOpen = false;
     const existing = tabs.find((t) => t.kind === "settings");
     if (existing) {
-      selectTab(existing.id);
+      if (focus) selectTab(existing.id);
       return;
     }
-    if (tab.kind !== "settings") settingsReturn = activeId;
-    addTab(settingsTab());
+    if (focus && tab.kind !== "settings") settingsReturn = activeId;
+    addTab(settingsTab(), focus);
   }
 
   async function send() {
@@ -1056,10 +1067,10 @@
         const idx = tabs.findIndex((x) => x.id === activeId);
         tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
       }
-    } else if (cmd.what === "settings") openSettings(cmd.section || "general");
-    else if (cmd.what === "brain") openBrain(cmd.path ?? "");
-    else if (cmd.what === "history") openHistory(cmd.view ?? "sessions");
-    else if (cmd.what === "home") goHome();
+    } else if (cmd.what === "settings") openSettings(cmd.section || "general", cmd.focus !== false);
+    else if (cmd.what === "brain") openBrain(cmd.path ?? "", cmd.focus !== false);
+    else if (cmd.what === "history") openHistory(cmd.view ?? "sessions", cmd.focus !== false);
+    else if (cmd.what === "home") goHome(cmd.focus !== false);
   }
 
   // Only the page used last loads ahead at launch: every renderer costs
@@ -1179,12 +1190,12 @@
       on:select={(e) => selectTab(e.detail.id)}
       on:close={(e) => closeTab(e.detail.id)}
       on:move={(e) => moveTab(e.detail.id, e.detail.to)}
-      on:newTab={newSession}
-      on:home={goHome}
+      on:newTab={() => newSession()}
+      on:home={() => goHome()}
       on:search={() => (switcherOpen = true)}
       on:settings={() => openSettings()}
       on:update={() => openSettings("system")}
-      on:brain={openBrain}
+      on:brain={() => openBrain()}
       on:history={() => openHistory()}
       on:setup={openSetup}
     />
@@ -1340,7 +1351,7 @@
           on:unavailable={() => openSettings(remoteOn ? "connections" : "providers")}
           on:folder={(e) => patchTab(tab.id, { cwd: e.detail.path })}
           on:project={() => loadProject(folder)}
-          on:brain={openBrain}
+          on:brain={() => openBrain()}
         />
       </div>
     {/if}
@@ -1359,17 +1370,17 @@
     on:selectTab={(e) => selectTab(e.detail.id)}
     on:openSession={(e) => openSession(e.detail.id)}
     on:deleteSession={(e) => remove(e.detail.id)}
-    on:newSession={newSession}
+    on:newSession={() => newSession()}
     on:newPage={() => addTab(pageTab())}
     on:settings={() => openSettings()}
     on:previews={() => openPreview()}
     on:setup={openSetup}
-    on:brain={openBrain}
+    on:brain={() => openBrain()}
     on:history={() => openHistory()}
   />
 
   {#if setupOpen}
-    <Onboarding startStep={setupStep} on:close={() => (setupOpen = false)} on:openBrain={openBrain} />
+    <Onboarding startStep={setupStep} on:close={() => (setupOpen = false)} on:openBrain={() => openBrain()} />
   {/if}
 
   {#if openRequest}

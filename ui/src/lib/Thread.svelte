@@ -296,7 +296,10 @@ ${e.text}` : e.text;
     try {
       await api.approveTool(key, session, allow);
     } catch (e) {
-      toastError(e);
+      // The run moved on (it stopped, or the request timed out) just as
+      // the vote went in: nothing went wrong, the card just goes.
+      if (/no longer waiting/i.test(String(e))) toast("The run is no longer waiting for this");
+      else toastError(e);
     } finally {
       dispatch("voted", { key });
     }
