@@ -1,16 +1,23 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount } from "svelte";
+  import { createEventDispatcher, onMount, tick } from "svelte";
+  import { flip } from "svelte/animate";
+  import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
+  import type { IconName } from "./icons";
   import ProviderLogo from "./ProviderLogo.svelte";
-  import { api, brain, type GitStatus, type Project, type ProviderStatus, type SessionMeta } from "./api";
+  import Viz from "./viz/Viz.svelte";
+  import { api, brain, onRunEvent, type GitStatus, type Project, type ProviderStatus, type SessionMeta } from "./api";
   import { faviconUrl, history, pins } from "./browserData";
+  import { openBrainNote } from "./brainStore";
   import { hasMark } from "./providerMarks";
   import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "./providerRows";
   import { loadRemoteInfo, remote as server, remoteInfo } from "./remote";
   import { folderName, hostOf } from "./tabs";
-  import { HOME_WIDGETS, hiddenWidgets, toggleWidget, type HomeWidget } from "./homeWidgets";
+  import { HOME_WIDGETS, customWidgets, hiddenWidgets, loadCustomWidgets, toggleWidget, widgetOrder, type WidgetId } from "./homeWidgets";
+  import { arrange, moveBy, moveTo, withShown } from "./homeLayout";
   import { popover, placeAbove } from "./popover";
   import { sessionTone, TONE_WORDS } from "./planModel";
+  import { tooltip } from "./tooltip";
 
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
@@ -34,15 +41,130 @@
   }>();
 
   const ROWS = 4;
+  const ICONS: Record<string, IconName> = { recent: "chat", agents: "bot", projects: "project", git: "branch", server: "server", sites: "globe" };
 
-  $: shown = (id: HomeWidget) => !$hiddenWidgets.includes(id);
+  // Every card in its order: the built-ins, then the widgets agents wrote
+  // (Brain notes under widgets/), as the person arranged them.
+  $: customs = $customWidgets ?? [];
+  $: order = arrange($widgetOrder, [...HOME_WIDGETS.map((w): string => w.id), ...customs.map((c) => c.id)]);
+  $: shown = (id: WidgetId) => !$hiddenWidgets.includes(id);
+  $: cards = drag ? drag.order : order.filter((id) => shown(id));
+  $: labelOf = (id: string) => HOME_WIDGETS.find((w) => w.id === id)?.label ?? customs.find((c) => c.id === id)?.title ?? id;
+  $: titleOf = (id: string) => (id === "sites" ? ($pins.length ? "Pinned" : "Most visited") : labelOf(id));
+  const domId = (id: string) => `home-${id.replace(/[^\w-]+/g, "-")}`;
+
   let customizeBtn: HTMLButtonElement | null = null;
   let customizing = false;
   let customizeStyle = "";
 
   function toggleCustomize() {
     customizing = !customizing;
-    if (customizing) customizeStyle = placeAbove(customizeBtn, 220, true);
+    if (customizing) customizeStyle = placeAbove(customizeBtn, 260, true);
+  }
+
+  // A new order; custom cards not read yet keep their saved places.
+  function commit(next: string[]) {
+    widgetOrder.set([...next, ...$widgetOrder.filter((id) => !next.includes(id))]);
+  }
+
+  function step(id: string, by: number) {
+    commit(moveBy(order, id, by));
+  }
+
+  // Dragging a card by its header: it follows the pointer and the others
+  // make room as it passes over them. Esc puts everything back.
+  const DRAG_START = 4;
+  let grid: HTMLDivElement | null = null;
+  let press: { id: string; x: number; y: number; card: HTMLElement } | null = null;
+  let drag: { id: string; order: string[]; grabX: number; grabY: number; dx: number; dy: number } | null = null;
+  // The card just swapped with: not again until the pointer leaves it.
+  let swapped = "";
+  let pointer = { x: 0, y: 0 };
+
+  function onHeaderDown(e: PointerEvent, id: string) {
+    if (e.button !== 0 || (e.target as HTMLElement).closest("button, a, input")) return;
+    const head = e.currentTarget as HTMLElement;
+    const card = head.closest<HTMLElement>(".card");
+    if (!card) return;
+    // No text selection while the card moves, and the release is heard
+    // even outside the window.
+    e.preventDefault();
+    head.setPointerCapture(e.pointerId);
+    press = { id, x: e.clientX, y: e.clientY, card };
+  }
+
+  async function onMove(e: PointerEvent) {
+    if (!press) return;
+    if (!drag) {
+      if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_START) return;
+      const r = press.card.getBoundingClientRect();
+      drag = { id: press.id, order: order.filter((id) => shown(id)), grabX: press.x - r.left, grabY: press.y - r.top, dx: 0, dy: 0 };
+      swapped = "";
+    }
+    pointer = { x: e.clientX, y: e.clientY };
+    edgeScroll(e.clientY);
+    const over = cardAt(e.clientX, e.clientY);
+    if (over && over !== swapped) {
+      drag.order = moveTo(drag.order, drag.id, drag.order.indexOf(over));
+      swapped = over;
+      await tick();
+    } else if (!over) {
+      swapped = "";
+    }
+    follow();
+  }
+
+  // The card under the pointer, by the slots the grid lays out (offsets
+  // ignore the moving cards' transforms).
+  function cardAt(x: number, y: number): string {
+    const g = grid;
+    if (!g || !drag) return "";
+    const box = g.getBoundingClientRect();
+    const px = x - box.left;
+    const py = y - box.top;
+    for (const el of g.querySelectorAll<HTMLElement>(":scope > .card")) {
+      const id = el.dataset.id ?? "";
+      if (!id || id === drag.id) continue;
+      if (px >= el.offsetLeft && px < el.offsetLeft + el.offsetWidth && py >= el.offsetTop && py < el.offsetTop + el.offsetHeight) return id;
+    }
+    return "";
+  }
+
+  // Keep the dragged card under the pointer, wherever its slot is now.
+  function follow() {
+    const g = grid;
+    if (!g || !drag || !press) return;
+    const box = g.getBoundingClientRect();
+    drag.dx = pointer.x - drag.grabX - (box.left + press.card.offsetLeft);
+    drag.dy = pointer.y - drag.grabY - (box.top + press.card.offsetTop);
+    drag = drag;
+  }
+
+  // Home's cards scroll under the composer: near an edge, scroll on.
+  function edgeScroll(y: number) {
+    const scroller = grid?.parentElement;
+    if (!scroller) return;
+    const r = scroller.getBoundingClientRect();
+    if (y < r.top + 40) scroller.scrollTop -= 12;
+    else if (y > r.bottom - 40) scroller.scrollTop += 12;
+  }
+
+  function onUp() {
+    if (drag) commit(withShown(order, drag.order));
+    press = null;
+    drag = null;
+  }
+
+  function cancelDrag() {
+    press = null;
+    drag = null;
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.key !== "Escape" || !drag) return;
+    e.preventDefault();
+    e.stopPropagation();
+    cancelDrag();
   }
 
   let projects: Project[] = [];
@@ -121,14 +243,24 @@
 
   // Branches and remotes change outside Parzi: refresh while Home is up.
   onMount(() => {
+    void loadCustomWidgets();
     const refresh = () => {
       if (shown("git")) void loadGit();
     };
+    const onFocus = () => {
+      refresh();
+      void loadCustomWidgets();
+    };
     const timer = window.setInterval(refresh, 30_000);
-    window.addEventListener("focus", refresh);
+    window.addEventListener("focus", onFocus);
+    // An agent that wrote or deleted a note may have changed a widget.
+    const unRun = onRunEvent((e) => {
+      if (e.kind === "tool_result" && e.ok && /brain[._](write|delete)/.test(e.name)) void loadCustomWidgets();
+    });
     return () => {
       window.clearInterval(timer);
-      window.removeEventListener("focus", refresh);
+      window.removeEventListener("focus", onFocus);
+      void unRun.then((off) => off());
     };
   });
 
@@ -147,152 +279,146 @@
   }
 </script>
 
-<div class="home">
-  {#if shown("recent")}
-  <section class="card" aria-labelledby="home-recent">
-    <header>
-      <h3 id="home-recent"><Icon name="chat" />Recent sessions</h3>
-      {#if threads.length}<button class="more" on:click={() => dispatch("allSessions")}>All</button>{/if}
-    </header>
-    {#if recent.length}
-      <div class="rows" data-ui-list>
-        {#each recent as s (s.id)}
-          {@const tone = sessionTone(s, running, waiting)}
-          <button class="row" on:click={() => dispatch("openSession", { id: s.id })}>
-            <span class="dot {tone}" role="img" aria-label={TONE_WORDS[tone]} />
-            <span class="name">{s.title || "Untitled session"}</span>
-            <span class="meta">{ago(s.updated)}</span>
-          </button>
-        {/each}
-      </div>
-    {:else}
-      <p class="empty">Your sessions show up here.</p>
-    {/if}
-  </section>
-  {/if}
+<svelte:window on:pointermove={onMove} on:pointerup={onUp} on:pointercancel={cancelDrag} on:keydown={onKey} />
 
-  {#if shown("agents")}
-  <section class="card" aria-labelledby="home-agents">
-    <header>
-      <h3 id="home-agents"><Icon name="bot" />Agents</h3>
-      <button class="more" on:click={() => dispatch("agents")}>Manage</button>
-    </header>
-    {#if agents.length}
-      <div class="rows" data-ui-list>
-        {#each agents as p (p.provider)}
-          {@const u = usage(p)}
-          <button class="row" on:click={() => dispatch("agents")}>
-            <span class="logo">{#if hasMark(p.provider)}<ProviderLogo provider={p.provider} size={14} />{/if}</span>
-            <span class="name">{nameOf(p.provider)}</span>
-            {#if u && isUsable(p)}
-              <span class="meter" title="{u.label}: {u.pct}% used"><i style:width="{u.pct}%" class:hot={u.pct >= 80} /></span>
-              <span class="meta num">{u.pct}%</span>
-            {:else}
-              <span class="meta" class:warn={!isUsable(p)}>{stateLabel(p)}</span>
-            {/if}
-          </button>
-        {/each}
-      </div>
-    {:else}
-      <p class="empty">No agents set up yet. Manage opens their sign-in.</p>
-    {/if}
-  </section>
-  {/if}
-
-  {#if shown("projects")}
-  <section class="card" aria-labelledby="home-projects">
-    <header>
-      <h3 id="home-projects"><Icon name="project" />Projects</h3>
-      <button class="more" on:click={() => dispatch("brain")}>Brain</button>
-    </header>
-    {#if projects.length}
-      <div class="rows" data-ui-list>
-        {#each projects as p (p.slug)}
-          <button class="row" class:on={!!folder && p.folder === folder} on:click={() => dispatch("folder", { path: p.folder })}>
-            <span class="name">{p.title}</span>
-            <span class="meta">{projectMeta(p)}</span>
-          </button>
-        {/each}
-      </div>
-    {:else}
-      <p class="empty">A project is a folder plus the notes agents should know. Pick a folder in the composer to start one.</p>
-    {/if}
-  </section>
-  {/if}
-
-  {#if shown("git")}
-  <section class="card" aria-labelledby="home-git">
-    <header>
-      <h3 id="home-git"><Icon name="branch" />Git</h3>
-      {#if gitFolder}<button class="more" on:click={() => loadGit()}>Refresh</button>{/if}
-    </header>
-    {#if git}
-      <div class="lines">
-        <div class="line">
-          <span class="name">{git.branch}</span>
-          <span class="meta num">{git.upstream ? (git.ahead || git.behind ? `${git.ahead} ahead, ${git.behind} behind` : "Up to date") : "No upstream"}</span>
-        </div>
-        <div class="line">
-          <span class="name" class:quiet={!git.changed && !git.untracked}>{git.changed || git.untracked ? `${git.changed} changed, ${git.untracked} new` : "Clean"}</span>
-          <span class="meta">{folderName(gitFolder)}</span>
-        </div>
-        {#if git.last_subject}
-          <div class="line">
-            <span class="name quiet">{git.last_subject}</span>
-            <span class="meta">{agoSecs(git.last_time)}</span>
-          </div>
+<div class="home" class:dragging={!!drag} bind:this={grid}>
+  {#each cards as id (id)}
+    {@const custom = customs.find((c) => c.id === id)}
+    <section
+      class="card"
+      class:lifted={drag?.id === id}
+      data-id={id}
+      style:transform={drag?.id === id ? `translate(${drag.dx}px, ${drag.dy}px)` : null}
+      aria-labelledby={domId(id)}
+      animate:flip={{ duration: drag?.id === id ? 0 : 240, easing: cubicOut }}
+    >
+      <!-- Dragging the header moves the card; Customize moves it by keyboard. -->
+      <!-- svelte-ignore a11y-no-static-element-interactions -->
+      <header on:pointerdown={(e) => onHeaderDown(e, id)}>
+        <h3 id={domId(id)}><Icon name={ICONS[id] ?? "chart"} /><span class="h-text">{titleOf(id)}</span></h3>
+        {#if id === "recent"}
+          {#if threads.length}<button class="more" on:click={() => dispatch("allSessions")}>All</button>{/if}
+        {:else if id === "agents"}
+          <button class="more" on:click={() => dispatch("agents")}>Manage</button>
+        {:else if id === "projects"}
+          <button class="more" on:click={() => dispatch("brain")}>Brain</button>
+        {:else if id === "git"}
+          {#if gitFolder}<button class="more" on:click={() => loadGit()}>Refresh</button>{/if}
+        {:else if id === "server"}
+          {#if $remoteInfo}<button class="more" disabled={syncing} on:click={syncNow}>{syncing ? "Syncing…" : "Sync now"}</button>{/if}
+        {:else if custom}
+          <button class="more" on:click={() => openBrainNote(custom.id)}>Edit</button>
         {/if}
-      </div>
-    {:else}
-      <p class="empty">{remote ? "Git status shows for folders on this PC." : gitFolder ? `${folderName(gitFolder)} isn't a git repository.` : "Pick a project to see its branch and changes."}</p>
-    {/if}
-  </section>
-  {/if}
+      </header>
 
-  {#if shown("server")}
-  <section class="card" aria-labelledby="home-server">
-    <header>
-      <h3 id="home-server"><Icon name="server" />Server</h3>
-      {#if $remoteInfo}<button class="more" disabled={syncing} on:click={syncNow}>{syncing ? "Syncing…" : "Sync now"}</button>{/if}
-    </header>
-    {#if $remoteInfo}
-      <div class="lines">
-        <div class="line">
-          <span class="dot" class:live={$remoteInfo.alive} />
-          <span class="name">{$remoteInfo.user}@{$remoteInfo.host}</span>
-          <span class="meta">{$remoteInfo.alive ? "Online" : "Offline"}</span>
-        </div>
-        <div class="line">
-          <span class="name quiet">{$remoteInfo.synced_at ? `Synced ${ago(new Date($remoteInfo.synced_at).toISOString())}` : "Not synced yet"}</span>
-          <span class="meta">{$remoteInfo.version ? `Parzi ${$remoteInfo.version}` : ""}</span>
-        </div>
-      </div>
-    {:else}
-      <p class="empty">Run sessions on your own Linux server and keep notes, settings and sessions in step across devices.</p>
-      <div class="cta"><button class="more" on:click={() => dispatch("remoteSetup")}>Set up a server</button></div>
-    {/if}
-  </section>
-  {/if}
-
-  {#if shown("sites")}
-  <section class="card" aria-labelledby="home-sites">
-    <header>
-      <h3 id="home-sites"><Icon name="globe" />{$pins.length ? "Pinned" : "Most visited"}</h3>
-    </header>
-    {#if sites.length}
-      <div class="sites" data-ui-list>
-        {#each sites as s (s.url)}
-          <button class="site" title={s.url} on:click={() => dispatch("open", { url: s.url })}>
-            <img src={faviconUrl(s.url)} alt="" draggable="false" on:error={noIcon} />
-            <span>{s.title || hostOf(s.url)}</span>
-          </button>
-        {/each}
-      </div>
-    {:else}
-      <p class="empty">Pin a page from its toolbar and it shows up here.</p>
-    {/if}
-  </section>
-  {/if}
+      {#if id === "recent"}
+        {#if recent.length}
+          <div class="rows" data-ui-list>
+            {#each recent as s (s.id)}
+              {@const tone = sessionTone(s, running, waiting)}
+              <button class="row" on:click={() => dispatch("openSession", { id: s.id })}>
+                <span class="dot {tone}" role="img" aria-label={TONE_WORDS[tone]} />
+                <span class="name">{s.title || "Untitled session"}</span>
+                <span class="meta">{ago(s.updated)}</span>
+              </button>
+            {/each}
+          </div>
+        {:else}
+          <p class="empty">Your sessions show up here.</p>
+        {/if}
+      {:else if id === "agents"}
+        {#if agents.length}
+          <div class="rows" data-ui-list>
+            {#each agents as p (p.provider)}
+              {@const u = usage(p)}
+              <button class="row" on:click={() => dispatch("agents")}>
+                <span class="logo">{#if hasMark(p.provider)}<ProviderLogo provider={p.provider} size={14} />{/if}</span>
+                <span class="name">{nameOf(p.provider)}</span>
+                {#if u && isUsable(p)}
+                  <span class="meter" title="{u.label}: {u.pct}% used"><i style:width="{u.pct}%" class:hot={u.pct >= 80} /></span>
+                  <span class="meta num">{u.pct}%</span>
+                {:else}
+                  <span class="meta" class:warn={!isUsable(p)}>{stateLabel(p)}</span>
+                {/if}
+              </button>
+            {/each}
+          </div>
+        {:else}
+          <p class="empty">No agents set up yet. Manage opens their sign-in.</p>
+        {/if}
+      {:else if id === "projects"}
+        {#if projects.length}
+          <div class="rows" data-ui-list>
+            {#each projects as p (p.slug)}
+              <button class="row" class:on={!!folder && p.folder === folder} on:click={() => dispatch("folder", { path: p.folder })}>
+                <span class="name">{p.title}</span>
+                <span class="meta">{projectMeta(p)}</span>
+              </button>
+            {/each}
+          </div>
+        {:else}
+          <p class="empty">A project is a folder plus the notes agents should know. Pick a folder in the composer to start one.</p>
+        {/if}
+      {:else if id === "git"}
+        {#if git}
+          <div class="lines">
+            <div class="line">
+              <span class="name">{git.branch}</span>
+              <span class="meta num">{git.upstream ? (git.ahead || git.behind ? `${git.ahead} ahead, ${git.behind} behind` : "Up to date") : "No upstream"}</span>
+            </div>
+            <div class="line">
+              <span class="name" class:quiet={!git.changed && !git.untracked}>{git.changed || git.untracked ? `${git.changed} changed, ${git.untracked} new` : "Clean"}</span>
+              <span class="meta">{folderName(gitFolder)}</span>
+            </div>
+            {#if git.last_subject}
+              <div class="line">
+                <span class="name quiet">{git.last_subject}</span>
+                <span class="meta">{agoSecs(git.last_time)}</span>
+              </div>
+            {/if}
+          </div>
+        {:else}
+          <p class="empty">{remote ? "Git status shows for folders on this PC." : gitFolder ? `${folderName(gitFolder)} isn't a git repository.` : "Pick a project to see its branch and changes."}</p>
+        {/if}
+      {:else if id === "server"}
+        {#if $remoteInfo}
+          <div class="lines">
+            <div class="line">
+              <span class="dot" class:live={$remoteInfo.alive} />
+              <span class="name">{$remoteInfo.user}@{$remoteInfo.host}</span>
+              <span class="meta">{$remoteInfo.alive ? "Online" : "Offline"}</span>
+            </div>
+            <div class="line">
+              <span class="name quiet">{$remoteInfo.synced_at ? `Synced ${ago(new Date($remoteInfo.synced_at).toISOString())}` : "Not synced yet"}</span>
+              <span class="meta">{$remoteInfo.version ? `Parzi ${$remoteInfo.version}` : ""}</span>
+            </div>
+          </div>
+        {:else}
+          <p class="empty">Run sessions on your own Linux server and keep notes, settings and sessions in step across devices.</p>
+          <div class="cta"><button class="more" on:click={() => dispatch("remoteSetup")}>Set up a server</button></div>
+        {/if}
+      {:else if id === "sites"}
+        {#if sites.length}
+          <div class="sites" data-ui-list>
+            {#each sites as s (s.url)}
+              <button class="site" title={s.url} on:click={() => dispatch("open", { url: s.url })}>
+                <img src={faviconUrl(s.url)} alt="" draggable="false" on:error={noIcon} />
+                <span>{s.title || hostOf(s.url)}</span>
+              </button>
+            {/each}
+          </div>
+        {:else}
+          <p class="empty">Pin a page from its toolbar and it shows up here.</p>
+        {/if}
+      {:else if custom}
+        {#if custom.spec}
+          <div class="widget"><Viz spec={custom.spec} bare /></div>
+        {:else}
+          <p class="empty">This note has no viz block yet. Ask an agent to add one.</p>
+        {/if}
+      {/if}
+    </section>
+  {/each}
 </div>
 
 <div class="foot">
@@ -312,17 +438,28 @@
 {#if customizing}
   <div class="home-menu" style={customizeStyle} use:popover={{ anchor: customizeBtn, close: () => (customizing = false) }}>
     <p class="menu-head">Show on Home</p>
-    {#each HOME_WIDGETS as w (w.id)}
-      <label class="opt">
-        <input type="checkbox" checked={shown(w.id)} on:change={() => toggleWidget(w.id)} />
-        <span>{w.label}</span>
-      </label>
+    {#each order as id, i (id)}
+      <div class="opt" animate:flip={{ duration: 200, easing: cubicOut }}>
+        <label>
+          <input type="checkbox" checked={shown(id)} on:change={() => toggleWidget(id)} />
+          <span>{labelOf(id)}</span>
+        </label>
+        <button class="mv" aria-label="Move {labelOf(id)} up" use:tooltip={"Move up"} disabled={i === 0} on:click={() => step(id, -1)}>
+          <Icon name="arrowUp" />
+        </button>
+        <button class="mv" aria-label="Move {labelOf(id)} down" use:tooltip={"Move down"} disabled={i === order.length - 1} on:click={() => step(id, 1)}>
+          <Icon name="arrowDown" />
+        </button>
+      </div>
     {/each}
+    <p class="menu-foot">Ask an agent to add a Home widget.</p>
   </div>
 {/if}
 
 <style>
+  /* Positioned: the cards' offsets (their grid slots) are relative to it. */
   .home {
+    position: relative;
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 12px;
@@ -341,7 +478,19 @@
     border: var(--glass-hairline);
     border-radius: var(--radius-lg);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+    /* Settles into its slot when let go. */
+    transition:
+      transform 240ms var(--ease-out),
+      box-shadow 240ms var(--ease-out);
   }
+  /* The card being dragged: above the rest, tracking the pointer exactly. */
+  .card.lifted {
+    position: relative;
+    z-index: 5;
+    box-shadow: var(--glass-shadow);
+    transition: none;
+  }
+  /* The header is the handle. */
   header {
     display: flex;
     align-items: center;
@@ -349,15 +498,33 @@
     gap: 8px;
     height: 24px;
     padding: 0 4px 0 8px;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+  }
+  .home.dragging,
+  .home.dragging * {
+    cursor: grabbing;
   }
   h3 {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
     margin: 0;
     font-size: var(--fs-md);
     font-weight: 600;
     color: var(--muted);
+  }
+  .h-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .widget {
+    min-width: 0;
+    padding: 2px 8px 4px;
   }
   .more {
     height: 24px;
@@ -505,8 +672,9 @@
     color: var(--text);
   }
   .home-menu {
-    width: 220px;
+    width: 260px;
     padding: 4px;
+    overflow-y: auto;
   }
   .menu-head {
     margin: 0;
@@ -518,16 +686,59 @@
   .opt {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     height: 32px;
-    padding: 0 8px;
+    padding: 0 4px 0 8px;
     border-radius: var(--radius);
+  }
+  .opt:hover {
+    background: var(--hover);
+  }
+  .opt label {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    height: 100%;
     color: var(--text);
     font-size: var(--fs-md);
     cursor: pointer;
   }
-  .opt:hover {
+  .opt label span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mv {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    flex: none;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .mv:hover:not(:disabled) {
     background: var(--hover);
+    color: var(--text);
+  }
+  .mv:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+  .menu-foot {
+    margin: 4px 0 0;
+    padding: 8px 8px 6px;
+    border-top: 1px solid var(--line);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .lines {
     display: flex;

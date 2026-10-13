@@ -329,7 +329,9 @@ export function mdHtml(src: string, _rev: unknown, cache = true): string {
 type Segment =
   | { kind: "md"; body: string }
   | { kind: "widget"; body: unknown }
-  | { kind: "artifact"; body: any };
+  | { kind: "artifact"; body: any }
+  // A ```viz block's JSON text, drawn by lib/viz (which explains a bad one).
+  | { kind: "viz"; body: string };
 
 const segCache = new Map<string, Segment[]>();
 const SEG_CACHE_MAX = 400;
@@ -340,11 +342,16 @@ export function splitSegments(text: string, cache = true): Segment[] {
     if (hit !== undefined) return hit;
   }
   const out: Segment[] = [];
-  const re = /```(parzi-widget|parzi-artifact)\n([\s\S]*?)```/g;
+  const re = /```(parzi-widget|parzi-artifact|viz)[ \t]*\r?\n([\s\S]*?)```/g;
   let last = 0;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) out.push({ kind: "md", body: text.slice(last, m.index) });
+    if (m[1] === "viz") {
+      out.push({ kind: "viz", body: m[2] });
+      last = m.index + m[0].length;
+      continue;
+    }
     try {
       const payload = JSON.parse(m[2]);
       if (m[1] === "parzi-widget") out.push({ kind: "widget", body: payload });
