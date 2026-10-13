@@ -318,14 +318,19 @@ async fn exchange(
         }
         let v: Value = serde_json::from_str(buf.trim())
             .map_err(|e| DeskError::Failed(format!("the window sent something odd: {e}")))?;
-        let Some(ok) = v.get("ok") else {
-            // A person is deciding: give them time, then the op its own.
-            if !confirming && v.get("kind").and_then(Value::as_str) == Some("confirm") {
-                confirming = true;
-                deadline = wait.map(|w| Instant::now() + CONFIRM_WAIT + w);
+        // Progress lines carry a `kind`; only the reply has none. A tool
+        // result has its own `ok`, so `ok` alone can't mark the reply.
+        let ok = match (v.get("kind"), v.get("ok")) {
+            (None, Some(ok)) => ok,
+            _ => {
+                // A person is deciding: give them time, then the op its own.
+                if !confirming && v.get("kind").and_then(Value::as_str) == Some("confirm") {
+                    confirming = true;
+                    deadline = wait.map(|w| Instant::now() + CONFIRM_WAIT + w);
+                }
+                on_event(&v);
+                continue;
             }
-            on_event(&v);
-            continue;
         };
         if ok.as_bool() == Some(false) {
             return Err(DeskError::Failed(
@@ -959,8 +964,13 @@ mod tests {
                 } else {
                     assert_eq!(v["token"], "secret-token");
                     assert_eq!(v["progress"], true);
-                    "{\"kind\":\"confirm\",\"text\":\"allow?\"}\n{\"ok\":true,\"tabs\":[]}\n"
-                        .to_string()
+                    // A tool result carries its own `ok`: progress, not the reply.
+                    concat!(
+                        "{\"kind\":\"confirm\",\"text\":\"allow?\"}\n",
+                        "{\"kind\":\"tool_result\",\"name\":\"shell_exec\",\"ok\":false}\n",
+                        "{\"ok\":true,\"tabs\":[]}\n",
+                    )
+                    .to_string()
                 };
                 let _ = write.write_all(reply.as_bytes()).await;
             }
@@ -977,8 +987,9 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(got["tabs"], json!([]));
-        assert_eq!(seen.len(), 1);
+        assert_eq!(seen.len(), 2);
         assert_eq!(seen[0]["kind"], "confirm");
+        assert_eq!(seen[1]["kind"], "tool_result");
         assert!(path.exists());
     }
 

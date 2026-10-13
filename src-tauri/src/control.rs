@@ -1357,6 +1357,13 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
         );
     }
     let cwd = str_arg(req, "cwd");
+    // A relative folder would resolve against the window's own directory,
+    // not the caller's: the agent would work somewhere nobody chose.
+    if !cwd.is_empty() && !std::path::Path::new(&cwd).is_absolute() {
+        return fail(format!(
+            "`{cwd}` is not a full path: pass the folder as an absolute path"
+        ));
+    }
     let effort = {
         let e = str_arg(req, "effort");
         parzi_runtime::orchestrator::normalize_effort(if e.is_empty() { "medium" } else { &e })

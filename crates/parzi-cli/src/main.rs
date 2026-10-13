@@ -941,8 +941,10 @@ async fn session_send(
             "a new session needs a model: --model claude (or claude/opus, codex, ...). `parzi providers` lists them"
         );
     }
+    // The window runs elsewhere: a relative folder would resolve against
+    // its own working directory, not this shell's.
     let base = match cwd.filter(|c| !c.trim().is_empty()) {
-        Some(c) => std::path::PathBuf::from(c),
+        Some(c) => std::path::absolute(c).with_context(|| format!("resolving {c}"))?,
         None => std::env::current_dir().context("reading the current directory")?,
     };
     let body = window::send_body(
