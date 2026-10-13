@@ -6,7 +6,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { checkUrl } from "lintapple";
 
 const BASE = process.env.PARZI_UI_URL ?? "http://localhost:1420/mock.html";
-const VIEWS = ["home", "session", "brain", "history", "settings", "setup", "page"];
+const VIEWS = ["home", "session", "brain", "history", "settings", "setup", "page", "sidebar"];
+// Views that are another view in other settings: the sidebar layout, with a system tab (History) open.
+const QUERY = { sidebar: "view=history&layout=sidebar" };
 
 // More states per view, each checked again after its action (run in order
 // on one page). Selectors are CSS and must match exactly one element.
@@ -43,6 +45,8 @@ const STATES = {
   history: [2, 3, 4].map((i) => click(`library ${i}`, nth(".seg", i), `${nth(".seg", i)}[aria-pressed="true"]`)),
   settings: [2, 3, 4, 5].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
   setup: [2, 3, 4, 5].map((i) => click(`step ${i}`, nth("header .steps", i), `${nth("header .steps", i)}[aria-current="step"]`)),
+  // New tab sits by Home in the top bar; it opens Home beside the sidebar.
+  sidebar: [click("new tab", '.topbar button[aria-label^="New tab"]', "main > .home")],
 };
 
 const args = process.argv.slice(2);
@@ -57,7 +61,7 @@ for (const view of views) {
   const interactions = STATES[view] ? { states: STATES[view] } : undefined;
   let report;
   try {
-    report = await checkUrl(`${BASE}?view=${view}`, policy, { ready: "html[data-app-ready]", interactions });
+    report = await checkUrl(`${BASE}?${QUERY[view] ?? `view=${view}`}`, policy, { ready: "html[data-app-ready]", interactions });
   } catch (e) {
     failed = true;
     console.log(`${view}: check did not finish: ${e.message}`);

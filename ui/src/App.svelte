@@ -1251,7 +1251,6 @@
     <TopBar
       {tabs}
       activeTabId={activeId}
-      activeTitle={tab.title}
       {sessionLanes}
       tabsVisible={layout !== "sidebar"}
       on:select={(e) => selectTab(e.detail.id)}
@@ -1277,7 +1276,6 @@
         on:select={(e) => selectTab(e.detail.id)}
         on:close={(e) => closeTab(e.detail.id)}
         on:move={(e) => moveTab(e.detail.id, e.detail.to)}
-        on:newTab={newSession}
       />
     {/if}
     <main>

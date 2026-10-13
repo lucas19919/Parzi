@@ -13,6 +13,7 @@ const params = new URLSearchParams(location.search);
 const view = params.get("view") ?? "session";
 // ?turns=N sizes the open session's transcript (default 40).
 // ?bg=1 shows a wallpaper, served at http://asset.localhost/ (route it to a file).
+// ?layout=sidebar: the tabs in a sidebar (Settings > Appearance), else in the top bar.
 const turns = Math.max(1, Number(params.get("turns")) || 40);
 
 const now = Date.now();
@@ -300,6 +301,7 @@ mockIPC((cmd, payload) => handlers[cmd]?.((payload ?? {}) as Record<string, unkn
 
 try {
   localStorage.setItem("parzi.onboarded.v1", view === "setup" ? "false" : "true");
+  localStorage.setItem("parzi.layout", params.get("layout") === "sidebar" ? "sidebar" : "topbar");
   const composer = { input: "", mode: "build", model: "claude/claude-opus-5-5", effort: "medium", attachments: [] };
   const tab = (id: string, kind: string, title: string, sessionId: string | null = null, extra: Record<string, unknown> = {}) => ({
     id,
