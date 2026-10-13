@@ -288,6 +288,9 @@
   let git: GitStatus | null = null;
   let gitFailed = false;
   let gitFor: string | null = null;
+  // The folder whose status was last read: until then the card says it is
+  // reading, not that the folder has no repository.
+  let gitRead: string | null = null;
   let gitTimer = 0;
   $: gitFolder = remote ? "" : folder;
   $: if (gitFolder !== gitFor) {
@@ -310,11 +313,13 @@
     if (dir !== gitFor) return;
     if (failed) {
       gitFailed = !git;
+      gitRead = dir;
       if (tries > 1) gitTimer = window.setTimeout(() => void loadGit(tries - 1), 3000);
       return;
     }
     git = status;
     gitFailed = false;
+    gitRead = dir;
   }
 
   let syncing = false;
@@ -499,9 +504,11 @@
                 ? "Git status shows for folders on this PC."
                 : !gitFolder
                   ? "Pick a project to see its branch and changes."
-                  : gitFailed
-                    ? `Couldn't read the git status of ${folderName(gitFolder)}. Refresh to try again.`
-                    : `${folderName(gitFolder)} isn't a git repository.`}
+                  : gitRead !== gitFolder
+                    ? "Reading the git status…"
+                    : gitFailed
+                      ? `Couldn't read the git status of ${folderName(gitFolder)}. Refresh to try again.`
+                      : `${folderName(gitFolder)} isn't a git repository.`}
             </p>
           {/if}
         {:else if id === "server"}

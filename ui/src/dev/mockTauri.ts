@@ -293,8 +293,8 @@ const downloadsList = [
 
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   app_version: () => "0.1.27-dev",
-  // The window's error reports (lib/crash.ts).
-  ui_log: () => null,
+  // The window's error reports (lib/crash.ts), where a test can read them.
+  ui_log: (a) => console.info("ui_log", JSON.stringify(a)),
   list_threads: () => sessions,
   get_thread: (a) => [sessions.find((s) => s.id === a.id) ?? sessions[0], transcript()],
   provider_statuses: () => board,

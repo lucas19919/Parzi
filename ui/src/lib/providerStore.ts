@@ -15,6 +15,7 @@ function listen() {
 }
 
 function merge(fresh: ProviderStatus[]) {
+  if (!Array.isArray(fresh)) return;
   board.set(fresh);
   boardLoaded.set(true);
 }

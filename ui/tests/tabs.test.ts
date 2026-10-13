@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { folderName, hostOf, isExplicitUrl, isSystemTab, sessionTab, pageTab, historyTab, brainTab, settingsTab, toAddress, restoreTab } from "../src/lib/tabs.ts";
+import { brainTab, folderName, historyTab, hostOf, isExplicitUrl, isSystemTab, pageTab, restoreComposer, restoreTab, sessionTab, settingsTab, toAddress } from "../src/lib/tabs.ts";
 import { normLane } from "../src/lib/lanes.ts";
 
 test("hostOf strips protocol and path", () => {
@@ -47,4 +47,27 @@ test("saved Work and Tasks tabs don't come back", () => {
   assert.deepEqual(restoreTab({ id: "t5", kind: "brain", title: "Brain" }), { id: "t5", kind: "brain", title: "Brain" });
   assert.equal(restoreTab({ id: "t3", kind: "settings", title: "Settings" }), null);
   assert.equal(restoreTab({ id: "t4", kind: "mystery", title: "?" }), null);
+});
+
+test("a saved composer comes back whole, whatever an older build saved", () => {
+  assert.deepEqual(restoreComposer(undefined), { input: "", mode: "build", model: "", effort: "medium", attachments: [] });
+  // Older names for the modes, "auto" for no model, junk in the lists.
+  assert.deepEqual(restoreComposer({ mode: "research", model: "auto", attachments: ["a.png", 4], draft: "hi" }), {
+    input: "",
+    mode: "work",
+    model: "",
+    effort: "medium",
+    attachments: ["a.png"],
+  });
+  assert.equal(restoreComposer({ mode: "code" }).mode, "build");
+  assert.equal(restoreComposer({ mode: "chat" }).mode, "build");
+  assert.deepEqual(restoreComposer({ input: "x", mode: "search", model: "codex/gpt-5", effort: "high", attachments: [], remote: true, remoteCwd: "/srv" }), {
+    input: "x",
+    mode: "search",
+    model: "codex/gpt-5",
+    effort: "high",
+    attachments: [],
+    remote: true,
+    remoteCwd: "/srv",
+  });
 });

@@ -206,15 +206,18 @@ ${e.text}` : e.text;
       }
       if (e.kind === "tool_result") return;
       group = null;
-      if (e.kind === "checkpoint") out.push({ key, kind: "checkpoint", text: e.summary });
-      else if (e.kind === "error") out.push({ key, kind: "error", class: e.class, message: e.message });
+      // A transcript line without its text (an older or newer backend's
+      // shape) draws as empty rather than throwing inside the update.
+      const text = "text" in e && typeof e.text === "string" ? e.text : "";
+      if (e.kind === "checkpoint") out.push({ key, kind: "checkpoint", text: e.summary ?? "" });
+      else if (e.kind === "error") out.push({ key, kind: "error", class: e.class ?? "unknown", message: e.message ?? "" });
       else if (e.kind === "widget") out.push({ key, kind: "widget", fence: e.fence, payload: e.payload });
       else if (e.kind === "artifact") out.push({ key, ...e });
-      else if (e.kind === "assistant" && echoLine(e.text)) {
-        pushSys(key, out, echoLine(e.text));
+      else if (e.kind === "assistant" && echoLine(text)) {
+        pushSys(key, out, echoLine(text));
       } else if (e.kind === "system") {
-        pushSys(key, out, e.text);
-      } else out.push({ key, kind: e.kind, text: e.text });
+        pushSys(key, out, text);
+      } else if (e.kind === "user" || e.kind === "assistant") out.push({ key, kind: e.kind, text });
     });
     return out;
   }
@@ -340,7 +343,7 @@ ${e.text}` : e.text;
   {#each items as item (item.key)}
     {#if item.kind === "user"}
       {@const images = attachedImages(item.text)}
-      {@const said = hidePlanItems(stripMarker(item.text ?? ""))}
+      {@const said = hidePlanItems(stripMarker(item.text))}
       <div class="row user">
         <div class="user-line">
           {#if said.text}

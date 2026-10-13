@@ -17,6 +17,25 @@ function defaultComposer(): TabComposerState {
   return { input: "", mode: "build", model: "", effort: "medium", attachments: [] };
 }
 
+const MODES: Record<string, ComposerMode> = { search: "search", build: "build", work: "work", code: "build", research: "work" };
+
+/// A composer as a saved tab brings it back: anything missing or of the
+/// wrong type (an older build's names, a hand-edited file) takes the
+/// default, so the composer never sees an undefined draft or mode.
+export function restoreComposer(saved: unknown): TabComposerState {
+  const c = defaultComposer();
+  if (!saved || typeof saved !== "object") return c;
+  const o = saved as Record<string, unknown>;
+  if (typeof o.input === "string") c.input = o.input;
+  if (typeof o.mode === "string" && MODES[o.mode]) c.mode = MODES[o.mode];
+  if (typeof o.model === "string" && o.model !== "auto") c.model = o.model;
+  if (typeof o.effort === "string" && o.effort) c.effort = o.effort;
+  if (Array.isArray(o.attachments)) c.attachments = o.attachments.filter((a): a is string => typeof a === "string");
+  if (typeof o.remote === "boolean") c.remote = o.remote;
+  if (typeof o.remoteCwd === "string") c.remoteCwd = o.remoteCwd;
+  return c;
+}
+
 export interface Tab {
   id: string;
   kind: TabKind;

@@ -58,7 +58,10 @@ export async function loadRemoteInfo(): Promise<RemoteInfo | null> {
 }
 
 export async function refreshRemoteBoard(refresh = false): Promise<ProviderStatus[]> {
-  const all = await remote.providers(refresh);
+  const got = await remote.providers(refresh);
+  // An older server may answer with nothing: an empty board, not a crash
+  // in every list that reads it.
+  const all = Array.isArray(got) ? got : [];
   remoteBoard.set(all);
   return all;
 }

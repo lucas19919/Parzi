@@ -34,7 +34,7 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
+  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, restoreComposer, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
   import { covered } from "./lib/overlay";
@@ -45,11 +45,7 @@
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
 
   const restored = loadTabs();
-  let tabs: Tab[] = (restored?.tabs ?? [sessionTab()]).map((t) => {
-    const c = (t as Partial<Tab>).composer ?? { input: "", mode: "build", model: "", effort: "medium", attachments: [] };
-    if (c.model === "auto") c.model = "";
-    return { ...t, composer: c };
-  });
+  let tabs: Tab[] = (restored?.tabs ?? [sessionTab()]).map((t) => ({ ...t, composer: restoreComposer((t as Partial<Tab>).composer) }));
   let activeId = restored?.active ?? tabs[0].id;
   // In-tab subagent navigation: when the panel opens a descendant of the
   // visible session, we swap the tab's session in place and remember the
@@ -215,7 +211,8 @@
   }
 
   const refreshThreads = coalesce(async () => {
-    threads = await api.listThreads().catch(() => threads);
+    const list = await api.listThreads().catch(() => null);
+    if (Array.isArray(list)) threads = list;
   }, 100);
 
   function patchTab(id: string, patch: Partial<Tab>) {
@@ -312,7 +309,7 @@
   }
 
   $: warm(model.split("/")[0]);
-  $: warm(meta?.model.split("/")[0] ?? "");
+  $: warm((meta?.model ?? "").split("/")[0]);
 
   function warm(provider: string) {
     if (!provider || provider === "auto" || provider === warmed) return;
@@ -324,21 +321,38 @@
     const my = ++navSeq;
     shown = id;
     clearLive();
-    try {
-      const [m, ev] = await api.getThread(id);
+    // Right after launch the backend may not answer yet: try again a
+    // couple of times before giving up, and then show nothing rather than
+    // the last session's thread under this one's tab.
+    for (let attempt = 0; ; attempt++) {
+      let got: [SessionMeta, ChatEvent[]];
+      try {
+        got = await api.getThread(id);
+      } catch (e) {
+        if (my !== navSeq) return;
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+          if (my !== navSeq) return;
+          continue;
+        }
+        meta = null;
+        events = [];
+        toastError(e);
+        return;
+      }
       if (my !== navSeq) return;
+      const [m, ev] = got;
       meta = m;
-      events = ev;
+      events = Array.isArray(ev) ? ev : [];
       context = { used: m.context_tokens ?? 0, limit: m.context_limit ?? 0 };
-      if (m.model.includes("/")) {
+      if (m.model?.includes("/")) {
         tab.composer.model = m.model;
         comp = comp;
       }
       if (m.status === "active" || m.status === "queued") running = new Set(running).add(id);
       if (tab.sessionId === id && m.title) patchTab(tab.id, { title: m.title });
       await scrollToBottom();
-    } catch (e) {
-      if (my === navSeq) toastError(e);
+      return;
     }
   }
 
@@ -356,7 +370,7 @@
     const [m, ev] = got;
     if (my !== navSeq || shown !== id) return;
     meta = m;
-    events = ev;
+    events = Array.isArray(ev) ? ev : [];
     context = { used: m.context_tokens ?? context.used, limit: m.context_limit ?? context.limit };
   }
 
@@ -1103,7 +1117,9 @@
       .catch((e) => toast(`Couldn't read the tool policy, so agents will ask first: ${e}`, true));
     api
       .listThreads()
-      .then((list) => (threads = list))
+      .then((list) => {
+        if (Array.isArray(list)) threads = list;
+      })
       .catch((e) => toast(`Couldn't load sessions: ${e}`, true));
     void loadRemoteInfo().catch(() => {});
     // The link to the server: updates, and a stream that restarted.
