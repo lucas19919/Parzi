@@ -21,11 +21,15 @@ const STATES = {
     { name: "project menu closed", action: "press", selector: ".ob textarea", key: "Escape", ready: { selector: ".menu-pop", state: "hidden" } },
     // The audit scrolls, which closes popovers: the next state starts from the page.
     click("customize home", ".customize", ".home-menu"),
+    // Its move buttons put a card first.
+    click("customize reorder", '.home-menu button[aria-label="Move Agents up"]', '.home > .card:first-child[data-id="agents"]'),
     { name: "customize closed", action: "press", selector: ".ob textarea", key: "Escape", ready: { selector: ".home-menu", state: "hidden" } },
     click("search mode", ".modes > button:first-child", ".box.web"),
     { name: "web suggestions", action: "fill", selector: ".ob textarea", value: "parzi docs", ready: { selector: ".web-suggest" } },
   ],
   session: [
+    // The last turn's charts (```viz blocks): the line chart's readout.
+    { name: "viz readout", action: "hover", selector: '.viz[data-viz="line"] svg.plot', ready: { selector: ".viz-tip:not([hidden])" } },
     { name: "switcher", action: "press", selector: ".ob textarea", key: "Control+p", ready: { selector: '.box[role="dialog"]' } },
     { name: "switcher closed", action: "press", selector: '.box[role="dialog"] input', key: "Escape", ready: { selector: '.box[role="dialog"]', state: "hidden" } },
     click("model picker", ".bar .model", ".picker"),

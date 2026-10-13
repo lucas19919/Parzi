@@ -167,6 +167,85 @@ const ANSWER = [
   "| Paste 2 KB | 210 ms | 9 ms |",
 ].join("\n");
 
+// The last turn's charts: one ```viz block per type, and one it can't draw.
+const viz = (spec: unknown) => ["```viz", JSON.stringify(spec), "```", ""];
+const VIZ_ANSWER = [
+  "Here is where the release stands.",
+  "",
+  ...viz({
+    type: "stat",
+    data: [
+      { label: "Plan items done", value: 3, delta: "+2 this week" },
+      { label: "Open PRs", value: 8, delta: -3, vs: "vs last week" },
+      { label: "Test time", value: 41.2, unit: "s", spark: [52, 50, 49, 47, 47, 44, 43, 41.2] },
+    ],
+  }),
+  ...viz({
+    type: "bars",
+    title: "Keystroke cost by step",
+    unit: "ms",
+    data: [
+      { label: "Measure height", value: 18 },
+      { label: "Model picker", value: 11 },
+      { label: "Project chip", value: 6 },
+      { label: "Markdown", value: 3 },
+    ],
+  }),
+  ...viz({ type: "bars", title: "Sessions per day", data: { Mon: 4, Tue: 7, Wed: 5, Thu: 9, Fri: 6, Sat: 2, Sun: 1 } }),
+  ...viz({
+    type: "line",
+    title: "Frame time while typing",
+    unit: "ms",
+    area: true,
+    data: {
+      labels: Array.from({ length: 12 }, (_, i) => `${i}s`),
+      series: [
+        { name: "Before", values: [16, 18, 17, 22, 19, 24, 21, 26, 23, 20, 25, 22] },
+        { name: "After", values: [5, 4, 6, 5, 4, 5, 6, 4, 5, 5, 4, 5] },
+      ],
+    },
+  }),
+  ...viz({ type: "spark", title: "Thread render time", unit: "ms", data: [9, 8.5, 8, 7, 7.2, 6, 5.5, 5, 4.6, 4.2, 4, 3.9] }),
+  ...viz({
+    type: "progress",
+    title: "Release checklist",
+    data: [
+      { label: "Plan items", value: 3, max: 9 },
+      { label: "Tests passing", value: 0.97 },
+      { label: "Docs", value: 40, max: 100 },
+    ],
+  }),
+  ...viz({
+    type: "table",
+    title: "Slowest renders",
+    data: [
+      { Component: "Thread", Renders: 1240, "Avg ms": 3.1 },
+      { Component: "Omnibar", Renders: 860, "Avg ms": 1.4 },
+      { Component: "SidePanel", Renders: 210, "Avg ms": 0.9 },
+    ],
+  }),
+  ...viz({
+    type: "list",
+    title: "Checks",
+    data: [
+      { label: "cargo test", detail: "workspace", value: "42s", tone: "ok" },
+      { label: "npm test", value: "3s", tone: "ok" },
+      { label: "lint:ui", detail: "2 findings", value: "18s", tone: "warn" },
+      { label: "Release build", value: "failed", tone: "bad" },
+    ],
+  }),
+  ...viz({
+    type: "timeline",
+    title: "This week",
+    data: [
+      { when: "2026-10-12T09:30", label: "Plan panel merged", tone: "ok" },
+      { when: "2026-10-12T14:05", label: "Session names in review", detail: "PR 42, checks passing", tone: "accent" },
+      { when: "2026-10-13", label: "Widgets started" },
+    ],
+  }),
+  ...viz({ type: "pie", data: [1, 2] }),
+].join("\n");
+
 function transcript() {
   const out: unknown[] = [];
   for (let i = 0; i < turns; i++) {
@@ -178,6 +257,7 @@ function transcript() {
     out.push({ kind: "tool_call", id: `t${i}`, name: "fs.read", args: { path: "ui/src/lib/Omnibar.svelte" } });
     out.push({ kind: "tool_result", id: `t${i}`, name: "fs.read", ok: true, output: "ok", ms: 12 });
     out.push({ kind: "assistant", text: ANSWER, done: true });
+    if (last) out.push({ kind: "assistant", text: VIZ_ANSWER, done: true });
   }
   return out;
 }
@@ -216,7 +296,38 @@ const notes = [
   // A sync conflict copy (both devices edited the checklist).
   { path: "notes/release.conflict-laptop-macos.md", title: "Release checklist", projects: ["parzi"], tags: [], pinned: false, links: [], modified: now / 1000, bytes: 950, summary: "Bump versions, tag, sign, attach installers.", conflict_of: "notes/release.md" },
   { path: "projects/parzi.md", title: "Parzi", projects: [], tags: [], folder: "D:\\Repos\\Parzi", pinned: false, links: [], modified: now / 1000, bytes: 300, summary: "The harness itself." },
+  { path: "widgets/open-prs.md", title: "Open pull requests", projects: [], tags: [], pinned: false, links: [], modified: now / 1000, bytes: 280, summary: "Open pull requests by repository." },
+  // No title of its own: the card takes the chart's.
+  { path: "widgets/release.md", title: "release", projects: [], tags: [], pinned: false, links: [], modified: now / 1000, bytes: 320, summary: "Where the release stands." },
 ];
+
+// Home widgets agents wrote: Brain notes under widgets/ with a ```viz block.
+const widgetNotes: Record<string, string> = {
+  "widgets/open-prs.md": [
+    "---",
+    "title: Open pull requests",
+    "---",
+    "Open pull requests by repository. Refreshed when asked.",
+    "",
+    "```viz",
+    JSON.stringify({ type: "bars", data: [{ label: "parzi", value: 4 }, { label: "memory-ai", value: 2 }, { label: "thesis", value: 1 }, { label: "dotfiles", value: 1 }] }),
+    "```",
+  ].join("\n"),
+  "widgets/release.md": [
+    "Where the release stands.",
+    "",
+    "```viz",
+    JSON.stringify({
+      type: "stat",
+      title: "Release 0.1.28",
+      data: [
+        { label: "Items done", value: 3, delta: "+2 this week" },
+        { label: "Tests", value: 412, delta: 18, spark: [361, 370, 372, 380, 388, 394, 401, 412] },
+      ],
+    }),
+    "```",
+  ].join("\n"),
+};
 
 const browserPrefs = {
   devtools: false,
@@ -267,7 +378,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     { slug: "thesis", title: "Thesis", folder: "D:\\Uni\\thesis", note: "projects/thesis.md", notes: ["notes/style.md"] },
   ],
   brain_list: () => notes,
-  brain_read: (a) => `# ${String(a.path)}\n\nA note for the mock backend.\n`,
+  brain_read: (a) => widgetNotes[String(a.path)] ?? `# ${String(a.path)}\n\nA note for the mock backend.\n`,
   brain_dir: () => "C:\\Users\\dev\\.parzi\\brain",
   brain_obsidian: () => "missing",
   git_branch: () => "main",
