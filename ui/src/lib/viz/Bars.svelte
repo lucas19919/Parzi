@@ -3,8 +3,12 @@
   // only. Rows (horizontal) carry their label and value as text; columns
   // (vertical) put the value on the cap when it fits, else an axis.
   import { fmt, niceTicks, SERIES_COLORS, type Point } from "./spec";
+  import { onDestroy } from "svelte";
   import { hideTip, showTip } from "./tip";
   import DataTable from "./DataTable.svelte";
+
+  // A readout left up by a chart that went away goes with it.
+  onDestroy(hideTip);
 
   export let items: Point[] = [];
   export let orient: "h" | "v" = "h";

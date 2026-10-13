@@ -3,8 +3,12 @@
   // hairline grid at round numbers, and a crosshair that reads every series
   // at the x under the pointer.
   import { axisFloor, fmt, niceTicks, SERIES_COLORS, type Series } from "./spec";
+  import { onDestroy } from "svelte";
   import { hideTip, showTip } from "./tip";
   import DataTable from "./DataTable.svelte";
+
+  // A readout left up by a chart that went away goes with it.
+  onDestroy(hideTip);
 
   export let labels: string[] = [];
   export let series: Series[] = [];

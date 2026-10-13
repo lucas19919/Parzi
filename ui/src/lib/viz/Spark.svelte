@@ -2,8 +2,12 @@
   // A small trend line: the run in the quiet grey, where it ends in the
   // accent. Hover reads a point.
   import { fmt } from "./spec";
+  import { onDestroy } from "svelte";
   import { hideTip, showTip } from "./tip";
   import DataTable from "./DataTable.svelte";
+
+  // A readout left up by a chart that went away goes with it.
+  onDestroy(hideTip);
 
   export let values: number[] = [];
   export let height = 24;
