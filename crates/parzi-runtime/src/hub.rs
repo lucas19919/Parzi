@@ -19,12 +19,6 @@ fn fail(error: impl Into<String>) -> Value {
     json!({ "ok": false, "error": error.into() })
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-}
-
 pub fn brain_manifest() -> Value {
     match Vault::open() {
         Ok(v) => brain_manifest_at(&v),
@@ -83,7 +77,9 @@ fn as_expected(full: &Path, expect: Option<&str>) -> bool {
     let Some(want) = expect else {
         return true;
     };
-    let now = std::fs::read(full).ok().map(|b| crate::sync::fnv(&b));
+    let now = std::fs::read(full)
+        .ok()
+        .map(|b| parzi_core::hash::fnv_hex(&b));
     match now {
         Some(h) => h == want,
         None => want.is_empty(),
@@ -92,7 +88,9 @@ fn as_expected(full: &Path, expect: Option<&str>) -> bool {
 
 /// `brain_apply` on `vault`. A put or delete whose note changed since the
 /// device listed it is refused and named in `stale`: the device plans that
-/// path again on its next sync instead of overwriting the change.
+/// path again on its next sync instead of overwriting the change. A plan
+/// note is checked and written under the plan lock, so a `plan.write` here
+/// cannot land between the two.
 pub fn brain_apply_at(vault: &Vault, req: &Value) -> Value {
     let (mut put, mut deleted) = (0, 0);
     let mut stale: Vec<String> = vec![];
@@ -113,6 +111,7 @@ pub fn brain_apply_at(vault: &Vault, req: &Value) -> Value {
             Ok(_) => continue,
             Err(e) => return fail(e.to_string()),
         };
+        let _plan = parzi_core::plan::lock_if_plan(path);
         if !as_expected(&full, n.get("expect").and_then(Value::as_str)) {
             stale.push(path.to_string());
             continue;
@@ -131,6 +130,7 @@ pub fn brain_apply_at(vault: &Vault, req: &Value) -> Value {
     {
         let Some(path) = p.as_str() else { continue };
         if let Ok(full) = vault.resolve(path) {
+            let _plan = parzi_core::plan::lock_if_plan(path);
             let expect = expected.and_then(|m| m.get(path)).and_then(Value::as_str);
             if !full.is_file() {
                 continue;
@@ -179,7 +179,7 @@ pub async fn settings_put(orch: &Orchestrator, req: &Value) -> Value {
         return fail(e.to_string());
     }
     orch.apply_config(merged).await;
-    let rev = now_ms().max(settings_rev() + 1);
+    let rev = parzi_core::now_ms().max(settings_rev() + 1);
     if let Some(path) = rev_file() {
         let _ = parzi_core::atomic_write(&path, rev.to_string().as_bytes());
     }

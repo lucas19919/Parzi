@@ -10,11 +10,17 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use parzi_core::paths::same_path;
+
 /// Git gets this long per snapshot; a bigger repo just goes without.
 const BUDGET: Duration = Duration::from_secs(3);
 const MAX_ENTRIES: usize = 5_000;
 /// Files up to this size are hashed; bigger ones go by size and time.
 const HASH_UP_TO: u64 = 256 * 1024;
+/// With more dirty files than this, none are hashed: size and time tell
+/// them apart well enough, and reading thousands of files would hold up
+/// the run's end.
+const HASH_FILES: usize = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Print {
@@ -115,19 +121,12 @@ fn parse_status(raw: &[u8]) -> Vec<String> {
     out
 }
 
-fn print(path: &Path) -> Option<Print> {
+fn print(path: &Path, hashed: bool) -> Option<Print> {
     let meta = std::fs::metadata(path).ok()?;
-    let hash = (meta.is_file() && meta.len() <= HASH_UP_TO)
+    let hash = (hashed && meta.is_file() && meta.len() <= HASH_UP_TO)
         .then(|| std::fs::read(path).ok())
         .flatten()
-        .map(|b| {
-            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-            for x in b {
-                h ^= u64::from(x);
-                h = h.wrapping_mul(0x0100_0000_01b3);
-            }
-            h
-        });
+        .map(|b| parzi_core::hash::fnv1a(&b));
     Some(Print {
         len: meta.len(),
         modified: meta.modified().ok(),
@@ -135,13 +134,32 @@ fn print(path: &Path) -> Option<Print> {
     })
 }
 
+/// Whether a dirty file is as the run found it: same size and time, and
+/// same content when both looks hashed it (one may not have: see
+/// `HASH_FILES`). None is a file that did not exist.
+fn unchanged(before: Option<&Option<Print>>, now: Option<&Print>) -> bool {
+    match (before, now) {
+        (Some(Some(a)), Some(b)) => {
+            a.len == b.len
+                && a.modified == b.modified
+                && match (a.hash, b.hash) {
+                    (Some(x), Some(y)) => x == y,
+                    _ => true,
+                }
+        }
+        (Some(None), None) => true,
+        _ => false,
+    }
+}
+
 async fn prints(root: PathBuf, paths: Vec<String>) -> HashMap<String, Option<Print>> {
+    let hashed = paths.len() <= HASH_FILES;
     tokio::task::spawn_blocking(move || {
         paths
             .into_iter()
             .map(|p| {
                 let at = root.join(&p);
-                (p, print(&at))
+                (p, print(&at, hashed))
             })
             .collect()
     })
@@ -180,7 +198,7 @@ impl GitMark {
         let branch = current_branch(&root).await.unwrap_or_default();
         let paths = status(&root).await?;
         let dirty = prints(root.clone(), paths).await;
-        let key = root.to_string_lossy().replace('\\', "/").to_lowercase();
+        let key = parzi_core::paths::path_key(&root.to_string_lossy());
         Some(Self {
             slot: Slot::join(&key),
             root,
@@ -242,7 +260,7 @@ impl GitMark {
         if let Some(now) = status(&self.root).await {
             let fresh = prints(self.root.clone(), now).await;
             for (p, print) in fresh {
-                if self.dirty.get(&p) != Some(&print) {
+                if !unchanged(self.dirty.get(&p), print.as_ref()) {
                     changed.insert(p);
                 }
             }
@@ -279,20 +297,6 @@ fn from_root(prefix: &str, path: &str) -> String {
     format!("{}{path}", "../".repeat(depth))
 }
 
-/// Paths compare with forward slashes, and without case on Windows.
-pub(crate) fn same_path(a: &str, b: &str) -> bool {
-    let n = |s: &str| {
-        let s = s.replace('\\', "/");
-        let s = s.trim_start_matches("./").to_string();
-        if cfg!(windows) {
-            s.to_lowercase()
-        } else {
-            s
-        }
-    };
-    n(a) == n(b)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,7 +331,6 @@ mod tests {
         assert_eq!(parse_status(raw), ["a.rs", "new dir/b.rs", "to.rs"]);
         assert_eq!(from_root("ui/", "ui/src/a.ts"), "src/a.ts");
         assert_eq!(from_root("ui/src/", "README.md"), "../../README.md");
-        assert!(same_path("./src\\a.rs", "src/a.rs"));
     }
 
     #[tokio::test]

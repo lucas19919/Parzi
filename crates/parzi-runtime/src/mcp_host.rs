@@ -18,6 +18,8 @@ use crate::tools::{from_mcp, to_mcp};
 const SERVER_NAME: &str = "parzi";
 const PROTOCOLS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_BODY: usize = 8 * 1024 * 1024;
+/// What the server says it offers: the families of `tools.rs`.
+const INSTRUCTIONS: &str = "Parzi's own tools: widgets and artifacts in the thread, teamwork across sessions, the project's plans, the notes vault, the window and its pages, and the shell where the lane allows it.";
 
 type Runs = Arc<RwLock<HashMap<String, Arc<ToolHost>>>>;
 
@@ -217,7 +219,7 @@ async fn dispatch(msg: &Value, host: &ToolHost) -> Option<Value> {
                 "protocolVersion": version,
                 "capabilities": {"tools": {"listChanged": false}},
                 "serverInfo": {"name": SERVER_NAME, "title": "Parzi", "version": env!("CARGO_PKG_VERSION")},
-                "instructions": "Parzi's own tools: widgets and artifacts in the thread, teamwork across sessions, knowledge and leases.",
+                "instructions": INSTRUCTIONS,
             })
         }
         "ping" => json!({}),
@@ -259,7 +261,13 @@ async fn dispatch(msg: &Value, host: &ToolHost) -> Option<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::local_origin;
+    use super::{local_origin, INSTRUCTIONS};
+
+    #[test]
+    fn the_instructions_name_the_plans() {
+        assert!(INSTRUCTIONS.contains("plans"), "{INSTRUCTIONS}");
+        assert!(!INSTRUCTIONS.contains("leases"), "no lease tools exist");
+    }
 
     #[test]
     fn only_exact_loopback_origins_pass() {

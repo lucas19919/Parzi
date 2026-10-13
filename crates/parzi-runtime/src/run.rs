@@ -8,6 +8,7 @@ use parzi_core::config::Budget;
 use parzi_core::context::{AttachedFile, InterSessionMessage};
 use parzi_core::error::{ParziError, Result};
 use parzi_core::store::{Check, Event, RunCause, RunEndKind, SessionStatus, SessionStore};
+use parzi_core::text::{clip, fold};
 use parzi_providers::{
     ErrorClass, PermissionGate, Provider, ProviderError, ProviderEvent, TurnEnd, TurnSpec,
 };
@@ -59,6 +60,9 @@ pub struct EngineRun {
     // Token estimate for providers that never emit Usage (else caps never trip).
     usage_seen: AtomicBool,
     est_tokens: std::sync::Mutex<u64>,
+    /// The hash of the plan this run's opening carried, kept on the session
+    /// once a turn with it completed (a turn that failed never showed it).
+    brief_sent: std::sync::Mutex<Option<String>>,
 }
 
 enum Outcome {
@@ -87,6 +91,7 @@ impl EngineRun {
             cost_seen: AtomicBool::new(false),
             usage_seen: AtomicBool::new(false),
             est_tokens: std::sync::Mutex::new(0),
+            brief_sent: std::sync::Mutex::new(None),
         }
     }
 
@@ -106,22 +111,9 @@ impl EngineRun {
             "run started"
         );
         let mut seen = self.p.seen;
-        let mut input = match self.p.inbox_from {
-            Some(from) => {
-                let start = self.p.slot.read_mark().unwrap_or(from);
-                let (msgs, upto) = self.inbox(start, Some(seen));
-                self.p.slot.set_read_mark(upto);
-                if msgs.is_empty() {
-                    prompt.to_string()
-                } else {
-                    msgs.join("\n\n")
-                }
-            }
-            None => prompt.to_string(),
-        };
+        let mut input = self.first_input(prompt, seen);
         let mut text = self.opening(&input);
         let mut turns = 0u32;
-        let mut released = false;
         let mut restarted = false;
         let mut cap_noted = false;
         loop {
@@ -131,11 +123,10 @@ impl EngineRun {
                 return Ok(());
             }
             match self.turn(&text).await {
-                Outcome::Completed => {}
+                Outcome::Completed => self.brief_seen(),
                 Outcome::Interrupted => {
                     self.tally(|t| t.end = Some((RunEndKind::Stopped, None)));
-                    self.settle(SessionStatus::Killed);
-                    self.record().await;
+                    self.end(SessionStatus::Killed).await;
                     self.p.sink.emit(RunEvent::Error("cancelled".into()));
                     return Ok(());
                 }
@@ -170,8 +161,7 @@ impl EngineRun {
                         },
                     );
                     self.tally(|t| t.end = Some((RunEndKind::Failed, Some(e.message.clone()))));
-                    self.settle(SessionStatus::Idle);
-                    self.record().await;
+                    self.end(SessionStatus::Idle).await;
                     self.p.sink.emit(RunEvent::Error(e.message.clone()));
                     return Err(ParziError::Provider(self.p.provider_id.clone(), e.message));
                 }
@@ -186,44 +176,82 @@ impl EngineRun {
                      dollar cap cannot stop it. The token cap still does."
                 ));
             }
-            let (fresh, upto) = self
-                .p
-                .slot
-                .last_look(
-                    || self.inbox(seen, None),
-                    || self.settle(SessionStatus::Done),
-                )
-                .await;
-            seen = upto;
+            let (mut fresh, mut upto) = self.inbox(seen, None);
             if fresh.is_empty() {
-                released = true;
-                break;
+                // Quiet: the outcome (git's look included) is kept while the
+                // run still holds its slot, so nothing new starts on the
+                // session before it is on record and a Stop cannot catch a
+                // run that has finished. Then the last look, under the lock
+                // that deliveries take, settles it and gives the slot back.
+                self.tally(|t| t.end = Some((RunEndKind::Completed, None)));
+                self.record().await;
+                (fresh, upto) = self
+                    .p
+                    .slot
+                    .last_look(
+                        || self.inbox(seen, None),
+                        || self.settle(SessionStatus::Done),
+                    )
+                    .await;
+                if fresh.is_empty() {
+                    tracing::info!(session = %sid, turns, "run done");
+                    self.p.sink.emit(RunEvent::Done { turns });
+                    return Ok(());
+                }
+                // A message came while the outcome was kept: it is answered,
+                // and the outcome kept again when the run ends.
+                self.tally(|t| {
+                    t.end = None;
+                    t.recorded = false;
+                });
             }
             if turns >= MAX_TURNS {
+                // Left unread, not lost: the next run of this session reads
+                // on from the first of them.
+                self.p.slot.set_read_mark(seen);
                 self.note(format!(
                     "Stopped after {MAX_TURNS} turns in one run: {} message(s) from other \
                      sessions are left unanswered. Send a message to continue.",
                     fresh.len()
                 ));
-                break;
+                self.tally(|t| t.end = Some((RunEndKind::Completed, None)));
+                self.end(SessionStatus::Done).await;
+                tracing::info!(session = %sid, turns, "run stopped at the turn cap");
+                self.p.sink.emit(RunEvent::Done { turns });
+                return Ok(());
             }
+            self.p.slot.set_read_mark(upto);
+            seen = upto;
             input = fresh.join("\n\n");
             text = input.clone();
         }
-        if !released {
-            self.settle(SessionStatus::Done);
+    }
+
+    /// What the first turn answers: a message run's messages (or its
+    /// prompt when they were read already); otherwise the prompt, after any
+    /// messages an earlier run left unanswered (see `MAX_TURNS`).
+    fn first_input(&self, prompt: &str, seen: usize) -> String {
+        let Some(start) = self.p.slot.read_mark().or(self.p.inbox_from) else {
+            return prompt.to_string();
+        };
+        let (msgs, upto) = self.inbox(start, Some(seen));
+        self.p.slot.set_read_mark(upto);
+        match (msgs.is_empty(), self.p.inbox_from.is_some()) {
+            (true, _) => prompt.to_string(),
+            (false, true) => msgs.join("\n\n"),
+            (false, false) => format!("{}\n\n{prompt}", msgs.join("\n\n")),
         }
-        self.tally(|t| t.end = Some((RunEndKind::Completed, None)));
-        self.record().await;
-        tracing::info!(session = %sid, turns, "run done");
-        self.p.sink.emit(RunEvent::Done { turns });
-        Ok(())
     }
 
     fn tally(&self, f: impl FnOnce(&mut RunTally)) {
-        if let Ok(mut t) = self.p.tally.lock() {
-            f(&mut t);
-        }
+        f(&mut crate::run_hooks::lock(&self.p.tally));
+    }
+
+    /// A run that ends here: its outcome kept, then its status, with the
+    /// slot given back in the same step (the window hears of it after).
+    async fn end(&self, status: SessionStatus) {
+        self.record().await;
+        self.p.slot.release(|| self.settle(status)).await;
     }
 
     /// The run's outcome kept on its session, before the window hears it
@@ -295,13 +323,23 @@ impl EngineRun {
     /// are re-sent every turn and a changing plan would spoil their cache).
     fn brief(&self, fresh: bool) -> Option<String> {
         let text = self.p.brief.as_ref()?;
-        let hash = parzi_core::plan::digest(text);
+        let hash = parzi_core::hash::fnv_hex(text.as_bytes());
         let sid = &self.p.session_id;
         if !fresh && crate::orchestrator::brief_hash(sid).as_deref() == Some(hash.as_str()) {
             return None;
         }
-        crate::orchestrator::set_brief_hash(sid, &hash);
+        if let Ok(mut sent) = self.brief_sent.lock() {
+            *sent = Some(hash);
+        }
         Some(text.clone())
+    }
+
+    /// A turn completed: the plan it carried is the conversation's now.
+    fn brief_seen(&self) {
+        let sent = self.brief_sent.lock().ok().and_then(|mut s| s.take());
+        if let Some(hash) = sent {
+            crate::orchestrator::set_brief_hash(&self.p.session_id, Some(&hash));
+        }
     }
 
     fn history(&self, prompt: &str) -> Option<String> {
@@ -316,9 +354,7 @@ impl EngineRun {
                 }
                 // Replacements must also see tool calls and results, not just chat.
                 Event::ToolCall { name, args, .. } => {
-                    let a = args.to_string();
-                    let a: String = a.split_whitespace().collect::<Vec<_>>().join(" ");
-                    let a: String = a.chars().take(200).collect();
+                    let a: String = fold(&args.to_string()).chars().take(200).collect();
                     Some(format!("tool_call: {name} {a}"))
                 }
                 Event::ToolResult {
@@ -600,8 +636,7 @@ impl EngineRun {
         );
         self.p.sink.emit(RunEvent::Notice { text });
         self.tally(|t| t.end = Some((RunEndKind::Paused, Some(reason.to_string()))));
-        self.settle(SessionStatus::Idle);
-        self.record().await;
+        self.end(SessionStatus::Idle).await;
         // The UI's running set clears on this, as it does on done.
         self.p.sink.emit(RunEvent::Paused {
             reason: reason.to_string(),
@@ -657,28 +692,91 @@ fn check_words(mut words: Vec<&str>) -> bool {
         .trim_end_matches(".cmd")
         .trim_end_matches(".bat");
     let rest = &words[1..];
-    let any = |names: &[&str]| rest.iter().any(|w| names.contains(w));
     match tool {
-        "cargo" => any(&["test", "build", "check", "clippy", "fmt", "nextest"]),
-        "npm" | "pnpm" | "yarn" | "bun" => {
-            rest.first() == Some(&"t")
-                || rest.iter().any(|w| {
-                    ["test", "build", "check", "lint"]
-                        .iter()
-                        .any(|k| w.contains(k))
-                })
-        }
-        "go" => any(&["test", "build", "vet"]),
-        "dotnet" => any(&["test", "build"]),
-        "pytest" | "py.test" | "make" | "tsc" | "eslint" | "ruff" | "mvn" | "gradle"
-        | "gradlew" | "vitest" | "jest" | "unittest" => true,
+        "cargo" => matches!(
+            subcommand(rest),
+            Some("test" | "build" | "check" | "clippy" | "fmt" | "nextest")
+        ),
+        "go" => matches!(subcommand(rest), Some("test" | "build" | "vet")),
+        "dotnet" => matches!(subcommand(rest), Some("test" | "build")),
+        "npm" | "pnpm" | "yarn" | "bun" => package_script_check(rest),
+        // `make` alone builds the default target; `make clean` does not.
+        "make" => match subcommand(rest) {
+            None => true,
+            Some(target) => target == "all" || checks_by_name(target),
+        },
+        "pytest" | "py.test" | "tsc" | "eslint" | "ruff" | "mvn" | "gradle" | "gradlew"
+        | "vitest" | "jest" | "unittest" => true,
         _ => false,
+    }
+}
+
+/// Names a script or target that builds, tests or lints.
+fn checks_by_name(name: &str) -> bool {
+    ["test", "build", "check", "lint", "tsc"]
+        .iter()
+        .any(|k| name.contains(k))
+}
+
+/// The first word that is not a flag (`-j8`, `+nightly`), skipping the
+/// value of the flags that take one (`--prefix ui`, `-C dir`).
+fn subcommand<'a>(rest: &[&'a str]) -> Option<&'a str> {
+    const TAKES_VALUE: &[&str] = &[
+        "--prefix",
+        "-C",
+        "--dir",
+        "--cwd",
+        "--filter",
+        "-F",
+        "--workspace",
+        "--manifest-path",
+        "-p",
+        "--package",
+    ];
+    let mut words = rest.iter();
+    while let Some(w) = words.next() {
+        if TAKES_VALUE.contains(w) {
+            words.next();
+        } else if !w.starts_with('-') && !w.starts_with('+') {
+            return Some(w);
+        }
+    }
+    None
+}
+
+/// `npm test`, `npm t`, `npm run build`, `pnpm lint`, `yarn test:unit`:
+/// the test command or a script named for a check. Installs (`pnpm add -D
+/// vitest`, `npm i jest`) are not checks, whatever they install.
+fn package_script_check(rest: &[&str]) -> bool {
+    let Some(sub) = subcommand(rest) else {
+        return false;
+    };
+    match sub {
+        "test" | "t" | "tst" => true,
+        "run" | "run-script" => {
+            let after = rest
+                .iter()
+                .position(|w| *w == sub)
+                .map_or(rest, |i| &rest[i + 1..]);
+            subcommand(after).is_some_and(checks_by_name)
+        }
+        "exec" | "dlx" | "x" => {
+            let after = rest
+                .iter()
+                .position(|w| *w == sub)
+                .map_or(rest, |i| &rest[i + 1..]);
+            check_words(after.to_vec())
+        }
+        "add" | "i" | "install" | "ci" | "remove" | "rm" | "uninstall" | "update" | "up"
+        | "upgrade" | "link" | "publish" | "init" | "create" => false,
+        // pnpm, yarn and bun run a script by its bare name.
+        script => checks_by_name(script),
     }
 }
 
 /// A command shown as a check: one line, at most 120 chars.
 fn check_label(cmd: &str) -> String {
-    crate::tools::clip(&cmd.split_whitespace().collect::<Vec<_>>().join(" "), 120)
+    clip(&fold(cmd), 120)
 }
 
 /// A file path as the run's folder sees it: relative inside it, with
@@ -688,19 +786,12 @@ pub(crate) fn display_path(cwd: &str, path: &str) -> String {
     let p = path.trim().replace('\\', "/");
     let c = cwd.trim().replace('\\', "/");
     let c = c.trim_end_matches('/');
-    if !c.is_empty() {
-        let same = p.get(..c.len()).is_some_and(|h| {
-            if cfg!(windows) {
-                h.eq_ignore_ascii_case(c)
-            } else {
-                h == c
-            }
-        });
-        if same && p[c.len()..].starts_with('/') {
-            return p[c.len() + 1..].to_string();
-        }
-    }
-    p.trim_start_matches("./").to_string()
+    let inside = (!c.is_empty())
+        .then(|| parzi_core::paths::strip_prefix_fold(&p, c)?.strip_prefix('/'))
+        .flatten();
+    inside
+        .unwrap_or_else(|| p.trim_start_matches("./"))
+        .to_string()
 }
 
 /// What a run did, gathered while it runs: the session's `last_run` comes
@@ -748,7 +839,7 @@ impl RunTally {
             if !self
                 .edits
                 .iter()
-                .any(|e| crate::gitmark::same_path(e, &shown))
+                .any(|e| parzi_core::paths::same_path(e, &shown))
             {
                 self.edits.push(shown);
             }
@@ -849,8 +940,29 @@ mod tests {
             "cargo run",
             "echo test",
             "cat Makefile",
+            "pnpm add -D vitest",
+            "npm i @testing-library/react",
+            "yarn add jest",
+            "make clean",
+            "make install",
+            "npm run dev",
+            "cargo add serde --features test-util",
+            "go run ./cmd/test",
         ] {
             assert!(!is_check(cmd), "{cmd}");
+        }
+        for cmd in [
+            "npm t",
+            "npm run test:unit",
+            "npm --prefix ui run build",
+            "yarn lint",
+            "pnpm -C ui typecheck",
+            "make test",
+            "make -j8",
+            "cargo +nightly fmt --check",
+            "pnpm exec vitest run",
+        ] {
+            assert!(is_check(cmd), "{cmd}");
         }
         let mut t = tally();
         t.tool_started("1", "shell.exec", &json!({"cmd": "cargo  test\n"}));

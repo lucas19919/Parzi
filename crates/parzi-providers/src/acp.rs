@@ -396,8 +396,17 @@ fn take_warm(program: &Path) -> Option<Conn> {
     let mut warm = WARM.lock().ok()?;
     while let Some(i) = warm.iter().position(|(_, p, _)| p == program) {
         let (_, _, mut conn) = warm.remove(i);
-        if matches!(conn.proc.child.try_wait(), Ok(None)) {
-            while conn.incoming.try_recv().is_ok() {}
+        if !matches!(conn.proc.child.try_wait(), Ok(None)) {
+            continue;
+        }
+        // An agent that asked something while parked waits for an answer
+        // nobody gave: it may never answer the next turn. It goes (dropping
+        // it kills it) and a fresh one starts instead.
+        let mut asked = false;
+        while let Ok(msg) = conn.incoming.try_recv() {
+            asked |= matches!(msg, Incoming::Request { .. });
+        }
+        if !asked {
             return Some(conn);
         }
     }
@@ -741,6 +750,56 @@ fn rpc_failure(agent: Agent, e: RpcError) -> ProviderError {
     }
 }
 
+/// Answers what the agent asks of Parzi while a turn starts or runs: a
+/// permission request goes to the gate, anything else is refused. Never
+/// left unanswered: an agent waiting on an answer hangs the run with
+/// nothing to show for it.
+struct Answerer {
+    peer: Arc<Peer>,
+    gate: Arc<dyn PermissionGate>,
+    /// Fires once session/cancel is out, so pending permission asks answer
+    /// "cancelled".
+    cancel_sent: CancellationToken,
+}
+
+impl Answerer {
+    async fn answer(&self, id: Value, method: &str, params: Value) {
+        if method == "session/request_permission" {
+            let (peer, gate, sent) = (
+                self.peer.clone(),
+                self.gate.clone(),
+                self.cancel_sent.clone(),
+            );
+            tokio::spawn(async move { permission(&peer, id, &params, gate, &sent).await });
+        } else {
+            let _ = self
+                .peer
+                .respond_error(id, -32601, &format!("Parzi does not offer {method}"))
+                .await;
+        }
+    }
+
+    /// `work` (a call made before the prompt goes out), answering what the
+    /// agent asks meanwhile; its notifications wait in `held` for the turn.
+    async fn meanwhile<T>(
+        &self,
+        work: impl std::future::Future<Output = T>,
+        incoming: &mut mpsc::UnboundedReceiver<Incoming>,
+        held: &mut Vec<Incoming>,
+    ) -> T {
+        tokio::pin!(work);
+        loop {
+            tokio::select! {
+                out = &mut work => return out,
+                Some(msg) = incoming.recv() => match msg {
+                    Incoming::Request { id, method, params } => self.answer(id, &method, params).await,
+                    other => held.push(other),
+                },
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn drive(
     peer: &Arc<Peer>,
@@ -788,19 +847,22 @@ async fn drive(
         .and_then(|r| r.get("session_id"))
         .and_then(Value::as_str)
         .map(str::to_string);
+    let answers = Answerer {
+        peer: peer.clone(),
+        gate,
+        cancel_sent: CancellationToken::new(),
+    };
+    let mut held: Vec<Incoming> = vec![];
     let mut fresh = true;
     let mut session = Value::Null;
     let mut sid = String::new();
     if let Some(id) = earlier.filter(|_| can_resume) {
-        let resumed = or_cancel(
-            cancel,
-            peer.request_within(
-                "session/resume",
-                json!({"sessionId": id, "cwd": cwd, "mcpServers": mcp_servers}),
-                limit,
-            ),
-        )
-        .await;
+        let resume = peer.request_within(
+            "session/resume",
+            json!({"sessionId": id, "cwd": cwd, "mcpServers": mcp_servers}),
+            limit,
+        );
+        let resumed = or_cancel(cancel, answers.meanwhile(resume, incoming, &mut held)).await;
         match resumed {
             None => return Ok(TurnEnd::Interrupted),
             Some(Ok(v)) => {
@@ -818,15 +880,12 @@ async fn drive(
         }
     }
     if fresh {
-        let opened = or_cancel(
-            cancel,
-            peer.request_within(
-                "session/new",
-                json!({"cwd": cwd, "mcpServers": mcp_servers}),
-                limit,
-            ),
-        )
-        .await;
+        let open = peer.request_within(
+            "session/new",
+            json!({"cwd": cwd, "mcpServers": mcp_servers}),
+            limit,
+        );
+        let opened = or_cancel(cancel, answers.meanwhile(open, incoming, &mut held)).await;
         let Some(opened) = opened else {
             return Ok(TurnEnd::Interrupted);
         };
@@ -850,6 +909,7 @@ async fn drive(
     }
     if let Some(model) = spec.model.as_deref().filter(|m| !m.is_empty()) {
         let chosen = select_model(peer, &session, &sid, model, agent, events);
+        let chosen = answers.meanwhile(chosen, incoming, &mut held);
         if or_cancel(cancel, chosen).await.is_none() {
             return Ok(TurnEnd::Interrupted);
         }
@@ -888,8 +948,6 @@ async fn drive(
     if cancel.is_cancelled() {
         return Ok(TurnEnd::Interrupted);
     }
-    // Fires once session/cancel is out, so pending permission asks answer "cancelled".
-    let cancel_sent = CancellationToken::new();
     let (done_tx, mut done_rx) = tokio::sync::oneshot::channel();
     {
         let (peer, params) = (peer.clone(), json!({"sessionId": sid, "prompt": prompt}));
@@ -907,6 +965,27 @@ async fn drive(
             .and_then(|r| r.get("cost"))
             .and_then(Value::as_f64)
     };
+    // What came while the session opened goes first, in order.
+    for msg in held {
+        if let Incoming::Notification { method, params } = msg {
+            let ours = params
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .is_none_or(|s| s == sid);
+            if method == "session/update" && ours {
+                let u = params.get("update").unwrap_or(&Value::Null);
+                update(
+                    u,
+                    &sid,
+                    can_resume,
+                    &mut buffers,
+                    &mut tool_names,
+                    &mut last_cost,
+                    events,
+                );
+            }
+        }
+    }
     let mut interrupting = false;
     let mut stop_by: Option<tokio::time::Instant> = None;
     let mut open = true;
@@ -917,7 +996,7 @@ async fn drive(
                 interrupting = true;
                 stop_by = Some(tokio::time::Instant::now() + STOP_GRACE);
                 let _ = peer.notify("session/cancel", json!({"sessionId": sid})).await;
-                cancel_sent.cancel();
+                answers.cancel_sent.cancel();
             }
             () = sleep_until(stop_by) => {
                 buffers.flush(events);
@@ -937,12 +1016,7 @@ async fn drive(
                         update(u, &sid, can_resume, &mut buffers, &mut tool_names, &mut last_cost, events);
                     }
                     Incoming::Request { id, method, params } => {
-                        if method == "session/request_permission" {
-                            let (peer, gate, sent) = (peer.clone(), gate.clone(), cancel_sent.clone());
-                            tokio::spawn(async move { permission(&peer, id, &params, gate, &sent).await });
-                        } else {
-                            let _ = peer.respond_error(id, -32601, &format!("Parzi does not offer {method}")).await;
-                        }
+                        answers.answer(id, &method, params).await;
                     }
                     _ => {}
                 }
@@ -1558,6 +1632,75 @@ mod tests {
         .unwrap();
         assert_eq!(end, TurnEnd::Interrupted);
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn what_the_agent_asks_while_the_session_opens_is_answered() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let new = read(&mut lines).await;
+            assert_eq!(new["method"], "session/new");
+            // Before it answers, the agent asks twice and waits.
+            send(&mut w, json!({"jsonrpc": "2.0", "id": 7, "method": "session/request_permission", "params": {
+                "sessionId": "S1",
+                "toolCall": {"toolCallId": "c0", "title": "Edit a.rs", "kind": "edit", "locations": [{"path": "a.rs"}]},
+                "options": [{"optionId": "yes", "kind": "allow_once"}, {"optionId": "no", "kind": "reject_once"}]
+            }}))
+            .await;
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": 8, "method": "fs/read_text_file", "params": {}}),
+            )
+            .await;
+            let mut answers = vec![];
+            for _ in 0..2 {
+                let a = tokio::time::timeout(Duration::from_secs(5), read(&mut lines))
+                    .await
+                    .expect("answered while the session opens, not left hanging");
+                answers.push(a);
+            }
+            answers.sort_by_key(|a| a["id"].as_i64());
+            assert_eq!(answers[0]["result"]["outcome"]["optionId"], "yes");
+            assert_eq!(answers[1]["error"]["code"], -32601);
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": new["id"], "result": {"sessionId": "S1"}}),
+            )
+            .await;
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["method"], "session/prompt");
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn"}}),
+            )
+            .await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let mut s = spec(None);
+        s.model = None;
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent("antigravity").unwrap(),
+            &s,
+            gate.clone(),
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(end, TurnEnd::Completed);
+        server.await.unwrap();
+        assert_eq!(gate.1.lock().unwrap().len(), 1, "the gate decided it");
     }
 
     #[test]

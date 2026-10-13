@@ -91,35 +91,8 @@ pub struct SpawnSpec {
 
 #[async_trait::async_trait]
 pub trait HarnessBridge: Send + Sync {
-    /// `spawn_session` taking its arguments as one spec.
-    async fn spawn(&self, caller_id: &str, spec: SpawnSpec) -> Result<String> {
-        self.spawn_session(
-            caller_id,
-            &spec.title,
-            &spec.prompt,
-            spec.is_subsession,
-            spec.model,
-            spec.lane,
-            spec.wait,
-            spec.mode_override,
-            spec.effort,
-        )
-        .await
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn spawn_session(
-        &self,
-        caller_id: &str,
-        title: &str,
-        prompt: &str,
-        is_subsession: bool,
-        model: Option<String>,
-        lane: Option<String>,
-        wait: bool,
-        mode_override: Option<String>,
-        effort: Option<String>,
-    ) -> Result<String>;
+    /// Starts a child session; the reply is the tool result's JSON.
+    async fn spawn(&self, caller_id: &str, spec: SpawnSpec) -> Result<String>;
     async fn send_message(
         &self,
         caller_id: &str,
@@ -283,7 +256,6 @@ mod tests {
                 "plan/<id>",
                 "`active`",
                 "`done`",
-                "<plan-item>",
                 "<parzi:plan>",
                 "session.rename",
                 "2 to 5 words",

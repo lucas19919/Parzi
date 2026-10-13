@@ -6,7 +6,9 @@ use std::time::Duration;
 use parzi_core::config::ParziConfig;
 use parzi_core::context::InterKind;
 use parzi_core::error::{ParziError, Result};
-use parzi_core::store::{Event, SessionStore};
+use parzi_core::paths::strip_prefix_fold;
+use parzi_core::store::{Event, SessionStatus, SessionStore};
+use parzi_core::text::{clip, short_id};
 use parzi_core::{artifacts, brain, widgets};
 use parzi_providers::{PermissionDecision, PermissionGate, PermissionRequest};
 use serde_json::Value;
@@ -14,7 +16,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::handler::{HarnessBridge, RunEvent, RunSink, SpawnSpec};
 use crate::tools::{
-    category, clip, display_name, is_brain_tool, is_browser_tool, is_desk_tool, is_doc_tool,
+    category, display_name, edit_paths, is_brain_tool, is_browser_tool, is_desk_tool, is_doc_tool,
     is_image_tool, is_lane_tool, is_models_tool, is_plan_tool, is_project_tool, is_question_tool,
     is_session_tool, is_shell_tool, is_ui_tool, window_tool_offered, Approval, ApprovalMode,
     Approver, AskRequest, Asker, ToolCallInfo, ToolDef, ToolExecutor,
@@ -146,20 +148,6 @@ fn relative_text(cwd: &str, path: &str) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
-fn strip_prefix_fold<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
-    let mut rest = s.char_indices();
-    for want in prefix.chars() {
-        let (_, got) = rest.next()?;
-        let same = want == got
-            || (cfg!(any(windows, target_os = "macos"))
-                && want.to_lowercase().eq(got.to_lowercase()));
-        if !same {
-            return None;
-        }
-    }
-    Some(rest.next().map_or("", |(i, _)| &s[i..]))
-}
-
 fn windows_plain_name(seg: &str) -> bool {
     const DEVICES: [&str; 6] = ["con", "prn", "aux", "nul", "conin$", "conout$"];
     let stem = seg
@@ -220,16 +208,13 @@ fn command_text(input: &Value) -> String {
 const SECRET_FILE: &str =
     "that file holds Parzi's or an agent's sign-in tokens, so agents cannot open it";
 
+/// The files a vendor write names: its locations, else the path keys its
+/// input uses (Claude's `file_path`, Antigravity's `TargetFile`, ...).
 fn write_targets(req: &PermissionRequest) -> Vec<String> {
     if !req.paths.is_empty() {
         return req.paths.clone();
     }
-    ["file_path", "filePath", "notebook_path", "path"]
-        .iter()
-        .filter_map(|k| req.input.get(*k).and_then(Value::as_str))
-        .map(str::to_string)
-        .take(1)
-        .collect()
+    edit_paths("edit", &req.input)
 }
 
 fn execute_brain(name: &str, args: &Value) -> (bool, String) {
@@ -268,14 +253,20 @@ fn execute_brain(name: &str, args: &Value) -> (bool, String) {
         "brain.delete" if arg("path").is_empty() => {
             return (false, "brain.delete needs a `path`".into())
         }
-        "brain.delete" => match brain::delete(&note(arg("path"))) {
-            Ok(()) => Ok(format!("deleted {}", note(arg("path")))),
-            Err(e) => Err(e),
-        },
+        "brain.delete" => {
+            let path = note(arg("path"));
+            let _plan = parzi_core::plan::lock_if_plan(&path);
+            brain::delete(&path).map(|()| format!("deleted {path}"))
+        }
         "brain.write" => match args.get("content").and_then(Value::as_str) {
-            Some(content) if !arg("path").is_empty() => vault
-                .write(&note(arg("path")), content)
-                .map(|m| format!("saved {} ({} bytes)", m.path, m.bytes)),
+            Some(content) if !arg("path").is_empty() => {
+                // A plan note is also written by plan.write: one at a time.
+                let path = note(arg("path"));
+                let _plan = parzi_core::plan::lock_if_plan(&path);
+                vault
+                    .write(&path, content)
+                    .map(|m| format!("saved {} ({} bytes)", m.path, m.bytes))
+            }
             _ => return (false, "brain.write needs `path` + `content`".into()),
         },
         _ => return (false, format!("unknown brain tool `{name}`")),
@@ -605,6 +596,32 @@ fn page_text(v: &Value) -> String {
     out
 }
 
+/// The tab the human is on, from `desk.state`'s `active`: an object
+/// (`kind`, `title`, maybe `id`) as the window sends it to agents, or a bare
+/// tab id looked up in `tabs` (the shape the CLI's full state used).
+fn front_tab(v: &Value) -> Option<Value> {
+    match v.get("active")? {
+        a @ Value::Object(_) => Some(a.clone()),
+        Value::String(id) if !id.is_empty() => {
+            let tab = v
+                .get("tabs")
+                .and_then(Value::as_array)?
+                .iter()
+                .find(|t| t.get("id").and_then(Value::as_str) == Some(id))?;
+            let kind = match tab.get("kind").and_then(Value::as_str) {
+                Some("browser") | None => "page",
+                Some(k) => k,
+            };
+            Some(serde_json::json!({
+                "id": id,
+                "kind": kind,
+                "title": tab.get("title").cloned().unwrap_or_default(),
+            }))
+        }
+        _ => None,
+    }
+}
+
 /// `desk.state` for the agent: its own tabs, and only titles of the rest.
 fn desk_state_text(v: &Value) -> String {
     let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
@@ -616,11 +633,11 @@ fn desk_state_text(v: &Value) -> String {
             "in the background"
         }
     )];
-    if let Some(active) = v.get("active").filter(|a| a.is_object()) {
+    if let Some(active) = front_tab(v) {
         out.push(format!(
             "the human is on: {} {:?}",
-            s(active, "kind"),
-            clip(&s(active, "title"), 80)
+            s(&active, "kind"),
+            clip(&s(&active, "title"), 80)
         ));
     }
     let folder = s(v, "folder");
@@ -657,10 +674,9 @@ fn desk_state_text(v: &Value) -> String {
         .into_iter()
         .flatten()
         .map(|r| {
-            let id = s(r, "id");
             format!(
                 "- {} {} ({})",
-                id.get(..8).unwrap_or(&id),
+                short_id(&s(r, "id")),
                 clip(&s(r, "title"), 60),
                 s(r, "lane")
             )
@@ -672,6 +688,14 @@ fn desk_state_text(v: &Value) -> String {
         format!("running sessions:\n{}", running.join("\n"))
     });
     out.join("\n")
+}
+
+/// The reply to a call this lane's mode or the person refused.
+fn denied(name: &str) -> (bool, String) {
+    (
+        false,
+        format!("tool `{name}` denied (lane mode / approver)"),
+    )
 }
 
 impl ToolHost {
@@ -821,10 +845,7 @@ impl ToolHost {
                 self.p.tools.is_allowed(name)
             };
             if !allowed {
-                return (
-                    false,
-                    format!("tool `{name}` denied (lane mode / approver)"),
-                );
+                return denied(name);
             }
             if is_desk_tool(name) {
                 return self.execute_desk(name, args).await;
@@ -839,10 +860,7 @@ impl ToolHost {
                 self.p.tools.is_allowed(name)
             };
             if !allowed {
-                return (
-                    false,
-                    format!("tool `{name}` denied (lane mode / approver)"),
-                );
+                return denied(name);
             }
             let (name, args) = (name.to_string(), args.clone());
             return tokio::task::spawn_blocking(move || execute_brain(&name, &args))
@@ -851,12 +869,11 @@ impl ToolHost {
         }
         if is_plan_tool(name) || name == "session.rename" {
             // The project's plan and this session's own name: Parzi's own
-            // state the person watches, nothing outside it. No card.
-            if !self.p.tools.is_allowed(name) {
-                return (
-                    false,
-                    format!("tool `{name}` denied (lane mode / approver)"),
-                );
+            // state the person watches, nothing outside it, so no card. A
+            // read-only lane still only reads: no plan writes, no renames.
+            let writes = name != "plan.read";
+            if !self.p.tools.is_allowed(name) || (writes && self.p.mode == ApprovalMode::Deny) {
+                return denied(name);
             }
             let (store, sid) = (self.p.store.clone(), self.p.session_id.clone());
             let (name, args) = (name.to_string(), args.clone());
@@ -868,10 +885,7 @@ impl ToolHost {
         }
         if is_session_tool(name) {
             if !self.approved(id, name, args).await {
-                return (
-                    false,
-                    format!("tool `{name}` denied (lane mode / approver)"),
-                );
+                return denied(name);
             }
             return self.execute_session_tool(name, args).await;
         }
@@ -879,36 +893,24 @@ impl ToolHost {
             // lane.status is read-only: allowlist only.
             if name == "lane.status" {
                 if !self.p.tools.is_allowed(name) {
-                    return (
-                        false,
-                        format!("tool `{name}` denied (lane mode / approver)"),
-                    );
+                    return denied(name);
                 }
                 return (true, self.lane_state());
             }
             if !self.approved(id, name, args).await {
-                return (
-                    false,
-                    format!("tool `{name}` denied (lane mode / approver)"),
-                );
+                return denied(name);
             }
             return self.execute_lane_tool(name, args).await;
         }
         if is_image_tool(name) {
             if !self.approved(id, name, args).await {
-                return (
-                    false,
-                    format!("tool `{name}` denied (lane mode / approver)"),
-                );
+                return denied(name);
             }
             return self.execute_image(args).await;
         }
         if is_question_tool(name) {
             if !self.p.tools.is_allowed(name) {
-                return (
-                    false,
-                    format!("tool `{name}` denied (lane mode / approver)"),
-                );
+                return denied(name);
             }
             if name == "memory.review" {
                 return self.execute_memory_review(id, args).await;
@@ -920,20 +922,14 @@ impl ToolHost {
         }
         if is_project_tool(name) {
             if !self.approved(id, name, args).await {
-                return (
-                    false,
-                    format!("tool `{name}` denied (lane mode / approver)"),
-                );
+                return denied(name);
             }
             return self.execute_project(id, name, args).await;
         }
         if is_shell_tool(name) {
             if name == "shell.logs" {
                 if !self.p.tools.is_allowed(name) {
-                    return (
-                        false,
-                        format!("tool `{name}` denied (lane mode / approver)"),
-                    );
+                    return denied(name);
                 }
                 return self.execute_shell_logs(args).await;
             }
@@ -942,10 +938,7 @@ impl ToolHost {
                 return (false, format!("refused: {SECRET_FILE}"));
             }
             if !self.approved(id, name, args).await {
-                return (
-                    false,
-                    format!("tool `{name}` denied (lane mode / approver)"),
-                );
+                return denied(name);
             }
             return self.execute_shell(name, args).await;
         }
@@ -964,10 +957,7 @@ impl ToolHost {
                 self.p.tools.is_allowed(name)
             };
             if !allowed {
-                return (
-                    false,
-                    format!("tool `{name}` denied (lane mode / approver)"),
-                );
+                return denied(name);
             }
             if name == "models.list" {
                 return (true, self.models_list());
@@ -975,10 +965,7 @@ impl ToolHost {
             return self.execute_doc(args).await;
         }
         if !self.approved(id, name, args).await {
-            return (
-                false,
-                format!("tool `{name}` denied (lane mode / approver)"),
-            );
+            return denied(name);
         }
         self.p.tools.execute(name, args).await
     }
@@ -1075,6 +1062,10 @@ impl ToolHost {
         ];
         if VENDOR_SHELL.contains(&req.tool.as_str()) && self.p.tools.is_allowed("shell.exec") {
             return PermissionDecision::Deny("use shell.exec".into());
+        }
+        // Shell switched off in Settings is off for the agent's own shell too.
+        if kind == Some("shell.exec") && self.p.cfg.lanes.no_shell {
+            return PermissionDecision::Deny("the shell is switched off in Settings".into());
         }
         let mut outside = false;
         if kind == Some("fs.write") {
@@ -1319,19 +1310,18 @@ impl ToolHost {
         let mut lanes: std::collections::BTreeMap<String, Vec<String>> =
             std::collections::BTreeMap::new();
         for m in &all {
-            let s = format!("{:?}", m.status).to_lowercase();
-            if s != "active" && s != "queued" {
+            if !matches!(m.status, SessionStatus::Active | SessionStatus::Queued) {
                 continue;
             }
+            let s = m.status.word();
             let lane = if m.lane.trim().is_empty() {
                 "build".into()
             } else {
                 m.lane.clone()
             };
             lanes.entry(lane).or_default().push(format!(
-                "{} [{}] {}",
-                &m.id[..8.min(m.id.len())],
-                s,
+                "{} [{s}] {}",
+                short_id(&m.id),
                 m.title.chars().take(48).collect::<String>()
             ));
         }
@@ -1872,10 +1862,7 @@ impl ToolHost {
 
     /// One request to the window, its errors in words an agent can act on.
     async fn desk_call(&self, op: &str, body: Value) -> std::result::Result<Value, String> {
-        crate::desk::request(op, body).await.map_err(|e| match e {
-            crate::desk::DeskError::NotOpen => "the Parzi window is not open".to_string(),
-            crate::desk::DeskError::Failed(m) => m,
-        })
+        crate::desk::request(op, body).await.map_err(String::from)
     }
 
     /// The body every page op takes: this session, the tab it names, its args.
@@ -1893,11 +1880,9 @@ impl ToolHost {
     }
 
     fn save_jpeg(&self, v: &Value, prefix: &str) -> (bool, String) {
-        use base64::Engine as _;
-        let raw = v.get("jpeg").and_then(Value::as_str).unwrap_or("");
-        let bytes = match base64::engine::general_purpose::STANDARD.decode(raw) {
-            Ok(b) if !b.is_empty() => b,
-            _ => return (false, "the window did not produce a screenshot".into()),
+        let bytes = match crate::desk::shot_bytes(v) {
+            Ok(b) => b,
+            Err(e) => return (false, e),
         };
         match crate::desk::save_shot(&self.p.session_id, prefix, &bytes) {
             Ok(path) => (
@@ -2065,6 +2050,7 @@ impl ToolHost {
                     "id": id,
                     "section": s("section"),
                     "path": s("path"),
+                    "view": s("view"),
                     "focus": args.get("focus").and_then(Value::as_bool).unwrap_or(false),
                 });
                 match self.desk_call("desk.open", body).await {
@@ -2397,6 +2383,32 @@ mod tests {
         assert!(out.contains("https://docs.rs"));
         assert!(out.contains("- 01234567 Fix it (build)"));
         assert!(out.contains("C:/src/app (project app)"));
+        // The same answer with `active` as a bare tab id reads the same.
+        let by_id = serde_json::json!({
+            "active": "t9",
+            "tabs": [{"id": "t9", "kind": "browser", "title": "Bank", "url": "https://bank"}],
+        });
+        assert!(desk_state_text(&by_id).contains("the human is on: page \"Bank\""));
+        let none = serde_json::json!({"active": null, "tabs": []});
+        assert!(!desk_state_text(&none).contains("the human is on"));
+    }
+
+    #[test]
+    fn writes_name_their_files_however_the_agent_spells_them() {
+        let req = |input: Value, paths: &[&str]| PermissionRequest {
+            id: "1".into(),
+            tool: "edit".into(),
+            title: "Run create_file?".into(),
+            input,
+            paths: paths.iter().map(|p| (*p).to_string()).collect(),
+        };
+        let antigravity = req(serde_json::json!({"TargetFile": "src/a.rs"}), &[]);
+        assert_eq!(write_targets(&antigravity), ["src/a.rs"]);
+        let claude = req(serde_json::json!({"file_path": "b.rs"}), &[]);
+        assert_eq!(write_targets(&claude), ["b.rs"]);
+        let located = req(serde_json::json!({"TargetFile": "x"}), &["c.rs"]);
+        assert_eq!(write_targets(&located), ["c.rs"], "locations come first");
+        assert!(write_targets(&req(Value::Null, &[])).is_empty());
     }
 
     #[test]

@@ -1,13 +1,13 @@
 use parzi_core::context::{InterKind, InterSessionMessage};
 use parzi_core::error::{ParziError, Result};
 use parzi_core::store::{Event, RunCause, SessionMeta, SessionStatus};
+use parzi_core::text::{clip, fold};
 
 use crate::handler::{HarnessBridge, SpawnSpec};
 use crate::inter;
-use crate::tools::clip;
 
 use super::normalize_effort;
-use super::queue::{set_report_to, Pump, QueuedRun};
+use super::queue::{set_report_to, take_report_to, Dispatch, Pump, QueuedRun};
 
 const HARNESS_WAIT_SECS: u64 = 180;
 
@@ -52,7 +52,7 @@ impl Pump {
     fn reply_json(&self, session_id: &str, meta: &SessionMeta, note: Option<&str>) -> String {
         // One read of the transcript serves reply, error, and outcome.
         let events = self.store.events(session_id).unwrap_or_default();
-        let status = format!("{:?}", meta.status).to_lowercase();
+        let status = meta.status.word();
         let reply: String = events
             .iter()
             .rev()
@@ -146,7 +146,7 @@ impl Pump {
         }
         if !wait {
             // Set before it can start: a quick child must not end unheard.
-            set_report_to(&meta.id, Some(caller_id));
+            set_report_to(&meta.id, caller_id);
         }
         let q = QueuedRun {
             session_id: meta.id.clone(),
@@ -164,18 +164,48 @@ impl Pump {
             mode_override,
             cause: RunCause::Message,
         };
-        let launched = self.dispatch(q).await;
-        if !launched && !self.cfg_snapshot().orchestrator.queue_when_busy {
-            // Nothing will run it: stand it down.
-            let _ = self.store.set_status(&meta.id, SessionStatus::Idle);
-        }
-        let meta = self.store.get(&meta.id)?;
         // Say it now instead of a mute child discovered 180s later.
         let crippled_note = "child runs Ask with no approver: approval-gated tools are denied. Staff autonomous work from a Full session.";
+        match self.dispatch(q).await {
+            Dispatch::Launched => {}
+            Dispatch::Queued => {
+                // Waiting would deadlock: it runs when a slot frees, and reports.
+                set_report_to(&meta.id, caller_id);
+                let mut o = serde_json::json!({
+                    "session_id": meta.id,
+                    "status": "queued",
+                    "title": meta.title,
+                    "note": "no run slot free; it runs when one frees",
+                    "report": REPORTS,
+                });
+                if crippled {
+                    o["warning"] = crippled_note.into();
+                }
+                return Ok(o.to_string());
+            }
+            Dispatch::Busy => {
+                // Nothing will ever run it: stand it down, don't phantom-run.
+                take_report_to(&meta.id);
+                let _ = self.store.set_status(&meta.id, SessionStatus::Idle);
+                return Ok(serde_json::json!({
+                    "session_id": meta.id,
+                    "status": "idle",
+                    "title": meta.title,
+                    "note": "no run slot free and queueing is off; retry the spawn when a slot frees",
+                })
+                .to_string());
+            }
+            Dispatch::Failed(e) => {
+                // No run, so no report will ever come: say why, now.
+                take_report_to(&meta.id);
+                return Err(not_started(&meta.id, &e));
+            }
+        }
+        let meta = self.store.get(&meta.id)?;
         if !wait {
             let mut o = serde_json::json!({
                 "session_id": meta.id,
-                "status": format!("{:?}", meta.status).to_lowercase(),
+                "status": meta.status.word(),
                 "title": meta.title,
                 "report": REPORTS,
             });
@@ -183,29 +213,6 @@ impl Pump {
                 o["note"] = crippled_note.into();
             }
             return Ok(o.to_string());
-        }
-        if !launched {
-            // Nothing will ever run it: stand it down, don't phantom-run.
-            if self.cfg_snapshot().orchestrator.queue_when_busy {
-                // Waiting would deadlock: it runs when a slot frees, and reports.
-                set_report_to(&meta.id, Some(caller_id));
-                return Ok(serde_json::json!({
-                    "session_id": meta.id,
-                    "status": "queued",
-                    "title": meta.title,
-                    "note": "no run slot free; it runs when one frees",
-                    "report": REPORTS,
-                })
-                .to_string());
-            }
-            let _ = self.store.set_status(&meta.id, SessionStatus::Idle);
-            return Ok(serde_json::json!({
-                "session_id": meta.id,
-                "status": "idle",
-                "title": meta.title,
-                "note": "no run slot free and queueing is off; retry the spawn when a slot frees",
-            })
-            .to_string());
         }
         match self.await_settled(&meta.id).await {
             Some(done) => Ok(self.reply_json(&meta.id, &done, crippled.then_some(crippled_note))),
@@ -225,7 +232,7 @@ impl Pump {
     /// A wait gave up while `target` still runs: it reports when it ends.
     /// If it ended in between, the report goes out now.
     async fn report_later(&self, caller_id: &str, target: &str) {
-        set_report_to(target, Some(caller_id));
+        set_report_to(target, caller_id);
         let running = {
             let mut h = self.handles.lock().await;
             h.retain(|_, x| !x.finished());
@@ -265,38 +272,19 @@ impl Pump {
 /// What a background child's reply promises.
 const REPORTS: &str = "Parzi messages you when it ends, and wakes you if you are idle; do not poll";
 
+/// A run that could not start, as the tool call that asked for it fails.
+fn not_started(session_id: &str, e: &ParziError) -> ParziError {
+    let why = match e {
+        ParziError::Store(m) | ParziError::Validation(m) | ParziError::Config(m) => m.clone(),
+        other => other.to_string(),
+    };
+    ParziError::Validation(format!("session {session_id} did not start: {why}"))
+}
+
 #[async_trait::async_trait]
 impl HarnessBridge for Pump {
     async fn spawn(&self, caller_id: &str, spec: SpawnSpec) -> Result<String> {
         self.spawn_child(caller_id, spec).await
-    }
-
-    async fn spawn_session(
-        &self,
-        caller_id: &str,
-        title: &str,
-        prompt: &str,
-        is_subsession: bool,
-        model: Option<String>,
-        lane: Option<String>,
-        wait: bool,
-        mode_override: Option<String>,
-        effort: Option<String>,
-    ) -> Result<String> {
-        self.spawn_child(
-            caller_id,
-            SpawnSpec {
-                title: title.to_string(),
-                prompt: prompt.to_string(),
-                is_subsession,
-                model,
-                lane,
-                wait,
-                mode_override,
-                effort,
-            },
-        )
-        .await
     }
 
     async fn send_message(
@@ -320,7 +308,7 @@ impl HarnessBridge for Pump {
         // A session the caller started answers back when it ends.
         let reports = target.parent_id.as_deref() == Some(caller_id);
         if reports && !wait {
-            set_report_to(session_id, Some(caller_id));
+            set_report_to(session_id, caller_id);
         }
         let (at, still_live) = {
             let mut h = self.handles.lock().await;
@@ -333,7 +321,7 @@ impl HarnessBridge for Pump {
             if !wait {
                 return Ok(serde_json::json!({
                     "session_id": session_id,
-                    "status": "active",
+                    "status": SessionStatus::Active.word(),
                     "note": "target is running; message appended to its transcript",
                 })
                 .to_string());
@@ -359,19 +347,11 @@ impl HarnessBridge for Pump {
             inbox_from: Some(at),
             cause: RunCause::Message,
         };
-        let launched = self.dispatch(q).await;
-        if !wait {
-            let meta = self.store.get(session_id)?;
-            return Ok(serde_json::json!({
-                "session_id": session_id,
-                "status": format!("{:?}", meta.status).to_lowercase(),
-            })
-            .to_string());
-        }
-        if !launched {
-            if self.cfg_snapshot().orchestrator.queue_when_busy {
+        match self.dispatch(q).await {
+            Dispatch::Launched => {}
+            Dispatch::Queued => {
                 if reports {
-                    set_report_to(session_id, Some(caller_id));
+                    set_report_to(session_id, caller_id);
                 }
                 return Ok(serde_json::json!({
                     "session_id": session_id,
@@ -384,10 +364,26 @@ impl HarnessBridge for Pump {
                 })
                 .to_string());
             }
+            Dispatch::Busy => {
+                return Ok(serde_json::json!({
+                    "session_id": session_id,
+                    "status": "idle",
+                    "note": "no run slot free and queueing is off; retry the message",
+                })
+                .to_string());
+            }
+            Dispatch::Failed(e) => {
+                if reports && !wait {
+                    take_report_to(session_id);
+                }
+                return Err(not_started(session_id, &e));
+            }
+        }
+        if !wait {
+            let meta = self.store.get(session_id)?;
             return Ok(serde_json::json!({
                 "session_id": session_id,
-                "status": "idle",
-                "note": "no run slot free and queueing is off; retry the message",
+                "status": meta.status.word(),
             })
             .to_string());
         }
@@ -417,7 +413,10 @@ impl HarnessBridge for Pump {
                 Event::User { text } => format!("user: {}\n", clip(text, 1_000)),
                 Event::Assistant { text, .. } => format!("assistant: {}\n", clip(text, 2_000)),
                 Event::ToolCall { name, args, .. } => {
-                    format!("tool_call: {name} {}\n", clip(&one_line(args), 120))
+                    format!(
+                        "tool_call: {name} {}\n",
+                        clip(&fold(&args.to_string()), 120)
+                    )
                 }
                 Event::ToolResult {
                     name, ok, output, ..
@@ -445,7 +444,7 @@ impl HarnessBridge for Pump {
         Ok(serde_json::json!({
             "session_id": meta.id,
             "title": meta.title,
-            "status": format!("{:?}", meta.status).to_lowercase(),
+            "status": meta.status.word(),
             "model": meta.model,
             "parent_id": meta.parent_id,
             "transcript_tail": tail_text,
@@ -466,7 +465,7 @@ impl HarnessBridge for Pump {
                 serde_json::json!({
                     "session_id": m.id,
                     "title": m.title,
-                    "status": format!("{:?}", m.status).to_lowercase(),
+                    "status": m.status.word(),
                     "parent_id": m.parent_id,
                     "model": m.model,
                 })
@@ -474,9 +473,4 @@ impl HarnessBridge for Pump {
             .collect();
         Ok(serde_json::Value::Array(rows).to_string())
     }
-}
-
-fn one_line(v: &serde_json::Value) -> String {
-    let s = v.to_string();
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }

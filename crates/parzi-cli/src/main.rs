@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use clap::{ArgGroup, Parser, Subcommand};
 use parzi_core::config::ParziConfig;
 use parzi_core::paths;
-use parzi_core::store::RunCause;
-use parzi_core::store::SessionStore;
+use parzi_core::store::{RunCause, SessionStatus, SessionStore};
+use parzi_core::text::short_id;
 use parzi_providers::State;
 use parzi_runtime::desk::{self, normalize_url, DeskError, Probe};
 use parzi_runtime::tools::{Approval, Approver, AutoApprover, ToolCallInfo};
@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 
 mod window;
 
-use window::{page, page_body, print_json, short};
+use window::{page, page_body, print_json};
 
 #[derive(Parser)]
 #[command(name = "parzi", version, about = "Lean agent harness")]
@@ -220,7 +220,9 @@ enum ApprovalCmd {
         #[arg(long)]
         json: bool,
     },
-    #[command(about = "Allow one. A key prefix works in the window")]
+    #[command(
+        about = "Allow one. With the window open it asks you to confirm there; a key prefix works in the window"
+    )]
     Allow { key: String },
     #[command(about = "Deny one")]
     Deny { key: String },
@@ -236,12 +238,6 @@ enum OpenCmd {
     Brain { path: Option<String> },
     #[command(about = "History: sessions, history, bookmarks or downloads")]
     History { view: Option<String> },
-    #[command(
-        about = "The plan of the project you are in, beside the session",
-        visible_alias = "work",
-        alias = "tasks"
-    )]
-    Plan,
     #[command(about = "The home tab")]
     Home,
     #[command(about = "A web page")]
@@ -784,7 +780,7 @@ async fn cmd_approval(action: ApprovalCmd) -> Result<()> {
                 let key = row.get("key").and_then(Value::as_str).unwrap_or("");
                 let session = row.get("session").and_then(Value::as_str).unwrap_or("");
                 let label = row.get("label").and_then(Value::as_str).unwrap_or("");
-                println!("{key}  {}  {label}", short(session));
+                println!("{key}  {}  {label}", short_id(session));
             }
             Ok(())
         }
@@ -804,11 +800,11 @@ async fn answer_approval(key: &str, allow: bool) -> Result<()> {
 }
 
 /// Neither the window nor `parzi serve` answers: the files are ours.
-fn offline(err: &str) -> bool {
-    desk::is_not_open(err)
+fn offline(err: &DeskError) -> bool {
+    *err == DeskError::NotOpen
 }
 
-async fn engine(op: &str, body: Value, wait: Duration) -> Result<Value, String> {
+async fn engine(op: &str, body: Value, wait: Duration) -> Result<Value, DeskError> {
     desk::call_desk_or_serve(op, body, wait).await
 }
 
@@ -859,10 +855,15 @@ async fn session_list(json: bool) -> Result<()> {
             }
             for row in rows {
                 let id = row.get("id").and_then(Value::as_str).unwrap_or("");
-                let status = row.get("status").and_then(Value::as_str).unwrap_or("");
+                let status = row
+                    .get("status")
+                    .cloned()
+                    .and_then(|s| serde_json::from_value::<SessionStatus>(s).ok())
+                    .unwrap_or_default()
+                    .word();
                 let model = row.get("model").and_then(Value::as_str).unwrap_or("");
                 let title = row.get("title").and_then(Value::as_str).unwrap_or("");
-                println!("{}  {}  {}  {}", short(id), status, model, title);
+                println!("{}  {}  {}  {}", short_id(id), status, model, title);
             }
             Ok(())
         }
@@ -883,7 +884,13 @@ fn list_local(json: bool) -> Result<()> {
         return Ok(());
     }
     for m in all {
-        println!("{}  {:?}  {}  {}", short(&m.id), m.status, m.model, m.title);
+        println!(
+            "{}  {}  {}  {}",
+            short_id(&m.id),
+            m.status.word(),
+            m.model,
+            m.title
+        );
     }
     Ok(())
 }
@@ -994,12 +1001,6 @@ async fn session_send(
             }
             Ok(())
         }
-        Err(DeskError::Failed(e)) => {
-            if view.0 && !view.1 {
-                println!();
-            }
-            anyhow::bail!(e)
-        }
         Err(DeskError::NotOpen) => {
             let mut body = body;
             body["stream"] = json!(false);
@@ -1009,16 +1010,26 @@ async fn session_send(
                     if let Some(id) = v.get("id").and_then(Value::as_str) {
                         eprintln!("session {id}");
                     }
-                    let status = v.get("status").and_then(Value::as_str).unwrap_or("active");
-                    eprintln!("{status} on parzi serve");
+                    let status = v
+                        .get("status")
+                        .cloned()
+                        .and_then(|s| serde_json::from_value::<SessionStatus>(s).ok())
+                        .unwrap_or(SessionStatus::Active);
+                    eprintln!("{} on parzi serve", status.word());
                     eprintln!("parzi approval list");
                     Ok(())
                 }
-                Err(e) if e.contains("not running") => {
+                Err(DeskError::ServeNotRunning) => {
                     send_local(target, message, model, &base, yes, effort).await
                 }
                 Err(e) => anyhow::bail!(e),
             }
+        }
+        Err(e) => {
+            if view.0 && !view.1 {
+                println!();
+            }
+            anyhow::bail!(e)
         }
     }
 }
@@ -1332,7 +1343,6 @@ fn open_body(what: OpenCmd, background: bool, raise: bool) -> Value {
         OpenCmd::Settings { section } => ("settings", json!({ "section": section })),
         OpenCmd::Brain { path } => ("brain", json!({ "path": path })),
         OpenCmd::History { view } => ("history", json!({ "view": view })),
-        OpenCmd::Plan => ("plan", json!({})),
         OpenCmd::Home => ("home", json!({})),
         OpenCmd::Url { url } => ("url", json!({ "url": normalize_url(&url) })),
     };
@@ -1369,7 +1379,7 @@ async fn window_check() -> parzi_runtime::doctor::Check {
                     file.pid
                 ),
             ),
-            Err(DeskError::Failed(e)) if e.contains("unknown op") => check(
+            Err(DeskError::UnknownOp(_)) => check(
                 true,
                 format!("an older Parzi answers on 127.0.0.1:{}", file.port),
             ),
@@ -1393,8 +1403,8 @@ async fn serve_check() -> parzi_runtime::doctor::Check {
                 v.get("version").and_then(Value::as_str).unwrap_or("?")
             ),
         ),
-        Err(e) if e.contains("not running") => (true, "not running".into()),
-        Err(e) => (false, e),
+        Err(DeskError::ServeNotRunning) => (true, "not running".into()),
+        Err(e) => (false, e.to_string()),
     };
     parzi_runtime::doctor::Check {
         name: "serve".into(),
@@ -1576,8 +1586,8 @@ mod tests {
         assert!(body.get("path").is_none());
         let body = open(&["open", "url", "localhost:1420"]);
         assert_eq!(body["url"], "http://localhost:1420");
-        for name in ["plan", "work", "tasks"] {
-            assert_eq!(open(&["open", name])["what"], "plan", "{name}");
+        for gone in ["plan", "work", "tasks"] {
+            assert!(parse(&["open", gone]).is_err(), "{gone}");
         }
         assert!(parse(&["open", "nowhere"]).is_err());
     }

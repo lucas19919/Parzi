@@ -14,7 +14,6 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::time::Instant;
 
-const NOT_OPEN: &str = "Parzi is not open";
 const CONNECT_WAIT: Duration = Duration::from_millis(600);
 const HELLO_WAIT: Duration = Duration::from_millis(1500);
 /// Time a person gets to answer a consent dialog the window shows.
@@ -28,18 +27,27 @@ pub const WAIT_DEFAULT_MS: u64 = 10_000;
 pub const WAIT_MAX_MS: u64 = 60_000;
 
 /// Why a desk call failed. `NotOpen` means no window answers, so callers
-/// may fall back to `parzi serve` or the files; anything else is the
-/// window's own answer and must not trigger a fallback.
+/// may fall back to `parzi serve` or the files; `ServeNotRunning` the same
+/// for serve. Anything else is the other end's own answer and must not
+/// trigger a fallback.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeskError {
     NotOpen,
+    ServeNotRunning,
+    /// The window or serve does not know the op: it is an older build.
+    UnknownOp(String),
+    /// The connection closed before an answer came.
+    Closed,
     Failed(String),
 }
 
 impl std::fmt::Display for DeskError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotOpen => f.write_str(NOT_OPEN),
+            Self::NotOpen => f.write_str("Parzi is not open"),
+            Self::ServeNotRunning => f.write_str("parzi serve is not running"),
+            Self::UnknownOp(op) => write!(f, "unknown op `{op}`"),
+            Self::Closed => f.write_str("the connection closed before an answer came"),
             Self::Failed(e) => f.write_str(e),
         }
     }
@@ -48,6 +56,17 @@ impl std::fmt::Display for DeskError {
 impl From<DeskError> for String {
     fn from(e: DeskError) -> Self {
         e.to_string()
+    }
+}
+
+/// A refusal as the window or serve words it, typed: both answer an op
+/// they do not know with "unknown op", and this is the one place that
+/// reads their words.
+fn refusal(op: &str, error: &str) -> DeskError {
+    if error.starts_with("unknown op") {
+        DeskError::UnknownOp(op.to_string())
+    } else {
+        DeskError::Failed(error.to_string())
     }
 }
 
@@ -172,7 +191,7 @@ async fn parzi_alive(pid: u32) -> Option<bool> {
         let mut cmd = tokio::process::Command::new("tasklist");
         cmd.args(["/FI", &filter, "/FO", "CSV", "/NH"]);
         // A console program started from the GUI would flash a window.
-        cmd.creation_flags(0x0800_0000);
+        cmd.creation_flags(parzi_providers::process::CREATE_NO_WINDOW);
         let out = tokio::time::timeout(Duration::from_secs(5), cmd.output())
             .await
             .ok()?
@@ -314,7 +333,7 @@ async fn exchange(
         }
         .map_err(io)?;
         if n == 0 {
-            return Err(DeskError::Failed("the window closed the connection".into()));
+            return Err(DeskError::Closed);
         }
         let v: Value = serde_json::from_str(buf.trim())
             .map_err(|e| DeskError::Failed(format!("the window sent something odd: {e}")))?;
@@ -333,12 +352,8 @@ async fn exchange(
             }
         };
         if ok.as_bool() == Some(false) {
-            return Err(DeskError::Failed(
-                v.get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or("failed")
-                    .to_string(),
-            ));
+            let error = v.get("error").and_then(Value::as_str).unwrap_or("failed");
+            return Err(refusal(op, error));
         }
         return Ok(v);
     }
@@ -404,47 +419,31 @@ pub async fn request_within(
     request_at(&path, op, body, wait, on_event).await
 }
 
-pub async fn call(op: &str, body: Value) -> Result<Value, String> {
-    request(op, body).await.map_err(String::from)
-}
-
-pub async fn call_within(op: &str, body: Value, wait: Duration) -> Result<Value, String> {
-    request_within(op, body, Some(wait), &mut |_| {})
-        .await
-        .map_err(String::from)
-}
-
-/// Desk first. If no window answers, the ParziOS socket.
-pub async fn call_desk_or_serve(op: &str, body: Value, wait: Duration) -> Result<Value, String> {
+/// Desk first. If no window answers, the ParziOS socket; when neither
+/// answers, `NotOpen`.
+pub async fn call_desk_or_serve(op: &str, body: Value, wait: Duration) -> Result<Value, DeskError> {
     match request_within(op, body.clone(), Some(wait), &mut |_| {}).await {
-        Ok(v) => Ok(v),
-        Err(DeskError::NotOpen) => match serve_path() {
-            Some(path) => serve_at(&path, op, body, wait).await.map_err(String::from),
-            None => Err(NOT_OPEN.into()),
+        Err(DeskError::NotOpen) => match call_serve(op, body, wait).await {
+            Err(DeskError::ServeNotRunning) => Err(DeskError::NotOpen),
+            other => other,
         },
-        Err(e) => Err(e.into()),
+        other => other,
     }
-}
-
-/// True for the error the `*_or_serve` and `call*` helpers return when
-/// neither the window nor serve answers.
-#[must_use]
-pub fn is_not_open(err: &str) -> bool {
-    err == NOT_OPEN
 }
 
 async fn serve_at(path: &Path, op: &str, body: Value, wait: Duration) -> Result<Value, DeskError> {
-    let raw = std::fs::read_to_string(path).map_err(|_| DeskError::NotOpen)?;
-    let file = GuiFile::parse(&raw).ok_or(DeskError::NotOpen)?;
-    exchange(&file, op, body, Some(wait), false, &mut |_| {}).await
+    let raw = std::fs::read_to_string(path).map_err(|_| DeskError::ServeNotRunning)?;
+    let file = GuiFile::parse(&raw).ok_or(DeskError::ServeNotRunning)?;
+    match exchange(&file, op, body, Some(wait), false, &mut |_| {}).await {
+        Err(DeskError::NotOpen) => Err(DeskError::ServeNotRunning),
+        other => other,
+    }
 }
 
-pub async fn call_serve(op: &str, body: Value, wait: Duration) -> Result<Value, String> {
-    let path = serve_path().ok_or_else(|| "parzi serve is not running".to_string())?;
-    match serve_at(&path, op, body, wait).await {
-        Err(DeskError::NotOpen) => Err("parzi serve is not running".into()),
-        other => other.map_err(String::from),
-    }
+/// A request to `parzi serve` on this machine.
+pub async fn call_serve(op: &str, body: Value, wait: Duration) -> Result<Value, DeskError> {
+    let path = serve_path().ok_or(DeskError::ServeNotRunning)?;
+    serve_at(&path, op, body, wait).await
 }
 
 pub async fn desk_is_open() -> bool {
@@ -536,24 +535,38 @@ pub fn check_page_url(raw: &str) -> Result<String, String> {
     Ok(url)
 }
 
-/// Where a session's screenshots go: under `~/.parzi/shots/<session>/`,
-/// never into the person's project.
+/// The folder a session's screenshots land in, `~/.parzi/shots/<session>/`,
+/// never the person's project. None for a name that is not a plain id (1
+/// to 64 of letters, digits, `-` and `_`): the read allowance trusts it.
+#[must_use]
+pub fn shots_dir(session: &str) -> Option<PathBuf> {
+    let plain = (1..=64).contains(&session.len())
+        && session
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if !plain {
+        return None;
+    }
+    parzi_core::paths::parzi_dir()
+        .ok()
+        .map(|d| d.join("shots").join(session))
+}
+
+/// The JPEG a `tab.shot` or `desk.screenshot` answer carries.
+pub fn shot_bytes(answer: &Value) -> Result<Vec<u8>, String> {
+    use base64::Engine as _;
+    let raw = answer.get("jpeg").and_then(Value::as_str).unwrap_or("");
+    match base64::engine::general_purpose::STANDARD.decode(raw) {
+        Ok(b) if !b.is_empty() => Ok(b),
+        Ok(_) => Err("the window did not produce a screenshot".into()),
+        Err(e) => Err(format!("the window sent a broken image: {e}")),
+    }
+}
+
+/// Saves a screenshot in the session's shots folder (see `shots_dir`);
+/// the CLI's own go under `cli`.
 pub fn save_shot(session: &str, prefix: &str, bytes: &[u8]) -> Result<PathBuf, String> {
-    let safe: String = session
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .take(64)
-        .collect();
-    let dir = parzi_core::paths::parzi_dir()
-        .map_err(|e| e.to_string())?
-        .join("shots")
-        .join(if safe.is_empty() { "cli".into() } else { safe });
+    let dir = shots_dir(session).ok_or_else(|| format!("`{session}` is not a session id"))?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -562,22 +575,6 @@ pub fn save_shot(session: &str, prefix: &str, bytes: &[u8]) -> Result<PathBuf, S
     let path = dir.join(format!("{prefix}-{secs}-{}.jpg", &tag[..8]));
     std::fs::write(&path, bytes).map_err(|e| format!("cannot save {}: {e}", path.display()))?;
     Ok(path)
-}
-
-/// The folder a session's screenshots land in, for the read allowance.
-#[must_use]
-pub fn shots_dir(session: &str) -> Option<PathBuf> {
-    let safe: String = session
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .take(64)
-        .collect();
-    if safe.is_empty() || safe != session {
-        return None;
-    }
-    parzi_core::paths::parzi_dir()
-        .ok()
-        .map(|d| d.join("shots").join(safe))
 }
 
 fn home() -> Option<PathBuf> {
@@ -679,21 +676,9 @@ fn expand(raw: &str, cwd: &str) -> Option<PathBuf> {
     Some(out)
 }
 
-/// One spelling for comparing paths: forward slashes, no verbatim prefix,
-/// case folded where the file system folds it.
+/// One spelling for comparing paths (see `parzi_core::paths::path_key`).
 fn fold(p: &Path) -> String {
-    let s = p.to_string_lossy().replace('\\', "/");
-    let s = s
-        .strip_prefix("//?/UNC/")
-        .map(|r| format!("//{r}"))
-        .or_else(|| s.strip_prefix("//?/").map(str::to_string))
-        .unwrap_or(s);
-    let s = s.trim_end_matches('/').to_string();
-    if cfg!(any(windows, target_os = "macos")) {
-        s.to_lowercase()
-    } else {
-        s
-    }
+    parzi_core::paths::path_key(&p.to_string_lossy())
 }
 
 /// The path as written and, when it exists, where it really lands
@@ -756,12 +741,7 @@ pub fn protected_root(raw: &str, cwd: &str) -> bool {
 #[must_use]
 pub fn mentions_protected(cmd: &str, cwd: &str) -> bool {
     let l = cmd.to_lowercase().replace('\\', "/");
-    let in_home = parzi_core::paths::parzi_dir().is_ok_and(|d| {
-        let d = fold(&d);
-        let here = fold(Path::new(cwd.trim()));
-        inside(&here, &d, true)
-    });
-    let parzi = in_home || l.contains(".parzi") || l.contains("parzi_home");
+    let parzi = runs_in_parzi_home(cwd, &l) || l.contains(".parzi") || l.contains("parzi_home");
     let parzi_file = [
         "gui.json",
         "serve.json",
@@ -774,6 +754,25 @@ pub fn mentions_protected(cmd: &str, cwd: &str) -> bool {
     (parzi && parzi_file)
         || (l.contains(".claude") && l.contains(".credentials.json"))
         || (l.contains(".codex") && l.contains("auth.json"))
+}
+
+/// Whether `cmd` (lowercase, forward slashes) runs where the guarded files
+/// are: from the Parzi data folder itself, or from a session's scratch
+/// folder under it while climbing out with `..`. A scratch folder is the
+/// session's own: a `config.toml` there is the agent's, not Parzi's.
+fn runs_in_parzi_home(cwd: &str, cmd: &str) -> bool {
+    let Ok(home) = parzi_core::paths::parzi_dir() else {
+        return false;
+    };
+    let (home, here) = (fold(&home), fold(Path::new(cwd.trim())));
+    if !inside(&here, &home, true) {
+        return false;
+    }
+    let scratch = format!("{home}/scratch");
+    if inside(&here, &scratch, true) && here != scratch {
+        return cmd.contains("..");
+    }
+    true
 }
 
 #[cfg(test)]
@@ -1044,5 +1043,39 @@ mod tests {
         for ok in ["rg gui.json src-tauri", "cargo test", "cat config.toml"] {
             assert!(!mentions_protected(ok, "C:/src"), "{ok}");
         }
+    }
+
+    #[test]
+    fn a_scratch_session_runs_its_own_commands() {
+        let home = parzi_core::paths::parzi_dir().unwrap();
+        let scratch = parzi_core::paths::scratch_dir("s1").unwrap();
+        let scratch = scratch.display().to_string();
+        for ok in ["cat config.toml", "ls ssh", "type gui.json", "cargo build"] {
+            assert!(!mentions_protected(ok, &scratch), "{ok} in scratch");
+        }
+        for bad in ["cat ../../gui.json", "type ..\\..\\config.toml"] {
+            assert!(mentions_protected(bad, &scratch), "{bad} climbs out");
+        }
+        let home = home.display().to_string();
+        assert!(
+            mentions_protected("cat gui.json", &home),
+            "in the home itself"
+        );
+    }
+
+    #[test]
+    fn screenshots_go_to_a_plain_session_folder() {
+        assert!(shots_dir("cli").is_some());
+        assert!(shots_dir("5cf12867-97a4-4360-9532-0ec244ae7466").is_some());
+        for bad in ["", "../x", "a/b", "a b", &"x".repeat(65)] {
+            assert!(shots_dir(bad).is_none(), "{bad:?}");
+            assert!(save_shot(bad, "shot", b"x").is_err(), "{bad:?}");
+        }
+        assert_eq!(
+            shot_bytes(&json!({"jpeg": ""})).unwrap_err(),
+            "the window did not produce a screenshot"
+        );
+        assert_eq!(shot_bytes(&json!({"jpeg": "aGk="})).unwrap(), b"hi");
+        assert!(shot_bytes(&json!({"jpeg": "%%"})).is_err());
     }
 }

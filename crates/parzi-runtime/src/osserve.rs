@@ -28,9 +28,6 @@ use crate::tools::{
 
 /// Large enough for a message with its attachments inlined.
 const MAX_REQUEST: u64 = 16 * 1024 * 1024;
-/// A parked approval nobody answers is denied after this long, so a
-/// forgotten run gives its slot back instead of holding it forever.
-const APPROVAL_TTL: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
 /// Events per `session.events` reply: the newest ones. A client that has
 /// some asks with `from` for only what is new since.
 const EVENTS_PAGE: usize = 400;
@@ -58,20 +55,38 @@ impl Drop for SlotGuard {
     }
 }
 
+/// How long a person gets to answer: Settings' approval wait, the one the
+/// desk's cards use too. Past it the call is denied (a question decides
+/// itself), so a forgotten run gives its slot back.
+type AnswerWait = Arc<dyn Fn() -> std::time::Duration + Send + Sync>;
+
+fn answer_wait(orch: &Arc<Orchestrator>) -> AnswerWait {
+    let orch = Arc::downgrade(orch);
+    Arc::new(move || {
+        let secs = orch.upgrade().map_or_else(
+            || parzi_core::config::OrchLimits::default().approval_wait_secs,
+            |o| o.config().orchestrator.approval_wait_secs,
+        );
+        std::time::Duration::from_secs(secs.max(10))
+    })
+}
+
 /// Approvals that wait until a client answers on the socket. Each one is
 /// also announced on the event stream, shaped like the desk's own cards.
 pub struct ParkedApprover {
     pending: Arc<std::sync::Mutex<HashMap<String, Pending>>>,
     store: SessionStore,
     events: broadcast::Sender<Value>,
+    wait: AnswerWait,
 }
 
 impl ParkedApprover {
-    fn new(store: SessionStore, events: broadcast::Sender<Value>) -> Arc<Self> {
+    fn new(store: SessionStore, events: broadcast::Sender<Value>, wait: AnswerWait) -> Arc<Self> {
         Arc::new(Self {
             pending: Arc::default(),
             store,
             events,
+            wait,
         })
     }
 
@@ -146,7 +161,7 @@ impl Approver for ParkedApprover {
                 "session": call.session,
             },
         }));
-        if let Ok(answer) = tokio::time::timeout(APPROVAL_TTL, rx).await {
+        if let Ok(answer) = tokio::time::timeout((self.wait)(), rx).await {
             answer.unwrap_or(Approval::Deny)
         } else {
             let text = format!("approval {key} expired unanswered and was denied: {label}");
@@ -163,13 +178,15 @@ type Questions = std::sync::Mutex<HashMap<String, (String, oneshot::Sender<Strin
 pub struct ParkedAsker {
     pending: Questions,
     events: broadcast::Sender<Value>,
+    wait: AnswerWait,
 }
 
 impl ParkedAsker {
-    fn new(events: broadcast::Sender<Value>) -> Arc<Self> {
+    fn new(events: broadcast::Sender<Value>, wait: AnswerWait) -> Arc<Self> {
         Arc::new(Self {
             pending: std::sync::Mutex::default(),
             events,
+            wait,
         })
     }
 
@@ -210,7 +227,7 @@ impl Asker for ParkedAsker {
                 "request": req.question, "req_kind": req.kind,
             })
         });
-        let out = tokio::time::timeout(APPROVAL_TTL, rx).await;
+        let out = tokio::time::timeout((self.wait)(), rx).await;
         self.pending
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -309,8 +326,9 @@ pub async fn start(orch: Arc<Orchestrator>) -> Result<Daemon, String> {
         &json!({ "port": addr.port(), "token": token }).to_string(),
     )?;
     let (events, _) = broadcast::channel(256);
-    let approver = ParkedApprover::new(orch.store().clone(), events.clone());
-    let asker = ParkedAsker::new(events.clone());
+    let wait = answer_wait(&orch);
+    let approver = ParkedApprover::new(orch.store().clone(), events.clone(), wait.clone());
+    let asker = ParkedAsker::new(events.clone(), wait);
     orch.install_asker(asker.clone()).await;
     // Queued runs restored after a restart (and later starts) ask a client
     // through the socket instead of being denied every gated call.
@@ -870,13 +888,6 @@ async fn session_send(state: &State, req: &Value) -> Value {
         Ok(id) => id,
         Err(e) => return fail(e.to_string()),
     };
-    // A desk that quoted a plan item links the session to it.
-    let item = str_arg(req, "plan_item");
-    if !item.is_empty() {
-        if let Err(e) = state.orch.store().set_plan_item(&id, Some(&item)) {
-            tracing::warn!("plan item of {id} not kept: {e}");
-        }
-    }
     let status = state
         .orch
         .store()

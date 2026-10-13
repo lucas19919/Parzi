@@ -52,6 +52,12 @@ impl SessionStore {
     }
 
     pub fn purge_finished(&self) -> Result<usize> {
+        self.purge_finished_ids().map(|ids| ids.len())
+    }
+
+    /// `purge_finished`, naming the sessions it removed (from one listing,
+    /// so a caller cleaning up after them sees exactly that set).
+    pub fn purge_finished_ids(&self) -> Result<Vec<String>> {
         let all = self.list().unwrap_or_default();
         Ok(self.remove_dirs(cascade_kill_ids(&all)))
     }
@@ -59,17 +65,19 @@ impl SessionStore {
     pub fn delete_thread(&self, id: &str) -> Result<usize> {
         self.get(id)?;
         let all = self.list().unwrap_or_default();
-        Ok(self.remove_dirs(subtree_ids(&all, id)))
+        Ok(self.remove_dirs(subtree_ids(&all, id)).len())
     }
 
-    fn remove_dirs(&self, ids: HashSet<String>) -> usize {
-        let mut n = 0;
+    /// The ids whose folders were removed.
+    fn remove_dirs(&self, ids: HashSet<String>) -> Vec<String> {
+        let mut gone = vec![];
         for id in ids {
             if std::fs::remove_dir_all(self.dir(&id)).is_ok() {
-                n += 1;
+                gone.push(id.clone());
             }
             self.cache().forget(&id);
         }
-        n
+        gone.sort();
+        gone
     }
 }

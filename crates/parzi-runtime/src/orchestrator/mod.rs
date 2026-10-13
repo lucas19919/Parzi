@@ -88,6 +88,10 @@ impl SessionSlot {
         }
     }
 
+    /// The run's last look at its inbox, under the lock deliveries take:
+    /// when nothing new came, `on_quiet` settles the session and the slot is
+    /// given back in the same step, so a message delivered after it starts
+    /// a new run instead of landing unread.
     pub(crate) async fn last_look<L, Q>(&self, look: L, on_quiet: Q) -> (Vec<String>, usize)
     where
         L: FnOnce() -> (Vec<String>, usize),
@@ -103,6 +107,17 @@ impl SessionSlot {
             }
         }
         (fresh, upto)
+    }
+
+    /// A run that ends without looking for more (failed, stopped, paused,
+    /// at the turn cap): `settle` and the slot given back in one step, once
+    /// its outcome is kept, so a resend right after it is not refused.
+    pub(crate) async fn release<S: FnOnce()>(&self, settle: S) {
+        let mut h = self.handles.lock().await;
+        settle();
+        if h.get(&self.sid).is_some_and(|x| x.id == self.id) {
+            h.remove(&self.sid);
+        }
     }
 }
 
@@ -243,7 +258,7 @@ impl Orchestrator {
                 // Its run was cut off when the app closed: the session says so.
                 let outcome = parzi_core::store::RunOutcome::bare(
                     parzi_core::store::RunEndKind::Interrupted,
-                    crate::run_hooks::now_ms(),
+                    parzi_core::now_ms(),
                 );
                 if let Err(e) = self.store.set_last_run(&m.id, outcome, None) {
                     tracing::warn!("run outcome of {} not kept: {e}", m.id);

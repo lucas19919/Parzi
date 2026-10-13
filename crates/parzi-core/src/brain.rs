@@ -649,7 +649,7 @@ fn assemble(notes: &[Note], project: Option<Project>) -> Option<BrainContext> {
         ));
         if let Some(h) = home.filter(|h| !h.body.is_empty()) {
             text.push_str("\n\n");
-            text.push_str(&clip(&h.body, CONTEXT_CAP / 2));
+            text.push_str(&truncated(&h.body, CONTEXT_CAP / 2));
         }
     }
     let mut chars = text.chars().count();
@@ -1595,7 +1595,10 @@ fn snippet(body: &str, at: usize) -> String {
     out
 }
 
-fn clip(text: &str, max: usize) -> String {
+/// The first `max` chars of a note body, marked on a line of its own when
+/// cut: unlike `text::clip`'s ellipsis, an agent must see that the note goes
+/// on, so it can read the rest.
+fn truncated(text: &str, max: usize) -> String {
     match text.char_indices().nth(max) {
         Some((i, _)) => format!("{}\n…(truncated)", &text[..i]),
         None => text.to_string(),

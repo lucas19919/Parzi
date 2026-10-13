@@ -5,18 +5,15 @@ use std::io::Write as _;
 use std::time::Duration;
 
 use anyhow::{bail, Result};
+use parzi_core::text::short_id as short;
 use parzi_runtime::desk::{self, DeskError};
 use serde_json::{json, Value};
-
-pub(crate) fn short(id: &str) -> &str {
-    id.get(..8).unwrap_or(id)
-}
 
 fn s<'a>(v: &'a Value, k: &str) -> &'a str {
     v.get(k).and_then(Value::as_str).unwrap_or("")
 }
 
-/// The window's answer, or a plain "Parzi is not open" error.
+/// The window's answer, or its error (`Parzi is not open` when none runs).
 pub(crate) async fn ask(op: &str, body: Value) -> Result<Value> {
     ask_with(op, body, &mut |v| say_confirm(v)).await
 }
@@ -27,11 +24,9 @@ pub(crate) async fn ask_with(
     on_event: &mut (dyn FnMut(&Value) + Send),
 ) -> Result<Value> {
     let wait = desk::deadline(op, &body);
-    match desk::request_within(op, body, wait, on_event).await {
-        Ok(v) => Ok(v),
-        Err(DeskError::NotOpen) => bail!("Parzi is not open: start it first"),
-        Err(DeskError::Failed(e)) => bail!(e),
-    }
+    desk::request_within(op, body, wait, on_event)
+        .await
+        .map_err(|e| anyhow::anyhow!(e))
 }
 
 /// A consent dialog is up in the window: say so, or the CLI looks stuck.
@@ -112,13 +107,7 @@ pub(crate) async fn tab_read(
 }
 
 fn save_jpeg(v: &Value, prefix: &str, out: Option<&std::path::Path>) -> Result<()> {
-    use base64::Engine as _;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(s(v, "jpeg"))
-        .map_err(|e| anyhow::anyhow!("the window sent a broken image: {e}"))?;
-    if bytes.is_empty() {
-        bail!("the window did not produce a screenshot");
-    }
+    let bytes = desk::shot_bytes(v).map_err(|e| anyhow::anyhow!(e))?;
     let path = match out {
         Some(p) => {
             std::fs::write(p, &bytes)
@@ -193,11 +182,11 @@ pub(crate) async fn state(json_out: bool) -> Result<()> {
             if json_out {
                 println!("{}", json!({ "open": false }));
             } else {
-                println!("Parzi is not open");
+                println!("{}", DeskError::NotOpen);
             }
             return Ok(());
         }
-        Err(DeskError::Failed(e)) => bail!(e),
+        Err(e) => bail!(e),
     };
     if json_out {
         return print_json(&v);
@@ -230,7 +219,7 @@ pub(crate) async fn state(json_out: bool) -> Result<()> {
             .unwrap_or_default();
         println!("folder  {folder}{project}");
     }
-    let active = s(&v, "active");
+    let active = active_tab(&v);
     println!("tabs");
     for t in v
         .get("tabs")
@@ -267,6 +256,16 @@ pub(crate) async fn state(json_out: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The id of the tab in front: `desk.state` names it as a bare id or as an
+/// object with an `id`.
+fn active_tab(v: &Value) -> &str {
+    match v.get("active") {
+        Some(Value::String(id)) => id,
+        Some(a @ Value::Object(_)) => s(a, "id"),
+        _ => "",
+    }
 }
 
 fn ago(secs: u64) -> String {
@@ -460,12 +459,11 @@ pub(crate) async fn watch(session: Option<String>, json_out: bool) -> Result<()>
     .await;
     match got {
         Ok(_) => Ok(()),
-        Err(DeskError::NotOpen) => bail!("Parzi is not open: start it first"),
-        Err(DeskError::Failed(e)) if e.contains("closed the connection") => {
+        Err(DeskError::Closed) => {
             eprintln!("the window closed");
             Ok(())
         }
-        Err(DeskError::Failed(e)) => bail!(e),
+        Err(e) => bail!(e),
     }
 }
 
@@ -473,16 +471,11 @@ pub(crate) async fn watch(session: Option<String>, json_out: bool) -> Result<()>
 pub(crate) async fn approvals(op: &str, body: Value) -> Result<Value> {
     match desk::request(op, body.clone()).await {
         Ok(v) => Ok(v),
-        Err(DeskError::NotOpen) => desk::call_serve(op, body, Duration::from_secs(5))
-            .await
-            .map_err(|e| {
-                if e.contains("not running") {
-                    anyhow::anyhow!("neither Parzi nor parzi serve is running")
-                } else {
-                    anyhow::anyhow!(e)
-                }
-            }),
-        Err(DeskError::Failed(e)) => bail!(e),
+        Err(DeskError::NotOpen) => match desk::call_serve(op, body, Duration::from_secs(5)).await {
+            Err(DeskError::ServeNotRunning) => bail!("neither Parzi nor parzi serve is running"),
+            other => other.map_err(|e| anyhow::anyhow!(e)),
+        },
+        Err(e) => bail!(e),
     }
 }
 
@@ -515,6 +508,16 @@ mod tests {
         assert!(w
             .lines(&json!({ "kind": "reasoning", "session": "x", "text": "hm" }))
             .is_empty());
+    }
+
+    #[test]
+    fn the_tab_in_front_reads_from_either_shape() {
+        assert_eq!(active_tab(&json!({"active": "t1"})), "t1");
+        assert_eq!(
+            active_tab(&json!({"active": {"id": "t2", "kind": "page", "title": "x"}})),
+            "t2"
+        );
+        assert_eq!(active_tab(&json!({"active": null})), "");
     }
 
     #[test]

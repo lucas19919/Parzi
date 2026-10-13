@@ -232,3 +232,139 @@ async fn a_compact_turn_leaves_the_last_run_alone() {
     assert_eq!(after, first, "housekeeping is not the session's run");
     let _ = Arc::strong_count(&orch);
 }
+
+#[tokio::test]
+async fn a_failed_compact_launch_leaves_the_last_run_alone() {
+    home("outcome");
+    let fake = Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            a.session("vendor-compact-fail");
+            a.say("first answer");
+            Ok(TurnEnd::Completed)
+        }),
+    );
+    let (orch, store) = orch(&[fake]);
+    let (meta, _rx) = orch
+        .spawn(
+            "outcome-tests",
+            "build",
+            "claude",
+            "say hi",
+            None,
+            "",
+            "low",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap();
+    let first = recorded(&store, &meta.id).await.last_run.unwrap();
+    // Claude switched off: the /compact run cannot start.
+    let mut cfg = orch.config();
+    cfg.providers.entry("claude".into()).or_default().enabled = false;
+    orch.apply_config(cfg).await;
+    assert!(orch.compact(&meta.id, "").await.is_err());
+    let after = store.get(&meta.id).unwrap().last_run.unwrap();
+    assert_eq!(
+        after, first,
+        "a housekeeping run that failed is not the run"
+    );
+}
+
+#[tokio::test]
+async fn a_run_is_on_record_before_it_reads_as_finished() {
+    home("outcome");
+    let dir = repo();
+    let fake = Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            let at = a.spec.cwd.join("new.txt");
+            a.own_tool(
+                "1",
+                "Write",
+                json!({"file_path": "new.txt"}),
+                || async move {
+                    std::fs::write(at, "made").unwrap();
+                    (true, "ok".to_string())
+                },
+            )
+            .await;
+            a.say("made a file");
+            Ok(TurnEnd::Completed)
+        }),
+    );
+    let (orch, store) = orch(&[fake]);
+    let (meta, mut rx) = orch
+        .spawn(
+            "outcome-tests",
+            "build",
+            "claude",
+            "make a file",
+            None,
+            &dir.path().display().to_string(),
+            "low",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap();
+    // The moment it stops reading as running, its outcome (git's look
+    // included) is kept: the slot was held until then.
+    let mut m = store.get(&meta.id).unwrap();
+    for _ in 0..400 {
+        m = store.get(&meta.id).unwrap();
+        if m.status != parzi_core::store::SessionStatus::Active {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert_eq!(m.branch, "plan/names", "git's look is in");
+    let out = m.last_run.expect("on record when it settled");
+    assert_eq!(out.summary, "made a file");
+    assert!(
+        out.files.iter().any(|f| f.path == "new.txt"),
+        "{:?}",
+        out.files
+    );
+    // And the Done the window hears comes after both.
+    while let Some(ev) = rx.recv().await {
+        if matches!(ev, parzi_runtime::handler::RunEvent::Done { .. }) {
+            let now = store.get(&meta.id).unwrap();
+            assert_eq!(now.status, parzi_core::store::SessionStatus::Done);
+            assert!(now.last_run.is_some());
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_relative_folder_is_refused_before_the_agent_starts() {
+    home("outcome");
+    let fake = Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            a.say("ran");
+            Ok(TurnEnd::Completed)
+        }),
+    );
+    let (orch, store) = orch(std::slice::from_ref(&fake));
+    let err = orch
+        .spawn(
+            "outcome-tests",
+            "build",
+            "claude",
+            "make a file",
+            None,
+            ".",
+            "low",
+            vec![],
+            None,
+        )
+        .await
+        .expect_err("`.` is Parzi's own folder, not the person's")
+        .to_string();
+    assert!(err.contains("not a full path"), "{err}");
+    assert!(fake.seen().is_empty(), "the agent never started");
+    let _ = store;
+}
