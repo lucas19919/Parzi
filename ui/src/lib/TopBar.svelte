@@ -11,7 +11,6 @@
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
-  export let activeTitle = "";
   export let sessionLanes: Record<string, string> = {};
   export let tabsVisible = true;
 
@@ -56,7 +55,7 @@
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<header class="topbar" on:mousedown={startWindowDrag}>
+<header class="topbar" class:side={!tabsVisible} on:mousedown={startWindowDrag}>
   <div class="left">
     <div class="menu">
       <button
@@ -116,7 +115,10 @@
         on:newTab={() => dispatch("newTab")}
       />
     {:else}
-      <span class="top-title">{activeTitle || "New session"}</span>
+      <!-- Sidebar layout: the tabs live in the sidebar, New tab sits here with Home. -->
+      <button class="icon-btn" use:tooltip={"New tab (Ctrl+T)"} on:click={() => dispatch("newTab")}>
+        <Icon name="plus" />
+      </button>
     {/if}
   </div>
 
@@ -134,6 +136,10 @@
     padding-left: 10px;
     user-select: none;
   }
+  /* Over the sidebar: the icons line up with the tab icons below them. */
+  .topbar.side {
+    padding-left: 12px;
+  }
   .left {
     display: flex;
     align-items: center;
@@ -141,19 +147,6 @@
     height: 100%;
     flex: 1;
     min-width: 0;
-  }
-  .top-title {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    text-align: center;
-    font-size: var(--fs-md);
-    font-weight: 600;
-    color: var(--muted);
-    user-select: none;
-    pointer-events: none;
   }
   .menu {
     position: relative;

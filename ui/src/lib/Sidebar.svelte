@@ -1,9 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import Icon from "./Icon.svelte";
   import TabBar from "./TabBar.svelte";
   import { isSystemTab, type Tab } from "./tabs";
-  import { tooltip } from "./tooltip";
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
@@ -13,7 +11,6 @@
     select: { id: string };
     close: { id: string };
     move: { id: string; to: number };
-    newTab: void;
   }>();
 
   $: workTabs = tabs.filter((t) => !isSystemTab(t));
@@ -32,13 +29,6 @@
 </script>
 
 <aside class="sidebar">
-  <div class="side-head">
-    <button class="icon-btn wide" use:tooltip={"New tab (Ctrl+T)"} on:click={() => dispatch("newTab")}>
-      <Icon name="plus" />
-      <span>New tab</span>
-    </button>
-  </div>
-
   <div class="side-tabs">
     <TabBar
       tabs={workTabs}
@@ -53,7 +43,6 @@
 
   {#if systemTabs.length}
     <div class="side-foot">
-      <div class="sys-label">System</div>
       <TabBar
         tabs={systemTabs}
         {activeTabId}
@@ -68,10 +57,14 @@
 </aside>
 
 <style>
+  /* One glass column from the window's top edge down: the top bar's menu,
+     Home and New tab buttons sit on it (the top bar is drawn above). The
+     negative margin lifts it under the 38px top bar; stretch keeps it full height. */
   .sidebar {
     width: 204px;
     flex: none;
-    height: 100%;
+    margin-top: -38px;
+    padding-top: 38px;
     display: flex;
     flex-direction: column;
     border-right: 1px solid var(--line);
@@ -80,54 +73,17 @@
     backdrop-filter: var(--glass-blur);
     user-select: none;
   }
-  .side-head {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex: none;
-    padding: 8px 8px 4px;
-  }
-  .icon-btn {
-    height: 28px;
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 0 8px;
-    min-width: 28px;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    color: var(--muted);
-    font-size: var(--fs-sm);
-    cursor: pointer;
-  }
-  .icon-btn.wide {
-    flex: 1;
-  }
-  .icon-btn:hover {
-    background: var(--panel);
-    border-color: var(--line);
-    color: var(--text);
-  }
   .side-tabs {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 4px 8px 8px;
+    padding: 8px 8px 4px;
   }
+  /* Settings, Brain and History stay at the bottom, set apart by the space alone. */
   .side-foot {
     flex: none;
     max-height: 40%;
     overflow-y: auto;
     padding: 4px 8px 8px;
-    border-top: 1px solid var(--line);
-  }
-  .sys-label {
-    margin: 6px 4px 2px;
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    color: var(--muted);
   }
 </style>
