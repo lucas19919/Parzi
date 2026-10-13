@@ -188,6 +188,13 @@ test("axes tick at round numbers and start at zero unless the data is far off it
   assert.deepEqual(niceTicks(980, 1010), [980, 990, 1000, 1010]);
   assert.deepEqual(niceTicks(0, 0), [0, 1]);
   assert.deepEqual(niceTicks(0, 1, 2), [0, 0.5, 1]);
+  // Huge values over a small range: a running sum would never move past
+  // the start (v + step === v) and freeze the window.
+  const big = niceTicks(1.7e18, 1.7e18 + 300);
+  assert.ok(big.length >= 2 && big.length <= 51);
+  assert.ok(big.every((t, i) => i === 0 || t > big[i - 1]));
+  assert.ok(big[0] <= 1.7e18 && big[big.length - 1] >= 1.7e18 + 256);
+  assert.ok(niceTicks(-Number.MAX_VALUE, Number.MAX_VALUE).length >= 2);
   assert.equal(axisFloor(4, 38), 0);
   assert.equal(axisFloor(980, 1010), 980);
   assert.equal(axisFloor(-5, 10), -5);

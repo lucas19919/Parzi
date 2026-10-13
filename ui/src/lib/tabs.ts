@@ -1,5 +1,3 @@
-import type { PlanQuote } from "./api";
-
 export type ComposerMode = "search" | "build" | "work";
 type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview";
 
@@ -9,8 +7,6 @@ export interface TabComposerState {
   model: string;
   effort: string;
   attachments: string[];
-  // Plan items quoted into the next message (at most 4).
-  quotes?: PlanQuote[];
   // A new session here starts on the linked server.
   remote?: boolean;
   // The server folder for that new session ("" = scratch there).
@@ -19,6 +15,25 @@ export interface TabComposerState {
 
 function defaultComposer(): TabComposerState {
   return { input: "", mode: "build", model: "", effort: "medium", attachments: [] };
+}
+
+const MODES: Record<string, ComposerMode> = { search: "search", build: "build", work: "work", code: "build", research: "work" };
+
+/// A composer as a saved tab brings it back: anything missing or of the
+/// wrong type (an older build's names, a hand-edited file) takes the
+/// default, so the composer never sees an undefined draft or mode.
+export function restoreComposer(saved: unknown): TabComposerState {
+  const c = defaultComposer();
+  if (!saved || typeof saved !== "object") return c;
+  const o = saved as Record<string, unknown>;
+  if (typeof o.input === "string") c.input = o.input;
+  if (typeof o.mode === "string" && MODES[o.mode]) c.mode = MODES[o.mode];
+  if (typeof o.model === "string" && o.model !== "auto") c.model = o.model;
+  if (typeof o.effort === "string" && o.effort) c.effort = o.effort;
+  if (Array.isArray(o.attachments)) c.attachments = o.attachments.filter((a): a is string => typeof a === "string");
+  if (typeof o.remote === "boolean") c.remote = o.remote;
+  if (typeof o.remoteCwd === "string") c.remoteCwd = o.remoteCwd;
+  return c;
 }
 
 export interface Tab {
@@ -66,7 +81,7 @@ export function brainTab(): Tab {
 const RESTORED = new Set(["session", "page", "brain", "history"]);
 
 /// A saved tab as it comes back, or null for kinds that don't reopen (the
-/// Work and Tasks tabs of earlier builds are gone: the plan panel took over).
+/// Work and Tasks tabs of earlier builds are gone).
 export function restoreTab<T extends { kind?: unknown; title?: unknown }>(t: T): T | null {
   return typeof t.kind === "string" && RESTORED.has(t.kind) ? t : null;
 }
@@ -103,9 +118,4 @@ export function isExplicitUrl(raw: string): boolean {
 export function folderName(path: string): string {
   const parts = path.replace(/[/\\]+$/, "").split(/[/\\]/);
   return parts[parts.length - 1] || path;
-}
-
-/// Brain/history/settings/preview live apart from working tabs.
-export function isSystemTab(t: Tab): boolean {
-  return t.kind !== "session" && t.kind !== "page";
 }

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { arrange, dropGone, isWidgetNote, moveBy, moveTo, vizBlock, widgetTitle, withShown } from "../src/lib/homeLayout.ts";
+import { arrange, CUT, fades, isWidgetNote, mergeOrder, moveBy, moveTo, nearestSlot, PEEK, peekHeight, rowsOf, vizBlock, widgetTitle, withShown } from "../src/lib/homeLayout.ts";
 
 const BUILT_IN = ["recent", "agents", "projects", "git", "server", "sites"];
 
@@ -34,12 +34,62 @@ test("dragging among shown cards leaves hidden ones in their places", () => {
   assert.deepEqual(withShown(["a", "b"], ["a", "b"]), ["a", "b"]);
 });
 
-test("custom widgets that are gone leave the order and the hidden list; built-ins stay", () => {
-  const list = ["git", "widgets/prs.md", "widgets/old.md", "server"];
-  assert.deepEqual(dropGone(list, ["widgets/prs.md"]), ["git", "widgets/prs.md", "server"]);
-  // Unchanged lists come back as they were (no store write).
-  const same = ["git", "widgets/prs.md"];
-  assert.equal(dropGone(same, ["widgets/prs.md"]), same);
+test("a card dropped after its widget was deleted loses no other card", () => {
+  // "w" was deleted while "a" was dragged past it: the live order lacks it.
+  assert.deepEqual(withShown(["a", "b", "c"], ["b", "w", "a", "c"]), ["b", "a", "c"]);
+  assert.deepEqual(withShown(["a", "b", "c"], ["c", "c", "a", "b"]), ["c", "a", "b"]);
+});
+
+test("a new order keeps custom widgets not read yet next to the card they followed", () => {
+  const saved = ["recent", "widgets/prs.md", "agents", "git"];
+  // The widget's note isn't read yet, so Home only has the built-ins.
+  assert.deepEqual(mergeOrder(saved, ["agents", "recent", "git"]), ["agents", "recent", "widgets/prs.md", "git"]);
+  // First in the saved order: it stays first.
+  assert.deepEqual(mergeOrder(["widgets/a.md", "git", "recent"], ["recent", "git"]), ["widgets/a.md", "recent", "git"]);
+  assert.deepEqual(mergeOrder([], ["git", "recent"]), ["git", "recent"]);
+});
+
+test("a dragged card lands in the slot nearest its centre", () => {
+  const slots = [0, 1, 2, 3].map((i) => ({ left: (i % 2) * 312, top: Math.floor(i / 2) * 184, width: 300, height: 172 }));
+  // Over its own slot, then most of the way into the next one.
+  assert.equal(nearestSlot(slots, 150, 86), 0);
+  assert.equal(nearestSlot(slots, 150 + 200, 86), 1);
+  assert.equal(nearestSlot(slots, 150, 86 + 120), 2);
+  assert.equal(nearestSlot([], 0, 0), -1);
+});
+
+test("cards in a row share a row", () => {
+  assert.deepEqual(rowsOf([{ top: 16, height: 172 }, { top: 16, height: 172 }, { top: 200, height: 120 }, { top: 200, height: 172 }]), [
+    { top: 16, bottom: 188 },
+    { top: 200, bottom: 372 },
+  ]);
+});
+
+test("cards that overflow stop partway down a row, so the next ones peek out", () => {
+  const rows = [
+    { top: 16, bottom: 188 },
+    { top: 200, bottom: 372 },
+    { top: 384, bottom: 556 },
+  ];
+  // Everything fits: the list keeps all the room.
+  assert.equal(peekHeight(700, rows, 620), 700);
+  // The window already shows enough of the second row.
+  assert.equal(peekHeight(280, rows, 620), 280);
+  // Only a sliver of the third row (or none, in the gap) would show: the
+  // second row is cut instead.
+  assert.equal(peekHeight(384 + PEEK - 10, rows, 620), 372 - CUT);
+  assert.equal(peekHeight(378, rows, 620), 372 - CUT);
+  // The cards all fit, only the Customize row doesn't: nothing to peek.
+  assert.equal(peekHeight(560, rows, 620), 560);
+  // A first row cut short has no row above it to cut.
+  assert.equal(peekHeight(40, rows, 620), 40);
+});
+
+test("the list's fades: the top one once scrolled, the bottom deeper while more is below", () => {
+  assert.deepEqual(fades(0, 400, 400), { top: 0, bottom: 32 });
+  assert.deepEqual(fades(0, 800, 400), { top: 0, bottom: 56 });
+  assert.deepEqual(fades(120, 800, 400), { top: 16, bottom: 56 });
+  assert.deepEqual(fades(400, 800, 400), { top: 16, bottom: 32 });
 });
 
 test("widget notes live under widgets/ and hold a viz block", () => {

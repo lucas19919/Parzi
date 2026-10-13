@@ -5,7 +5,7 @@
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
   import type { SessionMeta } from "./api";
-  import { bookmarks, clearHistory, faviconUrl, history, removeBookmark, removeVisit, type Bookmark, type Visit } from "./browserData";
+  import { bookmarks, clearHistory, faviconUrl, history, removeBookmark, removeVisit, type Bookmark } from "./browserData";
   import { downloads, type Download } from "./api";
   import { downloadList } from "./browserState";
   import { downloadNote, downloadShare } from "./pageRules";

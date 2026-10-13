@@ -44,18 +44,11 @@ const MAP = {
   image: "image",
   chart: "graph",
   branch: "git-branch",
-  panel: "split-view",
   server: "server",
   alert: "alert",
   download: "download",
   external: "link-external",
   browser: "browser",
-  plan: "project-roadmap",
-  pr: "git-pull-request",
-  send: "paper-airplane",
-  desktop: "device-desktop",
-  checkCircle: "check-circle",
-  xCircle: "x-circle",
 };
 
 const out = [];

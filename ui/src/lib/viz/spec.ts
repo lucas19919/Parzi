@@ -186,11 +186,22 @@ export function niceTicks(lo: number, hi: number, count = 4): number[] {
   const raw = (hi - lo) / Math.max(1, count);
   const mag = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
+  if (!(step > 0) || !Number.isFinite(step)) return [lo, hi];
   const start = Math.floor(lo / step + 1e-9) * step;
   const out: number[] = [];
-  for (let v = start; v < hi + step - 1e-9; v += step) out.push(+v.toFixed(10));
-  return out;
+  // Each tick from its index, not by adding a step: past 2^53 a small step
+  // can be lost to rounding (v + step === v) and a running sum never ends.
+  // Rounded-away duplicates are dropped, and a few ticks are plenty.
+  for (let i = 0; i <= MAX_TICKS; i++) {
+    const v = start + i * step;
+    if (v >= hi + step - 1e-9) break;
+    const t = +v.toFixed(10);
+    if (out[out.length - 1] !== t) out.push(t);
+  }
+  return out.length >= 2 ? out : [lo, hi];
 }
+
+const MAX_TICKS = 50;
 
 // The lower bound a value axis starts at: zero unless the data sits far
 // from it (a line of 980 to 1010 would be a flat stripe otherwise).

@@ -11,6 +11,7 @@ export interface TipRow {
 
 let tip: HTMLDivElement | null = null;
 let shownAt = 0;
+let listening = false;
 
 // The chart scrolls away under a fixed tip: drop it instead (but not for
 // the scroll that brought the chart under the pointer a moment ago).
@@ -25,7 +26,8 @@ function el(): HTMLDivElement {
   tip.setAttribute("role", "tooltip");
   tip.hidden = true;
   document.body.appendChild(tip);
-  window.addEventListener("scroll", onScroll, true);
+  if (!listening) window.addEventListener("scroll", onScroll, true);
+  listening = true;
   return tip;
 }
 

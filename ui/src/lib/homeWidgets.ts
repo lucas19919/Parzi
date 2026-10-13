@@ -1,7 +1,7 @@
 import { writable } from "svelte/store";
 import { brain } from "./api";
 import { persisted } from "./browserData";
-import { dropGone, isCustomId, isWidgetNote, vizBlock, widgetTitle } from "./homeLayout";
+import { isCustomId, isWidgetNote, vizBlock, widgetTitle } from "./homeLayout";
 import { parseViz } from "./viz/spec";
 
 // The cards under the composer on Home, in the order they show by default.
@@ -20,16 +20,19 @@ export type HomeWidget = (typeof HOME_WIDGETS)[number]["id"];
 export type WidgetId = HomeWidget | string;
 
 // Which cards are hidden, and the order they go in: per-device
-// preferences, like the layout. The order may be empty (the default).
+// preferences. The order may be empty (the default). Custom ids stay in
+// both even while their note can't be read (the vault may not be ready),
+// so a widget keeps its place and its hidden state.
 export const hiddenWidgets = persisted<WidgetId[]>("parzi.home.hidden.v1", []);
 export const widgetOrder = persisted<WidgetId[]>("parzi.home.order.v1", []);
 
-// Cards that are gone (Tasks, then Work) leave the list. Custom ones wait
-// until the notes are read (dropGone below).
-hiddenWidgets.update((all) => {
-  const known = all.filter((id) => isCustomId(id) || HOME_WIDGETS.some((w) => w.id === id));
-  return known.length === all.length ? all : known;
-});
+// Built-in cards that are gone (Tasks, then Work) leave both lists.
+const known = (all: WidgetId[]) => {
+  const kept = Array.isArray(all) ? all.filter((id) => typeof id === "string" && (isCustomId(id) || HOME_WIDGETS.some((w) => w.id === id))) : [];
+  return kept.length === all?.length ? all : kept;
+};
+hiddenWidgets.update(known);
+widgetOrder.update(known);
 
 export function toggleWidget(id: WidgetId) {
   hiddenWidgets.update((all) => (all.includes(id) ? all.filter((x) => x !== id) : [...all, id]));
@@ -78,9 +81,6 @@ async function readCustomWidgets() {
       })
       .sort((a, b) => a.id.localeCompare(b.id));
     customWidgets.set(list);
-    const ids = list.map((w) => w.id);
-    widgetOrder.update((o) => dropGone(o, ids));
-    hiddenWidgets.update((h) => dropGone(h, ids));
   } catch {
     // The vault can't be read right now: keep the cards Home has.
   }

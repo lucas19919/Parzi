@@ -19,10 +19,9 @@ export interface DeskCmd {
   url?: string;
   rev?: number;
   owner?: string | null;
-  /** open, show: switch to it. Agents' pages open behind unless they ask. */
+  /** open, show: switch to it; false opens it behind the current tab (agents' pages and views, unless they ask). */
   focus?: boolean;
-  // "plan" opens the plan panel; older CLIs still say "work" or "tasks".
-  what?: "session" | "settings" | "brain" | "history" | "plan" | "work" | "tasks" | "home";
+  what?: "session" | "settings" | "brain" | "history" | "home";
   title?: string;
   section?: string;
   path?: string;

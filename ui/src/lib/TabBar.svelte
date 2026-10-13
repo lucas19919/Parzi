@@ -9,7 +9,6 @@
   export let tabs: Tab[] = [];
   export let activeTabId = "";
   export let sessionLanes: Record<string, string> = {};
-  export let vertical = false;
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -23,7 +22,7 @@
   let strip: HTMLElement;
   const els: Record<string, HTMLElement> = {};
   let broken = new Set<string>();
-  let press: { id: string; x: number; y: number; grab: number; pointer: number } | null = null;
+  let press: { id: string; x: number; grab: number; pointer: number } | null = null;
   let dragId = "";
   let dragX = 0;
   let order: string[] | null = null;
@@ -104,35 +103,30 @@
     const el = els[id];
     if (!el) return;
     const r = el.getBoundingClientRect();
-    press = vertical
-      ? { id, x: e.clientX, y: e.clientY, grab: e.clientY - r.top, pointer: e.pointerId }
-      : { id, x: e.clientX, y: e.clientY, grab: e.clientX - r.left, pointer: e.pointerId };
+    press = { id, x: e.clientX, grab: e.clientX - r.left, pointer: e.pointerId };
   }
 
   function onMove(e: PointerEvent) {
     if (!press) return;
     if (!dragId) {
-      const moved = vertical ? Math.abs(e.clientY - press.y) : Math.abs(e.clientX - press.x);
-      if (moved < DRAG_START) return;
+      if (Math.abs(e.clientX - press.x) < DRAG_START) return;
       dragId = press.id;
       order = tabs.map((t) => t.id);
       try {
         els[dragId]?.setPointerCapture(press.pointer);
       } catch {}
     }
-    void follow(vertical ? e.clientY : e.clientX);
+    void follow(e.clientX);
   }
 
   async function follow(client: number) {
     const el = els[dragId];
     if (!el || !order || !press) return;
     const box = strip.getBoundingClientRect();
-    const size = (id: string) => (els[id] ? (vertical ? els[id].offsetHeight : els[id].offsetWidth) : 0);
-    const start = (id: string) => (els[id] ? (vertical ? els[id].offsetTop : els[id].offsetLeft) : 0);
+    const size = (id: string) => els[id]?.offsetWidth ?? 0;
+    const start = (id: string) => els[id]?.offsetLeft ?? 0;
     const end = Math.max(...order.map((id) => (els[id] ? start(id) + size(id) : 0)));
-    const scroll = vertical ? strip.scrollTop : strip.scrollLeft;
-    const origin = vertical ? box.top : box.left;
-    const pos = Math.max(0, Math.min(client - origin + scroll - press.grab, end - size(dragId)));
+    const pos = Math.max(0, Math.min(client - box.left + strip.scrollLeft - press.grab, end - size(dragId)));
     const far = pos + size(dragId);
     const mine = order.indexOf(dragId);
     const before = order.filter((id, i) => {
@@ -162,7 +156,7 @@
 <!-- A tablist may only own tabs, so each tab is a plain pill holding the
      role="tab" element and, beside it, pointer-only caret and close
      buttons (hidden from assistive tech; Ctrl+W closes the active tab). -->
-<div class="tabs" class:vertical role="tablist" bind:this={strip}>
+<div class="tabs" role="tablist" bind:this={strip}>
   {#each groups.lone as tab (tab.id)}
     {@const lane = laneOf(tab)}
     {@const attached = tab.kind === "session" && tab.sessionId ? (groups.kids.get(tab.sessionId) ?? []) : []}
@@ -175,7 +169,7 @@
           class="tab"
           class:active={tab.id === activeTabId}
           class:dragging={tab.id === dragId}
-          style={tab.id === dragId ? `transform: ${vertical ? "translateY" : "translateX"}(${dragX}px)` : ""}
+          style={tab.id === dragId ? `transform: translateX(${dragX}px)` : ""}
           on:pointerdown={(e) => onDown(e, tab.id)}
           on:auxclick={(e) => onAux(e, tab.id)}
         >
@@ -259,7 +253,7 @@
       class="tab"
       class:active={tab.id === activeTabId}
       class:dragging={tab.id === dragId}
-      style={tab.id === dragId ? `transform: ${vertical ? "translateY" : "translateX"}(${dragX}px)` : ""}
+      style={tab.id === dragId ? `transform: translateX(${dragX}px)` : ""}
       on:pointerdown={(e) => onDown(e, tab.id)}
       on:auxclick={(e) => onAux(e, tab.id)}
     >
@@ -310,11 +304,9 @@
     {/if}
   {/each}
 </div>
-{#if !vertical}
-  <button class="new" use:tooltip={"New tab (Ctrl+T)"} on:click={() => dispatch("newTab")}>
-    <Icon name="plus" />
-  </button>
-{/if}
+<button class="new" use:tooltip={"New tab (Ctrl+T)"} on:click={() => dispatch("newTab")}>
+  <Icon name="plus" />
+</button>
 
 <style>
   .tabs {
@@ -324,25 +316,6 @@
     gap: 4px;
     min-width: 0;
     overflow-x: auto;
-  }
-  .tabs.vertical {
-    flex-direction: column;
-    align-items: stretch;
-    overflow-x: hidden;
-    overflow-y: auto;
-  }
-  .tabs.vertical .tab {
-    max-width: none;
-    width: 100%;
-    flex: none;
-  }
-  .tabs.vertical .group {
-    width: 100%;
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .tabs.vertical .tab.sub {
-    max-width: none;
   }
   /* Equal widths keep the strip's rhythm even; the fill is the only state. */
   .tab {

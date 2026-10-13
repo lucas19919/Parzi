@@ -29,8 +29,6 @@ export interface RemoteStatus {
 // A session on the linked server is an ordinary session whose id starts
 // with "r:"; every session call routes it there (src-tauri/src/remote.rs).
 export const isRemote = (id: string | null | undefined): boolean => !!id && (id.startsWith("r:") || id.startsWith("m:"));
-// A session another device ran: read here, continued on the server.
-export const isMirror = (id: string | null | undefined): boolean => !!id && id.startsWith("m:");
 
 /** The linked server, or null. Loaded once at startup, kept fresh by setup and unlink. */
 export const remoteInfo = writable<RemoteInfo | null>(null);
@@ -58,7 +56,10 @@ export async function loadRemoteInfo(): Promise<RemoteInfo | null> {
 }
 
 export async function refreshRemoteBoard(refresh = false): Promise<ProviderStatus[]> {
-  const all = await remote.providers(refresh);
+  const got = await remote.providers(refresh);
+  // An older server may answer with nothing: an empty board, not a crash
+  // in every list that reads it.
+  const all = Array.isArray(got) ? got : [];
   remoteBoard.set(all);
   return all;
 }

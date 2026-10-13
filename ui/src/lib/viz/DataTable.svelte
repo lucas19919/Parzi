@@ -6,13 +6,17 @@
   export let rows: string[][] = [];
 </script>
 
-<table class="viz-data">
-  {#if caption}<caption>{caption}</caption>{/if}
-  <thead><tr>{#each head as h}<th scope="col">{h}</th>{/each}</tr></thead>
-  <tbody>
-    {#each rows as r}<tr>{#each r as c, i}{#if i === 0}<th scope="row">{c}</th>{:else}<td>{c}</td>{/if}{/each}</tr>{/each}
-  </tbody>
-</table>
+<!-- Hidden by its wrapper: a table ignores height and overflow, so hiding
+     the table itself left its full height to scroll through. -->
+<div class="viz-data">
+  <table>
+    {#if caption}<caption>{caption}</caption>{/if}
+    <thead><tr>{#each head as h}<th scope="col">{h}</th>{/each}</tr></thead>
+    <tbody>
+      {#each rows as r}<tr>{#each r as c, i}{#if i === 0}<th scope="row">{c}</th>{:else}<td>{c}</td>{/if}{/each}</tr>{/each}
+    </tbody>
+  </table>
+</div>
 
 <style>
   .viz-data {
