@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use common::*;
 use parzi_core::config::ParziConfig;
-use parzi_core::store::{Event, SessionStore};
+use parzi_core::store::{Event, RunEndKind, SessionStatus, SessionStore};
 use parzi_providers::{PermissionDecision, TurnEnd};
-use parzi_runtime::handler::RunSink;
+use parzi_runtime::handler::{RunSink, SpawnSpec};
 use parzi_runtime::inter::{InterKind, InterSessionMessage};
 use parzi_runtime::mcp::McpManager;
 use parzi_runtime::toolhost::{ToolHost, ToolHostParts};
@@ -122,16 +122,18 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
     let parent = store.create("boss", "t", "", "claude/model").unwrap();
     let h = orch.harness();
     let sub_id = id_of(
-        &h.spawn_session(
+        &h.spawn(
             &parent.id,
-            "research",
-            "look into x",
-            true,
-            None,
-            None,
-            false,
-            None,
-            None,
+            SpawnSpec {
+                title: "research".into(),
+                prompt: "look into x".into(),
+                is_subsession: true,
+                model: None,
+                lane: None,
+                wait: false,
+                mode_override: None,
+                effort: None,
+            },
         )
         .await
         .unwrap(),
@@ -147,16 +149,18 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
         .iter()
         .any(|m| m.id == sub_id));
     let full_id = id_of(
-        &h.spawn_session(
+        &h.spawn(
             &parent.id,
-            "side quest",
-            "do y",
-            false,
-            Some("claude/other".into()),
-            None,
-            false,
-            None,
-            None,
+            SpawnSpec {
+                title: "side quest".into(),
+                prompt: "do y".into(),
+                is_subsession: false,
+                model: Some("claude/other".into()),
+                lane: None,
+                wait: false,
+                mode_override: None,
+                effort: None,
+            },
         )
         .await
         .unwrap(),
@@ -172,16 +176,18 @@ async fn spawn_wait_collects_child_reply() {
     let parent = store.create("boss", "t", "", "claude/model").unwrap();
     let out = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        orch.harness().spawn_session(
+        orch.harness().spawn(
             &parent.id,
-            "research",
-            "look into x",
-            true,
-            None,
-            None,
-            true,
-            None,
-            None,
+            SpawnSpec {
+                title: "research".into(),
+                prompt: "look into x".into(),
+                is_subsession: true,
+                model: None,
+                lane: None,
+                wait: true,
+                mode_override: None,
+                effort: None,
+            },
         ),
     )
     .await
@@ -347,16 +353,18 @@ async fn read_and_list_inspect_sessions() {
     let parent = store.create("boss", "t", "", "claude/model").unwrap();
     let h = orch.harness();
     let sub_id = id_of(
-        &h.spawn_session(
+        &h.spawn(
             &parent.id,
-            "research",
-            "look into x",
-            true,
-            None,
-            None,
-            false,
-            None,
-            None,
+            SpawnSpec {
+                title: "research".into(),
+                prompt: "look into x".into(),
+                is_subsession: true,
+                model: None,
+                lane: None,
+                wait: false,
+                mode_override: None,
+                effort: None,
+            },
         )
         .await
         .unwrap(),
@@ -384,32 +392,36 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
     let parent = store.create("boss", "t", "", "claude/model").unwrap();
     let h = orch.harness();
     let first_id = id_of(
-        &h.spawn_session(
+        &h.spawn(
             &parent.id,
-            "one",
-            "first work",
-            true,
-            None,
-            None,
-            false,
-            None,
-            None,
+            SpawnSpec {
+                title: "one".into(),
+                prompt: "first work".into(),
+                is_subsession: true,
+                model: None,
+                lane: None,
+                wait: false,
+                mode_override: None,
+                effort: None,
+            },
         )
         .await
         .unwrap(),
     );
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let second = h
-        .spawn_session(
+        .spawn(
             &parent.id,
-            "two",
-            "second work",
-            true,
-            None,
-            None,
-            true,
-            None,
-            None,
+            SpawnSpec {
+                title: "two".into(),
+                prompt: "second work".into(),
+                is_subsession: true,
+                model: None,
+                lane: None,
+                wait: true,
+                mode_override: None,
+                effort: None,
+            },
         )
         .await
         .unwrap();
@@ -532,4 +544,55 @@ async fn project_create_makes_a_home() {
         folder.display().to_string(),
         "session moved there"
     );
+}
+
+#[tokio::test]
+async fn a_child_that_cannot_start_fails_the_call_instead_of_promising_a_report() {
+    let (orch, store) = team(4, answer());
+    let parent = store.create("boss", "t", "", "claude/model").unwrap();
+    let h = orch.harness();
+    for wait in [false, true] {
+        let err = h
+            .spawn(
+                &parent.id,
+                SpawnSpec {
+                    title: "nowhere".into(),
+                    prompt: "do x".into(),
+                    is_subsession: true,
+                    model: Some("nobody/x".into()),
+                    lane: None,
+                    wait,
+                    mode_override: None,
+                    effort: None,
+                },
+            )
+            .await
+            .expect_err("a launch that failed is no queued run")
+            .to_string();
+        assert!(err.contains("did not start"), "{err}");
+        assert!(err.contains("not a provider"), "the reason: {err}");
+    }
+    // The children say so too, and nobody waits on their reports.
+    let kids = store.list_children(&parent.id).unwrap();
+    assert_eq!(kids.len(), 2);
+    for k in &kids {
+        assert_eq!(k.status, SessionStatus::Idle);
+        let ended = k.last_run.as_ref().map(|o| o.end);
+        assert_eq!(ended, Some(RunEndKind::NotStarted));
+    }
+
+    // A message to a session whose agent is switched off fails the same way.
+    let child = store
+        .create_with_parent("helper", "t", "", "claude/model", Some(&parent.id))
+        .unwrap();
+    let mut cfg = orch.config();
+    cfg.providers.entry("claude".into()).or_default().enabled = false;
+    orch.apply_config(cfg).await;
+    let err = h
+        .send_message(&parent.id, &child.id, "hello", InterKind::Text, false, None)
+        .await
+        .expect_err("not started")
+        .to_string();
+    assert!(err.contains("did not start"), "{err}");
+    assert!(err.contains("switched off"), "{err}");
 }

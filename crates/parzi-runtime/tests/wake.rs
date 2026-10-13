@@ -244,3 +244,102 @@ async fn a_child_the_person_stopped_wakes_nobody() {
         rig.reports()
     );
 }
+
+struct AllowAll;
+
+#[async_trait::async_trait]
+impl parzi_runtime::tools::Approver for AllowAll {
+    async fn approve(
+        &self,
+        _call: &parzi_runtime::tools::ToolCallInfo,
+    ) -> parzi_runtime::tools::Approval {
+        parzi_runtime::tools::Approval::Allow
+    }
+}
+
+#[tokio::test]
+async fn a_wake_asks_the_person_only_for_a_session_that_had_them() {
+    home("wake");
+    let asked: Arc<Mutex<Vec<(String, PermissionDecision)>>> = Arc::default();
+    let log = asked.clone();
+    let fake = Fake::new(
+        "claude",
+        script(move |a: Agent| {
+            let log = log.clone();
+            async move {
+                let prompt = a.spec.prompt.clone();
+                if prompt.contains("<parzi:inter") {
+                    // A write outside its folder asks, even in Auto.
+                    let away = std::env::temp_dir().join("parzi-wake-elsewhere.txt");
+                    let away = away.display().to_string();
+                    let d = a.ask("Write", json!({"file_path": away}), &[&away]).await;
+                    let who = if prompt.contains("Part A") { "A" } else { "B" };
+                    log.lock().unwrap().push((who.to_string(), d));
+                    a.say("woken");
+                    return Ok(TurnEnd::Completed);
+                }
+                if prompt.contains("quick part") {
+                    a.say("part done");
+                    return Ok(TurnEnd::Completed);
+                }
+                let title = if prompt.contains("lead A") {
+                    "Part A"
+                } else {
+                    "Part B"
+                };
+                let (ok, out) = a
+                    .parzi(
+                        "session.spawn",
+                        json!({"title": title, "prompt": "quick part", "wait": false}),
+                    )
+                    .await;
+                assert!(ok, "{out}");
+                a.say("started");
+                Ok(TurnEnd::Completed)
+            }
+        }),
+    );
+    let mut cfg = ParziConfig::default();
+    cfg.lanes.default_mode = "auto".into();
+    cfg.orchestrator.max_concurrent = 8;
+    let (orch, store) = orch_with(cfg, &[fake]);
+    orch.set_approver(Arc::new(AllowAll));
+    // A, sent by the person, has someone to ask; B, like a session an agent
+    // started, has nobody.
+    for (prompt, approver) in [
+        (
+            "lead A",
+            Some(Arc::new(AllowAll) as Arc<dyn parzi_runtime::tools::Approver>),
+        ),
+        ("lead B", None),
+    ] {
+        orch.spawn(
+            "wake-approver",
+            "build",
+            "claude",
+            prompt,
+            approver,
+            "",
+            "low",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap();
+    }
+    for _ in 0..300 {
+        if asked.lock().unwrap().len() >= 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let mut got = asked.lock().unwrap().clone();
+    got.sort_by(|a, b| a.0.cmp(&b.0));
+    assert_eq!(got.len(), 2, "both woke: {got:?}");
+    assert_eq!(got[0], ("A".into(), PermissionDecision::Allow));
+    assert!(
+        matches!(got[1], (ref w, PermissionDecision::Deny(_)) if w == "B"),
+        "a session that never had the person's approver is not given it: {got:?}"
+    );
+    let _ = store;
+}

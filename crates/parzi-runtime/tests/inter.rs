@@ -243,3 +243,90 @@ async fn reads_and_messages_stop_at_the_project_boundary() {
     assert!(!list.contains(&theirs.id), "{list}");
     orch.kill(&sibling.id).await.ok();
 }
+
+#[tokio::test]
+async fn messages_left_at_the_turn_cap_reach_the_next_run() {
+    home("inter");
+    let own: Arc<std::sync::Mutex<Option<String>>> = Arc::default();
+    let me = own.clone();
+    let sent = Arc::new(std::sync::Mutex::new(0));
+    let fake = Fake::new(
+        "claude",
+        script(move |a: Agent| {
+            let (me, sent) = (me.clone(), sent.clone());
+            async move {
+                a.session("vendor-loop");
+                if a.spec.prompt.contains("continue now") {
+                    a.say("done");
+                    return Ok(TurnEnd::Completed);
+                }
+                let mut id = None;
+                for _ in 0..100 {
+                    id = me.lock().unwrap().clone();
+                    if id.is_some() {
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+                let n = {
+                    let mut n = sent.lock().unwrap();
+                    *n += 1;
+                    *n
+                };
+                // Every turn leaves this session a message for the next.
+                let (ok, out) = a
+                    .parzi(
+                        "session.send_message",
+                        serde_json::json!({"session_id": id.unwrap(), "message": format!("ping {n}")}),
+                    )
+                    .await;
+                assert!(ok, "{out}");
+                a.say("ok");
+                Ok(TurnEnd::Completed)
+            }
+        }),
+    );
+    let (orch, store) = orch(std::slice::from_ref(&fake));
+    let (meta, _rx) = orch
+        .spawn(
+            "loop",
+            "build",
+            "claude/m",
+            "start",
+            None,
+            "",
+            "low",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap();
+    *own.lock().unwrap() = Some(meta.id.clone());
+    settle(&store, &meta.id).await;
+    assert_eq!(fake.seen().len(), 8, "the turn cap");
+    assert!(
+        events(&store, &meta.id)
+            .iter()
+            .any(|e| matches!(e, Event::System { text } if text.contains("left unanswered"))),
+        "the session says so"
+    );
+    orch.send_to(
+        &meta.id,
+        "continue now",
+        None,
+        "",
+        "low",
+        vec![],
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&store, &meta.id).await;
+    let prompts: Vec<String> = fake.seen().into_iter().map(|s| s.prompt).collect();
+    assert_eq!(prompts.len(), 9, "{prompts:?}");
+    let last = &prompts[8];
+    assert!(last.contains("ping 8"), "the message left over: {last}");
+    assert!(last.ends_with("continue now"), "{last}");
+    assert!(!last.contains("ping 7"), "answered already: {last}");
+}

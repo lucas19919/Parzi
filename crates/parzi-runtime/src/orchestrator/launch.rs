@@ -13,9 +13,26 @@ use crate::tools::{ApprovalMode, Approver, DenyApprover, ToolExecutor};
 use parzi_providers::display_name;
 
 use super::queue::{
-    clear_queued, run_session, set_posture, set_run_note, Posture, Pump, QueuedRun,
+    clear_queued, run_session, set_brief_hash, set_posture, set_run_note, Posture, Pump, QueuedRun,
 };
 use super::{next_run_id, normalize_effort, Handle, Orchestrator, SessionSlot};
+
+/// How a launch went when it did not fail.
+pub(super) enum Started {
+    /// It runs; its events come on this channel (and the bus).
+    Running(mpsc::UnboundedReceiver<RunEvent>),
+    /// Another run of the session was starting: it waits its turn.
+    Queued,
+}
+
+impl Started {
+    fn events(self) -> mpsc::UnboundedReceiver<RunEvent> {
+        match self {
+            Self::Running(rx) => rx,
+            Self::Queued => Orchestrator::closed_rx(),
+        }
+    }
+}
 
 impl Orchestrator {
     /// A new session with a first run the person sent.
@@ -104,7 +121,7 @@ impl Orchestrator {
             meta = self.store.get(&meta.id)?;
             return Ok((meta, Self::closed_rx()));
         }
-        let rx = Self::launch(self.pump_parts(), q).await?;
+        let rx = Self::launch(self.pump_parts(), q).await?.events();
         meta = self.store.get(&meta.id)?;
         Ok((meta, rx))
     }
@@ -200,7 +217,7 @@ impl Orchestrator {
             self.pump_parts().enqueue(q).await;
             return Ok(Self::closed_rx());
         }
-        Self::launch(self.pump_parts(), q).await
+        Ok(Self::launch(self.pump_parts(), q).await?.events())
     }
 
     pub async fn compact(&self, id: &str, focus: &str) -> Result<String> {
@@ -214,6 +231,9 @@ impl Orchestrator {
             )));
         }
         let prompt = format!("/compact {}", focus.trim()).trim_end().to_string();
+        // The plan the conversation saw goes with what it compacts away:
+        // the next run sends it again.
+        set_brief_hash(id, None);
         let _rx = self
             .send_as(
                 RunCause::Compact,
@@ -282,12 +302,6 @@ impl Orchestrator {
         for u in [
             "ui.show_markdown",
             "ui.show_artifact",
-            "browser.open",
-            "browser.tabs",
-            "browser.read",
-            "browser.click",
-            "browser.type",
-            "browser.shot",
             "image.generate",
             "doc.read",
             "models.list",
@@ -380,8 +394,9 @@ impl Orchestrator {
         }
     }
 
-    pub(super) async fn launch(p: Pump, q: QueuedRun) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
+    pub(super) async fn launch(p: Pump, q: QueuedRun) -> Result<Started> {
         let sid = q.session_id.clone();
+        let cause = q.cause;
         clear_queued(&sid);
         let cancel = CancellationToken::new();
         let claim = {
@@ -407,14 +422,14 @@ impl Orchestrator {
             // A lost claim is "retry", never a dead channel.
             if q.inbox_from.is_none() && p.cfg_snapshot().orchestrator.queue_when_busy {
                 p.enqueue(q).await;
-                return Ok(Self::closed_rx());
+                return Ok(Started::Queued);
             }
             return Err(ParziError::Store(format!(
                 "session {sid} already has a live run; kill it first"
             )));
         };
         match Self::launch_inner(p.clone(), q, id, cancel, seen).await {
-            Ok(rx) => Ok(rx),
+            Ok(rx) => Ok(Started::Running(rx)),
             Err(e) => {
                 {
                     let mut h = p.handles.lock().await;
@@ -429,7 +444,7 @@ impl Orchestrator {
                         text: format!("run failed to start: {e}"),
                     },
                 )?;
-                crate::run_hooks::launch_failed(&p.store, &sid, &e.to_string());
+                crate::run_hooks::launch_failed(&p.store, &sid, cause, &e.to_string());
                 let _ = p.bus.send((sid, RunEvent::Error(e.to_string())));
                 Err(e)
             }
@@ -459,8 +474,15 @@ impl Orchestrator {
             let dir = parzi_core::paths::scratch_dir(&q.session_id)?;
             std::fs::create_dir_all(&dir)?;
             dir.display().to_string()
-        } else {
+        } else if std::path::Path::new(q.cwd.trim()).is_absolute() {
             q.cwd.clone()
+        } else {
+            // A relative folder would be Parzi's own working folder, and no
+            // write in it would count as inside the session's folder.
+            return Err(ParziError::Validation(format!(
+                "the folder `{}` is not a full path; pick the folder again",
+                q.cwd.trim()
+            )));
         };
         let (floor, allowed) = Self::lane_policy_for(&snap, &q.lane);
         let (mode, edits_auto, full) = Self::effective_mode(floor, q.mode_override.as_deref());
@@ -562,6 +584,7 @@ impl Orchestrator {
                     Posture {
                         mode_override: q.mode_override.clone(),
                         effort: q.effort.clone(),
+                        ask: q.approver.is_some() || q.restore_approver,
                     },
                 );
             }

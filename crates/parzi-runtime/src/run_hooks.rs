@@ -8,21 +8,24 @@
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use parzi_core::store::{Event, FileTouch, RunEndKind, RunOutcome, SessionStore, Via};
+use parzi_core::now_ms;
+use parzi_core::store::{Event, FileTouch, RunCause, RunEndKind, RunOutcome, SessionStore, Via};
 use serde_json::Value;
 
 use crate::run::RunTally;
 
 pub(crate) type Tally = Arc<Mutex<RunTally>>;
 
-fn lock(t: &Tally) -> std::sync::MutexGuard<'_, RunTally> {
-    t.lock().unwrap_or_else(PoisonError::into_inner)
-}
+/// What git may add to a run's end, all of it: the start snapshot still
+/// coming in, the end's own look and the hashing. A run holds its slot
+/// until its outcome is kept, so a slow repo must not hold it long; past
+/// this the outcome goes without git's files.
+const GIT_WAIT: Duration = Duration::from_secs(3);
 
-pub(crate) fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+/// The tally, even after a panic elsewhere left its lock poisoned: an
+/// update is never dropped.
+pub(crate) fn lock(t: &Tally) -> std::sync::MutexGuard<'_, RunTally> {
+    t.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// A run began: git is looked at in the background.
@@ -44,8 +47,12 @@ pub(crate) fn tool_started(t: &Tally, id: &str, name: &str, input: &Value) {
     lock(t).tool_started(id, name, input);
 }
 
-/// A run could not start: the session says why.
-pub(crate) fn launch_failed(store: &SessionStore, session: &str, error: &str) {
+/// A run could not start: the session says why. A housekeeping run (a
+/// `/compact`) is never the session's run, failed or not.
+pub(crate) fn launch_failed(store: &SessionStore, session: &str, cause: RunCause, error: &str) {
+    if !cause.recorded() {
+        return;
+    }
     let mut outcome = RunOutcome::bare(RunEndKind::NotStarted, now_ms());
     outcome.summary = format!("Didn't start: {error}");
     if let Err(e) = store.set_last_run(session, outcome, None) {
@@ -77,7 +84,10 @@ fn merge_files(edits: &[String], git: Vec<String>) -> Vec<FileTouch> {
         })
         .collect();
     for p in git {
-        if !out.iter().any(|f| crate::gitmark::same_path(&f.path, &p)) {
+        if !out
+            .iter()
+            .any(|f| parzi_core::paths::same_path(&f.path, &p))
+        {
             out.push(FileTouch {
                 path: p,
                 via: Via::Git,
@@ -125,15 +135,13 @@ pub(crate) async fn run_ended(store: &SessionStore, t: &Tally, stopped: bool, se
             outcome,
         )
     };
-    let (git_files, branch) = match git {
-        Some(h) => match tokio::time::timeout(Duration::from_secs(10), h).await {
-            Ok(Ok(Some(mark))) => {
-                let done = mark.finish(&edits).await;
-                (done.files, Some(done.branch))
-            }
-            _ => (vec![], None),
-        },
-        None => (vec![], None),
+    let looked = async {
+        let mark = git?.await.ok()??;
+        Some(mark.finish(&edits).await)
+    };
+    let (git_files, branch) = match tokio::time::timeout(GIT_WAIT, looked).await {
+        Ok(Some(done)) => (done.files, Some(done.branch)),
+        _ => (vec![], None),
     };
     let events = store.events_from(&session, first).unwrap_or_default();
     outcome.summary = summary_of(&events);

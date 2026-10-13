@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use parzi_core::context::InterKind;
 use parzi_core::store::{Event, RunCause, RunEndKind, SessionMeta, SessionStatus};
-use parzi_core::text::clip;
+use parzi_core::text::{clip, fold};
 
 use crate::handler::RunEvent;
 use crate::inter;
@@ -65,22 +65,8 @@ impl WakeState {
     }
 }
 
-/// How a run's end reads in a report.
-fn ended_words(end: Option<RunEndKind>) -> &'static str {
-    match end {
-        Some(RunEndKind::Completed) => "finished",
-        Some(RunEndKind::Failed) => "failed",
-        Some(RunEndKind::Paused) => "paused at the budget",
-        Some(RunEndKind::Stopped) => "was stopped",
-        Some(RunEndKind::Crashed) => "crashed",
-        Some(RunEndKind::Interrupted) => "was cut off",
-        Some(RunEndKind::NotStarted) => "did not start",
-        None => "ended",
-    }
-}
-
 fn one_line(s: &str, n: usize) -> String {
-    clip(&s.split_whitespace().collect::<Vec<_>>().join(" "), n)
+    clip(&fold(s), n)
 }
 
 /// A report on `child`'s latest run for the session that started it, at
@@ -96,7 +82,7 @@ pub(crate) fn report(child: &SessionMeta, stopped: bool, cap: usize) -> String {
     let mut out = format!(
         "Session \"{}\" {}.",
         one_line(&child.title, 100),
-        ended_words(end)
+        end.map_or("ended", RunEndKind::word)
     );
     if let Some(item) = &child.plan_item {
         out.push_str(&format!(" It works on plan item {item}."));
@@ -264,7 +250,8 @@ impl Pump {
             effort: normalize_effort(&last.effort),
             attachments: vec![],
             approver: None,
-            restore_approver: true,
+            // The person's approver only when the parent ran with one.
+            restore_approver: last.ask,
             prompt_recorded: true,
             mode_override: last.mode_override,
             inbox_from: Some(from),

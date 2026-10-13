@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use parzi_core::config::ParziConfig;
-use parzi_core::error::Result;
+use parzi_core::error::{ParziError, Result};
 use parzi_core::store::{Event, RunCause, SessionStatus, SessionStore};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex, Notify};
@@ -44,6 +44,16 @@ pub(crate) struct Posture {
     pub(crate) mode_override: Option<String>,
     #[serde(default)]
     pub(crate) effort: String,
+    /// The run had someone to ask (the person's approver). A wake restores
+    /// the host's approver only then: an agent-spawned child, which runs
+    /// without one, never gets the person's cards by being woken. Files
+    /// from before this was kept say yes, as wakes did then.
+    #[serde(default = "yes")]
+    pub(crate) ask: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -184,13 +194,13 @@ pub(crate) fn brief_hash(session_id: &str) -> Option<String> {
     load_sidecar(session_id).brief_hash
 }
 
-pub(crate) fn set_brief_hash(session_id: &str, hash: &str) {
-    edit_sidecar(session_id, |s| s.brief_hash = Some(hash.to_string()));
+pub(crate) fn set_brief_hash(session_id: &str, hash: Option<&str>) {
+    edit_sidecar(session_id, |s| s.brief_hash = hash.map(str::to_string));
 }
 
-/// Who hears about this session's next run end (None: nobody).
-pub(crate) fn set_report_to(session_id: &str, parent: Option<&str>) {
-    edit_sidecar(session_id, |s| s.report_to = parent.map(str::to_string));
+/// Who hears about this session's next run end.
+pub(crate) fn set_report_to(session_id: &str, parent: &str) {
+    edit_sidecar(session_id, |s| s.report_to = Some(parent.to_string()));
 }
 
 /// Who hears about this run end, cleared: only one report goes out.
@@ -439,20 +449,36 @@ impl Orchestrator {
     }
 }
 
+/// What became of a run Parzi itself started (a child, a message, a wake).
+pub(super) enum Dispatch {
+    Launched,
+    /// No slot was free: it runs when one frees.
+    Queued,
+    /// No slot was free and queueing is off: nothing will run it.
+    Busy,
+    /// It could not start (the session already says why).
+    Failed(ParziError),
+}
+
 impl Pump {
     fn max_live(&self) -> usize {
         self.cfg_snapshot().orchestrator.max_concurrent.max(1)
     }
 
-    pub(super) async fn dispatch(&self, q: QueuedRun) -> bool {
+    pub(super) async fn dispatch(&self, q: QueuedRun) -> Dispatch {
         let live = Orchestrator::live_count(self).await;
         if live >= self.max_live() {
-            if self.cfg_snapshot().orchestrator.queue_when_busy {
-                let _ = self.store.set_status(&q.session_id, SessionStatus::Queued);
-                self.enqueue(q).await;
+            if !self.cfg_snapshot().orchestrator.queue_when_busy {
+                return Dispatch::Busy;
             }
-            return false;
+            let _ = self.store.set_status(&q.session_id, SessionStatus::Queued);
+            self.enqueue(q).await;
+            return Dispatch::Queued;
         }
-        Orchestrator::launch(self.clone(), q).await.is_ok()
+        match Orchestrator::launch(self.clone(), q).await {
+            Ok(super::launch::Started::Running(_)) => Dispatch::Launched,
+            Ok(super::launch::Started::Queued) => Dispatch::Queued,
+            Err(e) => Dispatch::Failed(e),
+        }
     }
 }

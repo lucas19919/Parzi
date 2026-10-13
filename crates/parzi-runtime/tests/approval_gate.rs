@@ -200,6 +200,10 @@ async fn sequential_completed_runs_release_slots() {
 }
 
 fn host(allowed: Vec<String>, mode: ApprovalMode) -> ToolHost {
+    host_with(allowed, mode, ParziConfig::default())
+}
+
+fn host_with(allowed: Vec<String>, mode: ApprovalMode, cfg: ParziConfig) -> ToolHost {
     let store = parzi_core::store::SessionStore::open().unwrap();
     let meta = store.create("gate", "t", "", "claude").unwrap();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
@@ -209,7 +213,7 @@ fn host(allowed: Vec<String>, mode: ApprovalMode) -> ToolHost {
         mode,
         edits_auto: false,
         full: false,
-        cfg: parzi_core::config::ParziConfig::default(),
+        cfg,
         store,
         tools: Arc::new(ToolExecutor {
             cwd: std::env::temp_dir().display().to_string(),
@@ -228,17 +232,10 @@ fn host(allowed: Vec<String>, mode: ApprovalMode) -> ToolHost {
 struct NoHarness;
 #[async_trait::async_trait]
 impl parzi_runtime::handler::HarnessBridge for NoHarness {
-    async fn spawn_session(
+    async fn spawn(
         &self,
         _: &str,
-        _: &str,
-        _: &str,
-        _: bool,
-        _: Option<String>,
-        _: Option<String>,
-        _: bool,
-        _: Option<String>,
-        _: Option<String>,
+        _: parzi_runtime::handler::SpawnSpec,
     ) -> parzi_core::error::Result<String> {
         Ok("spawned".into())
     }
@@ -307,6 +304,18 @@ async fn the_agents_own_actions_pass_the_lane_and_the_mode() {
         no_kinds.decide(request("Bash")).await,
         PermissionDecision::Allow
     );
+    // The shell switched off in Settings is off for the agent's own too.
+    let mut off = ParziConfig::default();
+    off.lanes.no_shell = true;
+    let no_shell = host_with(vec!["session.*".into()], ApprovalMode::Auto, off);
+    assert!(matches!(
+        no_shell.decide(request("Bash")).await,
+        PermissionDecision::Deny(_)
+    ));
+    assert_eq!(
+        no_shell.decide(request("Grep")).await,
+        PermissionDecision::Allow
+    );
     let locked = host(vec!["*".into()], ApprovalMode::Deny);
     assert!(matches!(
         locked.decide(request("Edit")).await,
@@ -327,19 +336,12 @@ async fn the_agents_own_actions_pass_the_lane_and_the_mode() {
 struct LaneSpy(std::sync::Mutex<Vec<Option<String>>>);
 #[async_trait::async_trait]
 impl parzi_runtime::handler::HarnessBridge for LaneSpy {
-    async fn spawn_session(
+    async fn spawn(
         &self,
         _: &str,
-        _: &str,
-        _: &str,
-        _: bool,
-        _: Option<String>,
-        lane: Option<String>,
-        _: bool,
-        _: Option<String>,
-        _: Option<String>,
+        spec: parzi_runtime::handler::SpawnSpec,
     ) -> parzi_core::error::Result<String> {
-        self.0.lock().unwrap().push(lane);
+        self.0.lock().unwrap().push(spec.lane);
         Ok("spawned".into())
     }
     async fn send_message(
