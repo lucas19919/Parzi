@@ -46,6 +46,7 @@
   import { tooltip } from "./lib/tooltip";
   import type { Approval, LiveTool } from "./lib/live";
   import { deskRows, type DeskCmd } from "./lib/desk";
+  import { nextRowTop, scrollEdges, watchEdges, type ScrollEdges } from "./lib/scrollHint";
 
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
@@ -157,6 +158,9 @@
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
   let farFromBottom = false;
+  // Home's card list: how far it is scrolled, for its fades and "More below".
+  let homeEl: HTMLElement | null = null;
+  let homeEdges: ScrollEdges = scrollEdges(0, 0, 0);
   let dockHeight = 90;
   let omnibar: Omnibar;
   let page: PageView;
@@ -527,6 +531,22 @@
   function newSession() {
     addTab({ ...sessionTab(), cwd: folder || undefined });
     void tick().then(() => omnibar?.focus());
+  }
+
+  function setHomeEdges(edges: ScrollEdges) {
+    homeEdges = edges;
+  }
+
+  // "More below": the next row of cards up to the top of the list.
+  function homeNextRow() {
+    const el = homeEl;
+    if (!el) return;
+    const box = el.getBoundingClientRect();
+    const tops = [...el.querySelectorAll(".card")].map((c) => c.getBoundingClientRect().top - box.top + el.scrollTop);
+    const pad = parseFloat(getComputedStyle(el).paddingTop) || 0;
+    const max = el.scrollHeight - el.clientHeight;
+    const top = nextRowTop(tops, el.scrollTop, pad, max) ?? el.scrollTop + el.clientHeight * 0.8;
+    el.scrollTo({ top, behavior: reduced ? "auto" : "smooth" });
   }
 
   function goHome() {
@@ -1391,7 +1411,15 @@
       {/if}
 
       {#if !hasSession}
-        <div class="home" style:--shift="{planShown ? (panelW + 8) / 2 : 0}px" in:fade={{ duration: 200 }}>
+        <div
+          class="home"
+          bind:this={homeEl}
+          use:watchEdges={setHomeEdges}
+          style:--shift="{planShown ? (panelW + 8) / 2 : 0}px"
+          style:--fade-top="{homeEdges.top}px"
+          style:--fade-bottom="{homeEdges.bottom}px"
+          in:fade={{ duration: 200 }}
+        >
           <HomeView
             {threads}
             {running}
@@ -1408,6 +1436,18 @@
             on:remoteSetup={openRemoteSetup}
           />
         </div>
+        {#if homeEdges.hint > 0}
+          <button
+            class="more-below"
+            style:--shift="{planShown ? (panelW + 8) / 2 : 0}px"
+            style:opacity={homeEdges.hint}
+            use:tooltip={"More below"}
+            on:click={homeNextRow}
+            transition:fade={motion}
+          >
+            <Icon name="chevDown" />
+          </button>
+        {/if}
         {#if planShown}
           <div class="plan-float" in:fade={{ duration: 150 }}>
             <SidePanel
@@ -1649,8 +1689,8 @@
   /* Home: the composer sits a little above centre (.composer's hero
      bottom) and the widgets fill the space below it, 16px apart. The cards
      are exactly as wide as the composer and scroll under it, fading out in
-     the gap; with no scrollbar, the bottom fade says there is more. The
-     side padding leaves room for their shadows. */
+     the gap; with no scrollbar, a deeper bottom fade and the "More below"
+     hint say there is more. The side padding leaves room for their shadows. */
   .home {
     position: absolute;
     top: calc(36% + 58px);
@@ -1661,7 +1701,15 @@
     padding: 16px 24px 32px;
     overflow-y: auto;
     scrollbar-width: none;
-    mask-image: linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 32px), transparent);
+    /* Fades sized by scrollHint.ts: the top one once scrolled, the bottom
+       one deeper while there is more below. */
+    mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 var(--fade-top, 0px),
+      #000 calc(100% - var(--fade-bottom, 32px)),
+      transparent
+    );
     transform: translateX(calc(-50% - var(--shift, 0px)));
     transition:
       transform 700ms var(--ease-out),
@@ -1705,9 +1753,38 @@
   .home::-webkit-scrollbar {
     display: none;
   }
+  /* "More below": centred on the cards at the bottom edge, in the fade. */
+  .more-below {
+    position: absolute;
+    bottom: 10px;
+    left: 50%;
+    z-index: 11;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+    border: var(--glass-hairline);
+    border-radius: 999px;
+    color: var(--muted);
+    cursor: pointer;
+    transform: translateX(calc(-50% - var(--shift, 0px)));
+    transition:
+      opacity 150ms var(--ease-out),
+      transform 700ms var(--ease-out);
+  }
+  .more-below:hover {
+    background: var(--glass-bg-solid);
+    color: var(--text);
+  }
   /* Search suggestions drop over the widgets: hide them meanwhile rather
      than leave half-covered cards peeking out. */
-  :global(main:has(.web-suggest)) .home {
+  :global(main:has(.web-suggest)) .home,
+  :global(main:has(.web-suggest)) .more-below {
     display: none;
   }
   .composer {
