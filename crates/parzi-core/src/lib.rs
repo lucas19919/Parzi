@@ -6,12 +6,13 @@ pub mod device;
 pub mod error;
 pub mod hooks;
 pub mod paths;
+pub mod plan;
 pub mod store;
 pub mod system;
+pub mod text;
 pub mod theme;
 pub mod urls;
 pub mod wallpaper;
 pub mod widgets;
-pub mod work;
 
 pub use error::{atomic_write, atomic_write_private, ParziError, Result};

@@ -70,6 +70,8 @@ pub(crate) struct GitMark {
     /// The run's folder inside the repo (`ui/src/`), "" at the top.
     prefix: String,
     head: Option<String>,
+    /// The branch checked out at the start ("" when detached).
+    branch: String,
     /// Dirty paths at the start; None for one that did not exist then.
     dirty: HashMap<String, Option<Print>>,
     slot: Slot,
@@ -175,6 +177,7 @@ impl GitMark {
             .await
             .map(text)
             .filter(|h| !h.is_empty());
+        let branch = current_branch(&root).await.unwrap_or_default();
         let paths = status(&root).await?;
         let dirty = prints(root.clone(), paths).await;
         let key = root.to_string_lossy().replace('\\', "/").to_lowercase();
@@ -183,6 +186,7 @@ impl GitMark {
             root,
             prefix,
             head,
+            branch,
             dirty,
         })
     }
@@ -192,10 +196,28 @@ impl GitMark {
         self.slot.overlapped.load(Ordering::Relaxed)
     }
 
+    /// The branch checked out when the run started ("" when detached).
+    #[cfg(test)]
+    pub(crate) fn branch(&self) -> &str {
+        &self.branch
+    }
+
+    /// What the run did to the repo: the files it changed (see `files`) and
+    /// the branch it ended on (the one it started on when git cannot say).
+    pub(crate) async fn finish(self, named: &[String]) -> Finished {
+        let branch = current_branch(&self.root)
+            .await
+            .unwrap_or_else(|| self.branch.clone());
+        Finished {
+            files: self.files(named).await,
+            branch,
+        }
+    }
+
     /// Files the run changed, relative to its folder: what it committed and
     /// what is dirty now that was not (or was different) at the start. With
     /// an overlapping run, only those `named` by the run's own tool calls.
-    pub(crate) async fn finish(self, named: &[String]) -> Vec<String> {
+    async fn files(self, named: &[String]) -> Vec<String> {
         let mut changed: BTreeSet<String> = BTreeSet::new();
         let head = git(&self.root, &["rev-parse", "--verify", "-q", "HEAD"])
             .await
@@ -232,6 +254,20 @@ impl GitMark {
             .filter(|p| !overlapped || named.iter().any(|n| same_path(n, p)))
             .collect()
     }
+}
+
+/// What a run left in its repo.
+pub(crate) struct Finished {
+    pub(crate) files: Vec<String>,
+    /// "" on a detached HEAD.
+    pub(crate) branch: String,
+}
+
+/// The branch checked out in `root`: "" when HEAD is detached, None when
+/// git cannot say.
+async fn current_branch(root: &Path) -> Option<String> {
+    let name = text(git(root, &["rev-parse", "--abbrev-ref", "HEAD"]).await?);
+    Some(if name == "HEAD" { String::new() } else { name })
 }
 
 /// A repo-root path as seen from the run's folder (`prefix` inside it).
@@ -303,7 +339,7 @@ mod tests {
         std::fs::write(d.path().join("kept.txt"), "two").unwrap();
         std::fs::create_dir_all(d.path().join("src")).unwrap();
         std::fs::write(d.path().join("src").join("new.rs"), "fn x() {}").unwrap();
-        let files = mark.finish(&[]).await;
+        let files = mark.finish(&[]).await.files;
         assert_eq!(
             files,
             ["kept.txt", "src/new.rs"],
@@ -313,10 +349,23 @@ mod tests {
         let mark = GitMark::take(d.path()).await.unwrap();
         std::fs::write(d.path().join("dirty.txt"), "dirty again").unwrap();
         assert_eq!(
-            mark.finish(&[]).await,
+            mark.finish(&[]).await.files,
             ["dirty.txt"],
             "changed again counts"
         );
+    }
+
+    #[tokio::test]
+    async fn the_branch_is_the_one_the_run_ends_on() {
+        let d = repo();
+        run(d.path(), &["checkout", "-q", "-b", "plan/names"]);
+        let mark = GitMark::take(d.path()).await.unwrap();
+        assert_eq!(mark.branch(), "plan/names");
+        run(d.path(), &["checkout", "-q", "-b", "plan/panel"]);
+        assert_eq!(mark.finish(&[]).await.branch, "plan/panel");
+        let mark = GitMark::take(d.path()).await.unwrap();
+        run(d.path(), &["checkout", "-q", "--detach"]);
+        assert_eq!(mark.finish(&[]).await.branch, "", "detached is no branch");
     }
 
     #[tokio::test]
@@ -325,7 +374,7 @@ mod tests {
         let mark = GitMark::take(d.path()).await.unwrap();
         std::fs::write(d.path().join("kept.txt"), "committed").unwrap();
         run(d.path(), &["commit", "-q", "-am", "mid-run"]);
-        assert_eq!(mark.finish(&[]).await, ["kept.txt"]);
+        assert_eq!(mark.finish(&[]).await.files, ["kept.txt"]);
     }
 
     #[tokio::test]
@@ -351,8 +400,8 @@ mod tests {
         assert!(a.overlapped() && b.overlapped());
         std::fs::write(d.path().join("kept.txt"), "a wrote this").unwrap();
         std::fs::write(d.path().join("b.txt"), "b wrote this").unwrap();
-        assert_eq!(a.finish(&["kept.txt".into()]).await, ["kept.txt"]);
-        assert_eq!(b.finish(&["./b.txt".into()]).await, ["b.txt"]);
+        assert_eq!(a.finish(&["kept.txt".into()]).await.files, ["kept.txt"]);
+        assert_eq!(b.finish(&["./b.txt".into()]).await.files, ["b.txt"]);
         let alone = GitMark::take(d.path()).await.unwrap();
         assert!(!alone.overlapped(), "finished runs leave the registry");
     }

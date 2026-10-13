@@ -3,8 +3,7 @@ use std::sync::Arc;
 
 use parzi_core::config::ParziConfig;
 use parzi_core::error::Result;
-use parzi_core::store::{Event, SessionStatus, SessionStore};
-use parzi_core::work::RunCause;
+use parzi_core::store::{Event, RunCause, SessionStatus, SessionStore};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex, Notify};
 
@@ -26,6 +25,9 @@ struct RunSidecar {
     note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     session: Option<VendorSession>,
+    /// The plan summary this session's conversation last saw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    brief_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -36,7 +38,10 @@ pub struct VendorSession {
 
 impl RunSidecar {
     fn is_empty(&self) -> bool {
-        self.queued.is_none() && self.note.is_none() && self.session.is_none()
+        self.queued.is_none()
+            && self.note.is_none()
+            && self.session.is_none()
+            && self.brief_hash.is_none()
     }
 }
 
@@ -143,6 +148,26 @@ pub fn set_run_session(session_id: &str, session: Option<VendorSession>) {
 #[must_use]
 pub fn run_session(session_id: &str) -> Option<VendorSession> {
     load_sidecar(session_id).session
+}
+
+/// One load-change-save of a session's run.json, under the lock.
+fn edit_sidecar<R>(session_id: &str, f: impl FnOnce(&mut RunSidecar) -> R) -> R {
+    let _write = sidecar_lock();
+    let mut sidecar = load_sidecar(session_id);
+    let before = serde_json::to_value(&sidecar).ok();
+    let out = f(&mut sidecar);
+    if serde_json::to_value(&sidecar).ok() != before {
+        save_sidecar(session_id, &sidecar);
+    }
+    out
+}
+
+pub(crate) fn brief_hash(session_id: &str) -> Option<String> {
+    load_sidecar(session_id).brief_hash
+}
+
+pub(crate) fn set_brief_hash(session_id: &str, hash: &str) {
+    edit_sidecar(session_id, |s| s.brief_hash = Some(hash.to_string()));
 }
 
 pub(super) struct QueuedRun {

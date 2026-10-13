@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use parzi_core::config::ParziConfig;
 use parzi_core::error::{ParziError, Result};
-use parzi_core::store::{Event, SessionMeta, SessionStatus};
-use parzi_core::work::RunCause;
+use parzi_core::store::{Event, RunCause, SessionMeta, SessionStatus};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -67,13 +66,7 @@ impl Orchestrator {
             h.len()
         };
         let effort = normalize_effort(effort);
-        let title: String = prompt
-            .lines()
-            .next()
-            .unwrap_or("untitled")
-            .chars()
-            .take(80)
-            .collect();
+        let title = parzi_core::text::name_from_prompt(prompt);
 
         let mut meta = self.store.create(&title, project, lane, model_spec)?;
         if !cwd.trim().is_empty() {
@@ -311,6 +304,10 @@ impl Orchestrator {
             "project.delete",
             "lane.status",
             "memory.review",
+            // The project's plan and the session's own name: both lanes.
+            "plan.read",
+            "plan.write",
+            "session.rename",
         ] {
             if !allowed.contains(&u.to_string()) {
                 allowed.push(u.into());
@@ -430,7 +427,7 @@ impl Orchestrator {
                         text: format!("run failed to start: {e}"),
                     },
                 )?;
-                crate::work_hooks::launch_failed(&sid, &e.to_string());
+                crate::run_hooks::launch_failed(&p.store, &sid, &e.to_string());
                 let _ = p.bus.send((sid, RunEvent::Error(e.to_string())));
                 Err(e)
             }
@@ -474,16 +471,30 @@ impl Orchestrator {
         let sink = RunSink::new(&q.session_id, tx, Some(p.bus.clone()));
         let meta = p.store.get(&q.session_id)?;
         let tally = {
-            let run = parzi_core::work::graph::fresh_id(8, &|_| false);
-            let mut t = RunTally::new(&run, &q.session_id, q.cause, &cwd);
-            t.prompt.clone_from(&q.prompt);
-            t.title_hint = meta.title.clone();
-            t.project = parzi_core::work::project_of_session(&meta.project);
+            let mut t = RunTally::new(&q.session_id, q.cause, &cwd);
             t.first_event = seen;
             Arc::new(std::sync::Mutex::new(t))
         };
         let bridge: Arc<dyn HarnessBridge> = Arc::new(p.clone());
         let instructions = system_parts(&q.lane, &cwd);
+        // The project's plan goes in the opening turn, never in the
+        // instructions: those are re-sent every turn, and a changing plan
+        // there would spoil the prompt cache.
+        let brief = if q.cause.recorded() {
+            let item = meta.plan_item.clone().or_else(|| {
+                let parent = meta.parent_id.as_deref()?;
+                p.store.get(parent).ok()?.plan_item
+            });
+            let project = meta.project.clone();
+            tokio::task::spawn_blocking(move || {
+                crate::plan_tools::brief_for(&project, item.as_deref())
+            })
+            .await
+            .ok()
+            .flatten()
+        } else {
+            None
+        };
         if mode == ApprovalMode::Deny && !provider.gated() {
             return Err(ParziError::Validation(format!(
                 "this lane is read-only, and {} cannot run read-only; pick another agent for it",
@@ -536,10 +547,14 @@ impl Orchestrator {
             seen,
             inbox_from: q.inbox_from,
             tally: tally.clone(),
+            brief,
         });
         set_run_note(&q.session_id, None);
+        if q.cause.recorded() {
+            let _ = p.store.set_effort(&q.session_id, &q.effort);
+        }
         p.store.set_status(&q.session_id, SessionStatus::Active)?;
-        crate::work_hooks::run_started(&tally, &shown, &q.lane);
+        crate::run_hooks::run_started(&tally);
         let end = RunEnd {
             parts: p.clone(),
             sid: q.session_id.clone(),
@@ -571,8 +586,8 @@ struct RunEnd {
     id: u64,
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
     cancel: CancellationToken,
-    /// What the run did, for its entry in the work ledger.
-    tally: crate::work_hooks::Tally,
+    /// What the run did, kept on its session when it ends.
+    tally: crate::run_hooks::Tally,
 }
 
 impl Drop for RunEnd {
@@ -607,10 +622,12 @@ impl Drop for RunEnd {
                     }
                 }
             }
-            // The slot is free: a queued run need not wait for the ledger.
+            // The slot is free: a queued run need not wait for the record.
             p.notify.notify_one();
+            // A run that returned has kept its outcome already; this one
+            // panicked or was aborted.
             let settled = done.load(std::sync::atomic::Ordering::SeqCst);
-            crate::work_hooks::run_ended(&p.store, &tally, cancel.is_cancelled(), settled).await;
+            crate::run_hooks::run_ended(&p.store, &tally, cancel.is_cancelled(), settled).await;
         });
     }
 }
@@ -646,7 +663,18 @@ mod tests {
         }
         assert!(allowed.iter().all(|a| !a.starts_with("task.")));
         assert!(allowed.iter().all(|a| a != "lane.dispatch"));
-        assert!(allowed.iter().all(|a| !a.starts_with("plan.")));
+    }
+
+    #[test]
+    fn every_lane_reads_and_writes_the_plan_and_names_itself() {
+        let mut cfg = ParziConfig::default();
+        cfg.lanes.no_shell = true;
+        for lane in ["build", "work", ""] {
+            let (_, allowed) = Orchestrator::lane_policy_for(&cfg, lane);
+            for t in ["plan.read", "plan.write", "session.rename"] {
+                assert!(allowed.iter().any(|a| a == t), "{lane} lane missing {t}");
+            }
+        }
     }
 
     #[test]

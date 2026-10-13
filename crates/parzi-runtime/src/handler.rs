@@ -151,7 +151,8 @@ pub(crate) fn user_event_text(
 }
 
 // The harness prompt lives in parzi.md at the repo root so it reads like a
-// doc, not code. Sections are ## Tools, ## Teamwork, ## Build, ## Work.
+// doc, not code. Sections are ## Tools, ## Teamwork, ## Build, ## Work,
+// ## Plans, ## Delivery.
 const HARNESS_DOC: &str = include_str!("../../../parzi.md");
 
 fn harness_section(name: &str) -> String {
@@ -222,6 +223,8 @@ pub fn system_parts(lane: &str, cwd: &str) -> Vec<String> {
         parts.push(harness_section("teamwork"));
         parts.push(harness_section("build"));
     }
+    // Both lanes plan, and both name their sessions.
+    parts.push(harness_section("plans"));
     parts.push(harness_section("delivery"));
     if let Some(text) = parzi_core::system::global() {
         parts.push(format!("# Global instructions\n\n{text}"));
@@ -238,7 +241,7 @@ mod tests {
 
     #[test]
     fn harness_doc_has_every_section() {
-        for s in ["tools", "teamwork", "build", "work", "delivery"] {
+        for s in ["tools", "teamwork", "build", "work", "plans", "delivery"] {
             let body = harness_section(s);
             assert!(body.lines().count() > 3, "section {s} is missing or empty");
         }
@@ -267,5 +270,37 @@ mod tests {
         assert!(work.iter().any(|p| p.starts_with("## work")));
         assert!(!work.iter().any(|p| p.starts_with("## teamwork")));
         assert!(work.iter().any(|p| p.starts_with("## delivery")));
+        for parts in [&build, &work] {
+            let plans = parts
+                .iter()
+                .find(|p| p.starts_with("## plans"))
+                .expect("both lanes plan");
+            for word in [
+                "plan.write",
+                "plan.read",
+                "5 to 15 items",
+                "needs",
+                "plan/<id>",
+                "`active`",
+                "`done`",
+                "<plan-item>",
+                "<parzi:plan>",
+                "session.rename",
+                "2 to 5 words",
+            ] {
+                assert!(plans.contains(word), "the plans section says {word}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_plan_stays_out_of_the_instructions() {
+        // The instructions are re-sent every turn; a changing plan there
+        // would spoil the prompt cache.
+        for lane in ["build", "work"] {
+            assert!(system_parts(lane, "C:\\x")
+                .iter()
+                .all(|p| !p.contains("<parzi:plan project")));
+        }
     }
 }

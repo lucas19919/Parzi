@@ -41,6 +41,10 @@ impl SessionStore {
         self.update_meta(&meta.id, |m| {
             m.cwd.clone_from(&src.cwd);
             m.context_limit = src.context_limit;
+            // It goes on with the same item, on the same branch.
+            m.plan_item.clone_from(&src.plan_item);
+            m.branch.clone_from(&src.branch);
+            m.effort.clone_from(&src.effort);
             m.updated = Utc::now();
         })?;
         self.flush(&meta.id)?;

@@ -7,8 +7,7 @@ use std::time::Instant;
 use parzi_core::config::Budget;
 use parzi_core::context::{AttachedFile, InterSessionMessage};
 use parzi_core::error::{ParziError, Result};
-use parzi_core::store::{Event, SessionStatus, SessionStore};
-use parzi_core::work::{Check, RunCause, RunEndKind};
+use parzi_core::store::{Check, Event, RunCause, RunEndKind, SessionStatus, SessionStore};
 use parzi_providers::{
     ErrorClass, PermissionGate, Provider, ProviderError, ProviderEvent, TurnEnd, TurnSpec,
 };
@@ -18,10 +17,10 @@ use tokio_util::sync::CancellationToken;
 use crate::handler::{user_event_text, RunEvent, RunSink};
 use crate::mcp_host::McpHost;
 use crate::orchestrator::{set_run_session, SessionSlot, VendorSession};
+use crate::run_hooks::Tally;
 use crate::status::StatusBoard;
 use crate::toolhost::ToolHost;
-use crate::tools::{category, display_name, edit_paths, humanize_tool_call, shell_command};
-use crate::work_hooks::Tally;
+use crate::tools::{display_name, edit_paths, humanize_tool_call, shell_command};
 
 const MAX_TURNS: u32 = 8;
 const HISTORY_CHARS: usize = 12_000;
@@ -48,6 +47,8 @@ pub struct EngineRunParts {
     pub seen: usize,
     pub inbox_from: Option<usize>,
     pub(crate) tally: Tally,
+    /// The project's plan (`<parzi:plan>`), for the opening turn.
+    pub brief: Option<String>,
 }
 
 pub struct EngineRun {
@@ -125,9 +126,8 @@ impl EngineRun {
         let mut cap_noted = false;
         loop {
             turns += 1;
-            self.tally(|t| t.turns = turns);
             if let Some(reason) = self.budget_hit() {
-                self.pause_for_budget(&reason);
+                self.pause_for_budget(&reason).await;
                 return Ok(());
             }
             match self.turn(&text).await {
@@ -135,11 +135,12 @@ impl EngineRun {
                 Outcome::Interrupted => {
                     self.tally(|t| t.end = Some((RunEndKind::Stopped, None)));
                     self.settle(SessionStatus::Killed);
+                    self.record().await;
                     self.p.sink.emit(RunEvent::Error("cancelled".into()));
                     return Ok(());
                 }
                 Outcome::Paused(reason) => {
-                    self.pause_for_budget(&reason);
+                    self.pause_for_budget(&reason).await;
                     return Ok(());
                 }
                 Outcome::Failed(e) if e.class == ErrorClass::SessionLost && !restarted => {
@@ -168,9 +169,10 @@ impl EngineRun {
                             class: e.class.as_str().to_string(),
                         },
                     );
-                    self.p.sink.emit(RunEvent::Error(e.message.clone()));
                     self.tally(|t| t.end = Some((RunEndKind::Failed, Some(e.message.clone()))));
                     self.settle(SessionStatus::Idle);
+                    self.record().await;
+                    self.p.sink.emit(RunEvent::Error(e.message.clone()));
                     return Err(ParziError::Provider(self.p.provider_id.clone(), e.message));
                 }
             }
@@ -212,6 +214,7 @@ impl EngineRun {
             self.settle(SessionStatus::Done);
         }
         self.tally(|t| t.end = Some((RunEndKind::Completed, None)));
+        self.record().await;
         tracing::info!(session = %sid, turns, "run done");
         self.p.sink.emit(RunEvent::Done { turns });
         Ok(())
@@ -221,6 +224,13 @@ impl EngineRun {
         if let Ok(mut t) = self.p.tally.lock() {
             f(&mut t);
         }
+    }
+
+    /// The run's outcome kept on its session, before the window hears it
+    /// ended: what it reads then is already this run's.
+    async fn record(&self) {
+        let stopped = self.p.cancel.is_cancelled();
+        crate::run_hooks::run_ended(&self.p.store, &self.p.tally, stopped, true).await;
     }
 
     fn inbox(&self, from: usize, until: Option<usize>) -> (Vec<String>, usize) {
@@ -261,6 +271,9 @@ impl EngineRun {
     fn opening(&self, prompt: &str) -> String {
         let mut parts = vec![];
         let fresh_session = self.resume.lock().map(|r| r.is_none()).unwrap_or(true);
+        if let Some(b) = self.brief(fresh_session) {
+            parts.push(b);
+        }
         if fresh_session {
             if let Some(h) = self.history(prompt) {
                 parts.push(h);
@@ -274,6 +287,21 @@ impl EngineRun {
         }
         parts.push(prompt.to_string());
         parts.join("\n\n")
+    }
+
+    /// The plan, unless this conversation has seen this exact text: a fresh
+    /// one never has; a resumed one saw what run.json's hash says. Never
+    /// written to the transcript, and never part of the instructions (those
+    /// are re-sent every turn and a changing plan would spoil their cache).
+    fn brief(&self, fresh: bool) -> Option<String> {
+        let text = self.p.brief.as_ref()?;
+        let hash = parzi_core::plan::digest(text);
+        let sid = &self.p.session_id;
+        if !fresh && crate::orchestrator::brief_hash(sid).as_deref() == Some(hash.as_str()) {
+            return None;
+        }
+        crate::orchestrator::set_brief_hash(sid, &hash);
+        Some(text.clone())
     }
 
     fn history(&self, prompt: &str) -> Option<String> {
@@ -451,7 +479,7 @@ impl EngineRun {
                 turn.started.insert(id.clone(), Instant::now());
                 let shown = display_name(&name);
                 let label = humanize_tool_call(&name, &input);
-                crate::work_hooks::tool_started(&self.p.tally, &id, &shown, &input);
+                crate::run_hooks::tool_started(&self.p.tally, &id, &shown, &input);
                 let _ = self.p.store.append(
                     sid,
                     &Event::ToolCall {
@@ -505,7 +533,7 @@ impl EngineRun {
                     self.cost_seen.store(true, Ordering::Relaxed);
                 }
                 let cost = cost_usd.unwrap_or(0.0);
-                self.tally(|t| t.usage(input, output, cost_usd));
+                self.tally(|t| t.usage(cost_usd));
                 let _ = self.p.store.add_usage(sid, input, output, cost);
                 self.p.sink.emit(RunEvent::Usage {
                     tokens_in: input,
@@ -557,7 +585,7 @@ impl EngineRun {
         self.p.budget.exceeded(tokens.max(est), cost)
     }
 
-    fn pause_for_budget(&self, reason: &str) {
+    async fn pause_for_budget(&self, reason: &str) {
         let text = format!(
             "Paused: {reason}. Raise the budget in Settings, or re-scope, \
              then send the thread on."
@@ -572,8 +600,8 @@ impl EngineRun {
         );
         self.p.sink.emit(RunEvent::Notice { text });
         self.tally(|t| t.end = Some((RunEndKind::Paused, Some(reason.to_string()))));
-        crate::work_hooks::budget_paused(&self.p.session_id, reason);
         self.settle(SessionStatus::Idle);
+        self.record().await;
         // The UI's running set clears on this, as it does on done.
         self.p.sink.emit(RunEvent::Paused {
             reason: reason.to_string(),
@@ -593,35 +621,6 @@ impl EngineRun {
         };
         let _ = self.p.store.set_status(&self.p.session_id, status);
     }
-}
-
-/// The Parzi tools that are real work on their own: a run that calls one
-/// becomes a goal. Anything else counts toward the three-call rule.
-const REAL_WORK: &[&str] = &[
-    "work.plan",
-    "session.spawn",
-    "lane.dispatch",
-    "shell.exec",
-    "shell.start",
-    "image.generate",
-    "brain.write",
-    "ui.show_artifact",
-    "browser.click",
-    "browser.type",
-    "project.create",
-];
-
-/// Tool calls a run may make and still be a chat.
-const CHAT_TOOLS: usize = 2;
-
-/// Whether one call (by its shown name) is real work: an edit or a command
-/// of the agent's own, or one of Parzi's acting tools.
-#[must_use]
-pub(crate) fn real_work(name: &str) -> bool {
-    if crate::tools::is_parzi_tool(name) || name.starts_with("work.") {
-        return REAL_WORK.contains(&name);
-    }
-    matches!(category(name), Some("fs.write" | "shell.exec"))
 }
 
 /// Whether a command line builds, tests or lints: its result is a check.
@@ -704,65 +703,46 @@ pub(crate) fn display_path(cwd: &str, path: &str) -> String {
     p.trim_start_matches("./").to_string()
 }
 
-/// What a run did, gathered while it runs: the work ledger's `RunEnded`
-/// comes from this, and its first real tool call makes the goal.
+/// What a run did, gathered while it runs: the session's `last_run` comes
+/// from this when the run ends.
 pub(crate) struct RunTally {
-    pub(crate) run: String,
     pub(crate) session: String,
     pub(crate) cause: RunCause,
-    pub(crate) prompt: String,
-    /// The session's title, for a goal whose prompt has no words.
-    pub(crate) title_hint: String,
-    pub(crate) project: Option<String>,
     pub(crate) cwd: String,
     /// Where the run's events start in the transcript.
     pub(crate) first_event: usize,
     pub(crate) started: Instant,
-    pub(crate) goal: Option<String>,
-    tools: usize,
-    qualified: bool,
     edits: Vec<String>,
     shells: HashMap<String, String>,
     pub(crate) checks: Vec<Check>,
-    pub(crate) tokens_in: u64,
-    pub(crate) tokens_out: u64,
     pub(crate) cost: Option<f64>,
-    pub(crate) turns: u32,
     /// How it ended (and the error), set by the run itself.
     pub(crate) end: Option<(RunEndKind, Option<String>)>,
     pub(crate) git: Option<tokio::task::JoinHandle<Option<crate::gitmark::GitMark>>>,
+    /// Its outcome is on the session: the run's guard need not keep it.
+    pub(crate) recorded: bool,
 }
 
 impl RunTally {
-    pub(crate) fn new(run: &str, session: &str, cause: RunCause, cwd: &str) -> Self {
+    pub(crate) fn new(session: &str, cause: RunCause, cwd: &str) -> Self {
         Self {
-            run: run.to_string(),
             session: session.to_string(),
             cause,
-            prompt: String::new(),
-            title_hint: String::new(),
-            project: None,
             cwd: cwd.to_string(),
             first_event: 0,
             started: Instant::now(),
-            goal: None,
-            tools: 0,
-            qualified: false,
             edits: vec![],
             shells: HashMap::new(),
             checks: vec![],
-            tokens_in: 0,
-            tokens_out: 0,
             cost: None,
-            turns: 0,
             end: None,
             git: None,
+            recorded: false,
         }
     }
 
-    /// Counts a call; true when it is the one that makes the run real work.
-    pub(crate) fn tool_started(&mut self, id: &str, name: &str, input: &Value) -> bool {
-        self.tools += 1;
+    /// Counts a call: the files an edit names, and a check it runs.
+    pub(crate) fn tool_started(&mut self, id: &str, name: &str, input: &Value) {
         for p in edit_paths(name, input) {
             let shown = display_path(&self.cwd, &p);
             if !self
@@ -776,9 +756,6 @@ impl RunTally {
         if let Some(cmd) = shell_command(name, input).filter(|c| is_check(c)) {
             self.shells.insert(id.to_string(), check_label(&cmd));
         }
-        let was = self.qualified;
-        self.qualified = was || real_work(name) || self.tools > CHAT_TOOLS;
-        self.qualified && !was
     }
 
     pub(crate) fn tool_finished(&mut self, id: &str, ok: bool) {
@@ -787,17 +764,10 @@ impl RunTally {
         }
     }
 
-    pub(crate) fn usage(&mut self, input: u64, output: u64, cost: Option<f64>) {
-        self.tokens_in = self.tokens_in.saturating_add(input);
-        self.tokens_out = self.tokens_out.saturating_add(output);
+    pub(crate) fn usage(&mut self, cost: Option<f64>) {
         if let Some(c) = cost {
             self.cost = Some(self.cost.unwrap_or(0.0) + c);
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn qualifies(&self) -> bool {
-        self.qualified
     }
 
     /// Files the run's tool calls edited, relative to its folder.
@@ -812,47 +782,7 @@ mod tests {
     use serde_json::json;
 
     fn tally() -> RunTally {
-        RunTally::new("r1", "s1", RunCause::Send, r"D:\Repos\app")
-    }
-
-    #[test]
-    fn chat_and_a_couple_of_reads_stay_chat() {
-        let mut t = tally();
-        assert!(!t.qualifies(), "no tools at all");
-        assert!(!t.tool_started("1", "Read", &json!({"file_path": "a.rs"})));
-        assert!(!t.tool_started("2", "Grep", &json!({"pattern": "x"})));
-        assert!(!t.qualifies(), "two reads are a question, not work");
-        assert!(
-            t.tool_started("3", "Glob", &json!({"pattern": "*"})),
-            "the third call"
-        );
-        assert!(!t.tool_started("4", "Read", &json!({})), "only once");
-        assert!(t.qualifies());
-    }
-
-    #[test]
-    fn one_edit_or_command_is_work() {
-        for (name, input) in [
-            ("Edit", json!({"file_path": "a.rs"})),
-            ("edit", json!({"paths": ["a.rs"]})),
-            ("shell.exec", json!({"cmd": "ls"})),
-            ("Bash", json!({"command": "ls"})),
-            ("shell", json!({"command": "ls"})),
-            ("session.spawn", json!({"prompt": "x"})),
-            ("brain.write", json!({"path": "n.md"})),
-            ("work.plan", json!({})),
-        ] {
-            assert!(tally().tool_started("1", name, &input), "{name}");
-        }
-        for name in [
-            "brain.read",
-            "shell.logs",
-            "browser.read",
-            "desk.state",
-            "gh.issue_get",
-        ] {
-            assert!(!tally().tool_started("1", name, &json!({})), "{name}");
-        }
+        RunTally::new("s1", RunCause::Send, r"D:\Repos\app")
     }
 
     #[test]
@@ -869,6 +799,16 @@ mod tests {
         t.tool_started("5", "edit", &json!({"paths": ["src/b.rs", "./src/c.rs"]}));
         t.tool_started("6", "Read", &json!({"file_path": "src/z.rs"}));
         t.tool_started("7", "Write", &json!({"file_path": "C:/elsewhere/y.txt"}));
+        t.tool_started(
+            "8",
+            "Run create_file?",
+            &json!({"TargetFile": "D:/Repos/app/notes.txt", "CodeContent": "hello"}),
+        );
+        t.tool_started(
+            "9",
+            "Running edit_file",
+            &json!({"target_file": "src/d.rs"}),
+        );
         assert_eq!(
             t.edits(),
             [
@@ -877,7 +817,9 @@ mod tests {
                 "nb/x.ipynb",
                 "src/b.rs",
                 "src/c.rs",
-                "C:/elsewhere/y.txt"
+                "C:/elsewhere/y.txt",
+                "notes.txt",
+                "src/d.rs"
             ]
         );
     }
@@ -935,10 +877,10 @@ mod tests {
     #[test]
     fn usage_adds_up_and_cost_stays_unknown_until_reported() {
         let mut t = tally();
-        t.usage(10, 5, None);
+        t.usage(None);
         assert_eq!(t.cost, None);
-        t.usage(1, 1, Some(0.25));
-        t.usage(1, 1, Some(0.25));
-        assert_eq!((t.tokens_in, t.tokens_out, t.cost), (12, 7, Some(0.5)));
+        t.usage(Some(0.25));
+        t.usage(Some(0.25));
+        assert_eq!(t.cost, Some(0.5));
     }
 }

@@ -53,12 +53,13 @@ their reason.
 - **Home** is where a new tab lands: the composer, pinned sites (pin any page
   from its toolbar; until you do, your most visited sites show), and recent
   sessions.
-- **Work** (`Ctrl+J`) shows what your agents are doing for you. Ask for
-  something in the composer: once a run does real work (edits, commands,
-  sub-agents, or a few tool calls) it becomes a goal with what it changed, the
-  checks it ran and what it cost. Chats stay in History. A run that needs you
-  (failed, or paused at the budget) says so. Goals live in an append-only
-  ledger under `~/.parzi/work`.
+- **Plans**: a project can have one living plan, shown beside the session
+  (`Ctrl+J`). Agents write it (ask one to "plan the next release") and keep it
+  current; each item reads its state from the sessions working on it and the
+  pull request of its `plan/<id>` branch. Click an item to quote it into the
+  composer, then say what you want. The plan is a note in the Brain
+  (`projects/<slug>/plan.md`), so it syncs like the rest. Every session keeps
+  how its latest run went: what it changed, the checks it ran, what it cost.
 - **Set up Parzi** (first launch, or the menu) signs you in to each agent with
   its own login, imports Brave/Chrome/Edge bookmarks and history (never
   passwords or cookies), and turns your other agents' instructions, memories
@@ -169,7 +170,7 @@ parzi approval list                                              # tool calls wa
 parzi approval allow 1a2b                                        # a key prefix is enough
 parzi watch                                                      # runs, approvals, tabs as they happen
 parzi state                                                      # tabs, folder, running sessions
-parzi open session <id>                                          # also: settings providers, brain <note>, history, home
+parzi open session <id>                                          # also: settings providers, brain <note>, history, plan, home
 parzi notify "deploy is green"
 parzi screenshot                                                 # the window, to ~/.parzi/shots/cli/
 parzi providers --json

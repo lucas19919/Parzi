@@ -820,8 +820,8 @@ async fn session_send(state: &State, req: &Value) -> Value {
     };
     let project = parzi_core::brain::project_for_folder(&cwd).unwrap_or_else(|| "default".into());
     // A desktop sends as the person; the CLI says it is the CLI.
-    let cause = parzi_core::work::RunCause::parse(&str_arg(req, "cause"))
-        .filter(|c| c.makes_goals())
+    let cause = parzi_core::store::RunCause::parse(&str_arg(req, "cause"))
+        .filter(|c| c.from_person())
         .unwrap_or_default();
     let sent = if target.is_empty() || target == "new" {
         state
@@ -870,6 +870,13 @@ async fn session_send(state: &State, req: &Value) -> Value {
         Ok(id) => id,
         Err(e) => return fail(e.to_string()),
     };
+    // A desk that quoted a plan item links the session to it.
+    let item = str_arg(req, "plan_item");
+    if !item.is_empty() {
+        if let Err(e) = state.orch.store().set_plan_item(&id, Some(&item)) {
+            tracing::warn!("plan item of {id} not kept: {e}");
+        }
+    }
     let status = state
         .orch
         .store()

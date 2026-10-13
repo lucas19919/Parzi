@@ -1,7 +1,6 @@
 use parzi_core::context::{InterKind, InterSessionMessage};
 use parzi_core::error::{ParziError, Result};
-use parzi_core::store::{Event, SessionMeta, SessionStatus};
-use parzi_core::work::RunCause;
+use parzi_core::store::{Event, RunCause, SessionMeta, SessionStatus};
 
 use crate::handler::{HarnessBridge, SpawnSpec};
 use crate::inter;
@@ -110,8 +109,7 @@ fn run_outcome(events: &[Event]) -> String {
 }
 
 impl Pump {
-    /// A child session. It works a step of the caller's goal, added (and
-    /// linked) before the child can start, so its run end always finds it.
+    /// A child session, named by its caller or after its prompt.
     async fn spawn_child(&self, caller_id: &str, spec: SpawnSpec) -> Result<String> {
         let SpawnSpec {
             title,
@@ -124,14 +122,9 @@ impl Pump {
             effort,
         } = spec;
         let caller = self.store.get(caller_id)?;
+        // The tools' stand-in names say nothing: name it after its prompt.
         let title: String = match title.trim() {
-            "" => prompt
-                .lines()
-                .next()
-                .unwrap_or("subsession")
-                .chars()
-                .take(80)
-                .collect(),
+            "" | "subsession" | "lane worker" => parzi_core::text::name_from_prompt(&prompt),
             t => t.chars().take(80).collect(),
         };
         let model_spec = model.unwrap_or_else(|| caller.model.clone());
@@ -149,7 +142,6 @@ impl Pump {
         if !caller.cwd.is_empty() {
             let _ = self.store.set_cwd(&meta.id, &caller.cwd);
         }
-        crate::work_hooks::spawned(caller_id, &meta.id, &title, &lane_name);
         let q = QueuedRun {
             session_id: meta.id.clone(),
             project: caller.project.clone(),

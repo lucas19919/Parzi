@@ -9,14 +9,15 @@ pub mod mcp;
 mod mcp_host;
 pub mod orchestrator;
 pub mod osserve;
+mod plan_tools;
 pub mod provision;
 pub mod remote;
 mod run;
+mod run_hooks;
 pub mod shell;
 pub mod status;
 pub mod sync;
 pub mod toolhost;
 pub mod tools;
-mod work_hooks;
 
 pub use orchestrator::Orchestrator;
