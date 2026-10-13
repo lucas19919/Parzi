@@ -77,19 +77,28 @@
   let loadError = "";
   let viewFor: string | null = null;
 
+  // A call made while the app is still starting can fail or never answer:
+  // give it a few seconds, then say so (focus and run ends try again).
+  const LOAD_WAIT = 8000;
   const loadPlan = coalesce(async () => {
     const slug = project;
     if (!slug) {
       view = null;
       return;
     }
+    let timer = 0;
     try {
-      const next = await planApi.view(slug);
+      const late = new Promise<never>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error("it took too long to answer")), LOAD_WAIT);
+      });
+      const next = await Promise.race([planApi.view(slug), late]);
       if (slug !== project) return;
       view = next;
       loadError = "";
     } catch (e) {
-      if (slug === project) loadError = String(e);
+      if (slug === project && !view) loadError = e instanceof Error ? e.message : String(e);
+    } finally {
+      window.clearTimeout(timer);
     }
   }, 150);
 
@@ -210,11 +219,19 @@
   $: card = hovered ? (views.find((v) => v.item.id === hovered?.v.item.id) ?? null) : null;
 
   onMount(() => {
-    void brain
-      .projects()
-      .then((list) => (projects = list))
-      .catch(() => {});
+    const loadProjects = () =>
+      void brain
+        .projects()
+        .then((list) => (projects = list))
+        .catch(() => {});
+    loadProjects();
     void loadPlan();
+    // Back to the window: anything that failed while it started loads again.
+    const onFocus = () => {
+      if (!projects.length) loadProjects();
+      void loadPlan();
+    };
+    window.addEventListener("focus", onFocus);
     const unPlan = onPlan((e) => {
       if (sameSlug(e.project, project)) void loadPlan();
     });
@@ -228,6 +245,7 @@
     }, PR_EVERY);
     return () => {
       window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
       for (const un of [unPlan, unRun]) un.then((f) => f()).catch(() => {});
     };
   });
@@ -261,6 +279,8 @@
       </p>
     {:else if loadError && !view}
       <p class="empty">Couldn't load the plan: {loadError}</p>
+    {:else if !view}
+      <p class="empty">Loading the plan</p>
     {:else if view && !plan}
       {#if view.error}
         <p class="empty">This project's plan can't be read: {view.error}</p>

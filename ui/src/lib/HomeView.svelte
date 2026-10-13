@@ -52,10 +52,19 @@
     void loadProjects(remote);
   }
 
-  async function loadProjects(onServer: boolean) {
-    const list = await (onServer ? server.projects() : brain.projects()).catch(() => [] as Project[]);
-    if (onServer === remote) projects = list.filter((p) => p.folder).slice(0, ROWS);
+  // A call made while the app still starts can fail: try again a few times,
+  // and whenever the window comes back into focus.
+  async function loadProjects(onServer: boolean, tries = 3) {
+    const list = await (onServer ? server.projects() : brain.projects()).catch(() => null);
+    if (onServer !== remote) return;
+    if (list) projects = list.filter((p) => p.folder).slice(0, ROWS);
+    else if (tries > 1) window.setTimeout(() => void loadProjects(onServer, tries - 1), 2000);
   }
+  onMount(() => {
+    const onFocus = () => void loadProjects(remote, 1);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  });
 
   $: recent = threads.slice(0, ROWS);
   $: agents = PROVIDER_ORDER.map((id) => board.find((b) => b.provider === id))
