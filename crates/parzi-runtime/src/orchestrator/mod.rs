@@ -1,9 +1,12 @@
 mod harness;
 mod launch;
 mod queue;
+mod wake;
 
+pub(crate) use queue::{
+    brief_hash, run_session, set_brief_hash, set_run_note, set_run_session, VendorSession,
+};
 pub use queue::{run_note, BUDGET_NOTE};
-pub(crate) use queue::{run_session, set_run_note, set_run_session, VendorSession};
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -118,6 +121,7 @@ pub struct Orchestrator {
     asker: Arc<Mutex<Option<Arc<dyn crate::tools::Asker>>>>,
     approver: HostApprover,
     shells: Arc<std::sync::Mutex<HashMap<String, Arc<crate::shell::ShellRegistry>>>>,
+    wakes: wake::Wakes,
 }
 
 impl Orchestrator {
@@ -142,6 +146,7 @@ impl Orchestrator {
             asker: Arc::new(Mutex::new(None)),
             approver: HostApprover::default(),
             shells: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            wakes: wake::Wakes::default(),
         }
     }
 
@@ -203,6 +208,7 @@ impl Orchestrator {
             asker: self.asker.clone(),
             approver: self.approver.clone(),
             shells: self.shells.clone(),
+            wakes: self.wakes.clone(),
         }
     }
 
@@ -234,11 +240,17 @@ impl Orchestrator {
         for m in self.store.list()? {
             if m.status == SessionStatus::Active {
                 self.store.set_status(&m.id, SessionStatus::Idle)?;
+                // Its run was cut off when the app closed: the session says so.
+                let outcome = parzi_core::store::RunOutcome::bare(
+                    parzi_core::store::RunEndKind::Interrupted,
+                    crate::run_hooks::now_ms(),
+                );
+                if let Err(e) = self.store.set_last_run(&m.id, outcome, None) {
+                    tracing::warn!("run outcome of {} not kept: {e}", m.id);
+                }
                 cut.push(m.id);
             }
         }
-        // Their runs were cut off when the app closed: the ledger says so.
-        crate::work_hooks::recover();
         Ok(cut.len())
     }
 

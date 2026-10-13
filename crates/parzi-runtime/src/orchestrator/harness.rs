@@ -1,14 +1,13 @@
 use parzi_core::context::{InterKind, InterSessionMessage};
 use parzi_core::error::{ParziError, Result};
-use parzi_core::store::{Event, SessionMeta, SessionStatus};
-use parzi_core::work::RunCause;
+use parzi_core::store::{Event, RunCause, SessionMeta, SessionStatus};
 
 use crate::handler::{HarnessBridge, SpawnSpec};
 use crate::inter;
 use crate::tools::clip;
 
 use super::normalize_effort;
-use super::queue::{Pump, QueuedRun};
+use super::queue::{set_report_to, Pump, QueuedRun};
 
 const HARNESS_WAIT_SECS: u64 = 180;
 
@@ -110,8 +109,9 @@ fn run_outcome(events: &[Event]) -> String {
 }
 
 impl Pump {
-    /// A child session. It works a step of the caller's goal, added (and
-    /// linked) before the child can start, so its run end always finds it.
+    /// A child session, named by its caller or after its prompt. A child left
+    /// running in the background reports back to the caller when its run
+    /// ends.
     async fn spawn_child(&self, caller_id: &str, spec: SpawnSpec) -> Result<String> {
         let SpawnSpec {
             title,
@@ -124,14 +124,9 @@ impl Pump {
             effort,
         } = spec;
         let caller = self.store.get(caller_id)?;
+        // The tools' stand-in names say nothing: name it after its prompt.
         let title: String = match title.trim() {
-            "" => prompt
-                .lines()
-                .next()
-                .unwrap_or("subsession")
-                .chars()
-                .take(80)
-                .collect(),
+            "" | "subsession" | "lane worker" => parzi_core::text::name_from_prompt(&prompt),
             t => t.chars().take(80).collect(),
         };
         let model_spec = model.unwrap_or_else(|| caller.model.clone());
@@ -149,7 +144,10 @@ impl Pump {
         if !caller.cwd.is_empty() {
             let _ = self.store.set_cwd(&meta.id, &caller.cwd);
         }
-        crate::work_hooks::spawned(caller_id, &meta.id, &title, &lane_name);
+        if !wait {
+            // Set before it can start: a quick child must not end unheard.
+            set_report_to(&meta.id, Some(caller_id));
+        }
         let q = QueuedRun {
             session_id: meta.id.clone(),
             project: caller.project.clone(),
@@ -179,6 +177,7 @@ impl Pump {
                 "session_id": meta.id,
                 "status": format!("{:?}", meta.status).to_lowercase(),
                 "title": meta.title,
+                "report": REPORTS,
             });
             if crippled {
                 o["note"] = crippled_note.into();
@@ -188,11 +187,14 @@ impl Pump {
         if !launched {
             // Nothing will ever run it: stand it down, don't phantom-run.
             if self.cfg_snapshot().orchestrator.queue_when_busy {
+                // Waiting would deadlock: it runs when a slot frees, and reports.
+                set_report_to(&meta.id, Some(caller_id));
                 return Ok(serde_json::json!({
                     "session_id": meta.id,
                     "status": "queued",
                     "title": meta.title,
-                    "note": "no run slot free; parent would deadlock waiting — poll with session.read_session",
+                    "note": "no run slot free; it runs when one frees",
+                    "report": REPORTS,
                 })
                 .to_string());
             }
@@ -207,15 +209,61 @@ impl Pump {
         }
         match self.await_settled(&meta.id).await {
             Some(done) => Ok(self.reply_json(&meta.id, &done, crippled.then_some(crippled_note))),
-            None => Ok(serde_json::json!({
-                "session_id": meta.id,
-                "status": "timeout",
-                "note": "child still running; poll with session.read_session",
-            })
-            .to_string()),
+            None => {
+                self.report_later(caller_id, &meta.id).await;
+                Ok(serde_json::json!({
+                    "session_id": meta.id,
+                    "status": "timeout",
+                    "note": "child still running",
+                    "report": REPORTS,
+                })
+                .to_string())
+            }
         }
     }
+
+    /// A wait gave up while `target` still runs: it reports when it ends.
+    /// If it ended in between, the report goes out now.
+    async fn report_later(&self, caller_id: &str, target: &str) {
+        set_report_to(target, Some(caller_id));
+        let running = {
+            let mut h = self.handles.lock().await;
+            h.retain(|_, x| !x.finished());
+            h.contains_key(target)
+        };
+        let busy = self
+            .store
+            .get(target)
+            .is_ok_and(|m| matches!(m.status, SessionStatus::Active | SessionStatus::Queued));
+        if !running && !busy {
+            self.report_to_parent(target, false).await;
+        }
+    }
+
+    /// The reply to a message whose wait gave up: when the caller started
+    /// the target, it hears back when the target ends.
+    async fn timed_out(&self, caller_id: &str, target: &str, reports: bool) -> String {
+        if reports {
+            self.report_later(caller_id, target).await;
+            return serde_json::json!({
+                "session_id": target,
+                "status": "timeout",
+                "note": "target still running",
+                "report": REPORTS,
+            })
+            .to_string();
+        }
+        serde_json::json!({
+            "session_id": target,
+            "status": "timeout",
+            "note": "target still running; check later with session.read_session",
+        })
+        .to_string()
+    }
 }
+
+/// What a background child's reply promises.
+const REPORTS: &str = "Parzi messages you when it ends, and wakes you if you are idle; do not poll";
 
 #[async_trait::async_trait]
 impl HarnessBridge for Pump {
@@ -269,6 +317,11 @@ impl HarnessBridge for Pump {
             ));
         }
         let msg = inter::from_caller(&caller, kind, message);
+        // A session the caller started answers back when it ends.
+        let reports = target.parent_id.as_deref() == Some(caller_id);
+        if reports && !wait {
+            set_report_to(session_id, Some(caller_id));
+        }
         let (at, still_live) = {
             let mut h = self.handles.lock().await;
             h.retain(|_, handle| !handle.finished());
@@ -287,12 +340,7 @@ impl HarnessBridge for Pump {
             }
             return match self.await_settled(session_id).await {
                 Some(done) => Ok(self.reply_json(session_id, &done, None)),
-                None => Ok(serde_json::json!({
-                    "session_id": session_id,
-                    "status": "timeout",
-                    "note": "target still running; poll with session.read_session",
-                })
-                .to_string()),
+                None => Ok(self.timed_out(caller_id, session_id, reports).await),
             };
         }
         let q = QueuedRun {
@@ -322,10 +370,17 @@ impl HarnessBridge for Pump {
         }
         if !launched {
             if self.cfg_snapshot().orchestrator.queue_when_busy {
+                if reports {
+                    set_report_to(session_id, Some(caller_id));
+                }
                 return Ok(serde_json::json!({
                     "session_id": session_id,
                     "status": "queued",
-                    "note": "no run slot free — poll with session.read_session",
+                    "note": if reports {
+                        "no run slot free; it runs when one frees. Parzi messages you when it ends"
+                    } else {
+                        "no run slot free; it runs when one frees"
+                    },
                 })
                 .to_string());
             }
@@ -338,12 +393,7 @@ impl HarnessBridge for Pump {
         }
         match self.await_settled(session_id).await {
             Some(done) => Ok(self.reply_json(session_id, &done, None)),
-            None => Ok(serde_json::json!({
-                "session_id": session_id,
-                "status": "timeout",
-                "note": "target still running; poll with session.read_session",
-            })
-            .to_string()),
+            None => Ok(self.timed_out(caller_id, session_id, reports).await),
         }
     }
 

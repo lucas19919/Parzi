@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use clap::{ArgGroup, Parser, Subcommand};
 use parzi_core::config::ParziConfig;
 use parzi_core::paths;
+use parzi_core::store::RunCause;
 use parzi_core::store::SessionStore;
-use parzi_core::work::RunCause;
 use parzi_providers::State;
 use parzi_runtime::desk::{self, normalize_url, DeskError, Probe};
 use parzi_runtime::tools::{Approval, Approver, AutoApprover, ToolCallInfo};
@@ -237,10 +237,11 @@ enum OpenCmd {
     #[command(about = "History: sessions, history, bookmarks or downloads")]
     History { view: Option<String> },
     #[command(
-        about = "The Work view: goals your agents are working on",
+        about = "The plan of the project you are in, beside the session",
+        visible_alias = "work",
         alias = "tasks"
     )]
-    Work,
+    Plan,
     #[command(about = "The home tab")]
     Home,
     #[command(about = "A web page")]
@@ -1331,7 +1332,7 @@ fn open_body(what: OpenCmd, background: bool, raise: bool) -> Value {
         OpenCmd::Settings { section } => ("settings", json!({ "section": section })),
         OpenCmd::Brain { path } => ("brain", json!({ "path": path })),
         OpenCmd::History { view } => ("history", json!({ "view": view })),
-        OpenCmd::Work => ("work", json!({})),
+        OpenCmd::Plan => ("plan", json!({})),
         OpenCmd::Home => ("home", json!({})),
         OpenCmd::Url { url } => ("url", json!({ "url": normalize_url(&url) })),
     };
@@ -1575,6 +1576,9 @@ mod tests {
         assert!(body.get("path").is_none());
         let body = open(&["open", "url", "localhost:1420"]);
         assert_eq!(body["url"], "http://localhost:1420");
+        for name in ["plan", "work", "tasks"] {
+            assert_eq!(open(&["open", name])["what"], "plan", "{name}");
+        }
         assert!(parse(&["open", "nowhere"]).is_err());
     }
 

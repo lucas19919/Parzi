@@ -121,6 +121,7 @@ impl ToolExecutor {
         d.extend(doc_defs());
         d.extend(team_defs());
         d.extend(question_defs());
+        d.extend(plan_defs());
         d.extend(project_defs());
         d.extend(shell_defs());
         d.retain(|t| self.is_allowed(&t.name));
@@ -139,6 +140,7 @@ impl ToolExecutor {
                 || is_brain_tool(name)
                 || is_session_tool(name)
                 || is_lane_tool(name)
+                || is_plan_tool(name)
             {
                 return (false, format!("tool `{name}` is handled by the agent loop"));
             }
@@ -177,6 +179,12 @@ pub(crate) fn category(tool: &str) -> Option<&'static str> {
             // name smells like command execution routes to the shell gate
             // instead of slipping through as unknown.
             let l = tool.to_lowercase();
+            // ACP agents name a call by its title ("Run create_file?",
+            // "Running edit_file" from Antigravity): the file verb in it says
+            // it writes.
+            if FILE_WRITES.iter().any(|w| l.contains(w)) {
+                return Some("fs.write");
+            }
             if l.contains("shell")
                 || l.contains("bash")
                 || l.contains("terminal")
@@ -194,15 +202,35 @@ pub(crate) fn category(tool: &str) -> Option<&'static str> {
     }
 }
 
+/// File-writing tool names inside an ACP call's title.
+const FILE_WRITES: &[&str] = &[
+    "create_file",
+    "edit_file",
+    "write_file",
+    "write_to_file",
+    "replace_file",
+    "multi_replace_file",
+];
+
 /// The files an edit tool call names: Claude's `file_path` (and
-/// `notebook_path`), Codex's `paths`, and the usual spellings of others.
+/// `notebook_path`), Codex's `paths`, Antigravity's `TargetFile`, and the
+/// usual spellings of others.
 #[must_use]
 pub fn edit_paths(tool: &str, args: &serde_json::Value) -> Vec<String> {
     if category(tool) != Some("fs.write") {
         return vec![];
     }
     let mut out: Vec<String> = vec![];
-    for key in ["file_path", "notebook_path", "path", "filePath", "file"] {
+    for key in [
+        "file_path",
+        "notebook_path",
+        "path",
+        "filePath",
+        "file",
+        "TargetFile",
+        "target_file",
+        "targetFile",
+    ] {
         if let Some(p) = args.get(key).and_then(serde_json::Value::as_str) {
             out.push(p.to_string());
         }
@@ -255,6 +283,7 @@ pub(crate) fn is_parzi_tool(name: &str) -> bool {
         || is_project_tool(name)
         || is_shell_tool(name)
         || is_brain_tool(name)
+        || is_plan_tool(name)
 }
 
 fn ui_defs() -> Vec<ToolDef> {
@@ -463,11 +492,11 @@ fn desk_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "desk.open".into(),
-            description: "Open something in the Parzi window for the human: what=session (id; default this session), settings (section: general, providers, connections, appearance, system), brain (path of a note), history, work (goals agents are working on), or home. Opens in the background unless focus=true.".into(),
+            description: "Open something in the Parzi window for the human: what=session (id; default this session), settings (section: general, providers, connections, appearance, system), brain (path of a note), history, plan (the project's plan beside the session), or home. Opens in the background unless focus=true.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "what": {"type": "string", "enum": ["session", "settings", "brain", "history", "work", "home"]},
+                    "what": {"type": "string", "enum": ["session", "settings", "brain", "history", "plan", "home"]},
                     "id": {"type": "string"},
                     "section": {"type": "string"},
                     "path": {"type": "string"},
@@ -721,6 +750,56 @@ fn question_defs() -> Vec<ToolDef> {
     ]
 }
 
+/// The project's plan: read it, change it. Neither shows an approval card:
+/// the plan is Parzi's own note, shown to the person beside the session.
+pub fn is_plan_tool(name: &str) -> bool {
+    matches!(name, "plan.read" | "plan.write")
+}
+
+fn plan_defs() -> Vec<ToolDef> {
+    vec![
+        ToolDef {
+            name: "plan.read".into(),
+            description: "Read a project's plan: its items with their state, needs, branch, detail and note, and the sessions working on each (with their branches). project is a project slug; default: this session's project. Read-only.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"project": {"type": "string"}},
+            }),
+        },
+        ToolDef {
+            name: "plan.write".into(),
+            description: "Change this project's plan. Every field is optional and what you leave out stays: title, goal, phases (ordered names such as Now and Next), and items, merged by id: [{id, title?, detail?, phase?, needs?, state?, branch?, note?}]. An id is 1 to 24 of a-z, 0-9 and -; a new item needs a title. needs names other items of the plan, never in a circle. state is planned, active, done or dropped; marking an item active links this session to it. Limits: 40 items, title 80 chars, detail and note 400. remove: true on an item takes out a mistake (finished or abandoned work is done or dropped). replace: true starts a new plan and keeps the old one in the brain as history.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "goal": {"type": "string"},
+                    "phases": {"type": "array", "items": {"type": "string"}},
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string", "description": "a-z, 0-9 and -, at most 24"},
+                                "title": {"type": "string"},
+                                "detail": {"type": "string"},
+                                "phase": {"type": "string"},
+                                "needs": {"type": "array", "items": {"type": "string"}},
+                                "state": {"type": "string", "enum": ["planned", "active", "done", "dropped"]},
+                                "branch": {"type": "string"},
+                                "note": {"type": "string"},
+                                "remove": {"type": "boolean"},
+                            },
+                            "required": ["id"],
+                        },
+                    },
+                    "replace": {"type": "boolean"},
+                },
+            }),
+        },
+    ]
+}
+
 fn project_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
@@ -800,15 +879,22 @@ fn team_defs() -> Vec<ToolDef> {
 pub fn is_session_tool(name: &str) -> bool {
     matches!(
         name,
-        "session.spawn" | "session.send_message" | "session.read_session" | "session.list_sessions"
+        "session.spawn"
+            | "session.send_message"
+            | "session.read_session"
+            | "session.list_sessions"
+            | "session.rename"
     )
 }
+
+/// The longest name `session.rename` gives.
+pub const SESSION_NAME_CAP: usize = 60;
 
 fn session_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "session.spawn".into(),
-            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder, lane, and model unless overridden. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id immediately for background work you check later with session.read_session.".into(),
+            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder, lane, and model unless overridden. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id at once, and Parzi messages you when it ends (waking you if you are idle), so never poll.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -848,6 +934,15 @@ fn session_defs() -> Vec<ToolDef> {
                     "tail_events": {"type": "number"},
                 },
                 "required": ["session_id"],
+            }),
+        },
+        ToolDef {
+            name: "session.rename".into(),
+            description: "Rename this session (only your own): 2 to 5 words in sentence case that say what it is about, at most 60 chars. A session starts out named after the first words of its first message.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {"title": {"type": "string"}},
+                "required": ["title"],
             }),
         },
         ToolDef {
@@ -981,6 +1076,24 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         ),
         "session.read_session" => "Reading session".into(),
         "session.list_sessions" => "Listing sessions".into(),
+        "session.rename" => "Naming this session".into(),
+        "plan.read" => "Reading the plan".into(),
+        "plan.write" => {
+            let items = args
+                .get("items")
+                .and_then(serde_json::Value::as_array)
+                .map_or(0, Vec::len);
+            let replace = args.get("replace").and_then(serde_json::Value::as_bool) == Some(true);
+            let count = match items {
+                1 => "1 item".to_string(),
+                n => format!("{n} items"),
+            };
+            match (replace, items) {
+                (true, _) => format!("Writing a new plan: {count}"),
+                (false, 0) => "Updating the plan".into(),
+                (false, _) => format!("Updating the plan: {count}"),
+            }
+        }
         "lane.dispatch" => format!(
             "Dispatching worker: {}",
             one_line(&str_arg("title").unwrap_or_else(|| "worker".into()), 60)
@@ -1134,7 +1247,12 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
     }
 }
 
-const NAMESPACES: &[&str] = &["ui", "browser", "desk", "brain", "session", "lane"];
+/// Every namespace of Parzi's own tools: an MCP name `plan_write` reads
+/// back as `plan.write`, so labels and checks see the real name.
+const NAMESPACES: &[&str] = &[
+    "ui", "browser", "desk", "brain", "session", "lane", "plan", "shell", "project", "image",
+    "doc", "models", "ask", "request", "memory",
+];
 
 pub fn to_mcp(name: &str) -> String {
     name.replace('.', "_")
@@ -1271,6 +1389,74 @@ mod tests {
         assert_eq!(all.len(), DESK_TOOLS.len());
         assert!(all.iter().all(|n| DESK_TOOLS.contains(&n.as_str())));
         assert_eq!(display_name("mcp__parzi__desk_notify"), "desk.notify");
+    }
+
+    #[test]
+    fn antigravity_file_calls_name_their_files() {
+        let j = |s: &str| serde_json::from_str::<serde_json::Value>(s).unwrap();
+        assert_eq!(
+            edit_paths(
+                "Run create_file?",
+                &j(r#"{"TargetFile": "notes.txt", "CodeContent": "hello"}"#)
+            ),
+            ["notes.txt"]
+        );
+        assert_eq!(
+            edit_paths("Running edit_file", &j(r#"{"target_file": "src/a.rs"}"#)),
+            ["src/a.rs"]
+        );
+        assert_eq!(category("Running write_to_file"), Some("fs.write"));
+        assert_eq!(category("Run view_file?"), None, "reading writes nothing");
+        assert!(edit_paths("Run view_file?", &j(r#"{"TargetFile": "a"}"#)).is_empty());
+        assert_eq!(category("run_command"), Some("shell.exec"));
+    }
+
+    #[test]
+    fn plan_tools_read_as_what_they_do() {
+        let j = |s: &str| serde_json::from_str::<serde_json::Value>(s).unwrap();
+        let three = r#"{"items": [{"id":"a"},{"id":"b"},{"id":"c"}]}"#;
+        assert_eq!(
+            humanize_tool_call("plan.write", &j(three)),
+            "Updating the plan: 3 items"
+        );
+        assert_eq!(
+            humanize_tool_call("mcp__parzi__plan_write", &j(three)),
+            "Updating the plan: 3 items",
+            "an MCP name reads the same"
+        );
+        assert_eq!(
+            humanize_tool_call(
+                "plan.write",
+                &j(r#"{"items": [{"id":"a"}], "replace": true}"#)
+            ),
+            "Writing a new plan: 1 item"
+        );
+        assert_eq!(
+            humanize_tool_call("plan.write", &j(r#"{"title": "x"}"#)),
+            "Updating the plan"
+        );
+        assert_eq!(
+            humanize_tool_call("plan.read", &j("{}")),
+            "Reading the plan"
+        );
+        assert_eq!(
+            humanize_tool_call("mcp__parzi__session_rename", &j(r#"{"title": "x"}"#)),
+            "Naming this session"
+        );
+        for name in [
+            "plan.read",
+            "plan.write",
+            "session.rename",
+            "shell.exec",
+            "project.create",
+            "image.generate",
+            "ask.user",
+            "memory.review",
+        ] {
+            assert_eq!(display_name(&format!("mcp__parzi__{}", to_mcp(name))), name);
+            assert!(is_parzi_tool(name), "{name}");
+        }
+        assert!(is_plan_tool("plan.write") && is_session_tool("session.rename"));
     }
 
     #[test]

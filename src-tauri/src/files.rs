@@ -253,7 +253,7 @@ fn confine(store: &SessionStore, raw: &str) -> Result<(PathBuf, PathBuf), String
     }
 }
 
-fn confined_path(store: &SessionStore, raw: &str) -> Result<PathBuf, String> {
+pub(crate) fn confined_path(store: &SessionStore, raw: &str) -> Result<PathBuf, String> {
     confine(store, raw).map(|(normal, _)| normal)
 }
 

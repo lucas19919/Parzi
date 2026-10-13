@@ -1,0 +1,201 @@
+//! Where a run's measurement meets its session. Git is looked at when a
+//! run starts, its tool calls are tallied while it runs, and when it ends
+//! its outcome (how it ended, its last reply, the files it changed, the
+//! checks it ran) and the branch its folder is on are kept on the session
+//! as `last_run`. Every hook logs and moves on when the store cannot be
+//! written: recording never stops a run.
+
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
+
+use parzi_core::store::{Event, FileTouch, RunEndKind, RunOutcome, SessionStore, Via};
+use serde_json::Value;
+
+use crate::run::RunTally;
+
+pub(crate) type Tally = Arc<Mutex<RunTally>>;
+
+fn lock(t: &Tally) -> std::sync::MutexGuard<'_, RunTally> {
+    t.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+pub(crate) fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// A run began: git is looked at in the background.
+pub(crate) fn run_started(t: &Tally) {
+    let (cause, cwd) = {
+        let t = lock(t);
+        (t.cause, t.cwd.clone())
+    };
+    if !cause.recorded() {
+        return;
+    }
+    lock(t).git = Some(tokio::spawn(async move {
+        crate::gitmark::GitMark::take(std::path::Path::new(&cwd)).await
+    }));
+}
+
+/// A tool call began: its edits and checks are counted.
+pub(crate) fn tool_started(t: &Tally, id: &str, name: &str, input: &Value) {
+    lock(t).tool_started(id, name, input);
+}
+
+/// A run could not start: the session says why.
+pub(crate) fn launch_failed(store: &SessionStore, session: &str, error: &str) {
+    let mut outcome = RunOutcome::bare(RunEndKind::NotStarted, now_ms());
+    outcome.summary = format!("Didn't start: {error}");
+    if let Err(e) = store.set_last_run(session, outcome, None) {
+        tracing::warn!("run outcome of {session} not kept: {e}");
+    }
+}
+
+/// The last finished reply since the run's first event.
+fn summary_of(events: &[Event]) -> String {
+    events
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            Event::Assistant { text, done: true } if !text.trim().is_empty() => {
+                Some(parzi_core::text::summarize(text, RunOutcome::SUMMARY_CAP))
+            }
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+/// Tool-named files first, then what only git saw.
+fn merge_files(edits: &[String], git: Vec<String>) -> Vec<FileTouch> {
+    let mut out: Vec<FileTouch> = edits
+        .iter()
+        .map(|p| FileTouch {
+            path: p.clone(),
+            via: Via::Tool,
+        })
+        .collect();
+    for p in git {
+        if !out.iter().any(|f| crate::gitmark::same_path(&f.path, &p)) {
+            out.push(FileTouch {
+                path: p,
+                via: Via::Git,
+            });
+        }
+    }
+    out
+}
+
+/// A run's end, kept on its session once. The run itself records before
+/// it tells the window it is done, so the window reads the outcome with
+/// the news; the run's guard records again only when the run never got
+/// that far (a panic, an abort). `stopped`: the person stopped it;
+/// `settled`: the run returned.
+pub(crate) async fn run_ended(store: &SessionStore, t: &Tally, stopped: bool, settled: bool) {
+    let (session, cause, recorded) = {
+        let t = lock(t);
+        (t.session.clone(), t.cause, t.recorded)
+    };
+    if !cause.recorded() || recorded {
+        return;
+    }
+    let (first, error, git, edits, mut outcome) = {
+        let mut t = lock(t);
+        let (end, error) = match t.end.clone() {
+            Some(e) => e,
+            None if stopped => (RunEndKind::Stopped, None),
+            None if settled => (RunEndKind::Failed, None),
+            None => (
+                RunEndKind::Crashed,
+                Some("the run stopped without settling".into()),
+            ),
+        };
+        let outcome = RunOutcome {
+            ms: u64::try_from(t.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            cost_usd: t.cost,
+            checks: t.checks.clone(),
+            ..RunOutcome::bare(end, 0)
+        };
+        (
+            t.first_event,
+            error,
+            t.git.take(),
+            t.edits().to_vec(),
+            outcome,
+        )
+    };
+    let (git_files, branch) = match git {
+        Some(h) => match tokio::time::timeout(Duration::from_secs(10), h).await {
+            Ok(Ok(Some(mark))) => {
+                let done = mark.finish(&edits).await;
+                (done.files, Some(done.branch))
+            }
+            _ => (vec![], None),
+        },
+        None => (vec![], None),
+    };
+    let events = store.events_from(&session, first).unwrap_or_default();
+    outcome.summary = summary_of(&events);
+    if outcome.summary.is_empty() || outcome.end != RunEndKind::Completed {
+        if let Some(e) = error.filter(|e| !e.trim().is_empty()) {
+            outcome.summary = match outcome.end {
+                RunEndKind::Paused => format!("Paused: {e}"),
+                _ => format!("Failed: {e}"),
+            };
+        }
+    }
+    outcome.files = merge_files(&edits, git_files);
+    outcome.ended = now_ms();
+    match store.set_last_run(&session, outcome, branch.as_deref()) {
+        Ok(()) => lock(t).recorded = true,
+        Err(e) => tracing::warn!("run outcome of {session} not kept: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_summary_is_the_last_finished_reply() {
+        let events = vec![
+            Event::Assistant {
+                text: "**Done**: fixed it.".into(),
+                done: true,
+            },
+            Event::Assistant {
+                text: "half a thought".into(),
+                done: false,
+            },
+            Event::ToolCall {
+                id: "1".into(),
+                name: "Edit".into(),
+                args: Value::Null,
+            },
+        ];
+        assert_eq!(summary_of(&events), "Done: fixed it.");
+        assert_eq!(summary_of(&events[1..]), "");
+    }
+
+    #[test]
+    fn git_only_adds_what_the_tools_did_not_name() {
+        let files = merge_files(
+            &["src/a.rs".into()],
+            vec!["src\\a.rs".into(), "Cargo.lock".into()],
+        );
+        assert_eq!(
+            files,
+            [
+                FileTouch {
+                    path: "src/a.rs".into(),
+                    via: Via::Tool
+                },
+                FileTouch {
+                    path: "Cargo.lock".into(),
+                    via: Via::Git
+                },
+            ]
+        );
+    }
+}

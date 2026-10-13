@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 use crate::handler::{HarnessBridge, RunEvent, RunSink, SpawnSpec};
 use crate::tools::{
     category, clip, display_name, is_brain_tool, is_browser_tool, is_desk_tool, is_doc_tool,
-    is_image_tool, is_lane_tool, is_models_tool, is_project_tool, is_question_tool,
+    is_image_tool, is_lane_tool, is_models_tool, is_plan_tool, is_project_tool, is_question_tool,
     is_session_tool, is_shell_tool, is_ui_tool, window_tool_offered, Approval, ApprovalMode,
     Approver, AskRequest, Asker, ToolCallInfo, ToolDef, ToolExecutor,
 };
@@ -719,6 +719,9 @@ impl ToolHost {
                 | "project.create"
                 | "ui.show_markdown"
                 | "ui.show_artifact"
+                | "plan.read"
+                | "plan.write"
+                | "session.rename"
         )
     }
 
@@ -845,6 +848,23 @@ impl ToolHost {
             return tokio::task::spawn_blocking(move || execute_brain(&name, &args))
                 .await
                 .unwrap_or_else(|e| (false, e.to_string()));
+        }
+        if is_plan_tool(name) || name == "session.rename" {
+            // The project's plan and this session's own name: Parzi's own
+            // state the person watches, nothing outside it. No card.
+            if !self.p.tools.is_allowed(name) {
+                return (
+                    false,
+                    format!("tool `{name}` denied (lane mode / approver)"),
+                );
+            }
+            let (store, sid) = (self.p.store.clone(), self.p.session_id.clone());
+            let (name, args) = (name.to_string(), args.clone());
+            return tokio::task::spawn_blocking(move || {
+                crate::plan_tools::execute(&store, &sid, &name, &args)
+            })
+            .await
+            .unwrap_or_else(|e| (false, e.to_string()));
         }
         if is_session_tool(name) {
             if !self.approved(id, name, args).await {
@@ -1086,7 +1106,10 @@ impl ToolHost {
                     | "session.send_message"
                     | "session.read_session"
                     | "session.list_sessions"
+                    | "session.rename"
                     | "project.create"
+                    | "plan.read"
+                    | "plan.write"
             ) {
                 return PermissionDecision::Allow;
             }
@@ -1728,7 +1751,14 @@ impl ToolHost {
                 )
             }
         };
-        if let Err(e) = self.p.store.set_cwd(&self.p.session_id, folder) {
+        // The session files under the project from here on, so its plan is
+        // the project's.
+        let moved = self
+            .p
+            .store
+            .set_cwd(&self.p.session_id, folder)
+            .and_then(|()| self.p.store.set_project(&self.p.session_id, &project.slug));
+        if let Err(e) = moved {
             return (
                 false,
                 format!(

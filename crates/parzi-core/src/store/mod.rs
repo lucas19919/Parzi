@@ -16,7 +16,9 @@ use cache::{atomic_write_sync, count_read, count_stat, count_write, fold_lines, 
 use cache::{IndexEntry, StoreCache};
 
 pub use cache::io_counts;
-pub use model::{Event, SessionMeta, SessionStatus};
+pub use model::{
+    Check, Event, FileTouch, RunCause, RunEndKind, RunOutcome, SessionMeta, SessionStatus, Via,
+};
 pub use tree::{cascade_kill_ids, subtree_ids};
 
 /// Serializes every read-modify-write of meta.json. Process-wide, so two
@@ -89,6 +91,10 @@ impl SessionStore {
             context_tokens: 0,
             context_limit: 0,
             cwd: String::new(),
+            last_run: None,
+            plan_item: None,
+            branch: String::new(),
+            effort: String::new(),
             created: now,
             updated: now,
         };
@@ -214,6 +220,47 @@ impl SessionStore {
         self.update_meta(id, |m| {
             m.cwd = cwd.to_string();
             m.updated = Utc::now();
+        })?;
+        Ok(())
+    }
+
+    /// The project a session files under, as `project.create` moves it.
+    pub fn set_project(&self, id: &str, project: &str) -> Result<()> {
+        self.update_meta(id, |m| {
+            m.project = project.to_string();
+            m.updated = Utc::now();
+        })?;
+        self.mark_md_dirty(id);
+        Ok(())
+    }
+
+    /// The effort a run of the session uses; its list position stays.
+    pub fn set_effort(&self, id: &str, effort: &str) -> Result<()> {
+        if self.get(id)?.effort != effort {
+            self.update_meta(id, |m| m.effort = effort.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// The plan item the session works on (None: none).
+    pub fn set_plan_item(&self, id: &str, item: Option<&str>) -> Result<()> {
+        let item = item.map(str::trim).filter(|i| !i.is_empty());
+        if self.get(id)?.plan_item.as_deref() != item {
+            self.update_meta(id, |m| m.plan_item = item.map(str::to_string))?;
+        }
+        Ok(())
+    }
+
+    /// How the session's latest run went, and the branch its folder was on
+    /// when it ended (None: unknown, the branch stays). The outcome is cut
+    /// to what a session keeps.
+    pub fn set_last_run(&self, id: &str, outcome: RunOutcome, branch: Option<&str>) -> Result<()> {
+        let outcome = outcome.capped();
+        self.update_meta(id, |m| {
+            m.last_run = Some(outcome);
+            if let Some(b) = branch {
+                m.branch = b.to_string();
+            }
         })?;
         Ok(())
     }

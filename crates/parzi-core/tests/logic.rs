@@ -185,6 +185,10 @@ fn purge_cascade_kills_descendants_at_any_depth() {
         context_tokens: 0,
         context_limit: 0,
         cwd: "".into(),
+        last_run: None,
+        plan_item: None,
+        branch: String::new(),
+        effort: String::new(),
         created: Utc::now(),
         updated: Utc::now(),
     };
@@ -224,6 +228,10 @@ fn purge_spares_live_runs_and_the_ancestors_they_report_to() {
         context_tokens: 0,
         context_limit: 0,
         cwd: "".into(),
+        last_run: None,
+        plan_item: None,
+        branch: String::new(),
+        effort: String::new(),
         created: Utc::now(),
         updated: Utc::now(),
     };

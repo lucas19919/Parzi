@@ -37,7 +37,9 @@ pub async fn get_thread(
 }
 
 /// `remote` starts a new session on the linked server; an `r:` id continues
-/// one there. Either way the reply is the session's (tagged) id.
+/// one there. Either way the reply is the session's (tagged) id. `quotes`
+/// are plan items the person quoted: each goes after their text as a
+/// `<plan-item>` block, and the session is linked to the first.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn send_message(
@@ -52,7 +54,33 @@ pub async fn send_message(
     mode: Option<String>,
     lane: Option<String>,
     remote: Option<bool>,
+    quotes: Option<Vec<crate::plans::Quote>>,
 ) -> Result<String, String> {
+    let quoted = match quotes.filter(|q| !q.is_empty()) {
+        Some(q) => {
+            let found = tauri::async_runtime::spawn_blocking(move || crate::plans::resolve(&q))
+                .await
+                .map_err(|e| e.to_string())?;
+            if found.is_empty() && prompt.trim().is_empty() {
+                return Err(
+                    "Nothing to send: the quoted plan items are gone from the plan.".into(),
+                );
+            }
+            found
+        }
+        None => vec![],
+    };
+    // A new session that says little more than "start this" is the item's.
+    let name = quoted
+        .first()
+        .filter(|_| session_id.is_none() && crate::plans::named_after_item(&prompt))
+        .map(|(_, item)| item.title.clone());
+    let text = prompt;
+    let prompt = if quoted.is_empty() {
+        text
+    } else {
+        crate::plans::quoted_prompt(&text, &quoted, &cwd)
+    };
     let effort =
         parzi_runtime::orchestrator::normalize_effort(effort.as_deref().unwrap_or("medium"));
     let attached = {
@@ -73,10 +101,18 @@ pub async fn send_message(
         (None, None) => None,
     };
     if let Some(target) = far_target {
-        return remote::send(
-            &state.app, &far, target, &model, &prompt, &cwd, &effort, attached, mode, lane,
+        let item = quoted.first().map(|(_, i)| i.id.as_str());
+        let id = remote::send(
+            &state.app, &far, target, &model, &prompt, &cwd, &effort, attached, mode, lane, item,
         )
-        .await;
+        .await?;
+        if let (Some(title), Some(rid)) = (name, remote_id(&id)) {
+            let renamed = json!({ "id": rid, "title": title });
+            if let Err(e) = remote::call(&state.app, &far, "session.rename", renamed).await {
+                tracing::warn!("session {id} not named after its item: {e}");
+            }
+        }
+        return Ok(id);
     }
     let approver: Arc<dyn Approver> = Arc::new(GuiApprover {
         app: state.app.clone(),
@@ -121,7 +157,36 @@ pub async fn send_message(
                 .id
         }
     };
+    if !quoted.is_empty() {
+        let store = state.orch.store().clone();
+        let (sid, quoted) = (sid.clone(), quoted.clone());
+        let _ =
+            tauri::async_runtime::spawn_blocking(move || link(&store, &sid, &quoted, name)).await;
+    }
     Ok(sid)
+}
+
+/// A session sent quoted plan items works on the first of its project's,
+/// and, new and told little else, is named after it.
+fn link(
+    store: &parzi_core::store::SessionStore,
+    sid: &str,
+    quoted: &[(String, parzi_core::plan::PlanItem)],
+    name: Option<String>,
+) {
+    let Ok(meta) = store.get(sid) else {
+        return;
+    };
+    if let Some(item) = crate::plans::link_for(&meta.project, quoted) {
+        if let Err(e) = store.set_plan_item(sid, Some(item)) {
+            tracing::warn!("session {sid} not linked to its plan item: {e}");
+        }
+    }
+    if let Some(title) = name {
+        if let Err(e) = store.set_title(sid, &title) {
+            tracing::warn!("session {sid} not named after its item: {e}");
+        }
+    }
 }
 
 /// Threads belong to their folder's project, not shared "default". The
