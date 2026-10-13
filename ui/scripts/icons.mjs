@@ -42,6 +42,7 @@ const MAP = {
   bot: "dependabot",
   file: "file",
   image: "image",
+  chart: "graph",
   branch: "git-branch",
   panel: "split-view",
   server: "server",
