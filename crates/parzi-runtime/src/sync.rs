@@ -349,7 +349,12 @@ pub async fn sync_notes(
                 report.changed.push(path.clone());
             }
             Act::Push => {
-                let text = std::fs::read(local(path)?).map_err(|e| format!("{path}: {e}"))?;
+                let text = match std::fs::read(local(path)?) {
+                    Ok(t) => t,
+                    // Deleted here since the listing: the next sync sees it.
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(e) => return Err(format!("{path}: {e}")),
+                };
                 puts.push(Put {
                     path: path.clone(),
                     text: String::from_utf8_lossy(&text).into_owned(),

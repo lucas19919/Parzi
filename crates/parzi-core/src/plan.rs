@@ -703,8 +703,15 @@ pub fn summary(plan: &Plan) -> String {
             .filter(|i| !i.state.settled())
             .map(|i| {
                 let mut tags = vec![i.state.word().to_string()];
-                if !i.needs.is_empty() {
-                    tags.push(format!("after {}", i.needs.join(", ")));
+                // Only what it still waits on: a finished need is no news.
+                let waits: Vec<&str> = i
+                    .needs
+                    .iter()
+                    .filter(|n| plan.item(n).is_some_and(|x| !x.state.settled()))
+                    .map(String::as_str)
+                    .collect();
+                if !waits.is_empty() {
+                    tags.push(format!("after {}", waits.join(", ")));
                 }
                 if !i.branch.is_empty() {
                     tags.push(i.branch.clone());

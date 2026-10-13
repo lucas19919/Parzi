@@ -215,8 +215,19 @@ pub async fn plan_prs(state: State<'_, AppState>, cwd: String) -> Result<Vec<PrI
     }
     let orch = state.orch.clone();
     let raw = cwd.clone();
+    // A folder sessions work in, or one inside a project's folder.
     let dir = tauri::async_runtime::spawn_blocking(move || {
-        crate::files::confined_path(orch.store(), &raw)
+        crate::files::confined_path(orch.store(), &raw).or_else(|e| {
+            let path = std::path::PathBuf::from(raw.trim());
+            let project = crate::files::plain_local(&path)
+                && path.is_dir()
+                && parzi_core::brain::project_for_folder(&raw).is_some();
+            if project {
+                Ok(path)
+            } else {
+                Err(e)
+            }
+        })
     })
     .await;
     let Ok(Ok(dir)) = dir else {

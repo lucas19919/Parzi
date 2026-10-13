@@ -57,14 +57,19 @@ pub async fn send_message(
     quotes: Option<Vec<crate::plans::Quote>>,
 ) -> Result<String, String> {
     let quoted = match quotes.filter(|q| !q.is_empty()) {
-        Some(q) => tauri::async_runtime::spawn_blocking(move || crate::plans::resolve(&q))
-            .await
-            .map_err(|e| e.to_string())?,
+        Some(q) => {
+            let found = tauri::async_runtime::spawn_blocking(move || crate::plans::resolve(&q))
+                .await
+                .map_err(|e| e.to_string())?;
+            if found.is_empty() && prompt.trim().is_empty() {
+                return Err(
+                    "Nothing to send: the quoted plan items are gone from the plan.".into(),
+                );
+            }
+            found
+        }
         None => vec![],
     };
-    if quoted.is_empty() && prompt.trim().is_empty() {
-        return Err("Nothing to send: the quoted plan items are gone from the plan.".into());
-    }
     // A new session that says little more than "start this" is the item's.
     let name = quoted
         .first()
