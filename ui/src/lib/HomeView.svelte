@@ -1,7 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount, tick } from "svelte";
-  import { flip } from "svelte/animate";
-  import { cubicOut } from "svelte/easing";
+  import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
   import type { IconName } from "./icons";
   import ProviderLogo from "./ProviderLogo.svelte";
@@ -9,14 +7,15 @@
   import { api, brain, onRunEvent, type GitStatus, type Project, type ProviderStatus, type SessionMeta } from "./api";
   import { faviconUrl, history, pins } from "./browserData";
   import { openBrainNote } from "./brainStore";
+  import { ago } from "./format";
   import { hasMark } from "./providerMarks";
   import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "./providerRows";
   import { loadRemoteInfo, remote as server, remoteInfo } from "./remote";
   import { folderName, hostOf } from "./tabs";
-  import { HOME_WIDGETS, customWidgets, hiddenWidgets, loadCustomWidgets, toggleWidget, widgetOrder, type WidgetId } from "./homeWidgets";
-  import { arrange, moveBy, moveTo, withShown } from "./homeLayout";
+  import { HOME_WIDGETS, customWidgets, hiddenWidgets, loadCustomWidgets, toggleWidget, widgetOrder, type CustomWidget, type WidgetId } from "./homeWidgets";
+  import { arrange, clamp, fades, mergeOrder, moveBy, moveTo, nearestSlot, peekHeight, rowsOf, withShown, type Box } from "./homeLayout";
   import { popover, placeAbove } from "./popover";
-  import { sessionTone, TONE_WORDS } from "./planModel";
+  import { sessionTone, TONE_WORDS } from "./sessionTone";
   import { tooltip } from "./tooltip";
 
   export let threads: SessionMeta[] = [];
@@ -43,12 +42,18 @@
   const ROWS = 4;
   const ICONS: Record<string, IconName> = { recent: "chat", agents: "bot", projects: "project", git: "branch", server: "server", sites: "globe" };
 
+  // A drag freezes the cards (and the widgets' contents) it started with,
+  // so a widget reload meanwhile can't re-render the list under the pointer.
+  let drag: { id: string; ids: string[]; customs: CustomWidget[] } | null = null;
+
   // Every card in its order: the built-ins, then the widgets agents wrote
   // (Brain notes under widgets/), as the person arranged them.
-  $: customs = $customWidgets ?? [];
-  $: order = arrange($widgetOrder, [...HOME_WIDGETS.map((w): string => w.id), ...customs.map((c) => c.id)]);
+  $: liveCustoms = $customWidgets ?? [];
+  $: customs = drag ? drag.customs : liveCustoms;
+  $: order = arrange($widgetOrder, [...HOME_WIDGETS.map((w): string => w.id), ...liveCustoms.map((c) => c.id)]);
   $: shown = (id: WidgetId) => !$hiddenWidgets.includes(id);
-  $: cards = drag ? drag.order : order.filter((id) => shown(id));
+  $: visible = order.filter((id) => shown(id));
+  $: cards = drag ? drag.ids : visible;
   $: labelOf = (id: string) => HOME_WIDGETS.find((w) => w.id === id)?.label ?? customs.find((c) => c.id === id)?.title ?? id;
   $: titleOf = (id: string) => (id === "sites" ? ($pins.length ? "Pinned" : "Most visited") : labelOf(id));
   const domId = (id: string) => `home-${id.replace(/[^\w-]+/g, "-")}`;
@@ -62,113 +67,191 @@
     if (customizing) customizeStyle = placeAbove(customizeBtn, 260, true);
   }
 
-  // A new order; custom cards not read yet keep their saved places.
+  // A new order saved over the old one; custom cards not read yet keep
+  // their places.
   function commit(next: string[]) {
-    widgetOrder.set([...next, ...$widgetOrder.filter((id) => !next.includes(id))]);
+    widgetOrder.set(mergeOrder($widgetOrder, next));
   }
+
+  // Customize's arrows: a shown card steps past the shown card next to it,
+  // as a drag would move it (every press moves something on Home); a
+  // hidden card steps through the list.
+  $: stepList = (id: string) => (shown(id) ? visible : order);
+  $: canStep = (id: string, by: number) => {
+    const list = stepList(id);
+    const at = list.indexOf(id) + by;
+    return at >= 0 && at < list.length;
+  };
 
   function step(id: string, by: number) {
-    commit(moveBy(order, id, by));
+    commit(shown(id) ? withShown(order, moveBy(visible, id, by)) : moveBy(order, id, by));
   }
 
-  // Dragging a card by its header: it follows the pointer and the others
-  // make room as it passes over them. Esc puts everything back.
+  // Dragging a card: it lifts and follows the pointer inside the grid, an
+  // outline marks the slot it will land in, and letting go saves the order.
+  // Pointer events, since Tauri's file drop handling blocks HTML5 drag and
+  // drop on Windows. The follow transform is written straight to the card,
+  // so a move costs no Svelte update; Esc, a lost pointer or the window
+  // losing focus put the card back.
   const DRAG_START = 4;
+  const EDGE = 40;
+  const EDGE_SPEED = 14;
+  let scroller: HTMLDivElement | null = null;
   let grid: HTMLDivElement | null = null;
   let press: { id: string; x: number; y: number; card: HTMLElement } | null = null;
-  let drag: { id: string; order: string[]; grabX: number; grabY: number; dx: number; dy: number } | null = null;
-  // The card just swapped with: not again until the pointer leaves it.
-  let swapped = "";
+  // The drop slot's outline, in grid px.
+  let slot: Box | null = null;
+  let target = -1;
+  let slots: Box[] = [];
+  let grab = { x: 0, y: 0 };
   let pointer = { x: 0, y: 0 };
+  let scrollFrame = 0;
 
-  function onHeaderDown(e: PointerEvent, id: string) {
-    if (e.button !== 0 || (e.target as HTMLElement).closest("button, a, input")) return;
-    const head = e.currentTarget as HTMLElement;
-    const card = head.closest<HTMLElement>(".card");
-    if (!card) return;
+  function onPress(e: PointerEvent, id: string) {
+    if (e.button !== 0 || press || (e.target as HTMLElement).closest("button, a, input, label, select, textarea, .widget")) return;
+    const card = e.currentTarget as HTMLElement;
     // No text selection while the card moves, and the release is heard
     // even outside the window.
     e.preventDefault();
-    head.setPointerCapture(e.pointerId);
+    try {
+      card.setPointerCapture(e.pointerId);
+    } catch {
+      // A pointer that is already gone: the next move ends the press.
+    }
     press = { id, x: e.clientX, y: e.clientY, card };
   }
 
-  async function onMove(e: PointerEvent) {
+  function onMove(e: PointerEvent) {
     if (!press) return;
+    // A release this window never heard: let go without moving anything.
+    if (!(e.buttons & 1)) return reset();
+    pointer = { x: e.clientX, y: e.clientY };
     if (!drag) {
       if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_START) return;
-      const r = press.card.getBoundingClientRect();
-      drag = { id: press.id, order: order.filter((id) => shown(id)), grabX: press.x - r.left, grabY: press.y - r.top, dx: 0, dy: 0 };
-      swapped = "";
+      lift();
     }
-    pointer = { x: e.clientX, y: e.clientY };
-    edgeScroll(e.clientY);
-    const over = cardAt(e.clientX, e.clientY);
-    if (over && over !== swapped) {
-      drag.order = moveTo(drag.order, drag.id, drag.order.indexOf(over));
-      swapped = over;
-      await tick();
-    } else if (!over) {
-      swapped = "";
-    }
-    follow();
+    place();
   }
 
-  // The card under the pointer, by the slots the grid lays out (offsets
-  // ignore the moving cards' transforms).
-  function cardAt(x: number, y: number): string {
+  // The slots are measured once: nothing moves under the card until it drops.
+  function lift() {
     const g = grid;
-    if (!g || !drag) return "";
-    const box = g.getBoundingClientRect();
-    const px = x - box.left;
-    const py = y - box.top;
+    if (!g || !press) return;
+    const ids = visible;
+    const boxes = new Map<string, Box>();
     for (const el of g.querySelectorAll<HTMLElement>(":scope > .card")) {
-      const id = el.dataset.id ?? "";
-      if (!id || id === drag.id) continue;
-      if (px >= el.offsetLeft && px < el.offsetLeft + el.offsetWidth && py >= el.offsetTop && py < el.offsetTop + el.offsetHeight) return id;
+      boxes.set(el.dataset.id ?? "", { left: el.offsetLeft, top: el.offsetTop, width: el.offsetWidth, height: el.offsetHeight });
     }
-    return "";
+    slots = ids.map((id) => boxes.get(id) ?? { left: 0, top: 0, width: 0, height: 0 });
+    const r = press.card.getBoundingClientRect();
+    grab = { x: press.x - r.left, y: press.y - r.top };
+    target = ids.indexOf(press.id);
+    slot = slots[target] ?? null;
+    drag = { id: press.id, ids, customs: liveCustoms };
   }
 
-  // Keep the dragged card under the pointer, wherever its slot is now.
-  function follow() {
+  // The card under the pointer, kept inside the grid (and the pointer
+  // inside the visible list), and the slot nearest its centre.
+  function place() {
     const g = grid;
-    if (!g || !drag || !press) return;
-    const box = g.getBoundingClientRect();
-    drag.dx = pointer.x - drag.grabX - (box.left + press.card.offsetLeft);
-    drag.dy = pointer.y - drag.grabY - (box.top + press.card.offsetTop);
-    drag = drag;
+    const sc = scroller;
+    const card = press?.card;
+    if (!g || !sc || !card || !drag) return;
+    const home = slots[drag.ids.indexOf(drag.id)];
+    if (!home) return;
+    const gb = g.getBoundingClientRect();
+    const sb = sc.getBoundingClientRect();
+    const py = clamp(pointer.y, sb.top, sb.bottom);
+    const x = clamp(pointer.x - grab.x - gb.left, 0, Math.max(0, gb.width - home.width));
+    const y = clamp(py - grab.y - gb.top, 0, Math.max(0, gb.height - home.height));
+    card.style.transform = `translate(${x - home.left}px, ${y - home.top}px)`;
+    const to = nearestSlot(slots, x + home.width / 2, y + home.height / 2);
+    if (to >= 0 && to !== target) {
+      target = to;
+      slot = slots[to];
+    }
+    if (!scrollFrame && edgeSpeed(sb)) scrollFrame = requestAnimationFrame(edgeStep);
   }
 
-  // Home's cards scroll under the composer: near an edge, scroll on.
-  function edgeScroll(y: number) {
-    const scroller = grid?.parentElement;
-    if (!scroller) return;
-    const r = scroller.getBoundingClientRect();
-    if (y < r.top + 40) scroller.scrollTop -= 12;
-    else if (y > r.bottom - 40) scroller.scrollTop += 12;
+  // Near the list's top or bottom edge, or past it, the list scrolls a
+  // little every frame, faster the deeper the pointer goes, and stops at
+  // either end.
+  function edgeSpeed(sb: DOMRect): number {
+    const y = pointer.y;
+    if (y < sb.top + EDGE) return -Math.ceil(EDGE_SPEED * Math.min(1, (sb.top + EDGE - y) / EDGE));
+    if (y > sb.bottom - EDGE) return Math.ceil(EDGE_SPEED * Math.min(1, (y - sb.bottom + EDGE) / EDGE));
+    return 0;
+  }
+
+  function edgeStep() {
+    scrollFrame = 0;
+    const sc = scroller;
+    if (!sc || !drag) return;
+    const next = clamp(sc.scrollTop + edgeSpeed(sc.getBoundingClientRect()), 0, sc.scrollHeight - sc.clientHeight);
+    if (next === sc.scrollTop) return;
+    sc.scrollTop = next;
+    place();
   }
 
   function onUp() {
-    if (drag) commit(withShown(order, drag.order));
-    press = null;
-    drag = null;
+    if (!press) return;
+    const d = drag;
+    const moved = d && target >= 0 ? moveTo(d.ids, d.id, target) : null;
+    reset();
+    if (moved) commit(withShown(order, moved));
   }
 
-  function cancelDrag() {
+  // Back to rest: no transform left on the card, nothing frozen.
+  function reset() {
+    cancelAnimationFrame(scrollFrame);
+    scrollFrame = 0;
+    press?.card.style.removeProperty("transform");
     press = null;
     drag = null;
+    slot = null;
+    target = -1;
+    slots = [];
   }
 
-  function onKey(e: KeyboardEvent) {
-    if (e.key !== "Escape" || !drag) return;
-    e.preventDefault();
-    e.stopPropagation();
-    cancelDrag();
+  // The list's height and fades: it stops partway down a row when the
+  // cards don't all fit (homeLayout.peekHeight), so the next ones peek out.
+  let peek = 0;
+  let fadeTop = 0;
+  let fadeBottom = 32;
+
+  function measure() {
+    const sc = scroller;
+    const g = grid;
+    if (!sc || !g || drag) return;
+    const avail = sc.parentElement?.clientHeight ?? 0;
+    if (avail > 0) {
+      const rows = rowsOf([...g.querySelectorAll<HTMLElement>(":scope > .card")].map((el) => ({ top: g.offsetTop + el.offsetTop, height: el.offsetHeight })));
+      const h = peekHeight(avail, rows, sc.scrollHeight);
+      peek = h < avail ? h : 0;
+    }
+    edges();
+  }
+
+  function edges() {
+    const sc = scroller;
+    if (!sc) return;
+    const f = fades(sc.scrollTop, sc.scrollHeight, sc.clientHeight);
+    fadeTop = f.top;
+    fadeBottom = f.bottom;
+  }
+
+  // Cards that change after the list is measured (a widget loads, the
+  // window resizes) measure it again.
+  function watchSize(node: HTMLElement) {
+    const ro = new ResizeObserver(() => measure());
+    ro.observe(node);
+    if (node.parentElement) ro.observe(node.parentElement);
+    return { destroy: () => ro.disconnect() };
   }
 
   let projects: Project[] = [];
   let projectsFor: boolean | null = null;
+  let projectsTimer = 0;
   $: if (remote !== projectsFor) {
     projectsFor = remote;
     void loadProjects(remote);
@@ -176,56 +259,62 @@
 
   // A call made while the app still starts can fail: try again a few times,
   // and whenever the window comes back into focus.
-  async function loadProjects(onServer: boolean, tries = 3) {
+  async function loadProjects(onServer: boolean, tries = 5) {
+    window.clearTimeout(projectsTimer);
     const list = await (onServer ? server.projects() : brain.projects()).catch(() => null);
     if (onServer !== remote) return;
-    if (list) projects = list.filter((p) => p.folder).slice(0, ROWS);
-    else if (tries > 1) window.setTimeout(() => void loadProjects(onServer, tries - 1), 2000);
+    if (Array.isArray(list)) projects = list.filter((p) => p?.folder).slice(0, ROWS);
+    else if (tries > 1) projectsTimer = window.setTimeout(() => void loadProjects(onServer, tries - 1), 2000);
   }
-  onMount(() => {
-    const onFocus = () => void loadProjects(remote, 1);
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  });
 
   $: recent = threads.slice(0, ROWS);
-  $: agents = PROVIDER_ORDER.map((id) => board.find((b) => b.provider === id))
+  $: agents = PROVIDER_ORDER.map((id) => board.find((b) => b?.provider === id))
     .filter((p): p is ProviderStatus => !!p && p.state !== "not_installed" && p.state !== "disabled")
     .slice(0, ROWS);
   // Pinned sites first; until there are some, the most visited.
-  $: sites = ($pins.length ? $pins : [...$history].sort((a, b) => b.count - a.count)).slice(0, 8);
-
-  function ago(iso: string) {
-    const t = Date.parse(iso);
-    if (!t) return "";
-    const s = (Date.now() - t) / 1000;
-    if (s < 60) return "just now";
-    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-    if (s < 172800) return "yesterday";
-    return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  }
+  $: sites = ($pins.length ? $pins : [...$history].sort((a, b) => b.count - a.count)).filter((s) => s?.url).slice(0, 8);
 
   // The folder when its name says something the title doesn't, else the notes.
   function projectMeta(p: Project) {
     const dir = folderName(p.folder);
-    if (dir.toLowerCase() !== p.title.toLowerCase()) return dir;
-    return p.notes.length ? `${p.notes.length} note${p.notes.length === 1 ? "" : "s"}` : "";
+    if (dir.toLowerCase() !== (p.title ?? "").toLowerCase()) return dir;
+    const n = p.notes?.length ?? 0;
+    return n ? `${n} note${n === 1 ? "" : "s"}` : "";
   }
 
   // Git: the draft's folder on this PC (a server folder has no status here).
+  // A call that fails (the app still starting) is not "no repository": the
+  // card says it couldn't read it and tries again.
   let git: GitStatus | null = null;
+  let gitFailed = false;
   let gitFor: string | null = null;
+  let gitTimer = 0;
   $: gitFolder = remote ? "" : folder;
   $: if (gitFolder !== gitFor) {
     gitFor = gitFolder;
     void loadGit();
   }
 
-  async function loadGit() {
+  async function loadGit(tries = 3) {
+    window.clearTimeout(gitTimer);
     const dir = gitFor;
-    const s = dir ? await api.gitStatus(dir).catch(() => null) : null;
-    if (dir === gitFor) git = s;
+    let status: GitStatus | null = null;
+    let failed = false;
+    if (dir) {
+      try {
+        status = await api.gitStatus(dir);
+      } catch {
+        failed = true;
+      }
+    }
+    if (dir !== gitFor) return;
+    if (failed) {
+      gitFailed = !git;
+      if (tries > 1) gitTimer = window.setTimeout(() => void loadGit(tries - 1), 3000);
+      return;
+    }
+    git = status;
+    gitFailed = false;
   }
 
   let syncing = false;
@@ -241,32 +330,48 @@
     }
   }
 
-  // Branches and remotes change outside Parzi: refresh while Home is up.
+  // Branches, remotes, projects and widgets change outside Parzi: refresh
+  // while Home is up, and on coming back to the window (at most every few
+  // seconds, since a click into the window is a focus too).
   onMount(() => {
     void loadCustomWidgets();
-    const refresh = () => {
-      if (shown("git")) void loadGit();
-    };
+    let lastFocus = 0;
     const onFocus = () => {
-      refresh();
+      if (Date.now() - lastFocus < 5000) return;
+      lastFocus = Date.now();
+      void loadProjects(remote, 1);
+      if (shown("git")) void loadGit(1);
       void loadCustomWidgets();
     };
-    const timer = window.setInterval(refresh, 30_000);
+    const onBlur = () => reset();
+    // Capture: Esc puts a dragged card back before anything else reads it.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !press) return;
+      e.preventDefault();
+      e.stopPropagation();
+      reset();
+    };
+    const timer = window.setInterval(() => {
+      if (shown("git")) void loadGit(1);
+    }, 30_000);
     window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("keydown", onKey, true);
     // An agent that wrote or deleted a note may have changed a widget.
     const unRun = onRunEvent((e) => {
       if (e.kind === "tool_result" && e.ok && /brain[._](write|delete)/.test(e.name)) void loadCustomWidgets();
     });
     return () => {
+      reset();
       window.clearInterval(timer);
+      window.clearTimeout(projectsTimer);
+      window.clearTimeout(gitTimer);
       window.removeEventListener("focus", onFocus);
-      void unRun.then((off) => off());
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("keydown", onKey, true);
+      void unRun.then((off) => off()).catch(() => {});
     };
   });
-
-  function agoSecs(t: number) {
-    return t ? ago(new Date(t * 1000).toISOString()) : "";
-  }
 
   // A site without a favicon keeps its row, just no picture.
   function noIcon(e: Event) {
@@ -274,180 +379,203 @@
   }
 
   function usage(p: ProviderStatus) {
-    const u = p.usage[0];
-    return u ? { label: u.label, pct: Math.max(0, Math.min(100, Math.round(u.used_percent))) } : null;
+    const u = p.usage?.[0];
+    return u ? { label: u.label, pct: Math.max(0, Math.min(100, Math.round(u.used_percent || 0))) } : null;
   }
 </script>
 
-<svelte:window on:pointermove={onMove} on:pointerup={onUp} on:pointercancel={cancelDrag} on:keydown={onKey} />
+<svelte:window on:pointermove={onMove} on:pointerup={onUp} on:pointercancel={reset} />
 
-<div class="home" class:dragging={!!drag} bind:this={grid}>
-  {#each cards as id (id)}
-    {@const custom = customs.find((c) => c.id === id)}
-    <section
-      class="card"
-      class:lifted={drag?.id === id}
-      data-id={id}
-      style:transform={drag?.id === id ? `translate(${drag.dx}px, ${drag.dy}px)` : null}
-      aria-labelledby={domId(id)}
-      animate:flip={{ duration: drag?.id === id ? 0 : 240, easing: cubicOut }}
-    >
-      <!-- Dragging the header moves the card; Customize moves it by keyboard. -->
+<div
+  class="home-scroll"
+  bind:this={scroller}
+  use:watchSize
+  style:max-height={peek ? `${peek}px` : null}
+  style:--fade-top="{fadeTop}px"
+  style:--fade-bottom="{fadeBottom}px"
+  on:scroll={edges}
+>
+  <div class="cards" class:dragging={!!drag} bind:this={grid}>
+    {#each cards as id (id)}
+      {@const custom = customs.find((c) => c.id === id)}
+      <!-- Dragging a card moves it; Customize moves it by keyboard. -->
       <!-- svelte-ignore a11y-no-static-element-interactions -->
-      <header on:pointerdown={(e) => onHeaderDown(e, id)}>
-        <h3 id={domId(id)}><Icon name={ICONS[id] ?? "chart"} /><span class="h-text">{titleOf(id)}</span></h3>
+      <section
+        class="card"
+        class:lifted={drag?.id === id}
+        data-id={id}
+        aria-labelledby={domId(id)}
+        on:pointerdown={(e) => onPress(e, id)}
+        on:lostpointercapture={() => {
+          if (press?.id === id) reset();
+        }}
+      >
+        <header>
+          <h3 id={domId(id)}><Icon name={ICONS[id] ?? "chart"} /><span class="h-text">{titleOf(id)}</span></h3>
+          {#if id === "recent"}
+            {#if threads.length}<button class="more" on:click={() => dispatch("allSessions")}>All</button>{/if}
+          {:else if id === "agents"}
+            <button class="more" on:click={() => dispatch("agents")}>Manage</button>
+          {:else if id === "projects"}
+            <button class="more" on:click={() => dispatch("brain")}>Brain</button>
+          {:else if id === "git"}
+            {#if gitFolder}<button class="more" on:click={() => loadGit()}>Refresh</button>{/if}
+          {:else if id === "server"}
+            {#if $remoteInfo}<button class="more" disabled={syncing} on:click={syncNow}>{syncing ? "Syncing…" : "Sync now"}</button>{/if}
+          {:else if custom}
+            <button class="more" on:click={() => openBrainNote(custom.id)}>Edit</button>
+          {/if}
+        </header>
+
         {#if id === "recent"}
-          {#if threads.length}<button class="more" on:click={() => dispatch("allSessions")}>All</button>{/if}
+          {#if recent.length}
+            <div class="rows" data-ui-list>
+              {#each recent as s (s.id)}
+                {@const tone = sessionTone(s, running, waiting)}
+                <button class="row" on:click={() => dispatch("openSession", { id: s.id })}>
+                  <span class="dot {tone}" role="img" aria-label={TONE_WORDS[tone]} />
+                  <span class="name">{s.title || "Untitled session"}</span>
+                  <span class="meta">{ago(Date.parse(s.updated))}</span>
+                </button>
+              {/each}
+            </div>
+          {:else}
+            <p class="empty">Your sessions show up here.</p>
+          {/if}
         {:else if id === "agents"}
-          <button class="more" on:click={() => dispatch("agents")}>Manage</button>
+          {#if agents.length}
+            <div class="rows" data-ui-list>
+              {#each agents as p (p.provider)}
+                {@const u = usage(p)}
+                <button class="row" on:click={() => dispatch("agents")}>
+                  <span class="logo">{#if hasMark(p.provider)}<ProviderLogo provider={p.provider} size={14} />{/if}</span>
+                  <span class="name">{nameOf(p.provider)}</span>
+                  {#if u && isUsable(p)}
+                    <span class="meter" title="{u.label}: {u.pct}% used"><i style:width="{u.pct}%" class:hot={u.pct >= 80} /></span>
+                    <span class="meta num">{u.pct}%</span>
+                  {:else}
+                    <span class="meta" class:warn={!isUsable(p)}>{stateLabel(p)}</span>
+                  {/if}
+                </button>
+              {/each}
+            </div>
+          {:else}
+            <p class="empty">No agents set up yet. Manage opens their sign-in.</p>
+          {/if}
         {:else if id === "projects"}
-          <button class="more" on:click={() => dispatch("brain")}>Brain</button>
+          {#if projects.length}
+            <div class="rows" data-ui-list>
+              {#each projects as p (p.slug)}
+                <button class="row" class:on={!!folder && p.folder === folder} on:click={() => dispatch("folder", { path: p.folder })}>
+                  <span class="name">{p.title}</span>
+                  <span class="meta">{projectMeta(p)}</span>
+                </button>
+              {/each}
+            </div>
+          {:else}
+            <p class="empty">A project is a folder plus the notes agents should know. Pick a folder in the composer to start one.</p>
+          {/if}
         {:else if id === "git"}
-          {#if gitFolder}<button class="more" on:click={() => loadGit()}>Refresh</button>{/if}
-        {:else if id === "server"}
-          {#if $remoteInfo}<button class="more" disabled={syncing} on:click={syncNow}>{syncing ? "Syncing…" : "Sync now"}</button>{/if}
-        {:else if custom}
-          <button class="more" on:click={() => openBrainNote(custom.id)}>Edit</button>
-        {/if}
-      </header>
-
-      {#if id === "recent"}
-        {#if recent.length}
-          <div class="rows" data-ui-list>
-            {#each recent as s (s.id)}
-              {@const tone = sessionTone(s, running, waiting)}
-              <button class="row" on:click={() => dispatch("openSession", { id: s.id })}>
-                <span class="dot {tone}" role="img" aria-label={TONE_WORDS[tone]} />
-                <span class="name">{s.title || "Untitled session"}</span>
-                <span class="meta">{ago(s.updated)}</span>
-              </button>
-            {/each}
-          </div>
-        {:else}
-          <p class="empty">Your sessions show up here.</p>
-        {/if}
-      {:else if id === "agents"}
-        {#if agents.length}
-          <div class="rows" data-ui-list>
-            {#each agents as p (p.provider)}
-              {@const u = usage(p)}
-              <button class="row" on:click={() => dispatch("agents")}>
-                <span class="logo">{#if hasMark(p.provider)}<ProviderLogo provider={p.provider} size={14} />{/if}</span>
-                <span class="name">{nameOf(p.provider)}</span>
-                {#if u && isUsable(p)}
-                  <span class="meter" title="{u.label}: {u.pct}% used"><i style:width="{u.pct}%" class:hot={u.pct >= 80} /></span>
-                  <span class="meta num">{u.pct}%</span>
-                {:else}
-                  <span class="meta" class:warn={!isUsable(p)}>{stateLabel(p)}</span>
-                {/if}
-              </button>
-            {/each}
-          </div>
-        {:else}
-          <p class="empty">No agents set up yet. Manage opens their sign-in.</p>
-        {/if}
-      {:else if id === "projects"}
-        {#if projects.length}
-          <div class="rows" data-ui-list>
-            {#each projects as p (p.slug)}
-              <button class="row" class:on={!!folder && p.folder === folder} on:click={() => dispatch("folder", { path: p.folder })}>
-                <span class="name">{p.title}</span>
-                <span class="meta">{projectMeta(p)}</span>
-              </button>
-            {/each}
-          </div>
-        {:else}
-          <p class="empty">A project is a folder plus the notes agents should know. Pick a folder in the composer to start one.</p>
-        {/if}
-      {:else if id === "git"}
-        {#if git}
-          <div class="lines">
-            <div class="line">
-              <span class="name">{git.branch}</span>
-              <span class="meta num">{git.upstream ? (git.ahead || git.behind ? `${git.ahead} ahead, ${git.behind} behind` : "Up to date") : "No upstream"}</span>
-            </div>
-            <div class="line">
-              <span class="name" class:quiet={!git.changed && !git.untracked}>{git.changed || git.untracked ? `${git.changed} changed, ${git.untracked} new` : "Clean"}</span>
-              <span class="meta">{folderName(gitFolder)}</span>
-            </div>
-            {#if git.last_subject}
+          {#if git}
+            <div class="lines">
               <div class="line">
-                <span class="name quiet">{git.last_subject}</span>
-                <span class="meta">{agoSecs(git.last_time)}</span>
+                <span class="name">{git.branch}</span>
+                <span class="meta num">{git.upstream ? (git.ahead || git.behind ? `${git.ahead} ahead, ${git.behind} behind` : "Up to date") : "No upstream"}</span>
               </div>
-            {/if}
-          </div>
-        {:else}
-          <p class="empty">{remote ? "Git status shows for folders on this PC." : gitFolder ? `${folderName(gitFolder)} isn't a git repository.` : "Pick a project to see its branch and changes."}</p>
-        {/if}
-      {:else if id === "server"}
-        {#if $remoteInfo}
-          <div class="lines">
-            <div class="line">
-              <span class="dot" class:live={$remoteInfo.alive} />
-              <span class="name">{$remoteInfo.user}@{$remoteInfo.host}</span>
-              <span class="meta">{$remoteInfo.alive ? "Online" : "Offline"}</span>
+              <div class="line">
+                <span class="name" class:quiet={!git.changed && !git.untracked}>{git.changed || git.untracked ? `${git.changed} changed, ${git.untracked} new` : "Clean"}</span>
+                <span class="meta">{folderName(gitFolder)}</span>
+              </div>
+              {#if git.last_subject}
+                <div class="line">
+                  <span class="name quiet">{git.last_subject}</span>
+                  <span class="meta">{git.last_time ? ago(git.last_time * 1000) : ""}</span>
+                </div>
+              {/if}
             </div>
-            <div class="line">
-              <span class="name quiet">{$remoteInfo.synced_at ? `Synced ${ago(new Date($remoteInfo.synced_at).toISOString())}` : "Not synced yet"}</span>
-              <span class="meta">{$remoteInfo.version ? `Parzi ${$remoteInfo.version}` : ""}</span>
+          {:else}
+            <p class="empty">
+              {remote
+                ? "Git status shows for folders on this PC."
+                : !gitFolder
+                  ? "Pick a project to see its branch and changes."
+                  : gitFailed
+                    ? `Couldn't read the git status of ${folderName(gitFolder)}. Refresh to try again.`
+                    : `${folderName(gitFolder)} isn't a git repository.`}
+            </p>
+          {/if}
+        {:else if id === "server"}
+          {#if $remoteInfo}
+            <div class="lines">
+              <div class="line">
+                <span class="dot" class:live={$remoteInfo.alive} />
+                <span class="name">{$remoteInfo.user}@{$remoteInfo.host}</span>
+                <span class="meta">{$remoteInfo.alive ? "Online" : "Offline"}</span>
+              </div>
+              <div class="line">
+                <span class="name quiet">{$remoteInfo.synced_at ? `Synced ${ago($remoteInfo.synced_at)}` : "Not synced yet"}</span>
+                <span class="meta">{$remoteInfo.version ? `Parzi ${$remoteInfo.version}` : ""}</span>
+              </div>
             </div>
-          </div>
-        {:else}
-          <p class="empty">Run sessions on your own Linux server and keep notes, settings and sessions in step across devices.</p>
-          <div class="cta"><button class="more" on:click={() => dispatch("remoteSetup")}>Set up a server</button></div>
+          {:else}
+            <p class="empty">Run sessions on your own Linux server and keep notes, settings and sessions in step across devices.</p>
+            <div class="cta"><button class="more" on:click={() => dispatch("remoteSetup")}>Set up a server</button></div>
+          {/if}
+        {:else if id === "sites"}
+          {#if sites.length}
+            <div class="sites" data-ui-list>
+              {#each sites as s (s.url)}
+                <button class="site" title={s.url} on:click={() => dispatch("open", { url: s.url })}>
+                  <img src={faviconUrl(s.url)} alt="" draggable="false" on:error={noIcon} />
+                  <span>{s.title || hostOf(s.url)}</span>
+                </button>
+              {/each}
+            </div>
+          {:else}
+            <p class="empty">Pin a page from its toolbar and it shows up here.</p>
+          {/if}
+        {:else if custom}
+          {#if custom.spec}
+            <div class="widget"><Viz spec={custom.spec} bare /></div>
+          {:else}
+            <p class="empty">This note has no viz block yet. Ask an agent to add one.</p>
+          {/if}
         {/if}
-      {:else if id === "sites"}
-        {#if sites.length}
-          <div class="sites" data-ui-list>
-            {#each sites as s (s.url)}
-              <button class="site" title={s.url} on:click={() => dispatch("open", { url: s.url })}>
-                <img src={faviconUrl(s.url)} alt="" draggable="false" on:error={noIcon} />
-                <span>{s.title || hostOf(s.url)}</span>
-              </button>
-            {/each}
-          </div>
-        {:else}
-          <p class="empty">Pin a page from its toolbar and it shows up here.</p>
-        {/if}
-      {:else if custom}
-        {#if custom.spec}
-          <div class="widget"><Viz spec={custom.spec} bare /></div>
-        {:else}
-          <p class="empty">This note has no viz block yet. Ask an agent to add one.</p>
-        {/if}
-      {/if}
-    </section>
-  {/each}
-</div>
+      </section>
+    {/each}
+    {#if slot}
+      <div class="slot" aria-hidden="true" style:left="{slot.left}px" style:top="{slot.top}px" style:width="{slot.width}px" style:height="{slot.height}px" />
+    {/if}
+  </div>
 
-<div class="foot">
-  <button
-    bind:this={customizeBtn}
-    class="customize"
-    class:open={customizing}
-    aria-haspopup="true"
-    aria-expanded={customizing}
-    on:click|stopPropagation={toggleCustomize}
-  >
-    <Icon name="settings" size={12} />
-    <span>Customize</span>
-  </button>
+  <div class="foot">
+    <button
+      bind:this={customizeBtn}
+      class="customize"
+      class:open={customizing}
+      aria-haspopup="true"
+      aria-expanded={customizing}
+      on:click|stopPropagation={toggleCustomize}
+    >
+      <Icon name="settings" size={12} />
+      <span>Customize</span>
+    </button>
+  </div>
 </div>
 
 {#if customizing}
   <div class="home-menu" style={customizeStyle} use:popover={{ anchor: customizeBtn, close: () => (customizing = false) }}>
     <p class="menu-head">Show on Home</p>
-    {#each order as id, i (id)}
-      <div class="opt" animate:flip={{ duration: 200, easing: cubicOut }}>
+    {#each order as id (id)}
+      <div class="opt">
         <label>
           <input type="checkbox" checked={shown(id)} on:change={() => toggleWidget(id)} />
           <span>{labelOf(id)}</span>
         </label>
-        <button class="mv" aria-label="Move {labelOf(id)} up" use:tooltip={"Move up"} disabled={i === 0} on:click={() => step(id, -1)}>
+        <button class="mv" aria-label="Move {labelOf(id)} up" use:tooltip={"Move up"} disabled={!canStep(id, -1)} on:click={() => step(id, -1)}>
           <Icon name="arrowUp" />
         </button>
-        <button class="mv" aria-label="Move {labelOf(id)} down" use:tooltip={"Move down"} disabled={i === order.length - 1} on:click={() => step(id, 1)}>
+        <button class="mv" aria-label="Move {labelOf(id)} down" use:tooltip={"Move down"} disabled={!canStep(id, 1)} on:click={() => step(id, 1)}>
           <Icon name="arrowDown" />
         </button>
       </div>
@@ -457,8 +585,29 @@
 {/if}
 
 <style>
+  /* The list scrolls with no scrollbar; its edges fade (sizes from
+     homeLayout.fades): the top once scrolled, the bottom deeper while more
+     is below. The side padding leaves room for the cards' shadows. */
+  .home-scroll {
+    position: relative;
+    flex: 0 1 auto;
+    min-height: 0;
+    padding: 16px 24px 32px;
+    overflow-y: auto;
+    scrollbar-width: none;
+    mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      #000 var(--fade-top, 0px),
+      #000 calc(100% - var(--fade-bottom, 32px)),
+      transparent
+    );
+  }
+  .home-scroll::-webkit-scrollbar {
+    display: none;
+  }
   /* Positioned: the cards' offsets (their grid slots) are relative to it. */
-  .home {
+  .cards {
     position: relative;
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -478,19 +627,26 @@
     border: var(--glass-hairline);
     border-radius: var(--radius-lg);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
-    /* Settles into its slot when let go. */
-    transition:
-      transform 240ms var(--ease-out),
-      box-shadow 240ms var(--ease-out);
+    cursor: grab;
+    touch-action: none;
   }
-  /* The card being dragged: above the rest, tracking the pointer exactly. */
+  /* The card being dragged: above the rest, tracking the pointer exactly,
+     and opaque so the card under it doesn't show through. */
   .card.lifted {
     position: relative;
     z-index: 5;
+    background: var(--panel);
     box-shadow: var(--glass-shadow);
-    transition: none;
   }
-  /* The header is the handle. */
+  /* Where the dragged card lands. */
+  .slot {
+    position: absolute;
+    z-index: 1;
+    border: 1px dashed var(--muted);
+    border-radius: var(--radius-lg);
+    background: var(--hover);
+    pointer-events: none;
+  }
   header {
     display: flex;
     align-items: center;
@@ -498,12 +654,13 @@
     gap: 8px;
     height: 24px;
     padding: 0 4px 0 8px;
-    cursor: grab;
-    touch-action: none;
     user-select: none;
   }
-  .home.dragging,
-  .home.dragging * {
+  .card .widget {
+    cursor: default;
+  }
+  .cards.dragging,
+  .cards.dragging * {
     cursor: grabbing;
   }
   h3 {

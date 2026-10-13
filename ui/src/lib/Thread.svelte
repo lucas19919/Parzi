@@ -9,9 +9,9 @@
   import Viz from "./viz/Viz.svelte";
   import Steps from "./Steps.svelte";
   import Icon from "./Icon.svelte";
-  import { api, type ChatEvent, type PlanQuote, type Question } from "./api";
+  import { api, type ChatEvent, type Question } from "./api";
   import type { Approval, LiveTool, Step } from "./live";
-  import { splitQuotes } from "./planModel";
+  import { hidePlanItems } from "./userText";
   import { toast, toastError } from "./toast";
   import { tooltip } from "./tooltip";
 
@@ -24,7 +24,7 @@
   export let question: Question | null = null;
   export let folder = "";
 
-  const dispatch = createEventDispatcher<{ voted: { key: string }; answered: { key: string }; edited: { text: string; quotes: PlanQuote[] }; forked: void }>();
+  const dispatch = createEventDispatcher<{ voted: { key: string }; answered: { key: string }; edited: { text: string }; forked: void }>();
 
   const ERROR_WORDS: Record<string, string> = {
     auth: "Not signed in",
@@ -340,7 +340,7 @@ ${e.text}` : e.text;
   {#each items as item (item.key)}
     {#if item.kind === "user"}
       {@const images = attachedImages(item.text)}
-      {@const said = splitQuotes(stripMarker(item.text))}
+      {@const said = hidePlanItems(stripMarker(item.text ?? ""))}
       <div class="row user">
         <div class="user-line">
           {#if said.text}
@@ -348,17 +348,15 @@ ${e.text}` : e.text;
               <Icon name={copied === item.key ? "check" : "copy"} />
             </button>
           {/if}
-          <button class="copy" use:tooltip={"Edit in composer"} on:click={() => dispatch("edited", { text: said.text, quotes: said.quotes })}>
+          <button class="copy" use:tooltip={"Edit in composer"} on:click={() => dispatch("edited", { text: said.text })}>
             <Icon name="pencil" />
           </button>
           {#if said.text}
             <div class="bubble msg">{@html mdHtml(said.text, $richReady)}</div>
-          {:else}
-            <div class="quotes">{#each said.quotes as q, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">Plan · {q.title}</span></span>{/each}</div>
           {/if}
         </div>
-        {#if said.text && said.quotes.length}
-          <div class="quotes">{#each said.quotes as q, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">Plan · {q.title}</span></span>{/each}</div>
+        {#if said.items.length}
+          <p class="plan-items">Plan item{said.items.length === 1 ? "" : "s"}: {said.items.join(", ")}</p>
         {/if}
         {#if images.length}
           <div class="sent">
@@ -540,42 +538,13 @@ ${e.text}` : e.text;
     margin: 0.4em 0;
     padding-left: 20px;
   }
-  /* Plan items the message quoted: the desk sends them as blocks after the
-     text; they read as chips. */
-  .quotes {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 8px;
-    min-width: 0;
+  /* Plan items older messages quoted: plain words under the bubble. */
+  .plan-items {
     max-width: 85%;
-  }
-  .user-line .quotes {
-    max-width: none;
-  }
-  .row.user > .quotes {
-    margin-top: 8px;
-  }
-  .quote {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    max-width: 280px;
-    height: 26px;
-    padding: 0 10px;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    background: var(--hover);
-    color: var(--muted);
+    margin: 6px 0 0;
     font-size: var(--fs-sm);
-  }
-  .q-name {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text);
+    color: var(--muted);
+    text-align: right;
   }
   .sent {
     display: flex;

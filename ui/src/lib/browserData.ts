@@ -19,10 +19,21 @@ export interface Pin {
 const HISTORY_MAX = 2000;
 const BOOKMARKS_MAX = 5000;
 
+// A stored value of another shape than its fallback (hand-edited, or from
+// an older build) would break every reader: it reads as the fallback.
+function sameShape(v: unknown, fallback: unknown): boolean {
+  if (fallback === null) return true;
+  if (Array.isArray(fallback)) return Array.isArray(v);
+  if (typeof fallback === "object") return !!v && typeof v === "object" && !Array.isArray(v);
+  return typeof v === typeof fallback;
+}
+
 function read<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as T) : fallback;
+    if (!raw) return fallback;
+    const v = JSON.parse(raw) as unknown;
+    return sameShape(v, fallback) ? (v as T) : fallback;
   } catch {
     return fallback;
   }

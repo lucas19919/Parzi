@@ -6,14 +6,9 @@ import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks"
 
 const params = new URLSearchParams(location.search);
 // ?view=home | session | settings | brain | history | setup | page (default: session)
-// ?plan=none: the project has no plan yet (the empty plan panel).
-// ?quote=1: the open session's composer has two plan items quoted.
-// ?live=1 streams tool calls for the running sessions (the plan's live
-// lines); off for the UI lint, which needs a still page.
 const view = params.get("view") ?? "session";
 // ?turns=N sizes the open session's transcript (default 40).
 // ?bg=1 shows a wallpaper, served at http://asset.localhost/ (route it to a file).
-// ?layout=sidebar: the tabs in a sidebar (Settings > Appearance), else in the top bar.
 const turns = Math.max(1, Number(params.get("turns")) || 40);
 
 const now = Date.now();
@@ -21,7 +16,7 @@ const iso = (ago: number) => new Date(now - ago).toISOString();
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 
-// How a session's last run ended (PLAN_CONTRACT.md RunOutcome).
+// How a session's last run ended (RunOutcome).
 const outcome = (over: Record<string, unknown> = {}) => ({
   end: "completed",
   summary: "",
@@ -55,23 +50,22 @@ const session = (id: string, title: string, ago: number, over: Record<string, un
   created: iso(ago + 2 * HOUR),
   updated: iso(ago),
   last_run: null as ReturnType<typeof outcome> | null,
-  plan_item: null as string | null,
   branch: "",
   effort: "medium",
   ...over,
 });
 const sessions = [
-  session("s3", "Sidebar cleanup", MIN, { status: "active", plan_item: "sidebar", branch: "plan/sidebar", model: "claude/claude-sonnet-5-5" }),
-  session("s9", "Draw the plan panel", 2 * MIN, { status: "active", plan_item: "panel", branch: "plan/panel" }),
+  session("s3", "Tidy the settings page", MIN, { status: "active", branch: "settings", model: "claude/claude-sonnet-5-5" }),
+  // Waits on an approval (mockMain sends it).
+  session("s9", "Speed up the thread", 2 * MIN, { status: "active", branch: "thread" }),
   session("s10", "Fix the flaky queue test", 40 * MIN, {
     last_run: outcome({ end: "failed", summary: "The test waits on a timer the queue doesn't own; I couldn't make it fail on demand yet.", ended: now - 40 * MIN }),
   }),
   session("s7", "Name sessions in a few words", 55 * MIN, {
-    plan_item: "names",
-    branch: "plan/names",
+    branch: "names",
     last_run: outcome({
       summary:
-        "Sessions get a name from the first clause of the prompt, and agents rename their own session in the first turn.\n\n- `name_from_prompt` drops openers like *hey* and *can you*.\n- A quoted item names the session after the item.",
+        "Sessions get a name from the first clause of the prompt, and agents rename their own session in the first turn.\n\n- `name_from_prompt` drops openers like *hey* and *can you*.",
       files: files("crates/parzi-core/src/names.rs", "crates/parzi-runtime/src/launch.rs", "crates/parzi-core/src/tools.rs", "parzi.md", "ui/src/App.svelte", "ui/src/lib/Thread.svelte"),
       files_more: 2,
       checks: [
@@ -84,67 +78,17 @@ const sessions = [
   }),
   session("s1", "Fix the composer freeze", 70 * MIN, { last_run: outcome({ summary: "Autosize measures once per key now.", ended: now - 70 * MIN }) }),
   session("s2", "Lets test something", 3 * MIN, { status: "active", lane: "work", model: "codex/gpt-5" }),
-  session("s6", "Trim the old panel tabs", 4 * MIN, { status: "active", parent_id: "s3", model: "codex/gpt-5" }),
+  session("s6", "Check the settings copy", 4 * MIN, { status: "active", parent_id: "s3", model: "codex/gpt-5" }),
   session("s5", "Badges from gh pr list", 90 * MIN, {
-    plan_item: "prs",
-    branch: "plan/prs",
+    branch: "prs",
     last_run: outcome({ summary: "PR badges read `gh pr list`; the desk caches it for a minute.", checks: [{ cmd: "cargo test --bin parzi-app", ok: true }], ended: now - 90 * MIN }),
   }),
-  session("s8", "Strip the Work view", 3 * HOUR, { status: "done", plan_item: "strip", branch: "plan/strip", last_run: outcome({ ended: now - 3 * HOUR }) }),
-  session("s11", "Store run outcomes on sessions", 5 * HOUR, { plan_item: "outcomes", last_run: outcome({ ended: now - 5 * HOUR }) }),
+  session("s8", "Strip the Work view", 3 * HOUR, { status: "done", last_run: outcome({ ended: now - 3 * HOUR }) }),
+  session("s11", "Store run outcomes on sessions", 5 * HOUR, { last_run: outcome({ ended: now - 5 * HOUR }) }),
   session("s4", "Draft release notes", 6 * HOUR, { project: "", lane: "work", model: "opencode", status: "done" }),
   session("r:a1", "Update outdated crates in memory-ai", 8 * HOUR, { project: "memory-ai" }),
   session("r:a2", "Bump them and run the tests", 7 * HOUR, { project: "memory-ai", parent_id: "r:a1", status: "active", model: "claude/claude-sonnet-5-5" }),
 ];
-
-// Parzi's plan (PLAN_CONTRACT.md): nine items, one per state the panel
-// reads. Done by its state (outcomes) and by a merged PR (strip), dropped
-// (tasks), needs you through an approval (panel, emitted by mockMain),
-// working with two agents (sidebar), in review with checks passing (names)
-// and failing (prs), started (quotes), and not started with open needs
-// (widgets). s2 runs outside the plan.
-const item = (id: string, title: string, over: Record<string, unknown> = {}) => ({
-  id,
-  title,
-  detail: "",
-  phase: "Now",
-  needs: [] as string[],
-  state: "active",
-  branch: `plan/${id}`,
-  note: "",
-  ...over,
-});
-const parziPlan = {
-  version: 1,
-  title: "0.1.28",
-  goal: "A calmer sidebar driven by plans",
-  phases: ["Now", "Next"],
-  items: [
-    item("names", "Session names", { detail: "Name sessions in 3 to 5 words, and let agents rename their own session in the first turn." }),
-    item("panel", "Plan panel", { detail: "Show the project's plan in the right panel: phases, live states, needs as connectors.", needs: ["strip"] }),
-    item("sidebar", "Sidebar cleanup", { detail: "One panel instead of tabs: the plan, then what else runs.", needs: ["names"] }),
-    item("prs", "PR badges", { detail: "Read PRs with gh and badge the items whose branch has one.", needs: ["names"], note: "Keep it to one gh call a minute." }),
-    item("quotes", "Quote chips", { detail: "Click an item to quote it into the composer.", branch: "" }),
-    item("outcomes", "Run outcomes on sessions", { state: "done", branch: "" }),
-    item("strip", "Strip the Work view", { detail: "Remove the goals, the Work tab and the ledger." }),
-    item("widgets", "Movable Home widgets", { phase: "Next", state: "planned", branch: "", needs: ["panel", "quotes"], detail: "Drag Home's cards into the order you want." }),
-    item("tasks", "Task tools in the panel", { phase: "Next", state: "dropped", branch: "", note: "The plan replaces them." }),
-  ],
-  updated: now - 20 * MIN,
-  by: "s9",
-};
-const prs = [
-  { number: 42, title: "Name sessions from the prompt, and let agents rename them", url: "https://github.com/lucas19919/Parzi/pull/42", head: "plan/names", state: "open", draft: false, checks: "pass" },
-  { number: 44, title: "PR badges on plan items", url: "https://github.com/lucas19919/Parzi/pull/44", head: "plan/prs", state: "open", draft: false, checks: "fail" },
-  { number: 39, title: "Remove the Work view", url: "https://github.com/lucas19919/Parzi/pull/39", head: "plan/strip", state: "merged", draft: false, checks: "pass" },
-  { number: 31, title: "Old experiment", url: "https://github.com/lucas19919/Parzi/pull/31", head: "try/webgpu", state: "closed", draft: false, checks: "none" },
-];
-const planView = (project: string) => ({
-  project,
-  path: `projects/${project}/plan.md`,
-  plan: project === "parzi" && params.get("plan") !== "none" ? parziPlan : null,
-  error: null,
-});
 
 const ANSWER = [
   "## What I found",
@@ -176,7 +120,7 @@ const VIZ_ANSWER = [
   ...viz({
     type: "stat",
     data: [
-      { label: "Plan items done", value: 3, delta: "+2 this week" },
+      { label: "Sessions done", value: 3, delta: "+2 this week" },
       { label: "Open PRs", value: 8, delta: -3, vs: "vs last week" },
       { label: "Test time", value: 41.2, unit: "s", spark: [52, 50, 49, 47, 47, 44, 43, 41.2] },
     ],
@@ -211,7 +155,7 @@ const VIZ_ANSWER = [
     type: "progress",
     title: "Release checklist",
     data: [
-      { label: "Plan items", value: 3, max: 9 },
+      { label: "Issues closed", value: 3, max: 9 },
       { label: "Tests passing", value: 0.97 },
       { label: "Docs", value: 40, max: 100 },
     ],
@@ -222,7 +166,7 @@ const VIZ_ANSWER = [
     data: [
       { Component: "Thread", Renders: 1240, "Avg ms": 3.1 },
       { Component: "Omnibar", Renders: 860, "Avg ms": 1.4 },
-      { Component: "SidePanel", Renders: 210, "Avg ms": 0.9 },
+      { Component: "HomeView", Renders: 210, "Avg ms": 0.9 },
     ],
   }),
   ...viz({
@@ -239,7 +183,7 @@ const VIZ_ANSWER = [
     type: "timeline",
     title: "This week",
     data: [
-      { when: "2026-10-12T09:30", label: "Plan panel merged", tone: "ok" },
+      { when: "2026-10-12T09:30", label: "Home cards merged", tone: "ok" },
       { when: "2026-10-12T14:05", label: "Session names in review", detail: "PR 42, checks passing", tone: "accent" },
       { when: "2026-10-13", label: "Widgets started" },
     ],
@@ -250,7 +194,7 @@ const VIZ_ANSWER = [
 function transcript() {
   const out: unknown[] = [];
   for (let i = 0; i < turns; i++) {
-    // The last turn quotes a plan item, as the desk sends it.
+    // The last turn quotes a plan item, as older builds sent them.
     const last = i === turns - 1;
     const quote = `\n\n<plan-item project="parzi" id="quotes" title="Quote chips">\nClick an item to quote it into the composer.\nState: active. Needs: none. Branch: none.\n</plan-item>`;
     out.push({ kind: "user", text: last ? `Start this, and keep it small.${quote}` : `Turn ${i + 1}: look at why typing stalls, and check the thread too.` });
@@ -348,9 +292,9 @@ const downloadsList = [
 ];
 
 const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
-  plan_view: (a) => planView(String(a.project ?? "")),
-  plan_prs: () => (params.get("plan") === "none" ? [] : prs),
-  app_version: () => "0.1.25-dev",
+  app_version: () => "0.1.27-dev",
+  // The window's error reports (lib/crash.ts).
+  ui_log: () => null,
   list_threads: () => sessions,
   get_thread: (a) => [sessions.find((s) => s.id === a.id) ?? sessions[0], transcript()],
   provider_statuses: () => board,
@@ -412,7 +356,6 @@ mockIPC((cmd, payload) => handlers[cmd]?.((payload ?? {}) as Record<string, unkn
 
 try {
   localStorage.setItem("parzi.onboarded.v1", view === "setup" ? "false" : "true");
-  localStorage.setItem("parzi.layout", params.get("layout") === "sidebar" ? "sidebar" : "topbar");
   const composer = { input: "", mode: "build", model: "claude/claude-opus-5-5", effort: "medium", attachments: [] };
   const tab = (id: string, kind: string, title: string, sessionId: string | null = null, extra: Record<string, unknown> = {}) => ({
     id,
@@ -422,14 +365,8 @@ try {
     cwd: "D:\\Repos\\Parzi",
     composer: { ...composer, ...extra },
   });
-  const quotes = params.get("quote")
-    ? [
-        { project: "parzi", id: "prs", title: "PR badges" },
-        { project: "parzi", id: "widgets", title: "Movable Home widgets" },
-      ]
-    : [];
   const title = (id: string) => sessions.find((x) => x.id === id)?.title ?? "Session";
-  const tabs = [tab("t-home", "session", "New session"), tab("t-s1", "session", title("s1"), "s1", { quotes }), tab("t-s2", "session", title("s2"), "s2")];
+  const tabs = [tab("t-home", "session", "New session"), tab("t-s1", "session", title("s1"), "s1"), tab("t-s2", "session", title("s2"), "s2")];
   if (view === "brain") tabs.push(tab("t-brain", "brain", "Brain"));
   if (view === "history") tabs.push(tab("t-history", "history", "History"));
   // Earlier builds saved a Work tab: it is dropped on load.
@@ -449,4 +386,3 @@ try {
 } catch {}
 
 export const mockView = view;
-export const mockLive = !!params.get("live");

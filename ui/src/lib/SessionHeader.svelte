@@ -8,8 +8,6 @@
   export let branch = "";
   export let lane = "";
   export let canAct = false;
-  export let agentCount = 0;
-  export let panelOpen = false;
   export let backTitle: string | null = null;
   export let contextUsed = 0;
   export let contextLimit = 0;
@@ -19,7 +17,7 @@
   export let tokensOut = 0;
   export let costUsd = 0;
 
-  const dispatch = createEventDispatcher<{ rename: { title: string }; fork: void; copyId: void; delete: void; plan: void; back: void; compact: void }>();
+  const dispatch = createEventDispatcher<{ rename: { title: string }; fork: void; copyId: void; delete: void; back: void; compact: void }>();
 
   type Action = "rename" | "fork" | "copyId" | "delete";
   const ITEMS: { id: Action; label: string; icon: IconName }[] = [
@@ -43,7 +41,6 @@
 
   const RING = 2 * Math.PI * 6;
   $: contextPct = contextLimit > 0 ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : 0;
-  $: agents = agentCount > 99 ? "99+" : String(agentCount);
   let ctxOpen = false;
 
   async function run(id: Action) {
@@ -135,18 +132,6 @@
           </svg>
         </button>
       {/if}
-      <!-- The badge is visible text, so the name has to include it. -->
-      <button
-        class="icon-btn"
-        class:on={panelOpen}
-        aria-pressed={panelOpen}
-        aria-label={agentCount > 0 ? `Plan, ${agents} agents running` : "Plan"}
-        use:tooltip={"Plan (Ctrl+J)"}
-        on:click={() => dispatch("plan")}
-      >
-        <Icon name="panel" />
-        {#if agentCount > 0}<span class="count">{agents}</span>{/if}
-      </button>
       <button class="icon-btn" aria-haspopup="menu" aria-expanded={open} use:tooltip={"Session actions"} on:click={() => {
           open = !open;
           ctxOpen = false;
@@ -274,25 +259,6 @@
   .icon-btn:hover {
     background: var(--hover);
     color: var(--text);
-  }
-  .icon-btn.on {
-    background: var(--selected);
-    color: var(--text);
-  }
-  .count {
-    position: absolute;
-    top: 0;
-    right: -1px;
-    min-width: 14px;
-    height: 14px;
-    padding: 0 3px;
-    border-radius: 999px;
-    background: var(--ok);
-    color: var(--on-ok);
-    font-size: var(--fs-xs);
-    font-weight: 700;
-    line-height: 14px;
-    text-align: center;
   }
   .dropdown {
     position: absolute;

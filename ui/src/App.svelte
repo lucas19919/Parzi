@@ -5,19 +5,17 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import {
     api, brain, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onRunEvent,
-    MODE_META, type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type PlanQuote, type Question, type SessionMeta, type UiEvent,
+    MODE_META, type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type Question, type SessionMeta, type UiEvent,
   } from "./lib/api";
   import { downloads as downloadApi, onBrowserAsk, onDownload, type Download } from "./lib/api";
   import { addPrompt, downloadList, dropTabPrompts, upsertDownload } from "./lib/browserState";
   import { closedTabs, recordFavicon } from "./lib/browserData";
   import { downloadShare, popClosed, pushClosed } from "./lib/pageRules";
   import TopBar from "./lib/TopBar.svelte";
-  import Sidebar from "./lib/Sidebar.svelte";
   import Switcher from "./lib/Switcher.svelte";
   import DefaultArt from "./lib/DefaultArt.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
   import PanelHeader from "./lib/PanelHeader.svelte";
-  import SidePanel from "./lib/SidePanel.svelte";
   import Thread from "./lib/Thread.svelte";
   import SessionHeader from "./lib/SessionHeader.svelte";
   import PageView from "./lib/PageView.svelte";
@@ -29,7 +27,6 @@
   import RequestPopup from "./lib/RequestPopup.svelte";
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
   import Settings from "./lib/Settings.svelte";
-  import Icon from "./lib/Icon.svelte";
   import { board, ensureBoard } from "./lib/providerStore";
   import { isRemote, loadRemoteInfo, onRemoteStatus, refreshRemoteBoard, remote, remoteBoard, remoteInfo } from "./lib/remote";
   import { normLane, permissionFor } from "./lib/lanes";
@@ -39,14 +36,10 @@
   import { checkForUpdatesSoon } from "./lib/updateStore";
   import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
-  import { watchActivity } from "./lib/activity";
-  import { addQuote, MAX_QUOTES, quoteBlock, sameSlug } from "./lib/planModel";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
   import { covered } from "./lib/overlay";
-  import { tooltip } from "./lib/tooltip";
   import type { Approval, LiveTool } from "./lib/live";
   import { deskRows, type DeskCmd } from "./lib/desk";
-  import { nextRowTop, scrollEdges, watchEdges, type ScrollEdges } from "./lib/scrollHint";
 
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
@@ -125,47 +118,16 @@
     return false;
   }
 
-  // One parent map per threads change instead of a find() per hop.
-  $: familyActive = (() => {
-    if (!shown) return 0;
-    const parent = new Map(threads.map((t) => [t.id, t.parent_id]));
-    let n = 0;
-    for (const t of threads) {
-      if (t.id === shown || !(t.status === "active" || t.status === "queued" || running.has(t.id))) continue;
-      let cur = t.parent_id;
-      let guard = 0;
-      while (cur && guard++ < 50) {
-        if (cur === shown) {
-          n++;
-          break;
-        }
-        cur = parent.get(cur);
-      }
-    }
-    return n;
-  })();
-
   // Composer state lives on the tab: switching tabs preserves each
   // tab's composer intact, with no copying and no cross-contamination.
 
   let switcherOpen = false;
-  // The plan panel, open or shut for every session and draft alike.
-  let panelOpen = false;
-  try {
-    panelOpen = localStorage.getItem("parzi.plan.open") === "1";
-  } catch {}
-  let panelW = 360;
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
-  let farFromBottom = false;
-  // Home's card list: how far it is scrolled, for its fades and "More below".
-  let homeEl: HTMLElement | null = null;
-  let homeEdges: ScrollEdges = scrollEdges(0, 0, 0);
   let dockHeight = 90;
   let omnibar: Omnibar;
   let page: PageView;
   let immersive = false;
-  let layout: "topbar" | "sidebar" = "topbar";
   let setupOpen = false;
   let setupStep = 0;
   // The last Remote switch position; new drafts start from it.
@@ -294,40 +256,8 @@
     else addTab(brainTab());
   }
 
-  // The plan panel shows the project of the session, else of the draft's
-  // folder; on a draft only once it has a folder.
-  $: planProject = (hasSession ? meta?.project : "") || project?.slug || "";
-  $: planTitle = project && sameSlug(project.slug, planProject) ? project.title : "";
-  $: planShown = panelOpen && tab.kind === "session" && (hasSession || !!folder);
   // Sessions waiting on an approval or a question.
   $: waitingIds = new Set([...approvals.map((a) => a.session), ...questions.map((q) => q.session)]);
-
-  function togglePlan(open = !(panelOpen && tab.kind === "session")) {
-    if (open && tab.kind !== "session") goHome();
-    panelOpen = open;
-    try {
-      localStorage.setItem("parzi.plan.open", open ? "1" : "0");
-    } catch {}
-    if (open && tab.kind === "session" && !hasSession && !folder) toast("Pick a folder in the composer to see its plan");
-  }
-
-  // Clicking a plan item quotes it into this tab's composer.
-  function quoteItem(q: PlanQuote) {
-    const list = comp.quotes ?? [];
-    const next = addQuote(list, q);
-    if (next === list && list.length >= MAX_QUOTES) toast(`A message quotes at most ${MAX_QUOTES} plan items`);
-    comp.quotes = next;
-    if (comp.mode === "search" && !lockMode) comp.mode = "build";
-    comp = comp;
-    omnibar?.focus();
-  }
-
-  function useExample(text: string) {
-    comp.input = text;
-    if (comp.mode === "search" && !lockMode) comp.mode = "build";
-    comp = comp;
-    omnibar?.focus();
-  }
 
   // An agent renamed its session: the list, the tab and the header follow.
   async function renamed(id: string) {
@@ -533,22 +463,6 @@
     void tick().then(() => omnibar?.focus());
   }
 
-  function setHomeEdges(edges: ScrollEdges) {
-    homeEdges = edges;
-  }
-
-  // "More below": the next row of cards up to the top of the list.
-  function homeNextRow() {
-    const el = homeEl;
-    if (!el) return;
-    const box = el.getBoundingClientRect();
-    const tops = [...el.querySelectorAll(".card")].map((c) => c.getBoundingClientRect().top - box.top + el.scrollTop);
-    const pad = parseFloat(getComputedStyle(el).paddingTop) || 0;
-    const max = el.scrollHeight - el.clientHeight;
-    const top = nextRowTop(tops, el.scrollTop, pad, max) ?? el.scrollTop + el.clientHeight * 0.8;
-    el.scrollTo({ top, behavior: reduced ? "auto" : "smooth" });
-  }
-
   function goHome() {
     const draft = tabs.find((t) => t.kind === "session" && !t.sessionId);
     if (draft) selectTab(draft.id);
@@ -741,15 +655,13 @@
     const target = tab;
     const draft = target.composer;
     const prompt = draft.input.trim();
-    // A message can be just quoted plan items.
-    const quotes = draft.mode === "search" ? [] : [...(draft.quotes ?? [])];
-    if ((!prompt && !quotes.length) || sending || streaming) return;
+    if (!prompt || sending || streaming) return;
     if (!draft.model && draft.mode !== "search") {
       toast("Pick a model first");
       omnibar?.openModels();
       return;
     }
-    if (!quotes.length && isExplicitUrl(prompt)) {
+    if (isExplicitUrl(prompt)) {
       draft.input = "";
       comp = comp;
       browse(toAddress(prompt));
@@ -762,12 +674,10 @@
       navTrail = [];
       navTab = "";
     }
-    // Quotes go as blocks after the text, as the desk will send them.
-    const optimistic: ChatEvent = { kind: "user", text: [prompt, ...quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
+    const optimistic: ChatEvent = { kind: "user", text: prompt };
     sending = true;
     draft.input = "";
     draft.attachments = [];
-    draft.quotes = [];
     comp = comp;
     events = [...events, optimistic];
     try {
@@ -783,16 +693,14 @@
         mode: permission,
         lane: draft.mode,
         remote: remoteOn,
-        quotes: quotes.map((q) => ({ project: q.project, id: q.id })),
       });
       running = new Set(running).add(sid);
       // The field was cleared before the await. Drop the stored draft
       // for the tab that sent, not whichever tab is active now.
       draft.input = "";
       draft.attachments = [];
-      draft.quotes = [];
       comp = comp;
-      if (fresh) patchTab(target.id, { sessionId: sid, title: (prompt || quotes[0]?.title || "New session").slice(0, 40) });
+      if (fresh) patchTab(target.id, { sessionId: sid, title: prompt.slice(0, 40) });
       // Another device's session continues on the server under a new id.
       else if (sid !== target.sessionId) patchTab(target.id, { sessionId: sid });
       if (activeId === target.id) {
@@ -804,7 +712,6 @@
     } catch (e) {
       draft.input = prompt;
       draft.attachments = files;
-      draft.quotes = quotes;
       comp = comp;
       events = events.filter((ev) => ev !== optimistic);
       toastError(e);
@@ -1057,7 +964,6 @@
     else if (name === "ctrl+w") closeTab(activeId);
     else if (name === "ctrl+comma") tab.kind === "settings" ? closeTab(activeId) : openSettings();
     else if (name === "ctrl+b") openBrain();
-    else if (name === "ctrl+j" || name === "ctrl+shift+a") togglePlan();
     else if (name === "ctrl+h") openHistory();
     else if (name === "ctrl+shift+t") reopenClosed();
     else if (name === "f11") void setImmersive(!immersive);
@@ -1090,11 +996,9 @@
             ? "ctrl+comma"
           : mod && e.shiftKey && key === "t"
             ? "ctrl+shift+t"
-            : mod && e.shiftKey && key === "a"
-              ? "ctrl+shift+a"
-              : mod && ["p", "k", "t", "w", "l", "b", "h", "j"].includes(key)
-                  ? `ctrl+${key}`
-                  : "";
+            : mod && ["p", "k", "t", "w", "l", "b", "h"].includes(key)
+              ? `ctrl+${key}`
+              : "";
     if (name && shortcut(name)) {
       e.preventDefault();
     } else if (key === "escape" && !e.defaultPrevented && !$covered) {
@@ -1141,7 +1045,6 @@
     } else if (cmd.what === "settings") openSettings(cmd.section || "general");
     else if (cmd.what === "brain") openBrain(cmd.path ?? "");
     else if (cmd.what === "history") openHistory(cmd.view ?? "sessions");
-    else if (cmd.what === "plan" || cmd.what === "work" || cmd.what === "tasks") togglePlan(true);
     else if (cmd.what === "home") goHome();
   }
 
@@ -1158,19 +1061,7 @@
   }
 
   onMount(() => {
-    try {
-      const saved = Number(localStorage.getItem("parzi.dock.w"));
-      if (saved >= 280 && saved <= 640) panelW = saved;
-    } catch {}
-    try {
-      layout = localStorage.getItem("parzi.layout") === "sidebar" ? "sidebar" : "topbar";
-    } catch {}
-    document.documentElement.classList.toggle("parzi-sidebar", layout === "sidebar");
-    const onLayout = (e: Event) => {
-      layout = (e as CustomEvent<string>).detail === "sidebar" ? "sidebar" : "topbar";
-      document.documentElement.classList.toggle("parzi-sidebar", layout === "sidebar");
-    };
-    document.addEventListener("parzi:layout", onLayout);    const unRun = onRunEvent(onEvent);
+    const unRun = onRunEvent(onEvent);
     const unDesk = onDesk((cmd) => {
       if (typeof cmd.rev === "number") deskRev = Math.max(deskRev, cmd.rev);
       onDeskCmd(cmd);
@@ -1185,7 +1076,6 @@
       .then((list) => downloadList.set(list))
       .catch(() => {});
     let brainSeen = 0;
-    const unActivity = watchActivity();
     const unBrain = brainTabRequested.subscribe((n) => {
       if (n > 0 && n !== brainSeen) {
         brainSeen = n;
@@ -1249,7 +1139,6 @@
     })();
     return () => {
       unBrain();
-      unActivity();
       unClear();
       document.removeEventListener("parzi:default-mode", onDefaultMode);
       unRun.then((f) => f()).catch(() => {});
@@ -1257,7 +1146,6 @@
       unRemote.then((f) => f()).catch(() => {});
       for (const un of [unPage, unOpen, unKey, unAsk, unDownload]) un.then((f) => f()).catch(() => {});
       document.removeEventListener("parzi:bg", onBg);
-      document.removeEventListener("parzi:layout", onLayout);
     };
   });
 </script>
@@ -1272,7 +1160,6 @@
       {tabs}
       activeTabId={activeId}
       {sessionLanes}
-      tabsVisible={layout !== "sidebar"}
       on:select={(e) => selectTab(e.detail.id)}
       on:close={(e) => closeTab(e.detail.id)}
       on:move={(e) => moveTab(e.detail.id, e.detail.to)}
@@ -1288,16 +1175,6 @@
   {/if}
 
   <div class="content">
-    {#if layout === "sidebar" && !immersive}
-      <Sidebar
-        {tabs}
-        activeTabId={activeId}
-        {sessionLanes}
-        on:select={(e) => selectTab(e.detail.id)}
-        on:close={(e) => closeTab(e.detail.id)}
-        on:move={(e) => moveTab(e.detail.id, e.detail.to)}
-      />
-    {/if}
     <main>
     {#if tab.kind === "settings"}
       <div class="fill col" in:fly={{ y: 8, ...motion }}>
@@ -1347,8 +1224,6 @@
             title={meta?.title || tab.title}
             {branch}
             lane={meta?.lane ?? ""}
-            agentCount={familyActive}
-            {panelOpen}
             backTitle={backTitle}
             canAct={!!shown}
             contextUsed={context.used}
@@ -1364,10 +1239,9 @@
             on:delete={() => shown && remove(shown)}
             on:back={goBack}
             on:compact={() => onCommand("compact")}
-            on:plan={() => togglePlan()}
           />
           <div class="workarea">
-            <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl} on:scroll={() => (farFromBottom = !nearBottom())}>
+            <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl}>
               <Thread
                 {events}
                 liveText={live}
@@ -1381,7 +1255,6 @@
                 on:answered={(e) => (questions = questions.filter((q) => q.key !== e.detail.key))}
                 on:edited={(e) => {
                   comp.input = e.detail.text;
-                  if (e.detail.quotes.length) comp.quotes = e.detail.quotes.slice(0, MAX_QUOTES);
                   comp = comp;
                   omnibar?.focus();
                   toast("Loaded into composer. Edit and send.");
@@ -1389,37 +1262,12 @@
                 on:forked={() => fork()}
               />
             </div>
-            {#if planShown}
-              <SidePanel
-                project={planProject}
-                projectTitle={planTitle}
-                {folder}
-                {threads}
-                {running}
-                {approvals}
-                {questions}
-                bind:dockW={panelW}
-                on:quote={(e) => quoteItem(e.detail)}
-                on:example={(e) => useExample(e.detail.text)}
-                on:openUrl={(e) => openPage(e.detail.url)}
-                on:openSession={(e) => openSession(e.detail.id)}
-                on:close={() => togglePlan(false)}
-              />
-            {/if}
           </div>
         </section>
       {/if}
 
       {#if !hasSession}
-        <div
-          class="home"
-          bind:this={homeEl}
-          use:watchEdges={setHomeEdges}
-          style:--shift="{planShown ? (panelW + 8) / 2 : 0}px"
-          style:--fade-top="{homeEdges.top}px"
-          style:--fade-bottom="{homeEdges.bottom}px"
-          in:fade={{ duration: 200 }}
-        >
+        <div class="home" in:fade={{ duration: 200 }}>
           <HomeView
             {threads}
             {running}
@@ -1436,48 +1284,9 @@
             on:remoteSetup={openRemoteSetup}
           />
         </div>
-        {#if homeEdges.hint > 0}
-          <button
-            class="more-below"
-            style:--shift="{planShown ? (panelW + 8) / 2 : 0}px"
-            style:opacity={homeEdges.hint}
-            use:tooltip={"More below"}
-            on:click={homeNextRow}
-            transition:fade={motion}
-          >
-            <Icon name="chevDown" />
-          </button>
-        {/if}
-        {#if planShown}
-          <div class="plan-float" in:fade={{ duration: 150 }}>
-            <SidePanel
-              floating
-              project={planProject}
-              projectTitle={planTitle}
-              {folder}
-              {threads}
-              {running}
-              {approvals}
-              {questions}
-              bind:dockW={panelW}
-              on:quote={(e) => quoteItem(e.detail)}
-              on:example={(e) => useExample(e.detail.text)}
-              on:openUrl={(e) => openPage(e.detail.url)}
-              on:openSession={(e) => openSession(e.detail.id)}
-              on:close={() => togglePlan(false)}
-            />
-          </div>
-        {:else if folder}
-          <button class="plan-toggle" use:tooltip={"Plan (Ctrl+J)"} on:click={() => togglePlan(true)}><Icon name="panel" /></button>
-        {/if}
       {/if}
 
-      <div
-        class="composer"
-        class:docked={hasSession}
-        style:--shift="{planShown ? (hasSession ? panelW / 2 : (panelW + 8) / 2) : 0}px"
-        bind:clientHeight={dockHeight}
-      >
+      <div class="composer" class:docked={hasSession} bind:clientHeight={dockHeight}>
         {#if hasSession && meta?.lane && normLane(meta.lane) !== mode && mode !== "search"}
           <div class="lane-hint">↵ starts a new {MODE_META[mode].label} session</div>
         {/if}
@@ -1490,7 +1299,6 @@
           {policy}
           bind:mode={comp.mode}
           bind:attachments={comp.attachments}
-          bind:quotes={comp.quotes}
           {folder}
           lockMode={lockMode}
           folderLocked={!!tab.sessionId}
@@ -1687,123 +1495,38 @@
     );
   }
   /* Home: the composer sits a little above centre (.composer's hero
-     bottom) and the widgets fill the space below it, 16px apart. The cards
-     are exactly as wide as the composer and scroll under it, fading out in
-     the gap; with no scrollbar, a deeper bottom fade and the "More below"
-     hint say there is more. The side padding leaves room for their shadows. */
+     bottom) and the cards fill the space below it (HomeView scrolls them).
+     The cards are exactly as wide as the composer; the side padding leaves
+     room for their shadows. */
   .home {
     position: absolute;
     top: calc(36% + 58px);
     bottom: 0;
     left: 50%;
     z-index: 10;
-    width: calc(min(720px, calc(90% - 2 * var(--shift, 0px))) + 48px);
-    padding: 16px 24px 32px;
-    overflow-y: auto;
-    scrollbar-width: none;
-    /* Fades sized by scrollHint.ts: the top one once scrolled, the bottom
-       one deeper while there is more below. */
-    mask-image: linear-gradient(
-      to bottom,
-      transparent,
-      #000 var(--fade-top, 0px),
-      #000 calc(100% - var(--fade-bottom, 32px)),
-      transparent
-    );
-    transform: translateX(calc(-50% - var(--shift, 0px)));
-    transition:
-      transform 700ms var(--ease-out),
-      width 700ms var(--ease-out);
-  }
-  /* The plan beside Home, on a draft with a folder: its own glass card. */
-  .plan-float {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    bottom: 0;
-    z-index: 25;
     display: flex;
-    overflow: hidden;
-    background: var(--glass-bg-solid);
-    border: var(--glass-border);
-    border-bottom: none;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    flex-direction: column;
+    width: calc(min(720px, 90%) + 48px);
+    transform: translateX(-50%);
   }
-  .plan-toggle {
-    position: absolute;
-    top: 12px;
-    right: 16px;
-    z-index: 25;
-    width: 28px;
-    height: 28px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: var(--glass-bg);
-    border: var(--glass-hairline);
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .plan-toggle:hover {
-    background: var(--glass-bg-solid);
-    color: var(--text);
-  }
-  .home::-webkit-scrollbar {
-    display: none;
-  }
-  /* "More below": centred on the cards at the bottom edge, in the fade. */
-  .more-below {
-    position: absolute;
-    bottom: 10px;
-    left: 50%;
-    z-index: 11;
-    width: 28px;
-    height: 28px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: var(--glass-bg);
-    -webkit-backdrop-filter: var(--glass-blur);
-    backdrop-filter: var(--glass-blur);
-    border: var(--glass-hairline);
-    border-radius: 999px;
-    color: var(--muted);
-    cursor: pointer;
-    transform: translateX(calc(-50% - var(--shift, 0px)));
-    transition:
-      opacity 150ms var(--ease-out),
-      transform 700ms var(--ease-out);
-  }
-  .more-below:hover {
-    background: var(--glass-bg-solid);
-    color: var(--text);
-  }
-  /* Search suggestions drop over the widgets: hide them meanwhile rather
+  /* Search suggestions drop over the cards: hide them meanwhile rather
      than leave half-covered cards peeking out. */
-  :global(main:has(.web-suggest)) .home,
-  :global(main:has(.web-suggest)) .more-below {
+  :global(main:has(.web-suggest)) .home {
     display: none;
   }
+  /* No transitions: the composer appears where it belongs, centred on
+     Home and docked under a session. */
   .composer {
     position: absolute;
     left: 50%;
     bottom: calc(64% - 58px);
     z-index: 20;
-    width: min(720px, calc(90% - 2 * var(--shift, 0px)));
-    transform: translate(calc(-50% - var(--shift, 0px)), 0);
-    transition:
-      bottom 1050ms var(--ease-out),
-      transform 1050ms var(--ease-out),
-      width 700ms ease;
+    width: min(720px, 90%);
+    transform: translateX(-50%);
   }
   .composer.docked {
     bottom: 14px;
-    /* With the dock open it fits the thread beside it, not the window. */
-    width: min(740px, calc(100% - 40px - 2 * var(--shift, 0px)));
-    transform: translate(calc(-50% - var(--shift, 0px)), 0);
+    width: min(740px, calc(100% - 40px));
   }
   .lane-hint {
     margin: 0 0 6px;

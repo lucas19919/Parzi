@@ -12,7 +12,6 @@
   export let tabs: Tab[] = [];
   export let activeTabId = "";
   export let sessionLanes: Record<string, string> = {};
-  export let tabsVisible = true;
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -55,7 +54,7 @@
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<header class="topbar" class:side={!tabsVisible} on:mousedown={startWindowDrag}>
+<header class="topbar" on:mousedown={startWindowDrag}>
   <div class="left">
     <div class="menu">
       <button
@@ -104,22 +103,15 @@
     <button class="icon-btn" use:tooltip={"Home"} on:click={() => dispatch("home")}>
       <Icon name="home" />
     </button>
-    {#if tabsVisible}
-      <TabBar
-        {tabs}
-        {activeTabId}
-        {sessionLanes}
-        on:select={(e) => dispatch("select", e.detail)}
-        on:close={(e) => dispatch("close", e.detail)}
-        on:move={(e) => dispatch("move", e.detail)}
-        on:newTab={() => dispatch("newTab")}
-      />
-    {:else}
-      <!-- Sidebar layout: the tabs live in the sidebar, New tab sits here with Home. -->
-      <button class="icon-btn" use:tooltip={"New tab (Ctrl+T)"} on:click={() => dispatch("newTab")}>
-        <Icon name="plus" />
-      </button>
-    {/if}
+    <TabBar
+      {tabs}
+      {activeTabId}
+      {sessionLanes}
+      on:select={(e) => dispatch("select", e.detail)}
+      on:close={(e) => dispatch("close", e.detail)}
+      on:move={(e) => dispatch("move", e.detail)}
+      on:newTab={() => dispatch("newTab")}
+    />
   </div>
 
   <WinControls />
@@ -135,10 +127,6 @@
     z-index: 100;
     padding-left: 10px;
     user-select: none;
-  }
-  /* Over the sidebar: the icons line up with the tab icons below them. */
-  .topbar.side {
-    padding-left: 12px;
   }
   .left {
     display: flex;
