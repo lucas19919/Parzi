@@ -240,12 +240,11 @@
     fadeBottom = f.bottom;
   }
 
-  // Cards that change after the list is measured (a widget loads, the
-  // window resizes) measure it again.
+  // The window resizing, or the cards changing (a widget loads, one is
+  // hidden), measures the list again.
   function watchSize(node: HTMLElement) {
     const ro = new ResizeObserver(() => measure());
-    ro.observe(node);
-    if (node.parentElement) ro.observe(node.parentElement);
+    for (const el of [node, node.parentElement, ...node.children]) if (el) ro.observe(el);
     return { destroy: () => ro.disconnect() };
   }
 
