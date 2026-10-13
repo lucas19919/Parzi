@@ -5,7 +5,7 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import {
     api, brain, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onRunEvent,
-    MODE_META, type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type Question, type SessionMeta, type UiEvent,
+    MODE_META, type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type PlanQuote, type Question, type SessionMeta, type UiEvent,
   } from "./lib/api";
   import { downloads as downloadApi, onBrowserAsk, onDownload, type Download } from "./lib/api";
   import { addPrompt, downloadList, dropTabPrompts, upsertDownload } from "./lib/browserState";
@@ -25,8 +25,6 @@
   import HomeView from "./lib/HomeView.svelte";
   import PreviewView from "./lib/PreviewView.svelte";
   import BrainView from "./lib/BrainView.svelte";
-  import WorkView from "./lib/WorkView.svelte";
-  import SessionStrip from "./lib/SessionStrip.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
   import RequestPopup from "./lib/RequestPopup.svelte";
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
@@ -39,12 +37,13 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, workTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
+  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
-  import { markToasted, openGoal, refreshWork, toastedRecently, watchWork, watching, work, workTabRequested } from "./lib/workStore";
-  import { placeOf } from "./lib/workModel";
+  import { watchActivity } from "./lib/activity";
+  import { addQuote, MAX_QUOTES, quoteBlock, sameSlug } from "./lib/planModel";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
   import { covered } from "./lib/overlay";
+  import { tooltip } from "./lib/tooltip";
   import type { Approval, LiveTool } from "./lib/live";
   import { deskRows, type DeskCmd } from "./lib/desk";
 
@@ -149,9 +148,12 @@
   // tab's composer intact, with no copying and no cross-contamination.
 
   let switcherOpen = false;
+  // The plan panel, open or shut for every session and draft alike.
   let panelOpen = false;
+  try {
+    panelOpen = localStorage.getItem("parzi.plan.open") === "1";
+  } catch {}
   let panelW = 360;
-  let panelTab: "agents" | "projects" | "work" = "agents";
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
   let farFromBottom = false;
@@ -288,56 +290,48 @@
     else addTab(brainTab());
   }
 
-  // One Work tab; openGoal() (toasts, Home, the dock, the strip) lands here too.
-  function openWork() {
-    const existing = tabs.find((t) => t.kind === "work");
-    if (existing) selectTab(existing.id);
-    else addTab(workTab());
-  }
+  // The plan panel shows the project of the session, else of the draft's
+  // folder; on a draft only once it has a folder.
+  $: planProject = (hasSession ? meta?.project : "") || project?.slug || "";
+  $: planTitle = project && sameSlug(project.slug, planProject) ? project.title : "";
+  $: planShown = panelOpen && tab.kind === "session" && (hasSession || !!folder);
+  // Sessions waiting on an approval or a question.
+  $: waitingIds = new Set([...approvals.map((a) => a.session), ...questions.map((q) => q.session)]);
 
-  // The goal the shown session leads or works a step of, for the strip.
-  $: place = tab.kind === "session" ? placeOf($work.goals.filter((g) => g.status !== "archived"), shown) : null;
-  // The window shows this session: its goal finishing needs no toast.
-  $: watching.set(tab.kind === "session" ? shown : null);
-  // The strip slides in above the thread (180 ms): a thread read at its end
-  // stays there, during the slide and after it.
-  let placeKey = "";
-  $: if ((place ? `${place.goal.id}|${shown}` : "") !== placeKey) {
-    placeKey = place ? `${place.goal.id}|${shown}` : "";
-    if (nearBottom()) {
-      void scrollToBottom();
-      setTimeout(() => void scrollToBottom(), 200);
-    }
-  }
-
-  // A follow-up from a goal's page goes to its lead session, as if typed in
-  // that session's composer: its model, the effort its tab uses, the
-  // composer's permissions.
-  async function followUp(session: string, prompt: string): Promise<boolean> {
-    const m = threads.find((t) => t.id === session) ?? null;
-    const model = m?.model && m.model !== "auto" ? m.model : ($work.goals.find((g) => g.root === session)?.last?.model ?? "");
-    const effort = tabs.find((t) => t.sessionId === session)?.composer.effort ?? "medium";
+  function togglePlan(open = !(panelOpen && tab.kind === "session")) {
+    if (open && tab.kind !== "session") goHome();
+    panelOpen = open;
     try {
-      const sid = await api.sendMessage({
-        sessionId: session,
-        model,
-        prompt,
-        cwd: m?.cwd ?? "",
-        effort,
-        attachments: [],
-        mode: permission,
-        lane: normLane(m?.lane ?? "") || "build",
-        remote: isRemote(session),
-      });
-      running = new Set(running).add(sid);
-      void refreshThreads();
-      if (shown === session) void reload();
-      toast(`Sent to ${m?.title || "the lead agent"}`);
-      return true;
-    } catch (e) {
-      toastError(e);
-      return false;
-    }
+      localStorage.setItem("parzi.plan.open", open ? "1" : "0");
+    } catch {}
+    if (open && tab.kind === "session" && !hasSession && !folder) toast("Pick a folder in the composer to see its plan");
+  }
+
+  // Clicking a plan item quotes it into this tab's composer.
+  function quoteItem(q: PlanQuote) {
+    const list = comp.quotes ?? [];
+    const next = addQuote(list, q);
+    if (next === list && list.length >= MAX_QUOTES) toast(`A message quotes at most ${MAX_QUOTES} plan items`);
+    comp.quotes = next;
+    if (comp.mode === "search" && !lockMode) comp.mode = "build";
+    comp = comp;
+    omnibar?.focus();
+  }
+
+  function useExample(text: string) {
+    comp.input = text;
+    if (comp.mode === "search" && !lockMode) comp.mode = "build";
+    comp = comp;
+    omnibar?.focus();
+  }
+
+  // An agent renamed its session: the list, the tab and the header follow.
+  async function renamed(id: string) {
+    await refreshThreads();
+    const t = threads.find((x) => x.id === id);
+    if (!t?.title) return;
+    tabs = tabs.map((x) => (x.sessionId === id && x.title !== t.title ? { ...x, title: t.title } : x));
+    if (meta?.id === id) meta = { ...meta, title: t.title };
   }
 
   // Set up Parzi, opened straight at its Remote step.
@@ -727,13 +721,15 @@
     const target = tab;
     const draft = target.composer;
     const prompt = draft.input.trim();
-    if (!prompt || sending || streaming) return;
+    // A message can be just quoted plan items.
+    const quotes = draft.mode === "search" ? [] : [...(draft.quotes ?? [])];
+    if ((!prompt && !quotes.length) || sending || streaming) return;
     if (!draft.model && draft.mode !== "search") {
       toast("Pick a model first");
       omnibar?.openModels();
       return;
     }
-    if (isExplicitUrl(prompt)) {
+    if (!quotes.length && isExplicitUrl(prompt)) {
       draft.input = "";
       comp = comp;
       browse(toAddress(prompt));
@@ -746,10 +742,12 @@
       navTrail = [];
       navTab = "";
     }
-    const optimistic: ChatEvent = { kind: "user", text: prompt };
+    // Quotes go as blocks after the text, as the desk will send them.
+    const optimistic: ChatEvent = { kind: "user", text: [prompt, ...quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
     sending = true;
     draft.input = "";
     draft.attachments = [];
+    draft.quotes = [];
     comp = comp;
     events = [...events, optimistic];
     try {
@@ -765,14 +763,16 @@
         mode: permission,
         lane: draft.mode,
         remote: remoteOn,
+        quotes: quotes.map((q) => ({ project: q.project, id: q.id })),
       });
       running = new Set(running).add(sid);
       // The field was cleared before the await. Drop the stored draft
       // for the tab that sent, not whichever tab is active now.
       draft.input = "";
       draft.attachments = [];
+      draft.quotes = [];
       comp = comp;
-      if (fresh) patchTab(target.id, { sessionId: sid, title: prompt.slice(0, 40) });
+      if (fresh) patchTab(target.id, { sessionId: sid, title: (prompt || quotes[0]?.title || "New session").slice(0, 40) });
       // Another device's session continues on the server under a new id.
       else if (sid !== target.sessionId) patchTab(target.id, { sessionId: sid });
       if (activeId === target.id) {
@@ -784,6 +784,7 @@
     } catch (e) {
       draft.input = prompt;
       draft.attachments = files;
+      draft.quotes = quotes;
       comp = comp;
       events = events.filter((ev) => ev !== optimistic);
       toastError(e);
@@ -1001,9 +1002,7 @@
       } else if (e.kind === "paused") {
         notify(`Paused: budget. ${title}`, e.session);
         chime(false);
-      } else if (!toastedRecently(e.session) && !$work.goals.some((g) => g.root === e.session && g.running.includes(e.session))) {
-        // A goal's lead run says so itself when its goal settles (workStore).
-        markToasted(e.session);
+      } else {
         notify(e.kind === "done" ? `${title} finished` : `${title} stopped`, e.session);
         chime(e.kind === "done");
       }
@@ -1012,6 +1011,7 @@
     if (!running.has(e.session) && e.kind !== "context") {
       running = new Set(running).add(e.session);
     }
+    if (e.kind === "tool_result" && e.name === "session.rename" && e.ok) void renamed(e.session);
     if (e.session !== shown) return;
     if (e.kind === "text") {
       pending += e.text;
@@ -1037,12 +1037,8 @@
     else if (name === "ctrl+w") closeTab(activeId);
     else if (name === "ctrl+comma") tab.kind === "settings" ? closeTab(activeId) : openSettings();
     else if (name === "ctrl+b") openBrain();
-    else if (name === "ctrl+j") openWork();
+    else if (name === "ctrl+j" || name === "ctrl+shift+a") togglePlan();
     else if (name === "ctrl+h") openHistory();
-    else if (name === "ctrl+shift+a") {
-      panelTab = "agents";
-      panelOpen = true;
-    }
     else if (name === "ctrl+shift+t") reopenClosed();
     else if (name === "f11") void setImmersive(!immersive);
     else if (name === "ctrl+l") {
@@ -1125,7 +1121,7 @@
     } else if (cmd.what === "settings") openSettings(cmd.section || "general");
     else if (cmd.what === "brain") openBrain(cmd.path ?? "");
     else if (cmd.what === "history") openHistory(cmd.view ?? "sessions");
-    else if (cmd.what === "work" || cmd.what === "tasks") openWork();
+    else if (cmd.what === "plan" || cmd.what === "work" || cmd.what === "tasks") togglePlan(true);
     else if (cmd.what === "home") goHome();
   }
 
@@ -1169,15 +1165,7 @@
       .then((list) => downloadList.set(list))
       .catch(() => {});
     let brainSeen = 0;
-    const unWork = watchWork();
-    let workSeen = 0;
-    const unWorkTab = workTabRequested.subscribe((n) => {
-      if (n > 0 && n !== workSeen) {
-        workSeen = n;
-        if (immersive) void setImmersive(false);
-        openWork();
-      }
-    });
+    const unActivity = watchActivity();
     const unBrain = brainTabRequested.subscribe((n) => {
       if (n > 0 && n !== brainSeen) {
         brainSeen = n;
@@ -1214,15 +1202,11 @@
       else if (s.state === "error") toast(s.detail, true);
       if (s.state === "up" || s.state === "resync" || s.state === "ready") {
         void refreshThreads();
-        void refreshWork();
         if (remoteOn) void refreshRemoteBoard().catch(() => {});
         if (isRemote(shown)) void reload();
       }
       // Another device's sessions and the shared settings arrive by sync.
-      if (s.state === "synced") {
-        void refreshThreads();
-        void refreshWork();
-      }
+      if (s.state === "synced") void refreshThreads();
       if (s.state === "settings") {
         void api
           .getConfig()
@@ -1245,8 +1229,7 @@
     })();
     return () => {
       unBrain();
-      unWork();
-      unWorkTab();
+      unActivity();
       unClear();
       document.removeEventListener("parzi:default-mode", onDefaultMode);
       unRun.then((f) => f()).catch(() => {});
@@ -1281,7 +1264,6 @@
       on:update={() => openSettings("system")}
       on:brain={openBrain}
       on:history={() => openHistory()}
-      on:work={() => openWork()}
       on:setup={openSetup}
     />
   {/if}
@@ -1308,11 +1290,6 @@
       <div class="fill col" in:fade={{ duration: 150 }}>
         <PanelHeader title="Brain" on:close={() => closeTab(activeId)} />
         <BrainView />
-      </div>
-    {:else if tab.kind === "work"}
-      <div class="fill col" in:fade={{ duration: 150 }}>
-        <PanelHeader title="Work" on:close={() => closeTab(activeId)} />
-        <WorkView {threads} {running} {followUp} on:openSession={(e) => openSession(e.detail.id)} on:newSession={newSession} />
       </div>
     {:else if tab.kind === "history"}
       <div class="fill col" in:fade={{ duration: 150 }}>
@@ -1369,14 +1346,8 @@
             on:delete={() => shown && remove(shown)}
             on:back={goBack}
             on:compact={() => onCommand("compact")}
-            on:agents={() => {
-              panelTab = "agents";
-              panelOpen = !panelOpen;
-            }}
+            on:plan={() => togglePlan()}
           />
-          {#if place}
-            <SessionStrip {place} on:open={(e) => openGoal(e.detail.id)} />
-          {/if}
           <div class="workarea">
             <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl} on:scroll={() => (farFromBottom = !nearBottom())}>
               <Thread
@@ -1392,24 +1363,29 @@
                 on:answered={(e) => (questions = questions.filter((q) => q.key !== e.detail.key))}
                 on:edited={(e) => {
                   comp.input = e.detail.text;
+                  if (e.detail.quotes.length) comp.quotes = e.detail.quotes.slice(0, MAX_QUOTES);
+                  comp = comp;
                   omnibar?.focus();
                   toast("Loaded into composer. Edit and send.");
                 }}
                 on:forked={() => fork()}
               />
             </div>
-            {#if panelOpen}
+            {#if planShown}
               <SidePanel
+                project={planProject}
+                projectTitle={planTitle}
+                {folder}
                 {threads}
                 {running}
-                projectSlug={project?.slug ?? ""}
+                {approvals}
+                {questions}
                 bind:dockW={panelW}
-                sessionId={shown ?? ""}
-                bind:tab={panelTab}
+                on:quote={(e) => quoteItem(e.detail)}
+                on:example={(e) => useExample(e.detail.text)}
+                on:openUrl={(e) => openPage(e.detail.url)}
                 on:openSession={(e) => openSession(e.detail.id)}
-                on:stopSession={(e) => stopSession(e.detail.id)}
-                on:settled={() => void refreshThreads()}
-                on:close={() => (panelOpen = false)}
+                on:close={() => togglePlan(false)}
               />
             {/if}
           </div>
@@ -1417,10 +1393,11 @@
       {/if}
 
       {#if !hasSession}
-        <div class="home" in:fade={{ duration: 200 }}>
+        <div class="home" style:--shift="{planShown ? (panelW + 8) / 2 : 0}px" in:fade={{ duration: 200 }}>
           <HomeView
             {threads}
             {running}
+            waiting={waitingIds}
             board={remoteOn ? $remoteBoard : $board}
             remote={remoteOn}
             folder={remoteOn ? (comp.remoteCwd ?? "") : folder}
@@ -1433,13 +1410,34 @@
             on:remoteSetup={openRemoteSetup}
           />
         </div>
+        {#if planShown}
+          <div class="plan-float" in:fade={{ duration: 150 }}>
+            <SidePanel
+              floating
+              project={planProject}
+              projectTitle={planTitle}
+              {folder}
+              {threads}
+              {running}
+              {approvals}
+              {questions}
+              bind:dockW={panelW}
+              on:quote={(e) => quoteItem(e.detail)}
+              on:example={(e) => useExample(e.detail.text)}
+              on:openUrl={(e) => openPage(e.detail.url)}
+              on:openSession={(e) => openSession(e.detail.id)}
+              on:close={() => togglePlan(false)}
+            />
+          </div>
+        {:else if folder}
+          <button class="plan-toggle" use:tooltip={"Plan (Ctrl+J)"} on:click={() => togglePlan(true)}><Icon name="panel" /></button>
+        {/if}
       {/if}
 
       <div
         class="composer"
         class:docked={hasSession}
-        class:shifted={hasSession && panelOpen}
-        style:--shift="{panelOpen && hasSession ? panelW / 2 : 0}px"
+        style:--shift="{planShown ? (hasSession ? panelW / 2 : (panelW + 8) / 2) : 0}px"
         bind:clientHeight={dockHeight}
       >
         {#if hasSession && meta?.lane && normLane(meta.lane) !== mode && mode !== "search"}
@@ -1454,6 +1452,7 @@
           {policy}
           bind:mode={comp.mode}
           bind:attachments={comp.attachments}
+          bind:quotes={comp.quotes}
           {folder}
           lockMode={lockMode}
           folderLocked={!!tab.sessionId}
@@ -1505,7 +1504,6 @@
     on:setup={openSetup}
     on:brain={openBrain}
     on:history={() => openHistory()}
-    on:work={() => openWork()}
   />
 
   {#if setupOpen}
@@ -1661,12 +1659,50 @@
     bottom: 0;
     left: 50%;
     z-index: 10;
-    width: calc(min(720px, 90%) + 48px);
+    width: calc(min(720px, calc(90% - 2 * var(--shift, 0px))) + 48px);
     padding: 16px 24px 32px;
     overflow-y: auto;
     scrollbar-width: none;
     mask-image: linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 32px), transparent);
-    transform: translateX(-50%);
+    transform: translateX(calc(-50% - var(--shift, 0px)));
+    transition:
+      transform 700ms var(--ease-out),
+      width 700ms var(--ease-out);
+  }
+  /* The plan beside Home, on a draft with a folder: its own glass card. */
+  .plan-float {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    bottom: 0;
+    z-index: 25;
+    display: flex;
+    overflow: hidden;
+    background: var(--glass-bg-solid);
+    border: var(--glass-border);
+    border-bottom: none;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+  .plan-toggle {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+    z-index: 25;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: var(--glass-bg);
+    border: var(--glass-hairline);
+    border-radius: var(--radius);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .plan-toggle:hover {
+    background: var(--glass-bg-solid);
+    color: var(--text);
   }
   .home::-webkit-scrollbar {
     display: none;
@@ -1681,7 +1717,7 @@
     left: 50%;
     bottom: calc(64% - 58px);
     z-index: 20;
-    width: min(720px, 90%);
+    width: min(720px, calc(90% - 2 * var(--shift, 0px)));
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
     transition:
       bottom 1050ms var(--ease-out),

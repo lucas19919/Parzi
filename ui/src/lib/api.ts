@@ -19,6 +19,28 @@ export interface SessionMeta {
   parent_id?: string | null;
   created: string;
   updated: string;
+  // How the last run ended (absent from older backends).
+  last_run?: RunOutcome | null;
+  // The plan item this session works on; children count for their parent's.
+  plan_item?: string | null;
+  // The git branch the last run ended on ("" outside a repo).
+  branch?: string;
+  effort?: string;
+}
+
+export type RunEnd = "completed" | "failed" | "paused" | "stopped" | "crashed" | "interrupted" | "not_started";
+
+export interface RunOutcome {
+  end: RunEnd;
+  // The last assistant message, cleaned (at most 600 chars).
+  summary: string;
+  files: { path: string; via: "tool" | "git" }[];
+  files_more: number;
+  // Test and build commands, the latest result of each.
+  checks: { cmd: string; ok: boolean }[];
+  cost_usd: number | null;
+  ms: number;
+  ended: number;
 }
 
 export type ChatEvent =
@@ -164,6 +186,8 @@ interface SendArgs {
   mode: string;
   lane: string;
   remote?: boolean;
+  // Plan items quoted into the message (at most 4).
+  quotes?: { project: string; id: string }[];
 }
 
 export type ComposerMode = "search" | "build" | "work";
@@ -192,6 +216,7 @@ export const api = {
       mode: a.mode,
       lane: a.lane,
       remote: a.remote ?? false,
+      quotes: a.quotes ?? [],
     }),
   saveAnswer: (content: string) => invoke<NoteMeta>("brain_save_answer", { content }),
   renameThread: (id: string, title: string) => invoke<void>("rename_thread", { id, title }),
@@ -533,156 +558,69 @@ export function onDesk(cb: (cmd: DeskCmd) => void) {
   return listen<DeskCmd>("parzi://desk", (ev) => cb(ev.payload));
 }
 
-// Work: goals the agents fill in (WORK_CONTRACT.md). Session ids are tagged
-// like everywhere else: raw for this PC, "r:" for the server, "m:<device>:"
-// for another device.
-export type EngineKind = "here" | "server" | "device";
-export interface Engine {
-  kind: EngineKind;
-  // "This PC", the server's host label, or the other device's name.
-  name: string;
-}
+// Plans (PLAN_CONTRACT.md): one living plan per project, a Brain note the
+// agents write. Item states beyond what agents declare (working, needs you,
+// in review) are read live in planModel.ts.
+export type PlanState = "planned" | "active" | "done" | "dropped";
 
-export type GoalStatus = "later" | "working" | "needs_you" | "paused" | "check" | "done" | "failed" | "stopped" | "cut_off" | "archived";
-export type StepStatus = "todo" | "running" | "done" | "failed" | "skipped" | "check";
-export type RunEnd = "completed" | "failed" | "paused" | "stopped" | "crashed" | "interrupted" | "not_started";
-
-export interface StepView {
-  key: string;
+export interface PlanItem {
+  id: string;
   title: string;
+  detail: string;
+  // One of Plan.phases, or "" for the first phase.
+  phase: string;
+  // Ids in the same plan.
   needs: string[];
-  lane: string;
-  status: StepStatus;
-  note: string | null;
-  outcome: string | null;
-  // Tagged ids of the sessions that worked this step.
-  sessions: string[];
-  // Made from a spawn, not from a plan.
-  auto: boolean;
-  // To do with every need done.
-  ready: boolean;
-  // Needs still open.
-  blocked_by: string[];
+  state: PlanState;
+  // "" when unknown; agents use "plan/<id>".
+  branch: string;
+  note: string;
 }
 
-export interface FileTouch {
+export interface Plan {
+  version: 1;
+  title: string;
+  goal: string;
+  // In order; may be empty (one group).
+  phases: string[];
+  items: PlanItem[];
+  updated: number;
+  by: string;
+}
+
+export interface PlanView {
+  project: string;
   path: string;
-  via: "tool" | "git";
-}
-
-// A test or build command a run ran ("Check" in the contract).
-export interface RunCheck {
-  cmd: string;
-  ok: boolean;
-}
-
-export interface RunView {
-  id: string;
-  session: string;
-  step: string | null;
-  model: string;
-  lane: string;
-  cause: "send" | "later" | "wake" | "message" | "cli" | "restart";
-  started: number;
-  // null while running.
-  ended: number | null;
-  end: RunEnd | null;
+  // null when the project has no plan.
+  plan: Plan | null;
+  // The note exists but its parzi-plan block can't be read.
   error: string | null;
-  ms: number;
-  turns: number;
-  tokens_in: number;
-  tokens_out: number;
-  cost_usd: number | null;
-  // The last assistant message, cleaned (at most 600 chars).
-  summary: string;
-  files: FileTouch[];
-  files_more: number;
-  checks: RunCheck[];
-  artifacts: number;
 }
 
-export interface AskView {
-  id: string;
-  session: string;
-  goal: string | null;
-  kind: "approval" | "question" | "request" | "budget" | "continue";
-  label: string;
-  detail: unknown;
-  opened: number;
-  expires: number | null;
+export interface PrInfo {
+  number: number;
+  title: string;
+  url: string;
+  // The head branch.
+  head: string;
+  state: "open" | "closed" | "merged";
+  draft: boolean;
+  checks: "pass" | "fail" | "pending" | "none";
 }
 
-export interface GoalView {
+// An item quoted into the composer; sent as { project, id }.
+export interface PlanQuote {
+  project: string;
   id: string;
   title: string;
-  status: GoalStatus;
-  // A project slug; null is no project.
-  project: string | null;
-  // The session that leads the goal.
-  root: string | null;
-  // What the person asked (clipped).
-  prompt: string;
-  created: number;
-  updated: number;
-  engine: Engine;
-  // Empty when the agent never planned or spawned.
-  steps: StepView[];
-  // Sessions with an open run (the root or step children).
-  running: string[];
-  // The goal's latest run, for card summaries.
-  last: RunView | null;
-  cost_usd: number | null;
-  // Distinct files changed across runs.
-  files: number;
-  // Open asks on the goal's sessions.
-  asks: number;
-  later: { auto_start: boolean } | null;
-  // false: another device's goal, read only here.
-  owned: boolean;
 }
 
-export interface Digest {
-  since: number;
-  done: number;
-  steps: number;
-  needs_you: number;
-  failed: number;
-  goals: string[];
-}
-
-export interface WorkView {
-  // Newest updated first.
-  goals: GoalView[];
-  asks: AskView[];
-  digest: Digest | null;
-  server: { linked: boolean; ops: boolean };
-}
-
-export interface GoalNote {
-  at: number;
-  by: string;
-  text: string;
-  step: string | null;
-}
-
-export interface GoalDetail extends GoalView {
-  // Oldest first.
-  runs: RunView[];
-  notes: GoalNote[];
-}
-
-export interface WorkChange {
-  // Goals that changed.
-  goals: string[];
-  // Goals whose root run just ended.
-  settled: { goal: string; title: string; status: GoalStatus }[];
-}
-
-export const workApi = {
-  view: () => invoke<WorkView>("work_view"),
-  goal: (id: string) => invoke<GoalDetail>("work_goal", { id }),
+export const planApi = {
+  view: (project: string) => invoke<PlanView>("plan_view", { project }),
+  // Empty when gh is missing, signed out, or the folder isn't on GitHub.
+  prs: (cwd: string) => invoke<PrInfo[]>("plan_prs", { cwd }),
 };
 
-export function onWork(cb: (c: WorkChange) => void) {
-  return listen<WorkChange>("parzi://work", (ev) => cb(ev.payload));
+export function onPlan(cb: (e: { project: string }) => void) {
+  return listen<{ project: string }>("parzi://plan", (ev) => cb(ev.payload));
 }

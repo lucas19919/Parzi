@@ -19,7 +19,7 @@
   export let tokensOut = 0;
   export let costUsd = 0;
 
-  const dispatch = createEventDispatcher<{ rename: { title: string }; fork: void; copyId: void; delete: void; agents: void; back: void; compact: void }>();
+  const dispatch = createEventDispatcher<{ rename: { title: string }; fork: void; copyId: void; delete: void; plan: void; back: void; compact: void }>();
 
   type Action = "rename" | "fork" | "copyId" | "delete";
   const ITEMS: { id: Action; label: string; icon: IconName }[] = [
@@ -140,9 +140,9 @@
         class="icon-btn"
         class:on={panelOpen}
         aria-pressed={panelOpen}
-        aria-label={agentCount > 0 ? `Toggle dock, ${agents} agents running` : "Toggle dock"}
-        use:tooltip={"Toggle dock (Ctrl+Shift+A)"}
-        on:click={() => dispatch("agents")}
+        aria-label={agentCount > 0 ? `Plan, ${agents} agents running` : "Plan"}
+        use:tooltip={"Plan (Ctrl+J)"}
+        on:click={() => dispatch("plan")}
       >
         <Icon name="panel" />
         {#if agentCount > 0}<span class="count">{agents}</span>{/if}

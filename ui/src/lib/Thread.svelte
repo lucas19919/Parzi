@@ -8,8 +8,9 @@
   import ArtifactCard from "./widgets/ArtifactCard.svelte";
   import Steps from "./Steps.svelte";
   import Icon from "./Icon.svelte";
-  import { api, type ChatEvent, type Question } from "./api";
+  import { api, type ChatEvent, type PlanQuote, type Question } from "./api";
   import type { Approval, LiveTool, Step } from "./live";
+  import { splitQuotes } from "./planModel";
   import { toast, toastError } from "./toast";
   import { tooltip } from "./tooltip";
 
@@ -22,7 +23,7 @@
   export let question: Question | null = null;
   export let folder = "";
 
-  const dispatch = createEventDispatcher<{ voted: { key: string }; answered: { key: string }; edited: { text: string }; forked: void }>();
+  const dispatch = createEventDispatcher<{ voted: { key: string }; answered: { key: string }; edited: { text: string; quotes: PlanQuote[] }; forked: void }>();
 
   const ERROR_WORDS: Record<string, string> = {
     auth: "Not signed in",
@@ -121,14 +122,8 @@
         return "Writing the plan";
       case "plan.read":
         return "Reading the plan";
-      case "work.plan":
-        return Array.isArray((args as { steps?: unknown })?.steps)
-          ? `Planning ${(args as { steps: unknown[] }).steps.length} steps`
-          : "Updating the plan";
-      case "work.step":
-        return `Marking step ${arg(args, "step") || ""} ${arg(args, "status")}`.replace(/\s+/g, " ").trim();
-      case "work.list":
-        return "Reading open work";
+      case "session.rename":
+        return arg(args, "title") ? `Renaming the session to ${arg(args, "title")}` : "Renaming the session";
       case "session.spawn":
         return `Delegating: ${arg(args, "title") || "a subsession"}`;
       case "session.send":
@@ -344,16 +339,26 @@ ${e.text}` : e.text;
   {#each items as item (item.key)}
     {#if item.kind === "user"}
       {@const images = attachedImages(item.text)}
+      {@const said = splitQuotes(stripMarker(item.text))}
       <div class="row user">
         <div class="user-line">
-          <button class="copy" use:tooltip={"Copy"} on:click={() => copy(stripMarker(item.text), item.key)}>
-            <Icon name={copied === item.key ? "check" : "copy"} />
-          </button>
-          <button class="copy" use:tooltip={"Edit in composer"} on:click={() => dispatch("edited", { text: stripMarker(item.text) })}>
+          {#if said.text}
+            <button class="copy" use:tooltip={"Copy"} on:click={() => copy(said.text, item.key)}>
+              <Icon name={copied === item.key ? "check" : "copy"} />
+            </button>
+          {/if}
+          <button class="copy" use:tooltip={"Edit in composer"} on:click={() => dispatch("edited", { text: said.text, quotes: said.quotes })}>
             <Icon name="pencil" />
           </button>
-          <div class="bubble msg">{@html mdHtml(stripMarker(item.text), $richReady)}</div>
+          {#if said.text}
+            <div class="bubble msg">{@html mdHtml(said.text, $richReady)}</div>
+          {:else}
+            <div class="quotes">{#each said.quotes as q, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">Plan · {q.title}</span></span>{/each}</div>
+          {/if}
         </div>
+        {#if said.text && said.quotes.length}
+          <div class="quotes">{#each said.quotes as q, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">Plan · {q.title}</span></span>{/each}</div>
+        {/if}
         {#if images.length}
           <div class="sent">
             {#each images as name}
@@ -527,6 +532,43 @@ ${e.text}` : e.text;
   .bubble :global(ol) {
     margin: 0.4em 0;
     padding-left: 20px;
+  }
+  /* Plan items the message quoted: the desk sends them as blocks after the
+     text; they read as chips. */
+  .quotes {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    min-width: 0;
+    max-width: 85%;
+  }
+  .user-line .quotes {
+    max-width: none;
+  }
+  .row.user > .quotes {
+    margin-top: 8px;
+  }
+  .quote {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 280px;
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--hover);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+  }
+  .q-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
   }
   .sent {
     display: flex;
