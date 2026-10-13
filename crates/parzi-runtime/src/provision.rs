@@ -500,7 +500,7 @@ async fn relay_one(line: &str) -> Value {
         .unwrap_or_default();
     let mut reply = match desk::call_serve(&op, Value::Object(req), op_wait(&op)).await {
         Ok(v) => v,
-        Err(e) => json!({ "ok": false, "error": e }),
+        Err(e) => json!({ "ok": false, "error": e.to_string() }),
     };
     reply[key] = rid;
     reply

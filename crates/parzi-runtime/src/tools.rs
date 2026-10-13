@@ -492,14 +492,15 @@ fn desk_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "desk.open".into(),
-            description: "Open something in the Parzi window for the human: what=session (id; default this session), settings (section: general, providers, connections, appearance, system), brain (path of a note), history, plan (the project's plan beside the session), or home. Opens in the background unless focus=true.".into(),
+            description: "Open something in the Parzi window for the human: what=session (id; default this session), settings (section: general, providers, connections, appearance, system), brain (path of a note), history (view: sessions, history, bookmarks or downloads), or home. Opens in the background unless focus=true.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "what": {"type": "string", "enum": ["session", "settings", "brain", "history", "plan", "home"]},
+                    "what": {"type": "string", "enum": ["session", "settings", "brain", "history", "home"]},
                     "id": {"type": "string"},
                     "section": {"type": "string"},
                     "path": {"type": "string"},
+                    "view": {"type": "string", "enum": ["sessions", "history", "bookmarks", "downloads"]},
                     "focus": {"type": "boolean"},
                 },
                 "required": ["what"],
@@ -751,7 +752,8 @@ fn question_defs() -> Vec<ToolDef> {
 }
 
 /// The project's plan: read it, change it. Neither shows an approval card:
-/// the plan is Parzi's own note, shown to the person beside the session.
+/// the plan is Parzi's own note, not the person's files (a read-only lane
+/// still only reads it).
 pub fn is_plan_tool(name: &str) -> bool {
     matches!(name, "plan.read" | "plan.write")
 }
@@ -886,9 +888,6 @@ pub fn is_session_tool(name: &str) -> bool {
             | "session.rename"
     )
 }
-
-/// The longest name `session.rename` gives.
-pub const SESSION_NAME_CAP: usize = 60;
 
 fn session_defs() -> Vec<ToolDef> {
     vec![
@@ -1072,7 +1071,7 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         ),
         "session.send_message" => format!(
             "Messaging {}",
-            short_id(&str_arg("session_id").unwrap_or_else(|| "session".into()))
+            session_label(&str_arg("session_id").unwrap_or_else(|| "session".into()))
         ),
         "session.read_session" => "Reading session".into(),
         "session.list_sessions" => "Listing sessions".into(),
@@ -1274,21 +1273,15 @@ pub fn display_name(name: &str) -> String {
         .map_or_else(|| name.to_string(), from_mcp)
 }
 
-/// At most `n` chars, with an ellipsis when something was cut.
-pub(crate) fn clip(s: &str, n: usize) -> String {
-    match s.char_indices().nth(n) {
-        Some((at, _)) => format!("{}…", &s[..at]),
-        None => s.to_string(),
-    }
-}
-
+/// A label's argument: its first line, at most `n` chars.
 fn one_line(s: &str, n: usize) -> String {
-    clip(s.lines().next().unwrap_or("").trim(), n)
+    parzi_core::text::clip(s.lines().next().unwrap_or("").trim(), n)
 }
 
-fn short_id(s: &str) -> String {
+/// A session id as labels show it; anything else (a title) as one line.
+fn session_label(s: &str) -> String {
     if s.len() > 8 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
-        s.chars().take(8).collect()
+        parzi_core::text::short_id(s).to_string()
     } else {
         one_line(s, 24)
     }
@@ -1460,9 +1453,10 @@ mod tests {
     }
 
     #[test]
-    fn clip_counts_chars_not_bytes() {
-        assert_eq!(clip("héllo", 2), "hé…");
-        assert_eq!(clip("hé", 2), "hé");
+    fn labels_take_the_first_line_within_a_cap() {
         assert_eq!(one_line("  a\nb", 5), "a");
+        assert_eq!(one_line("héllo world", 3), "hé…");
+        assert_eq!(session_label("0123456789-abcdef"), "01234567");
+        assert_eq!(session_label("my helper"), "my helper");
     }
 }
