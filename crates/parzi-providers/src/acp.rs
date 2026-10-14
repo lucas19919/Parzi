@@ -1196,9 +1196,16 @@ fn finish_tool(u: &Value, id: &str, name: &str, events: &EventTx) {
     let _ = events.send(ProviderEvent::ToolFinished {
         id: id.to_string(),
         name: name.to_string(),
-        ok: status == "completed",
+        ok: tool_ok(status, &output),
         output,
     });
+}
+
+/// Whether a finished tool call went well. Antigravity shows its permission
+/// prompt as a tool call of its own and, once the real call has run under
+/// another id, ends the prompt as failed: that isn't a failure.
+fn tool_ok(status: &str, output: &str) -> bool {
+    status == "completed" || (status == "failed" && output.contains("approved but never executed"))
 }
 
 async fn permission(
@@ -1740,6 +1747,17 @@ mod tests {
         let odd = grok_read("error: network unreachable\n", grok);
         assert_eq!(odd.state, State::Error);
         assert!(odd.hint.contains("network unreachable"), "{}", odd.hint);
+    }
+
+    #[test]
+    fn a_permission_prompt_ended_after_its_call_ran_is_no_failure() {
+        assert!(tool_ok("completed", ""));
+        assert!(tool_ok(
+            "failed",
+            "Tool call was approved but never executed."
+        ));
+        assert!(!tool_ok("failed", "denied"));
+        assert!(!tool_ok("in_progress", ""));
     }
 
     #[test]
