@@ -63,7 +63,7 @@ export function fileLink(href: string): FileLink {
   return { kind: "open", path: /^[a-z]:\//i.test(path) ? path.replace(/\//g, "\\") : path };
 }
 
-export type WebLink = { kind: "open"; url: string } | { kind: "refuse"; reason: string };
+export type WebLink = { kind: "open"; url: string } | { kind: "tab"; url: string } | { kind: "refuse"; reason: string };
 
 const LOCAL_HOST = /^(localhost|127(?:\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0|[^/:]+\.localhost)(:\d+)?$/i;
 // Characters the backend rejects (crates/parzi-core/src/urls.rs); the
@@ -75,11 +75,17 @@ export function webLink(href: string): WebLink {
   const m = /^(https?):\/\/([^/?#]*)(.*)$/i.exec(href.trim());
   if (!m) return { kind: "refuse", reason: "That link can't be opened." };
   const host = m[2].replace(/^[^@]*@/, "");
-  if (m[1].toLowerCase() === "http" && LOCAL_HOST.test(host)) {
-    return { kind: "refuse", reason: "Local http links don't open outside Parzi. Paste it into a tab instead." };
-  }
   if (/[\s\u0000-\u001f\u007f]/.test(href.trim())) return { kind: "refuse", reason: "That link can't be opened." };
+  if (!m[2]) return { kind: "refuse", reason: "That link can't be opened." };
+  // Local pages (an agent's preview, a dev server) open in a Parzi tab:
+  // the tab reuses the agent's open page when it has the same URL.
+  // The scheme stays http: forcing https would break plain local servers.
+  if (m[1].toLowerCase() === "http" && LOCAL_HOST.test(host)) {
+    const url = `http://${m[2]}${m[3]}`;
+    if (url.length > MAX_LEN) return { kind: "refuse", reason: "That link can't be opened." };
+    return { kind: "tab", url };
+  }
   const url = `https://${m[2]}${m[3]}`.replace(BACKEND_REJECTS, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
-  if (!m[2] || url.length > MAX_LEN) return { kind: "refuse", reason: "That link can't be opened." };
+  if (url.length > MAX_LEN) return { kind: "refuse", reason: "That link can't be opened." };
   return { kind: "open", url };
 }

@@ -45,6 +45,12 @@ export async function handleLinkClick(e: MouseEvent): Promise<boolean> {
     toast(link.reason, true);
     return true;
   }
+  // A local page opens as a Parzi tab: an agent's preview or dev server
+  // lands next to the chat, reusing its tab when one shows the same URL.
+  if (link.kind === "tab") {
+    document.dispatchEvent(new CustomEvent<string>("parzi:open-page", { detail: link.url }));
+    return true;
+  }
   const short = link.url.length > 120 ? `${link.url.slice(0, 120)}…` : link.url;
   if (!window.confirm(`Open in browser?\n${short}`)) return true;
   await api.openConfirmedUrl(link.url).catch(toastError);

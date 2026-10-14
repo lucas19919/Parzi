@@ -60,12 +60,15 @@ test("brain markdown file links route to notes", () => {
   assert.deepEqual(fileLink("file:///C:/elsewhere/readme.md"), { kind: "open", path: "C:\\elsewhere\\readme.md" });
 });
 
-test("web links: plain http upgrades, local http is refused up front", () => {
+test("web links: plain http upgrades, local http opens in a tab", () => {
   assert.deepEqual(webLink("https://example.com/a?b=1"), { kind: "open", url: "https://example.com/a?b=1" });
   assert.deepEqual(webLink("http://example.com/a"), { kind: "open", url: "https://example.com/a" });
   assert.deepEqual(webLink("HTTP://Example.com"), { kind: "open", url: "https://Example.com" });
   for (const href of ["http://localhost:5173/", "http://127.0.0.1:8080", "http://[::1]:3000/x", "http://app.localhost/", "http://user@localhost/"]) {
-    assert.equal(webLink(href).kind, "refuse", href);
+    const link = webLink(href);
+    assert.equal(link.kind, "tab", href);
+    // The scheme stays http: forcing https would break plain local servers.
+    if (link.kind === "tab") assert.ok(link.url.startsWith("http://"), link.url);
   }
   assert.equal(webLink("https://localhost:8443/").kind, "open");
 });

@@ -80,7 +80,9 @@
   --fs-lg: 16px;
   --fs-xl: 18px;
   --fs-2xl: 22px;
-  --shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 2px 10px rgba(0, 0, 0, 0.35);
+  /* One elevation for the whole window: menus, cards and the composer
+     share it, so nothing looks pasted from another app. */
+  --shadow: var(--glass-shadow);
 }
 
 html.scanlines .shell::after {

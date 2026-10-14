@@ -1203,6 +1203,13 @@
       permission = permissionFor(policy);
     };
     document.addEventListener("parzi:default-mode", onDefaultMode);
+    // A chat link to a local page (an agent's preview, a dev server) opens
+    // as a tab, reusing the agent's page when one shows the same URL.
+    const onOpenPage = (e: Event) => {
+      const url = (e as CustomEvent<string>).detail ?? "";
+      if (url) openPage(url);
+    };
+    document.addEventListener("parzi:open-page", onOpenPage);
     const unClear = provideClearSessions(clearFinishedSessions);
     api
       .getConfig()
@@ -1252,6 +1259,7 @@
       unActivity();
       unClear();
       document.removeEventListener("parzi:default-mode", onDefaultMode);
+      document.removeEventListener("parzi:open-page", onOpenPage);
       unRun.then((f) => f()).catch(() => {});
       unDesk.then((f) => f()).catch(() => {});
       unRemote.then((f) => f()).catch(() => {});
@@ -1798,11 +1806,9 @@
     z-index: 20;
     width: min(720px, calc(90% - 2 * var(--shift, 0px)));
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
-    transition:
-      bottom 1050ms var(--ease-out),
-      left 300ms var(--ease-out),
-      transform 1050ms var(--ease-out),
-      width 700ms ease;
+    /* No slide: the composer sits where the layout puts it, even when the
+       sidebar or plan panel opens. Only the width eases. */
+    transition: width 700ms ease;
   }
   .composer.docked {
     bottom: 14px;
