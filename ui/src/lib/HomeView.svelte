@@ -477,7 +477,8 @@
     backdrop-filter: var(--glass-strong-blur);
     border: var(--glass-hairline);
     border-radius: var(--radius-lg);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+    /* Same resting elevation as the composer: cards and omnibar are one family. */
+    box-shadow: var(--glass-shadow);
     /* Settles into its slot when let go. */
     transition:
       transform 240ms var(--ease-out),
@@ -487,7 +488,7 @@
   .card.lifted {
     position: relative;
     z-index: 5;
-    box-shadow: var(--glass-shadow);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
     transition: none;
   }
   /* The header is the handle. */

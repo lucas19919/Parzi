@@ -1293,9 +1293,13 @@
         {tabs}
         activeTabId={activeId}
         {sessionLanes}
+        contextUsed={context.used}
+        contextLimit={context.limit}
+        {compacting}
         on:select={(e) => selectTab(e.detail.id)}
         on:close={(e) => closeTab(e.detail.id)}
         on:move={(e) => moveTab(e.detail.id, e.detail.to)}
+        on:context={() => shown && openSession(shown)}
       />
     {/if}
     <main>
@@ -1796,6 +1800,7 @@
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
     transition:
       bottom 1050ms var(--ease-out),
+      left 300ms var(--ease-out),
       transform 1050ms var(--ease-out),
       width 700ms ease;
   }

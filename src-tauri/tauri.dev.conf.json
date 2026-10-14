@@ -1,0 +1,12 @@
+{
+  "productName": "Parzi (Dev)",
+  "identifier": "com.parzi.app.dev",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Parzi (Dev)"
+      }
+    ]
+  }
+}

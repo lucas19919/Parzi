@@ -23,3 +23,5 @@ Thumbs.db
 *.swp
 lcov.info
 *.profraw
+target-dev/
+src-tauri/target-dev/

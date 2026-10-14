@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { laneIcon, normLane, permissionBlocked, permissionFor } from "../src/lib/lanes.ts";
+import { laneIcon, normLane, permissionBlocked, permissionFor, permissionGate } from "../src/lib/lanes.ts";
 
 test("normLane maps legacy names", () => {
   assert.equal(normLane("code"), "build");
@@ -32,4 +32,13 @@ test("the composer only offers what the Settings floor lets through", () => {
   for (const c of ["deny", "supervised", "edits", "full"]) assert.equal(permissionBlocked(c, "ask"), "");
   assert.equal(permissionBlocked("deny", "deny"), "");
   for (const c of ["supervised", "edits", "auto", "full"]) assert.notEqual(permissionBlocked(c, "deny"), "");
+});
+
+test("full access says it lifts the Ask floor instead of looking free", () => {
+  const lift = permissionGate("full", "ask");
+  assert.equal(lift.off, "");
+  assert.ok(lift.lift.length > 0);
+  assert.equal(permissionGate("full", "auto").lift, "");
+  assert.equal(permissionGate("auto", "auto").off, "");
+  assert.ok(permissionGate("full", "deny").off.length > 0);
 });

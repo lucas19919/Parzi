@@ -8,7 +8,7 @@
   import { api, brain, MODE_META, type ComposerMode, type PlanQuote, type Project, type ProviderStatus } from "./api";
   import { remote as server } from "./remote";
   import { effortsFor, fitEffort } from "./providerRows";
-  import { permissionBlocked } from "./lanes";
+  import { permissionGate } from "./lanes";
   import { folderName, toAddress } from "./tabs";
   import { relativeTo, sameDir, shortAttachment as shortName } from "./paths";
   import { popover, placeAbove } from "./popover";
@@ -746,17 +746,18 @@
   {#if permOpen}
     <div class="menu-pop perms" data-ui-list style={permStyle} use:popover={{ anchor: permBtn, close: () => (permOpen = false) }} transition:fly={{ y: permStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
       {#each PERMS as p (p.id)}
-        {@const blocked = permissionBlocked(p.id, policy)}
+        {@const gate = permissionGate(p.id, policy)}
         <button
           class="perm"
-          disabled={!!blocked}
+          class:lift={!!gate.lift}
+          disabled={!!gate.off}
           on:click={() => {
             permission = p.id;
             permOpen = false;
           }}
         >
           <span class="perm-icon"><Icon name={p.icon} /></span>
-          <span class="meta"><span class="perm-name">{p.title}</span><span class="perm-sub">{blocked || p.desc}</span></span>
+          <span class="meta"><span class="perm-name">{p.title}{gate.lift ? " · lifts" : ""}</span><span class="perm-sub">{gate.off || gate.lift || p.desc}</span></span>
           {#if permission === p.id}<span class="tick"><Icon name="check" /></span>{/if}
         </button>
       {/each}
@@ -1205,6 +1206,12 @@
   .perm-sub {
     font-size: var(--fs-sm);
     color: var(--muted);
+  }
+  .perm.lift .perm-name {
+    color: var(--warn);
+  }
+  .perm.lift .perm-sub {
+    color: var(--warn);
   }
   .tick {
     display: inline-flex;
