@@ -51,8 +51,8 @@ export async function handleLinkClick(e: MouseEvent): Promise<boolean> {
     document.dispatchEvent(new CustomEvent<string>("parzi:open-page", { detail: link.url }));
     return true;
   }
-  const short = link.url.length > 120 ? `${link.url.slice(0, 120)}…` : link.url;
-  if (!window.confirm(`Open in browser?\n${short}`)) return true;
-  await api.openConfirmedUrl(link.url).catch(toastError);
+  // Every web link opens in a Parzi tab, never in the system browser: the
+  // page toolbar keeps an explicit "open outside" button for the rare case.
+  document.dispatchEvent(new CustomEvent<string>("parzi:open-page", { detail: link.url }));
   return true;
 }

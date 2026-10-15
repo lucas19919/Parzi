@@ -42,6 +42,7 @@
   import { watchActivity } from "./lib/activity";
   import { addQuote, MAX_QUOTES, quoteBlock, sameSlug } from "./lib/planModel";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
+  import { addNotification } from "./lib/notificationStore";
   import { covered } from "./lib/overlay";
   import { tooltip } from "./lib/tooltip";
   import type { Approval, LiveTool } from "./lib/live";
@@ -992,18 +993,43 @@
     if (e.kind === "approval") {
       const fresh = !approvals.some((a) => a.key === e.key);
       approvals = [...approvals.filter((a) => a.key !== e.key), { key: e.key, session: e.session, call: e.call }];
-      if (fresh) flagElsewhere(e.session, "needs approval");
+      if (fresh) {
+        flagElsewhere(e.session, "needs approval");
+        const title = threads.find((t) => t.id === e.session)?.title || "Agent";
+        addNotification({
+          title,
+          body: `Tool call ${e.call?.name || "action"} requires approval`,
+          kind: "approval",
+          sessionId: e.session,
+        });
+      }
       return;
     }
     if (e.kind === "question") {
       const fresh = !questions.some((q) => q.key === e.key);
       questions = [...questions.filter((q) => q.key !== e.key), { key: e.key, session: e.session, question: e.question, options: e.options }];
-      if (fresh) flagElsewhere(e.session, "has a question");
+      if (fresh) {
+        flagElsewhere(e.session, "has a question");
+        const title = threads.find((t) => t.id === e.session)?.title || "Agent";
+        addNotification({
+          title,
+          body: e.question || "Agent asked a question",
+          kind: "question",
+          sessionId: e.session,
+        });
+      }
       return;
     }
     if (e.kind === "request") {
       requests = [...requests.filter((r) => r.key !== e.key), { key: e.key, session: e.session, request: e.request, kind: e.req_kind }];
       chime(false);
+      const title = threads.find((t) => t.id === e.session)?.title || "Agent";
+      addNotification({
+        title,
+        body: e.request || "Agent requested input",
+        kind: "question",
+        sessionId: e.session,
+      });
       return;
     }
     if (e.kind === "done" || e.kind === "error" || e.kind === "paused") {
@@ -1014,6 +1040,13 @@
       requests = requests.filter((r) => r.session !== e.session);
       void refreshThreads();
       const title = threads.find((t) => t.id === e.session)?.title || "Agent";
+      const isChild = threads.some((t) => t.id === e.session && t.parent_id);
+      addNotification({
+        title,
+        body: e.kind === "done" ? (isChild ? "Subagent finished work" : "Run completed successfully") : e.kind === "paused" ? "Run paused at budget limit" : "Run encountered an error or stopped",
+        kind: isChild ? "subagent" : e.kind === "done" ? "success" : "error",
+        sessionId: e.session,
+      });
       if (e.session === shown) {
         flushLive();
         clearLive();
@@ -1292,6 +1325,7 @@
       on:brain={openBrain}
       on:history={() => openHistory()}
       on:setup={openSetup}
+      on:openSession={(e) => openSession(e.detail.id)}
     />
   {/if}
 
@@ -1710,7 +1744,9 @@
     left: 50%;
     z-index: 10;
     width: calc(min(720px, calc(90% - 2 * var(--shift, 0px))) + 48px);
-    padding: 16px 24px 32px;
+    /* Same 12px rhythm as the card grid: the composer sits directly atop
+       the cards, one family, not a floating island. */
+    padding: 12px 24px 32px;
     overflow-y: auto;
     scrollbar-width: none;
     /* Fades sized by scrollHint.ts: the top one once scrolled, the bottom

@@ -775,7 +775,8 @@
   }
   .box {
     position: relative;
-    padding: 6px 6px 6px 16px;
+    /* Card rhythm: same inner spacing as a Home card. */
+    padding: 8px 8px 8px 12px;
     background: var(--glass-strong-bg);
     -webkit-backdrop-filter: var(--glass-strong-blur);
     backdrop-filter: var(--glass-strong-blur);

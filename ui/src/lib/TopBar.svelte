@@ -3,6 +3,8 @@
   import Icon from "./Icon.svelte";
   import TabBar from "./TabBar.svelte";
   import WinControls from "./WinControls.svelte";
+  import NotificationDropdown from "./NotificationDropdown.svelte";
+  import { notifications } from "./notificationStore";
   import type { Tab } from "./tabs";
   import { setOverlay } from "./overlay";
   import { updateVersion } from "./updateStore";
@@ -26,11 +28,14 @@
     brain: void;
     history: void;
     setup: void;
+    openSession: { id: string };
   }>();
 
   let menuOpen = false;
+  let notiOpen = false;
 
-  $: setOverlay("topbar-menu", menuOpen);
+  $: setOverlay("topbar-menu", menuOpen || notiOpen);
+  $: unreadCount = $notifications.filter((n) => !n.read).length;
 
   const MENU = [
     { label: "New tab", key: "Ctrl+T", icon: "plus", run: () => dispatch("newTab") },
@@ -43,6 +48,7 @@
 
   function onDocClick(e: MouseEvent) {
     if (!(e.target as HTMLElement).closest(".menu")) menuOpen = false;
+    if (!(e.target as HTMLElement).closest(".noti-wrap")) notiOpen = false;
   }
 
   onMount(() => {
@@ -122,7 +128,33 @@
     {/if}
   </div>
 
-  <WinControls />
+  <div class="right">
+    <div class="noti-wrap">
+      <button
+        class="icon-btn noti-btn"
+        class:active={notiOpen}
+        aria-haspopup="dialog"
+        aria-expanded={notiOpen}
+        use:tooltip={unreadCount ? `${unreadCount} notification${unreadCount === 1 ? "" : "s"}` : "Notifications"}
+        on:click={() => (notiOpen = !notiOpen)}
+      >
+        <Icon name="bell" />
+        {#if unreadCount > 0}
+          <span class="noti-badge">{unreadCount > 9 ? "9+" : unreadCount}</span>
+        {/if}
+      </button>
+      {#if notiOpen}
+        <NotificationDropdown
+          on:openSession={(e) => {
+            notiOpen = false;
+            dispatch("openSession", e.detail);
+          }}
+          on:close={() => (notiOpen = false)}
+        />
+      {/if}
+    </div>
+    <WinControls />
+  </div>
 </header>
 
 <style>
@@ -147,6 +179,39 @@
     height: 100%;
     flex: 1;
     min-width: 0;
+  }
+  .right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 100%;
+    flex: none;
+    padding-right: 2px;
+  }
+  .noti-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .noti-btn.active {
+    color: var(--text);
+    background: var(--hover);
+  }
+  .noti-badge {
+    position: absolute;
+    top: 1px;
+    right: -1px;
+    min-width: 13px;
+    height: 13px;
+    padding: 0 3px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 13px;
+    text-align: center;
+    border: 1.5px solid var(--bg);
   }
   .menu {
     position: relative;

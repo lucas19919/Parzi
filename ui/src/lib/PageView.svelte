@@ -388,6 +388,14 @@
       <button class="nav" class:on={pinned} use:tooltip={pinned ? "Unpin from Home" : "Pin to Home"} disabled={!url} on:click={togglePin}>
         <Icon name="pin" />
       </button>
+      <button
+        class="nav"
+        use:tooltip={"Open outside Parzi, in the system browser"}
+        disabled={!/^https?:\/\//i.test(url)}
+        on:click={() => api.openConfirmedUrl(url).catch((e) => dispatch("error", { text: String(e) }))}
+      >
+        <Icon name="external" />
+      </button>
     </div>
   {/if}
   {#if prompt}
