@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::error::{ParziError, Result};
 use crate::paths;
-use cache::{atomic_write_sync, count_read, count_stat, count_write, fold_lines, parse_lines};
+use cache::{atomic_write_sync, count_read, count_stat, count_write, parse_lines};
 use cache::{IndexEntry, StoreCache};
 
 pub use cache::io_counts;
@@ -266,17 +266,28 @@ impl SessionStore {
     }
 
     pub fn events(&self, id: &str) -> Result<Vec<Event>> {
-        self.with_events(id, <[Event]>::to_vec)
+        self.with_events(id, |(all, _)| <[Event]>::to_vec(all))
+    }
+
+    /// Events with their Unix times, if the line said (lines from before
+    /// timestamps existed say nothing).
+    pub fn events_with_times(&self, id: &str) -> Result<Vec<(Event, Option<i64>)>> {
+        self.with_events(id, |(all, times)| {
+            all.iter()
+                .zip(times.iter().chain(std::iter::repeat(&None)))
+                .map(|(e, t)| (e.clone(), *t))
+                .collect()
+        })
     }
 
     /// Transcript length without copying it.
     pub fn event_count(&self, id: &str) -> Result<usize> {
-        self.with_events(id, <[Event]>::len)
+        self.with_events(id, |(all, _)| <[Event]>::len(all))
     }
 
     /// Events from index `from` on; empty when `from` is past the end.
     pub fn events_from(&self, id: &str, from: usize) -> Result<Vec<Event>> {
-        self.with_events(id, |all| {
+        self.with_events(id, |(all, _)| {
             all.get(from..).map_or_else(Vec::new, <[Event]>::to_vec)
         })
     }
@@ -284,7 +295,7 @@ impl SessionStore {
     /// Runs `f` on the transcript after catching the cache up to the file's
     /// last complete line. The tail is read and parsed outside the cache
     /// lock, so a long read never stalls an append to another session.
-    fn with_events<T>(&self, id: &str, f: impl FnOnce(&[Event]) -> T) -> Result<T> {
+    fn with_events<T>(&self, id: &str, f: impl FnOnce((&[Event], &[Option<i64>])) -> T) -> Result<T> {
         let path = self.events_path(id);
         let file_len = || {
             count_stat(1);
@@ -298,10 +309,11 @@ impl SessionStore {
                 let mut c = self.cache();
                 let entry = c.session_mut(id);
                 if entry.len == len {
-                    return Ok(f(&entry.events));
+                    return Ok(f((&entry.events, &entry.times)));
                 }
                 if len < entry.len {
                     entry.events.clear();
+                    entry.times.clear();
                     entry.len = 0;
                 }
                 entry.len
@@ -315,21 +327,21 @@ impl SessionStore {
             let mut c = self.cache();
             let entry = c.session_mut(id);
             if entry.len > end {
-                return Ok(f(&entry.events));
+                return Ok(f((&entry.events, &entry.times)));
             }
             // Another reader or an append may have cached part of this
             // tail meanwhile; keep only the lines past what it holds.
             if let Some(skip) = entry.len.checked_sub(from) {
                 let skip = usize::try_from(skip).unwrap_or(usize::MAX);
                 if skip == 0 || bytes.get(skip - 1) == Some(&b'\n') {
-                    entry.events.extend(
-                        parsed
-                            .into_iter()
-                            .filter(|(at, _)| *at > skip)
-                            .map(|(_, e)| e),
-                    );
+                    for (at, e, t) in parsed {
+                        if at > skip {
+                            entry.events.push(e);
+                            entry.times.push(t);
+                        }
+                    }
                     entry.len = end;
-                    return Ok(f(&entry.events));
+                    return Ok(f((&entry.events, &entry.times)));
                 }
             }
         }
@@ -340,20 +352,25 @@ impl SessionStore {
         let entry = c.session_mut(id);
         if len < entry.len {
             entry.events.clear();
+            entry.times.clear();
             entry.len = 0;
         }
         let from = entry.len;
         count_read(1);
         let bytes = read_from(&path, from)?;
         let cut = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-        fold_lines(&bytes[..cut], &path, &mut entry.events);
+        for (_, e, t) in parse_lines(&bytes[..cut], &path) {
+            entry.events.push(e);
+            entry.times.push(t);
+        }
         entry.len = from + cut as u64;
-        Ok(f(&entry.events))
+        Ok(f((&entry.events, &entry.times)))
     }
 
     pub fn append(&self, id: &str, event: &Event) -> Result<()> {
         use std::io::{Read, Seek, SeekFrom, Write};
-        let mut line = serde_json::to_vec(event)?;
+        let at = Utc::now().timestamp();
+        let mut line = serde_json::to_vec(&serde_json::json!({ "at": at, "ev": event }))?;
         line.push(b'\n');
         count_write(2);
         let mut f = std::fs::OpenOptions::new()
@@ -384,6 +401,7 @@ impl SessionStore {
         let entry = c.session_mut(id);
         if entry.len + line.len() as u64 == end {
             entry.events.push(event.clone());
+            entry.times.push(Some(at));
             entry.len = end;
         }
         entry.pending_updated = Some(Utc::now());

@@ -37,6 +37,30 @@ fn append_through_keeps_reads_in_sync() {
 }
 
 #[test]
+fn appended_events_carry_times_and_old_lines_still_read() {
+    use std::io::Write;
+    let store = open();
+    let s = store.create("times", "t-times", "lane", "m").unwrap();
+    // A line from before timestamps existed: the bare event, no envelope.
+    {
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(events_file(&s.id))
+            .unwrap();
+        writeln!(f, "{{\"kind\":\"user\",\"text\":\"old\"}}").unwrap();
+    }
+    let before = parzi_core::now_ms() / 1000;
+    store.append(&s.id, &user("new")).unwrap();
+    let stamped = store.events_with_times(&s.id).unwrap();
+    assert_eq!(stamped.len(), 2);
+    assert_eq!(stamped[0].1, None, "bare lines carry no time");
+    let at = stamped[1].1.expect("appended lines are stamped");
+    assert!(at >= before as i64 - 5 && at <= parzi_core::now_ms() as i64 / 1000 + 5, "stamp is now: {at}");
+    // The plain reader is untouched by envelopes.
+    assert_eq!(store.events(&s.id).unwrap().len(), 2);
+}
+
+#[test]
 fn another_writer_is_picked_up_by_the_tail_read() {
     let a = open();
     let s = a.create("two writers", "t-two", "lane", "m").unwrap();

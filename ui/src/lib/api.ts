@@ -44,16 +44,16 @@ export interface RunOutcome {
 }
 
 export type ChatEvent =
-  | { kind: "system"; text: string }
-  | { kind: "user"; text: string }
-  | { kind: "assistant"; text: string; done: boolean }
-  | { kind: "reasoning"; text: string }
-  | { kind: "tool_call"; id: string; name: string; args: unknown }
-  | { kind: "tool_result"; id: string; name: string; ok: boolean; output: string; ms: number }
-  | { kind: "widget"; fence: string; payload: unknown }
-  | { kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
-  | { kind: "error"; message: string; class: string }
-  | { kind: "checkpoint"; summary: string };
+  | { kind: "system"; text: string; at?: number }
+  | { kind: "user"; text: string; at?: number }
+  | { kind: "assistant"; text: string; done: boolean; at?: number }
+  | { kind: "reasoning"; text: string; at?: number }
+  | { kind: "tool_call"; id: string; name: string; args: unknown; at?: number }
+  | { kind: "tool_result"; id: string; name: string; ok: boolean; output: string; ms: number; at?: number }
+  | { kind: "widget"; fence: string; payload: unknown; at?: number }
+  | { kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown; at?: number }
+  | { kind: "error"; message: string; class: string; at?: number }
+  | { kind: "checkpoint"; summary: string; at?: number };
 
 type ProviderState = "ready" | "signed_out" | "not_installed" | "disabled" | "error" | "unchecked";
 

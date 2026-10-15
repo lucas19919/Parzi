@@ -14,6 +14,19 @@
   import { splitQuotes } from "./planModel";
   import { toast, toastError } from "./toast";
   import { tooltip } from "./tooltip";
+  import { formatTime } from "./time";
+
+  // A message's clock time, for hover: Unix seconds from the transcript.
+  function when(at: number | undefined): string {
+    if (!at) return "";
+    return formatTime(at * 1000);
+  }
+
+  function whenTitle(at: number | undefined): string {
+    if (!at) return "";
+    const d = new Date(at * 1000);
+    return d.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
 
   export let events: ChatEvent[] = [];
   export let liveText = "";
@@ -49,8 +62,8 @@
   const spring = { duration: 160, easing: cubicOut };
 
   type Item =
-    | { key: string; kind: "user" | "assistant" | "checkpoint" | "system"; text: string }
-    | { key: string; kind: "error"; class: string; message: string }
+    | { key: string; kind: "user" | "assistant" | "checkpoint" | "system"; text: string; at?: number }
+    | { key: string; kind: "error"; class: string; message: string; at?: number }
     | { key: string; kind: "widget"; fence: string; payload: unknown }
     | { key: string; kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
     | { key: string; kind: "steps"; reasoning: string; tools: Step[] };
@@ -206,27 +219,27 @@ ${e.text}` : e.text;
       }
       if (e.kind === "tool_result") return;
       group = null;
-      if (e.kind === "checkpoint") out.push({ key, kind: "checkpoint", text: e.summary });
-      else if (e.kind === "error") out.push({ key, kind: "error", class: e.class, message: e.message });
+      if (e.kind === "checkpoint") out.push({ key, kind: "checkpoint", text: e.summary, at: e.at });
+      else if (e.kind === "error") out.push({ key, kind: "error", class: e.class, message: e.message, at: e.at });
       else if (e.kind === "widget") out.push({ key, kind: "widget", fence: e.fence, payload: e.payload });
       else if (e.kind === "artifact") out.push({ key, ...e });
       else if (e.kind === "assistant" && echoLine(e.text)) {
-        pushSys(key, out, echoLine(e.text));
+        pushSys(key, out, echoLine(e.text), e.at);
       } else if (e.kind === "system") {
-        pushSys(key, out, e.text);
-      } else out.push({ key, kind: e.kind, text: e.text });
+        pushSys(key, out, e.text, e.at);
+      } else out.push({ key, kind: e.kind, text: e.text, at: e.at });
     });
     return out;
   }
 
   // Consecutive routine lines join into one whisper instead of a stack.
-  function pushSys(key: string, out: Item[], text: string) {
+  function pushSys(key: string, out: Item[], text: string, at?: number) {
     const prev = out[out.length - 1];
     if (prev?.kind === "system" && sysTone(prev.text) === "line" && sysTone(text) === "line") {
       prev.text = `${prev.text} · ${text.trim()}`;
       return;
     }
-    out.push({ key, kind: "system", text });
+    out.push({ key, kind: "system", text, at });
   }
 
   function attachedImages(text: string): string[] {
@@ -343,6 +356,7 @@ ${e.text}` : e.text;
       {@const said = splitQuotes(stripMarker(item.text))}
       <div class="row user">
         <div class="user-line">
+          {#if when(item.at)}<span class="when">{when(item.at)}</span>{/if}
           {#if said.text}
             <button class="copy" use:tooltip={"Copy"} on:click={() => copy(said.text, item.key)}>
               <Icon name={copied === item.key ? "check" : "copy"} />
@@ -386,6 +400,7 @@ ${e.text}` : e.text;
           {/each}
         </div>
         <div class="actions">
+          {#if when(item.at)}<span class="when">{when(item.at)}</span>{/if}
           <button class="copy" use:tooltip={"Copy"} on:click={() => copy(item.text, item.key)}>
             <Icon name={copied === item.key ? "check" : "copy"} />
           </button>
@@ -403,12 +418,12 @@ ${e.text}` : e.text;
       <Steps title="Conversation compacted" reasoning={item.text} />
     {:else if item.kind === "system"}
       {#if sysTone(item.text) === "line"}
-        <div class="sysline">{item.text.slice(0, 300)}</div>
+        <div class="sysline" title={whenTitle(item.at)}>{item.text.slice(0, 300)}</div>
       {:else}
-        <div class="system">{item.text.slice(0, 300)}</div>
+        <div class="system" title={whenTitle(item.at)}>{item.text.slice(0, 300)}</div>
       {/if}
     {:else if item.kind === "error"}
-      <div class="turn-error" role="alert">
+      <div class="turn-error" role="alert" title={whenTitle(item.at)}>
         <span class="err-class">{ERROR_WORDS[item.class] ?? ERROR_WORDS.unknown}</span>
         <span class="err-msg">{shortErr(item.message)}</span>
         {#if ERROR_HINT[item.class]}<span class="err-hint">{ERROR_HINT[item.class]}</span>{/if}
@@ -622,6 +637,20 @@ ${e.text}` : e.text;
   }
   .row:hover .copy,
   .copy:focus-visible {
+    opacity: 1;
+  }
+  /* A message's clock time, only while its row is hovered. */
+  .when {
+    flex: none;
+    font-size: var(--fs-xs);
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 140ms ease;
+    cursor: default;
+  }
+  .row:hover .when {
     opacity: 1;
   }
   .copy:hover {

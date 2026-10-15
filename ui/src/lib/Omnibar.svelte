@@ -756,7 +756,6 @@
             permOpen = false;
           }}
         >
-          <span class="perm-icon"><Icon name={p.icon} /></span>
           <span class="meta"><span class="perm-name">{p.title}{gate.lift ? " · lifts" : ""}</span><span class="perm-sub">{gate.off || gate.lift || p.desc}</span></span>
           {#if permission === p.id}<span class="tick"><Icon name="check" /></span>{/if}
         </button>
@@ -1196,10 +1195,6 @@
   .perm:disabled {
     opacity: 0.45;
     cursor: default;
-  }
-  .perm-icon {
-    display: inline-flex;
-    color: var(--muted);
   }
   .perm-name {
     font-size: var(--fs-md);

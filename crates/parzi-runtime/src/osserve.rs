@@ -679,7 +679,7 @@ fn session_events(orch: &Orchestrator, req: &Value) -> Value {
         Ok(m) => m,
         Err(e) => return fail(e.to_string()),
     };
-    let events = match orch.store().events(&id) {
+    let events = match orch.store().events_with_times(&id) {
         Ok(ev) => ev,
         Err(e) => return fail(e.to_string()),
     };
@@ -691,12 +691,15 @@ fn session_events(orch: &Orchestrator, req: &Value) -> Value {
         .unwrap_or(0)
         .min(total);
     let from = asked.max(total.saturating_sub(EVENTS_PAGE));
-    let page: Vec<Value> = events[from..].iter().map(capped_event).collect();
+    let page: Vec<Value> = events[from..].iter().map(|(ev, at)| capped_event(ev, *at)).collect();
     json!({ "ok": true, "session": meta, "events": page, "from": from, "total": total })
 }
 
-fn capped_event(ev: &Event) -> Value {
+fn capped_event(ev: &Event, at: Option<i64>) -> Value {
     let mut v = serde_json::to_value(ev).unwrap_or(Value::Null);
+    if let (Some(at), Some(map)) = (at, v.as_object_mut()) {
+        map.insert("at".into(), json!(at));
+    }
     if let Some(out) = v.get_mut("output") {
         if let Some(text) = out.as_str() {
             if text.chars().count() > TOOL_OUTPUT_CAP {

@@ -33,6 +33,7 @@ impl SessionStore {
             let mut c = self.cache();
             let entry = c.session_mut(&meta.id);
             entry.events.clear();
+            entry.times.clear();
             entry.len = 0;
             entry.mark_md();
         }

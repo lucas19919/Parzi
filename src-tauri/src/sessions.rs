@@ -24,16 +24,38 @@ pub async fn get_thread(
     state: State<'_, AppState>,
     far: State<'_, RemoteState>,
     id: String,
-) -> Result<(SessionMeta, Vec<Event>), String> {
+) -> Result<(SessionMeta, Vec<serde_json::Value>), String> {
     if let Some((device, sid)) = mirror_id(&id) {
-        return remote::mirror_thread(&state.app, &far, device, sid).await;
+        return remote::mirror_thread(&state.app, &far, device, sid)
+            .await
+            .map(|(m, evs)| (m, evs.into_iter().map(stamped_plain).collect()));
     }
     if let Some(rid) = remote_id(&id) {
-        return remote::thread(&state.app, &far, rid).await;
+        return remote::thread(&state.app, &far, rid)
+            .await
+            .map(|(m, evs)| (m, evs.into_iter().map(stamped_plain).collect()));
     }
     let meta = state.orch.store().get(&id).map_err(|e| e.to_string())?;
-    let events = state.orch.store().events(&id).map_err(|e| e.to_string())?;
-    Ok((meta, events))
+    let stamped = state
+        .orch
+        .store()
+        .events_with_times(&id)
+        .map_err(|e| e.to_string())?;
+    Ok((meta, stamped.into_iter().map(|(e, at)| stamped_of(&e, at)).collect()))
+}
+
+/// A transcript event as the thread shows it, with its Unix time when the
+/// line said (lines from before timestamps existed say nothing).
+fn stamped_of(event: &Event, at: Option<i64>) -> serde_json::Value {
+    let mut v = serde_json::to_value(event).unwrap_or(serde_json::Value::Null);
+    if let (Some(at), Some(map)) = (at, v.as_object_mut()) {
+        map.insert("at".into(), at.into());
+    }
+    v
+}
+
+fn stamped_plain(event: &Event) -> serde_json::Value {
+    stamped_of(event, None)
 }
 
 /// `remote` starts a new session on the linked server; an `r:` id continues
