@@ -14,11 +14,12 @@
   import { coalesce } from "./threadList";
   import { folderName } from "./tabs";
   import { tooltip } from "./tooltip";
-  import {
-    alsoRunning,
-    deriveItems,
-    groupItems,
-    newestActivity,
+import {
+  alsoRunning,
+  deriveItems,
+  groupItems,
+  isRunning,
+  newestActivity,
     progress,
     railLayout,
     sameSlug,
@@ -162,6 +163,13 @@
   // This project's sessions outside the plan while they run or wait on you.
   $: linked = new Set(views.flatMap((v) => v.sessions.map((s) => s.id)));
   $: also = project ? alsoRunning(threads, project, linked, running, waiting) : [];
+  // With no plan to show, the panel is the agents list: every live session.
+  $: live = plan
+    ? []
+    : threads
+        .filter((t) => isRunning(t, running) || waiting.has(t.id))
+        .sort((a, b) => (Date.parse(b.updated) || 0) - (Date.parse(a.updated) || 0))
+        .map((session) => ({ session, ids: [session.id] }));
 
   function subLine(v: ItemView): { text: string; strong: boolean } {
     if (v.state === "needs") return { text: v.reason, strong: true };
@@ -357,6 +365,21 @@
       {/if}
     {/if}
 
+    {#if live.length}
+      <h3 class="also-head">Running now</h3>
+      <div class="also" data-ui-list>
+        {#each live as row (row.session.id)}
+          {@const tone = sessionTone(row.session, running, waiting)}
+          <button class="also-row" on:click={() => dispatch("openSession", { id: row.session.id })}>
+            <i class="dot t-{tone}" />
+            <span class="a-text">
+              <span class="t">{row.session.title || "Untitled session"}</span>
+              <span class="sub">{alsoLine(row.ids, row.session)}</span>
+            </span>
+          </button>
+        {/each}
+      </div>
+    {/if}
     {#if also.length}
       <h3 class="also-head">Also running</h3>
       <div class="also" data-ui-list>

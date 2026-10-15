@@ -64,12 +64,10 @@
   }>();
 
   // ids are the `mode` strings the backend reads (ApprovalMode::parse:
-  // "deny" blocks, "auto" and "full" run, anything else asks).
+  // "auto" and "full" run, anything else asks). Three choices, done.
   const PERMS: { id: string; title: string; label: string; desc: string; icon: IconName }[] = [
-    { id: "deny", title: "Read only", label: "Read only", desc: "Block commands and file changes.", icon: "shield" },
     { id: "supervised", title: "Supervised", label: "Ask", desc: "Ask before commands and file changes.", icon: "lock" },
-    { id: "edits", title: "Auto-accept edits", label: "Edits", desc: "Approve edits, ask before anything else.", icon: "pencil" },
-    { id: "auto", title: "Auto", label: "Auto", desc: "Agents that support it approve routine actions.", icon: "spark" },
+    { id: "auto", title: "Auto", label: "Auto", desc: "Approve routine actions without asking.", icon: "spark" },
     { id: "full", title: "Full access", label: "Full access", desc: "Run commands and edits without asking.", icon: "unlock" },
   ];
 
@@ -123,7 +121,9 @@
     const next = fitEffort(effort, efforts);
     if (next !== effort) effort = next;
   }
-  $: perm = PERMS.find((p) => p.id === permission) ?? PERMS[1];
+  // A stored choice from before the menu shrank (read-only, auto-edits)
+  // falls back to Supervised rather than a blank button.
+  $: perm = PERMS.find((p) => p.id === permission) ?? PERMS[0];
   $: slashQuery = /^\/\w*$/.test(input.trim()) ? input.trim().slice(1).toLowerCase() : null;
   $: slashItems = slashQuery === null ? [] : SLASH.filter((c) => c.name.startsWith(slashQuery));
   $: if (slashIndex >= slashItems.length) slashIndex = 0;
