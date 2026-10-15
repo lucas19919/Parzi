@@ -28,12 +28,12 @@ pub async fn get_thread(
     if let Some((device, sid)) = mirror_id(&id) {
         return remote::mirror_thread(&state.app, &far, device, sid)
             .await
-            .map(|(m, evs)| (m, evs.into_iter().map(stamped_plain).collect()));
+            .map(|(m, evs)| (m, evs.iter().map(stamped_plain).collect()));
     }
     if let Some(rid) = remote_id(&id) {
         return remote::thread(&state.app, &far, rid)
             .await
-            .map(|(m, evs)| (m, evs.into_iter().map(stamped_plain).collect()));
+            .map(|(m, evs)| (m, evs.iter().map(stamped_plain).collect()));
     }
     let meta = state.orch.store().get(&id).map_err(|e| e.to_string())?;
     let stamped = state
