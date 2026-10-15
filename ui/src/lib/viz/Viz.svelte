@@ -3,6 +3,7 @@
   // custom widget on Home. A spec it can't draw says why, in one line.
   import Icon from "../Icon.svelte";
   import Bars from "./Bars.svelte";
+  import Hist from "./Hist.svelte";
   import Line from "./Line.svelte";
   import List from "./List.svelte";
   import Progress from "./Progress.svelte";
@@ -31,6 +32,8 @@
       </div>
     {:else if s.type === "bars"}
       <Bars items={s.items} orient={s.orient} unit={s.unit} label={title} height={bare ? 112 : 168} />
+    {:else if s.type === "hist"}
+      <Hist bins={s.bins} total={s.total} mean={s.mean} unit={s.unit} label={title} height={bare ? 112 : 168} />
     {:else if s.type === "line"}
       <Line labels={s.labels} series={s.series} area={s.area} points={s.points} unit={s.unit} label={title} height={bare ? 112 : 180} />
     {:else if s.type === "spark"}
