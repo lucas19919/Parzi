@@ -66,9 +66,9 @@
   // ids are the `mode` strings the backend reads (ApprovalMode::parse:
   // "auto" and "full" run, anything else asks). Three choices, done.
   const PERMS: { id: string; title: string; label: string; desc: string; icon: IconName }[] = [
-    { id: "supervised", title: "Supervised", label: "Ask", desc: "Ask before commands and file changes.", icon: "lock" },
+    { id: "supervised", title: "Ask", label: "Ask", desc: "Ask before commands and file changes.", icon: "lock" },
     { id: "auto", title: "Auto", label: "Auto", desc: "Approve routine actions without asking.", icon: "spark" },
-    { id: "full", title: "Full access", label: "Full access", desc: "Run commands and edits without asking.", icon: "unlock" },
+    { id: "full", title: "Full", label: "Full", desc: "Run commands and edits without asking.", icon: "unlock" },
   ];
 
   const MODES: ComposerMode[] = ["search", "build", "work"];
