@@ -28,8 +28,9 @@ test("permissionFor follows Settings and never defaults to full access", () => {
 
 test("the composer only offers what the Settings floor lets through", () => {
   for (const c of ["deny", "supervised", "edits", "auto", "full"]) assert.equal(permissionBlocked(c, "auto"), "");
-  assert.notEqual(permissionBlocked("auto", "ask"), "");
-  for (const c of ["deny", "supervised", "edits", "full"]) assert.equal(permissionBlocked(c, "ask"), "");
+  // Auto under Ask behaves as Ask (the backend caps it), so it stays
+  // selectable; only Lockdown disables.
+  for (const c of ["deny", "supervised", "edits", "auto", "full"]) assert.equal(permissionBlocked(c, "ask"), "");
   assert.equal(permissionBlocked("deny", "deny"), "");
   for (const c of ["supervised", "edits", "auto", "full"]) assert.notEqual(permissionBlocked(c, "deny"), "");
 });

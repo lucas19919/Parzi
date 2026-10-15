@@ -625,7 +625,6 @@
           aria-expanded={permOpen}
           on:click|stopPropagation={togglePerm}
         >
-          <Icon name={perm.icon} />
           <span class="truncate">{perm.label}</span>
         </button>
       {/if}
@@ -1078,7 +1077,7 @@
     flex: none;
     gap: 5px;
   }
-  .perm-btn.full :global(svg) {
+  .perm-btn.full {
     color: var(--warn);
   }
   .remote-btn {

@@ -29,9 +29,8 @@ export function permissionGate(choice: string, defaultMode: string | null | unde
       ? { off: "", lift: "" }
       : { off: "Lockdown is on in Settings › General", lift: "" };
   }
-  if (floor === "supervised" && choice === "auto") {
-    return { off: "Ask applies until Auto is on in Settings › General", lift: "" };
-  }
+  // No disabled rows: Auto under an Ask floor simply behaves as Ask (the
+  // backend caps it), so the menu never lectures. Only Lockdown blocks.
   if (floor === "supervised" && choice === "full") {
     return { off: "", lift: "Lifts to Auto for this send" };
   }
