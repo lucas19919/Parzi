@@ -3,6 +3,7 @@
   import Icon from "./Icon.svelte";
   import type { Tab } from "./tabs";
   import { faviconUrl } from "./browserData";
+  import { buttonHeld, tabDragStarted, tabRelease } from "./gestures";
   import { laneIcon, normLane } from "./lanes";
   import { tooltip } from "./tooltip";
 
@@ -18,8 +19,6 @@
     newTab: void;
   }>();
 
-  const DRAG_START = 5;
-
   let strip: HTMLElement;
   const els: Record<string, HTMLElement> = {};
   let broken = new Set<string>();
@@ -27,6 +26,8 @@
   let dragId = "";
   let dragX = 0;
   let order: string[] | null = null;
+  // Set when a drag swallowed the click, so that click does not select again.
+  let swallow = "";
 
   $: shown = order ? order.map((id) => tabs.find((t) => t.id === id)).filter((t): t is Tab => !!t) : tabs;
 
@@ -99,7 +100,16 @@
     if (e.button === 1) dispatch("close", { id });
   }
 
+  function onPick(id: string) {
+    if (swallow === id) {
+      swallow = "";
+      return;
+    }
+    dispatch("select", { id });
+  }
+
   function onDown(e: PointerEvent, id: string) {
+    swallow = "";
     if (e.button !== 0 || (e.target as HTMLElement).closest(".close")) return;
     const el = els[id];
     if (!el) return;
@@ -109,11 +119,20 @@
       : { id, x: e.clientX, y: e.clientY, grab: e.clientX - r.left, pointer: e.pointerId };
   }
 
+  // A press left over from a pointerup the page window ate. Cleared before
+  // the tab's own handler runs, so a new press still starts.
+  function onDownAnywhere() {
+    if (press) onCancel();
+  }
+
   function onMove(e: PointerEvent) {
-    if (!press) return;
+    if (!press || e.pointerId !== press.pointer) return;
+    if (!buttonHeld(e.buttons)) {
+      onUp(e);
+      return;
+    }
     if (!dragId) {
-      const moved = vertical ? Math.abs(e.clientY - press.y) : Math.abs(e.clientX - press.x);
-      if (moved < DRAG_START) return;
+      if (!tabDragStarted(press.x, press.y, e.clientX, e.clientY, vertical)) return;
       dragId = press.id;
       order = tabs.map((t) => t.id);
       try {
@@ -145,29 +164,67 @@
       order = next;
       await tick();
     }
+    if (!press || !dragId) return;
     dragX = pos - start(dragId);
   }
 
+  function release(el: HTMLElement | undefined, pointer: number | undefined) {
+    if (!el || pointer === undefined) return;
+    try {
+      el.releasePointerCapture(pointer);
+    } catch {}
+  }
+
   function onUp(e?: PointerEvent) {
-    if (dragId && order) dispatch("move", { id: dragId, to: order.indexOf(dragId) });
-    if (dragId && press) {
-      try {
-        els[dragId]?.releasePointerCapture(press.pointer);
-      } catch {}
-    }
-    if (e && typeof e.pointerId === "number") {
-      try {
-        (e.target as HTMLElement)?.releasePointerCapture(e.pointerId);
-      } catch {}
-    }
+    if (press && e && e.pointerId !== press.pointer) return;
+    const result = tabRelease({
+      pressId: press?.id ?? "",
+      dragId,
+      order,
+      ids: tabs.map((t) => t.id),
+    });
+    const el = dragId ? els[dragId] : undefined;
+    const pointer = press?.pointer;
     press = null;
     dragId = "";
     dragX = 0;
     order = null;
+    release(el, pointer);
+    if (result.kind === "move") {
+      swallow = result.id;
+      dispatch("move", { id: result.id, to: result.to });
+      dispatch("select", { id: result.id });
+    } else if (result.kind === "select") {
+      swallow = result.id;
+      dispatch("select", { id: result.id });
+    }
+  }
+
+  function onCancel() {
+    const el = dragId ? els[dragId] : undefined;
+    const pointer = press?.pointer;
+    press = null;
+    dragId = "";
+    dragX = 0;
+    order = null;
+    swallow = "";
+    release(el, pointer);
+  }
+
+  function onLost(e: PointerEvent) {
+    if (!press || e.pointerId !== press.pointer) return;
+    onCancel();
   }
 </script>
 
-<svelte:window on:pointermove={onMove} on:pointerup={onUp} on:pointercancel={onUp} />
+<svelte:window
+  on:pointerdown|capture={onDownAnywhere}
+  on:pointermove={onMove}
+  on:pointerup={onUp}
+  on:pointercancel={onCancel}
+  on:lostpointercapture={onLost}
+  on:blur={onCancel}
+/>
 
 <!-- A tablist may only own tabs, so each tab is a plain pill holding the
      role="tab" element and, beside it, pointer-only caret and close
@@ -195,7 +252,7 @@
             tabindex="0"
             aria-selected={tab.id === activeTabId}
             title={tab.title}
-            on:click={() => dispatch("select", { id: tab.id })}
+            on:click={() => onPick(tab.id)}
             on:keydown={(e) => onKey(e, tab.id)}
           >
             <span class="kind">
@@ -237,7 +294,7 @@
               tabindex="0"
               aria-selected={sub.id === activeTabId}
               title={sub.url || sub.title}
-              on:click={() => dispatch("select", { id: sub.id })}
+              on:click={() => onPick(sub.id)}
               on:keydown={(e) => onKey(e, sub.id)}
             >
               <span class="kind">
@@ -279,7 +336,7 @@
         tabindex="0"
         aria-selected={tab.id === activeTabId}
         title={tab.kind === "page" ? tab.url || tab.title : tab.title}
-        on:click={() => dispatch("select", { id: tab.id })}
+        on:click={() => onPick(tab.id)}
         on:keydown={(e) => onKey(e, tab.id)}
       >
         <span class="kind">

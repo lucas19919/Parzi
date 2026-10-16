@@ -1,4 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { distance, windowDown, windowMove } from "./gestures";
 
 export async function windowMinimize() {
   await getCurrentWindow().minimize();
@@ -12,45 +13,49 @@ export async function windowClose() {
   await getCurrentWindow().close();
 }
 
-// Dragging starts once the pointer has moved slightly while holding the button:
-// calling startDragging on pure mousedown races with mouseup, leaving Windows in
-// a modal drag loop that freezes UI input until another click.
+// One armed gesture. A second press replaces it: the old listeners must not
+// call startDragging after the button is already up.
+let startX = 0;
+let startY = 0;
+
+function disarm() {
+  window.removeEventListener("mousemove", onMouseMove);
+  window.removeEventListener("mouseup", onPointerDone);
+  window.removeEventListener("pointerup", onPointerDone);
+  window.removeEventListener("pointercancel", onPointerDone);
+  window.removeEventListener("blur", disarm);
+}
+
+function onMouseMove(moveEvent: MouseEvent) {
+  const action = windowMove(moveEvent.buttons, distance(startX, startY, moveEvent.clientX, moveEvent.clientY));
+  if (action === "wait") return;
+  // Drop before the IPC call. startDragging after the button is up leaves
+  // Windows in a modal drag loop that eats every click until the next one.
+  disarm();
+  if (action === "drag") {
+    try {
+      void getCurrentWindow().startDragging();
+    } catch {}
+  }
+}
+
+function onPointerDone() {
+  disarm();
+}
+
 export function startWindowDrag(e: MouseEvent) {
-  if (e.button !== 0) return;
-  if ((e.target as HTMLElement).closest("button, input, a, [role='tab'], .tab")) return;
-  if (e.detail === 2) {
+  const action = windowDown(e.button, e.detail, e.target);
+  if (action === "ignore") return;
+  disarm();
+  if (action === "maximize") {
     void windowMaximize();
     return;
   }
-  const startX = e.clientX;
-  const startY = e.clientY;
-  let dragging = false;
-
-  const onMouseMove = (moveEvent: MouseEvent) => {
-    if (dragging) return;
-    if (moveEvent.buttons !== 1) {
-      cleanup();
-      return;
-    }
-    const dist = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
-    if (dist >= 4) {
-      dragging = true;
-      cleanup();
-      try {
-        void getCurrentWindow().startDragging();
-      } catch {}
-    }
-  };
-
-  const onMouseUp = () => {
-    cleanup();
-  };
-
-  const cleanup = () => {
-    window.removeEventListener("mousemove", onMouseMove);
-    window.removeEventListener("mouseup", onMouseUp);
-  };
-
+  startX = e.clientX;
+  startY = e.clientY;
   window.addEventListener("mousemove", onMouseMove);
-  window.addEventListener("mouseup", onMouseUp);
+  window.addEventListener("mouseup", onPointerDone);
+  window.addEventListener("pointerup", onPointerDone);
+  window.addEventListener("pointercancel", onPointerDone);
+  window.addEventListener("blur", disarm);
 }

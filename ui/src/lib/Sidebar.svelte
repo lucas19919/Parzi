@@ -42,28 +42,38 @@
     width = Math.max(W_MIN, Math.min(W_MAX, Math.round(clientX - box.left)));
   }
 
+  let pointer = -1;
+
   function onGrip(e: PointerEvent) {
     sizing = true;
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    pointer = e.pointerId;
     sizeTo(e.clientX);
     e.preventDefault();
+    e.stopPropagation();
   }
 
+  // No pointer capture: a capture the page window steals never comes back,
+  // and then no click in the app lands. The window hears the move instead.
   function onMove(e: PointerEvent) {
-    if (sizing) sizeTo(e.clientX);
+    if (!sizing || e.pointerId !== pointer) return;
+    if ((e.buttons & 1) === 0) {
+      endSize();
+      return;
+    }
+    sizeTo(e.clientX);
   }
 
-  function onUp(e?: PointerEvent) {
+  function endSize(e?: Event) {
     if (!sizing) return;
+    if (e && e.type !== "blur" && e instanceof PointerEvent && e.pointerId !== pointer) return;
     sizing = false;
-    if (e && typeof e.pointerId === "number") {
-      try {
-        (e.target as HTMLElement)?.releasePointerCapture(e.pointerId);
-      } catch {}
-    }
     try {
       localStorage.setItem(W_KEY, String(width));
     } catch {}
+  }
+
+  function onDownAnywhere() {
+    if (sizing) endSize();
   }
 
   // Each TabBar reorders its own list; translate back to the global index.
@@ -132,15 +142,16 @@
     </div>
   {/if}
   <!-- svelte-ignore a11y-no-static-element-interactions -->
-  <div
-    class="grip"
-    title="Drag to resize the sidebar"
-    on:pointerdown={onGrip}
-    on:pointermove={onMove}
-    on:pointerup={onUp}
-    on:pointercancel={onUp}
-  />
+  <div class="grip" title="Drag to resize the sidebar" on:pointerdown={onGrip} />
 </aside>
+
+<svelte:window
+  on:pointerdown|capture={onDownAnywhere}
+  on:pointermove={onMove}
+  on:pointerup={endSize}
+  on:pointercancel={endSize}
+  on:blur={endSize}
+/>
 
 <style>
   /* One glass column from the window's top edge down: the top bar's menu,

@@ -96,6 +96,5 @@
     max-width: 980px;
     margin: 0 auto;
     padding: 26px 28px 40px;
-    user-select: none;
   }
 </style>

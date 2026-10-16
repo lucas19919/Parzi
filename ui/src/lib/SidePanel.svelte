@@ -56,20 +56,31 @@ import {
 
   function startResize(e: PointerEvent) {
     e.preventDefault();
+    e.stopPropagation();
+    const pointer = e.pointerId;
     const startX = e.clientX;
     const startW = dockW;
-    const move = (ev: PointerEvent) => {
-      dockW = Math.min(640, Math.max(280, Math.round(startW + (startX - ev.clientX))));
-    };
-    const up = () => {
+    const end = () => {
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      window.removeEventListener("blur", end);
       try {
         localStorage.setItem("parzi.dock.w", String(dockW));
       } catch {}
     };
+    const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointer) return;
+      if ((ev.buttons & 1) === 0) {
+        end();
+        return;
+      }
+      dockW = Math.min(640, Math.max(280, Math.round(startW + (startX - ev.clientX))));
+    };
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    window.addEventListener("blur", end);
   }
 
   // The plan: loaded when the panel opens or the project changes, and again

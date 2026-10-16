@@ -14,6 +14,7 @@
   import { loadRemoteInfo, remote as server, remoteInfo } from "./remote";
   import { folderName, hostOf } from "./tabs";
   import { HOME_WIDGETS, customWidgets, hiddenWidgets, loadCustomWidgets, toggleWidget, widgetOrder, type WidgetId } from "./homeWidgets";
+  import { buttonHeld, dragPast } from "./gestures";
   import { arrange, moveBy, moveTo, withShown } from "./homeLayout";
   import { popover, placeAbove } from "./popover";
   import { sessionTone, TONE_WORDS } from "./planModel";
@@ -73,7 +74,6 @@
 
   // Dragging a card by its header: it follows the pointer and the others
   // make room as it passes over them. Esc puts everything back.
-  const DRAG_START = 4;
   let grid: HTMLDivElement | null = null;
   let press: { id: string; x: number; y: number; card: HTMLElement; head: HTMLElement; pointer: number } | null = null;
   let drag: { id: string; order: string[]; grabX: number; grabY: number; dx: number; dy: number } | null = null;
@@ -86,17 +86,28 @@
     const head = e.currentTarget as HTMLElement;
     const card = head.closest<HTMLElement>(".card");
     if (!card) return;
-    // No text selection while the card moves, and the release is heard
-    // even outside the window.
+    // No text selection while the card moves. Capture waits until the
+    // pointer has actually moved: capture on the press sticks when the
+    // page window takes the mouse, and then nothing can be selected.
     e.preventDefault();
-    head.setPointerCapture(e.pointerId);
     press = { id, x: e.clientX, y: e.clientY, card, head, pointer: e.pointerId };
   }
 
+  function onDownAnywhere() {
+    if (press) cancelDrag();
+  }
+
   async function onMove(e: PointerEvent) {
-    if (!press) return;
+    if (!press || e.pointerId !== press.pointer) return;
+    if (!buttonHeld(e.buttons)) {
+      onUp(e);
+      return;
+    }
     if (!drag) {
-      if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_START) return;
+      if (!dragPast(Math.hypot(e.clientX - press.x, e.clientY - press.y))) return;
+      try {
+        press.head.setPointerCapture(press.pointer);
+      } catch {}
       const r = press.card.getBoundingClientRect();
       drag = { id: press.id, order: order.filter((id) => shown(id)), grabX: press.x - r.left, grabY: press.y - r.top, dx: 0, dy: 0 };
       swapped = "";
@@ -149,30 +160,33 @@
     else if (y > r.bottom - 40) scroller.scrollTop += 12;
   }
 
+  function release(p: { head: HTMLElement; pointer: number } | null) {
+    if (!p) return;
+    try {
+      p.head.releasePointerCapture(p.pointer);
+    } catch {}
+  }
+
   function onUp(e?: PointerEvent) {
-    if (drag) commit(withShown(order, drag.order));
-    if (press) {
-      try {
-        press.head.releasePointerCapture(press.pointer);
-      } catch {}
-    }
-    if (e && typeof e.pointerId === "number") {
-      try {
-        (e.target as HTMLElement)?.releasePointerCapture(e.pointerId);
-      } catch {}
-    }
+    if (press && e && e.pointerId !== press.pointer) return;
+    const d = drag;
+    const p = press;
     press = null;
     drag = null;
+    if (d) commit(withShown(order, d.order));
+    release(p);
   }
 
   function cancelDrag() {
-    if (press) {
-      try {
-        press.head.releasePointerCapture(press.pointer);
-      } catch {}
-    }
+    const p = press;
     press = null;
     drag = null;
+    release(p);
+  }
+
+  function onLost(e: PointerEvent) {
+    if (!press || e.pointerId !== press.pointer) return;
+    cancelDrag();
   }
 
   function onKey(e: KeyboardEvent) {
@@ -294,7 +308,15 @@
   }
 </script>
 
-<svelte:window on:pointermove={onMove} on:pointerup={onUp} on:pointercancel={cancelDrag} on:keydown={onKey} />
+<svelte:window
+  on:pointerdown|capture={onDownAnywhere}
+  on:pointermove={onMove}
+  on:pointerup={onUp}
+  on:pointercancel={cancelDrag}
+  on:lostpointercapture={onLost}
+  on:blur={cancelDrag}
+  on:keydown={onKey}
+/>
 
 <div class="home" class:dragging={!!drag} bind:this={grid}>
   {#each cards as id (id)}
@@ -309,7 +331,7 @@
     >
       <!-- Dragging the header moves the card; Customize moves it by keyboard. -->
       <!-- svelte-ignore a11y-no-static-element-interactions -->
-      <header on:pointerdown={(e) => onHeaderDown(e, id)}>
+      <header on:pointerdown={(e) => onHeaderDown(e, id)} on:lostpointercapture={onLost}>
         <h3 id={domId(id)}><Icon name={ICONS[id] ?? "chart"} /><span class="h-text">{titleOf(id)}</span></h3>
         {#if id === "recent"}
           {#if threads.length}<button class="more" on:click={() => dispatch("allSessions")}>All</button>{/if}

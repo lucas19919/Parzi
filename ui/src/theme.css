@@ -200,7 +200,7 @@ kbd {
 .btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
 
 .thread-col { line-height: 1.65; font-size: var(--fs-base); }
-.msg { line-height: 1.65; }
+.msg { line-height: 1.65; user-select: text; }
 .msg p { margin: 0 0 0.55em; }
 .msg p:last-child { margin-bottom: 0; }
 .msg h1, .msg h2, .msg h3, .msg h4, .msg h5, .msg h6 { letter-spacing: -0.01em; margin: 0.9em 0 0.4em; }

@@ -7,6 +7,7 @@
   import { folderName } from "./tabs";
   import { toast, toastError } from "./toast";
   import { targetBrainNote } from "./brainStore";
+  import { buttonHeld, noteMoveStarts, noteRelease } from "./gestures";
   import { handleLinkClick } from "./links";
   import { safeDecode } from "./linkRules";
   import { tooltip } from "./tooltip";
@@ -14,8 +15,6 @@
   const UNUSED = "unused";
   const CONFLICTS = "conflicts";
   const OPEN_KEY = "parzi.brain.open.v2";
-  const DRAG_START = 5;
-
   type Folder = { key: string; title: string; project: Project | null; items: NoteMeta[] };
 
   let notes: NoteMeta[] = [];
@@ -35,7 +34,7 @@
   let draftField: HTMLInputElement | null = null;
   let obsidian: ObsidianState = "missing";
   let expanded = new Set<string>(loadExpanded());
-  let press: { path: string; from: string; title: string; x: number; y: number } | null = null;
+  let press: { path: string; from: string; title: string; x: number; y: number; pointer: number } | null = null;
   let dragging = false;
   let dragX = 0;
   let dragY = 0;
@@ -259,14 +258,29 @@
     }
   }
 
+  function noteAt(x: number, y: number): string | null {
+    return document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-note]")?.dataset.note ?? null;
+  }
+
   function onRowDown(e: PointerEvent, n: NoteMeta, from: string) {
     if (e.button !== 0) return;
-    press = { path: n.path, from, title: n.title, x: e.clientX, y: e.clientY };
+    press = { path: n.path, from, title: n.title, x: e.clientX, y: e.clientY, pointer: e.pointerId };
+  }
+
+  // A press left over from a missed pointerup. Runs before the row handler,
+  // so the new press still starts.
+  function onDownAnywhere() {
+    if (press) cancelPress();
   }
 
   function onMove(e: PointerEvent) {
-    if (!press || byPath.get(press.path)?.conflict_of) return;
-    if (!dragging && Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_START) return;
+    if (!press || e.pointerId !== press.pointer || byPath.get(press.path)?.conflict_of) return;
+    if (!buttonHeld(e.buttons)) {
+      onUp(e);
+      return;
+    }
+    const over = noteAt(e.clientX, e.clientY);
+    if (!dragging && !noteMoveStarts(Math.hypot(e.clientX - press.x, e.clientY - press.y), over, press.path)) return;
     dragging = true;
     dragX = e.clientX;
     dragY = e.clientY;
@@ -275,18 +289,23 @@
   }
 
   function onUp(e: PointerEvent) {
-    if (!press) return;
+    if (!press || e.pointerId !== press.pointer) return;
     const p = press;
     const wasDrag = dragging;
     const target = dropOn;
     press = null;
     dragging = false;
     dropOn = "";
-    if (!wasDrag) {
-      void openNote(p.path);
-      return;
-    }
-    if (target && target !== p.from) void moveNote(p.path, p.from, target, e.ctrlKey);
+    const upPath = (e.target instanceof Element ? e.target.closest<HTMLElement>("[data-note]") : null)?.dataset.note ?? null;
+    const result = noteRelease(p, wasDrag, target, upPath, e.ctrlKey || e.metaKey);
+    if (result.kind === "move") void moveNote(result.path, result.from, result.to, result.copy);
+    else if (result.kind === "open") void openNote(result.path);
+  }
+
+  function cancelPress() {
+    press = null;
+    dragging = false;
+    dropOn = "";
   }
 
   async function startNote(key: string) {
@@ -446,7 +465,13 @@
   });
 </script>
 
-<svelte:window on:pointermove={onMove} on:pointerup={onUp} on:pointercancel={() => ((press = null), (dragging = false), (dropOn = ""))} />
+<svelte:window
+  on:pointerdown|capture={onDownAnywhere}
+  on:pointermove={onMove}
+  on:pointerup={onUp}
+  on:pointercancel={cancelPress}
+  on:blur={cancelPress}
+/>
 
 <div class="brain" class:dragging>
   <aside>
@@ -481,6 +506,7 @@
                   class="note"
                   class:on={n.path === selected}
                   class:copy={!!n.conflict_of}
+                  data-note={n.path}
                   title={n.conflict_of ? `Sync conflict copy of ${n.conflict_of}` : n.summary || n.path}
                   on:pointerdown={(e) => onRowDown(e, n, f.key)}
                   on:keydown={(e) => e.key === "Enter" && openNote(n.path)}
@@ -932,6 +958,7 @@
     max-width: 760px;
     padding: 20px 28px 40px;
     font-size: var(--fs-base);
+    user-select: text;
   }
   textarea {
     width: 100%;
