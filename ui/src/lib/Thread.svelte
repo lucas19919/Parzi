@@ -16,7 +16,19 @@
   import { tooltip } from "./tooltip";
   import { formatTime } from "./time";
 
-  // A message's clock time, for hover: Unix seconds from the transcript.
+  // What the waiting prompt answers: the nearest assistant message above
+  // it, so "the proposal above" names what was actually said. Nothing
+  // when the agent asked without saying anything first.
+  $: askContext = (() => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i];
+      if ((e.kind === "assistant" || e.kind === "user") && e.text.trim()) {
+        const line = e.text.trim().split("\n")[0];
+        return line.length > 140 ? `${line.slice(0, 140)}…` : line;
+      }
+    }
+    return "";
+  })();
   function when(at: number | undefined): string {
     if (!at) return "";
     return formatTime(at * 1000);
@@ -493,6 +505,7 @@ ${e.text}` : e.text;
   {#if question}
     <div class="approval ask" transition:fade={spring}>
       {#if askerTitle}<div class="ask-from">{askerTitle} asks</div>{/if}
+      {#if askContext}<div class="ask-about" title={askContext}>Re: {askContext}</div>{/if}
       <div class="ask-q">{question.question}</div>
       {#if question.options.length}
         <div class="ask-options">
@@ -741,6 +754,15 @@ ${e.text}` : e.text;
   .ask-from {
     font-size: var(--fs-sm);
     color: var(--muted);
+  }
+  .ask-about {
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    border-left: 2px solid var(--line);
+    padding-left: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .ask-options {
     display: flex;
