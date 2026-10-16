@@ -75,7 +75,7 @@
   // make room as it passes over them. Esc puts everything back.
   const DRAG_START = 4;
   let grid: HTMLDivElement | null = null;
-  let press: { id: string; x: number; y: number; card: HTMLElement } | null = null;
+  let press: { id: string; x: number; y: number; card: HTMLElement; head: HTMLElement; pointer: number } | null = null;
   let drag: { id: string; order: string[]; grabX: number; grabY: number; dx: number; dy: number } | null = null;
   // The card just swapped with: not again until the pointer leaves it.
   let swapped = "";
@@ -90,7 +90,7 @@
     // even outside the window.
     e.preventDefault();
     head.setPointerCapture(e.pointerId);
-    press = { id, x: e.clientX, y: e.clientY, card };
+    press = { id, x: e.clientX, y: e.clientY, card, head, pointer: e.pointerId };
   }
 
   async function onMove(e: PointerEvent) {
@@ -149,13 +149,28 @@
     else if (y > r.bottom - 40) scroller.scrollTop += 12;
   }
 
-  function onUp() {
+  function onUp(e?: PointerEvent) {
     if (drag) commit(withShown(order, drag.order));
+    if (press) {
+      try {
+        press.head.releasePointerCapture(press.pointer);
+      } catch {}
+    }
+    if (e && typeof e.pointerId === "number") {
+      try {
+        (e.target as HTMLElement)?.releasePointerCapture(e.pointerId);
+      } catch {}
+    }
     press = null;
     drag = null;
   }
 
   function cancelDrag() {
+    if (press) {
+      try {
+        press.head.releasePointerCapture(press.pointer);
+      } catch {}
+    }
     press = null;
     drag = null;
   }

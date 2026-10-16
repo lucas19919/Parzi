@@ -148,8 +148,18 @@
     dragX = pos - start(dragId);
   }
 
-  function onUp() {
+  function onUp(e?: PointerEvent) {
     if (dragId && order) dispatch("move", { id: dragId, to: order.indexOf(dragId) });
+    if (dragId && press) {
+      try {
+        els[dragId]?.releasePointerCapture(press.pointer);
+      } catch {}
+    }
+    if (e && typeof e.pointerId === "number") {
+      try {
+        (e.target as HTMLElement)?.releasePointerCapture(e.pointerId);
+      } catch {}
+    }
     press = null;
     dragId = "";
     dragX = 0;

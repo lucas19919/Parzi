@@ -680,11 +680,13 @@ async fn dispatch(ctx: &Ctx, out: &Out, req: &Value) -> Value {
         "approval.list" => json!({ "ok": true, "approvals": ctx.desk.approvals() }),
         "approval.answer" => approval_answer(ctx, req).await,
         "providers" => providers(ctx, req).await,
-        "session.list" => session_list(&ctx.orch),
-        "session.show" | "session.export" => session_show(&ctx.orch, req, op == "session.export"),
-        "session.kill" => session_kill(&ctx.orch, req).await,
-        "session.fork" => session_fork(&ctx.orch, req),
-        "session.rename" => session_rename(&ctx.orch, req),
+        "session.list" => parzi_runtime::rpc::session_list(&ctx.orch),
+        "session.show" | "session.export" => {
+            parzi_runtime::rpc::session_show(&ctx.orch, req, op == "session.export")
+        }
+        "session.kill" => parzi_runtime::rpc::session_kill(&ctx.orch, req).await,
+        "session.fork" => parzi_runtime::rpc::session_fork(&ctx.orch, req),
+        "session.rename" => parzi_runtime::rpc::session_rename(&ctx.orch, req),
         "session.delete" => session_delete(ctx, out, req).await,
         _ => fail(format!("unknown op `{op}`")),
     }
@@ -1242,77 +1244,8 @@ async fn providers(ctx: &Ctx, req: &Value) -> Value {
     json!({ "ok": true, "providers": crate::settings::in_roster_order(all) })
 }
 
-fn session_list(orch: &Orchestrator) -> Value {
-    match orch.store().list() {
-        Ok(rows) => json!({ "ok": true, "sessions": rows }),
-        Err(e) => fail(e.to_string()),
-    }
-}
-
 fn resolve_id(orch: &Orchestrator, id: &str) -> Result<String, String> {
     orch.store().resolve_id(id).map_err(|e| e.to_string())
-}
-
-fn session_show(orch: &Orchestrator, req: &Value, export: bool) -> Value {
-    let id = match resolve_id(orch, &str_arg(req, "id")) {
-        Ok(id) => id,
-        Err(e) => return fail(e),
-    };
-    let meta = match orch.store().get(&id) {
-        Ok(m) => m,
-        Err(e) => return fail(e.to_string()),
-    };
-    let md = parzi_core::paths::sessions_dir()
-        .ok()
-        .and_then(|d| std::fs::read_to_string(d.join(&id).join("session.md")).ok())
-        .unwrap_or_default();
-    let text: String = md.chars().take(20_000).collect();
-    if export {
-        json!({ "ok": true, "id": id, "text": text })
-    } else {
-        json!({ "ok": true, "session": meta, "text": text })
-    }
-}
-
-async fn session_kill(orch: &Orchestrator, req: &Value) -> Value {
-    let id = match resolve_id(orch, &str_arg(req, "id")) {
-        Ok(id) => id,
-        Err(e) => return fail(e),
-    };
-    match orch.kill(&id).await {
-        Ok(()) => json!({ "ok": true, "id": id }),
-        Err(e) => fail(e.to_string()),
-    }
-}
-
-fn session_fork(orch: &Orchestrator, req: &Value) -> Value {
-    let id = match resolve_id(orch, &str_arg(req, "id")) {
-        Ok(id) => id,
-        Err(e) => return fail(e),
-    };
-    let at = req
-        .get("at")
-        .and_then(Value::as_u64)
-        .and_then(|n| usize::try_from(n).ok());
-    match orch.store().fork(&id, at) {
-        Ok(meta) => json!({ "ok": true, "id": meta.id }),
-        Err(e) => fail(e.to_string()),
-    }
-}
-
-fn session_rename(orch: &Orchestrator, req: &Value) -> Value {
-    let id = match resolve_id(orch, &str_arg(req, "id")) {
-        Ok(id) => id,
-        Err(e) => return fail(e),
-    };
-    let title = str_arg(req, "title");
-    if title.is_empty() {
-        return fail("title is required");
-    }
-    match orch.store().set_title(&id, &title) {
-        Ok(()) => json!({ "ok": true, "id": id }),
-        Err(e) => fail(e.to_string()),
-    }
 }
 
 async fn session_delete(ctx: &Ctx, out: &Out, req: &Value) -> Value {
@@ -1332,12 +1265,12 @@ async fn session_delete(ctx: &Ctx, out: &Out, req: &Value) -> Value {
     if !ctx.confirm(out, "Delete a session?", text, "Delete").await {
         return fail("not deleted: the person declined in the Parzi window");
     }
-    match crate::sessions::delete_with_runs(&ctx.orch, &id).await {
+    match ctx.orch.delete_thread(&id).await {
         Ok(n) => {
             ctx.tell(json!({ "op": "deleted", "id": id }));
             json!({ "ok": true, "id": id, "removed": n })
         }
-        Err(e) => fail(e),
+        Err(e) => fail(e.to_string()),
     }
 }
 

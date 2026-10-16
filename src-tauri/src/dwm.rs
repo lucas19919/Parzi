@@ -58,7 +58,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VK_OEM_COMMA, VK_SHIFT, VK_T, VK_TAB, VK_W,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    SetWindowPos, HWND_BOTTOM, HWND_TOP, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_SHOWWINDOW,
 };
 
 use crate::downloads::State as DownloadState;
@@ -168,6 +169,38 @@ fn fit_controller(
         }
         controller.NotifyParentWindowPositionChanged()
     }
+}
+
+pub fn hide_page_surface<R: tauri::Runtime>(wv: &tauri::Webview<R>) -> Result<(), String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    wv.with_webview(move |platform| {
+        let result = hide_controller(&platform.controller());
+        let _ = tx.send(result.map_err(|e| e.to_string()));
+    })
+    .map_err(|e| e.to_string())?;
+    match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+        Ok(result) => result,
+        Err(_) => Err("page surface hide timed out".into()),
+    }
+}
+
+fn hide_controller(controller: &ICoreWebView2Controller) -> windows::core::Result<()> {
+    let mut host = HWND::default();
+    unsafe {
+        let _ = controller.SetIsVisible(false);
+        if controller.ParentWindow(&raw mut host).is_ok() {
+            SetWindowPos(
+                host,
+                Some(HWND_BOTTOM),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW,
+            )?;
+        }
+    }
+    Ok(())
 }
 
 pub fn steer_page<R: tauri::Runtime>(wv: &tauri::Webview<R>, action: String) -> Result<(), String> {

@@ -25,3 +25,6 @@ lcov.info
 *.profraw
 target-dev/
 src-tauri/target-dev/
+*.timestamp-*.mjs
+screenshot*.jpg
+.claude/

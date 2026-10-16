@@ -308,7 +308,7 @@ pub async fn fork_thread(
     if let Some(rid) = remote_id(&id) {
         return remote::fork(&state.app, &far, rid).await;
     }
-    state.orch.fork(&id, None).await.map_err(|e| e.to_string())
+    state.orch.fork(&id, None).map_err(|e| e.to_string())
 }
 
 /// Another device's session is read here, not changed: its run lives
@@ -363,54 +363,12 @@ pub async fn delete_thread(
             .unwrap_or(1);
         return Ok(usize::try_from(removed).unwrap_or(1));
     }
-    delete_with_runs(&state.orch, &id).await
-}
-
-pub(crate) async fn delete_with_runs(
-    orch: &parzi_runtime::Orchestrator,
-    id: &str,
-) -> Result<usize, String> {
-    let id = id.to_string();
-    let all = orch.store().list().map_err(|e| e.to_string())?;
-    let by_id: std::collections::HashMap<&str, &SessionMeta> =
-        all.iter().map(|m| (m.id.as_str(), m)).collect();
-    let mut doomed = vec![id.clone()];
-    for m in &all {
-        let mut p = m.parent_id.as_deref();
-        let mut guard = 0;
-        while let Some(pid) = p {
-            if pid == id {
-                doomed.push(m.id.clone());
-                break;
-            }
-            if guard > 50 {
-                break;
-            }
-            guard += 1;
-            p = by_id.get(pid).and_then(|g| g.parent_id.as_deref());
-        }
-    }
-    for sid in &doomed {
-        let _ = orch.kill(sid).await;
-        orch.drop_shells(sid);
-    }
-    orch.store().delete_thread(&id).map_err(|e| e.to_string())
+    state.orch.delete_thread(&id).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn purge_sessions(state: State<'_, AppState>) -> Result<usize, String> {
-    // The same set the store removes: live runs and their ancestors stay.
-    let gone =
-        parzi_core::store::cascade_kill_ids(&state.orch.store().list().map_err(|e| e.to_string())?);
-    let n = state
-        .orch
-        .store()
-        .purge_finished()
-        .map_err(|e| e.to_string())?;
-    for sid in &gone {
-        state.orch.drop_shells(sid);
-    }
-    Ok(n)
+    state.orch.purge_finished().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -432,12 +390,13 @@ pub async fn answer_question(
         .await
         .map(drop);
     }
-    let entry = state.questions.lock().await.remove(&key);
-    match entry {
-        Some((bound, tx)) => {
-            if bound != session {
-                return Err("answer is for another session".into());
-            }
+    let mut lock = state.questions.lock().await;
+    match lock.get(&key) {
+        Some((bound, _)) if bound != &session => {
+            Err("answer is for another session".into())
+        }
+        Some(_) => {
+            let (_, tx) = lock.remove(&key).unwrap();
             let _ = tx.send(answer);
             Ok(())
         }
@@ -463,12 +422,13 @@ pub async fn approve_tool(
         .await
         .map(drop);
     }
-    let entry = state.pending.lock().await.remove(&key);
-    match entry {
-        Some((bound, tx)) => {
-            if bound != session {
-                return Err("approval is for another session".into());
-            }
+    let mut lock = state.pending.lock().await;
+    match lock.get(&key) {
+        Some((bound, _)) if bound != &session => {
+            Err("approval is for another session".into())
+        }
+        Some(_) => {
+            let (_, tx) = lock.remove(&key).unwrap();
             let _ = tx.send(if allow {
                 Approval::Allow
             } else {

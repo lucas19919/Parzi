@@ -334,6 +334,8 @@ fn backdrop() -> tauri::window::Color {
 fn hide_pages(app: &AppHandle, keep: &str) {
     for (label, wv) in app.webviews() {
         if label.starts_with(PAGE_PREFIX) && label != keep {
+            #[cfg(windows)]
+            let _ = crate::dwm::hide_page_surface(&wv);
             let _ = wv.hide();
             locked(&RESTING).entry(label).or_insert_with(|| Rest {
                 since: Instant::now(),
@@ -551,6 +553,8 @@ fn open_background(app: &AppHandle, label: String, evict: bool) {
     };
     let shown = locked(&SHOWN).clone();
     if shown != job.label {
+        #[cfg(windows)]
+        let _ = crate::dwm::hide_page_surface(&wv);
         let _ = wv.hide();
         locked(&RESTING).entry(job.label.clone()).or_insert(Rest {
             since: Instant::now(),
@@ -578,6 +582,8 @@ fn mount_page(app: &AppHandle, job: &Fit) -> bool {
             return false;
         };
         if stale(job.gen) {
+            #[cfg(windows)]
+            let _ = crate::dwm::hide_page_surface(&wv);
             let _ = wv.hide();
             return false;
         }

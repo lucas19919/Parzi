@@ -53,9 +53,14 @@
     if (sizing) sizeTo(e.clientX);
   }
 
-  function onUp() {
+  function onUp(e?: PointerEvent) {
     if (!sizing) return;
     sizing = false;
+    if (e && typeof e.pointerId === "number") {
+      try {
+        (e.target as HTMLElement)?.releasePointerCapture(e.pointerId);
+      } catch {}
+    }
     try {
       localStorage.setItem(W_KEY, String(width));
     } catch {}
