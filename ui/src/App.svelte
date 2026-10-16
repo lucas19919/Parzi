@@ -1421,6 +1421,7 @@
                 {liveTools}
                 {approval}
                 question={openQuestion}
+                askerTitle={threads.find((t) => t.id === (openQuestion?.session ?? approval?.session ?? shown))?.title ?? ""}
                 {streaming}
                 {folder}
                 on:voted={(e) => (approvals = approvals.filter((a) => a.key !== e.detail.key))}

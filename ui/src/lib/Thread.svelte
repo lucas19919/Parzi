@@ -35,6 +35,9 @@
   export let streaming = false;
   export let approval: Approval | null = null;
   export let question: Question | null = null;
+  // Who is asking: the session's title, so a question or approval reads
+  // with its context instead of floating anonymous in the thread.
+  export let askerTitle = "";
   export let folder = "";
 
   const dispatch = createEventDispatcher<{ voted: { key: string }; answered: { key: string }; edited: { text: string; quotes: PlanQuote[] }; forked: void }>();
@@ -75,17 +78,23 @@
 
   $: items = buildItems(events);
   $: running = liveTools.filter((t) => t.running);
-  $: status = !streaming
-    ? ""
-    : running.length && running[running.length - 1].label.trim()
-      ? `${running[running.length - 1].label}…`
-      : liveText
+  // A waiting prompt beats the run status: "Starting…" while an answer sits
+  // open is exactly the confusion this guards.
+  $: status = approval
+    ? "Needs your approval"
+    : question
+      ? "Waiting for your answer"
+      : !streaming
         ? ""
-        : liveReasoning
-          ? "Thinking…"
-          : liveTools.length
-            ? "Working…"
-            : "Starting…";
+        : running.length && running[running.length - 1].label.trim()
+          ? `${running[running.length - 1].label}…`
+          : liveText
+            ? ""
+            : liveReasoning
+              ? "Thinking…"
+              : liveTools.length
+                ? "Working…"
+                : "Starting…";
   $: showLiveSteps = !!status || !!liveReasoning || liveTools.length > 0;
   $: if (!liveText) liveMd.reset();
   $: liveSegs = liveText ? splitSegments(liveText, false) : [];
@@ -471,6 +480,7 @@ ${e.text}` : e.text;
 
   {#if approval}
     <div class="approval" transition:fade={spring}>
+      {#if askerTitle}<div class="ask-from">{askerTitle} asks for approval</div>{/if}
       <div>Allow <b>{approval.call.name}</b>?</div>
       <pre>{JSON.stringify(approval.call.args, null, 2)?.slice(0, 2000)}</pre>
       <div class="approval-actions">
@@ -482,6 +492,7 @@ ${e.text}` : e.text;
 
   {#if question}
     <div class="approval ask" transition:fade={spring}>
+      {#if askerTitle}<div class="ask-from">{askerTitle} asks</div>{/if}
       <div class="ask-q">{question.question}</div>
       {#if question.options.length}
         <div class="ask-options">
@@ -726,6 +737,10 @@ ${e.text}` : e.text;
   }
   .ask-q {
     font-weight: 600;
+  }
+  .ask-from {
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   .ask-options {
     display: flex;
