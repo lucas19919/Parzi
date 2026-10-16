@@ -75,7 +75,7 @@
   // Dragging a card by its header: it follows the pointer and the others
   // make room as it passes over them. Esc puts everything back.
   let grid: HTMLDivElement | null = null;
-  let press: { id: string; x: number; y: number; card: HTMLElement; head: HTMLElement; pointer: number } | null = null;
+  let press: { id: string; x: number; y: number; card: HTMLElement; pointer: number } | null = null;
   let drag: { id: string; order: string[]; grabX: number; grabY: number; dx: number; dy: number } | null = null;
   // The card just swapped with: not again until the pointer leaves it.
   let swapped = "";
@@ -86,11 +86,7 @@
     const head = e.currentTarget as HTMLElement;
     const card = head.closest<HTMLElement>(".card");
     if (!card) return;
-    // No text selection while the card moves. Capture waits until the
-    // pointer has actually moved: capture on the press sticks when the
-    // page window takes the mouse, and then nothing can be selected.
-    e.preventDefault();
-    press = { id, x: e.clientX, y: e.clientY, card, head, pointer: e.pointerId };
+    press = { id, x: e.clientX, y: e.clientY, card, pointer: e.pointerId };
   }
 
   function onDownAnywhere() {
@@ -105,9 +101,6 @@
     }
     if (!drag) {
       if (!dragPast(Math.hypot(e.clientX - press.x, e.clientY - press.y))) return;
-      try {
-        press.head.setPointerCapture(press.pointer);
-      } catch {}
       const r = press.card.getBoundingClientRect();
       drag = { id: press.id, order: order.filter((id) => shown(id)), grabX: press.x - r.left, grabY: press.y - r.top, dx: 0, dy: 0 };
       swapped = "";
@@ -160,32 +153,21 @@
     else if (y > r.bottom - 40) scroller.scrollTop += 12;
   }
 
-  function release(p: { head: HTMLElement; pointer: number } | null) {
-    if (!p) return;
-    try {
-      p.head.releasePointerCapture(p.pointer);
-    } catch {}
-  }
-
   function onUp(e?: PointerEvent) {
     if (press && e && e.pointerId !== press.pointer) return;
     const d = drag;
-    const p = press;
     press = null;
     drag = null;
     if (d) commit(withShown(order, d.order));
-    release(p);
   }
 
   function cancelDrag() {
-    const p = press;
     press = null;
     drag = null;
-    release(p);
   }
 
   function onLost(e: PointerEvent) {
-    if (!press || e.pointerId !== press.pointer) return;
+    if (!press || e.pointerId !== press.pointer || !buttonHeld(e.buttons)) return;
     cancelDrag();
   }
 
@@ -537,7 +519,6 @@
     height: 24px;
     padding: 0 4px 0 8px;
     cursor: grab;
-    touch-action: none;
     user-select: none;
   }
   .home.dragging,

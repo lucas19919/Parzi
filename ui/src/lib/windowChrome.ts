@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { distance, windowDown, windowMove } from "./gestures";
 
@@ -14,7 +15,7 @@ export async function windowClose() {
 }
 
 // One armed gesture. A second press replaces it: the old listeners must not
-// call startDragging after the button is already up.
+// start a drag after the button is already up.
 let startX = 0;
 let startY = 0;
 
@@ -29,14 +30,10 @@ function disarm() {
 function onMouseMove(moveEvent: MouseEvent) {
   const action = windowMove(moveEvent.buttons, distance(startX, startY, moveEvent.clientX, moveEvent.clientY));
   if (action === "wait") return;
-  // Drop before the IPC call. startDragging after the button is up leaves
-  // Windows in a modal drag loop that eats every click until the next one.
+  // Drop the gesture first. The command checks the button again on the UI
+  // thread and refuses once it is up, so a late call cannot eat the next click.
   disarm();
-  if (action === "drag") {
-    try {
-      void getCurrentWindow().startDragging();
-    } catch {}
-  }
+  if (action === "drag") void invoke("begin_window_drag").catch(() => {});
 }
 
 function onPointerDone() {

@@ -767,7 +767,6 @@
     font-size: var(--fs-md);
     text-align: left;
     cursor: pointer;
-    touch-action: none;
   }
   .note:hover {
     background: color-mix(in srgb, var(--text) 5%, transparent);

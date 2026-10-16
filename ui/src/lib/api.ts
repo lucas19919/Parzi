@@ -265,14 +265,16 @@ export const api = {
   deleteBackground: (name: string) => invoke<string>("delete_background", { name }),
   paletteFromBackground: () => invoke<Palette>("palette_from_background"),
 
-  // `owner`: the agent session a page belongs to; `focus`: hand it the
-  // keyboard when it appears (never while the user types in the shell).
+  // `owner`: the agent session a page belongs to. `focus` stays off: focusing
+  // the page window as it appears turns the next shell click into an
+  // activation click, so that click never selects. Enter in the address bar
+  // calls browserFocus when the keyboard should move.
   browserShow: (
     tab: string,
     rect: { x: number; y: number; width: number; height: number },
     url: string,
     owner: string | null = null,
-    focus = true,
+    focus = false,
   ) => invoke<void>("browser_show", { tab, ...rect, url, owner, focus }),
   browserHide: () => invoke<void>("browser_hide"),
   browserPrepare: (tab: string, url: string, owner: string | null = null) => invoke<void>("browser_prepare", { tab, url, owner }),

@@ -18,7 +18,31 @@ export interface TabComposerState {
 }
 
 function defaultComposer(): TabComposerState {
-  return { input: "", mode: "build", model: "", effort: "medium", attachments: [] };
+  return ensureComposer();
+}
+
+// Restored tabs persist no composer, and a partial one can omit `quotes`.
+// The Omnibar binds that field. Its prop default applies only on mount, so
+// the next session's missing list is a real `undefined`: `quotes.length`
+// throws inside the Svelte flush and every later click is dropped.
+export function ensureComposer(c?: Partial<TabComposerState> | null): TabComposerState {
+  const full = c as TabComposerState | null | undefined;
+  if (full && Array.isArray(full.attachments) && Array.isArray(full.quotes)) return full;
+  const next: TabComposerState = {
+    input: typeof c?.input === "string" ? c.input : "",
+    mode: c?.mode === "search" || c?.mode === "build" || c?.mode === "work" ? c.mode : "build",
+    model: typeof c?.model === "string" ? c.model : "",
+    effort: typeof c?.effort === "string" && c.effort ? c.effort : "medium",
+    remote: c?.remote,
+    remoteCwd: c?.remoteCwd,
+    attachments: Array.isArray(c?.attachments) ? c.attachments : [],
+    quotes: Array.isArray(c?.quotes) ? c.quotes : [],
+  };
+  if (c) {
+    Object.assign(c, next);
+    return c as TabComposerState;
+  }
+  return next;
 }
 
 export interface Tab {

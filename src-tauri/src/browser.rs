@@ -476,7 +476,7 @@ pub fn browser_show(
         width,
         height,
         scale: window.scale_factor().unwrap_or(1.0),
-        focus: focus.unwrap_or(true),
+        focus: focus.unwrap_or(false),
     };
     work(Work::Show(app, job));
     Ok(())

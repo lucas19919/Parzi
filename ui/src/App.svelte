@@ -37,7 +37,7 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { brainTab, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
+  import { brainTab, ensureComposer, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
   import { watchActivity } from "./lib/activity";
   import { addQuote, MAX_QUOTES, quoteBlock, sameSlug } from "./lib/planModel";
@@ -54,7 +54,7 @@
 
   const restored = loadTabs();
   let tabs: Tab[] = (restored?.tabs ?? [sessionTab()]).map((t) => {
-    const c = (t as Partial<Tab>).composer ?? { input: "", mode: "build", model: "", effort: "medium", attachments: [] };
+    const c = ensureComposer((t as Partial<Tab>).composer);
     if (c.model === "auto") c.model = "";
     return { ...t, composer: c };
   });
@@ -104,6 +104,7 @@
   let compFor = "";
 
   function syncComposer(t: Tab) {
+    t.composer = ensureComposer(t.composer);
     if (compFor === t.id && comp === t.composer) return;
     compFor = t.id;
     comp = t.composer;
@@ -461,7 +462,7 @@
   }
 
   function addTab(t: Tab) {
-    if (!t.composer) t.composer = { input: "", mode: "build", model: "", effort: "medium", attachments: [] };
+    t.composer = ensureComposer(t.composer);
     tabs = [...tabs, t];
     selectTab(t.id);
   }

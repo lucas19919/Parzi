@@ -54,8 +54,8 @@ use windows::Win32::Foundation::{HGLOBAL, HWND, RECT};
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
 use windows::Win32::System::Com::{IStream, STREAM_SEEK_END, STREAM_SEEK_SET};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, VIRTUAL_KEY, VK_B, VK_CONTROL, VK_F11, VK_H, VK_J, VK_K, VK_L, VK_MENU,
-    VK_OEM_COMMA, VK_SHIFT, VK_T, VK_TAB, VK_W,
+    GetAsyncKeyState, GetKeyState, ReleaseCapture, VIRTUAL_KEY, VK_B, VK_CONTROL, VK_F11, VK_H,
+    VK_J, VK_K, VK_L, VK_LBUTTON, VK_MENU, VK_OEM_COMMA, VK_SHIFT, VK_T, VK_TAB, VK_W,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     SetWindowPos, HWND_BOTTOM, HWND_TOP, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
@@ -1233,6 +1233,33 @@ pub fn alert(title: &str, text: &str) {
     }
 }
 
+/// The shell asks to drag after a few pixels of movement. The call arrives
+/// later, on this thread. If the button was released in between, dragging
+/// here makes Windows wait for a later click, and that click never reaches
+/// the shell.
+pub fn drag_allowed(button_down: bool) -> bool {
+    button_down
+}
+
+pub fn begin_window_drag(window: tauri::Window) {
+    let drag = window.clone();
+    let posted = window.run_on_main_thread(move || {
+        // SAFETY: a process-wide key state read and a capture release. Both
+        // are valid on the UI thread that owns the window.
+        let down = unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON.0)) } < 0;
+        if !drag_allowed(down) {
+            unsafe {
+                let _ = ReleaseCapture();
+            }
+            return;
+        }
+        let _ = drag.start_dragging();
+    });
+    if let Err(e) = posted {
+        tracing::debug!("window drag was not started: {e}");
+    }
+}
+
 pub fn round_window_corners(window: &tauri::WebviewWindow) {
     use windows::Win32::Graphics::Dwm::{
         DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
@@ -1257,6 +1284,12 @@ pub fn round_window_corners(window: &tauri::WebviewWindow) {
 mod tests {
     use super::*;
     use windows::Win32::UI::Input::KeyboardAndMouse::{VK_P, VK_R};
+
+    #[test]
+    fn a_late_window_drag_is_refused_once_the_button_is_up() {
+        assert!(drag_allowed(true));
+        assert!(!drag_allowed(false));
+    }
 
     #[test]
     fn page_keys_go_to_the_page_first_and_print_stays_the_pages() {

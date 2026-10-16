@@ -130,12 +130,18 @@
   // Attachments change rarely; guard by key so per-keystroke parent
   // object churn (same array, new dirty flag) doesn't re-decode images.
   $: {
-    const key = `${folder}\n${attachments.join("\n")}`;
+    const files = Array.isArray(attachments) ? attachments : [];
+    const key = `${folder}\n${files.join("\n")}`;
     if (key !== thumbsKey) {
       thumbsKey = key;
-      void loadThumbs(attachments, folder);
+      void loadThumbs(files, folder);
     }
   }
+  // `export let quotes = []` does not refill after mount. A bound composer
+  // with no quote list hands over undefined, and reading `.length` here
+  // aborts the flush so later clicks never update the UI.
+  $: if (!Array.isArray(quotes)) quotes = [];
+  $: if (!Array.isArray(attachments)) attachments = [];
 
   export function focus() {
     textarea?.focus();
@@ -145,7 +151,7 @@
     picker?.show();
   }
 
-  $: canSubmit = !!input.trim() || (quotes.length > 0 && mode !== "search");
+  $: canSubmit = !!input.trim() || ((quotes?.length ?? 0) > 0 && mode !== "search");
 
   function submit() {
     const text = input.trim();
@@ -525,9 +531,9 @@
       </div>
     {/if}
 
-    {#if attachments.length || quotes.length}
+    {#if (attachments?.length ?? 0) || (quotes?.length ?? 0)}
       <div class="attachments" transition:slide={{ duration: 160, easing: cubicOut }}>
-        {#each quotes as q (`${q.project}/${q.id}`)}
+        {#each quotes ?? [] as q (`${q.project}/${q.id}`)}
           <span class="chip quote" transition:scale={{ duration: 140, start: 0.9 }}>
             <Icon name="plan" size={12} />
             <span class="chip-name">Plan · {q.title}</span>
@@ -536,7 +542,7 @@
             </button>
           </span>
         {/each}
-        {#each attachments as a (a)}
+        {#each attachments ?? [] as a (a)}
           <span class="chip" transition:scale={{ duration: 140, start: 0.9 }}>
             {#if thumbs[a]}<img src={thumbs[a]} alt="" draggable="false" />{:else}<Icon name="file" size={12} />{/if}
             <span class="chip-name" title={a}>{shortName(a)}</span>

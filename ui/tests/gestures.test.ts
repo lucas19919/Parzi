@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   WINDOW_DRAG_SKIP,
   buttonHeld,
+  commitWindowDrag,
   dragPast,
   noteMoveStarts,
   noteRelease,
@@ -26,14 +27,17 @@ test("the window drags from empty chrome only", () => {
   assert.equal(windowDown(0, 1, {}), "ignore");
   assert.equal(windowDown(2, 1, plain), "ignore");
   assert.equal(windowDown(0, 2, plain), "maximize");
-  for (const piece of ["button", "[role='dialog']", "[role='menu']", ".noti-popover", ".dropdown", ".tab", ".picker", "textarea", "select"]) {
+  for (const piece of ["button", "[role='dialog']", "[role='menu']", ".noti-popover", ".dropdown", ".tab", ".tabs", ".picker", "textarea", "select"]) {
     assert.equal(windowDown(0, 1, hit(piece)), "ignore", piece);
   }
 });
 
 test("a released button never starts a window drag", () => {
-  // The freeze: startDragging after mouseup leaves Windows in a drag loop
-  // until some later click. Drop the gesture instead.
+  // The freeze: a drag that starts after mouseup leaves Windows in a drag
+  // loop until some later click. Drop the gesture instead, and the native
+  // side repeats the check because the button can come up during the call.
+  assert.equal(commitWindowDrag(false), false);
+  assert.equal(commitWindowDrag(true), true);
   assert.equal(windowMove(0, 40), "drop");
   assert.equal(windowMove(2, 40), "drop");
   assert.equal(windowMove(1, 3), "wait");
@@ -41,7 +45,7 @@ test("a released button never starts a window drag", () => {
   assert.equal(windowMove(3, 4), "drag");
 });
 
-test("pointer capture waits until the drag is real", () => {
+test("a card drag starts after a few pixels", () => {
   assert.equal(dragPast(0), false);
   assert.equal(dragPast(3), false);
   assert.equal(dragPast(4), true);

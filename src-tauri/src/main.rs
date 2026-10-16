@@ -288,6 +288,15 @@ fn window_fullscreen(window: tauri::Window, on: bool) -> Result<(), String> {
     window.set_fullscreen(on).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn begin_window_drag(window: tauri::Window) -> Result<(), String> {
+    #[cfg(windows)]
+    dwm::begin_window_drag(window);
+    #[cfg(not(windows))]
+    window.start_dragging().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn ui_from_run(session: String, ev: RunEvent) -> Option<UiEvent> {
     Some(match ev {
         RunEvent::Text(_)
@@ -632,6 +641,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             app_version,
             window_fullscreen,
+            begin_window_drag,
             browser::browser_show,
             browser::browser_hide,
             browser::browser_close,

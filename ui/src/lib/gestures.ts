@@ -9,9 +9,10 @@ export const DRAG_START = 4;
 export const PRESS_SLOP = 5;
 
 // Chrome that must not move the window. Popovers are drawn inside the top
-// bar, so a press on their padding is still a press on the popover.
+// bar, so a press on their padding is still a press on the popover. The tab
+// strip is too: a press on the gap between pills is not a window drag.
 export const WINDOW_DRAG_SKIP =
-  "button, input, textarea, select, a, label, [role='tab'], [role='menuitem'], [role='menu'], [role='dialog'], [contenteditable], .tab, .dropdown, .noti-popover, .picker, .home-menu, .menu-pop";
+  "button, input, textarea, select, a, label, [role='tab'], [role='menuitem'], [role='menu'], [role='dialog'], [contenteditable], .tab, .tabs, .dropdown, .noti-popover, .picker, .home-menu, .menu-pop";
 
 type WithClosest = { closest: (selector: string) => unknown };
 
@@ -46,10 +47,18 @@ export function distance(x0: number, y0: number, x1: number, y1: number): number
   return Math.hypot(x1 - x0, y1 - y0);
 }
 
-// Capture on the press itself sticks when pointerup never arrives (a page
-// window takes the mouse). Hold it only once the drag is real.
+// How far a card header moves before it is a drag. This never takes pointer
+// capture: on Windows a capture the page window steals is not returned, and
+// the next click never lands. Drags listen on the window instead.
 export function dragPast(distancePx: number, start = DRAG_START): boolean {
   return distancePx >= start;
+}
+
+// The page calls the native drag after a few pixels. By then the button may
+// already be up. Starting the drag in that state makes Windows wait for a
+// later click, and that click never reaches the shell.
+export function commitWindowDrag(buttonDown: boolean): boolean {
+  return buttonDown;
 }
 
 export function buttonHeld(buttons: number): boolean {

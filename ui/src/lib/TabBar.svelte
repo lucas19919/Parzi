@@ -133,11 +133,10 @@
     }
     if (!dragId) {
       if (!tabDragStarted(press.x, press.y, e.clientX, e.clientY, vertical)) return;
+      // No pointer capture. A capture a page window steals never comes back,
+      // and the next click never lands. The window hears the move instead.
       dragId = press.id;
       order = tabs.map((t) => t.id);
-      try {
-        els[dragId]?.setPointerCapture(press.pointer);
-      } catch {}
     }
     void follow(vertical ? e.clientY : e.clientX);
   }
@@ -168,13 +167,6 @@
     dragX = pos - start(dragId);
   }
 
-  function release(el: HTMLElement | undefined, pointer: number | undefined) {
-    if (!el || pointer === undefined) return;
-    try {
-      el.releasePointerCapture(pointer);
-    } catch {}
-  }
-
   function onUp(e?: PointerEvent) {
     if (press && e && e.pointerId !== press.pointer) return;
     const result = tabRelease({
@@ -183,13 +175,10 @@
       order,
       ids: tabs.map((t) => t.id),
     });
-    const el = dragId ? els[dragId] : undefined;
-    const pointer = press?.pointer;
     press = null;
     dragId = "";
     dragX = 0;
     order = null;
-    release(el, pointer);
     if (result.kind === "move") {
       swallow = result.id;
       dispatch("move", { id: result.id, to: result.to });
@@ -201,18 +190,17 @@
   }
 
   function onCancel() {
-    const el = dragId ? els[dragId] : undefined;
-    const pointer = press?.pointer;
     press = null;
     dragId = "";
     dragX = 0;
     order = null;
     swallow = "";
-    release(el, pointer);
   }
 
+  // Implicit capture can drop while the button is still down (the pointer
+  // left the shell for a page window). A release still has its pointerup.
   function onLost(e: PointerEvent) {
-    if (!press || e.pointerId !== press.pointer) return;
+    if (!press || e.pointerId !== press.pointer || !buttonHeld(e.buttons)) return;
     onCancel();
   }
 </script>

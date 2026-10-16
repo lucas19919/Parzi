@@ -100,12 +100,6 @@
     });
   }
 
-  // Someone typing in the shell keeps the keyboard when the page reappears.
-  function typing() {
-    const el = document.activeElement;
-    return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || (el instanceof HTMLElement && el.isContentEditable);
-  }
-
   // A picture of the page to show while HTML covers it, taken while it is
   // still up. Waits briefly: past that the page hides anyway and the
   // picture lands when it is ready.
@@ -138,7 +132,7 @@
       const x = Math.floor(r.x);
       const y = Math.floor(r.y);
       const rect = { x, y, width: Math.ceil(r.x + r.width) - x, height: Math.ceil(r.y + r.height) - y };
-      await api.browserShow(tab.id, rect, url, tab.owner ?? null, !editing && !typing());
+      await api.browserShow(tab.id, rect, url, tab.owner ?? null, false);
       shownNow = true;
       setPageArea({ left: rect.x, top: rect.y, right: rect.x + rect.width, bottom: rect.y + rect.height });
     } catch (e) {
