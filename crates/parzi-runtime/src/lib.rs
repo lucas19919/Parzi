@@ -12,6 +12,7 @@ pub mod osserve;
 mod plan_tools;
 pub mod provision;
 pub mod remote;
+pub mod rpc;
 mod run;
 mod run_hooks;
 pub mod shell;

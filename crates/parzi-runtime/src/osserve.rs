@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fs4::fs_std::FileExt;
-use parzi_core::store::{Event, SessionMeta, SessionStore};
+use parzi_core::store::{Event, SessionStore};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 use crate::desk;
 use crate::handler::ui_event;
 use crate::orchestrator::Orchestrator;
+use crate::rpc::{self, fail, str_arg};
 use crate::tools::{
     humanize_tool_call, Approval, Approver, AskRequest, Asker, AutoApprover, ToolCallInfo,
 };
@@ -93,26 +94,21 @@ impl ParkedApprover {
     #[must_use]
     pub fn list(&self) -> Vec<Value> {
         let map = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-        let mut rows: Vec<Value> = map.iter().map(|(k, p)| listed(k, &p.call)).collect();
-        rows.sort_by(|a, b| {
-            a.get("key")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .cmp(b.get("key").and_then(Value::as_str).unwrap_or(""))
-        });
-        rows
+        let mut keys: Vec<&String> = map.keys().collect();
+        keys.sort();
+        keys.into_iter()
+            .map(|k| rpc::approval_row(k, &map[k].call))
+            .collect()
     }
 
-    pub fn answer(&self, key: &str, allow: bool) -> Result<(), String> {
-        let key = key.trim();
-        if key.is_empty() {
-            return Err("an approval key is required".into());
-        }
+    /// `key` is the whole key or a prefix only one waiting approval has.
+    pub fn answer(&self, key: &str, allow: bool) -> Result<String, String> {
         let pending = {
             let mut map = self.pending.lock().unwrap_or_else(|e| e.into_inner());
-            map.remove(key)
+            let key = rpc::match_key(map.keys(), key)?;
+            map.remove(&key).map(|p| (key, p))
         };
-        let Some(pending) = pending else {
+        let Some((key, pending)) = pending else {
             return Err("approval expired or unknown".into());
         };
         let decision = if allow {
@@ -123,7 +119,7 @@ impl ParkedApprover {
         if pending.tx.send(decision).is_err() {
             return Err("the run is no longer waiting".into());
         }
-        Ok(())
+        Ok(key)
     }
 }
 
@@ -191,18 +187,22 @@ impl ParkedAsker {
     }
 
     fn answer(&self, key: &str, session: &str, text: &str) -> Result<(), String> {
-        let entry = self
-            .pending
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(key);
-        let Some((bound, tx)) = entry else {
-            return Err("question expired or unknown".into());
+        let tx = {
+            let mut map = self
+                .pending
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // Checked before removing: a wrong answer must leave it waiting.
+            match map.get(key) {
+                None => return Err("question expired or unknown".into()),
+                Some((bound, _)) if !session.is_empty() && bound != session => {
+                    return Err("answer is for another session".into());
+                }
+                Some(_) => map.remove(key).map(|(_, tx)| tx),
+            }
         };
-        if !session.is_empty() && bound != session {
-            return Err("answer is for another session".into());
-        }
-        tx.send(text.to_string())
+        tx.ok_or_else(|| "question expired or unknown".to_string())?
+            .send(text.to_string())
             .map_err(|_| "the run is no longer waiting".into())
     }
 }
@@ -234,19 +234,9 @@ impl Asker for ParkedAsker {
             .remove(&key);
         match out {
             Ok(Ok(a)) if !a.trim().is_empty() => a,
-            _ => "the user didn't answer. Decide yourself and say what you assumed".into(),
+            _ => rpc::NO_ANSWER.into(),
         }
     }
-}
-
-fn listed(key: &str, call: &ToolCallInfo) -> Value {
-    json!({
-        "key": key,
-        "session": call.session,
-        "name": call.name,
-        "lane": call.lane,
-        "label": humanize_tool_call(&call.name, &call.args),
-    })
 }
 
 struct State {
@@ -573,13 +563,13 @@ async fn dispatch(state: &State, req: &Value) -> Value {
             "version": env!("CARGO_PKG_VERSION"),
             "device": parzi_core::device::this(),
         }),
-        "session.list" => session_list(&state.orch),
-        "session.show" | "session.export" => session_show(&state.orch, req, op == "session.export"),
+        "session.list" => rpc::session_list(&state.orch),
+        "session.show" | "session.export" => rpc::session_show(&state.orch, req, op == "session.export"),
         "session.events" => session_events(&state.orch, req),
-        "session.kill" => session_kill(&state.orch, req).await,
-        "session.fork" => session_fork(&state.orch, req).await,
-        "session.rename" => session_rename(&state.orch, req),
-        "session.delete" => delete_session(&state.orch, req).await,
+        "session.kill" => rpc::session_kill(&state.orch, req).await,
+        "session.fork" => rpc::session_fork(&state.orch, req),
+        "session.rename" => rpc::session_rename(&state.orch, req),
+        "session.delete" => rpc::session_delete(&state.orch, req).await,
         "session.send" => session_send(state, req).await,
         "approval.list" => json!({ "ok": true, "approvals": state.approver.list() }),
         "approval.answer" => approval_answer(&state.approver, req),
@@ -624,48 +614,8 @@ async fn dispatch(state: &State, req: &Value) -> Value {
     }
 }
 
-fn str_arg(req: &Value, key: &str) -> String {
-    req.get(key)
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string()
-}
-
-fn fail(error: impl Into<String>) -> Value {
-    json!({ "ok": false, "error": error.into() })
-}
-
 fn resolve(orch: &Orchestrator, id: &str) -> Result<String, Value> {
     orch.store().resolve_id(id).map_err(|e| fail(e.to_string()))
-}
-
-fn session_list(orch: &Orchestrator) -> Value {
-    match orch.store().list() {
-        Ok(rows) => json!({ "ok": true, "sessions": rows }),
-        Err(e) => fail(e.to_string()),
-    }
-}
-
-fn session_show(orch: &Orchestrator, req: &Value, export: bool) -> Value {
-    let id = match resolve(orch, &str_arg(req, "id")) {
-        Ok(id) => id,
-        Err(v) => return v,
-    };
-    let meta = match orch.store().get(&id) {
-        Ok(m) => m,
-        Err(e) => return fail(e.to_string()),
-    };
-    let md = parzi_core::paths::sessions_dir()
-        .ok()
-        .and_then(|d| std::fs::read_to_string(d.join(&id).join("session.md")).ok())
-        .unwrap_or_default();
-    let text: String = md.chars().take(20_000).collect();
-    if export {
-        json!({ "ok": true, "id": id, "text": text })
-    } else {
-        json!({ "ok": true, "session": meta, "text": text })
-    }
 }
 
 /// Metadata plus the stored events from `from` on, at most a page of them.
@@ -728,32 +678,6 @@ async fn providers(orch: &Orchestrator, req: &Value) -> Value {
     json!({ "ok": true, "providers": all })
 }
 
-async fn session_kill(orch: &Orchestrator, req: &Value) -> Value {
-    let id = match resolve(orch, &str_arg(req, "id")) {
-        Ok(id) => id,
-        Err(v) => return v,
-    };
-    match orch.kill(&id).await {
-        Ok(()) => json!({ "ok": true, "id": id }),
-        Err(e) => fail(e.to_string()),
-    }
-}
-
-async fn session_fork(orch: &Orchestrator, req: &Value) -> Value {
-    let id = match resolve(orch, &str_arg(req, "id")) {
-        Ok(id) => id,
-        Err(v) => return v,
-    };
-    let at = req
-        .get("at")
-        .and_then(Value::as_u64)
-        .and_then(|n| usize::try_from(n).ok());
-    match orch.fork(&id, at).await {
-        Ok(meta) => json!({ "ok": true, "id": meta.id, "session": meta }),
-        Err(e) => fail(e.to_string()),
-    }
-}
-
 async fn session_compact(orch: &Orchestrator, req: &Value) -> Value {
     let id = match resolve(orch, &str_arg(req, "id")) {
         Ok(id) => id,
@@ -761,57 +685,6 @@ async fn session_compact(orch: &Orchestrator, req: &Value) -> Value {
     };
     match orch.compact(&id, &str_arg(req, "focus")).await {
         Ok(summary) => json!({ "ok": true, "id": id, "summary": summary }),
-        Err(e) => fail(e.to_string()),
-    }
-}
-
-fn session_rename(orch: &Orchestrator, req: &Value) -> Value {
-    let id = match resolve(orch, &str_arg(req, "id")) {
-        Ok(id) => id,
-        Err(v) => return v,
-    };
-    let title = str_arg(req, "title");
-    if title.is_empty() {
-        return fail("title is required");
-    }
-    match orch.store().set_title(&id, &title) {
-        Ok(()) => json!({ "ok": true, "id": id }),
-        Err(e) => fail(e.to_string()),
-    }
-}
-
-async fn delete_session(orch: &Orchestrator, req: &Value) -> Value {
-    let id = match resolve(orch, &str_arg(req, "id")) {
-        Ok(id) => id,
-        Err(v) => return v,
-    };
-    let all = match orch.store().list() {
-        Ok(all) => all,
-        Err(e) => return fail(e.to_string()),
-    };
-    let by_id: HashMap<&str, &SessionMeta> = all.iter().map(|m| (m.id.as_str(), m)).collect();
-    let mut doomed = vec![id.clone()];
-    for meta in &all {
-        let mut parent = meta.parent_id.as_deref();
-        let mut guard = 0;
-        while let Some(pid) = parent {
-            if pid == id {
-                doomed.push(meta.id.clone());
-                break;
-            }
-            if guard > 50 {
-                break;
-            }
-            guard += 1;
-            parent = by_id.get(pid).and_then(|row| row.parent_id.as_deref());
-        }
-    }
-    for sid in &doomed {
-        let _ = orch.kill(sid).await;
-        orch.drop_shells(sid);
-    }
-    match orch.store().delete_thread(&id) {
-        Ok(n) => json!({ "ok": true, "id": id, "removed": n }),
         Err(e) => fail(e.to_string()),
     }
 }
@@ -907,7 +780,7 @@ fn approval_answer(approver: &ParkedApprover, req: &Value) -> Value {
         return fail("allow true or false is required");
     };
     match approver.answer(&key, allow) {
-        Ok(()) => json!({ "ok": true, "key": key }),
+        Ok(key) => json!({ "ok": true, "key": key }),
         Err(e) => fail(e),
     }
 }

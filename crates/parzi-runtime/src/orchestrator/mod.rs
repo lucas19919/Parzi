@@ -330,8 +330,39 @@ impl Orchestrator {
         Ok(())
     }
 
-    pub async fn fork(&self, id: &str, at_step: Option<usize>) -> Result<SessionMeta> {
+    pub fn fork(&self, id: &str, at_step: Option<usize>) -> Result<SessionMeta> {
         self.store.fork(id, at_step)
+    }
+
+    /// A name the person gave: one line, never empty.
+    pub fn rename(&self, id: &str, title: &str) -> Result<()> {
+        let title = parzi_core::text::fold(title);
+        if title.is_empty() {
+            return Err(parzi_core::ParziError::Store("title is required".into()));
+        }
+        self.store.set_title(id, &title)
+    }
+
+    /// Deletes a session with the subsessions it started: their runs are
+    /// stopped and their shells killed first, so nothing outlives them.
+    pub async fn delete_thread(&self, id: &str) -> Result<usize> {
+        let all = self.store.list()?;
+        self.store.get(id)?;
+        for sid in parzi_core::store::subtree_ids(&all, id) {
+            let _ = self.kill(&sid).await;
+            self.drop_shells(&sid);
+        }
+        self.store.delete_thread(id)
+    }
+
+    /// Removes finished sessions (live runs and their ancestors stay) and
+    /// kills the shells of exactly those removed.
+    pub fn purge_finished(&self) -> Result<usize> {
+        let gone = self.store.purge_finished_ids()?;
+        for sid in &gone {
+            self.drop_shells(sid);
+        }
+        Ok(gone.len())
     }
 
     pub fn harness(&self) -> Arc<dyn HarnessBridge> {
