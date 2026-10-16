@@ -2,6 +2,7 @@ import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
 import { writable } from "svelte/store";
 import { toast } from "./toast";
+import { splitSegments, type Segment } from "./segments";
 
 // Rich renderers (KaTeX + highlight.js) load on first use, off the
 // startup path. Until then code renders plain and math renders as
@@ -326,50 +327,7 @@ export function mdHtml(src: string, _rev: unknown, cache = true): string {
   return renderMarkdown(src, cache);
 }
 
-type Segment =
-  | { kind: "md"; body: string }
-  | { kind: "widget"; body: unknown }
-  | { kind: "artifact"; body: any }
-  // A ```viz block's JSON text, drawn by lib/viz (which explains a bad one).
-  | { kind: "viz"; body: string };
-
-const segCache = new Map<string, Segment[]>();
-const SEG_CACHE_MAX = 400;
-
-export function splitSegments(text: string, cache = true): Segment[] {
-  if (cache) {
-    const hit = segCache.get(text);
-    if (hit !== undefined) return hit;
-  }
-  const out: Segment[] = [];
-  const re = /```(parzi-widget|parzi-artifact|viz)[ \t]*\r?\n([\s\S]*?)```/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push({ kind: "md", body: text.slice(last, m.index) });
-    if (m[1] === "viz") {
-      out.push({ kind: "viz", body: m[2] });
-      last = m.index + m[0].length;
-      continue;
-    }
-    try {
-      const payload = JSON.parse(m[2]);
-      if (m[1] === "parzi-widget") out.push({ kind: "widget", body: payload });
-      else out.push({ kind: "artifact", body: payload });
-    } catch {
-      out.push({ kind: "md", body: m[0] });
-    }
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) out.push({ kind: "md", body: text.slice(last) });
-  if (!cache) return out;
-  if (segCache.size >= SEG_CACHE_MAX) {
-    const first = segCache.keys().next().value;
-    if (first !== undefined) segCache.delete(first);
-  }
-  segCache.set(text, out);
-  return out;
-}
+export { splitSegments, type Segment } from "./segments";
 
 function continues(line: string): boolean {
   return /^(\s*([-*+]|\d+[.)])\s|\s{4,}|>|\||\s*\[[^\]]+\]:)/.test(line);
