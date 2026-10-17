@@ -87,7 +87,11 @@ export interface Tab {
   sessionId?: string | null;
   url?: string;
   cwd?: string;
+  // An agent's page: the session that drives it (its own browser profile).
   owner?: string | null;
+  // A page the person opened from a session (a link in its thread): it sits
+  // under that session in the strip but stays theirs, unlike `owner`.
+  group?: string | null;
   loading?: boolean;
   canGoBack?: boolean;
   canGoForward?: boolean;
@@ -110,8 +114,8 @@ export function sessionTab(sessionId: string | null = null, title = "New session
   return { id: tabId(), kind: "session", title, sessionId, composer: defaultComposer() };
 }
 
-export function pageTab(url = "", id = tabId(), owner: string | null = null): Tab {
-  return { id, kind: "page", title: hostOf(url) || "New page", url, owner, composer: defaultComposer() };
+export function pageTab(url = "", id = tabId(), owner: string | null = null, group: string | null = null): Tab {
+  return { id, kind: "page", title: hostOf(url) || "New page", url, owner, group, composer: defaultComposer() };
 }
 
 export function historyTab(): Tab {

@@ -36,7 +36,7 @@ const STATES = {
     click("plan done items", ".plan .item.fold", ".plan li:last-child > .item.closed"),
     click("plan quote chip", ".plan ul > li:nth-child(2) > .item", ".ob .chip.quote"),
     // A session that is working holds what you send until it is done.
-    click("running session", ".tabs > .tab:nth-child(3) .pick", ".ob .go.stop"),
+    click("running session", ".tabs > .tab:nth-child(2) .pick", ".ob .go.stop"),
     { name: "typed ahead", action: "fill", selector: ".ob textarea", value: "Then add a test for it", ready: { selector: ".ob .go.stop" } },
     { name: "held", action: "press", selector: ".ob textarea", key: "Enter", ready: { selector: ".ob .held" } },
   ],

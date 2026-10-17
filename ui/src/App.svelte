@@ -51,12 +51,25 @@
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
 
+  // Home is the one draft: a session tab with no session yet. It never
+  // shows in the strip; the Home button opens it, and sending from it turns
+  // it into a real tab at the strip's end (a new Home comes when needed).
+  const isHome = (t: Tab) => t.kind === "session" && !t.sessionId;
+
+  // Restored drafts fold into one Home, kept last, out of the strip's way.
+  function oneHome(list: Tab[]): Tab[] {
+    const home = list.find(isHome);
+    return [...list.filter((t) => !isHome(t)), ...(home ? [home] : [])];
+  }
+
   const restored = loadTabs();
-  let tabs: Tab[] = (restored?.tabs ?? [sessionTab()]).map((t) => {
-    const c = ensureComposer((t as Partial<Tab>).composer);
-    if (c.model === "auto") c.model = "";
-    return { ...t, composer: c };
-  });
+  let tabs: Tab[] = oneHome(
+    (restored?.tabs ?? [sessionTab()]).map((t) => {
+      const c = ensureComposer((t as Partial<Tab>).composer);
+      if (c.model === "auto") c.model = "";
+      return { ...t, composer: c };
+    }),
+  );
   let activeId = restored?.active ?? tabs[0].id;
   // In-tab subagent navigation: when the panel opens a descendant of the
   // visible session, we swap the tab's session in place and remember the
@@ -248,7 +261,7 @@
   }
   // Page events (loading, back/forward, blocked counts) patch tabs all
   // the time; the desk and the saved tab list only care about this.
-  $: tabsKey = JSON.stringify([activeId, tabs.map((t) => [t.id, t.kind, t.title, t.url ?? "", t.sessionId ?? "", t.owner ?? "", t.cwd ?? ""])]);
+  $: tabsKey = JSON.stringify([activeId, tabs.map((t) => [t.id, t.kind, t.title, t.url ?? "", t.sessionId ?? "", t.owner ?? "", t.group ?? "", t.cwd ?? ""])]);
   let lastTabsKey = "";
   $: if (tabsKey !== lastTabsKey) {
     lastTabsKey = tabsKey;
@@ -490,13 +503,14 @@
     selectTab(t.id);
   }
 
+  // `to` is a place in the strip, which leaves Home out.
   function moveTab(id: string, to: number) {
-    const from = tabs.findIndex((t) => t.id === id);
+    const strip = tabs.filter((t) => !isHome(t));
+    const from = strip.findIndex((t) => t.id === id);
     if (from < 0 || from === to) return;
-    const next = [...tabs];
-    const [moved] = next.splice(from, 1);
-    next.splice(Math.max(0, Math.min(to, next.length)), 0, moved);
-    tabs = next;
+    const [moved] = strip.splice(from, 1);
+    strip.splice(Math.max(0, Math.min(to, strip.length)), 0, moved);
+    tabs = [...strip, ...tabs.filter(isHome)];
   }
 
   function closeTab(id: string) {
@@ -553,16 +567,19 @@
     omnibar?.focus();
   }
 
-  function newSession() {
-    addTab({ ...sessionTab(), cwd: folder || undefined });
+  // A new session starts from Home: it becomes a tab when you send.
+  function goHome() {
+    let home = tabs.find(isHome);
+    if (!home) {
+      home = { ...sessionTab(), cwd: folder || undefined };
+      home.composer = ensureComposer(home.composer);
+      tabs = [...tabs, home];
+    }
+    selectTab(home.id);
     void tick().then(() => omnibar?.focus());
   }
 
-  function goHome() {
-    const draft = tabs.find((t) => t.kind === "session" && !t.sessionId);
-    if (draft) selectTab(draft.id);
-    else newSession();
-  }
+  const newSession = goHome;
 
   function openPage(url: string, id?: string, owner?: string | null, background = false) {
     const existing = tabs.find((t) => (id ? t.id === id : t.kind === "page" && t.url === url));
@@ -581,6 +598,22 @@
     }
   }
 
+  // A link in a session's thread opens under that session, after the pages
+  // already there, and shows. The page stays the person's own.
+  function openInSession(url: string, sessionId: string) {
+    const existing = tabs.find((t) => t.kind === "page" && t.url === url);
+    if (existing) {
+      if (!existing.owner && !existing.group) patchTab(existing.id, { group: sessionId });
+      selectTab(existing.id);
+      return;
+    }
+    const t = pageTab(url, undefined, null, sessionId);
+    const mine = tabs.map((x, i) => (x.sessionId === sessionId || x.owner === sessionId || x.group === sessionId ? i : -1)).filter((i) => i >= 0);
+    const at = mine.length ? Math.max(...mine) + 1 : tabs.findIndex((x) => x.id === activeId) + 1;
+    tabs = [...tabs.slice(0, at), t, ...tabs.slice(at)];
+    selectTab(t.id);
+  }
+
   function openPageNext(url: string) {
     const t = pageTab(url);
     const idx = tabs.findIndex((x) => x.id === activeId);
@@ -592,6 +625,10 @@
   // an agent's page keeps its owner and opens behind, like the agent's own.
   function openFromPage(opener: string, url: string) {
     const from = tabs.find((t) => t.id === opener);
+    if (from?.group) {
+      openInSession(url, from.group);
+      return;
+    }
     if (!from?.owner) {
       openPageNext(url);
       return;
@@ -1175,7 +1212,9 @@
   function shortcut(name: string): boolean {
     if (name === "ctrl+p" || name === "ctrl+k") switcherOpen = !switcherOpen;
     else if (name === "ctrl+t") newSession();
-    else if (name === "ctrl+w") closeTab(activeId);
+    else if (name === "ctrl+w") {
+      if (!isHome(tab)) closeTab(activeId);
+    }
     else if (name === "ctrl+comma") tab.kind === "settings" ? closeTab(activeId) : openSettings();
     else if (name === "ctrl+b") openBrain();
     else if (name === "ctrl+j" || name === "ctrl+shift+a") toggleInfo();
@@ -1191,8 +1230,13 @@
         omnibar?.focus();
       }
     } else if (name === "ctrl+tab" || name === "ctrl+shift+tab") {
-      const idx = tabs.findIndex((t) => t.id === activeId);
-      selectTab(tabs[(idx + (name === "ctrl+tab" ? 1 : -1) + tabs.length) % tabs.length].id);
+      // Cycles the strip; from Home it starts at either end.
+      const strip = tabs.filter((t) => !isHome(t));
+      if (strip.length) {
+        const idx = strip.findIndex((t) => t.id === activeId);
+        const step = name === "ctrl+tab" ? 1 : -1;
+        selectTab(strip[idx < 0 ? (step > 0 ? 0 : strip.length - 1) : (idx + step + strip.length) % strip.length].id);
+      }
     } else return false;
     return true;
   }
@@ -1316,7 +1360,9 @@
     // as a tab, reusing the agent's page when one shows the same URL.
     const onOpenPage = (e: Event) => {
       const url = (e as CustomEvent<string>).detail ?? "";
-      if (url) openPage(url);
+      if (!url) return;
+      if (tab.kind === "session" && tab.sessionId) openInSession(url, tab.sessionId);
+      else openPage(url);
     };
     document.addEventListener("parzi:open-page", onOpenPage);
     const unClear = provideClearSessions(clearFinishedSessions);
@@ -1385,7 +1431,8 @@
 
   {#if !immersive}
     <TopBar
-      {tabs}
+      tabs={tabs.filter((t) => !isHome(t))}
+      homeActive={isHome(tab)}
       activeTabId={activeId}
       {sessionLanes}
       on:select={(e) => selectTab(e.detail.id)}

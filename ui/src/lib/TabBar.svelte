@@ -58,25 +58,34 @@
     return normLane(sessionLanes[t.sessionId] ?? "");
   }
 
-  // Page tabs opened by an agent attach under their session tab instead
-  // of cluttering the strip. Sessions with attached pages get a collapse
-  // caret; attached pages render smaller and indented.
+  // Pages opened from a session (by its agent, or a link in its thread)
+  // attach under its tab instead of cluttering the strip: one framed
+  // group, the session first, its pages after it with a small hook.
   $: groups = (() => {
     const bySession = new Map<string, Tab>();
     for (const t of shown) if (t.kind === "session" && t.sessionId) bySession.set(t.sessionId, t);
     const kids = new Map<string, Tab[]>();
     const lone: Tab[] = [];
     for (const t of shown) {
-      if (t.kind === "page" && t.owner && bySession.has(t.owner)) {
-        const arr = kids.get(t.owner) ?? [];
+      const parent = t.kind === "page" ? t.owner || t.group : null;
+      if (parent && bySession.has(parent)) {
+        const arr = kids.get(parent) ?? [];
         arr.push(t);
-        kids.set(t.owner, arr);
+        kids.set(parent, arr);
       } else {
         lone.push(t);
       }
     }
     return { bySession, kids, lone };
   })();
+
+  const hostOfUrl = (url?: string) => {
+    try {
+      return url ? new URL(url).hostname.replace(/^www\./, "") : "page";
+    } catch {
+      return "page";
+    }
+  };
 
   function toggleGroup(sessionId: string) {
     touched = new Set(touched).add(sessionId);
@@ -188,8 +197,8 @@
   {#each groups.lone as tab (tab.id)}
     {@const lane = laneOf(tab)}
     {@const attached = tab.kind === "session" && tab.sessionId ? (groups.kids.get(tab.sessionId) ?? []) : []}
-    {@const shut = tab.sessionId ? collapsed.has(tab.sessionId) : false}
-    {@const linked = `${attached.length} linked page${attached.length === 1 ? "" : "s"}`}
+    {@const shut = tab.sessionId ? collapsed.has(tab.sessionId) && !attached.some((a) => a.id === activeTabId) : false}
+    {@const linked = `${attached.length} page${attached.length === 1 ? "" : "s"} from this session`}
     {#if attached.length && !shut}
       <div class="group">
         <div
@@ -228,19 +237,16 @@
             on:click|stopPropagation={() => tab.sessionId && toggleGroup(tab.sessionId)}
           >
             <Icon name="chevDown" size={12} />
-            <span class="n">{attached.length}</span>
           </button>
-          {#if tabs.length > 1}
-            <button
-              class="close"
-              tabindex="-1"
-              aria-hidden="true"
-              use:tooltip={"Close tab"}
-              on:click|stopPropagation={() => dispatch("close", { id: tab.id })}
-            >
-              <Icon name="close" size={12} />
-            </button>
-          {/if}
+          <button
+            class="close"
+            tabindex="-1"
+            aria-hidden="true"
+            use:tooltip={"Close tab"}
+            on:click|stopPropagation={() => dispatch("close", { id: tab.id })}
+          >
+            <Icon name="close" size={12} />
+          </button>
         </div>
         {#each attached as sub (sub.id)}
           <div class="tab sub" class:active={sub.id === activeTabId} on:auxclick={(e) => onAux(e, sub.id)}>
@@ -249,7 +255,7 @@
               role="tab"
               tabindex="0"
               aria-selected={sub.id === activeTabId}
-              title={sub.url || sub.title}
+              title={`${tab.title || "Session"} › ${sub.title || sub.url || "New page"}`}
               on:click={() => onPick(sub.id)}
               on:keydown={(e) => onKey(e, sub.id)}
             >
@@ -312,30 +318,37 @@
           class="close group-caret shut"
           tabindex="-1"
           aria-hidden="true"
-          use:tooltip={`Show ${linked}`}
+          use:tooltip={`Show ${linked}: ${attached.map((a) => a.title || hostOfUrl(a.url)).join(", ")}`}
           on:click|stopPropagation={() => tab.sessionId && toggleGroup(tab.sessionId)}
         >
           <Icon name="chevDown" size={12} />
-          <span class="n">{attached.length}</span>
+          <span class="faces">
+            {#each attached.slice(0, 3) as a (a.id)}
+              {#if a.url && !broken.has(a.url)}
+                <img src={a.favicon || faviconUrl(a.url)} alt="" on:error={() => a.url && (broken = new Set(broken).add(a.url))} />
+              {:else}
+                <span class="face"><Icon name="globe" size={12} /></span>
+              {/if}
+            {/each}
+          </span>
+          {#if attached.length > 3}<span class="n">+{attached.length - 3}</span>{/if}
         </button>
       {/if}
-      {#if tabs.length > 1}
-        <button
-          class="close"
-          tabindex="-1"
-          aria-hidden="true"
-          use:tooltip={"Close tab"}
-          on:click|stopPropagation={() => dispatch("close", { id: tab.id })}
-        >
-          <Icon name="close" size={12} />
-        </button>
-      {/if}
+      <button
+        class="close"
+        tabindex="-1"
+        aria-hidden="true"
+        use:tooltip={"Close tab"}
+        on:click|stopPropagation={() => dispatch("close", { id: tab.id })}
+      >
+        <Icon name="close" size={12} />
+      </button>
     </div>
     {/if}
   {/each}
 </div>
 {#if !vertical}
-  <button class="new" use:tooltip={"New tab (Ctrl+T)"} on:click={() => dispatch("newTab")}>
+  <button class="new" use:tooltip={"New session (Ctrl+T)"} on:click={() => dispatch("newTab")}>
     <Icon name="plus" />
   </button>
 {/if}
@@ -456,20 +469,39 @@
   .tab.active .kind {
     color: var(--accent);
   }
+  /* A page under its session: same type as any tab, a little narrower, and
+     a hook on its left that ties it to the session before it. */
   .tab.sub {
+    position: relative;
     height: 24px;
-    width: 160px;
-    min-width: 72px;
-    font-size: var(--fs-xs);
-    opacity: 0.85;
+    width: 168px;
+    min-width: 80px;
+    margin-left: 10px;
   }
+  .tab.sub::before {
+    content: "";
+    position: absolute;
+    left: -9px;
+    top: 4px;
+    width: 6px;
+    height: 7px;
+    border-left: 1.5px solid var(--muted);
+    border-bottom: 1.5px solid var(--muted);
+    border-bottom-left-radius: 3px;
+    opacity: 0.6;
+  }
+  .tabs.vertical .tab.sub {
+    margin-left: 14px;
+  }
+  /* The session and its pages read as one unit: framed and tinted. */
   .group {
     display: inline-flex;
     align-items: center;
     gap: 2px;
     padding: 2px;
     border-radius: var(--radius-lg);
-    background: var(--hover);
+    background: color-mix(in srgb, var(--text) 5%, transparent);
+    box-shadow: inset 0 0 0 1px var(--line);
   }
   .close.group-caret {
     opacity: 1;
@@ -483,6 +515,25 @@
   }
   .group-caret.shut :global(svg) {
     transform: rotate(-90deg);
+  }
+  .faces {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 2px;
+  }
+  .faces img,
+  .faces .face {
+    width: 14px;
+    height: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    background: var(--panel);
+    box-shadow: 0 0 0 1.5px var(--panel);
+  }
+  .faces > * + * {
+    margin-left: -4px;
   }
   .group-caret .n {
     font-size: var(--fs-xs);

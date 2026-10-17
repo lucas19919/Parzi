@@ -13,6 +13,8 @@
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
+  // Home shows: its button reads as the selected place.
+  export let homeActive = false;
   export let sessionLanes: Record<string, string> = {};
 
   const dispatch = createEventDispatcher<{
@@ -37,7 +39,7 @@
   $: unreadCount = $notifications.filter((n) => !n.read).length;
 
   const MENU = [
-    { label: "New tab", key: "Ctrl+T", icon: "plus", run: () => dispatch("newTab") },
+    { label: "New session", key: "Ctrl+T", icon: "plus", run: () => dispatch("newTab") },
     { label: "Search", key: "Ctrl+P", icon: "search", run: () => dispatch("search") },
     { label: "History", key: "Ctrl+H", icon: "clock", run: () => dispatch("history") },
     { label: "Brain", key: "Ctrl+B", icon: "brain", run: () => dispatch("brain") },
@@ -106,7 +108,7 @@
         </div>
       {/if}
     </div>
-    <button class="icon-btn" use:tooltip={"Home"} on:click={() => dispatch("home")}>
+    <button class="icon-btn" class:active={homeActive} aria-pressed={homeActive} use:tooltip={"Home (Ctrl+T)"} on:click={() => dispatch("home")}>
       <Icon name="home" />
     </button>
     <TabBar

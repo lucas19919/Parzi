@@ -106,7 +106,7 @@ export function removePin(url: string) {
 const TABS_KEY = "parzi.tabs.v1";
 
 export function saveTabs(tabs: Tab[], active: string) {
-  const slim = tabs.map(({ id, kind, title, sessionId, url, cwd }) => ({ id, kind, title, sessionId, url, cwd }));
+  const slim = tabs.map(({ id, kind, title, sessionId, url, cwd, group }) => ({ id, kind, title, sessionId, url, cwd, group }));
   store(TABS_KEY, { tabs: slim, active });
 }
 
