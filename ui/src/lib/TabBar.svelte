@@ -189,7 +189,7 @@
 <!-- A tablist may only own tabs, so each tab is a plain pill holding the
      role="tab" element and, beside it, pointer-only caret and close
      buttons (hidden from assistive tech; Ctrl+W closes the active tab). -->
-<div class="tabs" class:vertical role="tablist" bind:this={strip}>
+<div class="tabs" class:vertical class:none={!shown.length} role="tablist" bind:this={strip}>
   {#each groups.lone as tab (tab.id)}
     {@const attached = tab.kind === "session" && tab.sessionId ? (groups.kids.get(tab.sessionId) ?? []) : []}
     {@const shut = tab.sessionId ? collapsed.has(tab.sessionId) && !attached.some((a) => a.id === activeTabId) : false}
@@ -349,6 +349,10 @@
     gap: 4px;
     min-width: 0;
     overflow-x: auto;
+  }
+  /* No tabs: no slot, so Home and + sit one gap apart. */
+  .tabs.none {
+    display: none;
   }
   .tabs.vertical {
     flex-direction: column;

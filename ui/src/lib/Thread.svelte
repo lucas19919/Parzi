@@ -16,6 +16,7 @@
   import { toast, toastError } from "./toast";
   import { tooltip } from "./tooltip";
   import { formatTime } from "./time";
+  import { viewImage } from "./imageViewer";
   import { board, nextStep, setupWaits } from "./providerStore";
 
   // What the waiting prompt answers: the nearest assistant message above
@@ -437,8 +438,14 @@ ${e.text}` : e.text;
   }
 
   async function onClick(e: MouseEvent) {
-    if (await handleLinkClick(e, folder)) return;
     const el = e.target as HTMLElement;
+    // An image you sent or one in a reply opens big; one inside a link
+    // stays a link.
+    if (el instanceof HTMLImageElement && el.closest(".sent, .msg") && !el.closest("a")) {
+      viewImage(el.currentSrc || el.src, el.alt);
+      return;
+    }
+    if (await handleLinkClick(e, folder)) return;
     const copyBtn = el.closest<HTMLElement>("[data-copy]");
     if (copyBtn) {
       const code = copyBtn.closest(".codeblock")?.querySelector("code")?.textContent ?? "";
@@ -773,6 +780,7 @@ ${e.text}` : e.text;
     margin-top: 6px;
   }
   .sent img {
+    cursor: zoom-in;
     max-width: 220px;
     max-height: 160px;
     object-fit: cover;

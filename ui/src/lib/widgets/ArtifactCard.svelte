@@ -7,6 +7,7 @@
   import { svgDataUrl } from "../svgImage";
   import { toast } from "../toast";
   import { tooltip } from "../tooltip";
+  import { viewImage } from "../imageViewer";
 
   export let data: any;
   export let fallbackId = "";
@@ -108,10 +109,14 @@
     <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
     <div class="art-md" on:click={(e) => void handleLinkClick(e)}>{@html mdHtml(content, $richReady)}</div>
   {:else if kind === "svg" && !showCode && svgUrl && !svgBroken}
-    <img class="art-svg" src={svgUrl} alt={title} on:error={() => (svgBroken = true)} />
+    <button class="art-zoom" aria-label="View {title || 'image'} bigger" on:click={() => svgUrl && viewImage(svgUrl, title)}>
+      <img class="art-svg" src={svgUrl} alt={title} on:error={() => (svgBroken = true)} />
+    </button>
   {:else if kind === "image" && imageUrl}
     {#await imageUrl then url}
-      <img class="art-img" src={url} alt={title} />
+      <button class="art-zoom" aria-label="View {title || 'image'} bigger" on:click={() => viewImage(url, title)}>
+        <img class="art-img" src={url} alt={title} />
+      </button>
     {:catch e}
       <div class="art-error">Couldn't load the image: {e}</div>
     {/await}
@@ -177,6 +182,7 @@
   }
   .art-svg { width: 100%; height: auto; display: block; }
   .art-img { width: 100%; height: auto; display: block; border-radius: var(--radius); }
+  .art-zoom { display: block; width: 100%; padding: 0; background: none; border: none; border-radius: var(--radius); cursor: zoom-in; }
   .art-render { width: 100%; height: 320px; min-height: 160px; border: none; background: transparent; display: block; overflow: auto; }
   .art-code { font-size: var(--fs-sm); }
   .art-code.clamped :global(.codeblock.clamped) { max-height: 420px; }

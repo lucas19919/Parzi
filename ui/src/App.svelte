@@ -17,6 +17,7 @@
   import Omnibar from "./lib/Omnibar.svelte";
   import PanelHeader from "./lib/PanelHeader.svelte";
   import SessionInfo from "./lib/SessionInfo.svelte";
+  import ImageViewer from "./lib/ImageViewer.svelte";
   import PlanInline from "./lib/PlanInline.svelte";
   import Thread from "./lib/Thread.svelte";
   import SessionHeader from "./lib/SessionHeader.svelte";
@@ -1710,6 +1711,7 @@
     </main>
   </div>
 
+  <ImageViewer />
   <Switcher
     open={switcherOpen}
     {threads}

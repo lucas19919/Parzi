@@ -17,6 +17,7 @@
   import { tooltip } from "./tooltip";
   import { boxText, firstRows, looksLikeUrl, mergeRows, pageRows, phraseRows, type Suggestion } from "./suggest";
   import type { IconName } from "./icons";
+  import { viewImage } from "./imageViewer";
 
   export let input = "";
   export let model = "";
@@ -560,7 +561,11 @@
         {/each}
         {#each attachments ?? [] as a (a)}
           <span class="chip" transition:scale={{ duration: 140, start: 0.9 }}>
-            {#if thumbs[a]}<img src={thumbs[a]} alt="" draggable="false" />{:else}<Icon name="file" size={12} />{/if}
+            {#if thumbs[a]}
+              <button class="thumb" aria-label="View {shortName(a)}" use:tooltip={"View"} on:click={() => viewImage(thumbs[a] ?? "", shortName(a))}>
+                <img src={thumbs[a]} alt="" draggable="false" />
+              </button>
+            {:else}<Icon name="file" size={12} />{/if}
             <span class="chip-name" title={a}>{shortName(a)}</span>
             <button use:tooltip={`Remove ${a}`} on:click={() => (attachments = attachments.filter((x) => x !== a))}>
               <Icon name="close" size={12} />
@@ -1045,6 +1050,15 @@
     height: 18px;
     object-fit: cover;
     border-radius: 3px;
+  }
+  /* The chip's own thumbnail opens the picture big. */
+  .chip .thumb {
+    display: inline-flex;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 3px;
+    cursor: zoom-in;
   }
   .chip-name {
     overflow: hidden;

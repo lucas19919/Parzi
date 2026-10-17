@@ -259,4 +259,5 @@ kbd {
 .msg li { margin: 0.2em 0; }
 .msg li::marker { color: var(--muted); }
 .msg hr { border: none; border-top: 1px solid var(--line); margin: 1em 0; }
-.msg img { max-width: 100%; border-radius: var(--radius); }
+.msg img { max-width: 100%; border-radius: var(--radius); cursor: zoom-in; }
+.msg a img { cursor: pointer; }

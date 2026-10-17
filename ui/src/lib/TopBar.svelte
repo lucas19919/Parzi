@@ -159,13 +159,14 @@
     justify-content: space-between;
     position: relative;
     z-index: 100;
-    padding-left: 10px;
+    padding-left: 8px;
     user-select: none;
   }
+  /* One 4px step between the menu, Home, the tabs and +. */
   .left {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     height: 100%;
     flex: 1;
     min-width: 0;
