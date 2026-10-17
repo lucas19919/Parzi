@@ -15,7 +15,6 @@
   export let activeTabId = "";
   // Home shows: its button reads as the selected place.
   export let homeActive = false;
-  export let sessionLanes: Record<string, string> = {};
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -114,7 +113,6 @@
     <TabBar
       {tabs}
       {activeTabId}
-      {sessionLanes}
       on:select={(e) => dispatch("select", e.detail)}
       on:close={(e) => dispatch("close", e.detail)}
       on:move={(e) => dispatch("move", e.detail)}

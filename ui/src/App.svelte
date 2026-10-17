@@ -215,7 +215,7 @@
       remoteInfo.set(await remote.connect());
       await refreshRemoteBoard();
     } catch (e) {
-      toast(`Can't reach the server, so this stays on this PC: ${e}`, true);
+      toast(`Can't reach the remote, so this stays on this PC: ${e}`, true);
       comp.remote = false;
       comp = comp;
       preferRemote = false;
@@ -245,7 +245,8 @@
   $: openRequest = requests.find((r) => r.session === shown) ?? null;
   // Requests wait on you as questions do, in the plan and the session column.
   $: asks = [...questions, ...requests.map((r) => ({ key: r.key, session: r.session, question: r.request, options: [] }))];
-  $: sessionLanes = Object.fromEntries(threads.map((t) => [t.id, t.lane ?? ""]));
+  // A side task (or a helper) leads back to the session it came from.
+  $: parent = meta?.parent_id ? (threads.find((t) => t.id === meta?.parent_id) ?? null) : null;
   // Folder-driven side effects fire on value change only: without the
   // guard every keystroke (same folder string, fresh dirty flag) would
   // re-invoke git_branch + brain_context and pile backend work behind typing.
@@ -1502,7 +1503,6 @@
       tabs={tabs.filter((t) => !isHome(t))}
       homeActive={isHome(tab)}
       activeTabId={activeId}
-      {sessionLanes}
       on:select={(e) => selectTab(e.detail.id)}
       on:close={(e) => closeTab(e.detail.id)}
       on:move={(e) => moveTab(e.detail.id, e.detail.to)}
@@ -1570,6 +1570,7 @@
               {branch}
               lane={meta?.lane ?? ""}
               {folder}
+              parentTitle={parent ? parent.title || "Untitled" : ""}
               agentCount={familyActive}
               panelOpen={infoShown}
               canAct={!!shown}
@@ -1585,6 +1586,7 @@
               on:delete={() => shown && remove(shown)}
               on:compact={() => onCommand("compact")}
               on:plan={() => toggleInfo()}
+              on:back={() => parent && openSession(parent.id)}
             />
             <div class="workarea">
               <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl} on:scroll={() => (farFromBottom = !nearBottom())}>
@@ -1862,8 +1864,11 @@
     overflow-x: hidden;
     overflow-y: auto;
     padding-bottom: calc(var(--dock) + 30px);
+    /* The thread fades in under the header and out behind the composer. */
     mask-image: linear-gradient(
       to bottom,
+      transparent 0,
+      #000 18px,
       #000 calc(100% - var(--dock) - 28px),
       transparent calc(100% - var(--dock) - 4px)
     );

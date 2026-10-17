@@ -67,7 +67,7 @@
       ? [{ id: "previews", icon: "spark" as IconName, title: "Component previews", sub: "Live Omnibar variants, side by side", run: () => dispatch("previews") }]
       : []),
     { id: "settings", icon: "settings", title: "Settings", sub: "Agents, appearance, system", run: () => dispatch("settings") },
-    { id: "setup", icon: "spark", title: "Set up Parzi", sub: "Agents, browser, tools, server", run: () => dispatch("setup") },
+    { id: "setup", icon: "spark", title: "Set up Parzi", sub: "Agents, browser, tools, remote", run: () => dispatch("setup") },
   ];
   const MAX_SESSIONS = 50;
 

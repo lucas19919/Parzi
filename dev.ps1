@@ -20,6 +20,15 @@ if (-not (Test-Path $Env:PARZI_HOME)) {
     New-Item -ItemType Directory -Path $Env:PARZI_HOME -Force | Out-Null
 }
 
+# Agents Parzi installs itself (Antigravity) live under the real PARZI_HOME.
+# Share them, so the dev instance offers the same agents and models; their
+# sign-ins are the agents' own and already shared.
+$DevAgents = "$Env:PARZI_HOME\agents"
+$RealAgents = "$HomeDir\.parzi\agents"
+if (-not (Test-Path $DevAgents) -and (Test-Path $RealAgents)) {
+    New-Item -ItemType Junction -Path $DevAgents -Target $RealAgents | Out-Null
+}
+
 Write-Host "Starting Parzi in Isolated Dev Mode..." -ForegroundColor Cyan
 Write-Host "  CARGO_TARGET_DIR: $Env:CARGO_TARGET_DIR" -ForegroundColor Gray
 Write-Host "  PARZI_HOME:       $Env:PARZI_HOME" -ForegroundColor Gray

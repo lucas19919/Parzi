@@ -12,7 +12,7 @@
   import { toast } from "./toast";
   import { bare } from "./suggest";
   import { agentOf, whereOf } from "./sessions";
-  import { laneIcon, normLane } from "./lanes";
+  import { normLane } from "./lanes";
   import { byDay, formatTime as time } from "./time";
   import { tooltip } from "./tooltip";
 
@@ -53,10 +53,6 @@
 
   function laneOf(s: SessionMeta): string {
     return normLane(s.lane ?? "");
-  }
-
-  function laneIconFor(s: SessionMeta): "brain" | "bot" | "chat" {
-    return laneIcon(s.lane ?? "");
   }
 
   function byFolder(list: Bookmark[]) {
@@ -140,7 +136,7 @@
             <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
               <span class="time">{time(s.at)}</span>
               <span class="icon">
-                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name={laneIconFor(s)} />{/if}
+                {#if hasMark(agentOf(s))}<ProviderLogo provider={agentOf(s)} size={13} />{:else}<Icon name="bot" />{/if}
               </span>
               <span class="title">{s.title || "Untitled session"}</span>
               <span class="url" class:live={running.has(s.id)}>{running.has(s.id) ? "Running" : whereOf(s)}</span>

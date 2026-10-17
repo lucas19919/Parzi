@@ -7,8 +7,11 @@
 
   export let title = "";
   export let branch = "";
+  // For the context breakdown.
   export let lane = "";
   export let folder = "";
+  // A side task's session it came from: a way back to it.
+  export let parentTitle = "";
   export let canAct = false;
   export let agentCount = 0;
   export let panelOpen = false;
@@ -90,6 +93,11 @@
 
 <div class="head">
   <div class="left">
+    {#if parentTitle}
+      <button class="icon-btn back" aria-label="Back to {parentTitle}" use:tooltip={`Back to ${parentTitle}`} on:click={() => dispatch("back")}>
+        <Icon name="arrowLeft" />
+      </button>
+    {/if}
     {#if editing}
       <input bind:this={field} bind:value={draft} on:keydown={onKey} on:blur={commit} aria-label="Session title" />
     {:else}
@@ -97,10 +105,6 @@
     {/if}
     {#if branch}
       <span class="branch"><Icon name="branch" size={12} />{branch}</span>
-    {/if}
-    {#if lane === "work" || lane === "build"}
-      {@const work = lane === "work"}
-      <span class="lane" class:worklane={work}>{work ? "Work" : "Build"}</span>
     {/if}
   </div>
   {#if canAct}
@@ -177,15 +181,18 @@
 </div>
 
 <style>
+  /* No rule under it: the thread fades in below instead. */
   .head {
-    height: 42px;
+    height: 46px;
     flex: none;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 14px 0 20px;
-    border-bottom: 1px solid var(--line);
+    padding: 0 10px 0 20px;
     user-select: none;
+  }
+  .head:has(.back) {
+    padding-left: 10px;
   }
   .left {
     display: flex;
@@ -224,20 +231,6 @@
     font-size: var(--fs-xs);
     color: var(--muted);
   }
-  .lane {
-    flex: none;
-    padding: 1px 7px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--text) 8%, transparent);
-    color: var(--muted);
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    letter-spacing: 0.2px;
-  }
-  .lane.worklane {
-    background: color-mix(in srgb, var(--work) 18%, transparent);
-    color: var(--work);
-  }
   .menu {
     position: relative;
     display: flex;
@@ -261,6 +254,10 @@
   .icon-btn:hover {
     background: var(--hover);
     color: var(--text);
+  }
+  .back {
+    flex: none;
+    margin-right: -2px;
   }
   .icon-btn.on {
     background: var(--selected);

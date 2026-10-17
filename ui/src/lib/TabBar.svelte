@@ -4,13 +4,11 @@
   import type { Tab } from "./tabs";
   import { faviconUrl } from "./browserData";
   import { pressDrag, tabDragStarted, tabRelease, type PressDrag } from "./gestures";
-  import { laneIcon, normLane } from "./lanes";
   import { sessionMarks } from "./activity";
   import { tooltip } from "./tooltip";
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
-  export let sessionLanes: Record<string, string> = {};
   export let vertical = false;
 
   const dispatch = createEventDispatcher<{
@@ -54,11 +52,6 @@
       }
     }
     if (changed) collapsed = new Set(collapsed);
-  }
-
-  function laneOf(t: Tab): string {
-    if (t.kind !== "session" || !t.sessionId) return "";
-    return normLane(sessionLanes[t.sessionId] ?? "");
   }
 
   // Pages opened from a session (by its agent, or a link in its thread)
@@ -198,7 +191,6 @@
      buttons (hidden from assistive tech; Ctrl+W closes the active tab). -->
 <div class="tabs" class:vertical role="tablist" bind:this={strip}>
   {#each groups.lone as tab (tab.id)}
-    {@const lane = laneOf(tab)}
     {@const attached = tab.kind === "session" && tab.sessionId ? (groups.kids.get(tab.sessionId) ?? []) : []}
     {@const shut = tab.sessionId ? collapsed.has(tab.sessionId) && !attached.some((a) => a.id === activeTabId) : false}
     {@const linked = `${attached.length} page${attached.length === 1 ? "" : "s"} from this session`}
@@ -226,20 +218,20 @@
               {#if tab.loading || markOf(tab.sessionId) === "running"}
                 <span class="spinner" />
               {:else}
-                <Icon name={laneIcon(lane)} />
+                <Icon name="bot" />
               {/if}
             </span>
             <span class="title">{tab.title || "New session"}</span>
             {#if markOf(tab.sessionId) === "waiting"}<span class="waiting" />{/if}
           </div>
           <button
-            class="close group-caret"
+            class="close count on"
             tabindex="-1"
             aria-hidden="true"
             use:tooltip={`Hide ${linked}`}
             on:click|stopPropagation={() => tab.sessionId && toggleGroup(tab.sessionId)}
           >
-            <Icon name="chevDown" size={12} />
+            {attached.length}
           </button>
           <button
             class="close"
@@ -266,7 +258,7 @@
                 {#if sub.loading || markOf(sub.sessionId) === "running"}
                   <span class="spinner" />
                 {:else if sub.kind === "session"}
-                  <Icon name={laneIcon(laneOf(sub))} />
+                  <Icon name="bot" />
                 {:else if sub.url && !broken.has(sub.url)}
                   <img src={sub.favicon || faviconUrl(sub.url)} alt="" on:error={() => sub.url && (broken = new Set(broken).add(sub.url))} />
                 {:else}
@@ -313,7 +305,7 @@
           {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
             <img src={tab.favicon || faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
           {:else}
-            <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : laneIcon(lane)} />
+            <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : "bot"} />
           {/if}
         </span>
         <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>
@@ -321,23 +313,13 @@
       </div>
       {#if attached.length}
         <button
-          class="close group-caret shut"
+          class="close count"
           tabindex="-1"
           aria-hidden="true"
           use:tooltip={`Show ${linked}: ${attached.map((a) => a.title || hostOfUrl(a.url)).join(", ")}`}
           on:click|stopPropagation={() => tab.sessionId && toggleGroup(tab.sessionId)}
         >
-          <Icon name="chevDown" size={12} />
-          <span class="faces">
-            {#each attached.slice(0, 3) as a (a.id)}
-              {#if a.url && !broken.has(a.url)}
-                <img src={a.favicon || faviconUrl(a.url)} alt="" on:error={() => a.url && (broken = new Set(broken).add(a.url))} />
-              {:else}
-                <span class="face"><Icon name="globe" size={12} /></span>
-              {/if}
-            {/each}
-          </span>
-          {#if attached.length > 3}<span class="n">+{attached.length - 3}</span>{/if}
+          {attached.length}
         </button>
       {/if}
       <button
@@ -387,12 +369,12 @@
   .tabs.vertical .tab.sub {
     max-width: none;
   }
-  /* Equal widths keep the strip's rhythm even; the fill is the only state. */
+  /* Each tab fits its title, up to a limit; the fill is the only state. */
   .tab {
     display: inline-flex;
     align-items: center;
     height: 28px;
-    width: 220px;
+    max-width: 220px;
     flex: 0 1 auto;
     min-width: 96px;
     padding: 0 4px 0 0;
@@ -479,7 +461,7 @@
      inside the session's frame. */
   .tab.sub {
     height: 24px;
-    width: 168px;
+    max-width: 168px;
     min-width: 80px;
   }
   /* The session and its pages read as one unit: framed and tinted. */
@@ -492,41 +474,24 @@
     background: color-mix(in srgb, var(--text) 5%, transparent);
     box-shadow: inset 0 0 0 1px var(--line);
   }
-  .close.group-caret {
+  /* How many pages and side tasks sit under a session; a click shows or
+     hides them. */
+  .close.count {
     opacity: 1;
-    gap: 1px;
     width: auto;
-    min-width: 24px;
-    padding: 4px 2px;
-  }
-  .group-caret :global(svg) {
-    transition: transform 140ms ease;
-  }
-  .group-caret.shut :global(svg) {
-    transform: rotate(-90deg);
-  }
-  .faces {
-    display: inline-flex;
-    align-items: center;
-    margin-left: 2px;
-  }
-  .faces img,
-  .faces .face {
-    width: 14px;
-    height: 14px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 4px;
-    background: var(--panel);
-    box-shadow: 0 0 0 1.5px var(--panel);
-  }
-  .faces > * + * {
-    margin-left: -4px;
-  }
-  .group-caret .n {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--hover);
+    background-clip: border-box;
     font-size: var(--fs-xs);
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
+  }
+  .close.count.on {
+    background: var(--selected);
+    color: var(--text);
   }
   .title {
     flex: 1;
@@ -552,14 +517,14 @@
     opacity: 0;
   }
   .close + .close {
-    margin-left: 8px;
+    margin-left: 4px;
   }
   .tab:hover .close,
   .tab.active .close {
     opacity: 1;
   }
   /* An idle tab lends its close button's room to the title. */
-  .tab:not(:hover):not(.active) .close:not(.group-caret) {
+  .tab:not(:hover):not(.active) .close:not(.count) {
     display: none;
   }
   .close:hover {

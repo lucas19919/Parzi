@@ -253,7 +253,7 @@
           <button class:on={i === step} class:done={i < step} aria-current={i === step ? "step" : undefined} disabled={locked} on:click={() => (step = i)}>{s}</button>
         {/each}
       </div>
-      <button class="x" use:tooltip={locked ? "Wait for the server setup" : "Close"} disabled={locked} on:click={() => finish()}><Icon name="close" /></button>
+      <button class="x" use:tooltip={locked ? "Wait for the remote setup" : "Close"} disabled={locked} on:click={() => finish()}><Icon name="close" /></button>
     </header>
 
     <div class="body">

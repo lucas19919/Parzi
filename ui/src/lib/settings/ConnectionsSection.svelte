@@ -227,7 +227,7 @@
 {:else}
   <div class="pref-section">
     <div class="section-head-with-action">
-      <h3 class="section-title">Server</h3>
+      <h3 class="section-title">Remote</h3>
       {#if !info}
         <button class="sbtn" on:click={() => dispatch("setupRemote")}>Set up</button>
       {/if}
@@ -249,7 +249,7 @@
         <button class="sbtn" disabled={syncing} on:click={syncNow}>{syncing ? "Syncing…" : "Sync now"}</button>
       </div>
       <div class="section-head-with-action">
-        <h3 class="section-title">Agents on the server</h3>
+        <h3 class="section-title">Agents on the remote</h3>
         <button class="sbtn" disabled={checking} on:click={() => checkAgents(true)}>{checking ? "Checking…" : "Check again"}</button>
       </div>
       {#each agents as a (a.provider)}

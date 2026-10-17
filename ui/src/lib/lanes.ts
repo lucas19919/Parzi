@@ -1,13 +1,8 @@
-// Single place for legacy lane names ("code"/"research") and lane icons.
+// Single place for legacy lane names ("code"/"research").
 export function normLane(lane: string): string {
   if (lane === "code") return "build";
   if (lane === "research") return "work";
   return lane;
-}
-
-export function laneIcon(lane: string): "brain" | "bot" | "chat" {
-  const l = normLane(lane);
-  return l === "work" ? "brain" : l === "build" ? "bot" : "chat";
 }
 
 // Settings' permission (lanes.default_mode: ask / auto / deny) is where
