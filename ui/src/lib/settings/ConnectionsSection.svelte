@@ -11,6 +11,8 @@
   import { tooltip } from "../tooltip";
   import { updateConfig } from "../config";
   import { CATALOG, nameFromUrl, remoteServer, remoteUrl, type CatalogConnector, type ServerCfg as Server } from "../connectorCatalog";
+  import ConnectorLogo from "../ConnectorLogo.svelte";
+  import ConnectorDialog from "./ConnectorDialog.svelte";
   import "./shared.css";
 
   export let notify: (msg: string, err?: boolean) => void = () => {};
@@ -21,19 +23,13 @@
   let cfg: ParziConfig | null = null;
   let loadError = "";
   let info: RemoteInfo | null = null;
-  let adding = false;
   let saving = false;
-  let name = "";
-  let line = "";
-  let envText = "";
-  // The catalog connector whose token is being pasted.
-  let tokenFor: CatalogConnector | null = null;
-  let token = "";
+  // The add dialog, open on its directory or its custom form.
+  let dialog: "browse" | "custom" | null = null;
 
   $: servers = Object.entries((cfg?.mcp.servers ?? {}) as Record<string, Server>).sort(([a], [b]) => a.localeCompare(b));
   $: known = new Map(CATALOG.map((c) => [c.id, c]));
-  $: available = CATALOG.filter((c) => !cfg?.mcp.servers[c.id]);
-  $: isUrl = /^https?:\/\//i.test(line.trim());
+  $: added = new Set(Object.keys(cfg?.mcp.servers ?? {}));
 
   // How each connector answered when it last started, this visit.
   interface Health {
@@ -63,26 +59,10 @@
 
   const openOutside = (url: string) => api.openConfirmedUrl(url).catch((e) => notify(String(e), true));
 
-  async function addKnown(c: CatalogConnector) {
-    adding = false;
-    if (c.auth === "token") {
-      tokenFor = tokenFor?.id === c.id ? null : c;
-      token = "";
-      return;
-    }
-    tokenFor = null;
-    if (await save((cf) => (cf.mcp.servers[c.id] = remoteServer(c.url)), "")) void check(c.id);
-  }
-
-  async function addToken() {
-    const c = tokenFor;
-    const t = token.trim();
-    if (!c || !t) return;
-    if (await save((cf) => (cf.mcp.servers[c.id] = remoteServer(c.url, t)), "")) {
-      tokenFor = null;
-      token = "";
-      void check(c.id);
-    }
+  // A directory connector: added (with its token, if it takes one), then
+  // started, which signs in the first time.
+  async function addKnown(c: CatalogConnector, token: string) {
+    if (await save((cf) => (cf.mcp.servers[c.id] = remoteServer(c.url, token)), "")) void check(c.id);
   }
 
   // Linked from Set up Parzi while this shows: follow it.
@@ -125,11 +105,11 @@
   }
 
   // Anything else: a hosted server's address (it signs in like the
-  // catalog's), or the command that starts a local one.
-  async function add() {
-    const url = isUrl ? line.trim() : "";
-    const id = name.trim() || (url ? nameFromUrl(url) : "");
-    const words = url ? [] : splitLine(line);
+  // directory's, or takes an API key), or the command that starts a local one.
+  async function addCustom(a: { name: string; url: string; token: string; command: string; env: string }) {
+    const url = a.url;
+    const id = a.name || (url ? nameFromUrl(url) : "");
+    const words = url ? [] : splitLine(a.command);
     if (!/^[a-z0-9][a-z0-9_-]{0,31}$/i.test(id)) {
       notify("Name it with letters, digits, - or _ (up to 32)", true);
       return;
@@ -138,7 +118,7 @@
       notify("Enter an address or a command", true);
       return;
     }
-    const env = url ? {} : parseEnv(envText);
+    const env = url ? {} : parseEnv(a.env);
     if (typeof env === "string") {
       notify(env, true);
       return;
@@ -147,10 +127,9 @@
       notify(`A connector called ${id} already exists`, true);
       return;
     }
-    const server: Server = url ? remoteServer(url) : { command: words[0], args: words.slice(1), env, enabled: true };
+    const server: Server = url ? remoteServer(url, a.token) : { command: words[0], args: words.slice(1), env, enabled: true };
     if (await save((c) => (c.mcp.servers[id] = server), "")) {
-      adding = false;
-      name = line = envText = "";
+      dialog = null;
       void check(id);
     }
   }
@@ -290,14 +269,17 @@
   </div>
 
   <div class="pref-section">
-    <h3 class="section-title">Connectors</h3>
+    <div class="section-head-with-action">
+      <h3 class="section-title">Connectors</h3>
+      <button class="sbtn add-conn" on:click={() => (dialog = "browse")}><Icon name="plus" size={12} /><span>Add connector</span></button>
+    </div>
 
     {#each servers as [id, srv] (id)}
       {@const k = known.get(id)}
       {@const h = health[id]}
       {@const off = srv.enabled === false}
       <div class="field-card conn" class:off>
-        <span class="mark" aria-hidden="true">{(k?.name ?? id)[0].toUpperCase()}</span>
+        <ConnectorLogo id={id} name={k?.name ?? id} site={k?.site ?? (remoteUrl(srv) ? new URL(remoteUrl(srv)).origin : "")} size={32} />
         <div class="field-info">
           <span class="field-label">{k?.name ?? id}</span>
           <span class="field-hint" class:ok={h?.state === "ok"} class:bad={h?.state === "error"} title={remoteUrl(srv) || [srv.command, ...(srv.args ?? [])].join(" ")}>
@@ -309,8 +291,8 @@
               Connected · {h.tools} tool{h.tools === 1 ? "" : "s"}
             {:else if h?.state === "error"}
               {h.error}
-            {:else if !k}
-              {remoteUrl(srv) || [srv.command, ...(srv.args ?? [])].join(" ")}
+            {:else}
+              {k?.about ?? (remoteUrl(srv) || [srv.command, ...(srv.args ?? [])].join(" "))}
             {/if}
           </span>
         </div>
@@ -324,76 +306,67 @@
           <Icon name="trash" size={12} />
         </button>
       </div>
-    {/each}
-
-    <div class="catalog" data-ui-list>
-      {#each available as c (c.id)}
-        <button class="tile" class:on={tokenFor?.id === c.id} disabled={saving} on:click={() => addKnown(c)}>
-          <span class="mark" aria-hidden="true">{c.name[0]}</span>
-          <span class="tile-name">{c.name}</span>
-          <Icon name="plus" size={12} />
-        </button>
-      {/each}
-      <button
-        class="tile"
-        class:on={adding}
-        on:click={() => {
-          adding = !adding;
-          tokenFor = null;
-        }}
-      >
-        <span class="mark" aria-hidden="true"><Icon name="plus" size={12} /></span>
-        <span class="tile-name">Other</span>
+    {:else}
+      <button class="empty" on:click={() => (dialog = "browse")}>
+        <span class="faces">
+          {#each CATALOG.slice(0, 5) as c (c.id)}
+            <ConnectorLogo id={c.id} name={c.name} site={c.site} size={28} />
+          {/each}
+        </span>
+        <span class="empty-text">Give your agents GitHub, Notion, Linear, Higgsfield and more</span>
+        <Icon name="chevRight" size={12} />
       </button>
-    </div>
-
-    {#if tokenFor}
-      <div class="field-card add">
-        <label>
-          <span class="field-label">{tokenFor.name} {tokenFor.tokenName ?? "token"}</span>
-          <input
-            type="password"
-            bind:value={token}
-            placeholder="Paste it here"
-            autocomplete="off"
-            spellcheck="false"
-            on:keydown={(e) => e.key === "Enter" && addToken()}
-          />
-        </label>
-        <div class="row-end">
-          {#if tokenFor.tokenUrl}
-            <button class="sbtn" on:click={() => tokenFor?.tokenUrl && openOutside(tokenFor.tokenUrl)}>Create one</button>
-          {/if}
-          <button class="sbtn" disabled={saving || !token.trim()} on:click={addToken}>Connect</button>
-        </div>
-      </div>
-    {/if}
-
-    {#if adding}
-      <div class="field-card add">
-        <label>
-          <span class="field-label">Address or command</span>
-          <input class="mono" bind:value={line} placeholder="https://example.com/mcp, or npx -y some-mcp-server" spellcheck="false" />
-        </label>
-        <label>
-          <span class="field-label">Name</span>
-          <input bind:value={name} placeholder={isUrl ? nameFromUrl(line.trim()) : "mail"} spellcheck="false" />
-        </label>
-        {#if line.trim() && !isUrl}
-          <label>
-            <span class="field-label">Environment <span class="field-hint">(optional, NAME=value per line)</span></span>
-            <textarea class="mono" rows="2" bind:value={envText} spellcheck="false" />
-          </label>
-        {/if}
-        <div class="row-end">
-          <button class="sbtn" disabled={saving || !line.trim()} on:click={add}>{saving ? "Adding…" : "Add"}</button>
-        </div>
-      </div>
-    {/if}
+    {/each}
   </div>
 {/if}
 
+{#if dialog}
+  <ConnectorDialog
+    start={dialog}
+    {added}
+    {health}
+    busy={saving}
+    on:connect={(e) => void addKnown(e.detail.connector, e.detail.token)}
+    on:custom={(e) => void addCustom(e.detail)}
+    on:open={(e) => openOutside(e.detail.url)}
+    on:close={() => (dialog = null)}
+  />
+{/if}
+
 <style>
+  .conn.off .field-label {
+    opacity: 0.55;
+  }
+  .empty {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    padding: 14px 16px;
+    background: var(--panel);
+    border: 1px dashed var(--line);
+    border-radius: var(--radius-lg);
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-md);
+    text-align: left;
+    cursor: pointer;
+  }
+  .empty:hover {
+    border-color: var(--muted);
+    color: var(--text);
+  }
+  .faces {
+    display: inline-flex;
+    flex: none;
+  }
+  .faces > :global(* + *) {
+    margin-left: -6px;
+  }
+  .empty-text {
+    flex: 1;
+    min-width: 0;
+  }
   .conn .field-hint {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -401,23 +374,6 @@
   }
   .field-hint.bad {
     color: var(--bad);
-  }
-  .conn.off .mark,
-  .conn.off .field-label {
-    opacity: 0.55;
-  }
-  .mark {
-    width: 28px;
-    height: 28px;
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: var(--radius);
-    background: color-mix(in srgb, var(--text) 8%, transparent);
-    color: var(--text);
-    font-size: var(--fs-md);
-    font-weight: 650;
   }
   .remove {
     width: 28px;
@@ -437,48 +393,6 @@
     background: var(--line);
     color: var(--bad);
   }
-  /* The catalog: one click adds a connector. */
-  .catalog {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 8px;
-  }
-  .tile {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-height: 44px;
-    padding: 8px 12px 8px 8px;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
-    color: var(--muted);
-    font: inherit;
-    font-size: var(--fs-md);
-    text-align: left;
-    cursor: pointer;
-  }
-  .tile:hover:not(:disabled),
-  .tile.on {
-    border-color: var(--muted);
-    color: var(--text);
-  }
-  .tile:disabled {
-    cursor: default;
-    opacity: 0.6;
-  }
-  .tile .mark {
-    width: 26px;
-    height: 26px;
-  }
-  .tile-name {
-    flex: 1;
-    min-width: 0;
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
   .field-card {
     display: flex;
     align-items: center;
@@ -486,38 +400,5 @@
   }
   .field-hint.ok {
     color: var(--ok);
-  }
-  .mono {
-    font-family: var(--mono);
-  }
-  .add {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-  }
-  label {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  input,
-  textarea {
-    background: var(--bg);
-    color: var(--text);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    padding: 6px 8px;
-    font-size: var(--fs-md);
-    resize: vertical;
-  }
-  input:focus,
-  textarea:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  .row-end {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
   }
 </style>

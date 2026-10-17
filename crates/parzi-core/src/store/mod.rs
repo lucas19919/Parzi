@@ -224,6 +224,16 @@ impl SessionStore {
         Ok(())
     }
 
+    /// The session this one was started from: a side task the person sent
+    /// while that one worked. It lists among that session's helpers.
+    pub fn set_parent(&self, id: &str, parent: &str) -> Result<()> {
+        self.update_meta(id, |m| {
+            m.parent_id = Some(parent.to_string());
+            m.updated = Utc::now();
+        })?;
+        Ok(())
+    }
+
     /// The project a session files under, as `project.create` moves it.
     pub fn set_project(&self, id: &str, project: &str) -> Result<()> {
         self.update_meta(id, |m| {

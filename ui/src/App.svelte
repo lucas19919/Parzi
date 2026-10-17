@@ -38,7 +38,7 @@
   import { brainTab, ensureComposer, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, rememberModel, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
   import { sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
-  import { addQuote, MAX_QUOTES, quoteBlock, sameSlug } from "./lib/planModel";
+  import { addQuote, MAX_QUOTES, quoteBlock, sameSlug, splitQuotes } from "./lib/planModel";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
   import { nameOf } from "./lib/providerRows";
   import { addNotification, dropNotification, markSessionRead, type NotificationItem } from "./lib/notificationStore";
@@ -71,11 +71,6 @@
     }),
   );
   let activeId = restored?.active ?? tabs[0].id;
-  // In-tab subagent navigation: when the panel opens a descendant of the
-  // visible session, we swap the tab's session in place and remember the
-  // way back instead of spawning another top-level tab.
-  let navTrail: string[] = [];
-  let navTab = "";
   let threads: SessionMeta[] = [];
   let bg = "";
 
@@ -143,14 +138,15 @@
 
   // Legacy sessions stored lane "code" (today's "build") or "research"
   // (today's "work"): normalized in lib/lanes.ts.
-  function isDescendant(id: string, ancestor: string): boolean {
-    let cur = threads.find((t) => t.id === id)?.parent_id;
-    let guard = 0;
-    while (cur && guard++ < 50) {
-      if (cur === ancestor) return true;
-      cur = threads.find((t) => t.id === cur)?.parent_id;
+  // The nearest session up the parent chain that has a tab: a helper's
+  // tab sits under it in the strip.
+  function hostSessionOf(id: string): string | null {
+    let cur = threads.find((t) => t.id === id)?.parent_id ?? null;
+    for (let guard = 0; cur && guard < 50; guard++) {
+      if (tabs.some((t) => t.kind === "session" && t.sessionId === cur)) return cur;
+      cur = threads.find((t) => t.id === cur)?.parent_id ?? null;
     }
-    return false;
+    return null;
   }
 
   // One parent map per threads change instead of a find() per hop.
@@ -481,10 +477,6 @@
     // Each tab owns its composer; switching only changes the active tab
     // so drafts, mode, model, effort and attachments are preserved intact.
     activeId = id;
-    if (navTab !== id) {
-      navTrail = [];
-      navTab = "";
-    }
     if (next.kind === "session") {
       if (next.sessionId) void showSession(next.sessionId);
       else showDraft();
@@ -533,10 +525,6 @@
       }
     }
     if (settingsReturn && doomed.has(settingsReturn)) settingsReturn = null;
-    if (navTab === id || doomed.has(navTab)) {
-      navTrail = [];
-      navTab = "";
-    }
     const kept = tabs.filter((t) => !doomed.has(t.id));
     if (!kept.length) {
       const fresh = sessionTab();
@@ -723,21 +711,24 @@
   }
 
   function openSession(id: string) {
-    // A descendant of the visible session opens in place (same tab) with
-    // a way back; anything else keeps the old find-or-open-tab behavior.
-    if (shown && id !== shown && isDescendant(id, shown) && tab.kind === "session") {
-      navTrail = [...navTrail, shown];
-      navTab = tab.id;
-      patchTab(tab.id, { sessionId: id, title: threads.find((t) => t.id === id)?.title || "Session" });
-      void showSession(id);
-      return;
-    }
     const existing = tabs.find((t) => t.sessionId === id);
     if (existing) {
       selectTab(existing.id);
       return;
     }
     const title = threads.find((t) => t.id === id)?.title || "Session";
+    // A helper (an agent's, or a side task) opens under the session it came
+    // from, after what is already there: the strip doesn't grow.
+    const host = hostSessionOf(id);
+    if (host) {
+      const t = { ...sessionTab(id, title), group: host };
+      t.composer = ensureComposer(t.composer);
+      const mine = tabs.map((x, i) => (x.sessionId === host || x.group === host || x.owner === host ? i : -1)).filter((i) => i >= 0);
+      const at = Math.max(...mine) + 1;
+      tabs = [...tabs.slice(0, at), t, ...tabs.slice(at)];
+      selectTab(t.id);
+      return;
+    }
     if (tab.kind === "session" && !tab.sessionId && !events.length) {
       patchTab(tab.id, { sessionId: id, title });
       selectTab(tab.id);
@@ -746,21 +737,6 @@
     }
   }
 
-  function goBack() {
-    const prev = navTrail[navTrail.length - 1];
-    if (!prev) return;
-    navTrail = navTrail.slice(0, -1);
-    const host = tabs.find((t) => t.id === navTab);
-    if (host && host.kind === "session") {
-      patchTab(host.id, { sessionId: prev, title: threads.find((t) => t.id === prev)?.title || "Session" });
-      if (host.id === activeId) void showSession(prev);
-    } else {
-      openSession(prev);
-    }
-    if (!navTrail.length) navTab = "";
-  }
-
-  $: backTitle = navTrail.length && navTab === tab.id ? (threads.find((t) => t.id === navTrail[navTrail.length - 1])?.title || "Back") : null;
 
   function openPreview(which = "omnibar") {
     const existing = tabs.find((t) => t.kind === "preview" && t.url === which);
@@ -821,10 +797,6 @@
       return;
     }
     if (target.sessionId && otherAgent) toast(`New session on ${nameOf(agentOf(draft.model))}: a thread stays with the agent it started on`);
-    if (fresh) {
-      navTrail = [];
-      navTab = "";
-    }
     // Quotes go as blocks after the text, as the desk will send them.
     const optimistic: ChatEvent = { kind: "user", text: [prompt, ...quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
     sending = true;
@@ -1033,11 +1005,107 @@
     }
   }
 
+  // A side task: a new session started now, beside this one, from what the
+  // person typed (or a message waiting on the run). It lists under this
+  // session and never writes to it. "@project" points it at that project.
+  async function sideTask(fromHeld = false) {
+    const parent = shown;
+    if (!parent || tab.kind !== "session" || !tab.sessionId) return;
+    let text = "";
+    let quotes: PlanQuote[] = [];
+    let files: string[] = [];
+    if (fromHeld) {
+      const h = take(parent);
+      if (!h) return;
+      ({ text, quotes, files } = h);
+    } else {
+      text = comp.input.trim();
+      quotes = [...(comp.quotes ?? [])];
+      files = [...comp.attachments];
+      if (!text && !quotes.length) return;
+      comp.input = "";
+      comp.attachments = [];
+      comp.quotes = [];
+      comp = comp;
+    }
+    if (!comp.model) {
+      toast("Pick a model first");
+      omnibar?.openModels();
+      comp.input = text;
+      comp = comp;
+      return;
+    }
+    const aimed = await aimAt(text);
+    const where = aimed.folder || (remoteOn ? (meta?.cwd ?? "") : folder);
+    const prompt = [aimed.text, sideBrief(meta?.title || tab.title, events, aimed.title)].filter(Boolean).join("\n\n");
+    try {
+      const id = await api.sendMessage({
+        sessionId: null,
+        model: comp.model,
+        prompt,
+        cwd: where,
+        effort: comp.effort,
+        attachments: files,
+        mode: permission,
+        lane: where ? "build" : "work",
+        remote: remoteOn,
+        quotes: quotes.map((q) => ({ project: q.project, id: q.id })),
+        parent,
+      });
+      running = new Set(running).add(id);
+      void refreshThreads();
+      const busySame = !aimed.folder && running.has(parent);
+      toast(busySame ? "Side task started in this folder too: the two may edit the same files" : `Side task started${aimed.title ? ` in ${aimed.title}` : ""}`);
+    } catch (e) {
+      comp.input = [text, comp.input].filter(Boolean).join("\n\n");
+      comp.attachments = [...files, ...comp.attachments];
+      comp = comp;
+      toastError(e);
+    }
+  }
+
+  // "@website ..." aims a side task at that project's folder.
+  async function aimAt(text: string): Promise<{ text: string; folder: string; title: string }> {
+    const m = /(^|\s)@([\w.-]+)/.exec(text);
+    if (!m) return { text, folder: "", title: "" };
+    const want = m[2].toLowerCase();
+    const list = await brain.projects().catch(() => []);
+    const p = list.find((x) => x.folder && (x.slug.toLowerCase() === want || x.title.toLowerCase().replace(/\s+/g, "-") === want));
+    if (!p) return { text, folder: "", title: "" };
+    return { text: text.replace(m[0], m[1]).trim(), folder: p.folder, title: p.title };
+  }
+
+  // What a side task knows of the session it came from: what that one was
+  // asked and last said, so "do the same for the website" makes sense.
+  function sideBrief(title: string, evs: ChatEvent[], elsewhere: string): string {
+    const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n).trimEnd()}…` : s);
+    const last = (kind: "user" | "assistant") => {
+      const e = [...evs].reverse().find((x) => x.kind === kind && x.text.trim());
+      return e && "text" in e ? splitQuotes(e.text).text.replace(/\n?\[attached: [^\]]+\]/, "").trim() : "";
+    };
+    const asked = last("user");
+    const said = last("assistant");
+    // Tagged so the thread shows it as a small label, not as your words.
+    const from = title.replace(/["<>]/g, "");
+    return [
+      `<side-task from="${from}">`,
+      `This is a side task, started from the session "${from}", which keeps working on its own. Leave that session's work alone${elsewhere ? `, and work in the project ${elsewhere}` : ""}.`,
+      asked ? `That session was asked: ${clip(asked, 600)}` : "",
+      said ? `It last said: ${clip(said, 600)}` : "",
+      "</side-task>",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
   // A failed turn's "Try again": the last message goes out once more.
   function retryLast() {
     const last = [...events].reverse().find((e) => e.kind === "user");
     if (!last || last.kind !== "user" || streaming || sending) return;
-    comp.input = last.text.replace(/\n?\[attached: [^\]]+\]/, "").trimEnd();
+    comp.input = last.text
+      .replace(/\n?\[attached: [^\]]+\]/, "")
+      .replace(/\n*<side-task[^>]*>[\s\S]*?<\/side-task>\n*/, "")
+      .trimEnd();
     comp = comp;
     void send();
   }
@@ -1502,7 +1570,6 @@
             lane={meta?.lane ?? ""}
             agentCount={familyActive}
             panelOpen={infoShown}
-            backTitle={backTitle}
             canAct={!!shown}
             contextUsed={context.used}
             contextLimit={infoShown ? 0 : context.limit}
@@ -1516,7 +1583,6 @@
             on:fork={fork}
             on:copyId={copyId}
             on:delete={() => shown && remove(shown)}
-            on:back={goBack}
             on:compact={() => onCommand("compact")}
             on:plan={() => toggleInfo()}
           />
@@ -1624,6 +1690,9 @@
           held={heldText}
           on:send={send}
           on:unhold={() => shown && unhold(shown)}
+          on:side={() => void sideTask(false)}
+          on:sideHeld={() => void sideTask(true)}
+          canSide={tab.kind === "session" && !!tab.sessionId}
           on:browse={(e) => browse(e.detail.url)}
           on:stop={stop}
           on:command={(e) => onCommand(e.detail.name)}

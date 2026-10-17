@@ -83,6 +83,11 @@
       "reason": "Reviewed: the placeholder sits on blurred glass (backdrop-filter), which axe can't measure. It is --muted, at least 4.7:1 on that glass in every built-in theme."
     },
     {
+      "selector": ".card .item .about",
+      "rules": ["text-contrast"],
+      "reason": "Reviewed: connector descriptions are --muted on the add dialog's opaque --panel (about 6.7:1 in the default theme); axe reports them as overlapping in the dialog's scrolling grid and can't measure them."
+    },
+    {
       "selector": ".info h3, .info .line span",
       "rules": ["text-contrast"],
       "reason": "Reviewed: the session column is --text and --muted on the session's opaque glass. The session actions menu drops over it, and axe can't sample text under the menu."

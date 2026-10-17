@@ -191,6 +191,8 @@ interface SendArgs {
   remote?: boolean;
   // Plan items quoted into the message (at most 4).
   quotes?: { project: string; id: string }[];
+  // A side task: the session it was started from, which it lists under.
+  parent?: string | null;
 }
 
 export type ComposerMode = "search" | "build" | "work";
@@ -214,6 +216,7 @@ export const api = {
       lane: a.lane,
       remote: a.remote ?? false,
       quotes: a.quotes ?? [],
+      parent: a.parent ?? null,
     }),
   saveAnswer: (content: string) => invoke<NoteMeta>("brain_save_answer", { content }),
   renameThread: (id: string, title: string) => invoke<void>("rename_thread", { id, title }),

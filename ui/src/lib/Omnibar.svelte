@@ -37,6 +37,8 @@
   export let streaming = false;
   // A message sent while the agent works: it goes out when the run is done.
   export let held = "";
+  // A session is open: Ctrl+Enter can start a side task beside it.
+  export let canSide = false;
   export let board: ProviderStatus[] = [];
   export let hero = false;
   export let project: { slug: string; title: string; tokens: number } | null = null;
@@ -51,6 +53,8 @@
   const dispatch = createEventDispatcher<{
     send: void;
     unhold: void;
+    side: void;
+    sideHeld: void;
     browse: { url: string };
     stop: void;
     command: { name: string };
@@ -154,7 +158,9 @@
 
   $: web = mode === "search";
   $: placeholder = streaming
-    ? "Working · Esc to stop"
+    ? canSide && !web
+      ? "Working · Enter waits for it, Ctrl+Enter runs beside it"
+      : "Working · Esc to stop"
     : web
       ? "Search the web or type an address"
       : folder || remoteCwd
@@ -220,6 +226,9 @@
     } else if (atItems.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
       atIndex = move(atItems, atIndex, e.key === "ArrowDown" ? 1 : -1);
+    } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && canSide && !web) {
+      e.preventDefault();
+      if (input.trim() || quotes.length) dispatch("side");
     } else if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (slashItems.length) runSlash(slashItems[slashIndex].name);
@@ -533,6 +542,7 @@
       <div class="held" transition:slide={{ duration: 160, easing: cubicOut }}>
         <span class="held-text" title={held}>{held}</span>
         <span class="held-note">Sends when done</span>
+        <button class="held-side" use:tooltip={"Run it now, beside this session"} on:click={() => dispatch("sideHeld")}>Side task</button>
         <button use:tooltip={"Edit"} on:click={() => dispatch("unhold")}><Icon name="pencil" size={12} /></button>
       </div>
     {/if}
@@ -1002,6 +1012,12 @@
     border-radius: var(--radius-sm);
     color: var(--muted);
     cursor: pointer;
+  }
+  .held button.held-side {
+    width: auto;
+    padding: 0 6px;
+    font: inherit;
+    font-size: var(--fs-sm);
   }
   .held button:hover {
     color: var(--text);

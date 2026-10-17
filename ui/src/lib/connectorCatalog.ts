@@ -7,9 +7,14 @@ export const MCP_REMOTE = "mcp-remote@0.14.3";
 export interface CatalogConnector {
   id: string;
   name: string;
+  // One line: what it gives your agents.
+  about: string;
   url: string;
+  // The service's site: its icon stands in where no mark is bundled.
+  site: string;
   // "signin": the service's own sign-in page. "token": a key pasted here.
-  auth: "signin" | "token";
+  // "none": public, nothing to sign in to.
+  auth: "signin" | "token" | "none";
   // For token connectors: where to make one, and what it is called there.
   tokenUrl?: string;
   tokenName?: string;
@@ -19,17 +24,28 @@ export const CATALOG: CatalogConnector[] = [
   {
     id: "github",
     name: "GitHub",
+    about: "Repositories, issues and pull requests",
     url: "https://api.githubcopilot.com/mcp/",
+    site: "https://github.com",
     auth: "token",
     tokenUrl: "https://github.com/settings/personal-access-tokens/new",
     tokenName: "personal access token",
   },
-  { id: "higgsfield", name: "Higgsfield", url: "https://mcp.higgsfield.ai/mcp", auth: "signin" },
-  { id: "notion", name: "Notion", url: "https://mcp.notion.com/mcp", auth: "signin" },
-  { id: "linear", name: "Linear", url: "https://mcp.linear.app/mcp", auth: "signin" },
-  { id: "sentry", name: "Sentry", url: "https://mcp.sentry.dev/mcp", auth: "signin" },
-  { id: "stripe", name: "Stripe", url: "https://mcp.stripe.com", auth: "signin" },
-  { id: "huggingface", name: "Hugging Face", url: "https://huggingface.co/mcp?login", auth: "signin" },
+  { id: "higgsfield", name: "Higgsfield", about: "Make images and videos", url: "https://mcp.higgsfield.ai/mcp", site: "https://higgsfield.ai", auth: "signin" },
+  { id: "notion", name: "Notion", about: "Pages and databases", url: "https://mcp.notion.com/mcp", site: "https://www.notion.so", auth: "signin" },
+  { id: "linear", name: "Linear", about: "Issues, projects and cycles", url: "https://mcp.linear.app/mcp", site: "https://linear.app", auth: "signin" },
+  { id: "canva", name: "Canva", about: "Designs and brand assets", url: "https://mcp.canva.com/mcp", site: "https://www.canva.com", auth: "signin" },
+  { id: "sentry", name: "Sentry", about: "Errors and performance", url: "https://mcp.sentry.dev/mcp", site: "https://sentry.io", auth: "signin" },
+  { id: "stripe", name: "Stripe", about: "Payments, customers and billing", url: "https://mcp.stripe.com", site: "https://stripe.com", auth: "signin" },
+  {
+    id: "huggingface",
+    name: "Hugging Face",
+    about: "Models, datasets and Spaces",
+    url: "https://huggingface.co/mcp?login",
+    site: "https://huggingface.co",
+    auth: "signin",
+  },
+  { id: "deepwiki", name: "DeepWiki", about: "Docs for any public GitHub repo", url: "https://mcp.deepwiki.com/mcp", site: "https://deepwiki.com", auth: "none" },
 ];
 
 export interface ServerCfg {

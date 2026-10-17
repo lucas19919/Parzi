@@ -34,6 +34,9 @@
   $: markTitle = (title: string, sessionId?: string | null) =>
     markOf(sessionId) === "waiting" ? `${title} · waiting for you` : markOf(sessionId) === "running" ? `${title} · working` : title;
 
+  // The tab you are on stays in view when the strip overflows.
+  $: if (strip && activeTabId) void tick().then(() => strip?.querySelector('[aria-selected="true"]')?.closest(".tab")?.scrollIntoView({ block: "nearest", inline: "nearest" }));
+
   let collapsed = new Set<string>();
   let touched = new Set<string>();
 
@@ -67,7 +70,7 @@
     const kids = new Map<string, Tab[]>();
     const lone: Tab[] = [];
     for (const t of shown) {
-      const parent = t.kind === "page" ? t.owner || t.group : null;
+      const parent = t.kind === "page" ? t.owner || t.group : t.kind === "session" ? t.group : null;
       if (parent && bySession.has(parent)) {
         const arr = kids.get(parent) ?? [];
         arr.push(t);
@@ -260,15 +263,18 @@
               on:keydown={(e) => onKey(e, sub.id)}
             >
               <span class="kind">
-                {#if sub.loading}
+                {#if sub.loading || markOf(sub.sessionId) === "running"}
                   <span class="spinner" />
+                {:else if sub.kind === "session"}
+                  <Icon name={laneIcon(laneOf(sub))} />
                 {:else if sub.url && !broken.has(sub.url)}
                   <img src={sub.favicon || faviconUrl(sub.url)} alt="" on:error={() => sub.url && (broken = new Set(broken).add(sub.url))} />
                 {:else}
                   <Icon name="globe" />
                 {/if}
               </span>
-              <span class="title">{sub.title || "New page"}</span>
+              <span class="title">{sub.title || (sub.kind === "session" ? "Side task" : "New page")}</span>
+              {#if markOf(sub.sessionId) === "waiting"}<span class="waiting" />{/if}
             </div>
             <button
               class="close"

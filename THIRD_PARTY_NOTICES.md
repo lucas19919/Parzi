@@ -7,6 +7,14 @@ lobehub icon set, rendered inline by `ProviderLogo.svelte`.
 
 Upstream: https://github.com/lobehub/lobehub
 
+## Simple Icons (CC0 1.0)
+
+Connector brand marks in `ui/src/lib/connectorMarks.ts` are path data from
+Simple Icons 16.33.0, dedicated to the public domain. The brands remain their
+owners' trademarks and show only to name the service a connector reaches.
+
+Upstream: https://github.com/simple-icons/simple-icons
+
 ## Octicons (MIT)
 
 Interface icons in `ui/src/lib/icons.ts` are GitHub's Octicons, generated

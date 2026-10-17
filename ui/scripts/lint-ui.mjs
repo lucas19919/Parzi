@@ -44,9 +44,13 @@ const STATES = {
   history: [2, 3, 4].map((i) => click(`library ${i}`, nth(".seg", i), `${nth(".seg", i)}[aria-pressed="true"]`)),
   settings: [
     ...[2, 3].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
-    // Connections: a token connector's form, then the form for any other.
-    click("connector token", ".catalog > .tile:first-child", '.field-card.add input[type="password"]'),
-    click("connector other", ".catalog > .tile:last-child", ".field-card.add input.mono"),
+    // Connections: the add dialog's directory, a token connector's step,
+    // back, the custom form, then closed.
+    click("connector directory", ".add-conn", '.card[role="dialog"] .grid'),
+    click("connector token", '.card .grid > .item:first-child .sbtn', '.card input[type="password"]'),
+    click("connector back", ".card header .icon:first-child", '.card[role="dialog"] .grid'),
+    click("connector custom", ".card footer .link", ".card input.mono"),
+    { name: "connector closed", action: "click", selector: ".card header .icon:last-child", ready: { selector: '.card[role="dialog"]', state: "hidden" } },
     ...[4, 5].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
   ],
   setup: [

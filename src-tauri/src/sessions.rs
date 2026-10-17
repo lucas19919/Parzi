@@ -77,6 +77,7 @@ pub async fn send_message(
     lane: Option<String>,
     remote: Option<bool>,
     quotes: Option<Vec<crate::plans::Quote>>,
+    parent: Option<String>,
 ) -> Result<String, String> {
     let quoted = match quotes.filter(|q| !q.is_empty()) {
         Some(q) => {
@@ -179,6 +180,13 @@ pub async fn send_message(
                 .id
         }
     };
+    // A side task: the new session lists under the one it came from, which
+    // goes on undisturbed (nothing is sent to it).
+    if let Some(parent) = parent.filter(|p| !p.is_empty() && *p != sid) {
+        if let Err(e) = state.orch.store().set_parent(&sid, &parent) {
+            tracing::warn!("side task {sid} not linked to {parent}: {e}");
+        }
+    }
     if !quoted.is_empty() {
         let store = state.orch.store().clone();
         let (sid, quoted) = (sid.clone(), quoted.clone());

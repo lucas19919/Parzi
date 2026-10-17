@@ -10,7 +10,6 @@
   export let canAct = false;
   export let agentCount = 0;
   export let panelOpen = false;
-  export let backTitle: string | null = null;
   export let contextUsed = 0;
   export let contextLimit = 0;
   export let compacting = false;
@@ -97,11 +96,6 @@
 
 <div class="head">
   <div class="left">
-    {#if backTitle}
-      <button class="icon-btn" use:tooltip={`Back to ${backTitle}`} on:click={() => dispatch("back")}>
-        <Icon name="arrowLeft" />
-      </button>
-    {/if}
     {#if editing}
       <input bind:this={field} bind:value={draft} on:keydown={onKey} on:blur={commit} aria-label="Session title" />
     {:else}

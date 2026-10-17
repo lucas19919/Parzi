@@ -68,11 +68,17 @@ their reason.
   it changed, the checks it ran, what it cost.
 - **Providers** (Settings) lists every agent with what it needs next: Install
   or Sign in right on its row, checked again on its own.
-- **Connectors** (Settings, Connections) give your agents more tools. Click
-  one (GitHub, Higgsfield, Notion, Linear, Sentry, Stripe, Hugging Face) and
-  sign in to the service in your browser; GitHub takes a personal access
-  token instead. **Other** adds any hosted MCP server by its address, or a
-  local one by its command. Hosted ones run through
+- **Side tasks**: while an agent works, Enter queues your next message for
+  when it is done; **Ctrl+Enter** starts it now as a side task instead, beside
+  the running session and without touching it ("@website do the same here"
+  points it at another project). It knows what the main session was asked,
+  lists under it as a helper, and opens as a tab inside that session's group.
+- **Connectors** (Settings, Connections, **Add connector**) give your agents
+  more tools: GitHub, Higgsfield, Notion, Linear, Canva, Sentry, Stripe,
+  Hugging Face and DeepWiki, each one click; you sign in to the service in
+  your browser, and GitHub takes a personal access token instead. **Custom
+  connector** adds any hosted MCP server by its address (with an API key if
+  it uses one), or a local one by its command. Hosted ones run through
   [mcp-remote](https://github.com/geelen/mcp-remote), so they need Node.js.
 - **Set up Parzi** (first launch, or the menu) signs you in to each agent with
   its own login, imports Brave/Chrome/Edge bookmarks and history (never

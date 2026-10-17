@@ -326,7 +326,15 @@ ${e.text}` : e.text;
   }
 
   function stripMarker(text: string): string {
-    return text.replace(/\n?\[attached: [^\]]+\]/, "").trimEnd();
+    return text
+      .replace(/\n?\[attached: [^\]]+\]/, "")
+      .replace(/\n*<side-task[^>]*>[\s\S]*?<\/side-task>\n*/, "")
+      .trimEnd();
+  }
+
+  // The session a side task was started from, from its opening message.
+  function sideFrom(text: string): string {
+    return /<side-task from="([^"]*)">/.exec(text)?.[1] ?? "";
   }
 
   // Agent narration that only echoes tool I/O (a pseudo-call or a result
@@ -455,7 +463,9 @@ ${e.text}` : e.text;
     {#if item.kind === "user"}
       {@const images = attachedImages(item.text)}
       {@const said = splitQuotes(stripMarker(item.text))}
+      {@const from = sideFrom(item.text)}
       <div class="row user">
+        {#if from}<span class="side-from">Side task from {from}</span>{/if}
         <div class="user-line">
           {#if when(item.at)}<span class="when">{when(item.at)}</span>{/if}
           {#if said.text}
@@ -679,6 +689,11 @@ ${e.text}` : e.text;
   }
   .row.user {
     align-items: flex-end;
+  }
+  .side-from {
+    margin-bottom: 4px;
+    font-size: var(--fs-xs);
+    color: var(--muted);
   }
   .user-line {
     display: inline-flex;
