@@ -175,6 +175,7 @@ fn models_from_init(init: &Value) -> Vec<ModelInfo> {
                 id,
                 name,
                 efforts,
+                images: None,
             })
         })
         .collect()

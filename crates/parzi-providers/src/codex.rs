@@ -244,6 +244,7 @@ async fn list_models(peer: &Peer) -> Vec<ModelInfo> {
                             .collect()
                     })
                     .unwrap_or_default(),
+                images: None,
             });
         }
         cursor = page

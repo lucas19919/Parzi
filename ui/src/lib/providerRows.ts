@@ -95,6 +95,13 @@ export function effortsFor(value: string, board: ProviderStatus[]): string[] {
   return m?.efforts ?? [];
 }
 
+// False only when the agent said this model can't see images.
+export function seesImages(value: string, board: ProviderStatus[]): boolean {
+  const [p, ...rest] = value.split("/");
+  const id = rest.join("/");
+  return board.find((b) => b.provider === p)?.models.find((x) => x.id === id)?.images !== false;
+}
+
 export function fitEffort(current: string, efforts: string[]): string {
   if (!efforts.length || efforts.includes(current)) return current;
   if (efforts.includes("medium")) return "medium";

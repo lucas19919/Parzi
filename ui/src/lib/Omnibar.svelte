@@ -7,7 +7,7 @@
   import ModelPicker from "./ModelPicker.svelte";
   import { api, brain, type ComposerMode, type PlanQuote, type Project, type ProviderStatus } from "./api";
   import { remote as server } from "./remote";
-  import { effortsFor, fitEffort } from "./providerRows";
+  import { effortsFor, fitEffort, seesImages, shownOf } from "./providerRows";
   import { permissionBlocked } from "./lanes";
   import { folderName, toAddress } from "./tabs";
   import { relativeTo, sameDir, shortAttachment as shortName } from "./paths";
@@ -167,6 +167,8 @@
       : folder || remoteCwd
         ? "Describe a task or ask a question"
         : "Ask anything";
+  // An image is attached and the chosen model can't see it: said before send.
+  $: blind = !web && !!model && (attachments ?? []).some((a) => IMAGE.test(a)) && !seesImages(model, board);
   $: canSubmit = !!input.trim() || ((quotes?.length ?? 0) > 0 && !web);
 
   function setWeb(on: boolean) {
@@ -553,6 +555,14 @@
         <span class="held-note">Sends when done</span>
         <button class="held-side" use:tooltip={"Run it now, beside this session"} on:click={() => dispatch("sideHeld")}>Side task</button>
         <button use:tooltip={"Edit"} on:click={() => dispatch("unhold")}><Icon name="pencil" size={12} /></button>
+      </div>
+    {/if}
+
+    {#if blind}
+      <div class="held blind" transition:slide={{ duration: 160, easing: cubicOut }}>
+        <Icon name="image" size={12} />
+        <span class="held-text">{shownOf(model, board).name} can't see images</span>
+        <button class="held-side" on:click={() => picker?.show()}>Change model</button>
       </div>
     {/if}
 
@@ -1052,6 +1062,10 @@
     padding: 0 6px;
     font: inherit;
     font-size: var(--fs-sm);
+  }
+  .held.blind > :global(svg) {
+    flex: none;
+    color: var(--warn);
   }
   .held button:hover {
     color: var(--text);

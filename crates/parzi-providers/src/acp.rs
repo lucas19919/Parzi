@@ -328,6 +328,7 @@ fn session_models(session: &Value) -> Vec<ModelInfo> {
         name: name.unwrap_or(id).to_string(),
         is_default: current == Some(id),
         efforts: vec![],
+        images: None,
     };
     if let Some(list) = session
         .pointer("/models/availableModels")
@@ -612,25 +613,52 @@ fn cursor_read(out: &str, agent: Agent) -> ProviderStatus {
 }
 
 async fn opencode_status(program: &Path, agent: Agent) -> ProviderStatus {
-    // Stdout only: stderr log lines can look like model ids.
-    let Some(out) = process::stdout(program, &["models"], 60).await else {
+    // Stdout only: stderr log lines can look like model ids. Verbose adds
+    // each model's details (whether it sees images); an older OpenCode
+    // without it still lists the ids.
+    let out = match process::stdout(program, &["models", "--verbose"], 60).await {
+        Some(out) => Some(out),
+        None => process::stdout(program, &["models"], 60).await,
+    };
+    let Some(out) = out else {
         return ProviderStatus::new(agent.id, State::Error, "`opencode models` gave no answer.");
     };
     opencode_read(&out, agent)
 }
 
+/// Reads `opencode models`, plain (one id a line) or `--verbose` (each id
+/// followed by its details as JSON).
 fn opencode_read(out: &str, agent: Agent) -> ProviderStatus {
-    let models: Vec<ModelInfo> = out
-        .lines()
-        .map(str::trim)
-        .filter(|l| l.contains('/') && !l.contains(' '))
-        .map(|id| ModelInfo {
-            id: id.to_string(),
-            name: id.to_string(),
-            is_default: false,
-            efforts: vec![],
-        })
-        .collect();
+    let is_id = |l: &str| {
+        l.contains('/') && !l.contains(' ') && !l.contains('"') && !l.starts_with(['{', '}'])
+    };
+    let mut models: Vec<ModelInfo> = vec![];
+    let mut details = String::new();
+    let close = |models: &mut Vec<ModelInfo>, details: &mut String| {
+        if let (Some(m), Ok(v)) = (models.last_mut(), serde_json::from_str::<Value>(details)) {
+            m.images = v
+                .pointer("/capabilities/input/image")
+                .and_then(Value::as_bool);
+        }
+        details.clear();
+    };
+    for line in out.lines() {
+        let l = line.trim();
+        if is_id(l) && !line.starts_with(char::is_whitespace) {
+            close(&mut models, &mut details);
+            models.push(ModelInfo {
+                id: l.to_string(),
+                name: l.to_string(),
+                is_default: false,
+                efforts: vec![],
+                images: None,
+            });
+        } else if !models.is_empty() {
+            details.push_str(line);
+            details.push('\n');
+        }
+    }
+    close(&mut models, &mut details);
     if models.is_empty() {
         return ProviderStatus::new(agent.id, State::SignedOut, "");
     }
@@ -673,6 +701,7 @@ fn grok_read(out: &str, agent: Agent) -> ProviderStatus {
                 id,
                 is_default,
                 efforts: vec![],
+                images: None,
             });
         }
     }
@@ -1709,6 +1738,46 @@ mod tests {
         assert_eq!(s.models.len(), 3);
         assert_eq!(s.account.as_deref(), Some("2 providers connected"));
         assert_eq!(opencode_read("", opencode).state, State::SignedOut);
+    }
+
+    /// Against the OpenCode installed here: `cargo test -p parzi-providers
+    /// --lib opencode_live -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "needs OpenCode installed and signed in"]
+    async fn opencode_live_lists_models_with_image_support() {
+        let opencode = agent("opencode").unwrap();
+        let program = process::resolve("opencode").expect("opencode on PATH");
+        let s = opencode_status(&program, opencode).await;
+        assert_eq!(s.state, State::Ready, "{}", s.hint);
+        for m in &s.models {
+            println!("{} images={:?}", m.id, m.images);
+        }
+        assert!(
+            s.models.iter().all(|m| m.images.is_some()),
+            "verbose gives every model's input kinds"
+        );
+    }
+
+    #[test]
+    fn opencode_verbose_says_which_models_see_images() {
+        let opencode = agent("opencode").unwrap();
+        let out = concat!(
+            "opencode/beam-free\n{\n",
+            "  \"id\": \"beam-free\",\n",
+            "  \"api\": {\"npm\": \"@ai-sdk/openai-compatible\"},\n",
+            "  \"capabilities\": {\"input\": {\"text\": true, \"image\": false}}\n}\n",
+            "anthropic/claude-sonnet-4-5\n{\n",
+            "  \"capabilities\": {\"input\": {\"image\": true}}\n}\n",
+        );
+        let s = opencode_read(out, opencode);
+        let seen: Vec<_> = s.models.iter().map(|m| (m.id.as_str(), m.images)).collect();
+        assert_eq!(
+            seen,
+            [
+                ("opencode/beam-free", Some(false)),
+                ("anthropic/claude-sonnet-4-5", Some(true))
+            ]
+        );
     }
 
     #[test]

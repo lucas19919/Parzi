@@ -68,6 +68,8 @@ interface ProviderModel {
   name: string;
   is_default: boolean;
   efforts: string[];
+  // Whether it sees images, when its agent says (OpenCode does).
+  images?: boolean;
 }
 
 export interface ProviderStatus {

@@ -169,6 +169,10 @@ pub struct ModelInfo {
     pub is_default: bool,
     #[serde(default)]
     pub efforts: Vec<String>,
+    /// Whether the model can see images, when its agent says so (OpenCode
+    /// does, per model); unknown otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub images: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

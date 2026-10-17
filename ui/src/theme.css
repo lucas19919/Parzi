@@ -35,8 +35,10 @@
   --bad: #ef4444;
   --on-ok: #06110a;
   --work: #e8b64c;
-  --link: #8ab4ff;
-  --link-hover: #aecbff;
+  /* Blue leaning toward the text: pale on a dark theme, deep on a light
+     one, readable on both. */
+  --link: color-mix(in srgb, #60a5fa 60%, var(--text));
+  --link-hover: color-mix(in srgb, #60a5fa 40%, var(--text));
   --scrim: rgba(0, 0, 0, 0.6);
 
   /* Surfaces are matte: a tint, a blur and a quiet edge. No rim light, no
@@ -193,6 +195,11 @@ kbd {
 .msg h1 { font-size: var(--fs-xl); }
 .msg h2 { font-size: var(--fs-lg); }
 .msg h3, .msg h4, .msg h5, .msg h6 { font-size: var(--fs-base); }
+/* Any link the app draws without styles of its own (an artifact's
+   markdown, a widget's text) reads in the link colour, never the browser's
+   dark blue on a dark stage. */
+a { color: var(--link); }
+a:hover { color: var(--link-hover); }
 .msg a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: color-mix(in srgb, var(--link) 55%, transparent); }
 .msg a:hover { color: var(--link-hover); text-decoration-color: currentColor; }
 .msg :not(pre) > code { background: var(--line); border-radius: var(--radius-sm); padding: 1px 5px; font-family: var(--mono); font-size: 0.92em; }
