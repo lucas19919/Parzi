@@ -693,6 +693,7 @@ fn main() {
             adblock::adblock_site,
             vault::vault_state,
             vault::vault_install,
+            settings::connector_check,
             vault::vault_unlock,
             vault::vault_lock,
             vault::vault_logins,

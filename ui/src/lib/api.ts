@@ -239,6 +239,8 @@ export const api = {
   warmAgent: (provider: string) => invoke<void>("warm_agent", { provider }),
   getConfig: () => invoke<ParziConfig>("get_config"),
   saveConfig: (cfg: ParziConfig) => invoke<void>("save_config", { cfg }),
+  // Starts a connector (signing in, the first time) and counts its tools.
+  connectorCheck: (name: string) => invoke<number>("connector_check", { name }),
   runDoctorQuick: () => invoke<Check[]>("run_doctor_quick"),
 
   getTheme: () => invoke<Theme>("get_theme"),

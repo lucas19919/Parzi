@@ -60,7 +60,7 @@
 
   // Pages opened from a session (by its agent, or a link in its thread)
   // attach under its tab instead of cluttering the strip: one framed
-  // group, the session first, its pages after it with a small hook.
+  // group, the session first, its pages after it.
   $: groups = (() => {
     const bySession = new Map<string, Tab>();
     for (const t of shown) if (t.kind === "session" && t.sessionId) bySession.set(t.sessionId, t);
@@ -469,29 +469,12 @@
   .tab.active .kind {
     color: var(--accent);
   }
-  /* A page under its session: same type as any tab, a little narrower, and
-     a hook on its left that ties it to the session before it. */
+  /* A page under its session: same type as any tab, a little narrower,
+     inside the session's frame. */
   .tab.sub {
-    position: relative;
     height: 24px;
     width: 168px;
     min-width: 80px;
-    margin-left: 10px;
-  }
-  .tab.sub::before {
-    content: "";
-    position: absolute;
-    left: -9px;
-    top: 4px;
-    width: 6px;
-    height: 7px;
-    border-left: 1.5px solid var(--muted);
-    border-bottom: 1.5px solid var(--muted);
-    border-bottom-left-radius: 3px;
-    opacity: 0.6;
-  }
-  .tabs.vertical .tab.sub {
-    margin-left: 14px;
   }
   /* The session and its pages read as one unit: framed and tinted. */
   .group {

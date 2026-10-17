@@ -20,21 +20,26 @@ pub async fn save_config(
         return Err("config version mismatch — reload settings".into());
     }
     let old = ParziConfig::load().unwrap_or_default();
+    // Each new or changed program, as the line it runs (never its env:
+    // that holds tokens).
     let mut changed: Vec<String> = mcp_command_changes(&old, &cfg)
         .into_iter()
-        .map(|s| format!("connector {s}"))
+        .map(|name| {
+            let srv = &cfg.mcp.servers[&name];
+            format!("{name}: {} {}", srv.command, srv.args.join(" "))
+        })
         .collect();
     changed.extend(binary_changes(&old, &cfg));
     if !changed.is_empty() {
         let msg = format!(
-            "Changed: {}. A malicious program runs with your user account on every agent turn. Save anyway?",
-            changed.join(", ")
+            "These run as programs on this computer, with your account:\n\n{}\n\nOnly add ones you trust.",
+            changed.join("\n")
         );
         let ask = app.clone();
         let allow = tokio::task::spawn_blocking(move || {
             ask.dialog()
                 .message(msg)
-                .title("Parzi — confirm connector")
+                .title("Add to Parzi?")
                 .buttons(MessageDialogButtons::OkCancel)
                 .blocking_show()
         })
@@ -79,6 +84,20 @@ fn mcp_command_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
     }
     out.sort();
     out
+}
+
+/// Starts a connector and lists its tools: how many it offers, or why it
+/// can't start. A connector that signs in opens the browser here, the
+/// first time.
+#[tauri::command]
+pub async fn connector_check(state: State<'_, AppState>, name: String) -> Result<usize, String> {
+    state
+        .orch
+        .mcp()
+        .exposed_tools(&name)
+        .await
+        .map(|tools| tools.len())
+        .map_err(|e| e.to_string())
 }
 
 pub fn in_roster_order(mut all: Vec<ProviderStatus>) -> Vec<ProviderStatus> {

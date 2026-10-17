@@ -356,7 +356,14 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   get_thread: (a) => [sessions.find((s) => s.id === a.id) ?? sessions[0], transcript()],
   provider_statuses: () => board,
   refresh_providers: () => board,
-  get_config: () => config,
+  get_config: () => structuredClone(config),
+  // Settings save over the mock's copy, so a reload of Settings sees them.
+  save_config: (a) => {
+    Object.assign(config, structuredClone((a as { cfg: typeof config }).cfg));
+    return null;
+  },
+  // A connector "starts" after a moment and offers a few tools.
+  connector_check: () => new Promise((r) => setTimeout(() => r(14), 900)),
   get_theme: () => theme,
   get_theme_css: () => "",
   background_url: () => (params.get("bg") ? "C:/mock/wallpaper.png" : ""),

@@ -159,6 +159,21 @@ pub fn resolve(program: &str) -> Option<PathBuf> {
     Some(follow_npm_shim(&found).unwrap_or(found))
 }
 
+/// A program as the shell would find it, `.cmd` and `.bat` included, but
+/// not followed into an npm shim: `npx` has to stay `npx.cmd`, since the
+/// node.exe its shim names runs nothing without the script beside it.
+pub fn which(program: &str) -> Option<PathBuf> {
+    let program = program.trim();
+    if program.is_empty() {
+        return None;
+    }
+    if program.contains('/') || program.contains('\\') {
+        let p = expand_home(program);
+        return p.is_file().then_some(p);
+    }
+    find_on_path(program)
+}
+
 fn expand_home(p: &str) -> PathBuf {
     match p.strip_prefix("~/").or_else(|| p.strip_prefix("~\\")) {
         Some(rest) => dirs::home_dir().map_or_else(|| PathBuf::from(p), |h| h.join(rest)),
