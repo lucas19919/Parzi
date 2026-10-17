@@ -171,6 +171,7 @@
 
   function setWeb(on: boolean) {
     mode = on ? "search" : "build";
+    if (on) projOpen = false;
     textarea?.focus();
   }
 
@@ -489,11 +490,15 @@
 </script>
 
 <div class="ob" class:hero>
-  <!-- The project rides on the box's top edge: where this session works. -->
+  <!-- The project rides on the box's top edge: where this session works.
+       A web search has no project, so it folds away behind the box. -->
   {#if remote}
     <button
       bind:this={projBtn}
       class="proj set"
+      class:folded={web}
+      aria-hidden={web || undefined}
+      tabindex={web ? -1 : undefined}
       aria-haspopup={folderLocked ? undefined : "menu"}
       aria-expanded={folderLocked ? undefined : projOpen}
       on:click|stopPropagation={toggleProject}
@@ -508,6 +513,9 @@
       bind:this={projBtn}
       class="proj"
       class:set={!!project}
+      class:folded={web}
+      aria-hidden={web || undefined}
+      tabindex={web ? -1 : undefined}
       aria-haspopup={folderLocked ? undefined : "menu"}
       aria-expanded={folderLocked ? undefined : projOpen}
       on:click|stopPropagation={toggleProject}
@@ -731,6 +739,14 @@
     color: var(--muted);
     font-size: var(--fs-sm);
     cursor: pointer;
+    transition:
+      transform 220ms var(--ease-out),
+      opacity 160ms ease;
+  }
+  .proj.folded {
+    transform: translateY(100%);
+    opacity: 0;
+    pointer-events: none;
   }
   .proj:hover {
     color: var(--text);
@@ -757,6 +773,7 @@
 
   .box {
     position: relative;
+    z-index: 1;
     padding: 6px;
     background: var(--glass-strong-bg);
     -webkit-backdrop-filter: var(--glass-strong-blur);
