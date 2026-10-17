@@ -604,46 +604,45 @@
         </button>
       {/if}
     </div>
-
-    <!-- Inside the box, so the controls read on any wallpaper. -->
-    <div class="under">
-      <div class="seg" role="group" aria-label="Send to" data-ui-segmented>
-        <button class:on={!web} aria-pressed={!web} use:tooltip={"Ask the agent (Ctrl+1)"} on:click={() => setWeb(false)}>Agent</button>
-        <button class:on={web} aria-pressed={web} use:tooltip={"Search the web (Ctrl+2)"} on:click={() => setWeb(true)}>Web</button>
-      </div>
-      {#if !web}
-        {#if remoteHost}
-          <button
-            class="ctl"
-            class:on={remote}
-            disabled={remoteLocked}
-            aria-pressed={remote}
-            use:tooltip={remoteLocked ? "A session stays where it started" : remote ? "Run on this computer instead" : `Run on ${remoteHost} instead`}
-            on:click|stopPropagation={() => dispatch("remote", { on: !remote })}
-          >
-            <Icon name={remote ? "server" : "desktop"} size={12} />
-            <span class="truncate">{remote ? remoteHost : "This computer"}</span>
-          </button>
-        {/if}
-        <button
-          bind:this={permBtn}
-          class="ctl"
-          class:open={permOpen}
-          class:warn={permission === "full"}
-          use:tooltip={perm.desc}
-          aria-haspopup="menu"
-          aria-expanded={permOpen}
-          on:click|stopPropagation={togglePerm}
-        >
-          <Icon name={permission === "supervised" ? "lock" : "unlock"} size={12} />
-          <span>{perm.label}</span>
-        </button>
-        <span class="spacer" />
-        <ModelPicker bind:this={picker} bind:value={model} bind:effort {board} on:unavailable />
-      {/if}
-    </div>
   </div>
 
+  <!-- Suggestions open under the box on Home: the line steps aside. -->
+  <div class="under" class:hidden={webOpen && hero}>
+    <div class="seg" role="group" aria-label="Send to" data-ui-segmented>
+      <button class:on={!web} aria-pressed={!web} use:tooltip={"Ask the agent (Ctrl+1)"} on:click={() => setWeb(false)}>Agent</button>
+      <button class:on={web} aria-pressed={web} use:tooltip={"Search the web (Ctrl+2)"} on:click={() => setWeb(true)}>Web</button>
+    </div>
+    {#if !web}
+      {#if remoteHost}
+        <button
+          class="ctl"
+          class:on={remote}
+          disabled={remoteLocked}
+          aria-pressed={remote}
+          use:tooltip={remoteLocked ? "A session stays where it started" : remote ? "Run on this computer instead" : `Run on ${remoteHost} instead`}
+          on:click|stopPropagation={() => dispatch("remote", { on: !remote })}
+        >
+          <Icon name={remote ? "server" : "desktop"} size={12} />
+          <span class="truncate">{remote ? remoteHost : "This computer"}</span>
+        </button>
+      {/if}
+      <button
+        bind:this={permBtn}
+        class="ctl"
+        class:open={permOpen}
+        class:warn={permission === "full"}
+        use:tooltip={perm.desc}
+        aria-haspopup="menu"
+        aria-expanded={permOpen}
+        on:click|stopPropagation={togglePerm}
+      >
+        <Icon name={permission === "supervised" ? "lock" : "unlock"} size={12} />
+        <span>{perm.label}</span>
+      </button>
+      <span class="spacer" />
+      <ModelPicker bind:this={picker} bind:value={model} bind:effort {board} on:unavailable />
+    {/if}
+  </div>
   {#if attachError}<div class="error" role="alert">{attachError}</div>{/if}
 
   {#if projOpen}
@@ -910,25 +909,43 @@
     }
   }
 
-  /* The quiet line under the box: plain text controls, no pills. */
+  /* The line under the box: each control on its own small glass, like the
+     project tab above it, so it reads on any wallpaper without joining the
+     box. */
   .under {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
-    min-height: 28px;
-    padding: 2px 0 0 2px;
+    min-height: 32px;
+    padding: 6px 0 0;
+  }
+  .under.hidden {
+    visibility: hidden;
+  }
+  .seg,
+  .under :global(.ctl) {
+    box-sizing: border-box;
+    height: 26px;
+    background: var(--glass-strong-bg);
+    -webkit-backdrop-filter: var(--glass-strong-blur);
+    backdrop-filter: var(--glass-strong-blur);
+    border: var(--glass-hairline);
+    border-radius: var(--radius);
   }
   .seg {
     display: inline-flex;
+    align-items: center;
     flex: none;
+    gap: 2px;
+    padding: 2px;
   }
   .seg button {
-    height: 24px;
+    height: 20px;
     padding: 0 8px;
     background: none;
     border: none;
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     color: var(--muted);
     font-size: var(--fs-sm);
     cursor: pointer;
@@ -937,6 +954,7 @@
     color: var(--text);
   }
   .seg button.on {
+    background: var(--selected);
     color: var(--text);
     font-weight: 600;
   }
@@ -944,19 +962,15 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    height: 24px;
     min-width: 0;
-    padding: 0 6px;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
+    padding: 0 8px;
     color: var(--muted);
     font-size: var(--fs-sm);
     cursor: pointer;
   }
   .under :global(.ctl:hover:not(:disabled)),
   .under :global(.ctl.open) {
-    background: color-mix(in srgb, var(--text) 7%, transparent);
+    background: var(--panel);
     color: var(--text);
   }
   .under :global(.ctl:disabled) {
