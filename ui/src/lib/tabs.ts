@@ -21,18 +21,53 @@ function defaultComposer(): TabComposerState {
   return ensureComposer();
 }
 
+const LAST_MODEL = "parzi.lastModel.v1";
+const RECENT_MODELS = "parzi.recentModels.v1";
+
+// The model and effort of the last send: every new draft starts there
+// instead of on an empty "Pick a model".
+function lastModel(): { model: string; effort: string } {
+  try {
+    const v = JSON.parse(localStorage.getItem(LAST_MODEL) ?? "null");
+    if (v && typeof v.model === "string") return { model: v.model, effort: typeof v.effort === "string" ? v.effort : "" };
+  } catch {}
+  return { model: "", effort: "" };
+}
+
+// The last few models sent with, newest first: the picker lists them on top.
+export function recentModels(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_MODELS) ?? "[]");
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export function rememberModel(model: string, effort: string) {
+  if (!model) return;
+  try {
+    localStorage.setItem(LAST_MODEL, JSON.stringify({ model, effort }));
+    localStorage.setItem(RECENT_MODELS, JSON.stringify([model, ...recentModels().filter((m) => m !== model)].slice(0, 3)));
+  } catch {}
+}
+
 // Restored tabs persist no composer, and a partial one can omit `quotes`.
 // The Omnibar binds that field. Its prop default applies only on mount, so
 // the next session's missing list is a real `undefined`: `quotes.length`
 // throws inside the Svelte flush and every later click is dropped.
 export function ensureComposer(c?: Partial<TabComposerState> | null): TabComposerState {
   const full = c as TabComposerState | null | undefined;
-  if (full && Array.isArray(full.attachments) && Array.isArray(full.quotes)) return full;
+  if (full && Array.isArray(full.attachments) && Array.isArray(full.quotes)) {
+    if (!full.model) Object.assign(full, lastModel());
+    return full;
+  }
+  const last = lastModel();
   const next: TabComposerState = {
     input: typeof c?.input === "string" ? c.input : "",
     mode: c?.mode === "search" || c?.mode === "build" || c?.mode === "work" ? c.mode : "build",
-    model: typeof c?.model === "string" ? c.model : "",
-    effort: typeof c?.effort === "string" && c.effort ? c.effort : "medium",
+    model: typeof c?.model === "string" && c.model ? c.model : last.model,
+    effort: typeof c?.effort === "string" && c.effort ? c.effort : last.effort || "medium",
     remote: c?.remote,
     remoteCwd: c?.remoteCwd,
     attachments: Array.isArray(c?.attachments) ? c.attachments : [],

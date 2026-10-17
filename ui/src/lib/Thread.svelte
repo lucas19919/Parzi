@@ -15,6 +15,7 @@
   import { toast, toastError } from "./toast";
   import { tooltip } from "./tooltip";
   import { formatTime } from "./time";
+  import { board, nextStep, setupWaits } from "./providerStore";
 
   // What the waiting prompt answers: the nearest assistant message above
   // it, so "the proposal above" names what was actually said. Nothing
@@ -51,18 +52,26 @@
   // with its context instead of floating anonymous in the thread.
   export let askerTitle = "";
   export let folder = "";
+  // The agent this thread runs on, so a failed turn can offer its fix.
+  export let provider = "";
+  // Names another session, for messages and reports that come from one.
+  export let sessionTitle: (id: string) => string = () => "Another session";
 
-  const dispatch = createEventDispatcher<{ voted: { key: string }; answered: { key: string }; edited: { text: string; quotes: PlanQuote[] }; forked: void }>();
+  const dispatch = createEventDispatcher<{ voted: { key: string }; answered: { key: string }; edited: { text: string; quotes: PlanQuote[] }; forked: void; retry: void; compact: void }>();
 
   const ERROR_WORDS: Record<string, string> = {
     auth: "Not signed in",
     rate_limit: "Plan limit reached. Wait a bit, then send again",
     overloaded: "The service is overloaded. Wait a bit, then send again",
     context_overflow: "The conversation is too long",
-    bad_request: "The agent refused the request",
+    bad_request: "The request didn't go through",
     process: "The agent's program stopped",
+    session_lost: "The agent lost this conversation",
     unknown: "The turn failed",
   };
+  // Errors a plain second try can get past.
+  const RETRYABLE = new Set(["rate_limit", "overloaded", "process", "session_lost", "unknown"]);
+  const COMPACTS = new Set(["claude", "opencode"]);
   const ERROR_HINT: Record<string, string> = {
     rate_limit: "Your prompt is kept. Nothing was lost.",
   };
@@ -73,12 +82,23 @@
     if (cut > 0) return `${message.slice(0, cut).trimEnd()}…`;
     return message.length > 400 ? `${message.slice(0, 400).trimEnd()}…` : message;
   }
+
+  // The first line reads as the reason; the rest (stderr, stack) waits
+  // behind Details.
+  function errLead(message: string): { lead: string; more: string } {
+    const text = shortErr(message);
+    const nl = text.indexOf("\n");
+    const end = nl > 0 && nl <= 160 ? nl : Math.min(text.length, 160);
+    if (end >= text.length) return { lead: text, more: "" };
+    return { lead: nl === end ? text.slice(0, end) : `${text.slice(0, end).trimEnd()}…`, more: text };
+  }
   const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
   const spring = { duration: 160, easing: cubicOut };
 
   type Item =
     | { key: string; kind: "user" | "assistant" | "checkpoint" | "system"; text: string; at?: number }
     | { key: string; kind: "error"; class: string; message: string; at?: number }
+    | { key: string; kind: "inter"; from: string; text: string; at?: number }
     | { key: string; kind: "widget"; fence: string; payload: unknown }
     | { key: string; kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
     | { key: string; kind: "steps"; reasoning: string; tools: Step[] };
@@ -89,6 +109,11 @@
   const imageCache = new Map<string, Promise<string | null>>();
 
   $: items = buildItems(events);
+  // Only the newest error offers a fix, and only while the agent still
+  // needs it: once signed in, the card is history.
+  $: lastError = [...items].reverse().find((i) => i.kind === "error")?.key;
+  $: fix = provider ? nextStep($board.find((b) => b.provider === provider)) : null;
+  $: fixWait = provider ? $setupWaits.get(provider) : undefined;
   $: running = liveTools.filter((t) => t.running);
   // A waiting prompt beats the run status: "Starting…" while an answer sits
   // open is exactly the confusion this guards.
@@ -148,7 +173,7 @@
       case "doc.read":
         return `Reading ${arg(args, "source") || "a document"}`;
       case "models.list":
-        return "Checking the bench";
+        return "Listing models";
       case "ask.user":
         return `Asking ${arg(args, "question") || "a question"}`;
       case "request.user":
@@ -160,21 +185,23 @@
       case "session.rename":
         return arg(args, "title") ? `Renaming the session to ${arg(args, "title")}` : "Renaming the session";
       case "session.spawn":
-        return `Delegating: ${arg(args, "title") || "a subsession"}`;
+        return `Starting a helper: ${arg(args, "title") || "untitled"}`;
       case "session.send":
       case "session.send_message":
-        return `Messaging ${arg(args, "title", "session", "session_id") || "a subsession"}`;
+        return `Messaging ${arg(args, "title", "session", "session_id") || "a helper"}`;
       case "session.read":
       case "session.read_session":
-        return `Checking on ${arg(args, "title", "session", "session_id") || "a subsession"}`;
+        return `Checking on ${arg(args, "title", "session", "session_id") || "a helper"}`;
       case "session.list":
-        return "Listing subsessions";
-      case "lane.dispatch":
-        return `Dispatching ${arg(args, "lane") || "a lane"}`;
+        return "Listing helpers";
+      case "lane.dispatch": {
+        const lane = arg(args, "lane");
+        return lane ? `Handing off to ${lane[0].toUpperCase()}${lane.slice(1)}` : "Handing off";
+      }
       case "lane.status":
-        return "Reading lane state";
+        return "Checking what is running";
       case "memory.review":
-        return `Reviewing memory ${arg(args, "path") || "?"}`;
+        return `Reviewing note ${arg(args, "path") || "?"}`;
       case "project.create":
         return `Creating ${arg(args, "title") || "a project"}`;
       case "project.archive":
@@ -184,9 +211,9 @@
       case "shell.start":
         return `Starting ${arg(args, "cmd") || "a command"}`;
       case "shell.logs":
-        return "Reading shell output";
+        return "Reading command output";
       case "shell.kill":
-        return "Stopping a shell";
+        return "Stopping a command";
       case "browser.click":
         return `Clicking ${arg(args, "text", "selector") || "a control"}`;
       case "browser.type":
@@ -202,12 +229,15 @@
       case "brain.delete":
         return `Deleting note ${arg(args, "path") || "?"}`;
       case "ui.show_markdown":
-        return "Rendering text";
+        return "Writing a note";
       case "ui.show_artifact":
-        return `Saving ${arg(args, "title", "id") || "artifact"}`;
+        return `Publishing ${arg(args, "title", "id") || "an artifact"}`;
       default: {
+        // Vendor and connector tools ("mcp__github__list_issues") read by
+        // their last word.
+        const short = (name.split(/__|\./).pop() || name).replace(/_/g, " ");
         const hint = arg(args, "path", "file", "cmd", "query", "url", "title", "id");
-        return hint ? `Calling ${name} ${hint}` : `Calling ${name}`;
+        return hint ? `Using ${short}: ${hint}` : `Using ${short}`;
       }
     }
   }
@@ -246,6 +276,9 @@ ${e.text}` : e.text;
       else if (e.kind === "artifact") out.push({ key, ...e });
       else if (e.kind === "assistant" && echoLine(e.text)) {
         pushSys(key, out, echoLine(e.text), e.at);
+      } else if (e.kind === "system" && interOf(e.text)) {
+        const m = interOf(e.text)!;
+        out.push({ key, kind: "inter", from: m.from, text: m.body, at: e.at });
       } else if (e.kind === "system") {
         pushSys(key, out, e.text, e.at);
       } else out.push({ key, kind: e.kind, text: e.text, at: e.at });
@@ -261,6 +294,18 @@ ${e.text}` : e.text;
       return;
     }
     out.push({ key, kind: "system", text, at });
+  }
+
+  // Another session's message or end-of-run report, stored as
+  // `parzi-inter:1 {json}` for the agent: shown as words, not the wire format.
+  function interOf(text: string): { from: string; body: string } | null {
+    if (!text.startsWith("parzi-inter:1")) return null;
+    try {
+      const m = JSON.parse(text.slice("parzi-inter:1".length));
+      return { from: sessionTitle(String(m.from_run ?? "")), body: String(m.body ?? "") };
+    } catch {
+      return null;
+    }
   }
 
   function attachedImages(text: string): string[] {
@@ -349,7 +394,7 @@ ${e.text}` : e.text;
   }
 
   async function onClick(e: MouseEvent) {
-    if (await handleLinkClick(e)) return;
+    if (await handleLinkClick(e, folder)) return;
     const el = e.target as HTMLElement;
     const copyBtn = el.closest<HTMLElement>("[data-copy]");
     if (copyBtn) {
@@ -428,7 +473,7 @@ ${e.text}` : e.text;
           <button class="copy" use:tooltip={"Save to brain"} on:click={() => save(item.text, item.key)}>
             <Icon name={saved === item.key ? "check" : "brain"} />
           </button>
-          <button class="copy" use:tooltip={"Fork thread to try again"} on:click={() => dispatch("forked")}>
+          <button class="copy" use:tooltip={"Fork: go on in a copy of this thread"} on:click={() => dispatch("forked")}>
             <Icon name="fork" />
           </button>
         </div>
@@ -443,11 +488,38 @@ ${e.text}` : e.text;
       {:else}
         <div class="system" title={whenTitle(item.at)}>{item.text.slice(0, 300)}</div>
       {/if}
+    {:else if item.kind === "inter"}
+      <div class="inter" title={whenTitle(item.at)}>
+        <span class="inter-from">From {item.from}</span>
+        <span class="inter-body">{item.text.slice(0, 2000)}</span>
+      </div>
     {:else if item.kind === "error"}
+      {@const msg = errLead(item.message)}
       <div class="turn-error" role="alert" title={whenTitle(item.at)}>
         <span class="err-class">{ERROR_WORDS[item.class] ?? ERROR_WORDS.unknown}</span>
-        <span class="err-msg">{shortErr(item.message)}</span>
+        <span class="err-msg">{msg.lead}</span>
+        {#if msg.more}
+          <details class="err-more"><summary>Details</summary><pre>{msg.more}</pre></details>
+        {/if}
         {#if ERROR_HINT[item.class]}<span class="err-hint">{ERROR_HINT[item.class]}</span>{/if}
+        {#if item.key === lastError && !streaming}
+          {#if fix || fixWait}
+            <div class="err-fix">
+              {#if fixWait}
+                <span class="err-hint">{fixWait.note}</span>
+              {:else if fix}
+                <button class="err-btn" on:click={() => fix?.run(provider)}>{fix.label}</button>
+                <span class="err-hint">Then try again.</span>
+              {/if}
+            </div>
+          {:else if item.class === "context_overflow" && COMPACTS.has(provider)}
+            <div class="err-fix"><button class="err-btn" on:click={() => dispatch("compact")}>Compact and go on</button></div>
+          {:else if item.class === "context_overflow"}
+            <span class="err-hint">Start a new session to go on.</span>
+          {:else if RETRYABLE.has(item.class)}
+            <div class="err-fix"><button class="err-btn" on:click={() => dispatch("retry")}>Try again</button></div>
+          {/if}
+        {/if}
       </div>
     {:else if item.kind === "widget"}
       {#if item.fence === "parzi-widget"}
@@ -490,11 +562,17 @@ ${e.text}` : e.text;
     {/if}
   {/each}
 
+  <!-- The plan checklist, after the conversation and before what waits on you. -->
+  <slot />
+
   {#if approval}
     <div class="approval" transition:fade={spring}>
       {#if askerTitle}<div class="ask-from">{askerTitle} asks for approval</div>{/if}
-      <div>Allow <b>{approval.call.name}</b>?</div>
-      <pre>{JSON.stringify(approval.call.args, null, 2)?.slice(0, 2000)}</pre>
+      <div class="ask-q">{approval.call.label || `Use ${approval.call.name}`}?</div>
+      <details class="approval-details">
+        <summary>Details</summary>
+        <pre>{approval.call.name} {JSON.stringify(approval.call.args, null, 2)?.slice(0, 2000)}</pre>
+      </details>
       <div class="approval-actions">
         <button class="btn primary" on:click={() => vote(true)}>Approve</button>
         <button class="btn" on:click={() => vote(false)}>Deny</button>
@@ -700,6 +778,23 @@ ${e.text}` : e.text;
     color: var(--muted);
     padding-left: 2px;
   }
+  .inter {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    font-size: var(--fs-sm);
+  }
+  .inter-from {
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .inter-body {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
   .turn-error {
     display: flex;
     flex-direction: column;
@@ -723,6 +818,40 @@ ${e.text}` : e.text;
     color: var(--muted);
     font-size: var(--fs-sm);
   }
+  .err-more summary {
+    cursor: pointer;
+    color: var(--muted);
+  }
+  .err-more pre {
+    max-height: 160px;
+    margin: 4px 0 0;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .err-fix {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  .err-btn {
+    padding: 4px 12px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .err-btn:hover {
+    border-color: var(--muted);
+  }
   .approval {
     display: flex;
     flex-direction: column;
@@ -734,9 +863,17 @@ ${e.text}` : e.text;
     font-size: var(--fs-md);
     color: var(--text);
   }
+  .approval-details summary {
+    cursor: pointer;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .approval-details summary:hover {
+    color: var(--text);
+  }
   .approval pre {
     max-height: 160px;
-    margin: 0;
+    margin: 6px 0 0;
     padding: 8px 12px;
     overflow: auto;
     background: var(--bg);

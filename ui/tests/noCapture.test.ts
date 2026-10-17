@@ -7,7 +7,7 @@ function src(name: string): string {
 }
 
 test("clicks do not take pointer capture", () => {
-  for (const name of ["TabBar.svelte", "HomeView.svelte", "BrainView.svelte", "Sidebar.svelte", "SidePanel.svelte"]) {
+  for (const name of ["TabBar.svelte", "BrainView.svelte"]) {
     assert.equal(src(name).includes("setPointerCapture"), false, name);
   }
 });

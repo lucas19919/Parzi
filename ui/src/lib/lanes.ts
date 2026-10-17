@@ -10,35 +10,12 @@ export function laneIcon(lane: string): "brain" | "bot" | "chat" {
   return l === "work" ? "brain" : l === "build" ? "bot" : "chat";
 }
 
-// Settings' tool policy (lanes.default_mode: ask / auto / deny) to the
-// composer's permission, which travels as `mode` on send. Unknown or
+// Settings' permission (lanes.default_mode: ask / auto / deny) is where
+// the composer starts; the composer's choice travels as `mode` and is what
+// runs (launch.rs effective_mode). Only Locked holds over it. Unknown or
 // missing values ask; nothing here ever yields "full".
-// Settings' default is a floor the composer can tighten but not lift
-// (launch.rs restrict_mode), except Full access, which lifts any floor but
-// Lockdown. A choice is either open, off (disabled with a reason), or a
-// lift (works, but says so: it behaves above the floor for this send).
-export interface PermGate {
-  off: string;
-  lift: string;
-}
-
-export function permissionGate(choice: string, defaultMode: string | null | undefined): PermGate {
-  const floor = permissionFor(defaultMode);
-  if (floor === "deny") {
-    return choice === "deny"
-      ? { off: "", lift: "" }
-      : { off: "Lockdown is on in Settings › General", lift: "" };
-  }
-  // No disabled rows: Auto under an Ask floor simply behaves as Ask (the
-  // backend caps it), so the menu never lectures. Only Lockdown blocks.
-  if (floor === "supervised" && choice === "full") {
-    return { off: "", lift: "Lifts to Auto for this send" };
-  }
-  return { off: "", lift: "" };
-}
-
 export function permissionBlocked(choice: string, defaultMode: string | null | undefined): string {
-  return permissionGate(choice, defaultMode).off;
+  return permissionFor(defaultMode) === "deny" && choice !== "deny" ? "Locked in Settings" : "";
 }
 
 export function permissionFor(defaultMode: string | null | undefined): string {

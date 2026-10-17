@@ -1,14 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { adblock, api, browserPrefs, vault, BITWARDEN_INSTALL, type BrowserPrefs, type ParziConfig, type VaultState } from "../api";
+  import { adblock, api, browserPrefs, vault, type BrowserPrefs, type ParziConfig, type VaultState } from "../api";
   import Icon from "../Icon.svelte";
   import { permissionName } from "../pageRules";
   import { tooltip } from "../tooltip";
   import Switch from "./Switch.svelte";
   import SegControl from "./SegControl.svelte";
+  import { updateConfig } from "../config";
   import "./shared.css";
 
-  export let notify: (msg: string) => void = () => {};
+  export let notify: (msg: string, err?: boolean) => void = () => {};
 
   let cfg: ParziConfig | null = null;
   let err = "";
@@ -22,7 +23,7 @@
     try {
       web = await browserPrefs.set(name, !web[name]);
     } catch (e) {
-      notify(`Save failed: ${e}`);
+      notify(`Could not save: ${e}`, true);
     }
   }
 
@@ -30,7 +31,25 @@
     try {
       web = await browserPrefs.forget(origin, kind);
     } catch (e) {
-      notify(`Save failed: ${e}`);
+      notify(`Could not save: ${e}`, true);
+    }
+  }
+
+  // Bitwarden's CLI installs in a terminal; coming back to the window
+  // checks whether it is there now.
+  async function installVault() {
+    pwBusy = true;
+    try {
+      await vault.install();
+      const recheck = () => {
+        window.removeEventListener("focus", recheck);
+        vault.state().then((s) => (pw = s)).catch(() => {});
+        pwBusy = false;
+      };
+      window.addEventListener("focus", recheck);
+    } catch (e) {
+      pwBusy = false;
+      notify(`Could not start the install: ${e}`, true);
     }
   }
 
@@ -40,7 +59,7 @@
     try {
       pw = pw.status === "unlocked" ? await vault.lock() : await vault.unlock();
     } catch (e) {
-      notify(String(e) === "missing" ? `Install the Bitwarden CLI: ${BITWARDEN_INSTALL}` : String(e));
+      notify(String(e) === "missing" ? "Bitwarden isn't installed" : String(e), true);
       pw = await vault.state().catch(() => pw);
     } finally {
       pwBusy = false;
@@ -58,13 +77,12 @@
     }
   });
 
-  async function saveCfg(): Promise<boolean> {
-    if (!cfg) return false;
+  async function update(change: (c: ParziConfig) => void): Promise<boolean> {
     try {
-      await api.saveConfig(cfg);
+      cfg = await updateConfig(change);
       return true;
     } catch (e) {
-      notify(`Save failed: ${e}`);
+      notify(`Could not save: ${e}`, true);
       try {
         cfg = await api.getConfig();
       } catch {}
@@ -75,22 +93,21 @@
   // The composer's permission starts from this default; tell it.
   async function pickMode(mode: string) {
     if (!cfg) return;
-    cfg.lanes.default_mode = mode;
-    if (await saveCfg()) document.dispatchEvent(new CustomEvent("parzi:default-mode", { detail: mode }));
+    if (await update((c) => (c.lanes.default_mode = mode))) document.dispatchEvent(new CustomEvent("parzi:default-mode", { detail: mode }));
   }
 
   async function toggleAds() {
     try {
       blockAds = (await adblock.enable(!blockAds)).enabled;
     } catch (e) {
-      notify(`Save failed: ${e}`);
+      notify(`Could not save: ${e}`, true);
     }
   }
 
   function toggleShell() {
     if (!cfg) return;
-    cfg.lanes.no_shell = !cfg.lanes.no_shell;
-    saveCfg();
+    const off = !cfg.lanes.no_shell;
+    void update((c) => (c.lanes.no_shell = off));
   }
 </script>
 
@@ -108,11 +125,7 @@
     <div class="field-card">
       <div class="field-info">
         <span class="field-label">Block ads and trackers</span>
-        <span class="field-hint">
-          Uses the EasyList and EasyPrivacy lists. Allow a single site from the shield in the page toolbar.{web && !web.windows
-            ? " Works on Windows only for now."
-            : ""}
-        </span>
+        {#if web && !web.windows}<span class="field-hint">Windows only for now.</span>{/if}
       </div>
       <Switch on={blockAds} title="Block ads and trackers" on:toggle={toggleAds} />
     </div>
@@ -123,17 +136,19 @@
           {#if !pw}
             Checking…
           {:else if pw.status === "missing"}
-            Install the Bitwarden CLI with <code>{BITWARDEN_INSTALL}</code>, then restart Parzi.
+            Not installed
           {:else if pw.status === "unlocked"}
-            Unlocked{pw.email ? ` as ${pw.email}` : ""}. Use the key in the page toolbar to fill a login.
+            Unlocked{pw.email ? ` as ${pw.email}` : ""}
           {:else if pw.status === "unauthenticated"}
-            Not signed in. You sign in in Bitwarden's own prompt; Parzi never sees your master password.
+            Not signed in
           {:else}
-            Locked{pw.email ? ` (${pw.email})` : ""}. You unlock in Bitwarden's own prompt; Parzi never sees your master password.
+            Locked{pw.email ? ` · ${pw.email}` : ""}
           {/if}
         </span>
       </div>
-      {#if pw && pw.status !== "missing"}
+      {#if pw?.status === "missing"}
+        <button class="sbtn" disabled={pwBusy} on:click={installVault}>{pwBusy ? "Installing…" : "Install"}</button>
+      {:else if pw}
         <button class="sbtn" disabled={pwBusy} on:click={pwAction}>
           {pwBusy ? "Waiting…" : pw.status === "unlocked" ? "Lock" : pw.status === "unauthenticated" ? "Sign in" : "Unlock"}
         </button>
@@ -143,30 +158,20 @@
       <div class="field-card">
         <div class="field-info">
           <span class="field-label">Agent tabs use your sign-ins</span>
-          <span class="field-hint">
-            Off: pages an agent opens get their own browser profile, without your cookies and accounts. Applies to agent pages
-            opened from now on.
-          </span>
         </div>
         <Switch on={web.agentSignIns} title="Agent tabs use your sign-ins" on:toggle={() => setWeb("agentSignIns")} />
       </div>
       <div class="field-card">
         <div class="field-info">
           <span class="field-label">Developer tools for pages</span>
-          <span class="field-hint">{web.windows ? "F12 and Inspect in web page tabs." : "Needs Windows for now."}</span>
+          {#if !web.windows}<span class="field-hint">Windows only for now.</span>{/if}
         </div>
         <Switch on={web.devtools} title="Developer tools for pages" on:toggle={() => setWeb("devtools")} />
       </div>
       <div class="field-card sites">
         <div class="field-info">
           <span class="field-label">Site permissions</span>
-          <span class="field-hint">
-            {web.sites.length
-              ? "What you allowed or blocked when a page asked. Remove one to be asked again."
-              : web.windows
-                ? "Sites you allow or block when they ask for your camera, location and the like show up here."
-                : "Pages ask with the system prompt on this computer."}
-          </span>
+          {#if !web.sites.length}<span class="field-hint">None yet</span>{/if}
           {#if web.sites.length}
             <ul class="site-list">
               {#each web.sites as s (s.origin + s.kind)}
@@ -187,32 +192,24 @@
   </div>
 
   <div class="pref-section">
-    <h3 class="section-title">Agent autonomy</h3>
-    <p class="section-desc">Controls how terminal commands and local tools require approval before running.</p>
+    <h3 class="section-title">Permissions</h3>
 
     <div class="field-card">
       <div class="field-info">
-        <span class="field-label">Tool policy</span>
-        <span class="field-hint">
-          {cfg.lanes.default_mode === "ask"
-            ? "Ask: asks before each tool call."
-            : cfg.lanes.default_mode === "auto"
-            ? "Turbo: runs tool calls in the session folder without asking."
-            : "Lockdown: blocks shell commands and file changes."}
-        </span>
+        <span class="field-label">New sessions start on</span>
+        {#if cfg.lanes.default_mode === "deny"}<span class="field-hint">Agents never run commands or change files.</span>{/if}
       </div>
       <SegControl
-        label="Tool policy"
-        options={[{ value: "ask", label: "Ask" }, { value: "auto", label: "Turbo" }, { value: "deny", label: "Lockdown" }]}
-        value={cfg.lanes.default_mode}
+        label="New sessions start on"
+        options={[{ value: "ask", label: "Ask" }, { value: "auto", label: "Auto" }, { value: "deny", label: "Locked" }]}
+        value={cfg.lanes.default_mode === "auto" || cfg.lanes.default_mode === "deny" ? cfg.lanes.default_mode : "ask"}
         on:pick={(e) => void pickMode(e.detail)}
       />
     </div>
 
     <div class="field-card">
       <div class="field-info">
-        <span class="field-label">Shell commands</span>
-        <span class="field-hint">Lets Build agents run commands in the project folder. Off: no agent gets a shell.</span>
+        <span class="field-label">Agents run commands</span>
       </div>
       <Switch
         on={!cfg.lanes.no_shell}
@@ -223,39 +220,14 @@
   </div>
 
   <div class="pref-section">
-    <h3 class="section-title">Orchestration and limits</h3>
+    <h3 class="section-title">Limits</h3>
     <div class="field-card">
       <div class="field-info">
-        <span class="field-label">Follow-up messages while busy</span>
-        <span class="field-hint">Behavior when sending prompts while an agent is currently running</span>
-      </div>
-      <SegControl
-        label="Follow-up messages while busy"
-        options={[{ value: "queue", label: "Queue" }, { value: "reject", label: "Reject" }]}
-        value={cfg.orchestrator.queue_when_busy ? "queue" : "reject"}
-        on:pick={(e) => { if (cfg) cfg.orchestrator.queue_when_busy = e.detail === "queue"; saveCfg(); }}
-      />
-    </div>
-
-    <div class="field-card">
-      <div class="field-info">
-        <span class="field-label">Parallel agent runs</span>
-        <span class="field-hint">Concurrent background agents allowed: <b>{cfg.orchestrator.max_concurrent}</b></span>
+        <span class="field-label">Agents at once</span>
       </div>
       <div class="slider-wrapper">
-        <input type="range" min="1" max="8" aria-label="Parallel agent runs" bind:value={cfg.orchestrator.max_concurrent} on:change={saveCfg} />
+        <input type="range" min="1" max="8" aria-label="Agents at once" bind:value={cfg.orchestrator.max_concurrent} on:change={(e) => update((c) => (c.orchestrator.max_concurrent = Number(e.currentTarget.value)))} />
         <span class="slider-val">{cfg.orchestrator.max_concurrent}</span>
-      </div>
-    </div>
-
-    <div class="field-card">
-      <div class="field-info">
-        <span class="field-label">Reasoning steps per turn</span>
-        <span class="field-hint">Prevents infinite agent run loops: <b>{cfg.lanes.max_steps} steps</b></span>
-      </div>
-      <div class="slider-wrapper">
-        <input type="range" min="4" max="64" aria-label="Reasoning steps per turn" bind:value={cfg.lanes.max_steps} on:change={saveCfg} />
-        <span class="slider-val">{cfg.lanes.max_steps}</span>
       </div>
     </div>
   </div>

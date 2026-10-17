@@ -85,6 +85,8 @@ export interface ProviderStatus {
 export interface ApprovalCall {
   id: string;
   name: string;
+  // What the call does, in words ("Running `npm test`").
+  label?: string;
   args: unknown;
   lane: string;
   session: string;
@@ -112,6 +114,7 @@ export type UiEvent =
   | { kind: "notice"; session: string; text: string }
   | { kind: "context"; session: string; used: number; limit: number }
   | { kind: "approval"; key: string; session: string; call: ApprovalCall }
+  | { kind: "expired"; key: string; session: string }
   | { kind: "question"; key: string; session: string; question: string; options: string[] }
   | { kind: "request"; key: string; session: string; request: string; req_kind: string }
   | { kind: "done"; session: string; turns: number }
@@ -134,7 +137,7 @@ export interface ProviderEntry {
 export interface ParziConfig {
   version: number;
   providers: Record<string, ProviderEntry>;
-  lanes: { default_mode: string; default_allowed_tools: string[]; max_steps: number; no_shell?: boolean };
+  lanes: { default_mode: string; default_allowed_tools: string[]; no_shell?: boolean };
   mcp: { servers: Record<string, unknown> };
   orchestrator: { max_concurrent: number; mcp_idle_kill_secs: number; queue_when_busy: boolean; approval_wait_secs?: number };
   routing: { order: string[] };
@@ -192,12 +195,6 @@ interface SendArgs {
 
 export type ComposerMode = "search" | "build" | "work";
 
-export const MODE_META: Record<ComposerMode, { label: string; icon: "globe" | "bot" | "brain"; tint: string; hint: string }> = {
-  search: { label: "Search", icon: "globe", tint: "#6aa8ff", hint: "Search or enter an address" },
-  build: { label: "Build", icon: "bot", tint: "#4e8f5c", hint: "Ask anything" },
-  work: { label: "Work", icon: "brain", tint: "#e8b64c", hint: "Ask a quick question" },
-};
-
 export const api = {
   appVersion: () => invoke<string>("app_version"),
   openConfirmedUrl: (url: string) => invoke<void>("open_confirmed_url", { url }),
@@ -239,7 +236,6 @@ export const api = {
 
   providerStatuses: () => invoke<ProviderStatus[]>("provider_statuses"),
   refreshProviders: (ids?: string[]) => invoke<ProviderStatus[]>("refresh_providers", { ids: ids ?? null }),
-  toggleFavorite: (spec: string) => invoke<string[]>("toggle_favorite", { spec }),
   warmAgent: (provider: string) => invoke<void>("warm_agent", { provider }),
   getConfig: () => invoke<ParziConfig>("get_config"),
   saveConfig: (cfg: ParziConfig) => invoke<void>("save_config", { cfg }),
@@ -509,6 +505,7 @@ export interface VaultLogin {
 
 export const vault = {
   state: () => invoke<VaultState>("vault_state"),
+  install: () => invoke<void>("vault_install"),
   unlock: () => invoke<VaultState>("vault_unlock"),
   lock: () => invoke<VaultState>("vault_lock"),
   logins: (tab: string) => invoke<{ status: string; host: string; items: VaultLogin[] }>("vault_logins", { tab }),

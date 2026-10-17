@@ -303,6 +303,11 @@ pub trait Provider: Send + Sync {
     ) -> Result<TurnEnd, ProviderError>;
 }
 
+// What to do next, for a status or an error a person reads. The Providers
+// tab in Settings has the button for each.
+pub(crate) const INSTALL_HINT: &str = "Install it from Providers in Settings.";
+pub(crate) const LOGIN_HINT: &str = "Sign in from Providers in Settings.";
+
 pub fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -25,11 +25,11 @@
     return `${Math.round(ms)}ms`;
   }
 
-  // Heartbeat for live work: ticking elapsed so a hung call is obvious.
-  // Only ticks while expanded so collapsed groups cost nothing.
+  // Heartbeat for live work: ticking elapsed so a hung call is obvious,
+  // open or not. Only the live group ticks.
   let elapsed = 0;
   let timer: number | null = null;
-  $: live = !!status && open;
+  $: live = !!status;
   $: {
     if (live && timer === null) {
       const t0 = Date.now();

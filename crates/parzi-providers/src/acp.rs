@@ -14,7 +14,7 @@ use crate::setup;
 use crate::types::{
     or_cancel, sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision,
     PermissionGate, PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus,
-    State, TurnEnd, TurnSpec,
+    State, TurnEnd, TurnSpec, INSTALL_HINT, LOGIN_HINT,
 };
 
 const AUTH_REQUIRED: i64 = -32000;
@@ -32,8 +32,6 @@ pub struct Agent {
     gated: bool,
     slow_start: bool,
     sign_in: Option<&'static str>,
-    install_hint: &'static str,
-    login_hint: &'static str,
     probe: Probe,
 }
 
@@ -83,8 +81,6 @@ pub fn agent(id: &str) -> Option<Agent> {
             gated: true,
             slow_start: false,
             sign_in: None,
-            install_hint: "Install OpenCode from Set up Parzi, or set its path in Settings.",
-            login_hint: "Sign in from Set up Parzi (it runs `opencode auth login`), then check again.",
             probe: Probe::OpencodeModels,
         },
         "grok" => Agent {
@@ -97,8 +93,6 @@ pub fn agent(id: &str) -> Option<Agent> {
             gated: false,
             slow_start: false,
             sign_in: None,
-            install_hint: "Install Grok from Set up Parzi, or set its path in Settings.",
-            login_hint: "Sign in from Set up Parzi (it runs `grok login`), then check again.",
             probe: Probe::GrokModels,
         },
         "antigravity" => Agent {
@@ -111,8 +105,6 @@ pub fn agent(id: &str) -> Option<Agent> {
             gated: false,
             slow_start: true,
             sign_in: Some("oauth-personal"),
-            install_hint: "Install Google's Antigravity agent from Set up Parzi, or set the path to agy_acp_server in Settings.",
-            login_hint: "Sign in with Google from Set up Parzi, then check again.",
             probe: Probe::GeminiSettings,
         },
         "cursor" => Agent {
@@ -125,8 +117,6 @@ pub fn agent(id: &str) -> Option<Agent> {
             gated: false,
             slow_start: false,
             sign_in: None,
-            install_hint: "Install Cursor's CLI from Set up Parzi, or set the path to cursor-agent in Settings.",
-            login_hint: "Sign in from Set up Parzi (it runs `cursor-agent login`), then check again.",
             probe: Probe::CursorStatus,
         },
         _ => return None,
@@ -155,8 +145,8 @@ impl Acp {
 
     fn not_installed(&self) -> ProviderError {
         ProviderError::process(format!(
-            "{} is not installed. {}",
-            self.agent.name, self.agent.install_hint
+            "{} is not installed. {INSTALL_HINT}",
+            self.agent.name
         ))
     }
 
@@ -444,11 +434,7 @@ impl Provider for Acp {
 
     async fn status(&self) -> ProviderStatus {
         let Some(program) = self.program() else {
-            return ProviderStatus::new(
-                self.agent.id,
-                State::NotInstalled,
-                self.agent.install_hint,
-            );
+            return ProviderStatus::new(self.agent.id, State::NotInstalled, "");
         };
         let mut status = match self.agent.probe {
             Probe::OpencodeModels => opencode_status(&program, self.agent).await,
@@ -471,6 +457,17 @@ impl Provider for Acp {
                 .or_else(|| conn.init.pointer("/_meta/agentVersion"))
                 .and_then(Value::as_str)
                 .map(str::to_string);
+            // An agent whose own status lists no models (Cursor) names them
+            // in a session; asking once here beats waiting for a first turn.
+            // Bounded well inside the board's 90 s limit on a whole check.
+            let asked = status.models.is_empty() && status.state == State::Ready;
+            if asked
+                && tokio::time::timeout(Duration::from_secs(30), self.learn_models(&conn))
+                    .await
+                    .unwrap_or(false)
+            {
+                status.models = cached_models(self.agent.id);
+            }
             conn.proc.kill().await;
         }
         status
@@ -539,7 +536,7 @@ fn read_gemini_settings() -> Option<Value> {
 
 fn gemini_status(agent: Agent) -> ProviderStatus {
     let Some(kind) = read_gemini_settings().as_ref().and_then(gemini_auth_type) else {
-        return ProviderStatus::new(agent.id, State::SignedOut, agent.login_hint);
+        return ProviderStatus::new(agent.id, State::SignedOut, "");
     };
     let mut s = ProviderStatus::new(agent.id, State::Ready, "");
     s.account = Some(
@@ -605,7 +602,7 @@ fn cursor_read(out: &str, agent: Agent) -> ProviderStatus {
             );
             s
         }
-        Some(_) => ProviderStatus::new(agent.id, State::SignedOut, agent.login_hint),
+        Some(_) => ProviderStatus::new(agent.id, State::SignedOut, ""),
         None => ProviderStatus::new(
             agent.id,
             State::Error,
@@ -635,7 +632,7 @@ fn opencode_read(out: &str, agent: Agent) -> ProviderStatus {
         })
         .collect();
     if models.is_empty() {
-        return ProviderStatus::new(agent.id, State::SignedOut, agent.login_hint);
+        return ProviderStatus::new(agent.id, State::SignedOut, "");
     }
     let providers: HashSet<&str> = models
         .iter()
@@ -683,7 +680,7 @@ fn grok_read(out: &str, agent: Agent) -> ProviderStatus {
         return s;
     }
     if lower.contains("not logged in") || lower.contains("not authenticated") {
-        return ProviderStatus::new(agent.id, State::SignedOut, agent.login_hint);
+        return ProviderStatus::new(agent.id, State::SignedOut, "");
     }
     ProviderStatus::new(
         agent.id,
@@ -743,7 +740,7 @@ fn rpc_failure(agent: Agent, e: RpcError) -> ProviderError {
     match e.code {
         AUTH_REQUIRED => ProviderError::new(
             ErrorClass::Auth,
-            format!("{} is not signed in. {}", agent.name, agent.login_hint),
+            format!("{} is not signed in. {LOGIN_HINT}", agent.name),
         ),
         RpcError::CLOSED | RpcError::TIMEOUT => ProviderError::process(e.to_string()),
         _ => ProviderError::sniffed(ErrorClass::Unknown, format!("{}: {e}", agent.name)),

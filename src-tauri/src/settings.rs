@@ -81,19 +81,6 @@ fn mcp_command_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
     out
 }
 
-#[tauri::command]
-pub async fn toggle_favorite(spec: String) -> Result<Vec<String>, String> {
-    let mut cfg = ParziConfig::load().map_err(|e| e.to_string())?;
-    if cfg.favorite_models.iter().any(|f| f == &spec) {
-        cfg.favorite_models.retain(|f| f != &spec);
-    } else {
-        cfg.favorite_models.push(spec);
-        cfg.favorite_models.truncate(9);
-    }
-    cfg.save().map_err(|e| e.to_string())?;
-    Ok(cfg.favorite_models)
-}
-
 pub fn in_roster_order(mut all: Vec<ProviderStatus>) -> Vec<ProviderStatus> {
     all.sort_by_key(|s| {
         parzi_providers::PROVIDERS

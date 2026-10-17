@@ -143,7 +143,7 @@ impl Approver for ParkedApprover {
             map: self.pending.clone(),
         };
         let label = humanize_tool_call(&call.name, &call.args);
-        let text = format!("waiting for approval {key}: {label}");
+        let text = format!("Waiting for approval: {label}");
         let _ = self.store.append(&call.session, &Event::System { text });
         let _ = self.events.send(json!({
             "kind": "approval",
@@ -152,6 +152,7 @@ impl Approver for ParkedApprover {
             "call": {
                 "id": call.id,
                 "name": call.name,
+                "label": label,
                 "args": call.args,
                 "lane": call.lane,
                 "session": call.session,
@@ -160,7 +161,7 @@ impl Approver for ParkedApprover {
         if let Ok(answer) = tokio::time::timeout((self.wait)(), rx).await {
             answer.unwrap_or(Approval::Deny)
         } else {
-            let text = format!("approval {key} expired unanswered and was denied: {label}");
+            let text = format!("Nobody answered in time, so it was denied: {label}");
             let _ = self.store.append(&call.session, &Event::System { text });
             Approval::Deny
         }

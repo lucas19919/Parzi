@@ -14,13 +14,10 @@ use crate::process::{self, Proc, STOP_GRACE};
 use crate::types::{
     sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
     PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd,
-    TurnSpec, UsageWindow,
+    TurnSpec, UsageWindow, INSTALL_HINT,
 };
 
 pub const ID: &str = "claude";
-const INSTALL_HINT: &str = "Install Claude Code from Set up Parzi, or set its path in Settings.";
-const LOGIN_HINT: &str =
-    "Sign in from Set up Parzi (it runs `claude auth login`), then check again.";
 
 pub struct Claude {
     binary: String,
@@ -54,7 +51,7 @@ impl Provider for Claude {
 
     async fn status(&self) -> ProviderStatus {
         let Some(program) = self.program() else {
-            return ProviderStatus::new(ID, State::NotInstalled, INSTALL_HINT);
+            return ProviderStatus::new(ID, State::NotInstalled, "");
         };
         let version = process::first_line(&program, &["--version"])
             .await
@@ -68,7 +65,7 @@ impl Provider for Claude {
                 s.account = Some(account_label(a));
                 s
             }
-            Some(_) => ProviderStatus::new(ID, State::SignedOut, LOGIN_HINT),
+            Some(_) => ProviderStatus::new(ID, State::SignedOut, ""),
             None => ProviderStatus::new(
                 ID,
                 State::Error,

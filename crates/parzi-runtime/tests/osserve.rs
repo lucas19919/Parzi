@@ -133,7 +133,7 @@ async fn serve_stays_on_loopback_and_parks_approvals() {
     let events = store.events(&session.id).unwrap();
     assert!(events.iter().any(|e| matches!(
         e,
-        parzi_core::store::Event::System { text } if text.contains("waiting for approval")
+        parzi_core::store::Event::System { text } if text.contains("Waiting for approval")
     )));
 
     drop(daemon);

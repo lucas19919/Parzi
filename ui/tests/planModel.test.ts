@@ -2,8 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   addQuote,
-  alsoRunning,
-  cardSpot,
   deriveItems,
   groupItems,
   itemState,
@@ -11,7 +9,6 @@ import {
   MAX_QUOTES,
   progress,
   quoteBlock,
-  railLayout,
   runTrouble,
   sessionTone,
   splitQuotes,
@@ -181,47 +178,6 @@ test("groups follow the phases, closed items apart, and progress leaves dropped 
   assert.deepEqual(groupItems(plan([item("a")]), derive(plan([item("a")]))).open[0].phase, "");
 });
 
-test("the rail: a spine through the nodes, one lane per need, shared by its dependents", () => {
-  // Now: a, b, c; Next: d. b and d need a; d needs c too.
-  const rows = [null, "a", "b", "c", null, "d"];
-  const needs = new Map([
-    ["b", ["a"]],
-    ["d", ["a", "c"]],
-  ]);
-  const { rows: r, lanes } = railLayout(rows, needs);
-  assert.equal(lanes, 2);
-  // The heading above the first node has no spine; the one between nodes does.
-  assert.deepEqual([r[0].up, r[0].down], [false, false]);
-  assert.deepEqual([r[4].up, r[4].down], [true, true]);
-  assert.deepEqual([r[1].up, r[1].down, r[5].up, r[5].down], [false, true, true, false]);
-  assert.equal(r[1].out, 0);
-  assert.deepEqual(r[2].into, [{ lane: 0, ends: false }]);
-  assert.equal(r[3].out, 1);
-  assert.deepEqual(r[3].through, [0]);
-  assert.deepEqual(r[4].through, [0, 1]);
-  assert.deepEqual(r[5].into, [
-    { lane: 0, ends: true },
-    { lane: 1, ends: true },
-  ]);
-});
-
-test("the rail skips needs pointing up the list and lanes past the cap, and reuses free lanes", () => {
-  const { rows, lanes } = railLayout(
-    ["a", "b", "c", "d"],
-    new Map([
-      ["a", ["b"]],
-      ["b", ["a"]],
-      ["d", ["c"]],
-    ]),
-  );
-  assert.equal(lanes, 1);
-  assert.equal(rows[0].out, 0);
-  assert.equal(rows[2].out, 0);
-  const capped = railLayout(["a", "b", "c"], new Map([["c", ["a", "b"]]]), 1);
-  assert.equal(capped.lanes, 1);
-  assert.deepEqual(capped.rows[2].into, [{ lane: 0, ends: true }]);
-});
-
 test("session dots: needs you, running, failed, done", () => {
   const running = new Set(["r"]);
   assert.equal(sessionTone(session("w"), running, new Set(["w"])), "need");
@@ -233,25 +189,6 @@ test("session dots: needs you, running, failed, done", () => {
   assert.equal(sessionTone(session("d", { last_run: run() }), running), "ok");
   assert.equal(sessionTone(session("i"), running), "idle");
   assert.equal(runTrouble(run({ checks: [{ cmd: "a", ok: false }, { cmd: "b", ok: false }] })), "a and 1 more failed");
-});
-
-test("also running: this project's busy sessions outside the plan, one row per tree", () => {
-  const threads = [
-    session("linked", { status: "active", plan_item: "x" }),
-    session("loose", { status: "active", updated: new Date(NOW - 1000).toISOString() }),
-    session("helper", { status: "active", parent_id: "loose" }),
-    session("asks"),
-    session("idle"),
-    session("elsewhere", { status: "active", project: "thesis" }),
-  ];
-  const rows = alsoRunning(threads, "parzi", new Set(["linked"]), new Set(), new Set(["asks"]));
-  assert.deepEqual(
-    rows.map((r) => [r.session.id, r.ids]),
-    [
-      ["loose", ["loose", "helper"]],
-      ["asks", ["asks"]],
-    ],
-  );
 });
 
 test("quote blocks: the thread hides them and shows what they quote", () => {
@@ -273,14 +210,4 @@ test("the composer quotes an item once, and at most four", () => {
   for (const id of ["b", "c", "d"]) list = addQuote(list, { project: "parzi", id, title: id });
   assert.equal(list.length, MAX_QUOTES);
   assert.equal(addQuote(list, { project: "parzi", id: "e", title: "E" }), list);
-});
-
-test("the hover card sits left of its row, inside the window", () => {
-  const view = { width: 1280, height: 800 };
-  const card = { width: 300, height: 260 };
-  assert.deepEqual(cardSpot({ left: 930, top: 120, right: 1270, bottom: 150 }, card, view), { left: 622, top: 120 });
-  // Low rows lift the card so it stays in the window.
-  assert.deepEqual(cardSpot({ left: 930, top: 760, right: 1270, bottom: 790 }, card, view), { left: 622, top: 532 });
-  // No room on either side: below the row.
-  assert.deepEqual(cardSpot({ left: 100, top: 100, right: 1200, bottom: 130 }, card, view), { left: 100, top: 138 });
 });

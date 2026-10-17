@@ -225,78 +225,6 @@ export function groupItems(plan: Plan, views: ItemView[]): { open: PhaseGroup[];
   return { open: [...groups].filter(([, items]) => items.length).map(([phase, items]) => ({ phase, items })), closed };
 }
 
-// The rail beside the items: a spine through every node, and each open
-// need drawn as a connector from the need's node, out to a lane on the
-// left, down, and into the node that waits on it (one lane per need, shared
-// by its dependents; lanes are reused once free, like a commit graph).
-export interface RailRow {
-  // Lanes passing this row without touching its node.
-  through: number[];
-  // Lanes that join this node: `ends` when it is the lane's last stop.
-  into: { lane: number; ends: boolean }[];
-  // The lane this node's connector leaves on, or -1.
-  out: number;
-  // The spine reaches the row above / below.
-  up: boolean;
-  down: boolean;
-}
-
-export interface RailLayout {
-  rows: RailRow[];
-  lanes: number;
-}
-
-// `rows`: item ids in display order, null for rows without a node (a phase
-// heading). Needs that point up the list are left out (the item still says
-// "after"), and connectors past `maxLanes` too.
-export function railLayout(rows: (string | null)[], needsOf: ReadonlyMap<string, string[]>, maxLanes = 4): RailLayout {
-  const rowOf = new Map<string, number>();
-  rows.forEach((id, i) => {
-    if (id !== null && !rowOf.has(id)) rowOf.set(id, i);
-  });
-  const deps = new Map<string, number[]>();
-  rows.forEach((id, j) => {
-    if (id === null) return;
-    for (const n of new Set(needsOf.get(id) ?? [])) {
-      const i = rowOf.get(n);
-      if (i === undefined || i >= j) continue;
-      const list = deps.get(n) ?? [];
-      list.push(j);
-      deps.set(n, list);
-    }
-  });
-  const sources = [...deps].map(([id, list]) => ({ from: rowOf.get(id) ?? 0, to: Math.max(...list), stops: new Set(list) })).sort((a, b) => a.from - b.from);
-  const laneEnd: number[] = [];
-  const placed: { lane: number; from: number; to: number; stops: Set<number> }[] = [];
-  for (const s of sources) {
-    let lane = laneEnd.findIndex((end) => end < s.from);
-    if (lane < 0) lane = laneEnd.length;
-    if (lane >= maxLanes) continue;
-    laneEnd[lane] = s.to;
-    placed.push({ lane, ...s });
-  }
-  const nodes = rows.map((id, i) => (id === null ? -1 : i)).filter((i) => i >= 0);
-  const firstNode = nodes[0] ?? -1;
-  const lastNode = nodes[nodes.length - 1] ?? -1;
-  const out: RailRow[] = rows.map((id, r) => {
-    const node = id !== null;
-    const row: RailRow = {
-      through: [],
-      into: [],
-      out: -1,
-      up: firstNode >= 0 && (node ? r > firstNode : r > firstNode && r < lastNode),
-      down: lastNode >= 0 && (node ? r < lastNode : r > firstNode && r < lastNode),
-    };
-    for (const p of placed) {
-      if (r === p.from) row.out = p.lane;
-      else if (node && p.stops.has(r)) row.into.push({ lane: p.lane, ends: r === p.to });
-      else if (r > p.from && r < p.to) row.through.push(p.lane);
-    }
-    return row;
-  });
-  return { rows: out, lanes: laneEnd.length };
-}
-
 // A session's dot: running, waiting on you, failed, done, or quiet.
 export type Tone = "live" | "need" | "bad" | "ok" | "idle";
 
@@ -310,37 +238,6 @@ export function sessionTone(s: SessionMeta, running: ReadonlySet<string>, waitin
   if (r.end === "failed" || r.end === "crashed" || r.end === "not_started") return "bad";
   if (r.end === "paused" || (r.checks ?? []).some((c) => !c.ok)) return "need";
   return r.end === "completed" ? "ok" : "idle";
-}
-
-// This project's sessions outside the plan, while they run or wait on you:
-// one row per tree (a helper shows under the session that spawned it).
-export function alsoRunning(
-  threads: SessionMeta[],
-  project: string,
-  linked: ReadonlySet<string>,
-  running: ReadonlySet<string>,
-  waiting: { has(id: string): boolean },
-): { session: SessionMeta; ids: string[] }[] {
-  const byId = new Map(threads.map((t) => [t.id, t]));
-  const busy = threads.filter((t) => sameSlug(t.project, project) && !linked.has(t.id) && (isRunning(t, running) || waiting.has(t.id)));
-  const busyIds = new Set(busy.map((t) => t.id));
-  const rootOf = (t: SessionMeta) => {
-    let root = t;
-    let cur = t.parent_id ? byId.get(t.parent_id) : undefined;
-    for (let guard = 0; cur && guard < 50; guard++) {
-      if (busyIds.has(cur.id)) root = cur;
-      cur = cur.parent_id ? byId.get(cur.parent_id) : undefined;
-    }
-    return root;
-  };
-  const rows = new Map<string, { session: SessionMeta; ids: string[] }>();
-  for (const t of busy) {
-    const root = rootOf(t);
-    const row = rows.get(root.id) ?? { session: root, ids: [] };
-    row.ids.push(t.id);
-    rows.set(root.id, row);
-  }
-  return [...rows.values()].sort((a, b) => (Date.parse(b.session.updated) || 0) - (Date.parse(a.session.updated) || 0));
 }
 
 // Quotes travel as plain prompt text (PLAN_CONTRACT.md):
@@ -381,24 +278,4 @@ export const MAX_QUOTES = 4;
 export function addQuote(list: PlanQuote[], q: PlanQuote): PlanQuote[] {
   if (list.length >= MAX_QUOTES || list.some((x) => x.id === q.id && sameSlug(x.project, q.project))) return list;
   return [...list, q];
-}
-
-export interface Box {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
-
-// Where an item's hover card goes: beside its row, level with it (the panel
-// sits at the window's right edge, so left first), else below or above it;
-// always inside the window.
-export function cardSpot(anchor: Box, card: { width: number; height: number }, view: { width: number; height: number }, gap = 8): { left: number; top: number } {
-  const top = Math.max(gap, Math.min(anchor.top, view.height - card.height - gap));
-  if (anchor.left - gap - card.width >= gap) return { left: Math.round(anchor.left - gap - card.width), top: Math.round(top) };
-  if (anchor.right + gap + card.width <= view.width - gap) return { left: Math.round(anchor.right + gap), top: Math.round(top) };
-  const left = Math.max(gap, Math.min(anchor.left, view.width - card.width - gap));
-  const below = anchor.bottom + gap;
-  const y = below + card.height <= view.height - gap ? below : Math.max(gap, anchor.top - gap - card.height);
-  return { left: Math.round(left), top: Math.round(y) };
 }

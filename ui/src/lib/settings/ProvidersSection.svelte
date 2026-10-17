@@ -3,13 +3,14 @@
   import ProviderLogo from "../ProviderLogo.svelte";
   import { onMount } from "svelte";
   import { api, type ParziConfig, type ProviderEntry, type ProviderStatus } from "../api";
-  import { board, checking, ensureBoard, refreshBoard } from "../providerStore";
+  import { board, checking, ensureBoard, nextStep, refreshBoard, refreshStale, setupWaits } from "../providerStore";
   import { PROVIDER_ORDER, effortLabel, isUsable, modelLabel, nameOf, stateLabel } from "../providerRows";
   import Switch from "./Switch.svelte";
+  import { updateConfig } from "../config";
   import { tooltip } from "../tooltip";
   import "./shared.css";
 
-  export let notify: (msg: string) => void = () => {};
+  export let notify: (msg: string, err?: boolean) => void = () => {};
 
   const PROGRAM: Record<string, string> = {
     claude: "claude",
@@ -19,12 +20,14 @@
     antigravity: "agy_acp_server",
     cursor: "cursor-agent",
   };
+  // A model list this long gets its own search.
+  const SEARCH_FROM = 12;
 
   let cfg: ParziConfig | null = null;
   let loading = true;
   let err = "";
-  let query = "";
-  let expanded = new Set<string>();
+  let open = new Set<string>();
+  let queries: Record<string, string> = {};
   let paths: Record<string, string> = {};
   let spendUsd = "";
   let spendTok = "";
@@ -33,7 +36,7 @@
     try {
       const [, c] = await Promise.all([ensureBoard(), api.getConfig()]);
       cfg = c;
-      paths = Object.fromEntries(PROVIDER_ORDER.map((id) => [id, c.providers?.[id]?.binary ?? ""]));
+      paths = pathsOf(c);
       spendUsd = c.budget?.max_cost_usd != null ? String(c.budget.max_cost_usd) : "";
       spendTok = c.budget?.max_tokens != null ? String(c.budget.max_tokens) : "";
     } catch (e) {
@@ -41,127 +44,93 @@
     } finally {
       loading = false;
     }
+    void refreshStale().catch(() => {});
   });
 
   $: statusOf = (id: string) => $board.find((b) => b.provider === id);
-  $: favs = new Set(cfg?.favorite_models ?? []);
-  $: q = query.trim().toLowerCase();
-  $: modelsFor = (p: ProviderStatus | undefined) =>
-    !p ? [] : !q ? p.models : p.models.filter((m) => (m.name || m.id).toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
   $: entryOf = (id: string): ProviderEntry => cfg?.providers?.[id] ?? { enabled: true };
   $: allChecking = $checking.has("*");
 
-  function badgeOf(p: ProviderStatus | undefined, enabled: boolean): { label: string; cls: string } {
-    if (!enabled) return { label: "Off", cls: "key" };
-    if (!p) return { label: "Not checked yet", cls: "key" };
-    const cls = p.state === "ready" ? "ok" : p.state === "unchecked" || p.state === "disabled" ? "key" : "missing";
-    return { label: stateLabel(p), cls };
+  const pathsOf = (c: ParziConfig) => Object.fromEntries(PROVIDER_ORDER.map((id) => [id, c.providers?.[id]?.binary ?? ""]));
+
+  function statusLine(p: ProviderStatus | undefined, enabled: boolean, busy: boolean): string {
+    if (!enabled) return "Off";
+    if (!p || p.state === "unchecked") return busy ? "Checking…" : "Not checked yet";
+    const parts = [stateLabel(p)];
+    if (p.version && p.state === "ready") parts.push(p.version);
+    return parts.join(" · ");
   }
 
-  function ago(secs: number): string {
-    const s = Math.max(0, Date.now() / 1000 - secs);
-    if (s < 60) return "just now";
-    if (s < 3600) return `${Math.round(s / 60)} min ago`;
-    if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-    return `${Math.round(s / 86400)} d ago`;
+  function filtered(p: ProviderStatus | undefined, q: string) {
+    const list = p?.models ?? [];
+    const s = q.trim().toLowerCase();
+    return s ? list.filter((m) => `${m.name} ${m.id}`.toLowerCase().includes(s)) : list;
   }
 
   function resetsIn(at?: number): string {
     if (!at) return "";
     const s = at - Date.now() / 1000;
-    if (s <= 0) return "Resets now";
-    if (s < 3600) return `Resets in ${Math.round(s / 60)} min`;
-    if (s < 86400) return `Resets in ${Math.round(s / 3600)} h`;
-    return `Resets in ${Math.round(s / 86400)} d`;
+    if (s <= 0) return "resets now";
+    if (s < 3600) return `resets in ${Math.round(s / 60)} min`;
+    if (s < 86400) return `resets in ${Math.round(s / 3600)} h`;
+    return `resets in ${Math.round(s / 86400)} d`;
   }
 
-  function toggle(set: Set<string>, id: string): Set<string> {
-    const next = new Set(set);
+  function toggleOpen(id: string) {
+    const next = new Set(open);
     if (next.has(id)) next.delete(id);
     else next.add(id);
-    return next;
+    open = next;
   }
 
-  async function saveCfg(msg?: string): Promise<boolean> {
-    if (!cfg) return false;
+  async function update(change: (c: ParziConfig) => void, msg?: string): Promise<boolean> {
     try {
-      await api.saveConfig(cfg);
-      cfg = cfg;
+      cfg = await updateConfig(change);
       if (msg) notify(msg);
       return true;
     } catch (e) {
-      notify(`Save failed: ${e}`);
+      const declined = String(e).includes("cancelled");
+      notify(declined ? "Not saved" : `Could not save: ${e}`, !declined);
       try {
         cfg = await api.getConfig();
-        paths = Object.fromEntries(PROVIDER_ORDER.map((id) => [id, cfg?.providers?.[id]?.binary ?? ""]));
+        paths = pathsOf(cfg);
       } catch {}
       return false;
     }
   }
 
-  function setEntry(id: string, patch: Partial<ProviderEntry>) {
-    if (!cfg) return;
-    cfg.providers = { ...(cfg.providers ?? {}), [id]: { ...entryOf(id), ...patch } };
-  }
+  const patchEntry = (id: string, patch: Partial<ProviderEntry>) => (c: ParziConfig) => {
+    c.providers = { ...(c.providers ?? {}), [id]: { ...(c.providers?.[id] ?? { enabled: true }), ...patch } };
+  };
 
-  async function checkAgain(ids: string[] = []) {
-    try {
-      await refreshBoard(ids);
-      if (!ids.length) notify("Asked every agent again");
-    } catch (e) {
-      notify(`Check failed: ${e}`);
-    }
-  }
+  const recheck = (ids: string[] = []) => refreshBoard(ids).catch((e) => notify(`Could not check: ${e}`, true));
 
   async function setEnabled(id: string, on: boolean) {
-    setEntry(id, { enabled: on });
-    if (await saveCfg(on ? `${nameOf(id)} is on` : `${nameOf(id)} is off: the picker leaves it out`)) {
-      void checkAgain([id]);
-    }
+    if (await update(patchEntry(id, { enabled: on }))) void recheck([id]);
   }
 
   async function savePath(id: string) {
     const next = (paths[id] ?? "").trim();
     if (next === (entryOf(id).binary ?? "")) return;
-    setEntry(id, { binary: next || undefined });
-    if (await saveCfg(next ? `${nameOf(id)} runs ${next}` : `${nameOf(id)} runs \`${PROGRAM[id]}\` from PATH`)) {
-      void checkAgain([id]);
-    }
-  }
-
-  async function setDefault(id: string, model: string) {
-    setEntry(id, { default_model: model });
-    await saveCfg(`New ${nameOf(id)} threads start on ${model}`);
+    if (await update(patchEntry(id, { binary: next || undefined }))) void recheck([id]);
   }
 
   function saveSpend() {
-    if (!cfg) return;
     const usd = spendUsd.trim() ? Number(spendUsd) : NaN;
     const tok = spendTok.trim() ? Number(spendTok) : NaN;
-    cfg.budget = {
-      max_cost_usd: Number.isFinite(usd) && usd > 0 ? usd : null,
-      max_tokens: Number.isFinite(tok) && tok > 0 ? tok : null,
-    };
-    void saveCfg();
+    void update((c) => {
+      c.budget = {
+        max_cost_usd: Number.isFinite(usd) && usd > 0 ? usd : null,
+        max_tokens: Number.isFinite(tok) && tok > 0 ? tok : null,
+      };
+    });
   }
 
-  async function toggleFav(spec: string) {
-    try {
-      const list = await api.toggleFavorite(spec);
-      if (cfg) {
-        cfg.favorite_models = list;
-        cfg = cfg;
-      }
-    } catch (e) {
-      notify(`Favorite failed: ${e}`);
-    }
-  }
 </script>
 
 {#if loading}
   <div class="pref-section">
-    <div class="models-toolbar"><div class="skel search" /><div class="skel btn" /></div>
-    <div class="skel tall" />
+    <div class="skel" />
     <div class="skel" />
     <div class="skel" />
   </div>
@@ -169,29 +138,126 @@
   <div class="load-err"><span>{err}</span></div>
 {:else}
   <div class="pref-section">
-    <div class="models-toolbar">
-      <div class="models-search">
-        <Icon name="search" size={12} />
-        <input placeholder="Search models…" aria-label="Search models" bind:value={query} />
-        {#if query}<button class="clear-btn" use:tooltip={"Clear search"} on:click={() => (query = "")}><Icon name="close" size={12} /></button>{/if}
-      </div>
-      <button class="sbtn" on:click={() => checkAgain()} disabled={allChecking} title="Ask every agent's own program where it stands. Spends no quota.">
+    <div class="section-head-with-action">
+      <h3 class="section-title">Providers</h3>
+      <button class="icon-btn" class:spin={allChecking} disabled={allChecking} use:tooltip={allChecking ? "Checking…" : "Check all again"} aria-label="Check all agents again" on:click={() => recheck()}>
         <Icon name="reload" size={12} />
-        <span>{allChecking ? "Checking…" : "Check again"}</span>
       </button>
+    </div>
+
+    <div class="providers-list">
+      {#each PROVIDER_ORDER as id (id)}
+        {@const p = statusOf(id)}
+        {@const entry = entryOf(id)}
+        {@const busy = allChecking || $checking.has(id)}
+        {@const wait = $setupWaits.get(id)}
+        {@const step = entry.enabled && !wait ? nextStep(p) : null}
+        {@const ready = entry.enabled && isUsable(p)}
+        {@const isOpen = open.has(id)}
+        <div class="provider-card" class:off={!entry.enabled}>
+          <div class="provider-head">
+            <ProviderLogo provider={id} size={20} />
+            <div class="provider-title">
+              <div class="provider-title-row">
+                <span class="provider-name">{nameOf(id)}</span>
+                {#if ready && p && !p.gated}
+                  <span class="chip warn" use:tooltip={"It changes files on its own. Parzi cannot ask you first or keep it inside the project folder."}>Edits without asking</span>
+                {/if}
+              </div>
+              <span class="provider-sub" class:ok={ready && p?.state === "ready"}>{wait?.note ?? statusLine(p, entry.enabled, busy)}</span>
+            </div>
+            <span class="head-spacer" />
+            {#if step}
+              <button class="sbtn primary" disabled={busy} on:click={() => step.run(id)}>{busy && step.label === "Try again" ? "Checking…" : step.label}</button>
+            {:else if wait}
+              <span class="waiting">{wait.action === "install" ? "Installing…" : "Signing in…"}</span>
+            {/if}
+            <Switch on={entry.enabled} title={entry.enabled ? `Turn ${nameOf(id)} off` : `Turn ${nameOf(id)} on`} on:toggle={() => setEnabled(id, !entry.enabled)} />
+          </div>
+
+          {#if wait}
+            {#key wait.note}
+              <span class="progress" class:sweep={!wait.eta} style:--eta="{wait.eta}ms"><span /></span>
+            {/key}
+          {/if}
+
+          {#if entry.enabled && p?.state === "error" && p.hint}
+            <div class="provider-how">{p.hint}</div>
+          {:else if ready && p?.hint}
+            <div class="provider-how">{p.hint}</div>
+          {/if}
+
+          {#if ready && p?.usage?.length}
+            <div class="usage">
+              {#each p.usage as w (w.label)}
+                <div class="usage-row">
+                  <span class="usage-label">{w.label}</span>
+                  <span class="usage-bar"><span class="usage-fill" class:hot={w.used_percent >= 80} style="width:{Math.min(100, w.used_percent)}%" /></span>
+                  <span class="usage-num">{Math.round(w.used_percent)}%</span>
+                  {#if w.resets_at}<span class="usage-reset">{resetsIn(w.resets_at)}</span>{/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          <button class="models-toggle" aria-expanded={isOpen} on:click={() => toggleOpen(id)}>
+            <span class="disclosure"><Icon name={isOpen ? "chevDown" : "chevRight"} size={12} /></span>
+            {#if p?.models.length}
+              <span>{p.models.length} model{p.models.length === 1 ? "" : "s"}</span>
+            {:else}
+              <span>Options</span>
+            {/if}
+          </button>
+
+          {#if isOpen}
+            <div class="details">
+              {#if p?.models.length}
+                {#if p.models.length > SEARCH_FROM}
+                  <div class="models-search">
+                    <Icon name="search" size={12} />
+                    <input placeholder="Search {p.models.length} models" aria-label="Search {nameOf(id)} models" bind:value={queries[id]} />
+                  </div>
+                {/if}
+                <div class="model-list">
+                  {#each filtered(p, queries[id] ?? "") as m (m.id)}
+                    <div class="model-row">
+                      <span class="model-main">
+                        <span class="model-name">{modelLabel(m)}{#if m.is_default}<span class="agent-def"> · default</span>{/if}</span>
+                        <span class="model-meta">
+                          <span class="mono">{m.id}</span>
+                          {#if m.efforts.length}<span>{m.efforts.map(effortLabel).join(" · ")}</span>{/if}
+                        </span>
+                      </span>
+                    </div>
+                  {:else}
+                    <div class="empty-note">No model matches.</div>
+                  {/each}
+                </div>
+              {/if}
+              <label class="path-row">
+                <span class="path-label">Program</span>
+                <input
+                  class="path-in"
+                  placeholder="Found automatically ({PROGRAM[id]})"
+                  aria-label="{nameOf(id)} program path"
+                  spellcheck="false"
+                  bind:value={paths[id]}
+                  on:change={() => savePath(id)}
+                  on:keydown={(e) => e.key === "Enter" && savePath(id)}
+                />
+              </label>
+            </div>
+          {/if}
+        </div>
+      {/each}
     </div>
   </div>
 
   <div class="pref-section">
     <h3 class="section-title">Spending limits</h3>
-    <p class="section-desc">
-      A run pauses when it hits either cap. Empty is no cap. A turn on a plan reports no
-      dollar cost, so only the token cap stops it.
-    </p>
     <div class="field-card">
       <div class="field-info">
         <span class="field-label">Max spend per run</span>
-        <span class="field-hint">US dollars, for agents billed per token.</span>
       </div>
       <div class="spend">
         <span class="cur">$</span>
@@ -201,174 +267,57 @@
     <div class="field-card">
       <div class="field-info">
         <span class="field-label">Max tokens per run</span>
-        <span class="field-hint">In plus out. Empty is no cap.</span>
       </div>
       <input class="spend-in wide" inputmode="numeric" placeholder="None" aria-label="Max tokens per run" bind:value={spendTok} on:change={saveSpend} />
-    </div>
-  </div>
-
-  <div class="pref-section">
-    <h3 class="section-title">Providers</h3>
-    <p class="section-desc">
-      Parzi runs each vendor's own agent with your existing sign-in. Sign in with the
-      agent's own program; Parzi asks it where it stands and spends no quota doing so.
-    </p>
-
-    <div class="providers-list">
-      {#each PROVIDER_ORDER as id (id)}
-        {@const p = statusOf(id)}
-        {@const entry = entryOf(id)}
-        {@const b = badgeOf(p, entry.enabled)}
-        {@const list = modelsFor(p)}
-        {@const isOpen = expanded.has(id) || (q.length > 0 && list.length > 0)}
-        {@const def = entry.default_model ?? ""}
-        {@const busy = allChecking || $checking.has(id)}
-        {#if !q || list.length}
-          <div class="provider-card" class:signed-in={isUsable(p)} class:off={!entry.enabled}>
-            <div class="provider-head">
-              <ProviderLogo provider={id} size={20} />
-              <div class="provider-title">
-                <div class="provider-title-row">
-                  <span class="provider-name">{nameOf(id)}</span>
-                  <span class="status-badge {b.cls}">{b.label}</span>
-                  {#if p?.version}<span class="version">{p.version}</span>{/if}
-                </div>
-                <span class="provider-sub">
-                  {p ? `Checked ${ago(p.checked_at)}` : "Not checked yet"}
-                </span>
-              </div>
-              <span class="head-spacer" />
-              <button class="sbtn" disabled={busy} on:click={() => checkAgain([id])} title="Ask {nameOf(id)}'s program again">
-                {busy ? "Checking…" : "Check again"}
-              </button>
-              <Switch on={entry.enabled} title={entry.enabled ? `Turn ${nameOf(id)} off` : `Turn ${nameOf(id)} on`} on:toggle={() => setEnabled(id, !entry.enabled)} />
-            </div>
-
-            {#if p?.hint}
-              <div class="provider-how">{p.hint}</div>
-            {/if}
-
-            {#if p && !p.gated}
-              <div class="provider-ungated" title="Parzi's own gate only sees what the agent asks about.">
-                Can change files without asking Parzi: the folder fence cannot stop it.
-              </div>
-            {/if}
-
-            {#if p?.usage?.length}
-              <div class="usage">
-                {#each p.usage as w (w.label)}
-                  <div class="usage-row">
-                    <span class="usage-label">{w.label}</span>
-                    <span class="usage-bar"><span class="usage-fill" class:hot={w.used_percent >= 80} style="width:{Math.min(100, w.used_percent)}%" /></span>
-                    <span class="usage-num">{Math.round(w.used_percent)}%</span>
-                    {#if w.resets_at}<span class="usage-reset">{resetsIn(w.resets_at)}</span>{/if}
-                  </div>
-                {/each}
-              </div>
-            {/if}
-
-            <div class="path-row">
-              <span class="path-label">Program</span>
-              <input
-                class="path-in"
-                placeholder="{PROGRAM[id]} (from PATH)"
-                aria-label="{nameOf(id)} program"
-                spellcheck="false"
-                bind:value={paths[id]}
-                on:change={() => savePath(id)}
-                on:keydown={(e) => e.key === "Enter" && savePath(id)}
-              />
-            </div>
-
-            {#if p && p.models.length}
-              <button class="models-toggle" aria-expanded={isOpen} on:click={() => (expanded = toggle(expanded, id))}>
-                <span class="disclosure"><Icon name={isOpen ? "chevDown" : "chevRight"} size={12} /></span>
-                <span>{p.models.length} model{p.models.length === 1 ? "" : "s"}</span>
-                {#if def}<span class="def-tag" title="New threads start here">◉ {def}</span>{/if}
-              </button>
-              {#if isOpen}
-                {#if list.length}
-                  <div class="model-list">
-                    {#each list as m (m.id)}
-                      {@const spec = `${id}/${m.id}`}
-                      <div class="model-row">
-                        <button class="fav-btn" use:tooltip={favs.has(spec) ? "Unstar" : "Star as favorite"} on:click={() => toggleFav(spec)}>
-                          {favs.has(spec) ? "★" : "☆"}
-                        </button>
-                        <span class="model-main">
-                          <span class="model-name">{modelLabel(m)}</span>
-                          <span class="model-meta">
-                            <span class="mono">{m.id}</span>
-                            {#if m.efforts.length}<span>Effort: {m.efforts.map(effortLabel).join(" · ")}</span>{/if}
-                          </span>
-                        </span>
-                        {#if m.is_default}<span class="pill hot" title="The agent's own default">Agent default</span>{/if}
-                        {#if def === m.id}
-                          <span class="pill on">New threads</span>
-                        {:else}
-                          <button class="def-btn" title="Start new {nameOf(id)} threads on this model" on:click={() => setDefault(id, m.id)}>Default</button>
-                        {/if}
-                      </div>
-                    {/each}
-                  </div>
-                {:else}
-                  <div class="empty-note">No models match your search.</div>
-                {/if}
-              {/if}
-            {/if}
-          </div>
-        {/if}
-      {/each}
     </div>
   </div>
 {/if}
 
 <style>
-  .models-toolbar { display: flex; gap: 8px; align-items: center; }
-  .models-search {
-    flex: 1; display: flex; align-items: center; gap: 8px; padding: 7px 10px;
-    background: var(--panel); border: 1px solid var(--line);
-    border-radius: var(--radius); color: var(--muted);
+  .icon-btn {
+    width: 28px; height: 28px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: 1px solid var(--line); border-radius: var(--radius);
+    color: var(--muted); cursor: pointer; padding: 0;
   }
-  .models-search input {
-    flex: 1; min-width: 0; background: transparent; border: none; outline: none;
-    color: var(--text); font: inherit; font-size: var(--fs-md);
-  }
-  .models-search input::placeholder { color: var(--muted); }
-  .clear-btn {
-    width: 18px; height: 18px; flex: none; display: inline-flex; align-items: center; justify-content: center;
-    background: transparent; border: none; border-radius: var(--radius-sm); color: var(--muted); cursor: pointer; font-size: var(--fs-xs); padding: 0;
-  }
-  .clear-btn:hover { color: var(--text); }
-  .skel.search { flex: 1; min-height: 34px; }
-  .skel.btn { width: 110px; min-height: 34px; }
-
-  .status-badge.key { background: var(--line); color: var(--muted); border: 1px solid var(--line); }
+  .icon-btn:hover:not(:disabled) { color: var(--text); background: var(--line); }
+  .icon-btn:disabled { cursor: default; }
+  .icon-btn.spin :global(svg) { animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
 
   .providers-list { display: flex; flex-direction: column; gap: 8px; }
   .provider-card {
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg); padding: 10px 12px;
-    display: flex; flex-direction: column; gap: 6px;
+    display: flex; flex-direction: column; gap: 8px;
   }
-  .provider-card.signed-in { border-color: var(--line); }
-  .provider-card.off { opacity: 0.6; }
+  .provider-card.off .provider-head > :global(:not(.switch)),
+  .provider-card.off .models-toggle { opacity: 0.55; }
   .provider-head { display: flex; align-items: center; gap: 10px; }
   .provider-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .provider-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .provider-name { font-size: var(--fs-md); font-weight: 650; color: var(--text); }
-  .provider-sub { font-size: var(--fs-sm); color: var(--muted); }
-  .version { font-size: var(--fs-xs); color: var(--muted); font-family: var(--mono), ui-monospace, monospace; }
+  .provider-sub { font-size: var(--fs-sm); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .provider-sub.ok { color: var(--ok); }
   .provider-how { font-size: var(--fs-sm); color: var(--muted); line-height: 1.45; }
-  .provider-ungated {
-    font-size: var(--fs-sm); line-height: 1.45; color: var(--warn);
-    background: transparent; border: 1px solid var(--warn); border-radius: var(--radius); padding: 6px 9px;
+  .chip {
+    font-size: var(--fs-xs); font-weight: 600; padding: 1px 6px; border-radius: 999px; white-space: nowrap; cursor: default;
   }
+  .chip.warn { color: var(--warn); border: 1px solid var(--warn); }
   .head-spacer { flex: 1; }
-  .def-tag {
-    font-size: var(--fs-xs); color: var(--accent); font-family: var(--mono), ui-monospace, monospace;
-    max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  .sbtn.primary { padding: 5px 12px; font-size: var(--fs-sm); }
+  .waiting { font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
+
+  .progress { display: block; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .progress > span {
+    display: block; height: 100%; width: 100%; background: var(--accent); border-radius: 2px;
+    transform-origin: left; animation: fill var(--eta) linear forwards;
+  }
+  .progress.sweep > span { width: 30%; animation: sweep 1.4s ease-in-out infinite; }
+  @keyframes fill { from { transform: scaleX(0); } to { transform: scaleX(0.95); } }
+  @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+  @media (prefers-reduced-motion: reduce) {
+    .progress > span, .progress.sweep > span, .icon-btn.spin :global(svg) { animation: none; }
   }
 
   .usage { display: flex; flex-direction: column; gap: 5px; }
@@ -379,6 +328,36 @@
   .usage-fill.hot { background: var(--warn); }
   .usage-num { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
   .usage-reset { font-size: var(--fs-xs); color: var(--muted); flex: none; }
+
+  .models-toggle {
+    display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0;
+    background: transparent; border: none; cursor: pointer; min-height: 22px; padding: 0;
+    font: inherit; font-size: var(--fs-sm); text-align: left; color: var(--muted);
+  }
+  .models-toggle:hover { color: var(--text); }
+  .disclosure { display: inline-flex; flex: none; }
+
+  .details { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+  .models-search {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); color: var(--muted);
+  }
+  .models-search input {
+    flex: 1; min-width: 0; background: transparent; border: none; outline: none;
+    color: var(--text); font: inherit; font-size: var(--fs-sm);
+  }
+  .model-list { display: flex; flex-direction: column; gap: 2px; max-height: 340px; overflow-y: auto; }
+  .model-row {
+    display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+    border-radius: var(--radius); font-size: var(--fs-sm);
+  }
+  .model-row:hover { background: var(--line); }
+  .model-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .model-name { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent-def { color: var(--muted); font-weight: 400; }
+  .model-meta { display: flex; align-items: center; gap: 7px; font-size: var(--fs-xs); color: var(--muted); overflow: hidden; white-space: nowrap; }
+  .model-meta .mono { font-family: var(--mono), ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; }
+  .empty-note { padding: 8px; font-size: var(--fs-sm); color: var(--muted); }
 
   .path-row { display: flex; align-items: center; gap: 8px; }
   .path-label { font-size: var(--fs-sm); color: var(--muted); flex: none; width: 58px; }
@@ -391,46 +370,6 @@
   .path-in:focus { border-color: var(--accent); }
   .path-in::placeholder { color: var(--muted); }
 
-  .models-toggle {
-    display: flex; align-items: center; gap: 8px; width: 100%;
-    background: transparent; border: none; cursor: pointer; min-height: 24px; padding: 0;
-    font: inherit; font-size: var(--fs-sm); text-align: left; color: var(--muted);
-  }
-  .models-toggle:hover { color: var(--text); }
-  .disclosure { display: inline-flex; flex: none; }
-
-  .model-list {
-    display: flex; flex-direction: column; gap: 2px;
-    border-top: 1px solid var(--line); padding-top: 8px;
-    max-height: 320px; overflow-y: auto;
-  }
-  .model-row {
-    display: flex; align-items: center; gap: 8px; padding: 5px 8px;
-    border-radius: var(--radius); font-size: var(--fs-sm);
-  }
-  .model-row:hover { background: var(--line); }
-  .fav-btn {
-    width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center;
-    background: transparent; border: none; color: var(--muted); cursor: pointer;
-    font-size: var(--fs-md); padding: 0; flex: none; line-height: 1;
-  }
-  .fav-btn:hover { color: var(--warn); }
-  .model-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-  .model-name { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .model-meta { display: flex; align-items: center; gap: 7px; font-size: var(--fs-xs); color: var(--muted); overflow: hidden; white-space: nowrap; }
-  .model-meta .mono { font-family: var(--mono), ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; }
-  .pill {
-    font-size: var(--fs-xs); font-weight: 600; padding: 1px 5px; border-radius: var(--radius-sm); flex: none;
-    background: var(--line); border: 1px solid var(--line); color: var(--muted);
-  }
-  .pill.hot { background: var(--line); border-color: var(--accent); color: var(--accent); }
-  .pill.on { background: transparent; border-color: var(--ok); color: var(--ok); }
-  .def-btn {
-    background: transparent; border: 1px solid transparent; border-radius: var(--radius-sm);
-    color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer; padding: 3px 8px; flex: none;
-  }
-  .def-btn:hover { color: var(--text); border-color: var(--line); background: var(--line); }
-  .empty-note { padding: 10px; font-size: var(--fs-sm); color: var(--muted); }
   .spend { display: flex; align-items: center; gap: 6px; }
   .cur { font-size: var(--fs-md); color: var(--muted); }
   .spend-in {

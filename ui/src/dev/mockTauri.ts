@@ -276,7 +276,7 @@ const board = [
 const config = {
   version: 1,
   providers: { claude: { enabled: true, default_model: "claude/claude-opus-5-5" }, codex: { enabled: true } },
-  lanes: { default_mode: "supervised", default_allowed_tools: [], max_steps: 60 },
+  lanes: { default_mode: "ask", default_allowed_tools: [] },
   mcp: { servers: {} },
   orchestrator: { max_concurrent: 4, mcp_idle_kill_secs: 600, queue_when_busy: true },
   routing: { order: ["claude", "codex"] },
@@ -412,7 +412,6 @@ mockIPC((cmd, payload) => handlers[cmd]?.((payload ?? {}) as Record<string, unkn
 
 try {
   localStorage.setItem("parzi.onboarded.v1", view === "setup" ? "false" : "true");
-  localStorage.setItem("parzi.layout", params.get("layout") === "sidebar" ? "sidebar" : "topbar");
   const composer = { input: "", mode: "build", model: "claude/claude-opus-5-5", effort: "medium", attachments: [] };
   const tab = (id: string, kind: string, title: string, sessionId: string | null = null, extra: Record<string, unknown> = {}) => ({
     id,

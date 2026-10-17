@@ -365,32 +365,23 @@ impl Orchestrator {
         (mode, allowed)
     }
 
-    /// The turn's mode, auto-accept-edits and full flags. A composer choice
-    /// only tightens the Settings floor; Full access lifts it, except
-    /// Lockdown, which nothing lifts.
-    fn effective_mode(floor: ApprovalMode, choice: Option<&str>) -> (ApprovalMode, bool, bool) {
+    /// The turn's mode, auto-accept-edits and full flags. Settings picks
+    /// where a session starts; the composer's choice for a send is what
+    /// runs, so "Auto" never quietly means "Ask". Lockdown alone holds
+    /// over every choice.
+    fn effective_mode(default: ApprovalMode, choice: Option<&str>) -> (ApprovalMode, bool, bool) {
         match choice {
-            None => (floor, false, false),
-            Some(o) if ApprovalMode::is_full_override(Some(o)) && floor != ApprovalMode::Deny => {
-                (ApprovalMode::Auto, false, true)
-            }
+            None => (default, false, false),
+            Some(_) if default == ApprovalMode::Deny => (ApprovalMode::Deny, false, false),
+            Some(o) if ApprovalMode::is_full_override(Some(o)) => (ApprovalMode::Auto, false, true),
             Some(o) => {
-                let mode = Self::restrict_mode(floor, ApprovalMode::parse(o));
+                let mode = ApprovalMode::parse(o);
                 (
                     mode,
                     o.trim() == "edits" && mode != ApprovalMode::Deny,
                     false,
                 )
             }
-        }
-    }
-
-    fn restrict_mode(a: ApprovalMode, b: ApprovalMode) -> ApprovalMode {
-        use ApprovalMode::{Ask, Auto, Deny};
-        match (a, b) {
-            (Deny, _) | (_, Deny) => Deny,
-            (Ask, _) | (_, Ask) => Ask,
-            (Auto, Auto) => Auto,
         }
     }
 
@@ -484,8 +475,8 @@ impl Orchestrator {
                 q.cwd.trim()
             )));
         };
-        let (floor, allowed) = Self::lane_policy_for(&snap, &q.lane);
-        let (mode, edits_auto, full) = Self::effective_mode(floor, q.mode_override.as_deref());
+        let (start, allowed) = Self::lane_policy_for(&snap, &q.lane);
+        let (mode, edits_auto, full) = Self::effective_mode(start, q.mode_override.as_deref());
         let tools = Arc::new(ToolExecutor {
             cwd: cwd.clone(),
             mcp: p.mcp.clone(),
@@ -774,26 +765,19 @@ mod tests {
     }
 
     #[test]
-    fn full_access_lifts_every_floor_but_lockdown() {
+    fn the_composer_choice_runs_and_only_lockdown_holds_over_it() {
         use crate::tools::ApprovalMode::{Ask, Auto, Deny};
         let eff = Orchestrator::effective_mode;
         assert_eq!(eff(Ask, Some("full")), (Auto, false, true));
         assert_eq!(eff(Auto, Some("full")), (Auto, false, true));
-        assert_eq!(eff(Deny, Some("full")), (Deny, false, false));
-        assert_eq!(eff(Deny, Some("edits")), (Deny, false, false));
+        assert_eq!(eff(Ask, Some("auto")), (Auto, false, false));
+        assert_eq!(eff(Auto, Some("supervised")), (Ask, false, false));
         assert_eq!(eff(Ask, Some("edits")), (Ask, true, false));
-        assert_eq!(eff(Ask, Some("auto")), (Ask, false, false));
+        assert_eq!(eff(Auto, Some("deny")), (Deny, false, false));
+        assert_eq!(eff(Deny, Some("full")), (Deny, false, false));
+        assert_eq!(eff(Deny, Some("auto")), (Deny, false, false));
+        assert_eq!(eff(Deny, Some("edits")), (Deny, false, false));
         assert_eq!(eff(Auto, None), (Auto, false, false));
-    }
-
-    #[test]
-    fn mode_floor_never_lifts_only_tightens() {
-        use crate::tools::ApprovalMode::{Ask, Auto, Deny};
-        assert_eq!(Orchestrator::restrict_mode(Auto, Auto), Auto);
-        assert_eq!(Orchestrator::restrict_mode(Auto, Ask), Ask);
-        assert_eq!(Orchestrator::restrict_mode(Ask, Auto), Ask);
-        assert_eq!(Orchestrator::restrict_mode(Auto, Deny), Deny);
-        assert_eq!(Orchestrator::restrict_mode(Deny, Auto), Deny);
-        assert_eq!(Orchestrator::restrict_mode(Ask, Ask), Ask);
+        assert_eq!(eff(Ask, None), (Ask, false, false));
     }
 }

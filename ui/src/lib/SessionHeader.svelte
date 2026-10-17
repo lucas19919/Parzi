@@ -18,6 +18,8 @@
   export let tokensIn = 0;
   export let tokensOut = 0;
   export let costUsd = 0;
+  // Empty when the agent compacts on its own: that agent's name, else "".
+  export let selfCompacts = "";
 
   const dispatch = createEventDispatcher<{ rename: { title: string }; fork: void; copyId: void; delete: void; plan: void; back: void; compact: void }>();
 
@@ -172,17 +174,21 @@
             <div><span>Used</span><b>{kTokens(contextUsed)} of {kTokens(contextLimit)}</b></div>
             <div><span>Session</span><b>{kTokens(tokensIn)} in · {kTokens(tokensOut)} out</b></div>
           </div>
-          <button
-            class="ctx-compact"
-            disabled={compacting || streaming}
-            on:click={() => {
-              if (compacting || streaming) return;
-              ctxOpen = false;
-              dispatch("compact");
-            }}
-          >
-            {compacting ? "Compacting…" : "Compact"}
-          </button>
+          {#if selfCompacts}
+            <div class="ctx-note">{selfCompacts} compacts its conversation on its own.</div>
+          {:else}
+            <button
+              class="ctx-compact"
+              disabled={compacting || streaming}
+              on:click={() => {
+                if (compacting || streaming) return;
+                ctxOpen = false;
+                dispatch("compact");
+              }}
+            >
+              {compacting ? "Compacting…" : "Compact"}
+            </button>
+          {/if}
         </div>
       {/if}
     </div>
@@ -351,6 +357,7 @@
   .ctx-rows div { display: flex; justify-content: space-between; }
   .ctx-rows span { color: var(--muted); }
   .ctx-rows b { font-weight: 550; font-variant-numeric: tabular-nums; }
+  .ctx-note { font-size: var(--fs-sm); color: var(--muted); }
   .ctx-compact { width: 100%; padding: 5px; background: var(--line); border: none; border-radius: var(--radius); font-size: var(--fs-sm); font-weight: 600; cursor: pointer; color: var(--text); }
   .ctx-compact:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 16%, transparent); }
   .ctx-compact:disabled { opacity: 0.45; cursor: default; }

@@ -5,24 +5,23 @@
   import { ask } from "@tauri-apps/plugin-dialog";
   import {
     api, brain, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onRunEvent,
-    MODE_META, type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type PlanQuote, type Question, type SessionMeta, type UiEvent,
+    type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type PlanQuote, type Question, type SessionMeta, type UiEvent,
   } from "./lib/api";
   import { downloads as downloadApi, onBrowserAsk, onDownload, type Download } from "./lib/api";
   import { addPrompt, downloadList, dropTabPrompts, upsertDownload } from "./lib/browserState";
   import { closedTabs, recordFavicon } from "./lib/browserData";
   import { downloadShare, popClosed, pushClosed } from "./lib/pageRules";
   import TopBar from "./lib/TopBar.svelte";
-  import Sidebar from "./lib/Sidebar.svelte";
   import Switcher from "./lib/Switcher.svelte";
   import DefaultArt from "./lib/DefaultArt.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
   import PanelHeader from "./lib/PanelHeader.svelte";
-  import SidePanel from "./lib/SidePanel.svelte";
+  import SessionInfo from "./lib/SessionInfo.svelte";
+  import PlanInline from "./lib/PlanInline.svelte";
   import Thread from "./lib/Thread.svelte";
   import SessionHeader from "./lib/SessionHeader.svelte";
   import PageView from "./lib/PageView.svelte";
   import HistoryView from "./lib/HistoryView.svelte";
-  import HomeView from "./lib/HomeView.svelte";
   import PreviewView from "./lib/PreviewView.svelte";
   import BrainView from "./lib/BrainView.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
@@ -37,17 +36,18 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { brainTab, ensureComposer, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
+  import { brainTab, ensureComposer, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, rememberModel, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
-  import { watchActivity } from "./lib/activity";
+  import { sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
   import { addQuote, MAX_QUOTES, quoteBlock, sameSlug } from "./lib/planModel";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
-  import { addNotification } from "./lib/notificationStore";
+  import { nameOf } from "./lib/providerRows";
+  import { addNotification, dropNotification, markSessionRead, type NotificationItem } from "./lib/notificationStore";
   import { covered } from "./lib/overlay";
   import { tooltip } from "./lib/tooltip";
   import type { Approval, LiveTool } from "./lib/live";
   import { deskRows, type DeskCmd } from "./lib/desk";
-  import { nextRowTop, scrollEdges, watchEdges, type ScrollEdges } from "./lib/scrollHint";
+  import { watchPlan } from "./lib/planStore";
 
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
@@ -74,6 +74,13 @@
   let approvals: Approval[] = [];
   let questions: Question[] = [];
   let requests: AgentRequest[] = [];
+  // Waiting on you beats working: that is the one to look at.
+  $: sessionMarks.set(
+    Object.fromEntries<SessionMark>([
+      ...[...running].map((id) => [id, "running"] as const),
+      ...[...approvals, ...questions, ...requests].map((x) => [x.session, "waiting"] as const),
+    ]),
+  );
   let context = { used: 0, limit: 0 };
   let compacting = false;
   let branch = "";
@@ -151,23 +158,25 @@
   // tab's composer intact, with no copying and no cross-contamination.
 
   let switcherOpen = false;
-  // The plan panel, open or shut for every session and draft alike.
-  let panelOpen = false;
+  // The column beside a session: open unless you closed it, and only where
+  // the window has room for it.
+  let infoOpen = true;
   try {
-    panelOpen = localStorage.getItem("parzi.plan.open") === "1";
+    infoOpen = localStorage.getItem("parzi.info.open") !== "0";
   } catch {}
-  let panelW = 360;
+  let innerWidth = 1280;
+  // The plan checklist for a session that works on no item, asked for from
+  // the column; it resets when another session shows.
+  let planForced = false;
+  let planForcedFor: string | null = null;
+  let planInline = false;
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
   let farFromBottom = false;
-  // Home's card list: how far it is scrolled, for its fades and "More below".
-  let homeEl: HTMLElement | null = null;
-  let homeEdges: ScrollEdges = scrollEdges(0, 0, 0);
   let dockHeight = 90;
   let omnibar: Omnibar;
   let page: PageView;
   let immersive = false;
-  let layout: "topbar" | "sidebar" = "topbar";
   let setupOpen = false;
   let setupStep = 0;
   // The last Remote switch position; new drafts start from it.
@@ -220,11 +229,6 @@
   // The popup shows the visible session's request first, else the oldest.
   $: openRequest = requests.find((r) => r.session === shown) ?? requests[0] ?? null;
   $: openRequestTitle = openRequest ? (threads.find((t) => t.id === openRequest.session)?.title || "Agent") : "";
-  $: lockMode = (() => {
-    if (!hasSession) return null;
-    const l = normLane(meta?.lane ?? "");
-    return l === "build" || l === "work" ? (l as ComposerMode) : null;
-  })();
   $: sessionLanes = Object.fromEntries(threads.map((t) => [t.id, t.lane ?? ""]));
   // Folder-driven side effects fire on value change only: without the
   // guard every keystroke (same folder string, fresh dirty flag) would
@@ -296,21 +300,29 @@
     else addTab(brainTab());
   }
 
-  // The plan panel shows the project of the session, else of the draft's
-  // folder; on a draft only once it has a folder.
+  // The session's project: its plan and its name.
   $: planProject = (hasSession ? meta?.project : "") || project?.slug || "";
   $: planTitle = project && sameSlug(project.slug, planProject) ? project.title : "";
-  $: planShown = panelOpen && tab.kind === "session" && (hasSession || !!folder);
-  // Sessions waiting on an approval or a question.
-  $: waitingIds = new Set([...approvals.map((a) => a.session), ...questions.map((q) => q.session)]);
+  $: if (hasSession) watchPlan(planProject, folder);
+  $: infoShown = hasSession && infoOpen && innerWidth >= 900;
+  $: if (shown !== planForcedFor) {
+    planForcedFor = shown;
+    planForced = false;
+  }
 
-  function togglePlan(open = !(panelOpen && tab.kind === "session")) {
-    if (open && tab.kind !== "session") goHome();
-    panelOpen = open;
+  function toggleInfo(open = !infoShown) {
+    infoOpen = open;
     try {
-      localStorage.setItem("parzi.plan.open", open ? "1" : "0");
+      localStorage.setItem("parzi.info.open", open ? "1" : "0");
     } catch {}
-    if (open && tab.kind === "session" && !hasSession && !folder) toast("Pick a folder in the composer to see its plan");
+    if (open && hasSession && innerWidth < 900) toast("Widen the window to see the session column");
+  }
+
+  // Agents ask for "the plan": the checklist shows in the thread.
+  function showPlan() {
+    planForced = true;
+    if (!hasSession) toast("Open a session in a project to see its plan");
+    else void tick().then(() => scrollEl?.querySelector(".plan")?.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" }));
   }
 
   // Clicking a plan item quotes it into this tab's composer.
@@ -319,14 +331,14 @@
     const next = addQuote(list, q);
     if (next === list && list.length >= MAX_QUOTES) toast(`A message quotes at most ${MAX_QUOTES} plan items`);
     comp.quotes = next;
-    if (comp.mode === "search" && !lockMode) comp.mode = "build";
+    if (comp.mode === "search") comp.mode = "build";
     comp = comp;
     omnibar?.focus();
   }
 
   function useExample(text: string) {
     comp.input = text;
-    if (comp.mode === "search" && !lockMode) comp.mode = "build";
+    if (comp.mode === "search") comp.mode = "build";
     comp = comp;
     omnibar?.focus();
   }
@@ -395,6 +407,7 @@
   async function showSession(id: string) {
     const my = ++navSeq;
     shown = id;
+    markSessionRead(id);
     clearLive();
     try {
       const [m, ev] = await api.getThread(id);
@@ -402,7 +415,8 @@
       meta = m;
       events = ev;
       context = { used: m.context_tokens ?? 0, limit: m.context_limit ?? 0 };
-      if (m.model.includes("/")) {
+      // A session on an agent's own default ("cursor") keeps it too.
+      if (m.model) {
         tab.composer.model = m.model;
         comp = comp;
       }
@@ -533,22 +547,6 @@
   function newSession() {
     addTab({ ...sessionTab(), cwd: folder || undefined });
     void tick().then(() => omnibar?.focus());
-  }
-
-  function setHomeEdges(edges: ScrollEdges) {
-    homeEdges = edges;
-  }
-
-  // "More below": the next row of cards up to the top of the list.
-  function homeNextRow() {
-    const el = homeEl;
-    if (!el) return;
-    const box = el.getBoundingClientRect();
-    const tops = [...el.querySelectorAll(".card")].map((c) => c.getBoundingClientRect().top - box.top + el.scrollTop);
-    const pad = parseFloat(getComputedStyle(el).paddingTop) || 0;
-    const max = el.scrollHeight - el.clientHeight;
-    const top = nextRowTop(tops, el.scrollTop, pad, max) ?? el.scrollTop + el.clientHeight * 0.8;
-    el.scrollTo({ top, behavior: reduced ? "auto" : "smooth" });
   }
 
   function goHome() {
@@ -758,8 +756,17 @@
       return;
     }
     const files = [...draft.attachments];
-    const sessionLane = normLane(laneOf(target.sessionId));
-    const fresh = !target.sessionId || (sessionLane !== "" && sessionLane !== draft.mode);
+    // A thread's conversation lives inside one agent: another agent's
+    // model starts a new session instead of failing the send.
+    const agentOf = (model: string) => model.split("/")[0];
+    const sessionModel = threads.find((t) => t.id === target.sessionId)?.model ?? "";
+    const otherAgent = !!sessionModel && !!draft.model && agentOf(sessionModel) !== agentOf(draft.model);
+    const fresh = !target.sessionId || otherAgent;
+    // A session keeps its lane. A new one builds when it has a folder to
+    // work in, and is a plain assistant (no shell) without one.
+    const where = remoteOn ? (target.sessionId ? (meta?.cwd ?? "") : (draft.remoteCwd ?? "")) : folder;
+    const lane = !fresh ? normLane(laneOf(target.sessionId)) || "build" : where ? "build" : "work";
+    if (target.sessionId && otherAgent) toast(`New session on ${nameOf(agentOf(draft.model))}: a thread stays with the agent it started on`);
     if (fresh) {
       navTrail = [];
       navTab = "";
@@ -779,15 +786,16 @@
         prompt,
         // A started server session keeps its folder there; a draft uses the
         // server folder picked for it.
-        cwd: remoteOn ? (target.sessionId ? (meta?.cwd ?? "") : (draft.remoteCwd ?? "")) : folder,
+        cwd: where,
         effort: draft.effort,
         attachments: files,
         mode: permission,
-        lane: draft.mode,
+        lane,
         remote: remoteOn,
         quotes: quotes.map((q) => ({ project: q.project, id: q.id })),
       });
       running = new Set(running).add(sid);
+      rememberModel(draft.model, draft.effort);
       // The field was cleared before the await. Drop the stored draft
       // for the tab that sent, not whichever tab is active now.
       draft.input = "";
@@ -877,6 +885,15 @@
     }
   }
 
+  // A failed turn's "Try again": the last message goes out once more.
+  function retryLast() {
+    const last = [...events].reverse().find((e) => e.kind === "user");
+    if (!last || last.kind !== "user" || streaming || sending) return;
+    comp.input = last.text.replace(/\n?\[attached: [^\]]+\]/, "").trimEnd();
+    comp = comp;
+    void send();
+  }
+
   async function rename(title: string) {
     if (!shown) return;
     const id = shown;
@@ -920,7 +937,7 @@
   async function answerRequest(key: string, text: string) {
     const r = requests.find((x) => x.key === key);
     if (!r) return;
-    requests = requests.filter((x) => x.key !== key);
+    settle(key);
     try {
       await api.answerQuestion(key, r.session, text);
     } catch (e) {
@@ -931,7 +948,7 @@
   async function declineRequest(key: string) {
     const r = requests.find((x) => x.key === key);
     if (!r) return;
-    requests = requests.filter((x) => x.key !== key);
+    settle(key);
     try {
       await api.answerQuestion(key, r.session, "");
     } catch (e) {
@@ -981,85 +998,63 @@
     if (follow) void scrollToBottom();
   }
 
-  // Approvals and questions render inline in their own session only, and
-  // the backend denies them after a while: flag ones you can't see.
-  function flagElsewhere(session: string, what: string) {
-    if (session === shown && tab.kind === "session") return;
-    const title = threads.find((t) => t.id === session)?.title || "Agent";
+  const titleOf = (session: string) => threads.find((t) => t.id === session)?.title || "Agent";
+
+  // One announcement per event: a toast and a bell entry, both skipped for
+  // the session you are looking at. Approvals and questions also chime,
+  // since the backend denies them after a while.
+  function announce(session: string, what: string, kind: NotificationItem["kind"], opts: { key?: string; chime?: boolean } = {}) {
+    if (session === shown && tab.kind === "session" && document.hasFocus()) return;
+    const title = titleOf(session);
     notify(`${title} ${what}`, session);
-    chime(false);
+    addNotification({ title, body: what[0].toUpperCase() + what.slice(1), kind, sessionId: session, key: opts.key });
+    if (opts.chime !== undefined) chime(opts.chime);
+  }
+
+  function settle(key: string) {
+    approvals = approvals.filter((a) => a.key !== key);
+    questions = questions.filter((q) => q.key !== key);
+    requests = requests.filter((r) => r.key !== key);
+    dropNotification(key);
   }
 
   function onEvent(e: UiEvent) {
     if (e.kind === "approval") {
       const fresh = !approvals.some((a) => a.key === e.key);
       approvals = [...approvals.filter((a) => a.key !== e.key), { key: e.key, session: e.session, call: e.call }];
-      if (fresh) {
-        flagElsewhere(e.session, "needs approval");
-        const title = threads.find((t) => t.id === e.session)?.title || "Agent";
-        addNotification({
-          title,
-          body: `Tool call ${e.call?.name || "action"} requires approval`,
-          kind: "approval",
-          sessionId: e.session,
-        });
-      }
+      if (fresh) announce(e.session, `needs your approval: ${e.call?.label || e.call?.name || "an action"}`, "approval", { key: e.key, chime: false });
       return;
     }
     if (e.kind === "question") {
       const fresh = !questions.some((q) => q.key === e.key);
       questions = [...questions.filter((q) => q.key !== e.key), { key: e.key, session: e.session, question: e.question, options: e.options }];
-      if (fresh) {
-        flagElsewhere(e.session, "has a question");
-        const title = threads.find((t) => t.id === e.session)?.title || "Agent";
-        addNotification({
-          title,
-          body: e.question || "Agent asked a question",
-          kind: "question",
-          sessionId: e.session,
-        });
-      }
+      if (fresh) announce(e.session, `asks: ${e.question || "a question"}`, "question", { key: e.key, chime: false });
       return;
     }
     if (e.kind === "request") {
+      const fresh = !requests.some((r) => r.key === e.key);
       requests = [...requests.filter((r) => r.key !== e.key), { key: e.key, session: e.session, request: e.request, kind: e.req_kind }];
-      chime(false);
-      const title = threads.find((t) => t.id === e.session)?.title || "Agent";
-      addNotification({
-        title,
-        body: e.request || "Agent requested input",
-        kind: "question",
-        sessionId: e.session,
-      });
+      if (fresh) announce(e.session, `needs something from you: ${e.request || "a request"}`, "question", { key: e.key, chime: false });
+      return;
+    }
+    if (e.kind === "expired") {
+      settle(e.key);
       return;
     }
     if (e.kind === "done" || e.kind === "error" || e.kind === "paused") {
       running.delete(e.session);
       running = running;
-      approvals = approvals.filter((a) => a.session !== e.session);
-      questions = questions.filter((q) => q.session !== e.session);
-      requests = requests.filter((r) => r.session !== e.session);
+      for (const k of [...approvals, ...questions, ...requests].filter((x) => x.session === e.session).map((x) => x.key)) settle(k);
       void refreshThreads();
-      const title = threads.find((t) => t.id === e.session)?.title || "Agent";
-      const isChild = threads.some((t) => t.id === e.session && t.parent_id);
-      addNotification({
-        title,
-        body: e.kind === "done" ? (isChild ? "Subagent finished work" : "Run completed successfully") : e.kind === "paused" ? "Run paused at budget limit" : "Run encountered an error or stopped",
-        kind: isChild ? "subagent" : e.kind === "done" ? "success" : "error",
-        sessionId: e.session,
-      });
       if (e.session === shown) {
         flushLive();
         clearLive();
         void reload();
-        if (e.kind === "paused") toast("Paused: budget");
-      } else if (e.kind === "paused") {
-        notify(`Paused: budget. ${title}`, e.session);
-        chime(false);
-      } else {
-        notify(e.kind === "done" ? `${title} finished` : `${title} stopped`, e.session);
-        chime(e.kind === "done");
       }
+      const isChild = threads.some((t) => t.id === e.session && t.parent_id);
+      if (e.kind === "paused") announce(e.session, "paused at its spending limit", "error", { chime: false });
+      else if (e.kind === "done") announce(e.session, "finished", isChild ? "subagent" : "success", { chime: true });
+      else announce(e.session, "stopped with an error", "error", { chime: false });
       return;
     }
     if (!running.has(e.session) && e.kind !== "context") {
@@ -1091,7 +1086,7 @@
     else if (name === "ctrl+w") closeTab(activeId);
     else if (name === "ctrl+comma") tab.kind === "settings" ? closeTab(activeId) : openSettings();
     else if (name === "ctrl+b") openBrain();
-    else if (name === "ctrl+j" || name === "ctrl+shift+a") togglePlan();
+    else if (name === "ctrl+j" || name === "ctrl+shift+a") toggleInfo();
     else if (name === "ctrl+h") openHistory();
     else if (name === "ctrl+shift+t") reopenClosed();
     else if (name === "f11") void setImmersive(!immersive);
@@ -1100,7 +1095,7 @@
         void setImmersive(false);
         void page?.focusAddress();
       } else if (tab.kind === "session") {
-        if (!lockMode) comp.mode = "search";
+        comp.mode = "search";
         omnibar?.focus();
       }
     } else if (name === "ctrl+tab" || name === "ctrl+shift+tab") {
@@ -1175,7 +1170,7 @@
     } else if (cmd.what === "settings") openSettings(cmd.section || "general");
     else if (cmd.what === "brain") openBrain(cmd.path ?? "");
     else if (cmd.what === "history") openHistory(cmd.view ?? "sessions");
-    else if (cmd.what === "plan" || cmd.what === "work" || cmd.what === "tasks") togglePlan(true);
+    else if (cmd.what === "plan" || cmd.what === "work" || cmd.what === "tasks") showPlan();
     else if (cmd.what === "home") goHome();
   }
 
@@ -1192,19 +1187,7 @@
   }
 
   onMount(() => {
-    try {
-      const saved = Number(localStorage.getItem("parzi.dock.w"));
-      if (saved >= 280 && saved <= 640) panelW = saved;
-    } catch {}
-    try {
-      layout = localStorage.getItem("parzi.layout") === "sidebar" ? "sidebar" : "topbar";
-    } catch {}
-    document.documentElement.classList.toggle("parzi-sidebar", layout === "sidebar");
-    const onLayout = (e: Event) => {
-      layout = (e as CustomEvent<string>).detail === "sidebar" ? "sidebar" : "topbar";
-      document.documentElement.classList.toggle("parzi-sidebar", layout === "sidebar");
-    };
-    document.addEventListener("parzi:layout", onLayout);    const unRun = onRunEvent(onEvent);
+    const unRun = onRunEvent(onEvent);
     const unDesk = onDesk((cmd) => {
       if (typeof cmd.rev === "number") deskRev = Math.max(deskRev, cmd.rev);
       onDeskCmd(cmd);
@@ -1299,12 +1282,11 @@
       unRemote.then((f) => f()).catch(() => {});
       for (const un of [unPage, unOpen, unKey, unAsk, unDownload]) un.then((f) => f()).catch(() => {});
       document.removeEventListener("parzi:bg", onBg);
-      document.removeEventListener("parzi:layout", onLayout);
     };
   });
 </script>
 
-<svelte:window on:keydown={onKey} />
+<svelte:window on:keydown={onKey} bind:innerWidth />
 
 <div class="shell">
   <DefaultArt {bg} blurred={tab.kind === "page"} />
@@ -1314,7 +1296,6 @@
       {tabs}
       activeTabId={activeId}
       {sessionLanes}
-      tabsVisible={layout !== "sidebar"}
       on:select={(e) => selectTab(e.detail.id)}
       on:close={(e) => closeTab(e.detail.id)}
       on:move={(e) => moveTab(e.detail.id, e.detail.to)}
@@ -1331,20 +1312,6 @@
   {/if}
 
   <div class="content">
-    {#if layout === "sidebar" && !immersive}
-      <Sidebar
-        {tabs}
-        activeTabId={activeId}
-        {sessionLanes}
-        contextUsed={context.used}
-        contextLimit={context.limit}
-        {compacting}
-        on:select={(e) => selectTab(e.detail.id)}
-        on:close={(e) => closeTab(e.detail.id)}
-        on:move={(e) => moveTab(e.detail.id, e.detail.to)}
-        on:context={() => shown && openSession(shown)}
-      />
-    {/if}
     <main>
     {#if tab.kind === "settings"}
       <div class="fill col" in:fly={{ y: 8, ...motion }}>
@@ -1395,23 +1362,24 @@
             {branch}
             lane={meta?.lane ?? ""}
             agentCount={familyActive}
-            {panelOpen}
+            panelOpen={infoShown}
             backTitle={backTitle}
             canAct={!!shown}
             contextUsed={context.used}
-            contextLimit={context.limit}
+            contextLimit={infoShown ? 0 : context.limit}
             {compacting}
             {streaming}
             tokensIn={meta?.tokens_in ?? 0}
             tokensOut={meta?.tokens_out ?? 0}
             costUsd={meta?.cost_usd ?? 0}
+            selfCompacts={meta && !["claude", "opencode"].includes(meta.model.split("/")[0]) ? nameOf(meta.model.split("/")[0]) : ""}
             on:rename={(e) => rename(e.detail.title)}
             on:fork={fork}
             on:copyId={copyId}
             on:delete={() => shown && remove(shown)}
             on:back={goBack}
             on:compact={() => onCommand("compact")}
-            on:plan={() => togglePlan()}
+            on:plan={() => toggleInfo()}
           />
           <div class="workarea">
             <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl} on:scroll={() => (farFromBottom = !nearBottom())}>
@@ -1425,8 +1393,10 @@
                 askerTitle={threads.find((t) => t.id === (openQuestion?.session ?? approval?.session ?? shown))?.title ?? ""}
                 {streaming}
                 {folder}
-                on:voted={(e) => (approvals = approvals.filter((a) => a.key !== e.detail.key))}
-                on:answered={(e) => (questions = questions.filter((q) => q.key !== e.detail.key))}
+                provider={threads.find((t) => t.id === shown)?.model.split("/")[0] ?? ""}
+                sessionTitle={titleOf}
+                on:voted={(e) => settle(e.detail.key)}
+                on:answered={(e) => settle(e.detail.key)}
                 on:edited={(e) => {
                   comp.input = e.detail.text;
                   if (e.detail.quotes.length) comp.quotes = e.detail.quotes.slice(0, MAX_QUOTES);
@@ -1435,100 +1405,56 @@
                   toast("Loaded into composer. Edit and send.");
                 }}
                 on:forked={() => fork()}
-              />
+                on:retry={retryLast}
+                on:compact={compact}
+              >
+                <PlanInline
+                  project={planProject}
+                  session={shown ?? ""}
+                  {threads}
+                  {running}
+                  {approvals}
+                  {questions}
+                  force={planForced}
+                  bind:visible={planInline}
+                  on:quote={(e) => quoteItem(e.detail)}
+                />
+              </Thread>
             </div>
-            {#if planShown}
-              <SidePanel
+            {#if infoShown}
+              <SessionInfo
+                session={shown ?? ""}
                 project={planProject}
                 projectTitle={planTitle}
                 {folder}
+                {branch}
+                remoteHost={remoteOn ? ($remoteInfo?.host ?? "") : ""}
+                contextUsed={context.used}
+                contextLimit={context.limit}
+                {compacting}
+                {streaming}
+                selfCompacts={meta && !["claude", "opencode"].includes(meta.model.split("/")[0]) ? nameOf(meta.model.split("/")[0]) : ""}
                 {threads}
                 {running}
                 {approvals}
                 {questions}
-                bind:dockW={panelW}
-                on:quote={(e) => quoteItem(e.detail)}
-                on:example={(e) => useExample(e.detail.text)}
-                on:openUrl={(e) => openPage(e.detail.url)}
+                {planInline}
                 on:openSession={(e) => openSession(e.detail.id)}
-                on:close={() => togglePlan(false)}
+                on:openUrl={(e) => openPage(e.detail.url)}
+                on:compact={compact}
+                on:plan={showPlan}
               />
             {/if}
           </div>
         </section>
       {/if}
 
-      {#if !hasSession}
-        <div
-          class="home"
-          bind:this={homeEl}
-          use:watchEdges={setHomeEdges}
-          style:--shift="{planShown ? (panelW + 8) / 2 : 0}px"
-          style:--fade-top="{homeEdges.top}px"
-          style:--fade-bottom="{homeEdges.bottom}px"
-          in:fade={{ duration: 200 }}
-        >
-          <HomeView
-            {threads}
-            {running}
-            waiting={waitingIds}
-            board={remoteOn ? $remoteBoard : $board}
-            remote={remoteOn}
-            folder={remoteOn ? (comp.remoteCwd ?? "") : folder}
-            on:open={(e) => browse(e.detail.url)}
-            on:openSession={(e) => openSession(e.detail.id)}
-            on:allSessions={() => openHistory("sessions")}
-            on:folder={(e) => useFolder(e.detail.path)}
-            on:agents={() => openSettings(remoteOn ? "connections" : "providers")}
-            on:brain={() => openBrain()}
-            on:remoteSetup={openRemoteSetup}
-          />
-        </div>
-        {#if homeEdges.hint > 0}
-          <button
-            class="more-below"
-            style:--shift="{planShown ? (panelW + 8) / 2 : 0}px"
-            style:opacity={homeEdges.hint}
-            use:tooltip={"More below"}
-            on:click={homeNextRow}
-            transition:fade={motion}
-          >
-            <Icon name="chevDown" />
-          </button>
-        {/if}
-        {#if planShown}
-          <div class="plan-float" in:fade={{ duration: 150 }}>
-            <SidePanel
-              floating
-              project={planProject}
-              projectTitle={planTitle}
-              {folder}
-              {threads}
-              {running}
-              {approvals}
-              {questions}
-              bind:dockW={panelW}
-              on:quote={(e) => quoteItem(e.detail)}
-              on:example={(e) => useExample(e.detail.text)}
-              on:openUrl={(e) => openPage(e.detail.url)}
-              on:openSession={(e) => openSession(e.detail.id)}
-              on:close={() => togglePlan(false)}
-            />
-          </div>
-        {:else if folder}
-          <button class="plan-toggle" use:tooltip={"Plan (Ctrl+J)"} on:click={() => togglePlan(true)}><Icon name="panel" /></button>
-        {/if}
-      {/if}
-
       <div
         class="composer"
         class:docked={hasSession}
-        style:--shift="{planShown ? (hasSession ? panelW / 2 : (panelW + 8) / 2) : 0}px"
+        style:--shift="{infoShown ? 120 : 0}px"
         bind:clientHeight={dockHeight}
       >
-        {#if hasSession && meta?.lane && normLane(meta.lane) !== mode && mode !== "search"}
-          <div class="lane-hint">↵ starts a new {MODE_META[mode].label} session</div>
-        {/if}
         <Omnibar
           bind:this={omnibar}
           bind:input={comp.input}
@@ -1540,7 +1466,6 @@
           bind:attachments={comp.attachments}
           bind:quotes={comp.quotes}
           {folder}
-          lockMode={lockMode}
           folderLocked={!!tab.sessionId}
           {branch}
           {streaming}
@@ -1556,7 +1481,6 @@
           }}
           hero={!hasSession}
           {project}
-          variant={6}
           on:send={send}
           on:browse={(e) => browse(e.detail.url)}
           on:stop={stop}
@@ -1734,131 +1658,22 @@
       transparent calc(100% - var(--dock) - 4px)
     );
   }
-  /* Home: the composer sits a little above centre (.composer's hero
-     bottom) and the widgets fill the space below it, 16px apart. The cards
-     are exactly as wide as the composer and scroll under it, fading out in
-     the gap; with no scrollbar, a deeper bottom fade and the "More below"
-     hint say there is more. The side padding leaves room for their shadows. */
-  .home {
-    position: absolute;
-    top: calc(36% + 58px);
-    bottom: 0;
-    left: 50%;
-    z-index: 10;
-    width: calc(min(720px, calc(90% - 2 * var(--shift, 0px))) + 48px);
-    /* Same 12px rhythm as the card grid: the composer sits directly atop
-       the cards, one family, not a floating island. */
-    padding: 12px 24px 32px;
-    overflow-y: auto;
-    scrollbar-width: none;
-    /* Fades sized by scrollHint.ts: the top one once scrolled, the bottom
-       one deeper while there is more below. */
-    mask-image: linear-gradient(
-      to bottom,
-      transparent,
-      #000 var(--fade-top, 0px),
-      #000 calc(100% - var(--fade-bottom, 32px)),
-      transparent
-    );
-    transform: translateX(calc(-50% - var(--shift, 0px)));
-    transition:
-      transform 700ms var(--ease-out),
-      width 700ms var(--ease-out);
-  }
-  /* The plan beside Home, on a draft with a folder: its own glass card. */
-  .plan-float {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    bottom: 0;
-    z-index: 25;
-    display: flex;
-    overflow: hidden;
-    background: var(--glass-bg-solid);
-    border: var(--glass-border);
-    border-bottom: none;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  }
-  .plan-toggle {
-    position: absolute;
-    top: 12px;
-    right: 16px;
-    z-index: 25;
-    width: 28px;
-    height: 28px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: var(--glass-bg);
-    border: var(--glass-hairline);
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .plan-toggle:hover {
-    background: var(--glass-bg-solid);
-    color: var(--text);
-  }
-  .home::-webkit-scrollbar {
-    display: none;
-  }
-  /* "More below": centred on the cards at the bottom edge, in the fade. */
-  .more-below {
-    position: absolute;
-    bottom: 10px;
-    left: 50%;
-    z-index: 11;
-    width: 28px;
-    height: 28px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: var(--glass-bg);
-    -webkit-backdrop-filter: var(--glass-blur);
-    backdrop-filter: var(--glass-blur);
-    border: var(--glass-hairline);
-    border-radius: 999px;
-    color: var(--muted);
-    cursor: pointer;
-    transform: translateX(calc(-50% - var(--shift, 0px)));
-    transition:
-      opacity 150ms var(--ease-out),
-      transform 700ms var(--ease-out);
-  }
-  .more-below:hover {
-    background: var(--glass-bg-solid);
-    color: var(--text);
-  }
-  /* Search suggestions drop over the widgets: hide them meanwhile rather
-     than leave half-covered cards peeking out. */
-  :global(main:has(.web-suggest)) .home,
-  :global(main:has(.web-suggest)) .more-below {
-    display: none;
-  }
+  /* Home is the composer alone, a little above the middle. In a session
+     it docks at the bottom of the thread, beside the info column. */
   .composer {
     position: absolute;
     left: 50%;
-    bottom: calc(64% - 58px);
+    bottom: 46%;
     z-index: 20;
-    width: min(720px, calc(90% - 2 * var(--shift, 0px)));
+    width: min(680px, calc(90% - 2 * var(--shift, 0px)));
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
-    /* No slide: the composer sits where the layout puts it, even when the
-       sidebar or plan panel opens. Only the width eases. */
-    transition: width 700ms ease;
+    transition: width 300ms ease;
   }
   .composer.docked {
     bottom: 14px;
     /* With the dock open it fits the thread beside it, not the window. */
     width: min(740px, calc(100% - 40px - 2 * var(--shift, 0px)));
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
-  }
-  .lane-hint {
-    margin: 0 0 6px;
-    text-align: center;
-    font-size: var(--fs-sm);
-    color: var(--muted);
   }
   .toasts {
     position: fixed;

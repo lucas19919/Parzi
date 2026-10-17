@@ -5,6 +5,7 @@
   import { faviconUrl } from "./browserData";
   import { buttonHeld, tabDragStarted, tabRelease } from "./gestures";
   import { laneIcon, normLane } from "./lanes";
+  import { sessionMarks } from "./activity";
   import { tooltip } from "./tooltip";
 
   export let tabs: Tab[] = [];
@@ -30,6 +31,9 @@
   let swallow = "";
 
   $: shown = order ? order.map((id) => tabs.find((t) => t.id === id)).filter((t): t is Tab => !!t) : tabs;
+  $: markOf = (sessionId?: string | null) => (sessionId ? $sessionMarks[sessionId] : undefined);
+  $: markTitle = (title: string, sessionId?: string | null) =>
+    markOf(sessionId) === "waiting" ? `${title} · waiting for you` : markOf(sessionId) === "running" ? `${title} · working` : title;
 
   let collapsed = new Set<string>();
   let touched = new Set<string>();
@@ -239,18 +243,19 @@
             role="tab"
             tabindex="0"
             aria-selected={tab.id === activeTabId}
-            title={tab.title}
+            title={markTitle(tab.title, tab.sessionId)}
             on:click={() => onPick(tab.id)}
             on:keydown={(e) => onKey(e, tab.id)}
           >
             <span class="kind">
-              {#if tab.loading}
+              {#if tab.loading || markOf(tab.sessionId) === "running"}
                 <span class="spinner" />
               {:else}
                 <Icon name={laneIcon(lane)} />
               {/if}
             </span>
             <span class="title">{tab.title || "New session"}</span>
+            {#if markOf(tab.sessionId) === "waiting"}<span class="waiting" />{/if}
           </div>
           <button
             class="close group-caret"
@@ -323,12 +328,12 @@
         role="tab"
         tabindex="0"
         aria-selected={tab.id === activeTabId}
-        title={tab.kind === "page" ? tab.url || tab.title : tab.title}
+        title={tab.kind === "page" ? tab.url || tab.title : markTitle(tab.title, tab.sessionId)}
         on:click={() => onPick(tab.id)}
         on:keydown={(e) => onKey(e, tab.id)}
       >
         <span class="kind">
-          {#if tab.loading}
+          {#if tab.loading || markOf(tab.sessionId) === "running"}
             <span class="spinner" />
           {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
             <img src={tab.favicon || faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
@@ -337,6 +342,7 @@
           {/if}
         </span>
         <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>
+        {#if markOf(tab.sessionId) === "waiting"}<span class="waiting" />{/if}
       </div>
       {#if attached.length}
         <button
@@ -463,6 +469,13 @@
   .kind img {
     width: 14px;
     height: 14px;
+  }
+  .waiting {
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--warn);
   }
   .spinner {
     width: 11px;

@@ -42,6 +42,11 @@ export function trackActivity(e: UiEvent) {
   else if (e.kind === "done" || e.kind === "error" || e.kind === "paused") stage(e.session, null);
 }
 
+// Sessions working, or waiting on the person: their tabs say so, so a
+// question in a background tab is not missed.
+export type SessionMark = "running" | "waiting";
+export const sessionMarks = writable<Record<string, SessionMark>>({});
+
 export function watchActivity(): () => void {
   const un = onRunEvent(trackActivity);
   return () => {

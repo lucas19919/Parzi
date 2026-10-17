@@ -5,11 +5,12 @@
   import { parseEnv, splitLine } from "../cmdline";
   import type { ProviderStatus } from "../api";
   import { remote, remoteBoard, remoteInfo as linked, type RemoteInfo } from "../remote";
-  import { PROVIDER_ORDER, nameOf } from "../providerRows";
+  import { PROVIDER_ORDER, nameOf, stateLabel } from "../providerRows";
   import Switch from "./Switch.svelte";
+  import { updateConfig } from "../config";
   import "./shared.css";
 
-  export let notify: (msg: string) => void = () => {};
+  export let notify: (msg: string, err?: boolean) => void = () => {};
 
   const dispatch = createEventDispatcher<{ setupRemote: void }>();
 
@@ -42,37 +43,43 @@
 
   $: servers = Object.entries((cfg?.mcp.servers ?? {}) as Record<string, Server>).sort(([a], [b]) => a.localeCompare(b));
 
+  // Linked from Set up Parzi while this shows: follow it.
+  $: if ($linked) info = $linked;
+
   onMount(() => {
     void load();
+    // Back from a terminal that installed or signed in an agent there.
+    const onFocus = () => {
+      if (info && agents.length) void checkAgents(true);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   });
 
   async function load() {
     try {
       [cfg, info] = await Promise.all([api.getConfig(), remote.info()]);
       loadError = "";
+      if (info) void checkAgents(false);
     } catch (e) {
       loadError = String(e);
     }
   }
 
-  async function save(next: ParziConfig, done: string) {
+  async function save(change: (c: ParziConfig) => void, done: string) {
     saving = true;
     try {
-      await api.saveConfig(next);
-      cfg = next;
+      cfg = await updateConfig(change);
       notify(done);
       return true;
     } catch (e) {
-      notify(String(e).includes("cancelled") ? "Not saved" : `Could not save: ${e}`);
+      const declined = String(e).includes("cancelled");
+      notify(declined ? "Not saved" : `Could not save: ${e}`, !declined);
       cfg = await api.getConfig().catch(() => cfg);
       return false;
     } finally {
       saving = false;
     }
-  }
-
-  function clone(): ParziConfig | null {
-    return cfg ? (JSON.parse(JSON.stringify(cfg)) as ParziConfig) : null;
   }
 
   async function add() {
@@ -91,34 +98,29 @@
       notify(env);
       return;
     }
-    const next = clone();
-    if (!next) return;
-    if (next.mcp.servers[id]) {
-      notify(`A connector called ${id} already exists`);
+    if (cfg?.mcp.servers[id]) {
+      notify(`A connector called ${id} already exists`, true);
       return;
     }
-    next.mcp.servers[id] = { command: words[0], args: words.slice(1), env, enabled: true };
-    if (await save(next, `Added ${id}`)) {
+    const server: Server = { command: words[0], args: words.slice(1), env, enabled: true };
+    if (await save((c) => (c.mcp.servers[id] = server), `Added ${id}`)) {
       adding = false;
       name = line = envText = "";
     }
   }
 
   async function toggle(id: string) {
-    const next = clone();
-    const srv = next?.mcp.servers[id] as Server | undefined;
-    if (!next || !srv) return;
-    srv.enabled = srv.enabled === false;
-    await save(next, `${id} ${srv.enabled ? "on" : "off"}`);
+    const on = (cfg?.mcp.servers[id] as Server | undefined)?.enabled === false;
+    await save((c) => {
+      const srv = c.mcp.servers[id] as Server | undefined;
+      if (srv) srv.enabled = on;
+    }, `${id} ${on ? "on" : "off"}`);
   }
 
   async function removeServer(id: string) {
     const ok = await ask(`Remove the connector "${id}"?`, { title: "Remove connector", kind: "warning" }).catch(() => false);
     if (!ok) return;
-    const next = clone();
-    if (!next) return;
-    delete next.mcp.servers[id];
-    await save(next, `Removed ${id}`);
+    await save((c) => delete c.mcp.servers[id], `Removed ${id}`);
   }
 
   function preset(p: (typeof PRESETS)[number]) {
@@ -127,7 +129,7 @@
     adding = true;
   }
 
-  // Agents on the server: shown only after a check, since it connects.
+  // Agents on the server: what it last reported, checked again on demand.
   let agents: ProviderStatus[] = [];
   let checking = false;
 
@@ -138,7 +140,7 @@
       remoteBoard.set(all);
       agents = PROVIDER_ORDER.map((id) => all.find((a) => a.provider === id)).filter((a): a is ProviderStatus => !!a);
     } catch (e) {
-      notify(`Can't reach the server: ${e}`);
+      notify(`Can't reach the server: ${e}`, true);
     } finally {
       checking = false;
     }
@@ -147,20 +149,13 @@
   async function agentAction(provider: string, action: "install" | "login") {
     try {
       await remote.agent(provider, action);
-      notify(action === "install" ? "Installing in a terminal. Check again when it is done." : "Sign in in the terminal, then check again.");
+      notify("Finish in the terminal window");
     } catch (e) {
-      notify(String(e));
+      notify(String(e), true);
     }
   }
 
-  function agentState(a: ProviderStatus): string {
-    if (a.state === "ready") return a.account ? `Ready · ${a.account}` : "Ready";
-    if (a.state === "signed_out") return "Not signed in";
-    if (a.state === "not_installed") return "Not installed";
-    if (a.state === "disabled") return "Switched off";
-    if (a.state === "error") return a.hint || "Error";
-    return "Installed";
-  }
+  const agentState = (a: ProviderStatus) => (a.state === "error" && a.hint ? a.hint : stateLabel(a));
 
   async function unlink() {
     if (!info) return;
@@ -177,21 +172,21 @@
       agents = [];
       notify("Unlinked");
     } catch (e) {
-      notify(`Could not unlink: ${e}`);
+      notify(`Could not unlink: ${e}`, true);
     }
   }
 
   let syncing = false;
-  $: syncedLine = info?.synced_at ? `Last synced ${new Date(info.synced_at).toLocaleTimeString()}.` : "Not synced yet.";
+  $: syncedLine = info?.synced_at ? `Synced ${new Date(info.synced_at).toLocaleTimeString()}` : "Not synced yet";
 
   async function syncNow() {
     syncing = true;
     try {
       const moved = await remote.sync();
-      notify(moved ? `Synced: ${moved}` : "Already in step");
+      notify(moved ? `Synced ${moved}` : "Up to date");
       info = await remote.info();
     } catch (e) {
-      notify(`Sync failed: ${e}`);
+      notify(`Could not sync: ${e}`, true);
     } finally {
       syncing = false;
     }
@@ -211,10 +206,7 @@
 {:else}
   <div class="pref-section">
     <div class="section-head-with-action">
-      <div>
-        <h3 class="section-title">Remote</h3>
-        <p class="section-desc">Parzi on your own Linux server, reached over SSH. Sessions there keep going while this PC sleeps.</p>
-      </div>
+      <h3 class="section-title">Server</h3>
       {#if !info}
         <button class="sbtn" on:click={() => dispatch("setupRemote")}>Set up</button>
       {/if}
@@ -230,17 +222,14 @@
       </div>
       <div class="field-card">
         <div class="field-info">
-          <span class="field-label">Everything syncs through it</span>
-          <span class="field-hint">Brain notes, settings and every device's sessions. A note changed on two devices at once keeps both copies. Connectors and agent paths stay per machine. {syncedLine}</span>
+          <span class="field-label">Sync</span>
+          <span class="field-hint">{syncedLine}</span>
         </div>
         <button class="sbtn" disabled={syncing} on:click={syncNow}>{syncing ? "Syncing…" : "Sync now"}</button>
       </div>
       <div class="section-head-with-action">
-        <div>
-          <h3 class="section-title">Agents on the server</h3>
-          <p class="section-desc">Install and sign in run in a terminal you watch, with each agent's own login.</p>
-        </div>
-        <button class="sbtn" disabled={checking} on:click={() => checkAgents(true)}>{checking ? "Checking…" : agents.length ? "Check again" : "Check"}</button>
+        <h3 class="section-title">Agents on the server</h3>
+        <button class="sbtn" disabled={checking} on:click={() => checkAgents(true)}>{checking ? "Checking…" : "Check again"}</button>
       </div>
       {#each agents as a (a.provider)}
         <div class="field-card">
@@ -260,10 +249,7 @@
 
   <div class="pref-section">
     <div class="section-head-with-action">
-      <div>
-        <h3 class="section-title">Connectors</h3>
-        <p class="section-desc">MCP servers your agents can use. Each runs as a program on this PC, so Parzi asks before saving a new or changed one.</p>
-      </div>
+      <h3 class="section-title">Connectors</h3>
       <button class="sbtn" disabled={saving} on:click={() => (adding = !adding)}>{adding ? "Cancel" : "Add"}</button>
     </div>
 
@@ -308,7 +294,7 @@
           <input class="mono" bind:value={line} placeholder="npx -y some-mcp-server --flag value" spellcheck="false" />
         </label>
         <label>
-          <span class="field-label">Environment <span class="field-hint">(optional, NAME=value per line; stays on this PC)</span></span>
+          <span class="field-label">Environment <span class="field-hint">(optional, NAME=value per line)</span></span>
           <textarea class="mono" rows="2" bind:value={envText} spellcheck="false" />
         </label>
         <div class="row-end">

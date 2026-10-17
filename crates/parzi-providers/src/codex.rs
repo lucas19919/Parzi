@@ -12,12 +12,10 @@ use crate::process::{self, Proc, STOP_GRACE};
 use crate::types::{
     or_cancel, sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision,
     PermissionGate, PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus,
-    State, TurnEnd, TurnSpec, UsageWindow,
+    State, TurnEnd, TurnSpec, UsageWindow, INSTALL_HINT,
 };
 
 pub const ID: &str = "codex";
-const INSTALL_HINT: &str = "Install Codex from Set up Parzi, or set its path in Settings.";
-const LOGIN_HINT: &str = "Sign in from Set up Parzi (it runs `codex login`), then check again.";
 
 pub struct Codex {
     binary: String,
@@ -100,7 +98,7 @@ impl Provider for Codex {
 
     async fn status(&self) -> ProviderStatus {
         let Some(program) = self.program() else {
-            return ProviderStatus::new(ID, State::NotInstalled, INSTALL_HINT);
+            return ProviderStatus::new(ID, State::NotInstalled, "");
         };
         let mut server = match open(&program, &std::env::temp_dir()).await {
             Ok(s) => s,
@@ -161,7 +159,7 @@ async fn probe(peer: &Peer, version: Option<String>) -> ProviderStatus {
     };
     let signed_in = account.get("account").is_some_and(|a| !a.is_null());
     if !signed_in && account.get("requiresOpenaiAuth").and_then(Value::as_bool) == Some(true) {
-        let mut s = ProviderStatus::new(ID, State::SignedOut, LOGIN_HINT);
+        let mut s = ProviderStatus::new(ID, State::SignedOut, "");
         s.version = version;
         return s;
     }

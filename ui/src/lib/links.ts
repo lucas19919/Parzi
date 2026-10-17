@@ -3,7 +3,21 @@ import { toast, toastError } from "./toast";
 import { openBrainNote } from "./brainStore";
 import { fileLink, safeDecode, webLink } from "./linkRules";
 
-export async function handleLinkClick(e: MouseEvent): Promise<boolean> {
+async function openFile(href: string) {
+  const link = fileLink(href);
+  if (link.kind === "note") {
+    openBrainNote(link.path);
+  } else if (link.kind === "refuse") {
+    toast(link.reason, true);
+  } else {
+    // The backend asks natively with the full path, then re-checks it.
+    await api.openFilePath(link.path).catch(toastError);
+  }
+}
+
+// `folder` is the session's folder: agents link code by its path there
+// ("ui/src/App.svelte", "./README.md:12").
+export async function handleLinkClick(e: MouseEvent, folder = ""): Promise<boolean> {
   const anchor = (e.target as HTMLElement).closest?.("a");
   if (!anchor) return false;
   e.preventDefault();
@@ -18,22 +32,20 @@ export async function handleLinkClick(e: MouseEvent): Promise<boolean> {
   }
 
   if (/^file:/i.test(href)) {
-    const link = fileLink(href);
-    if (link.kind === "note") {
-      openBrainNote(link.path);
-    } else if (link.kind === "refuse") {
-      toast(link.reason, true);
-    } else {
-      // The backend asks natively with the full path, then re-checks it.
-      await api.openFilePath(link.path).catch(toastError);
-    }
+    await openFile(href);
     return true;
   }
 
   if (!/^https?:\/\//i.test(href)) {
-    // A bare note path (projects/.../*.md or notes/*.md).
-    if (/\.md(#.*)?$/i.test(href)) {
-      openBrainNote(safeDecode(href.split("#")[0]).replace(/\\/g, "/"));
+    const path = safeDecode(href.split("#")[0]).replace(/\\/g, "/");
+    const note = /^(projects|notes|widgets)\//i.test(path) || (!folder && /\.md$/i.test(path));
+    if (note) {
+      openBrainNote(path);
+    } else if (folder && path && !/^[a-z][a-z0-9+.-]*:(?![/\d])/i.test(path)) {
+      // A trailing ":12" or ":12:3" names a line, not part of the file.
+      const file = path.replace(/:\d+(:\d+)?$/, "");
+      const full = /^([a-z]:\/|\/)/i.test(file) ? file : `${folder.replace(/[\\/]+$/, "")}/${file.replace(/^\.\//, "")}`;
+      await openFile(`file:///${full.replace(/^\//, "")}`);
     } else {
       toast("That link can't be opened.", true);
     }

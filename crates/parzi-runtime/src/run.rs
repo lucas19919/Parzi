@@ -623,8 +623,7 @@ impl EngineRun {
 
     async fn pause_for_budget(&self, reason: &str) {
         let text = format!(
-            "Paused: {reason}. Raise the budget in Settings, or re-scope, \
-             then send the thread on."
+            "Paused: {reason}. Send again to go on, or raise the spending limit."
         );
         let _ = self
             .p

@@ -1,12 +1,11 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { get } from "svelte/store";
   import { fade, fly } from "svelte/transition";
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
-  import { api, brain, onboard, onSignIn, type ProviderStatus, type Scan } from "./api";
-  import { board, checking, refreshBoard } from "./providerStore";
+  import { brain, onboard, type Scan } from "./api";
+  import { board, checking, nextStep, refreshBoard, setupWaits } from "./providerStore";
   import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "./providerRows";
   import { importBrowser, onboarded } from "./browserData";
   import { setOverlay } from "./overlay";
@@ -18,16 +17,6 @@
 
   const STEPS = ["Agents", "Browser", "Your tools", "Brain", "Remote"];
   const TITLES = ["Your agents", "Bring your browser", "Bring your other tools", "Your brain", "Work from anywhere"];
-  const WATCH_EVERY = 5_000;
-  const INSTALL_WAIT = 600_000;
-  const SIGN_IN_WAIT = 180_000;
-  const START_ETA = 75_000;
-
-  interface Wait {
-    note: string;
-    eta: number;
-  }
-
   export let startStep = 0;
 
   let step = startStep;
@@ -42,8 +31,6 @@
   let folderPicks = new Set<string>();
   let toolResult = "";
   let vault = "";
-  let waiting = new Map<string, Wait>();
-  let alive = true;
   let card: HTMLDivElement;
 
   $: agents = PROVIDER_ORDER.map((id) => $board.find((b) => b.provider === id)).filter((b) => !!b);
@@ -57,18 +44,7 @@
     const before = document.activeElement as HTMLElement | null;
     card.focus();
     void load();
-    const unlisten = onSignIn(({ provider, step }) => {
-      if (!waiting.has(provider)) return;
-      waiting = new Map(waiting).set(
-        provider,
-        step === "starting"
-          ? { note: `Starting ${nameOf(provider)}. This takes about a minute…`, eta: START_ETA }
-          : { note: "Sign in with Google in your browser…", eta: 0 },
-      );
-    });
     return () => {
-      alive = false;
-      void unlisten.then((off) => off());
       setOverlay("onboarding", false);
       before?.focus?.();
     };
@@ -94,46 +70,6 @@
     else next.add(key);
     return next;
   }
-
-  const stateOf = (provider: string) => get(board).find((b) => b.provider === provider)?.state;
-
-  async function watch(provider: string, from: string | undefined, ms: number) {
-    const until = Date.now() + ms;
-    while (alive && Date.now() < until) {
-      await new Promise((r) => setTimeout(r, WATCH_EVERY));
-      const fresh = await refreshBoard([provider]).catch(() => [] as ProviderStatus[]);
-      const now = fresh.find((b) => b.provider === provider)?.state;
-      if (now && now !== from) return;
-    }
-  }
-
-  async function act(provider: string, note: string, work: () => Promise<number>) {
-    if (waiting.has(provider)) return;
-    const from = stateOf(provider);
-    waiting = new Map(waiting).set(provider, { note, eta: 0 });
-    try {
-      const ms = await work();
-      if (ms) await watch(provider, from, ms);
-      else await refreshBoard([provider]);
-    } catch (e) {
-      toastError(e);
-    } finally {
-      const next = new Map(waiting);
-      next.delete(provider);
-      waiting = next;
-    }
-  }
-
-  const install = (provider: string) =>
-    act(provider, "Installing in the terminal window…", async () => {
-      await onboard.install(provider);
-      return INSTALL_WAIT;
-    });
-
-  const signIn = (provider: string) =>
-    act(provider, "Finish signing in in the window that opens…", async () =>
-      (await onboard.login(provider)) ? 0 : SIGN_IN_WAIT,
-    );
 
   async function importFromBrowser() {
     if (!browserPick) return;
@@ -171,11 +107,22 @@
     if (openBrain) dispatch("openBrain");
   }
 
+  // Esc in a field only leaves the field: the wizard stays.
   function onKey(e: KeyboardEvent) {
-    if (e.key === "Escape" && !e.defaultPrevented) {
+    const typing = (e.target as HTMLElement | null)?.closest?.("input, textarea, select");
+    if (e.key === "Escape" && !e.defaultPrevented && !typing) {
       e.preventDefault();
       finish();
     }
+  }
+
+  // Next does what the step offers with what is picked, then moves on;
+  // Skip moves on without it.
+  async function next() {
+    if (busy) return;
+    if (step === 1 && !browserResult && browserPick && (wantBookmarks || wantHistory)) await importFromBrowser();
+    else if (step === 2 && !toolResult && (notePicks.size || folderPicks.size)) await importFromTools();
+    step += 1;
   }
 
   function ago(ms?: number | null) {
@@ -269,7 +216,8 @@
         <p class="lead">Parzi drives each agent on your own subscription. Install and sign in right here; each agent keeps its own login, so Parzi never sees your tokens.</p>
         <div class="list">
           {#each agents as a (a.provider)}
-            {@const wait = waiting.get(a.provider)}
+            {@const wait = $setupWaits.get(a.provider)}
+            {@const next = wait ? null : nextStep(a)}
             <div class="item">
               <span class="logo">
                 {#if hasMark(a.provider)}<ProviderLogo provider={a.provider} size={18} />{:else}{a.provider.slice(0, 1).toUpperCase()}{/if}
@@ -283,14 +231,8 @@
                   <span class="progress" class:sweep={!wait.eta} style:--eta="{wait.eta}ms"><span></span></span>
                 {/key}
               {/if}
-              {#if a.state === "not_installed"}
-                <button class="btn" disabled={waiting.has(a.provider)} on:click={() => install(a.provider)}>
-                  {waiting.has(a.provider) ? "Installing…" : "Install"}
-                </button>
-              {:else if a.state === "signed_out" || a.state === "unchecked"}
-                <button class="btn" disabled={waiting.has(a.provider)} on:click={() => signIn(a.provider)}>
-                  {waiting.has(a.provider) ? "Signing in…" : "Sign in"}
-                </button>
+              {#if next}
+                <button class="btn" disabled={$checking.has(a.provider) || $checking.has("*")} on:click={() => next.run(a.provider)}>{next.label}</button>
               {/if}
             </div>
           {/each}
@@ -436,10 +378,9 @@
       <span class="grow" />
       {#if step < STEPS.length - 1}
         <button class="link" on:click={() => (step += 1)}>Skip</button>
-        <button class="btn primary" on:click={() => (step += 1)}>Next</button>
+        <button class="btn primary" disabled={busy} on:click={next}>{busy ? "Importing…" : "Next"}</button>
       {:else}
-        <button class="btn" on:click={() => finish()}>Done</button>
-        <button class="btn primary" on:click={() => finish(true)}>Open brain</button>
+        <button class="btn primary" on:click={() => finish()}>Done</button>
       {/if}
     </footer>
   </div>

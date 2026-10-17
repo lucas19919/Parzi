@@ -2,216 +2,228 @@
   import { onMount } from "svelte";
   import { api, type Check } from "../api";
   import Icon from "../Icon.svelte";
-  import { check as checkUpdatesStore, dlDone, dlTotal, installUpdate, updateMsg, updateState, updateVersion } from "../updateStore";
+  import { check as checkUpdates, dlDone, dlTotal, installUpdate, updateMsg, updateState, updateVersion } from "../updateStore";
   import { clearFinishedSessions } from "../sessions";
-  import { toast } from "../toast";
   import "./shared.css";
 
-  export let notify: (msg: string) => void = () => {};
+  export let notify: (msg: string, err?: boolean) => void = () => {};
 
-  let quick: Check[] | null = null;
-  let loaded = false;
-  let diagTimedOut = false;
+  const SHORTCUTS = [
+    ["Ctrl+T", "New tab"],
+    ["Ctrl+W", "Close tab"],
+    ["Ctrl+K", "Find a session or command"],
+    ["Ctrl+Tab", "Next tab"],
+    ["Ctrl+1 / Ctrl+2", "Ask the agent / search the web"],
+    ["Ctrl+J", "Session column"],
+    ["Ctrl+B", "Brain"],
+    ["Ctrl+H", "History"],
+    ["Ctrl+,", "Settings"],
+    ["Esc", "Stop the run"],
+  ];
 
-  let threadCount = 0;
+  let version = "";
+  let checks: Check[] | null = null;
+  let checking = true;
+  let slow = false;
+  let sessions = 0;
 
-  let appVersion = "";
+  $: failing = (checks ?? []).filter((c) => !c.ok);
+  $: pct = $dlTotal > 0 ? Math.min(100, Math.round(($dlDone / $dlTotal) * 100)) : 0;
 
-  // Update state lives in updateStore: the startup check pre-downloads
-  // in the background, so this section only reflects and installs.
-  async function checkUpdates() {
-    await checkUpdatesStore(true);
-  }
-
-  async function installUpdateClicked() {
-    await installUpdate();
-  }
-
-  // Diagnostics must never hold the section hostage: provider probes are
-  // slow, so a timeout renders the rest and says so.
-  async function load() {
-    loaded = false;
-    diagTimedOut = false;
+  // Health checks never hold the section: after a few seconds the rest
+  // shows and the checks say they were slow.
+  async function runChecks() {
+    checking = true;
+    slow = false;
     let timer = 0;
     try {
-      const all = Promise.all([
-        api.runDoctorQuick(),
-        api.listThreads(),
-        api.appVersion().catch(() => ""),
-      ]);
-      const timeout = new Promise<never>((_, rej) => {
-        timer = window.setTimeout(() => rej(new Error("diagnostics timed out")), 12000);
+      const late = new Promise<never>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error("slow")), 12000);
       });
-      const [q, threads, v] = await Promise.race([all, timeout]);
-      quick = q;
-      threadCount = threads.length;
-      appVersion = v;
-    } catch (e) {
-      diagTimedOut = true;
-      quick = [];
-      try {
-        threadCount = (await api.listThreads()).length;
-      } catch (e2) {
-        notify(`Couldn't count sessions: ${e2}`);
-      }
-      appVersion = await api.appVersion().catch(() => "");
+      checks = await Promise.race([api.runDoctorQuick(), late]);
+    } catch {
+      slow = true;
+      checks = [];
     } finally {
       clearTimeout(timer);
-      loaded = true;
+      checking = false;
     }
   }
 
+  async function countSessions() {
+    sessions = (await api.listThreads().catch(() => [])).length;
+  }
+
   onMount(() => {
-    void load();
+    api.appVersion().then((v) => (version = v)).catch(() => {});
+    void countSessions();
+    void runChecks();
   });
 
   function copyDiagnostics() {
-    navigator.clipboard.writeText((quick ?? []).map((c) => `${c.ok ? "PASS" : "FAIL"} [${c.name}] ${c.detail}`).join("\n")).then(
-      () => notify("Diagnostics copied to clipboard"),
-      (e) => toast(`Couldn't copy: ${e}`, true),
+    const text = [`Parzi ${version}`, ...(checks ?? []).map((c) => `${c.ok ? "ok  " : "FAIL"} ${c.name}: ${c.detail}`)].join("\n");
+    navigator.clipboard.writeText(text).then(
+      () => notify("Copied"),
+      (e) => notify(`Could not copy: ${e}`, true),
     );
   }
 
-  // Same flow as History's Clear sessions: asks first, keeps running
-  // ones, closes the tabs of the sessions it deleted.
-  async function purgeSessions() {
+  // Same flow as History's: asks first, keeps running sessions, closes
+  // the tabs of the ones it deletes.
+  async function clearSessions() {
     try {
       await clearFinishedSessions();
-      threadCount = (await api.listThreads()).length;
+      await countSessions();
     } catch (e) {
-      toast(`Purge failed: ${e}`, true);
+      notify(`Could not clear sessions: ${e}`, true);
     }
   }
 </script>
 
-{#if !loaded}
-  <div class="pref-section">
-    <div class="skel tall" />
-    <div class="skel" />
-    <div class="skel" />
-  </div>
-{:else}
-  <div class="pref-section">
-    <div class="section-head-with-action">
-      <div>
-        <h3 class="section-title">Updates</h3>
-        <p class="section-desc">Parzi {appVersion ? `v${appVersion}` : ""} · stable channel · checks GitHub releases.</p>
-      </div>
-      {#if $updateState === "ready"}
-        <button class="sbtn" on:click={installUpdateClicked}>
-          <span>Install v{$updateVersion}</span>
-        </button>
-      {:else if $updateState === "available" || $updateState === "downloading"}
-        <button class="sbtn" disabled>
-          <span>{$updateState === "downloading" ? "Downloading…" : "Preparing…"}</span>
-        </button>
-      {:else}
-        <button class="sbtn" disabled={$updateState === "checking"} on:click={checkUpdates}>
-          <span>{$updateState === "checking" ? "Checking…" : "Check for updates"}</span>
-        </button>
+<div class="pref-section">
+  <h3 class="section-title">Updates</h3>
+  <div class="field-card">
+    <div class="field-info">
+      <span class="field-label">Parzi {version}</span>
+      {#if $updateState === "error" || $updateState === "uptodate" || $updateState === "ready"}
+        <span class="field-hint" class:bad={$updateState === "error"}>{$updateState === "error" ? "Couldn't check for updates." : $updateMsg}</span>
       {/if}
     </div>
-    {#if $updateState === "downloading" && $dlTotal > 0}
-      <div class="upd-bar"><div class="upd-fill" style={`width:${Math.min(100, Math.round(($dlDone / $dlTotal) * 100))}%`} /></div>
-    {/if}
-    {#if $updateMsg && $updateState !== "idle"}
-      <div class="check-row">
-        <span class="check-icon {$updateState === "ready" || $updateState === "uptodate" ? "pass" : $updateState === "error" ? "fail" : ""}"><Icon name={$updateState === "ready" || $updateState === "uptodate" ? "check" : $updateState === "error" ? "close" : "clock"} /></span>
-        <span class="check-detail">{$updateMsg}</span>
-      </div>
+    {#if $updateState === "ready"}
+      <button class="sbtn" on:click={installUpdate}>Install {$updateVersion}</button>
+    {:else if $updateState === "available" || $updateState === "downloading"}
+      <span class="progress-text">Downloading {$updateVersion}{pct ? ` · ${pct}%` : "…"}</span>
+    {:else}
+      <button class="sbtn" disabled={$updateState === "checking"} on:click={() => checkUpdates(true)}>
+        {$updateState === "checking" ? "Checking…" : "Check for updates"}
+      </button>
     {/if}
   </div>
+</div>
 
-  <div class="pref-section">
-    <div class="section-head-with-action">
-      <div>
-        <h3 class="section-title">Health checks</h3>
-        <p class="section-desc">Config, agents, and the window.</p>
+<div class="pref-section">
+  <div class="section-head-with-action">
+    <h3 class="section-title">Health</h3>
+    <button class="sbtn" disabled={checking} on:click={copyDiagnostics}><Icon name="copy" size={12} /><span>Copy details</span></button>
+  </div>
+  <div class="checks">
+    {#if checking}
+      <div class="check"><span class="icon"><Icon name="clock" size={12} /></span><span>Checking…</span></div>
+    {:else if slow}
+      <div class="check">
+        <span class="icon bad"><Icon name="alert" size={12} /></span>
+        <span class="grow">The checks took too long.</span>
+        <button class="link" on:click={runChecks}>Run again</button>
       </div>
-      <button class="sbtn" on:click={copyDiagnostics}>
-        <Icon name="copy" size={12} />
-        <span>Copy diagnostics</span>
-      </button>
-    </div>
-
-    <div class="checks-list">
-      {#if diagTimedOut}
-        <div class="check-row">
-          <span class="check-icon fail"><Icon name="close" /></span>
-          <span class="check-name">diagnostics</span>
-          <span class="check-detail">Timed out after 12s. Providers check themselves live under Agents.</span>
-          <button class="sbtn" on:click={() => void load()}>Run again</button>
-        </div>
-      {/if}
-      {#each quick ?? [] as c}
-        <div class="check-row">
-          <span class="check-icon {c.ok ? 'pass' : 'fail'}"><Icon name={c.ok ? "check" : "close"} /></span>
-          <span class="check-name">{c.name}</span>
-          <span class="check-detail">{c.detail}</span>
+    {:else if !failing.length}
+      <div class="check"><span class="icon ok"><Icon name="checkCircle" size={12} /></span><span>All good</span></div>
+    {:else}
+      {#each failing as c (c.name)}
+        <div class="check">
+          <span class="icon bad"><Icon name="xCircle" size={12} /></span>
+          <span class="grow">{c.detail}</span>
         </div>
       {/each}
-    </div>
-
+    {/if}
   </div>
+</div>
 
-  <div class="pref-section">
-    <h3 class="section-title">Sessions</h3>
-    <div class="field-card">
-      <div class="field-info">
-        <span class="field-label">Stored conversations</span>
-        <span class="field-hint">{threadCount} total threads recorded under <code>~/.parzi/sessions</code></span>
-      </div>
-      <button class="sbtn danger" on:click={purgeSessions}>
-        <Icon name="trash" size={12} />
-        <span>Purge finished sessions</span>
-      </button>
-    </div>
+<div class="pref-section">
+  <h3 class="section-title">Sessions</h3>
+  <div class="field-card">
+    <span class="field-label">{sessions} {sessions === 1 ? "session" : "sessions"}</span>
+    <button class="sbtn" on:click={clearSessions}><Icon name="trash" size={12} /><span>Clear finished</span></button>
   </div>
+</div>
 
-  <div class="pref-section">
-    <h3 class="section-title">Keyboard shortcuts</h3>
-    <div class="shortcuts-grid">
-      {#each [
-        ["Ctrl + T", "New tab"],
-        ["Ctrl + W", "Close tab"],
-        ["Ctrl + K", "Sessions and commands"],
-        ["Ctrl + Tab", "Next tab"],
-        ["Ctrl + ,", "Settings"],
-        ["Enter", "Send"],
-        ["Shift + Enter", "New line"],
-        ["Esc", "Stop the run, or close what is open"],
-      ] as [shortcut, action]}
-        <div class="shortcut-item">
-          <kbd>{shortcut}</kbd>
-          <span class="shortcut-action">{action}</span>
-        </div>
-      {/each}
-    </div>
+<div class="pref-section">
+  <h3 class="section-title">Shortcuts</h3>
+  <div class="shortcuts">
+    {#each SHORTCUTS as [keys, action]}
+      <div class="shortcut"><span>{action}</span><kbd>{keys}</kbd></div>
+    {/each}
   </div>
-{/if}
+</div>
 
 <style>
-  .checks-list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
-  .check-row {
-    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
-    background: var(--panel); border-radius: var(--radius); font-size: var(--fs-sm);
+  .field-hint.bad {
+    color: var(--bad);
   }
-  .check-icon { display: inline-flex; flex: none; color: var(--muted); }
-  .check-icon.pass { color: var(--ok); }
-  .check-icon.fail { color: var(--bad); }
-  .check-name { color: var(--text); font-weight: 500; min-width: 120px; flex: none; }
-  .check-detail { color: var(--muted); font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .upd-bar { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; margin-top: 8px; }
-  .upd-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.2s ease; }
-  .shortcuts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; }
-  .shortcut-item {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 6px 0; border-bottom: 1px solid var(--line);
+  .progress-text {
+    flex: none;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .checks {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 32px;
+    font-size: var(--fs-md);
+    color: var(--text);
+  }
+  .icon {
+    display: inline-flex;
+    flex: none;
+    color: var(--muted);
+  }
+  .icon.ok {
+    color: var(--ok);
+  }
+  .icon.bad {
+    color: var(--bad);
+  }
+  .grow {
+    flex: 1;
+    min-width: 0;
+  }
+  .link {
+    flex: none;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-sm);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+  .link:hover {
+    color: var(--text);
+  }
+  .shortcuts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 24px;
+  }
+  .shortcut {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 34px;
+    border-bottom: 1px solid var(--line);
+    font-size: var(--fs-sm);
+    color: var(--muted);
   }
   kbd {
-    font-family: var(--mono), ui-monospace, monospace; font-size: var(--fs-xs);
-    background: var(--line); border: 1px solid var(--line);
-    padding: 2px 6px; border-radius: var(--radius-sm); color: var(--text);
+    flex: none;
+    padding: 2px 6px;
+    background: var(--line);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    font-family: var(--mono), ui-monospace, monospace;
+    font-size: var(--fs-xs);
   }
-  .shortcut-action { font-size: var(--fs-sm); color: var(--muted); }
 </style>

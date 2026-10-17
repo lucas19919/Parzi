@@ -68,7 +68,7 @@
       "reason": "Math follows TeX metrics and fonts."
     },
     {
-      "selector": ".path-in",
+      "selector": ".path-in, .spend-in",
       "rules": ["text-contrast"],
       "reason": "Reviewed: placeholder is --muted on an opaque --bg (at least 5.6:1 in every built-in theme). axe can't sample the background of fields below the fold."
     },
@@ -76,6 +76,11 @@
       "selector": ".ob textarea",
       "rules": ["text-contrast"],
       "reason": "Reviewed: the placeholder sits on blurred glass (backdrop-filter), which axe can't measure. It is --muted, at least 4.7:1 on that glass in every built-in theme."
+    },
+    {
+      "selector": ".info h3, .info .line span",
+      "rules": ["text-contrast"],
+      "reason": "Reviewed: the session column is --text and --muted on the session's opaque glass. The session actions menu drops over it, and axe can't sample text under the menu."
     }
   ]
 }

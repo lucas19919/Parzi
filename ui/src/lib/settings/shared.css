@@ -1,7 +1,7 @@
 .pref-section { display: flex; flex-direction: column; gap: 10px; }
 .section-title { margin: 0; font-size: var(--fs-md); font-weight: 600; color: var(--text); letter-spacing: -0.1px; }
 .section-desc { margin: -4px 0 2px; font-size: var(--fs-sm); color: var(--muted); line-height: 1.45; }
-.section-head-with-action { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.section-head-with-action { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .section-head-with-action > div { display: flex; flex-direction: column; gap: 6px; }
 
 .field-card {

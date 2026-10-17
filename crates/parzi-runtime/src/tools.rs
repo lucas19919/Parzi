@@ -1066,15 +1066,15 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         "fs.read" => format!("Reading {}", str_arg("path").unwrap_or_else(|| "?".into())),
         "fs.write" => format!("Writing {}", str_arg("path").unwrap_or_else(|| "?".into())),
         "session.spawn" => format!(
-            "Delegating: {}",
-            one_line(&str_arg("title").unwrap_or_else(|| "subsession".into()), 60)
+            "Starting a helper: {}",
+            one_line(&str_arg("title").unwrap_or_else(|| "untitled".into()), 60)
         ),
         "session.send_message" => format!(
             "Messaging {}",
             session_label(&str_arg("session_id").unwrap_or_else(|| "session".into()))
         ),
-        "session.read_session" => "Reading session".into(),
-        "session.list_sessions" => "Listing sessions".into(),
+        "session.read_session" => "Checking on a helper".into(),
+        "session.list_sessions" => "Listing helpers".into(),
         "session.rename" => "Naming this session".into(),
         "plan.read" => "Reading the plan".into(),
         "plan.write" => {
@@ -1094,8 +1094,8 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             }
         }
         "lane.dispatch" => format!(
-            "Dispatching worker: {}",
-            one_line(&str_arg("title").unwrap_or_else(|| "worker".into()), 60)
+            "Handing off: {}",
+            one_line(&str_arg("title").unwrap_or_else(|| "a task".into()), 60)
         ),
         "browser.open" => format!(
             "Opening {}",
@@ -1153,13 +1153,13 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
                 60
             )
         ),
-        "models.list" => "Checking the bench".into(),
+        "models.list" => "Listing models".into(),
         "shell.start" => format!(
             "Starting {}",
             one_line(&str_arg("cmd").unwrap_or_else(|| "a command".into()), 60)
         ),
-        "shell.logs" => "Reading shell output".into(),
-        "shell.kill" => "Stopping a shell".into(),
+        "shell.logs" => "Reading command output".into(),
+        "shell.kill" => "Stopping a command".into(),
         "ask.user" => format!(
             "Asking {}",
             one_line(
@@ -1190,9 +1190,9 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             "Deleting note {}",
             one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
         ),
-        "lane.status" => "Reading lane state".into(),
+        "lane.status" => "Checking what is running".into(),
         "memory.review" => format!(
-            "Reviewing memory {}",
+            "Reviewing note {}",
             one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
         ),
         "browser.click" => format!(
@@ -1229,21 +1229,34 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             "Writing note {}",
             one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
         ),
-        "ui.show_markdown" => "Rendering text".into(),
+        "ui.show_markdown" => "Writing a note".into(),
         "ui.show_artifact" => format!(
-            "Saving {}",
+            "Publishing {}",
             one_line(
                 &str_arg("title")
                     .or_else(|| str_arg("id"))
-                    .unwrap_or_else(|| "artifact".into()),
+                    .unwrap_or_else(|| "an artifact".into()),
                 60
             )
         ),
-        _ => match hint {
-            Some(h) => format!("Calling {name} {}", one_line(&h, 60)),
-            None => format!("Calling {name}"),
-        },
+        // Connector tools ("mcp__github__list_issues", "gh.issue_get")
+        // read by their last word.
+        _ => {
+            let short = short_tool_name(name).replace('_', " ");
+            match hint {
+                Some(h) => format!("Using {short}: {}", one_line(&h, 60)),
+                None => format!("Using {short}"),
+            }
+        }
     }
+}
+
+fn short_tool_name(name: &str) -> &str {
+    name.rsplit("__")
+        .next()
+        .and_then(|s| s.rsplit('.').next())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(name)
 }
 
 /// Every namespace of Parzi's own tools: an MCP name `plan_write` reads
@@ -1307,15 +1320,16 @@ mod tests {
                 "session.spawn",
                 &j(r#"{"title":"auth worker","prompt":"x"}"#)
             ),
-            "Delegating: auth worker"
+            "Starting a helper: auth worker"
         );
         assert_eq!(
             humanize_tool_call("gh.issue_get", &j(r#"{"number":"12"}"#)),
-            "Calling gh.issue_get 12"
+            "Using issue get: 12"
         );
+        assert_eq!(humanize_tool_call("weird.tool", &j("{}")), "Using tool");
         assert_eq!(
-            humanize_tool_call("weird.tool", &j("{}")),
-            "Calling weird.tool"
+            humanize_tool_call("mcp__github__list_issues", &j("{}")),
+            "Using list issues"
         );
         assert!(!humanize_tool_call("shell.exec", &j(r#"{"cmd":"a\nb"}"#)).contains('\n'));
     }

@@ -6,7 +6,9 @@ use std::sync::Arc;
 use parzi_core::config::ParziConfig;
 use parzi_core::store::SessionStore;
 use parzi_runtime::handler::RunEvent;
-use parzi_runtime::tools::{Approval, Approver, AskRequest, Asker, ToolCallInfo};
+use parzi_runtime::tools::{
+    humanize_tool_call, Approval, Approver, AskRequest, Asker, ToolCallInfo,
+};
 use parzi_runtime::Orchestrator;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -94,6 +96,12 @@ pub(crate) enum UiEvent {
         request: String,
         req_kind: String,
     },
+    /// An approval, question or request nobody answered in time: its card
+    /// goes, since answering it now would do nothing.
+    Expired {
+        key: String,
+        session: String,
+    },
     Done {
         session: String,
         turns: u32,
@@ -113,6 +121,8 @@ pub(crate) enum UiEvent {
 pub(crate) struct ToolCallView {
     id: String,
     name: String,
+    /// What the call does, in words ("Running `npm test`").
+    label: String,
     args: serde_json::Value,
     lane: String,
     session: String,
@@ -135,6 +145,7 @@ impl Approver for GuiApprover {
         let view = ToolCallView {
             id: call.id.clone(),
             name: call.name.clone(),
+            label: humanize_tool_call(&call.name, &call.args),
             args: call.args.clone(),
             lane: call.lane.clone(),
             session: call.session.clone(),
@@ -165,7 +176,10 @@ impl Approver for GuiApprover {
         }
         match out {
             Ok(Ok(a)) => a,
-            _ => Approval::Deny,
+            _ => {
+                expired(&self.app, &key, &call.session);
+                Approval::Deny
+            }
         }
     }
 }
@@ -204,11 +218,24 @@ impl Asker for GuiAsker {
         );
         let out = tokio::time::timeout(std::time::Duration::from_secs(300), rx).await;
         self.pending.lock().await.remove(&key);
+        if out.is_err() {
+            expired(&self.app, &key, &req.session);
+        }
         match out {
             Ok(Ok(a)) if !a.trim().is_empty() => a,
             _ => "the user didn't answer — decide yourself and say what you assumed".into(),
         }
     }
+}
+
+fn expired(app: &AppHandle, key: &str, session: &str) {
+    let _ = app.emit(
+        "parzi://run-event",
+        UiEvent::Expired {
+            key: key.to_string(),
+            session: session.to_string(),
+        },
+    );
 }
 
 fn boot() -> anyhow::Result<(ParziConfig, SessionStore, Option<String>)> {
@@ -665,6 +692,7 @@ fn main() {
             adblock::adblock_enable,
             adblock::adblock_site,
             vault::vault_state,
+            vault::vault_install,
             vault::vault_unlock,
             vault::vault_lock,
             vault::vault_logins,
@@ -707,7 +735,6 @@ fn main() {
             files::open_file_path,
             settings::get_config,
             settings::save_config,
-            settings::toggle_favorite,
             settings::provider_statuses,
             settings::refresh_providers,
             settings::warm_agent,

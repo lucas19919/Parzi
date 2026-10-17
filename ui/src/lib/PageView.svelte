@@ -296,7 +296,15 @@
     else if (yes && p.url) dispatch("openTab", { url: p.url });
   }
 
+  // The login key shows only with Bitwarden's CLI installed: a button
+  // that can only say "install something first" is noise.
+  let hasVault = false;
+
   onMount(() => {
+    vault
+      .state()
+      .then((s) => (hasVault = s.status !== "missing"))
+      .catch(() => {});
     const ro = new ResizeObserver(schedule);
     if (slot) ro.observe(slot);
     window.addEventListener("resize", schedule);
@@ -369,16 +377,18 @@
           {#if count}<span class="count">{count}</span>{/if}
         </button>
       {/if}
-      <button
-        bind:this={keyBtn}
-        class="nav"
-        class:busy={filling}
-        use:tooltip={"Fill a login from Bitwarden"}
-        disabled={!url.startsWith("https://")}
-        on:click={fillLogin}
-      >
-        <Icon name="key" />
-      </button>
+      {#if hasVault}
+        <button
+          bind:this={keyBtn}
+          class="nav"
+          class:busy={filling}
+          use:tooltip={"Fill a login from Bitwarden"}
+          disabled={!url.startsWith("https://")}
+          on:click={fillLogin}
+        >
+          <Icon name="key" />
+        </button>
+      {/if}
       <button class="nav" class:on={pinned} use:tooltip={pinned ? "Unpin from Home" : "Pin to Home"} disabled={!url} on:click={togglePin}>
         <Icon name="pin" />
       </button>

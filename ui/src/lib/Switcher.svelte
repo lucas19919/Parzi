@@ -4,6 +4,8 @@
   import Icon from "./Icon.svelte";
   import type { IconName } from "./icons";
   import type { SessionMeta } from "./api";
+  import { shownOf } from "./providerRows";
+  import { board } from "./providerStore";
   import { folderName, type Tab } from "./tabs";
   import { setOverlay } from "./overlay";
   import { tooltip } from "./tooltip";
@@ -55,11 +57,6 @@
     return !q || fields.some((f) => f?.toLowerCase().includes(q));
   }
 
-  function tokens(t: SessionMeta) {
-    const n = (t.tokens_in || 0) + (t.tokens_out || 0);
-    return n >= 1000 ? `${Math.round(n / 1000)}k tokens` : `${n} tokens`;
-  }
-
   // The component gallery is a design tool: dev builds only.
   const ACTIONS: Omit<Item, "group">[] = [
     { id: "new-session", icon: "chat", title: "New session", sub: "Start a draft", run: () => dispatch("newSession") },
@@ -99,7 +96,7 @@
             group: "Sessions",
             icon: "chat",
             title: t.title || "Untitled session",
-            sub: [t.model && t.model !== "auto" ? t.model : "no model yet", t.cwd ? folderName(t.cwd) : "", tokens(t)].filter(Boolean).join(" · "),
+            sub: [t.model && t.model !== "auto" ? shownOf(t.model, $board).name : "", t.cwd ? folderName(t.cwd) : ""].filter(Boolean).join(" · "),
             run: () => dispatch("openSession", { id: t.id }),
             remove: () => dispatch("deleteSession", { id: t.id }),
           }),

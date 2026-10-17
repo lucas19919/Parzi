@@ -174,6 +174,21 @@ pub async fn vault_state(webview: Webview) -> Result<VaultState, String> {
     Ok(current_state().await)
 }
 
+/// Opens Bitwarden's own installer in a terminal; Settings checks again
+/// when the person comes back to the window.
+#[tauri::command]
+pub async fn vault_install(webview: Webview) -> Result<(), String> {
+    from_shell(&webview)?;
+    let script = if cfg!(windows) {
+        "winget install --id Bitwarden.CLI --exact"
+    } else if cfg!(target_os = "macos") {
+        "brew install bitwarden-cli"
+    } else {
+        "npm install -g @bitwarden/cli"
+    };
+    crate::onboard::open_terminal("Install Bitwarden", script)
+}
+
 #[tauri::command]
 pub async fn vault_lock(webview: Webview) -> Result<VaultState, String> {
     from_shell(&webview)?;

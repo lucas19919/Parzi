@@ -16,7 +16,7 @@
     { id: "system", label: "System" },
   ];
 
-  const notify = (msg: string) => toast(msg);
+  const notify = (msg: string, err = false) => toast(msg, err);
 </script>
 
 <div class="settings">

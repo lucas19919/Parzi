@@ -14,7 +14,6 @@
   export let tabs: Tab[] = [];
   export let activeTabId = "";
   export let sessionLanes: Record<string, string> = {};
-  export let tabsVisible = true;
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -61,7 +60,7 @@
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<header class="topbar" class:side={!tabsVisible} on:mousedown={startWindowDrag}>
+<header class="topbar" on:mousedown={startWindowDrag}>
   <div class="left">
     <div class="menu">
       <button
@@ -110,22 +109,15 @@
     <button class="icon-btn" use:tooltip={"Home"} on:click={() => dispatch("home")}>
       <Icon name="home" />
     </button>
-    {#if tabsVisible}
-      <TabBar
-        {tabs}
-        {activeTabId}
-        {sessionLanes}
-        on:select={(e) => dispatch("select", e.detail)}
-        on:close={(e) => dispatch("close", e.detail)}
-        on:move={(e) => dispatch("move", e.detail)}
-        on:newTab={() => dispatch("newTab")}
-      />
-    {:else}
-      <!-- Sidebar layout: the tabs live in the sidebar, New tab sits here with Home. -->
-      <button class="icon-btn" use:tooltip={"New tab (Ctrl+T)"} on:click={() => dispatch("newTab")}>
-        <Icon name="plus" />
-      </button>
-    {/if}
+    <TabBar
+      {tabs}
+      {activeTabId}
+      {sessionLanes}
+      on:select={(e) => dispatch("select", e.detail)}
+      on:close={(e) => dispatch("close", e.detail)}
+      on:move={(e) => dispatch("move", e.detail)}
+      on:newTab={() => dispatch("newTab")}
+    />
   </div>
 
   <div class="right">
@@ -135,12 +127,12 @@
         class:active={notiOpen}
         aria-haspopup="dialog"
         aria-expanded={notiOpen}
-        use:tooltip={unreadCount ? `${unreadCount} notification${unreadCount === 1 ? "" : "s"}` : "Notifications"}
+        use:tooltip={unreadCount ? `${unreadCount} unread notification${unreadCount === 1 ? "" : "s"}` : "Notifications"}
         on:click={() => (notiOpen = !notiOpen)}
       >
         <Icon name="bell" />
         {#if unreadCount > 0}
-          <span class="noti-badge">{unreadCount > 9 ? "9+" : unreadCount}</span>
+          <span class="noti-badge" />
         {/if}
       </button>
       {#if notiOpen}
@@ -168,10 +160,6 @@
     padding-left: 10px;
     user-select: none;
   }
-  /* Over the sidebar: the icons line up with the tab icons below them. */
-  .topbar.side {
-    padding-left: 12px;
-  }
   .left {
     display: flex;
     align-items: center;
@@ -197,20 +185,15 @@
     color: var(--text);
     background: var(--hover);
   }
+  /* Unread is a dot; the count is in the button's name and tooltip. */
   .noti-badge {
     position: absolute;
-    top: 1px;
-    right: -1px;
-    min-width: 13px;
-    height: 13px;
-    padding: 0 3px;
+    top: 4px;
+    right: 4px;
+    width: 8px;
+    height: 8px;
     border-radius: 999px;
     background: var(--accent);
-    color: #fff;
-    font-size: 9px;
-    font-weight: 700;
-    line-height: 13px;
-    text-align: center;
     border: 1.5px solid var(--bg);
   }
   .menu {

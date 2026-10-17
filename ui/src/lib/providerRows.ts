@@ -38,8 +38,9 @@ export const modelLabel = (m: { id: string; name: string }): string =>
 
 const sourceOf = (id: string): string => id.split("/").slice(0, -1).join("/");
 
-export const isUsable = (p: ProviderStatus | undefined): boolean =>
-  !!p && (p.state === "ready" || p.state === "unchecked");
+// Only an agent that answered "ready" is offered: a never-checked one may
+// not even be installed.
+export const isUsable = (p: ProviderStatus | undefined): boolean => p?.state === "ready";
 
 function rowsOf(p: ProviderStatus): PickRow[] {
   const usable = isUsable(p);
@@ -62,7 +63,7 @@ export function stateLabel(p: ProviderStatus): string {
     case "ready":
       return p.account || "Ready";
     case "unchecked":
-      return "Installed";
+      return "Checking…";
     case "signed_out":
       return "Not signed in";
     case "not_installed":
@@ -83,16 +84,15 @@ export function shownOf(value: string, board: ProviderStatus[]): { provider: str
   return { provider: p, name: id ? prettyModel(id) : nameOf(p) };
 }
 
-export const DEFAULT_EFFORTS = ["low", "medium", "high", "extra", "ultra"];
-
+// The effort levels the model itself lists. None means the agent picks its
+// own, and Parzi offers no control that would do nothing.
 export function effortsFor(value: string, board: ProviderStatus[]): string[] {
-  if (!value || value === "auto") return DEFAULT_EFFORTS;
+  if (!value) return [];
   const [p, ...rest] = value.split("/");
   const models = board.find((b) => b.provider === p)?.models ?? [];
   const id = rest.join("/");
-  const m = models.find((x) => x.id === id) ?? models.find((x) => x.is_default);
-  const list = m?.efforts ?? [];
-  return list.length ? list : DEFAULT_EFFORTS;
+  const m = (id && models.find((x) => x.id === id)) || models.find((x) => x.is_default);
+  return m?.efforts ?? [];
 }
 
 export function fitEffort(current: string, efforts: string[]): string {
