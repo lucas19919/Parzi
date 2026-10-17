@@ -6,9 +6,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { checkUrl } from "lintapple";
 
 const BASE = process.env.PARZI_UI_URL ?? "http://localhost:1420/mock.html";
-const VIEWS = ["home", "session", "brain", "history", "settings", "setup", "page"];
+const VIEWS = ["home", "session", "request", "brain", "history", "settings", "setup", "page"];
 // Views that are another view in other settings.
-const QUERY = {};
+const QUERY = { request: "view=session&request=file" };
 
 // More states per view, each checked again after its action (run in order
 // on one page). Selectors are CSS and must match exactly one element.
@@ -35,11 +35,20 @@ const STATES = {
     click("plan checklist", ".info .plan-row", ".thread-col .plan ul"),
     click("plan done items", ".plan .item.fold", ".plan li:last-child > .item.closed"),
     click("plan quote chip", ".plan ul > li:nth-child(2) > .item", ".ob .chip.quote"),
+    // A session that is working holds what you send until it is done.
+    click("running session", ".tabs > .tab:nth-child(3) .pick", ".ob .go.stop"),
+    { name: "typed ahead", action: "fill", selector: ".ob textarea", value: "Then add a test for it", ready: { selector: ".ob .go.stop" } },
+    { name: "held", action: "press", selector: ".ob textarea", key: "Enter", ready: { selector: ".ob .held" } },
   ],
   brain: [click("pinned note", ".note:has(.pin)", ".titles h2"), click("conflict copy", ".note.copy", ".conflict")],
   history: [2, 3, 4].map((i) => click(`library ${i}`, nth(".seg", i), `${nth(".seg", i)}[aria-pressed="true"]`)),
   settings: [2, 3, 4, 5].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
-  setup: [2, 3, 4, 5].map((i) => click(`step ${i}`, nth("header .steps", i), `${nth("header .steps", i)}[aria-current="step"]`)),
+  setup: [
+    ...[2, 3].map((i) => click(`step ${i}`, nth("header .steps", i), `${nth("header .steps", i)}[aria-current="step"]`)),
+    click("tool notes", ".body .list > .item:first-child .more", ".list.picks"),
+    click("step 4", nth("header .steps", 4), `${nth("header .steps", 4)}[aria-current="step"]`),
+    click("server form", ".disclose", ".remote-form"),
+  ],
 };
 
 const args = process.argv.slice(2);

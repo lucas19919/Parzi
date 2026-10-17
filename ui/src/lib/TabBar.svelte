@@ -3,7 +3,7 @@
   import Icon from "./Icon.svelte";
   import type { Tab } from "./tabs";
   import { faviconUrl } from "./browserData";
-  import { buttonHeld, tabDragStarted, tabRelease } from "./gestures";
+  import { pressDrag, tabDragStarted, tabRelease, type PressDrag } from "./gestures";
   import { laneIcon, normLane } from "./lanes";
   import { sessionMarks } from "./activity";
   import { tooltip } from "./tooltip";
@@ -23,7 +23,6 @@
   let strip: HTMLElement;
   const els: Record<string, HTMLElement> = {};
   let broken = new Set<string>();
-  let press: { id: string; x: number; y: number; grab: number; pointer: number } | null = null;
   let dragId = "";
   let dragX = 0;
   let order: string[] | null = null;
@@ -112,42 +111,46 @@
     dispatch("select", { id });
   }
 
-  function onDown(e: PointerEvent, id: string) {
-    swallow = "";
-    if (e.button !== 0 || (e.target as HTMLElement).closest(".close")) return;
-    const el = els[id];
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    press = vertical
-      ? { id, x: e.clientX, y: e.clientY, grab: e.clientY - r.top, pointer: e.pointerId }
-      : { id, x: e.clientX, y: e.clientY, grab: e.clientX - r.left, pointer: e.pointerId };
-  }
+  type Press = { id: string; x: number; y: number; grab: number };
 
-  // A press left over from a pointerup the page window ate. Cleared before
-  // the tab's own handler runs, so a new press still starts.
-  function onDownAnywhere() {
-    if (press) onCancel();
-  }
-
-  function onMove(e: PointerEvent) {
-    if (!press || e.pointerId !== press.pointer) return;
-    if (!buttonHeld(e.buttons)) {
-      onUp(e);
-      return;
-    }
-    if (!dragId) {
-      if (!tabDragStarted(press.x, press.y, e.clientX, e.clientY, vertical)) return;
-      // No pointer capture. A capture a page window steals never comes back,
-      // and the next click never lands. The window hears the move instead.
-      dragId = press.id;
+  // A press on a tab: a click selects through the tab's own handler, a drag
+  // past the slop moves it.
+  const drag = (id: string): PressDrag<Press> => ({
+    press(e) {
+      swallow = "";
+      if ((e.target as HTMLElement).closest(".close")) return null;
+      const el = els[id];
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { id, x: e.clientX, y: e.clientY, grab: vertical ? e.clientY - r.top : e.clientX - r.left };
+    },
+    starts: (p, e) => tabDragStarted(p.x, p.y, e.clientX, e.clientY, vertical),
+    start(p) {
+      dragId = p.id;
       order = tabs.map((t) => t.id);
-    }
-    void follow(vertical ? e.clientY : e.clientX);
-  }
+    },
+    drag: (p, e) => void follow(p, vertical ? e.clientY : e.clientX),
+    release(p) {
+      const result = tabRelease({ pressId: p.id, dragId, order, ids: tabs.map((t) => t.id) });
+      reset();
+      if (result.kind === "move") {
+        swallow = result.id;
+        dispatch("move", { id: result.id, to: result.to });
+        dispatch("select", { id: result.id });
+      } else if (result.kind === "select") {
+        swallow = result.id;
+        dispatch("select", { id: result.id });
+      }
+    },
+    cancel() {
+      reset();
+      swallow = "";
+    },
+  });
 
-  async function follow(client: number) {
+  async function follow(press: Press, client: number) {
     const el = els[dragId];
-    if (!el || !order || !press) return;
+    if (!el || !order) return;
     const box = strip.getBoundingClientRect();
     const size = (id: string) => (els[id] ? (vertical ? els[id].offsetHeight : els[id].offsetWidth) : 0);
     const start = (id: string) => (els[id] ? (vertical ? els[id].offsetTop : els[id].offsetLeft) : 0);
@@ -167,56 +170,16 @@
       order = next;
       await tick();
     }
-    if (!press || !dragId) return;
+    if (!dragId) return;
     dragX = pos - start(dragId);
   }
 
-  function onUp(e?: PointerEvent) {
-    if (press && e && e.pointerId !== press.pointer) return;
-    const result = tabRelease({
-      pressId: press?.id ?? "",
-      dragId,
-      order,
-      ids: tabs.map((t) => t.id),
-    });
-    press = null;
+  function reset() {
     dragId = "";
     dragX = 0;
     order = null;
-    if (result.kind === "move") {
-      swallow = result.id;
-      dispatch("move", { id: result.id, to: result.to });
-      dispatch("select", { id: result.id });
-    } else if (result.kind === "select") {
-      swallow = result.id;
-      dispatch("select", { id: result.id });
-    }
-  }
-
-  function onCancel() {
-    press = null;
-    dragId = "";
-    dragX = 0;
-    order = null;
-    swallow = "";
-  }
-
-  // Implicit capture can drop while the button is still down (the pointer
-  // left the shell for a page window). A release still has its pointerup.
-  function onLost(e: PointerEvent) {
-    if (!press || e.pointerId !== press.pointer || !buttonHeld(e.buttons)) return;
-    onCancel();
   }
 </script>
-
-<svelte:window
-  on:pointerdown|capture={onDownAnywhere}
-  on:pointermove={onMove}
-  on:pointerup={onUp}
-  on:pointercancel={onCancel}
-  on:lostpointercapture={onLost}
-  on:blur={onCancel}
-/>
 
 <!-- A tablist may only own tabs, so each tab is a plain pill holding the
      role="tab" element and, beside it, pointer-only caret and close
@@ -235,7 +198,7 @@
           class:active={tab.id === activeTabId}
           class:dragging={tab.id === dragId}
           style={tab.id === dragId ? `transform: ${vertical ? "translateY" : "translateX"}(${dragX}px)` : ""}
-          on:pointerdown={(e) => onDown(e, tab.id)}
+          use:pressDrag={drag(tab.id)}
           on:auxclick={(e) => onAux(e, tab.id)}
         >
           <div
@@ -320,7 +283,7 @@
       class:active={tab.id === activeTabId}
       class:dragging={tab.id === dragId}
       style={tab.id === dragId ? `transform: ${vertical ? "translateY" : "translateX"}(${dragX}px)` : ""}
-      on:pointerdown={(e) => onDown(e, tab.id)}
+      use:pressDrag={drag(tab.id)}
       on:auxclick={(e) => onAux(e, tab.id)}
     >
       <div

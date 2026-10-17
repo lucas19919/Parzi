@@ -25,7 +25,6 @@
   import PreviewView from "./lib/PreviewView.svelte";
   import BrainView from "./lib/BrainView.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
-  import RequestPopup from "./lib/RequestPopup.svelte";
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
   import Settings from "./lib/Settings.svelte";
   import Icon from "./lib/Icon.svelte";
@@ -100,6 +99,13 @@
   let policy = "";
   let mode: ComposerMode = "build";
   let sending = false;
+  // Type-ahead. The backend takes one run per session, so a message sent
+  // while its session works is held here (a later one joins it) and goes
+  // out when the run is done.
+  type Held = { tab: string; text: string; quotes: PlanQuote[]; files: string[]; model: string; effort: string; mode: string; cwd: string; lane: string; remote: boolean };
+  let held: Record<string, Held> = {};
+  $: heldNow = tab.kind === "session" && shown ? held[shown] : undefined;
+  $: heldText = heldNow ? heldNow.text || heldNow.quotes.map((q) => q.title).join(", ") : "";
 
   // The Omnibar binds to `comp`, the active tab's own composer object
   // (tab.composer, same reference), so each tab keeps its draft, mode,
@@ -179,6 +185,7 @@
   let immersive = false;
   let setupOpen = false;
   let setupStep = 0;
+  let setupServer = false;
   // The last Remote switch position; new drafts start from it.
   let preferRemote = false;
   try {
@@ -226,9 +233,9 @@
   $: folder = remoteOn ? "" : tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
   $: approval = approvals.find((a) => a.session === shown) ?? null;
   $: openQuestion = questions.find((q) => q.session === shown) ?? null;
-  // The popup shows the visible session's request first, else the oldest.
-  $: openRequest = requests.find((r) => r.session === shown) ?? requests[0] ?? null;
-  $: openRequestTitle = openRequest ? (threads.find((t) => t.id === openRequest.session)?.title || "Agent") : "";
+  $: openRequest = requests.find((r) => r.session === shown) ?? null;
+  // Requests wait on you as questions do, in the plan and the session column.
+  $: asks = [...questions, ...requests.map((r) => ({ key: r.key, session: r.session, question: r.request, options: [] }))];
   $: sessionLanes = Object.fromEntries(threads.map((t) => [t.id, t.lane ?? ""]));
   // Folder-driven side effects fire on value change only: without the
   // guard every keystroke (same folder string, fresh dirty flag) would
@@ -352,14 +359,16 @@
     if (meta?.id === id) meta = { ...meta, title: t.title };
   }
 
-  // Set up Parzi, opened straight at its Remote step.
+  // Set up Parzi, opened at its end with the server form showing.
   function openRemoteSetup() {
-    setupStep = 4;
+    setupStep = 3;
+    setupServer = true;
     setupOpen = true;
   }
 
   function openSetup() {
     setupStep = 0;
+    setupServer = false;
     setupOpen = true;
   }
 
@@ -743,7 +752,7 @@
     const prompt = draft.input.trim();
     // A message can be just quoted plan items.
     const quotes = draft.mode === "search" ? [] : [...(draft.quotes ?? [])];
-    if ((!prompt && !quotes.length) || sending || streaming) return;
+    if ((!prompt && !quotes.length) || sending) return;
     if (!draft.model && draft.mode !== "search") {
       toast("Pick a model first");
       omnibar?.openModels();
@@ -766,6 +775,14 @@
     // work in, and is a plain assistant (no shell) without one.
     const where = remoteOn ? (target.sessionId ? (meta?.cwd ?? "") : (draft.remoteCwd ?? "")) : folder;
     const lane = !fresh ? normLane(laneOf(target.sessionId)) || "build" : where ? "build" : "work";
+    if (!fresh && target.sessionId && running.has(target.sessionId)) {
+      hold(target.sessionId, { tab: target.id, text: prompt, quotes, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, lane, remote: remoteOn });
+      draft.input = "";
+      draft.attachments = [];
+      draft.quotes = [];
+      comp = comp;
+      return;
+    }
     if (target.sessionId && otherAgent) toast(`New session on ${nameOf(agentOf(draft.model))}: a thread stays with the agent it started on`);
     if (fresh) {
       navTrail = [];
@@ -823,11 +840,105 @@
     }
   }
 
+  function hold(sid: string, next: Held) {
+    const prev = held[sid];
+    held = {
+      ...held,
+      [sid]: prev
+        ? {
+            ...next,
+            text: [prev.text, next.text].filter(Boolean).join("\n\n"),
+            quotes: [...prev.quotes, ...next.quotes].slice(0, MAX_QUOTES),
+            files: [...new Set([...prev.files, ...next.files])],
+          }
+        : next,
+    };
+  }
+
+  function take(sid: string): Held | undefined {
+    const h = held[sid];
+    if (!h) return undefined;
+    const rest = { ...held };
+    delete rest[sid];
+    held = rest;
+    return h;
+  }
+
+  // A held message goes back into its composer, ahead of anything typed
+  // since: its run stopped short, or sending it failed.
+  function restore(sid: string, h: Held) {
+    const t = tabs.find((x) => x.id === h.tab) ?? tabs.find((x) => x.sessionId === sid);
+    if (!t) return;
+    t.composer = ensureComposer(t.composer);
+    const c = t.composer;
+    c.input = [h.text, c.input.trim()].filter(Boolean).join("\n\n");
+    c.attachments = [...new Set([...h.files, ...c.attachments])];
+    c.quotes = [...h.quotes, ...(c.quotes ?? [])].slice(0, MAX_QUOTES);
+    if (t.id === activeId) {
+      syncComposer(t);
+      comp = comp;
+    }
+  }
+
+  function unhold(sid: string) {
+    const h = take(sid);
+    if (h) restore(sid, h);
+  }
+
+  // The run a held message waited on is done: it goes out now.
+  async function sendHeld(sid: string) {
+    if (!held[sid]) return;
+    // Busy from here, so a message typed meanwhile is held with it.
+    running = new Set(running).add(sid);
+    if (sid === shown) await reload();
+    const h = take(sid);
+    if (!h) return;
+    const optimistic: ChatEvent = { kind: "user", text: [h.text, ...h.quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
+    if (sid === shown) {
+      events = [...events, optimistic];
+      void scrollToBottom();
+    }
+    try {
+      const id = await api.sendMessage({
+        sessionId: sid,
+        model: h.model,
+        prompt: h.text,
+        cwd: h.cwd,
+        effort: h.effort,
+        attachments: h.files,
+        mode: h.mode,
+        lane: h.lane,
+        remote: h.remote,
+        quotes: h.quotes.map((q) => ({ project: q.project, id: q.id })),
+      });
+      if (id !== sid) {
+        running.delete(sid);
+        running = new Set(running).add(id);
+        for (const t of tabs.filter((t) => t.sessionId === sid)) patchTab(t.id, { sessionId: id });
+      }
+      if (shown === sid) {
+        shown = id;
+        await reload();
+        await scrollToBottom();
+      }
+      void refreshThreads();
+    } catch (e) {
+      running.delete(sid);
+      running = running;
+      if (shown === sid) events = events.filter((ev) => ev !== optimistic);
+      // Anything typed while it was going out stays after it.
+      unhold(sid);
+      restore(sid, h);
+      toastError(e);
+    }
+  }
+
   async function stop() {
     if (!shown || !running.has(shown)) return;
     const id = shown;
     running.delete(id);
     running = running;
+    unhold(id);
     clearLive();
     await reload();
     void refreshThreads();
@@ -915,6 +1026,7 @@
       await api.deleteThread(id);
       running.delete(id);
       running = running;
+      take(id);
       const open = tabs.filter((t) => t.sessionId === id).map((t) => t.id);
       for (const tid of open) closeTab(tid);
       void refreshThreads();
@@ -930,30 +1042,6 @@
       () => toast("Session ID copied"),
       (e) => toast(`Couldn't copy: ${e}`, true),
     );
-  }
-
-  // Agent requests share the question answer path: answering resumes the
-  // turn, declining sends blank and the agent proceeds on assumption.
-  async function answerRequest(key: string, text: string) {
-    const r = requests.find((x) => x.key === key);
-    if (!r) return;
-    settle(key);
-    try {
-      await api.answerQuestion(key, r.session, text);
-    } catch (e) {
-      toastError(e);
-    }
-  }
-
-  async function declineRequest(key: string) {
-    const r = requests.find((x) => x.key === key);
-    if (!r) return;
-    settle(key);
-    try {
-      await api.answerQuestion(key, r.session, "");
-    } catch (e) {
-      toastError(e);
-    }
   }
 
   // History's Clear sessions: purge finished threads, close their tabs.
@@ -1046,11 +1134,15 @@
       running = running;
       for (const k of [...approvals, ...questions, ...requests].filter((x) => x.session === e.session).map((x) => x.key)) settle(k);
       void refreshThreads();
+      // A held message goes out after a finished run, else back to its composer.
+      const next = e.kind === "done" && !!held[e.session];
+      if (e.kind !== "done") unhold(e.session);
       if (e.session === shown) {
         flushLive();
         clearLive();
-        void reload();
+        if (!next) void reload();
       }
+      if (next) void sendHeld(e.session);
       const isChild = threads.some((t) => t.id === e.session && t.parent_id);
       if (e.kind === "paused") announce(e.session, "paused at its spending limit", "error", { chime: false });
       else if (e.kind === "done") announce(e.session, "finished", isChild ? "subagent" : "success", { chime: true });
@@ -1390,7 +1482,8 @@
                 {liveTools}
                 {approval}
                 question={openQuestion}
-                askerTitle={threads.find((t) => t.id === (openQuestion?.session ?? approval?.session ?? shown))?.title ?? ""}
+                request={openRequest}
+                askerTitle={threads.find((t) => t.id === (openQuestion?.session ?? openRequest?.session ?? approval?.session ?? shown))?.title ?? ""}
                 {streaming}
                 {folder}
                 provider={threads.find((t) => t.id === shown)?.model.split("/")[0] ?? ""}
@@ -1414,7 +1507,7 @@
                   {threads}
                   {running}
                   {approvals}
-                  {questions}
+                  questions={asks}
                   force={planForced}
                   bind:visible={planInline}
                   on:quote={(e) => quoteItem(e.detail)}
@@ -1437,7 +1530,7 @@
                 {threads}
                 {running}
                 {approvals}
-                {questions}
+                questions={asks}
                 {planInline}
                 on:openSession={(e) => openSession(e.detail.id)}
                 on:openUrl={(e) => openPage(e.detail.url)}
@@ -1481,7 +1574,9 @@
           }}
           hero={!hasSession}
           {project}
+          held={heldText}
           on:send={send}
+          on:unhold={() => shown && unhold(shown)}
           on:browse={(e) => browse(e.detail.url)}
           on:stop={stop}
           on:command={(e) => onCommand(e.detail.name)}
@@ -1517,17 +1612,7 @@
   />
 
   {#if setupOpen}
-    <Onboarding startStep={setupStep} on:close={() => (setupOpen = false)} on:openBrain={openBrain} />
-  {/if}
-
-  {#if openRequest}
-    <RequestPopup
-      request={openRequest}
-      title={openRequestTitle}
-      pending={requests.length}
-      on:answer={(e) => answerRequest(e.detail.key, e.detail.text)}
-      on:decline={(e) => declineRequest(e.detail.key)}
-    />
+    <Onboarding startStep={setupStep} server={setupServer} on:close={() => (setupOpen = false)} on:openBrain={openBrain} />
   {/if}
 
   <!-- While a web page is shown its native view covers the bottom corner:

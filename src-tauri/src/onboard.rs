@@ -44,7 +44,10 @@ pub struct Scan {
 pub struct BrowserSource {
     pub id: String,
     pub name: String,
+    /// The profile's folder ("Default", "Profile 3"): what the import asks for.
     pub profile: String,
+    /// The profile's name as the browser shows it.
+    pub label: String,
     pub bookmarks: usize,
     pub history: bool,
 }
@@ -1108,6 +1111,11 @@ fn import_with(env: &Env, notes: &[String], folders: &[String]) -> ImportReport 
     let mut report = ImportReport::default();
     let (mut index, mut used) = project_index(&vault, &env.home);
     let mut done = HashSet::new();
+    // Skips name what was skipped as the wizard listed it, not by its path.
+    let plain = |path: &str| match last_segment(path) {
+        n if n.is_empty() => path.to_string(),
+        n => n,
+    };
     for raw in folders {
         match ensure_project(&vault, raw, &mut index, &mut used) {
             Ok(k) => {
@@ -1115,7 +1123,7 @@ fn import_with(env: &Env, notes: &[String], folders: &[String]) -> ImportReport 
                     report.projects += 1;
                 }
             }
-            Err(e) => report.skipped.push(format!("{raw}: {e}")),
+            Err(e) => report.skipped.push(format!("{}: {e}", plain(raw))),
         }
     }
     let (cands, _) = gather(env);
@@ -1123,12 +1131,12 @@ fn import_with(env: &Env, notes: &[String], folders: &[String]) -> ImportReport 
         let Some(c) = cands.iter().find(|c| c.note.source == *src) else {
             report
                 .skipped
-                .push(format!("{src}: not one of the scanned sources"));
+                .push(format!("{}: not one of the scanned notes", plain(src)));
             continue;
         };
         match write_note(env, &vault, c, &index) {
             Ok(()) => report.notes += 1,
-            Err(e) => report.skipped.push(format!("{src}: {e}")),
+            Err(e) => report.skipped.push(format!("{}: {e}", c.note.title)),
         }
     }
     report
@@ -1181,17 +1189,52 @@ fn browser_profiles(root: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Profile folder -> the name the browser shows for it, from `Local State`.
+/// A profile still on its default name ("Person 1") goes by its account's.
+fn profile_names(local_state: &Value) -> HashMap<String, String> {
+    let Some(cache) = local_state
+        .pointer("/profile/info_cache")
+        .and_then(Value::as_object)
+    else {
+        return HashMap::new();
+    };
+    cache
+        .iter()
+        .filter_map(|(dir, info)| {
+            let field = |k: &str| {
+                info.get(k)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+            };
+            let default = info.get("is_using_default_name").and_then(Value::as_bool) == Some(true);
+            let name = match (default, field("gaia_name")) {
+                (true, Some(account)) => Some(account),
+                _ => field("name").or(field("gaia_name")),
+            }?;
+            Some((dir.clone(), one_line(name)))
+        })
+        .collect()
+}
+
 fn scan_browsers() -> Vec<BrowserSource> {
     let mut out = Vec::new();
     for (id, name) in BROWSERS {
         let Some(root) = browser_root(id) else {
             continue;
         };
+        let names = read_json::<Value>(&root.join("Local State"), JSON_CAP)
+            .map(|v| profile_names(&v))
+            .unwrap_or_default();
         for profile in browser_profiles(&root) {
             let dir = root.join(&profile);
             out.push(BrowserSource {
                 id: id.into(),
                 name: name.into(),
+                label: names
+                    .get(&profile)
+                    .cloned()
+                    .unwrap_or_else(|| profile.clone()),
                 bookmarks: load_bookmarks(&dir).len(),
                 history: dir.join("History").is_file(),
                 profile,
@@ -1622,6 +1665,24 @@ mod tests {
     }
 
     #[test]
+    fn browser_profiles_go_by_their_shown_names() {
+        let state = serde_json::json!({"profile": {"info_cache": {
+            "Default": {"name": "Person 1", "is_using_default_name": true, "gaia_name": "Sam Doe"},
+            "Profile 3": {"name": "Work", "is_using_default_name": false, "gaia_name": "Sam Doe"},
+            "Profile 4": {"name": "  Side\nproject ", "gaia_name": ""},
+            "Profile 5": {"name": "", "gaia_name": ""},
+            "Profile 6": {"name": "Person 2", "is_using_default_name": true},
+        }}});
+        let names = profile_names(&state);
+        assert_eq!(names["Default"], "Sam Doe");
+        assert_eq!(names["Profile 3"], "Work");
+        assert_eq!(names["Profile 4"], "Side project");
+        assert!(!names.contains_key("Profile 5"));
+        assert_eq!(names["Profile 6"], "Person 2");
+        assert!(profile_names(&serde_json::json!({})).is_empty());
+    }
+
+    #[test]
     fn scan_finds_notes_and_folders() {
         let t = tmp();
         let env = fixture(&t);
@@ -1739,6 +1800,8 @@ mod tests {
             assert_eq!(r.notes, 7);
             assert_eq!(r.projects, 2);
             assert_eq!(r.skipped.len(), 2, "{:?}", r.skipped);
+            assert!(r.skipped[0].starts_with("relative: "), "{:?}", r.skipped);
+            assert!(r.skipped[1].starts_with("auth.json: "), "{:?}", r.skipped);
         }
         let projects = files_with(&vault.join("projects"), "md");
         assert_eq!(projects.len(), 3);

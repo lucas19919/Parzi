@@ -68,6 +68,11 @@
       "reason": "Math follows TeX metrics and fonts."
     },
     {
+      "selector": "[aria-labelledby=onboarding-title] .count",
+      "rules": ["text-contrast"],
+      "reason": "Reviewed: the setup wizard's counts are --muted on its opaque --panel card (6.7:1 in the default theme). axe can't read the card's color(srgb) background and samples the page behind the modal, where the session column starts under them."
+    },
+    {
       "selector": ".path-in, .spend-in",
       "rules": ["text-contrast"],
       "reason": "Reviewed: placeholder is --muted on an opaque --bg (at least 5.6:1 in every built-in theme). axe can't sample the background of fields below the fold."

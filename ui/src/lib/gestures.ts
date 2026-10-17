@@ -118,3 +118,104 @@ export function noteRelease(press: NotePress, dragging: boolean, dropOn: string,
   if (upPath === press.path) return { kind: "open", path: press.path };
   return { kind: "cancel" };
 }
+
+// Press, then maybe drag (`use:pressDrag`): tabs in the strip, notes in the
+// Brain tree. The node hears only the press; the window hears the rest
+// while it lasts. It never takes pointer capture (see dragPast).
+export interface PressDrag<P> {
+  // A primary-button press on the node: what to track, or null to let it be.
+  press(e: PointerEvent): P | null;
+  // Asked on each move until it says yes: is this a drag yet?
+  starts(p: P, e: PointerEvent): boolean;
+  // Once, when the drag starts, before its first move.
+  start?(p: P, e: PointerEvent): void;
+  // Every move of the drag, the first included.
+  drag?(p: P, e: PointerEvent): void;
+  // The button came up. A move without it counts: its pointerup went elsewhere.
+  release(p: P, e: PointerEvent, dragged: boolean): void;
+  // It ended some other way: cancelled, the window lost focus, or a new press came.
+  cancel?(p: P): void;
+}
+
+export function pressDrag<P>(node: HTMLElement, opts: PressDrag<P>) {
+  let o = opts;
+  let live: { p: P; pointer: number; dragging: boolean } | null = null;
+
+  function listen(on: boolean) {
+    const set = on ? window.addEventListener.bind(window) : window.removeEventListener.bind(window);
+    set("pointerdown", onDownAnywhere, true);
+    set("pointermove", onMove);
+    set("pointerup", onUp);
+    set("pointercancel", cancel);
+    set("lostpointercapture", onLost);
+    set("blur", cancel);
+  }
+
+  function end() {
+    const was = live;
+    live = null;
+    listen(false);
+    return was;
+  }
+
+  function cancel() {
+    const was = end();
+    if (was) o.cancel?.(was.p);
+  }
+
+  function release(e: PointerEvent) {
+    const was = end();
+    if (was) o.release(was.p, e, was.dragging);
+  }
+
+  function onDown(e: PointerEvent) {
+    if (e.button !== 0) return;
+    const p = o.press(e);
+    if (p === null) return;
+    live = { p, pointer: e.pointerId, dragging: false };
+    listen(true);
+  }
+
+  // A press left over from a pointerup the page window ate. The window's
+  // capture runs before the node's own handler, so a new press still starts.
+  function onDownAnywhere() {
+    if (live) cancel();
+  }
+
+  function onMove(e: PointerEvent) {
+    if (!live || e.pointerId !== live.pointer) return;
+    if (!buttonHeld(e.buttons)) {
+      release(e);
+      return;
+    }
+    if (!live.dragging) {
+      if (!o.starts(live.p, e)) return;
+      live.dragging = true;
+      o.start?.(live.p, e);
+    }
+    o.drag?.(live.p, e);
+  }
+
+  function onUp(e: PointerEvent) {
+    if (!live || e.pointerId !== live.pointer) return;
+    release(e);
+  }
+
+  // Implicit capture can drop while the button is still down (the pointer
+  // left the shell for a page window). A release still has its pointerup.
+  function onLost(e: PointerEvent) {
+    if (!live || e.pointerId !== live.pointer || !buttonHeld(e.buttons)) return;
+    cancel();
+  }
+
+  node.addEventListener("pointerdown", onDown);
+  return {
+    update(next: PressDrag<P>) {
+      o = next;
+    },
+    destroy() {
+      node.removeEventListener("pointerdown", onDown);
+      cancel();
+    },
+  };
+}

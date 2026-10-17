@@ -8,6 +8,7 @@ const params = new URLSearchParams(location.search);
 // ?view=home | session | settings | brain | history | setup | page (default: session)
 // ?plan=none: the project has no plan yet (the empty plan panel).
 // ?quote=1: the open session's composer has two plan items quoted.
+// ?request=file|image|text: the open session's agent needs something from you.
 // ?live=1 streams tool calls for the running sessions (the plan's live
 // lines); off for the UI lint, which needs a still page.
 const view = params.get("view") ?? "session";
@@ -401,8 +402,58 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   },
   browser_downloads: () => downloadsList,
   browser_downloads_clear: () => downloadsList.filter((d) => d.state === "progress"),
-  onboard_scan: () => ({ browsers: [], tools: [], folders: [] }),
-  send_message: () => "s1",
+  onboard_scan: () => scan,
+  // One note is skipped, as a real import can.
+  onboard_import: (a) => ({
+    notes: Math.max(0, (a.notes as string[]).length - 1),
+    projects: (a.folders as string[]).length,
+    skipped: (a.notes as string[]).length ? ["Claude Code CLAUDE.md: larger than 256 KB"] : [],
+  }),
+  // Setup runs a while, so the wizard is seen holding still.
+  remote_setup: async () => {
+    const { emit } = await import("@tauri-apps/api/event");
+    await emit("parzi://remote-setup", { step: "connect", state: "ok", detail: "box.example.net:22" });
+    await emit("parzi://remote-setup", { step: "key", state: "ok", detail: "Parzi's key added" });
+    await emit("parzi://remote-setup", { step: "install", state: "run", detail: "Downloading Parzi 0.1.32" });
+    await new Promise((r) => setTimeout(r, 20_000));
+    await emit("parzi://remote-setup", { step: "install", state: "ok", detail: "Parzi 0.1.32" });
+    return { label: "box", user: "dev", host: "box.example.net", version: "0.1.32", linked_at: Date.now(), alive: true, synced_at: Date.now(), device: "pc" };
+  },
+  send_message: (a) => (a.sessionId as string | null) ?? "s1",
+};
+
+// What the setup wizard finds on this PC.
+const win = (...parts: string[]) => parts.join("\\");
+const note = (tool: string, title: string, file: string, kind = "skill") => ({ source: win("C:", "Users", "dev", `.${tool}`, file), title, kind, bytes: 2048 });
+const scan = {
+  browsers: [
+    { id: "brave", name: "Brave", profile: "Default", label: "Sam Doe", bookmarks: 214, history: true },
+    { id: "brave", name: "Brave", profile: "Profile 3", label: "Work", bookmarks: 38, history: true },
+    { id: "chrome", name: "Google Chrome", profile: "Default", label: "Person 1", bookmarks: 1, history: false },
+  ],
+  tools: [
+    {
+      id: "claude",
+      name: "Claude Code",
+      found: true,
+      notes: [
+        note("claude", "Claude Code CLAUDE.md", "CLAUDE.md", "instructions"),
+        note("claude", "parzi memory", win("projects", "D--Repos-Parzi", "memory", "MEMORY.md"), "memory"),
+        note("claude", "thesis memory", win("projects", "D--Thesis", "memory", "MEMORY.md"), "memory"),
+        ...["release-notes", "svelte-check", "screenshot", "changelog", "pr-review", "deploy", "bench", "triage"].map((n) => note("claude", n, win("skills", n, "SKILL.md"))),
+      ],
+    },
+    { id: "codex", name: "Codex", found: true, notes: [note("codex", "Codex AGENTS.md", "AGENTS.md", "instructions")] },
+    { id: "grok", name: "Grok", found: false, notes: [] },
+    { id: "cursor", name: "Cursor", found: true, notes: [] },
+  ],
+  folders: ["Parzi", "memory-ai", "Thesis", "website", "dotfiles", "notes-app", "rust-play", "gpu-bench", "recipes", "invoice-tool", "talk-slides", "old-blog", "scratch"].map((name, i) => ({
+    path: win("D:", "Repos", name),
+    name,
+    sources: ["claude"],
+    last_used: now - i * 86_400_000,
+    exists: true,
+  })),
 };
 
 // Backend events (`listen`) are mocked too, so subscriptions resolve.
@@ -449,3 +500,4 @@ try {
 
 export const mockView = view;
 export const mockLive = !!params.get("live");
+export const mockRequest = params.get("request") ?? "";

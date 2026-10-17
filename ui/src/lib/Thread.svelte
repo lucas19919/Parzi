@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import { open } from "@tauri-apps/plugin-dialog";
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { handleLinkClick } from "./links";
@@ -9,7 +10,7 @@
   import Viz from "./viz/Viz.svelte";
   import Steps from "./Steps.svelte";
   import Icon from "./Icon.svelte";
-  import { api, type ChatEvent, type PlanQuote, type Question } from "./api";
+  import { api, type AgentRequest, type ChatEvent, type PlanQuote, type Question } from "./api";
   import type { Approval, LiveTool, Step } from "./live";
   import { splitQuotes } from "./planModel";
   import { toast, toastError } from "./toast";
@@ -48,6 +49,8 @@
   export let streaming = false;
   export let approval: Approval | null = null;
   export let question: Question | null = null;
+  // Something the agent needs from you: text, a file or a picture.
+  export let request: AgentRequest | null = null;
   // Who is asking: the session's title, so a question or approval reads
   // with its context instead of floating anonymous in the thread.
   export let askerTitle = "";
@@ -119,7 +122,7 @@
   // open is exactly the confusion this guards.
   $: status = approval
     ? "Needs your approval"
-    : question
+    : question || request
       ? "Waiting for your answer"
       : !streaming
         ? ""
@@ -393,6 +396,38 @@ ${e.text}` : e.text;
     }
   }
 
+  let replyText = "";
+
+  // A blank reply declines: the agent goes on without it.
+  async function reply(text: string) {
+    if (!request) return;
+    const { key, session } = request;
+    replyText = "";
+    try {
+      await api.answerQuestion(key, session, text.trim());
+    } catch (e) {
+      toastError(e);
+    } finally {
+      dispatch("answered", { key });
+    }
+  }
+
+  // Choosing the file is the reply: its path goes back to the agent.
+  async function chooseFile() {
+    const picture = request?.kind === "image";
+    try {
+      const path = await open({
+        multiple: false,
+        directory: false,
+        defaultPath: folder || undefined,
+        filters: picture ? [{ name: "Pictures", extensions: ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif"] }] : undefined,
+      });
+      if (typeof path === "string" && path) await reply(path);
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
   async function onClick(e: MouseEvent) {
     if (await handleLinkClick(e, folder)) return;
     const el = e.target as HTMLElement;
@@ -602,6 +637,27 @@ ${e.text}` : e.text;
           }}
         />
         <button class="btn primary" disabled={!answerText.trim()} on:click={() => respond(answerText)}>Send</button>
+      </div>
+    </div>
+  {/if}
+
+  {#if request}
+    {@const wantsFile = request.kind === "file" || request.kind === "image"}
+    <div class="approval ask" transition:fade={spring}>
+      {#if askerTitle}<div class="ask-from">{askerTitle} {request.kind === "file" ? "needs a file" : request.kind === "image" ? "needs a picture" : "needs something from you"}</div>{/if}
+      <div class="ask-q">{request.request}</div>
+      <div class="ask-free">
+        <input
+          aria-label="Reply"
+          placeholder={wantsFile ? "Paste a path… (Enter sends)" : "Type your reply… (Enter sends)"}
+          bind:value={replyText}
+          on:keydown={(e) => {
+            if (e.key === "Enter" && replyText.trim()) reply(replyText);
+          }}
+        />
+        {#if wantsFile}<button class="btn" on:click={chooseFile}>Choose file</button>{/if}
+        <button class="btn primary" disabled={!replyText.trim()} on:click={() => reply(replyText)}>Send</button>
+        <button class="btn quiet" on:click={() => reply("")}>Decline</button>
       </div>
     </div>
   {/if}
@@ -924,6 +980,19 @@ ${e.text}` : e.text;
   }
   .ask-free input:focus {
     border-color: var(--accent);
+  }
+  .ask-free .btn {
+    flex: none;
+  }
+  .btn.quiet {
+    background: none;
+    border-color: transparent;
+    color: var(--muted);
+  }
+  .btn.quiet:hover:not(:disabled) {
+    background: var(--line);
+    border-color: transparent;
+    color: var(--text);
   }
   @media (prefers-reduced-motion: reduce) {
     .live-head {

@@ -7,7 +7,7 @@
   import { folderName } from "./tabs";
   import { toast, toastError } from "./toast";
   import { targetBrainNote } from "./brainStore";
-  import { buttonHeld, noteMoveStarts, noteRelease } from "./gestures";
+  import { noteMoveStarts, noteRelease, pressDrag, type PressDrag } from "./gestures";
   import { handleLinkClick } from "./links";
   import { safeDecode } from "./linkRules";
   import { tooltip } from "./tooltip";
@@ -34,7 +34,7 @@
   let draftField: HTMLInputElement | null = null;
   let obsidian: ObsidianState = "missing";
   let expanded = new Set<string>(loadExpanded());
-  let press: { path: string; from: string; title: string; x: number; y: number; pointer: number } | null = null;
+  let press: NotePress | null = null;
   let dragging = false;
   let dragX = 0;
   let dragY = 0;
@@ -262,45 +262,31 @@
     return document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-note]")?.dataset.note ?? null;
   }
 
-  function onRowDown(e: PointerEvent, n: NoteMeta, from: string) {
-    if (e.button !== 0) return;
-    press = { path: n.path, from, title: n.title, x: e.clientX, y: e.clientY, pointer: e.pointerId };
-  }
+  type NotePress = { path: string; from: string; title: string; x: number; y: number };
 
-  // A press left over from a missed pointerup. Runs before the row handler,
-  // so the new press still starts.
-  function onDownAnywhere() {
-    if (press) cancelPress();
-  }
-
-  function onMove(e: PointerEvent) {
-    if (!press || e.pointerId !== press.pointer || byPath.get(press.path)?.conflict_of) return;
-    if (!buttonHeld(e.buttons)) {
-      onUp(e);
-      return;
-    }
-    const over = noteAt(e.clientX, e.clientY);
-    if (!dragging && !noteMoveStarts(Math.hypot(e.clientX - press.x, e.clientY - press.y), over, press.path)) return;
-    dragging = true;
-    dragX = e.clientX;
-    dragY = e.clientY;
-    const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-folder]");
-    dropOn = hit?.dataset.folder ?? "";
-  }
-
-  function onUp(e: PointerEvent) {
-    if (!press || e.pointerId !== press.pointer) return;
-    const p = press;
-    const wasDrag = dragging;
-    const target = dropOn;
-    press = null;
-    dragging = false;
-    dropOn = "";
-    const upPath = (e.target instanceof Element ? e.target.closest<HTMLElement>("[data-note]") : null)?.dataset.note ?? null;
-    const result = noteRelease(p, wasDrag, target, upPath, e.ctrlKey || e.metaKey);
-    if (result.kind === "move") void moveNote(result.path, result.from, result.to, result.copy);
-    else if (result.kind === "open") void openNote(result.path);
-  }
+  // A press on a note: a click opens it, a drag onto a folder moves it
+  // there (Ctrl copies). A sync conflict copy only opens.
+  const noteDrag = (n: NoteMeta, from: string): PressDrag<NotePress> => ({
+    press: (e) => (press = { path: n.path, from, title: n.title, x: e.clientX, y: e.clientY }),
+    starts: (p, e) =>
+      !byPath.get(p.path)?.conflict_of && noteMoveStarts(Math.hypot(e.clientX - p.x, e.clientY - p.y), noteAt(e.clientX, e.clientY), p.path),
+    start: () => (dragging = true),
+    drag(_, e) {
+      dragX = e.clientX;
+      dragY = e.clientY;
+      const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-folder]");
+      dropOn = hit?.dataset.folder ?? "";
+    },
+    release(p, e, dragged) {
+      const target = dropOn;
+      cancelPress();
+      const upPath = (e.target instanceof Element ? e.target.closest<HTMLElement>("[data-note]") : null)?.dataset.note ?? null;
+      const result = noteRelease(p, dragged, target, upPath, e.ctrlKey || e.metaKey);
+      if (result.kind === "move") void moveNote(result.path, result.from, result.to, result.copy);
+      else if (result.kind === "open") void openNote(result.path);
+    },
+    cancel: cancelPress,
+  });
 
   function cancelPress() {
     press = null;
@@ -465,14 +451,6 @@
   });
 </script>
 
-<svelte:window
-  on:pointerdown|capture={onDownAnywhere}
-  on:pointermove={onMove}
-  on:pointerup={onUp}
-  on:pointercancel={cancelPress}
-  on:blur={cancelPress}
-/>
-
 <div class="brain" class:dragging>
   <aside>
     <div class="top">
@@ -508,7 +486,7 @@
                   class:copy={!!n.conflict_of}
                   data-note={n.path}
                   title={n.conflict_of ? `Sync conflict copy of ${n.conflict_of}` : n.summary || n.path}
-                  on:pointerdown={(e) => onRowDown(e, n, f.key)}
+                  use:pressDrag={noteDrag(n, f.key)}
                   on:keydown={(e) => e.key === "Enter" && openNote(n.path)}
                 >
                   <span class="name">{n.title}</span>

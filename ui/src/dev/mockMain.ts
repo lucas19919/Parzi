@@ -1,5 +1,5 @@
 // Entry for mock.html: install the mock backend, then boot the real app.
-const { mockView, mockLive } = await import("./mockTauri");
+const { mockView, mockLive, mockRequest } = await import("./mockTauri");
 await import("../main");
 
 const { emit } = await import("@tauri-apps/api/event");
@@ -20,6 +20,14 @@ await emit("parzi://run-event", {
   session: "s9",
   call: { id: "c1", name: "shell.exec", args: { cmd: "npm install --save-dev @primer/octicons" }, lane: "build", session: "s9" },
 });
+if (mockRequest) {
+  const asks: Record<string, string> = {
+    file: "Send me the crash log from last night's run, so I can see where the queue stalls.",
+    image: "Send a screenshot of the composer as it looks on your screen.",
+    text: "Paste the error message you saw.",
+  };
+  await emit("parzi://run-event", { kind: "request", key: "r1", session: "s1", request: asks[mockRequest] ?? asks.text, req_kind: mockRequest });
+}
 // Its toast would come and go while the UI lint audits the page.
 await new Promise((r) => setTimeout(r, 50));
 (await import("../lib/toast")).toasts.set([]);

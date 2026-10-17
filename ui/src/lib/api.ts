@@ -339,7 +339,10 @@ export type ObsidianState = "missing" | "unregistered" | "ready";
 interface BrowserSource {
   id: string;
   name: string;
+  // The profile's folder, which the import asks for.
   profile: string;
+  // Its name as the browser shows it.
+  label: string;
   bookmarks: number;
   history: boolean;
 }

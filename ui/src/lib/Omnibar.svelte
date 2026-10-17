@@ -35,6 +35,8 @@
   export let folderLocked = false;
   export let branch = "";
   export let streaming = false;
+  // A message sent while the agent works: it goes out when the run is done.
+  export let held = "";
   export let board: ProviderStatus[] = [];
   export let hero = false;
   export let project: { slug: string; title: string; tokens: number } | null = null;
@@ -48,6 +50,7 @@
 
   const dispatch = createEventDispatcher<{
     send: void;
+    unhold: void;
     browse: { url: string };
     stop: void;
     command: { name: string };
@@ -166,7 +169,7 @@
 
   function submit() {
     const text = input.trim();
-    if (!canSubmit || streaming) return;
+    if (!canSubmit) return;
     if (mode === "search") {
       if (webActive >= 0 && webRows[webActive]) {
         pickWeb(webRows[webActive]);
@@ -523,6 +526,14 @@
         {#each atItems as item, i (item)}
           <button class="mono" class:on={i === atIndex} on:click={() => pickMention(item)}>{item}</button>
         {/each}
+      </div>
+    {/if}
+
+    {#if held}
+      <div class="held" transition:slide={{ duration: 160, easing: cubicOut }}>
+        <span class="held-text" title={held}>{held}</span>
+        <span class="held-note">Sends when done</span>
+        <button use:tooltip={"Edit"} on:click={() => dispatch("unhold")}><Icon name="pencil" size={12} /></button>
       </div>
     {/if}
 
@@ -955,6 +966,46 @@
     min-width: 4px;
   }
 
+  .held {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 26px;
+    margin: 2px 2px 6px;
+    padding: 0 4px 0 10px;
+    background: color-mix(in srgb, var(--text) 5%, transparent);
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+  }
+  .held-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+  }
+  .held-note {
+    flex: none;
+  }
+  .held button {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .held button:hover {
+    color: var(--text);
+  }
   .attachments {
     display: flex;
     flex-wrap: wrap;
