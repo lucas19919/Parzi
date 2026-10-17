@@ -242,6 +242,8 @@ export const api = {
   warmAgent: (provider: string) => invoke<void>("warm_agent", { provider }),
   getConfig: () => invoke<ParziConfig>("get_config"),
   saveConfig: (cfg: ParziConfig) => invoke<void>("save_config", { cfg }),
+  // What Parzi adds to a session's context, in estimated tokens.
+  contextParts: (lane: string, cwd: string) => invoke<{ instructions: number; notes: number; tools: number }>("context_parts", { lane, cwd }),
   // Starts a connector (signing in, the first time) and counts its tools.
   connectorCheck: (name: string) => invoke<number>("connector_check", { name }),
   runDoctorQuick: () => invoke<Check[]>("run_doctor_quick"),
@@ -299,6 +301,8 @@ export interface GitStatus {
   behind: number;
   changed: number;
   untracked: number;
+  added: number;
+  removed: number;
   last_subject: string;
   last_time: number;
 }

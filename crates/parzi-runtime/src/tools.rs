@@ -111,19 +111,7 @@ impl ToolExecutor {
     }
 
     pub fn defs(&self) -> Vec<ToolDef> {
-        let mut d = ui_defs();
-        d.extend(browser_defs());
-        d.extend(desk_defs());
-        d.extend(brain_defs());
-        d.extend(session_defs());
-        d.extend(lane_defs());
-        d.extend(image_defs());
-        d.extend(doc_defs());
-        d.extend(team_defs());
-        d.extend(question_defs());
-        d.extend(plan_defs());
-        d.extend(project_defs());
-        d.extend(shell_defs());
+        let mut d = all_defs();
         d.retain(|t| self.is_allowed(&t.name));
         d
     }
@@ -284,6 +272,24 @@ pub(crate) fn is_parzi_tool(name: &str) -> bool {
         || is_shell_tool(name)
         || is_brain_tool(name)
         || is_plan_tool(name)
+}
+
+/// Every one of Parzi's own tool definitions, before a lane filters them.
+pub fn all_defs() -> Vec<ToolDef> {
+    let mut d = ui_defs();
+    d.extend(browser_defs());
+    d.extend(desk_defs());
+    d.extend(brain_defs());
+    d.extend(session_defs());
+    d.extend(lane_defs());
+    d.extend(image_defs());
+    d.extend(doc_defs());
+    d.extend(team_defs());
+    d.extend(question_defs());
+    d.extend(plan_defs());
+    d.extend(project_defs());
+    d.extend(shell_defs());
+    d
 }
 
 fn ui_defs() -> Vec<ToolDef> {

@@ -287,9 +287,23 @@ pub struct GitStatus {
     /// Tracked files with staged or unstaged changes, conflicts included.
     pub changed: u32,
     pub untracked: u32,
+    /// Lines added and removed in tracked files, staged or not.
+    pub added: u32,
+    pub removed: u32,
     pub last_subject: String,
     /// Unix seconds of the last commit, 0 when the branch has none.
     pub last_time: i64,
+}
+
+/// Totals `git diff --numstat`: added and removed lines ("-" for binary
+/// files counts nothing).
+fn sum_numstat(out: &str) -> (u32, u32) {
+    out.lines().fold((0, 0), |(a, r), line| {
+        let mut cols = line.split('\t');
+        let add = cols.next().and_then(|n| n.parse::<u32>().ok()).unwrap_or(0);
+        let del = cols.next().and_then(|n| n.parse::<u32>().ok()).unwrap_or(0);
+        (a.saturating_add(add), r.saturating_add(del))
+    })
 }
 
 /// Reads `git status --porcelain=v2 --branch`.
@@ -343,6 +357,9 @@ pub async fn git_status(
         return Ok(None);
     };
     let mut s = parse_git_status(&out);
+    if let Some(stat) = git_out(&cwd, &["diff", "HEAD", "--numstat"]).await {
+        (s.added, s.removed) = sum_numstat(&stat);
+    }
     if let Some(log) = git_out(&cwd, &["log", "-1", "--format=%ct%x1f%s"]).await {
         if let Some((time, subject)) = log.trim().split_once('\u{1f}') {
             s.last_time = time.parse().unwrap_or(0);
@@ -781,6 +798,15 @@ pub(crate) fn launch(o: &Opener) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numstat_sums_lines_and_skips_binaries() {
+        assert_eq!(
+            sum_numstat("3\t1\tsrc/a.rs\n-\t-\tlogo.png\n10\t0\tb.rs\n"),
+            (13, 1)
+        );
+        assert_eq!(sum_numstat(""), (0, 0));
+    }
 
     #[test]
     fn git_status_counts_branch_changes_and_untracked_files() {

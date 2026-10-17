@@ -1563,102 +1563,104 @@
       {/key}
     {:else}
       {#if hasSession}
-        <section class="session">
-          <SessionHeader
-            title={meta?.title || tab.title}
-            {branch}
-            lane={meta?.lane ?? ""}
-            agentCount={familyActive}
-            panelOpen={infoShown}
-            canAct={!!shown}
-            contextUsed={context.used}
-            contextLimit={infoShown ? 0 : context.limit}
-            {compacting}
-            {streaming}
-            tokensIn={meta?.tokens_in ?? 0}
-            tokensOut={meta?.tokens_out ?? 0}
-            costUsd={meta?.cost_usd ?? 0}
-            selfCompacts={meta && !["claude", "opencode"].includes(meta.model.split("/")[0]) ? nameOf(meta.model.split("/")[0]) : ""}
-            on:rename={(e) => rename(e.detail.title)}
-            on:fork={fork}
-            on:copyId={copyId}
-            on:delete={() => shown && remove(shown)}
-            on:compact={() => onCommand("compact")}
-            on:plan={() => toggleInfo()}
-          />
-          <div class="workarea">
-            <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl} on:scroll={() => (farFromBottom = !nearBottom())}>
-              <Thread
-                {events}
-                liveText={live}
-                {liveReasoning}
-                {liveTools}
-                {approval}
-                question={openQuestion}
-                request={openRequest}
-                askerTitle={threads.find((t) => t.id === (openQuestion?.session ?? openRequest?.session ?? approval?.session ?? shown))?.title ?? ""}
-                {streaming}
-                {folder}
-                provider={threads.find((t) => t.id === shown)?.model.split("/")[0] ?? ""}
-                sessionTitle={titleOf}
-                on:voted={(e) => settle(e.detail.key)}
-                on:answered={(e) => settle(e.detail.key)}
-                on:edited={(e) => {
-                  comp.input = e.detail.text;
-                  if (e.detail.quotes.length) comp.quotes = e.detail.quotes.slice(0, MAX_QUOTES);
-                  comp = comp;
-                  omnibar?.focus();
-                  toast("Loaded into composer. Edit and send.");
-                }}
-                on:forked={() => fork()}
-                on:retry={retryLast}
-                on:compact={compact}
-              >
-                <PlanInline
-                  project={planProject}
-                  session={shown ?? ""}
-                  {threads}
-                  {running}
-                  {approvals}
-                  questions={asks}
-                  force={planForced}
-                  bind:visible={planInline}
-                  on:quote={(e) => quoteItem(e.detail)}
-                />
-              </Thread>
+        <div class="stagerow">
+          <section class="session">
+            <SessionHeader
+              title={meta?.title || tab.title}
+              {branch}
+              lane={meta?.lane ?? ""}
+              {folder}
+              agentCount={familyActive}
+              panelOpen={infoShown}
+              canAct={!!shown}
+              contextUsed={context.used}
+              contextLimit={infoShown ? 0 : context.limit}
+              {compacting}
+              {streaming}
+              costUsd={meta?.cost_usd ?? 0}
+              selfCompacts={meta && !["claude", "opencode"].includes(meta.model.split("/")[0]) ? nameOf(meta.model.split("/")[0]) : ""}
+              on:rename={(e) => rename(e.detail.title)}
+              on:fork={fork}
+              on:copyId={copyId}
+              on:delete={() => shown && remove(shown)}
+              on:compact={() => onCommand("compact")}
+              on:plan={() => toggleInfo()}
+            />
+            <div class="workarea">
+              <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl} on:scroll={() => (farFromBottom = !nearBottom())}>
+                <Thread
+                  {events}
+                  liveText={live}
+                  {liveReasoning}
+                  {liveTools}
+                  {approval}
+                  question={openQuestion}
+                  request={openRequest}
+                  askerTitle={threads.find((t) => t.id === (openQuestion?.session ?? openRequest?.session ?? approval?.session ?? shown))?.title ?? ""}
+                  {streaming}
+                  {folder}
+                  provider={threads.find((t) => t.id === shown)?.model.split("/")[0] ?? ""}
+                  sessionTitle={titleOf}
+                  on:voted={(e) => settle(e.detail.key)}
+                  on:answered={(e) => settle(e.detail.key)}
+                  on:edited={(e) => {
+                    comp.input = e.detail.text;
+                    if (e.detail.quotes.length) comp.quotes = e.detail.quotes.slice(0, MAX_QUOTES);
+                    comp = comp;
+                    omnibar?.focus();
+                    toast("Loaded into composer. Edit and send.");
+                  }}
+                  on:forked={() => fork()}
+                  on:retry={retryLast}
+                  on:compact={compact}
+                >
+                  <PlanInline
+                    project={planProject}
+                    session={shown ?? ""}
+                    {threads}
+                    {running}
+                    {approvals}
+                    questions={asks}
+                    force={planForced}
+                    bind:visible={planInline}
+                    on:quote={(e) => quoteItem(e.detail)}
+                  />
+                </Thread>
+              </div>
             </div>
-            {#if infoShown}
-              <SessionInfo
-                session={shown ?? ""}
-                project={planProject}
-                projectTitle={planTitle}
-                {folder}
-                {branch}
-                remoteHost={remoteOn ? ($remoteInfo?.host ?? "") : ""}
-                contextUsed={context.used}
-                contextLimit={context.limit}
-                {compacting}
-                {streaming}
-                selfCompacts={meta && !["claude", "opencode"].includes(meta.model.split("/")[0]) ? nameOf(meta.model.split("/")[0]) : ""}
-                {threads}
-                {running}
-                {approvals}
-                questions={asks}
-                {planInline}
-                on:openSession={(e) => openSession(e.detail.id)}
-                on:openUrl={(e) => openPage(e.detail.url)}
-                on:compact={compact}
-                on:plan={showPlan}
-              />
-            {/if}
-          </div>
-        </section>
+          </section>
+          {#if infoShown}
+            <SessionInfo
+              session={shown ?? ""}
+              project={planProject}
+              projectTitle={planTitle}
+              {folder}
+              {branch}
+              lane={meta?.lane ?? ""}
+              remoteHost={remoteOn ? ($remoteInfo?.host ?? "") : ""}
+              contextUsed={context.used}
+              contextLimit={context.limit}
+              {compacting}
+              {streaming}
+              selfCompacts={meta && !["claude", "opencode"].includes(meta.model.split("/")[0]) ? nameOf(meta.model.split("/")[0]) : ""}
+              {threads}
+              {running}
+              {approvals}
+              questions={asks}
+              {planInline}
+              on:openSession={(e) => openSession(e.detail.id)}
+              on:openUrl={(e) => openPage(e.detail.url)}
+              on:compact={compact}
+              on:plan={showPlan}
+            />
+          {/if}
+        </div>
       {/if}
 
       <div
         class="composer"
         class:docked={hasSession}
-        style:--shift="{infoShown ? 120 : 0}px"
+        style:--shift="{infoShown ? 136 : 0}px"
         bind:clientHeight={dockHeight}
       >
         <Omnibar
@@ -1823,8 +1825,15 @@
   .fill.col {
     flex-direction: column;
   }
+  /* The session and, beside it, the cards about it. */
+  .stagerow {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
   .session {
     position: relative;
+    min-width: 0;
     flex: 1;
     min-height: 0;
     display: flex;

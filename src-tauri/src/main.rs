@@ -694,6 +694,7 @@ fn main() {
             vault::vault_state,
             vault::vault_install,
             settings::connector_check,
+            settings::context_parts,
             vault::vault_unlock,
             vault::vault_lock,
             vault::vault_logins,

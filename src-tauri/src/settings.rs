@@ -100,6 +100,20 @@ pub async fn connector_check(state: State<'_, AppState>, name: String) -> Result
         .map_err(|e| e.to_string())
 }
 
+/// What Parzi adds to a session's context (instructions, notes, tools),
+/// for the session column's breakdown.
+#[tauri::command]
+pub async fn context_parts(
+    state: State<'_, AppState>,
+    lane: String,
+    cwd: String,
+) -> Result<parzi_runtime::orchestrator::ContextParts, String> {
+    let orch = state.orch.clone();
+    tauri::async_runtime::spawn_blocking(move || orch.context_parts(&lane, &cwd))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 pub fn in_roster_order(mut all: Vec<ProviderStatus>) -> Vec<ProviderStatus> {
     all.sort_by_key(|s| {
         parzi_providers::PROVIDERS

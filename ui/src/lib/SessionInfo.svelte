@@ -4,6 +4,8 @@
   // glance; the few things to click open what they name.
   import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
+  import InfoCard from "./InfoCard.svelte";
+  import ContextBreakdown from "./ContextBreakdown.svelte";
   import { api, onRunEvent, type GitStatus, type Question, type SessionMeta } from "./api";
   import type { Approval } from "./live";
   import { planState } from "./planStore";
@@ -17,6 +19,7 @@
   export let projectTitle = "";
   export let folder = "";
   export let branch = "";
+  export let lane = "";
   // The server's name when the session runs there.
   export let remoteHost = "";
   export let contextUsed = 0;
@@ -35,12 +38,6 @@
   const dispatch = createEventDispatcher<{ openSession: { id: string }; openUrl: { url: string }; compact: void; plan: void }>();
 
   $: pct = contextLimit > 0 ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : 0;
-
-  function k(n: number) {
-    if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
-    return String(n);
-  }
 
   // Git, for a folder on this computer.
   let git: GitStatus | null = null;
@@ -72,6 +69,7 @@
     }
     return out.sort((a, b) => (Date.parse(b.updated) || 0) - (Date.parse(a.updated) || 0)).slice(0, 8);
   })();
+  $: busy = helpers.filter((h) => running.has(h.id)).length;
 
   $: plan = $planState.project === project ? $planState.plan : null;
   $: planCount = plan ? progress(deriveItems(plan, { project, threads, running, waiting: new Map(), prs: $planState.prs, activity: $activity })) : null;
@@ -90,8 +88,8 @@
 </script>
 
 <aside class="info" aria-label="Session">
-  <section>
-    <h3>Environment</h3>
+  <InfoCard id="env" title="Environment" foldedAside>
+    <svelte:fragment slot="aside">{remoteHost ? "Remote" : "Local"}</svelte:fragment>
     <div class="line">
       <Icon name={remoteHost ? "server" : "desktop"} size={12} />
       <span class="v">{remoteHost || "This computer"}</span>
@@ -106,24 +104,31 @@
         <span class="v mono">{branch}</span>
       </div>
     {/if}
-  </section>
+  </InfoCard>
 
   {#if contextLimit > 0}
-    <section>
-      <h3>Context <span class="aside">{pct}%</span></h3>
-      <div class="bar" class:warn={pct >= 70} class:bad={pct >= 90}><i style:width="{pct}%" /></div>
-      <div class="line quiet">
-        <span class="v">{k(contextUsed)} of {k(contextLimit)}</span>
-        {#if !selfCompacts}
-          <button class="link" disabled={compacting || streaming} on:click={() => dispatch("compact")}>{compacting ? "Compacting…" : "Compact"}</button>
-        {/if}
-      </div>
-    </section>
+    <InfoCard id="context" title="Context" foldedAside>
+      <svelte:fragment slot="aside">{pct}%</svelte:fragment>
+      <ContextBreakdown
+        used={contextUsed}
+        limit={contextLimit}
+        {lane}
+        {folder}
+        {compacting}
+        {streaming}
+        {selfCompacts}
+        on:compact={() => dispatch("compact")}
+      />
+    </InfoCard>
   {/if}
 
   {#if git}
-    <section>
-      <h3>Changes</h3>
+    <InfoCard id="changes" title="Changes">
+      <svelte:fragment slot="aside">
+        {#if git.added || git.removed}
+          <span class="add">+{git.added.toLocaleString()}</span>&nbsp;<span class="del">−{git.removed.toLocaleString()}</span>
+        {/if}
+      </svelte:fragment>
       <div class="line">
         <span class="v" class:quiet={!git.changed && !git.untracked}>
           {git.changed || git.untracked ? [git.changed ? `${git.changed} changed` : "", git.untracked ? `${git.untracked} new` : ""].filter(Boolean).join(" · ") : "No changes"}
@@ -141,23 +146,22 @@
           {/if}
         </button>
       {/if}
-    </section>
+    </InfoCard>
   {/if}
 
   {#if plan && planCount && !planInline}
-    <section>
-      <h3>Plan</h3>
+    <InfoCard id="plan" title="Plan">
+      <svelte:fragment slot="aside">{planCount.done} of {planCount.total}</svelte:fragment>
       <button class="line row plan-row" on:click={() => dispatch("plan")}>
         <Icon name="plan" size={12} />
         <span class="v">{plan.title || "Plan"}</span>
-        <span class="aside">{planCount.done} of {planCount.total}</span>
       </button>
-    </section>
+    </InfoCard>
   {/if}
 
   {#if helpers.length}
-    <section>
-      <h3>Helpers</h3>
+    <InfoCard id="helpers" title="Side tasks">
+      <svelte:fragment slot="aside">{busy ? `${busy} running` : helpers.length}</svelte:fragment>
       {#each helpers as h (h.id)}
         {@const tone = sessionTone(h, running, waiting)}
         <button class="line row" use:tooltip={TONE_WORDS[tone]} on:click={() => dispatch("openSession", { id: h.id })}>
@@ -165,34 +169,30 @@
           <span class="v">{h.title || "Untitled"}</span>
         </button>
       {/each}
-    </section>
+    </InfoCard>
   {/if}
 </aside>
 
 <style>
+  /* Cards that float beside the session, not a panel inside it. */
   .info {
     flex: none;
-    width: 240px;
+    width: 264px;
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 18px;
-    padding: 16px 14px 24px;
+    gap: 8px;
+    margin: 8px 8px 0 0;
+    padding-bottom: 12px;
     overflow-y: auto;
-    border-left: 1px solid var(--line);
+    scrollbar-width: none;
+    animation: enter 600ms var(--ease-out);
   }
-  section {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  h3 {
-    display: flex;
-    align-items: baseline;
-    margin: 0 0 2px;
-    font-size: var(--fs-md);
-    font-weight: 600;
-    color: var(--muted);
+  @keyframes enter {
+    from {
+      opacity: 0;
+      transform: translateX(8px);
+    }
   }
   .line {
     display: flex;
@@ -236,48 +236,12 @@
     font-family: var(--mono);
     font-size: var(--fs-xs);
   }
-  .aside {
-    margin-left: auto;
-    font-weight: 400;
-    font-variant-numeric: tabular-nums;
-    color: var(--muted);
+  /* Lightened toward the text so small numbers stay readable on a card. */
+  .add {
+    color: color-mix(in srgb, var(--ok) 75%, var(--text));
   }
-  .bar {
-    height: 4px;
-    margin: 4px 0 2px;
-    overflow: hidden;
-    border-radius: 2px;
-    background: var(--line);
-  }
-  .bar i {
-    display: block;
-    height: 100%;
-    background: var(--accent);
-  }
-  .bar.warn i {
-    background: var(--warn);
-  }
-  .bar.bad i {
-    background: var(--bad);
-  }
-  .link {
-    flex: none;
-    padding: 0;
-    background: none;
-    border: none;
-    color: var(--muted);
-    font: inherit;
-    font-size: var(--fs-sm);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-    cursor: pointer;
-  }
-  .link:hover:not(:disabled) {
-    color: var(--text);
-  }
-  .link:disabled {
-    cursor: default;
-    opacity: 0.5;
+  .del {
+    color: color-mix(in srgb, var(--bad) 62%, var(--text));
   }
   .checks.pass :global(svg) {
     color: var(--ok);

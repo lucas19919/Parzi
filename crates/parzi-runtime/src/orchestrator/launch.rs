@@ -34,7 +34,39 @@ impl Started {
     }
 }
 
+/// What Parzi itself puts into a session's context, estimated at four
+/// characters a token: its instructions, the project notes they carry and
+/// the definitions of the tools the lane offers. The rest of what the agent
+/// reports is the conversation and the agent's own.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct ContextParts {
+    pub instructions: u64,
+    pub notes: u64,
+    pub tools: u64,
+}
+
 impl Orchestrator {
+    pub fn context_parts(&self, lane: &str, cwd: &str) -> ContextParts {
+        let tokens = |chars: usize| (chars as u64).div_ceil(4);
+        let notes = parzi_core::brain::context_for(std::path::Path::new(cwd.trim()))
+            .map_or(0, |c| tokens(c.chars));
+        let all: usize = crate::handler::system_parts(lane, cwd)
+            .iter()
+            .map(|p| p.chars().count())
+            .sum();
+        let (_, allowed) = Self::lane_policy_for(&self.config(), lane);
+        let tools: usize = crate::tools::all_defs()
+            .iter()
+            .filter(|t| allowed.iter().any(|a| a == &t.name))
+            .map(|t| t.name.len() + t.description.chars().count() + t.schema.to_string().len())
+            .sum();
+        ContextParts {
+            instructions: tokens(all).saturating_sub(notes),
+            notes,
+            tools: tokens(tools),
+        }
+    }
+
     /// A new session with a first run the person sent.
     #[allow(clippy::too_many_arguments)]
     pub async fn spawn(

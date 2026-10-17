@@ -287,7 +287,7 @@ const config = {
 
 const theme = {
   font: { family: "Inter", size: 14, mono: "JetBrains Mono", mono_size: 13 },
-  colors: { sidebar: "#0b0b10", stage: "#0b0b10", accent: "#e6e8ee", text: "#ededf2", text_dim: "#9aa0ae", bar: "#0b0b10", border: "#24242c" },
+  colors: { sidebar: "#0f1217", stage: "#14181e", accent: "#cbd5e1", text: "#e2e8f0", text_dim: "#94a3b8", bar: "#1a1f26", border: "#283039" },
   background: { image: params.get("bg") ? "backgrounds/mock.png" : "", dim: 0.66, vignette: 0.5, blur: 0, grain: 0.16, grain_size: 32, height: 1 },
 };
 
@@ -363,6 +363,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     return null;
   },
   // A connector "starts" after a moment and offers a few tools.
+  context_parts: () => ({ instructions: 6400, notes: 1800, tools: 9200 }),
   connector_check: () => new Promise((r) => setTimeout(() => r(14), 900)),
   get_theme: () => theme,
   get_theme_css: () => "",
@@ -391,7 +392,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   brain_dir: () => "C:\\Users\\dev\\.parzi\\brain",
   brain_obsidian: () => "missing",
   git_branch: () => "main",
-  git_status: () => ({ branch: "main", upstream: true, ahead: 2, behind: 0, changed: 3, untracked: 1, last_subject: "matte surfaces, one icon size", last_time: Math.floor(now / 1000) - 3600 }),
+  git_status: () => ({ branch: "main", upstream: true, ahead: 2, behind: 0, changed: 3, untracked: 1, added: 214, removed: 57, last_subject: "matte surfaces, one icon size", last_time: Math.floor(now / 1000) - 3600 }),
   list_files: (a) => ["src/App.svelte", "src/lib/Omnibar.svelte", "src/lib/Thread.svelte"].filter((f) => f.includes(String(a.query ?? ""))),
   search_suggest: (a) => [`${a.query} docs`, `${a.query} tutorial`],
   run_doctor_quick: () => [{ name: "Sessions folder", ok: true, detail: "~/.parzi/sessions" }],

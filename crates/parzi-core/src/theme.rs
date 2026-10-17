@@ -77,26 +77,51 @@ fn d_mono_font() -> String {
 fn d_mono_size() -> u32 {
     13
 }
+// The default look: slate. Cool, quiet greys with a pale slate accent, so
+// nothing glows.
 fn c_sidebar() -> String {
-    "#07070B".into()
+    "#0F1217".into()
 }
 fn c_stage() -> String {
-    "#0B0B10".into()
+    "#14181E".into()
 }
 fn c_accent() -> String {
-    "#E6E8EE".into()
+    "#CBD5E1".into()
 }
 fn c_text() -> String {
-    "#EDEDF2".into()
+    "#E2E8F0".into()
 }
 fn c_text_dim() -> String {
-    "#9AA0AE".into()
+    "#94A3B8".into()
 }
 fn c_bar() -> String {
-    "#0E0E14".into()
+    "#1A1F26".into()
 }
 fn c_border() -> String {
-    "#20232C".into()
+    "#283039".into()
+}
+
+/// The default before slate, in the order of `ColorTheme`'s fields. A saved
+/// theme that is still exactly this was never chosen: it moves to the new one.
+const OLD_DEFAULT: [&str; 7] = [
+    "#07070B", "#0B0B10", "#E6E8EE", "#EDEDF2", "#9AA0AE", "#0E0E14", "#20232C",
+];
+
+impl ColorTheme {
+    fn is_old_default(&self) -> bool {
+        let mine = [
+            &self.sidebar,
+            &self.stage,
+            &self.accent,
+            &self.text,
+            &self.text_dim,
+            &self.bar,
+            &self.border,
+        ];
+        mine.iter()
+            .zip(OLD_DEFAULT)
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+    }
 }
 fn d_bg_image() -> String {
     "".into()
@@ -164,7 +189,11 @@ impl Theme {
         if !path.exists() {
             return Ok(Self::default());
         }
-        Ok(toml::from_str(&std::fs::read_to_string(&path)?)?)
+        let mut theme: Theme = toml::from_str(&std::fs::read_to_string(&path)?)?;
+        if theme.colors.is_old_default() {
+            theme.colors = ColorTheme::default();
+        }
+        Ok(theme)
     }
 
     pub fn save(&self) -> Result<()> {
@@ -722,12 +751,12 @@ pub fn extract_palette(path: &std::path::Path) -> Result<Palette> {
                 0.0
             };
             if sat < 0.18 {
-                [0xE6, 0xE8, 0xEE]
+                [0xCB, 0xD5, 0xE1]
             } else {
                 rgb
             }
         }
-        None => [0xE6, 0xE8, 0xEE],
+        None => [0xCB, 0xD5, 0xE1],
     };
     Ok(Palette {
         accent: hex(accent[0], accent[1], accent[2]),
@@ -760,7 +789,7 @@ mod css_tests {
         let css = Theme::default().to_css_vars();
         assert!(css.contains("--font:\"Inter\""));
         assert!(css.contains("--bg-dim:0.66"));
-        assert!(css.contains("--accent:#E6E8EE"));
+        assert!(css.contains("--accent:#CBD5E1"));
         assert!(!css.contains("glass"));
         assert!(!css.contains("--parzi-"));
         let mut t = Theme::default();
@@ -849,8 +878,28 @@ mod palette_tests {
         let p = dir.path().join("gray.png");
         solid_png(&p, [120, 120, 120]);
         let pal = extract_palette(&p).unwrap();
-        assert_eq!(pal.accent, "#E6E8EE");
+        assert_eq!(pal.accent, "#CBD5E1");
         assert_eq!(pal.average, "#787878");
+    }
+
+    #[test]
+    fn the_untouched_old_default_moves_to_slate_and_a_chosen_look_stays() {
+        let mut old = super::ColorTheme::default();
+        for (field, hex) in [
+            (&mut old.sidebar, "#07070b"),
+            (&mut old.stage, "#0B0B10"),
+            (&mut old.accent, "#E6E8EE"),
+            (&mut old.text, "#EDEDF2"),
+            (&mut old.text_dim, "#9AA0AE"),
+            (&mut old.bar, "#0E0E14"),
+            (&mut old.border, "#20232C"),
+        ] {
+            *field = hex.to_string();
+        }
+        assert!(old.is_old_default());
+        old.accent = "#7AA2F7".into();
+        assert!(!old.is_old_default(), "a changed accent is a choice");
+        assert!(!super::ColorTheme::default().is_old_default());
     }
 
     #[test]

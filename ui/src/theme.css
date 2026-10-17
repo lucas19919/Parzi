@@ -21,10 +21,10 @@
 }
 
 :root {
-  --bg: #0b0b10;
-  --text: #ededf2;
-  --muted: #9aa0ae;
-  --accent: #e6e8ee;
+  --bg: #14181e;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #cbd5e1;
   --panel: color-mix(in srgb, var(--text) 6%, var(--bg));
   --line: color-mix(in srgb, var(--text) 12%, var(--bg));
   /* Decoration only (dots, rules, idle icons). Text is --text or --muted:
