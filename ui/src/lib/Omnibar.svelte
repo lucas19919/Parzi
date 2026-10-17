@@ -604,45 +604,46 @@
         </button>
       {/if}
     </div>
+
+    <!-- Inside the box, so the controls read on any wallpaper. -->
+    <div class="under">
+      <div class="seg" role="group" aria-label="Send to" data-ui-segmented>
+        <button class:on={!web} aria-pressed={!web} use:tooltip={"Ask the agent (Ctrl+1)"} on:click={() => setWeb(false)}>Agent</button>
+        <button class:on={web} aria-pressed={web} use:tooltip={"Search the web (Ctrl+2)"} on:click={() => setWeb(true)}>Web</button>
+      </div>
+      {#if !web}
+        {#if remoteHost}
+          <button
+            class="ctl"
+            class:on={remote}
+            disabled={remoteLocked}
+            aria-pressed={remote}
+            use:tooltip={remoteLocked ? "A session stays where it started" : remote ? "Run on this computer instead" : `Run on ${remoteHost} instead`}
+            on:click|stopPropagation={() => dispatch("remote", { on: !remote })}
+          >
+            <Icon name={remote ? "server" : "desktop"} size={12} />
+            <span class="truncate">{remote ? remoteHost : "This computer"}</span>
+          </button>
+        {/if}
+        <button
+          bind:this={permBtn}
+          class="ctl"
+          class:open={permOpen}
+          class:warn={permission === "full"}
+          use:tooltip={perm.desc}
+          aria-haspopup="menu"
+          aria-expanded={permOpen}
+          on:click|stopPropagation={togglePerm}
+        >
+          <Icon name={permission === "supervised" ? "lock" : "unlock"} size={12} />
+          <span>{perm.label}</span>
+        </button>
+        <span class="spacer" />
+        <ModelPicker bind:this={picker} bind:value={model} bind:effort {board} on:unavailable />
+      {/if}
+    </div>
   </div>
 
-  <!-- Suggestions open under the box on Home: the line steps aside. -->
-  <div class="under" class:hidden={webOpen && hero}>
-    <div class="seg" role="group" aria-label="Send to" data-ui-segmented>
-      <button class:on={!web} aria-pressed={!web} use:tooltip={"Ask the agent (Ctrl+1)"} on:click={() => setWeb(false)}>Agent</button>
-      <button class:on={web} aria-pressed={web} use:tooltip={"Search the web (Ctrl+2)"} on:click={() => setWeb(true)}>Web</button>
-    </div>
-    {#if !web}
-      {#if remoteHost}
-        <button
-          class="ctl"
-          class:on={remote}
-          disabled={remoteLocked}
-          aria-pressed={remote}
-          use:tooltip={remoteLocked ? "A session stays where it started" : remote ? "Run on this computer instead" : `Run on ${remoteHost} instead`}
-          on:click|stopPropagation={() => dispatch("remote", { on: !remote })}
-        >
-          <Icon name={remote ? "server" : "desktop"} size={12} />
-          <span class="truncate">{remote ? remoteHost : "This computer"}</span>
-        </button>
-      {/if}
-      <button
-        bind:this={permBtn}
-        class="ctl"
-        class:open={permOpen}
-        class:warn={permission === "full"}
-        use:tooltip={perm.desc}
-        aria-haspopup="menu"
-        aria-expanded={permOpen}
-        on:click|stopPropagation={togglePerm}
-      >
-        <Icon name={permission === "supervised" ? "lock" : "unlock"} size={12} />
-        <span>{perm.label}</span>
-      </button>
-      <span class="spacer" />
-      <ModelPicker bind:this={picker} bind:value={model} bind:effort {board} on:unavailable />
-    {/if}
-  </div>
   {#if attachError}<div class="error" role="alert">{attachError}</div>{/if}
 
   {#if projOpen}
@@ -916,10 +917,7 @@
     gap: 8px;
     min-width: 0;
     min-height: 28px;
-    padding: 4px 4px 0;
-  }
-  .under.hidden {
-    visibility: hidden;
+    padding: 2px 0 0 2px;
   }
   .seg {
     display: inline-flex;

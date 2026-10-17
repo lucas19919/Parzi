@@ -22,7 +22,11 @@
   let packName = "";
   let fileInputEl: HTMLInputElement | null = null;
 
+  // The wallpaper's fractions (0-1) as the whole percents the sliders show.
   let dimPct = 66;
+  let vignettePct = 50;
+  let grainPct = 16;
+  let heightPct = 100;
 
   const ACCENTS = ["#CBD5E1", "#7AA2F7", "#88C0D0", "#34D399", "#A6DA95", "#5EEAD4", "#EB6F92", "#F5A97F", "#E8B64C"];
   const UI_FONTS = ["Inter", "system-ui", "Segoe UI", "SF Pro Text", "Roboto", "IBM Plex Sans"];
@@ -66,6 +70,9 @@
   function syncPercents() {
     if (!theme) return;
     dimPct = Math.round(theme.background.dim * 100);
+    vignettePct = Math.round(theme.background.vignette * 100);
+    grainPct = Math.round(theme.background.grain * 100);
+    heightPct = Math.round(theme.background.height * 100);
   }
 
   // The accent can follow the wallpaper, so a theme is matched without it.
@@ -254,11 +261,10 @@
     if (theme.background.auto_accent) await sampleAccent();
   }
 
-  function onDim() {
-    if (theme) {
-      theme.background.dim = dimPct / 100;
-      touch();
-    }
+  function onPct(key: "dim" | "vignette" | "grain" | "height", pct: number) {
+    if (!theme) return;
+    theme.background[key] = pct / 100;
+    touch();
   }
   // Picking a colour by hand means the wallpaper no longer sets it.
   function setColor(key: ColorKey, hex: string) {
@@ -376,8 +382,14 @@
     </div>
     {#if theme.background.image}
       <div class="field-card stack">
-        <Slider label="Dim" bind:value={dimPct} min={0} max={95} unit="%" on:input={onDim} />
+        <Slider label="Dim" bind:value={dimPct} min={0} max={95} unit="%" on:input={() => onPct("dim", dimPct)} />
         <Slider label="Blur" bind:value={theme.background.blur} min={0} max={20} step={0.5} unit="px" on:input={touch} />
+        <Slider label="Vignette" bind:value={vignettePct} min={0} max={100} unit="%" on:input={() => onPct("vignette", vignettePct)} />
+        <Slider label="Height" bind:value={heightPct} min={30} max={100} unit="%" on:input={() => onPct("height", heightPct)} />
+      </div>
+      <div class="field-card stack">
+        <Slider label="Dither" bind:value={grainPct} min={0} max={100} unit="%" on:input={() => onPct("grain", grainPct)} />
+        <Slider label="Dither size" bind:value={theme.background.grain_size} min={16} max={128} step={4} unit="px" on:input={touch} />
       </div>
       <div class="field-card">
         <span class="field-label">Accent follows the wallpaper</span>
