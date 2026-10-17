@@ -182,7 +182,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    margin: 8px 8px 0 0;
+    margin: 0 8px 0 0;
     padding-bottom: 12px;
     overflow-y: auto;
     scrollbar-width: none;

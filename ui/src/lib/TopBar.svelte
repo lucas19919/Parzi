@@ -150,8 +150,10 @@
 </header>
 
 <style>
+  /* 44px holds a 28px tab with 8px above it; the panels below start right
+     under the bar, so the gap under the tab is the same 8px. */
   .topbar {
-    height: 38px;
+    height: 44px;
     display: flex;
     align-items: center;
     justify-content: space-between;

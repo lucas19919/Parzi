@@ -1817,7 +1817,7 @@
     flex: 1;
     min-height: 0;
     display: flex;
-    margin: 8px 8px 0;
+    margin: 0 8px;
     overflow: hidden;
     background: var(--glass-bg-solid);
     border: var(--glass-border);
@@ -1840,7 +1840,7 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    margin: 8px 8px 0;
+    margin: 0 8px;
     overflow: hidden;
     background: var(--glass-bg-solid);
     border: var(--glass-border);

@@ -523,10 +523,6 @@
   .tab.active .close {
     opacity: 1;
   }
-  /* An idle tab lends its close button's room to the title. */
-  .tab:not(:hover):not(.active) .close:not(.count) {
-    display: none;
-  }
   .close:hover {
     background: var(--selected);
     color: var(--text);
