@@ -334,6 +334,8 @@ impl Orchestrator {
         for u in [
             "ui.show_markdown",
             "ui.show_artifact",
+            "ui.offer_replies",
+            "ui.propose_task",
             "image.generate",
             "doc.read",
             "models.list",

@@ -319,11 +319,51 @@ fn ui_defs() -> Vec<ToolDef> {
                 "required": ["artifact", "content"],
             }),
         },
+        ToolDef {
+            name: "ui.offer_replies".into(),
+            description: "End a turn that leaves the person a decision with one to three reply buttons under your reply: a go-ahead, a choice between two ways, approve or not. Call it last, after your final text. Labels are one to four words (\"Release 0.1.36\", \"Not yet\"); your recommendation goes first. A click sends its message (or the label) as the person's reply. Optional question: the decision in one short line. Skip it when nothing waits on them, and never for questions you need answered mid-turn (that is ask.user).".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "the decision, one short line"},
+                    "replies": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 3,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string", "description": "1-4 words, max 30 characters"},
+                                "message": {"type": "string", "description": "what the click sends, when the label alone is too short"},
+                            },
+                            "required": ["label"],
+                        },
+                    },
+                },
+                "required": ["replies"],
+            }),
+        },
+        ToolDef {
+            name: "ui.propose_task".into(),
+            description: "Propose follow-up work as a card the person can start with one click as a side task: a new session beside this one that works on its own. Use it for real, independent work your answer turned up (a bug spotted in passing, the same change for a sibling project, a follow-up worth its own session), never for what you are about to do anyway. One card per piece, at most three a turn. The brief is all the new session gets: what to do, where, and what done looks like. Name a project slug to run it in that project's folder.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "under 60 characters"},
+                    "brief": {"type": "string", "description": "what to do, where, and what done looks like"},
+                    "project": {"type": "string", "description": "a project slug, to work in its folder"},
+                },
+                "required": ["title", "brief"],
+            }),
+        },
     ]
 }
 
 pub(crate) fn is_ui_tool(name: &str) -> bool {
-    matches!(name, "ui.show_markdown" | "ui.show_artifact")
+    matches!(
+        name,
+        "ui.show_markdown" | "ui.show_artifact" | "ui.offer_replies" | "ui.propose_task"
+    )
 }
 
 /// The optional `tab` every page tool takes: one of this session's tab ids

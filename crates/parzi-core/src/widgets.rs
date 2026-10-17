@@ -257,3 +257,104 @@ fn check_kind(w: &WidgetV1) -> Result<()> {
     }
     Ok(())
 }
+
+/// `ui.offer_replies`: one to three reply buttons under the agent's last
+/// reply. Each has a short label and the message a click sends.
+pub fn replies(args: &serde_json::Value) -> std::result::Result<serde_json::Value, String> {
+    let text = |v: Option<&serde_json::Value>| {
+        v.and_then(|s| s.as_str())
+            .map(str::trim)
+            .unwrap_or("")
+            .to_string()
+    };
+    let list = args
+        .get("replies")
+        .and_then(|r| r.as_array())
+        .ok_or("replies must be a list of {label, message}")?;
+    if list.is_empty() || list.len() > 3 {
+        return Err("offer one to three replies".into());
+    }
+    let mut out = vec![];
+    for r in list {
+        let label = text(r.get("label"));
+        if label.is_empty() {
+            return Err("every reply needs a label".into());
+        }
+        if label.chars().count() > 30 {
+            return Err(format!("label `{label}` is over 30 characters: one to four words, the detail goes in message"));
+        }
+        let message = text(r.get("message"));
+        if message.chars().count() > 1000 {
+            return Err("a reply's message is over 1000 characters".into());
+        }
+        let message = if message.is_empty() {
+            label.clone()
+        } else {
+            message
+        };
+        out.push(serde_json::json!({"label": label, "message": message}));
+    }
+    let question = text(args.get("question"));
+    if question.chars().count() > 160 {
+        return Err("the question is over 160 characters: one short line".into());
+    }
+    Ok(serde_json::json!({"question": question, "replies": out}))
+}
+
+/// `ui.propose_task`: a card the person can start as a side task. The id
+/// lets the card remember whether it was started or dismissed.
+pub fn task(args: &serde_json::Value) -> std::result::Result<serde_json::Value, String> {
+    let text = |k: &str| {
+        args.get(k)
+            .and_then(|s| s.as_str())
+            .map(str::trim)
+            .unwrap_or("")
+            .to_string()
+    };
+    let (title, brief, project) = (text("title"), text("brief"), text("project"));
+    if title.is_empty() || brief.is_empty() {
+        return Err("a task needs a title and a brief".into());
+    }
+    if title.chars().count() > 80 {
+        return Err("the title is over 80 characters".into());
+    }
+    if brief.chars().count() > 4000 {
+        return Err("the brief is over 4000 characters".into());
+    }
+    Ok(serde_json::json!({
+        "id": uuid::Uuid::new_v4().to_string(),
+        "title": title,
+        "brief": brief,
+        "project": project,
+    }))
+}
+
+#[cfg(test)]
+mod reply_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn replies_default_their_message_and_refuse_long_labels() {
+        let ok = replies(&json!({"replies": [{"label": "Release 0.1.36"}, {"label": "Not yet", "message": "Not yet, more first."}]})).unwrap();
+        assert_eq!(ok["replies"][0]["message"], "Release 0.1.36");
+        assert_eq!(ok["replies"][1]["message"], "Not yet, more first.");
+        assert!(replies(&json!({"replies": []})).is_err());
+        assert!(replies(
+            &json!({"replies": [{"label": "a label that is far too long to be a button"}]})
+        )
+        .is_err());
+        assert!(replies(
+            &json!({"replies": [{"label": "a"}, {"label": "b"}, {"label": "c"}, {"label": "d"}]})
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn a_task_needs_a_title_and_a_brief_and_gets_an_id() {
+        let t = task(&json!({"title": "Same color on the website", "brief": "Change the accent to slate in web/.", "project": "website"})).unwrap();
+        assert_eq!(t["project"], "website");
+        assert!(!t["id"].as_str().unwrap().is_empty());
+        assert!(task(&json!({"title": "No brief"})).is_err());
+    }
+}

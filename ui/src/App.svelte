@@ -1037,32 +1037,77 @@
       comp = comp;
       return;
     }
-    const aimed = await aimAt(text);
-    const where = aimed.folder || (remoteOn ? (meta?.cwd ?? "") : folder);
-    const prompt = [aimed.text, sideBrief(meta?.title || tab.title, events, aimed.title)].filter(Boolean).join("\n\n");
     try {
-      const id = await api.sendMessage({
-        sessionId: null,
-        model: comp.model,
-        prompt,
-        cwd: where,
-        effort: comp.effort,
-        attachments: files,
-        mode: permission,
-        lane: where ? "build" : "work",
-        remote: remoteOn,
-        quotes: quotes.map((q) => ({ project: q.project, id: q.id })),
-        parent,
-      });
-      running = new Set(running).add(id);
-      void refreshThreads();
-      const busySame = !aimed.folder && running.has(parent);
-      toast(busySame ? "Side task started in this folder too: the two may edit the same files" : `Side task started${aimed.title ? ` in ${aimed.title}` : ""}`);
+      await launchSide(parent, text, quotes, files);
     } catch (e) {
       comp.input = [text, comp.input].filter(Boolean).join("\n\n");
       comp.attachments = [...files, ...comp.attachments];
       comp = comp;
       toastError(e);
+    }
+  }
+
+  // Starts a side task of `parent` on the composer's model; its id.
+  async function launchSide(parent: string, text: string, quotes: PlanQuote[], files: string[]): Promise<string> {
+    const aimed = await aimAt(text);
+    const where = aimed.folder || (remoteOn ? (meta?.cwd ?? "") : folder);
+    const prompt = [aimed.text, sideBrief(meta?.title || tab.title, events, aimed.title)].filter(Boolean).join("\n\n");
+    const id = await api.sendMessage({
+      sessionId: null,
+      model: comp.model,
+      prompt,
+      cwd: where,
+      effort: comp.effort,
+      attachments: files,
+      mode: permission,
+      lane: where ? "build" : "work",
+      remote: remoteOn,
+      quotes: quotes.map((q) => ({ project: q.project, id: q.id })),
+      parent,
+    });
+    running = new Set(running).add(id);
+    void refreshThreads();
+    const busySame = !aimed.folder && running.has(parent);
+    toast(busySame ? "Side task started in this folder too: the two may edit the same files" : `Side task started${aimed.title ? ` in ${aimed.title}` : ""}`);
+    return id;
+  }
+
+  // A task card an agent proposed, started as a side task of this session.
+  async function startTask(task: { title: string; brief: string; project?: string }, done: (session: string | null) => void) {
+    const parent = shown;
+    if (!parent || !comp.model) {
+      if (!comp.model) {
+        toast("Pick a model first");
+        omnibar?.openModels();
+      }
+      done(null);
+      return;
+    }
+    const aim = task.project ? `@${task.project.replace(/\s+/g, "-")} ` : "";
+    try {
+      done(await launchSide(parent, `${aim}${task.title}\n\n${task.brief}`, [], []));
+    } catch (e) {
+      toastError(e);
+      done(null);
+    }
+  }
+
+  // A reply button the agent offered: sent as the person's message. A
+  // half-typed draft waits in the composer meanwhile.
+  async function sendReply(text: string) {
+    if (sending || streaming) return;
+    const draft = tab.composer;
+    const kept = { input: draft.input, attachments: [...draft.attachments], quotes: [...(draft.quotes ?? [])] };
+    draft.input = text;
+    draft.attachments = [];
+    draft.quotes = [];
+    comp = comp;
+    await send();
+    if (kept.input || kept.attachments.length || kept.quotes.length) {
+      draft.input = kept.input;
+      draft.attachments = kept.attachments;
+      draft.quotes = kept.quotes;
+      comp = comp;
     }
   }
 
@@ -1616,6 +1661,9 @@
                   on:forked={() => fork()}
                   on:retry={retryLast}
                   on:compact={compact}
+                  on:reply={(e) => void sendReply(e.detail.text)}
+                  on:startTask={(e) => void startTask(e.detail.task, e.detail.done)}
+                  on:openSession={(e) => openSession(e.detail.id)}
                 >
                   <PlanInline
                     project={planProject}

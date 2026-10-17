@@ -17,6 +17,8 @@
   import { tooltip } from "./tooltip";
   import { formatTime } from "./time";
   import { viewImage } from "./imageViewer";
+  import ReplyButtons from "./ReplyButtons.svelte";
+  import TaskCard from "./TaskCard.svelte";
   import { board, nextStep, setupWaits } from "./providerStore";
 
   // What the waiting prompt answers: the nearest assistant message above
@@ -61,7 +63,17 @@
   // Names another session, for messages and reports that come from one.
   export let sessionTitle: (id: string) => string = () => "Another session";
 
-  const dispatch = createEventDispatcher<{ voted: { key: string }; answered: { key: string }; edited: { text: string; quotes: PlanQuote[] }; forked: void; retry: void; compact: void }>();
+  const dispatch = createEventDispatcher<{
+    voted: { key: string };
+    answered: { key: string };
+    edited: { text: string; quotes: PlanQuote[] };
+    forked: void;
+    retry: void;
+    compact: void;
+    reply: { text: string };
+    startTask: { task: { id: string; title: string; brief: string; project?: string }; done: (session: string | null) => void };
+    openSession: { id: string };
+  }>();
 
   const ERROR_WORDS: Record<string, string> = {
     auth: "Not signed in",
@@ -113,6 +125,16 @@
   const imageCache = new Map<string, Promise<string | null>>();
 
   $: items = buildItems(events);
+  // Offered replies stand only until the next message: the latest offer,
+  // with nothing said after it.
+  $: replyAt = (() => {
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (it.kind === "user") return -1;
+      if (it.kind === "widget" && it.fence === "parzi-replies") return i;
+    }
+    return -1;
+  })();
   // Only the newest error offers a fix, and only while the agent still
   // needs it: once signed in, the card is history.
   $: lastError = [...items].reverse().find((i) => i.kind === "error")?.key;
@@ -466,7 +488,7 @@ ${e.text}` : e.text;
 
 <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
 <div class="thread-col" on:click={onClick}>
-  {#each items as item (item.key)}
+  {#each items as item, idx (item.key)}
     {#if item.kind === "user"}
       {@const images = attachedImages(item.text)}
       {@const said = splitQuotes(stripMarker(item.text))}
@@ -574,7 +596,13 @@ ${e.text}` : e.text;
         {/if}
       </div>
     {:else if item.kind === "widget"}
-      {#if item.fence === "parzi-widget"}
+      {#if item.fence === "parzi-replies"}
+        {#if !streaming && idx === replyAt}
+          <ReplyButtons payload={item.payload} on:reply={(e) => dispatch("reply", e.detail)} />
+        {/if}
+      {:else if item.fence === "parzi-task"}
+        <TaskCard payload={item.payload} on:start={(e) => dispatch("startTask", e.detail)} on:open={(e) => dispatch("openSession", e.detail)} />
+      {:else if item.fence === "parzi-widget"}
         <Widget data={item.payload} />
       {:else if item.fence === "viz"}
         <Viz spec={item.payload} />

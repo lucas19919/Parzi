@@ -259,7 +259,20 @@ function transcript() {
     out.push({ kind: "tool_call", id: `t${i}`, name: "fs.read", args: { path: "ui/src/lib/Omnibar.svelte" } });
     out.push({ kind: "tool_result", id: `t${i}`, name: "fs.read", ok: true, output: "ok", ms: 12 });
     out.push({ kind: "assistant", text: ANSWER, done: true });
-    if (last) out.push({ kind: "assistant", text: VIZ_ANSWER, done: true });
+    if (last) {
+      out.push({ kind: "assistant", text: VIZ_ANSWER, done: true });
+      // What an agent offers at the end of a turn: a side task and replies.
+      out.push({
+        kind: "widget",
+        fence: "parzi-task",
+        payload: { id: "mock-task-1", title: "Same slate accent on the website", brief: "Change the website's accent to the slate the app now uses (web/src/theme.css), check the hero and the buttons, and open a PR.", project: "website" },
+      });
+      out.push({
+        kind: "widget",
+        fence: "parzi-replies",
+        payload: { question: "Release this as 0.1.36?", replies: [{ label: "Release 0.1.36", message: "Looks good, release 0.1.36." }, { label: "Not yet", message: "Not yet, I have more changes first." }] },
+      });
+    }
   }
   return out;
 }
@@ -427,7 +440,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     await emit("parzi://remote-setup", { step: "install", state: "ok", detail: "Parzi 0.1.32" });
     return { label: "box", user: "dev", host: "box.example.net", version: "0.1.32", linked_at: Date.now(), alive: true, synced_at: Date.now(), device: "pc" };
   },
-  send_message: (a) => (a.sessionId as string | null) ?? "s1",
+  send_message: (a) => (a.sessionId as string | null) ?? (a.parent ? `side-${Date.now()}` : "s1"),
 };
 
 // What the setup wizard finds on this PC.

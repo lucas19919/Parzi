@@ -743,6 +743,8 @@ impl ToolHost {
                 | "project.create"
                 | "ui.show_markdown"
                 | "ui.show_artifact"
+                | "ui.offer_replies"
+                | "ui.propose_task"
                 | "plan.read"
                 | "plan.write"
                 | "session.rename"
@@ -2113,6 +2115,22 @@ impl ToolHost {
                 Ok(msg) => (true, msg),
                 Err(e) => (false, e),
             },
+            "ui.offer_replies" => match widgets::replies(args) {
+                Ok(payload) => {
+                    widget("parzi-replies", payload);
+                    (true, "the buttons show under your reply; a click arrives as the person's next message".into())
+                }
+                Err(e) => (false, e),
+            },
+            "ui.propose_task" => {
+                match widgets::task(args) {
+                    Ok(payload) => {
+                        widget("parzi-task", payload);
+                        (true, "the card shows under your reply; the person decides whether to start it".into())
+                    }
+                    Err(e) => (false, e),
+                }
+            }
             _ => (false, format!("unknown ui tool `{name}`")),
         }
     }
