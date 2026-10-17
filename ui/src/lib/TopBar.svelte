@@ -39,7 +39,7 @@
 
   const MENU = [
     { label: "New session", key: "Ctrl+T", icon: "plus", run: () => dispatch("newTab") },
-    { label: "Search", key: "Ctrl+P", icon: "search", run: () => dispatch("search") },
+    { label: "Search", key: "Ctrl+K", icon: "search", run: () => dispatch("search") },
     { label: "History", key: "Ctrl+H", icon: "clock", run: () => dispatch("history") },
     { label: "Brain", key: "Ctrl+B", icon: "brain", run: () => dispatch("brain") },
     { label: "Settings", key: "Ctrl+,", icon: "settings", run: () => dispatch("settings") },

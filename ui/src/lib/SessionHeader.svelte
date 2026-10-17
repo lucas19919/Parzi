@@ -134,8 +134,8 @@
         class="icon-btn"
         class:on={panelOpen}
         aria-pressed={panelOpen}
-        aria-label={agentCount > 0 ? `Plan, ${agents} agents running` : "Plan"}
-        use:tooltip={"Plan (Ctrl+J)"}
+        aria-label={agentCount > 0 ? `Session column, ${agents} agents running` : "Session column"}
+        use:tooltip={"Session column (Ctrl+J)"}
         on:click={() => dispatch("plan")}
       >
         <Icon name="panel" />

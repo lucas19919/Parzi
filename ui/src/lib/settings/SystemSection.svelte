@@ -9,11 +9,13 @@
   export let notify: (msg: string, err?: boolean) => void = () => {};
 
   const SHORTCUTS = [
-    ["Ctrl+T", "New tab"],
+    ["Ctrl+T", "New session"],
     ["Ctrl+W", "Close tab"],
     ["Ctrl+K", "Find a session or command"],
-    ["Ctrl+Tab", "Next tab"],
+    ["Ctrl+Shift+T", "Reopen a closed tab"],
     ["Ctrl+1 / Ctrl+2", "Ask the agent / search the web"],
+    ["Ctrl+Tab", "Next tab"],
+    ["Ctrl+Enter", "Side task, while an agent works"],
     ["Ctrl+J", "Session column"],
     ["Ctrl+B", "Brain"],
     ["Ctrl+H", "History"],

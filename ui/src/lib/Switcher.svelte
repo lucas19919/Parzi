@@ -35,6 +35,8 @@
     icon: IconName;
     title: string;
     sub: string;
+    // Words that find it without showing (actions carry no subtitle).
+    keys?: string;
     run: () => void;
     remove?: () => void;
   }
@@ -59,22 +61,22 @@
 
   // The component gallery is a design tool: dev builds only.
   const ACTIONS: Omit<Item, "group">[] = [
-    { id: "new-session", icon: "chat", title: "New session", sub: "Start a draft", run: () => dispatch("newSession") },
-    { id: "new-page", icon: "globe", title: "New page", sub: "Open a web page", run: () => dispatch("newPage") },
-    { id: "history", icon: "clock", title: "History", sub: "Pages you visited and bookmarks", run: () => dispatch("history") },
-    { id: "brain", icon: "brain", title: "Brain", sub: "Notes and projects", run: () => dispatch("brain") },
+    { id: "new-session", icon: "chat", title: "New session", sub: "", keys: "draft chat", run: () => dispatch("newSession") },
+    { id: "new-page", icon: "globe", title: "New page", sub: "", keys: "web browser", run: () => dispatch("newPage") },
+    { id: "history", icon: "clock", title: "History", sub: "", keys: "pages visited bookmarks downloads", run: () => dispatch("history") },
+    { id: "brain", icon: "brain", title: "Brain", sub: "", keys: "notes projects", run: () => dispatch("brain") },
     ...(import.meta.env.DEV
-      ? [{ id: "previews", icon: "spark" as IconName, title: "Component previews", sub: "Live Omnibar variants, side by side", run: () => dispatch("previews") }]
+      ? [{ id: "previews", icon: "spark" as IconName, title: "Component previews", sub: "", keys: "omnibar gallery", run: () => dispatch("previews") }]
       : []),
-    { id: "settings", icon: "settings", title: "Settings", sub: "Agents, appearance, system", run: () => dispatch("settings") },
-    { id: "setup", icon: "spark", title: "Set up Parzi", sub: "Agents, browser, tools, remote", run: () => dispatch("setup") },
+    { id: "settings", icon: "settings", title: "Settings", sub: "", keys: "agents providers appearance theme system connectors", run: () => dispatch("settings") },
+    { id: "setup", icon: "spark", title: "Set up Parzi", sub: "", keys: "agents browser tools remote wizard", run: () => dispatch("setup") },
   ];
   const MAX_SESSIONS = 50;
 
   function build(q: string, tabs: Tab[], threads: SessionMeta[], activeTabId: string): Item[] {
     const openSessions = new Set(tabs.map((t) => t.sessionId).filter(Boolean));
     return [
-      ...ACTIONS.filter((c) => hit(q, c.title, c.sub)).map((c): Item => ({ ...c, group: "Actions" })),
+      ...ACTIONS.filter((c) => hit(q, c.title, c.keys)).map((c): Item => ({ ...c, group: "Actions" })),
       ...tabs
         .filter((t) => hit(q, t.title, t.url))
         .map(
@@ -164,7 +166,7 @@
               <span class="ico"><Icon name={item.icon} /></span>
               <span class="info">
                 <span class="title">{item.title}</span>
-                <span class="sub">{item.sub}</span>
+                {#if item.sub}<span class="sub">{item.sub}</span>{/if}
               </span>
             </button>
             {#if item.remove}

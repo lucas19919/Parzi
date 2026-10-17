@@ -55,7 +55,8 @@
 
   function statusLine(p: ProviderStatus | undefined, enabled: boolean, busy: boolean): string {
     if (!enabled) return "Off";
-    if (!p || p.state === "unchecked") return busy ? "Checking…" : "Not checked yet";
+    // Switched on again, but last checked while off: due for a check.
+    if (!p || p.state === "unchecked" || p.state === "disabled") return busy ? "Checking…" : "Not checked yet";
     const parts = [stateLabel(p)];
     if (p.version && p.state === "ready") parts.push(p.version);
     return parts.join(" · ");
