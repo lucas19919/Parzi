@@ -305,7 +305,11 @@ impl SessionStore {
     /// Runs `f` on the transcript after catching the cache up to the file's
     /// last complete line. The tail is read and parsed outside the cache
     /// lock, so a long read never stalls an append to another session.
-    fn with_events<T>(&self, id: &str, f: impl FnOnce((&[Event], &[Option<i64>])) -> T) -> Result<T> {
+    fn with_events<T>(
+        &self,
+        id: &str,
+        f: impl FnOnce((&[Event], &[Option<i64>])) -> T,
+    ) -> Result<T> {
         let path = self.events_path(id);
         let file_len = || {
             count_stat(1);

@@ -276,6 +276,7 @@ async fn session_tools_obey_the_lane_allowlist() {
 
 fn request(tool: &str) -> PermissionRequest {
     PermissionRequest {
+        name: String::new(),
         id: "r1".into(),
         tool: tool.into(),
         title: tool.into(),
@@ -459,6 +460,7 @@ async fn grok_reaches_parzis_tools_through_its_use_tool() {
     // As Grok sends it: the kind as the tool, the name as the title, the
     // tool it means inside.
     let wrapped = |inner: &str| PermissionRequest {
+        name: String::new(),
         id: "r2".into(),
         tool: "other".into(),
         title: "use_tool".into(),
@@ -471,6 +473,7 @@ async fn grok_reaches_parzis_tools_through_its_use_tool() {
     );
     // And as it asks for one directly: the name as the title.
     let direct = PermissionRequest {
+        name: String::new(),
         title: "parzi__todo_write".into(),
         input: json!({}),
         ..wrapped("")
@@ -515,6 +518,7 @@ async fn its_own_scratch_folder_is_the_sessions_to_write_in() {
     let scratch = parzi_core::paths::scratch_dir(&meta.id).unwrap();
     std::fs::create_dir_all(&scratch).unwrap();
     let write = |path: String| PermissionRequest {
+        name: String::new(),
         id: "w".into(),
         tool: "Write".into(),
         title: "Write".into(),

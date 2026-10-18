@@ -566,7 +566,9 @@ async fn dispatch(state: &State, req: &Value) -> Value {
             "device": parzi_core::device::this(),
         }),
         "session.list" => rpc::session_list(&state.orch),
-        "session.show" | "session.export" => rpc::session_show(&state.orch, req, op == "session.export"),
+        "session.show" | "session.export" => {
+            rpc::session_show(&state.orch, req, op == "session.export")
+        }
         "session.events" => session_events(&state.orch, req),
         "session.kill" => rpc::session_kill(&state.orch, req).await,
         "session.fork" => rpc::session_fork(&state.orch, req),
@@ -643,7 +645,10 @@ fn session_events(orch: &Orchestrator, req: &Value) -> Value {
         .unwrap_or(0)
         .min(total);
     let from = asked.max(total.saturating_sub(EVENTS_PAGE));
-    let page: Vec<Value> = events[from..].iter().map(|(ev, at)| capped_event(ev, *at)).collect();
+    let page: Vec<Value> = events[from..]
+        .iter()
+        .map(|(ev, at)| capped_event(ev, *at))
+        .collect();
     json!({ "ok": true, "session": meta, "events": page, "from": from, "total": total })
 }
 

@@ -424,7 +424,7 @@ impl HarnessBridge for Pump {
                     format!("tool_result({name}, ok={ok}): {}\n", clip(output, 1_500))
                 }
                 Event::Reasoning { text } => format!("reasoning: {}\n", clip(text, 300)),
-                Event::Checkpoint { summary } => {
+                Event::Checkpoint { summary, .. } => {
                     format!("checkpoint: {}\n", clip(summary, 300))
                 }
                 Event::Widget { .. } => "[widget]\n".to_string(),

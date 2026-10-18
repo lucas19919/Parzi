@@ -94,6 +94,7 @@ fn gate(folder: &Path, mode: ApprovalMode, edits_auto: bool, person: Arc<Person>
 
 async fn ask(host: &ToolHost, tool: &str, paths: &[&str]) -> PermissionDecision {
     host.decide(PermissionRequest {
+        name: String::new(),
         id: format!("req-{}", uuid::Uuid::new_v4()),
         tool: tool.into(),
         title: tool.into(),
@@ -167,13 +168,10 @@ async fn writes_outside_the_folder_need_a_person() {
     );
     let cards = person.seen.lock().unwrap().clone();
     assert_eq!(cards.len(), 1, "one card, for the write outside");
-    assert!(
-        cards[0].args["title"]
-            .as_str()
-            .unwrap_or("")
-            .contains("outside"),
-        "{:?}",
-        cards[0].args
+    assert_eq!(cards[0].args["outside"], true, "{:?}", cards[0].args);
+    assert_eq!(
+        parzi_runtime::ask_text::ask_text(&cards[0].name, &cards[0].args).note,
+        "Outside this session's folder."
     );
     let _ = std::fs::remove_dir_all(&folder);
 }

@@ -29,8 +29,6 @@
   export let contextLimit = 0;
   export let compacting = false;
   export let streaming = false;
-  // The agent's name when it compacts on its own (no Compact here).
-  export let selfCompacts = "";
   // What the session spent, for agents that report no context window, and
   // the agent whose plan limits apply.
   export let tokensIn = 0;
@@ -127,7 +125,6 @@
         {folder}
         {compacting}
         {streaming}
-        {selfCompacts}
         on:compact={() => dispatch("compact")}
       />
     </InfoCard>

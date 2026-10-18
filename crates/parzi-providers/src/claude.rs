@@ -92,6 +92,12 @@ impl Provider for Claude {
         let program = self.program().ok_or_else(|| {
             ProviderError::process(format!("Claude Code is not installed. {INSTALL_HINT}"))
         })?;
+        if spec.compact && spec.resume.is_none() {
+            return Err(ProviderError::new(
+                ErrorClass::Unsupported,
+                "Claude has no conversation here to compact",
+            ));
+        }
         if cancel.is_cancelled() {
             return Ok(TurnEnd::Interrupted);
         }
@@ -632,7 +638,14 @@ async fn converse(
     if cancel.is_cancelled() {
         return Ok(TurnEnd::Interrupted);
     }
-    let (content, unreadable) = user_content(&spec.prompt, &spec.images);
+    let prompt = if spec.compact {
+        format!("/compact {}", spec.prompt.trim())
+            .trim_end()
+            .to_string()
+    } else {
+        spec.prompt.clone()
+    };
+    let (content, unreadable) = user_content(&prompt, &spec.images);
     for p in unreadable {
         let _ = events.send(ProviderEvent::Notice(format!(
             "{} was not sent: Claude Code takes PNG, JPEG, GIF or WebP images",
@@ -753,9 +766,12 @@ async fn handle(
                 )));
             }
             "compact_boundary" => {
-                let _ = events.send(ProviderEvent::Notice(
-                    "Claude compacted the conversation".into(),
-                ));
+                let _ = events.send(ProviderEvent::Compacted {
+                    before: v
+                        .pointer("/compact_metadata/pre_tokens")
+                        .and_then(Value::as_u64),
+                    after: None,
+                });
             }
             _ => {}
         },
@@ -925,6 +941,7 @@ fn permission_request(req: &Value) -> (PermissionRequest, Value) {
         })
         .collect();
     let request = PermissionRequest {
+        name: String::new(),
         id: req
             .get("tool_use_id")
             .and_then(Value::as_str)
@@ -1074,6 +1091,7 @@ mod tests {
             resume: None,
             prompt: "hi".into(),
             images: vec![],
+            compact: false,
             tools: None,
         }
     }

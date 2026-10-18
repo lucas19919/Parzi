@@ -20,7 +20,14 @@ fn builtin_packs_parse_and_ship_no_wallpaper() {
         "builtin set changed; update this list: {:?}",
         packs.iter().map(|p| &p.name).collect::<Vec<_>>()
     );
-    for want in ["tokyo-night", "full-dark", "grey", "graphite", "slate", "light"] {
+    for want in [
+        "tokyo-night",
+        "full-dark",
+        "grey",
+        "graphite",
+        "slate",
+        "light",
+    ] {
         let p = packs
             .iter()
             .find(|p| p.name == want)

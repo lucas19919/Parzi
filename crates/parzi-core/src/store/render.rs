@@ -62,7 +62,10 @@ pub(crate) fn session_md(meta: &SessionMeta, events: &[Event]) -> String {
                     "### artifact: {title} ({id} v{version})\n\n```{fence_lang}\n{content}\n```\n\n"
                 ));
             }
-            Event::Checkpoint { summary } => {
+            Event::Checkpoint { summary, .. } if summary.is_empty() => {
+                md.push_str("> compacted\n\n");
+            }
+            Event::Checkpoint { summary, .. } => {
                 md.push_str(&format!("> checkpoint: {summary}\n\n"));
             }
             Event::Reasoning { text } => {

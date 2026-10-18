@@ -6,9 +6,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { checkUrl } from "lintapple";
 
 const BASE = process.env.PARZI_UI_URL ?? "http://localhost:1420/mock.html";
-const VIEWS = ["home", "session", "request", "question", "brain", "history", "settings", "setup", "page"];
+const VIEWS = ["home", "session", "request", "question", "approval", "brain", "history", "settings", "setup", "page"];
 // Views that are another view in other settings.
-const QUERY = { request: "view=session&request=file", question: "view=session&question=1" };
+const QUERY = { request: "view=session&request=file", question: "view=session&question=1", approval: "view=session&approval=1" };
 
 // More states per view, each checked again after its action (run in order
 // on one page). Selectors are CSS and must match exactly one element.
@@ -16,7 +16,7 @@ const click = (name, selector, ready) => ({ name, action: "click", selector, rea
 const nth = (list, i) => `${list} > :nth-child(${i})`;
 const STATES = {
   home: [
-    click("project menu", ".ob .proj", ".menu-pop"),
+    click("project menu", ".ob .proj:not(.branch-tab)", ".menu-pop"),
     // Pressed in the composer: the audit may already have scrolled the menu shut.
     { name: "project menu closed", action: "press", selector: ".ob textarea", key: "Escape", ready: { selector: ".menu-pop", state: "hidden" } },
     click("web", ".under .seg > button:last-child", ".box.web"),
@@ -36,7 +36,7 @@ const STATES = {
     click("plan done items", ".plan .item.fold", ".plan li:last-child > .item.closed"),
     click("plan quote chip", ".plan ul > li:nth-child(2) > .item", ".ob .chip.quote"),
     // A session that is working holds what you send until it is done.
-    click("running session", ".tabs > .tab:nth-child(2) .pick", ".ob .go.stop"),
+    click("running session", ".tabs > .tab:nth-child(3) .pick", ".ob .go.stop"),
     { name: "typed ahead", action: "fill", selector: ".ob textarea", value: "Then add a test for it", ready: { selector: ".ob .go.stop" } },
     { name: "held", action: "press", selector: ".ob textarea", key: "Enter", ready: { selector: ".ob .held" } },
   ],

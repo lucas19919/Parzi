@@ -130,6 +130,10 @@ pub(crate) struct ToolCallView {
     name: String,
     /// What the call does, in words ("Running `npm test`").
     label: String,
+    /// What the approval card says: "<agent> wants to <action>" over the
+    /// detail.
+    #[serde(flatten)]
+    ask: parzi_runtime::ask_text::AskText,
     args: serde_json::Value,
     lane: String,
     session: String,
@@ -153,6 +157,7 @@ impl Approver for GuiApprover {
             id: call.id.clone(),
             name: call.name.clone(),
             label: humanize_tool_call(&call.name, &call.args),
+            ask: parzi_runtime::ask_text::ask_text(&call.name, &call.args),
             args: call.args.clone(),
             lane: call.lane.clone(),
             session: call.session.clone(),

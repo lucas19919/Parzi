@@ -31,6 +31,9 @@ pub struct Agent {
     locate: fn() -> Option<PathBuf>,
     gated: bool,
     slow_start: bool,
+    /// Takes `/compact` as a prompt even when it does not list the
+    /// command (OpenCode); any other compacts only if it lists it.
+    compacts: bool,
     sign_in: Option<&'static str>,
     probe: Probe,
 }
@@ -80,6 +83,7 @@ pub fn agent(id: &str) -> Option<Agent> {
             locate: nowhere,
             gated: true,
             slow_start: false,
+            compacts: true,
             sign_in: None,
             probe: Probe::OpencodeModels,
         },
@@ -92,6 +96,7 @@ pub fn agent(id: &str) -> Option<Agent> {
             locate: nowhere,
             gated: false,
             slow_start: false,
+            compacts: true,
             sign_in: None,
             probe: Probe::GrokModels,
         },
@@ -104,6 +109,7 @@ pub fn agent(id: &str) -> Option<Agent> {
             locate: setup::antigravity_program,
             gated: false,
             slow_start: true,
+            compacts: false,
             sign_in: Some("oauth-personal"),
             probe: Probe::GeminiSettings,
         },
@@ -116,6 +122,7 @@ pub fn agent(id: &str) -> Option<Agent> {
             locate: nowhere,
             gated: false,
             slow_start: false,
+            compacts: false,
             sign_in: None,
             probe: Probe::CursorStatus,
         },
@@ -415,6 +422,7 @@ struct Live {
     tools: Option<String>,
     model: Option<String>,
     session: Value,
+    commands: Vec<String>,
     conn: Conn,
 }
 
@@ -423,14 +431,16 @@ struct Live {
 struct Opened {
     sid: String,
     session: Value,
+    commands: Vec<String>,
 }
 
-/// A session reused from the pool: its id, what opening it said, and the
-/// model it runs.
+/// A session reused from the pool: its id, what opening it said, the
+/// model it runs and the commands it listed.
 struct Reused {
     sid: String,
     session: Value,
     model: Option<String>,
+    commands: Vec<String>,
 }
 
 static LIVE: Mutex<Vec<Live>> = Mutex::new(Vec::new());
@@ -590,6 +600,7 @@ impl Provider for Acp {
                     sid: l.sid,
                     session: l.session,
                     model: l.model,
+                    commands: l.commands,
                 }),
             ),
             None => {
@@ -633,6 +644,7 @@ impl Provider for Acp {
                 tools,
                 model: spec.model.clone().filter(|m| !m.is_empty()),
                 session: opened.session,
+                commands: opened.commands,
                 conn,
             });
         } else {
@@ -881,6 +893,54 @@ struct Buffers {
     thought: String,
 }
 
+type Names = Arc<Mutex<HashMap<String, String>>>;
+
+/// What a turn has heard so far.
+struct Seen {
+    buffers: Buffers,
+    names: Names,
+    last_cost: Option<f64>,
+    /// The slash commands the agent lists (`available_commands_update`).
+    commands: Vec<String>,
+    /// How full the context was at the last model call, when the agent
+    /// says per call (Grok's `response_completed`): a turn's totals add
+    /// up every call and overstate it.
+    context: Option<u64>,
+}
+
+/// The commands an `available_commands_update` lists, by name.
+fn listed_commands(u: &Value) -> Option<Vec<String>> {
+    if u.get("sessionUpdate").and_then(Value::as_str) != Some("available_commands_update") {
+        return None;
+    }
+    Some(
+        u.get("availableCommands")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|c| c.get("name").and_then(Value::as_str))
+            .map(|n| n.trim_start_matches('/').to_string())
+            .collect(),
+    )
+}
+
+/// The session update a notification carries, when it is for `sid`:
+/// `session/update`, or Grok's own `_x.ai/session_notification`.
+fn update_of<'a>(method: &str, params: &'a Value, sid: &str) -> Option<&'a Value> {
+    if !matches!(method, "session/update" | "_x.ai/session_notification") {
+        return None;
+    }
+    let ours = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .is_none_or(|s| s == sid);
+    ours.then(|| params.get("update")).flatten()
+}
+
+/// How long a turn that compacts waits for the agent to list its
+/// commands before deciding it cannot.
+const COMMANDS_WAIT: Duration = Duration::from_secs(3);
+
 impl Buffers {
     fn flush(&mut self, events: &EventTx) {
         let thought = std::mem::take(&mut self.thought);
@@ -912,6 +972,9 @@ fn rpc_failure(agent: Agent, e: RpcError) -> ProviderError {
 struct Answerer {
     peer: Arc<Peer>,
     gate: Arc<dyn PermissionGate>,
+    /// Each tool call's own name, by id: a permission ask gives only the
+    /// call's kind and a title.
+    names: Names,
     /// Fires once session/cancel is out, so pending permission asks answer
     /// "cancelled".
     cancel_sent: CancellationToken,
@@ -925,7 +988,8 @@ impl Answerer {
                 self.gate.clone(),
                 self.cancel_sent.clone(),
             );
-            tokio::spawn(async move { permission(&peer, id, &params, gate, &sent).await });
+            let names = self.names.clone();
+            tokio::spawn(async move { permission(&peer, id, &params, gate, &names, &sent).await });
         } else {
             let _ = self
                 .peer
@@ -1007,6 +1071,7 @@ async fn drive(
     let answers = Answerer {
         peer: peer.clone(),
         gate,
+        names: Names::default(),
         cancel_sent: CancellationToken::new(),
     };
     let mut held: Vec<Incoming> = vec![];
@@ -1016,9 +1081,11 @@ async fn drive(
     // The session is still open in this process: nothing to open, and the
     // model only changes when the person picked another.
     let live_model = reused.as_ref().map(|r| r.model.clone());
+    let mut commands = vec![];
     if let Some(r) = reused {
         session = r.session;
         sid = r.sid;
+        commands = r.commands;
         fresh = false;
     } else if let Some(id) = earlier.filter(|_| can_resume) {
         let resume = peer.request_within(
@@ -1082,7 +1149,61 @@ async fn drive(
             return Ok(TurnEnd::Interrupted);
         }
     }
-    let mut text = spec.prompt.clone();
+    for msg in &held {
+        if let Incoming::Notification { method, params } = msg {
+            if let Some(list) = update_of(method, params, &sid).and_then(listed_commands) {
+                commands = list;
+            }
+        }
+    }
+    if spec.compact {
+        // A new conversation has nothing to compact; one that is gone is
+        // Parzi's to summarize from the transcript.
+        if fresh {
+            return Err(ProviderError::new(
+                ErrorClass::Unsupported,
+                format!("{} has no conversation here to compact", agent.name),
+            ));
+        }
+        let lists = |c: &[String]| c.iter().any(|n| n == "compact");
+        if !agent.compacts && !lists(&commands) {
+            let wait = async {
+                while let Some(msg) = incoming.recv().await {
+                    match msg {
+                        Incoming::Request { id, method, params } => {
+                            answers.answer(id, &method, params).await;
+                        }
+                        Incoming::Notification { method, params } => {
+                            let list = update_of(&method, &params, &sid).and_then(listed_commands);
+                            held.push(Incoming::Notification { method, params });
+                            if let Some(list) = list {
+                                return Some(list);
+                            }
+                        }
+                        Incoming::Raw(_) => {}
+                    }
+                }
+                None
+            };
+            if let Ok(Some(list)) = tokio::time::timeout(COMMANDS_WAIT, wait).await {
+                commands = list;
+            }
+            if !lists(&commands) {
+                return Err(ProviderError::new(
+                    ErrorClass::Unsupported,
+                    format!("{} cannot compact its conversation", agent.name),
+                ));
+            }
+        }
+    }
+    opened.commands.clone_from(&commands);
+    let mut text = if spec.compact {
+        format!("/compact {}", spec.prompt.trim())
+            .trim_end()
+            .to_string()
+    } else {
+        spec.prompt.clone()
+    };
     if fresh {
         if let Some(i) = spec
             .instructions
@@ -1123,34 +1244,25 @@ async fn drive(
             let _ = done_tx.send(peer.request("session/prompt", params).await);
         });
     }
-    let mut buffers = Buffers::default();
-    let mut tool_names: HashMap<String, String> = HashMap::new();
-    let mut last_cost: Option<f64> = if fresh {
-        Some(0.0)
-    } else {
-        spec.resume
-            .as_ref()
-            .and_then(|r| r.get("cost"))
-            .and_then(Value::as_f64)
+    let mut seen = Seen {
+        buffers: Buffers::default(),
+        names: answers.names.clone(),
+        last_cost: if fresh {
+            Some(0.0)
+        } else {
+            spec.resume
+                .as_ref()
+                .and_then(|r| r.get("cost"))
+                .and_then(Value::as_f64)
+        },
+        commands,
+        context: None,
     };
     // What came while the session opened goes first, in order.
     for msg in held {
         if let Incoming::Notification { method, params } = msg {
-            let ours = params
-                .get("sessionId")
-                .and_then(Value::as_str)
-                .is_none_or(|s| s == sid);
-            if method == "session/update" && ours {
-                let u = params.get("update").unwrap_or(&Value::Null);
-                update(
-                    u,
-                    &sid,
-                    can_resume,
-                    &mut buffers,
-                    &mut tool_names,
-                    &mut last_cost,
-                    events,
-                );
+            if let Some(u) = update_of(&method, &params, &sid) {
+                update(u, &sid, can_resume, &mut seen, events);
             }
         }
     }
@@ -1167,7 +1279,7 @@ async fn drive(
                 answers.cancel_sent.cancel();
             }
             () = sleep_until(stop_by) => {
-                buffers.flush(events);
+                seen.buffers.flush(events);
                 return Ok(TurnEnd::Interrupted);
             }
             msg = incoming.recv(), if open => {
@@ -1176,21 +1288,20 @@ async fn drive(
                     continue;
                 };
                 match msg {
-                    Incoming::Notification { method, params } if method == "session/update" => {
-                        if params.get("sessionId").and_then(Value::as_str).is_some_and(|s| s != sid) {
-                            continue;
+                    Incoming::Notification { method, params } => {
+                        if let Some(u) = update_of(&method, &params, &sid) {
+                            update(u, &sid, can_resume, &mut seen, events);
                         }
-                        let u = params.get("update").unwrap_or(&Value::Null);
-                        update(u, &sid, can_resume, &mut buffers, &mut tool_names, &mut last_cost, events);
                     }
                     Incoming::Request { id, method, params } => {
                         answers.answer(id, &method, params).await;
                     }
-                    _ => {}
+                    Incoming::Raw(_) => {}
                 }
             }
             done = &mut done_rx => {
-                buffers.flush(events);
+                seen.buffers.flush(events);
+                opened.commands.clone_from(&seen.commands);
                 let answer = done.unwrap_or_else(|_| Err(RpcError { code: RpcError::CLOSED, message: format!("{} exited before the turn finished", agent.name), data: None }));
                 let answer = match answer {
                     Ok(v) => v,
@@ -1206,7 +1317,7 @@ async fn drive(
                     let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
                     let cost = u.get("costUsdTicks").and_then(Value::as_f64).map(|t| t / 1e10);
                     let _ = events.send(ProviderEvent::Usage { input: n("inputTokens"), output: n("outputTokens"), cost_usd: cost });
-                    let used = n("totalTokens").max(n("inputTokens") + n("outputTokens"));
+                    let used = seen.context.unwrap_or_else(|| n("totalTokens").max(n("inputTokens") + n("outputTokens")));
                     if let Some(limit) = context_window(&session, spec.model.as_deref()).filter(|_| used > 0) {
                         let _ = events.send(ProviderEvent::Context { used, limit });
                     }
@@ -1293,16 +1404,10 @@ async fn select_model(
     }
 }
 
-fn update(
-    u: &Value,
-    sid: &str,
-    resumable: bool,
-    buffers: &mut Buffers,
-    tool_names: &mut HashMap<String, String>,
-    last_cost: &mut Option<f64>,
-    events: &EventTx,
-) {
+fn update(u: &Value, sid: &str, resumable: bool, seen: &mut Seen, events: &EventTx) {
     let chunk = || u.get("content").map(text_of).unwrap_or_default();
+    let buffers = &mut seen.buffers;
+    let last_cost = &mut seen.last_cost;
     match u.get("sessionUpdate").and_then(Value::as_str).unwrap_or("") {
         "agent_message_chunk" => {
             let t = chunk();
@@ -1327,7 +1432,9 @@ fn update(
                 .and_then(Value::as_str)
                 .unwrap_or("tool")
                 .to_string();
-            tool_names.insert(id.clone(), name.clone());
+            if let Ok(mut names) = seen.names.lock() {
+                names.insert(id.clone(), name.clone());
+            }
             let _ = events.send(ProviderEvent::ToolStarted {
                 id: id.clone(),
                 name: name.clone(),
@@ -1341,9 +1448,11 @@ fn update(
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            let name = tool_names
-                .get(&id)
-                .cloned()
+            let name = seen
+                .names
+                .lock()
+                .ok()
+                .and_then(|n| n.get(&id).cloned())
                 .unwrap_or_else(|| "tool".into());
             finish_tool(u, &id, &name, events);
         }
@@ -1370,6 +1479,36 @@ fn update(
                     });
                 }
             }
+        }
+        "available_commands_update" => {
+            if let Some(list) = listed_commands(u) {
+                seen.commands = list;
+            }
+        }
+        // Grok, asked to or when its context fills.
+        // Grok, after each model call: what that call read and wrote.
+        "response_completed" => {
+            let n = |k: &str| {
+                u.pointer(&format!("/usage/{k}"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            let used = n("input_tokens")
+                + n("cache_read_input_tokens")
+                + n("cache_creation_input_tokens")
+                + n("output_tokens");
+            if used > 0 {
+                seen.context = Some(used);
+            }
+        }
+        "auto_compact_completed" => {
+            buffers.flush(events);
+            let n = |k: &str| u.get(k).and_then(Value::as_u64);
+            seen.context = n("tokens_after");
+            let _ = events.send(ProviderEvent::Compacted {
+                before: n("tokens_before"),
+                after: n("tokens_after"),
+            });
         }
         _ => {}
     }
@@ -1400,6 +1539,7 @@ async fn permission(
     id: Value,
     params: &Value,
     gate: Arc<dyn PermissionGate>,
+    names: &Names,
     cancelled: &CancellationToken,
 ) {
     let call = params.get("toolCall").unwrap_or(&Value::Null);
@@ -1420,13 +1560,20 @@ async fn permission(
     } else {
         vec![]
     };
+    let call_id = call
+        .get("toolCallId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let name = names
+        .lock()
+        .ok()
+        .and_then(|n| n.get(&call_id).cloned())
+        .unwrap_or_default();
     let request = PermissionRequest {
-        id: call
-            .get("toolCallId")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
+        id: call_id,
         tool: kind.to_string(),
+        name,
         title: call
             .get("title")
             .and_then(Value::as_str)
@@ -1499,6 +1646,7 @@ mod tests {
             resume,
             prompt: "hi".into(),
             images: vec![],
+            compact: false,
             tools: Some(ToolServer {
                 name: "parzi".into(),
                 url: "http://127.0.0.1:1/mcp/t".into(),
@@ -1534,10 +1682,16 @@ mod tests {
             let mut lines = BufReader::new(r).lines();
             let prompt = read(&mut lines).await;
             assert_eq!(prompt["method"], "session/prompt");
+            // Two model calls: the second read 9,000 + 8,800 cached.
+            for (input, cached) in [(8000, 0), (9000, 8800)] {
+                send(&mut w, json!({"jsonrpc": "2.0", "method": "_x.ai/session_notification", "params": {"sessionId": "S0", "update": {
+                    "sessionUpdate": "response_completed", "usage": {"input_tokens": input, "cache_read_input_tokens": cached, "output_tokens": 196}
+                }}})).await;
+            }
             send(
                 &mut w,
                 json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn", "_meta": {"usage": {
-                    "inputTokens": 17803, "outputTokens": 193, "totalTokens": 17996, "costUsdTicks": 116511200
+                    "inputTokens": 17803, "outputTokens": 193, "totalTokens": 35000, "costUsdTicks": 116511200
                 }}}}),
             )
             .await;
@@ -1567,6 +1721,7 @@ mod tests {
                 sid: "S0".into(),
                 session,
                 model: Some("grok-4.7".into()),
+                commands: vec![],
             }),
             &mut Opened::default(),
         )
@@ -1626,6 +1781,7 @@ mod tests {
                 sid: "S0".into(),
                 session: json!({"sessionId": "S0"}),
                 model: Some("opencode/big-pickle".into()),
+                commands: vec![],
             }),
             &mut opened,
         )
@@ -2185,5 +2341,133 @@ mod tests {
             Some("no")
         );
         assert_eq!(option_for(&[always], &PermissionDecision::Allow), None);
+    }
+
+    /// Drives one turn of `agent` on the live session "S0" against a
+    /// scripted other end; returns the turn's end and what it relayed.
+    async fn live_turn<F, Fut>(
+        agent_id: &str,
+        spec: TurnSpec,
+        commands: Vec<String>,
+        gate: Arc<Gate>,
+        other_end: F,
+    ) -> (Result<TurnEnd, ProviderError>, Vec<ProviderEvent>)
+    where
+        F: FnOnce(
+                tokio::io::Lines<BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>>,
+                tokio::io::WriteHalf<tokio::io::DuplexStream>,
+            ) -> Fut
+            + Send
+            + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, w) = tokio::io::split(theirs);
+            other_end(BufReader::new(r).lines(), w).await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent(agent_id).unwrap(),
+            &spec,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+            Some(Reused {
+                sid: "S0".into(),
+                session: json!({"sessionId": "S0"}),
+                model: spec.model.clone(),
+                commands,
+            }),
+            &mut Opened::default(),
+        )
+        .await;
+        server.abort();
+        drop(tx);
+        let mut got = vec![];
+        while let Some(e) = rx.recv().await {
+            got.push(e);
+        }
+        (end, got)
+    }
+
+    fn gate() -> Arc<Gate> {
+        Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ))
+    }
+
+    #[tokio::test]
+    async fn grok_compacts_when_asked_and_says_how_much() {
+        let mut spec = spec(Some(json!({"session_id": "S0"})));
+        spec.model = None;
+        spec.compact = true;
+        spec.prompt = "the API shape".into();
+        let (end, got) = live_turn("grok", spec, vec![], gate(), |mut lines, mut w| async move {
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["params"]["prompt"][0]["text"], "/compact the API shape");
+            send(&mut w, json!({"jsonrpc": "2.0", "method": "_x.ai/session_notification", "params": {"sessionId": "S0", "update": {
+                "sessionUpdate": "auto_compact_completed", "tokens_before": 90000, "tokens_after": 12000
+            }}})).await;
+            send(&mut w, json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn"}})).await;
+        })
+        .await;
+        assert_eq!(end.unwrap(), TurnEnd::Completed);
+        assert!(got.contains(&ProviderEvent::Compacted {
+            before: Some(90_000),
+            after: Some(12_000)
+        }));
+    }
+
+    #[tokio::test]
+    async fn an_agent_that_lists_no_compact_cannot_be_asked_to() {
+        let mut spec = spec(Some(json!({"session_id": "S0"})));
+        spec.compact = true;
+        let (end, _) = live_turn(
+            "cursor",
+            spec.clone(),
+            vec!["review".into()],
+            gate(),
+            |_l, _w| async {},
+        )
+        .await;
+        assert_eq!(end.unwrap_err().class, ErrorClass::Unsupported);
+        // One that lists it is asked.
+        let (end, _) = live_turn("cursor", spec, vec!["compact".into()], gate(), |mut lines, mut w| async move {
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["params"]["prompt"][0]["text"], "/compact hi");
+            send(&mut w, json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn"}})).await;
+        })
+        .await;
+        assert_eq!(end.unwrap(), TurnEnd::Completed);
+    }
+
+    #[tokio::test]
+    async fn a_permission_ask_names_the_tool_the_call_started_as() {
+        let gate = gate();
+        let (end, _) = live_turn("grok", spec(Some(json!({"session_id": "S0"}))), vec![], gate.clone(), |mut lines, mut w| async move {
+            let prompt = read(&mut lines).await;
+            let update = |u: Value| json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "S0", "update": u}});
+            send(&mut w, update(json!({"sessionUpdate": "tool_call", "toolCallId": "c1", "title": "image_gen", "kind": "other", "rawInput": {"prompt": "an apple"}}))).await;
+            send(&mut w, json!({"jsonrpc": "2.0", "id": 5, "method": "session/request_permission", "params": {
+                "sessionId": "S0",
+                "toolCall": {"toolCallId": "c1", "title": "An apple on white", "kind": "other", "rawInput": {"prompt": "an apple"}},
+                "options": [{"optionId": "yes", "kind": "allow_once"}]
+            }})).await;
+            let answer = read(&mut lines).await;
+            assert_eq!(answer["result"]["outcome"]["optionId"], "yes");
+            send(&mut w, json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn"}})).await;
+        })
+        .await;
+        assert_eq!(end.unwrap(), TurnEnd::Completed);
+        let asked = gate.1.lock().unwrap();
+        assert_eq!(asked[0].tool, "other");
+        assert_eq!(asked[0].name, "image_gen");
     }
 }

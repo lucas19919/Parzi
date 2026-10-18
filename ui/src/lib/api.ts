@@ -53,7 +53,7 @@ export type ChatEvent =
   | { kind: "widget"; fence: string; payload: unknown; at?: number }
   | { kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown; at?: number }
   | { kind: "error"; message: string; class: string; at?: number }
-  | { kind: "checkpoint"; summary: string; at?: number };
+  | { kind: "checkpoint"; summary: string; before?: number; after?: number; at?: number };
 
 type ProviderState = "ready" | "signed_out" | "not_installed" | "disabled" | "error" | "unchecked";
 
@@ -89,6 +89,12 @@ export interface ApprovalCall {
   name: string;
   // What the call does, in words ("Running `npm test`").
   label?: string;
+  // What the approval card says: "<agent> wants to <action>", over the
+  // exact thing (`detail`: the command, the files, the picture's prompt).
+  action?: string;
+  detail?: string;
+  detail_kind?: "command" | "paths" | "url" | "text";
+  note?: string;
   args: unknown;
   lane: string;
   session: string;

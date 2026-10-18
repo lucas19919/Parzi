@@ -315,8 +315,12 @@ impl McpManager {
             return Err(tool_err(format!("server `{name}` disabled")));
         }
         // `npx` on Windows is npx.cmd, which a bare name never starts.
-        let program = parzi_providers::process::which(&cfg.command)
-            .ok_or_else(|| tool_err(format!("`{}` isn't installed on this computer", cfg.command)))?;
+        let program = parzi_providers::process::which(&cfg.command).ok_or_else(|| {
+            tool_err(format!(
+                "`{}` isn't installed on this computer",
+                cfg.command
+            ))
+        })?;
         let mut cmd = Command::new(program);
         cmd.args(&cfg.args)
             .env_clear()

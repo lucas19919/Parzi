@@ -567,3 +567,5 @@ export const mockLive = !!params.get("live");
 export const mockRequest = params.get("request") ?? "";
 // ?question=1 (or =multi): the open session's agent asks at a fork.
 export const mockQuestion = params.get("question") ?? "";
+// ?approval=1: the open session's agent asks to run a command.
+export const mockApproval = params.get("approval") ?? "";

@@ -27,8 +27,6 @@
   export let folder = "";
   export let compacting = false;
   export let streaming = false;
-  // The agent's name when it compacts on its own (no Compact here).
-  export let selfCompacts = "";
 
   const dispatch = createEventDispatcher<{ compact: void }>();
 
@@ -98,13 +96,9 @@
       <span class="p">{share(free)}</span>
     </div>
   </div>
-  {#if selfCompacts}
-    <div class="note">{selfCompacts} compacts on its own.</div>
-  {:else}
-    <button class="compact" disabled={compacting || streaming} on:click={() => dispatch("compact")}>
-      {compacting ? "Compacting…" : "Compact session"}
-    </button>
-  {/if}
+  <button class="compact" disabled={compacting || streaming} on:click={() => dispatch("compact")}>
+    {compacting ? "Compacting…" : "Compact session"}
+  </button>
 </div>
 
 <style>

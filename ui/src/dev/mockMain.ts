@@ -1,5 +1,5 @@
 // Entry for mock.html: install the mock backend, then boot the real app.
-const { mockView, mockLive, mockRequest, mockQuestion } = await import("./mockTauri");
+const { mockView, mockLive, mockRequest, mockQuestion, mockApproval } = await import("./mockTauri");
 await import("../main");
 
 const { emit } = await import("@tauri-apps/api/event");
@@ -18,8 +18,17 @@ await emit("parzi://run-event", {
   kind: "approval",
   key: "a1",
   session: "s9",
-  call: { id: "c1", name: "shell.exec", args: { cmd: "npm install --save-dev @primer/octicons" }, lane: "build", session: "s9" },
+  call: { id: "c1", name: "shell.exec", args: { cmd: "npm install --save-dev @primer/octicons" }, lane: "build", session: "s9", action: "run a command", detail: "npm install --save-dev @primer/octicons", detail_kind: "command", note: "" },
 });
+if (mockApproval) {
+  // The open session's own agent asks.
+  await emit("parzi://run-event", {
+    kind: "approval",
+    key: "a2",
+    session: "s1",
+    call: { id: "c2", name: "execute", args: { title: "Execute `cargo test -p parzi-core`" }, lane: "build", session: "s1", action: "run a command", detail: "cargo test -p parzi-core", detail_kind: "command", note: "" },
+  });
+}
 if (mockRequest) {
   const asks: Record<string, string> = {
     file: "Send me the crash log from last night's run, so I can see where the queue stalls.",

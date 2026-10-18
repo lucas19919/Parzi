@@ -149,6 +149,7 @@ async fn vendor_shell_is_rerouted_not_carded() {
     for tool in ["Bash", "bash"] {
         let d = h
             .decide(PermissionRequest {
+                name: String::new(),
                 id: "req-1".into(),
                 tool: tool.into(),
                 title: tool.into(),
@@ -168,6 +169,7 @@ async fn vendor_shell_is_rerouted_not_carded() {
     for tool in ["shell", "execute", "run_command"] {
         let d = h
             .decide(PermissionRequest {
+                name: String::new(),
                 id: "req-2".into(),
                 tool: tool.into(),
                 title: "run_terminal_command".into(),
@@ -213,6 +215,7 @@ async fn research_offers_no_shell() {
     assert!(!ok, "work must not run commands");
     let d = host
         .decide(PermissionRequest {
+            name: String::new(),
             id: "req-1".into(),
             tool: "Bash".into(),
             title: "Bash".into(),

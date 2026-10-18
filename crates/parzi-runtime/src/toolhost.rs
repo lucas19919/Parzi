@@ -14,6 +14,7 @@ use parzi_providers::{PermissionDecision, PermissionGate, PermissionRequest};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use crate::ask_text::makes_media;
 use crate::handler::{HarnessBridge, RunEvent, RunSink, SpawnSpec};
 use crate::tools::{
     category, display_name, edit_paths, is_brain_tool, is_browser_tool, is_desk_tool, is_doc_tool,
@@ -1141,21 +1142,34 @@ impl ToolHost {
                 None => PermissionDecision::Deny(READ_ONLY.into()),
             };
         }
+        // Making a picture or a video changes nothing here: its output lands
+        // in the agent's own store, and the person asked for it.
+        if kind.is_none() && (makes_media(&req.name) || makes_media(&req.tool)) {
+            return PermissionDecision::Allow;
+        }
         let allowed = match self.p.mode {
             ApprovalMode::Auto if !outside => true,
             ApprovalMode::Ask if self.p.edits_auto && kind == Some("fs.write") && !outside => true,
             _ => {
                 let mut args = req.input.clone();
+                if !args.is_object() {
+                    args = serde_json::json!({});
+                }
                 if let Value::Object(o) = &mut args {
+                    o.entry("title")
+                        .or_insert_with(|| Value::String(req.title.clone()));
                     if outside {
-                        let title = format!("{} — outside this lane's folder", req.title);
-                        o.insert("title".into(), Value::String(title));
-                    } else {
-                        o.entry("title")
-                            .or_insert_with(|| Value::String(req.title.clone()));
+                        o.insert("outside".into(), Value::Bool(true));
                     }
                 }
-                self.ask(&req.id, &req.tool, &args).await
+                // An ACP agent says only "other" of its own tools; the card
+                // names the tool the call started as.
+                let asked = if req.tool == "other" && !req.name.is_empty() {
+                    req.name.as_str()
+                } else {
+                    req.tool.as_str()
+                };
+                self.ask(&req.id, asked, &args).await
             }
         };
         if !allowed {
@@ -2563,6 +2577,7 @@ mod tests {
     #[test]
     fn writes_name_their_files_however_the_agent_spells_them() {
         let req = |input: Value, paths: &[&str]| PermissionRequest {
+            name: String::new(),
             id: "1".into(),
             tool: "edit".into(),
             title: "Run create_file?".into(),

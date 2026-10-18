@@ -252,17 +252,13 @@ impl Orchestrator {
         Ok(Self::launch(self.pump_parts(), q).await?.events())
     }
 
+    /// Compacts a thread's conversation: its agent's own way, else Parzi
+    /// has it summarize and carries on from that (see `EngineRun`).
     pub async fn compact(&self, id: &str, focus: &str) -> Result<String> {
         let provider = run_session(id).map(|s| s.provider).ok_or_else(|| {
             ParziError::Store("nothing to compact yet: this thread has no conversation".into())
         })?;
-        if !matches!(provider.as_str(), "claude" | "opencode") {
-            return Err(ParziError::Store(format!(
-                "{} compacts its conversation on its own",
-                display_name(&provider)
-            )));
-        }
-        let prompt = format!("/compact {}", focus.trim()).trim_end().to_string();
+        let prompt = focus.trim().to_string();
         // The plan the conversation saw goes with what it compacts away:
         // the next run sends it again.
         set_brief_hash(id, None);
@@ -610,6 +606,7 @@ impl Orchestrator {
             inbox_from: q.inbox_from,
             tally: tally.clone(),
             brief,
+            compact: q.cause == RunCause::Compact,
         });
         set_run_note(&q.session_id, None);
         if q.cause.recorded() {

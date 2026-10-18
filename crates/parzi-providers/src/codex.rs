@@ -332,6 +332,12 @@ async fn drive(
         .and_then(|r| r.get("thread_id"))
         .and_then(Value::as_str)
         .map(str::to_string);
+    if spec.compact && resume.is_none() {
+        return Err(ProviderError::new(
+            ErrorClass::Unsupported,
+            "Codex has no conversation here to compact",
+        ));
+    }
     let tid = match resume {
         Some(tid) => {
             let mut p = thread.clone();
@@ -356,6 +362,23 @@ async fn drive(
     let _ = events.send(ProviderEvent::Session {
         resume: json!({"thread_id": tid}),
     });
+    if spec.compact {
+        let ask = peer.request_within("thread/compact/start", json!({"threadId": tid}), limit);
+        let Some(asked) = or_cancel(cancel, ask).await else {
+            return Ok(TurnEnd::Interrupted);
+        };
+        asked.map_err(rpc_failure)?;
+        // It runs as a turn of its own: whichever turn ends next is it.
+        return follow(
+            peer,
+            incoming,
+            Turn::new(tid, String::new()),
+            gate,
+            events,
+            cancel,
+        )
+        .await;
+    }
     let mut input = vec![json!({"type": "text", "text": spec.prompt})];
     for p in &spec.images {
         input.push(json!({"type": "localImage", "path": p.display().to_string()}));
@@ -382,13 +405,26 @@ async fn drive(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let mut st = Turn {
-        thread: tid,
-        turn: turn_id,
-        file_paths: HashMap::new(),
-        last_error: None,
-        interrupting: false,
-    };
+    follow(
+        peer,
+        incoming,
+        Turn::new(tid, turn_id),
+        gate,
+        events,
+        cancel,
+    )
+    .await
+}
+
+/// Answers and relays what Codex says until the turn ends.
+async fn follow(
+    peer: &Arc<Peer>,
+    incoming: &mut mpsc::UnboundedReceiver<Incoming>,
+    mut st: Turn,
+    gate: Arc<dyn PermissionGate>,
+    events: &EventTx,
+    cancel: &CancellationToken,
+) -> Result<TurnEnd, ProviderError> {
     let mut stop_by: Option<tokio::time::Instant> = None;
     loop {
         let msg = tokio::select! {
@@ -475,6 +511,7 @@ async fn answer(
                 ("edit", format!("Edit {}", paths.join(", ")))
             };
             let request = PermissionRequest {
+                name: String::new(),
                 id: params
                     .get("itemId")
                     .and_then(Value::as_str)
@@ -511,6 +548,16 @@ struct Turn {
 }
 
 impl Turn {
+    fn new(thread: String, turn: String) -> Self {
+        Self {
+            thread,
+            turn,
+            file_paths: HashMap::new(),
+            last_error: None,
+            interrupting: false,
+        }
+    }
+
     fn ours(&self, params: &Value) -> bool {
         params
             .get("threadId")
@@ -667,6 +714,12 @@ fn item_completed(item: &Value, events: &EventTx) {
         });
     };
     match item.get("type").and_then(Value::as_str).unwrap_or("") {
+        "contextCompaction" => {
+            let _ = events.send(ProviderEvent::Compacted {
+                before: None,
+                after: None,
+            });
+        }
         "agentMessage" => {
             let text = item.get("text").and_then(Value::as_str).unwrap_or("");
             if !text.trim().is_empty() {
@@ -809,6 +862,7 @@ mod tests {
             resume: None,
             prompt: "hi".into(),
             images: vec![],
+            compact: false,
             tools: None,
         }
     }

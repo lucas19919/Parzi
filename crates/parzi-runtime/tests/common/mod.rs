@@ -136,6 +136,7 @@ impl Agent {
             .decide(PermissionRequest {
                 id: format!("req-{}", uuid::Uuid::new_v4()),
                 tool: tool.to_string(),
+                name: String::new(),
                 title: tool.to_string(),
                 input,
                 paths: paths.iter().map(|p| (*p).to_string()).collect(),

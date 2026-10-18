@@ -51,6 +51,7 @@ fn host(lane: &str, mode: ApprovalMode, full: bool, approver: Arc<Counter>) -> T
 
 fn read(tool: &str, input: serde_json::Value) -> PermissionRequest {
     PermissionRequest {
+        name: String::new(),
         id: "r1".into(),
         tool: tool.into(),
         title: tool.into(),

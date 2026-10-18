@@ -42,6 +42,7 @@
   import { addQuote, MAX_QUOTES, quoteBlock, sameSlug, splitQuotes } from "./lib/planModel";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
   import { nameOf } from "./lib/providerRows";
+  import { follower } from "./lib/follow";
   import { addNotification, dropNotification, markSessionRead, type NotificationItem } from "./lib/notificationStore";
   import { covered } from "./lib/overlay";
   import { tooltip } from "./lib/tooltip";
@@ -194,7 +195,6 @@
   let planInline = false;
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
-  let farFromBottom = false;
   let dockHeight = 90;
   let omnibar: Omnibar;
   let page: PageView;
@@ -404,13 +404,12 @@
     liveTools = [];
   }
 
-  function nearBottom() {
-    return !!scrollEl && scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 160;
-  }
+  // The thread holds its bottom while you are there (see follow.ts).
+  const follow = follower();
 
   async function scrollToBottom(smooth = false) {
     await tick();
-    scrollEl?.scrollTo({ top: scrollEl.scrollHeight, behavior: smooth && !reduced ? "smooth" : "auto" });
+    follow.toBottom(smooth);
   }
 
   function showDraft() {
@@ -520,6 +519,8 @@
     const idx = tabs.findIndex((t) => t.id === id);
     if (idx < 0) return;
     const closedKind = tabs[idx].kind;
+    // A page under a session (the agent's, or a link from its thread).
+    const under = tabs[idx].kind === "page" ? (tabs[idx].owner ?? tabs[idx].group ?? null) : null;
     // Closing a session tab takes its agent-owned pages with it.
     const doomed = new Set([id]);
     const closingSession = tabs[idx].kind === "session" ? tabs[idx].sessionId : null;
@@ -550,6 +551,12 @@
       const back = settingsReturn;
       settingsReturn = null;
       selectTab(back);
+      return;
+    }
+    // Closing a page under a session goes back to that session.
+    const home = under ? kept.find((t) => t.kind === "session" && t.sessionId === under) : undefined;
+    if (home) {
+      selectTab(home.id);
       return;
     }
     selectTab(kept[Math.max(0, Math.min(idx, kept.length - 1))].id);
@@ -813,6 +820,8 @@
     draft.quotes = [];
     comp = comp;
     events = [...events, optimistic];
+    // Your message glides into view above the composer.
+    void scrollToBottom(true);
     try {
       const sid = await api.sendMessage({
         sessionId: fresh ? null : target.sessionId,
@@ -844,7 +853,6 @@
       if (activeId === target.id) {
         shown = sid;
         await reload();
-        await scrollToBottom();
       }
       void refreshThreads();
     } catch (e) {
@@ -916,7 +924,7 @@
     const optimistic: ChatEvent = { kind: "user", text: [h.text, ...h.quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
     if (sid === shown) {
       events = [...events, optimistic];
-      void scrollToBottom();
+      void scrollToBottom(true);
     }
     try {
       const id = await api.sendMessage({
@@ -939,7 +947,6 @@
       if (shown === sid) {
         shown = id;
         await reload();
-        await scrollToBottom();
       }
       void refreshThreads();
     } catch (e) {
@@ -1314,13 +1321,11 @@
   function revealLive() {
     revealing = 0;
     if (!pending) return;
-    const follow = nearBottom();
     let cut = Math.min(pending.length, Math.max(3, Math.ceil(pending.length / 6)));
     // Never between the halves of an emoji.
     if (cut < pending.length && /[\uD800-\uDBFF]/.test(pending[cut - 1])) cut++;
     live += pending.slice(0, cut);
     pending = pending.slice(cut);
-    if (follow) void scrollToBottom();
     if (pending) revealing = requestAnimationFrame(revealLive);
   }
 
@@ -1711,7 +1716,6 @@
               {compacting}
               {streaming}
               costUsd={meta?.cost_usd ?? 0}
-              selfCompacts={meta && !["claude", "opencode"].includes(meta.model.split("/")[0]) ? nameOf(meta.model.split("/")[0]) : ""}
               on:rename={(e) => rename(e.detail.title)}
               on:fork={fork}
               on:copyId={copyId}
@@ -1721,7 +1725,7 @@
               on:back={() => parent && openSession(parent.id)}
             />
             <div class="workarea">
-              <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl} on:scroll={() => (farFromBottom = !nearBottom())}>
+              <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl} use:follow.attach>
                 <Thread
                   {events}
                   liveText={live}
@@ -1732,6 +1736,7 @@
                   question={openQuestion}
                   request={openRequest}
                   askerTitle={threads.find((t) => t.id === (openQuestion?.session ?? openRequest?.session ?? approval?.session ?? shown))?.title ?? ""}
+                  agentName={nameOf(threads.find((t) => t.id === shown)?.model.split("/")[0] ?? "")}
                   {streaming}
                   session={shown ?? ""}
                   {folder}
@@ -1783,7 +1788,6 @@
               contextLimit={context.limit}
               {compacting}
               {streaming}
-              selfCompacts={meta && !["claude", "opencode"].includes(meta.model.split("/")[0]) ? nameOf(meta.model.split("/")[0]) : ""}
               {threads}
               {running}
               {approvals}
@@ -1821,6 +1825,7 @@
           bind:worktree={comp.worktree}
           {folder}
           folderLocked={!!tab.sessionId}
+          started={!!tab.sessionId}
           {branch}
           {streaming}
           board={remoteOn ? $remoteBoard : $board}

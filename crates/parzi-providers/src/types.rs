@@ -15,6 +15,8 @@ pub enum ErrorClass {
     BadRequest,
     Process,
     SessionLost,
+    /// The agent has no way to do what the turn asked (compacting).
+    Unsupported,
     Unknown,
 }
 
@@ -28,6 +30,7 @@ impl ErrorClass {
             Self::BadRequest => "bad_request",
             Self::Process => "process",
             Self::SessionLost => "session_lost",
+            Self::Unsupported => "unsupported",
             Self::Unknown => "unknown",
         }
     }
@@ -227,6 +230,10 @@ pub struct TurnSpec {
     pub prompt: String,
     pub images: Vec<PathBuf>,
     pub tools: Option<ToolServer>,
+    /// Compact the conversation instead of answering: `prompt` is what the
+    /// summary should keep (may be empty). An agent with no way to compact
+    /// fails the turn as `Unsupported`.
+    pub compact: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -260,6 +267,12 @@ pub enum ProviderEvent {
     },
     Limits(Vec<UsageWindow>),
     Notice(String),
+    /// The agent compacted its conversation, asked to or on its own, with
+    /// the context's size before and after when it says.
+    Compacted {
+        before: Option<u64>,
+        after: Option<u64>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -271,7 +284,12 @@ pub enum TurnEnd {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PermissionRequest {
     pub id: String,
+    /// What kind of action it is; an ACP agent says only that ("execute",
+    /// "edit", "other"), its tool's own name is in `name`.
     pub tool: String,
+    /// The tool's own name when the agent gave one ("image_gen"), else
+    /// empty.
+    pub name: String,
     pub title: String,
     pub input: serde_json::Value,
     pub paths: Vec<String>,

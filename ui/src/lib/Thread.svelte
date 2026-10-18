@@ -65,6 +65,11 @@
   // Who is asking: the session's title, so a question or approval reads
   // with its context instead of floating anonymous in the thread.
   export let askerTitle = "";
+  // This thread's agent by name ("Grok"): an approval of its own reads
+  // "Grok wants to …".
+  export let agentName = "";
+  let rawOpen = false;
+  $: if (!approval) rawOpen = false;
   export let folder = "";
   // The agent this thread runs on, so a failed turn can offer its fix.
   export let provider = "";
@@ -113,7 +118,13 @@
   };
   // Errors a plain second try can get past.
   const RETRYABLE = new Set(["rate_limit", "overloaded", "process", "session_lost", "unknown"]);
-  const COMPACTS = new Set(["claude", "opencode"]);
+  // "Conversation compacted · 92k → 12k tokens", with what is known.
+  function compactedTitle(before?: number, after?: number): string {
+    const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
+    if (before && after) return `Conversation compacted · ${k(before)} → ${k(after)} tokens`;
+    if (before) return `Conversation compacted · was ${k(before)} tokens`;
+    return "Conversation compacted";
+  }
   const ERROR_HINT: Record<string, string> = {
     rate_limit: "Your message is kept. Nothing was lost.",
   };
@@ -138,7 +149,8 @@
   const spring = { duration: 160, easing: cubicOut };
 
   type Item =
-    | { key: string; kind: "user" | "assistant" | "checkpoint" | "system"; text: string; at?: number }
+    | { key: string; kind: "user" | "assistant" | "system"; text: string; at?: number }
+    | { key: string; kind: "checkpoint"; text: string; at?: number; before?: number; after?: number }
     | { key: string; kind: "error"; class: string; message: string; at?: number }
     | { key: string; kind: "inter"; from: string; text: string; at?: number }
     | { key: string; kind: "widget"; fence: string; payload: unknown }
@@ -370,7 +382,7 @@ ${e.text}` : e.text;
       }
       if (e.kind === "tool_result") return;
       group = null;
-      if (e.kind === "checkpoint") out.push({ key, kind: "checkpoint", text: e.summary, at: e.at });
+      if (e.kind === "checkpoint") out.push({ key, kind: "checkpoint", text: e.summary, at: e.at, before: e.before, after: e.after });
       else if (e.kind === "error") out.push({ key, kind: "error", class: e.class, message: e.message, at: e.at });
       else if (e.kind === "widget") out.push({ key, kind: "widget", fence: e.fence, payload: e.payload });
       else if (e.kind === "artifact") out.push({ key, ...e });
@@ -638,7 +650,7 @@ ${e.text}` : e.text;
       <Steps reasoning={item.reasoning} tools={item.tools} />
       <ToolPictures {session} paths={picturesIn(item.tools.map((t) => t.output ?? ""))} />
     {:else if item.kind === "checkpoint"}
-      <Steps title="Conversation compacted" reasoning={item.text} />
+      <Steps title={compactedTitle(item.before, item.after)} reasoning={item.text} />
     {:else if item.kind === "system"}
       {#if sysTone(item.text) === "line"}
         <div class="sysline" title={whenTitle(item.at)}>{item.text.slice(0, 300)}</div>
@@ -670,7 +682,7 @@ ${e.text}` : e.text;
                 <span class="err-hint">Then try again.</span>
               {/if}
             </div>
-          {:else if item.class === "context_overflow" && COMPACTS.has(provider)}
+          {:else if item.class === "context_overflow"}
             <div class="err-fix"><button class="err-btn" on:click={() => dispatch("compact")}>Compact and go on</button></div>
           {:else if item.class === "context_overflow"}
             <span class="err-hint">Start a new session to go on.</span>
@@ -744,16 +756,23 @@ ${e.text}` : e.text;
   <slot />
 
   {#if approval}
-    <div class="approval" transition:fade={spring}>
-      {#if askerTitle}<div class="ask-from">{askerTitle} asks for approval</div>{/if}
-      <div class="ask-q">{approval.call.label || `Use ${approval.call.name}`}?</div>
-      <details class="approval-details">
-        <summary>Details</summary>
-        <pre>{approval.call.name} {JSON.stringify(approval.call.args, null, 2)?.slice(0, 2000)}</pre>
-      </details>
+    {@const call = approval.call}
+    {@const who = approval.session === session ? agentName || "The agent" : askerTitle || "Another session"}
+    <div class="approval" role="group" aria-label="Approval" transition:fade={spring}>
+      <div class="ask-line">
+        <span class="who">{who}</span> wants to {call.action || (call.label ? call.label.charAt(0).toLowerCase() + call.label.slice(1) : `use ${call.name}`)}
+      </div>
+      {#if call.detail}
+        <div class="ask-detail" class:mono={call.detail_kind === "command" || call.detail_kind === "paths"}>{call.detail}</div>
+      {/if}
+      {#if call.note}<div class="ask-note">{call.note}</div>{/if}
+      {#if rawOpen}
+        <pre class="ask-raw">{call.name} {JSON.stringify(call.args, null, 2)?.slice(0, 2000)}</pre>
+      {/if}
       <div class="approval-actions">
-        <button class="btn primary" on:click={() => vote(true)}>Approve</button>
+        <button class="btn primary" on:click={() => vote(true)}>Allow</button>
         <button class="btn" on:click={() => vote(false)}>Deny</button>
+        <button class="raw-toggle" aria-expanded={rawOpen} on:click={() => (rawOpen = !rawOpen)}>{rawOpen ? "Hide details" : "Details"}</button>
       </div>
     </div>
   {/if}
@@ -1045,38 +1064,73 @@ ${e.text}` : e.text;
   .err-btn:hover {
     border-color: var(--muted);
   }
+  /* Quiet like the thread around it: the live line already says it waits. */
   .approval {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    padding: 14px 16px;
-    background: transparent;
-    border: 1px solid var(--warn);
+    padding: 12px 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
     border-radius: var(--radius-lg);
     font-size: var(--fs-md);
     color: var(--text);
   }
-  .approval-details summary {
-    cursor: pointer;
-    font-size: var(--fs-sm);
+  .ask-line {
     color: var(--muted);
   }
-  .approval-details summary:hover {
+  .ask-line .who {
     color: var(--text);
+    font-weight: 500;
   }
-  .approval pre {
+  .ask-detail {
+    max-height: 7.5em;
+    padding: 8px 10px;
+    overflow: auto;
+    background: var(--bg);
+    border-radius: var(--radius);
+    color: var(--text);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.5;
+  }
+  .ask-detail.mono {
+    font-family: var(--mono);
+    font-size: var(--fs-sm);
+  }
+  .ask-note {
+    font-size: var(--fs-sm);
+    color: var(--warn);
+  }
+  .ask-raw {
     max-height: 160px;
-    margin: 6px 0 0;
-    padding: 8px 12px;
+    margin: 0;
+    padding: 8px 10px;
     overflow: auto;
     background: var(--bg);
     border-radius: var(--radius);
     font-family: var(--mono);
     font-size: var(--fs-xs);
+    color: var(--muted);
   }
   .approval-actions {
     display: flex;
+    align-items: center;
     gap: 8px;
+  }
+  .raw-toggle {
+    margin-left: auto;
+    padding: 4px 6px;
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-sm);
+    cursor: pointer;
+  }
+  .raw-toggle:hover {
+    color: var(--text);
   }
   .ask-q {
     font-weight: 600;

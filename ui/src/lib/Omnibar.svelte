@@ -34,6 +34,10 @@
   export let quotes: PlanQuote[] = [];
   export let folder = "";
   export let folderLocked = false;
+  // A session has started here: everything goes to its agent, so Web
+  // (opening a page from the composer) is for a new tab only.
+  export let started = false;
+  $: if (started && mode === "search") mode = "build";
   export let branch = "";
   export let streaming = false;
   // A message sent while the agent works: it goes out when the run is done.
@@ -159,7 +163,8 @@
   // falls back to Supervised rather than a blank button.
   $: perm = PERMS.find((p) => p.id === permission) ?? PERMS[0];
   $: slashQuery = /^\/\w*$/.test(input.trim()) ? input.trim().slice(1).toLowerCase() : null;
-  $: slashItems = slashQuery === null ? [] : SLASH.filter((c) => c.name.startsWith(slashQuery));
+  $: slashItems =
+    slashQuery === null ? [] : SLASH.filter((c) => c.name.startsWith(slashQuery) && !(started && (c.name === "web" || c.name === "agent")));
   $: if (slashIndex >= slashItems.length) slashIndex = 0;
   // Attachments change rarely; guard by key so per-keystroke parent
   // object churn (same array, new dirty flag) doesn't re-decode images.
@@ -266,7 +271,7 @@
       if (slashItems.length) runSlash(slashItems[slashIndex].name);
       else if (atItems.length) pickMention(atItems[atIndex]);
       else submit();
-    } else if (/^[12]$/.test(e.key) && (e.ctrlKey || e.metaKey) && !slashItems.length && !atItems.length) {
+    } else if (!started && /^[12]$/.test(e.key) && (e.ctrlKey || e.metaKey) && !slashItems.length && !atItems.length) {
       e.preventDefault();
       setWeb(e.key === "2");
     } else if (e.key === "Escape" && (slashItems.length || atItems.length)) {
@@ -674,10 +679,12 @@
 
   <!-- Suggestions open under the box on Home: the line steps aside. -->
   <div class="under" class:hidden={webOpen && hero}>
-    <div class="seg" role="group" aria-label="Send to" data-ui-segmented>
-      <button class:on={!web} aria-pressed={!web} use:tooltip={"Ask the agent (Ctrl+1)"} on:click={() => setWeb(false)}>Agent</button>
-      <button class:on={web} aria-pressed={web} use:tooltip={"Search the web (Ctrl+2)"} on:click={() => setWeb(true)}>Web</button>
-    </div>
+    {#if !started}
+      <div class="seg" role="group" aria-label="Send to" data-ui-segmented>
+        <button class:on={!web} aria-pressed={!web} use:tooltip={"Ask the agent (Ctrl+1)"} on:click={() => setWeb(false)}>Agent</button>
+        <button class:on={web} aria-pressed={web} use:tooltip={"Search the web (Ctrl+2)"} on:click={() => setWeb(true)}>Web</button>
+      </div>
+    {/if}
     {#if !web}
       {#if remoteHost}
         <button

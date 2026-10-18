@@ -20,8 +20,6 @@
   export let compacting = false;
   export let streaming = false;
   export let costUsd = 0;
-  // Empty when the agent compacts on its own: that agent's name, else "".
-  export let selfCompacts = "";
 
   const dispatch = createEventDispatcher<{ rename: { title: string }; fork: void; copyId: void; delete: void; plan: void; back: void; compact: void }>();
 
@@ -168,7 +166,6 @@
             {folder}
             {compacting}
             {streaming}
-            {selfCompacts}
             on:compact={() => {
               ctxOpen = false;
               dispatch("compact");

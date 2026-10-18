@@ -55,7 +55,10 @@ fn appended_events_carry_times_and_old_lines_still_read() {
     assert_eq!(stamped.len(), 2);
     assert_eq!(stamped[0].1, None, "bare lines carry no time");
     let at = stamped[1].1.expect("appended lines are stamped");
-    assert!(at >= before as i64 - 5 && at <= parzi_core::now_ms() as i64 / 1000 + 5, "stamp is now: {at}");
+    assert!(
+        at >= before as i64 - 5 && at <= parzi_core::now_ms() as i64 / 1000 + 5,
+        "stamp is now: {at}"
+    );
     // The plain reader is untouched by envelopes.
     assert_eq!(store.events(&s.id).unwrap().len(), 2);
 }

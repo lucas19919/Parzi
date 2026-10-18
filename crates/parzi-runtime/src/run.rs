@@ -25,6 +25,13 @@ use crate::tools::{display_name, edit_paths, humanize_tool_call, shell_command};
 
 const MAX_TURNS: u32 = 8;
 const HISTORY_CHARS: usize = 12_000;
+
+/// What Parzi asks an agent that cannot compact on its own: a summary the
+/// next conversation starts from.
+const SUMMARIZE: &str = "Summarize this conversation so a fresh session can carry on from it alone. \
+Keep: the goal and what the person asked for, decisions made and why, files and places touched, \
+what is done, what is in progress, open questions, and the next step. Be specific (names, paths, \
+numbers), drop chit-chat and anything already superseded. Use no tools. Reply with the summary only.";
 const OUTPUT_CHARS: usize = 20_000;
 
 pub struct EngineRunParts {
@@ -50,6 +57,9 @@ pub struct EngineRunParts {
     pub(crate) tally: Tally,
     /// The project's plan (`<parzi:plan>`), for the opening turn.
     pub brief: Option<String>,
+    /// Compacts the conversation instead of answering; the prompt is what
+    /// the summary should keep.
+    pub compact: bool,
 }
 
 pub struct EngineRun {
@@ -63,6 +73,10 @@ pub struct EngineRun {
     /// The hash of the plan this run's opening carried, kept on the session
     /// once a turn with it completed (a turn that failed never showed it).
     brief_sent: std::sync::Mutex<Option<String>>,
+    /// While compacting: what the agent says goes here, not the thread.
+    captured: std::sync::Mutex<Option<String>>,
+    /// The agent's own word that it compacted (context before and after).
+    compacted: std::sync::Mutex<Option<(Option<u64>, Option<u64>)>>,
 }
 
 enum Outcome {
@@ -92,13 +106,16 @@ impl EngineRun {
             usage_seen: AtomicBool::new(false),
             est_tokens: std::sync::Mutex::new(0),
             brief_sent: std::sync::Mutex::new(None),
+            captured: std::sync::Mutex::new(None),
+            compacted: std::sync::Mutex::new(None),
         }
     }
 
     pub async fn run(&self, prompt: &str) -> Result<()> {
         let sid = self.p.session_id.clone();
         let name = parzi_providers::display_name(&self.p.provider_id);
-        if !self.p.prompt_recorded {
+        // A compact run says what it did with a checkpoint, not a message.
+        if !self.p.prompt_recorded && !self.p.compact {
             let text = user_event_text(prompt, &self.p.attachments);
             self.p.store.append(&sid, &Event::User { text })?;
         }
@@ -110,6 +127,9 @@ impl EngineRun {
             cwd = %self.p.cwd,
             "run started"
         );
+        if self.p.compact {
+            return self.compact(prompt).await;
+        }
         let mut seen = self.p.seen;
         let mut input = self.first_input(prompt, seen);
         let mut text = self.opening(&input);
@@ -122,7 +142,7 @@ impl EngineRun {
                 self.pause_for_budget(&reason).await;
                 return Ok(());
             }
-            match self.turn(&text).await {
+            match self.turn(&text, false).await {
                 Outcome::Completed => self.brief_seen(),
                 Outcome::Interrupted => {
                     self.tally(|t| t.end = Some((RunEndKind::Stopped, None)));
@@ -153,17 +173,7 @@ impl EngineRun {
                         "turn failed: {}",
                         e.message
                     );
-                    let _ = self.p.store.append(
-                        &sid,
-                        &Event::Error {
-                            message: e.message.clone(),
-                            class: e.class.as_str().to_string(),
-                        },
-                    );
-                    self.tally(|t| t.end = Some((RunEndKind::Failed, Some(e.message.clone()))));
-                    self.end(SessionStatus::Idle).await;
-                    self.p.sink.emit(RunEvent::Error(e.message.clone()));
-                    return Err(ParziError::Provider(self.p.provider_id.clone(), e.message));
+                    return self.fail(&e).await;
                 }
             }
             if !cap_noted
@@ -225,6 +235,121 @@ impl EngineRun {
             input = fresh.join("\n\n");
             text = input.clone();
         }
+    }
+
+    /// Compacts the conversation: the agent's own way when it has one,
+    /// else Parzi asks it for a summary, keeps that as a checkpoint and
+    /// starts the next turn in a new conversation handed only that.
+    async fn compact(&self, focus: &str) -> Result<()> {
+        let sid = self.p.session_id.clone();
+        let name = parzi_providers::display_name(&self.p.provider_id);
+        self.capture(true);
+        let mut outcome = self.turn(focus, true).await;
+        let native = !matches!(&outcome, Outcome::Failed(e) if e.class == ErrorClass::Unsupported);
+        if !native {
+            tracing::info!(session = %sid, "{name} cannot compact on its own: Parzi summarizes");
+            self.capture(true);
+            let ask = match focus.trim() {
+                "" => SUMMARIZE.to_string(),
+                f => format!("{SUMMARIZE}\n\nKeep especially: {f}"),
+            };
+            let text = self.opening(&ask);
+            outcome = self.turn(&text, false).await;
+        }
+        let summary_text = self.capture(false).unwrap_or_default().trim().to_string();
+        match outcome {
+            Outcome::Completed if !native && summary_text.is_empty() => {
+                let msg = format!("{name} wrote no summary, so nothing was compacted");
+                self.fail(&ProviderError::new(ErrorClass::Unknown, msg))
+                    .await
+            }
+            Outcome::Completed => {
+                let told = self.compacted.lock().ok().and_then(|mut c| c.take());
+                let (before, mut after) = told.unwrap_or((None, None));
+                let before = before.or_else(|| {
+                    self.p
+                        .store
+                        .get(&sid)
+                        .ok()
+                        .map(|m| m.context_tokens)
+                        .filter(|&t| t > 0)
+                });
+                if !native {
+                    // The next turn opens a new conversation handed the summary.
+                    self.forget_session();
+                    after = Some(est_tokens(&summary_text));
+                }
+                if let Some(used) = after {
+                    let limit = self.p.store.get(&sid).map_or(0, |m| m.context_limit);
+                    let _ = self.p.store.set_context(&sid, used, limit);
+                    self.p.sink.emit(RunEvent::Context { used, limit });
+                }
+                let _ = self.p.store.append(
+                    &sid,
+                    &Event::Checkpoint {
+                        summary: summary_text,
+                        before,
+                        after,
+                    },
+                );
+                self.tally(|t| t.end = Some((RunEndKind::Completed, None)));
+                self.end(SessionStatus::Done).await;
+                self.p.sink.emit(RunEvent::Done { turns: 1 });
+                Ok(())
+            }
+            Outcome::Interrupted => {
+                self.tally(|t| t.end = Some((RunEndKind::Stopped, None)));
+                self.end(SessionStatus::Killed).await;
+                self.p.sink.emit(RunEvent::Error("cancelled".into()));
+                Ok(())
+            }
+            Outcome::Paused(reason) => {
+                self.pause_for_budget(&reason).await;
+                Ok(())
+            }
+            Outcome::Failed(e) => self.fail(&e).await,
+        }
+    }
+
+    /// Starts (true) or ends what a compact turn keeps out of the thread,
+    /// handing back what it caught.
+    fn capture(&self, on: bool) -> Option<String> {
+        let mut c = self.captured.lock().ok()?;
+        std::mem::replace(&mut *c, on.then(String::new))
+    }
+
+    /// Holds what the agent says while capturing; false when it is the
+    /// thread's.
+    fn caught(&self, text: &str, replace: bool) -> bool {
+        let Ok(mut c) = self.captured.lock() else {
+            return false;
+        };
+        let Some(buf) = c.as_mut() else {
+            return false;
+        };
+        if replace {
+            buf.clear();
+        }
+        buf.push_str(text);
+        true
+    }
+
+    async fn fail(&self, e: &ProviderError) -> Result<()> {
+        let sid = &self.p.session_id;
+        let _ = self.p.store.append(
+            sid,
+            &Event::Error {
+                message: e.message.clone(),
+                class: e.class.as_str().to_string(),
+            },
+        );
+        self.tally(|t| t.end = Some((RunEndKind::Failed, Some(e.message.clone()))));
+        self.end(SessionStatus::Idle).await;
+        self.p.sink.emit(RunEvent::Error(e.message.clone()));
+        Err(ParziError::Provider(
+            self.p.provider_id.clone(),
+            e.message.clone(),
+        ))
     }
 
     /// What the first turn answers: a message run's messages (or its
@@ -344,14 +469,23 @@ impl EngineRun {
 
     fn history(&self, prompt: &str) -> Option<String> {
         let events = self.p.store.events(&self.p.session_id).ok()?;
-        let mut lines: Vec<String> = events
+        // A summary stands for everything before it.
+        let from = events
+            .iter()
+            .rposition(
+                |e| matches!(e, Event::Checkpoint { summary, .. } if !summary.trim().is_empty()),
+            )
+            .unwrap_or(0);
+        let summary = match &events.get(from) {
+            Some(Event::Checkpoint { summary, .. }) => Some(summary.trim().to_string()),
+            _ => None,
+        };
+        let mut lines: Vec<String> = events[from..]
             .iter()
             .filter_map(|e| match e {
                 Event::User { text } => Some(format!("user: {text}")),
                 Event::Assistant { text, .. } => Some(format!("assistant: {text}")),
-                Event::Checkpoint { summary } => {
-                    Some(format!("summary of earlier turns: {summary}"))
-                }
+                Event::Checkpoint { .. } => None,
                 // Replacements must also see tool calls and results, not just chat.
                 Event::ToolCall { name, args, .. } => {
                     let a: String = fold(&args.to_string()).chars().take(200).collect();
@@ -370,7 +504,7 @@ impl EngineRun {
         if lines.last() == Some(&own) {
             lines.pop();
         }
-        if !lines.iter().any(|l| l.starts_with("assistant: ")) {
+        if summary.is_none() && !lines.iter().any(|l| l.starts_with("assistant: ")) {
             return None;
         }
         let mut kept: Vec<String> = vec![];
@@ -383,6 +517,9 @@ impl EngineRun {
             kept.push(line);
         }
         kept.reverse();
+        if let Some(s) = summary {
+            kept.insert(0, format!("summary of everything before: {s}"));
+        }
         Some(format!(
             "<earlier-conversation>\nThis thread started before you joined it. What was said so far:\n{}\n</earlier-conversation>",
             kept.join("\n")
@@ -406,7 +543,7 @@ impl EngineRun {
             .collect()
     }
 
-    async fn turn(&self, text: &str) -> Outcome {
+    async fn turn(&self, text: &str, compact: bool) -> Outcome {
         let registration = self
             .p
             .mcp
@@ -419,8 +556,9 @@ impl EngineRun {
             instructions: Some(self.p.instructions.clone()).filter(|i| !i.trim().is_empty()),
             resume: self.resume.lock().ok().and_then(|r| r.clone()),
             prompt: text.to_string(),
-            images: self.images(),
+            images: if compact { vec![] } else { self.images() },
             tools: registration.as_ref().map(|r| r.server.clone()),
+            compact,
         };
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let turn_cancel = self.p.cancel.child_token();
@@ -462,6 +600,9 @@ impl EngineRun {
 
     fn flush(&self, turn: &mut Turn, done: bool) {
         if let Some(text) = turn.pending.take() {
+            if self.caught(&text, true) {
+                return;
+            }
             let _ = self
                 .p
                 .store
@@ -471,7 +612,7 @@ impl EngineRun {
 
     fn keep_partial(&self, turn: &mut Turn) {
         let partial = std::mem::take(&mut turn.partial);
-        if !partial.trim().is_empty() {
+        if !partial.trim().is_empty() && !self.caught("", false) {
             let _ = self.p.store.append(
                 &self.p.session_id,
                 &Event::Assistant {
@@ -500,11 +641,15 @@ impl EngineRun {
             ProviderEvent::TextDelta(t) => {
                 turn.partial.push_str(&t);
                 self.count_estimate(&t);
-                self.p.sink.emit(RunEvent::Text(t));
+                if !self.caught("", false) {
+                    self.p.sink.emit(RunEvent::Text(t));
+                }
             }
             ProviderEvent::ReasoningDelta(text) => {
                 self.count_estimate(&text);
-                self.p.sink.emit(RunEvent::Reasoning { text });
+                if !self.caught("", false) {
+                    self.p.sink.emit(RunEvent::Reasoning { text });
+                }
             }
             ProviderEvent::Message(text) => {
                 self.flush(turn, false);
@@ -512,7 +657,9 @@ impl EngineRun {
                 turn.partial.clear();
             }
             ProviderEvent::Reasoning(text) => {
-                let _ = self.p.store.append(sid, &Event::Reasoning { text });
+                if !self.caught("", false) {
+                    let _ = self.p.store.append(sid, &Event::Reasoning { text });
+                }
             }
             ProviderEvent::ToolStarted { id, name, input } => {
                 self.flush(turn, false);
@@ -597,6 +744,36 @@ impl EngineRun {
                 self.p.status.update_usage(&self.p.provider_id, &windows);
             }
             ProviderEvent::Notice(text) => self.note(text),
+            ProviderEvent::Compacted { before, after } => {
+                if self.p.compact {
+                    // The compact run keeps one checkpoint when it ends.
+                    if let Ok(mut c) = self.compacted.lock() {
+                        *c = Some((before, after));
+                    }
+                } else {
+                    // On its own, mid-turn: the thread says so where it happened.
+                    self.flush(turn, false);
+                    let _ = self.p.store.append(
+                        sid,
+                        &Event::Checkpoint {
+                            summary: String::new(),
+                            before,
+                            after,
+                        },
+                    );
+                    self.p.sink.emit(RunEvent::Notice {
+                        text: format!(
+                            "{} compacted the conversation",
+                            parzi_providers::display_name(&self.p.provider_id)
+                        ),
+                    });
+                }
+                if let Some(used) = after {
+                    let limit = self.p.store.get(sid).map_or(0, |m| m.context_limit);
+                    let _ = self.p.store.set_context(sid, used, limit);
+                    self.p.sink.emit(RunEvent::Context { used, limit });
+                }
+            }
         }
         None
     }
@@ -626,9 +803,7 @@ impl EngineRun {
     }
 
     async fn pause_for_budget(&self, reason: &str) {
-        let text = format!(
-            "Paused: {reason}. Send again to go on, or raise the spending limit."
-        );
+        let text = format!("Paused: {reason}. Send again to go on, or raise the spending limit.");
         let _ = self
             .p
             .store
@@ -659,6 +834,11 @@ impl EngineRun {
         };
         let _ = self.p.store.set_status(&self.p.session_id, status);
     }
+}
+
+/// About how many tokens a text is (four characters each).
+fn est_tokens(text: &str) -> u64 {
+    (text.chars().count() as u64).div_ceil(4)
 }
 
 /// Whether a command line builds, tests or lints: its result is a check.

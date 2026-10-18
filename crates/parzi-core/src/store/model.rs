@@ -275,8 +275,15 @@ pub enum Event {
         version: u32,
         payload: serde_json::Value,
     },
+    /// The conversation was compacted. `summary` is what carries on (empty
+    /// when the agent kept it to itself); `before` and `after` the
+    /// context's size around it, when known.
     Checkpoint {
         summary: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
     },
     Reasoning {
         text: String,

@@ -200,7 +200,7 @@ async fn a_compact_turn_leaves_the_last_run_alone() {
         "claude",
         script(|a: Agent| async move {
             a.session("vendor-compact");
-            a.say(if a.spec.prompt.starts_with("/compact") {
+            a.say(if a.spec.compact {
                 "compacted"
             } else {
                 "first answer"

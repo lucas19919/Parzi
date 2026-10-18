@@ -182,7 +182,10 @@ async fn a_hosted_server_answers_through_mcp_remote() {
         ..Default::default()
     };
     let mgr = McpManager::new(HashMap::from([("deepwiki".to_string(), cfg)]), 60);
-    let tools = mgr.exposed_tools("deepwiki").await.expect("lists its tools");
+    let tools = mgr
+        .exposed_tools("deepwiki")
+        .await
+        .expect("lists its tools");
     assert!(!tools.is_empty(), "a hosted server offers tools");
     mgr.shutdown().await;
 }

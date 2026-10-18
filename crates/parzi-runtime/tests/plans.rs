@@ -408,11 +408,7 @@ async fn a_plan_a_turn_never_showed_is_sent_again() {
         "the failed turn never showed it: {}",
         turns[1].prompt
     );
-    assert!(
-        turns[2].prompt.starts_with("/compact"),
-        "{}",
-        turns[2].prompt
-    );
+    assert!(turns[2].compact, "{}", turns[2].prompt);
     assert!(
         turns[3].prompt.contains(&block),
         "compacted away: {}",
