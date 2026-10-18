@@ -1042,12 +1042,12 @@ impl ToolHost {
         if parzi != req.tool {
             return PermissionDecision::Allow;
         }
-        // Grok calls every MCP tool through its own `use_tool`; one of
-        // Parzi's goes through, and Parzi's own rules judge the call itself.
-        let wrapped = (req.tool == "use_tool")
-            .then(|| req.input.get("tool_name").and_then(Value::as_str))
-            .flatten();
-        if wrapped.is_some_and(|t| display_name(t) != t) {
+        // ACP agents (Grok) send the action's kind as the tool and its name
+        // as the title, and may wrap the call in their own `use_tool`. One
+        // of Parzi's own goes through: Parzi's rules judge the call itself.
+        let ours = |t: &str| crate::tools::is_parzi_tool(&display_name(t)) && display_name(t) != t;
+        let wrapped = req.input.get("tool_name").and_then(Value::as_str);
+        if ours(&req.title) || (req.title == "use_tool" && wrapped.is_some_and(ours)) {
             return PermissionDecision::Allow;
         }
         let kind = category(&req.tool);

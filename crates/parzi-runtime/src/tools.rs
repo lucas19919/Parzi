@@ -1363,7 +1363,7 @@ fn short_tool_name(name: &str) -> &str {
 /// back as `plan.write`, so labels and checks see the real name.
 const NAMESPACES: &[&str] = &[
     "ui", "browser", "desk", "brain", "session", "lane", "plan", "shell", "project", "image",
-    "doc", "models", "ask", "request", "memory",
+    "doc", "models", "ask", "request", "memory", "todo", "github",
 ];
 
 pub fn to_mcp(name: &str) -> String {
@@ -1497,6 +1497,10 @@ mod tests {
         assert_eq!(all.len(), DESK_TOOLS.len());
         assert!(all.iter().all(|n| DESK_TOOLS.contains(&n.as_str())));
         assert_eq!(display_name("mcp__parzi__desk_notify"), "desk.notify");
+        // Every tool Parzi offers comes back by its own name from MCP.
+        for d in all_defs() {
+            assert_eq!(from_mcp(&to_mcp(&d.name)), d.name, "{} lost its name", d.name);
+        }
         // Grok names them inside its own use_tool.
         assert_eq!(display_name("parzi__ui_propose_task"), "ui.propose_task");
         assert_eq!(display_name("search_tool"), "search_tool");

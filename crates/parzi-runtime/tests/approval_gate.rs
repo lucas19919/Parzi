@@ -451,3 +451,36 @@ async fn project_create_outside_the_folder_asks_even_in_work() {
     assert!(cwd.join("papers").join("paper").is_dir(), "{out}");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[tokio::test]
+async fn grok_reaches_parzis_tools_through_its_use_tool() {
+    home("approval");
+    let ask = host(vec!["*".into()], ApprovalMode::Ask);
+    // As Grok sends it: the kind as the tool, the name as the title, the
+    // tool it means inside.
+    let wrapped = |inner: &str| PermissionRequest {
+        id: "r2".into(),
+        tool: "other".into(),
+        title: "use_tool".into(),
+        input: json!({"tool_name": inner, "tool_input": {}}),
+        paths: vec![],
+    };
+    assert_eq!(
+        ask.decide(wrapped("parzi__ui_propose_task")).await,
+        PermissionDecision::Allow
+    );
+    // And as it asks for one directly: the name as the title.
+    let direct = PermissionRequest {
+        title: "parzi__todo_write".into(),
+        input: json!({}),
+        ..wrapped("")
+    };
+    assert_eq!(ask.decide(direct).await, PermissionDecision::Allow);
+    // Another server's tool still goes through Parzi's own rules (with
+    // nobody to answer the card here, that is a no).
+    let locked = host(vec!["*".into()], ApprovalMode::Deny);
+    assert!(matches!(
+        locked.decide(wrapped("github__create_issue")).await,
+        PermissionDecision::Deny(_)
+    ));
+}

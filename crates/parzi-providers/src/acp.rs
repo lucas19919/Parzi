@@ -1402,8 +1402,18 @@ async fn permission(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    tracing::debug!(
+        "permission asked: {} ({}), options {:?}",
+        request.title,
+        request.tool,
+        options
+            .iter()
+            .filter_map(|o| o.get("kind").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>()
+    );
     // After session/cancel the spec wants every pending ask answered "cancelled".
     let decision = or_cancel(cancelled, gate.decide(request)).await;
+    tracing::debug!("permission decided: {decision:?}");
     let chosen =
         decision.and_then(|d| option_for(&options, &d).filter(|_| !cancelled.is_cancelled()));
     let outcome = match chosen {
