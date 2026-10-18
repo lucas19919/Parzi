@@ -149,7 +149,15 @@ fn remove_in(root: &Path, dir: &Path) -> Option<String> {
     .ok()?;
     let main = Path::new(&common).parent()?.to_path_buf();
     let dir_s = dir.display().to_string();
-    match git(&main, &["worktree", "remove", &dir_s]) {
+    // A process just stopped may still hold the folder a moment.
+    let mut tried = git(&main, &["worktree", "remove", &dir_s]);
+    if tried.is_err() && dir.exists() {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+        tried = git(&main, &["worktree", "remove", "--force", &dir_s])
+            .or_else(|e| std::fs::remove_dir(dir).map(|()| String::new()).map_err(|_| e));
+        let _ = git(&main, &["worktree", "prune"]);
+    }
+    match tried {
         Ok(_) => None,
         Err(e) => Some(format!("could not remove {}: {e}", dir.display())),
     }

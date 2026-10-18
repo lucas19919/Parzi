@@ -456,6 +456,18 @@ fn take_live(program: &Path, sid: &str, cwd: &Path, tools: Option<&str>) -> Opti
     (!asked).then_some(l)
 }
 
+/// Stops every agent kept running in `cwd`: its folder is going (a
+/// deleted session's worktree), and a process sitting in it would keep it.
+pub fn drop_live_in(cwd: &Path) -> usize {
+    let Ok(mut live) = LIVE.lock() else {
+        return 0;
+    };
+    let before = live.len();
+    // Dropping one kills its process.
+    live.retain(|l| l.cwd != cwd);
+    before - live.len()
+}
+
 fn park_live(mut l: Live) {
     l.id = WARM_ID.fetch_add(1, Ordering::Relaxed);
     let id = l.id;

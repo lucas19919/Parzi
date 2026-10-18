@@ -418,7 +418,12 @@ pub async fn delete_thread(
                 .iter()
                 .any(|m| m.cwd == cwd);
             if !used {
-                if let Some(note) = crate::worktree::remove(std::path::Path::new(&cwd)) {
+                let dir = std::path::Path::new(&cwd);
+                // An agent kept running there holds the folder: it goes first.
+                if parzi_providers::drop_live_in(dir) > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(800));
+                }
+                if let Some(note) = crate::worktree::remove(dir) {
                     tracing::warn!("worktree {note}");
                 }
             }

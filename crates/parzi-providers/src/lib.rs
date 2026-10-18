@@ -1,4 +1,6 @@
 mod acp;
+
+pub use acp::drop_live_in;
 mod claude;
 mod codex;
 mod jsonrpc;
