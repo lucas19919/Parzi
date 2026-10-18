@@ -7,6 +7,8 @@
   import InfoCard from "./InfoCard.svelte";
   import ContextBreakdown from "./ContextBreakdown.svelte";
   import JobsCard from "./JobsCard.svelte";
+  import { board } from "./providerStore";
+  import { nameOf } from "./providerRows";
   import { api, onRunEvent, type GitStatus, type Question, type SessionMeta } from "./api";
   import type { Approval } from "./live";
   import { planState } from "./planStore";
@@ -29,6 +31,12 @@
   export let streaming = false;
   // The agent's name when it compacts on its own (no Compact here).
   export let selfCompacts = "";
+  // What the session spent, for agents that report no context window, and
+  // the agent whose plan limits apply.
+  export let tokensIn = 0;
+  export let tokensOut = 0;
+  export let costUsd = 0;
+  export let provider = "";
   export let threads: SessionMeta[] = [];
   export let running: Set<string> = new Set();
   export let approvals: Approval[] = [];
@@ -73,6 +81,8 @@
   $: busy = helpers.filter((h) => running.has(h.id)).length;
 
   $: plan = $planState.project === project ? $planState.plan : null;
+  $: limits = $board.find((b) => b.provider === provider)?.usage ?? [];
+  const kTok = (n: number) => (n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${+(n / 1_000).toFixed(1)}k` : String(n));
   $: planCount = plan ? progress(deriveItems(plan, { project, threads, running, waiting: new Map(), prs: $planState.prs, activity: $activity })) : null;
 
   onMount(() => {
@@ -120,6 +130,20 @@
         {selfCompacts}
         on:compact={() => dispatch("compact")}
       />
+    </InfoCard>
+  {:else if tokensIn || tokensOut || limits.length}
+    <!-- No context window from this agent: what the session spent. -->
+    <InfoCard id="usage" title="Usage">
+      <svelte:fragment slot="aside">{costUsd > 0 ? `$${costUsd.toFixed(2)}` : ""}</svelte:fragment>
+      {#if tokensIn || tokensOut}
+        <div class="line"><span class="v">{kTok(tokensIn)} in · {kTok(tokensOut)} out</span></div>
+      {/if}
+      {#each limits as w (w.label)}
+        <div class="line quiet">
+          <span class="v">{nameOf(provider)} {w.label}</span>
+          <span class="pct">{Math.round(w.used_percent)}%</span>
+        </div>
+      {/each}
     </InfoCard>
   {/if}
 
@@ -240,6 +264,10 @@
     font-size: var(--fs-xs);
   }
   /* Lightened toward the text so small numbers stay readable on a card. */
+  .pct {
+    flex: none;
+    font-variant-numeric: tabular-nums;
+  }
   .add {
     color: color-mix(in srgb, var(--ok) 75%, var(--text));
   }

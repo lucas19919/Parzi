@@ -1200,6 +1200,16 @@ async fn drive(
                 if let Some(u) = answer.get("usage").filter(|u| !u.is_null()) {
                     let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
                     let _ = events.send(ProviderEvent::Usage { input: n("inputTokens"), output: n("outputTokens"), cost_usd: None });
+                } else if let Some(u) = answer.pointer("/_meta/usage").filter(|u| u.is_object()) {
+                    // Grok says it under _meta: tokens, cost in ticks (1e-10 USD),
+                    // and with its window known, how full the context is.
+                    let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+                    let cost = u.get("costUsdTicks").and_then(Value::as_f64).map(|t| t / 1e10);
+                    let _ = events.send(ProviderEvent::Usage { input: n("inputTokens"), output: n("outputTokens"), cost_usd: cost });
+                    let used = n("totalTokens").max(n("inputTokens") + n("outputTokens"));
+                    if let Some(limit) = context_window(&session, spec.model.as_deref()).filter(|_| used > 0) {
+                        let _ = events.send(ProviderEvent::Context { used, limit });
+                    }
                 }
                 return match answer.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn") {
                     "cancelled" => Ok(TurnEnd::Interrupted),
@@ -1218,6 +1228,22 @@ async fn drive(
             }
         }
     }
+}
+
+/// The context window of the model a session runs, when the agent lists
+/// it (Grok: models.availableModels[]._meta.totalContextTokens).
+fn context_window(session: &Value, wanted: Option<&str>) -> Option<u64> {
+    let models = session.get("models")?;
+    let current = wanted
+        .filter(|m| !m.is_empty())
+        .or_else(|| models.get("currentModelId").and_then(Value::as_str))?;
+    models
+        .get("availableModels")?
+        .as_array()?
+        .iter()
+        .find(|m| m.get("modelId").and_then(Value::as_str) == Some(current))?
+        .pointer("/_meta/totalContextTokens")
+        .and_then(Value::as_u64)
 }
 
 async fn select_model(
@@ -1498,6 +1524,66 @@ mod tests {
             "promptCapabilities": {"image": true},
             "sessionCapabilities": {"resume": {}}
         }})
+    }
+
+    #[tokio::test]
+    async fn grok_says_its_context_and_cost_under_meta() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["method"], "session/prompt");
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn", "_meta": {"usage": {
+                    "inputTokens": 17803, "outputTokens": 193, "totalTokens": 17996, "costUsdTicks": 116511200
+                }}}}),
+            )
+            .await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let mut spec = spec(Some(json!({"session_id": "S0"})));
+        spec.model = Some("grok-4.7".into());
+        let session = json!({"sessionId": "S0", "models": {"currentModelId": "grok-4.7", "availableModels": [
+            {"modelId": "grok-4.7", "_meta": {"totalContextTokens": 256000}}
+        ]}});
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent("grok").unwrap(),
+            &spec,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+            Some(Reused {
+                sid: "S0".into(),
+                session,
+                model: Some("grok-4.7".into()),
+            }),
+            &mut Opened::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(end, TurnEnd::Completed);
+        server.await.unwrap();
+        drop(tx);
+        let mut got = vec![];
+        while let Some(e) = rx.recv().await {
+            got.push(e);
+        }
+        assert!(got.contains(&ProviderEvent::Context {
+            used: 17996,
+            limit: 256_000
+        }));
+        assert!(got.iter().any(|e| matches!(e, ProviderEvent::Usage { input: 17803, output: 193, cost_usd: Some(c) } if (c - 0.011_651_12).abs() < 1e-9)));
     }
 
     #[tokio::test]

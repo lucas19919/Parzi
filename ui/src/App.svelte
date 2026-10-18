@@ -1789,6 +1789,10 @@
               {approvals}
               questions={asks}
               {planInline}
+              tokensIn={meta?.tokens_in ?? 0}
+              tokensOut={meta?.tokens_out ?? 0}
+              costUsd={meta?.cost_usd ?? 0}
+              provider={meta?.model.split("/")[0] ?? ""}
               on:openSession={(e) => openSession(e.detail.id)}
               on:openUrl={(e) => openPage(e.detail.url)}
               on:compact={compact}
