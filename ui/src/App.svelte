@@ -904,12 +904,13 @@
   }
 
   // The run a held message waited on is done: it goes out now.
-  async function sendHeld(sid: string) {
-    if (!held[sid]) return;
+  // `given`: a message already taken off the hold (Send now).
+  async function sendHeld(sid: string, given?: Held) {
+    if (!given && !held[sid]) return;
     // Busy from here, so a message typed meanwhile is held with it.
     running = new Set(running).add(sid);
     if (sid === shown) await reload();
-    const h = take(sid);
+    const h = given ?? take(sid);
     if (!h) return;
     const optimistic: ChatEvent = { kind: "user", text: [h.text, ...h.quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
     if (sid === shown) {
@@ -961,6 +962,30 @@
     await reload();
     void refreshThreads();
     await stopSession(id);
+  }
+
+  // The waiting message, now: the run stops (what it said so far stays)
+  // and the message goes straight after. Taken off the hold first, so the
+  // stopped run's end does not hand it back to the composer.
+  async function sendHeldNow() {
+    const id = shown;
+    const h = id ? take(id) : undefined;
+    if (!id || !h) return;
+    if (running.has(id)) {
+      running.delete(id);
+      running = running;
+      clearLive();
+      await stopSession(id);
+      // Its end settles before the next run starts, or that end would
+      // read as this one's.
+      for (let i = 0; i < 40; i++) {
+        const t = (await api.listThreads().catch(() => [])).find((x) => x.id === id);
+        if (!t || (t.status !== "active" && t.status !== "queued")) break;
+        await new Promise((r) => setTimeout(r, 125));
+      }
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    await sendHeld(id, h);
   }
 
   async function stopSession(id: string) {
@@ -1811,6 +1836,7 @@
           on:unhold={() => shown && unhold(shown)}
           on:side={() => void sideTask(false)}
           on:sideHeld={() => void sideTask(true)}
+          on:sendHeldNow={() => void sendHeldNow()}
           canSide={tab.kind === "session" && !!tab.sessionId}
           on:browse={(e) => browse(e.detail.url)}
           on:stop={stop}

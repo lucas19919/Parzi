@@ -56,6 +56,7 @@
     unhold: void;
     side: void;
     sideHeld: void;
+    sendHeldNow: void;
     browse: { url: string };
     stop: void;
     command: { name: string };
@@ -598,10 +599,13 @@
 
     {#if held}
       <div class="held" transition:slide={{ duration: 160, easing: cubicOut }}>
-        <span class="held-text" title={held}>{held}</span>
-        <span class="held-note">Sends when done</span>
-        <button class="held-side" use:tooltip={"Run it now, beside this session"} on:click={() => dispatch("sideHeld")}>Side task</button>
-        <button use:tooltip={"Edit"} on:click={() => dispatch("unhold")}><Icon name="pencil" size={12} /></button>
+        <!-- Waits for the run to finish; or now, or beside it, or back to edit. -->
+        <span class="held-text" title={`${held}\n\nSends when the agent is done`}>{held}</span>
+        <span class="held-acts">
+          <button aria-label="Send now" use:tooltip={"Send now: stop the agent and send this"} on:click={() => dispatch("sendHeldNow")}><Icon name="arrowUp" size={12} /></button>
+          <button aria-label="Side task" use:tooltip={"Side task: run it now, beside this session"} on:click={() => dispatch("sideHeld")}><Icon name="fork" size={12} /></button>
+          <button aria-label="Edit" use:tooltip={"Edit"} on:click={() => dispatch("unhold")}><Icon name="pencil" size={12} /></button>
+        </span>
       </div>
     {/if}
 
@@ -1106,8 +1110,17 @@
     white-space: nowrap;
     color: var(--text);
   }
-  .held-note {
+  .held-acts {
+    display: inline-flex;
     flex: none;
+    gap: 8px;
+  }
+  .held .held-acts button {
+    width: 22px;
+    height: 22px;
+  }
+  .held .held-acts button:hover {
+    background: var(--hover);
   }
   .held button {
     width: 18px;
