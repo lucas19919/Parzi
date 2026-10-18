@@ -290,7 +290,7 @@
     <div class="w-sub">{Math.min(100, Math.max(0, Math.round(value * 100)))}%</div>
   {:else if type === "markdown"}
     <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
-    <div class="w-md" on:click={(e) => void handleLinkClick(e)}>{@html mdHtml(text, $richReady)}</div>
+    <div class="w-md msg" on:click={(e) => void handleLinkClick(e)}>{@html mdHtml(text, $richReady)}</div>
   {:else if type === "list"}
     {#if !items.length}
       <div class="w-empty">Empty list</div>

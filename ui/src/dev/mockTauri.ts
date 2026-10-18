@@ -262,6 +262,36 @@ function transcript() {
     if (last) {
       out.push({ kind: "assistant", text: VIZ_ANSWER, done: true });
       out.push({
+        kind: "artifact",
+        id: "release-notes",
+        title: "Release notes 0.1.36",
+        artifact_kind: "markdown",
+        version: 1,
+        payload: { id: "release-notes", title: "Release notes 0.1.36", kind: "markdown", version: 1, content: "# Parzi 0.1.36\n\nA first draft." },
+      });
+      out.push({
+        kind: "artifact",
+        id: "release-notes",
+        title: "Release notes 0.1.36",
+        artifact_kind: "markdown",
+        version: 2,
+        payload: {
+          id: "release-notes",
+          title: "Release notes 0.1.36",
+          kind: "markdown",
+          version: 2,
+          content: "# Parzi 0.1.36\n\nA faster, calmer release.\n\n## What changed\n\n- **Agents stay up** between messages: the second reply comes in under two seconds.\n- Text streams at a steady pace.\n- A *Background tasks* card shows what runs.\n\n## Fixed\n\n1. Links in research write-ups read on every theme.\n2. Pictures under a message line up.\n\n> Thanks to everyone who sent feedback.\n\n| Area | Before | After |\n| --- | --- | --- |\n| Second reply | 4.4 s | 1.7 s |\n\nRun `npm test` before you ship.",
+        },
+      });
+      out.push({
+        kind: "artifact",
+        id: "autosize",
+        title: "autosize.ts",
+        artifact_kind: "code",
+        version: 1,
+        payload: { id: "autosize", title: "autosize.ts", kind: "code", language: "typescript", version: 1, content: "export function autosize(el: HTMLTextAreaElement) {\n  el.style.height = \"auto\";\n  el.style.height = `${Math.min(el.scrollHeight, 180)}px`;\n}" },
+      });
+      out.push({
         kind: "widget",
         fence: "parzi-todo",
         payload: { items: [{ title: "Find where typing stalls", state: "done" }, { title: "Cache the markdown head", state: "done" }, { title: "Check the thread at 300 turns", state: "active" }, { title: "Run the UI tests", state: "pending" }] },

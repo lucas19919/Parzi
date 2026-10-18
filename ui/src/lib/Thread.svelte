@@ -147,6 +147,12 @@
   const imageCache = new Map<string, Promise<string | null>>();
 
   $: items = buildItems(events);
+  // Each artifact's newest version: older ones fold to a line.
+  $: newest = (() => {
+    const m = new Map<string, number>();
+    for (const it of items) if (it.kind === "artifact") m.set(it.id, Math.max(m.get(it.id) ?? 0, it.version ?? 1));
+    return m;
+  })();
   // Each of the person's messages by its place among them, as the store
   // counts them for a rewind.
   $: userNth = (() => {
@@ -664,6 +670,7 @@ ${e.text}` : e.text;
         fallbackId={item.id}
         fallbackTitle={item.title}
         fallbackKind={item.artifact_kind}
+        superseded={(item.version ?? 1) < (newest.get(item.id) ?? 0)}
       />
     {/if}
   {/each}

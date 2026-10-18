@@ -53,6 +53,16 @@
       "reason": "A question's option shows its label as text; the check misreads it where the docked composer covers the end of the thread."
     },
     {
+      "selector": ".art .body.folded *",
+      "rules": ["content-clipping", "text-contrast"],
+      "reason": "A long document folds behind Show all on purpose; the fade shows there is more. Its text is the thread's (--text on --panel, as in replies); the check cannot read the background through the fade's pseudo element."
+    },
+    {
+      "selector": ".art > .more",
+      "rules": ["text-contrast"],
+      "reason": "Show all is --muted on the card's --panel (5.9:1 in the default theme); the check cannot measure it where the docked composer overlaps the end of the thread."
+    },
+    {
       "selector": ".steps > button.head",
       "rules": ["icon-button-tooltip"],
       "reason": "The step summary is its visible label; the check misreads it when the thread's scroll cuts it at the top edge."
