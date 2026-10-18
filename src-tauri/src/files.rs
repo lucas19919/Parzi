@@ -515,9 +515,9 @@ pub async fn tool_image(
             .map_err(|e| e.to_string())?
             .iter()
             .any(|e| match e {
-                parzi_core::store::Event::ToolResult { output, .. } => {
-                    fold(output).replace("//", "/").contains(&want.replace("//", "/"))
-                }
+                parzi_core::store::Event::ToolResult { output, .. } => fold(output)
+                    .replace("//", "/")
+                    .contains(&want.replace("//", "/")),
                 _ => false,
             });
         if !named {
