@@ -99,6 +99,9 @@ export interface Question {
   session: string;
   question: string;
   options: string[];
+  // A line under each option ("" where none), and whether several may be picked.
+  details?: string[];
+  multi?: boolean;
 }
 
 export interface AgentRequest {
@@ -118,7 +121,7 @@ export type UiEvent =
   | { kind: "context"; session: string; used: number; limit: number }
   | { kind: "approval"; key: string; session: string; call: ApprovalCall }
   | { kind: "expired"; key: string; session: string }
-  | { kind: "question"; key: string; session: string; question: string; options: string[] }
+  | { kind: "question"; key: string; session: string; question: string; options: string[]; details?: string[]; multi?: boolean }
   | { kind: "request"; key: string; session: string; request: string; req_kind: string }
   | { kind: "done"; session: string; turns: number }
   // The run stopped at its budget; like done for the running set.

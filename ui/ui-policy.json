@@ -48,6 +48,11 @@
       "reason": "A session card's title is its visible label; the check misreads it when the column's scroll cuts the card at the window's bottom edge."
     },
     {
+      "selector": ".q .choice",
+      "rules": ["icon-button-tooltip"],
+      "reason": "A question's option shows its label as text; the check misreads it where the docked composer covers the end of the thread."
+    },
+    {
       "selector": ".steps > button.head",
       "rules": ["icon-button-tooltip"],
       "reason": "The step summary is its visible label; the check misreads it when the thread's scroll cuts it at the top edge."

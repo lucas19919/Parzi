@@ -1327,7 +1327,7 @@
     }
     if (e.kind === "question") {
       const fresh = !questions.some((q) => q.key === e.key);
-      questions = [...questions.filter((q) => q.key !== e.key), { key: e.key, session: e.session, question: e.question, options: e.options }];
+      questions = [...questions.filter((q) => q.key !== e.key), { key: e.key, session: e.session, question: e.question, options: e.options, details: e.details, multi: e.multi }];
       if (fresh) announce(e.session, `asks: ${e.question || "a question"}`, "question", { key: e.key, chime: false });
       return;
     }

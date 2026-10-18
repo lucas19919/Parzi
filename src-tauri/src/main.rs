@@ -94,6 +94,8 @@ pub(crate) enum UiEvent {
         session: String,
         question: String,
         options: Vec<String>,
+        details: Vec<String>,
+        multi: bool,
     },
     Request {
         key: String,
@@ -211,6 +213,8 @@ impl Asker for GuiAsker {
                     session: req.session.clone(),
                     question: req.question.clone(),
                     options: req.options.clone(),
+                    details: req.details.clone(),
+                    multi: req.multi,
                 }
             } else {
                 UiEvent::Request {

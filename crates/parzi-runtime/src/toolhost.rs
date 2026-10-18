@@ -1613,19 +1613,23 @@ impl ToolHost {
         if question.is_empty() {
             return (false, "ask.user needs a `question`".into());
         }
-        let options: Vec<String> = args
+        // Each option a label, or {label, description}.
+        let (options, details): (Vec<String>, Vec<String>) = args
             .get("options")
             .and_then(Value::as_array)
-            .map(|list| {
-                list.iter()
-                    .filter_map(Value::as_str)
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .take(6)
-                    .map(str::to_string)
-                    .collect()
+            .into_iter()
+            .flatten()
+            .filter_map(|o| {
+                let label = o
+                    .as_str()
+                    .or_else(|| o.get("label").and_then(Value::as_str))?
+                    .trim();
+                let about = o.get("description").and_then(Value::as_str).unwrap_or("");
+                (!label.is_empty()).then(|| (label.to_string(), clip(about.trim(), 300)))
             })
-            .unwrap_or_default();
+            .take(6)
+            .unzip();
+        let multi = args.get("multi").and_then(Value::as_bool).unwrap_or(false);
         let Some(asker) = &self.p.asker else {
             return (
                 true,
@@ -1636,6 +1640,8 @@ impl ToolHost {
             id: id.into(),
             question: question.to_string(),
             options,
+            details,
+            multi,
             kind: String::new(),
             lane: self.p.lane.clone(),
             session: self.p.session_id.clone(),
@@ -1673,6 +1679,8 @@ impl ToolHost {
             id: id.into(),
             question: request.to_string(),
             options: vec![],
+            details: vec![],
+            multi: false,
             kind,
             lane: self.p.lane.clone(),
             session: self.p.session_id.clone(),
@@ -1713,6 +1721,8 @@ impl ToolHost {
                 "Memory says this ({note_path}):\n\n{head}\n\nStill agree, or remove it?"
             ),
             options: vec!["Keep".into(), "Remove".into()],
+            details: vec![],
+            multi: false,
             kind: String::new(),
             lane: self.p.lane.clone(),
             session: self.p.session_id.clone(),

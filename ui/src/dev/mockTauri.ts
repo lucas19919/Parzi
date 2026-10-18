@@ -535,3 +535,5 @@ try {
 export const mockView = view;
 export const mockLive = !!params.get("live");
 export const mockRequest = params.get("request") ?? "";
+// ?question=1 (or =multi): the open session's agent asks at a fork.
+export const mockQuestion = params.get("question") ?? "";

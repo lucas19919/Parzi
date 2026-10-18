@@ -53,6 +53,10 @@ pub struct AskRequest {
     pub id: String,
     pub question: String,
     pub options: Vec<String>,
+    /// A line under each option, "" where it has none.
+    pub details: Vec<String>,
+    /// The person may pick several options.
+    pub multi: bool,
     /// Empty for questions; otherwise the request kind ("text", "file",
     /// "image"). The UI shows both inline, in the asking session.
     pub kind: String,
@@ -813,12 +817,29 @@ fn question_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "ask.user".into(),
-            description: "Ask the user a question mid-turn and wait for their answer. Use it at real forks instead of guessing: which approach, which scope, proceed/stop. Keep options short; the user may also type free text.".into(),
+            description: "Ask the user a question mid-turn and wait for their answer. Use it at real forks instead of guessing: which approach, which scope, proceed or stop. Up to six options, each a short label, with a description when the choice needs a line of why or what follows. Put your recommendation first and say so. multi: true when several may be picked. The user may also answer in their own words, or skip (then decide yourself and say what you assumed).".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "question": {"type": "string"},
-                    "options": {"type": "array", "items": {"type": "string"}},
+                    "options": {
+                        "type": "array",
+                        "maxItems": 6,
+                        "items": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "label": {"type": "string"},
+                                        "description": {"type": "string"},
+                                    },
+                                    "required": ["label"],
+                                },
+                            ],
+                        },
+                    },
+                    "multi": {"type": "boolean"},
                 },
                 "required": ["question"],
             }),

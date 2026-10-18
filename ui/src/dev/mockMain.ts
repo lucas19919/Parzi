@@ -1,5 +1,5 @@
 // Entry for mock.html: install the mock backend, then boot the real app.
-const { mockView, mockLive, mockRequest } = await import("./mockTauri");
+const { mockView, mockLive, mockRequest, mockQuestion } = await import("./mockTauri");
 await import("../main");
 
 const { emit } = await import("@tauri-apps/api/event");
@@ -27,6 +27,20 @@ if (mockRequest) {
     text: "Paste the error message you saw.",
   };
   await emit("parzi://run-event", { kind: "request", key: "r1", session: "s1", request: asks[mockRequest] ?? asks.text, req_kind: mockRequest });
+}
+if (mockQuestion) {
+  await emit("parzi://run-event", {
+    kind: "question",
+    key: "q1",
+    session: "s1",
+    question: "When you pick a branch for a session, what should happen?",
+    options: ["Own worktree (recommended)", "Switch the folder"],
+    details: [
+      "The session works in its own copy of the repo on that branch, so it never touches your checkout or other sessions.",
+      "Parzi runs git switch in the project folder: simple, but it changes your checkout for everything working there.",
+    ],
+    multi: mockQuestion === "multi",
+  });
 }
 // Its toast would come and go while the UI lint audits the page.
 await new Promise((r) => setTimeout(r, 50));

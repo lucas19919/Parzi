@@ -221,6 +221,7 @@ impl Asker for ParkedAsker {
             json!({
                 "kind": "question", "key": key, "session": req.session,
                 "question": req.question, "options": req.options,
+                "details": req.details, "multi": req.multi,
             })
         } else {
             json!({

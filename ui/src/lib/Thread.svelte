@@ -20,6 +20,7 @@
   import ReplyButtons from "./ReplyButtons.svelte";
   import TaskCard from "./TaskCard.svelte";
   import TodoList from "./TodoList.svelte";
+  import QuestionCard from "./QuestionCard.svelte";
   import { board, nextStep, setupWaits } from "./providerStore";
 
   // What the waiting prompt answers: the nearest assistant message above
@@ -448,12 +449,9 @@ ${e.text}` : e.text;
     }
   }
 
-  let answerText = "";
-
   async function respond(answer: string) {
     if (!question || !answer.trim()) return;
     const { key, session } = question;
-    answerText = "";
     try {
       await api.answerQuestion(key, session, answer.trim());
     } catch (e) {
@@ -719,28 +717,8 @@ ${e.text}` : e.text;
   {/if}
 
   {#if question}
-    <div class="approval ask" transition:fade={spring}>
-      {#if askerTitle}<div class="ask-from">{askerTitle} asks</div>{/if}
-      {#if askContext}<div class="ask-about" title={askContext}>Re: {askContext}</div>{/if}
-      <div class="ask-q">{question.question}</div>
-      {#if question.options.length}
-        <div class="ask-options">
-          {#each question.options as opt}
-            <button class="btn" on:click={() => respond(opt)}>{opt}</button>
-          {/each}
-        </div>
-      {/if}
-      <div class="ask-free">
-        <input
-          aria-label="Answer"
-          placeholder="Or type an answer… (Enter sends)"
-          bind:value={answerText}
-          on:keydown={(e) => {
-            if (e.key === "Enter") respond(answerText);
-          }}
-        />
-        <button class="btn primary" disabled={!answerText.trim()} on:click={() => respond(answerText)}>Send</button>
-      </div>
+    <div transition:fade={spring}>
+      <QuestionCard {question} from={askerTitle} about={askContext} on:answer={(e) => respond(e.detail.text)} />
     </div>
   {/if}
 
@@ -1060,20 +1038,6 @@ ${e.text}` : e.text;
   .ask-from {
     font-size: var(--fs-sm);
     color: var(--muted);
-  }
-  .ask-about {
-    font-size: var(--fs-sm);
-    color: var(--muted);
-    border-left: 2px solid var(--line);
-    padding-left: 8px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .ask-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
   }
   .ask-free {
     display: flex;

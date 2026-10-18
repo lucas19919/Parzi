@@ -6,9 +6,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { checkUrl } from "lintapple";
 
 const BASE = process.env.PARZI_UI_URL ?? "http://localhost:1420/mock.html";
-const VIEWS = ["home", "session", "request", "brain", "history", "settings", "setup", "page"];
+const VIEWS = ["home", "session", "request", "question", "brain", "history", "settings", "setup", "page"];
 // Views that are another view in other settings.
-const QUERY = { request: "view=session&request=file" };
+const QUERY = { request: "view=session&request=file", question: "view=session&question=1" };
 
 // More states per view, each checked again after its action (run in order
 // on one page). Selectors are CSS and must match exactly one element.
