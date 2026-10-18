@@ -496,6 +496,45 @@ pub async fn read_image_data_url(
     .await
 }
 
+/// A picture one of this session's tools made, wherever it saved it (an
+/// agent's own image model keeps them in its folder): only a path the
+/// session's own tool results name is read.
+#[tauri::command]
+pub async fn tool_image(
+    state: State<'_, AppState>,
+    session: String,
+    path: String,
+) -> Result<String, String> {
+    let orch = state.orch.clone();
+    off_thread(move || {
+        let fold = |s: &str| s.replace('\\', "/").to_lowercase();
+        let want = fold(&path);
+        let named = orch
+            .store()
+            .events(&session)
+            .map_err(|e| e.to_string())?
+            .iter()
+            .any(|e| match e {
+                parzi_core::store::Event::ToolResult { output, .. } => {
+                    fold(output).replace("//", "/").contains(&want.replace("//", "/"))
+                }
+                _ => false,
+            });
+        if !named {
+            return Err("no tool in this session made that picture".into());
+        }
+        let p = Path::new(&path);
+        let meta = std::fs::metadata(p).map_err(|e| format!("{path}: {e}"))?;
+        if !meta.is_file() || meta.len() > READ_IMAGE_MAX {
+            return Err(format!("{path} is not a picture Parzi can show"));
+        }
+        let img = parzi_core::context::encode_image_file(p)
+            .ok_or_else(|| format!("{path} is not a supported image"))?;
+        Ok(img.data_url())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn stage_image(name: String, base64_data: String) -> Result<String, String> {
     off_thread(move || stage_image_blocking(&name, &base64_data)).await

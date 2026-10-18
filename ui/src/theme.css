@@ -65,7 +65,6 @@
   --grain: 0.16;
   --grain-size: 32px;
   --bg-height: 100%;
-  --grain-height: 100%;
   /* One radius scale (plus 999px pills and 50% dots); glyph-sized shapes
      like the stop square keep their own 1-3px. */
   --radius-sm: 4px;

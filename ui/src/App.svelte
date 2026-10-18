@@ -52,19 +52,24 @@
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
 
-  // Home is the one draft: a session tab with no session yet. It never
-  // shows in the strip; the Home button opens it, and sending from it turns
-  // it into a real tab at the strip's end (a new Home comes when needed).
-  const isHome = (t: Tab) => t.kind === "session" && !t.sessionId;
+  // A draft: a session tab with no session yet, "New session" in the
+  // strip. Sending from it makes it that session's tab, in place.
+  const isDraft = (t: Tab) => t.kind === "session" && !t.sessionId;
+  const emptyDraft = (t: Tab) => isDraft(t) && !t.composer?.input?.trim() && !t.composer?.attachments?.length;
 
-  // Restored drafts fold into one Home, kept last, out of the strip's way.
-  function oneHome(list: Tab[]): Tab[] {
-    const home = list.find(isHome);
-    return [...list.filter((t) => !isHome(t)), ...(home ? [home] : [])];
+  // Restored: one empty draft at most (ones with a draft message stay).
+  function oneEmptyDraft(list: Tab[]): Tab[] {
+    let kept = false;
+    return list.filter((t) => {
+      if (!emptyDraft(t)) return true;
+      if (kept) return false;
+      kept = true;
+      return true;
+    });
   }
 
   const restored = loadTabs();
-  let tabs: Tab[] = oneHome(
+  let tabs: Tab[] = oneEmptyDraft(
     (restored?.tabs ?? [sessionTab()]).map((t) => {
       const c = ensureComposer((t as Partial<Tab>).composer);
       if (c.model === "auto") c.model = "";
@@ -502,14 +507,13 @@
     selectTab(t.id);
   }
 
-  // `to` is a place in the strip, which leaves Home out.
   function moveTab(id: string, to: number) {
-    const strip = tabs.filter((t) => !isHome(t));
+    const strip = [...tabs];
     const from = strip.findIndex((t) => t.id === id);
     if (from < 0 || from === to) return;
     const [moved] = strip.splice(from, 1);
     strip.splice(Math.max(0, Math.min(to, strip.length)), 0, moved);
-    tabs = [...strip, ...tabs.filter(isHome)];
+    tabs = strip;
   }
 
   function closeTab(id: string) {
@@ -562,19 +566,19 @@
     omnibar?.focus();
   }
 
-  // A new session starts from Home: it becomes a tab when you send.
-  function goHome() {
-    let home = tabs.find(isHome);
-    if (!home) {
-      home = { ...sessionTab(), cwd: folder || undefined };
-      home.composer = ensureComposer(home.composer);
-      tabs = [...tabs, home];
+  // A new session: a draft tab beside this one (an empty draft already
+  // open is reused). It becomes the session when you send.
+  function newSession() {
+    let draft = tabs.find(emptyDraft);
+    if (!draft) {
+      draft = { ...sessionTab(), cwd: folder || undefined };
+      draft.composer = ensureComposer(draft.composer);
+      const idx = tabs.findIndex((x) => x.id === activeId);
+      tabs = [...tabs.slice(0, idx + 1), draft, ...tabs.slice(idx + 1)];
     }
-    selectTab(home.id);
+    selectTab(draft.id);
     void tick().then(() => omnibar?.focus());
   }
-
-  const newSession = goHome;
 
   function openPage(url: string, id?: string, owner?: string | null, background = false) {
     const existing = tabs.find((t) => (id ? t.id === id : t.kind === "page" && t.url === url));
@@ -1414,7 +1418,7 @@
     if (name === "ctrl+p" || name === "ctrl+k") switcherOpen = !switcherOpen;
     else if (name === "ctrl+t") newSession();
     else if (name === "ctrl+w") {
-      if (!isHome(tab)) closeTab(activeId);
+      closeTab(activeId);
     }
     else if (name === "ctrl+comma") tab.kind === "settings" ? closeTab(activeId) : openSettings();
     else if (name === "ctrl+b") openBrain();
@@ -1431,8 +1435,8 @@
         omnibar?.focus();
       }
     } else if (name === "ctrl+tab" || name === "ctrl+shift+tab") {
-      // Cycles the strip; from Home it starts at either end.
-      const strip = tabs.filter((t) => !isHome(t));
+      // Cycles the strip.
+      const strip = tabs;
       if (strip.length) {
         const idx = strip.findIndex((t) => t.id === activeId);
         const step = name === "ctrl+tab" ? 1 : -1;
@@ -1508,7 +1512,7 @@
     else if (cmd.what === "brain") openBrain(cmd.path ?? "");
     else if (cmd.what === "history") openHistory(cmd.view ?? "sessions");
     else if (cmd.what === "plan" || cmd.what === "work" || cmd.what === "tasks") showPlan();
-    else if (cmd.what === "home") goHome();
+    else if (cmd.what === "home") newSession();
   }
 
   // Only the page used last loads ahead at launch: every renderer costs
@@ -1632,14 +1636,12 @@
 
   {#if !immersive}
     <TopBar
-      tabs={tabs.filter((t) => !isHome(t))}
-      homeActive={isHome(tab)}
+      {tabs}
       activeTabId={activeId}
       on:select={(e) => selectTab(e.detail.id)}
       on:close={(e) => closeTab(e.detail.id)}
       on:move={(e) => moveTab(e.detail.id, e.detail.to)}
       on:newTab={newSession}
-      on:home={goHome}
       on:search={() => (switcherOpen = true)}
       on:settings={() => openSettings()}
       on:update={() => openSettings("system")}
@@ -1734,6 +1736,7 @@
                   request={openRequest}
                   askerTitle={threads.find((t) => t.id === (openQuestion?.session ?? openRequest?.session ?? approval?.session ?? shown))?.title ?? ""}
                   {streaming}
+                  session={shown ?? ""}
                   {folder}
                   provider={threads.find((t) => t.id === shown)?.model.split("/")[0] ?? ""}
                   sessionTitle={titleOf}

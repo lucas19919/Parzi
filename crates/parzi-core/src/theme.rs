@@ -63,10 +63,6 @@ pub struct BackgroundTheme {
     /// How far down the window the wallpaper reaches (0.3-1); it fades out there.
     #[serde(default = "d_bg_height")]
     pub height: f64,
-    /// How far down the wallpaper the dither reaches (0.1-1); it fades out
-    /// there.
-    #[serde(default = "d_bg_height")]
-    pub grain_height: f64,
 }
 
 fn d_ui_font() -> String {
@@ -183,7 +179,6 @@ impl Default for BackgroundTheme {
             grain: d_grain(),
             grain_size: d_grain_size(),
             height: d_bg_height(),
-            grain_height: d_bg_height(),
         }
     }
 }
@@ -214,7 +209,6 @@ impl Theme {
         t.background.grain = round2(t.background.grain.clamp(0.0, 1.0));
         t.background.grain_size = t.background.grain_size.clamp(16.0, 128.0).round();
         t.background.height = round2(t.background.height.clamp(0.3, 1.0));
-        t.background.grain_height = round2(t.background.grain_height.clamp(0.1, 1.0));
         t.font.size = t.font.size.clamp(10, 20);
         t.font.mono_size = t.font.mono_size.clamp(9, 18);
         t
@@ -228,7 +222,7 @@ impl Theme {
             ":root{{--font:{};--font-size:{}px;--mono:{};--mono-size:{}px;\
             --bg:{};--text:{};--muted:{};--accent:{};\
             --bg-dim:{};--vignette:{};--bg-blur:{}px;\
-            --grain:{};--grain-size:{}px;--bg-height:{}%;--grain-height:{}%;}}\n",
+            --grain:{};--grain-size:{}px;--bg-height:{}%;}}\n",
             css_font_list(&t.font.family),
             t.font.size,
             css_font_list(&t.font.mono),
@@ -243,7 +237,6 @@ impl Theme {
             num(b.grain),
             num(b.grain_size),
             num(b.height * 100.0),
-            num(b.grain_height * 100.0),
         )
     }
 }
@@ -812,18 +805,13 @@ mod css_tests {
         t.background.grain = 3.0;
         t.background.grain_size = 4.0;
         t.background.height = 0.7;
-        t.background.grain_height = 0.02;
         assert!(t
             .to_css_vars()
-            .contains("--grain:1;--grain-size:16px;--bg-height:70%;--grain-height:10%;"));
+            .contains("--grain:1;--grain-size:16px;--bg-height:70%;"));
         // Theme files from before these keys still load, with the defaults.
         let old: Theme = toml::from_str("[background]\nimage = \"\"\ndim = 0.5\n").unwrap();
         let b = old.background;
         assert_eq!((b.grain, b.grain_size, b.height), (0.16, 32.0, 1.0));
-        assert!(
-            (b.grain_height - 1.0).abs() < f64::EPSILON,
-            "the dither reaches as far as before"
-        );
     }
 
     #[test]

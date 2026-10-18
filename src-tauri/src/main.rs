@@ -708,6 +708,7 @@ fn main() {
             settings::shell_jobs,
             sessions::rewind_thread,
             files::git_branches,
+            files::tool_image,
             settings::shell_kill,
             vault::vault_unlock,
             vault::vault_lock,

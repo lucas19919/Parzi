@@ -650,9 +650,6 @@
       {:else}
         <button class="lead btn" use:tooltip={"Attach files"} on:click={pickFiles}><Icon name="plus" /></button>
       {/if}
-      {#if streaming}
-        <span class="orb" aria-hidden="true" title="Working…"><span class="eye" /><span class="eye" /></span>
-      {/if}
       <textarea
         bind:this={textarea}
         bind:value={input}
@@ -956,54 +953,6 @@
     height: 9px;
     border-radius: 2px;
     background: currentColor;
-  }
-  .orb {
-    width: 22px;
-    height: 22px;
-    flex: none;
-    align-self: center;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    border-radius: 50%;
-    background: color-mix(in srgb, var(--text) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--text) 16%, transparent);
-    animation: orb-bob 2.4s ease-in-out infinite;
-  }
-  .eye {
-    width: 3px;
-    height: 4.5px;
-    border-radius: 2px;
-    background: var(--text);
-    opacity: 0.85;
-    animation: orb-blink 4.4s ease-in-out infinite;
-    transform-origin: center;
-  }
-  @keyframes orb-bob {
-    0%,
-    100% {
-      transform: translateY(0);
-    }
-    50% {
-      transform: translateY(-1.5px);
-    }
-  }
-  @keyframes orb-blink {
-    0%,
-    91%,
-    100% {
-      transform: scaleY(1);
-    }
-    94.5% {
-      transform: scaleY(0.12);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .orb,
-    .eye {
-      animation: none;
-    }
   }
 
   /* The line under the box: each control on its own small glass, like the

@@ -164,7 +164,6 @@ export interface Theme {
     grain: number;
     grain_size: number;
     height: number;
-    grain_height: number;
   };
 }
 
@@ -249,6 +248,8 @@ export const api = {
   gitStatus: (cwd: string) => invoke<GitStatus | null>("git_status", { cwd }),
   stageImage: (name: string, base64Data: string) => invoke<string>("stage_image", { name, base64Data }),
   readImageDataUrl: (path: string, cwd: string) => invoke<string>("read_image_data_url", { path, cwd }),
+  // A picture one of the session's tools made, wherever it was saved.
+  toolImage: (session: string, path: string) => invoke<string>("tool_image", { session, path }),
 
   providerStatuses: () => invoke<ProviderStatus[]>("provider_statuses"),
   refreshProviders: (ids?: string[]) => invoke<ProviderStatus[]>("refresh_providers", { ids: ids ?? null }),

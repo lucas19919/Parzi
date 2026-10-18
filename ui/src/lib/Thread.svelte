@@ -21,6 +21,8 @@
   import TaskCard from "./TaskCard.svelte";
   import TodoList from "./TodoList.svelte";
   import QuestionCard from "./QuestionCard.svelte";
+  import ToolPictures, { picturesIn } from "./ToolPictures.svelte";
+  import LiveLine from "./LiveLine.svelte";
   import { board, nextStep, setupWaits } from "./providerStore";
 
   // What the waiting prompt answers: the nearest assistant message above
@@ -52,6 +54,8 @@
   export let liveReasoning = "";
   export let liveTools: LiveTool[] = [];
   export let streaming = false;
+  // Whose thread: pictures its tools made are read by it.
+  export let session = "";
   // The checklist todo.write just set, ahead of the saved one.
   export let liveTodo: unknown = null;
   export let approval: Approval | null = null;
@@ -201,7 +205,19 @@
               : liveTools.length
                 ? "Working…"
                 : "Starting…";
-  $: showLiveSteps = !!status || !!liveReasoning || liveTools.length > 0;
+  // The live line under the thread says it plainly: a running tool, else
+  // the checklist's active item, else thinking or writing.
+  $: activeTask = (((todo ?? {}) as { items?: { title: string; state: string }[] }).items ?? []).find((i) => i.state === "active")?.title ?? "";
+  $: lineText =
+    status && (approval || question || request || running.length)
+      ? status
+      : activeTask
+        ? `${activeTask}…`
+        : liveText
+          ? "Writing…"
+          : status || "Working…";
+  $: lineTokens = Math.round((liveText.length + liveReasoning.length) / 4);
+  $: showLiveSteps = !!liveReasoning || liveTools.length > 0;
   $: if (!liveText) liveMd.reset();
   $: liveSegs = liveText ? splitSegments(liveText, false) : [];
   $: tailIdx = liveSegs.map((s) => s.kind).lastIndexOf("md");
@@ -603,6 +619,7 @@ ${e.text}` : e.text;
       </div>
     {:else if item.kind === "steps"}
       <Steps reasoning={item.reasoning} tools={item.tools} />
+      <ToolPictures {session} paths={picturesIn(item.tools.map((t) => t.output ?? ""))} />
     {:else if item.kind === "checkpoint"}
       <Steps title="Conversation compacted" reasoning={item.text} />
     {:else if item.kind === "system"}
@@ -677,7 +694,7 @@ ${e.text}` : e.text;
 
   {#if showLiveSteps}
     <div transition:fade|local={spring}>
-      <Steps reasoning={liveReasoning} tools={liveTools} {status} />
+      <Steps reasoning={liveReasoning} tools={liveTools} />
     </div>
   {/if}
 
@@ -700,6 +717,7 @@ ${e.text}` : e.text;
 
   <!-- The plan checklist, after the conversation and before what waits on you. -->
   {#if todo}<TodoList {todo} working={streaming} />{/if}
+  {#if streaming}<LiveLine text={lineText} tokens={lineTokens} />{/if}
   {#if !streaming && replyAt >= 0}
     {@const offer = items[replyAt]}
     {#if offer.kind === "widget"}

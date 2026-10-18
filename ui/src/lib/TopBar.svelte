@@ -13,15 +13,12 @@
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
-  // Home shows: its button reads as the selected place.
-  export let homeActive = false;
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
     close: { id: string };
     move: { id: string; to: number };
     newTab: void;
-    home: void;
     settings: void;
     search: void;
     update: void;
@@ -109,9 +106,6 @@
         </div>
       {/if}
     </div>
-    <button class="icon-btn" class:active={homeActive} aria-pressed={homeActive} use:tooltip={"Home (Ctrl+T)"} on:click={() => dispatch("home")}>
-      <Icon name="home" />
-    </button>
     <TabBar
       {tabs}
       {activeTabId}
