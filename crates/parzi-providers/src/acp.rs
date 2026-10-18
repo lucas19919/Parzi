@@ -404,6 +404,87 @@ fn take_warm(program: &Path) -> Option<Conn> {
     None
 }
 
+/// An agent process kept after a clean turn with its session still open,
+/// so the next message in that conversation goes straight to it: no
+/// start, no reconnecting tools, no reloading the history.
+struct Live {
+    id: u64,
+    program: PathBuf,
+    sid: String,
+    cwd: PathBuf,
+    tools: Option<String>,
+    model: Option<String>,
+    session: Value,
+    conn: Conn,
+}
+
+/// What a turn opened, so a clean end can keep it.
+#[derive(Default)]
+struct Opened {
+    sid: String,
+    session: Value,
+}
+
+/// A session reused from the pool: its id, what opening it said, and the
+/// model it runs.
+struct Reused {
+    sid: String,
+    session: Value,
+    model: Option<String>,
+}
+
+static LIVE: Mutex<Vec<Live>> = Mutex::new(Vec::new());
+const LIVE_FOR: Duration = Duration::from_secs(10 * 60);
+/// Kept at once; the oldest goes first.
+const LIVE_MAX: usize = 4;
+
+fn take_live(program: &Path, sid: &str, cwd: &Path, tools: Option<&str>) -> Option<Live> {
+    let mut live = LIVE.lock().ok()?;
+    let i = live.iter().position(|l| {
+        l.program == program && l.sid == sid && l.cwd == cwd && l.tools.as_deref() == tools
+    })?;
+    let mut l = live.remove(i);
+    drop(live);
+    if !matches!(l.conn.proc.child.try_wait(), Ok(None)) {
+        return None;
+    }
+    // Something it asked while parked went unanswered: start fresh.
+    let mut asked = false;
+    while let Ok(msg) = l.conn.incoming.try_recv() {
+        asked |= matches!(msg, Incoming::Request { .. });
+    }
+    (!asked).then_some(l)
+}
+
+fn park_live(mut l: Live) {
+    l.id = WARM_ID.fetch_add(1, Ordering::Relaxed);
+    let id = l.id;
+    let Ok(mut live) = LIVE.lock() else {
+        return;
+    };
+    live.push(l);
+    // Dropping one kills its process.
+    while live.len() > LIVE_MAX {
+        live.remove(0);
+    }
+    drop(live);
+    tokio::spawn(async move {
+        tokio::time::sleep(LIVE_FOR).await;
+        let stale = LIVE.lock().ok().and_then(|mut live| {
+            let i = live.iter().position(|l| l.id == id)?;
+            Some(live.remove(i))
+        });
+        if let Some(mut l) = stale {
+            l.conn.proc.kill().await;
+        }
+    });
+}
+
+fn can_resume(init: &Value) -> bool {
+    init.pointer("/agentCapabilities/sessionCapabilities/resume")
+        .is_some_and(|v| !v.is_null())
+}
+
 fn park(program: PathBuf, conn: Conn) {
     let id = WARM_ID.fetch_add(1, Ordering::Relaxed);
     let Ok(mut warm) = WARM.lock() else {
@@ -483,11 +564,31 @@ impl Provider for Acp {
     ) -> Result<TurnEnd, ProviderError> {
         let program = self.program().ok_or_else(|| self.not_installed())?;
         process::existing_folder(&spec.cwd)?;
-        // Dropping a half-open connection kills its process.
-        let Some(conn) = or_cancel(&cancel, self.connect(&program, &spec.cwd)).await else {
-            return Ok(TurnEnd::Interrupted);
+        let tools = spec.tools.as_ref().map(|t| t.url.clone());
+        let earlier = spec
+            .resume
+            .as_ref()
+            .and_then(|r| r.get("session_id"))
+            .and_then(Value::as_str);
+        let live = earlier.and_then(|sid| take_live(&program, sid, &spec.cwd, tools.as_deref()));
+        let (mut conn, reused) = match live {
+            Some(l) => (
+                l.conn,
+                Some(Reused {
+                    sid: l.sid,
+                    session: l.session,
+                    model: l.model,
+                }),
+            ),
+            None => {
+                // Dropping a half-open connection kills its process.
+                let Some(conn) = or_cancel(&cancel, self.connect(&program, &spec.cwd)).await else {
+                    return Ok(TurnEnd::Interrupted);
+                };
+                (conn?, None)
+            }
         };
-        let mut conn = conn?;
+        let mut opened = Opened::default();
         let outcome = drive(
             &conn.peer,
             &mut conn.incoming,
@@ -497,6 +598,8 @@ impl Provider for Acp {
             gate,
             &events,
             &cancel,
+            reused,
+            &mut opened,
         )
         .await;
         let outcome = match outcome {
@@ -508,7 +611,21 @@ impl Provider for Acp {
             other => other,
         };
         let reusable = matches!(outcome, Ok(TurnEnd::Completed));
-        self.release(program, conn, reusable).await;
+        // Only a session the next turn can name (one that resumes) is kept.
+        if reusable && !opened.sid.is_empty() && can_resume(&conn.init) {
+            park_live(Live {
+                id: 0,
+                program,
+                sid: opened.sid,
+                cwd: spec.cwd.clone(),
+                tools,
+                model: spec.model.clone().filter(|m| !m.is_empty()),
+                session: opened.session,
+                conn,
+            });
+        } else {
+            self.release(program, conn, reusable).await;
+        }
         outcome
     }
 }
@@ -836,6 +953,8 @@ async fn drive(
     gate: Arc<dyn PermissionGate>,
     events: &EventTx,
     cancel: &CancellationToken,
+    reused: Option<Reused>,
+    opened: &mut Opened,
 ) -> Result<TurnEnd, ProviderError> {
     let caps = init.get("agentCapabilities").unwrap_or(&Value::Null);
     let http_mcp = caps
@@ -882,7 +1001,14 @@ async fn drive(
     let mut fresh = true;
     let mut session = Value::Null;
     let mut sid = String::new();
-    if let Some(id) = earlier.filter(|_| can_resume) {
+    // The session is still open in this process: nothing to open, and the
+    // model only changes when the person picked another.
+    let live_model = reused.as_ref().map(|r| r.model.clone());
+    if let Some(r) = reused {
+        session = r.session;
+        sid = r.sid;
+        fresh = false;
+    } else if let Some(id) = earlier.filter(|_| can_resume) {
         let resume = peer.request_within(
             "session/resume",
             json!({"sessionId": id, "cwd": cwd, "mcpServers": mcp_servers}),
@@ -928,12 +1054,16 @@ async fn drive(
             })?;
     }
     remember_models(agent.id, &session_models(&session));
+    opened.sid = sid.clone();
+    opened.session = session.clone();
     if can_resume {
         let _ = events.send(ProviderEvent::Session {
             resume: json!({"session_id": sid}),
         });
     }
-    if let Some(model) = spec.model.as_deref().filter(|m| !m.is_empty()) {
+    let wanted = spec.model.as_deref().filter(|m| !m.is_empty());
+    let same_model = live_model.is_some_and(|m| m.as_deref() == wanted);
+    if let Some(model) = wanted.filter(|_| !same_model) {
         let chosen = select_model(peer, &session, &sid, model, agent, events);
         let chosen = answers.meanwhile(chosen, incoming, &mut held);
         if or_cancel(cancel, chosen).await.is_none() {
@@ -1349,6 +1479,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_live_session_goes_straight_to_the_prompt() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            // No session/resume or session/new, and no model switch: the
+            // model is the one it already runs.
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["method"], "session/prompt");
+            assert_eq!(prompt["params"]["sessionId"], "S0");
+            let text = prompt["params"]["prompt"][0]["text"].as_str().unwrap();
+            assert_eq!(text, "hi", "a live session has its instructions already");
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn"}}),
+            )
+            .await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let mut opened = Opened::default();
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent("opencode").unwrap(),
+            &spec(Some(json!({"session_id": "S0"}))),
+            gate,
+            &tx,
+            &CancellationToken::new(),
+            Some(Reused {
+                sid: "S0".into(),
+                session: json!({"sessionId": "S0"}),
+                model: Some("opencode/big-pickle".into()),
+            }),
+            &mut opened,
+        )
+        .await
+        .unwrap();
+        assert_eq!(end, TurnEnd::Completed);
+        assert_eq!(opened.sid, "S0", "kept for the next turn");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn a_new_session_gets_parzi_tools_instructions_and_a_gate() {
         let (ours, theirs) = tokio::io::duplex(1 << 16);
         let server = tokio::spawn(async move {
@@ -1409,6 +1589,8 @@ mod tests {
             gate.clone(),
             &tx,
             &CancellationToken::new(),
+            None,
+            &mut Opened::default(),
         )
         .await
         .unwrap();
@@ -1481,6 +1663,8 @@ mod tests {
             gate,
             &tx,
             &CancellationToken::new(),
+            None,
+            &mut Opened::default(),
         )
         .await
         .unwrap();
@@ -1513,6 +1697,8 @@ mod tests {
             gate,
             &tx,
             &CancellationToken::new(),
+            None,
+            &mut Opened::default(),
         )
         .await
         .unwrap_err();
@@ -1546,6 +1732,8 @@ mod tests {
             gate,
             &tx,
             &CancellationToken::new(),
+            None,
+            &mut Opened::default(),
         )
         .await
         .unwrap_err();
@@ -1617,6 +1805,8 @@ mod tests {
             Arc::new(Undecided),
             &tx,
             &cancel,
+            None,
+            &mut Opened::default(),
         )
         .await
         .unwrap();
@@ -1653,6 +1843,8 @@ mod tests {
             gate,
             &tx,
             &cancel,
+            None,
+            &mut Opened::default(),
         )
         .await
         .unwrap();
@@ -1721,6 +1913,8 @@ mod tests {
             gate.clone(),
             &tx,
             &CancellationToken::new(),
+            None,
+            &mut Opened::default(),
         )
         .await
         .unwrap();

@@ -26,18 +26,28 @@ type Runs = Arc<RwLock<HashMap<String, Arc<ToolHost>>>>;
 pub struct McpHost {
     addr: SocketAddr,
     runs: Runs,
+    /// One token per session for the app's life: an agent kept running
+    /// between turns still reaches its tools at the same address, which
+    /// always leads to the session's current turn.
+    tokens: std::sync::Mutex<HashMap<String, String>>,
 }
 
 pub struct Registration {
     runs: Runs,
     token: String,
+    host: Arc<ToolHost>,
     pub server: ToolServer,
 }
 
 impl Drop for Registration {
     fn drop(&mut self) {
         if let Ok(mut r) = self.runs.write() {
-            r.remove(&self.token);
+            // A later turn of the session may hold the address already.
+            if r.get(&self.token)
+                .is_some_and(|h| Arc::ptr_eq(h, &self.host))
+            {
+                r.remove(&self.token);
+            }
         }
     }
 }
@@ -50,6 +60,7 @@ impl McpHost {
         let host = Arc::new(Self {
             addr,
             runs: runs.clone(),
+            tokens: std::sync::Mutex::default(),
         });
         tokio::spawn(async move {
             loop {
@@ -72,17 +83,24 @@ impl McpHost {
         Ok(host)
     }
 
-    pub fn register(&self, host: Arc<ToolHost>) -> Registration {
-        let token = format!(
-            "{}{}",
-            uuid::Uuid::new_v4().simple(),
-            uuid::Uuid::new_v4().simple()
-        );
+    pub fn register(&self, session: &str, host: Arc<ToolHost>) -> Registration {
+        let fresh = || {
+            format!(
+                "{}{}",
+                uuid::Uuid::new_v4().simple(),
+                uuid::Uuid::new_v4().simple()
+            )
+        };
+        let token = match self.tokens.lock() {
+            Ok(mut t) => t.entry(session.to_string()).or_insert_with(fresh).clone(),
+            Err(_) => fresh(),
+        };
         if let Ok(mut r) = self.runs.write() {
-            r.insert(token.clone(), host);
+            r.insert(token.clone(), host.clone());
         }
         Registration {
             runs: self.runs.clone(),
+            host,
             server: ToolServer {
                 name: SERVER_NAME.into(),
                 url: format!("http://{}/mcp/{token}", self.addr),

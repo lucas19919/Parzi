@@ -407,7 +407,11 @@ impl EngineRun {
     }
 
     async fn turn(&self, text: &str) -> Outcome {
-        let registration = self.p.mcp.as_ref().map(|m| m.register(self.p.host.clone()));
+        let registration = self
+            .p
+            .mcp
+            .as_ref()
+            .map(|m| m.register(&self.p.session_id, self.p.host.clone()));
         let spec = TurnSpec {
             cwd: PathBuf::from(&self.p.cwd),
             model: self.p.model.clone(),
