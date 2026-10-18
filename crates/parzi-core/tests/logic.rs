@@ -260,7 +260,7 @@ fn theme_emits_css_vars_with_a_neutral_default() {
     let t = Theme::default();
     assert_eq!(t.background.image, "");
     let css = t.to_css_vars();
-    assert!(css.contains("--accent:#E6E8EE"));
+    assert!(css.contains("--accent:#CBD5E1"), "the slate default");
     assert!(css.contains("--bg-blur:"));
 }
 
