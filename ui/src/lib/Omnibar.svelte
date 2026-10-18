@@ -724,7 +724,6 @@
   .ob {
     position: relative;
     width: 100%;
-    max-width: 720px;
     min-width: 0;
     margin: 0 auto;
   }

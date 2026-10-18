@@ -70,6 +70,8 @@
   --radius-sm: 4px;
   --radius: 8px;
   --radius-lg: 12px;
+  /* The reading column: a thread's text, and the composer under it. */
+  --read: 772px;
   /* One easing for anything that moves. */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 

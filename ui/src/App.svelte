@@ -97,7 +97,7 @@
   let liveReasoning = "";
   let liveTools: LiveTool[] = [];
   let pending = "";
-  let flushTimer = 0;
+  let revealing = 0;
 
   let model = "";
   let warmed = "";
@@ -389,8 +389,8 @@
   }
 
   function clearLive() {
-    clearTimeout(flushTimer);
-    flushTimer = 0;
+    cancelAnimationFrame(revealing);
+    revealing = 0;
     pending = "";
     live = "";
     liveReasoning = "";
@@ -448,8 +448,10 @@
     }
   }
 
-  async function reload() {
-    if (!shown) return;
+  // `swap` runs in the same update as the new events: a finished reply
+  // trades its live copy for the saved one without a blank frame between.
+  async function reload(swap?: () => void) {
+    if (!shown) return swap?.();
     const id = shown;
     const my = navSeq;
     let got: [SessionMeta, ChatEvent[]];
@@ -457,12 +459,13 @@
       got = await api.getThread(id);
     } catch (e) {
       if (my === navSeq && shown === id) toastError(e);
-      return;
+      return swap?.();
     }
     const [m, ev] = got;
     if (my !== navSeq || shown !== id) return;
     meta = m;
     events = ev;
+    swap?.();
     context = { used: m.context_tokens ?? context.used, limit: m.context_limit ?? context.limit };
   }
 
@@ -1229,13 +1232,20 @@
     else if (name === "settings") openSettings();
   }
 
-  function flushLive() {
-    flushTimer = 0;
+  // Streamed text shows at a steady pace, not in the bursts it arrives
+  // in: each frame reveals a share of what waits, so a burst spreads over
+  // a few frames and a trickle shows at once.
+  function revealLive() {
+    revealing = 0;
     if (!pending) return;
     const follow = nearBottom();
-    live += pending;
-    pending = "";
+    let cut = Math.min(pending.length, Math.max(3, Math.ceil(pending.length / 6)));
+    // Never between the halves of an emoji.
+    if (cut < pending.length && /[\uD800-\uDBFF]/.test(pending[cut - 1])) cut++;
+    live += pending.slice(0, cut);
+    pending = pending.slice(cut);
     if (follow) void scrollToBottom();
+    if (pending) revealing = requestAnimationFrame(revealLive);
   }
 
   const titleOf = (session: string) => threads.find((t) => t.id === session)?.title || "Agent";
@@ -1290,9 +1300,8 @@
       const next = e.kind === "done" && !!held[e.session];
       if (e.kind !== "done") unhold(e.session);
       if (e.session === shown) {
-        flushLive();
-        clearLive();
-        if (!next) void reload();
+        if (next) clearLive();
+        else void reload(clearLive);
       }
       if (next) void sendHeld(e.session);
       const isChild = threads.some((t) => t.id === e.session && t.parent_id);
@@ -1308,7 +1317,7 @@
     if (e.session !== shown) return;
     if (e.kind === "text") {
       pending += e.text;
-      if (!flushTimer) flushTimer = window.setTimeout(() => requestAnimationFrame(flushLive), 60);
+      if (!revealing) revealing = requestAnimationFrame(revealLive);
     } else if (e.kind === "reasoning") {
       liveReasoning += e.text;
     } else if (e.kind === "tool_call") {
@@ -1936,8 +1945,9 @@
   }
   .composer.docked {
     bottom: 14px;
-    /* With the dock open it fits the thread beside it, not the window. */
-    width: min(740px, calc(100% - 40px - 2 * var(--shift, 0px)));
+    /* As wide as the thread's text above it: the session's width less its
+       margins (16px), the thread's padding (48px) and the column. */
+    width: min(var(--read), calc(100% - 64px - 2 * var(--shift, 0px)));
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
   }
   .toasts {

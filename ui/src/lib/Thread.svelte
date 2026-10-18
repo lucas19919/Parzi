@@ -714,7 +714,7 @@ ${e.text}` : e.text;
     flex-direction: column;
     gap: 16px;
     width: 100%;
-    max-width: 820px;
+    max-width: calc(var(--read) + 48px);
     margin: 0 auto;
     padding: 16px 24px 8px;
   }
