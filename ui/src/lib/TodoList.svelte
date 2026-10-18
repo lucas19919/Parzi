@@ -1,0 +1,148 @@
+<script lang="ts">
+  // This session's checklist, as its agent keeps it with todo.write: what
+  // is done, what it works on now, what is next. It folds to a count once
+  // everything is done.
+  import { slide } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
+  import Icon from "./Icon.svelte";
+
+  export let todo: unknown;
+  // The turn runs: the active item spins.
+  export let working = false;
+
+  type Item = { title: string; state: "pending" | "active" | "done" };
+  $: items = (((todo ?? {}) as { items?: Item[] }).items ?? []).filter((i) => i && typeof i.title === "string");
+  $: done = items.filter((i) => i.state === "done").length;
+  $: finished = items.length > 0 && done === items.length;
+
+  let open: boolean | null = null;
+  // Open while there is work left, folded once it is all done, unless the
+  // person chose otherwise.
+  $: shown = open ?? !finished;
+</script>
+
+{#if items.length}
+  <section class="todo" aria-label="Tasks">
+    <button class="head" aria-expanded={shown} on:click={() => (open = !shown)}>
+      <Icon name={shown ? "chevDown" : "chevRight"} size={12} />
+      <span class="title">Tasks</span>
+      <span class="count">{done} of {items.length}</span>
+    </button>
+    {#if shown}
+      <ul transition:slide={{ duration: 160, easing: cubicOut }}>
+        {#each items as it, i (i)}
+          <li class="item {it.state}">
+            <span class="mark {it.state}" class:spin={working && it.state === "active"} aria-hidden="true" />
+            <span class="t">{it.title}</span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </section>
+{/if}
+
+<style>
+  .todo {
+    margin: 4px 0 0;
+    padding: 8px 6px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+  }
+  .head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 2px 6px 6px;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-sm);
+    text-align: left;
+    cursor: pointer;
+  }
+  .head:hover {
+    color: var(--text);
+  }
+  .title {
+    flex: 1;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .count {
+    flex: none;
+    font-variant-numeric: tabular-nums;
+  }
+  ul {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 30px;
+    padding: 4px 6px;
+    color: var(--text);
+    font-size: var(--fs-md);
+  }
+  .item.done {
+    color: var(--muted);
+  }
+  .item.active .t {
+    font-weight: 600;
+  }
+  .t {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Hollow to do, accent ring in the works (spinning while the turn
+     runs), filled with a tick when done. */
+  .mark {
+    position: relative;
+    width: 14px;
+    height: 14px;
+    flex: none;
+    border: 1.5px solid var(--muted);
+    border-radius: 50%;
+  }
+  .mark.active {
+    border-color: var(--accent);
+  }
+  .mark.active.spin {
+    border-color: var(--line);
+    border-top-color: var(--accent);
+    animation: spin 0.9s linear infinite;
+  }
+  .mark.done {
+    border-color: var(--ok);
+    background: var(--ok);
+  }
+  .mark.done::after {
+    content: "";
+    position: absolute;
+    left: 3.5px;
+    top: 1.5px;
+    width: 3px;
+    height: 6px;
+    border: solid var(--bg);
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mark.active.spin {
+      animation: none;
+    }
+  }
+</style>

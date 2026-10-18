@@ -151,7 +151,7 @@
   {/if}
 
   {#if plan && planCount && !planInline}
-    <InfoCard id="plan" title="Plan">
+    <InfoCard id="plan" title="Project plan">
       <svelte:fragment slot="aside">{planCount.done} of {planCount.total}</svelte:fragment>
       <button class="line row plan-row" on:click={() => dispatch("plan")}>
         <Icon name="plan" size={12} />

@@ -301,6 +301,42 @@ pub fn replies(args: &serde_json::Value) -> std::result::Result<serde_json::Valu
     Ok(serde_json::json!({"question": question, "replies": out}))
 }
 
+/// `todo.write`: the session's checklist, replaced whole each time.
+pub fn todo(args: &serde_json::Value) -> std::result::Result<serde_json::Value, String> {
+    let list = args
+        .get("items")
+        .and_then(|r| r.as_array())
+        .ok_or("items must be a list of {title, state}")?;
+    if list.is_empty() || list.len() > 20 {
+        return Err("a checklist has one to twenty items".into());
+    }
+    let mut out = vec![];
+    for it in list {
+        let title = it
+            .get("title")
+            .and_then(|s| s.as_str())
+            .map(str::trim)
+            .unwrap_or("");
+        if title.is_empty() {
+            return Err("every item needs a title".into());
+        }
+        if title.chars().count() > 120 {
+            return Err(format!(
+                "`{title}` is over 120 characters: a short imperative"
+            ));
+        }
+        let state = it
+            .get("state")
+            .and_then(|s| s.as_str())
+            .unwrap_or("pending");
+        if !matches!(state, "pending" | "active" | "done") {
+            return Err(format!("state `{state}` is not pending, active or done"));
+        }
+        out.push(serde_json::json!({"title": title, "state": state}));
+    }
+    Ok(serde_json::json!({"items": out}))
+}
+
 /// `ui.propose_task`: a card the person can start as a side task. The id
 /// lets the card remember whether it was started or dismissed.
 pub fn task(args: &serde_json::Value) -> std::result::Result<serde_json::Value, String> {
@@ -348,6 +384,15 @@ mod reply_tests {
             &json!({"replies": [{"label": "a"}, {"label": "b"}, {"label": "c"}, {"label": "d"}]})
         )
         .is_err());
+    }
+
+    #[test]
+    fn a_checklist_keeps_titles_and_states_and_refuses_unknown_states() {
+        let t = todo(&json!({"items": [{"title": " Read the code ", "state": "done"}, {"title": "Fix it", "state": "active"}]})).unwrap();
+        assert_eq!(t["items"][0]["title"], "Read the code");
+        assert_eq!(t["items"][1]["state"], "active");
+        assert!(todo(&json!({"items": [{"title": "x", "state": "maybe"}]})).is_err());
+        assert!(todo(&json!({"items": []})).is_err());
     }
 
     #[test]

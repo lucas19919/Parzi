@@ -38,6 +38,10 @@ pub enum RunEvent {
     Notice {
         text: String,
     },
+    /// The session's checklist, as `todo.write` just set it.
+    Todo {
+        todo: serde_json::Value,
+    },
     Done {
         turns: u32,
     },
@@ -171,6 +175,7 @@ pub fn ui_event(session: &str, ev: &RunEvent) -> Option<serde_json::Value> {
             json!({ "kind": "tool_result", "session": session, "id": id, "name": name, "ok": ok, "ms": ms })
         }
         RunEvent::Notice { text } => json!({ "kind": "notice", "session": session, "text": text }),
+        RunEvent::Todo { todo } => json!({ "kind": "todo", "session": session, "todo": todo }),
         RunEvent::Context { used, limit } => {
             json!({ "kind": "context", "session": session, "used": used, "limit": limit })
         }

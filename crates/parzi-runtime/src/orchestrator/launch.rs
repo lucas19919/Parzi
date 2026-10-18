@@ -336,6 +336,7 @@ impl Orchestrator {
             "ui.show_artifact",
             "ui.offer_replies",
             "ui.propose_task",
+            "todo.write",
             "image.generate",
             "doc.read",
             "models.list",

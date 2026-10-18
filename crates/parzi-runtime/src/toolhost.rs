@@ -745,6 +745,7 @@ impl ToolHost {
                 | "ui.show_artifact"
                 | "ui.offer_replies"
                 | "ui.propose_task"
+                | "todo.write"
                 | "plan.read"
                 | "plan.write"
                 | "session.rename"
@@ -2119,6 +2120,14 @@ impl ToolHost {
                 Ok(payload) => {
                     widget("parzi-replies", payload);
                     (true, "the buttons show under your reply; a click arrives as the person's next message".into())
+                }
+                Err(e) => (false, e),
+            },
+            "todo.write" => match widgets::todo(args) {
+                Ok(payload) => {
+                    widget("parzi-todo", payload.clone());
+                    self.p.sink.emit(RunEvent::Todo { todo: payload });
+                    (true, "the checklist shows under your replies".into())
                 }
                 Err(e) => (false, e),
             },

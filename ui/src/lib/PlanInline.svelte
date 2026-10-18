@@ -39,9 +39,9 @@
   $: groups = plan ? groupItems(plan, views) : { open: [], closed: [] };
   $: items = groups.open.flatMap((g) => g.items);
   $: count = progress(views);
-  // This session, or a helper it started, works on an item.
-  $: involved = views.some((v) => v.sessions.some((s) => s.id === session));
-  $: shown = !!plan && !!project && (involved || force);
+  // The project's plan is its long-lived roadmap: it shows in a thread
+  // only when the person opens it (a session's own steps are its Tasks).
+  $: shown = !!plan && !!project && force;
   $: visible = shown;
 
   function quote(v: ItemView) {

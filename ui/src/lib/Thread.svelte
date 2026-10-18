@@ -19,6 +19,7 @@
   import { viewImage } from "./imageViewer";
   import ReplyButtons from "./ReplyButtons.svelte";
   import TaskCard from "./TaskCard.svelte";
+  import TodoList from "./TodoList.svelte";
   import { board, nextStep, setupWaits } from "./providerStore";
 
   // What the waiting prompt answers: the nearest assistant message above
@@ -50,6 +51,8 @@
   export let liveReasoning = "";
   export let liveTools: LiveTool[] = [];
   export let streaming = false;
+  // The checklist todo.write just set, ahead of the saved one.
+  export let liveTodo: unknown = null;
   export let approval: Approval | null = null;
   export let question: Question | null = null;
   // Something the agent needs from you: text, a file or a picture.
@@ -125,6 +128,11 @@
   const imageCache = new Map<string, Promise<string | null>>();
 
   $: items = buildItems(events);
+  // The session's checklist: the last one its agent wrote.
+  $: todo =
+    liveTodo ??
+    [...items].reverse().find((i): i is Extract<typeof i, { kind: "widget" }> => i.kind === "widget" && i.fence === "parzi-todo")?.payload ??
+    null;
   // Offered replies stand only until the next message: the latest offer,
   // with nothing said after it.
   $: replyAt = (() => {
@@ -488,7 +496,7 @@ ${e.text}` : e.text;
 
 <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
 <div class="thread-col" on:click={onClick}>
-  {#each items as item, idx (item.key)}
+  {#each items as item (item.key)}
     {#if item.kind === "user"}
       {@const images = attachedImages(item.text)}
       {@const said = splitQuotes(stripMarker(item.text))}
@@ -597,9 +605,9 @@ ${e.text}` : e.text;
       </div>
     {:else if item.kind === "widget"}
       {#if item.fence === "parzi-replies"}
-        {#if !streaming && idx === replyAt}
-          <ReplyButtons payload={item.payload} on:reply={(e) => dispatch("reply", e.detail)} />
-        {/if}
+        <!-- The latest offer is drawn last, after the checklist. -->
+      {:else if item.fence === "parzi-todo"}
+        <!-- Drawn once, as it stands now, at the end of the thread. -->
       {:else if item.fence === "parzi-task"}
         <TaskCard payload={item.payload} on:start={(e) => dispatch("startTask", e.detail)} on:open={(e) => dispatch("openSession", e.detail)} />
       {:else if item.fence === "parzi-widget"}
@@ -643,6 +651,13 @@ ${e.text}` : e.text;
   {/each}
 
   <!-- The plan checklist, after the conversation and before what waits on you. -->
+  {#if todo}<TodoList {todo} working={streaming} />{/if}
+  {#if !streaming && replyAt >= 0}
+    {@const offer = items[replyAt]}
+    {#if offer.kind === "widget"}
+      <ReplyButtons payload={offer.payload} on:reply={(e) => dispatch("reply", e.detail)} />
+    {/if}
+  {/if}
   <slot />
 
   {#if approval}

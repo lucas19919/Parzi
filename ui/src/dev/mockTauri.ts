@@ -261,6 +261,11 @@ function transcript() {
     out.push({ kind: "assistant", text: ANSWER, done: true });
     if (last) {
       out.push({ kind: "assistant", text: VIZ_ANSWER, done: true });
+      out.push({
+        kind: "widget",
+        fence: "parzi-todo",
+        payload: { items: [{ title: "Find where typing stalls", state: "done" }, { title: "Cache the markdown head", state: "done" }, { title: "Check the thread at 300 turns", state: "active" }, { title: "Run the UI tests", state: "pending" }] },
+      });
       // What an agent offers at the end of a turn: a side task and replies.
       out.push({
         kind: "widget",

@@ -320,6 +320,29 @@ fn ui_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
+            name: "todo.write".into(),
+            description: "This session's checklist, shown live under your replies: for work of three steps or more. Send the whole list each time (it replaces the last one): each item a short imperative title and a state, pending, active or done. Keep one item active while you work, mark each done as it is, and finish with every item done or removed. It is this session's own list; a project's long-lived plan is plan.write.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": "string", "description": "a short imperative, under 80 characters"},
+                                "state": {"type": "string", "enum": ["pending", "active", "done"]},
+                            },
+                            "required": ["title", "state"],
+                        },
+                    },
+                },
+                "required": ["items"],
+            }),
+        },
+        ToolDef {
             name: "ui.offer_replies".into(),
             description: "End a turn that leaves the person a decision with one to three reply buttons under your reply: a go-ahead, a choice between two ways, approve or not. Call it last, after your final text. Labels are one to four words (\"Release 0.1.36\", \"Not yet\"); your recommendation goes first. A click sends its message (or the label) as the person's reply. Optional question: the decision in one short line. Skip it when nothing waits on them, and never for questions you need answered mid-turn (that is ask.user).".into(),
             schema: serde_json::json!({
@@ -362,7 +385,11 @@ fn ui_defs() -> Vec<ToolDef> {
 pub(crate) fn is_ui_tool(name: &str) -> bool {
     matches!(
         name,
-        "ui.show_markdown" | "ui.show_artifact" | "ui.offer_replies" | "ui.propose_task"
+        "ui.show_markdown"
+            | "ui.show_artifact"
+            | "ui.offer_replies"
+            | "ui.propose_task"
+            | "todo.write"
     )
 }
 

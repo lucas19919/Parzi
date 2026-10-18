@@ -74,6 +74,10 @@ pub(crate) enum UiEvent {
         session: String,
         text: String,
     },
+    Todo {
+        session: String,
+        todo: serde_json::Value,
+    },
     Context {
         session: String,
         used: u64,
@@ -344,6 +348,7 @@ fn ui_from_run(session: String, ev: RunEvent) -> Option<UiEvent> {
             ms,
         },
         RunEvent::Notice { text } => UiEvent::Notice { session, text },
+        RunEvent::Todo { todo } => UiEvent::Todo { session, todo },
         RunEvent::Context { used, limit } => UiEvent::Context {
             session,
             used,

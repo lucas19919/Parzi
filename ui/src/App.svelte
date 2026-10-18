@@ -95,6 +95,7 @@
 
   let live = "";
   let liveReasoning = "";
+  let liveTodo: unknown = null;
   let liveTools: LiveTool[] = [];
   let pending = "";
   let revealing = 0;
@@ -394,6 +395,7 @@
     pending = "";
     live = "";
     liveReasoning = "";
+    liveTodo = null;
     liveTools = [];
   }
 
@@ -1320,6 +1322,8 @@
       if (!revealing) revealing = requestAnimationFrame(revealLive);
     } else if (e.kind === "reasoning") {
       liveReasoning += e.text;
+    } else if (e.kind === "todo") {
+      liveTodo = e.todo;
     } else if (e.kind === "tool_call") {
       if (!liveTools.some((t) => t.id === e.id)) {
         liveTools = [...liveTools, { id: e.id, name: e.name, label: e.label || e.name, running: true, ok: true, ms: 0 }];
@@ -1649,6 +1653,7 @@
                   {events}
                   liveText={live}
                   {liveReasoning}
+                {liveTodo}
                   {liveTools}
                   {approval}
                   question={openQuestion}

@@ -111,6 +111,7 @@ export interface AgentRequest {
 export type UiEvent =
   | { kind: "text"; session: string; text: string }
   | { kind: "reasoning"; session: string; text: string }
+  | { kind: "todo"; session: string; todo: unknown }
   | { kind: "tool_call"; session: string; id: string; name: string; label: string }
   | { kind: "tool_result"; session: string; id: string; name: string; ok: boolean; ms: number }
   | { kind: "notice"; session: string; text: string }
