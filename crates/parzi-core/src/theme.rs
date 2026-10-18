@@ -77,34 +77,40 @@ fn d_mono_font() -> String {
 fn d_mono_size() -> u32 {
     13
 }
-// The default look: slate. Cool, quiet greys with a pale slate accent, so
-// nothing glows.
+// The default look: graphite. Neutral near-black, soft white text and a
+// plain grey for the quiet parts; no tint, so nothing glows.
 fn c_sidebar() -> String {
-    "#0F1217".into()
+    "#0F0F0F".into()
 }
 fn c_stage() -> String {
-    "#14181E".into()
+    "#161616".into()
 }
 fn c_accent() -> String {
-    "#CBD5E1".into()
+    "#E8E8E8".into()
 }
 fn c_text() -> String {
-    "#E2E8F0".into()
+    "#ECECEC".into()
 }
 fn c_text_dim() -> String {
-    "#94A3B8".into()
+    "#9B9B9B".into()
 }
 fn c_bar() -> String {
-    "#1A1F26".into()
+    "#1C1C1C".into()
 }
 fn c_border() -> String {
-    "#283039".into()
+    "#2A2A2A".into()
 }
 
-/// The default before slate, in the order of `ColorTheme`'s fields. A saved
-/// theme that is still exactly this was never chosen: it moves to the new one.
-const OLD_DEFAULT: [&str; 7] = [
-    "#07070B", "#0B0B10", "#E6E8EE", "#EDEDF2", "#9AA0AE", "#0E0E14", "#20232C",
+/// Earlier defaults, in the order of `ColorTheme`'s fields. A saved theme
+/// still exactly one of these was never chosen: it moves to the new one.
+const OLD_DEFAULTS: [[&str; 7]; 2] = [
+    [
+        "#07070B", "#0B0B10", "#E6E8EE", "#EDEDF2", "#9AA0AE", "#0E0E14", "#20232C",
+    ],
+    // Slate, the default of 0.1.33 to 0.1.36 (still a theme to pick).
+    [
+        "#0F1217", "#14181E", "#CBD5E1", "#E2E8F0", "#94A3B8", "#1A1F26", "#283039",
+    ],
 ];
 
 impl ColorTheme {
@@ -118,9 +124,9 @@ impl ColorTheme {
             &self.bar,
             &self.border,
         ];
-        mine.iter()
-            .zip(OLD_DEFAULT)
-            .all(|(a, b)| a.eq_ignore_ascii_case(b))
+        OLD_DEFAULTS
+            .iter()
+            .any(|old| mine.iter().zip(old).all(|(a, b)| a.eq_ignore_ascii_case(b)))
     }
 }
 fn d_bg_image() -> String {
@@ -751,12 +757,12 @@ pub fn extract_palette(path: &std::path::Path) -> Result<Palette> {
                 0.0
             };
             if sat < 0.18 {
-                [0xCB, 0xD5, 0xE1]
+                [0xE8, 0xE8, 0xE8]
             } else {
                 rgb
             }
         }
-        None => [0xCB, 0xD5, 0xE1],
+        None => [0xE8, 0xE8, 0xE8],
     };
     Ok(Palette {
         accent: hex(accent[0], accent[1], accent[2]),
@@ -789,7 +795,7 @@ mod css_tests {
         let css = Theme::default().to_css_vars();
         assert!(css.contains("--font:\"Inter\""));
         assert!(css.contains("--bg-dim:0.66"));
-        assert!(css.contains("--accent:#CBD5E1"));
+        assert!(css.contains("--accent:#E8E8E8"));
         assert!(!css.contains("glass"));
         assert!(!css.contains("--parzi-"));
         let mut t = Theme::default();
@@ -878,7 +884,7 @@ mod palette_tests {
         let p = dir.path().join("gray.png");
         solid_png(&p, [120, 120, 120]);
         let pal = extract_palette(&p).unwrap();
-        assert_eq!(pal.accent, "#CBD5E1");
+        assert_eq!(pal.accent, "#E8E8E8");
         assert_eq!(pal.average, "#787878");
     }
 
@@ -900,6 +906,17 @@ mod palette_tests {
         old.accent = "#7AA2F7".into();
         assert!(!old.is_old_default(), "a changed accent is a choice");
         assert!(!super::ColorTheme::default().is_old_default());
+        // Slate, the default before graphite, moves on too.
+        let slate = super::ColorTheme {
+            sidebar: "#0F1217".into(),
+            stage: "#14181E".into(),
+            accent: "#CBD5E1".into(),
+            text: "#E2E8F0".into(),
+            text_dim: "#94A3B8".into(),
+            bar: "#1A1F26".into(),
+            border: "#283039".into(),
+        };
+        assert!(slate.is_old_default());
     }
 
     #[test]

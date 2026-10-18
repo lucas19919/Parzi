@@ -21,10 +21,10 @@
 }
 
 :root {
-  --bg: #14181e;
-  --text: #e2e8f0;
-  --muted: #94a3b8;
-  --accent: #cbd5e1;
+  --bg: #161616;
+  --text: #ececec;
+  --muted: #9b9b9b;
+  --accent: #e8e8e8;
   --panel: color-mix(in srgb, var(--text) 6%, var(--bg));
   --line: color-mix(in srgb, var(--text) 12%, var(--bg));
   /* Decoration only (dots, rules, idle icons). Text is --text or --muted:
@@ -44,7 +44,8 @@
   /* Surfaces are matte: a tint, a blur and a quiet edge. No rim light, no
      inset highlights: over a wallpaper those read as shine. */
   --glass-bg: color-mix(in srgb, var(--panel) 72%, transparent);
-  --glass-bg-solid: color-mix(in srgb, var(--panel) 90%, transparent);
+  /* Nearly opaque: a wallpaper must not tint the text a session is read on. */
+  --glass-bg-solid: color-mix(in srgb, var(--panel) 97%, transparent);
   --glass-strong-bg: color-mix(in srgb, var(--panel) 82%, transparent);
   --glass-blur: blur(28px) saturate(1.05);
   --glass-strong-blur: blur(32px) saturate(1.05);

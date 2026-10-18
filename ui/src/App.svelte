@@ -566,16 +566,13 @@
     omnibar?.focus();
   }
 
-  // A new session: a draft tab beside this one (an empty draft already
-  // open is reused). It becomes the session when you send.
+  // A new session: a tab of its own beside this one. It becomes the
+  // session when you send.
   function newSession() {
-    let draft = tabs.find(emptyDraft);
-    if (!draft) {
-      draft = { ...sessionTab(), cwd: folder || undefined };
-      draft.composer = ensureComposer(draft.composer);
-      const idx = tabs.findIndex((x) => x.id === activeId);
-      tabs = [...tabs.slice(0, idx + 1), draft, ...tabs.slice(idx + 1)];
-    }
+    const draft: Tab = { ...sessionTab(), cwd: folder || undefined };
+    draft.composer = ensureComposer(draft.composer);
+    const idx = tabs.findIndex((x) => x.id === activeId);
+    tabs = [...tabs.slice(0, idx + 1), draft, ...tabs.slice(idx + 1)];
     selectTab(draft.id);
     void tick().then(() => omnibar?.focus());
   }
@@ -2029,7 +2026,8 @@
     left: 50%;
     bottom: 46%;
     z-index: 20;
-    width: min(680px, calc(90% - 2 * var(--shift, 0px)));
+    /* One width everywhere: as wide as a session's text column. */
+    width: min(var(--read), calc(100% - 64px - 2 * var(--shift, 0px)));
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
     transition: width 300ms ease;
   }

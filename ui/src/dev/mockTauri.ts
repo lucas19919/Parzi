@@ -335,7 +335,7 @@ const config = {
 
 const theme = {
   font: { family: "Inter", size: 14, mono: "JetBrains Mono", mono_size: 13 },
-  colors: { sidebar: "#0f1217", stage: "#14181e", accent: "#cbd5e1", text: "#e2e8f0", text_dim: "#94a3b8", bar: "#1a1f26", border: "#283039" },
+  colors: { sidebar: "#0f0f0f", stage: "#161616", accent: "#e8e8e8", text: "#ececec", text_dim: "#9b9b9b", bar: "#1c1c1c", border: "#2a2a2a" },
   background: { image: params.get("bg") ? "backgrounds/mock.png" : "", dim: 0.66, vignette: 0.5, blur: 0, grain: 0.16, grain_size: 32, height: 1 },
 };
 

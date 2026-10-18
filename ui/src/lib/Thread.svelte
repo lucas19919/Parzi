@@ -151,6 +151,21 @@
   const imageCache = new Map<string, Promise<string | null>>();
 
   $: items = buildItems(events);
+  // A turn's last reply carries its actions (copy, save, fork); the replies
+  // before it in the same turn stay close together, as they read.
+  $: turnEnds = (() => {
+    const ends = new Set<string>();
+    let last: string | null = null;
+    for (const it of items) {
+      if (it.kind === "assistant") last = it.key;
+      else if (it.kind === "user") {
+        if (last) ends.add(last);
+        last = null;
+      }
+    }
+    if (last && !streaming) ends.add(last);
+    return ends;
+  })();
   // Each artifact's newest version: older ones fold to a line.
   $: newest = (() => {
     const m = new Map<string, number>();
@@ -604,6 +619,7 @@ ${e.text}` : e.text;
             {/if}
           {/each}
         </div>
+        {#if turnEnds.has(item.key)}
         <div class="actions">
           {#if when(item.at)}<span class="when">{when(item.at)}</span>{/if}
           <button class="copy" use:tooltip={"Copy"} on:click={() => copy(item.text, item.key)}>
@@ -616,6 +632,7 @@ ${e.text}` : e.text;
             <Icon name="fork" />
           </button>
         </div>
+        {/if}
       </div>
     {:else if item.kind === "steps"}
       <Steps reasoning={item.reasoning} tools={item.tools} />
@@ -773,7 +790,7 @@ ${e.text}` : e.text;
   .thread-col {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
     width: 100%;
     max-width: calc(var(--read) + 48px);
     margin: 0 auto;
@@ -785,6 +802,10 @@ ${e.text}` : e.text;
   }
   .row.user {
     align-items: flex-end;
+  }
+  /* A new turn stands a little apart from the last one. */
+  .row.user:not(:first-child) {
+    margin-top: 14px;
   }
   .side-from {
     margin-bottom: 4px;

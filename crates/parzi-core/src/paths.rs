@@ -182,6 +182,20 @@ text_dim = \"#9A9AA2\"\nbar = \"#1F1F23\"\nborder = \"#2E2E35\"\n\n\
 [background]\nimage = \"\"\ndim = 0.60\nvignette = 0.40\nblur = 0.0\n",
     ),
     (
+        "graphite",
+        "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+[colors]\nsidebar = \"#0F0F0F\"\nstage = \"#161616\"\naccent = \"#E8E8E8\"\ntext = \"#ECECEC\"\n\
+text_dim = \"#9B9B9B\"\nbar = \"#1C1C1C\"\nborder = \"#2A2A2A\"\n\n\
+[background]\nimage = \"\"\ndim = 0.66\nvignette = 0.50\nblur = 0.0\n",
+    ),
+    (
+        "slate",
+        "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+[colors]\nsidebar = \"#0F1217\"\nstage = \"#14181E\"\naccent = \"#CBD5E1\"\ntext = \"#E2E8F0\"\n\
+text_dim = \"#94A3B8\"\nbar = \"#1A1F26\"\nborder = \"#283039\"\n\n\
+[background]\nimage = \"\"\ndim = 0.66\nvignette = 0.50\nblur = 0.0\n",
+    ),
+    (
         "light",
         "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
 [colors]\nsidebar = \"#F2F3F5\"\nstage = \"#FFFFFF\"\naccent = \"#4F5EE0\"\ntext = \"#1A1D24\"\n\
