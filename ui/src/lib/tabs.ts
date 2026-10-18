@@ -15,6 +15,9 @@ export interface TabComposerState {
   remote?: boolean;
   // The server folder for that new session ("" = scratch there).
   remoteCwd?: string;
+  // A new session here gets a worktree of its own from this branch;
+  // empty or missing: it works in the folder as it is.
+  worktree?: string;
 }
 
 function defaultComposer(): TabComposerState {

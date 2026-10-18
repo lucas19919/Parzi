@@ -197,6 +197,8 @@ interface SendArgs {
   quotes?: { project: string; id: string }[];
   // A side task: the session it was started from, which it lists under.
   parent?: string | null;
+  // A new session in a worktree of its own, made from this branch.
+  worktree?: string;
 }
 
 export type ComposerMode = "search" | "build" | "work";
@@ -221,6 +223,7 @@ export const api = {
       remote: a.remote ?? false,
       quotes: a.quotes ?? [],
       parent: a.parent ?? null,
+      worktree: a.worktree || null,
     }),
   saveAnswer: (content: string) => invoke<NoteMeta>("brain_save_answer", { content }),
   renameThread: (id: string, title: string) => invoke<void>("rename_thread", { id, title }),
@@ -239,6 +242,7 @@ export const api = {
   pickFolder: (start?: string) => invoke<string | null>("pick_folder", { start: start || null }),
   listFiles: (root: string, query: string) => invoke<string[]>("list_files", { root, query }),
   gitBranch: (cwd: string) => invoke<string>("git_branch", { cwd }),
+  gitBranches: (cwd: string) => invoke<{ current: string; all: string[] }>("git_branches", { cwd }),
   gitStatus: (cwd: string) => invoke<GitStatus | null>("git_status", { cwd }),
   stageImage: (name: string, base64Data: string) => invoke<string>("stage_image", { name, base64Data }),
   readImageDataUrl: (path: string, cwd: string) => invoke<string>("read_image_data_url", { path, cwd }),

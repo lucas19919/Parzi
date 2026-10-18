@@ -97,6 +97,33 @@
   let permOpen = false;
   let permStyle = "";
   let projBtn: HTMLButtonElement | null = null;
+  // Where a new session works: the folder as it is (""), or a worktree of
+  // its own made from this branch.
+  export let worktree = "";
+  let branchBtn: HTMLButtonElement | null = null;
+  let branchOpen = false;
+  let branchStyle = "";
+  let branchList: string[] = [];
+  // Another folder, another repository: back to working in it as it is.
+  let worktreeFor = folder;
+  $: if (folder !== worktreeFor) {
+    worktreeFor = folder;
+    worktree = "";
+  }
+
+  async function toggleBranch() {
+    if (folderLocked) return;
+    branchOpen = !branchOpen;
+    if (!branchOpen || !branchBtn) return;
+    branchStyle = placeAbove(branchBtn, 280);
+    branchList = (await api.gitBranches(folder).catch(() => ({ current: branch, all: [] as string[] }))).all;
+  }
+
+  function pickBranch(base: string) {
+    worktree = base;
+    branchOpen = false;
+    textarea?.focus();
+  }
   let projOpen = false;
   let projStyle = "";
   let projects: Project[] = [];
@@ -511,23 +538,43 @@
       {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
     </button>
   {:else}
-    <button
-      bind:this={projBtn}
-      class="proj"
-      class:set={!!project}
-      class:folded={web}
-      aria-hidden={web || undefined}
-      tabindex={web ? -1 : undefined}
-      aria-haspopup={folderLocked ? undefined : "menu"}
-      aria-expanded={folderLocked ? undefined : projOpen}
-      on:click|stopPropagation={toggleProject}
-      use:tooltip={project ? `Project ${project.title}` : folder ? folder : "Pick a folder to work in"}
-    >
-      <Icon name={project || !folder ? "project" : "folder"} size={12} />
-      <span class="proj-title">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
-      {#if branch}<span class="proj-branch">{branch}</span>{/if}
-      {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
-    </button>
+    <div class="tops">
+      <button
+        bind:this={projBtn}
+        class="proj"
+        class:set={!!project}
+        class:folded={web}
+        aria-hidden={web || undefined}
+        tabindex={web ? -1 : undefined}
+        aria-haspopup={folderLocked ? undefined : "menu"}
+        aria-expanded={folderLocked ? undefined : projOpen}
+        on:click|stopPropagation={toggleProject}
+        use:tooltip={project ? `Project ${project.title}` : folder ? folder : "Pick a folder to work in"}
+      >
+        <Icon name={project || !folder ? "project" : "folder"} size={12} />
+        <span class="proj-title">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
+        {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
+      </button>
+      {#if folder && branch}
+        <!-- Which branch: the folder as it is, or a worktree of its own. -->
+        <button
+          bind:this={branchBtn}
+          class="proj branch-tab"
+          class:folded={web}
+          class:fresh={!!worktree}
+          aria-hidden={web || undefined}
+          tabindex={web ? -1 : undefined}
+          aria-haspopup={folderLocked ? undefined : "menu"}
+          aria-expanded={folderLocked ? undefined : branchOpen}
+          on:click|stopPropagation={toggleBranch}
+          use:tooltip={folderLocked ? `On ${branch}` : worktree ? `A worktree of its own, from ${worktree}` : `In the folder, on ${branch}`}
+        >
+          <Icon name="branch" size={12} />
+          <span class="proj-branch">{worktree && !folderLocked ? `new from ${worktree}` : branch}</span>
+          {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
+        </button>
+      {/if}
+    </div>
   {/if}
 
   <div class="box" class:web role="group" aria-label="Composer" on:dragover|preventDefault on:drop|preventDefault={onDrop}>
@@ -697,6 +744,26 @@
       >
         <Icon name="brain" /><span class="name">Manage projects</span>
       </button>
+    </div>
+  {/if}
+
+  {#if branchOpen}
+    <div class="menu-pop" data-ui-list style={branchStyle} use:popover={{ anchor: branchBtn, close: () => (branchOpen = false) }} transition:fly={{ y: branchStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
+      <button class="opt" class:on={!worktree} on:click={() => pickBranch("")}>
+        <Icon name="folder" />
+        <span class="name">This folder</span>
+        <span class="count">{branch}</span>
+      </button>
+      <div class="sep" />
+      <p class="pop-head">New worktree from</p>
+      {#each branchList as b (b)}
+        <button class="opt" class:on={worktree === b} on:click={() => pickBranch(b)}>
+          <Icon name="branch" />
+          <span class="name truncate">{b}</span>
+        </button>
+      {:else}
+        <p class="pop-empty">No branches found.</p>
+      {/each}
     </div>
   {/if}
 
@@ -1243,6 +1310,25 @@
   }
   .pop-empty.err {
     color: var(--bad);
+  }
+  .pop-head {
+    margin: 0;
+    padding: 4px 10px 2px;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    color: var(--muted);
+  }
+  /* The project and branch tabs sit side by side on the box's top edge. */
+  .tops {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+  }
+  .proj.branch-tab {
+    margin-left: 0;
+  }
+  .proj.branch-tab.fresh :global(svg:first-child) {
+    color: var(--accent);
   }
   .sep {
     height: 1px;

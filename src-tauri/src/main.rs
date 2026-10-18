@@ -34,6 +34,7 @@ mod sessions;
 mod settings;
 mod siteprefs;
 mod vault;
+mod worktree;
 
 pub(crate) type Pending = Arc<Mutex<HashMap<String, (String, oneshot::Sender<Approval>)>>>;
 pub(crate) type PendingQuestions = Arc<Mutex<HashMap<String, (String, oneshot::Sender<String>)>>>;
@@ -702,6 +703,7 @@ fn main() {
             settings::context_parts,
             settings::shell_jobs,
             sessions::rewind_thread,
+            files::git_branches,
             settings::shell_kill,
             vault::vault_unlock,
             vault::vault_lock,

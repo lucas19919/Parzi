@@ -78,6 +78,7 @@ pub async fn send_message(
     remote: Option<bool>,
     quotes: Option<Vec<crate::plans::Quote>>,
     parent: Option<String>,
+    worktree: Option<String>,
 ) -> Result<String, String> {
     let quoted = match quotes.filter(|q| !q.is_empty()) {
         Some(q) => {
@@ -161,6 +162,21 @@ pub async fn send_message(
         }
         None => {
             let project = project_for(&cwd).await;
+            // Its own worktree, from the branch the person picked: the
+            // session works there, never in their checkout.
+            let cwd = match worktree.filter(|b| !b.trim().is_empty() && !cwd.is_empty()) {
+                Some(base) => {
+                    let (repo, about) = (std::path::PathBuf::from(&cwd), prompt.clone());
+                    tauri::async_runtime::spawn_blocking(move || {
+                        crate::worktree::create(&repo, base.trim(), &about)
+                    })
+                    .await
+                    .map_err(|e| e.to_string())??
+                    .display()
+                    .to_string()
+                }
+                None => cwd.clone(),
+            };
             state
                 .orch
                 .spawn(
@@ -386,7 +402,29 @@ pub async fn delete_thread(
             .unwrap_or(1);
         return Ok(usize::try_from(removed).unwrap_or(1));
     }
-    state.orch.delete_thread(&id).await.map_err(|e| e.to_string())
+    let cwd = state.orch.store().get(&id).map(|m| m.cwd).unwrap_or_default();
+    let removed = state
+        .orch
+        .delete_thread(&id)
+        .await
+        .map_err(|e| e.to_string())?;
+    // A worktree goes with the last session working in it.
+    if !cwd.is_empty() {
+        let store = state.orch.store().clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let used = store
+                .list()
+                .unwrap_or_default()
+                .iter()
+                .any(|m| m.cwd == cwd);
+            if !used {
+                if let Some(note) = crate::worktree::remove(std::path::Path::new(&cwd)) {
+                    tracing::warn!("worktree {note}");
+                }
+            }
+        });
+    }
+    Ok(removed)
 }
 
 #[tauri::command]

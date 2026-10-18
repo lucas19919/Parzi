@@ -826,6 +826,8 @@
         lane,
         remote: remoteOn,
         quotes: quotes.map((q) => ({ project: q.project, id: q.id })),
+        // A brand-new session only: one going on keeps where it works.
+        worktree: !target.sessionId && !remoteOn ? draft.worktree : undefined,
       });
       running = new Set(running).add(sid);
       rememberModel(draft.model, draft.effort);
@@ -1787,6 +1789,7 @@
           bind:mode={comp.mode}
           bind:attachments={comp.attachments}
           bind:quotes={comp.quotes}
+          bind:worktree={comp.worktree}
           {folder}
           folderLocked={!!tab.sessionId}
           {branch}

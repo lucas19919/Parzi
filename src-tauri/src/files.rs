@@ -277,6 +277,23 @@ pub async fn git_branch(state: State<'_, AppState>, cwd: String) -> Result<Strin
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
+/// A folder's local branches, for the composer's branch menu.
+#[tauri::command]
+pub async fn git_branches(
+    state: State<'_, AppState>,
+    cwd: String,
+) -> Result<crate::worktree::Branches, String> {
+    if cwd.is_empty() {
+        return Ok(crate::worktree::Branches::default());
+    }
+    let orch = state.orch.clone();
+    off_thread(move || {
+        let dir = confined_path(orch.store(), &cwd)?;
+        Ok(crate::worktree::branches(&dir))
+    })
+    .await
+}
+
 /// What Home's Git card shows for a folder.
 #[derive(serde::Serialize, Default, Debug, PartialEq)]
 pub struct GitStatus {
