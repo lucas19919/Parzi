@@ -338,6 +338,7 @@ impl Orchestrator {
             "ui.propose_task",
             "todo.write",
             "image.generate",
+            "github.issue",
             "doc.read",
             "models.list",
             "ask.user",

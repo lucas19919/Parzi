@@ -28,6 +28,7 @@
     brain: void;
     history: void;
     setup: void;
+    report: void;
     openSession: { id: string };
   }>();
 
@@ -44,6 +45,7 @@
     { label: "Brain", key: "Ctrl+B", icon: "brain", run: () => dispatch("brain") },
     { label: "Settings", key: "Ctrl+,", icon: "settings", run: () => dispatch("settings") },
     { label: "Set up Parzi", key: "", icon: "spark", run: () => dispatch("setup") },
+    { label: "Report a problem", key: "", icon: "alert", run: () => dispatch("report") },
   ] as const;
 
   function onDocClick(e: MouseEvent) {

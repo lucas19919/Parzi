@@ -1176,6 +1176,26 @@
     }
   }
 
+  // A new issue on Parzi's GitHub, the version and system already in it.
+  async function reportProblem() {
+    const version = await api.appVersion().catch(() => "");
+    const body = [
+      "**What happened**",
+      "",
+      "",
+      "**What you did just before**",
+      "",
+      "",
+      "**What you expected**",
+      "",
+      "",
+      "---",
+      `Parzi ${version || "?"} · ${navigator.userAgent.includes("Windows") ? "Windows" : navigator.userAgent.includes("Mac") ? "macOS" : "Linux"}`,
+    ].join("\n");
+    const url = `https://github.com/lucas19919/Parzi/issues/new?body=${encodeURIComponent(body)}`;
+    await api.openConfirmedUrl(url).catch(toastError);
+  }
+
   // A failed turn's "Try again": the last message goes out once more.
   function retryLast() {
     const last = [...events].reverse().find((e) => e.kind === "user");
@@ -1599,6 +1619,7 @@
       on:brain={openBrain}
       on:history={() => openHistory()}
       on:setup={openSetup}
+      on:report={reportProblem}
       on:openSession={(e) => openSession(e.detail.id)}
     />
   {/if}

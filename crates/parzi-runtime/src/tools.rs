@@ -265,6 +265,7 @@ pub(crate) fn is_parzi_tool(name: &str) -> bool {
         || is_session_tool(name)
         || is_lane_tool(name)
         || is_image_tool(name)
+        || is_github_tool(name)
         || is_doc_tool(name)
         || is_models_tool(name)
         || is_question_tool(name)
@@ -283,6 +284,7 @@ pub fn all_defs() -> Vec<ToolDef> {
     d.extend(session_defs());
     d.extend(lane_defs());
     d.extend(image_defs());
+    d.extend(github_defs());
     d.extend(doc_defs());
     d.extend(team_defs());
     d.extend(question_defs());
@@ -706,6 +708,27 @@ pub(crate) fn is_lane_tool(name: &str) -> bool {
 
 pub(crate) fn is_image_tool(name: &str) -> bool {
     matches!(name, "image.generate")
+}
+
+pub(crate) fn is_github_tool(name: &str) -> bool {
+    matches!(name, "github.issue")
+}
+
+fn github_defs() -> Vec<ToolDef> {
+    vec![ToolDef {
+        name: "github.issue".into(),
+        description: "File a GitHub issue, through the person's GitHub CLI (gh). They approve each one first: it is public. repo is owner/name (Parzi's own bugs: lucas19919/Parzi); without it, the repository of this session's folder. The body is markdown: what happened, the steps, what was expected, and the version. Images cannot be attached here: describe them, and name their files so the person can drop them into the issue. Answers the issue's URL, or, when gh is missing or signed out, a prefilled link to open for the person with browser.open.".into(),
+        schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "body": {"type": "string", "description": "markdown"},
+                "repo": {"type": "string", "description": "owner/name"},
+                "labels": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["title", "body"],
+        }),
+    }]
 }
 
 pub(crate) fn is_doc_tool(name: &str) -> bool {
@@ -1215,6 +1238,10 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             one_line(&str_arg("text").unwrap_or_default(), 60)
         ),
         "desk.screenshot" => "Taking a screenshot of the window".into(),
+        "github.issue" => format!(
+            "Filing an issue: {}",
+            one_line(&str_arg("title").unwrap_or_default(), 60)
+        ),
         "image.generate" => format!(
             "Drawing {}",
             one_line(&str_arg("prompt").unwrap_or_else(|| "an image".into()), 60)
@@ -1354,6 +1381,7 @@ pub(crate) fn from_mcp(tool: &str) -> String {
 
 pub fn display_name(name: &str) -> String {
     name.strip_prefix("mcp__parzi__")
+        .or_else(|| name.strip_prefix("parzi__"))
         .or_else(|| name.strip_prefix("parzi."))
         .or_else(|| name.strip_prefix("parzi_"))
         .map_or_else(|| name.to_string(), from_mcp)
@@ -1469,6 +1497,9 @@ mod tests {
         assert_eq!(all.len(), DESK_TOOLS.len());
         assert!(all.iter().all(|n| DESK_TOOLS.contains(&n.as_str())));
         assert_eq!(display_name("mcp__parzi__desk_notify"), "desk.notify");
+        // Grok names them inside its own use_tool.
+        assert_eq!(display_name("parzi__ui_propose_task"), "ui.propose_task");
+        assert_eq!(display_name("search_tool"), "search_tool");
     }
 
     #[test]

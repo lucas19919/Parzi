@@ -17,9 +17,9 @@ use tokio_util::sync::CancellationToken;
 use crate::handler::{HarnessBridge, RunEvent, RunSink, SpawnSpec};
 use crate::tools::{
     category, display_name, edit_paths, is_brain_tool, is_browser_tool, is_desk_tool, is_doc_tool,
-    is_image_tool, is_lane_tool, is_models_tool, is_plan_tool, is_project_tool, is_question_tool,
-    is_session_tool, is_shell_tool, is_ui_tool, window_tool_offered, Approval, ApprovalMode,
-    Approver, AskRequest, Asker, ToolCallInfo, ToolDef, ToolExecutor,
+    is_github_tool, is_image_tool, is_lane_tool, is_models_tool, is_plan_tool, is_project_tool,
+    is_question_tool, is_session_tool, is_shell_tool, is_ui_tool, window_tool_offered, Approval,
+    ApprovalMode, Approver, AskRequest, Asker, ToolCallInfo, ToolDef, ToolExecutor,
 };
 
 pub struct ToolHostParts {
@@ -911,6 +911,17 @@ impl ToolHost {
             }
             return self.execute_image(args).await;
         }
+        if is_github_tool(name) {
+            // It posts where anyone can read it: asked every time, unless
+            // the run is Full. A read-only lane never posts.
+            if self.p.mode == ApprovalMode::Deny || !self.p.tools.is_allowed(name) {
+                return denied(name);
+            }
+            if !self.p.full && !self.ask(id, name, args).await {
+                return denied(name);
+            }
+            return self.execute_github_issue(args).await;
+        }
         if is_question_tool(name) {
             if !self.p.tools.is_allowed(name) {
                 return denied(name);
@@ -1029,6 +1040,14 @@ impl ToolHost {
     async fn gate(&self, req: &PermissionRequest) -> PermissionDecision {
         let parzi = display_name(&req.tool);
         if parzi != req.tool {
+            return PermissionDecision::Allow;
+        }
+        // Grok calls every MCP tool through its own `use_tool`; one of
+        // Parzi's goes through, and Parzi's own rules judge the call itself.
+        let wrapped = (req.tool == "use_tool")
+            .then(|| req.input.get("tool_name").and_then(Value::as_str))
+            .flatten();
+        if wrapped.is_some_and(|t| display_name(t) != t) {
             return PermissionDecision::Allow;
         }
         let kind = category(&req.tool);
@@ -1396,6 +1415,93 @@ impl ToolHost {
             ));
         }
         lines.join("\n")
+    }
+
+    async fn execute_github_issue(&self, args: &Value) -> (bool, String) {
+        let text = |k: &str| {
+            args.get(k)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("")
+        };
+        let (title, body, repo) = (text("title"), text("body"), text("repo"));
+        if title.is_empty() {
+            return (false, "an issue needs a title".into());
+        }
+        // gh missing or signed out: a link that opens the form filled in.
+        let by_hand = |why: &str| {
+            if repo.is_empty() {
+                return (false, format!("{why}. Name the repo (owner/name) to get a link the person can file it from."));
+            }
+            let body = clip(body, 6000);
+            let url = format!(
+                "https://github.com/{repo}/issues/new?title={}&body={}",
+                url_encode(title),
+                url_encode(&body)
+            );
+            (
+                false,
+                format!("{why}. Open this for the person to file it themselves: {url}"),
+            )
+        };
+        let Some(gh) = parzi_providers::process::which("gh") else {
+            return by_hand("The GitHub CLI (gh) is not installed");
+        };
+        let file =
+            std::env::temp_dir().join(format!("parzi-issue-{}.md", uuid::Uuid::new_v4().simple()));
+        if let Err(e) = std::fs::write(&file, body) {
+            return (false, format!("could not write the issue's body: {e}"));
+        }
+        let mut cmd = tokio::process::Command::new(gh);
+        cmd.args(["issue", "create", "--title", title, "--body-file"])
+            .arg(&file)
+            .stdin(std::process::Stdio::null())
+            .kill_on_drop(true);
+        if !repo.is_empty() {
+            cmd.args(["--repo", repo]);
+        }
+        for l in args
+            .get("labels")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(l) = l.as_str().map(str::trim).filter(|l| !l.is_empty()) {
+                cmd.args(["--label", l]);
+            }
+        }
+        let cwd = Path::new(&self.p.tools.cwd);
+        if cwd.is_dir() {
+            cmd.current_dir(cwd);
+        }
+        #[cfg(windows)]
+        cmd.creation_flags(0x0800_0000);
+        let out = tokio::time::timeout(Duration::from_secs(60), cmd.output()).await;
+        let _ = std::fs::remove_file(&file);
+        let out = match out {
+            Ok(Ok(o)) => o,
+            Ok(Err(e)) => return (false, format!("gh did not run: {e}")),
+            Err(_) => {
+                return (
+                    false,
+                    "gh took over a minute; the issue may not exist".into(),
+                )
+            }
+        };
+        let said = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        if out.status.success() {
+            let url = said
+                .lines()
+                .rev()
+                .find(|l| l.starts_with("https://"))
+                .unwrap_or(&said);
+            return (true, format!("filed: {url}"));
+        }
+        if err.contains("auth login") || err.contains("not logged") {
+            return by_hand("The GitHub CLI (gh) is not signed in");
+        }
+        (false, format!("gh could not file it: {}", clip(&err, 600)))
     }
 
     async fn execute_image(&self, args: &Value) -> (bool, String) {
