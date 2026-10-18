@@ -1073,15 +1073,11 @@ impl ToolHost {
         }
         // The harness owns the shell: vendor-native shell tools are refused
         // wherever shell.* is offered.
-        const VENDOR_SHELL: &[&str] = &[
-            "Bash",
-            "bash",
-            "BashOutput",
-            "KillShell",
-            "shell",
-            "execute",
-            "run_command",
-        ];
+        // Claude Code's own shell is pointed at shell.exec: its refusal
+        // carries the reason, and it goes on with Parzi's. An ACP agent's
+        // terminal (Grok's, as kind "execute") gets only a bare "rejected"
+        // and ends its turn there, so it is judged like shell.exec below.
+        const VENDOR_SHELL: &[&str] = &["Bash", "bash", "BashOutput", "KillShell"];
         if VENDOR_SHELL.contains(&req.tool.as_str()) && self.p.tools.is_allowed("shell.exec") {
             return PermissionDecision::Deny("use shell.exec".into());
         }
@@ -1904,6 +1900,16 @@ impl ToolHost {
             .map(str::trim)
             .unwrap_or("");
         if raw.is_empty() {
+            return Ok(PathBuf::from(&self.p.tools.cwd));
+        }
+        // The session's folder itself (no path below it to name).
+        let same = |a: &str, b: &str| {
+            std::fs::canonicalize(a)
+                .ok()
+                .zip(std::fs::canonicalize(b).ok())
+                .is_some_and(|(a, b)| a == b)
+        };
+        if same(raw, &self.p.tools.cwd) {
             return Ok(PathBuf::from(&self.p.tools.cwd));
         }
         let rel = worktree_relative(&self.p.tools.cwd, raw)

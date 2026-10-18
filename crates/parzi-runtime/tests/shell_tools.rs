@@ -134,13 +134,19 @@ async fn workdir_outside_the_folder_is_refused() {
         .call("shell.exec", &json!({"cmd": "echo hi", "workdir": away}))
         .await;
     assert!(!ok, "outside the fence must not run: {out}");
-    assert!(out.contains("outside"), "{out}");
+    assert!(out.contains("outside"), "{out}"); // The folder itself, named in full, is inside.
+    let here = workdir();
+    let (ok, out) = h
+        .call("shell.exec", &json!({"cmd": "echo hi", "workdir": here}))
+        .await;
+    assert!(ok, "the session's own folder runs: {out}");
 }
 
 #[tokio::test]
 async fn vendor_shell_is_rerouted_not_carded() {
     let h = host(&workdir());
-    for tool in ["Bash", "bash", "shell", "execute", "run_command"] {
+    // Claude Code's shell is pointed at shell.exec (its refusal carries why).
+    for tool in ["Bash", "bash"] {
         let d = h
             .decide(PermissionRequest {
                 id: "req-1".into(),
@@ -157,6 +163,23 @@ async fn vendor_shell_is_rerouted_not_carded() {
         if let PermissionDecision::Deny(why) = d {
             assert!(why.contains("shell.exec"), "{tool}: {why}");
         }
+    } // An ACP agent's terminal gets a bare "rejected" and ends its turn:
+      // it is judged as shell.exec would be, never just turned away.
+    for tool in ["shell", "execute", "run_command"] {
+        let d = h
+            .decide(PermissionRequest {
+                id: "req-2".into(),
+                tool: tool.into(),
+                title: "run_terminal_command".into(),
+                input: json!({"command": "echo hi"}),
+                paths: vec![],
+            })
+            .await;
+        assert_ne!(
+            d,
+            PermissionDecision::Deny("use shell.exec".into()),
+            "{tool}"
+        );
     }
 }
 
