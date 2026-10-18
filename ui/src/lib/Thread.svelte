@@ -865,10 +865,14 @@ ${e.text}` : e.text;
     gap: 6px;
     margin-top: 6px;
   }
+  /* One tile height, whatever the picture's shape: a row of them lines
+     up. A click shows the whole picture. */
   .sent img {
     cursor: zoom-in;
-    max-width: 220px;
-    max-height: 160px;
+    height: 88px;
+    width: auto;
+    min-width: 88px;
+    max-width: 200px;
     object-fit: cover;
     border: 1px solid var(--line);
     border-radius: var(--radius);
