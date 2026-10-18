@@ -484,3 +484,56 @@ async fn grok_reaches_parzis_tools_through_its_use_tool() {
         PermissionDecision::Deny(_)
     ));
 }
+
+#[tokio::test]
+async fn its_own_scratch_folder_is_the_sessions_to_write_in() {
+    home("approval");
+    // Work refuses file writes: only the scratch folder is let through.
+    let store = parzi_core::store::SessionStore::open().unwrap();
+    let meta = store.create("scratch", "t", "work", "claude").unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let work = ToolHost::new(ToolHostParts {
+        session_id: meta.id.clone(),
+        lane: "work".into(),
+        mode: ApprovalMode::Ask,
+        edits_auto: false,
+        full: false,
+        cfg: ParziConfig::default(),
+        store,
+        tools: Arc::new(ToolExecutor {
+            cwd: std::env::temp_dir().display().to_string(),
+            mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
+            allowed: vec!["*".into()],
+        }),
+        approver: Arc::new(Allow),
+        asker: None,
+        shell: Arc::new(parzi_runtime::shell::ShellRegistry::new("test")),
+        harness: Some(Arc::new(NoHarness)),
+        sink: RunSink::new(&meta.id, tx, None),
+        cancel: tokio_util::sync::CancellationToken::new(),
+    });
+    let scratch = parzi_core::paths::scratch_dir(&meta.id).unwrap();
+    std::fs::create_dir_all(&scratch).unwrap();
+    let write = |path: String| PermissionRequest {
+        id: "w".into(),
+        tool: "Write".into(),
+        title: "Write".into(),
+        input: json!({"file_path": path}),
+        paths: vec![],
+    };
+    let inside = scratch.join("notes.md").display().to_string();
+    assert_eq!(work.decide(write(inside)).await, PermissionDecision::Allow);
+    let elsewhere = std::env::temp_dir()
+        .join("elsewhere.md")
+        .display()
+        .to_string();
+    assert!(matches!(
+        work.decide(write(elsewhere)).await,
+        PermissionDecision::Deny(_)
+    ));
+    // A relative path is the session's folder's, not the scratch folder's.
+    assert!(matches!(
+        work.decide(write("notes.md".into())).await,
+        PermissionDecision::Deny(_)
+    ));
+}

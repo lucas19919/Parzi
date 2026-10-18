@@ -1110,6 +1110,10 @@ impl ToolHost {
         if self.p.full || (kind == Some("fs.read") && self.own_shot(req)) {
             return PermissionDecision::Allow;
         }
+        // Its own scratch folder is its to write in, in either lane.
+        if kind == Some("fs.write") && self.in_scratch(req) {
+            return PermissionDecision::Allow;
+        }
         if self.p.lane == "work" {
             const READ_ONLY: &str =
                 "work cannot run shell commands — say what needs running instead";
@@ -1185,6 +1189,20 @@ impl ToolHost {
     }
 
     /// A read of a file under this session's own screenshot folder.
+    /// Every file the request writes is in this session's scratch folder,
+    /// named by full path (a relative one is the session's folder's).
+    fn in_scratch(&self, req: &PermissionRequest) -> bool {
+        let Ok(dir) = parzi_core::paths::scratch_dir(&self.p.session_id) else {
+            return false;
+        };
+        let dir = dir.display().to_string();
+        let targets = write_targets(req);
+        !targets.is_empty()
+            && targets
+                .iter()
+                .all(|p| Path::new(p).is_absolute() && worktree_relative(&dir, p).is_some())
+    }
+
     fn own_shot(&self, req: &PermissionRequest) -> bool {
         let Some(dir) = crate::desk::shots_dir(&self.p.session_id) else {
             return false;

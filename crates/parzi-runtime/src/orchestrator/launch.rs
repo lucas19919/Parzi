@@ -527,7 +527,18 @@ impl Orchestrator {
             Arc::new(std::sync::Mutex::new(t))
         };
         let bridge: Arc<dyn HarnessBridge> = Arc::new(p.clone());
-        let instructions = system_parts(&q.lane, &cwd);
+        let mut instructions = system_parts(&q.lane, &cwd);
+        // A folder of its own for scratch work (a session with no project
+        // already works in it).
+        if let Ok(dir) = parzi_core::paths::scratch_dir(&q.session_id) {
+            if std::path::Path::new(&cwd) != dir.as_path() && std::fs::create_dir_all(&dir).is_ok()
+            {
+                instructions.push(format!(
+                    "# Scratch\n\nYour scratch folder is {}: yours for temporary files, notes and experiments that do not belong in the project. Writing there needs no approval. Never leave scratch files in the project.",
+                    dir.display()
+                ));
+            }
+        }
         // The project's plan goes in the opening turn, never in the
         // instructions: those are re-sent every turn, and a changing plan
         // there would spoil the prompt cache.
