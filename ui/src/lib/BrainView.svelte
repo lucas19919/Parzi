@@ -458,7 +458,6 @@
         <Icon name="search" />
         <input bind:value={query} placeholder="Search" aria-label="Search notes" spellcheck="false" />
       </div>
-      <button class="icon" use:tooltip={"Open the brain folder"} on:click={() => openOutside("", "folder")}><Icon name="folder" /></button>
     </div>
 
     <div class="tree">
@@ -617,8 +616,7 @@
   .top {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 10px 8px 6px 10px;
+    padding: 10px 10px 6px;
   }
   .search {
     flex: 1;
