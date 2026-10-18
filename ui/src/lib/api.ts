@@ -225,6 +225,8 @@ export const api = {
   renameThread: (id: string, title: string) => invoke<void>("rename_thread", { id, title }),
   deleteThread: (id: string) => invoke<number>("delete_thread", { id }),
   forkThread: (id: string) => invoke<SessionMeta>("fork_thread", { id }),
+  // The session before the person's nth message, as a new session.
+  rewindThread: (id: string, nth: number) => invoke<SessionMeta>("rewind_thread", { id, nth }),
   compactThread: (id: string) => invoke<string>("compact_thread", { id }),
   killRun: (id: string) => invoke<void>("kill_run", { id }),
   approveTool: (key: string, session: string, allow: boolean) =>

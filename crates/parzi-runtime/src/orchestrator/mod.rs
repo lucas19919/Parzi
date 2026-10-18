@@ -348,6 +348,12 @@ impl Orchestrator {
         self.store.fork(id, at_step)
     }
 
+    /// The conversation as it stood before the person's `nth` message, as
+    /// a new session to go on from; the original stays.
+    pub fn rewind(&self, id: &str, nth: usize) -> Result<SessionMeta> {
+        self.store.rewind(id, nth)
+    }
+
     /// A name the person gave: one line, never empty.
     pub fn rename(&self, id: &str, title: &str) -> Result<()> {
         let title = parzi_core::text::fold(title);

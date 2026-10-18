@@ -701,6 +701,7 @@ fn main() {
             settings::connector_check,
             settings::context_parts,
             settings::shell_jobs,
+            sessions::rewind_thread,
             settings::shell_kill,
             vault::vault_unlock,
             vault::vault_lock,

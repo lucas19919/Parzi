@@ -387,6 +387,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     { id: "sh-1", cmd: "npm run dev", background: true, running: true, exit: null, started: now - 8_220_000, ms: 8_220_000 },
   ],
   shell_kill: () => true,
+  rewind_thread: () => sessions[0],
   context_parts: () => ({ instructions: 6400, notes: 1800, tools: 9200 }),
   connector_check: () => new Promise((r) => setTimeout(() => r(14), 900)),
   get_theme: () => theme,

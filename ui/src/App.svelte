@@ -1150,6 +1150,32 @@
       .join("\n");
   }
 
+  // Rewind: the conversation as it stood before one of the person's
+  // messages, in this tab, with that message back in the composer to
+  // change and send. The full conversation stays in History.
+  async function rewindTo(nth: number, text: string, quotes: PlanQuote[]) {
+    const from = shown;
+    const target = tab;
+    if (!from || target.kind !== "session") return;
+    try {
+      const m = await api.rewindThread(from, nth);
+      patchTab(target.id, { sessionId: m.id, title: m.title });
+      if (activeId === target.id) {
+        clearLive();
+        shown = m.id;
+        await reload();
+      }
+      comp.input = text;
+      comp.quotes = quotes.slice(0, MAX_QUOTES);
+      comp = comp;
+      omnibar?.focus();
+      void refreshThreads();
+      toast("Rewound. Change the message and send; the full conversation stays in History.");
+    } catch (e) {
+      toastError(e);
+    }
+  }
+
   // A failed turn's "Try again": the last message goes out once more.
   function retryLast() {
     const last = [...events].reverse().find((e) => e.kind === "user");
@@ -1676,6 +1702,7 @@
                   on:retry={retryLast}
                   on:compact={compact}
                   on:reply={(e) => void sendReply(e.detail.text)}
+                on:rewind={(e) => void rewindTo(e.detail.nth, e.detail.text, e.detail.quotes)}
                   on:startTask={(e) => void startTask(e.detail.task, e.detail.done)}
                   on:openSession={(e) => openSession(e.detail.id)}
                 >

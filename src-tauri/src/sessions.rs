@@ -319,6 +319,21 @@ pub async fn fork_thread(
     state.orch.fork(&id, None).map_err(|e| e.to_string())
 }
 
+/// The session as it stood before the person's `nth` message (0 is the
+/// first), as a new session under the same title; the original stays.
+#[tauri::command]
+pub async fn rewind_thread(
+    state: State<'_, AppState>,
+    id: String,
+    nth: usize,
+) -> Result<SessionMeta, String> {
+    read_only(&id)?;
+    if remote_id(&id).is_some() {
+        return Err("Rewind works on this computer's sessions.".into());
+    }
+    state.orch.rewind(&id, nth).map_err(|e| e.to_string())
+}
+
 /// Another device's session is read here, not changed: its run lives
 /// there. Sending to it or forking it copies it to the server instead.
 fn read_only(id: &str) -> Result<(), String> {

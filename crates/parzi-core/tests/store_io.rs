@@ -374,3 +374,25 @@ fn a_corrupt_meta_is_skipped_by_list_until_healed() {
     parzi_core::atomic_write(&path, ok.to_string().as_bytes()).unwrap();
     assert!(has(&open()), "a healed meta.json lists again");
 }
+
+#[test]
+fn rewind_keeps_what_came_before_the_chosen_message() {
+    let store = open();
+    let s = store.create("Rewind me", "t-rewind", "lane", "m").unwrap();
+    let said = |t: &str| Event::Assistant {
+        text: t.into(),
+        done: true,
+    };
+    for e in [user("first"), said("one"), user("second"), said("two")] {
+        store.append(&s.id, &e).unwrap();
+    }
+    let r = store.rewind(&s.id, 1).unwrap();
+    assert_eq!(r.title, "Rewind me", "a rewind keeps the name");
+    let kept = store.events(&r.id).unwrap();
+    assert_eq!(kept.len(), 2, "the first exchange only");
+    assert!(matches!(&kept[0], Event::User { text } if text == "first"));
+    assert_eq!(store.events(&s.id).unwrap().len(), 4, "the original stays");
+    let before_all = store.rewind(&s.id, 0).unwrap();
+    assert!(store.events(&before_all.id).unwrap().is_empty());
+    assert!(store.rewind(&s.id, 2).is_err(), "no third message");
+}

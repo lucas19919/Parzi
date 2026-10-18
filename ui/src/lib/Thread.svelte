@@ -76,6 +76,7 @@
     reply: { text: string };
     startTask: { task: { id: string; title: string; brief: string; project?: string }; done: (session: string | null) => void };
     openSession: { id: string };
+    rewind: { nth: number; text: string; quotes: PlanQuote[] };
   }>();
 
   const ERROR_WORDS: Record<string, string> = {
@@ -128,6 +129,16 @@
   const imageCache = new Map<string, Promise<string | null>>();
 
   $: items = buildItems(events);
+  // Each of the person's messages by its place among them, as the store
+  // counts them for a rewind.
+  $: userNth = (() => {
+    const m = new Map<string, number>();
+    let n = 0;
+    events.forEach((e, i) => {
+      if (e.kind === "user") m.set(`e${i}`, n++);
+    });
+    return m;
+  })();
   // The session's checklist: the last one its agent wrote.
   $: todo =
     liveTodo ??
@@ -513,6 +524,15 @@ ${e.text}` : e.text;
           <button class="copy" use:tooltip={"Edit in composer"} on:click={() => dispatch("edited", { text: said.text, quotes: said.quotes })}>
             <Icon name="pencil" />
           </button>
+          {#if userNth.has(item.key)}
+            <button
+              class="copy"
+              use:tooltip={"Rewind: go on from before this message"}
+              on:click={() => dispatch("rewind", { nth: userNth.get(item.key) ?? 0, text: said.text, quotes: said.quotes })}
+            >
+              <Icon name="rewind" />
+            </button>
+          {/if}
           {#if said.text}
             <div class="bubble msg">{@html mdHtml(said.text, $richReady)}</div>
           {:else}

@@ -8,16 +8,40 @@ use crate::error::{ParziError, Result};
 
 impl SessionStore {
     pub fn fork(&self, id: &str, at_step: Option<usize>) -> Result<SessionMeta> {
+        let title = format!("{} (fork)", self.get(id)?.title);
+        self.fork_as(id, at_step, &title)
+    }
+
+    /// A copy of `id` as it stood just before its `nth` message from the
+    /// person (0 is the first), under the same title, to go on from there
+    /// differently. The original stays as it was.
+    pub fn rewind(&self, id: &str, nth: usize) -> Result<SessionMeta> {
         let src = self.get(id)?;
         count_read(1);
         let text = std::fs::read_to_string(self.events_path(id))
             .map_err(|_| ParziError::Store(format!("session not found: {id}")))?;
-        let meta = self.create(
-            &format!("{} (fork)", src.title),
-            &src.project,
-            &src.lane,
-            &src.model,
-        )?;
+        let mut seen = 0;
+        let mut keep = None;
+        for (i, line) in text.lines().filter(|l| !l.trim().is_empty()).enumerate() {
+            if is_user_line(line) {
+                if seen == nth {
+                    keep = Some(i);
+                    break;
+                }
+                seen += 1;
+            }
+        }
+        let keep = keep
+            .ok_or_else(|| ParziError::Validation("that message is not in this session".into()))?;
+        self.fork_as(id, Some(keep), &src.title)
+    }
+
+    fn fork_as(&self, id: &str, at_step: Option<usize>, title: &str) -> Result<SessionMeta> {
+        let src = self.get(id)?;
+        count_read(1);
+        let text = std::fs::read_to_string(self.events_path(id))
+            .map_err(|_| ParziError::Store(format!("session not found: {id}")))?;
+        let meta = self.create(title, &src.project, &src.lane, &src.model)?;
         let mut kept = String::new();
         for line in text
             .lines()
@@ -81,4 +105,14 @@ impl SessionStore {
         gone.sort();
         gone
     }
+}
+
+/// A transcript line holding the person's message: the bare event, or one
+/// inside its timestamp envelope.
+fn is_user_line(line: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+        return false;
+    };
+    let kind = v.get("kind").or_else(|| v.pointer("/ev/kind"));
+    kind.and_then(serde_json::Value::as_str) == Some("user")
 }
