@@ -153,8 +153,11 @@ fn remove_in(root: &Path, dir: &Path) -> Option<String> {
     let mut tried = git(&main, &["worktree", "remove", &dir_s]);
     if tried.is_err() && dir.exists() {
         std::thread::sleep(std::time::Duration::from_millis(1500));
-        tried = git(&main, &["worktree", "remove", "--force", &dir_s])
-            .or_else(|e| std::fs::remove_dir(dir).map(|()| String::new()).map_err(|_| e));
+        tried = git(&main, &["worktree", "remove", "--force", &dir_s]).or_else(|e| {
+            std::fs::remove_dir(dir)
+                .map(|()| String::new())
+                .map_err(|_| e)
+        });
         let _ = git(&main, &["worktree", "prune"]);
     }
     match tried {
