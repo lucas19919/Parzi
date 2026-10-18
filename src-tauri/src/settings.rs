@@ -100,6 +100,22 @@ pub async fn connector_check(state: State<'_, AppState>, name: String) -> Result
         .map_err(|e| e.to_string())
 }
 
+/// The commands a session's agents ran (background and recent foreground
+/// ones), for the session column.
+#[tauri::command]
+pub fn shell_jobs(
+    state: State<'_, AppState>,
+    session: String,
+) -> Vec<parzi_runtime::shell::ShellJob> {
+    state.orch.shell_jobs(&session)
+}
+
+/// Stops one of a session's background commands.
+#[tauri::command]
+pub fn shell_kill(state: State<'_, AppState>, session: String, id: String) -> bool {
+    state.orch.shell_kill(&session, &id)
+}
+
 /// What Parzi adds to a session's context (instructions, notes, tools),
 /// for the session column's breakdown.
 #[tauri::command]

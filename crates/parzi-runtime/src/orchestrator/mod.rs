@@ -189,6 +189,19 @@ impl Orchestrator {
 
     /// Kill every background shell of a session and forget its registry.
     /// Called when sessions are deleted or purged so nothing outlives them.
+    /// The commands a session's agents ran, for its column. None started
+    /// yet: an empty list, not a new registry.
+    pub fn shell_jobs(&self, sid: &str) -> Vec<crate::shell::ShellJob> {
+        let reg = self.shells.lock().ok().and_then(|m| m.get(sid).cloned());
+        reg.map(|r| r.jobs()).unwrap_or_default()
+    }
+
+    /// Stops one of a session's background commands.
+    pub fn shell_kill(&self, sid: &str, id: &str) -> bool {
+        let reg = self.shells.lock().ok().and_then(|m| m.get(sid).cloned());
+        reg.is_some_and(|r| r.kill(id))
+    }
+
     pub fn drop_shells(&self, id: &str) {
         let reg = self.shells.lock().map(|mut m| m.remove(id)).unwrap_or(None);
         if let Some(reg) = reg {

@@ -376,6 +376,12 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     return null;
   },
   // A connector "starts" after a moment and offers a few tools.
+  shell_jobs: () => [
+    { id: "fg-1", cmd: "cargo test -p parzi-runtime", background: false, running: false, exit: 0, started: now - 600_000, ms: 48_000 },
+    { id: "fg-2", cmd: "npm run lint:ui", background: false, running: false, exit: 1, started: now - 300_000, ms: 18_000 },
+    { id: "sh-1", cmd: "npm run dev", background: true, running: true, exit: null, started: now - 8_220_000, ms: 8_220_000 },
+  ],
+  shell_kill: () => true,
   context_parts: () => ({ instructions: 6400, notes: 1800, tools: 9200 }),
   connector_check: () => new Promise((r) => setTimeout(() => r(14), 900)),
   get_theme: () => theme,

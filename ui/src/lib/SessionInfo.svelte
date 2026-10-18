@@ -6,6 +6,7 @@
   import Icon from "./Icon.svelte";
   import InfoCard from "./InfoCard.svelte";
   import ContextBreakdown from "./ContextBreakdown.svelte";
+  import JobsCard from "./JobsCard.svelte";
   import { api, onRunEvent, type GitStatus, type Question, type SessionMeta } from "./api";
   import type { Approval } from "./live";
   import { planState } from "./planStore";
@@ -158,6 +159,8 @@
       </button>
     </InfoCard>
   {/if}
+
+  <JobsCard {session} />
 
   {#if helpers.length}
     <InfoCard id="helpers" title="Side tasks">

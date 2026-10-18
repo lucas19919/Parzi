@@ -244,6 +244,9 @@ export const api = {
   warmAgent: (provider: string) => invoke<void>("warm_agent", { provider }),
   getConfig: () => invoke<ParziConfig>("get_config"),
   saveConfig: (cfg: ParziConfig) => invoke<void>("save_config", { cfg }),
+  // The commands a session's agents ran, and stopping a background one.
+  shellJobs: (session: string) => invoke<ShellJob[]>("shell_jobs", { session }),
+  shellKill: (session: string, id: string) => invoke<boolean>("shell_kill", { session, id }),
   // What Parzi adds to a session's context, in estimated tokens.
   contextParts: (lane: string, cwd: string) => invoke<{ instructions: number; notes: number; tools: number }>("context_parts", { lane, cwd }),
   // Starts a connector (signing in, the first time) and counts its tools.
@@ -295,6 +298,17 @@ export const api = {
     invoke<void>("browser_nav", { tab, action }),
   windowFullscreen: (on: boolean) => invoke<void>("window_fullscreen", { on }),
 };
+
+export interface ShellJob {
+  id: string;
+  cmd: string;
+  background: boolean;
+  running: boolean;
+  exit: number | null;
+  // Unix ms it started; ms it ran (so far).
+  started: number;
+  ms: number;
+}
 
 export interface GitStatus {
   branch: string;
