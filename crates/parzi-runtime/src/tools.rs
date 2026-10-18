@@ -1499,7 +1499,12 @@ mod tests {
         assert_eq!(display_name("mcp__parzi__desk_notify"), "desk.notify");
         // Every tool Parzi offers comes back by its own name from MCP.
         for d in all_defs() {
-            assert_eq!(from_mcp(&to_mcp(&d.name)), d.name, "{} lost its name", d.name);
+            assert_eq!(
+                from_mcp(&to_mcp(&d.name)),
+                d.name,
+                "{} lost its name",
+                d.name
+            );
         }
         // Grok names them inside its own use_tool.
         assert_eq!(display_name("parzi__ui_propose_task"), "ui.propose_task");
