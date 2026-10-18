@@ -63,9 +63,14 @@
       radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, var(--vignette)) 100%),
       color-mix(in srgb, #000 calc(var(--bg-dim) * 100%), transparent);
   }
+  /* The dither reaches --grain-height down the picture and fades out
+     over the last fifth of that. */
   .grain {
     position: absolute;
-    inset: 0;
+    inset: 0 0 auto;
+    height: var(--grain-height, 100%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 80%, transparent);
+    mask-image: linear-gradient(to bottom, #000 80%, transparent);
     background: url("/dither-bayer.png");
     background-size: var(--grain-size, 32px) var(--grain-size, 32px);
     image-rendering: pixelated;

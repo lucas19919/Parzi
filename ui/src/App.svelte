@@ -1724,6 +1724,7 @@
                   on:compact={compact}
                   on:reply={(e) => void sendReply(e.detail.text)}
                 on:rewind={(e) => void rewindTo(e.detail.nth, e.detail.text, e.detail.quotes)}
+                on:pickModel={() => omnibar?.openModels()}
                   on:startTask={(e) => void startTask(e.detail.task, e.detail.done)}
                   on:openSession={(e) => openSession(e.detail.id)}
                 >

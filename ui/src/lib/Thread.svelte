@@ -77,11 +77,28 @@
     startTask: { task: { id: string; title: string; brief: string; project?: string }; done: (session: string | null) => void };
     openSession: { id: string };
     rewind: { nth: number; text: string; quotes: PlanQuote[] };
+    pickModel: void;
   }>();
+
+  // When the agent's spent limit comes back, from its usage windows: the
+  // soonest reset of one at 100%, else of the fullest one.
+  function resetLine(p: string): string {
+    const windows = $board.find((b) => b.provider === p)?.usage ?? [];
+    const now = Date.now() / 1000;
+    const spent = windows.filter((w) => w.used_percent >= 100 && (w.resets_at ?? 0) > now);
+    const pick = (spent.length ? spent : [...windows].sort((a, b) => b.used_percent - a.used_percent).slice(0, 1)).filter((w) => w.resets_at && w.resets_at > now);
+    const at = Math.min(...pick.map((w) => w.resets_at ?? Infinity));
+    if (!Number.isFinite(at)) return "";
+    const mins = Math.round((at - now) / 60);
+    const when = new Date(at * 1000);
+    const clock = when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const day = when.toDateString() === new Date().toDateString() ? "" : ` ${when.toLocaleDateString([], { weekday: "short" })}`;
+    return mins < 60 ? `Resets in ${Math.max(1, mins)} min.` : `Resets at ${clock}${day}.`;
+  }
 
   const ERROR_WORDS: Record<string, string> = {
     auth: "Not signed in",
-    rate_limit: "Plan limit reached. Wait a bit, then send again",
+    rate_limit: "Usage limit reached",
     overloaded: "The service is overloaded. Wait a bit, then send again",
     context_overflow: "The conversation is too long",
     bad_request: "The request didn't go through",
@@ -93,7 +110,7 @@
   const RETRYABLE = new Set(["rate_limit", "overloaded", "process", "session_lost", "unknown"]);
   const COMPACTS = new Set(["claude", "opencode"]);
   const ERROR_HINT: Record<string, string> = {
-    rate_limit: "Your prompt is kept. Nothing was lost.",
+    rate_limit: "Your message is kept. Nothing was lost.",
   };
 
   // Vendor errors often trail a raw JSON blob; cut it, it never helped.
@@ -603,6 +620,7 @@ ${e.text}` : e.text;
         {#if msg.more}
           <details class="err-more"><summary>Details</summary><pre>{msg.more}</pre></details>
         {/if}
+        {#if item.class === "rate_limit" && resetLine(provider)}<span class="err-hint">{resetLine(provider)}</span>{/if}
         {#if ERROR_HINT[item.class]}<span class="err-hint">{ERROR_HINT[item.class]}</span>{/if}
         {#if item.key === lastError && !streaming}
           {#if fix || fixWait}
@@ -618,6 +636,11 @@ ${e.text}` : e.text;
             <div class="err-fix"><button class="err-btn" on:click={() => dispatch("compact")}>Compact and go on</button></div>
           {:else if item.class === "context_overflow"}
             <span class="err-hint">Start a new session to go on.</span>
+          {:else if item.class === "rate_limit"}
+            <div class="err-fix">
+              <button class="err-btn" on:click={() => dispatch("pickModel")}>Change model</button>
+              <button class="err-btn" on:click={() => dispatch("retry")}>Try again</button>
+            </div>
           {:else if RETRYABLE.has(item.class)}
             <div class="err-fix"><button class="err-btn" on:click={() => dispatch("retry")}>Try again</button></div>
           {/if}

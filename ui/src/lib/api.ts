@@ -161,6 +161,7 @@ export interface Theme {
     grain: number;
     grain_size: number;
     height: number;
+    grain_height: number;
   };
 }
 
