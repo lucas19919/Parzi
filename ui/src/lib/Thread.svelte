@@ -163,6 +163,70 @@
   const imageCache = new Map<string, Promise<string | null>>();
 
   $: items = buildItems(events);
+
+  // A turn's working (its thinking, tool steps and the narration between
+  // them) folds into one quiet line at the turn's top; its answer, the
+  // pictures it made, artifacts and anything that needs you stay in view.
+  // The running turn folds too, all but what it says now.
+  type Fold = { key: string; tools: number; secs: number; live: boolean; only: string };
+  let openFolds = new Set<string>();
+  $: folds = foldTurns(items, streaming, liveTools.length + (liveReasoning ? 1 : 0));
+
+  function foldTurns(items: Item[], streaming: boolean, liveWork: number) {
+    const before = new Map<string, Fold>();
+    const inside = new Map<string, string>();
+    let tail: Fold | null = null;
+    let live: Fold | null = null;
+    const users = items.flatMap((it, i) => (it.kind === "user" ? [i] : []));
+    const starts = [-1, ...users];
+    starts.forEach((u, n) => {
+      const end = n + 1 < starts.length ? starts[n + 1] : items.length;
+      const range = items.slice(u + 1, end);
+      const current = streaming && n === starts.length - 1;
+      let answer = -1;
+      range.forEach((it, i) => {
+        if (it.kind === "assistant") answer = i;
+      });
+      const work = range.filter(
+        (it, i) => it.kind === "steps" || (it.kind === "assistant" && i !== answer) || (it.kind === "system" && sysTone(it.text) === "line"),
+      );
+      if (!work.length && !(current && liveWork)) return;
+      const opener = u >= 0 ? items[u] : null;
+      const times = [opener, ...range].map((it) => (it && "at" in it ? it.at ?? 0 : 0)).filter((t) => t > 0);
+      const fold: Fold = {
+        key: `fold-${opener?.key ?? "start"}`,
+        tools: work.reduce((sum, it) => sum + (it.kind === "steps" ? it.tools.length : 0), 0) + (current ? liveTools.length : 0),
+        secs: times.length > 1 ? Math.max(...times) - Math.min(...times) : 0,
+        live: current,
+        only: "",
+      };
+      // One step and nothing else: its own words say more than a count.
+      const steps = work.flatMap((it) => (it.kind === "steps" ? it.tools : []));
+      if (!current && work.length === 1 && steps.length === 1) fold.only = steps[0].label.trim();
+      if (current) live = fold;
+      for (const it of work) inside.set(it.key, fold.key);
+      if (range.length) before.set(range[0].key, fold);
+      else tail = fold;
+    });
+    return { before, inside, tail: tail as Fold | null, live: live as Fold | null };
+  }
+
+  function foldLabel(f: Fold): string {
+    const spent = (s: number) => (s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`);
+    if (f.only) return f.secs >= 1 ? `${f.only} · ${spent(f.secs)}` : f.only;
+    const head = f.live ? "Working" : f.secs >= 1 ? `Worked for ${spent(f.secs)}` : "Worked";
+    return f.tools ? `${head} · ${f.tools} step${f.tools === 1 ? "" : "s"}` : head;
+  }
+
+  function toggleFold(key: string) {
+    openFolds = new Set(openFolds);
+    if (openFolds.has(key)) openFolds.delete(key);
+    else openFolds.add(key);
+  }
+  const shut = (key: string, open: Set<string>) => {
+    const f = folds.inside.get(key);
+    return !!f && !open.has(f);
+  };
   // A turn's last reply carries its actions (copy, save, fork); the replies
   // before it in the same turn stay close together, as they read.
   $: turnEnds = (() => {
@@ -572,7 +636,18 @@ ${e.text}` : e.text;
 <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
 <div class="thread-col" on:click={onClick}>
   {#each items as item (item.key)}
-    {#if item.kind === "user"}
+    {@const fold = folds.before.get(item.key)}
+    {@const hidden = shut(item.key, openFolds)}
+    {@const folded = folds.inside.has(item.key)}
+    {#if fold}
+      <button class="fold" class:live={fold.live} aria-expanded={openFolds.has(fold.key)} on:click={() => toggleFold(fold.key)}>
+        <span class="fold-text">{foldLabel(fold)}</span>
+        <span class="chev" class:open={openFolds.has(fold.key)}><Icon name="chevDown" size={12} /></span>
+      </button>
+    {/if}
+    {#if hidden && item.kind !== "steps"}
+      <!-- Folded into the turn's line above. -->
+    {:else if item.kind === "user"}
       {@const images = attachedImages(item.text)}
       {@const said = splitQuotes(stripMarker(item.text))}
       {@const from = sideFrom(item.text)}
@@ -617,7 +692,7 @@ ${e.text}` : e.text;
         {/if}
       </div>
     {:else if item.kind === "assistant"}
-      <div class="row">
+      <div class="row" class:in-fold={folded}>
         <div class="body">
           {#each splitSegments(item.text) as seg}
             {#if seg.kind === "md"}
@@ -647,13 +722,14 @@ ${e.text}` : e.text;
         {/if}
       </div>
     {:else if item.kind === "steps"}
-      <Steps reasoning={item.reasoning} tools={item.tools} />
+      {#if !hidden}<div class:in-fold={folded}><Steps reasoning={item.reasoning} tools={item.tools} /></div>{/if}
+      <!-- What its tools made stays in view, folded or not. -->
       <ToolPictures {session} paths={picturesIn(item.tools.map((t) => t.output ?? ""))} />
     {:else if item.kind === "checkpoint"}
       <Steps title={compactedTitle(item.before, item.after)} reasoning={item.text} />
     {:else if item.kind === "system"}
       {#if sysTone(item.text) === "line"}
-        <div class="sysline" title={whenTitle(item.at)}>{item.text.slice(0, 300)}</div>
+        <div class="sysline" class:in-fold={folded} title={whenTitle(item.at)}>{item.text.slice(0, 300)}</div>
       {:else}
         <div class="system" title={whenTitle(item.at)}>{item.text.slice(0, 300)}</div>
       {/if}
@@ -721,8 +797,15 @@ ${e.text}` : e.text;
     {/if}
   {/each}
 
-  {#if showLiveSteps}
-    <div transition:fade|local={spring}>
+  {#if folds.tail}
+    <button class="fold live" aria-expanded={openFolds.has(folds.tail.key)} on:click={() => folds.tail && toggleFold(folds.tail.key)}>
+      <span class="fold-text">{foldLabel(folds.tail)}</span>
+      <span class="chev" class:open={openFolds.has(folds.tail.key)}><Icon name="chevDown" size={12} /></span>
+    </button>
+  {/if}
+  <!-- What it is doing now shows in the live line; the steps wait in the fold. -->
+  {#if showLiveSteps && folds.live && openFolds.has(folds.live.key)}
+    <div class="in-fold" transition:fade|local={spring}>
       <Steps reasoning={liveReasoning} tools={liveTools} />
     </div>
   {/if}
@@ -825,6 +908,45 @@ ${e.text}` : e.text;
   /* A new turn stands a little apart from the last one. */
   .row.user:not(:first-child) {
     margin-top: 14px;
+  }
+  .fold {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-md);
+    cursor: pointer;
+  }
+  .fold:hover {
+    color: var(--text);
+  }
+  .fold.live .fold-text {
+    animation: breathe 1.6s ease-in-out infinite;
+  }
+  .fold .chev {
+    display: inline-flex;
+    transform: rotate(-90deg);
+    transition: transform 140ms ease;
+  }
+  .fold .chev.open {
+    transform: none;
+  }
+  @keyframes breathe {
+    50% {
+      opacity: 0.45;
+    }
+  }
+  /* What a fold holds, when open: set in under its line. */
+  .in-fold {
+    margin-left: 5px;
+    padding-left: 14px;
+    border-left: 1px solid var(--line);
   }
   .side-from {
     margin-bottom: 4px;

@@ -58,6 +58,11 @@
       "reason": "A long document folds behind Show all on purpose; the fade shows there is more. Its text is the thread's (--text on --panel, as in replies); the check cannot read the background through the fade's pseudo element."
     },
     {
+      "selector": ".art .codeblock pre code",
+      "rules": ["text-contrast"],
+      "reason": "A code artifact scrolled half under the window header (960x640) has no single background to measure; where it shows, it is the code block's own text on its own background, as in replies."
+    },
+    {
       "selector": ".art > .more",
       "rules": ["text-contrast"],
       "reason": "Show all is --muted on the card's --panel (5.9:1 in the default theme); the check cannot measure it where the docked composer overlaps the end of the thread."

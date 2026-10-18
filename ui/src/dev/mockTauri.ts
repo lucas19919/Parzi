@@ -148,13 +148,12 @@ const planView = (project: string) => ({
 });
 
 const ANSWER = [
-  "## What I found",
+  "**Typing stalls because three things run on every keystroke; caching them takes a key from 38 ms to 4 ms.** [1](https://developer.mozilla.org/en-US/docs/Web/API/ResizeObserver) [2](https://svelte.dev/docs/svelte/$derived)",
   "",
-  "The freeze comes from work that runs on every keystroke. Here is what I found:",
+  "The composer measures its own height twice per key, and each draft change re-renders the **model picker**. [1](https://developer.mozilla.org/en-US/docs/Web/API/ResizeObserver)",
   "",
-  "- The composer measures its own height twice per key.",
-  "- Each draft change re-renders the **model picker** and the project chip.",
-  "- The thread re-parses markdown when nothing changed.",
+  "- The thread re-parses markdown when nothing changed. [2](https://svelte.dev/docs/svelte/$derived)",
+  "- The project chip re-reads git state on each render.",
   "",
   "```ts",
   "export function autosize(el: HTMLTextAreaElement) {",
@@ -163,10 +162,15 @@ const ANSWER = [
   "}",
   "```",
   "",
-  "| Step | Before | After |",
-  "| --- | --- | --- |",
-  "| Keystroke | 38 ms | 4 ms |",
-  "| Paste 2 KB | 210 ms | 9 ms |",
+  "| Step | Before (ms) | After (ms) | Change (%) | Renders (per key) |",
+  "| --- | --- | --- | --- | --- |",
+  "| Keystroke | 38 | 4 | (89.5) | 3 |",
+  "| Paste 2 KB | 210 | 9 | (95.7) | 3 |",
+  "| Undo | 22 | 3 | (86.4) | n.m. |",
+  "| Mean | 90.0 | 5.3 | (90.5) | 3 |",
+  "| Median | 38 | 4 | (89.5) | 3 |",
+  "",
+  "*Measured in a dev build on a 300-turn thread. n.m. = not measured.*",
 ].join("\n");
 
 // The last turn's charts: one ```viz block per type, and one it can't draw.

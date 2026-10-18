@@ -3,6 +3,7 @@ import DOMPurify from "dompurify";
 import { writable } from "svelte/store";
 import { toast } from "./toast";
 import { splitSegments, type Segment } from "./segments";
+import { reportMarkdown } from "./mdReport";
 
 // Rich renderers (KaTeX + highlight.js) load on first use, off the
 // startup path. Until then code renders plain and math renders as
@@ -276,6 +277,8 @@ md.renderer.rules.parzi_front = (tokens, idx) => {
     .join("");
   return `<dl class="md-front">${rows}</dl>`;
 };
+
+reportMarkdown(md);
 
 const mdCache = new Map<string, string>();
 const MD_CACHE_MAX = 400;
