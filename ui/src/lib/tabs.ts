@@ -102,6 +102,8 @@ export interface Tab {
   bg?: string;
   // The page's own icon (https or data URL) and why its renderer died.
   favicon?: string;
+  // The page's zoom, when not 100% (1 is 100%).
+  zoom?: number;
   crashed?: string;
   composer: TabComposerState;
 }

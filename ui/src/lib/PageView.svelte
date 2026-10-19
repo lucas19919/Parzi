@@ -259,7 +259,7 @@
     if (next) leaveFor(next);
   }
 
-  function nav(action: "back" | "forward" | "reload" | "stop") {
+  function nav(action: "back" | "forward" | "reload" | "stop" | "zoom-reset") {
     api.browserNav(tab.id, action).catch((e) => dispatch("error", { text: String(e) }));
   }
 
@@ -355,6 +355,12 @@
           spellcheck="false"
           autocomplete="off"
         />
+        {#if tab.zoom}
+          <!-- Zoomed (Ctrl+plus/minus or Ctrl+wheel): how much, and back to 100%. -->
+          <button type="button" class="zoom" use:tooltip={"Reset zoom (Ctrl+0)"} on:click={() => nav("zoom-reset")}>
+            {Math.round(tab.zoom * 100)}%
+          </button>
+        {/if}
         {#if tab.loading}<span class="progress" />{/if}
       </form>
       {#if shield}
@@ -472,6 +478,23 @@
 </div>
 
 <style>
+  .zoom {
+    flex: none;
+    height: 22px;
+    margin-right: 4px;
+    padding: 0 8px;
+    background: var(--hover);
+    border: none;
+    border-radius: 999px;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+  }
+  .zoom:hover {
+    color: var(--text);
+  }
   .page {
     position: relative;
     flex: 1;

@@ -39,7 +39,7 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_WEB_RESOURCE_CONTEXT_XML_HTTP_REQUEST,
 };
 use webview2_com::{
-    take_pwstr, AcceleratorKeyPressedEventHandler,
+    take_pwstr, AcceleratorKeyPressedEventHandler, ZoomFactorChangedEventHandler,
     AddScriptToExecuteOnDocumentCreatedCompletedHandler, BytesReceivedChangedEventHandler,
     CapturePreviewCompletedHandler, ContainsFullScreenElementChangedEventHandler,
     DOMContentLoadedEventHandler, DownloadStartingEventHandler, ExecuteScriptCompletedHandler,
@@ -448,6 +448,8 @@ pub enum PageSignal {
         ok: bool,
     },
     Fullscreen(bool),
+    /// The page's zoom changed (1.0 is 100%).
+    Zoom(f64),
     Key(&'static str),
     Blocked(u32),
     Background(String),
@@ -694,6 +696,20 @@ fn hook_page(
             })),
             &raw mut token,
         )?;
+        {
+            let s = signal.clone();
+            controller.add_ZoomFactorChanged(
+                &ZoomFactorChangedEventHandler::create(Box::new(move |controller, _| {
+                    if let Some(c) = controller {
+                        let mut factor = 1.0;
+                        c.ZoomFactor(&raw mut factor)?;
+                        s(PageSignal::Zoom(factor));
+                    }
+                    Ok(())
+                })),
+                &raw mut token,
+            )?;
+        }
         if let Ok(core15) = core.cast::<ICoreWebView2_15>() {
             let s = signal.clone();
             core15.add_FaviconChanged(

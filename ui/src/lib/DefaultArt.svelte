@@ -1,9 +1,10 @@
 <script lang="ts">
   export let bg = "";
-  export let blurred = false;
 </script>
 
-<div class="backdrop" class:blurred>
+<!-- Behind everything, pages included: a page covers all but the top bar,
+     which keeps the window's own background. -->
+<div class="backdrop">
   {#if bg}
     <!-- The picture, its shade and the dither reach --bg-height down the
          window and fade into the stage colour there. -->
@@ -23,15 +24,6 @@
     overflow: hidden;
     pointer-events: none;
     background: var(--bg);
-    transition:
-      transform 750ms var(--ease-out),
-      opacity 650ms ease,
-      filter 650ms ease;
-  }
-  .backdrop.blurred {
-    transform: translateY(-32px) scale(1.03);
-    opacity: 0;
-    filter: blur(16px);
   }
   .art {
     position: absolute;

@@ -764,6 +764,9 @@ fn page_builder(
     let (open_app, open_tab, title_tab) = (app.clone(), tab.to_string(), tab.to_string());
     let builder = WebviewBuilder::new(label, WebviewUrl::External(url))
         .devtools(crate::siteprefs::devtools())
+        // Ctrl+plus/minus/0 and Ctrl+wheel zoom a page, as in any browser
+        // (Tauri turns them off by default).
+        .zoom_hotkeys_enabled(true)
         .background_color(backdrop())
         .on_navigation(move |url| allow_navigation(&nav_app, &nav_tab, url))
         .on_new_window(move |url, features| new_window(&open_app, &open_tab, &url, features))
@@ -987,6 +990,9 @@ fn on_signal(app: &AppHandle, label: &str, tab: &str, signal: crate::dwm::PageSi
         }
         PageSignal::Crashed(what) => {
             tell(app, BROWSER, json!({ "tab": tab, "crashed": what }));
+        }
+        PageSignal::Zoom(factor) => {
+            tell(app, BROWSER, json!({ "tab": tab, "zoom": factor }));
         }
         PageSignal::Favicon(icon) => {
             tell(app, BROWSER, json!({ "tab": tab, "favicon": icon }));
@@ -1301,6 +1307,9 @@ pub fn browser_navigate(app: AppHandle, tab: &str, url: &str) -> Result<(), Stri
 pub fn browser_nav(app: AppHandle, tab: &str, action: String) -> Result<(), String> {
     let label = page_label(tab)?;
     let wv = app.get_webview(&label).ok_or("no such tab")?;
+    if action == "zoom-reset" {
+        return wv.set_zoom(1.0).map_err(|e| e.to_string());
+    }
     let js = match action.as_str() {
         "back" => "history.back()",
         "forward" => "history.forward()",

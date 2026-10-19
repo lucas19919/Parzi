@@ -309,7 +309,7 @@ export const api = {
   searchSuggest: (query: string) => invoke<string[]>("search_suggest", { query }),
   browserClose: (tab: string) => invoke<void>("browser_close", { tab }),
   browserNavigate: (tab: string, url: string) => invoke<void>("browser_navigate", { tab, url }),
-  browserNav: (tab: string, action: "back" | "forward" | "reload" | "stop") =>
+  browserNav: (tab: string, action: "back" | "forward" | "reload" | "stop" | "zoom-reset") =>
     invoke<void>("browser_nav", { tab, action }),
   windowFullscreen: (on: boolean) => invoke<void>("window_fullscreen", { on }),
 };
@@ -464,6 +464,8 @@ export interface PageEvent {
   canGoBack?: boolean;
   canGoForward?: boolean;
   fullscreen?: boolean;
+  // The page's zoom (1 is 100%).
+  zoom?: number;
   blocked?: number;
   bg?: string;
   // false: the load failed (no network, DNS, an error page): not history.

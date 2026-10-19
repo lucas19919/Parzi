@@ -714,6 +714,7 @@
     if (e.canGoBack !== undefined) patch.canGoBack = e.canGoBack;
     if (e.canGoForward !== undefined) patch.canGoForward = e.canGoForward;
     if (e.blocked !== undefined) patch.blocked = e.blocked;
+    if (e.zoom !== undefined) patch.zoom = Math.abs(e.zoom - 1) < 0.005 ? undefined : e.zoom;
     if (e.bg) patch.bg = e.bg;
     if (e.crashed) patch.crashed = e.crashed;
     if (e.favicon) {
@@ -1658,7 +1659,7 @@
 <svelte:window on:keydown={onKey} on:pagehide={flushDrafts} on:beforeunload={flushDrafts} bind:innerWidth />
 
 <div class="shell">
-  <DefaultArt {bg} blurred={tab.kind === "page"} />
+  <DefaultArt {bg} />
 
   {#if !immersive}
     <TopBar

@@ -260,6 +260,10 @@
     } else if (atItems.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
       atIndex = move(atItems, atIndex, e.key === "ArrowDown" ? 1 : -1);
+    } else if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !started && !slashItems.length && !atItems.length) {
+      // A new session: Tab flips between asking the agent and the web.
+      e.preventDefault();
+      setWeb(!web);
     } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && canSide && !web) {
       e.preventDefault();
       if (input.trim() || quotes.length) dispatch("side");
@@ -678,8 +682,8 @@
   <div class="under" class:hidden={webOpen && hero}>
     {#if !started}
       <div class="seg" role="group" aria-label="Send to" data-ui-segmented>
-        <button class:on={!web} aria-pressed={!web} use:tooltip={"Ask the agent (Ctrl+1)"} on:click={() => setWeb(false)}>Agent</button>
-        <button class:on={web} aria-pressed={web} use:tooltip={"Search the web (Ctrl+2)"} on:click={() => setWeb(true)}>Web</button>
+        <button class:on={!web} aria-pressed={!web} use:tooltip={"Ask the agent (Tab switches)"} on:click={() => setWeb(false)}>Agent</button>
+        <button class:on={web} aria-pressed={web} use:tooltip={"Search the web (Tab switches)"} on:click={() => setWeb(true)}>Web</button>
       </div>
     {/if}
     {#if !web}
