@@ -8,7 +8,7 @@
   import type { ProviderStatus } from "./api";
   import { ageOf, checking, refreshBoard } from "./providerStore";
   import { PROVIDER_ORDER, allRows, isUsable, nameOf, shownOf, type PickRow } from "./providerRows";
-  import { effortLabel, effortsFor } from "./providerRows";
+  import { effortLabel, effortShort, effortsFor } from "./providerRows";
   import { recentModels } from "./tabs";
   import { popover, placeAbove } from "./popover";
   import { tooltip } from "./tooltip";
@@ -216,8 +216,15 @@
             <span class="foot-label">Effort</span>
             <div class="effort-row" role="group" aria-label="Effort" data-ui-segmented>
               {#each modelEfforts as e (e)}
-                <button class="effort" class:on={effort === e} aria-pressed={effort === e} on:click={() => (effort = e)}>
-                  {effortLabel(e)}
+                <button
+                  class="effort"
+                  class:on={effort === e}
+                  aria-pressed={effort === e}
+                  aria-label={effortLabel(e)}
+                  use:tooltip={effortShort(e) === effortLabel(e) ? "" : effortLabel(e)}
+                  on:click={() => (effort = e)}
+                >
+                  {effortShort(e)}
                 </button>
               {/each}
             </div>
@@ -372,14 +379,16 @@
     padding: 8px 4px 4px;
     border-top: 1px solid var(--line);
   }
+  /* The label over a full-width row: up to five efforts fit the picker,
+     each on one line. */
   .effort-line {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 0 4px 0 8px;
+    flex-direction: column;
+    gap: 6px;
+    padding: 2px 4px 4px;
   }
   .foot-label {
-    flex: 1;
+    padding-left: 4px;
     font-size: var(--fs-sm);
     color: var(--muted);
   }
@@ -391,8 +400,11 @@
     background: var(--hover);
   }
   .effort {
+    flex: 1 1 0;
+    min-width: 0;
     height: 24px;
-    padding: 0 10px;
+    padding: 0 4px;
+    white-space: nowrap;
     background: transparent;
     border: none;
     border-radius: 999px;

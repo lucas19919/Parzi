@@ -110,3 +110,6 @@ export function fitEffort(current: string, efforts: string[]): string {
 
 export const effortLabel = (e: string): string =>
   e === "xhigh" ? "Extra high" : e ? e[0].toUpperCase() + e.slice(1) : e;
+
+// On a segment, where five must fit side by side: "Extra", as Claude says it.
+export const effortShort = (e: string): string => (e === "xhigh" ? "Extra" : effortLabel(e));
