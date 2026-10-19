@@ -239,7 +239,6 @@ mod tests {
             title: format!("Session {id}"),
             pinned: false,
             project: "demo".into(),
-            lane: "build".into(),
             model: String::new(),
             parent_id: parent.map(str::to_string),
             status: SessionStatus::Idle,

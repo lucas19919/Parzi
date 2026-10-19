@@ -59,7 +59,6 @@ async fn token_budget_pauses_the_run_and_marks_it() {
     let (meta, mut rx) = orch
         .spawn(
             "t",
-            "",
             "claude",
             "spend it",
             Some(Arc::new(Allow)),

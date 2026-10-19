@@ -94,7 +94,6 @@ async fn a_run_keeps_its_summary_files_checks_and_branch_on_the_session() {
     let (meta, _rx) = orch
         .spawn(
             "outcome-tests",
-            "build",
             "claude",
             "hey, can you please fix the omnibar autosize?",
             None,
@@ -154,7 +153,6 @@ async fn a_failed_run_says_why_and_a_run_that_never_started_says_so() {
     let (meta, _rx) = orch
         .spawn(
             "outcome-tests",
-            "build",
             "claude",
             "Plan the next release",
             None,
@@ -212,7 +210,6 @@ async fn a_compact_turn_leaves_the_last_run_alone() {
     let (meta, _rx) = orch
         .spawn(
             "outcome-tests",
-            "build",
             "claude",
             "say hi",
             None,
@@ -248,7 +245,6 @@ async fn a_failed_compact_launch_leaves_the_last_run_alone() {
     let (meta, _rx) = orch
         .spawn(
             "outcome-tests",
-            "build",
             "claude",
             "say hi",
             None,
@@ -298,7 +294,6 @@ async fn a_run_is_on_record_before_it_reads_as_finished() {
     let (meta, mut rx) = orch
         .spawn(
             "outcome-tests",
-            "build",
             "claude",
             "make a file",
             None,
@@ -352,7 +347,6 @@ async fn a_relative_folder_is_refused_before_the_agent_starts() {
     let err = orch
         .spawn(
             "outcome-tests",
-            "build",
             "claude",
             "make a file",
             None,

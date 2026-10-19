@@ -25,7 +25,7 @@ fn events_file(id: &str) -> std::path::PathBuf {
 #[test]
 fn append_through_keeps_reads_in_sync() {
     let store = open();
-    let s = store.create("append", "t-append", "lane", "m").unwrap();
+    let s = store.create("append", "t-append", "m").unwrap();
     for i in 0..5 {
         store.append(&s.id, &user(&format!("m{i}"))).unwrap();
     }
@@ -40,7 +40,7 @@ fn append_through_keeps_reads_in_sync() {
 fn appended_events_carry_times_and_old_lines_still_read() {
     use std::io::Write;
     let store = open();
-    let s = store.create("times", "t-times", "lane", "m").unwrap();
+    let s = store.create("times", "t-times", "m").unwrap();
     // A line from before timestamps existed: the bare event, no envelope.
     {
         let mut f = std::fs::OpenOptions::new()
@@ -66,7 +66,7 @@ fn appended_events_carry_times_and_old_lines_still_read() {
 #[test]
 fn another_writer_is_picked_up_by_the_tail_read() {
     let a = open();
-    let s = a.create("two writers", "t-two", "lane", "m").unwrap();
+    let s = a.create("two writers", "t-two", "m").unwrap();
     a.append(&s.id, &user("from a")).unwrap();
     assert_eq!(a.events(&s.id).unwrap().len(), 1);
 
@@ -82,7 +82,7 @@ fn another_writer_is_picked_up_by_the_tail_read() {
 fn a_bad_line_does_not_brick_the_transcript() {
     use std::io::Write;
     let store = open();
-    let s = store.create("torn", "t-torn", "lane", "m").unwrap();
+    let s = store.create("torn", "t-torn", "m").unwrap();
     store.append(&s.id, &user("before")).unwrap();
     {
         let mut f = std::fs::OpenOptions::new()
@@ -103,7 +103,7 @@ fn a_bad_line_does_not_brick_the_transcript() {
 fn fork_keeps_lines_this_build_cannot_parse() {
     use std::io::Write;
     let store = open();
-    let s = store.create("fork src", "t-fork", "lane", "m").unwrap();
+    let s = store.create("fork src", "t-fork", "m").unwrap();
     store.append(&s.id, &user("one")).unwrap();
     {
         let mut f = std::fs::OpenOptions::new()
@@ -124,7 +124,7 @@ fn fork_keeps_lines_this_build_cannot_parse() {
 #[test]
 fn session_md_is_lazy_and_closes_the_widget_fence() {
     let store = open();
-    let s = store.create("md", "t-md", "lane", "m").unwrap();
+    let s = store.create("md", "t-md", "m").unwrap();
     let md_path = parzi_core::paths::sessions_dir()
         .unwrap()
         .join(&s.id)
@@ -167,7 +167,7 @@ fn session_md_is_lazy_and_closes_the_widget_fence() {
 #[test]
 fn transcript_md_renders_on_read() {
     let store = open();
-    let s = store.create("read", "t-read", "lane", "m").unwrap();
+    let s = store.create("read", "t-read", "m").unwrap();
     store.append(&s.id, &user("only on read")).unwrap();
     let md = store.transcript_md(&s.id).unwrap();
     assert!(md.contains("only on read"));
@@ -184,7 +184,7 @@ fn transcript_md_renders_on_read() {
 #[test]
 fn list_sees_a_title_change_through_the_index() {
     let store = open();
-    let s = store.create("before", "t-list", "lane", "m").unwrap();
+    let s = store.create("before", "t-list", "m").unwrap();
     let find = |st: &SessionStore| -> String {
         st.list()
             .unwrap()
@@ -198,7 +198,7 @@ fn list_sees_a_title_change_through_the_index() {
     store.set_title(&s.id, "after").unwrap();
     assert_eq!(find(&store), "after", "C-6: a changed session is re-read");
 
-    let bad = store.create("bad", "t-list", "lane", "m").unwrap();
+    let bad = store.create("bad", "t-list", "m").unwrap();
     std::fs::write(
         parzi_core::paths::sessions_dir()
             .unwrap()
@@ -213,7 +213,7 @@ fn list_sees_a_title_change_through_the_index() {
 #[test]
 fn appends_do_not_rewrite_meta_but_list_stays_ordered() {
     let store = open();
-    let s = store.create("coalesce", "t-coalesce", "lane", "m").unwrap();
+    let s = store.create("coalesce", "t-coalesce", "m").unwrap();
     let meta_path = parzi_core::paths::sessions_dir()
         .unwrap()
         .join(&s.id)
@@ -237,14 +237,14 @@ fn appends_do_not_rewrite_meta_but_list_stays_ordered() {
 #[test]
 fn the_event_cache_is_bounded_and_keeps_unflushed_runs() {
     let store = open();
-    let live = store.create("live", "t-cap-live", "lane", "m").unwrap();
+    let live = store.create("live", "t-cap-live", "m").unwrap();
     store.append(&live.id, &user("half a turn")).unwrap();
     let live_updated = store.get(&live.id).unwrap().updated;
 
     let mut ids = vec![];
     for i in 0..40 {
         let s = store
-            .create(&format!("browse {i}"), &format!("t-cap-{i}"), "lane", "m")
+            .create(&format!("browse {i}"), &format!("t-cap-{i}"), "m")
             .unwrap();
         store.append(&s.id, &user(&format!("m{i}"))).unwrap();
         store.flush(&s.id).unwrap();
@@ -266,9 +266,7 @@ fn the_event_cache_is_bounded_and_keeps_unflushed_runs() {
 fn a_torn_last_line_does_not_swallow_the_next_append() {
     use std::io::Write;
     let store = open();
-    let s = store
-        .create("torn tail", "t-torn-tail", "lane", "m")
-        .unwrap();
+    let s = store.create("torn tail", "t-torn-tail", "m").unwrap();
     store.append(&s.id, &user("one")).unwrap();
     {
         let mut f = std::fs::OpenOptions::new()
@@ -295,9 +293,7 @@ fn a_torn_last_line_does_not_swallow_the_next_append() {
 #[test]
 fn fork_keeps_the_working_folder_and_settings() {
     let store = open();
-    let s = store
-        .create("src", "t-fork-cwd", "lane-x", "model-y")
-        .unwrap();
+    let s = store.create("src", "t-fork-cwd", "model-y").unwrap();
     store.set_cwd(&s.id, "/work/repo").unwrap();
     store.set_context(&s.id, 1200, 200_000).unwrap();
     store.add_usage(&s.id, 10, 20, 0.5).unwrap();
@@ -305,8 +301,8 @@ fn fork_keeps_the_working_folder_and_settings() {
     let f = store.fork(&s.id, None).unwrap();
     assert_eq!(f.cwd, "/work/repo");
     assert_eq!(
-        (f.project.as_str(), f.lane.as_str(), f.model.as_str()),
-        ("t-fork-cwd", "lane-x", "model-y")
+        (f.project.as_str(), f.model.as_str()),
+        ("t-fork-cwd", "model-y")
     );
     assert_eq!(f.context_limit, 200_000);
     assert_eq!(
@@ -321,7 +317,7 @@ fn fork_keeps_the_working_folder_and_settings() {
 #[test]
 fn concurrent_setters_keep_every_update() {
     let store = open();
-    let s = store.create("race", "t-race", "lane", "m").unwrap();
+    let s = store.create("race", "t-race", "m").unwrap();
     std::thread::scope(|scope| {
         for t in 0..4 {
             let (store, id) = (store.clone(), s.id.clone());
@@ -341,7 +337,7 @@ fn concurrent_setters_keep_every_update() {
 #[test]
 fn counts_and_tails_without_copying_the_transcript() {
     let store = open();
-    let s = store.create("tail", "t-tail", "lane", "m").unwrap();
+    let s = store.create("tail", "t-tail", "m").unwrap();
     assert_eq!(store.event_count(&s.id).unwrap(), 0);
     for i in 0..5 {
         store.append(&s.id, &user(&format!("m{i}"))).unwrap();
@@ -360,7 +356,7 @@ fn counts_and_tails_without_copying_the_transcript() {
 #[test]
 fn a_corrupt_meta_is_skipped_by_list_until_healed() {
     let store = open();
-    let bad = store.create("corrupt", "t-corrupt", "lane", "m").unwrap();
+    let bad = store.create("corrupt", "t-corrupt", "m").unwrap();
     let path = parzi_core::paths::sessions_dir()
         .unwrap()
         .join(&bad.id)
@@ -381,7 +377,7 @@ fn a_corrupt_meta_is_skipped_by_list_until_healed() {
 #[test]
 fn rewind_keeps_what_came_before_the_chosen_message() {
     let store = open();
-    let s = store.create("Rewind me", "t-rewind", "lane", "m").unwrap();
+    let s = store.create("Rewind me", "t-rewind", "m").unwrap();
     let said = |t: &str| Event::Assistant {
         text: t.into(),
         done: true,

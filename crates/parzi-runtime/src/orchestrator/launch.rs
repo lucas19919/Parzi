@@ -36,7 +36,7 @@ impl Started {
 
 /// What Parzi itself puts into a session's context, estimated at four
 /// characters a token: its instructions, the project notes they carry and
-/// the definitions of the tools the lane offers. The rest of what the agent
+/// the definitions of the tools a session is offered. The rest of what the agent
 /// reports is the conversation and the agent's own.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize)]
 pub struct ContextParts {
@@ -46,15 +46,15 @@ pub struct ContextParts {
 }
 
 impl Orchestrator {
-    pub fn context_parts(&self, lane: &str, cwd: &str) -> ContextParts {
+    pub fn context_parts(&self, cwd: &str) -> ContextParts {
         let tokens = |chars: usize| (chars as u64).div_ceil(4);
         let notes = parzi_core::brain::context_for(std::path::Path::new(cwd.trim()))
             .map_or(0, |c| tokens(c.chars));
-        let all: usize = crate::handler::system_parts(lane, cwd)
+        let all: usize = crate::handler::system_parts(cwd)
             .iter()
             .map(|p| p.chars().count())
             .sum();
-        let (_, allowed) = Self::lane_policy_for(&self.config(), lane);
+        let (_, allowed) = Self::tool_policy(&self.config());
         let tools: usize = crate::tools::all_defs()
             .iter()
             .filter(|t| allowed.iter().any(|a| a == &t.name))
@@ -72,7 +72,6 @@ impl Orchestrator {
     pub async fn spawn(
         &self,
         project: &str,
-        lane: &str,
         model_spec: &str,
         prompt: &str,
         approver: Option<Arc<dyn Approver>>,
@@ -84,7 +83,6 @@ impl Orchestrator {
         self.spawn_as(
             RunCause::Send,
             project,
-            lane,
             model_spec,
             prompt,
             approver,
@@ -102,7 +100,6 @@ impl Orchestrator {
         &self,
         cause: RunCause,
         project: &str,
-        lane: &str,
         model_spec: &str,
         prompt: &str,
         approver: Option<Arc<dyn Approver>>,
@@ -119,7 +116,7 @@ impl Orchestrator {
         let effort = normalize_effort(effort);
         let title = parzi_core::text::name_from_prompt(prompt);
 
-        let mut meta = self.store.create(&title, project, lane, model_spec)?;
+        let mut meta = self.store.create(&title, project, model_spec)?;
         if !cwd.trim().is_empty() {
             self.store.set_cwd(&meta.id, cwd)?;
         }
@@ -127,7 +124,6 @@ impl Orchestrator {
         let q = QueuedRun {
             session_id: meta.id.clone(),
             project: project.to_string(),
-            lane: lane.to_string(),
             model_spec: model_spec.to_string(),
             prompt: prompt.to_string(),
             cwd: cwd.to_string(),
@@ -216,7 +212,6 @@ impl Orchestrator {
         let q = QueuedRun {
             session_id: id.to_string(),
             project: meta.project.clone(),
-            lane: meta.lane.clone(),
             model_spec: spec,
             prompt: prompt.to_string(),
             cwd: if cwd.is_empty() {
@@ -324,7 +319,10 @@ impl Orchestrator {
         Ok((provider, model))
     }
 
-    fn lane_policy_for(cfg: &ParziConfig, lane: &str) -> (ApprovalMode, Vec<String>) {
+    /// What every session may use: all of Parzi's tools, the shell
+    /// included unless Settings turns it off. How freely they run is the
+    /// mode's to say, not the session's.
+    fn tool_policy(cfg: &ParziConfig) -> (ApprovalMode, Vec<String>) {
         let mode = ApprovalMode::parse(&cfg.lanes.default_mode);
         let mut allowed = cfg.lanes.default_allowed_tools.clone();
         for u in [
@@ -348,37 +346,21 @@ impl Orchestrator {
             "brain.list",
             "brain.write",
             "brain.delete",
+            "project.create",
             "project.archive",
             "project.delete",
-            "lane.status",
             "memory.review",
-            // The project's plan and the session's own name: both lanes.
             "plan.read",
             "plan.write",
             "session.rename",
-        ] {
-            if !allowed.contains(&u.to_string()) {
-                allowed.push(u.into());
-            }
-        }
-        // Work staffs read/write workers; shell and cross-lane dispatch stay Build-only.
-        for u in [
             "session.spawn",
             "session.send_message",
             "session.read_session",
             "session.list_sessions",
-            "project.create",
         ] {
             if !allowed.contains(&u.to_string()) {
                 allowed.push(u.into());
             }
-        }
-        if lane != "work" {
-            if !allowed.contains(&"lane.dispatch".to_string()) {
-                allowed.push("lane.dispatch".into());
-            }
-        } else {
-            allowed.retain(|t| !t.starts_with("shell."));
         }
         if cfg.lanes.no_shell {
             allowed.retain(|t| !t.starts_with("shell."));
@@ -507,7 +489,7 @@ impl Orchestrator {
                 q.cwd.trim()
             )));
         };
-        let (start, allowed) = Self::lane_policy_for(&snap, &q.lane);
+        let (start, allowed) = Self::tool_policy(&snap);
         let (mode, edits_auto, full) = Self::effective_mode(start, q.mode_override.as_deref());
         let tools = Arc::new(ToolExecutor {
             cwd: cwd.clone(),
@@ -523,7 +505,7 @@ impl Orchestrator {
             Arc::new(std::sync::Mutex::new(t))
         };
         let bridge: Arc<dyn HarnessBridge> = Arc::new(p.clone());
-        let mut instructions = system_parts(&q.lane, &cwd);
+        let mut instructions = system_parts(&cwd);
         // A folder of its own for scratch work (a session with no project
         // already works in it).
         if let Ok(dir) = parzi_core::paths::scratch_dir(&q.session_id) {
@@ -555,13 +537,12 @@ impl Orchestrator {
         };
         if mode == ApprovalMode::Deny && !provider.gated() {
             return Err(ParziError::Validation(format!(
-                "this lane is read-only, and {} cannot run read-only; pick another agent for it",
+                "agents are locked to read-only in Settings, and {} cannot run read-only; pick another agent for it",
                 display_name(&provider_id)
             )));
         }
         let host = Arc::new(ToolHost::new(ToolHostParts {
             session_id: q.session_id.clone(),
-            lane: q.lane.clone(),
             mode,
             edits_auto,
             full,
@@ -712,19 +693,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lane_policy_offers_the_page_and_not_the_crew() {
+    fn every_session_gets_every_tool_and_the_shell() {
         let cfg = ParziConfig::default();
-        let (_mode, allowed) = Orchestrator::lane_policy_for(&cfg, "work");
+        let (_mode, allowed) = Orchestrator::tool_policy(&cfg);
         for t in [
+            "shell.exec",
+            "shell.start",
+            "shell.logs",
+            "shell.kill",
             "browser.open",
-            "browser.tabs",
             "browser.read",
             "browser.click",
-            "browser.type",
-            "browser.shot",
             "image.generate",
-            "doc.read",
-            "models.list",
             "ui.show_artifact",
             "brain.search",
             "brain.write",
@@ -732,80 +712,32 @@ mod tests {
             "session.send_message",
             "session.read_session",
             "session.list_sessions",
+            "session.rename",
             "project.create",
+            "plan.read",
+            "plan.write",
+            "todo.write",
         ] {
-            assert!(allowed.iter().any(|a| a == t), "lane missing {t}");
+            assert!(allowed.iter().any(|a| a == t), "missing {t}");
         }
-        assert!(allowed.iter().all(|a| !a.starts_with("task.")));
-        assert!(allowed.iter().all(|a| a != "lane.dispatch"));
-    }
-
-    #[test]
-    fn every_lane_reads_and_writes_the_plan_and_names_itself() {
-        let mut cfg = ParziConfig::default();
-        cfg.lanes.no_shell = true;
-        for lane in ["build", "work", ""] {
-            let (_, allowed) = Orchestrator::lane_policy_for(&cfg, lane);
-            for t in ["plan.read", "plan.write", "session.rename"] {
-                assert!(allowed.iter().any(|a| a == t), "{lane} lane missing {t}");
-            }
-        }
+        assert!(
+            allowed.iter().all(|a| !a.starts_with("lane.")),
+            "no lanes left"
+        );
     }
 
     #[test]
     fn the_shell_switch_turns_shell_off_everywhere() {
         let mut cfg = ParziConfig::default();
-        let (_, on) = Orchestrator::lane_policy_for(&cfg, "build");
+        let (_, on) = Orchestrator::tool_policy(&cfg);
         assert!(
             on.iter().any(|t| t == "shell.exec"),
             "shell is on by default"
         );
         cfg.lanes.no_shell = true;
-        for lane in ["build", "work", ""] {
-            let (_, off) = Orchestrator::lane_policy_for(&cfg, lane);
-            assert!(off.iter().all(|t| !t.starts_with("shell.")), "{lane}");
-        }
-    }
-
-    #[test]
-    fn both_lanes_orchestrate_but_only_build_dispatches() {
-        let cfg = ParziConfig::default();
-        for lane in ["build", "code", ""] {
-            let (_, allowed) = Orchestrator::lane_policy_for(&cfg, lane);
-            for t in [
-                "session.spawn",
-                "session.send_message",
-                "session.read_session",
-                "session.list_sessions",
-                "lane.dispatch",
-            ] {
-                assert!(allowed.iter().any(|a| a == t), "{lane} lane missing {t}");
-            }
-        }
-        let (_, allowed) = Orchestrator::lane_policy_for(&cfg, "work");
-        for t in ["session.spawn", "session.send_message", "project.create"] {
-            assert!(allowed.iter().any(|a| a == t), "work lane missing {t}");
-        }
-        assert!(
-            allowed.iter().all(|a| a != "lane.dispatch"),
-            "cross-lane dispatch stays Build-only"
-        );
-    }
-
-    #[test]
-    fn work_lane_is_stripped_of_shell() {
-        let cfg = ParziConfig::default();
-        let (_, build) = Orchestrator::lane_policy_for(&cfg, "build");
-        for t in ["shell.exec", "shell.start", "shell.logs", "shell.kill"] {
-            assert!(build.iter().any(|a| a == t), "build lane missing {t}");
-        }
-        let (_, research) = Orchestrator::lane_policy_for(&cfg, "work");
-        for t in ["shell.exec", "shell.start", "shell.logs", "shell.kill"] {
-            assert!(
-                research.iter().all(|a| a != t),
-                "work lane must not offer {t}"
-            );
-        }
+        let (_, off) = Orchestrator::tool_policy(&cfg);
+        assert!(off.iter().all(|t| !t.starts_with("shell.")));
+        assert!(off.iter().any(|t| t == "plan.write"), "the rest stays");
     }
 
     #[test]

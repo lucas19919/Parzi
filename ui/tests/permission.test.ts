@@ -1,14 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normLane, permissionBlocked, permissionFor } from "../src/lib/lanes.ts";
-
-test("normLane maps legacy names", () => {
-  assert.equal(normLane("code"), "build");
-  assert.equal(normLane("research"), "work");
-  assert.equal(normLane("build"), "build");
-  assert.equal(normLane("work"), "work");
-  assert.equal(normLane(""), "");
-});
+import { permissionBlocked, permissionFor } from "../src/lib/permission.ts";
 
 test("permissionFor follows Settings and never defaults to full access", () => {
   assert.equal(permissionFor("ask"), "supervised");

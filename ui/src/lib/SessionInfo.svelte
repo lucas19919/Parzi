@@ -22,7 +22,6 @@
   export let projectTitle = "";
   export let folder = "";
   export let branch = "";
-  export let lane = "";
   // The server's name when the session runs there.
   export let remoteHost = "";
   export let contextUsed = 0;
@@ -121,7 +120,6 @@
       <ContextBreakdown
         used={contextUsed}
         limit={contextLimit}
-        {lane}
         {folder}
         {compacting}
         {streaming}

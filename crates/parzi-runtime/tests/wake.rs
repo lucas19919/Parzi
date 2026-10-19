@@ -96,7 +96,6 @@ async fn rig(n: usize) -> Rig {
     let (meta, _rx) = orch
         .spawn(
             "wake-tests",
-            "build",
             "claude",
             "build it in parts",
             None,
@@ -315,7 +314,6 @@ async fn a_wake_asks_the_person_only_for_a_session_that_had_them() {
     ] {
         orch.spawn(
             "wake-approver",
-            "build",
             "claude",
             prompt,
             approver,

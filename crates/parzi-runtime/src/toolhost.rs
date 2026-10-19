@@ -7,7 +7,7 @@ use parzi_core::config::ParziConfig;
 use parzi_core::context::InterKind;
 use parzi_core::error::{ParziError, Result};
 use parzi_core::paths::strip_prefix_fold;
-use parzi_core::store::{Event, SessionStatus, SessionStore};
+use parzi_core::store::{Event, SessionStore};
 use parzi_core::text::{clip, short_id};
 use parzi_core::{artifacts, brain, widgets};
 use parzi_providers::{PermissionDecision, PermissionGate, PermissionRequest};
@@ -18,14 +18,13 @@ use crate::ask_text::makes_media;
 use crate::handler::{HarnessBridge, RunEvent, RunSink, SpawnSpec};
 use crate::tools::{
     category, display_name, edit_paths, is_brain_tool, is_browser_tool, is_desk_tool, is_doc_tool,
-    is_github_tool, is_image_tool, is_lane_tool, is_models_tool, is_plan_tool, is_project_tool,
-    is_question_tool, is_session_tool, is_shell_tool, is_ui_tool, window_tool_offered, Approval,
-    ApprovalMode, Approver, AskRequest, Asker, ToolCallInfo, ToolDef, ToolExecutor,
+    is_github_tool, is_image_tool, is_models_tool, is_plan_tool, is_project_tool, is_question_tool,
+    is_session_tool, is_shell_tool, is_ui_tool, window_tool_offered, Approval, ApprovalMode,
+    Approver, AskRequest, Asker, ToolCallInfo, ToolDef, ToolExecutor,
 };
 
 pub struct ToolHostParts {
     pub session_id: String,
-    pub lane: String,
     pub mode: ApprovalMode,
     pub edits_auto: bool,
     pub full: bool,
@@ -674,14 +673,7 @@ fn desk_state_text(v: &Value) -> String {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .map(|r| {
-            format!(
-                "- {} {} ({})",
-                short_id(&s(r, "id")),
-                clip(&s(r, "title"), 60),
-                s(r, "lane")
-            )
-        })
+        .map(|r| format!("- {} {}", short_id(&s(r, "id")), clip(&s(r, "title"), 60)))
         .collect();
     out.push(if running.is_empty() {
         "running sessions: none".into()
@@ -691,11 +683,11 @@ fn desk_state_text(v: &Value) -> String {
     out.join("\n")
 }
 
-/// The reply to a call this lane's mode or the person refused.
+/// The reply to a call the mode (Settings) or the person refused.
 fn denied(name: &str) -> (bool, String) {
     (
         false,
-        format!("tool `{name}` denied (lane mode / approver)"),
+        format!("tool `{name}` denied (by the approval mode or the person)"),
     )
 }
 
@@ -705,66 +697,6 @@ impl ToolHost {
             p: parts,
             defs: tokio::sync::OnceCell::new(),
         }
-    }
-
-    /// Parzi-native tools a work turn may use without asking. Shell is
-    /// absent on purpose: work never runs commands, so those deny
-    /// silently instead of showing a card.
-    fn work_allows(name: &str) -> bool {
-        matches!(
-            name,
-            "browser.open"
-                | "browser.tabs"
-                | "browser.read"
-                | "browser.scroll"
-                | "browser.wait"
-                | "browser.shot"
-                | "browser.close"
-                | "desk.state"
-                | "desk.open"
-                | "desk.notify"
-                | "brain.search"
-                | "brain.read"
-                | "brain.list"
-                | "brain.write"
-                | "brain.delete"
-                | "project.archive"
-                | "project.delete"
-                | "lane.status"
-                | "memory.review"
-                | "image.generate"
-                | "doc.read"
-                | "models.list"
-                | "ask.user"
-                | "request.user"
-                | "session.spawn"
-                | "session.send_message"
-                | "session.read_session"
-                | "session.list_sessions"
-                | "project.create"
-                | "ui.show_markdown"
-                | "ui.show_artifact"
-                | "ui.offer_replies"
-                | "ui.propose_task"
-                | "todo.write"
-                | "plan.read"
-                | "plan.write"
-                | "session.rename"
-        )
-    }
-
-    /// Work tools that act for the person on a page or show their screen:
-    /// a page they are signed in to makes a click or a keystroke theirs,
-    /// so work asks first instead of allowing or refusing.
-    fn work_asks(name: &str) -> bool {
-        matches!(
-            name,
-            "browser.click"
-                | "browser.type"
-                | "browser.press"
-                | "browser.select"
-                | "desk.screenshot"
-        )
     }
 
     pub(crate) async fn defs(&self) -> Vec<ToolDef> {
@@ -874,7 +806,7 @@ impl ToolHost {
         if is_plan_tool(name) || name == "session.rename" {
             // The project's plan and this session's own name: Parzi's own
             // state the person watches, nothing outside it, so no card. A
-            // read-only lane still only reads: no plan writes, no renames.
+            // read-only mode still only reads: no plan writes, no renames.
             let writes = name != "plan.read";
             if !self.p.tools.is_allowed(name) || (writes && self.p.mode == ApprovalMode::Deny) {
                 return denied(name);
@@ -893,19 +825,6 @@ impl ToolHost {
             }
             return self.execute_session_tool(name, args).await;
         }
-        if is_lane_tool(name) {
-            // lane.status is read-only: allowlist only.
-            if name == "lane.status" {
-                if !self.p.tools.is_allowed(name) {
-                    return denied(name);
-                }
-                return (true, self.lane_state());
-            }
-            if !self.approved(id, name, args).await {
-                return denied(name);
-            }
-            return self.execute_lane_tool(name, args).await;
-        }
         if is_image_tool(name) {
             if !self.approved(id, name, args).await {
                 return denied(name);
@@ -914,7 +833,7 @@ impl ToolHost {
         }
         if is_github_tool(name) {
             // It posts where anyone can read it: asked every time, unless
-            // the run is Full. A read-only lane never posts.
+            // the run is Full. Read-only never posts.
             if self.p.mode == ApprovalMode::Deny || !self.p.tools.is_allowed(name) {
                 return denied(name);
             }
@@ -998,16 +917,6 @@ impl ToolHost {
                 Some(ApprovalMode::Deny)
             );
         }
-        if self.p.lane == "work" {
-            return match self.p.tools.approval_override(name) {
-                Some(ApprovalMode::Deny) => false,
-                Some(ApprovalMode::Auto) => true,
-                Some(ApprovalMode::Ask) => self.ask(id, name, args).await,
-                None if Self::work_allows(name) => true,
-                None if Self::work_asks(name) => self.ask(id, name, args).await,
-                None => false,
-            };
-        }
         match self.p.tools.approval_override(name) {
             Some(ApprovalMode::Deny) => return false,
             Some(ApprovalMode::Auto) => return true,
@@ -1026,7 +935,6 @@ impl ToolHost {
             id: id.into(),
             name: name.into(),
             args: args.clone(),
-            lane: self.p.lane.clone(),
             session: self.p.session_id.clone(),
         };
         self.p
@@ -1061,7 +969,7 @@ impl ToolHost {
             if kind == Some("fs.read") {
                 return PermissionDecision::Allow;
             }
-            return PermissionDecision::Deny("this lane is locked down: read-only".into());
+            return PermissionDecision::Deny("agents are read-only (Settings)".into());
         }
         if let Some(k) = kind {
             let lists_kinds = self.p.tools.allowed.iter().any(|a| {
@@ -1069,7 +977,7 @@ impl ToolHost {
                     && !crate::tools::is_parzi_tool(a)
             });
             if lists_kinds && !self.p.tools.is_allowed(k) {
-                return PermissionDecision::Deny(format!("this lane does not allow {k}"));
+                return PermissionDecision::Deny(format!("Settings do not allow {k}"));
             }
         }
         // The harness owns the shell: vendor-native shell tools are refused
@@ -1107,40 +1015,9 @@ impl ToolHost {
         if self.p.full || (kind == Some("fs.read") && self.own_shot(req)) {
             return PermissionDecision::Allow;
         }
-        // Its own scratch folder is its to write in, in either lane.
+        // Its own scratch folder is its to write in.
         if kind == Some("fs.write") && self.in_scratch(req) {
             return PermissionDecision::Allow;
-        }
-        if self.p.lane == "work" {
-            const READ_ONLY: &str =
-                "work cannot run shell commands — say what needs running instead";
-            if matches!(
-                req.tool.as_str(),
-                "session.spawn"
-                    | "session.send_message"
-                    | "session.read_session"
-                    | "session.list_sessions"
-                    | "session.rename"
-                    | "project.create"
-                    | "plan.read"
-                    | "plan.write"
-            ) {
-                return PermissionDecision::Allow;
-            }
-            return match kind {
-                Some("fs.read") => PermissionDecision::Allow,
-                // Work writes through brain.write and artifacts, never the repo.
-                Some("fs.write") => PermissionDecision::Deny(
-                    "work cannot write files — put it in a brain note or artifact instead".into(),
-                ),
-                Some(_) => PermissionDecision::Deny(
-                    "work can staff workers and write documents, but cannot run commands".into(),
-                ),
-                None if matches!(req.tool.as_str(), "WebFetch" | "WebSearch" | "web_search") => {
-                    PermissionDecision::Allow
-                }
-                None => PermissionDecision::Deny(READ_ONLY.into()),
-            };
         }
         // Making a picture or a video changes nothing here: its output lands
         // in the agent's own store, and the person asked for it.
@@ -1249,7 +1126,6 @@ impl ToolHost {
                             prompt,
                             is_subsession: bool_arg("is_subsession", true),
                             model: str_arg("model").filter(|s| !s.trim().is_empty()),
-                            lane: self.child_lane(str_arg("lane")),
                             wait: bool_arg("wait", true),
                             mode_override: self.child_mode(),
                             effort: str_arg("effort").filter(|s| !s.trim().is_empty()),
@@ -1308,90 +1184,6 @@ impl ToolHost {
             }
             Err(e) => (false, e.to_string()),
         }
-    }
-
-    async fn execute_lane_tool(&self, name: &str, args: &Value) -> (bool, String) {
-        let Some(bridge) = &self.p.harness else {
-            return (false, "lane tools unavailable in this run".into());
-        };
-        if name != "lane.dispatch" {
-            return (false, format!("unknown lane tool `{name}`"));
-        }
-        let str_arg = |k: &str| args.get(k).and_then(|v| v.as_str()).map(str::to_string);
-        let title = str_arg("title").unwrap_or_else(|| "lane worker".into());
-        let prompt = str_arg("prompt").unwrap_or_default();
-        if prompt.trim().is_empty() {
-            return (false, "lane.dispatch needs a `prompt`".into());
-        }
-        let lane = self.child_lane(str_arg("lane"));
-        let wait = args.get("wait").and_then(Value::as_bool).unwrap_or(true);
-        match bridge
-            .spawn(
-                &self.p.session_id,
-                SpawnSpec {
-                    title,
-                    prompt,
-                    is_subsession: true,
-                    model: str_arg("model").filter(|s| !s.trim().is_empty()),
-                    lane,
-                    wait,
-                    mode_override: self.child_mode(),
-                    effort: str_arg("effort").filter(|s| !s.trim().is_empty()),
-                },
-            )
-            .await
-        {
-            Ok(text) => {
-                self.p.sink.emit(RunEvent::Notice {
-                    text: text.chars().take(240).collect(),
-                });
-                (true, text)
-            }
-            Err(e) => (false, e.to_string()),
-        }
-    }
-
-    /// Lane state across every session, from the store. Read-only.
-    fn lane_state(&self) -> String {
-        let all = match self.p.store.list() {
-            Ok(l) => l,
-            Err(e) => return format!("cannot list sessions: {e}"),
-        };
-        let mut lanes: std::collections::BTreeMap<String, Vec<String>> =
-            std::collections::BTreeMap::new();
-        for m in &all {
-            if !matches!(m.status, SessionStatus::Active | SessionStatus::Queued) {
-                continue;
-            }
-            let s = m.status.word();
-            let lane = if m.lane.trim().is_empty() {
-                "build".into()
-            } else {
-                m.lane.clone()
-            };
-            lanes.entry(lane).or_default().push(format!(
-                "{} [{s}] {}",
-                short_id(&m.id),
-                m.title.chars().take(48).collect::<String>()
-            ));
-        }
-        if lanes.is_empty() {
-            return "lanes: idle — nothing queued or active".into();
-        }
-        let mut out = String::from("lanes:");
-        for (lane, runs) in lanes {
-            out.push_str(&format!("\n- {lane}: {}", runs.join("; ")));
-        }
-        out
-    }
-
-    /// Lane a child runs in. Work children stay work: a build child would
-    /// hand a work thread the shell it was denied.
-    fn child_lane(&self, asked: Option<String>) -> Option<String> {
-        if self.p.lane == "work" {
-            return Some("work".into());
-        }
-        asked.filter(|s| !s.trim().is_empty())
     }
 
     /// Approval posture children inherit. Ask/Deny never propagate: a child
@@ -1653,7 +1445,6 @@ impl ToolHost {
             details,
             multi,
             kind: String::new(),
-            lane: self.p.lane.clone(),
             session: self.p.session_id.clone(),
         };
         let answer = asker.ask(&req).await;
@@ -1692,7 +1483,6 @@ impl ToolHost {
             details: vec![],
             multi: false,
             kind,
-            lane: self.p.lane.clone(),
             session: self.p.session_id.clone(),
         };
         let answer = asker.ask(&req).await;
@@ -1734,7 +1524,6 @@ impl ToolHost {
             details: vec![],
             multi: false,
             kind: String::new(),
-            lane: self.p.lane.clone(),
             session: self.p.session_id.clone(),
         };
         let answer = asker.ask(&req).await;
@@ -1756,10 +1545,12 @@ impl ToolHost {
             None if raw == "~" => std::env::home_dir()?,
             None => PathBuf::from(raw),
         };
+        // A bare name goes beside the person's other projects, never into
+        // this session's folder (which may be its throwaway scratch).
         let p = if p.is_absolute() {
             p
         } else {
-            Path::new(self.p.tools.cwd.trim()).join(p)
+            parzi_core::brain::projects_root().join(p)
         };
         let mut out = PathBuf::new();
         for c in p.components() {
@@ -1776,12 +1567,15 @@ impl ToolHost {
         out.is_absolute().then_some(out)
     }
 
-    /// Inside this session's folder or an already registered project.
+    /// Inside this session's folder, an already registered project, or
+    /// where new projects go.
     fn known_folder(&self, folder: &Path) -> bool {
         let Some(real) = land(folder) else {
             return false;
         };
-        let mut homes = vec![PathBuf::from(self.p.tools.cwd.trim())];
+        let root = parzi_core::brain::projects_root();
+        let _ = std::fs::create_dir_all(&root);
+        let mut homes = vec![PathBuf::from(self.p.tools.cwd.trim()), root];
         if let Ok(v) = brain::Vault::open() {
             homes.extend(v.catalog().1.into_iter().map(|p| PathBuf::from(p.folder)));
         }
@@ -1851,7 +1645,7 @@ impl ToolHost {
                 format!("`{folder}` is not a folder path Parzi can use"),
             );
         };
-        // Anywhere else on disk is the person's call, even in work or Auto.
+        // Anywhere else on disk is the person's call, even in Auto.
         if !self.p.full && !self.known_folder(&path) {
             let mut card = args.clone();
             if let Value::Object(o) = &mut card {
@@ -2356,7 +2150,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vendor_tools_fall_into_the_lane_categories() {
+    fn vendor_tools_fall_into_the_right_categories() {
         assert_eq!(category("Bash"), Some("shell.exec"));
         assert_eq!(category("shell"), Some("shell.exec"));
         assert_eq!(category("execute"), Some("shell.exec"));
@@ -2554,7 +2348,7 @@ mod tests {
             "focused": false,
             "active": {"kind": "page", "title": "Bank"},
             "tabs": [{"id": "t1", "title": "Docs", "url": "https://docs.rs"}],
-            "running": [{"id": "0123456789", "title": "Fix it", "lane": "build"}],
+            "running": [{"id": "0123456789", "title": "Fix it"}],
             "folder": "C:/src/app",
             "project": {"slug": "app"},
         });
@@ -2562,7 +2356,7 @@ mod tests {
         assert!(out.contains("in the background"));
         assert!(out.contains("page \"Bank\""));
         assert!(out.contains("https://docs.rs"));
-        assert!(out.contains("- 01234567 Fix it (build)"));
+        assert!(out.contains("- 01234567 Fix it"));
         assert!(out.contains("C:/src/app (project app)"));
         // The same answer with `active` as a bare tab id reads the same.
         let by_id = serde_json::json!({

@@ -43,17 +43,7 @@ async fn an_agent_that_compacts_is_asked_to_and_says_how_much() {
     );
     let (orch, store) = orch(&[fake.clone()]);
     let (meta, _rx) = orch
-        .spawn(
-            "compact",
-            "build",
-            "grok",
-            "build it",
-            None,
-            "",
-            "low",
-            vec![],
-            None,
-        )
+        .spawn("compact", "grok", "build it", None, "", "low", vec![], None)
         .await
         .unwrap();
     settle(&store, &meta.id).await;
@@ -101,7 +91,6 @@ async fn an_agent_that_cannot_compact_summarizes_and_goes_on_from_the_summary() 
     let (meta, _rx) = orch
         .spawn(
             "compact",
-            "build",
             "cursor",
             "SECRET-EARLY-DETAIL",
             None,
@@ -163,7 +152,6 @@ async fn compacting_on_its_own_mid_turn_leaves_a_mark_where_it_happened() {
     let (meta, _rx) = orch
         .spawn(
             "compact",
-            "build",
             "claude",
             "long job",
             None,

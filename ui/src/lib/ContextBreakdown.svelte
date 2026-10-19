@@ -1,13 +1,13 @@
 <script lang="ts" context="module">
-  // What Parzi adds to a context depends on the lane and the folder only:
+  // What Parzi adds to a context depends on the folder only:
   // asked once per pair.
   type Parts = { instructions: number; notes: number; tools: number };
   const cache = new Map<string, Promise<Parts | null>>();
-  function partsFor(lane: string, folder: string) {
-    const key = `${lane}\u0000${folder}`;
+  function partsFor(folder: string) {
+    const key = folder;
     let p = cache.get(key);
     if (!p) {
-      p = api.contextParts(lane, folder).catch(() => null);
+      p = api.contextParts(folder).catch(() => null);
       cache.set(key, p);
     }
     return p;
@@ -23,7 +23,6 @@
 
   export let used = 0;
   export let limit = 0;
-  export let lane = "";
   export let folder = "";
   export let compacting = false;
   export let streaming = false;
@@ -32,11 +31,11 @@
 
   let parts: Parts | null = null;
   let partsKey = "";
-  $: if (`${lane}\u0000${folder}` !== partsKey) {
-    partsKey = `${lane}\u0000${folder}`;
+  $: if (folder !== partsKey) {
+    partsKey = folder;
     const key = partsKey;
     parts = null;
-    void partsFor(lane, folder).then((p) => {
+    void partsFor(folder).then((p) => {
       if (key === partsKey) parts = p;
     });
   }

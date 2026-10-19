@@ -135,7 +135,6 @@ pub(crate) struct ToolCallView {
     #[serde(flatten)]
     ask: parzi_runtime::ask_text::AskText,
     args: serde_json::Value,
-    lane: String,
     session: String,
 }
 
@@ -159,7 +158,6 @@ impl Approver for GuiApprover {
             label: humanize_tool_call(&call.name, &call.args),
             ask: parzi_runtime::ask_text::ask_text(&call.name, &call.args),
             args: call.args.clone(),
-            lane: call.lane.clone(),
             session: call.session.clone(),
         };
         let _ = self.app.emit(

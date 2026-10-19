@@ -358,7 +358,7 @@ pub fn mirror_adopt(orch: &Orchestrator, req: &Value) -> Value {
         return fail("the mirrored session is unreadable");
     };
     let store = orch.store();
-    let fresh = match store.create(&meta.title, &meta.project, &meta.lane, &meta.model) {
+    let fresh = match store.create(&meta.title, &meta.project, &meta.model) {
         Ok(m) => m,
         Err(e) => return fail(e.to_string()),
     };

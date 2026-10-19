@@ -121,11 +121,10 @@ pub fn shell_kill(state: State<'_, AppState>, session: String, id: String) -> bo
 #[tauri::command]
 pub async fn context_parts(
     state: State<'_, AppState>,
-    lane: String,
     cwd: String,
 ) -> Result<parzi_runtime::orchestrator::ContextParts, String> {
     let orch = state.orch.clone();
-    tauri::async_runtime::spawn_blocking(move || orch.context_parts(&lane, &cwd))
+    tauri::async_runtime::spawn_blocking(move || orch.context_parts(&cwd))
         .await
         .map_err(|e| e.to_string())
 }

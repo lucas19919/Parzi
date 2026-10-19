@@ -8,7 +8,6 @@
   export let title = "";
   export let branch = "";
   // For the context breakdown.
-  export let lane = "";
   export let folder = "";
   // A side task's session it came from: a way back to it.
   export let parentTitle = "";
@@ -162,7 +161,6 @@
           <ContextBreakdown
             used={contextUsed}
             limit={contextLimit}
-            {lane}
             {folder}
             {compacting}
             {streaming}

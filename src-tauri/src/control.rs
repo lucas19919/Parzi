@@ -329,7 +329,6 @@ impl Desk {
             "key": key,
             "session": call.session,
             "name": call.name,
-            "lane": call.lane,
             "label": humanize_tool_call(&call.name, &call.args),
         });
         locked(&self.approvals).insert(key.to_string(), row.clone());
@@ -1020,7 +1019,7 @@ async fn desk_state(ctx: &Ctx, req: &Value) -> Value {
                 parzi_core::store::SessionStatus::Active | parzi_core::store::SessionStatus::Queued
             )
         })
-        .map(|m| json!({ "id": m.id, "title": m.title, "lane": m.lane, "status": m.status }))
+        .map(|m| json!({ "id": m.id, "title": m.title, "status": m.status }))
         .collect();
     if !session.is_empty() {
         let own: Vec<&TabSnap> = tabs
@@ -1362,7 +1361,6 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
                 .spawn_as(
                     RunCause::Cli,
                     &project,
-                    "",
                     &model,
                     &message,
                     Some(approver),
@@ -1711,7 +1709,6 @@ mod tests {
             id: "c1".into(),
             name: "shell.exec".into(),
             args: json!({ "cmd": "cargo test" }),
-            lane: "build".into(),
             session: "s1".into(),
         };
         desk.approval_opened("abcd-1234", &call);

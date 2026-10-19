@@ -7,7 +7,6 @@ export interface SessionMeta {
   title: string;
   pinned: boolean;
   project: string;
-  lane: string;
   model: string;
   status: "active" | "idle" | "done" | "killed" | "queued";
   tokens_in: number;
@@ -96,7 +95,6 @@ export interface ApprovalCall {
   detail_kind?: "command" | "paths" | "url" | "text";
   note?: string;
   args: unknown;
-  lane: string;
   session: string;
 }
 
@@ -199,7 +197,6 @@ interface SendArgs {
   effort: string;
   attachments: string[];
   mode: string;
-  lane: string;
   remote?: boolean;
   // Plan items quoted into the message (at most 4).
   quotes?: { project: string; id: string }[];
@@ -209,7 +206,8 @@ interface SendArgs {
   worktree?: string;
 }
 
-export type ComposerMode = "search" | "build" | "work";
+// What the composer sends to: an agent ("build") or the web ("search").
+export type ComposerMode = "search" | "build";
 
 export const api = {
   appVersion: () => invoke<string>("app_version"),
@@ -227,7 +225,6 @@ export const api = {
       effort: a.effort,
       attachments: a.attachments,
       mode: a.mode,
-      lane: a.lane,
       remote: a.remote ?? false,
       quotes: a.quotes ?? [],
       parent: a.parent ?? null,
@@ -266,7 +263,7 @@ export const api = {
   shellJobs: (session: string) => invoke<ShellJob[]>("shell_jobs", { session }),
   shellKill: (session: string, id: string) => invoke<boolean>("shell_kill", { session, id }),
   // What Parzi adds to a session's context, in estimated tokens.
-  contextParts: (lane: string, cwd: string) => invoke<{ instructions: number; notes: number; tools: number }>("context_parts", { lane, cwd }),
+  contextParts: (cwd: string) => invoke<{ instructions: number; notes: number; tools: number }>("context_parts", { cwd }),
   // Starts a connector (signing in, the first time) and counts its tools.
   connectorCheck: (name: string) => invoke<number>("connector_check", { name }),
   runDoctorQuick: () => invoke<Check[]>("run_doctor_quick"),

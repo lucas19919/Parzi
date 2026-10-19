@@ -242,7 +242,6 @@ impl Pump {
         let q = QueuedRun {
             session_id: parent.to_string(),
             project: meta.project.clone(),
-            lane: meta.lane.clone(),
             model_spec: meta.model.clone(),
             prompt: "Sessions you started in the background have ended; their reports are above."
                 .into(),
@@ -308,7 +307,6 @@ mod tests {
             title: "Write the parser".into(),
             pinned: false,
             project: "demo".into(),
-            lane: "build".into(),
             model: String::new(),
             parent_id: Some("p1".into()),
             status: SessionStatus::Done,

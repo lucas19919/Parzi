@@ -37,11 +37,10 @@ fn person(answer: Approval) -> Arc<Person> {
 
 fn host(approver: Arc<Person>) -> ToolHost {
     let store = SessionStore::open().unwrap();
-    let sid = store.create("brain", "", "", "claude/m").unwrap().id;
+    let sid = store.create("brain", "", "claude/m").unwrap().id;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     ToolHost::new(ToolHostParts {
         session_id: sid.clone(),
-        lane: String::new(),
         mode: ApprovalMode::Ask,
         edits_auto: false,
         full: false,
@@ -141,7 +140,7 @@ async fn brain_reads_freely_writes_with_approval_and_attaches_project_notes() {
 
     let src = code.join("src");
     let src = src.to_str().unwrap();
-    let parts = system_parts("", src);
+    let parts = system_parts(src);
     assert!(parts[1].contains("one line summaries"));
     let last = parts.last().unwrap();
     assert!(
@@ -154,14 +153,14 @@ async fn brain_reads_freely_writes_with_approval_and_attaches_project_notes() {
         "{last}"
     );
     assert!(brain::pin("notes/setup.md", true).unwrap().pinned);
-    let last = system_parts("", src).pop().unwrap();
+    let last = system_parts(src).pop().unwrap();
     assert!(
         last.ends_with("\n\n## setup (notes/setup.md)\n\nRun cargo xtask."),
         "{last}"
     );
     assert!(!last.contains("## On demand"), "{last}");
 
-    let bare = system_parts("w", home.to_str().unwrap());
+    let bare = system_parts(home.to_str().unwrap());
     assert!(!bare.iter().any(|p| p.contains("Parzi brain")));
     brain::write(
         "notes/me.md",
@@ -174,14 +173,14 @@ async fn brain_reads_freely_writes_with_approval_and_attaches_project_notes() {
         "{out}"
     );
     for cwd in ["", "  ", home.to_str().unwrap()] {
-        let last = system_parts("w", cwd).pop().unwrap();
+        let last = system_parts(cwd).pop().unwrap();
         assert!(
             last.ends_with("\n\n## me (notes/me.md)\n\nKeep answers short."),
             "{last}"
         );
         assert!(!last.contains("## Project:"), "{last}");
     }
-    let last = system_parts("", src).pop().unwrap();
+    let last = system_parts(src).pop().unwrap();
     let (me, setup) = (
         last.find("## me (notes/me.md)").unwrap(),
         last.find("## setup (notes/setup.md)").unwrap(),
@@ -205,7 +204,7 @@ async fn brain_reads_freely_writes_with_approval_and_attaches_project_notes() {
     );
     let (ok, out) = h.call("brain.search", &json!({"query": "run"})).await;
     assert!(ok && !out.contains("conflict"), "{out}");
-    let last = system_parts("", src).pop().unwrap();
+    let last = system_parts(src).pop().unwrap();
     assert!(
         !last.contains("conflict") && !last.contains("make"),
         "{last}"

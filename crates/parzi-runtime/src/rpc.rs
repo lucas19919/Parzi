@@ -55,7 +55,6 @@ pub fn approval_row(key: &str, call: &ToolCallInfo) -> Value {
         "key": key,
         "session": call.session,
         "name": call.name,
-        "lane": call.lane,
         "label": humanize_tool_call(&call.name, &call.args),
     })
 }

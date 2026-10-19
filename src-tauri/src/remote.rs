@@ -474,7 +474,6 @@ pub(crate) async fn send(
     effort: &str,
     attachments: Vec<parzi_core::context::AttachedFile>,
     mode: Option<String>,
-    lane: Option<String>,
     plan_item: Option<&str>,
 ) -> Result<String, String> {
     let body = json!({
@@ -485,7 +484,6 @@ pub(crate) async fn send(
         "model": model,
         "effort": effort,
         "mode": mode.unwrap_or_default(),
-        "lane": lane.unwrap_or_default(),
         "attachments": attachments,
         // A folder on the server (a project there), or its scratch folder.
         "cwd": if cwd.starts_with('/') || cwd.starts_with('~') { cwd } else { "" },

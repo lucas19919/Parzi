@@ -13,9 +13,7 @@ fn append_and_read_10k_events() {
     let turn_every = 8;
 
     let store = SessionStore::open().expect("store");
-    let s = store
-        .create("bench", "proj", "lane", "model")
-        .expect("create");
+    let s = store.create("bench", "proj", "model").expect("create");
 
     let before = parzi_core::store::io_counts();
     let t0 = std::time::Instant::now();

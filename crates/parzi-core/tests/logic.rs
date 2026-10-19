@@ -143,14 +143,14 @@ fn subsession_hierarchy_lists_children() {
     std::fs::create_dir_all(&dir).unwrap();
     std::env::set_var("PARZI_HOME", &dir);
     let store = SessionStore::open().unwrap();
-    let parent = store.create("team-parent", "t", "", "m").unwrap();
+    let parent = store.create("team-parent", "t", "m").unwrap();
     assert_eq!(parent.parent_id, None);
     let child = store
-        .create_with_parent("team-child", "t", "", "m", Some(&parent.id))
+        .create_with_parent("team-child", "t", "m", Some(&parent.id))
         .unwrap();
     assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
     let grand = store
-        .create_with_parent("team-grand", "t", "", "m", Some(&child.id))
+        .create_with_parent("team-grand", "t", "m", Some(&child.id))
         .unwrap();
     let kids = store.list_children(&parent.id).unwrap();
     assert!(kids.iter().any(|m| m.id == child.id));
@@ -175,7 +175,6 @@ fn purge_cascade_kills_descendants_at_any_depth() {
         title: id.into(),
         pinned: false,
         project: "t".into(),
-        lane: "".into(),
         model: "m".into(),
         parent_id: parent.map(|s| s.into()),
         status,
@@ -218,7 +217,6 @@ fn purge_spares_live_runs_and_the_ancestors_they_report_to() {
         title: id.into(),
         pinned: false,
         project: "t".into(),
-        lane: "".into(),
         model: "m".into(),
         parent_id: parent.map(|s| s.into()),
         status,

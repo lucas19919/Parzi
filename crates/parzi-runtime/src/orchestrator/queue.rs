@@ -76,7 +76,6 @@ impl RunSidecar {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedRun {
     project: String,
-    lane: String,
     model_spec: String,
     prompt: String,
     cwd: String,
@@ -219,7 +218,6 @@ pub(crate) fn set_posture(session_id: &str, posture: Posture) {
 pub(super) struct QueuedRun {
     pub(super) session_id: String,
     pub(super) project: String,
-    pub(super) lane: String,
     pub(super) model_spec: String,
     pub(super) prompt: String,
     pub(super) cwd: String,
@@ -239,7 +237,6 @@ impl QueuedRun {
     fn persisted(&self) -> PersistedRun {
         PersistedRun {
             project: self.project.clone(),
-            lane: self.lane.clone(),
             model_spec: self.model_spec.clone(),
             prompt: self.prompt.clone(),
             cwd: self.cwd.clone(),
@@ -257,7 +254,6 @@ impl QueuedRun {
         Self {
             session_id: session_id.to_string(),
             project: p.project,
-            lane: p.lane,
             model_spec: p.model_spec,
             prompt: p.prompt,
             cwd: p.cwd,

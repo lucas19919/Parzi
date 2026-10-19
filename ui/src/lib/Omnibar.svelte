@@ -8,7 +8,7 @@
   import { api, brain, type ComposerMode, type PlanQuote, type Project, type ProviderStatus } from "./api";
   import { remote as server } from "./remote";
   import { effortsFor, fitEffort, seesImages, shownOf } from "./providerRows";
-  import { permissionBlocked } from "./lanes";
+  import { permissionBlocked } from "./permission";
   import { folderName, toAddress } from "./tabs";
   import { relativeTo, sameDir, shortAttachment as shortName } from "./paths";
   import { popover, placeAbove } from "./popover";
@@ -26,8 +26,7 @@
   export let permission = "supervised";
   // Settings' default_mode; options it would ignore are shown disabled.
   export let policy = "";
-  // "search" talks to the web; anything else to the agent. Whether the
-  // agent builds or assists follows the folder, so it is no choice here.
+  // "search" talks to the web; "build" to the agent, which does everything.
   export let mode: ComposerMode = "build";
   export let attachments: string[] = [];
   // Plan items quoted from the plan panel: a message can be just these.

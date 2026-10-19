@@ -31,7 +31,7 @@
   import Icon from "./lib/Icon.svelte";
   import { board, ensureBoard } from "./lib/providerStore";
   import { isRemote, loadRemoteInfo, onRemoteStatus, refreshRemoteBoard, remote, remoteBoard, remoteInfo } from "./lib/remote";
-  import { normLane, permissionFor } from "./lib/lanes";
+  import { permissionFor } from "./lib/permission";
   import { provideClearSessions } from "./lib/sessions";
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
@@ -119,7 +119,7 @@
   // Type-ahead. The backend takes one run per session, so a message sent
   // while its session works is held here (a later one joins it) and goes
   // out when the run is done.
-  type Held = { tab: string; text: string; quotes: PlanQuote[]; files: string[]; model: string; effort: string; mode: string; cwd: string; lane: string; remote: boolean };
+  type Held = { tab: string; text: string; quotes: PlanQuote[]; files: string[]; model: string; effort: string; mode: string; cwd: string; remote: boolean };
   let held: Record<string, Held> = {};
   $: heldNow = tab.kind === "session" && shown ? held[shown] : undefined;
   $: heldText = heldNow ? heldNow.text || heldNow.quotes.map((q) => q.title).join(", ") : "";
@@ -174,13 +174,6 @@
     { input: comp.input, quotes: comp.quotes ?? [], attachments: comp.attachments },
   );
 
-  function laneOf(sessionId: string | null | undefined): string {
-    if (!sessionId) return "";
-    return threads.find((t) => t.id === sessionId)?.lane ?? "";
-  }
-
-  // Legacy sessions stored lane "code" (today's "build") or "research"
-  // (today's "work"): normalized in lib/lanes.ts.
   // The nearest session up the parent chain that has a tab: a helper's
   // tab sits under it in the strip.
   function hostSessionOf(id: string): string | null {
@@ -272,7 +265,7 @@
 
   $: tab = tabs.find((t) => t.id === activeId) ?? tabs[0];
   $: syncComposer(tab);
-  // Only mode/model mirror out (lane hint, agent warmup).
+  // Only mode/model mirror out (agent warmup).
   $: mode = comp.mode;
   $: model = comp.model;
   $: streaming = !!shown && running.has(shown);
@@ -834,12 +827,9 @@
     const sessionModel = threads.find((t) => t.id === target.sessionId)?.model ?? "";
     const otherAgent = !!sessionModel && !!draft.model && agentOf(sessionModel) !== agentOf(draft.model);
     const fresh = !target.sessionId || otherAgent;
-    // A session keeps its lane. A new one builds when it has a folder to
-    // work in, and is a plain assistant (no shell) without one.
     const where = remoteOn ? (target.sessionId ? (meta?.cwd ?? "") : (draft.remoteCwd ?? "")) : folder;
-    const lane = !fresh ? normLane(laneOf(target.sessionId)) || "build" : where ? "build" : "work";
     if (!fresh && target.sessionId && running.has(target.sessionId)) {
-      hold(target.sessionId, { tab: target.id, text: prompt, quotes, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, lane, remote: remoteOn });
+      hold(target.sessionId, { tab: target.id, text: prompt, quotes, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn });
       draft.input = "";
       draft.attachments = [];
       draft.quotes = [];
@@ -869,7 +859,6 @@
         effort: draft.effort,
         attachments: files,
         mode: permission,
-        lane,
         remote: remoteOn,
         quotes: quotes.map((q) => ({ project: q.project, id: q.id })),
         // A brand-new session only: one going on keeps where it works.
@@ -971,7 +960,6 @@
         effort: h.effort,
         attachments: h.files,
         mode: h.mode,
-        lane: h.lane,
         remote: h.remote,
         quotes: h.quotes.map((q) => ({ project: q.project, id: q.id })),
       });
@@ -1136,7 +1124,6 @@
       effort: comp.effort,
       attachments: files,
       mode: permission,
-      lane: where ? "build" : "work",
       remote: remoteOn,
       quotes: quotes.map((q) => ({ project: q.project, id: q.id })),
       parent,
@@ -1742,7 +1729,6 @@
             <SessionHeader
               title={meta?.title || tab.title}
               {branch}
-              lane={meta?.lane ?? ""}
               {folder}
               parentTitle={parent ? parent.title || "Untitled" : ""}
               agentCount={familyActive}
@@ -1819,7 +1805,6 @@
               projectTitle={planTitle}
               {folder}
               {branch}
-              lane={meta?.lane ?? ""}
               remoteHost={remoteOn ? ($remoteInfo?.host ?? "") : ""}
               contextUsed={context.used}
               contextLimit={context.limit}

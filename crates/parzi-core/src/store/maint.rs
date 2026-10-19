@@ -41,7 +41,7 @@ impl SessionStore {
         count_read(1);
         let text = std::fs::read_to_string(self.events_path(id))
             .map_err(|_| ParziError::Store(format!("session not found: {id}")))?;
-        let meta = self.create(title, &src.project, &src.lane, &src.model)?;
+        let meta = self.create(title, &src.project, &src.model)?;
         let mut kept = String::new();
         for line in text
             .lines()

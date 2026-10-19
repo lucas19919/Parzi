@@ -29,7 +29,7 @@ const BUS_CAPACITY: usize = 4_096;
 
 static HEADLESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// `parzi serve` runs with no desk, so its lanes offer no browser tools.
+/// `parzi serve` runs with no desk, so it offers no browser tools.
 pub fn set_headless() {
     HEADLESS.store(true, std::sync::atomic::Ordering::Relaxed);
 }

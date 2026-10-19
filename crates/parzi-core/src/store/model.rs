@@ -41,8 +41,6 @@ pub struct SessionMeta {
     #[serde(default)]
     pub project: String,
     #[serde(default)]
-    pub lane: String,
-    #[serde(default)]
     pub model: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,

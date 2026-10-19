@@ -57,21 +57,14 @@ impl SessionStore {
         self.cache.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    pub fn create(
-        &self,
-        title: &str,
-        project: &str,
-        lane: &str,
-        model: &str,
-    ) -> Result<SessionMeta> {
-        self.create_with_parent(title, project, lane, model, None)
+    pub fn create(&self, title: &str, project: &str, model: &str) -> Result<SessionMeta> {
+        self.create_with_parent(title, project, model, None)
     }
 
     pub fn create_with_parent(
         &self,
         title: &str,
         project: &str,
-        lane: &str,
         model: &str,
         parent_id: Option<&str>,
     ) -> Result<SessionMeta> {
@@ -80,7 +73,6 @@ impl SessionStore {
             id: Uuid::new_v4().to_string(),
             title: title.to_string(),
             project: project.to_string(),
-            lane: lane.to_string(),
             model: model.to_string(),
             parent_id: parent_id.map(std::string::ToString::to_string),
             status: SessionStatus::Active,

@@ -123,6 +123,54 @@ pub fn pin(path: &str, on: bool) -> Result<NoteMeta> {
     Vault::open()?.set_pinned(path, on)
 }
 
+/// Where a new project's folder goes when no full path is given: beside
+/// the person's other projects (the folder most of them share, so
+/// `D:\Repos` when Parzi and sepia live there), else `~/Projects`.
+/// Parzi's own folders (scratch, worktrees) never count.
+#[must_use]
+pub fn projects_root() -> PathBuf {
+    // Set by tests (and anyone who wants new projects somewhere fixed).
+    if let Some(root) = std::env::var_os("PARZI_PROJECTS").filter(|r| !r.is_empty()) {
+        return PathBuf::from(root);
+    }
+    let folders = Vault::open()
+        .map(|v| {
+            v.catalog()
+                .1
+                .into_iter()
+                .map(|p| p.folder)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let own = crate::paths::parzi_dir().ok();
+    root_of(&folders, own.as_deref()).unwrap_or_else(|| {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Projects")
+    })
+}
+
+/// The parent most of `folders` share, skipping any under `own`.
+fn root_of(folders: &[String], own: Option<&Path>) -> Option<PathBuf> {
+    let mut counts: Vec<(PathBuf, usize)> = vec![];
+    for f in folders.iter().filter(|f| !f.trim().is_empty()) {
+        let p = Path::new(f.trim());
+        if !p.is_absolute() || own.is_some_and(|o| inside(o, p)) {
+            continue;
+        }
+        let Some(parent) = p.parent().filter(|q| q.parent().is_some()) else {
+            continue;
+        };
+        match counts.iter_mut().find(|(q, _)| q == parent) {
+            Some((_, n)) => *n += 1,
+            None => counts.push((parent.to_path_buf(), 1)),
+        }
+    }
+    // The most shared; the first seen wins a tie.
+    let best = counts.iter().map(|(_, n)| *n).max()?;
+    counts.into_iter().find(|(_, n)| *n == best).map(|(p, _)| p)
+}
+
 pub fn archive_project(slug: &str, on: bool) -> Result<Project> {
     Vault::open()?.project_archive(slug, on)
 }
@@ -1608,6 +1656,27 @@ fn truncated(text: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_projects_go_beside_the_others_never_into_parzis_own_folders() {
+        let own = Path::new("C:/Users/me/.parzi");
+        let folders = [
+            "D:/Repos/Parzi".to_string(),
+            "D:/IsarWebsites".to_string(),
+            "D:/Repos/sepia".to_string(),
+            "C:/Users/me/.parzi/scratch/3bbf/strohmann".to_string(),
+            "C:/Users/me/.parzi/scratch/aa11/x".to_string(),
+            "C:/Users/me/.parzi/scratch/bb22/y".to_string(),
+        ];
+        assert_eq!(
+            root_of(&folders, Some(own)),
+            Some(PathBuf::from("D:/Repos"))
+        );
+        // Only Parzi's own: no root from them.
+        assert_eq!(root_of(&folders[3..], Some(own)), None);
+        // A drive root alone is no parent to put projects in.
+        assert_eq!(root_of(&["D:/".to_string()], Some(own)), None);
+    }
 
     fn vault() -> (tempfile::TempDir, Vault) {
         let dir = tempfile::tempdir().unwrap();

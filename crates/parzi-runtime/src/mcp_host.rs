@@ -19,7 +19,7 @@ const SERVER_NAME: &str = "parzi";
 const PROTOCOLS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_BODY: usize = 8 * 1024 * 1024;
 /// What the server says it offers: the families of `tools.rs`.
-const INSTRUCTIONS: &str = "Parzi's own tools: widgets and artifacts in the thread, teamwork across sessions, the project's plans, the notes vault, the window and its pages, and the shell where the lane allows it.";
+const INSTRUCTIONS: &str = "Parzi's own tools: widgets and artifacts in the thread, teamwork across sessions, the project's plans, the notes vault, the window and its pages, and the shell.";
 
 type Runs = Arc<RwLock<HashMap<String, Arc<ToolHost>>>>;
 

@@ -1,6 +1,6 @@
 import type { PlanQuote } from "./api";
 
-export type ComposerMode = "search" | "build" | "work";
+export type ComposerMode = "search" | "build";
 type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview";
 
 export interface TabComposerState {
@@ -68,7 +68,7 @@ export function ensureComposer(c?: Partial<TabComposerState> | null): TabCompose
   const last = lastModel();
   const next: TabComposerState = {
     input: typeof c?.input === "string" ? c.input : "",
-    mode: c?.mode === "search" || c?.mode === "build" || c?.mode === "work" ? c.mode : "build",
+    mode: c?.mode === "search" ? "search" : "build",
     model: typeof c?.model === "string" && c.model ? c.model : last.model,
     effort: typeof c?.effort === "string" && c.effort ? c.effort : last.effort || "medium",
     remote: c?.remote,

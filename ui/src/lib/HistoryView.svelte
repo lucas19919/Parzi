@@ -12,7 +12,6 @@
   import { toast } from "./toast";
   import { bare } from "./suggest";
   import { agentOf, whereOf } from "./sessions";
-  import { normLane } from "./lanes";
   import { byDay, formatTime as time } from "./time";
   import { tooltip } from "./tooltip";
 
@@ -49,10 +48,6 @@
 
   function matches(title: string, url: string, term: string) {
     return !term || title.toLowerCase().includes(term) || url.toLowerCase().includes(term);
-  }
-
-  function laneOf(s: SessionMeta): string {
-    return normLane(s.lane ?? "");
   }
 
   function byFolder(list: Bookmark[]) {

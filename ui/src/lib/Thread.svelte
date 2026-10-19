@@ -371,12 +371,6 @@
         return `Checking on ${arg(args, "title", "session", "session_id") || "a helper"}`;
       case "session.list":
         return "Listing helpers";
-      case "lane.dispatch": {
-        const lane = arg(args, "lane");
-        return lane ? `Handing off to ${lane[0].toUpperCase()}${lane.slice(1)}` : "Handing off";
-      }
-      case "lane.status":
-        return "Checking what is running";
       case "memory.review":
         return `Reviewing note ${arg(args, "path") || "?"}`;
       case "project.create":
@@ -492,7 +486,7 @@ ${e.text}` : e.text;
 
   // Routine narrations render as a whisper, not a mono block.
   function sysTone(text: string): "line" | "block" {
-    return /^(asked the user|the user answered|plan written|plan saved|brain\.write|session\.spawn|session\.send_message|lane\.dispatch):/i.test(
+    return /^(asked the user|the user answered|plan written|plan saved|brain\.write|session\.spawn|session\.send_message):/i.test(
       text.trim(),
     )
       ? "line"

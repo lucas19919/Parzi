@@ -82,7 +82,6 @@ async fn ask_mode_waits_for_a_slow_approver_and_deny_denies() {
     let (meta, _rx) = orch
         .spawn(
             "t",
-            "",
             "claude",
             "write the file",
             Some(slow.clone()),
@@ -113,7 +112,6 @@ async fn ask_mode_waits_for_a_slow_approver_and_deny_denies() {
     let (meta, _rx) = orch
         .spawn(
             "t",
-            "",
             "claude",
             "write the file",
             Some(Arc::new(DenyAll)),
@@ -154,7 +152,6 @@ async fn sequential_completed_runs_release_slots() {
     let (m1, _) = orch
         .spawn(
             "t",
-            "",
             "claude",
             "first",
             Some(Arc::new(Allow)),
@@ -169,7 +166,6 @@ async fn sequential_completed_runs_release_slots() {
     let (m2, _) = orch
         .spawn(
             "t",
-            "",
             "claude",
             "second",
             Some(Arc::new(Allow)),
@@ -205,11 +201,10 @@ fn host(allowed: Vec<String>, mode: ApprovalMode) -> ToolHost {
 
 fn host_with(allowed: Vec<String>, mode: ApprovalMode, cfg: ParziConfig) -> ToolHost {
     let store = parzi_core::store::SessionStore::open().unwrap();
-    let meta = store.create("gate", "t", "", "claude").unwrap();
+    let meta = store.create("gate", "t", "claude").unwrap();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     ToolHost::new(ToolHostParts {
         session_id: meta.id.clone(),
-        lane: "test".into(),
         mode,
         edits_auto: false,
         full: false,
@@ -264,9 +259,9 @@ impl parzi_runtime::handler::HarnessBridge for NoHarness {
 }
 
 #[tokio::test]
-async fn session_tools_obey_the_lane_allowlist() {
+async fn session_tools_obey_the_allowlist() {
     home("approval");
-    let without = host(vec!["lane.status".into()], ApprovalMode::Auto);
+    let without = host(vec!["plan.read".into()], ApprovalMode::Auto);
     let (ok, out) = without.call("session.list_sessions", &json!({})).await;
     assert!(!ok, "not in the allowlist, not run: {out}");
     let with = host(vec!["session.*".into()], ApprovalMode::Auto);
@@ -286,7 +281,7 @@ fn request(tool: &str) -> PermissionRequest {
 }
 
 #[tokio::test]
-async fn the_agents_own_actions_pass_the_lane_and_the_mode() {
+async fn the_agents_own_actions_pass_the_allowlist_and_the_mode() {
     home("approval");
     let reads_only = host(
         vec!["fs.read".into(), "ui.show_artifact".into()],
@@ -332,55 +327,16 @@ async fn the_agents_own_actions_pass_the_lane_and_the_mode() {
     );
 }
 
-/// Records the lane each spawn asked for.
-#[derive(Default)]
-struct LaneSpy(std::sync::Mutex<Vec<Option<String>>>);
-#[async_trait::async_trait]
-impl parzi_runtime::handler::HarnessBridge for LaneSpy {
-    async fn spawn(
-        &self,
-        _: &str,
-        spec: parzi_runtime::handler::SpawnSpec,
-    ) -> parzi_core::error::Result<String> {
-        self.0.lock().unwrap().push(spec.lane);
-        Ok("spawned".into())
-    }
-    async fn send_message(
-        &self,
-        _: &str,
-        _: &str,
-        _: &str,
-        _: parzi_core::context::InterKind,
-        _: bool,
-        _: Option<String>,
-    ) -> parzi_core::error::Result<String> {
-        Ok("sent".into())
-    }
-    async fn read_session(
-        &self,
-        _: &str,
-        _: &str,
-        _: Option<usize>,
-    ) -> parzi_core::error::Result<String> {
-        Ok("read".into())
-    }
-    async fn list_sessions(&self, _: &str, _: bool) -> parzi_core::error::Result<String> {
-        Ok("[]".into())
-    }
-}
-
-fn lane_host(
-    lane: &str,
+fn auto_host(
     cwd: &str,
     approver: Arc<dyn Approver>,
     harness: Arc<dyn parzi_runtime::handler::HarnessBridge>,
 ) -> ToolHost {
     let store = parzi_core::store::SessionStore::open().unwrap();
-    let meta = store.create("lanes", "t", lane, "claude").unwrap();
+    let meta = store.create("auto", "t", "claude").unwrap();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     ToolHost::new(ToolHostParts {
         session_id: meta.id.clone(),
-        lane: lane.into(),
         mode: ApprovalMode::Auto,
         edits_auto: false,
         full: false,
@@ -401,38 +357,16 @@ fn lane_host(
 }
 
 #[tokio::test]
-async fn work_children_stay_in_work() {
-    home("approval");
-    let cwd = std::env::temp_dir().display().to_string();
-    let spy = Arc::new(LaneSpy::default());
-    let work = lane_host("work", &cwd, Arc::new(DenyAll), spy.clone());
-    let (ok, out) = work
-        .call("session.spawn", &json!({"prompt": "go", "lane": "build"}))
-        .await;
-    assert!(ok, "{out}");
-    let build = lane_host("build", &cwd, Arc::new(DenyAll), spy.clone());
-    let (ok, out) = build
-        .call(
-            "session.spawn",
-            &json!({"prompt": "go", "lane": "research"}),
-        )
-        .await;
-    assert!(ok, "{out}");
-    assert_eq!(
-        *spy.0.lock().unwrap(),
-        vec![Some("work".to_string()), Some("research".to_string())],
-        "a work thread cannot staff a shell-capable child"
-    );
-}
-
-#[tokio::test]
-async fn project_create_outside_the_folder_asks_even_in_work() {
+async fn project_create_outside_the_folder_asks() {
     home("approval");
     let base = std::env::temp_dir().join(format!("parzi-proj-{}", std::process::id()));
     let (cwd, away) = (base.join("here"), base.join("away").join("paper"));
     std::fs::create_dir_all(&cwd).unwrap();
+    // Where new projects go, instead of the real ~/Projects.
+    let projects = base.join("projects");
+    std::env::set_var("PARZI_PROJECTS", &projects);
     let cwd_s = cwd.display().to_string();
-    let host = lane_host("work", &cwd_s, Arc::new(DenyAll), Arc::new(NoHarness));
+    let host = auto_host(&cwd_s, Arc::new(DenyAll), Arc::new(NoHarness));
     let (ok, out) = host
         .call(
             "project.create",
@@ -449,7 +383,10 @@ async fn project_create_outside_the_folder_asks_even_in_work() {
         )
         .await;
     assert!(ok, "{out}");
-    assert!(cwd.join("papers").join("paper").is_dir(), "{out}");
+    assert!(
+        projects.join("papers").join("paper").is_dir(),
+        "a bare name lands beside the other projects, not in the session's folder: {out}"
+    );
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -491,13 +428,12 @@ async fn grok_reaches_parzis_tools_through_its_use_tool() {
 #[tokio::test]
 async fn its_own_scratch_folder_is_the_sessions_to_write_in() {
     home("approval");
-    // Work refuses file writes: only the scratch folder is let through.
+    // A write asks (here: no one says yes), except in its own scratch folder.
     let store = parzi_core::store::SessionStore::open().unwrap();
-    let meta = store.create("scratch", "t", "work", "claude").unwrap();
+    let meta = store.create("scratch", "t", "claude").unwrap();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let work = ToolHost::new(ToolHostParts {
         session_id: meta.id.clone(),
-        lane: "work".into(),
         mode: ApprovalMode::Ask,
         edits_auto: false,
         full: false,
@@ -508,7 +444,7 @@ async fn its_own_scratch_folder_is_the_sessions_to_write_in() {
             mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
             allowed: vec!["*".into()],
         }),
-        approver: Arc::new(Allow),
+        approver: Arc::new(DenyAll),
         asker: None,
         shell: Arc::new(parzi_runtime::shell::ShellRegistry::new("test")),
         harness: Some(Arc::new(NoHarness)),

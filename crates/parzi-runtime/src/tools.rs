@@ -33,7 +33,6 @@ pub struct ToolCallInfo {
     pub id: String,
     pub name: String,
     pub args: serde_json::Value,
-    pub lane: String,
     pub session: String,
 }
 
@@ -60,7 +59,6 @@ pub struct AskRequest {
     /// Empty for questions; otherwise the request kind ("text", "file",
     /// "image"). The UI shows both inline, in the asking session.
     pub kind: String,
-    pub lane: String,
     pub session: String,
 }
 
@@ -122,16 +120,21 @@ impl ToolExecutor {
 
     pub async fn execute(&self, name: &str, args: &serde_json::Value) -> (bool, String) {
         if !self.is_allowed(name) {
-            return (false, format!("tool `{name}` is not allowed in this lane"));
+            return (
+                false,
+                format!("tool `{name}` is not allowed here (Settings)"),
+            );
         }
         if let Some((server, tool)) = name.split_once('.') {
             if is_vendor_category(name) {
-                return (false, format!("tool `{name}` is not allowed in this lane"));
+                return (
+                    false,
+                    format!("tool `{name}` is not allowed here (Settings)"),
+                );
             }
             if is_ui_tool(name)
                 || is_brain_tool(name)
                 || is_session_tool(name)
-                || is_lane_tool(name)
                 || is_plan_tool(name)
             {
                 return (false, format!("tool `{name}` is handled by the agent loop"));
@@ -259,7 +262,7 @@ pub fn shell_command(tool: &str, args: &serde_json::Value) -> Option<String> {
     Some(cmd.trim().to_string()).filter(|c| !c.is_empty())
 }
 
-/// Every tool Parzi itself offers. Used to tell lane-allowlist entries
+/// Every tool Parzi itself offers. Used to tell allowlist entries
 /// that name our own tools apart from entries that speak in vendor
 /// categories (e.g. "fs.*") — "shell.exec" is unfortunately both.
 pub(crate) fn is_parzi_tool(name: &str) -> bool {
@@ -267,7 +270,6 @@ pub(crate) fn is_parzi_tool(name: &str) -> bool {
         || is_browser_tool(name)
         || is_desk_tool(name)
         || is_session_tool(name)
-        || is_lane_tool(name)
         || is_image_tool(name)
         || is_github_tool(name)
         || is_doc_tool(name)
@@ -279,14 +281,13 @@ pub(crate) fn is_parzi_tool(name: &str) -> bool {
         || is_plan_tool(name)
 }
 
-/// Every one of Parzi's own tool definitions, before a lane filters them.
+/// Every one of Parzi's own tool definitions, before Settings filter them.
 pub fn all_defs() -> Vec<ToolDef> {
     let mut d = ui_defs();
     d.extend(browser_defs());
     d.extend(desk_defs());
     d.extend(brain_defs());
     d.extend(session_defs());
-    d.extend(lane_defs());
     d.extend(image_defs());
     d.extend(github_defs());
     d.extend(doc_defs());
@@ -614,7 +615,7 @@ pub(crate) fn is_desk_tool(name: &str) -> bool {
     )
 }
 
-/// Every desk and page tool name, for lane allowlists.
+/// Every desk and page tool name, for allowlists.
 pub const DESK_TOOLS: &[&str] = &[
     "browser.open",
     "browser.tabs",
@@ -704,10 +705,6 @@ pub fn is_brain_tool(name: &str) -> bool {
         name,
         "brain.search" | "brain.read" | "brain.list" | "brain.write" | "brain.delete"
     )
-}
-
-pub(crate) fn is_lane_tool(name: &str) -> bool {
-    matches!(name, "lane.dispatch" | "lane.status")
 }
 
 pub(crate) fn is_image_tool(name: &str) -> bool {
@@ -869,7 +866,7 @@ fn question_defs() -> Vec<ToolDef> {
 }
 
 /// The project's plan: read it, change it. Neither shows an approval card:
-/// the plan is Parzi's own note, not the person's files (a read-only lane
+/// the plan is Parzi's own note, not the person's files (read-only mode
 /// still only reads it).
 pub fn is_plan_tool(name: &str) -> bool {
     matches!(name, "plan.read" | "plan.write")
@@ -923,7 +920,7 @@ fn project_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "project.create".into(),
-            description: "Create a real project: makes the folder, registers it in the brain, and moves this session into it. Use it when the work deserves a home instead of scratch — then build inside it.".into(),
+            description: "Create a real project: makes the folder, registers it in the brain, and moves this session into it. Use it when the work deserves a home instead of scratch, then build inside it. `folder` as a bare name (\"strohmann\") goes beside the person's other projects; a full path elsewhere asks them first.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1010,7 +1007,7 @@ fn session_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "session.spawn".into(),
-            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder, lane, and model unless overridden. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id at once, and Parzi messages you when it ends (waking you if you are idle), so never poll.".into(),
+            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder and model unless overridden. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id at once, and Parzi messages you when it ends (waking you if you are idle), so never poll.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -1019,7 +1016,6 @@ fn session_defs() -> Vec<ToolDef> {
                     "is_subsession": {"type": "boolean"},
                     "model": {"type": "string"},
                     "effort": {"type": "string"},
-                    "lane": {"type": "string"},
                     "wait": {"type": "boolean"},
                 },
                 "required": ["prompt"],
@@ -1063,39 +1059,10 @@ fn session_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "session.list_sessions".into(),
-            description: "List sessions. only_subsessions=true shows only the subsessions of the calling session.".into(),
+            description: "List this project's sessions with their status (check what is running before staffing, so work is not done twice). only_subsessions=true shows only the subsessions of the calling session.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {"only_subsessions": {"type": "boolean"}},
-            }),
-        },
-    ]
-}
-
-fn lane_defs() -> Vec<ToolDef> {
-    vec![
-        ToolDef {
-            name: "lane.dispatch".into(),
-            description: "Dispatch a lane worker: like session.spawn but onto a named lane (for example a research lane) instead of inheriting yours. Pass an explicit model to staff by strength.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "prompt": {"type": "string"},
-                    "lane": {"type": "string"},
-                    "model": {"type": "string"},
-                    "effort": {"type": "string"},
-                    "wait": {"type": "boolean"},
-                },
-                "required": ["prompt"],
-            }),
-        },
-        ToolDef {
-            name: "lane.status".into(),
-            description: "See every lane's live state across sessions: queued and active runs grouped by lane with session ids and titles. Read-only. Use it before staffing so lanes do not double-book.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {},
             }),
         },
     ]
@@ -1210,10 +1177,6 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
                 (false, _) => format!("Updating the plan: {count}"),
             }
         }
-        "lane.dispatch" => format!(
-            "Handing off: {}",
-            one_line(&str_arg("title").unwrap_or_else(|| "a task".into()), 60)
-        ),
         "browser.open" => format!(
             "Opening {}",
             one_line(&str_arg("url").unwrap_or_else(|| "a page".into()), 60)
@@ -1311,7 +1274,6 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             "Deleting note {}",
             one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
         ),
-        "lane.status" => "Checking what is running".into(),
         "memory.review" => format!(
             "Reviewing note {}",
             one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
@@ -1383,8 +1345,8 @@ fn short_tool_name(name: &str) -> &str {
 /// Every namespace of Parzi's own tools: an MCP name `plan_write` reads
 /// back as `plan.write`, so labels and checks see the real name.
 const NAMESPACES: &[&str] = &[
-    "ui", "browser", "desk", "brain", "session", "lane", "plan", "shell", "project", "image",
-    "doc", "models", "ask", "request", "memory", "todo", "github",
+    "ui", "browser", "desk", "brain", "session", "plan", "shell", "project", "image", "doc",
+    "models", "ask", "request", "memory", "todo", "github",
 ];
 
 pub fn to_mcp(name: &str) -> String {

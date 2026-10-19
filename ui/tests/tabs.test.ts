@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ensureComposer, folderName, hostOf, isExplicitUrl, isSystemTab, sessionTab, pageTab, historyTab, brainTab, settingsTab, toAddress, restoreTab } from "../src/lib/tabs.ts";
-import { normLane } from "../src/lib/lanes.ts";
 
 test("hostOf strips protocol and path", () => {
   assert.equal(hostOf("https://github.com/lucas/parzi"), "github.com");
@@ -26,13 +25,6 @@ test("folderName takes the leaf", () => {
   assert.equal(folderName("/home/u/app/"), "app");
 });
 
-test("legacy lanes normalize", () => {
-  assert.equal(normLane("code"), "build");
-  assert.equal(normLane("research"), "work");
-  assert.equal(normLane("build"), "build");
-  assert.equal(normLane(""), "");
-});
-
 test("system tabs split from working tabs", () => {
   assert.equal(isSystemTab(sessionTab()), false);
   assert.equal(isSystemTab(pageTab("https://example.com")), false);
@@ -45,11 +37,12 @@ test("a composer always has quote and attachment lists", () => {
   const fresh = ensureComposer();
   assert.deepEqual(fresh.quotes, []);
   assert.deepEqual(fresh.attachments, []);
-  const saved = { input: "hi", mode: "work" as const, model: "", effort: "medium", attachments: ["a.png"] };
+  // A composer saved before the lanes merged may still say "work": it talks to the agent.
+  const saved = { input: "hi", mode: "work" as unknown as "build", model: "", effort: "medium", attachments: ["a.png"] };
   const partial = ensureComposer(saved);
   assert.equal(partial, saved);
   assert.equal(partial.input, "hi");
-  assert.equal(partial.mode, "work");
+  assert.equal(partial.mode, "build");
   assert.deepEqual(partial.attachments, ["a.png"]);
   assert.deepEqual(partial.quotes, []);
   const kept = [{ project: "parzi", id: "prs", title: "PR badges" }];

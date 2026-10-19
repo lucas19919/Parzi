@@ -25,11 +25,10 @@ impl Approver for Allow {
 fn host(cwd: &str) -> ToolHost {
     home("shell-tools");
     let store = SessionStore::open().unwrap();
-    let sid = store.create("shell", "", "", "claude/m").unwrap().id;
+    let sid = store.create("shell", "", "claude/m").unwrap().id;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     ToolHost::new(ToolHostParts {
         session_id: sid.clone(),
-        lane: "build".into(),
         mode: ApprovalMode::Auto,
         edits_auto: false,
         full: false,
@@ -186,23 +185,25 @@ async fn vendor_shell_is_rerouted_not_carded() {
 }
 
 #[tokio::test]
-async fn research_offers_no_shell() {
-    home("shell-research");
+async fn the_shell_switch_turns_off_parzis_shell_and_the_agents_own() {
+    home("shell-off");
     let store = SessionStore::open().unwrap();
-    let sid = store.create("shell", "", "", "claude/m").unwrap().id;
+    let sid = store.create("shell", "", "claude/m").unwrap().id;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut cfg = ParziConfig::default();
+    cfg.lanes.no_shell = true;
     let host = ToolHost::new(ToolHostParts {
         session_id: sid.clone(),
-        lane: "work".into(),
-        mode: ApprovalMode::Ask,
+        mode: ApprovalMode::Auto,
         edits_auto: false,
         full: false,
-        cfg: ParziConfig::default(),
+        cfg,
         store,
         tools: Arc::new(ToolExecutor {
             cwd: workdir(),
             mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
-            allowed: vec!["*".into()],
+            // As the policy hands it out with the switch off: no shell.*.
+            allowed: vec!["fs.*".into(), "plan.read".into()],
         }),
         approver: Arc::new(Allow),
         asker: None,
@@ -212,7 +213,7 @@ async fn research_offers_no_shell() {
         cancel: CancellationToken::new(),
     });
     let (ok, _) = host.call("shell.exec", &json!({"cmd": "echo hi"})).await;
-    assert!(!ok, "work must not run commands");
+    assert!(!ok, "no commands with the shell off");
     let d = host
         .decide(PermissionRequest {
             name: String::new(),
@@ -225,6 +226,6 @@ async fn research_offers_no_shell() {
         .await;
     assert!(
         matches!(d, PermissionDecision::Deny(_)),
-        "work denies vendor shell too"
+        "the agent's own shell is off too"
     );
 }

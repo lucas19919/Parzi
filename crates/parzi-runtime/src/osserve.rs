@@ -154,7 +154,6 @@ impl Approver for ParkedApprover {
                 "name": call.name,
                 "label": label,
                 "args": call.args,
-                "lane": call.lane,
                 "session": call.session,
             },
         }));
@@ -704,7 +703,7 @@ async fn session_send(state: &State, req: &Value) -> Value {
     let target = str_arg(req, "target");
     let model = str_arg(req, "model");
     let cwd = str_arg(req, "cwd");
-    let lane = str_arg(req, "lane");
+    // An older desk may still send a "lane": every session works the same now.
     let mode = Some(str_arg(req, "mode")).filter(|m| !m.is_empty());
     let effort = crate::orchestrator::normalize_effort(&str_arg(req, "effort"));
     let yes = req.get("yes").and_then(Value::as_bool).unwrap_or(false);
@@ -730,7 +729,6 @@ async fn session_send(state: &State, req: &Value) -> Value {
             .spawn_as(
                 cause,
                 &project,
-                &lane,
                 &model,
                 &message,
                 Some(approver),

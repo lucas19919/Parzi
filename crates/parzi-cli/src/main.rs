@@ -1078,7 +1078,6 @@ async fn send_local(
             .spawn_as(
                 RunCause::Cli,
                 "default",
-                "",
                 model.unwrap_or_default(),
                 message,
                 Some(approver),

@@ -43,7 +43,7 @@ const session = (id: string, title: string, ago: number, over: Record<string, un
   title,
   pinned: false,
   project: "parzi",
-  lane: "build",
+ 
   model: "claude/claude-opus-5-5",
   status: "idle",
   tokens_in: 12000,
@@ -84,7 +84,7 @@ const sessions = [
     }),
   }),
   session("s1", "Fix the composer freeze", 70 * MIN, { last_run: outcome({ summary: "Autosize measures once per key now.", ended: now - 70 * MIN }) }),
-  session("s2", "Lets test something", 3 * MIN, { status: "active", lane: "work", model: "codex/gpt-5" }),
+  session("s2", "Lets test something", 3 * MIN, { status: "active", model: "codex/gpt-5" }),
   session("s6", "Trim the old panel tabs", 4 * MIN, { status: "active", parent_id: "s3", model: "codex/gpt-5" }),
   session("s5", "Badges from gh pr list", 90 * MIN, {
     plan_item: "prs",
@@ -93,7 +93,7 @@ const sessions = [
   }),
   session("s8", "Strip the Work view", 3 * HOUR, { status: "done", plan_item: "strip", branch: "plan/strip", last_run: outcome({ ended: now - 3 * HOUR }) }),
   session("s11", "Store run outcomes on sessions", 5 * HOUR, { plan_item: "outcomes", last_run: outcome({ ended: now - 5 * HOUR }) }),
-  session("s4", "Draft release notes", 6 * HOUR, { project: "", lane: "work", model: "opencode", status: "done" }),
+  session("s4", "Draft release notes", 6 * HOUR, { project: "", model: "opencode", status: "done" }),
   session("r:a1", "Update outdated crates in memory-ai", 8 * HOUR, { project: "memory-ai" }),
   session("r:a2", "Bump them and run the tests", 7 * HOUR, { project: "memory-ai", parent_id: "r:a1", status: "active", model: "claude/claude-sonnet-5-5" }),
 ];

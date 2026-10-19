@@ -41,7 +41,13 @@ pub async fn get_thread(
         .store()
         .events_with_times(&id)
         .map_err(|e| e.to_string())?;
-    Ok((meta, stamped.into_iter().map(|(e, at)| stamped_of(&e, at)).collect()))
+    Ok((
+        meta,
+        stamped
+            .into_iter()
+            .map(|(e, at)| stamped_of(&e, at))
+            .collect(),
+    ))
 }
 
 /// A transcript event as the thread shows it, with its Unix time when the
@@ -74,7 +80,6 @@ pub async fn send_message(
     effort: Option<String>,
     attachments: Option<Vec<String>>,
     mode: Option<String>,
-    lane: Option<String>,
     remote: Option<bool>,
     quotes: Option<Vec<crate::plans::Quote>>,
     parent: Option<String>,
@@ -127,7 +132,7 @@ pub async fn send_message(
     if let Some(target) = far_target {
         let item = quoted.first().map(|(_, i)| i.id.as_str());
         let id = remote::send(
-            &state.app, &far, target, &model, &prompt, &cwd, &effort, attached, mode, lane, item,
+            &state.app, &far, target, &model, &prompt, &cwd, &effort, attached, mode, item,
         )
         .await?;
         if let (Some(title), Some(rid)) = (name, remote_id(&id)) {
@@ -181,7 +186,6 @@ pub async fn send_message(
                 .orch
                 .spawn(
                     &project,
-                    lane.as_deref().unwrap_or(""),
                     &model,
                     &prompt,
                     Some(approver),
@@ -402,7 +406,12 @@ pub async fn delete_thread(
             .unwrap_or(1);
         return Ok(usize::try_from(removed).unwrap_or(1));
     }
-    let cwd = state.orch.store().get(&id).map(|m| m.cwd).unwrap_or_default();
+    let cwd = state
+        .orch
+        .store()
+        .get(&id)
+        .map(|m| m.cwd)
+        .unwrap_or_default();
     let removed = state
         .orch
         .delete_thread(&id)
@@ -458,9 +467,7 @@ pub async fn answer_question(
     }
     let mut lock = state.questions.lock().await;
     match lock.get(&key) {
-        Some((bound, _)) if bound != &session => {
-            Err("answer is for another session".into())
-        }
+        Some((bound, _)) if bound != &session => Err("answer is for another session".into()),
         Some(_) => {
             let (_, tx) = lock.remove(&key).unwrap();
             let _ = tx.send(answer);
@@ -490,9 +497,7 @@ pub async fn approve_tool(
     }
     let mut lock = state.pending.lock().await;
     match lock.get(&key) {
-        Some((bound, _)) if bound != &session => {
-            Err("approval is for another session".into())
-        }
+        Some((bound, _)) if bound != &session => Err("approval is for another session".into()),
         Some(_) => {
             let (_, tx) = lock.remove(&key).unwrap();
             let _ = tx.send(if allow {
