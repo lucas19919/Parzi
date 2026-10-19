@@ -72,6 +72,10 @@ fn binary_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
 fn mcp_command_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
     let mut out = vec![];
     for (name, srv) in &new.mcp.servers {
+        // A hosted connector runs nothing here: nothing to confirm.
+        if srv.command.trim().is_empty() {
+            continue;
+        }
         match old.mcp.servers.get(name) {
             // An added or changed env var (PATH, NODE_OPTIONS, LD_PRELOAD...)
             // can swap the program as surely as a new command line.
@@ -279,6 +283,16 @@ mod tests {
         assert_eq!(mcp_command_changes(&old, &new), vec!["s".to_string()]);
         assert!(mcp_command_changes(&new, &new).is_empty());
         assert!(mcp_command_changes(&new, &old).is_empty());
+        // A hosted one runs nothing on this computer: nothing to confirm.
+        let mut hosted = ParziConfig::default();
+        hosted.mcp.servers.insert(
+            "notion".into(),
+            parzi_core::config::McpServerCfg {
+                url: "https://mcp.notion.com/mcp".into(),
+                ..Default::default()
+            },
+        );
+        assert!(mcp_command_changes(&old, &hosted).is_empty());
     }
 
     #[test]
