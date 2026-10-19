@@ -66,13 +66,7 @@ fn brain_tools_round_trip_their_mcp_names() {
     // Every brain tool the host runs is offered to agents (tools/list).
     assert_eq!(
         names,
-        [
-            "brain.search",
-            "brain.read",
-            "brain.list",
-            "brain.write",
-            "brain.delete"
-        ]
+        ["brain.search", "brain.read", "brain.write", "brain.delete"]
     );
     for name in &names {
         assert!(is_brain_tool(name));

@@ -347,14 +347,10 @@
         return "Looking at the page";
       case "image.generate":
         return `Drawing ${arg(args, "prompt") || "an image"}`;
-      case "doc.read":
-        return `Reading ${arg(args, "source") || "a document"}`;
       case "models.list":
         return "Listing models";
       case "ask.user":
         return `Asking ${arg(args, "question") || "a question"}`;
-      case "request.user":
-        return `Requesting ${arg(args, "request") || "something"}`;
       case "plan.write":
         return "Writing the plan";
       case "plan.read":
@@ -371,8 +367,6 @@
         return `Checking on ${arg(args, "title", "session", "session_id") || "a helper"}`;
       case "session.list":
         return "Listing helpers";
-      case "memory.review":
-        return `Reviewing note ${arg(args, "path") || "?"}`;
       case "project.create":
         return `Creating ${arg(args, "title") || "a project"}`;
       case "project.archive":
@@ -393,14 +387,10 @@
         return `Searching notes for ${arg(args, "query") || "?"}`;
       case "brain.read":
         return `Reading note ${arg(args, "path") || "?"}`;
-      case "brain.list":
-        return arg(args, "project") ? `Listing ${arg(args, "project")} notes` : "Listing notes";
       case "brain.write":
         return `Writing note ${arg(args, "path") || "?"}`;
       case "brain.delete":
         return `Deleting note ${arg(args, "path") || "?"}`;
-      case "ui.show_markdown":
-        return "Writing a note";
       case "ui.show_artifact":
         return `Publishing ${arg(args, "title", "id") || "an artifact"}`;
       default: {
@@ -486,7 +476,7 @@ ${e.text}` : e.text;
 
   // Routine narrations render as a whisper, not a mono block.
   function sysTone(text: string): "line" | "block" {
-    return /^(asked the user|the user answered|plan written|plan saved|brain\.write|session\.spawn|session\.send_message):/i.test(
+    return /^(asked the user|the user answered|plan written|plan saved|brain\.write|session\.spawn|session\.send_message|session\.send):/i.test(
       text.trim(),
     )
       ? "line"

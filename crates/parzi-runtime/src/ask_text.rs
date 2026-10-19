@@ -171,9 +171,7 @@ pub fn ask_text(name: &str, args: &Value) -> AskText {
 /// Parzi's own tools and the web ones, by name.
 fn named(shown: &str, args: &Value) -> Option<(String, String, DetailKind)> {
     let url = text(args, &["url", "source"]);
-    if matches!(shown, "WebFetch" | "fetch" | "browser.open" | "doc.read")
-        && url.starts_with("http")
-    {
+    if matches!(shown, "WebFetch" | "fetch" | "browser.open") && url.starts_with("http") {
         return Some(("open a web page".into(), url, DetailKind::Url));
     }
     let (action, key, kind) = match shown {
@@ -185,7 +183,7 @@ fn named(shown: &str, args: &Value) -> Option<(String, String, DetailKind)> {
         "brain.write" => ("write a note", "path", DetailKind::Paths),
         "brain.delete" => ("delete a note", "path", DetailKind::Paths),
         "session.spawn" => ("start a helper session", "title", DetailKind::Text),
-        "session.send_message" => ("message another session", "message", DetailKind::Text),
+        "session.send" => ("message another session", "message", DetailKind::Text),
         _ => return None,
     };
     Some((action.into(), text(args, &[key]), kind))

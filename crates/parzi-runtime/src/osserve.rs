@@ -169,7 +169,7 @@ impl Approver for ParkedApprover {
 
 type Questions = std::sync::Mutex<HashMap<String, (String, oneshot::Sender<String>)>>;
 
-/// `ask.user` and `request.user` on a headless engine: the question is
+/// `ask.user` (a question or a request) on a headless engine: the question is
 /// announced on the event stream and waits for `question.answer`.
 pub struct ParkedAsker {
     pending: Questions,

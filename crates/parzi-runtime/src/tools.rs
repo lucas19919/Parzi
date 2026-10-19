@@ -272,7 +272,6 @@ pub(crate) fn is_parzi_tool(name: &str) -> bool {
         || is_session_tool(name)
         || is_image_tool(name)
         || is_github_tool(name)
-        || is_doc_tool(name)
         || is_models_tool(name)
         || is_question_tool(name)
         || is_project_tool(name)
@@ -290,7 +289,6 @@ pub fn all_defs() -> Vec<ToolDef> {
     d.extend(session_defs());
     d.extend(image_defs());
     d.extend(github_defs());
-    d.extend(doc_defs());
     d.extend(team_defs());
     d.extend(question_defs());
     d.extend(plan_defs());
@@ -302,24 +300,15 @@ pub fn all_defs() -> Vec<ToolDef> {
 fn ui_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
-            name: "ui.show_markdown".into(),
-            description: "Render rich markdown in the thread.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {"markdown": {"type": "string"}},
-                "required": ["markdown"],
-            }),
-        },
-        ToolDef {
             name: "ui.show_artifact".into(),
-            description: "A versioned artifact card with copy/save. Use for code over ~15 lines, files, docs, data, diffs, diagrams (svg, or html for layout). Contract: FIRST say in chat text what the artifact is in one or two sentences (that streams as your reply), THEN make exactly one call with the complete content. Never paste the content into chat as well, and never call with half the content planning to finish it later: an incomplete call fails validation and the person sees an error card. Reuse an id for new versions of the same thing. html/svg render live sandboxed with no network: inline everything, images as data: URIs. Kinds: code|markdown|html|svg|json|csv|diff|text|preview. preview renders a live component inline from JSON like {\"component\":\"omnibar\",\"variant\":2} (omnibar only, variant 1-7 integer, live ships 2; anything else errors). The artifact IS the delivery: never send the user to a tab or window. Example: {\"artifact\":1,\"id\":\"auth-middleware\",\"title\":\"Auth middleware\",\"kind\":\"code\",\"language\":\"typescript\",\"content\":\"...\"}.".into(),
+            description: "A versioned artifact card with copy/save. Use for code over ~15 lines, files, docs, data, diffs, diagrams (svg, or html for layout). Contract: FIRST say in chat text what the artifact is in one or two sentences (that streams as your reply), THEN make exactly one call with the complete content. Never paste the content into chat as well, and never call with half the content planning to finish it later: an incomplete call fails validation and the person sees an error card. Reuse an id for new versions of the same thing. html/svg render live sandboxed with no network: inline everything, images as data: URIs. Kinds: code|markdown|html|svg|json|csv|diff|text|preview|image. image shows a picture already on disk: its full path as content. preview renders a live component inline from JSON like {\"component\":\"omnibar\",\"variant\":2} (omnibar only, variant 1-7 integer, live ships 2; anything else errors). The artifact IS the delivery: never send the user to a tab or window. Example: {\"artifact\":1,\"id\":\"auth-middleware\",\"title\":\"Auth middleware\",\"kind\":\"code\",\"language\":\"typescript\",\"content\":\"...\"}.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "artifact": {"type": "number", "const": 1},
                     "id": {"type": "string", "description": "slug [a-z0-9-], reused across versions"},
                     "title": {"type": "string"},
-                    "kind": {"type": "string", "enum": ["code","markdown","html","svg","json","csv","diff","text","preview"]},
+                    "kind": {"type": "string", "enum": ["code","markdown","html","svg","json","csv","diff","text","preview","image"]},
                     "language": {"type": "string"},
                     "content": {"type": "string"},
                 },
@@ -392,11 +381,7 @@ fn ui_defs() -> Vec<ToolDef> {
 pub(crate) fn is_ui_tool(name: &str) -> bool {
     matches!(
         name,
-        "ui.show_markdown"
-            | "ui.show_artifact"
-            | "ui.offer_replies"
-            | "ui.propose_task"
-            | "todo.write"
+        "ui.show_artifact" | "ui.offer_replies" | "ui.propose_task" | "todo.write"
     )
 }
 
@@ -652,28 +637,19 @@ pub fn brain_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "brain.search".into(),
-            description: "Search the user's notes vault by title and text. A note matches when it holds every word of the query; title matches rank first. Returns up to 20 notes with a snippet each.".into(),
+            description: "Search the user's notes vault (the brain) by title and text: a note matches when it holds every word of the query, title matches first, up to 20 with a snippet each. With no query it lists the vault instead: projects with their folders, and each note's path, title, summary and whether it is pinned (attached to sessions in full); pass project (a slug, or all) to list only those.".into(),
             schema: serde_json::json!({
                 "type": "object",
-                "properties": {"query": {"type": "string"}},
-                "required": ["query"],
+                "properties": {"query": {"type": "string"}, "project": {"type": "string"}},
             }),
         },
         ToolDef {
             name: "brain.read".into(),
-            description: "Read one note from the user's notes vault (the brain) by its path relative to the vault, e.g. projects/parzi.md, as given by brain.search, brain.list, or the on-demand notes listed in your instructions. Returns the raw markdown, frontmatter included.".into(),
+            description: "Read one note from the user's notes vault (the brain) by its path relative to the vault, e.g. projects/parzi.md, as given by brain.search or the on-demand notes listed in your instructions. Returns the raw markdown, frontmatter included.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {"path": {"type": "string"}},
                 "required": ["path"],
-            }),
-        },
-        ToolDef {
-            name: "brain.list".into(),
-            description: "List the user's notes vault (the brain): projects with the folders they map to, and each note's path, title, one-line summary, and whether it is pinned (pinned notes are attached to sessions in full). Pass project (a project slug, or all for the notes attached to every session) to list only those notes. Shows at most 50 notes; use brain.search for the rest.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {"project": {"type": "string"}},
             }),
         },
         ToolDef {
@@ -690,7 +666,7 @@ pub fn brain_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "brain.delete".into(),
-            description: "Delete a note from the user's notes vault (path relative to the vault, as given by brain.search or brain.list). Use it for notes that are wrong or obsolete; a project goes with project.delete.".into(),
+            description: "Delete a note from the user's notes vault (path relative to the vault, as given by brain.search). Use it for notes that are wrong or obsolete; a project goes with project.delete.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {"path": {"type": "string"}},
@@ -703,7 +679,7 @@ pub fn brain_defs() -> Vec<ToolDef> {
 pub fn is_brain_tool(name: &str) -> bool {
     matches!(
         name,
-        "brain.search" | "brain.read" | "brain.list" | "brain.write" | "brain.delete"
+        "brain.search" | "brain.read" | "brain.write" | "brain.delete"
     )
 }
 
@@ -730,10 +706,6 @@ fn github_defs() -> Vec<ToolDef> {
             "required": ["title", "body"],
         }),
     }]
-}
-
-pub(crate) fn is_doc_tool(name: &str) -> bool {
-    matches!(name, "doc.read")
 }
 
 pub(crate) fn is_models_tool(name: &str) -> bool {
@@ -800,7 +772,7 @@ fn shell_defs() -> Vec<ToolDef> {
 }
 
 pub(crate) fn is_question_tool(name: &str) -> bool {
-    matches!(name, "ask.user" | "request.user" | "memory.review")
+    name == "ask.user"
 }
 
 pub(crate) fn is_project_tool(name: &str) -> bool {
@@ -814,7 +786,7 @@ fn question_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "ask.user".into(),
-            description: "Ask the user a question mid-turn and wait for their answer. Use it at real forks instead of guessing: which approach, which scope, proceed or stop. Up to six options, each a short label, with a description when the choice needs a line of why or what follows. Put your recommendation first and say so. multi: true when several may be picked. The user may also answer in their own words, or skip (then decide yourself and say what you assumed).".into(),
+            description: "Ask the user mid-turn and wait for the answer. At a real fork (which approach, which scope, proceed or stop) give up to six options, each a short label, with a description when the choice needs a line of why or what follows; put your recommendation first and say so; multi: true when several may be picked. They may also answer in their own words, or skip (then decide yourself and say what you assumed). When you need them to give you something instead (a picture, a file, text only they have), leave out options and set kind to image, file or text; reserve that for real needs.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -837,29 +809,9 @@ fn question_defs() -> Vec<ToolDef> {
                         },
                     },
                     "multi": {"type": "boolean"},
-                },
-                "required": ["question"],
-            }),
-        },
-        ToolDef {
-            name: "memory.review".into(),
-            description: "Flag a stored note back to the user for re-confirmation (a founder decision that may be stale, a convention to keep or drop). Shows the note and asks Keep or Remove; Remove deletes it. Use when memory says something the current work contradicts.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {"path": {"type": "string"}},
-                "required": ["path"],
-            }),
-        },
-        ToolDef {
-            name: "request.user".into(),
-            description: "Ask the human to give or do something mid-turn and wait for their reply: send a picture, paste inspiration or text, drop a file path, confirm something only they can see. It holds the turn until they answer, so reserve it for real needs, not forks (those are ask.user). Set kind to file when you need a file, image when you need a picture, else text.".into(),
-            schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "request": {"type": "string"},
                     "kind": {"type": "string", "enum": ["text", "file", "image"]},
                 },
-                "required": ["request"],
+                "required": ["question"],
             }),
         },
     ]
@@ -969,18 +921,6 @@ fn image_defs() -> Vec<ToolDef> {
     }]
 }
 
-fn doc_defs() -> Vec<ToolDef> {
-    vec![ToolDef {
-        name: "doc.read".into(),
-        description: "Read a document as text: a PDF or text file from an http(s) URL or a local path. Use it for research papers, manuals, and reports (for web pages prefer the browser tools). Returns the first ~12k characters.".into(),
-        schema: serde_json::json!({
-            "type": "object",
-            "properties": {"source": {"type": "string"}},
-            "required": ["source"],
-        }),
-    }]
-}
-
 fn team_defs() -> Vec<ToolDef> {
     vec![ToolDef {
         name: "models.list".into(),
@@ -995,11 +935,7 @@ fn team_defs() -> Vec<ToolDef> {
 pub fn is_session_tool(name: &str) -> bool {
     matches!(
         name,
-        "session.spawn"
-            | "session.send_message"
-            | "session.read_session"
-            | "session.list_sessions"
-            | "session.rename"
+        "session.spawn" | "session.send" | "session.read" | "session.list" | "session.rename"
     )
 }
 
@@ -1022,7 +958,7 @@ fn session_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
-            name: "session.send_message".into(),
+            name: "session.send".into(),
             description: "Send a follow-up message to another session (for example a background subsession) and optionally wait for its reply.".into(),
             schema: serde_json::json!({
                 "type": "object",
@@ -1037,7 +973,7 @@ fn session_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
-            name: "session.read_session".into(),
+            name: "session.read".into(),
             description: "Read what another session (for example a background subsession) has produced. tail_events caps how many recent events come back.".into(),
             schema: serde_json::json!({
                 "type": "object",
@@ -1058,7 +994,7 @@ fn session_defs() -> Vec<ToolDef> {
             }),
         },
         ToolDef {
-            name: "session.list_sessions".into(),
+            name: "session.list".into(),
             description: "List this project's sessions with their status (check what is running before staffing, so work is not done twice). only_subsessions=true shows only the subsessions of the calling session.".into(),
             schema: serde_json::json!({
                 "type": "object",
@@ -1153,12 +1089,12 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             "Starting a helper: {}",
             one_line(&str_arg("title").unwrap_or_else(|| "untitled".into()), 60)
         ),
-        "session.send_message" => format!(
+        "session.send" => format!(
             "Messaging {}",
             session_label(&str_arg("session_id").unwrap_or_else(|| "session".into()))
         ),
-        "session.read_session" => "Checking on a helper".into(),
-        "session.list_sessions" => "Listing helpers".into(),
+        "session.read" => "Checking on a helper".into(),
+        "session.list" => "Listing helpers".into(),
         "session.rename" => "Naming this session".into(),
         "plan.read" => "Reading the plan".into(),
         "plan.write" => {
@@ -1230,13 +1166,6 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             "Drawing {}",
             one_line(&str_arg("prompt").unwrap_or_else(|| "an image".into()), 60)
         ),
-        "doc.read" => format!(
-            "Reading {}",
-            one_line(
-                &str_arg("source").unwrap_or_else(|| "a document".into()),
-                60
-            )
-        ),
         "models.list" => "Listing models".into(),
         "shell.start" => format!(
             "Starting {}",
@@ -1244,17 +1173,17 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         ),
         "shell.logs" => "Reading command output".into(),
         "shell.kill" => "Stopping a command".into(),
+        "ask.user" if str_arg("kind").is_some() && args.get("options").is_none() => format!(
+            "Asking for {}",
+            one_line(
+                &str_arg("question").unwrap_or_else(|| "something".into()),
+                60
+            )
+        ),
         "ask.user" => format!(
             "Asking {}",
             one_line(
                 &str_arg("question").unwrap_or_else(|| "a question".into()),
-                60
-            )
-        ),
-        "request.user" => format!(
-            "Requesting {}",
-            one_line(
-                &str_arg("request").unwrap_or_else(|| "something".into()),
                 60
             )
         ),
@@ -1272,10 +1201,6 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         ),
         "brain.delete" => format!(
             "Deleting note {}",
-            one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
-        ),
-        "memory.review" => format!(
-            "Reviewing note {}",
             one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
         ),
         "browser.click" => format!(
@@ -1296,23 +1221,19 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
                 60
             )
         ),
-        "brain.search" => format!(
-            "Searching notes for {}",
-            one_line(&str_arg("query").unwrap_or_default(), 60)
-        ),
+        "brain.search" => match (str_arg("query"), str_arg("project")) {
+            (Some(q), _) => format!("Searching notes for {}", one_line(&q, 60)),
+            (None, Some(p)) => format!("Listing notes for {}", one_line(&p, 60)),
+            (None, None) => "Listing notes".into(),
+        },
         "brain.read" => format!(
             "Reading note {}",
             one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
         ),
-        "brain.list" => match str_arg("project") {
-            Some(p) => format!("Listing notes for {}", one_line(&p, 60)),
-            None => "Listing notes".into(),
-        },
         "brain.write" => format!(
             "Writing note {}",
             one_line(&str_arg("path").unwrap_or_else(|| "?".into()), 60)
         ),
-        "ui.show_markdown" => "Writing a note".into(),
         "ui.show_artifact" => format!(
             "Publishing {}",
             one_line(
@@ -1345,8 +1266,8 @@ fn short_tool_name(name: &str) -> &str {
 /// Every namespace of Parzi's own tools: an MCP name `plan_write` reads
 /// back as `plan.write`, so labels and checks see the real name.
 const NAMESPACES: &[&str] = &[
-    "ui", "browser", "desk", "brain", "session", "plan", "shell", "project", "image", "doc",
-    "models", "ask", "request", "memory", "todo", "github",
+    "ui", "browser", "desk", "brain", "session", "plan", "shell", "project", "image", "models",
+    "ask", "todo", "github",
 ];
 
 pub fn to_mcp(name: &str) -> String {
@@ -1360,6 +1281,20 @@ pub(crate) fn from_mcp(tool: &str) -> String {
         }
     }
     tool.to_string()
+}
+
+/// A tool's current name for one that was renamed or merged, so an
+/// agent that learned the old one still reaches it.
+#[must_use]
+pub fn current_name(name: &str) -> &str {
+    match name {
+        "session.send_message" => "session.send",
+        "session.read_session" => "session.read",
+        "session.list_sessions" => "session.list",
+        "brain.list" => "brain.search",
+        "request.user" => "ask.user",
+        other => other,
+    }
 }
 
 pub fn display_name(name: &str) -> String {
@@ -1433,7 +1368,6 @@ mod tests {
             ("shell", auto(&["exec", "start"])),
             ("project", auto(&["create"])),
             ("browser", auto(&["open"])),
-            ("doc", auto(&["read"])),
             ("gh", auto(&["issue_get"])),
         ]
         .into_iter()
@@ -1449,7 +1383,6 @@ mod tests {
             "shell.start",
             "project.create",
             "browser.open",
-            "doc.read",
         ] {
             assert_eq!(tools.approval_override(own), None, "{own}");
         }
@@ -1554,7 +1487,7 @@ mod tests {
             "project.create",
             "image.generate",
             "ask.user",
-            "memory.review",
+            "session.read",
         ] {
             assert_eq!(display_name(&format!("mcp__parzi__{}", to_mcp(name))), name);
             assert!(is_parzi_tool(name), "{name}");

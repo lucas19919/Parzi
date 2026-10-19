@@ -667,6 +667,17 @@ impl EngineRun {
                 let shown = display_name(&name);
                 let label = humanize_tool_call(&name, &input);
                 crate::run_hooks::tool_started(&self.p.tally, &id, &shown, &input);
+                // The agent's own checklist is the session's checklist.
+                if let Some(todo) = parzi_core::widgets::todo_from_agent(&shown, &input) {
+                    let _ = self.p.store.append(
+                        sid,
+                        &Event::Widget {
+                            fence: "parzi-todo".into(),
+                            payload: todo.clone(),
+                        },
+                    );
+                    self.p.sink.emit(RunEvent::Todo { todo });
+                }
                 let _ = self.p.store.append(
                     sid,
                     &Event::ToolCall {

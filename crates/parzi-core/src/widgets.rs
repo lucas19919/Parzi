@@ -337,6 +337,40 @@ pub fn todo(args: &serde_json::Value) -> std::result::Result<serde_json::Value, 
     Ok(serde_json::json!({"items": out}))
 }
 
+/// An agent's own checklist tool (Claude's `TodoWrite`, OpenCode's
+/// `todowrite`, Codex's `update_plan`) as the session checklist
+/// `todo.write` makes, so the person sees one list whoever keeps it.
+#[must_use]
+pub fn todo_from_agent(tool: &str, input: &serde_json::Value) -> Option<serde_json::Value> {
+    let t = tool.to_ascii_lowercase();
+    if !matches!(t.as_str(), "todowrite" | "todo_write" | "update_plan") {
+        return None;
+    }
+    let list = input
+        .get("todos")
+        .or_else(|| input.get("plan"))
+        .and_then(|l| l.as_array())?;
+    let items: Vec<serde_json::Value> = list
+        .iter()
+        .filter_map(|it| {
+            let title = ["content", "step", "title"]
+                .iter()
+                .find_map(|k| it.get(*k).and_then(|v| v.as_str()))?
+                .trim();
+            let state = match it.get("status").and_then(|s| s.as_str()).unwrap_or("") {
+                "in_progress" | "active" => "active",
+                "completed" | "done" => "done",
+                "cancelled" | "canceled" => return None,
+                _ => "pending",
+            };
+            let title: String = title.chars().take(120).collect();
+            (!title.is_empty()).then(|| serde_json::json!({"title": title, "state": state}))
+        })
+        .take(20)
+        .collect();
+    (!items.is_empty()).then(|| serde_json::json!({"items": items}))
+}
+
 /// `ui.propose_task`: a card the person can start as a side task. The id
 /// lets the card remember whether it was started or dismissed.
 pub fn task(args: &serde_json::Value) -> std::result::Result<serde_json::Value, String> {
@@ -369,6 +403,31 @@ pub fn task(args: &serde_json::Value) -> std::result::Result<serde_json::Value, 
 mod reply_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn an_agents_own_checklist_reads_as_the_sessions() {
+        let claude = json!({"todos": [
+            {"content": "Read the code", "status": "completed", "activeForm": "Reading"},
+            {"content": "Fix the bug", "status": "in_progress", "activeForm": "Fixing"},
+            {"content": "Old idea", "status": "cancelled"},
+            {"content": "Run tests", "status": "pending"},
+        ]});
+        assert_eq!(
+            todo_from_agent("TodoWrite", &claude),
+            Some(json!({"items": [
+                {"title": "Read the code", "state": "done"},
+                {"title": "Fix the bug", "state": "active"},
+                {"title": "Run tests", "state": "pending"},
+            ]}))
+        );
+        let codex = json!({"plan": [{"step": "Plan it", "status": "completed"}]});
+        assert_eq!(
+            todo_from_agent("update_plan", &codex),
+            Some(json!({"items": [{"title": "Plan it", "state": "done"}]}))
+        );
+        assert!(todo_from_agent("todowrite", &json!({"todos": []})).is_none());
+        assert!(todo_from_agent("Bash", &claude).is_none());
+    }
 
     #[test]
     fn replies_default_their_message_and_refuse_long_labels() {

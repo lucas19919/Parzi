@@ -195,11 +195,7 @@ async fn children_ending_together_wake_the_parent_once_with_its_posture() {
         w.prompt
     );
     assert!(w.prompt.contains("Files: part.rs."), "{}", w.prompt);
-    assert!(
-        w.prompt.contains("More: session.read_session "),
-        "{}",
-        w.prompt
-    );
+    assert!(w.prompt.contains("More: session.read "), "{}", w.prompt);
     assert_eq!(w.effort.as_deref(), Some("high"), "its effort came back");
     assert_eq!(
         w.write,

@@ -256,7 +256,7 @@ impl Pump {
         serde_json::json!({
             "session_id": target,
             "status": "timeout",
-            "note": "target still running; check later with session.read_session",
+            "note": "target still running; check later with session.read",
         })
         .to_string()
     }
