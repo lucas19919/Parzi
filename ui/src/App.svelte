@@ -43,6 +43,7 @@
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
   import { nameOf } from "./lib/providerRows";
   import { follower } from "./lib/follow";
+  import { draftKey, flushDrafts, loadDrafts, sameDraft, saveDrafts, withDraft } from "./lib/drafts";
   import { addNotification, dropNotification, markSessionRead, type NotificationItem } from "./lib/notificationStore";
   import { covered } from "./lib/overlay";
   import { tooltip } from "./lib/tooltip";
@@ -136,8 +137,42 @@
     t.composer = ensureComposer(t.composer);
     if (compFor === t.id && comp === t.composer) return;
     compFor = t.id;
+    fillDraft(t);
     comp = t.composer;
   }
+
+  // What you typed stays with its session (see drafts.ts): an empty
+  // composer picks it back up, and typing writes it.
+  let drafts = loadDrafts();
+
+  function fillDraft(t: Tab) {
+    const c = t.composer;
+    if (t.kind !== "session" || c.input.trim() || c.attachments.length || c.quotes?.length) return;
+    const d = drafts[draftKey(t)];
+    if (!d) return;
+    c.input = d.input;
+    c.quotes = [...d.quotes].slice(0, MAX_QUOTES);
+    c.attachments = [...d.attachments];
+  }
+
+  function keepDraft(t: Tab | undefined, d: { input: string; quotes: PlanQuote[]; attachments: string[] }) {
+    if (t?.kind !== "session") return;
+    const key = draftKey(t);
+    if (sameDraft(drafts[key], d)) return;
+    drafts = withDraft(drafts, key, d);
+    saveDrafts(drafts);
+  }
+
+  function forgetDraft(t: Tab) {
+    keepDraft(t, { input: "", quotes: [], attachments: [] });
+  }
+
+  // Keyed by the tab `comp` belongs to (`compFor`, set with it), never the
+  // active one: on a switch `tab` moves first and would get the old text.
+  $: keepDraft(
+    tabs.find((t) => t.id === compFor && t.composer === comp),
+    { input: comp.input, quotes: comp.quotes ?? [], attachments: comp.attachments },
+  );
 
   function laneOf(sessionId: string | null | undefined): string {
     if (!sessionId) return "";
@@ -815,6 +850,7 @@
     // Quotes go as blocks after the text, as the desk will send them.
     const optimistic: ChatEvent = { kind: "user", text: [prompt, ...quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
     sending = true;
+    forgetDraft(target);
     draft.input = "";
     draft.attachments = [];
     draft.quotes = [];
@@ -1631,7 +1667,8 @@
   });
 </script>
 
-<svelte:window on:keydown={onKey} bind:innerWidth />
+<!-- A draft typed just before closing is written then, not lost. -->
+<svelte:window on:keydown={onKey} on:pagehide={flushDrafts} on:beforeunload={flushDrafts} bind:innerWidth />
 
 <div class="shell">
   <DefaultArt {bg} blurred={tab.kind === "page"} />
