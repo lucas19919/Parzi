@@ -4,6 +4,7 @@ import { writable } from "svelte/store";
 import { toast } from "./toast";
 import { splitSegments, type Segment } from "./segments";
 import { reportMarkdown } from "./mdReport";
+import { mathAt } from "./mdMath";
 
 // Rich renderers (KaTeX + highlight.js) load on first use, off the
 // startup path. Until then code renders plain and math renders as
@@ -149,33 +150,15 @@ md.block.ruler.before("fence", "parzi-math-block", (state, start, end, silent) =
   return true;
 });
 
-// $…$ inline and $$…$$ single-line display (escaped \$ ignored).
+// $…$ inline and $$…$$ single-line display (escaped \$ and money ignored).
 md.inline.ruler.after("escape", "parzi-math-inline", (state, silent) => {
-  const src = state.src;
-  if (state.pos >= src.length || src[state.pos] !== "$") return false;
-  if (state.pos > 0 && src[state.pos - 1] === "\\") return false;
-  const display = src[state.pos + 1] === "$";
-  const open = display ? state.pos + 2 : state.pos + 1;
-  let end = open;
-  while (end < src.length) {
-    if (src[end] === "\n") return false;
-    if (src[end] === "$" && src[end - 1] !== "\\") {
-      if (display) {
-        if (src[end + 1] === "$") break;
-      } else if (src[end + 1] !== "$") {
-        break;
-      }
-    }
-    end++;
-  }
-  if (end >= src.length) return false;
-  const tex = src.slice(open, end);
-  if (!tex.trim()) return false;
+  const span = mathAt(state.src, state.pos);
+  if (!span) return false;
   if (silent) return true;
   const tok = state.push("parzi_math", "span", 0);
-  tok.content = tex;
-  tok.meta = { display };
-  state.pos = display ? end + 2 : end + 1;
+  tok.content = span.tex;
+  tok.meta = { display: span.display };
+  state.pos = span.next;
   return true;
 });
 
