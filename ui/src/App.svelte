@@ -44,6 +44,7 @@
   import { nameOf } from "./lib/providerRows";
   import { follower } from "./lib/follow";
   import { draftKey, flushDrafts, loadDrafts, sameDraft, saveDrafts, withDraft } from "./lib/drafts";
+import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, saveHeld, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
   import { addNotification, dropNotification, markSessionRead, type NotificationItem } from "./lib/notificationStore";
   import { covered } from "./lib/overlay";
   import { tooltip } from "./lib/tooltip";
@@ -116,13 +117,39 @@
   let policy = "";
   let mode: ComposerMode = "build";
   let sending = false;
-  // Type-ahead. The backend takes one run per session, so a message sent
-  // while its session works is held here (a later one joins it) and goes
-  // out when the run is done.
-  type Held = { tab: string; text: string; quotes: PlanQuote[]; files: string[]; model: string; effort: string; mode: string; cwd: string; remote: boolean };
-  let held: Record<string, Held> = {};
-  $: heldNow = tab.kind === "session" && shown ? held[shown] : undefined;
-  $: heldText = heldNow ? heldNow.text || heldNow.quotes.map((q) => q.title).join(", ") : "";
+  // The backend runs one turn per session. Messages typed while that turn
+  // works queue here, one turn each, and the oldest goes out when it ends.
+  let held: HoldQueue = loadHeld();
+  $: saveHeld(held);
+  $: heldRows = (tab.kind === "session" && shown ? held[shown] ?? [] : []).map((item) => ({ id: item.id, text: heldLabel(item) }));
+  // A send we have started but the server has not settled. A status refresh
+  // must not clear `running` during it, or the next keystroke starts a second run.
+  const inflight = new Set<string>();
+  // Ignore a stale "idle" for a moment after we start a run. The list can
+  // answer from before the server marked it active and drop `running`.
+  const holdLive = new Map<string, number>();
+  // A run we just saw end. A list fetched earlier still says "active" and
+  // must not put the composer back on Stop.
+  const released = new Map<string, number>();
+
+  function markLive(id: string) {
+    released.delete(id);
+    holdLive.set(id, Date.now() + 2000);
+    running = new Set(running).add(id);
+  }
+
+  function release(id: string) {
+    holdLive.delete(id);
+    released.set(id, Date.now() + 2000);
+    if (!running.has(id)) return;
+    running.delete(id);
+    running = new Set(running);
+  }
+
+  function persistDrafts() {
+    flushDrafts();
+    flushHeld();
+  }
 
   // The Omnibar binds to `comp`, the active tab's own composer object
   // (tab.composer, same reference), so each tab keeps its draft, mode,
@@ -312,7 +339,28 @@
 
   const refreshThreads = coalesce(async () => {
     threads = await api.listThreads().catch(() => threads);
+    noteThreads(threads);
   }, 100);
+
+  // The list is the source of truth for who is working. A missed "done"
+  // used to leave the composer on Stop, and every later message waited
+  // for a turn that had already ended.
+  function applyLive(id: string, status: string) {
+    const live = status === "active" || status === "queued";
+    if (live) {
+      if ((released.get(id) ?? 0) > Date.now()) return;
+      if (!running.has(id)) running = new Set(running).add(id);
+      return;
+    }
+    if (inflight.has(id) || !running.has(id)) return;
+    if ((holdLive.get(id) ?? 0) > Date.now()) return;
+    running.delete(id);
+    running = new Set(running);
+  }
+
+  function noteThreads(list: { id: string; status: string }[]) {
+    for (const t of list) applyLive(t.id, t.status);
+  }
 
   function patchTab(id: string, patch: Partial<Tab>) {
     tabs = tabs.map((t) => (t.id === id ? { ...t, ...patch } : t));
@@ -474,7 +522,7 @@
         tab.composer.model = m.model;
         comp = comp;
       }
-      if (m.status === "active" || m.status === "queued") running = new Set(running).add(id);
+      applyLive(id, m.status);
       if (tab.sessionId === id && m.title) patchTab(tab.id, { title: m.title });
       await scrollToBottom();
     } catch (e) {
@@ -809,7 +857,7 @@
     const prompt = draft.input.trim();
     // A message can be just quoted plan items.
     const quotes = draft.mode === "search" ? [] : [...(draft.quotes ?? [])];
-    if ((!prompt && !quotes.length) || sending) return;
+    if (!prompt && !quotes.length) return;
     if (!draft.model && draft.mode !== "search") {
       toast("Pick a model first");
       omnibar?.openModels();
@@ -829,18 +877,30 @@
     const otherAgent = !!sessionModel && !!draft.model && agentOf(sessionModel) !== agentOf(draft.model);
     const fresh = !target.sessionId || otherAgent;
     const where = remoteOn ? (target.sessionId ? (meta?.cwd ?? "") : (draft.remoteCwd ?? "")) : folder;
-    if (!fresh && target.sessionId && running.has(target.sessionId)) {
-      hold(target.sessionId, { tab: target.id, text: prompt, quotes, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn });
+    // Queue while this session works, including during the send that just
+    // started: Enter used to be ignored until that request returned.
+    if (!fresh && target.sessionId && (running.has(target.sessionId) || inflight.has(target.sessionId))) {
+      const queued = enqueue(held, target.sessionId, { tab: target.id, text: prompt, quotes, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn });
+      if (!queued.ok) {
+        toast(`The queue holds ${MAX_HELD} messages`);
+        return;
+      }
+      held = queued.queue;
       draft.input = "";
       draft.attachments = [];
       draft.quotes = [];
       comp = comp;
       return;
     }
+    if (sending) return;
     if (target.sessionId && otherAgent) toast(`New session on ${nameOf(agentOf(draft.model))}: a thread stays with the agent it started on`);
     // Quotes go as blocks after the text, as the desk will send them.
     const optimistic: ChatEvent = { kind: "user", text: [prompt, ...quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
     sending = true;
+    if (!fresh && target.sessionId) {
+      inflight.add(target.sessionId);
+      markLive(target.sessionId);
+    }
     forgetDraft(target);
     draft.input = "";
     draft.attachments = [];
@@ -865,7 +925,14 @@
         // A brand-new session only: one going on keeps where it works.
         worktree: !target.sessionId && !remoteOn ? draft.worktree : undefined,
       });
-      running = new Set(running).add(sid);
+      if (target.sessionId) inflight.delete(target.sessionId);
+      markLive(sid);
+      if (target.sessionId && sid !== target.sessionId) {
+        running.delete(target.sessionId);
+        holdLive.delete(target.sessionId);
+        running = new Set(running);
+        held = moveHeld(held, target.sessionId, sid);
+      }
       rememberModel(draft.model, draft.effort);
       // The field was cleared before the await. Drop the stored draft
       // for the tab that sent, not whichever tab is active now.
@@ -881,7 +948,12 @@
         await reload();
       }
       void refreshThreads();
+      void drainIfIdle(sid);
     } catch (e) {
+      if (target.sessionId) {
+        inflight.delete(target.sessionId);
+        release(target.sessionId);
+      }
       draft.input = prompt;
       draft.attachments = files;
       draft.quotes = quotes;
@@ -893,33 +965,9 @@
     }
   }
 
-  function hold(sid: string, next: Held) {
-    const prev = held[sid];
-    held = {
-      ...held,
-      [sid]: prev
-        ? {
-            ...next,
-            text: [prev.text, next.text].filter(Boolean).join("\n\n"),
-            quotes: [...prev.quotes, ...next.quotes].slice(0, MAX_QUOTES),
-            files: [...new Set([...prev.files, ...next.files])],
-          }
-        : next,
-    };
-  }
-
-  function take(sid: string): Held | undefined {
-    const h = held[sid];
-    if (!h) return undefined;
-    const rest = { ...held };
-    delete rest[sid];
-    held = rest;
-    return h;
-  }
-
   // A held message goes back into its composer, ahead of anything typed
   // since: its run stopped short, or sending it failed.
-  function restore(sid: string, h: Held) {
+  function restore(sid: string, h: HeldItem) {
     const t = tabs.find((x) => x.id === h.tab) ?? tabs.find((x) => x.sessionId === sid);
     if (!t) return;
     t.composer = ensureComposer(t.composer);
@@ -933,20 +981,38 @@
     }
   }
 
-  function unhold(sid: string) {
-    const h = take(sid);
-    if (h) restore(sid, h);
+  function unhold(sid: string, itemId?: string) {
+    const next = itemId ? takeId(held, sid, itemId) : takeHead(held, sid);
+    held = next.queue;
+    if (next.item) restore(sid, next.item);
   }
 
-  // The run a held message waited on is done: it goes out now.
-  // `given`: a message already taken off the hold (Send now).
-  async function sendHeld(sid: string, given?: Held) {
-    if (!given && !held[sid]) return;
-    // Busy from here, so a message typed meanwhile is held with it.
-    running = new Set(running).add(sid);
-    if (sid === shown) await reload();
-    const h = given ?? take(sid);
+  // Stop hands the whole queue back, oldest first, so none of it goes out
+  // when the killed run reports its end.
+  function restoreAll(sid: string) {
+    const next = takeAll(held, sid);
+    held = next.queue;
+    for (const h of [...next.items].reverse()) restore(sid, h);
+  }
+
+  // The oldest queued message goes out. Taken before any await, so a second
+  // "done" cannot send it twice or leave the composer marked busy with nothing to send.
+  // `given`: already taken off the queue (Send now).
+  async function sendHeld(sid: string, given?: HeldItem) {
+    if (inflight.has(sid)) {
+      if (given) held = putFront(held, sid, given);
+      return;
+    }
+    let h = given;
+    if (!h) {
+      const next = takeHead(held, sid);
+      held = next.queue;
+      h = next.item;
+    }
     if (!h) return;
+    inflight.add(sid);
+    markLive(sid);
+    if (sid === shown) await reload();
     const optimistic: ChatEvent = { kind: "user", text: [h.text, ...h.quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
     if (sid === shown) {
       events = [...events, optimistic];
@@ -964,9 +1030,12 @@
         remote: h.remote,
         quotes: h.quotes.map((q) => ({ project: q.project, id: q.id })),
       });
+      inflight.delete(sid);
       if (id !== sid) {
         running.delete(sid);
-        running = new Set(running).add(id);
+        holdLive.delete(sid);
+        markLive(id);
+        held = moveHeld(held, sid, id);
         for (const t of tabs.filter((t) => t.sessionId === sid)) patchTab(t.id, { sessionId: id });
       }
       if (shown === sid) {
@@ -974,39 +1043,58 @@
         await reload();
       }
       void refreshThreads();
+      void drainIfIdle(id);
     } catch (e) {
-      running.delete(sid);
-      running = running;
+      inflight.delete(sid);
+      release(sid);
+      held = putFront(held, sid, h);
       if (shown === sid) events = events.filter((ev) => ev !== optimistic);
-      // Anything typed while it was going out stays after it.
-      unhold(sid);
-      restore(sid, h);
       toastError(e);
     }
+  }
+
+  // The run we just started may already have finished (a short turn, a
+  // missed "done"). The next queued message goes out only then.
+  async function drainIfIdle(sid: string) {
+    if (inflight.has(sid) || !(held[sid]?.length)) return;
+    let status = "";
+    try {
+      const [m] = await api.getThread(sid);
+      status = m.status;
+    } catch {
+      return;
+    }
+    if (status === "active" || status === "queued") {
+      if (!running.has(sid)) markLive(sid);
+      return;
+    }
+    release(sid);
+    void sendHeld(sid);
   }
 
   async function stop() {
     if (!shown || !running.has(shown)) return;
     const id = shown;
-    running.delete(id);
-    running = running;
-    unhold(id);
+    release(id);
+    restoreAll(id);
     clearLive();
     await reload();
     void refreshThreads();
     await stopSession(id);
   }
 
-  // The waiting message, now: the run stops (what it said so far stays)
-  // and the message goes straight after. Taken off the hold first, so the
-  // stopped run's end does not hand it back to the composer.
-  async function sendHeldNow() {
+  // This queued message, now. Taken off the queue first, so the stopped
+  // run's end does not hand it back, and the messages behind it stay queued.
+  async function sendHeldNow(itemId?: string) {
     const id = shown;
-    const h = id ? take(id) : undefined;
-    if (!id || !h) return;
+    if (!id) return;
+    const next = itemId ? takeId(held, id, itemId) : takeHead(held, id);
+    held = next.queue;
+    const h = next.item;
+    if (!h) return;
     if (running.has(id)) {
       running.delete(id);
-      running = running;
+      running = new Set(running);
       clearLive();
       await stopSession(id);
       // Its end settles before the next run starts, or that end would
@@ -1018,6 +1106,7 @@
       }
       await new Promise((r) => setTimeout(r, 150));
     }
+    for (let i = 0; i < 40 && inflight.has(id); i++) await new Promise((r) => setTimeout(r, 50));
     await sendHeld(id, h);
   }
 
@@ -1075,16 +1164,19 @@
   // A side task: a new session started now, beside this one, from what the
   // person typed (or a message waiting on the run). It lists under this
   // session and never writes to it. "@project" points it at that project.
-  async function sideTask(fromHeld = false) {
+  async function sideTask(fromHeld = false, itemId?: string) {
     const parent = shown;
     if (!parent || tab.kind !== "session" || !tab.sessionId) return;
     let text = "";
     let quotes: PlanQuote[] = [];
     let files: string[] = [];
+    let taken: HeldItem | undefined;
     if (fromHeld) {
-      const h = take(parent);
-      if (!h) return;
-      ({ text, quotes, files } = h);
+      const next = itemId ? takeId(held, parent, itemId) : takeHead(held, parent);
+      held = next.queue;
+      taken = next.item;
+      if (!taken) return;
+      ({ text, quotes, files } = taken);
     } else {
       text = comp.input.trim();
       quotes = [...(comp.quotes ?? [])];
@@ -1095,19 +1187,26 @@
       comp.quotes = [];
       comp = comp;
     }
+    // A queued message goes back on the queue. A draft goes back in the composer.
+    const giveBack = () => {
+      if (taken) held = putFront(held, parent, taken);
+      else {
+        comp.input = [text, comp.input].filter(Boolean).join("\n\n");
+        comp.attachments = [...files, ...comp.attachments];
+        comp.quotes = [...quotes, ...(comp.quotes ?? [])].slice(0, MAX_QUOTES);
+        comp = comp;
+      }
+    };
     if (!comp.model) {
       toast("Pick a model first");
       omnibar?.openModels();
-      comp.input = text;
-      comp = comp;
+      giveBack();
       return;
     }
     try {
       await launchSide(parent, text, quotes, files);
     } catch (e) {
-      comp.input = [text, comp.input].filter(Boolean).join("\n\n");
-      comp.attachments = [...files, ...comp.attachments];
-      comp = comp;
+      giveBack();
       toastError(e);
     }
   }
@@ -1286,9 +1385,9 @@
     if (!ok) return;
     try {
       await api.deleteThread(id);
-      running.delete(id);
-      running = running;
-      take(id);
+      release(id);
+      inflight.delete(id);
+      held = takeAll(held, id).queue;
       const open = tabs.filter((t) => t.sessionId === id).map((t) => t.id);
       for (const tid of open) closeTab(tid);
       void refreshThreads();
@@ -1397,13 +1496,12 @@
       return;
     }
     if (e.kind === "done" || e.kind === "error" || e.kind === "paused") {
-      running.delete(e.session);
-      running = running;
+      release(e.session);
       for (const k of [...approvals, ...questions, ...requests].filter((x) => x.session === e.session).map((x) => x.key)) settle(k);
       void refreshThreads();
-      // A held message goes out after a finished run, else back to its composer.
-      const next = e.kind === "done" && !!held[e.session];
-      if (e.kind !== "done") unhold(e.session);
+      // The oldest queued message goes out after a finished run. An error
+      // or a pause leaves the rest queued: the person sends or edits them.
+      const next = e.kind === "done" && !inflight.has(e.session) && !!held[e.session]?.length;
       if (e.session === shown) {
         if (next) clearLive();
         else void reload(clearLive);
@@ -1606,7 +1704,10 @@
       .catch((e) => toast(`Couldn't read the tool policy, so agents will ask first: ${e}`, true));
     api
       .listThreads()
-      .then((list) => (threads = list))
+      .then((list) => {
+        threads = list;
+        noteThreads(list);
+      })
       .catch((e) => toast(`Couldn't load sessions: ${e}`, true));
     void loadRemoteInfo().catch(() => {});
     // The link to the server: updates, and a stream that restarted.
@@ -1656,7 +1757,7 @@
 </script>
 
 <!-- A draft typed just before closing is written then, not lost. -->
-<svelte:window on:keydown={onKey} on:pagehide={flushDrafts} on:beforeunload={flushDrafts} bind:innerWidth />
+<svelte:window on:keydown={onKey} on:pagehide={persistDrafts} on:beforeunload={persistDrafts} bind:innerWidth />
 
 <div class="shell">
   <DefaultArt {bg} />
@@ -1863,12 +1964,12 @@
           }}
           hero={!hasSession}
           {project}
-          held={heldText}
+          queue={heldRows}
           on:send={send}
-          on:unhold={() => shown && unhold(shown)}
+          on:unhold={(e) => shown && unhold(shown, e.detail.id)}
           on:side={() => void sideTask(false)}
-          on:sideHeld={() => void sideTask(true)}
-          on:sendHeldNow={() => void sendHeldNow()}
+          on:sideHeld={(e) => void sideTask(true, e.detail.id)}
+          on:sendHeldNow={(e) => void sendHeldNow(e.detail.id)}
           canSide={tab.kind === "session" && !!tab.sessionId}
           on:browse={(e) => browse(e.detail.url)}
           on:stop={stop}

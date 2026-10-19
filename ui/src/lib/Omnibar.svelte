@@ -39,8 +39,8 @@
   $: if (started && mode === "search") mode = "build";
   export let branch = "";
   export let streaming = false;
-  // A message sent while the agent works: it goes out when the run is done.
-  export let held = "";
+  // Messages sent while the agent works, oldest first. Each goes out as its own turn.
+  export let queue: { id: string; text: string }[] = [];
   // A session is open: Ctrl+Enter can start a side task beside it.
   export let canSide = false;
   export let board: ProviderStatus[] = [];
@@ -56,10 +56,10 @@
 
   const dispatch = createEventDispatcher<{
     send: void;
-    unhold: void;
+    unhold: { id: string };
     side: void;
-    sideHeld: void;
-    sendHeldNow: void;
+    sideHeld: { id: string };
+    sendHeldNow: { id: string };
     browse: { url: string };
     stop: void;
     command: { name: string };
@@ -180,6 +180,7 @@
   // aborts the flush so later clicks never update the UI.
   $: if (!Array.isArray(quotes)) quotes = [];
   $: if (!Array.isArray(attachments)) attachments = [];
+  $: if (!Array.isArray(queue)) queue = [];
 
   export function focus() {
     textarea?.focus();
@@ -603,15 +604,19 @@
       </div>
     {/if}
 
-    {#if held}
-      <div class="held" transition:slide={{ duration: 160, easing: cubicOut }}>
-        <!-- Waits for the run to finish; or now, or beside it, or back to edit. -->
-        <span class="held-text" title={`${held}\n\nSends when the agent is done`}>{held}</span>
-        <span class="held-acts">
-          <button aria-label="Send now" use:tooltip={"Send now: stop the agent and send this"} on:click={() => dispatch("sendHeldNow")}><Icon name="arrowUp" size={12} /></button>
-          <button aria-label="Side task" use:tooltip={"Side task: run it now, beside this session"} on:click={() => dispatch("sideHeld")}><Icon name="fork" size={12} /></button>
-          <button aria-label="Edit" use:tooltip={"Edit"} on:click={() => dispatch("unhold")}><Icon name="pencil" size={12} /></button>
-        </span>
+    {#if queue.length}
+      <div class="held-list">
+        {#each queue as item (item.id)}
+          <div class="held" transition:slide={{ duration: 160, easing: cubicOut }}>
+            <!-- Waits its turn; or now, or beside this session, or back to edit. -->
+            <span class="held-text" title={`${item.text}\n\n${streaming ? "Sends when the agent is done" : "Send now to run it"}`}>{item.text}</span>
+            <span class="held-acts">
+              <button aria-label="Send now: {item.text}" use:tooltip={"Send now: stop the agent and send this"} on:click={() => dispatch("sendHeldNow", { id: item.id })}><Icon name="arrowUp" size={12} /></button>
+              <button aria-label="Side task: {item.text}" use:tooltip={"Side task: run it now, beside this session"} on:click={() => dispatch("sideHeld", { id: item.id })}><Icon name="fork" size={12} /></button>
+              <button aria-label="Edit: {item.text}" use:tooltip={"Edit"} on:click={() => dispatch("unhold", { id: item.id })}><Icon name="pencil" size={12} /></button>
+            </span>
+          </div>
+        {/each}
       </div>
     {/if}
 
@@ -1047,17 +1052,29 @@
     min-width: 4px;
   }
 
+  .held-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 118px;
+    margin: 2px 2px 6px;
+    overflow: auto;
+  }
   .held {
     display: flex;
     align-items: center;
     gap: 8px;
     height: 26px;
+    flex: none;
     margin: 2px 2px 6px;
     padding: 0 4px 0 10px;
     background: color-mix(in srgb, var(--text) 5%, transparent);
     border-radius: var(--radius);
     color: var(--muted);
     font-size: var(--fs-sm);
+  }
+  .held-list .held {
+    margin: 0;
   }
   .held-text {
     flex: 1;
