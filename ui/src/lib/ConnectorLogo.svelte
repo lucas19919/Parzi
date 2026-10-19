@@ -1,4 +1,7 @@
 <script lang="ts">
+  // The initial's size on the type scale, about two fifths of the badge.
+  const SCALE = [11, 12, 13, 14, 16, 18, 22];
+  const letterSize = (badge: number) => SCALE.reduce((best, n) => (Math.abs(n - badge * 0.42) < Math.abs(best - badge * 0.42) ? n : best), SCALE[0]);
   // A connector's logo: its bundled mark in the brand's colour, else the
   // service's own site icon, else its initial.
   import { CONNECTOR_MARKS } from "./connectorMarks";
@@ -30,7 +33,7 @@
   {:else if icon && !broken}
     <img src={icon} alt="" width={Math.round(size * 0.56)} height={Math.round(size * 0.56)} on:error={() => (broken = true)} />
   {:else}
-    <span class="letter" style:font-size="{Math.round(size * 0.42)}px">{(name || id).slice(0, 1).toUpperCase()}</span>
+    <span class="letter" style:font-size="{letterSize(size)}px">{(name || id).slice(0, 1).toUpperCase()}</span>
   {/if}
 </span>
 

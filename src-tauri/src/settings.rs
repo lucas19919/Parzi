@@ -100,6 +100,58 @@ pub async fn connector_check(state: State<'_, AppState>, name: String) -> Result
         .map_err(|e| e.to_string())
 }
 
+/// Signs in to a hosted connector the way its server asks (OAuth): the
+/// sign-in page opens in the person's browser, Parzi keeps the token, and
+/// the connector reconnects with it. How many tools it offers then.
+#[tauri::command]
+pub async fn connector_sign_in(state: State<'_, AppState>, name: String) -> Result<usize, String> {
+    let cfg = ParziConfig::load().map_err(|e| e.to_string())?;
+    let url = cfg
+        .mcp
+        .servers
+        .get(&name)
+        .map(|s| s.url.clone())
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| format!("{name} is not a hosted connector"))?;
+    let challenge = parzi_runtime::mcp_http::last_challenge(&name);
+    parzi_runtime::mcp_oauth::sign_in(&name, &url, challenge, |page| {
+        crate::files::launch(&crate::files::open_with_default(page.into()))
+    })
+    .await?;
+    // Reconnect with the token.
+    state.orch.mcp().stop(&name).await;
+    state
+        .orch
+        .mcp()
+        .exposed_tools(&name)
+        .await
+        .map(|tools| tools.len())
+        .map_err(|e| e.to_string())
+}
+
+/// Forgets a connector's kept sign-in (removing it, or signing out).
+#[tauri::command]
+pub async fn connector_sign_out(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    parzi_runtime::mcp_oauth::forget(&name);
+    state.orch.mcp().stop(&name).await;
+    Ok(())
+}
+
+/// Connectors set up in the other apps on this computer (Claude Code,
+/// Claude Desktop, Cursor, VS Code, Codex, Grok), ready to add.
+#[tauri::command]
+pub async fn connectors_found() -> Vec<parzi_core::connectors::Found> {
+    tauri::async_runtime::spawn_blocking(parzi_core::connectors::found_on_this_computer)
+        .await
+        .unwrap_or_default()
+}
+
+/// What a pasted text adds: an `mcpServers` block, an address, or nothing.
+#[tauri::command]
+pub fn connectors_from_text(text: String) -> Vec<(String, parzi_core::config::McpServerCfg)> {
+    parzi_core::connectors::from_pasted(&text)
+}
+
 /// The commands a session's agents ran (background and recent foreground
 /// ones), for the session column.
 #[tauri::command]

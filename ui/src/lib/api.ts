@@ -266,6 +266,13 @@ export const api = {
   contextParts: (cwd: string) => invoke<{ instructions: number; notes: number; tools: number }>("context_parts", { cwd }),
   // Starts a connector (signing in, the first time) and counts its tools.
   connectorCheck: (name: string) => invoke<number>("connector_check", { name }),
+  // Signs in to a hosted connector (its page opens in the browser): how many tools it offers then.
+  connectorSignIn: (name: string) => invoke<number>("connector_sign_in", { name }),
+  connectorSignOut: (name: string) => invoke<void>("connector_sign_out", { name }),
+  // Connectors set up in Claude Code, Claude Desktop, Cursor, VS Code, Codex or Grok.
+  connectorsFound: () => invoke<{ name: string; source: string; server: Record<string, unknown> }[]>("connectors_found"),
+  // A pasted mcpServers block or address, as connectors.
+  connectorsFromText: (text: string) => invoke<[string, Record<string, unknown>][]>("connectors_from_text", { text }),
   runDoctorQuick: () => invoke<Check[]>("run_doctor_quick"),
 
   getTheme: () => invoke<Theme>("get_theme"),

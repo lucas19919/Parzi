@@ -1,25 +1,28 @@
 <script lang="ts">
-  // Adding a connector: the directory of well-known ones (a click each, a
-  // token step for those that take one), or a custom one by its address or
-  // the command that starts it. Saving and starting stay with the section;
-  // this only asks.
+  // Adding a connector: the ones already set up in your other apps, the
+  // directory of well-known ones (a click each), or anything else by
+  // pasting its address, its command or its config block. Saving and
+  // connecting stay with the section; this only asks.
   import { createEventDispatcher, onMount, tick } from "svelte";
   import { fade, fly } from "svelte/transition";
   import Icon from "../Icon.svelte";
   import ConnectorLogo from "../ConnectorLogo.svelte";
-  import { CATALOG, nameFromUrl, type CatalogConnector } from "../connectorCatalog";
+  import { CATALOG, serverLine, type CatalogConnector, type ServerCfg } from "../connectorCatalog";
   import { tooltip } from "../tooltip";
   import { portal } from "../popover";
 
   // Connectors already added, and how each answered this visit.
   export let added: Set<string> = new Set();
-  export let health: Record<string, { state: "checking" | "ok" | "error"; tools?: number; error?: string }> = {};
+  export let health: Record<string, { state: "checking" | "signing" | "signin" | "ok" | "error"; tools?: number; error?: string }> = {};
   export let busy = false;
   export let start: "browse" | "custom" = "browse";
+  // Set up in Claude Code, Cursor, Grok and the like, not added here yet.
+  export let found: { name: string; source: string; server: ServerCfg }[] = [];
 
   const dispatch = createEventDispatcher<{
     connect: { connector: CatalogConnector; token: string };
-    custom: { name: string; url: string; token: string; command: string; env: string };
+    custom: { text: string; name: string; token: string };
+    import: { name: string; server: ServerCfg };
     open: { url: string };
     close: void;
   }>();
@@ -29,15 +32,15 @@
   let pick: CatalogConnector | null = null;
   let token = "";
   let name = "";
-  let url = "";
+  let pasted = "";
   let key = "";
-  let local = false;
-  let command = "";
-  let env = "";
   let card: HTMLDivElement;
 
   $: q = query.trim().toLowerCase();
   $: shown = CATALOG.filter((c) => !q || `${c.name} ${c.about}`.toLowerCase().includes(q));
+  $: here = found.filter((f) => !added.has(f.name) && (!q || `${f.name} ${f.source}`.toLowerCase().includes(q)));
+  // What the paste looks like: an address, a config block, or a command.
+  $: kind = /^https?:\/\/\S+$/i.test(pasted.trim()) ? "address" : pasted.trim().startsWith("{") ? "block" : pasted.trim() ? "command" : "";
 
   onMount(() => {
     const before = document.activeElement as HTMLElement | null;
@@ -72,7 +75,7 @@
   }
 
   function sendCustom() {
-    dispatch("custom", { name: name.trim(), url: local ? "" : url.trim(), token: local ? "" : key.trim(), command: local ? command.trim() : "", env: local ? env : "" });
+    dispatch("custom", { text: pasted.trim(), name: name.trim(), token: kind === "address" ? key.trim() : "" });
   }
 
   function onKey(e: KeyboardEvent) {
@@ -83,7 +86,7 @@
     else go("browse");
   }
 
-  $: canAdd = !!(local ? command.trim() && name.trim() : /^https?:\/\/\S+$/i.test(url.trim()));
+  $: canAdd = kind === "address" || kind === "block" || (kind === "command" && !!name.trim());
 </script>
 
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
@@ -93,7 +96,7 @@
       {#if view !== "browse"}
         <button class="icon" use:tooltip={"Back"} aria-label="Back" on:click={() => go("browse")}><Icon name="arrowLeft" /></button>
       {/if}
-      <h2>{view === "custom" ? "Custom connector" : view === "token" && pick ? `Connect ${pick.name}` : "Add a connector"}</h2>
+      <h2>{view === "custom" ? "Add by address or config" : view === "token" && pick ? `Connect ${pick.name}` : "Add a connector"}</h2>
       <button class="icon" use:tooltip={"Close"} aria-label="Close" on:click={() => dispatch("close")}><Icon name="close" /></button>
     </header>
 
@@ -103,6 +106,20 @@
         <input bind:value={query} placeholder="Search connectors" aria-label="Search connectors" spellcheck="false" />
       </div>
       <div class="grid" data-ui-list>
+        {#if here.length}
+          <p class="group">On this computer</p>
+          {#each here as f (f.name)}
+            <div class="item">
+              <ConnectorLogo id={f.name} name={f.name} site={f.server.url ? new URL(f.server.url).origin : ""} size={36} />
+              <span class="text">
+                <span class="name">{f.name}</span>
+                <span class="about" title={serverLine(f.server)}>From {f.source}</span>
+              </span>
+              <button class="sbtn" disabled={busy} on:click={() => dispatch("import", { name: f.name, server: f.server })}>Add</button>
+            </div>
+          {/each}
+          <p class="group">Directory</p>
+        {/if}
         {#each shown as c (c.id)}
           {@const h = health[c.id]}
           {@const on = added.has(c.id)}
@@ -114,6 +131,8 @@
             </span>
             {#if h?.state === "checking"}
               <span class="state">Connecting…</span>
+            {:else if h?.state === "signing"}
+              <span class="state">Signing in…</span>
             {:else if on && h?.state !== "error"}
               <span class="state ok"><Icon name="check" size={12} /> Added</span>
             {:else}
@@ -125,8 +144,8 @@
         {/each}
       </div>
       <footer>
-        <span class="hint">Signing in opens the service's page in your browser.</span>
-        <button class="link" on:click={() => go("custom")}>Custom connector</button>
+        <span class="hint">Signing in opens the service's page in your browser, once.</span>
+        <button class="link" on:click={() => go("custom")}>Add by address or config</button>
       </footer>
     {:else if view === "token" && pick}
       <div class="step">
@@ -144,23 +163,16 @@
     {:else}
       <div class="form">
         <label>
-          <span class="label">Name</span>
-          <input bind:value={name} placeholder={!local && url.trim() ? nameFromUrl(url.trim()) : "mail"} spellcheck="false" />
+          <span class="label">Address, command or config</span>
+          <textarea class="mono" rows="5" bind:value={pasted} placeholder={'https://mcp.example.com/mcp\n\nor  npx -y some-mcp-server\n\nor  {"mcpServers": {...}}'} spellcheck="false" />
         </label>
-        {#if local}
+        {#if kind !== "block"}
           <label>
-            <span class="label">Command</span>
-            <input class="mono" bind:value={command} placeholder="npx -y some-mcp-server" spellcheck="false" />
+            <span class="label">Name <em>{kind === "command" ? "needed for a command" : "optional"}</em></span>
+            <input bind:value={name} placeholder={kind === "address" ? "from its address" : "mail"} spellcheck="false" />
           </label>
-          <label>
-            <span class="label">Environment <em>optional, NAME=value per line</em></span>
-            <textarea class="mono" rows="3" bind:value={env} spellcheck="false" />
-          </label>
-        {:else}
-          <label>
-            <span class="label">Server address</span>
-            <input class="mono" bind:value={url} placeholder="https://example.com/mcp" spellcheck="false" on:keydown={(e) => e.key === "Enter" && canAdd && sendCustom()} />
-          </label>
+        {/if}
+        {#if kind === "address"}
           <label>
             <span class="label">API key <em>optional, if the service gives you one instead of a sign-in</em></span>
             <input type="password" bind:value={key} autocomplete="off" spellcheck="false" />
@@ -168,7 +180,7 @@
         {/if}
       </div>
       <footer>
-        <button class="link" on:click={() => (local = !local)}>{local ? "Use a server address" : "Run a local program instead"}</button>
+        <span class="hint">{kind === "block" ? "Adds every server in the block." : kind === "address" ? "Parzi connects to it directly; it asks to sign in if it needs to." : ""}</span>
         <span class="grow" />
         <button class="sbtn primary" disabled={busy || !canAdd} on:click={sendCustom}>Add</button>
       </footer>
@@ -177,6 +189,13 @@
 </div>
 
 <style>
+  .group {
+    grid-column: 1 / -1;
+    margin: 6px 0 2px;
+    padding: 0 6px;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
   .backdrop {
     position: fixed;
     inset: 0;

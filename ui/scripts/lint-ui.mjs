@@ -44,12 +44,12 @@ const STATES = {
   history: [2, 3, 4].map((i) => click(`library ${i}`, nth(".seg", i), `${nth(".seg", i)}[aria-pressed="true"]`)),
   settings: [
     ...[2, 3].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
-    // Connections: the add dialog's directory, a token connector's step,
-    // back, the custom form, then closed.
+    // Connections: the add dialog's directory (with what other apps set up),
+    // pasting an address, back, then closed.
     click("connector directory", ".add-conn", '.card[role="dialog"] .grid'),
-    click("connector token", '.card .grid > .item:first-child .sbtn', '.card input[type="password"]'),
+    click("connector custom", ".card footer .link", ".card textarea.mono"),
+    { name: "connector address", action: "fill", selector: ".card textarea.mono", value: "https://mcp.example.com/mcp", ready: { selector: '.card input[type="password"]' } },
     click("connector back", ".card header .icon:first-child", '.card[role="dialog"] .grid'),
-    click("connector custom", ".card footer .link", ".card input.mono"),
     { name: "connector closed", action: "click", selector: ".card header .icon:last-child", ready: { selector: '.card[role="dialog"]', state: "hidden" } },
     ...[4, 5].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
   ],

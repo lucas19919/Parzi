@@ -8,6 +8,8 @@ pub mod hub;
 pub mod inter;
 pub mod mcp;
 mod mcp_host;
+pub mod mcp_http;
+pub mod mcp_oauth;
 pub mod orchestrator;
 pub mod osserve;
 mod plan_tools;

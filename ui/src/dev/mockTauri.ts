@@ -425,6 +425,14 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   rewind_thread: () => sessions[0],
   context_parts: () => ({ instructions: 6400, notes: 1800, tools: 9200 }),
   connector_check: () => new Promise((r) => setTimeout(() => r(14), 900)),
+  connector_sign_in: () => new Promise((r) => setTimeout(() => r(12), 1200)),
+  connector_sign_out: () => null,
+  // Set up in other apps on this computer.
+  connectors_found: () => [
+    { name: "isar", source: "Claude Code", server: { command: "node", args: ["mcp/src/index.js"], enabled: true } },
+    { name: "conductor", source: "Grok", server: { command: "conductor.exe", args: ["mcp"], enabled: true } },
+  ],
+  connectors_from_text: () => [],
   get_theme: () => theme,
   get_theme_css: () => "",
   background_url: () => (params.get("bg") ? "C:/mock/wallpaper.png" : ""),

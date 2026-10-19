@@ -2,7 +2,7 @@
   import { createEventDispatcher, onMount } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
   import { api, type ParziConfig } from "../api";
-  import { parseEnv, splitLine } from "../cmdline";
+  import { splitLine } from "../cmdline";
   import type { ProviderStatus } from "../api";
   import { remote, remoteBoard, remoteInfo as linked, type RemoteInfo } from "../remote";
   import { PROVIDER_ORDER, nameOf, stateLabel } from "../providerRows";
@@ -10,7 +10,7 @@
   import Icon from "../Icon.svelte";
   import { tooltip } from "../tooltip";
   import { updateConfig } from "../config";
-  import { CATALOG, nameFromUrl, remoteServer, remoteUrl, type CatalogConnector, type ServerCfg as Server } from "../connectorCatalog";
+  import { CATALOG, hostedServer, nameFromUrl, serverLine, type CatalogConnector, type ServerCfg as Server } from "../connectorCatalog";
   import ConnectorLogo from "../ConnectorLogo.svelte";
   import ConnectorDialog from "./ConnectorDialog.svelte";
   import "./shared.css";
@@ -33,36 +33,66 @@
 
   // How each connector answered when it last started, this visit.
   interface Health {
-    state: "checking" | "ok" | "error";
+    state: "checking" | "signing" | "signin" | "ok" | "error";
     tools?: number;
     error?: string;
   }
   let health: Record<string, Health> = {};
 
+  const SIGN_IN = "sign-in needed";
+
   function plainError(e: string): string {
     if (e.includes("isn't installed") && e.includes("npx")) return "Needs Node.js";
-    if (/timed out/i.test(e)) return "Didn't answer in time. Finish the sign-in, then connect again";
-    return e.replace(/^tool `[^`]*`: /, "");
+    if (/timed out/i.test(e)) return "Didn't answer in time";
+    return e.replace(/^tool `[^`]*`: /, "").replace(/^`[^`]*`: /, "");
   }
 
-  // Starts it and counts its tools. A connector that signs in opens the
-  // service's page in your browser the first time.
-  async function check(id: string) {
+  // Connects and counts its tools. One that asks to sign in, just added,
+  // goes straight to its sign-in page (`signIn`).
+  async function check(id: string, signInIfAsked = false) {
     health = { ...health, [id]: { state: "checking" } };
     try {
       const tools = await api.connectorCheck(id);
+      health = { ...health, [id]: { state: "ok", tools } };
+    } catch (e) {
+      if (String(e).includes(SIGN_IN)) {
+        health = { ...health, [id]: { state: "signin" } };
+        if (signInIfAsked) void signIn(id);
+        return;
+      }
+      health = { ...health, [id]: { state: "error", error: plainError(String(e)) } };
+    }
+  }
+
+  // Its sign-in page opens in the browser; Parzi keeps the token.
+  async function signIn(id: string) {
+    health = { ...health, [id]: { state: "signing" } };
+    try {
+      const tools = await api.connectorSignIn(id);
       health = { ...health, [id]: { state: "ok", tools } };
     } catch (e) {
       health = { ...health, [id]: { state: "error", error: plainError(String(e)) } };
     }
   }
 
+  // Connectors set up in your other apps, offered in the add dialog.
+  let found: { name: string; source: string; server: Server }[] = [];
+
   const openOutside = (url: string) => api.openConfirmedUrl(url).catch((e) => notify(String(e), true));
 
-  // A directory connector: added (with its token, if it takes one), then
-  // started, which signs in the first time.
+  // A directory connector: added, then connected; one that signs in opens
+  // its page right away.
   async function addKnown(c: CatalogConnector, token: string) {
-    if (await save((cf) => (cf.mcp.servers[c.id] = remoteServer(c.url, token)), "")) void check(c.id);
+    const server = hostedServer(c.url, { token, auth: c.auth === "gh" ? "gh" : "" });
+    if (!(await save((cf) => (cf.mcp.servers[c.id] = server), ""))) return;
+    if (c.auth === "signin") void signIn(c.id);
+    else void check(c.id);
+  }
+
+  // One found in another app, as it was set up there.
+  async function addFound(name: string, server: Server) {
+    if (cfg?.mcp.servers[name]) return notify(`A connector called ${name} already exists`, true);
+    if (await save((c) => (c.mcp.servers[name] = { ...server, enabled: true }), "")) void check(name, true);
   }
 
   // Linked from Set up Parzi while this shows: follow it.
@@ -70,6 +100,10 @@
 
   onMount(() => {
     void load();
+    void api
+      .connectorsFound()
+      .then((all) => (found = all as typeof found))
+      .catch(() => {});
     // Back from a terminal that installed or signed in an agent there.
     const onFocus = () => {
       if (info && agents.length) void checkAgents(true);
@@ -104,33 +138,28 @@
     }
   }
 
-  // Anything else: a hosted server's address (it signs in like the
-  // directory's, or takes an API key), or the command that starts a local one.
-  async function addCustom(a: { name: string; url: string; token: string; command: string; env: string }) {
-    const url = a.url;
-    const id = a.name || (url ? nameFromUrl(url) : "");
-    const words = url ? [] : splitLine(a.command);
-    if (!/^[a-z0-9][a-z0-9_-]{0,31}$/i.test(id)) {
-      notify("Name it with letters, digits, - or _ (up to 32)", true);
-      return;
+  // Anything else, pasted: a hosted server's address (it signs in itself,
+  // or takes an API key), an mcpServers block (every server in it), or the
+  // command that starts a local one.
+  async function addCustom(a: { text: string; name: string; token: string }) {
+    let list: [string, Server][];
+    if (/^https?:\/\//i.test(a.text)) {
+      list = [[a.name || nameFromUrl(a.text), hostedServer(a.text, { token: a.token })]];
+    } else if (a.text.startsWith("{")) {
+      list = (await api.connectorsFromText(a.text).catch(() => [])) as [string, Server][];
+      if (!list.length) return notify("No servers in that block", true);
+    } else {
+      const words = splitLine(a.text);
+      if (!words.length) return notify("Paste an address, a command or a config block", true);
+      list = [[a.name, { command: words[0], args: words.slice(1), env: {}, enabled: true }]];
     }
-    if (!url && !words.length) {
-      notify("Enter an address or a command", true);
-      return;
-    }
-    const env = url ? {} : parseEnv(a.env);
-    if (typeof env === "string") {
-      notify(env, true);
-      return;
-    }
-    if (cfg?.mcp.servers[id]) {
-      notify(`A connector called ${id} already exists`, true);
-      return;
-    }
-    const server: Server = url ? remoteServer(url, a.token) : { command: words[0], args: words.slice(1), env, enabled: true };
-    if (await save((c) => (c.mcp.servers[id] = server), "")) {
+    const bad = list.find(([id]) => !/^[a-z0-9][a-z0-9_-]{0,31}$/i.test(id));
+    if (bad) return notify("Name it with letters, digits, - or _ (up to 32)", true);
+    const taken = list.find(([id]) => cfg?.mcp.servers[id]);
+    if (taken) return notify(`A connector called ${taken[0]} already exists`, true);
+    if (await save((c) => list.forEach(([id, srv]) => (c.mcp.servers[id] = srv)), "")) {
       dialog = null;
-      void check(id);
+      for (const [id] of list) void check(id, true);
     }
   }
 
@@ -146,6 +175,7 @@
     const ok = await ask(`Remove the connector "${id}"?`, { title: "Remove connector", kind: "warning" }).catch(() => false);
     if (!ok) return;
     await save((c) => delete c.mcp.servers[id], "");
+    await api.connectorSignOut(id).catch(() => {});
     const { [id]: _, ...rest } = health;
     health = rest;
   }
@@ -279,25 +309,31 @@
       {@const h = health[id]}
       {@const off = srv.enabled === false}
       <div class="field-card conn" class:off>
-        <ConnectorLogo id={id} name={k?.name ?? id} site={k?.site ?? (remoteUrl(srv) ? new URL(remoteUrl(srv)).origin : "")} size={32} />
+        <ConnectorLogo id={id} name={k?.name ?? id} site={k?.site ?? (srv.url ? new URL(srv.url).origin : "")} size={32} />
         <div class="field-info">
           <span class="field-label">{k?.name ?? id}</span>
-          <span class="field-hint" class:ok={h?.state === "ok"} class:bad={h?.state === "error"} title={remoteUrl(srv) || [srv.command, ...(srv.args ?? [])].join(" ")}>
+          <span class="field-hint" class:ok={h?.state === "ok"} class:bad={h?.state === "error"} title={serverLine(srv)}>
             {#if off}
               Off
             {:else if h?.state === "checking"}
-              {remoteUrl(srv) ? "Connecting… sign in if your browser asks" : "Starting…"}
+              {srv.url ? "Connecting…" : "Starting…"}
+            {:else if h?.state === "signing"}
+              Finish signing in in your browser…
+            {:else if h?.state === "signin"}
+              Needs you to sign in
             {:else if h?.state === "ok"}
               Connected · {h.tools} tool{h.tools === 1 ? "" : "s"}
             {:else if h?.state === "error"}
               {h.error}
             {:else}
-              {k?.about ?? (remoteUrl(srv) || [srv.command, ...(srv.args ?? [])].join(" "))}
+              {k?.about ?? serverLine(srv)}
             {/if}
           </span>
         </div>
         {#if h?.state === "error" && h.error === "Needs Node.js"}
           <button class="sbtn" on:click={() => openOutside("https://nodejs.org")}>Get Node.js</button>
+        {:else if !off && (h?.state === "signin" || h?.state === "signing")}
+          <button class="sbtn primary" disabled={h?.state === "signing"} on:click={() => signIn(id)}>{h?.state === "signing" ? "Signing in…" : "Sign in"}</button>
         {:else if !off && h?.state !== "ok"}
           <button class="sbtn" disabled={h?.state === "checking"} on:click={() => check(id)}>{h?.state === "checking" ? "Connecting…" : "Connect"}</button>
         {/if}
@@ -325,9 +361,11 @@
     start={dialog}
     {added}
     {health}
+    {found}
     busy={saving}
     on:connect={(e) => void addKnown(e.detail.connector, e.detail.token)}
     on:custom={(e) => void addCustom(e.detail)}
+    on:import={(e) => void addFound(e.detail.name, e.detail.server)}
     on:open={(e) => openOutside(e.detail.url)}
     on:close={() => (dialog = null)}
   />

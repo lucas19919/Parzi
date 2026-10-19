@@ -1,8 +1,6 @@
-// Well-known connectors, one click each. Hosted ones run through
-// mcp-remote, which speaks to the service over the web and opens its
-// sign-in page in the browser the first time; tokens stay in ~/.mcp-auth.
-// Pinned to a release a few weeks old, never "latest".
-export const MCP_REMOTE = "mcp-remote@0.14.3";
+// Well-known connectors, one click each. Parzi speaks to hosted servers
+// itself: one that signs in opens its page in your browser once and Parzi
+// keeps the token; GitHub uses the GitHub CLI's login.
 
 export interface CatalogConnector {
   id: string;
@@ -12,9 +10,9 @@ export interface CatalogConnector {
   url: string;
   // The service's site: its icon stands in where no mark is bundled.
   site: string;
-  // "signin": the service's own sign-in page. "token": a key pasted here.
-  // "none": public, nothing to sign in to.
-  auth: "signin" | "token" | "none";
+  // "signin": the service's own sign-in page. "gh": the GitHub CLI's
+  // login. "token": a key pasted here. "none": public.
+  auth: "signin" | "gh" | "token" | "none";
   // For token connectors: where to make one, and what it is called there.
   tokenUrl?: string;
   tokenName?: string;
@@ -27,9 +25,7 @@ export const CATALOG: CatalogConnector[] = [
     about: "Repositories, issues and pull requests",
     url: "https://api.githubcopilot.com/mcp/",
     site: "https://github.com",
-    auth: "token",
-    tokenUrl: "https://github.com/settings/personal-access-tokens/new",
-    tokenName: "personal access token",
+    auth: "gh",
   },
   { id: "higgsfield", name: "Higgsfield", about: "Make images and videos", url: "https://mcp.higgsfield.ai/mcp", site: "https://higgsfield.ai", auth: "signin" },
   { id: "notion", name: "Notion", about: "Pages and databases", url: "https://mcp.notion.com/mcp", site: "https://www.notion.so", auth: "signin" },
@@ -49,32 +45,29 @@ export const CATALOG: CatalogConnector[] = [
 ];
 
 export interface ServerCfg {
-  command: string;
+  // A server this computer starts.
+  command?: string;
   args?: string[];
   env?: Record<string, string>;
+  // A hosted one: its address, any headers, and how it signs in
+  // ("" its own sign-in or the headers, "gh" the GitHub CLI's login).
+  url?: string;
+  headers?: Record<string, string>;
+  auth?: string;
   enabled?: boolean;
   timeout_ms?: number;
   [k: string]: unknown;
 }
 
-// A hosted MCP server as a connector. Sign-in can take a while the first
-// time, so its calls get three minutes. A token travels in an env var: no
-// space in the argument itself, which Windows would split.
-export function remoteServer(url: string, token = ""): ServerCfg {
-  const args = ["-y", MCP_REMOTE, url];
-  const env: Record<string, string> = {};
-  if (token) {
-    args.push("--header", "Authorization:${AUTH_HEADER}");
-    env.AUTH_HEADER = `Bearer ${token}`;
-  }
-  return { command: "npx", args, env, enabled: true, timeout_ms: 180_000 };
+// A hosted server as a connector, with an API key if one was given.
+export function hostedServer(url: string, opts: { token?: string; auth?: string } = {}): ServerCfg {
+  const headers: Record<string, string> = opts.token ? { Authorization: `Bearer ${opts.token}` } : {};
+  return { command: "", url, headers, auth: opts.auth ?? "", enabled: true, timeout_ms: 60_000 };
 }
 
-// The hosted address a connector reaches, if it is one made above.
-export function remoteUrl(srv: ServerCfg): string {
-  const args = srv.args ?? [];
-  const at = args.findIndex((a) => a.startsWith("mcp-remote"));
-  return at >= 0 ? (args[at + 1] ?? "") : "";
+// What a connector reaches, for its row: an address or a command line.
+export function serverLine(srv: ServerCfg): string {
+  return srv.url || [srv.command ?? "", ...(srv.args ?? [])].join(" ").trim();
 }
 
 // A name for a connector added by address: its host, as a config key.
