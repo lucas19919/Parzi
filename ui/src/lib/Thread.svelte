@@ -214,7 +214,8 @@
   function foldLabel(f: Fold): string {
     const spent = (s: number) => (s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`);
     if (f.only) return f.secs >= 1 ? `${f.only} · ${spent(f.secs)}` : f.only;
-    const head = f.live ? "Working" : f.secs >= 1 ? `Worked for ${spent(f.secs)}` : "Worked";
+    if (f.live) return f.tools ? `${f.tools} step${f.tools === 1 ? "" : "s"} so far` : "Thinking";
+    const head = f.secs >= 1 ? `Worked for ${spent(f.secs)}` : "Worked";
     return f.tools ? `${head} · ${f.tools} step${f.tools === 1 ? "" : "s"}` : head;
   }
 

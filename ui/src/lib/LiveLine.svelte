@@ -21,7 +21,7 @@
 <div class="live" role="status" aria-live="polite">
   <span class="face" aria-hidden="true"><span class="eye" /><span class="eye" /></span>
   <span class="what">{text}</span>
-  <span class="meta">{clock}{written ? ` · ${written}` : ""}{secs >= 120 ? " · Esc stops it" : ""}</span>
+  <span class="meta">{clock}{written ? ` · ${written}` : ""}</span>
 </div>
 
 <style>

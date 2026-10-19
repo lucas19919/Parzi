@@ -192,9 +192,7 @@
 
   $: web = mode === "search";
   $: placeholder = streaming
-    ? canSide && !web
-      ? "Working · Enter waits for it, Ctrl+Enter runs beside it"
-      : "Working · Esc to stop"
+    ? "Queue a message for when it's done"
     : web
       ? "Search the web or type an address"
       : folder || remoteCwd
