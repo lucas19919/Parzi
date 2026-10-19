@@ -20,6 +20,7 @@ fn broken_server() -> HashMap<String, McpServerCfg> {
             tool_modes: HashMap::new(),
             timeout_ms: 1_000,
             enabled: true,
+            ..Default::default()
         },
     );
     servers

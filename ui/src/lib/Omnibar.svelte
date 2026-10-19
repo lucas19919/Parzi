@@ -282,7 +282,7 @@
     }
   }
 
-  // Fits the box to its text (up to 180px). Writes go through a local:
+  // Fits the box to its text (up to two fifths of the window, then it scrolls). Writes go through a local:
   // `textarea.style.x = …` marks `textarea` dirty in Svelte, which re-ran
   // the `$:` below after every await and froze the composer on the first
   // keystroke (an endless microtask loop).
@@ -295,7 +295,7 @@
       return;
     }
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.4))}px`;
   }
 
   // Keystrokes and programmatic fills (edit-load, tab drafts) both land here.
@@ -896,7 +896,7 @@
     flex: 1;
     min-width: 0;
     min-height: 30px;
-    max-height: 180px;
+    max-height: 40vh;
     padding: 5px 2px;
     background: transparent;
     border: none;

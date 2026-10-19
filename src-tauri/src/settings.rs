@@ -133,12 +133,91 @@ pub async fn connector_sign_in(state: State<'_, AppState>, name: String) -> Resu
         .map_err(|e| e.to_string())
 }
 
-/// Forgets a connector's kept sign-in (removing it, or signing out).
+/// Forgets what Parzi kept for a removed connector: its sign-in and logo.
 #[tauri::command]
-pub async fn connector_sign_out(state: State<'_, AppState>, name: String) -> Result<(), String> {
+pub async fn connector_forget(state: State<'_, AppState>, name: String) -> Result<(), String> {
     parzi_runtime::mcp_oauth::forget(&name);
+    parzi_runtime::connector_icon::forget(&name);
     state.orch.mcp().stop(&name).await;
     Ok(())
+}
+
+/// One of a connector's tools, as Settings lists it.
+#[derive(serde::Serialize)]
+pub struct ToolRow {
+    name: String,
+    description: String,
+    read_only: bool,
+    destructive: bool,
+    /// "auto" (runs without asking), "ask", "off", or "" (the approval
+    /// mode decides).
+    mode: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct ConnectorDetails {
+    title: String,
+    /// Its logo as an image (a data URL), when it has one.
+    icon: Option<String>,
+    tools: Vec<ToolRow>,
+}
+
+/// A connector as it describes itself (connecting if needed): its title,
+/// its logo, and every tool with how it runs here.
+#[tauri::command]
+pub async fn connector_details(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<ConnectorDetails, String> {
+    let d = state
+        .orch
+        .mcp()
+        .details(&name)
+        .await
+        .map_err(|e| e.to_string())?;
+    let cfg = ParziConfig::load().map_err(|e| e.to_string())?;
+    let srv = cfg.mcp.servers.get(&name).cloned().unwrap_or_default();
+    let (icons, website, url, who) = (
+        d.icons.clone(),
+        d.website.clone(),
+        srv.url.clone(),
+        name.clone(),
+    );
+    let icon = tauri::async_runtime::spawn_blocking(move || {
+        parzi_runtime::connector_icon::resolve(&who, &icons, &website, &url)
+    })
+    .await
+    .unwrap_or(None);
+    let tools = d
+        .tools
+        .into_iter()
+        .map(|t| ToolRow {
+            mode: if srv.deny.iter().any(|x| x == &t.name) {
+                "off".into()
+            } else {
+                srv.tool_mode(&t.name).unwrap_or_default()
+            },
+            name: t.name,
+            description: t.description,
+            read_only: t.read_only,
+            destructive: t.destructive,
+        })
+        .collect();
+    Ok(ConnectorDetails {
+        title: d.title,
+        icon,
+        tools,
+    })
+}
+
+/// Sets a connector's logo from a picture the person picked.
+#[tauri::command]
+pub async fn connector_set_icon(name: String, path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        parzi_runtime::connector_icon::set_picked(&name, std::path::Path::new(&path))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Connectors set up in the other apps on this computer (Claude Code,

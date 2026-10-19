@@ -51,6 +51,9 @@ const STATES = {
     { name: "connector address", action: "fill", selector: ".card textarea.mono", value: "https://mcp.example.com/mcp", ready: { selector: '.card input[type="password"]' } },
     click("connector back", ".card header .icon:first-child", '.card[role="dialog"] .grid'),
     { name: "connector closed", action: "click", selector: ".card header .icon:last-child", ready: { selector: '.card[role="dialog"]', state: "hidden" } },
+    // A connector connected: its tools, each with Allow, Ask or Off.
+    click("connector connected", ".conn .sbtn", ".conn .sbtn[aria-expanded]"),
+    click("connector tools", ".conn .sbtn[aria-expanded]", ".tools .tool:first-child"),
     ...[4, 5].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
   ],
   setup: [

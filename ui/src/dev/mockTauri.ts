@@ -330,7 +330,11 @@ const config = {
   version: 1,
   providers: { claude: { enabled: true, default_model: "claude/claude-opus-5-5" }, codex: { enabled: true } },
   lanes: { default_mode: "ask", default_allowed_tools: [] },
-  mcp: { servers: {} },
+  mcp: {
+    servers: {
+      github: { command: "", url: "https://api.githubcopilot.com/mcp/", auth: "gh", enabled: true, timeout_ms: 60000 },
+    },
+  },
   orchestrator: { max_concurrent: 4, mcp_idle_kill_secs: 600, queue_when_busy: true },
   routing: { order: ["claude", "codex"] },
   budget: { max_cost_usd: null, max_tokens: null },
@@ -426,13 +430,23 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   context_parts: () => ({ instructions: 6400, notes: 1800, tools: 9200 }),
   connector_check: () => new Promise((r) => setTimeout(() => r(14), 900)),
   connector_sign_in: () => new Promise((r) => setTimeout(() => r(12), 1200)),
-  connector_sign_out: () => null,
   // Set up in other apps on this computer.
   connectors_found: () => [
     { name: "isar", source: "Claude Code", server: { command: "node", args: ["mcp/src/index.js"], enabled: true } },
     { name: "conductor", source: "Grok", server: { command: "conductor.exe", args: ["mcp"], enabled: true } },
   ],
   connectors_from_text: () => [],
+  connector_forget: () => null,
+  connector_set_icon: () => "",
+  connector_details: () => ({
+    title: "GitHub",
+    icon: null,
+    tools: [
+      { name: "get_me", description: "Get details of the authenticated GitHub user.", read_only: true, destructive: false, mode: "auto" },
+      { name: "create_pull_request", description: "Create a new pull request in a GitHub repository.", read_only: false, destructive: false, mode: "" },
+      { name: "delete_file", description: "Delete a file from a GitHub repository.", read_only: false, destructive: true, mode: "off" },
+    ],
+  }),
   get_theme: () => theme,
   get_theme_css: () => "",
   background_url: () => (params.get("bg") ? "C:/mock/wallpaper.png" : ""),

@@ -1,4 +1,5 @@
 pub mod ask_text;
+pub mod connector_icon;
 pub mod desk;
 pub mod doctor;
 mod gitmark;

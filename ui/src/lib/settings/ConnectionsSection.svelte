@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { ask } from "@tauri-apps/plugin-dialog";
+  import { ask, open as pickFile } from "@tauri-apps/plugin-dialog";
   import { api, type ParziConfig } from "../api";
   import { splitLine } from "../cmdline";
   import type { ProviderStatus } from "../api";
@@ -54,6 +54,7 @@
     try {
       const tools = await api.connectorCheck(id);
       health = { ...health, [id]: { state: "ok", tools } };
+      void loadDetails(id);
     } catch (e) {
       if (String(e).includes(SIGN_IN)) {
         health = { ...health, [id]: { state: "signin" } };
@@ -70,8 +71,61 @@
     try {
       const tools = await api.connectorSignIn(id);
       health = { ...health, [id]: { state: "ok", tools } };
+      void loadDetails(id);
     } catch (e) {
       health = { ...health, [id]: { state: "error", error: plainError(String(e)) } };
+    }
+  }
+
+  // What each connected one says about itself: title, logo and tools.
+  type Details = Awaited<ReturnType<typeof api.connectorDetails>>;
+  let details: Record<string, Details> = {};
+  let openTools: string | null = null;
+
+  async function loadDetails(id: string) {
+    try {
+      // Waited for first: two loading at once must not drop each other.
+      const d = await api.connectorDetails(id);
+      details = { ...details, [id]: d };
+    } catch {
+      // It connected a moment ago; the row still says so.
+    }
+  }
+
+  // What a tool does when the agent calls it: its own setting, else the
+  // approval mode's (Settings › General).
+  $: policyAuto = (cfg?.lanes.default_mode ?? "ask") === "auto";
+  const effective = (mode: string) => mode || (policyAuto ? "auto" : "ask");
+  const TOOL_MODES: ["auto" | "ask" | "off", string][] = [
+    ["auto", "Allow"],
+    ["ask", "Ask"],
+    ["off", "Off"],
+  ];
+
+  async function setToolMode(id: string, tool: string, mode: "auto" | "ask" | "off") {
+    const ok = await save((c) => {
+      const srv = c.mcp.servers[id] as Server & { deny?: string[]; tool_modes?: Record<string, string> };
+      if (!srv) return;
+      srv.deny = (srv.deny ?? []).filter((t) => t !== tool);
+      srv.tool_modes = { ...(srv.tool_modes ?? {}) };
+      delete srv.tool_modes[tool];
+      if (mode === "off") srv.deny.push(tool);
+      else srv.tool_modes[tool] = mode;
+    }, "");
+    if (ok && details[id]) {
+      details = { ...details, [id]: { ...details[id], tools: details[id].tools.map((t) => (t.name === tool ? { ...t, mode } : t)) } };
+    }
+  }
+
+  // A logo of the person's own choosing.
+  async function chooseLogo(id: string) {
+    const path = await pickFile({ multiple: false, filters: [{ name: "Pictures", extensions: ["png", "jpg", "jpeg", "svg", "webp", "ico", "gif"] }] }).catch(() => null);
+    if (typeof path !== "string") return;
+    try {
+      const icon = await api.connectorSetIcon(id, path);
+      details = { ...details, [id]: { ...(details[id] ?? { title: "", tools: [] }), icon } };
+    } catch (e) {
+      notify(String(e), true);
     }
   }
 
@@ -175,7 +229,7 @@
     const ok = await ask(`Remove the connector "${id}"?`, { title: "Remove connector", kind: "warning" }).catch(() => false);
     if (!ok) return;
     await save((c) => delete c.mcp.servers[id], "");
-    await api.connectorSignOut(id).catch(() => {});
+    await api.connectorForget(id).catch(() => {});
     const { [id]: _, ...rest } = health;
     health = rest;
   }
@@ -309,7 +363,9 @@
       {@const h = health[id]}
       {@const off = srv.enabled === false}
       <div class="field-card conn" class:off>
-        <ConnectorLogo id={id} name={k?.name ?? id} site={k?.site ?? (srv.url ? new URL(srv.url).origin : "")} size={32} />
+        <button class="logo-pick" use:tooltip={"Choose a logo"} aria-label="Choose a logo for {k?.name ?? id}" on:click={() => chooseLogo(id)}>
+          <ConnectorLogo id={id} name={k?.name ?? id} site={k?.site ?? ""} src={details[id]?.icon ?? null} size={32} />
+        </button>
         <div class="field-info">
           <span class="field-label">{k?.name ?? id}</span>
           <span class="field-hint" class:ok={h?.state === "ok"} class:bad={h?.state === "error"} title={serverLine(srv)}>
@@ -322,7 +378,7 @@
             {:else if h?.state === "signin"}
               Needs you to sign in
             {:else if h?.state === "ok"}
-              Connected · {h.tools} tool{h.tools === 1 ? "" : "s"}
+              Connected
             {:else if h?.state === "error"}
               {h.error}
             {:else}
@@ -336,12 +392,37 @@
           <button class="sbtn primary" disabled={h?.state === "signing"} on:click={() => signIn(id)}>{h?.state === "signing" ? "Signing in…" : "Sign in"}</button>
         {:else if !off && h?.state !== "ok"}
           <button class="sbtn" disabled={h?.state === "checking"} on:click={() => check(id)}>{h?.state === "checking" ? "Connecting…" : "Connect"}</button>
+        {:else if !off && h?.state === "ok"}
+          <button class="sbtn" aria-expanded={openTools === id} on:click={() => (openTools = openTools === id ? null : id)}>
+            {h.tools} tool{h.tools === 1 ? "" : "s"}
+            <Icon name="chevDown" size={12} />
+          </button>
         {/if}
         <Switch on={!off} title={off ? `Turn ${k?.name ?? id} on` : `Turn ${k?.name ?? id} off`} on:toggle={() => toggle(id)} />
         <button class="remove" disabled={saving} use:tooltip={`Remove ${k?.name ?? id}`} aria-label="Remove {k?.name ?? id}" on:click={() => removeServer(id)}>
           <Icon name="trash" size={12} />
         </button>
       </div>
+      {#if openTools === id && !off}
+        <div class="tools" data-ui-list>
+          {#each details[id]?.tools ?? [] as t (t.name)}
+            {@const m = effective(t.mode)}
+            <div class="tool" class:off={m === "off"}>
+              <div class="tool-text">
+                <span class="tool-name">{t.name}{#if t.read_only}<span class="tag">reads only</span>{:else if t.destructive}<span class="tag warn">can delete</span>{/if}</span>
+                {#if t.description}<span class="tool-about" title={t.description}>{t.description}</span>{/if}
+              </div>
+              <div class="modes" role="group" aria-label="When {t.name} runs" data-ui-segmented>
+                {#each TOOL_MODES as [v, label] (v)}
+                  <button class:on={m === v} aria-pressed={m === v} on:click={() => setToolMode(id, t.name, v)}>{label}</button>
+                {/each}
+              </div>
+            </div>
+          {:else}
+            <p class="tools-empty">{details[id] ? "It offers no tools." : "Loading its tools…"}</p>
+          {/each}
+        </div>
+      {/if}
     {:else}
       <button class="empty" on:click={() => (dialog = "browse")}>
         <span class="faces">
@@ -372,6 +453,101 @@
 {/if}
 
 <style>
+  .logo-pick {
+    flex: none;
+    display: inline-flex;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 25%;
+    cursor: pointer;
+  }
+  .logo-pick:hover {
+    outline: 1px solid var(--line);
+    outline-offset: 2px;
+  }
+  .tools {
+    display: flex;
+    flex-direction: column;
+    margin: -4px 0 8px;
+    padding: 4px 0;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+  }
+  .tool {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 14px;
+  }
+  .tool + .tool {
+    border-top: 1px solid var(--line);
+  }
+  .tool-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .tool-name {
+    font-family: var(--mono);
+    font-size: var(--fs-sm);
+    color: var(--text);
+  }
+  .tool.off .tool-name {
+    color: var(--muted);
+  }
+  .tag {
+    margin-left: 8px;
+    font-family: var(--font);
+    font-size: var(--fs-xs);
+    color: var(--muted);
+  }
+  .tag.warn {
+    color: var(--warn);
+  }
+  .tool-about {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .modes {
+    flex: none;
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--text) 5%, transparent);
+  }
+  .modes button {
+    height: 24px;
+    padding: 0 10px;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-sm);
+    cursor: pointer;
+  }
+  .modes button:hover {
+    color: var(--text);
+  }
+  .modes button.on {
+    background: var(--selected);
+    color: var(--text);
+  }
+  .tools-empty {
+    margin: 6px 14px;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
   .conn.off .field-label {
     opacity: 0.55;
   }

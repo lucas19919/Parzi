@@ -268,7 +268,17 @@ export const api = {
   connectorCheck: (name: string) => invoke<number>("connector_check", { name }),
   // Signs in to a hosted connector (its page opens in the browser): how many tools it offers then.
   connectorSignIn: (name: string) => invoke<number>("connector_sign_in", { name }),
-  connectorSignOut: (name: string) => invoke<void>("connector_sign_out", { name }),
+  // Forgets a removed connector's sign-in and logo.
+  connectorForget: (name: string) => invoke<void>("connector_forget", { name }),
+  // Its title, logo (a data URL) and tools, each with how it runs here.
+  connectorDetails: (name: string) =>
+    invoke<{
+      title: string;
+      icon: string | null;
+      tools: { name: string; description: string; read_only: boolean; destructive: boolean; mode: "" | "auto" | "ask" | "off" }[];
+    }>("connector_details", { name }),
+  // A picture the person picked as its logo: the logo as a data URL.
+  connectorSetIcon: (name: string, path: string) => invoke<string>("connector_set_icon", { name, path }),
   // Connectors set up in Claude Code, Claude Desktop, Cursor, VS Code, Codex or Grok.
   connectorsFound: () => invoke<{ name: string; source: string; server: Record<string, unknown> }[]>("connectors_found"),
   // A pasted mcpServers block or address, as connectors.

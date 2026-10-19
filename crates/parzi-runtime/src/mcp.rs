@@ -14,10 +14,25 @@ const HTTP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 const HANDSHAKE_FLOOR: Duration = Duration::from_secs(10);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct McpTool {
     pub server: String,
     pub name: String,
+    /// What it does, as the server says it.
+    pub description: String,
+    /// The server's hints: it only reads, or it destroys.
+    pub read_only: bool,
+    pub destructive: bool,
+}
+
+/// What a connector says about itself on connecting, and its tools.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct ServerDetails {
+    pub title: String,
+    pub website: String,
+    /// Icon addresses (https or data:) the server declares, best first.
+    pub icons: Vec<String>,
+    pub tools: Vec<McpTool>,
 }
 
 impl McpTool {
@@ -38,6 +53,8 @@ enum Conn {
 
 struct LiveServer {
     conn: Conn,
+    /// `serverInfo` from its initialize answer.
+    info: serde_json::Value,
     next_id: u64,
     tools: Option<Vec<McpTool>>,
     last_used: Instant,
@@ -358,6 +375,10 @@ impl McpManager {
         let res = Self::request(sv, name, "initialize", init, timeout)
             .await?
             .map_err(tool_err)?;
+        sv.info = res
+            .get("serverInfo")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         match res.get("protocolVersion").and_then(|v| v.as_str()) {
             Some(v) => {
                 if v != offered {
@@ -404,6 +425,7 @@ impl McpManager {
                 ))),
                 next_id: 0,
                 tools: None,
+                info: serde_json::Value::Null,
                 last_used: Instant::now(),
                 epoch,
             };
@@ -449,6 +471,7 @@ impl McpManager {
             },
             next_id: 0,
             tools: None,
+            info: serde_json::Value::Null,
             last_used: Instant::now(),
             epoch,
         };
@@ -528,9 +551,22 @@ impl McpManager {
         let mut out = vec![];
         if let Some(arr) = res.get("tools").and_then(|t| t.as_array()) {
             for t in arr {
+                let hint = |k: &str| {
+                    t.pointer(&format!("/annotations/{k}"))
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true)
+                };
                 out.push(McpTool {
                     server: name.to_string(),
                     name: t.get("name").and_then(|n| n.as_str()).unwrap_or("?").into(),
+                    description: t
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string(),
+                    read_only: hint("readOnlyHint"),
+                    destructive: hint("destructiveHint"),
                 });
             }
         }
@@ -538,6 +574,45 @@ impl McpManager {
             sv.tools = Some(out.clone());
         }
         Ok(out)
+    }
+
+    /// What the server said about itself and every tool it has (the ones
+    /// switched off included, for Settings to show).
+    pub async fn details(&self, name: &str) -> Result<ServerDetails> {
+        let tools = self.list_tools(name).await?;
+        let slot = self.slot_for(name).await;
+        let info = slot
+            .lock()
+            .await
+            .as_ref()
+            .map(|sv| sv.info.clone())
+            .unwrap_or_default();
+        let text = |k: &str| {
+            info.get(k)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        };
+        let icons = info
+            .get("icons")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|i| i.get("src").and_then(serde_json::Value::as_str))
+            .filter(|s| s.starts_with("https://") || s.starts_with("data:image/"))
+            .map(str::to_string)
+            .collect();
+        Ok(ServerDetails {
+            title: if text("title").is_empty() {
+                text("name")
+            } else {
+                text("title")
+            },
+            website: text("websiteUrl"),
+            icons,
+            tools,
+        })
     }
 
     pub async fn call_tool(

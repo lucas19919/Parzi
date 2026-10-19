@@ -78,6 +78,7 @@ fn manager(tag: &str, timeout_ms: u64, idle_secs: u64) -> (McpManager, std::path
         tool_modes: HashMap::new(),
         timeout_ms,
         enabled: true,
+        ..Default::default()
     };
     let mut servers = HashMap::new();
     servers.insert("fake".to_string(), cfg);

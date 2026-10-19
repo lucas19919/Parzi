@@ -11,6 +11,8 @@
   // The service's site, for its icon when no mark is bundled.
   export let site = "";
   export let size = 32;
+  // A logo the server or the person gave (a data URL): it wins.
+  export let src: string | null = null;
 
   let broken = false;
 
@@ -28,7 +30,9 @@
 </script>
 
 <span class="logo" style:width="{size}px" style:height="{size}px" style:--brand={mark && !dark ? mark.hex : "var(--text)"} aria-hidden="true">
-  {#if mark}
+  {#if src}
+    <img class="own" {src} alt="" width={Math.round(size * 0.62)} height={Math.round(size * 0.62)} />
+  {:else if mark}
     <svg viewBox="0 0 24 24" width={Math.round(size * 0.56)} height={Math.round(size * 0.56)}><path d={mark.path} fill="currentColor" /></svg>
   {:else if icon && !broken}
     <img src={icon} alt="" width={Math.round(size * 0.56)} height={Math.round(size * 0.56)} on:error={() => (broken = true)} />
