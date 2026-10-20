@@ -1838,7 +1838,6 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
         questions={asks}
         current={shown ?? ""}
         on:open={(e) => openSession(e.detail.id)}
-        on:fresh={() => newSession()}
         on:all={() => openHistory("sessions")}
       />
     {/if}

@@ -3,7 +3,6 @@
   // each like the session column's, the project with the newest work
   // first. Helpers stay under their session (the right column lists them).
   import { createEventDispatcher, onDestroy, onMount } from "svelte";
-  import Icon from "./Icon.svelte";
   import InfoCard from "./InfoCard.svelte";
   import { brain, type Project, type Question, type SessionMeta } from "./api";
   import type { Approval } from "./live";
@@ -22,7 +21,7 @@
   // All sessions.
   const PER = 5;
   const CARDS = 8;
-  const dispatch = createEventDispatcher<{ open: { id: string }; fresh: void; all: void }>();
+  const dispatch = createEventDispatcher<{ open: { id: string }; all: void }>();
 
   // Project names, from the brain; a slug it doesn't know reads as itself.
   let titles = new Map<string, string>();
@@ -79,11 +78,6 @@
 </script>
 
 <aside class="rail" aria-label="Sessions by project">
-  <button class="pill" on:click={() => dispatch("fresh")}>
-    <Icon name="plus" size={12} />
-    <span class="grow">New session</span>
-  </button>
-
   {#if pinned.length}
     <InfoCard id="recent:pinned" title="Pinned">
       <svelte:fragment slot="aside">{live(pinned) ? `${live(pinned)} running` : ""}</svelte:fragment>
@@ -153,7 +147,7 @@
       transform: translateX(-8px);
     }
   }
-  /* New session and All sessions: one-line bubbles. */
+  /* All sessions: a one-line bubble under the project cards. */
   .pill {
     flex: none;
     display: flex;
@@ -173,9 +167,6 @@
   }
   .pill:hover {
     background: var(--hover);
-  }
-  .pill :global(svg) {
-    color: var(--muted);
   }
   .grow {
     flex: 1;
