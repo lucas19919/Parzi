@@ -168,6 +168,8 @@ export interface Theme {
     grain: number;
     grain_size: number;
     height: number;
+    // Which part of the picture shows: 0 is the top, 1 the bottom.
+    y: number;
   };
 }
 

@@ -101,6 +101,7 @@ function themeVars(t: Theme): Record<string, string> {
     "--grain": String(clamp01(t.background.grain)),
     "--grain-size": `${t.background.grain_size}px`,
     "--bg-height": `${Math.round(t.background.height * 100)}%`,
+    "--bg-y": `${Math.round((t.background.y ?? 0.5) * 100)}%`,
   };
 }
 
@@ -110,7 +111,7 @@ export function previewTheme(t: Theme) {
   bump();
 }
 
-const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--bg-dim", "--vignette", "--bg-blur", "--grain", "--grain-size", "--bg-height"];
+const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--bg-dim", "--vignette", "--bg-blur", "--grain", "--grain-size", "--bg-height", "--bg-y"];
 
 function clearPreview() {
   const s = document.documentElement.style;

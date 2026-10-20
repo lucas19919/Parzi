@@ -41,6 +41,7 @@
     width: calc(100% + var(--bg-blur) * 4);
     height: calc(100% + var(--bg-blur) * 4);
     object-fit: cover;
+    object-position: center var(--bg-y, 50%);
     filter: blur(var(--bg-blur)) saturate(1.06);
   }
   .shade {

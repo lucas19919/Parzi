@@ -27,6 +27,7 @@
   let vignettePct = 50;
   let grainPct = 16;
   let heightPct = 100;
+  let yPct = 50;
 
   const ACCENTS = ["#E8E8E8", "#CBD5E1", "#7AA2F7", "#88C0D0", "#34D399", "#A6DA95", "#5EEAD4", "#EB6F92", "#F5A97F", "#E8B64C"];
   const UI_FONTS = ["Inter", "system-ui", "Segoe UI", "SF Pro Text", "Roboto", "IBM Plex Sans"];
@@ -73,6 +74,7 @@
     vignettePct = Math.round(theme.background.vignette * 100);
     grainPct = Math.round(theme.background.grain * 100);
     heightPct = Math.round(theme.background.height * 100);
+    yPct = Math.round((theme.background.y ?? 0.5) * 100);
   }
 
   // The accent can follow the wallpaper, so a theme is matched without it.
@@ -261,7 +263,7 @@
     if (theme.background.auto_accent) await sampleAccent();
   }
 
-  function onPct(key: "dim" | "vignette" | "grain" | "height", pct: number) {
+  function onPct(key: "dim" | "vignette" | "grain" | "height" | "y", pct: number) {
     if (!theme) return;
     theme.background[key] = pct / 100;
     touch();
@@ -386,6 +388,7 @@
         <Slider label="Blur" bind:value={theme.background.blur} min={0} max={20} step={0.5} unit="px" on:input={touch} />
         <Slider label="Vignette" bind:value={vignettePct} min={0} max={100} unit="%" on:input={() => onPct("vignette", vignettePct)} />
         <Slider label="Height" bind:value={heightPct} min={30} max={100} unit="%" on:input={() => onPct("height", heightPct)} />
+        <Slider label="Position" bind:value={yPct} min={0} max={100} unit="%" on:input={() => onPct("y", yPct)} />
       </div>
       <div class="field-card stack">
         <Slider label="Dither" bind:value={grainPct} min={0} max={100} unit="%" on:input={() => onPct("grain", grainPct)} />
