@@ -29,7 +29,16 @@ async fn the_agents_own_todo_list_is_the_sessions_checklist() {
     );
     let (orch, store) = orch(&[fake]);
     let (meta, _rx) = orch
-        .spawn("todo", "claude", "pull and audit", None, "", "low", vec![], None)
+        .spawn(
+            "todo",
+            "claude",
+            "pull and audit",
+            None,
+            "",
+            "low",
+            vec![],
+            None,
+        )
         .await
         .unwrap();
     settle(&store, &meta.id).await;

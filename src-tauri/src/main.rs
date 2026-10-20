@@ -328,7 +328,9 @@ async fn app_version() -> Result<String, String> {
 fn ui_error(message: &str) {
     static BUDGET: std::sync::Mutex<(u64, u32)> = std::sync::Mutex::new((0, 0));
     let minute = parzi_core::now_ms() / 60_000;
-    let mut b = BUDGET.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut b = BUDGET
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if b.0 != minute {
         *b = (minute, 0);
     }
@@ -537,19 +539,23 @@ fn fatal(text: &str) -> ! {
 /// Present while Parzi runs: one left from before means that run ended
 /// without closing (killed, crashed, or the machine went down).
 fn running_marker() -> Option<std::path::PathBuf> {
-    Some(parzi_core::paths::parzi_dir().ok()?.join("logs").join("running"))
+    Some(
+        parzi_core::paths::parzi_dir()
+            .ok()?
+            .join("logs")
+            .join("running"),
+    )
 }
 
 fn mark_running() {
-    let Some(marker) = running_marker() else { return };
+    let Some(marker) = running_marker() else {
+        return;
+    };
     if let Ok(prev) = std::fs::read_to_string(&marker) {
         tracing::warn!("the last Parzi run ({}) ended without closing", prev.trim());
     }
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-    let _ = std::fs::write(
-        &marker,
-        format!("pid {} started {now}", std::process::id()),
-    );
+    let _ = std::fs::write(&marker, format!("pid {} started {now}", std::process::id()));
     tracing::info!(
         "Parzi {} started (pid {})",
         env!("CARGO_PKG_VERSION"),

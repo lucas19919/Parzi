@@ -15,7 +15,6 @@ const ARTIFACT_KINDS: &[&str] = &[
     "preview",
 ];
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactV1 {
     pub artifact: u64,

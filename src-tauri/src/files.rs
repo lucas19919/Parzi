@@ -601,10 +601,7 @@ pub async fn save_as(
     builder.save_file(move |picked| {
         let _ = tx.send(picked);
     });
-    let Some(picked) = rx
-        .await
-        .map_err(|_| "the save dialog closed".to_string())?
-    else {
+    let Some(picked) = rx.await.map_err(|_| "the save dialog closed".to_string())? else {
         return Ok(None);
     };
     let path = picked.into_path().map_err(|e| e.to_string())?;

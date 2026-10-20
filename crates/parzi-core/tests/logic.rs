@@ -80,7 +80,10 @@ fn artifact_validation_versions_and_dedups() {
     let bad_lang = serde_json::json!({"artifact": 1, "id": "x", "kind": "code", "language": "rust; <b>", "content": "hi"});
     assert!(validate_artifact(&bad_lang).is_err());
     let go = serde_json::json!({"artifact": 1, "id": "x", "kind": "code", "language": "Go", "content": "package main"});
-    assert_eq!(validate_artifact(&go).unwrap().language.as_deref(), Some("go"));
+    assert_eq!(
+        validate_artifact(&go).unwrap().language.as_deref(),
+        Some("go")
+    );
     // Models name a document `doc`: it is one.
     let doc = serde_json::json!({"artifact": 1, "id": "x", "kind": "doc", "content": "# Hi"});
     assert_eq!(validate_artifact(&doc).unwrap().kind, "markdown");

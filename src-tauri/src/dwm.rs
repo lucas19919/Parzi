@@ -39,7 +39,7 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_WEB_RESOURCE_CONTEXT_XML_HTTP_REQUEST,
 };
 use webview2_com::{
-    take_pwstr, AcceleratorKeyPressedEventHandler, ZoomFactorChangedEventHandler,
+    take_pwstr, AcceleratorKeyPressedEventHandler,
     AddScriptToExecuteOnDocumentCreatedCompletedHandler, BytesReceivedChangedEventHandler,
     CapturePreviewCompletedHandler, ContainsFullScreenElementChangedEventHandler,
     DOMContentLoadedEventHandler, DownloadStartingEventHandler, ExecuteScriptCompletedHandler,
@@ -48,6 +48,7 @@ use webview2_com::{
     NewWindowRequestedEventHandler, PermissionRequestedEventHandler, ProcessFailedEventHandler,
     StateChangedEventHandler, TrySuspendCompletedHandler, WebMessageReceivedEventHandler,
     WebResourceRequestedEventHandler, WindowCloseRequestedEventHandler,
+    ZoomFactorChangedEventHandler,
 };
 use windows::core::{w, Interface, BOOL, HSTRING, PWSTR};
 use windows::Win32::Foundation::{HGLOBAL, HWND, RECT};
