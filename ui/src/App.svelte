@@ -17,6 +17,7 @@
   import Omnibar from "./lib/Omnibar.svelte";
   import PanelHeader from "./lib/PanelHeader.svelte";
   import SessionInfo from "./lib/SessionInfo.svelte";
+  import RecentSessions from "./lib/RecentSessions.svelte";
   import ImageViewer from "./lib/ImageViewer.svelte";
   import PlanInline from "./lib/PlanInline.svelte";
   import Thread from "./lib/Thread.svelte";
@@ -24,6 +25,7 @@
   import PageView from "./lib/PageView.svelte";
   import HistoryView from "./lib/HistoryView.svelte";
   import PreviewView from "./lib/PreviewView.svelte";
+  import ArtifactCard from "./lib/widgets/ArtifactCard.svelte";
   import BrainView from "./lib/BrainView.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
@@ -36,7 +38,7 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { brainTab, ensureComposer, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, rememberModel, sessionTab, settingsTab, toAddress, type Tab, type TabComposerState } from "./lib/tabs";
+  import { artifactTab, brainTab, ensureComposer, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, rememberModel, sessionTab, settingsTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
   import { sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
   import { addQuote, MAX_QUOTES, quoteBlock, sameSlug, splitQuotes } from "./lib/planModel";
@@ -410,6 +412,22 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
     planForced = false;
   }
 
+  // The recent sessions column on the left, beside session tabs, when
+  // there is room for it next to the session (and the right column).
+  let railOpen = true;
+  try {
+    railOpen = localStorage.getItem("parzi.recent.open") !== "0";
+  } catch {}
+  $: railFits = innerWidth >= (infoShown ? 1180 : 900);
+  $: railShown = tab.kind === "session" && railOpen && railFits;
+  function toggleRail(open = !railShown) {
+    railOpen = open;
+    try {
+      localStorage.setItem("parzi.recent.open", open ? "1" : "0");
+    } catch {}
+    if (open && !railFits) toast("Widen the window to see your sessions");
+  }
+
   function toggleInfo(open = !infoShown) {
     infoOpen = open;
     try {
@@ -688,6 +706,23 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
     }
     const t = pageTab(url, undefined, null, sessionId);
     const mine = tabs.map((x, i) => (x.sessionId === sessionId || x.owner === sessionId || x.group === sessionId ? i : -1)).filter((i) => i >= 0);
+    const at = mine.length ? Math.max(...mine) + 1 : tabs.findIndex((x) => x.id === activeId) + 1;
+    tabs = [...tabs.slice(0, at), t, ...tabs.slice(at)];
+    selectTab(t.id);
+  }
+
+  // An artifact read on its own: one tab per artifact, under its session;
+  // a newer version replaces what the tab shows.
+  function openArtifact(doc: ArtifactDoc) {
+    const group = tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null);
+    const existing = tabs.find((t) => t.kind === "artifact" && t.doc?.id === doc.id && (t.group ?? null) === group);
+    if (existing) {
+      patchTab(existing.id, { doc, title: doc.title });
+      selectTab(existing.id);
+      return;
+    }
+    const t = artifactTab(doc, group);
+    const mine = group ? tabs.map((x, i) => (x.sessionId === group || x.owner === group || x.group === group ? i : -1)).filter((i) => i >= 0) : [];
     const at = mine.length ? Math.max(...mine) + 1 : tabs.findIndex((x) => x.id === activeId) + 1;
     tabs = [...tabs.slice(0, at), t, ...tabs.slice(at)];
     selectTab(t.id);
@@ -1548,6 +1583,7 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
     else if (name === "ctrl+b") openBrain();
     else if (name === "ctrl+j" || name === "ctrl+shift+a") toggleInfo();
     else if (name === "ctrl+h") openHistory();
+    else if (name === "ctrl+shift+s") toggleRail();
     else if (name === "ctrl+shift+t") reopenClosed();
     else if (name === "f11") void setImmersive(!immersive);
     else if (name === "ctrl+l") {
@@ -1584,6 +1620,8 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
             ? "ctrl+comma"
           : mod && e.shiftKey && key === "t"
             ? "ctrl+shift+t"
+          : mod && e.shiftKey && key === "s"
+            ? "ctrl+shift+s"
             : mod && e.shiftKey && key === "a"
               ? "ctrl+shift+a"
               : mod && ["p", "k", "t", "w", "l", "b", "h", "j"].includes(key)
@@ -1592,9 +1630,10 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
     if (name && shortcut(name)) {
       e.preventDefault();
     } else if (key === "escape" && !e.defaultPrevented && !$covered) {
+      // Never stops an agent: Esc closes things, and a run cut short by a
+      // stray Esc read as a crash. The Stop button stops it.
       if (immersive) void setImmersive(false);
       else if (tab.kind === "settings") closeTab(activeId);
-      else if (streaming) void stop();
     }
   }
 
@@ -1694,6 +1733,11 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
       else openPage(url);
     };
     document.addEventListener("parzi:open-page", onOpenPage);
+    const onOpenArtifact = (e: Event) => {
+      const doc = (e as CustomEvent<ArtifactDoc>).detail;
+      if (doc?.content) openArtifact(doc);
+    };
+    document.addEventListener("parzi:open-artifact", onOpenArtifact);
     const unClear = provideClearSessions(clearFinishedSessions);
     api
       .getConfig()
@@ -1747,6 +1791,7 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
       unClear();
       document.removeEventListener("parzi:default-mode", onDefaultMode);
       document.removeEventListener("parzi:open-page", onOpenPage);
+      document.removeEventListener("parzi:open-artifact", onOpenArtifact);
       unRun.then((f) => f()).catch(() => {});
       unDesk.then((f) => f()).catch(() => {});
       unRemote.then((f) => f()).catch(() => {});
@@ -1778,10 +1823,25 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
       on:setup={openSetup}
       on:report={reportProblem}
       on:openSession={(e) => openSession(e.detail.id)}
+      railable={tab.kind === "session"}
+      railOpen={railShown}
+      on:rail={() => toggleRail()}
     />
   {/if}
 
   <div class="content">
+    {#if railShown}
+      <RecentSessions
+        {threads}
+        {running}
+        {approvals}
+        questions={asks}
+        current={shown ?? ""}
+        on:open={(e) => openSession(e.detail.id)}
+        on:fresh={() => newSession()}
+        on:all={() => openHistory("sessions")}
+      />
+    {/if}
     <main>
     {#if tab.kind === "settings"}
       <div class="fill col" in:fly={{ y: 8, ...motion }}>
@@ -1810,6 +1870,13 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
       <div class="fill col" in:fade={{ duration: 150 }}>
         <PanelHeader title={tab.title} on:close={() => closeTab(activeId)} />
         <PreviewView which={tab.url ?? "omnibar"} />
+      </div>
+    {:else if tab.kind === "artifact" && tab.doc}
+      <div class="fill col" in:fade={{ duration: 150 }}>
+        <PanelHeader title={tab.title} on:close={() => closeTab(activeId)} />
+        {#key `${tab.id}:${tab.doc.version}`}
+          <ArtifactCard data={tab.doc} reader />
+        {/key}
       </div>
     {:else if tab.kind === "page"}
       {#key tab.id}

@@ -69,7 +69,7 @@
 
 <div class="steps">
   <button class="head" class:live={!!status} disabled={!expandable} aria-expanded={open} on:click={() => (open = !open)}>
-    <span class="text">{status || summary}{#if live && elapsed >= 10_000} · {clock(elapsed)}{#if elapsed >= 120_000} · still going, Esc stops it{/if}{/if}</span>
+    <span class="text">{status || summary}{#if live && elapsed >= 10_000} · {clock(elapsed)}{/if}</span>
     {#if failed && !status}<span class="failed">{failed} failed</span>{/if}
     {#if expandable}<span class="chev" class:open><Icon name="chevDown" size={12} /></span>{/if}
   </button>

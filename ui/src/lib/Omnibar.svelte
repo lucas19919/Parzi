@@ -673,8 +673,11 @@
         on:blur={() => (focused = false)}
         on:paste={onPaste}
       />
-      {#if streaming}
-        <button class="go stop" use:tooltip={"Stop (Esc)"} on:click={() => dispatch("stop")}><span class="square" /></button>
+      <!-- While it works, a typed message sends (it waits its turn): the
+           button only stops the agent when there is nothing to send, so a
+           habitual click never ends a run by accident. -->
+      {#if streaming && !canSubmit}
+        <button class="go stop" use:tooltip={"Stop"} on:click={() => dispatch("stop")}><span class="square" /></button>
       {:else}
         <button class="go" class:ready={canSubmit} use:tooltip={web ? "Open (Enter)" : "Send (Enter)"} disabled={!canSubmit} on:click={submit}>
           <Icon name="arrowUp" />

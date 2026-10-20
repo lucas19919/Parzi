@@ -1,7 +1,7 @@
 import type { PlanQuote } from "./api";
 
 export type ComposerMode = "search" | "build";
-type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview";
+type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview" | "artifact";
 
 export interface TabComposerState {
   input: string;
@@ -105,7 +105,18 @@ export interface Tab {
   // The page's zoom, when not 100% (1 is 100%).
   zoom?: number;
   crashed?: string;
+  // An artifact opened to read: what it holds.
+  doc?: ArtifactDoc;
   composer: TabComposerState;
+}
+
+export interface ArtifactDoc {
+  id: string;
+  title: string;
+  kind: string;
+  language?: string;
+  content: string;
+  version: number;
 }
 
 let seq = 0;
@@ -145,6 +156,11 @@ export function settingsTab(): Tab {
 
 export function previewTab(which = "omnibar"): Tab {
   return { id: tabId(), kind: "preview", title: `Preview ${which}`, url: which, composer: defaultComposer() };
+}
+
+/// An artifact to read on its own, under the session that made it.
+export function artifactTab(doc: ArtifactDoc, group: string | null): Tab {
+  return { id: tabId(), kind: "artifact", title: doc.title, group, doc, composer: defaultComposer() };
 }
 
 export function hostOf(url: string): string {

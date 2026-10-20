@@ -535,6 +535,105 @@ pub async fn tool_image(
     .await
 }
 
+/// Files saved with `save_as` this run: the only ones `reveal_saved` shows.
+static SAVED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// A name the Save dialog can offer: no folders, no characters Windows
+/// refuses, never empty.
+fn file_name_for(name: &str) -> String {
+    let clean: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let clean = clean.trim().trim_matches('.').to_string();
+    if clean.is_empty() {
+        "file.txt".into()
+    } else {
+        clean.chars().take(120).collect()
+    }
+}
+
+/// Saves something the window holds (an artifact, a chart's data) where
+/// the person picks in the system's Save dialog. The window's own download
+/// links go nowhere in a desktop app; nothing is written without the
+/// dialog. `base64`: `content` is encoded bytes (a picture). None: the
+/// person cancelled.
+#[tauri::command]
+pub async fn save_as(
+    app: AppHandle,
+    name: String,
+    content: String,
+    base64: Option<bool>,
+) -> Result<Option<String>, String> {
+    use base64::Engine as _;
+    const SAVE_MAX: usize = 64 * 1024 * 1024;
+    let bytes = if base64.unwrap_or(false) {
+        base64::engine::general_purpose::STANDARD
+            .decode(content.trim())
+            .map_err(|_| "that file's data is damaged".to_string())?
+    } else {
+        content.into_bytes()
+    };
+    if bytes.len() > SAVE_MAX {
+        return Err("that is too big to save from here (64 MB at most)".into());
+    }
+    let name = file_name_for(&name);
+    let mut builder = app
+        .dialog()
+        .file()
+        .set_title("Save as")
+        .set_file_name(&name);
+    if let Ok(dir) = tauri::Manager::path(&app).download_dir() {
+        builder = builder.set_directory(dir);
+    }
+    if let Some(ext) = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()) {
+        if !ext.is_empty() && ext.len() <= 8 {
+            builder = builder.add_filter(ext.to_ascii_uppercase(), &[ext.as_str()]);
+        }
+    }
+    let (tx, rx) = oneshot::channel();
+    builder.save_file(move |picked| {
+        let _ = tx.send(picked);
+    });
+    let Some(picked) = rx
+        .await
+        .map_err(|_| "the save dialog closed".to_string())?
+    else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    let target = path.clone();
+    off_thread(move || {
+        std::fs::write(&target, &bytes).map_err(|e| format!("couldn't save: {e}"))?;
+        let mut saved = SAVED.lock().unwrap_or_else(PoisonError::into_inner);
+        saved.retain(|p| p != &target);
+        saved.push(target);
+        Ok(())
+    })
+    .await?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+/// Shows a file `save_as` wrote in the file manager.
+#[tauri::command]
+pub async fn reveal_saved(path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    let known = SAVED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .contains(&path);
+    if !known {
+        return Err("Parzi didn't save that file".into());
+    }
+    off_thread(move || launch(&reveal(&path, false))).await
+}
+
 #[tauri::command]
 pub async fn stage_image(name: String, base64_data: String) -> Result<String, String> {
     off_thread(move || stage_image_blocking(&name, &base64_data)).await

@@ -77,8 +77,13 @@ fn artifact_validation_versions_and_dedups() {
     assert_eq!(a.version, 1);
     let bad_kind = serde_json::json!({"artifact": 1, "id": "x", "kind": "nuke", "content": "hi"});
     assert!(validate_artifact(&bad_kind).is_err());
-    let bad_lang = serde_json::json!({"artifact": 1, "id": "x", "kind": "code", "language": "cobol-x", "content": "hi"});
+    let bad_lang = serde_json::json!({"artifact": 1, "id": "x", "kind": "code", "language": "rust; <b>", "content": "hi"});
     assert!(validate_artifact(&bad_lang).is_err());
+    let go = serde_json::json!({"artifact": 1, "id": "x", "kind": "code", "language": "Go", "content": "package main"});
+    assert_eq!(validate_artifact(&go).unwrap().language.as_deref(), Some("go"));
+    // Models name a document `doc`: it is one.
+    let doc = serde_json::json!({"artifact": 1, "id": "x", "kind": "doc", "content": "# Hi"});
+    assert_eq!(validate_artifact(&doc).unwrap().kind, "markdown");
     let preview = serde_json::json!({
         "artifact": 1, "id": "omni-v2", "title": "Omnibar v2",
         "kind": "preview", "content": "{\"component\":\"omnibar\",\"variant\":2}",

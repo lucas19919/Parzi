@@ -63,7 +63,7 @@
     const kids = new Map<string, Tab[]>();
     const lone: Tab[] = [];
     for (const t of shown) {
-      const parent = t.kind === "page" ? t.owner || t.group : t.kind === "session" ? t.group : null;
+      const parent = t.kind === "page" ? t.owner || t.group : t.kind === "session" || t.kind === "artifact" ? t.group : null;
       if (parent && bySession.has(parent)) {
         const arr = kids.get(parent) ?? [];
         arr.push(t);
@@ -259,6 +259,8 @@
                   <span class="spinner" />
                 {:else if sub.kind === "session"}
                   <Icon name="bot" />
+                {:else if sub.kind === "artifact"}
+                  <Icon name="file" />
                 {:else if sub.url && !broken.has(sub.url)}
                   <img src={sub.favicon || faviconUrl(sub.url)} alt="" on:error={() => sub.url && (broken = new Set(broken).add(sub.url))} />
                 {:else}
@@ -305,7 +307,7 @@
           {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
             <img src={tab.favicon || faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
           {:else}
-            <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : "bot"} />
+            <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.kind === "artifact" ? "file" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : "bot"} />
           {/if}
         </span>
         <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>

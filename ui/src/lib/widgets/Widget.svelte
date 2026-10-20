@@ -5,6 +5,7 @@
   import Zoomable from "./Zoomable.svelte";
   import EChart from "./EChart.svelte";
   import { tooltip } from "../tooltip";
+  import { saveFile } from "../saveFile";
 
   export let data: any;
   const d = data && typeof data === "object" ? data : {};
@@ -237,21 +238,13 @@
     const t = s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
     return t || "chart";
   }
-  function download(url: string, name: string) {
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  }
   function dlCsv() {
     if (type === "scatter") {
       const lines = ["series,x,y"];
       for (const s of scSer) {
         for (const p of s.points) lines.push([s.name || "value", String(p[0]), String(p[1])].join(","));
       }
-      const blob = new Blob([lines.join("\n")], { type: "text/csv" });
-      download(URL.createObjectURL(blob), `${slug(title)}.csv`);
+      void saveFile(`${slug(title)}.csv`, lines.join("\n"));
       return;
     }
     const head = ["x", ...plotSer.map((s) => s.name || "value")];
@@ -259,12 +252,11 @@
     for (let i = 0; i < maxLen; i++) {
       lines.push([plotLabels[i] ?? String(i + 1), ...plotSer.map((s) => (i < s.points.length ? String(s.points[i]) : ""))].join(","));
     }
-    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
-    download(URL.createObjectURL(blob), `${slug(title)}.csv`);
+    void saveFile(`${slug(title)}.csv`, lines.join("\n"));
   }
   function dlSvg() {
     const url = (type === "scatter" ? echScatter : echLine)?.snapshot();
-    if (url) download(url, `${slug(title)}.svg`);
+    if (url) void saveFile(`${slug(title)}.svg`, url);
   }
   $: shownRows = rows.slice(0, 50);
   $: truncated = rows.length - shownRows.length;

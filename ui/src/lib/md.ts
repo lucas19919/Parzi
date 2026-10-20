@@ -210,10 +210,47 @@ md.renderer.rules.fence = (tokens, idx) => {
     }
   }
   const label = PLAIN_FENCES.has(lang.toLowerCase()) ? "" : `<span class="code-lang">${safeLang}</span>`;
-  const long = lines.length > 30;
+  // A drawing in text (boxes and arrows) is a picture: it shrinks to fit
+  // instead of scrolling, and shows whole.
+  const cols = isDiagram(lang, body) ? Math.max(...lines.map((l) => [...l].length)) : 0;
+  const long = !cols && lines.length > 30;
   const expand = long ? `<button class="code-expand" data-expand data-label="Show all ${lines.length} lines">Show all ${lines.length} lines</button>` : "";
-  return `<div class="codeblock${long ? " clamped" : ""}"><div class="code-tools">${label}<button data-copy>Copy</button></div><pre><code>${code}</code></pre>${expand}</div>`;
+  const cls = cols ? " diagram" : long ? " clamped" : "";
+  const style = cols ? ` style="--cols:${cols}"` : "";
+  return `<div class="codeblock${cls}"${style}><div class="code-tools">${label}<button data-copy>Copy</button></div><pre><code>${code}</code></pre>${expand}</div>`;
 };
+
+const BOX = /[─-╿▀-▟]/g;
+
+/** A fence that draws (box-drawing lines), not code. */
+export function isDiagram(lang: string, body: string): boolean {
+  if (!PLAIN_FENCES.has(lang.toLowerCase())) return false;
+  return (body.match(BOX)?.length ?? 0) >= 6;
+}
+
+/** A click on a code block's Copy or Show all; true when it was one. */
+export function codeBlockClick(el: HTMLElement): boolean {
+  const copyBtn = el.closest<HTMLElement>("[data-copy]");
+  if (copyBtn) {
+    const code = copyBtn.closest(".codeblock")?.querySelector("code")?.textContent ?? "";
+    navigator.clipboard.writeText(code).then(
+      () => {
+        copyBtn.textContent = "Copied";
+        setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
+      },
+      (e) => toast(`Couldn't copy: ${e}`, true),
+    );
+    return true;
+  }
+  const expand = el.closest<HTMLElement>("[data-expand]");
+  if (expand) {
+    const block = expand.closest(".codeblock");
+    block?.classList.toggle("clamped");
+    expand.textContent = block?.classList.contains("clamped") ? (expand.dataset.label ?? "Show all") : "Show less";
+    return true;
+  }
+  return false;
+}
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

@@ -322,6 +322,23 @@ async fn app_version() -> Result<String, String> {
     Ok(env!("CARGO_PKG_VERSION").to_string())
 }
 
+/// An error the window did not handle, into the log: a stuck or blank
+/// window leaves a trace. At most 30 a minute, each clipped.
+#[tauri::command]
+fn ui_error(message: &str) {
+    static BUDGET: std::sync::Mutex<(u64, u32)> = std::sync::Mutex::new((0, 0));
+    let minute = parzi_core::now_ms() / 60_000;
+    let mut b = BUDGET.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if b.0 != minute {
+        *b = (minute, 0);
+    }
+    b.1 += 1;
+    if b.1 <= 30 {
+        let text: String = message.chars().take(2000).collect();
+        tracing::error!("window: {text}");
+    }
+}
+
 #[tauri::command]
 fn window_fullscreen(window: tauri::Window, on: bool) -> Result<(), String> {
     window.set_fullscreen(on).map_err(|e| e.to_string())
@@ -517,6 +534,36 @@ fn fatal(text: &str) -> ! {
     std::process::exit(1);
 }
 
+/// Present while Parzi runs: one left from before means that run ended
+/// without closing (killed, crashed, or the machine went down).
+fn running_marker() -> Option<std::path::PathBuf> {
+    Some(parzi_core::paths::parzi_dir().ok()?.join("logs").join("running"))
+}
+
+fn mark_running() {
+    let Some(marker) = running_marker() else { return };
+    if let Ok(prev) = std::fs::read_to_string(&marker) {
+        tracing::warn!("the last Parzi run ({}) ended without closing", prev.trim());
+    }
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let _ = std::fs::write(
+        &marker,
+        format!("pid {} started {now}", std::process::id()),
+    );
+    tracing::info!(
+        "Parzi {} started (pid {})",
+        env!("CARGO_PKG_VERSION"),
+        std::process::id()
+    );
+}
+
+fn mark_closed() {
+    tracing::info!("Parzi closed");
+    if let Some(marker) = running_marker() {
+        let _ = std::fs::remove_file(marker);
+    }
+}
+
 fn main() {
     init_log();
     // Mutual exclusion with `parzi serve`: both own ~/.parzi, so the desk
@@ -606,6 +653,7 @@ fn main() {
             // Here, not in main: plugins initialize first, so a second
             // launch has already handed off to the running desk and exited
             // instead of marking that desk's live runs idle.
+            mark_running();
             orch.recover().ok();
             let o = orch.clone();
             parzi_runtime::remote::sweep_askpass();
@@ -653,6 +701,10 @@ fn main() {
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
                 dwm::round_window_corners(&w);
+                let h = app.handle().clone();
+                if let Err(e) = dwm::watch_shell(w.as_ref(), move || h.restart()) {
+                    tracing::warn!("window crash recovery not attached: {e}");
+                }
             }
             adblock::start();
             browser::warm_up();
@@ -680,6 +732,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             app_version,
+            ui_error,
             window_fullscreen,
             begin_window_drag,
             browser::browser_show,
@@ -757,6 +810,8 @@ fn main() {
             files::git_status,
             files::read_image_data_url,
             files::stage_image,
+            files::save_as,
+            files::reveal_saved,
             files::open_confirmed_url,
             files::open_file_path,
             settings::get_config,
@@ -801,6 +856,7 @@ fn main() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 control::clear_gui_file();
+                mark_closed();
                 if let Some(state) = app.try_state::<AppState>() {
                     let mcp = state.orch.mcp().clone();
                     let (tx, rx) = std::sync::mpsc::sync_channel(1);

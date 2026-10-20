@@ -45,6 +45,9 @@ pub struct ContextParts {
     pub tools: u64,
 }
 
+/// How long getting a run going may take (not the run: its start).
+const LAUNCH_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
+
 impl Orchestrator {
     pub fn context_parts(&self, cwd: &str) -> ContextParts {
         let tokens = |chars: usize| (chars as u64).div_ceil(4);
@@ -428,9 +431,23 @@ impl Orchestrator {
                 "session {sid} already has a live run; kill it first"
             )));
         };
-        match Self::launch_inner(p.clone(), q, id, cancel, seen).await {
+        // Getting a run going never takes this long: a start that hangs
+        // fails, so the session is never left showing a run that never was.
+        let started = tokio::time::timeout(
+            LAUNCH_WAIT,
+            Self::launch_inner(p.clone(), q, id, cancel, seen),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(ParziError::Store(format!(
+                "the run did not start within {}s",
+                LAUNCH_WAIT.as_secs()
+            )))
+        });
+        match started {
             Ok(rx) => Ok(Started::Running(rx)),
             Err(e) => {
+                tracing::warn!(session = %sid, "run failed to start: {e}");
                 {
                     let mut h = p.handles.lock().await;
                     if h.get(&sid).is_some_and(|x| x.id == id) {

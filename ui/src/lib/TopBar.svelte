@@ -13,6 +13,9 @@
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
+  // The recent sessions column: offered on session tabs, and whether it shows.
+  export let railable = false;
+  export let railOpen = false;
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -27,6 +30,7 @@
     setup: void;
     report: void;
     openSession: { id: string };
+    rail: void;
   }>();
 
   let menuOpen = false;
@@ -106,6 +110,17 @@
         </div>
       {/if}
     </div>
+    {#if railable}
+      <button
+        class="icon-btn rail-btn"
+        class:active={railOpen}
+        aria-pressed={railOpen}
+        use:tooltip={railOpen ? "Hide sessions (Ctrl+Shift+S)" : "Sessions by project (Ctrl+Shift+S)"}
+        on:click={() => dispatch("rail")}
+      >
+        <Icon name="panel" />
+      </button>
+    {/if}
     <TabBar
       {tabs}
       {activeTabId}
@@ -159,6 +174,10 @@
     user-select: none;
   }
   /* One 4px step between the menu, Home, the tabs and +. */
+  /* The session column's icon, mirrored: this one opens on the left. */
+  .rail-btn :global(svg) {
+    transform: scaleX(-1);
+  }
   .left {
     display: flex;
     align-items: center;

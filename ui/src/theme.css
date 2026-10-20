@@ -253,6 +253,15 @@ a:hover { color: var(--link-hover); }
   content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 70px;
   background: linear-gradient(transparent, var(--bg)); pointer-events: none;
 }
+/* A text drawing: one font whose box lines match its letters (the code
+   font has none, and a fallback's lines come out shorter), never wrapped,
+   shrunk to the width down to a readable floor, then it scrolls. */
+.codeblock.diagram { container-type: inline-size; }
+.codeblock.diagram pre, .codeblock.diagram code {
+  white-space: pre; line-height: 1.17;
+  font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace;
+  font-size: clamp(9px, calc((100cqw - 28px) / (var(--cols) * 0.6)), var(--mono-size));
+}
 .code-expand {
   display: block; width: 100%; padding: 7px; background: transparent; border: none;
   border-top: 1px solid var(--line); color: var(--muted); font-size: var(--fs-sm); cursor: pointer;
@@ -264,6 +273,9 @@ a:hover { color: var(--link-hover); }
 .msg .md-table { width: max-content; max-width: 100%; margin: 0.9em 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
 .msg table { border-collapse: separate; border-spacing: 0; font-size: var(--fs-md); font-variant-numeric: tabular-nums; }
 .msg th, .msg td { padding: 9px 16px; text-align: left; white-space: nowrap; border-right: 1px solid var(--line); }
+/* Words wrap inside a cell so a table of prose fits the column; figures
+   and headers stay on one line. */
+.msg td:not(.num) { white-space: normal; min-width: 10ch; overflow-wrap: break-word; vertical-align: top; }
 .msg th:last-child, .msg td:last-child { border-right: none; }
 .msg td { border-top: 1px solid var(--line); }
 .msg th { vertical-align: bottom; font-weight: 500; color: var(--text); background: color-mix(in srgb, var(--text) 3%, transparent); }

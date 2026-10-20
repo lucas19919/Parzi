@@ -532,6 +532,54 @@ pub fn watch_page<R: tauri::Runtime>(
     .map_err(|e| e.to_string())
 }
 
+/// Parzi's own window. A page process that dies or hangs reloads instead of
+/// leaving the window white or frozen; a dead browser process takes every
+/// view with it, so `restart` brings the app back. Each says so in the log.
+pub fn watch_shell<R: tauri::Runtime>(
+    wv: &tauri::Webview<R>,
+    restart: impl Fn() + Send + 'static,
+) -> Result<(), String> {
+    wv.with_webview(move |platform| {
+        let controller = platform.controller();
+        let mut token = 0i64;
+        // SAFETY: on the UI thread that owns the controller; WebView2 calls
+        // the handler on that same thread.
+        let hooked = unsafe {
+            controller.CoreWebView2().and_then(|core| {
+                core.add_ProcessFailed(
+                    &ProcessFailedEventHandler::create(Box::new(move |core, args| {
+                        let Some(args) = args else { return Ok(()) };
+                        let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+                        args.ProcessFailedKind(&raw mut kind)?;
+                        match crash_kind(kind) {
+                            Some("browser") => {
+                                tracing::error!("the window's browser process exited; restarting");
+                                restart();
+                            }
+                            Some(what) => {
+                                tracing::error!("the window's page process {what}; reloading it");
+                                if let Some(core) = core {
+                                    let _ = core.Reload();
+                                }
+                            }
+                            None => tracing::warn!(
+                                "a helper process of the window failed (kind {})",
+                                kind.0
+                            ),
+                        }
+                        Ok(())
+                    })),
+                    &raw mut token,
+                )
+            })
+        };
+        if let Err(e) = hooked {
+            tracing::warn!("window crash recovery not attached: {e}");
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
 const ANY_NAV: u64 = u64::MAX;
 
 /// Per-navigation state the handlers share.

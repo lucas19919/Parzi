@@ -93,6 +93,13 @@ struct Turn {
     started: HashMap<String, Instant>,
 }
 
+/// What an agent says when its turn is cancelled ("The request was
+/// cancelled by the client."): a short line about cancelling, nothing more.
+fn cancel_notice(text: &str) -> bool {
+    let t = text.trim().to_ascii_lowercase();
+    !t.is_empty() && t.len() <= 100 && (t.contains("cancelled") || t.contains("canceled"))
+}
+
 impl EngineRun {
     pub fn new(p: EngineRunParts) -> Self {
         let resume = crate::orchestrator::run_session(&p.session_id)
@@ -145,6 +152,13 @@ impl EngineRun {
             match self.turn(&text, false).await {
                 Outcome::Completed => self.brief_seen(),
                 Outcome::Interrupted => {
+                    // One quiet line where the answer would be.
+                    let _ = self.p.store.append(
+                        &sid,
+                        &Event::System {
+                            text: "Stopped".into(),
+                        },
+                    );
                     self.tally(|t| t.end = Some((RunEndKind::Stopped, None)));
                     self.end(SessionStatus::Killed).await;
                     self.p.sink.emit(RunEvent::Error("cancelled".into()));
@@ -583,6 +597,16 @@ impl EngineRun {
             .unwrap_or_else(|e| Err(ProviderError::process(format!("the provider stopped: {e}"))));
         drop(registration);
         let completed = paused.is_none() && matches!(result, Ok(TurnEnd::Completed));
+        if !completed {
+            // The agent's own "the request was cancelled" is not an answer:
+            // the thread says the run stopped.
+            if turn.pending.as_deref().is_some_and(cancel_notice) {
+                turn.pending = None;
+            }
+            if cancel_notice(&turn.partial) {
+                turn.partial.clear();
+            }
+        }
         self.flush(&mut turn, completed);
         if !completed {
             self.keep_partial(&mut turn);

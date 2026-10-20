@@ -3,12 +3,14 @@
   // page): a quiet card in the thread. Its name, kind and version on top
   // with Copy and Save; the content below in the thread's own type, a long
   // one folded until asked for. An older version of the same artifact
-  // folds to its header line.
+  // folds to its header line. Open shows it in its own tab to read
+  // (`reader`): the whole of it, in a centred column.
   import { onMount, tick } from "svelte";
   import { api } from "../api";
-  import { mdHtml, richReady } from "../md";
+  import { codeBlockClick, mdHtml, richReady } from "../md";
   import { handleLinkClick } from "../links";
   import { previewSpecOf, previewProblem } from "../previewRegistry";
+  import { saveFile } from "../saveFile";
   import { svgDataUrl } from "../svgImage";
   import { toast } from "../toast";
   import { tooltip } from "../tooltip";
@@ -22,6 +24,8 @@
   export let fallbackKind = "text";
   // A newer version follows further down: this one folds to its header.
   export let superseded = false;
+  // Shown on its own in a tab: nothing folds, no card frame.
+  export let reader = false;
 
   const d = data ?? {};
   const id: string = String(d.id ?? fallbackId ?? "artifact");
@@ -67,7 +71,7 @@
   let showCode = false;
   let frame: HTMLIFrameElement | null = null;
   let svgBroken = false;
-  let open = !superseded;
+  let open = reader || !superseded;
   let copied = false;
 
   // Folding: measured once the content is in.
@@ -75,7 +79,7 @@
   let tall = false;
   let all = false;
   // Code folds in its own block; a document folds here.
-  $: foldable = kind === "markdown";
+  $: foldable = !reader && kind === "markdown";
   async function measure() {
     await tick();
     tall = foldable && !!body && body.scrollHeight > FOLD + 40;
@@ -85,6 +89,27 @@
   function svgImage(src: string): string {
     const svg = new DOMParser().parseFromString(src, "text/html").querySelector("svg");
     return svg ? svgDataUrl(new XMLSerializer().serializeToString(svg)) : "";
+  }
+
+  function openToRead() {
+    document.dispatchEvent(
+      new CustomEvent("parzi:open-artifact", { detail: { id, title, kind, language, content, version } }),
+    );
+  }
+
+  function nameClick() {
+    if (superseded && !reader) open = !open;
+    else if (!reader && !bad) openToRead();
+  }
+
+  function codeClick(e: MouseEvent) {
+    if (reader) codeBlockClick(e.target as HTMLElement);
+  }
+
+  async function docClick(e: MouseEvent) {
+    if (await handleLinkClick(e)) return;
+    // In the thread, the thread handles code blocks; alone, this does.
+    if (reader) codeBlockClick(e.target as HTMLElement);
   }
 
   function copy() {
@@ -99,12 +124,7 @@
 
   function download() {
     const ext = kind === "code" && language ? language : kind === "markdown" ? "md" : kind === "svg" ? "svg" : kind === "html" ? "html" : kind === "json" ? "json" : kind === "csv" ? "csv" : "txt";
-    const blob = new Blob([content], { type: "text/plain" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${id}.${ext}`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    void saveFile(`${title.replace(/\.[a-z0-9]{1,8}$/i, "") || id}.${ext}`, content);
   }
 
   onMount(() => {
@@ -119,16 +139,19 @@
   });
 </script>
 
-<div class="art" class:bad class:old={superseded && !open}>
+<div class="art" class:bad class:reader class:old={superseded && !open}>
   <div class="head">
-    <button class="name" aria-expanded={open} disabled={!superseded} on:click={() => (open = !open)}>
+    <button class="name" aria-expanded={superseded ? open : undefined} disabled={reader || bad} on:click={nameClick}>
       <Icon name={icon} size={12} />
-      <span class="title">{title}</span>
+      {#if !reader}<span class="title">{title}</span>{/if}
       <span class="meta">{label}{version > 1 ? ` · v${version}` : ""}{superseded && !open ? " · updated below" : ""}</span>
     </button>
     <span class="tools">
       {#if canRender && open}
         <button class="tool text" on:click={() => (showCode = !showCode)}>{showCode ? "Preview" : "Source"}</button>
+      {/if}
+      {#if !reader && !bad}
+        <button class="tool" aria-label="Open" use:tooltip={"Open to read"} on:click={openToRead}><Icon name="external" size={12} /></button>
       {/if}
       <button class="tool" aria-label="Copy" use:tooltip={copied ? "Copied" : "Copy"} on:click={copy}><Icon name={copied ? "check" : "copy"} size={12} /></button>
       <button class="tool" aria-label="Save" use:tooltip={"Save as a file"} on:click={download}><Icon name="download" size={12} /></button>
@@ -147,7 +170,7 @@
         <div class="err">Unknown preview: {previewProblem(content)}.</div>
       {:else if kind === "markdown"}
         <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
-        <div class="doc msg" on:click={(e) => void handleLinkClick(e)}>{@html mdHtml(content, $richReady)}</div>
+        <div class="doc msg" on:click={(e) => void docClick(e)}>{@html mdHtml(content, $richReady)}</div>
       {:else if kind === "svg" && !showCode && svgUrl && !svgBroken}
         <button class="zoom" aria-label="View {title} bigger" on:click={() => svgUrl && viewImage(svgUrl, title)}>
           <img src={svgUrl} alt={title} on:error={() => (svgBroken = true)} />
@@ -166,7 +189,8 @@
         {#if kind === "svg" && !showCode}
           <div class="err">Couldn't draw this SVG. Showing its source.</div>
         {/if}
-        <div class="code">
+        <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
+        <div class="code" on:click={codeClick}>
           {@html mdHtml("```" + (language || kind) + "\n" + content.slice(0, 60000) + "\n```", $richReady)}
         </div>
       {/if}
@@ -185,6 +209,39 @@
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
+  }
+  /* Alone in a tab: the page scrolls, the content sits in a reading
+     column, no frame around it. */
+  .art.reader {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    background: none;
+    border: none;
+    border-radius: 0;
+  }
+  .reader .head,
+  .reader .body {
+    width: 100%;
+    max-width: 820px;
+    margin: 0 auto;
+  }
+  .art.reader .head {
+    padding: 6px 12px 0 24px;
+    border-bottom: none;
+  }
+  .reader .doc {
+    padding: 4px 24px 64px;
+    font-size: var(--fs-md);
+    line-height: 1.65;
+  }
+  .reader .code {
+    padding: 8px 12px 48px;
+  }
+  .reader .code :global(.codeblock) {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--bg);
   }
   .art.bad {
     border-color: color-mix(in srgb, var(--bad) 50%, var(--line));

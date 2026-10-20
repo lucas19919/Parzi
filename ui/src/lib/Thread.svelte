@@ -4,7 +4,7 @@
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { handleLinkClick } from "./links";
-  import { mdHtml, richReady, splitSegments, LiveMarkdown } from "./md";
+  import { codeBlockClick, mdHtml, richReady, splitSegments, LiveMarkdown } from "./md";
   import Widget from "./widgets/Widget.svelte";
   import ArtifactCard from "./widgets/ArtifactCard.svelte";
   import Viz from "./viz/Viz.svelte";
@@ -188,7 +188,7 @@
         if (it.kind === "assistant") answer = i;
       });
       const work = range.filter(
-        (it, i) => it.kind === "steps" || (it.kind === "assistant" && i !== answer) || (it.kind === "system" && sysTone(it.text) === "line"),
+        (it, i) => it.kind === "steps" || (it.kind === "assistant" && i !== answer) || (it.kind === "system" && sysTone(it.text) === "line" && !isStop(it.text)),
       );
       if (!work.length && !(current && liveWork)) return;
       const opener = u >= 0 ? items[u] : null;
@@ -475,8 +475,13 @@ ${e.text}` : e.text;
   }
 
   // Routine narrations render as a whisper, not a mono block.
+  // A stopped run's line stays in view, outside the fold.
+  function isStop(text: string): boolean {
+    return /^stopped$/i.test(text.trim());
+  }
+
   function sysTone(text: string): "line" | "block" {
-    return /^(asked the user|the user answered|plan written|plan saved|brain\.write|session\.spawn|session\.send_message|session\.send):/i.test(
+    return /^(asked the user|the user answered|plan written|plan saved|brain\.write|session\.spawn|session\.send_message|session\.send):|^stopped$/i.test(
       text.trim(),
     )
       ? "line"
@@ -600,21 +605,7 @@ ${e.text}` : e.text;
       return;
     }
     if (await handleLinkClick(e, folder)) return;
-    const copyBtn = el.closest<HTMLElement>("[data-copy]");
-    if (copyBtn) {
-      const code = copyBtn.closest(".codeblock")?.querySelector("code")?.textContent ?? "";
-      navigator.clipboard.writeText(code).then(() => {
-        copyBtn.textContent = "Copied";
-        setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
-      }, (e) => toast(`Couldn't copy: ${e}`, true));
-      return;
-    }
-    const expand = el.closest<HTMLElement>("[data-expand]");
-    if (expand) {
-      const block = expand.closest(".codeblock");
-      block?.classList.toggle("clamped");
-      expand.textContent = block?.classList.contains("clamped") ? (expand.dataset.label ?? "Show all") : "Show less";
-    }
+    codeBlockClick(el);
   }
 </script>
 
