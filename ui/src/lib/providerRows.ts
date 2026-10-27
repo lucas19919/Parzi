@@ -84,15 +84,21 @@ export function shownOf(value: string, board: ProviderStatus[]): { provider: str
   return { provider: p, name: id ? prettyModel(id) : nameOf(p) };
 }
 
-// The effort levels the model itself lists. None means the agent picks its
-// own, and Parzi offers no control that would do nothing.
+// The effort levels the model itself lists. ACP agents (opencode, grok,
+// cursor, antigravity) take no --effort flag but still record the choice on
+// the session, so they fall back to the standard five rather than hiding
+// the picker.
+const FALLBACK_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 export function effortsFor(value: string, board: ProviderStatus[]): string[] {
   if (!value) return [];
   const [p, ...rest] = value.split("/");
   const models = board.find((b) => b.provider === p)?.models ?? [];
   const id = rest.join("/");
   const m = (id && models.find((x) => x.id === id)) || models.find((x) => x.is_default);
-  return m?.efforts ?? [];
+  const listed = m?.efforts ?? [];
+  if (listed.length) return listed;
+  if (["opencode", "grok", "cursor", "antigravity"].includes(p)) return [...FALLBACK_EFFORTS];
+  return [];
 }
 
 // False only when the agent said this model can't see images.

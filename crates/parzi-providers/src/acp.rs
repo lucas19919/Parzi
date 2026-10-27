@@ -50,6 +50,17 @@ fn no_env() -> Vec<(String, String)> {
     vec![]
 }
 
+/// Effort levels Parzi offers for ACP agents (OpenCode, Grok, Cursor,
+/// Antigravity): the agents take no `--effort` flag, so Parzi tries a
+/// `session/set_config_option` with `effort` and always records the choice
+/// on the session. Never empty, or the composer hides the effort picker.
+fn default_efforts() -> Vec<String> {
+    ["low", "medium", "high", "xhigh", "max"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
 fn opencode_env() -> Vec<(String, String)> {
     vec![
         (
@@ -334,7 +345,7 @@ fn session_models(session: &Value) -> Vec<ModelInfo> {
         id: id.to_string(),
         name: name.unwrap_or(id).to_string(),
         is_default: current == Some(id),
-        efforts: vec![],
+        efforts: default_efforts(),
         images: None,
     };
     if let Some(list) = session
@@ -397,6 +408,9 @@ fn take_warm(program: &Path) -> Option<Conn> {
         if !matches!(conn.proc.child.try_wait(), Ok(None)) {
             continue;
         }
+        if conn.incoming.is_closed() {
+            continue;
+        }
         // An agent that asked something while parked waits for an answer
         // nobody gave: it may never answer the next turn. It goes (dropping
         // it kills it) and a fresh one starts instead.
@@ -456,6 +470,12 @@ fn take_live(program: &Path, sid: &str, cwd: &Path, tools: Option<&str>) -> Opti
     let mut l = live.remove(i);
     drop(live);
     if !matches!(l.conn.proc.child.try_wait(), Ok(None)) {
+        return None;
+    }
+    // The reader ended (EOF): the process is gone even if the handle
+    // lingers. Reusing it would fail the turn with "exited before it
+    // finished".
+    if l.conn.incoming.is_closed() {
         return None;
     }
     // Something it asked while parked went unanswered: start fresh.
@@ -546,8 +566,17 @@ impl Provider for Acp {
             Probe::CursorStatus => cursor_status(&program, self.agent).await,
             Probe::GeminiSettings => gemini_status(self.agent),
         };
-        if status.models.is_empty() && status.state == State::Ready {
+        // A probe that lists nothing (transient failure, signed out)
+        // falls back to the last models a session saw, so the picker
+        // keeps its models and effort levels instead of blinking out.
+        // Caches from before effort levels backfill to the default five.
+        if status.models.is_empty() {
             status.models = cached_models(self.agent.id);
+            for m in &mut status.models {
+                if m.efforts.is_empty() {
+                    m.efforts = default_efforts();
+                }
+            }
             if status.models.is_empty() && self.agent.slow_start {
                 self.warm_up(program.clone());
             }
@@ -791,7 +820,7 @@ fn opencode_read(out: &str, agent: Agent) -> ProviderStatus {
                 id: l.to_string(),
                 name: l.to_string(),
                 is_default: false,
-                efforts: vec![],
+                efforts: default_efforts(),
                 images: None,
             });
         } else if !models.is_empty() {
@@ -841,7 +870,7 @@ fn grok_read(out: &str, agent: Agent) -> ProviderStatus {
                 name: id.clone(),
                 id,
                 is_default,
-                efforts: vec![],
+                efforts: default_efforts(),
                 images: None,
             });
         }
@@ -1149,6 +1178,13 @@ async fn drive(
             return Ok(TurnEnd::Interrupted);
         }
     }
+    if let Some(effort) = spec.effort.as_deref().filter(|e| !e.is_empty()) {
+        let set = select_effort(peer, &session, &sid, effort);
+        let set = answers.meanwhile(set, incoming, &mut held);
+        if or_cancel(cancel, set).await.is_none() {
+            return Ok(TurnEnd::Interrupted);
+        }
+    }
     for msg in &held {
         if let Incoming::Notification { method, params } = msg {
             if let Some(list) = update_of(method, params, &sid).and_then(listed_commands) {
@@ -1401,6 +1437,40 @@ async fn select_model(
             "{} kept its own model: {model} was refused ({e})",
             agent.name
         )));
+    }
+}
+
+/// Best-effort effort level for ACP agents: many list no `effort` config
+/// option, in which case the choice is still recorded on the session (and
+/// shown in the UI) but the agent runs its own default. Never fails a turn.
+async fn select_effort(peer: &Peer, session: &Value, sid: &str, effort: &str) {
+    let limit = Duration::from_secs(15);
+    let has_effort_option = session
+        .get("configOptions")
+        .and_then(Value::as_array)
+        .is_some_and(|opts| {
+            opts.iter().any(|o| {
+                matches!(
+                    o.get("id").and_then(Value::as_str),
+                    Some("effort" | "effortLevel" | "reasoningEffort")
+                )
+            })
+        });
+    if !has_effort_option {
+        return;
+    }
+    for id in ["effort", "effortLevel", "reasoningEffort"] {
+        let ok = peer
+            .request_within(
+                "session/set_config_option",
+                json!({"sessionId": sid, "configId": id, "value": effort}),
+                limit,
+            )
+            .await
+            .is_ok();
+        if ok {
+            return;
+        }
     }
 }
 

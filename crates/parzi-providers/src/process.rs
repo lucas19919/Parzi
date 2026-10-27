@@ -235,8 +235,21 @@ fn follow_npm_shim(path: &Path) -> Option<PathBuf> {
     if ext != "cmd" && ext != "bat" {
         return None;
     }
-    let text = std::fs::read_to_string(path).ok()?;
     let dir = path.parent()?;
+    // A native binary next to the shim wins: no cmd.exe wrapper in the
+    // ACP stdio path, so no extra shell to buffer, quote or kill.
+    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+        for candidate in [
+            dir.join(format!("{stem}.exe")),
+            dir.join(stem),
+            dir.join(format!("{stem}-x86_64.exe")),
+        ] {
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    let text = std::fs::read_to_string(path).ok()?;
     for marker in ["\"%dp0%\\", "\"%~dp0\\"] {
         for (i, _) in text.match_indices(marker) {
             let rest = &text[i + marker.len()..];
