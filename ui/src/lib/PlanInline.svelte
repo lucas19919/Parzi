@@ -10,7 +10,7 @@
   import type { Approval } from "./live";
   import { activity } from "./activity";
   import { planState } from "./planStore";
-  import { deriveItems, groupItems, progress, STATE_WORDS, type ItemView } from "./planModel";
+  import { deriveItems, groupItems, progress, sameSlug, STATE_WORDS, type ItemView } from "./planModel";
   import { tooltip } from "./tooltip";
 
   export let project = "";
@@ -19,18 +19,22 @@
   export let running: Set<string> = new Set();
   export let approvals: Approval[] = [];
   export let questions: Question[] = [];
+  // Items already quoted into the composer: clicking one quotes it, clicking
+  // it again takes it back out.
+  export let quotes: PlanQuote[] = [];
   // Shown even when this session works on no item (asked for from the
   // info column).
   export let force = false;
   // Out: whether the checklist shows, so the info column can skip its row.
   export let visible = false;
 
-  const dispatch = createEventDispatcher<{ quote: PlanQuote }>();
+  const dispatch = createEventDispatcher<{ quote: PlanQuote; unquote: PlanQuote; close: void }>();
 
   let open = true;
   let showDone = false;
 
   $: plan = $planState.project === project ? $planState.plan : null;
+  $: error = $planState.project === project ? $planState.error : "";
   $: waiting = new Map<string, string>([
     ...approvals.map((a): [string, string] => [a.session, "Waiting for your approval"]),
     ...questions.map((q): [string, string] => [q.session, "Has a question"]),
@@ -41,51 +45,78 @@
   $: count = progress(views);
   // The project's plan is its long-lived roadmap: it shows in a thread
   // only when the person opens it (a session's own steps are its Tasks).
-  $: shown = !!plan && !!project && force;
+  // A forced-open panel stays open even with no plan yet or an unreadable
+  // note, so a click always shows something and the X always hides it.
+  $: shown = !!project && force;
   $: visible = shown;
+  $: path = `projects/${project}/plan.md`;
+
+  function quoted(v: ItemView) {
+    return (quotes ?? []).some((q) => q.id === v.item.id && sameSlug(q.project, project));
+  }
 
   function quote(v: ItemView) {
-    dispatch("quote", { project, id: v.item.id, title: v.item.title });
+    const q = { project, id: v.item.id, title: v.item.title };
+    if (quoted(v)) dispatch("unquote", q);
+    else dispatch("quote", q);
   }
 </script>
 
-{#if shown && plan}
+{#if shown}
   <section class="plan" aria-label="Plan">
-    <button class="head" aria-expanded={open} on:click={() => (open = !open)}>
-      <Icon name={open ? "chevDown" : "chevRight"} size={12} />
-      <span class="title">{plan.title || "Plan"}</span>
-      <span class="count">{count.done} of {count.total}</span>
-    </button>
+    <div class="head-row">
+      <button class="head" aria-expanded={open} on:click={() => (open = !open)}>
+        <Icon name={open ? "chevDown" : "chevRight"} size={12} />
+        <span class="title">{plan?.title || "Plan"}</span>
+        {#if plan}<span class="count">{count.done} of {count.total}</span>{/if}
+      </button>
+      <button class="x" use:tooltip={"Hide plan"} aria-label="Hide plan" on:click={() => dispatch("close")}>
+        <Icon name="close" size={12} />
+      </button>
+    </div>
     {#if open}
-      <ul transition:slide={{ duration: 160, easing: cubicOut }}>
-        {#each items as v (v.item.id)}
-          <li>
-            <button class="item" class:mine={v.sessions.some((s) => s.id === session)} use:tooltip={`${STATE_WORDS[v.state]}. Click to quote it.`} on:click={() => quote(v)}>
-              <span class="mark {v.state}" aria-label={STATE_WORDS[v.state]} />
-              <span class="t">{v.item.title}</span>
-              {#if v.state === "needs" && v.reason}<span class="why">{v.reason}</span>{/if}
-            </button>
-          </li>
-        {/each}
-        {#if groups.closed.length}
-          <li>
-            <button class="item fold" on:click={() => (showDone = !showDone)}>
-              <span class="mark done" />
-              <span class="t">{showDone ? "Hide done" : `Done · ${groups.closed.length}`}</span>
-            </button>
-          </li>
-          {#if showDone}
-            {#each groups.closed as v (v.item.id)}
-              <li>
-                <button class="item closed" on:click={() => quote(v)}>
-                  <span class="mark {v.state}" />
-                  <span class="t" class:struck={v.state === "dropped"}>{v.item.title}</span>
-                </button>
-              </li>
-            {/each}
+      {#if error}
+        <p class="empty">The plan note {path} can't be read: {error}. Fix it in the Brain, or ask the agent for a new plan.</p>
+      {:else if !plan}
+        <p class="empty">No plan yet. Ask the agent for one when the work spans sessions.</p>
+      {:else}
+        <ul transition:slide={{ duration: 160, easing: cubicOut }}>
+          {#each items as v (v.item.id)}
+            <li>
+              <button
+                class="item"
+                class:mine={v.sessions.some((s) => s.id === session)}
+                class:picked={quoted(v)}
+                use:tooltip={quoted(v) ? "Quoted. Click to remove it." : `${STATE_WORDS[v.state]}. Click to quote it.`}
+                on:click={() => quote(v)}
+              >
+                <span class="mark {v.state}" aria-label={STATE_WORDS[v.state]} />
+                <span class="t">{v.item.title}</span>
+                {#if quoted(v)}<span class="why">Quoted</span>
+                {:else if v.state === "needs" && v.reason}<span class="why">{v.reason}</span>{/if}
+              </button>
+            </li>
+          {/each}
+          {#if groups.closed.length}
+            <li>
+              <button class="item fold" on:click={() => (showDone = !showDone)}>
+                <span class="mark done" />
+                <span class="t">{showDone ? "Hide done" : `Done · ${groups.closed.length}`}</span>
+              </button>
+            </li>
+            {#if showDone}
+              {#each groups.closed as v (v.item.id)}
+                <li>
+                  <button class="item closed" class:picked={quoted(v)} on:click={() => quote(v)}>
+                    <span class="mark {v.state}" />
+                    <span class="t" class:struck={v.state === "dropped"}>{v.item.title}</span>
+                  </button>
+                </li>
+              {/each}
+            {/if}
           {/if}
-        {/if}
-      </ul>
+        </ul>
+      {/if}
     {/if}
   </section>
 {/if}
@@ -97,11 +128,17 @@
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
   }
+  .head-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
   .head {
     display: flex;
     align-items: center;
     gap: 8px;
-    width: 100%;
+    flex: 1;
+    min-width: 0;
     padding: 2px 6px 6px;
     background: none;
     border: none;
@@ -110,6 +147,35 @@
     font-size: var(--fs-sm);
     cursor: pointer;
     text-align: left;
+  }
+  .x {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin-bottom: 4px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .x:hover {
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+    color: var(--text);
+  }
+  .empty {
+    margin: 0 6px 4px;
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+  }
+  .item.picked {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
   }
   .head:hover {
     color: var(--text);

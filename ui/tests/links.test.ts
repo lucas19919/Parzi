@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fileLink, safeDecode, webLink } from "../src/lib/linkRules.ts";
+import { fileLink, safeDecode, vaultRefs, webLink } from "../src/lib/linkRules.ts";
 
 test("safeDecode survives malformed escapes", () => {
   assert.equal(safeDecode("a%20b"), "a b");
@@ -58,6 +58,34 @@ test("brain markdown file links route to notes", () => {
   assert.deepEqual(fileLink("file:notes/a.md"), { kind: "note", path: "notes/a.md" });
   assert.equal(fileLink("file://server/share/readme.txt").kind, "refuse");
   assert.deepEqual(fileLink("file:///C:/elsewhere/readme.md"), { kind: "open", path: "C:\\elsewhere\\readme.md" });
+});
+
+test("bare vault notes in prose are found as link targets", () => {
+  assert.deepEqual(vaultRefs("see projects/acme/GOALS.md for the plan"), [
+    { path: "projects/acme/GOALS.md", index: 4, length: 22 },
+  ]);
+  assert.deepEqual(vaultRefs("a is notes/a.md, b is widgets/w.md"), [
+    { path: "notes/a.md", index: 5, length: 10 },
+    { path: "widgets/w.md", index: 22, length: 12 },
+  ]);
+  // Trailing prose punctuation stays outside the link.
+  assert.deepEqual(vaultRefs("(see notes/a.md), then notes/b.md."), [
+    { path: "notes/a.md", index: 5, length: 10 },
+    { path: "notes/b.md", index: 23, length: 10 },
+  ]);
+  // A :line suffix rides along for the opener to strip.
+  assert.deepEqual(vaultRefs("at projects/acme/plan.md:12 review"), [
+    { path: "projects/acme/plan.md:12", index: 3, length: 24 },
+  ]);
+  assert.deepEqual(vaultRefs("BRAIN://Notes/A.MD"), [{ path: "BRAIN://Notes/A.MD", index: 0, length: 18 }]);
+});
+
+test("vault refs ignore code ticks, links-in-words and plain words", () => {
+  assert.deepEqual(vaultRefs("`notes/a.md`"), []);
+  assert.deepEqual(vaultRefs("**notes/a.md**"), [{ path: "notes/a.md", index: 2, length: 10 }]);
+  assert.deepEqual(vaultRefs("footnotes/foo.md"), []);
+  assert.deepEqual(vaultRefs("release notes for fun"), []);
+  assert.deepEqual(vaultRefs("no refs here.txt"), []);
 });
 
 test("web links: plain http upgrades, local http opens in a tab", () => {

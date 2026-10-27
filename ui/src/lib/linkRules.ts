@@ -63,6 +63,52 @@ export function fileLink(href: string): FileLink {
   return { kind: "open", path: /^[a-z]:\//i.test(path) ? path.replace(/\//g, "\\") : path };
 }
 
+// A vault note named in plain prose ("see projects/acme/GOALS.md", never
+// linkified by markdown-it itself). Matched case-insensitively; an optional
+// trailing :line or :line:col rides along and is stripped on open.
+const VAULT_RE = /(?<![A-Za-z0-9_/])(?:(?:projects|notes|widgets)\/[^\s<>\]()`"'*|]+?\.md|brain:\/\/[^\s<>\]()`"'*|]+)(?::\d+(?::\d+)?)?/gi;
+
+// Trailing punctuation is prose, not path ("see notes/a.md, then...").
+const TRAIL = /[.,;:!?)\]}>]+$/;
+
+export interface VaultRef {
+  /** The link target: the path with any :line suffix intact. */
+  path: string;
+  /** Offset of the match in the searched text. */
+  index: number;
+  /** Length of the match in the searched text. */
+  length: number;
+}
+
+/** Bare vault references in a text token, in order, never overlapping. */
+export function vaultRefs(text: string): VaultRef[] {
+  const out: VaultRef[] = [];
+  VAULT_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  let guard = 0;
+  while ((m = VAULT_RE.exec(text)) !== null && guard++ < 1000) {
+    if (m[0].length === 0) {
+      VAULT_RE.lastIndex++;
+      continue;
+    }
+    let path = m[0];
+    const trail = TRAIL.exec(path);
+    if (trail) path = path.slice(0, -trail[0].length);
+    if (!path) continue;
+    // A code tick hugs a code span the tokenizer already separates; skip
+    // so inline code never links even if it reaches here raw.
+    if (text[m.index - 1] === "`" || text[m.index + path.length] === "`") {
+      VAULT_RE.lastIndex = m.index + m[0].length;
+      continue;
+    }
+    out.push({ path, index: m.index, length: path.length });
+    // Continue past the kept path, not the trimmed punctuation.
+    VAULT_RE.lastIndex = m.index + path.length;
+  }
+  VAULT_RE.lastIndex = 0;
+  return out;
+}
+
 export type WebLink = { kind: "open"; url: string } | { kind: "tab"; url: string } | { kind: "refuse"; reason: string };
 
 const LOCAL_HOST = /^(localhost|127(?:\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0|[^/:]+\.localhost)(:\d+)?$/i;

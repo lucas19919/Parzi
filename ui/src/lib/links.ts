@@ -16,8 +16,10 @@ async function openFile(href: string) {
 }
 
 // `folder` is the session's folder: agents link code by its path there
-// ("ui/src/App.svelte", "./README.md:12").
-export async function handleLinkClick(e: MouseEvent, folder = ""): Promise<boolean> {
+// ("ui/src/App.svelte", "./README.md:12"). With `pin`, a vault note opens
+// in the session's side column (Antigravity-style) instead of switching to
+// the Brain tab; everywhere else keeps the Brain behaviour.
+export async function handleLinkClick(e: MouseEvent, folder = "", opts: { pin?: boolean } = {}): Promise<boolean> {
   const anchor = (e.target as HTMLElement).closest?.("a");
   if (!anchor) return false;
   e.preventDefault();
@@ -25,9 +27,17 @@ export async function handleLinkClick(e: MouseEvent, folder = ""): Promise<boole
   const href = anchor.getAttribute("href") ?? "";
   if (!href) return true;
 
+  // A trailing ":12" or ":12:3" names a line, not part of the note.
+  const unlined = (p: string) => p.replace(/:\d+(?::\d+)?$/, "");
+  const pinNote = (p: string) => {
+    document.dispatchEvent(new CustomEvent<string>("parzi:pin-note", { detail: unlined(p) }));
+  };
+
   if (href.startsWith("brain://") || href.startsWith("parzi:note/")) {
     const rawPath = href.replace(/^(brain:\/\/|parzi:note\/)/, "");
-    openBrainNote(safeDecode(rawPath).replace(/\\/g, "/"));
+    const path = unlined(safeDecode(rawPath).replace(/\\/g, "/"));
+    if (opts.pin) pinNote(path);
+    else openBrainNote(path);
     return true;
   }
 
@@ -40,7 +50,8 @@ export async function handleLinkClick(e: MouseEvent, folder = ""): Promise<boole
     const path = safeDecode(href.split("#")[0]).replace(/\\/g, "/");
     const note = /^(projects|notes|widgets)\//i.test(path) || (!folder && /\.md$/i.test(path));
     if (note) {
-      openBrainNote(path);
+      if (opts.pin) pinNote(path);
+      else openBrainNote(unlined(path));
     } else if (folder && path && !/^[a-z][a-z0-9+.-]*:(?![/\d])/i.test(path)) {
       // A trailing ":12" or ":12:3" names a line, not part of the file.
       const file = path.replace(/:\d+(:\d+)?$/, "");

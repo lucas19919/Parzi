@@ -40,7 +40,9 @@
   export let branch = "";
   export let streaming = false;
   // Messages sent while the agent works, oldest first. Each goes out as its own turn.
-  export let queue: { id: string; text: string }[] = [];
+  export let queue: { id: string; text: string; detail?: string }[] = [];
+  // The queue is stopped: items stay listed until resumed.
+  export let queuePaused = false;
   // A session is open: Ctrl+Enter can start a side task beside it.
   export let canSide = false;
   export let board: ProviderStatus[] = [];
@@ -60,12 +62,15 @@
     side: void;
     sideHeld: { id: string };
     sendHeldNow: { id: string };
+    dropHeld: { id: string };
+    moveHeld: { id: string; to: number };
+    resumeQueue: void;
     browse: { url: string };
     stop: void;
     command: { name: string };
     unavailable: { provider: string };
     folder: { path: string };
-    project: void;
+    project: { path?: string };
     brain: void;
     remote: { on: boolean };
     remoteFolder: { path: string };
@@ -108,6 +113,15 @@
   let branchOpen = false;
   let branchStyle = "";
   let branchList: string[] = [];
+  // The queue bar above the box: which item is unfolded, and drag state.
+  let expanded: string | null = null;
+  let dragId: string | null = null;
+  let dragOver = -1;
+  function queueDrop(to: number) {
+    if (dragId) dispatch("moveHeld", { id: dragId, to });
+    dragId = null;
+    dragOver = -1;
+  }
   // Another folder, another repository: back to working in it as it is.
   let worktreeFor = folder;
   $: if (folder !== worktreeFor) {
@@ -436,9 +450,11 @@
         const picked = await api.pickFolder(folder);
         if (!picked) return;
         path = (await brain.upsertProject(p.title, picked, p.slug)).folder;
-        dispatch("project");
       }
+      // Folder first so the draft runs there; the project event carries the
+      // same path so the header never reads the previous folder's project.
       dispatch("folder", { path });
+      dispatch("project", { path });
     } catch (e) {
       attachError = String(e);
     }
@@ -462,7 +478,7 @@
     const known = projects.find((p) => sameDir(p.folder, dir));
     if (!known) await brain.upsertProject(folderName(dir), dir);
     if (!sameDir(dir, folder)) dispatch("folder", { path: dir });
-    dispatch("project");
+    dispatch("project", { path: dir });
   }
 
   async function newProject() {
@@ -585,6 +601,55 @@
     </div>
   {/if}
 
+  {#if queue.length}
+    <!-- The queue is its own bar above the composer: numbered, in send
+         order, each with its own actions. Drag the grip to reorder. -->
+    <div class="queue-bar" role="list" aria-label="Queued messages">
+      <div class="queue-head">
+        <span class="queue-title">Queue · {queue.length}{queuePaused ? " · paused" : streaming ? " · sends in order" : ""}</span>
+        {#if queuePaused}<button class="queue-resume" on:click={() => dispatch("resumeQueue")}>Resume</button>{/if}
+      </div>
+      {#each queue as item, i (item.id)}
+        <div
+          class="queue-item"
+          class:open={expanded === item.id}
+          class:dragover={dragOver === i}
+          role="listitem"
+          transition:slide={{ duration: 160, easing: cubicOut }}
+          on:dragover|preventDefault={() => (dragOver = i)}
+          on:dragleave={() => (dragOver = -1)}
+          on:drop|preventDefault={() => queueDrop(i)}
+        >
+          <span
+            class="grip"
+            draggable="true"
+            role="button"
+            tabindex="0"
+            aria-label="Drag to reorder: {item.text}"
+            title="Drag to reorder"
+            on:dragstart={() => (dragId = item.id)}
+            on:dragend={() => ((dragId = null), (dragOver = -1))}
+            on:keydown={(e) => {
+              if (e.key === "ArrowUp" && i > 0) dispatch("moveHeld", { id: item.id, to: i - 1 });
+              if (e.key === "ArrowDown" && i < queue.length - 1) dispatch("moveHeld", { id: item.id, to: i + 1 });
+            }}
+          ><Icon name="more" size={12} /></span>
+          <span class="queue-num">{i + 1}</span>
+          <button class="queue-text" class:open={expanded === item.id} title={item.text} on:click={() => (expanded = expanded === item.id ? null : item.id)}>
+            <span>{item.text}</span>
+            {#if item.detail}<span class="queue-detail">{item.detail}</span>{/if}
+          </button>
+          <span class="queue-acts">
+            <button aria-label="Send now: {item.text}" use:tooltip={"Send now: stop the agent and send this"} on:click={() => dispatch("sendHeldNow", { id: item.id })}><Icon name="arrowUp" size={12} /></button>
+            <button aria-label="Side task: {item.text}" use:tooltip={"Side task: run it now, beside this session"} on:click={() => dispatch("sideHeld", { id: item.id })}><Icon name="fork" size={12} /></button>
+            <button aria-label="Edit: {item.text}" use:tooltip={"Edit"} on:click={() => dispatch("unhold", { id: item.id })}><Icon name="pencil" size={12} /></button>
+            <button aria-label="Drop: {item.text}" use:tooltip={"Drop this message"} on:click={() => dispatch("dropHeld", { id: item.id })}><Icon name="close" size={12} /></button>
+          </span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
   <div class="box" class:web role="group" aria-label="Composer" on:dragover|preventDefault on:drop|preventDefault={onDrop}>
     {#if webOpen}
       <div class="web-suggest" class:below={hero}>
@@ -600,22 +665,6 @@
         {/each}
         {#each atItems as item, i (item)}
           <button class="mono" class:on={i === atIndex} on:click={() => pickMention(item)}>{item}</button>
-        {/each}
-      </div>
-    {/if}
-
-    {#if queue.length}
-      <div class="held-list">
-        {#each queue as item (item.id)}
-          <div class="held" transition:slide={{ duration: 160, easing: cubicOut }}>
-            <!-- Waits its turn; or now, or beside this session, or back to edit. -->
-            <span class="held-text" title={`${item.text}\n\n${streaming ? "Sends when the agent is done" : "Send now to run it"}`}>{item.text}</span>
-            <span class="held-acts">
-              <button aria-label="Send now: {item.text}" use:tooltip={"Send now: stop the agent and send this"} on:click={() => dispatch("sendHeldNow", { id: item.id })}><Icon name="arrowUp" size={12} /></button>
-              <button aria-label="Side task: {item.text}" use:tooltip={"Side task: run it now, beside this session"} on:click={() => dispatch("sideHeld", { id: item.id })}><Icon name="fork" size={12} /></button>
-              <button aria-label="Edit: {item.text}" use:tooltip={"Edit"} on:click={() => dispatch("unhold", { id: item.id })}><Icon name="pencil" size={12} /></button>
-            </span>
-          </div>
         {/each}
       </div>
     {/if}
@@ -712,7 +761,6 @@
         bind:this={permBtn}
         class="ctl"
         class:open={permOpen}
-        class:warn={permission === "full"}
         use:tooltip={perm.desc}
         aria-haspopup="menu"
         aria-expanded={permOpen}
@@ -873,7 +921,7 @@
     backdrop-filter: var(--glass-strong-blur);
     border: var(--glass-hairline);
     border-radius: var(--radius-lg);
-    box-shadow: var(--glass-shadow);
+    box-shadow: none;
   }
   .row {
     display: flex;
@@ -1038,9 +1086,6 @@
   .under :global(.ctl:disabled) {
     cursor: default;
   }
-  .ctl.warn {
-    color: var(--warn);
-  }
   .ctl.on :global(svg) {
     color: var(--accent);
   }
@@ -1055,13 +1100,133 @@
     min-width: 4px;
   }
 
-  .held-list {
+  /* The queue bar: its own row above the composer, one card per
+     waiting message in send order. The text folds to two lines until
+     opened, so items stay distinguishable without growing the box. */
+  .queue-bar {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    max-height: 118px;
-    margin: 2px 2px 6px;
-    overflow: auto;
+    max-height: 220px;
+    margin: 0 0 8px;
+    overflow-y: auto;
+  }
+  .queue-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px;
+  }
+  .queue-title {
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .queue-resume {
+    margin-left: auto;
+    padding: 2px 10px;
+    background: var(--text);
+    border: none;
+    border-radius: 999px;
+    color: var(--bg);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .queue-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 6px 4px 6px 2px;
+    background: var(--glass-strong-bg);
+    -webkit-backdrop-filter: var(--glass-strong-blur);
+    backdrop-filter: var(--glass-strong-blur);
+    border: var(--glass-hairline);
+    border-radius: var(--radius);
+  }
+  .queue-item.dragover {
+    border-color: var(--accent);
+  }
+  .grip {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 22px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    cursor: grab;
+  }
+  .grip:active {
+    cursor: grabbing;
+  }
+  .queue-num {
+    flex: none;
+    min-width: 16px;
+    padding-top: 3px;
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    color: var(--muted);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .queue-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: var(--fs-sm);
+    text-align: left;
+    cursor: pointer;
+  }
+  .queue-text > span:first-child {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .queue-text.open > span:first-child {
+    display: block;
+  }
+  .queue-detail {
+    font-size: var(--fs-xs);
+    color: var(--muted);
+  }
+  .queue-acts {
+    flex: none;
+    display: inline-flex;
+    gap: 2px;
+  }
+  .queue-acts button {
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .queue-acts button:hover {
+    background: var(--hover);
+    color: var(--text);
   }
   .held {
     display: flex;
@@ -1076,9 +1241,6 @@
     color: var(--muted);
     font-size: var(--fs-sm);
   }
-  .held-list .held {
-    margin: 0;
-  }
   .held-text {
     flex: 1;
     min-width: 0;
@@ -1086,18 +1248,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--text);
-  }
-  .held-acts {
-    display: inline-flex;
-    flex: none;
-    gap: 8px;
-  }
-  .held .held-acts button {
-    width: 22px;
-    height: 22px;
-  }
-  .held .held-acts button:hover {
-    background: var(--hover);
   }
   .held button {
     width: 18px;

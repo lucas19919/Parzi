@@ -25,11 +25,8 @@ export const MAX_HELD = 8;
 
 const KEY = "parzi.held.v1";
 
-let seq = 0;
-
 export function heldId(): string {
-  seq += 1;
-  return `h${seq}`;
+  return `h${Date.now().toString(36)}${Math.floor(Math.random() * 0xffffff).toString(36)}`;
 }
 
 export function heldLabel(item: { text: string; quotes: { title: string }[] }): string {
@@ -91,6 +88,23 @@ export function putFront(queue: HoldQueue, sid: string, item: HeldItem): HoldQue
   const list = queue[sid] ?? [];
   if (list.some((entry) => entry.id === item.id)) return queue;
   return { ...queue, [sid]: [item, ...list] };
+}
+
+/** Drop one queued message without touching the rest. */
+export function dropId(queue: HoldQueue, sid: string, id: string): HoldQueue {
+  const list = queue[sid];
+  if (!list?.some((item) => item.id === id)) return queue;
+  return write(queue, sid, list.filter((entry) => entry.id !== id));
+}
+
+/** Move one queued message to position `to` (clamped), keeping the rest. */
+export function moveId(queue: HoldQueue, sid: string, id: string, to: number): HoldQueue {
+  const list = queue[sid];
+  const at = list?.findIndex((item) => item.id === id) ?? -1;
+  if (!list || at < 0) return queue;
+  const rest = list.filter((entry) => entry.id !== id);
+  const clamped = Math.max(0, Math.min(to, rest.length));
+  return write(queue, sid, [...rest.slice(0, clamped), list[at], ...rest.slice(clamped)]);
 }
 
 /** The server continued this session under another id. The queue follows. */

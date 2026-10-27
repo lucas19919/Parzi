@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { enqueue, heldLabel, moveHeld, putFront, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "../src/lib/held.ts";
+import { dropId, enqueue, heldLabel, moveHeld, moveId, putFront, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "../src/lib/held.ts";
 
 const item = (text: string, extra: Partial<HeldItem> = {}): Omit<HeldItem, "id"> & { id?: string } => ({
   tab: "tab",
@@ -79,4 +79,26 @@ test("a session that continues under a new id keeps its queue", () => {
 test("a message that is only quoted plan items still has a label", () => {
   assert.equal(heldLabel({ text: "  ", quotes: [{ title: "Ship the queue" }, { title: "Add a test" }] }), "Ship the queue, Add a test");
   assert.equal(heldLabel({ text: "Fix the omnibar", quotes: [{ title: "ignored" }] }), "Fix the omnibar");
+});
+
+test("dropping one queued message leaves the rest in order", () => {
+  let queue: HoldQueue = {};
+  queue = enqueue(queue, "s", item("first", { id: "a" })).queue;
+  queue = enqueue(queue, "s", item("second", { id: "b" })).queue;
+  queue = enqueue(queue, "s", item("third", { id: "c" })).queue;
+  queue = dropId(queue, "s", "b");
+  assert.deepEqual(queue.s.map((entry) => entry.id), ["a", "c"]);
+  assert.equal(dropId(queue, "s", "missing"), queue);
+});
+
+test("reordering clamps to the ends and leaves others in order", () => {
+  let queue: HoldQueue = {};
+  queue = enqueue(queue, "s", item("first", { id: "a" })).queue;
+  queue = enqueue(queue, "s", item("second", { id: "b" })).queue;
+  queue = enqueue(queue, "s", item("third", { id: "c" })).queue;
+  queue = moveId(queue, "s", "c", 0);
+  assert.deepEqual(queue.s.map((entry) => entry.id), ["c", "a", "b"]);
+  queue = moveId(queue, "s", "a", 99);
+  assert.deepEqual(queue.s.map((entry) => entry.id), ["c", "b", "a"]);
+  assert.equal(moveId(queue, "s", "missing", 0), queue);
 });

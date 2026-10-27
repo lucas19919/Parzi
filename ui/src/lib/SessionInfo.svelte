@@ -16,6 +16,7 @@
   import { activity } from "./activity";
   import { folderName } from "./tabs";
   import { tooltip } from "./tooltip";
+  import { mdHtml, richReady } from "./md";
 
   export let session = "";
   export let project = "";
@@ -40,8 +41,43 @@
   export let questions: Question[] = [];
   // The plan checklist is in the thread already.
   export let planInline = false;
+  // A markdown document pinned beside the thread, if one was opened here.
+  // It renders as a card on top of the column: no mode switch, Info stays
+  // visible below. Null when nothing is pinned.
+  export let doc: { title: string; content: string; version: number } | null = null;
+  // The column width, owned by App (persisted there). The grip dispatches
+  // resize while dragging.
+  export let width = 264;
 
-  const dispatch = createEventDispatcher<{ openSession: { id: string }; openUrl: { url: string }; compact: void; plan: void }>();
+  const dispatch = createEventDispatcher<{
+    openSession: { id: string };
+    openUrl: { url: string };
+    compact: void;
+    plan: void;
+    openDoc: void;
+    closeDoc: void;
+    resize: { width: number };
+  }>();
+
+  // Drag the left edge to resize. Pointer capture keeps the drag alive
+  // outside the grip; clamp keeps the thread readable on both ends.
+  let dragging = false;
+  function startResize(e: PointerEvent) {
+    dragging = true;
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+  }
+  function onResize(e: PointerEvent) {
+    if (!dragging) return;
+    const aside = (e.currentTarget as HTMLElement).closest(".info") as HTMLElement | null;
+    const rect = aside?.getBoundingClientRect();
+    // Fall back to window math when the aside isn't laid out yet.
+    const next = rect ? rect.right - e.clientX : window.innerWidth - e.clientX - 16;
+    dispatch("resize", { width: Math.round(Math.min(520, Math.max(220, next))) });
+  }
+  function endResize() {
+    dragging = false;
+  }
 
   $: pct = contextLimit > 0 ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : 0;
 
@@ -78,9 +114,11 @@
   $: busy = helpers.filter((h) => running.has(h.id)).length;
 
   $: plan = $planState.project === project ? $planState.plan : null;
+  $: planError = $planState.project === project ? $planState.error : "";
   $: limits = $board.find((b) => b.provider === provider)?.usage ?? [];
   const kTok = (n: number) => (n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${+(n / 1_000).toFixed(1)}k` : String(n));
   $: planCount = plan ? progress(deriveItems(plan, { project, threads, running, waiting: new Map(), prs: $planState.prs, activity: $activity })) : null;
+  $: planAside = planError ? "Unreadable" : planInline ? "Shown" : planCount ? `${planCount.done} of ${planCount.total}` : "";
 
   onMount(() => {
     const onFocus = () => void loadGit();
@@ -95,7 +133,31 @@
   });
 </script>
 
-<aside class="info" aria-label="Session">
+<aside class="info" aria-label="Session" style="width: {width}px">
+  <div
+    class="grip"
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Resize session column"
+    title="Drag to resize"
+    on:pointerdown={startResize}
+    on:pointermove={onResize}
+    on:pointerup={endResize}
+    on:pointercancel={endResize}
+  />
+  {#if doc}
+    <InfoCard id="doc" title={doc.version > 1 ? `${doc.title} · v${doc.version}` : doc.title}>
+      <svelte:fragment slot="aside">
+        <span class="doc-acts">
+          <button class="doc-btn" use:tooltip={"Open in its own tab"} aria-label="Open document in its own tab" on:click={() => dispatch("openDoc")}><Icon name="external" size={12} /></button>
+          <button class="doc-btn" use:tooltip={"Unpin"} aria-label="Unpin document" on:click={() => dispatch("closeDoc")}><Icon name="close" size={12} /></button>
+        </span>
+      </svelte:fragment>
+      {#key `${doc.title}:${doc.version}`}
+        <div class="doc msg">{@html mdHtml(doc.content, $richReady)}</div>
+      {/key}
+    </InfoCard>
+  {/if}
   <InfoCard id="env" title="Environment" foldedAside>
     <svelte:fragment slot="aside">{remoteHost ? "Remote" : "Local"}</svelte:fragment>
     <div class="line">
@@ -169,13 +231,20 @@
     </InfoCard>
   {/if}
 
-  {#if plan && planCount && !planInline}
+  {#if (plan && planCount) || planError}
     <InfoCard id="plan" title="Project plan">
-      <svelte:fragment slot="aside">{planCount.done} of {planCount.total}</svelte:fragment>
-      <button class="line row plan-row" on:click={() => dispatch("plan")}>
-        <Icon name="plan" size={12} />
-        <span class="v">{plan.title || "Plan"}</span>
-      </button>
+      <svelte:fragment slot="aside">{planAside}</svelte:fragment>
+      {#if plan && planCount}
+        <button class="line row plan-row" use:tooltip={planInline ? "Hide the plan checklist" : "Show the plan checklist"} on:click={() => dispatch("plan")}>
+          <Icon name="plan" size={12} />
+          <span class="v">{planInline ? "Hide plan" : plan.title || "Plan"}</span>
+        </button>
+      {:else}
+        <button class="line row plan-row" use:tooltip={"Show why the plan can't be read"} on:click={() => dispatch("plan")}>
+          <Icon name="plan" size={12} />
+          <span class="v">Plan unreadable</span>
+        </button>
+      {/if}
     </InfoCard>
   {/if}
 
@@ -196,15 +265,18 @@
 </aside>
 
 <style>
-  /* Cards that float beside the session, not a panel inside it. */
+  /* Cards that float beside the session, not a panel inside it. The
+     width rides inline (App owns it, persisted); the grip drags the left
+     edge. */
   .info {
+    position: relative;
     flex: none;
-    width: 264px;
     min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 8px;
     margin: 0 8px 0 0;
+    padding-left: 6px;
     padding-bottom: 12px;
     overflow-y: auto;
     scrollbar-width: none;
@@ -215,6 +287,61 @@
       opacity: 0;
       transform: translateX(8px);
     }
+  }
+  .grip {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 8px;
+    margin-left: -2px;
+    cursor: ew-resize;
+    touch-action: none;
+  }
+  .grip::after {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: 12px;
+    bottom: 12px;
+    width: 2px;
+    border-radius: 2px;
+    background: transparent;
+    transition: background 120ms ease;
+  }
+  .grip:hover::after {
+    background: color-mix(in srgb, var(--text) 18%, transparent);
+  }
+  .doc-acts {
+    display: inline-flex;
+    gap: 2px;
+  }
+  .doc-btn {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .doc-btn:hover {
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    color: var(--text);
+  }
+  .doc {
+    min-height: 0;
+    max-height: 46vh;
+    overflow-y: auto;
+    padding: 0 2px 12px;
+    font-size: var(--fs-md);
+    line-height: 1.55;
+    overflow-wrap: anywhere;
   }
   .line {
     display: flex;

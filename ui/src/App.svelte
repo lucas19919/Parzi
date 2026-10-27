@@ -46,7 +46,7 @@
   import { nameOf } from "./lib/providerRows";
   import { follower } from "./lib/follow";
   import { draftKey, flushDrafts, loadDrafts, sameDraft, saveDrafts, withDraft } from "./lib/drafts";
-import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, saveHeld, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
+import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, moveId, putFront, saveHeld, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
   import { addNotification, dropNotification, markSessionRead, type NotificationItem } from "./lib/notificationStore";
   import { covered } from "./lib/overlay";
   import { tooltip } from "./lib/tooltip";
@@ -123,7 +123,19 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
   // works queue here, one turn each, and the oldest goes out when it ends.
   let held: HoldQueue = loadHeld();
   $: saveHeld(held);
-  $: heldRows = (tab.kind === "session" && shown ? held[shown] ?? [] : []).map((item) => ({ id: item.id, text: heldLabel(item) }));
+  // A stopped queue stays listed until resumed: nothing goes out on its own.
+  // Pauses with no queue left (drained, dropped, session gone) clear
+  // themselves so Resume never shows for nothing.
+  let queuePaused = new Set<string>();
+  $: if ([...queuePaused].some((sid) => !(held[sid]?.length))) {
+    queuePaused = new Set([...queuePaused].filter((sid) => held[sid]?.length));
+  }
+  $: heldRows = (tab.kind === "session" && shown ? held[shown] ?? [] : []).map((item) => ({
+    id: item.id,
+    text: heldLabel(item),
+    detail: [item.files.length ? `${item.files.length} file${item.files.length === 1 ? "" : "s"}` : "", item.quotes.length ? `${item.quotes.length} quote${item.quotes.length === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · "),
+  }));
+  $: queueIsPaused = !!shown && queuePaused.has(shown);
   // A send we have started but the server has not settled. A status refresh
   // must not clear `running` during it, or the next keystroke starts a second run.
   const inflight = new Set<string>();
@@ -239,16 +251,24 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
 
   let switcherOpen = false;
   // The column beside a session: open unless you closed it, and only where
-  // the window has room for it.
+  // the window has room for it. Its width drags on the left edge and
+  // persists across restarts.
   let infoOpen = true;
   try {
     infoOpen = localStorage.getItem("parzi.info.open") !== "0";
   } catch {}
+  let infoWidth = 264;
+  try {
+    const w = parseInt(localStorage.getItem("parzi.info.width") ?? "", 10);
+    if (w >= 220 && w <= 520) infoWidth = w;
+  } catch {}
   let innerWidth = 1280;
-  // The plan checklist for a session that works on no item, asked for from
-  // the column; it resets when another session shows.
-  let planForced = false;
-  let planForcedFor: string | null = null;
+  // Sessions where the project plan checklist is shown inline in the
+  // thread. Per session (not global) so opening it in one thread does
+  // not leak it into every other thread of the same project, and the
+  // X / sidebar toggle always hides just this session's copy.
+  let planForced: Set<string> = new Set();
+  $: planForcedNow = !!shown && planForced.has(shown);
   let planInline = false;
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
@@ -407,10 +427,6 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
   $: planTitle = project && sameSlug(project.slug, planProject) ? project.title : "";
   $: if (hasSession) watchPlan(planProject, folder);
   $: infoShown = hasSession && infoOpen && innerWidth >= 900;
-  $: if (shown !== planForcedFor) {
-    planForcedFor = shown;
-    planForced = false;
-  }
 
   // The recent sessions column on the left, beside session tabs, when
   // there is room for it next to the session (and the right column).
@@ -418,7 +434,7 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
   try {
     railOpen = localStorage.getItem("parzi.recent.open") !== "0";
   } catch {}
-  $: railFits = innerWidth >= (infoShown ? 1180 : 900);
+  $: railFits = innerWidth >= (infoShown ? 900 + infoWidth : 900);
   $: railShown = tab.kind === "session" && railOpen && railFits;
   function toggleRail(open = !railShown) {
     railOpen = open;
@@ -436,14 +452,37 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
     if (open && hasSession && innerWidth < 900) toast("Widen the window to see the session column");
   }
 
-  // Agents ask for "the plan": the checklist shows in the thread.
-  function showPlan() {
-    planForced = true;
-    if (!hasSession) toast("Open a session in a project to see its plan");
-    else void tick().then(() => scrollEl?.querySelector(".plan")?.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" }));
+  function resizeInfo(e: { detail: { width: number } }) {
+    infoWidth = Math.min(520, Math.max(220, Math.round(e.detail.width)));
+    try {
+      localStorage.setItem("parzi.info.width", String(infoWidth));
+    } catch {}
   }
 
-  // Clicking a plan item quotes it into this tab's composer.
+  // Agents ask for "the plan": the checklist shows in this session's
+  // thread. A second click (or the checklist's own X) hides it again.
+  function showPlan() {
+    if (!hasSession) {
+      toast("Open a session in a project to see its plan");
+      return;
+    }
+    if (!shown) return;
+    const next = new Set(planForced);
+    if (next.has(shown)) next.delete(shown);
+    else next.add(shown);
+    planForced = next;
+    if (next.has(shown)) void tick().then(() => scrollEl?.querySelector(".plan")?.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" }));
+  }
+
+  function hidePlan() {
+    if (!shown) return;
+    const next = new Set(planForced);
+    next.delete(shown);
+    planForced = next;
+  }
+
+  // Clicking a plan item quotes it into this tab's composer; clicking a
+  // quoted one takes it back out.
   function quoteItem(q: PlanQuote) {
     const list = comp.quotes ?? [];
     const next = addQuote(list, q);
@@ -452,6 +491,11 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
     if (comp.mode === "search") comp.mode = "build";
     comp = comp;
     omnibar?.focus();
+  }
+
+  function unquoteItem(q: PlanQuote) {
+    comp.quotes = (comp.quotes ?? []).filter((x) => !(x.id === q.id && sameSlug(x.project, q.project)));
+    comp = comp;
   }
 
   function useExample(text: string) {
@@ -711,10 +755,55 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
     selectTab(t.id);
   }
 
-  // An artifact read on its own: one tab per artifact, under its session;
-  // a newer version replaces what the tab shows.
-  function openArtifact(doc: ArtifactDoc) {
+  // A markdown document pinned as a card on top of the session's side
+  // column. New versions replace in place; opening one always reveals it
+  // (no tab switch: Info stays visible below).
+  let pinnedDocs: Record<string, ArtifactDoc> = {};
+  $: pinnedDoc = shown ? (pinnedDocs[shown] ?? null) : null;
+
+  function closePinnedDoc() {
+    if (!shown) return;
+    if (!(shown in pinnedDocs)) return;
+    const { [shown]: _, ...rest } = pinnedDocs;
+    pinnedDocs = rest;
+  }
+
+  // A vault note referenced in the thread: read it and pin it as this
+  // session's side-column card. Same path re-pinned bumps the version so
+  // the card re-renders with fresh content. Outside a session (or when the
+  // note can't be read) it opens in the Brain instead.
+  async function pinNote(path: string) {
     const group = tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null);
+    if (!group) {
+      openBrainNote(path);
+      return;
+    }
+    let content: string | null = null;
+    try {
+      content = await brain.read(path);
+    } catch {
+      content = null;
+    }
+    if (content == null) {
+      openBrainNote(path);
+      return;
+    }
+    const prev = pinnedDocs[group];
+    const version = prev && prev.id === path ? prev.version + 1 : 1;
+    const title = path.split("/").pop()?.replace(/\.md$/i, "") || path;
+    pinnedDocs = { ...pinnedDocs, [group]: { id: path, title, kind: "markdown", content, version } };
+    if (!infoShown) toggleInfo(true);
+  }
+
+  // A markdown read pins beside its session; anything else opens a tab.
+  // `forceTab` opens the full tab even for markdown (the card's pop-out).
+  function openArtifact(doc: ArtifactDoc, forceTab = false) {
+    const group = tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null);
+    if (doc.kind === "markdown" && group && !forceTab) {
+      pinnedDocs = { ...pinnedDocs, [group]: doc };
+      if (!infoShown) toggleInfo(true);
+      return;
+    }
     const existing = tabs.find((t) => t.kind === "artifact" && t.doc?.id === doc.id && (t.group ?? null) === group);
     if (existing) {
       patchTab(existing.id, { doc, title: doc.title });
@@ -1022,14 +1111,6 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
     if (next.item) restore(sid, next.item);
   }
 
-  // Stop hands the whole queue back, oldest first, so none of it goes out
-  // when the killed run reports its end.
-  function restoreAll(sid: string) {
-    const next = takeAll(held, sid);
-    held = next.queue;
-    for (const h of [...next.items].reverse()) restore(sid, h);
-  }
-
   // The oldest queued message goes out. Taken before any await, so a second
   // "done" cannot send it twice or leave the composer marked busy with nothing to send.
   // `given`: already taken off the queue (Send now).
@@ -1091,7 +1172,7 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
   // The run we just started may already have finished (a short turn, a
   // missed "done"). The next queued message goes out only then.
   async function drainIfIdle(sid: string) {
-    if (inflight.has(sid) || !(held[sid]?.length)) return;
+    if (inflight.has(sid) || queuePaused.has(sid) || !(held[sid]?.length)) return;
     let status = "";
     try {
       const [m] = await api.getThread(sid);
@@ -1111,11 +1192,28 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
     if (!shown || !running.has(shown)) return;
     const id = shown;
     release(id);
-    restoreAll(id);
+    // The queue stays listed, paused, in order: nothing goes out when the
+    // killed run reports its end. Resume sends from the top. No queue, no
+    // pause: an empty stop leaves nothing to resume.
+    if ((held[id]?.length ?? 0) > 0) queuePaused = new Set(queuePaused).add(id);
     clearLive();
     await reload();
     void refreshThreads();
     await stopSession(id);
+  }
+
+  function dropQueued(sid: string, itemId: string) {
+    held = dropId(held, sid, itemId);
+    if (!(held[sid]?.length)) queuePaused = new Set([...queuePaused].filter((x) => x !== sid));
+  }
+
+  function moveQueued(sid: string, itemId: string, to: number) {
+    held = moveId(held, sid, itemId, to);
+  }
+
+  function resumeQueue(sid: string) {
+    queuePaused = new Set([...queuePaused].filter((x) => x !== sid));
+    void drainIfIdle(sid);
   }
 
   // This queued message, now. Taken off the queue first, so the stopped
@@ -1423,6 +1521,12 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
       release(id);
       inflight.delete(id);
       held = takeAll(held, id).queue;
+      queuePaused = new Set([...queuePaused].filter((x) => x !== id));
+      queuePaused = queuePaused;
+      if (pinnedDocs[id]) {
+        const { [id]: _, ...rest } = pinnedDocs;
+        pinnedDocs = rest;
+      }
       const open = tabs.filter((t) => t.sessionId === id).map((t) => t.id);
       for (const tid of open) closeTab(tid);
       void refreshThreads();
@@ -1534,9 +1638,10 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
       release(e.session);
       for (const k of [...approvals, ...questions, ...requests].filter((x) => x.session === e.session).map((x) => x.key)) settle(k);
       void refreshThreads();
-      // The oldest queued message goes out after a finished run. An error
-      // or a pause leaves the rest queued: the person sends or edits them.
-      const next = e.kind === "done" && !inflight.has(e.session) && !!held[e.session]?.length;
+      // The oldest queued message goes out after a finished run. A stopped
+      // queue stays put until resumed. An error or a pause leaves the rest
+      // queued: the person sends or edits them.
+      const next = e.kind === "done" && !inflight.has(e.session) && !queuePaused.has(e.session) && !!held[e.session]?.length;
       if (e.session === shown) {
         if (next) clearLive();
         else void reload(clearLive);
@@ -1738,6 +1843,14 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
       if (doc?.content) openArtifact(doc);
     };
     document.addEventListener("parzi:open-artifact", onOpenArtifact);
+    // A vault note referenced in the thread pins into this session's side
+    // column (Antigravity-style): the thread stays put. Outside a session
+    // it falls back to opening the Brain.
+    const onPinNote = (e: Event) => {
+      const path = (e as CustomEvent<string>).detail ?? "";
+      if (path) void pinNote(path);
+    };
+    document.addEventListener("parzi:pin-note", onPinNote);
     const unClear = provideClearSessions(clearFinishedSessions);
     api
       .getConfig()
@@ -1792,6 +1905,7 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
       document.removeEventListener("parzi:default-mode", onDefaultMode);
       document.removeEventListener("parzi:open-page", onOpenPage);
       document.removeEventListener("parzi:open-artifact", onOpenArtifact);
+      document.removeEventListener("parzi:pin-note", onPinNote);
       unRun.then((f) => f()).catch(() => {});
       unDesk.then((f) => f()).catch(() => {});
       unRemote.then((f) => f()).catch(() => {});
@@ -1958,9 +2072,12 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
                     {running}
                     {approvals}
                     questions={asks}
-                    force={planForced}
+                    quotes={comp.quotes ?? []}
+                    force={planForcedNow}
                     bind:visible={planInline}
                     on:quote={(e) => quoteItem(e.detail)}
+                    on:unquote={(e) => unquoteItem(e.detail)}
+                    on:close={hidePlan}
                   />
                 </Thread>
               </div>
@@ -1983,6 +2100,11 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
               {approvals}
               questions={asks}
               {planInline}
+              doc={pinnedDoc}
+              width={infoWidth}
+              on:resize={resizeInfo}
+              on:openDoc={() => pinnedDoc && openArtifact(pinnedDoc, true)}
+              on:closeDoc={closePinnedDoc}
               tokensIn={meta?.tokens_in ?? 0}
               tokensOut={meta?.tokens_out ?? 0}
               costUsd={meta?.cost_usd ?? 0}
@@ -1999,7 +2121,7 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
       <div
         class="composer"
         class:docked={hasSession}
-        style:--shift="{infoShown ? 136 : 0}px"
+        style:--shift="{infoShown ? Math.round(infoWidth / 2) : 0}px"
         bind:clientHeight={dockHeight}
       >
         <Omnibar
@@ -2031,8 +2153,12 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
           hero={!hasSession}
           {project}
           queue={heldRows}
+          queuePaused={queueIsPaused}
           on:send={send}
           on:unhold={(e) => shown && unhold(shown, e.detail.id)}
+          on:dropHeld={(e) => shown && dropQueued(shown, e.detail.id)}
+          on:moveHeld={(e) => shown && moveQueued(shown, e.detail.id, e.detail.to)}
+          on:resumeQueue={() => shown && resumeQueue(shown)}
           on:side={() => void sideTask(false)}
           on:sideHeld={(e) => void sideTask(true, e.detail.id)}
           on:sendHeldNow={(e) => void sendHeldNow(e.detail.id)}
@@ -2042,7 +2168,7 @@ import { enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, putFront, 
           on:command={(e) => onCommand(e.detail.name)}
           on:unavailable={() => openSettings(remoteOn ? "connections" : "providers")}
           on:folder={(e) => patchTab(tab.id, { cwd: e.detail.path })}
-          on:project={() => loadProject(folder)}
+          on:project={(e) => loadProject(e.detail.path ?? tab.cwd ?? folder)}
           on:brain={openBrain}
         />
       </div>

@@ -107,7 +107,7 @@
   }
 
   async function docClick(e: MouseEvent) {
-    if (await handleLinkClick(e)) return;
+    if (await handleLinkClick(e, "", { pin: true })) return;
     // In the thread, the thread handles code blocks; alone, this does.
     if (reader) codeBlockClick(e.target as HTMLElement);
   }

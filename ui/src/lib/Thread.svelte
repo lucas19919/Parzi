@@ -604,7 +604,8 @@ ${e.text}` : e.text;
       viewImage(el.currentSrc || el.src, el.alt);
       return;
     }
-    if (await handleLinkClick(e, folder)) return;
+    // Note links pin into the session's side column; the Brain tab stays put.
+    if (await handleLinkClick(e, folder, { pin: true })) return;
     codeBlockClick(el);
   }
 </script>

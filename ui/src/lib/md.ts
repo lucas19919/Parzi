@@ -5,6 +5,7 @@ import { toast } from "./toast";
 import { splitSegments, type Segment } from "./segments";
 import { reportMarkdown } from "./mdReport";
 import { mathAt } from "./mdMath";
+import { vaultRefs } from "./linkRules";
 
 // Rich renderers (KaTeX + highlight.js) load on first use, off the
 // startup path. Until then code renders plain and math renders as
@@ -297,6 +298,58 @@ md.renderer.rules.parzi_front = (tokens, idx) => {
     .join("");
   return `<dl class="md-front">${rows}</dl>`;
 };
+
+// Bare vault notes named in prose ("updated projects/acme/GOALS.md") link
+// like Antigravity's file chips: no explicit [label](href) needed. Runs on
+// the token stream so code spans, fences and existing links are untouched
+// (only bare text tokens outside link_open/link_close are split).
+md.core.ruler.push("parzi-file-links", (state) => {
+  for (const block of state.tokens) {
+    if (block.type !== "inline" || !block.children) continue;
+    const kids = block.children;
+    let depth = 0;
+    for (let i = 0; i < kids.length; i++) {
+      const tok = kids[i];
+      if (tok.type === "link_open") {
+        depth++;
+        continue;
+      }
+      if (tok.type === "link_close") {
+        depth = Math.max(0, depth - 1);
+        continue;
+      }
+      if (tok.type !== "text" || depth > 0) continue;
+      const refs = vaultRefs(tok.content);
+      if (!refs.length) continue;
+      const nodes: typeof kids = [];
+      let at = 0;
+      for (const r of refs) {
+        if (r.index > at) {
+          const plain = new state.Token("text", "", 0);
+          plain.content = tok.content.slice(at, r.index);
+          nodes.push(plain);
+        }
+        const open = new state.Token("link_open", "a", 1);
+        open.attrs = [
+          ["href", r.path],
+          ["class", "file-ref"],
+        ];
+        const label = new state.Token("text", "", 0);
+        label.content = r.path;
+        const close = new state.Token("link_close", "a", -1);
+        nodes.push(open, label, close);
+        at = r.index + r.length;
+      }
+      if (at < tok.content.length) {
+        const tail = new state.Token("text", "", 0);
+        tail.content = tok.content.slice(at);
+        nodes.push(tail);
+      }
+      kids.splice(i, 1, ...nodes);
+      i += nodes.length - 1;
+    }
+  }
+});
 
 reportMarkdown(md);
 
