@@ -22,8 +22,8 @@
   export let input = "";
   export let model = "";
   export let effort = "medium";
-  // Never defaults to full access: App seeds it from Settings' default.
-  export let permission = "supervised";
+  // New sessions start on full: App seeds it from Settings' default.
+  export let permission = "full";
   // Settings' default_mode; options it would ignore are shown disabled.
   export let policy = "";
   // "search" talks to the web; "build" to the agent, which does everything.

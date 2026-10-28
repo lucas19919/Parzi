@@ -329,7 +329,7 @@ const board = [
 const config = {
   version: 1,
   providers: { claude: { enabled: true, default_model: "claude/claude-opus-5-5" }, codex: { enabled: true } },
-  lanes: { default_mode: "ask", default_allowed_tools: [] },
+  lanes: { default_mode: "full", default_allowed_tools: [] },
   mcp: {
     servers: {
       github: { command: "", url: "https://api.githubcopilot.com/mcp/", auth: "gh", enabled: true, timeout_ms: 60000 },

@@ -22,7 +22,7 @@ function omnibarProps(variant: number, extra: Record<string, unknown>) {
     input: "",
     model: "",
     effort: "medium",
-    permission: "supervised",
+    permission: "full",
     mode: variant === 2 ? "search" : "build",
     attachments: [],
     folder: "C:/demo/parzi",

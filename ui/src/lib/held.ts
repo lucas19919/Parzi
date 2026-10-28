@@ -134,7 +134,7 @@ function cleanItem(raw: Partial<HeldItem> | null): HeldItem | null {
     files: Array.isArray(raw.files) ? raw.files.filter((f): f is string => typeof f === "string") : [],
     model: typeof raw.model === "string" ? raw.model : "",
     effort: typeof raw.effort === "string" ? raw.effort : "medium",
-    mode: typeof raw.mode === "string" ? raw.mode : "supervised",
+    mode: typeof raw.mode === "string" ? raw.mode : "full",
     cwd: typeof raw.cwd === "string" ? raw.cwd : "",
     remote: raw.remote === true,
   };

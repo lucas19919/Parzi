@@ -112,8 +112,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   let model = "";
   let warmed = "";
-  // Sent as `mode` with every agent message. Starts from Settings'
-  // default (lanes.default_mode, loaded on mount); never full by default.
+  // Sent as `mode` with every agent message. Every session starts on
+  // full; an explicit "deny" in Settings is the only thing that locks it.
   let permission = permissionFor("");
   // Settings' default_mode: the floor the composer's choice cannot lift.
   let policy = "";

@@ -5,7 +5,7 @@
   import { permissionName } from "../pageRules";
   import { tooltip } from "../tooltip";
   import Switch from "./Switch.svelte";
-  import SegControl from "./SegControl.svelte";
+  import Slider from "./Slider.svelte";
   import { updateConfig } from "../config";
   import "./shared.css";
 
@@ -88,12 +88,6 @@
       } catch {}
       return false;
     }
-  }
-
-  // The composer's permission starts from this default; tell it.
-  async function pickMode(mode: string) {
-    if (!cfg) return;
-    if (await update((c) => (c.lanes.default_mode = mode))) document.dispatchEvent(new CustomEvent("parzi:default-mode", { detail: mode }));
   }
 
   async function toggleAds() {
@@ -193,19 +187,7 @@
 
   <div class="pref-section">
     <h3 class="section-title">Permissions</h3>
-
-    <div class="field-card">
-      <div class="field-info">
-        <span class="field-label">New sessions start on</span>
-        {#if cfg.lanes.default_mode === "deny"}<span class="field-hint">Agents never run commands or change files.</span>{/if}
-      </div>
-      <SegControl
-        label="New sessions start on"
-        options={[{ value: "ask", label: "Ask" }, { value: "auto", label: "Auto" }, { value: "deny", label: "Locked" }]}
-        value={cfg.lanes.default_mode === "auto" || cfg.lanes.default_mode === "deny" ? cfg.lanes.default_mode : "ask"}
-        on:pick={(e) => void pickMode(e.detail)}
-      />
-    </div>
+    <p class="section-desc">New sessions start on Full: agents run commands and change files without asking.</p>
 
     <div class="field-card">
       <div class="field-info">
@@ -222,13 +204,13 @@
   <div class="pref-section">
     <h3 class="section-title">Limits</h3>
     <div class="field-card">
-      <div class="field-info">
-        <span class="field-label">Agents at once</span>
-      </div>
-      <div class="slider-wrapper">
-        <input type="range" min="1" max="8" aria-label="Agents at once" bind:value={cfg.orchestrator.max_concurrent} on:change={(e) => update((c) => (c.orchestrator.max_concurrent = Number(e.currentTarget.value)))} />
-        <span class="slider-val">{cfg.orchestrator.max_concurrent}</span>
-      </div>
+      <Slider
+        label="Agents at once"
+        bind:value={cfg.orchestrator.max_concurrent}
+        min={1}
+        max={8}
+        on:input={(e) => update((c) => (c.orchestrator.max_concurrent = e.detail))}
+      />
     </div>
   </div>
 {/if}
@@ -293,11 +275,5 @@
   .forget:hover {
     background: var(--selected);
     color: var(--text);
-  }
-  .slider-wrapper { display: flex; align-items: center; gap: 10px; min-width: 180px; }
-  .slider-wrapper input[type="range"] { flex: 1; accent-color: var(--accent); }
-  .slider-val {
-    font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums;
-    width: 38px; text-align: right;
   }
 </style>
