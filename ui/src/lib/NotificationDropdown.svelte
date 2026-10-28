@@ -110,7 +110,6 @@
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
     z-index: 500;
     overflow: hidden;
     user-select: none;

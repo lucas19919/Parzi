@@ -55,9 +55,6 @@
   --glass-border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
   --glass-hairline: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
   --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  /* Theme-aware: dark themes get a deep drop, light themes a soft grey lift.
-     Kept tight: menus and popovers float, they never halo. */
-  --glass-shadow: 0 1px 2px color-mix(in srgb, var(--text) 10%, transparent), 0 8px 24px color-mix(in srgb, var(--text) 12%, transparent);
   /* Hover and selected fills for controls sitting on glass or wallpaper. */
   --hover: color-mix(in srgb, var(--text) 6%, transparent);
   --selected: color-mix(in srgb, var(--text) 10%, transparent);
@@ -91,9 +88,6 @@
   --fs-lg: 16px;
   --fs-xl: 18px;
   --fs-2xl: 22px;
-  /* One elevation for the whole window: menus, cards and the composer
-     share it, so nothing looks pasted from another app. */
-  --shadow: var(--glass-shadow);
 }
 
 * { box-sizing: border-box; }
@@ -154,13 +148,13 @@ input[type="color"] { background: transparent; border: 1px solid var(--line); bo
 .pop {
   position: fixed; z-index: 600; max-width: calc(100vw - 16px);
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg);
-  box-shadow: var(--shadow); overflow: hidden;
+  overflow: hidden;
 }
 /* lib/tooltip.ts */
 .tip {
   position: fixed; z-index: 2000; max-width: 280px; padding: 4px 8px; pointer-events: none;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); color: var(--text); font-size: var(--fs-sm); line-height: 1.4;
+  color: var(--text); font-size: var(--fs-sm); line-height: 1.4;
 }
 .tip[hidden] { display: none; }
 /* lib/viz/tip.ts: a chart's readout, the value first. */

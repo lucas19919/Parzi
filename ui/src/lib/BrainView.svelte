@@ -990,7 +990,6 @@
     background: var(--panel);
     border: 1px solid var(--accent);
     border-radius: var(--radius);
-    box-shadow: var(--shadow);
     color: var(--text);
     font-size: var(--fs-md);
     pointer-events: none;

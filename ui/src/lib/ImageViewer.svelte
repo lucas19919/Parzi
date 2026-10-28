@@ -51,7 +51,6 @@
     max-height: 100%;
     object-fit: contain;
     border-radius: var(--radius-lg);
-    box-shadow: var(--glass-shadow);
     cursor: default;
   }
   .x {

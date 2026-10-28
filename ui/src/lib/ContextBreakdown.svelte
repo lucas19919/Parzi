@@ -128,6 +128,7 @@
   .p {
     font-variant-numeric: tabular-nums;
     color: var(--muted);
+    white-space: nowrap;
   }
   .of {
     font-size: var(--fs-sm);
