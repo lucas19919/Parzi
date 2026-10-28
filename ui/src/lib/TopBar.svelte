@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
+  import type { IconName } from "./icons";
   import TabBar from "./TabBar.svelte";
   import WinControls from "./WinControls.svelte";
   import NotificationDropdown from "./NotificationDropdown.svelte";
@@ -27,7 +28,6 @@
     close: { id: string };
     move: { id: string; to: number };
     newTab: void;
-    search: void;
     settings: void;
     update: void;
     brain: void;
@@ -47,18 +47,17 @@
   $: setOverlay("topbar-menu", menuOpen || notiOpen);
   $: unreadCount = $notifications.filter((n) => !n.read).length;
 
-  const MENU = [
+  const MENU: { label: string; key: string; icon: IconName; img?: string; run: () => void }[] = [
     { label: "New session", key: "Ctrl+T", icon: "plus", run: () => dispatch("newTab") },
-    { label: "Search", key: "Ctrl+K", icon: "search", run: () => dispatch("search") },
     { label: "History", key: "Ctrl+H", icon: "clock", run: () => dispatch("history") },
     { label: "Brain", key: "Ctrl+B", icon: "brain", run: () => dispatch("brain") },
     { label: "Settings", key: "Ctrl+,", icon: "settings", run: () => dispatch("settings") },
-    { label: "Set up Parzi", key: "", icon: "spark", run: () => dispatch("setup") },
+    { label: "Set up Parzi", key: "", icon: "spark", img: "/favicon.svg", run: () => dispatch("setup") },
     { label: "Report a problem", key: "", icon: "alert", run: () => dispatch("report") },
-  ] as const;
+  ];
 
   function onDocClick(e: MouseEvent) {
-    if (!(e.target as HTMLElement).closest(".menu")) menuOpen = false;
+    if (!(e.target as HTMLElement).closest(".menuzone")) menuOpen = false;
     if (!(e.target as HTMLElement).closest(".noti-wrap")) notiOpen = false;
   }
 
@@ -72,9 +71,10 @@
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
+<div class="chrome">
 <header class="topbar" on:mousedown={startWindowDrag}>
   <div class="left">
-    <div class="menu">
+    <div class="menuzone">
       <button
         class="icon-btn"
         class:active={menuOpen}
@@ -86,37 +86,6 @@
         <Icon name="menu" />
         {#if $updateVersion}<span class="dot" />{/if}
       </button>
-      {#if menuOpen}
-        <div class="dropdown" role="menu" data-ui-list>
-          {#each MENU as item}
-            <button
-              class="menu-item"
-              role="menuitem"
-              on:click={() => {
-                menuOpen = false;
-                item.run();
-              }}
-            >
-              <Icon name={item.icon} />
-              <span class="label">{item.label}</span>
-              <span class="key">{item.key}</span>
-            </button>
-          {/each}
-          {#if $updateVersion}
-            <button
-              class="menu-item update"
-              role="menuitem"
-              on:click={() => {
-                menuOpen = false;
-                dispatch("update");
-              }}
-            >
-              <Icon name="arrowDown" />
-              <span class="label">Update to v{$updateVersion}</span>
-            </button>
-          {/if}
-        </div>
-      {/if}
     </div>
     {#if railable}
       <button
@@ -184,8 +153,46 @@
       <WinControls />
   </div>
 </header>
+{#if menuOpen}
+  <!-- The menu expands into the bar as its own row, never a floating popout. -->
+  <div class="menuzone menurow" role="menu" data-ui-list>
+    {#each MENU as item}
+      <button
+        class="opt"
+        role="menuitem"
+        on:click={() => {
+          menuOpen = false;
+          item.run();
+        }}
+      >
+        {#if item.img}<img class="fav" src={item.img} alt="" />{:else}<Icon name={item.icon} />{/if}
+        <span class="label">{item.label}</span>
+        {#if item.key}<span class="key">{item.key}</span>{/if}
+      </button>
+    {/each}
+    {#if $updateVersion}
+      <button
+        class="opt update"
+        role="menuitem"
+        on:click={() => {
+          menuOpen = false;
+          dispatch("update");
+        }}
+      >
+        <Icon name="arrowDown" />
+        <span class="label">Update to v{$updateVersion}</span>
+      </button>
+    {/if}
+  </div>
+{/if}
+</div>
 
 <style>
+  .chrome {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+  }
   /* 44px holds a 28px tab with 8px above it; the panels below start right
      under the bar, so the gap under the tab is the same 8px. */
   .topbar {
@@ -239,9 +246,6 @@
     background: var(--accent);
     border: 1.5px solid var(--bg);
   }
-  .menu {
-    position: relative;
-  }
   .icon-btn {
     position: relative;
     width: 28px;
@@ -266,9 +270,6 @@
     border-radius: 50%;
     background: var(--accent);
   }
-  .menu-item.update {
-    color: var(--accent);
-  }
   .icon-btn:hover {
     background: var(--hover);
     color: var(--text);
@@ -292,43 +293,49 @@
     line-height: 14px;
     text-align: center;
   }
-  .dropdown {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    width: 200px;
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
-    z-index: 500;
-  }
-  .menu-item {
+  /* The menu expands into the bar as its own row: one quiet strip of
+     options, never a floating popout. */
+  .menuzone.menurow {
     display: flex;
     align-items: center;
+    gap: 2px;
+    overflow-x: auto;
+    padding: 4px var(--gap);
+    border-bottom: 1px solid var(--line);
+  }
+  .opt {
+    display: inline-flex;
+    align-items: center;
     gap: 8px;
-    width: 100%;
-    padding: 6px 8px;
+    flex: none;
+    padding: 5px 10px;
     background: transparent;
     border: none;
     border-radius: var(--radius);
-    color: var(--text);
+    color: var(--muted);
+    font: inherit;
     font-size: var(--fs-sm);
-    text-align: left;
+    white-space: nowrap;
     cursor: pointer;
   }
-  .menu-item:hover {
-    background: var(--line);
+  .opt:hover {
+    background: var(--hover);
+    color: var(--text);
   }
-  .label {
-    flex: 1;
+  .opt.update {
+    color: var(--accent);
   }
-  .key {
+  .opt .label {
+    flex: none;
+  }
+  .opt .key {
     font-size: var(--fs-xs);
     color: var(--muted);
+  }
+  .fav {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    border-radius: 4px;
   }
 </style>

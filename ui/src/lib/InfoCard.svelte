@@ -85,8 +85,9 @@
   }
   .title {
     flex: none;
-    font-size: var(--fs-md);
-    font-weight: 600;
+    font-size: var(--fs-base);
+    font-weight: 650;
+    letter-spacing: -0.2px;
   }
   .aside {
     flex: 1;
@@ -112,7 +113,7 @@
   .body {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 2px 14px 12px;
+    gap: 12px;
+    padding: 2px 12px 12px;
   }
 </style>

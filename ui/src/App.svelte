@@ -1939,7 +1939,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       on:close={(e) => closeTab(e.detail.id)}
       on:move={(e) => moveTab(e.detail.id, e.detail.to)}
       on:newTab={newSession}
-      on:search={() => (switcherOpen = true)}
       on:settings={() => openSettings()}
       on:update={() => openSettings("system")}
       on:brain={openBrain}

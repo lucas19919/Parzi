@@ -185,9 +185,9 @@
     font-size: var(--fs-sm);
   }
   .row {
-    width: calc(100% + 12px);
-    margin: 0 -6px;
-    padding: 0 6px;
+    width: calc(100% + 8px);
+    margin: 0 -4px;
+    padding: 0 4px;
     background: none;
     border: none;
     border-radius: var(--radius);

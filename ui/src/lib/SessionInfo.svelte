@@ -338,7 +338,7 @@
     min-height: 0;
     max-height: 46vh;
     overflow-y: auto;
-    padding: 0 2px 12px;
+    padding: 0;
     font-size: var(--fs-md);
     line-height: 1.55;
     overflow-wrap: anywhere;
@@ -360,9 +360,9 @@
     color: var(--muted);
   }
   .row {
-    width: calc(100% + 12px);
-    margin: 0 -6px;
-    padding: 0 6px;
+    width: calc(100% + 8px);
+    margin: 0 -4px;
+    padding: 0 4px;
     background: none;
     border: none;
     border-radius: var(--radius);
