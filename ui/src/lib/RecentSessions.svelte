@@ -135,7 +135,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    margin: 0 0 0 8px;
+    margin: 0 0 0 var(--gap);
     padding-bottom: 12px;
     overflow-y: auto;
     scrollbar-width: none;

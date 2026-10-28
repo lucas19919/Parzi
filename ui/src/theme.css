@@ -41,16 +41,20 @@
   --link-hover: color-mix(in srgb, #60a5fa 40%, var(--text));
   --scrim: rgba(0, 0, 0, 0.6);
 
-  /* Surfaces are matte: a tint, a blur and a quiet edge. No rim light, no
-     inset highlights: over a wallpaper those read as shine. */
+  /* The one gap: window edges, rails, the session, the columns. Every
+     panel sits on it, so the spacing never drifts. */
+  --gap: 8px;
+  /* Frosted glass: the wallpaper blurs through a tinted veil, lifted by
+     saturation, edged by a hairline and a faint top light. */
   --glass-bg: color-mix(in srgb, var(--panel) 72%, transparent);
   /* Nearly opaque: a wallpaper must not tint the text a session is read on. */
   --glass-bg-solid: color-mix(in srgb, var(--panel) 97%, transparent);
   --glass-strong-bg: color-mix(in srgb, var(--panel) 82%, transparent);
-  --glass-blur: blur(28px) saturate(1.05);
-  --glass-strong-blur: blur(32px) saturate(1.05);
+  --glass-blur: blur(28px) saturate(1.6);
+  --glass-strong-blur: blur(32px) saturate(1.6);
   --glass-border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
   --glass-hairline: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   /* Theme-aware: dark themes get a deep drop, light themes a soft grey lift. */
   --glass-shadow: 0 1px 2px color-mix(in srgb, var(--text) 8%, transparent), 0 12px 32px color-mix(in srgb, var(--text) 14%, transparent);
   /* Hover and selected fills for controls sitting on glass or wallpaper. */

@@ -921,7 +921,7 @@
     backdrop-filter: var(--glass-strong-blur);
     border: var(--glass-hairline);
     border-radius: var(--radius-lg);
-    box-shadow: none;
+    box-shadow: var(--glass-shadow), var(--glass-inner);
   }
   .row {
     display: flex;

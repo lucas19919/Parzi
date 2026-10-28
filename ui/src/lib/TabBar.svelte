@@ -474,8 +474,8 @@
   .group {
     display: inline-flex;
     align-items: center;
-    gap: 2px;
-    padding: 2px;
+    gap: 4px;
+    padding: 4px;
     border-radius: var(--radius-lg);
     background: color-mix(in srgb, var(--text) 5%, transparent);
     box-shadow: inset 0 0 0 1px var(--line);

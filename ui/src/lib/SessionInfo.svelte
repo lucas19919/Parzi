@@ -275,8 +275,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    margin: 0 8px 0 0;
-    padding-left: 6px;
+    margin: 0 var(--gap) 0 0;
     padding-bottom: 12px;
     overflow-y: auto;
     scrollbar-width: none;
@@ -288,13 +287,14 @@
       transform: translateX(8px);
     }
   }
+  /* The hit area fills the gutter between the session and this column,
+     so the grab line sits dead center in the gap. */
   .grip {
     position: absolute;
-    left: 0;
+    left: calc(-1 * var(--gap));
     top: 0;
     bottom: 0;
-    width: 8px;
-    margin-left: -2px;
+    width: var(--gap);
     cursor: ew-resize;
     touch-action: none;
   }

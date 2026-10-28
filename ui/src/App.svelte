@@ -436,6 +436,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   } catch {}
   $: railFits = innerWidth >= (infoShown ? 900 + infoWidth : 900);
   $: railShown = tab.kind === "session" && railOpen && railFits;
+  // The composer stays centered over the thread's text: half the column
+  // sticking out on the right (width + gutter), minus half the rail
+  // sticking out on the left. 248 is the rail's width, 8 its gutter.
+  $: shift = Math.round(((infoShown ? infoWidth + 8 : 0) - (railShown ? 256 : 0)) / 2);
   function toggleRail(open = !railShown) {
     railOpen = open;
     try {
@@ -2122,7 +2126,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       <div
         class="composer"
         class:docked={hasSession}
-        style:--shift="{infoShown ? Math.round(infoWidth / 2) : 0}px"
+        style:--shift="{shift}px"
         bind:clientHeight={dockHeight}
       >
         <Omnibar
@@ -2285,12 +2289,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     flex: 1;
     min-height: 0;
     display: flex;
-    margin: 0 8px;
+    margin: 0 var(--gap);
     overflow: hidden;
     background: var(--glass-bg-solid);
     border: var(--glass-border);
     border-bottom: none;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    box-shadow: var(--glass-inner);
   }
   .fill.col {
     flex-direction: column;
@@ -2308,12 +2313,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     min-height: 0;
     display: flex;
     flex-direction: column;
-    margin: 0 8px;
+    margin: 0 var(--gap);
     overflow: hidden;
     background: var(--glass-bg-solid);
     border: var(--glass-border);
     border-bottom: none;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    box-shadow: var(--glass-inner);
     animation: enter 600ms var(--ease-out);
   }
   @keyframes enter {

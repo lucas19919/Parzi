@@ -170,7 +170,7 @@
     justify-content: space-between;
     position: relative;
     z-index: 100;
-    padding-left: 8px;
+    padding-left: var(--gap);
     user-select: none;
   }
   /* One 4px step between the menu, Home, the tabs and +. */
