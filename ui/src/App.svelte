@@ -437,9 +437,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: railFits = innerWidth >= (infoShown ? 900 + infoWidth : 900);
   $: railShown = tab.kind === "session" && railOpen && railFits;
   // The composer stays centered over the thread's text: half the column
-  // sticking out on the right (width + gutter), minus half the rail
-  // sticking out on the left. 248 is the rail's width, 8 its gutter.
-  $: shift = Math.round(((infoShown ? infoWidth + 8 : 0) - (railShown ? 256 : 0)) / 2);
+  // sticking out on the right (width + gutter). The left rail needs no
+  // term: it sits outside main, so the composer is already clear of it.
+  $: shift = Math.round((infoShown ? infoWidth + 8 : 0) / 2);
   function toggleRail(open = !railShown) {
     railOpen = open;
     try {
@@ -1958,6 +1958,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         current={shown ?? ""}
         on:open={(e) => openSession(e.detail.id)}
         on:all={() => openHistory("sessions")}
+        on:menu={() => (switcherOpen = true)}
+        on:rail={() => toggleRail()}
+        on:settings={() => openSettings()}
       />
     {/if}
     <main>
