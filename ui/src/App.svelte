@@ -2113,6 +2113,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       <div
         class="composer"
         class:docked={hasSession}
+        class:browse={comp.mode === "search"}
         style:--shift="{shift}px"
         bind:clientHeight={dockHeight}
       >
@@ -2391,6 +2392,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     width: min(var(--read), calc(100% - 64px - 2 * var(--shift, 0px)));
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
     transition: width 300ms ease, bottom 300ms ease, transform 300ms ease;
+  }
+  /* Browser mode sits under the tab. The bar already leaves 8px below it,
+     the same gap the tab has above it. */
+  .composer.browse:not(.docked) {
+    top: 0;
+    bottom: auto;
   }
   .composer.docked {
     bottom: 14px;

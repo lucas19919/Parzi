@@ -41,7 +41,7 @@ a pack without art keeps the current wallpaper.
   Ctrl+Shift+←/→ moves the focused tab. A session tab shows the thread card
   and the docked composer; an empty draft shows the composer centred.
 - Each page tab owns a native WebView2 child that stays alive while hidden,
-  so switching tabs never reloads. It fills everything under the 40px toolbar
+  so switching tabs never reloads. It fills everything under the address bar
   (back, forward, reload, address, shield, pin); F11 or a page's own
   fullscreen hides all chrome. Any HTML overlay above it (top menu, switcher,
   popovers) registers in `lib/overlay.ts` so the page hides while the overlay
@@ -60,8 +60,7 @@ a pack without art keeps the current wallpaper.
   and a JPEG snapshot of the page (taken on focus) stands in for it.
 - History opens in the session (Ctrl+H): Sessions, Pages, Bookmarks, Downloads, one search field, rows
   grouped by day with a hover ×. A new tab focuses the composer.
-- An empty session tab is Home: the composer with pinned (or most visited)
-  sites and recent sessions under it. New tab and the Home button land here.
+- An empty session tab is Home: the composer. New tab and the Home button land here.
 - Switcher (Ctrl+P / Ctrl+K): actions, open tabs, sessions. Settings opens in
   the session (Ctrl+,).
 
@@ -76,10 +75,11 @@ a pack without art keeps the current wallpaper.
   Reloads on window focus.
 - Composer: one evenly padded box. The textarea sits above a quiet row:
   model, effort, and permission as plain text on the left; a browser icon,
-  attach, and send on the right. The browser icon turns the box into search
-  or an address (Tab does the same on a new tab). Above the box, "Let's build
-  in {project} on {branch}" is plain text and opens the same pickers. Send fills once there is
-  text. `/` opens commands, `@` lists files. Esc stops a run.
+  attach, and send on the right. Send is the arrow, with no circle, and it
+  takes the text color once there is text. The browser icon turns the box
+  into one search row under the tab (Tab does the same on a new tab). Above
+  the box, "Let's build in {project} on {branch}" is plain text and opens the
+  same pickers. `/` opens commands, `@` lists files. Esc stops a run.
 - Buttons: `.btn` and settings `.sbtn` are the same outline (transparent,
   text color, line border, hover wash). `.primary` is the accent fill with
   the background as its label. Every button presses (scale 0.97). Disabled is 45%.

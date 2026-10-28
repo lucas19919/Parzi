@@ -502,8 +502,9 @@
     display: flex;
     flex-direction: column;
   }
+  /* Hugs the 30px field. The tab's own bar already leaves the same gap
+     below the tab that the window leaves above it. */
   .toolbar {
-    height: 40px;
     flex: none;
     display: flex;
     align-items: center;
@@ -714,7 +715,7 @@
   }
   .suggest {
     position: absolute;
-    top: 38px;
+    top: 31px;
     z-index: 20;
     min-width: 320px;
   }

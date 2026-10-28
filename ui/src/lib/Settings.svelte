@@ -54,11 +54,16 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: calc(var(--space) * 2) calc(var(--space) * 4);
+    /* First tab shares the session's top-left corner. */
+    padding: calc(var(--radius) - var(--radius-sm)) calc(var(--space) * 4);
+    padding-left: calc(var(--radius) - var(--radius-sm));
     border-bottom: 1px solid var(--line);
   }
   .sections {
     overflow-x: auto;
+  }
+  .sections > button {
+    border-radius: var(--radius-sm);
   }
   .scroll {
     flex: 1;

@@ -933,6 +933,21 @@
     border-radius: var(--radius-lg);
     box-shadow: none;
   }
+  /* Search is one row, so the text and the arrow share a center. */
+  .box.web {
+    flex-direction: row;
+    align-items: center;
+  }
+  .box.web textarea {
+    flex: 1;
+    height: calc(var(--space) * 6);
+    min-height: calc(var(--space) * 6);
+    line-height: calc(var(--space) * 6);
+    overflow: hidden;
+  }
+  .box.web .tools {
+    flex: none;
+  }
   textarea {
     width: 100%;
     min-width: 0;
@@ -964,18 +979,12 @@
     justify-content: center;
     padding: 0;
     background: none;
-    border: 1px solid var(--line);
-    border-radius: 999px;
+    border: none;
     color: var(--muted);
     cursor: pointer;
   }
   .go.ready:not(:disabled) {
-    background: var(--text);
-    border-color: var(--text);
-    color: var(--bg);
-  }
-  .go.ready:hover:not(:disabled) {
-    opacity: 0.88;
+    color: var(--text);
   }
   .go:active:not(:disabled) {
     transform: scale(0.94);
@@ -985,13 +994,9 @@
     cursor: default;
   }
   .go.stop {
-    background: var(--line);
-    border-color: var(--line);
     color: var(--text);
   }
   .go.stop:hover {
-    background: color-mix(in srgb, var(--bad) 22%, var(--bg));
-    border-color: color-mix(in srgb, var(--bad) 22%, var(--bg));
     color: var(--bad);
   }
   .square {
