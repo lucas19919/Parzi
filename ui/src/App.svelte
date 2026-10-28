@@ -964,7 +964,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let settingsReturn: string | null = null;
 
   function openSettings(section = "general") {
-    settingsSection = section;
+    // System lives at the bottom of General now.
+    settingsSection = section === "system" ? "general" : section;
     switcherOpen = false;
     const existing = tabs.find((t) => t.kind === "settings");
     if (existing) {

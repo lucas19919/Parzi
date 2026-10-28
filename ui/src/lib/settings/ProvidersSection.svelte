@@ -29,16 +29,12 @@
   let open = new Set<string>();
   let queries: Record<string, string> = {};
   let paths: Record<string, string> = {};
-  let spendUsd = "";
-  let spendTok = "";
 
   onMount(async () => {
     try {
       const [, c] = await Promise.all([ensureBoard(), api.getConfig()]);
       cfg = c;
       paths = pathsOf(c);
-      spendUsd = c.budget?.max_cost_usd != null ? String(c.budget.max_cost_usd) : "";
-      spendTok = c.budget?.max_tokens != null ? String(c.budget.max_tokens) : "";
     } catch (e) {
       err = String(e);
     } finally {
@@ -114,17 +110,6 @@
     const next = (paths[id] ?? "").trim();
     if (next === (entryOf(id).binary ?? "")) return;
     if (await update(patchEntry(id, { binary: next || undefined }))) void recheck([id]);
-  }
-
-  function saveSpend() {
-    const usd = spendUsd.trim() ? Number(spendUsd) : NaN;
-    const tok = spendTok.trim() ? Number(spendTok) : NaN;
-    void update((c) => {
-      c.budget = {
-        max_cost_usd: Number.isFinite(usd) && usd > 0 ? usd : null,
-        max_tokens: Number.isFinite(tok) && tok > 0 ? tok : null,
-      };
-    });
   }
 
 </script>
@@ -253,26 +238,6 @@
       {/each}
     </div>
   </div>
-
-  <div class="pref-section">
-    <h3 class="section-title">Spending limits</h3>
-    <p class="section-desc">Empty means no cap.</p>
-    <div class="rows">
-      <div class="row">
-        <span class="row-label">Max spend per run</span>
-        <span class="row-ctl">
-          <span class="cur">$</span>
-          <input class="tin nums" inputmode="decimal" placeholder="None" aria-label="Max spend per run in US dollars" bind:value={spendUsd} on:change={saveSpend} />
-        </span>
-      </div>
-      <div class="row">
-        <span class="row-label">Max tokens per run</span>
-        <span class="row-ctl">
-          <input class="tin nums" inputmode="numeric" placeholder="None" aria-label="Max tokens per run" bind:value={spendTok} on:change={saveSpend} />
-        </span>
-      </div>
-    </div>
-  </div>
 {/if}
 
 <style>
@@ -367,7 +332,4 @@
   .path-row { display: flex; align-items: center; gap: 8px; }
   .path-label { font-size: var(--fs-sm); color: var(--muted); flex: none; width: 58px; }
   .path-row .tin { flex: 1; }
-
-  .cur { font-size: var(--fs-md); color: var(--muted); }
-  .row-ctl .tin { width: 104px; }
 </style>

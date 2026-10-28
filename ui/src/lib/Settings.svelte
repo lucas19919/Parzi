@@ -1,47 +1,84 @@
 <script lang="ts">
+  import { onMount, tick } from "svelte";
   import GeneralSection from "./settings/GeneralSection.svelte";
   import ProvidersSection from "./settings/ProvidersSection.svelte";
-  import AppearanceSection from "./settings/AppearanceSection.svelte";
-  import SystemSection from "./settings/SystemSection.svelte";
   import ConnectionsSection from "./settings/ConnectionsSection.svelte";
+  import AppearanceSection from "./settings/AppearanceSection.svelte";
   import { toast } from "./toast";
 
+  // One long page, docs-style: the side lists every section, the page
+  // scrolls to it. "system" is legacy (merged into general) and lands there.
   export let section = "general";
 
-  const SECTIONS = [
+  const NAV = [
     { id: "general", label: "General" },
     { id: "providers", label: "Providers" },
     { id: "connections", label: "Connections" },
     { id: "appearance", label: "Appearance" },
-    { id: "system", label: "System" },
   ];
 
   const notify = (msg: string, err = false) => toast(msg, err);
+
+  let active = "general";
+  let scrollEl: HTMLElement | null = null;
+
+  const anchorOf = (s: string) => (s === "system" ? "general" : s);
+
+  function go(id: string) {
+    active = id;
+    scrollEl?.querySelector(`[data-anchor="${id}"]`)?.scrollIntoView({ block: "start" });
+  }
+
+  // A new section asked for (update banner, model picker, switcher) scrolls
+  // there; the spy below takes over from the user's own scrolling.
+  let lastTarget = "";
+  $: target = anchorOf(section);
+  $: if (target && target !== lastTarget) {
+    lastTarget = target;
+    active = target;
+    void tick().then(() => {
+      scrollEl?.querySelector(`[data-anchor="${target}"]`)?.scrollIntoView({ block: "start" });
+    });
+  }
+
+  onMount(() => {
+    const boxes = () =>
+      [...(scrollEl?.querySelectorAll("[data-anchor]") ?? [])] as HTMLElement[];
+    const spy = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) active = (e.target as HTMLElement).dataset.anchor ?? active;
+        }
+      },
+      { root: scrollEl, rootMargin: "-12% 0px -72% 0px" },
+    );
+    void tick().then(() => boxes().forEach((b) => spy.observe(b)));
+    return () => spy.disconnect();
+  });
 </script>
 
 <div class="settings">
-  <nav>
-    <div class="sections" role="tablist" aria-label="Settings sections">
-      {#each SECTIONS as s (s.id)}
-        <button role="tab" aria-selected={section === s.id} class:active={section === s.id} on:click={() => (section = s.id)}>
-          {s.label}
-        </button>
-      {/each}
-    </div>
+  <nav class="side" aria-label="Settings sections">
+    {#each NAV as n (n.id)}
+      <button class:active={active === n.id} aria-current={active === n.id ? "true" : undefined} on:click={() => go(n.id)}>
+        {n.label}
+      </button>
+    {/each}
   </nav>
-  <div class="scroll">
+  <div class="scroll" bind:this={scrollEl}>
     <div class="content">
-      {#if section === "providers"}
-        <ProvidersSection {notify} />
-      {:else if section === "connections"}
-        <ConnectionsSection {notify} on:setupRemote />
-      {:else if section === "appearance"}
-        <AppearanceSection {notify} />
-      {:else if section === "system"}
-        <SystemSection {notify} />
-      {:else}
+      <section class="anchor" data-anchor="general" aria-label="General">
         <GeneralSection {notify} />
-      {/if}
+      </section>
+      <section class="anchor" data-anchor="providers" aria-label="Providers">
+        <ProvidersSection {notify} />
+      </section>
+      <section class="anchor" data-anchor="connections" aria-label="Connections">
+        <ConnectionsSection {notify} on:setupRemote />
+      </section>
+      <section class="anchor" data-anchor="appearance" aria-label="Appearance">
+        <AppearanceSection {notify} />
+      </section>
     </div>
   </div>
 </div>
@@ -51,50 +88,56 @@
     flex: 1;
     min-height: 0;
     display: flex;
-    flex-direction: column;
     background: transparent;
   }
-  nav {
+  /* The docs margin: one quiet column of links, current one lit. */
+  .side {
+    flex: none;
+    width: 168px;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 6px 16px;
-    border-bottom: 1px solid var(--line);
+    flex-direction: column;
+    gap: 2px;
+    align-items: stretch;
+    padding: 26px 0 40px 28px;
+    overflow-y: auto;
   }
-  .sections {
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-  }
-  .sections button {
-    padding: 5px 11px;
+  .side button {
+    padding: 5px 10px;
     background: transparent;
     border: none;
     border-radius: var(--radius);
     color: var(--muted);
-    font-size: var(--fs-sm);
+    font-size: var(--fs-md);
+    text-align: left;
     cursor: pointer;
   }
-  .sections button:hover {
-    background: var(--line);
+  .side button:hover {
     color: var(--text);
+    background: var(--hover);
   }
-  .sections button.active {
-    background: var(--line);
+  .side button.active {
     color: var(--text);
-    font-weight: 500;
+    background: var(--selected);
+    font-weight: 600;
   }
   .scroll {
     flex: 1;
+    min-width: 0;
     overflow-y: auto;
   }
   .content {
     display: flex;
     flex-direction: column;
-    gap: 26px;
+    gap: 44px;
     width: 100%;
-    max-width: 840px;
+    max-width: 760px;
     margin: 0 auto;
     padding: 26px 28px 48px;
+  }
+  .anchor {
+    display: flex;
+    flex-direction: column;
+    gap: 26px;
+    scroll-margin-top: 8px;
   }
 </style>
