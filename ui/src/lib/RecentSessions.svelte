@@ -187,7 +187,7 @@
   .row {
     width: calc(100% + 8px);
     margin: 0 -4px;
-    padding: 6px;
+    padding: 8px;
     background: none;
     border: none;
     border-radius: var(--radius);

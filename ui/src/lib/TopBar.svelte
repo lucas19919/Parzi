@@ -87,9 +87,9 @@
       </button>
     </div>
     {#if menuOpen}
-      <!-- A popout box anchored to the rail's edge: icons unfold with a
-           stagger, names and keys live in the tooltips. -->
-      <div class="menuzone pop" role="menu" data-ui-list>
+      <!-- Icons unfold rightward in the bar with a stagger; names and keys
+           live in the tooltips. No popout, no second row. -->
+      <div class="menuzone opts" role="menu" data-ui-list>
         {#each MENU as item, i}
           <button
             class="opt"
@@ -293,23 +293,18 @@
     line-height: 14px;
     text-align: center;
   }
-  /* The menu is a popout box anchored to the rail's edge: icons unfold
-     with a stagger, names and keys live in the tooltips. */
-  .pop {
-    position: absolute;
-    top: calc(100% + 6px);
-    left: var(--gap);
-    z-index: 500;
+  /* The menu unfolds rightward into the bar as icons, each stepping in
+     just after the last. No popout, no second row. */
+  .opts {
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 6px;
-    background: var(--glass-strong-bg);
-    -webkit-backdrop-filter: var(--glass-strong-blur);
-    backdrop-filter: var(--glass-strong-blur);
-    border: var(--glass-hairline);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--glass-shadow);
+    flex: none;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .opts::-webkit-scrollbar {
+    display: none;
   }
   .opt {
     display: inline-flex;
@@ -344,11 +339,5 @@
   }
   .opt.update {
     color: var(--accent);
-  }
-  .fav {
-    width: 16px;
-    height: 16px;
-    flex: none;
-    border-radius: 4px;
   }
 </style>
