@@ -41,6 +41,10 @@ pub struct ColorTheme {
     pub bar: String,
     #[serde(default = "c_border")]
     pub border: String,
+    /// The panels' own colour. Empty means automatic: a whisper of the
+    /// text over the stage, so panels always sit on the theme.
+    #[serde(default)]
+    pub panel: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +59,10 @@ pub struct BackgroundTheme {
     pub blur: f64,
     #[serde(default)]
     pub auto_accent: bool,
+    /// Frosted panels: the wallpaper blurs through them. Off means solid
+    /// panels in the panel colour.
+    #[serde(default = "d_glass")]
+    pub glass: bool,
     /// Dither over the wallpaper: strength (opacity, 0-1) and tile size in px.
     #[serde(default = "d_grain")]
     pub grain: f64,
@@ -144,6 +152,9 @@ fn d_vignette() -> f64 {
 fn d_bg_blur() -> f64 {
     3.0
 }
+fn d_glass() -> bool {
+    true
+}
 fn d_grain() -> f64 {
     0.16
 }
@@ -177,6 +188,7 @@ impl Default for ColorTheme {
             text_dim: c_text_dim(),
             bar: c_bar(),
             border: c_border(),
+            panel: String::new(),
         }
     }
 }
@@ -188,6 +200,7 @@ impl Default for BackgroundTheme {
             vignette: d_vignette(),
             blur: d_bg_blur(),
             auto_accent: false,
+            glass: d_glass(),
             grain: d_grain(),
             grain_size: d_grain_size(),
             height: d_bg_height(),
@@ -216,6 +229,7 @@ impl Theme {
 
     fn normalized(&self) -> Theme {
         let mut t = self.clone();
+        t.colors.panel = t.colors.panel.trim().to_string();
         t.background.dim = round2(t.background.dim.clamp(0.0, 1.0));
         t.background.vignette = round2(t.background.vignette.clamp(0.0, 1.0));
         t.background.blur = round2(t.background.blur.clamp(0.0, 40.0));
@@ -232,11 +246,27 @@ impl Theme {
         let t = self.normalized();
         let c = &t.colors;
         let b = &t.background;
+        // A chosen panel colour, else the derived whisper of text over
+        // stage, so custom panels still ride every glass surface.
+        let panel = if c.panel.trim().is_empty() {
+            "color-mix(in srgb, var(--text) 6%, var(--bg))".to_string()
+        } else {
+            css_value(&c.panel)
+        };
+        // Frost off means solid panels: no translucency, no backdrop blur.
+        let solid = if b.glass {
+            String::new()
+        } else {
+            "--glass-bg:var(--panel);--glass-strong-bg:var(--panel);\
+            --glass-bg-solid:var(--panel);--glass-blur:none;"
+                .to_string()
+        };
         format!(
             ":root{{--font:{};--font-size:{}px;--mono:{};--mono-size:{}px;\
-            --bg:{};--text:{};--muted:{};--accent:{};\
+            --bg:{};--text:{};--muted:{};--accent:{};--panel:{};\
             --bg-dim:{};--vignette:{};--bg-blur:{}px;\
-            --grain:{};--grain-size:{}px;--bg-height:{}%;--bg-y:{}%;}}\n",
+            --grain:{};--grain-size:{}px;--bg-height:{}%;--bg-y:{}%;\
+            --glass:{};{}}}\n",
             css_font_list(&t.font.family),
             t.font.size,
             css_font_list(&t.font.mono),
@@ -245,6 +275,7 @@ impl Theme {
             css_value(&c.text),
             css_value(&c.text_dim),
             css_value(&c.accent),
+            panel,
             num(b.dim),
             num(b.vignette),
             num(b.blur),
@@ -252,6 +283,8 @@ impl Theme {
             num(b.grain_size),
             num(b.height * 100.0),
             num(b.y * 100.0),
+            if b.glass { "1" } else { "0" },
+            solid,
         )
     }
 }
@@ -805,11 +838,33 @@ mod css_tests {
         assert!(css.contains("--font:\"Inter\""));
         assert!(css.contains("--bg-dim:0.66"));
         assert!(css.contains("--accent:#E8E8E8"));
-        assert!(!css.contains("glass"));
+        assert!(css.contains("--glass:1;"));
+        // No custom panel: the derived whisper, and no solid overrides.
+        assert!(css.contains("--panel:color-mix(in srgb, var(--text) 6%, var(--bg));"));
+        assert!(!css.contains("--glass-bg:var(--panel)"));
         assert!(!css.contains("--parzi-"));
         let mut t = Theme::default();
         t.background.dim = 1.0;
         assert!(t.to_css_vars().contains("--bg-dim:1;"));
+    }
+
+    #[test]
+    fn a_chosen_panel_rides_the_glass_and_frost_off_goes_solid() {
+        let mut t = Theme::default();
+        t.colors.panel = " #1C1C1E ".into();
+        let css = t.to_css_vars();
+        assert!(css.contains("--panel:#1C1C1E;"), "{css}");
+        // Frost on: glass surfaces keep their translucency recipe.
+        assert!(!css.contains("--glass-blur:none"));
+        t.background.glass = false;
+        let css = t.to_css_vars();
+        assert!(css.contains("--glass:0;"), "{css}");
+        assert!(css.contains("--glass-bg:var(--panel);"), "{css}");
+        assert!(css.contains("--glass-blur:none;"), "{css}");
+        // Old theme files without the keys still load frosted and automatic.
+        let old: Theme = toml::from_str("[background]\nimage = \"\"\ndim = 0.5\n").unwrap();
+        assert!(old.background.glass);
+        assert!(old.colors.panel.is_empty());
     }
 
     #[test]
@@ -928,6 +983,7 @@ mod palette_tests {
             text_dim: "#94A3B8".into(),
             bar: "#1A1F26".into(),
             border: "#283039".into(),
+            panel: String::new(),
         };
         assert!(slate.is_old_default());
     }

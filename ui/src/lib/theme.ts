@@ -95,6 +95,7 @@ function themeVars(t: Theme): Record<string, string> {
     "--accent": t.colors.accent,
     "--text": t.colors.text,
     "--muted": t.colors.text_dim,
+    "--panel": t.colors.panel?.trim() ? t.colors.panel : "color-mix(in srgb, var(--text) 6%, var(--bg))",
     "--bg-dim": String(clamp01(t.background.dim)),
     "--vignette": String(clamp01(t.background.vignette)),
     "--bg-blur": `${t.background.blur}px`,
@@ -102,6 +103,15 @@ function themeVars(t: Theme): Record<string, string> {
     "--grain-size": `${t.background.grain_size}px`,
     "--bg-height": `${Math.round(t.background.height * 100)}%`,
     "--bg-y": `${Math.round((t.background.y ?? 0.5) * 100)}%`,
+    "--glass": t.background.glass === false ? "0" : "1",
+    ...(t.background.glass === false
+      ? {
+          "--glass-bg": "var(--panel)",
+          "--glass-strong-bg": "var(--panel)",
+          "--glass-bg-solid": "var(--panel)",
+          "--glass-blur": "none",
+        }
+      : {}),
   };
 }
 
@@ -111,7 +121,7 @@ export function previewTheme(t: Theme) {
   bump();
 }
 
-const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--bg-dim", "--vignette", "--bg-blur", "--grain", "--grain-size", "--bg-height", "--bg-y"];
+const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--panel", "--bg-dim", "--vignette", "--bg-blur", "--grain", "--grain-size", "--bg-height", "--bg-y", "--glass", "--glass-bg", "--glass-strong-bg", "--glass-bg-solid", "--glass-blur"];
 
 function clearPreview() {
   const s = document.documentElement.style;

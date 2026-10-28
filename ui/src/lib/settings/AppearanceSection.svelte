@@ -35,7 +35,7 @@
   const SIZES_UI = [12, 13, 14, 15, 16].map((n) => ({ value: String(n), label: String(n) }));
   const SIZES_MONO = [11, 12, 13, 14, 15].map((n) => ({ value: String(n), label: String(n) }));
   const COLOR_KEYS = ["stage", "accent", "text", "text_dim"] as const;
-  type ColorKey = (typeof COLOR_KEYS)[number];
+  type ColorKey = (typeof COLOR_KEYS)[number] | "panel";
 
   onMount(() => {
     void load();
@@ -275,6 +275,18 @@
     if (key === "accent") theme.background.auto_accent = false;
     touch();
   }
+  // An empty panel colour means automatic: a whisper of the text over
+  // the stage, so panels always sit on the theme.
+  function clearPanel() {
+    if (!theme) return;
+    theme.colors.panel = "";
+    touch();
+  }
+  function toggleGlass() {
+    if (!theme) return;
+    theme.background.glass = !(theme.background.glass ?? true);
+    touch();
+  }
   function setSize(key: "size" | "mono_size", v: string) {
     if (!theme) return;
     theme.font[key] = Number(v);
@@ -361,6 +373,13 @@
       <button class="sbtn" on:click={pickFile}><Icon name="plus" size={12} /><span>Add image</span></button>
       <input type="file" accept="image/png,image/jpeg,image/webp" hidden bind:this={fileInputEl} on:change={onFile} />
     </div>
+    <div class="field-card">
+      <div class="field-info">
+        <span class="field-label">Glass panels</span>
+        <span class="field-hint">Blur the wallpaper through the panels. Off is solid.</span>
+      </div>
+      <Switch on={theme.background.glass ?? true} title="Blur the wallpaper through the panels" on:toggle={toggleGlass} />
+    </div>
     <div class="walls">
       <button class="wall" class:on={!theme.background.image} on:click={() => setBg("")}>
         <span class="wall-pre none"><span>None</span></span>
@@ -421,6 +440,14 @@
         </div>
       </div>
       <div class="row"><ColorField label="Background" value={theme.colors.stage} on:input={(e) => setColor("stage", e.detail)} /></div>
+      <div class="row">
+        <span class="panel-wrap" class:auto={!theme.colors.panel}>
+          <ColorField label="Panels" value={theme.colors.panel || "#808080"} on:input={(e) => setColor("panel", e.detail)} />
+        </span>
+        {#if theme.colors.panel}
+          <button class="mini" use:tooltip={"Back to automatic"} on:click={clearPanel}>Auto</button>
+        {/if}
+      </div>
       <div class="row"><ColorField label="Text" value={theme.colors.text} on:input={(e) => setColor("text", e.detail)} /></div>
       <div class="row"><ColorField label="Muted text" value={theme.colors.text_dim} on:input={(e) => setColor("text_dim", e.detail)} /></div>
     </div>
@@ -530,6 +557,23 @@
   .field-card.stack { flex-direction: column; align-items: stretch; gap: 12px; }
 
   .rows > .row > :global(.cf) { flex: 1; min-width: 0; }
+  .panel-wrap { display: flex; flex: 1; min-width: 0; }
+  .panel-wrap.auto { opacity: 0.55; }
+  .mini {
+    flex: none;
+    padding: 3px 10px;
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-sm);
+    cursor: pointer;
+  }
+  .mini:hover {
+    color: var(--text);
+    background: var(--hover);
+  }
   .swatches { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%; }
   .swatch-gap { flex: 1; }
   .swatch {
