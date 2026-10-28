@@ -173,6 +173,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   // keystroke through `tabs` (desk sync, tab save, switcher rebuild).
   let comp: TabComposerState = tabs.find((t) => t.id === activeId)?.composer ?? tabs[0].composer;
   let compFor = "";
+  // The active draft's picked model, by value: `tabs` never invalidates on
+  // composer keystrokes, so the tab strip would otherwise keep a stale icon.
+  let liveModel = "";
+  $: if (comp.model !== liveModel) liveModel = comp.model;
 
   function syncComposer(t: Tab) {
     t.composer = ensureComposer(t.composer);
@@ -1935,6 +1939,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       {tabs}
       activeTabId={activeId}
       {threads}
+      {liveModel}
       on:select={(e) => selectTab(e.detail.id)}
       on:close={(e) => closeTab(e.detail.id)}
       on:move={(e) => moveTab(e.detail.id, e.detail.to)}

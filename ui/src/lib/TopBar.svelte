@@ -15,6 +15,9 @@
   export let tabs: Tab[] = [];
   export let activeTabId = "";
   export let threads: { id: string; model: string }[] = [];
+  // The active draft's picked model, by value: tabs never invalidate on
+  // composer edits, so the strip would otherwise keep a stale icon.
+  export let liveModel = "";
   // The recent sessions column: offered on session tabs, and whether it shows.
   export let railable = false;
   export let railOpen = false;
@@ -137,6 +140,7 @@
         {tabs}
         {activeTabId}
         {threads}
+        {liveModel}
         on:select={(e) => dispatch("select", e.detail)}
         on:close={(e) => dispatch("close", e.detail)}
         on:move={(e) => dispatch("move", e.detail)}

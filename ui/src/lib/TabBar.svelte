@@ -13,6 +13,7 @@
   export let activeTabId = "";
   export let vertical = false;
   export let threads: { id: string; model: string }[] = [];
+  export let liveModel = "";
 
   // The agent behind a session tab, from the thread's model.
   const providerOf = (sid?: string | null) => {
@@ -20,9 +21,10 @@
     return m ? m.split("/")[0] : "";
   };
   // A draft tab has no thread yet: the logo of the model it will start
-  // with, from its own composer (seeded from the last send).
+  // with. The active draft reads the live composer (tabs never invalidate
+  // on keystrokes); a parked draft reads what it saved.
   const draftProvider = (tab: Tab) => {
-    const m = tab.composer?.model;
+    const m = tab.id === activeTabId && liveModel ? liveModel : tab.composer?.model;
     return m ? m.split("/")[0] : "";
   };
 
