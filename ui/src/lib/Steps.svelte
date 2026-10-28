@@ -108,7 +108,7 @@
     align-self: flex-start;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: calc(var(--space) * 2);
     max-width: 100%;
     min-height: 24px;
     padding: 0;
@@ -148,15 +148,15 @@
   .body {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    margin: 6px 0 2px 5px;
-    padding-left: 12px;
+    gap: var(--space);
+    margin: calc(var(--space) * 2) 0 var(--space) var(--space);
+    padding-left: calc(var(--space) * 3);
     border-left: 1px solid var(--line);
   }
   .reasoning {
     max-height: 320px;
     overflow-y: auto;
-    padding: 2px 0 6px;
+    padding: var(--space) 0 calc(var(--space) * 2);
     color: var(--muted);
     font-size: var(--fs-md);
     line-height: 1.6;
@@ -166,9 +166,9 @@
   .tool {
     display: flex;
     align-items: baseline;
-    gap: 12px;
+    gap: calc(var(--space) * 3);
     width: 100%;
-    padding: 3px 0;
+    padding: var(--space) 0;
     background: none;
     border: none;
     color: var(--muted);
@@ -205,7 +205,7 @@
     font-size: var(--fs-sm);
   }
   .output :global(.codeblock) {
-    margin: 2px 0 6px;
+    margin: var(--space) 0 calc(var(--space) * 2);
   }
   @keyframes breathe {
     50% {

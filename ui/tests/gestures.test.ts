@@ -28,7 +28,7 @@ test("the window drags from empty chrome only", () => {
   assert.equal(windowDown(0, 1, {}), "ignore");
   assert.equal(windowDown(2, 1, plain), "ignore");
   assert.equal(windowDown(0, 2, plain), "maximize");
-  for (const piece of ["button", "[role='dialog']", "[role='menu']", ".noti-popover", ".dropdown", ".tab", ".tabs", ".picker", "textarea", "select"]) {
+  for (const piece of ["button", "[role='dialog']", "[role='menu']", ".dropdown", ".tab", ".tabs", ".picker", "textarea", "select"]) {
     assert.equal(windowDown(0, 1, hit(piece)), "ignore", piece);
   }
 });

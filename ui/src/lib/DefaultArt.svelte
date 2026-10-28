@@ -47,14 +47,11 @@
   .shade {
     position: absolute;
     inset: 0;
-    /* The dim is always black: a light stage must darken the picture,
-       never veil it white. */
-    /* A scrim under the top bar: tabs and window buttons stay readable
-       over a bright picture, whatever the dim. */
+    /* Veil toward the stage, so a light theme stays light over a picture. */
     background:
-      linear-gradient(to bottom, rgba(0, 0, 0, 0.45), transparent 80px),
-      radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, var(--vignette)) 100%),
-      color-mix(in srgb, #000 calc(var(--bg-dim) * 100%), transparent);
+      linear-gradient(to bottom, color-mix(in srgb, var(--bg) 64%, transparent), transparent 80px),
+      radial-gradient(ellipse at center, transparent 45%, color-mix(in srgb, var(--bg) calc(var(--vignette) * 100%), transparent) 100%),
+      color-mix(in srgb, var(--bg) calc(var(--bg-dim) * 100%), transparent);
   }
   /* The dither lies over the whole picture and fades out with it. */
   .grain {

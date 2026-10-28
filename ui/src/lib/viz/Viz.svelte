@@ -68,10 +68,10 @@
   .viz {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: calc(var(--space) * 3);
     min-width: 0;
-    margin: 4px 0;
-    padding: 14px 16px;
+    margin: var(--space) 0;
+    padding: calc(var(--space) * 4) calc(var(--space) * 4);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
     background: var(--glass-bg);
@@ -92,12 +92,12 @@
   .stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
-    gap: 16px 24px;
+    gap: calc(var(--space) * 4) calc(var(--space) * 6);
   }
   .spark-row {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: calc(var(--space) * 3);
   }
   .last {
     flex: none;
@@ -112,19 +112,19 @@
     color: var(--muted);
   }
   .bad {
-    gap: 4px;
-    padding: 10px 12px;
+    gap: var(--space);
+    padding: calc(var(--space) * 3) calc(var(--space) * 3);
   }
   .why {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     margin: 0;
     font-size: var(--fs-sm);
     color: var(--muted);
   }
   .why :global(svg) {
-    margin-top: 2px;
+    margin-top: var(--space);
     color: var(--warn);
   }
   summary {
@@ -140,8 +140,8 @@
   }
   pre {
     max-height: 200px;
-    margin: 4px 0 0;
-    padding: 8px 10px;
+    margin: var(--space) 0 0;
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
     overflow: auto;
     background: var(--bg);
     border-radius: var(--radius);

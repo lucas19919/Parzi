@@ -31,7 +31,7 @@
   .meters {
     display: grid;
     grid-template-columns: minmax(40px, 1fr) max-content;
-    column-gap: 12px;
+    column-gap: calc(var(--space) * 3);
   }
   .meters.labelled {
     grid-template-columns: fit-content(40%) minmax(40px, 1fr) max-content;

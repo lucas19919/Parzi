@@ -101,7 +101,7 @@
 
 <div class="library">
   <header>
-    <div class="seg" role="group" aria-label="Library" data-ui-segmented>
+    <div class="seg page-tabs" role="group" aria-label="Library" data-ui-segmented>
       <button class:on={view === "sessions"} aria-pressed={view === "sessions"} on:click={() => show("sessions")}>Sessions</button>
       <button class:on={view === "history"} aria-pressed={view === "history"} on:click={() => show("history")}>Pages</button>
       <button class:on={view === "bookmarks"} aria-pressed={view === "bookmarks"} on:click={() => show("bookmarks")}>Bookmarks</button>
@@ -229,46 +229,25 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: calc(var(--space) * 3);
     width: 100%;
-    max-width: 820px;
-    margin: 0 auto;
-    padding: 20px 24px 12px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 4);
+    border-bottom: 1px solid var(--line);
   }
   .seg {
     flex: none;
-    display: inline-flex;
-    padding: 2px;
-    background: var(--panel);
-    border-radius: 999px;
-  }
-  .seg button {
-    padding: 4px 12px;
-    background: none;
-    border: none;
-    border-radius: 999px;
-    color: var(--muted);
-    font-size: var(--fs-md);
-    cursor: pointer;
-  }
-  .seg button:hover {
-    color: var(--text);
-  }
-  .seg button.on {
-    background: var(--line);
-    color: var(--text);
   }
   .search {
     flex: 1;
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 8px;
-    height: 32px;
-    padding: 0 12px;
-    background: var(--panel);
+    gap: calc(var(--space) * 2);
+    height: 28px;
+    padding: 0 calc(var(--space) * 3);
+    background: transparent;
     border: 1px solid var(--line);
-    border-radius: 999px;
+    border-radius: var(--radius);
     color: var(--muted);
   }
   .search input {
@@ -283,12 +262,12 @@
   }
   .link {
     flex: none;
-    padding: 4px 8px;
+    padding: var(--space) calc(var(--space) * 2);
     background: none;
     border: none;
     border-radius: var(--radius);
     color: var(--muted);
-    font-size: var(--fs-md);
+    font-size: var(--fs-sm);
     cursor: pointer;
   }
   .link:hover {
@@ -299,12 +278,10 @@
     min-height: 0;
     overflow-y: auto;
     width: 100%;
-    max-width: 820px;
-    margin: 0 auto;
-    padding: 0 24px 40px;
+    padding: 0 calc(var(--space) * 4) calc(var(--space) * 8);
   }
   h3 {
-    margin: 18px 0 6px 10px;
+    margin: calc(var(--space) * 4) 0 calc(var(--space) * 2) calc(var(--space) * 3);
     font-size: var(--fs-md);
     font-weight: 600;
     color: var(--muted);
@@ -312,20 +289,20 @@
   .row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     border-radius: var(--radius);
   }
   .row:hover {
-    background: color-mix(in srgb, var(--text) 5%, transparent);
+    background: var(--hover);
   }
   .open {
     flex: 1;
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
     height: 34px;
-    padding: 0 10px;
+    padding: 0 calc(var(--space) * 3);
     background: none;
     border: none;
     color: var(--text);
@@ -397,7 +374,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    margin-right: 4px;
+    margin-right: var(--space);
     padding: 0;
     background: none;
     border: none;
@@ -412,29 +389,28 @@
     opacity: 1;
   }
   .x:hover {
-    background: var(--line);
+    background: var(--hover);
     color: var(--text);
   }
   .empty {
-    margin: 40px 0;
+    margin: calc(var(--space) * 8) 0;
     text-align: center;
     font-size: var(--fs-md);
     color: var(--muted);
   }
   .more {
     display: block;
-    margin: 16px auto 0;
-    padding: 5px 14px;
+    margin: calc(var(--space) * 4) auto 0;
+    padding: var(--space) calc(var(--space) * 4);
     background: none;
     border: 1px solid var(--line);
-    border-radius: 999px;
+    border-radius: var(--radius);
     color: var(--muted);
     font-size: var(--fs-md);
     cursor: pointer;
-    transition: color 140ms ease, background 140ms ease;
   }
   .more:hover {
-    background: var(--line);
+    background: var(--hover);
     color: var(--text);
   }
   .more:active {

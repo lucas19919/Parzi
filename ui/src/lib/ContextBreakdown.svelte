@@ -76,8 +76,9 @@
   </div>
   <div class="bar" aria-hidden="true">
     {#each rows as r (r.id)}
-      <i class="s-{r.id}" style:width="{limit > 0 ? (r.n / limit) * 100 : 0}%" />
+      <i class="s-{r.id}" style:flex-grow={r.n} />
     {/each}
+    {#if free > 0}<i class="s-free" style:flex-grow={free} />{/if}
   </div>
   <div class="rows">
     {#each rows as r (r.id)}
@@ -104,13 +105,14 @@
   .ctx {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    /* Same inset as the card pad, so the button-to-list gap matches the button-to-edge gap. */
+    gap: calc(var(--space) * 3);
   }
   .top {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
   }
   .pct {
     font-size: var(--fs-base);
@@ -135,15 +137,19 @@
   }
   .bar {
     display: flex;
-    gap: 2px;
+    align-items: stretch;
     height: 6px;
     overflow: hidden;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     background: var(--line);
+    line-height: 0;
   }
   .bar i {
     display: block;
-    height: 100%;
+    flex: 1 1 0;
+    height: 6px;
+    min-width: 0;
+    min-height: 0;
   }
   /* One hue, fading by part, so the bar stays quiet. */
   .s-conv {
@@ -164,16 +170,27 @@
   .rows {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
+    margin: 0;
+    padding: 0;
+    background: none;
+    border: none;
+    overflow: visible;
   }
   .row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    min-height: 22px;
+    gap: calc(var(--space) * 2);
+    min-height: calc(var(--space) * 6);
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: none;
     font-size: var(--fs-sm);
+    line-height: 1;
   }
   .dot {
+    display: block;
     width: 8px;
     height: 8px;
     flex: none;
@@ -187,8 +204,12 @@
     white-space: nowrap;
     color: var(--text);
   }
+  .n {
+    min-width: 5ch;
+    text-align: right;
+  }
   .p {
-    width: 32px;
+    width: calc(var(--space) * 8);
     text-align: right;
   }
   .note {
@@ -196,19 +217,21 @@
     color: var(--muted);
   }
   .compact {
-    width: 100%;
-    padding: 6px;
-    background: var(--text);
-    border: 1px solid transparent;
+    align-self: flex-end;
+    height: calc(var(--space) * 6);
+    padding: 0 calc(var(--space) * 3);
+    background: transparent;
+    border: 1px solid var(--line);
     border-radius: var(--radius);
-    color: var(--bg);
+    color: var(--muted);
     font: inherit;
     font-size: var(--fs-sm);
-    font-weight: 600;
+    font-weight: 500;
     cursor: pointer;
   }
   .compact:hover:not(:disabled) {
-    opacity: 0.88;
+    background: var(--hover);
+    color: var(--text);
   }
   .compact:disabled {
     opacity: 0.4;

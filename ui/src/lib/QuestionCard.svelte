@@ -120,9 +120,9 @@
   }
   .from {
     display: flex;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     min-width: 0;
-    padding: 10px 14px 0;
+    padding: calc(var(--space) * 3) calc(var(--space) * 4) 0;
     font-size: var(--fs-sm);
     color: var(--muted);
   }
@@ -133,7 +133,7 @@
     white-space: nowrap;
   }
   .head {
-    padding: 10px 14px;
+    padding: calc(var(--space) * 3) calc(var(--space) * 4);
     font-weight: 600;
     border-bottom: 1px solid var(--line);
   }
@@ -144,9 +144,9 @@
   .choice {
     display: flex;
     align-items: flex-start;
-    gap: 12px;
+    gap: calc(var(--space) * 3);
     width: 100%;
-    padding: 12px 14px;
+    padding: calc(var(--space) * 3) calc(var(--space) * 4);
     background: none;
     border: none;
     border-bottom: 1px solid var(--line);
@@ -161,16 +161,16 @@
   }
   .choice.other {
     flex-direction: column;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     cursor: default;
   }
   .other-pick {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: calc(var(--space) * 3);
     width: calc(100% + 28px);
-    margin: -12px -14px 0;
-    padding: 12px 14px 0;
+    margin: calc(var(--space) * -3) calc(var(--space) * -4) 0;
+    padding: calc(var(--space) * 3) calc(var(--space) * 4) 0;
     background: none;
     border: none;
     color: var(--text);
@@ -181,7 +181,7 @@
   .text {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space);
     min-width: 0;
   }
   .label {
@@ -198,12 +198,12 @@
     width: 16px;
     height: 16px;
     flex: none;
-    margin-top: 1px;
+    margin-top: var(--space);
     border: 1.5px solid var(--muted);
     border-radius: 50%;
   }
   .mark.box {
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
   }
   .on .mark,
   .other-pick[aria-checked="true"] .mark {
@@ -220,7 +220,7 @@
   textarea {
     width: 100%;
     min-height: 56px;
-    padding: 8px 10px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
     resize: vertical;
     background: var(--bg);
     border: 1px solid var(--line);
@@ -236,37 +236,21 @@
   .actions {
     display: flex;
     justify-content: flex-end;
-    gap: 8px;
-    padding: 10px 14px;
+    gap: calc(var(--space) * 2);
+    padding: calc(var(--space) * 3) calc(var(--space) * 4);
   }
   .btn {
     height: 30px;
-    padding: 0 14px;
-    background: var(--hover);
-    border: var(--glass-hairline);
-    border-radius: var(--radius);
-    color: var(--text);
-    font: inherit;
+    padding: 0 calc(var(--space) * 4);
     font-size: var(--fs-sm);
-    font-weight: 600;
-    cursor: pointer;
   }
   .btn.quiet {
     background: none;
     border-color: transparent;
     color: var(--muted);
   }
-  .btn:hover:not(:disabled) {
-    background: var(--selected);
+  .btn.quiet:hover:not(:disabled) {
+    background: var(--line);
     color: var(--text);
-  }
-  .btn.primary {
-    background: var(--accent);
-    border-color: transparent;
-    color: var(--bg);
-  }
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: default;
   }
 </style>

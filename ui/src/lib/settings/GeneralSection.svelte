@@ -291,16 +291,16 @@
   .site-list {
     display: flex;
     flex-direction: column;
-    margin: 8px 0 0;
+    margin: calc(var(--space) * 2) 0 0;
     padding: 0;
     list-style: none;
   }
   .site {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: calc(var(--space) * 3);
     min-height: 32px;
-    padding: 0 4px 0 8px;
+    padding: 0 var(--space) 0 calc(var(--space) * 2);
     border-radius: var(--radius);
     font-size: var(--fs-md);
   }
@@ -357,8 +357,8 @@
   .checks {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    padding: 6px 14px;
+    gap: var(--space);
+    padding: calc(var(--space) * 2) calc(var(--space) * 4);
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
@@ -366,7 +366,7 @@
   .check {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
     min-height: 32px;
     font-size: var(--fs-md);
     color: var(--text);
@@ -404,13 +404,13 @@
   .shortcuts {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 0 24px;
+    gap: 0 calc(var(--space) * 6);
   }
   .shortcut {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: calc(var(--space) * 3);
     min-height: 34px;
     border-bottom: 1px solid var(--line);
     font-size: var(--fs-sm);
@@ -418,7 +418,7 @@
   }
   kbd {
     flex: none;
-    padding: 2px 6px;
+    padding: var(--space) calc(var(--space) * 2);
     background: var(--line);
     border-radius: var(--radius-sm);
     color: var(--text);

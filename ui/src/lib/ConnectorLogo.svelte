@@ -53,7 +53,7 @@
     color: var(--brand);
   }
   img {
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     object-fit: contain;
   }
   .letter {

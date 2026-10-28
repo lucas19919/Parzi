@@ -71,9 +71,7 @@
     return row.value === row.provider ? "Default model" : row.label;
   }
 
-  // Long provider strings ("Muse Spark 1.3 Contributor Free") collapse to
-  // the first two non-version words ("Muse Spark") so the pill never
-  // crushes its neighbours.
+  // Long names collapse to two words so the row stays one line.
   function shortModel(name: string) {
     if (!value) return "Pick a model";
     if (name.length <= 24) return name;
@@ -157,7 +155,7 @@
 
 <button
   bind:this={trigger}
-  class="ctl model"
+  class="model"
   class:open
   use:tooltip={shown.name}
   aria-haspopup="dialog"
@@ -165,8 +163,6 @@
   on:click|stopPropagation={() => (open ? (open = false) : show())}
 >
   <span class="truncate">{shortModel(shown.name)}</span>
-  {#if value && modelEfforts.length > 1}<span class="eff">{effortLabel(effort)}</span>{/if}
-  <Icon name="chevDown" size={12} />
 </button>
 
 {#if open}
@@ -253,10 +249,6 @@
     min-width: 0;
     max-width: 200px;
   }
-  .model .eff {
-    flex: none;
-    color: var(--muted);
-  }
   .model .truncate {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -275,10 +267,10 @@
   .search {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
     flex: none;
     height: 40px;
-    padding: 0 12px;
+    padding: 0 calc(var(--space) * 3);
     color: var(--muted);
     border-bottom: 1px solid var(--line);
   }
@@ -311,16 +303,16 @@
     min-height: 0;
     max-height: 360px;
     overflow-y: auto;
-    padding: 4px;
+    padding: var(--space);
   }
   .head {
-    padding: 10px 8px 4px;
+    padding: calc(var(--space) * 3) calc(var(--space) * 2) var(--space);
     font-size: var(--fs-xs);
     font-weight: 600;
     color: var(--muted);
   }
   .head:first-child {
-    padding-top: 6px;
+    padding-top: calc(var(--space) * 2);
   }
   .rows {
     display: flex;
@@ -329,10 +321,10 @@
   .row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
     width: 100%;
     height: 32px;
-    padding: 0 8px;
+    padding: 0 calc(var(--space) * 2);
     background: transparent;
     border: none;
     border-radius: var(--radius);
@@ -340,6 +332,9 @@
     font-size: var(--fs-md);
     text-align: left;
     cursor: pointer;
+  }
+  .row.picked {
+    background: var(--selected);
   }
   .row.active {
     background: var(--hover);
@@ -374,9 +369,9 @@
   .foot {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space);
     flex: none;
-    padding: 8px 4px 4px;
+    padding: calc(var(--space) * 2) var(--space) var(--space);
     border-top: 1px solid var(--line);
   }
   /* The label over a full-width row: up to five efforts fit the picker,
@@ -384,18 +379,18 @@
   .effort-line {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 2px 4px 4px;
+    gap: calc(var(--space) * 2);
+    padding: var(--space) var(--space) var(--space);
   }
   .foot-label {
-    padding-left: 4px;
+    padding-left: var(--space);
     font-size: var(--fs-sm);
     color: var(--muted);
   }
   .effort-row {
     display: flex;
-    gap: 2px;
-    padding: 2px;
+    gap: var(--space);
+    padding: var(--space);
     border-radius: 999px;
     background: var(--hover);
   }
@@ -403,7 +398,7 @@
     flex: 1 1 0;
     min-width: 0;
     height: 24px;
-    padding: 0 4px;
+    padding: 0 var(--space);
     white-space: nowrap;
     background: transparent;
     border: none;
@@ -428,12 +423,12 @@
   }
   .logos {
     display: inline-flex;
-    gap: 4px;
+    gap: var(--space);
     flex: none;
     opacity: 0.8;
   }
   .empty {
-    padding: 16px;
+    padding: calc(var(--space) * 4);
     text-align: center;
     font-size: var(--fs-sm);
     color: var(--muted);

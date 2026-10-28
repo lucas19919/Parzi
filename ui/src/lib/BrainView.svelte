@@ -533,7 +533,7 @@
             <Icon name="pin" />
           </button>
         {/if}
-        <div class="seg" role="group" aria-label="View" data-ui-segmented>
+        <div class="seg page-tabs" role="group" aria-label="View" data-ui-segmented>
           <button class:on={!editing} aria-pressed={!editing} on:click={() => (editing = false)}>Read</button>
           <button class:on={editing} aria-pressed={editing} on:click={() => (editing = true)}>Edit</button>
         </div>
@@ -616,16 +616,16 @@
   .top {
     display: flex;
     align-items: center;
-    padding: 10px 10px 6px;
+    padding: calc(var(--space) * 3) calc(var(--space) * 3) calc(var(--space) * 2);
   }
   .search {
     flex: 1;
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     height: 30px;
-    padding: 0 10px;
+    padding: 0 calc(var(--space) * 3);
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -645,18 +645,20 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 4px 6px 16px;
+    padding: var(--space) calc(var(--space) * 2) calc(var(--space) * 4);
   }
   .folder {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     border: 1px solid transparent;
     border-radius: var(--radius);
   }
-  .folder:hover,
+  .folder:hover {
+    background: var(--hover);
+  }
   .folder.on {
-    background: var(--line);
+    background: var(--selected);
   }
   .folder.drop {
     border-color: var(--accent);
@@ -691,9 +693,9 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: calc(var(--space) * 2);
     height: 30px;
-    padding: 0 4px 0 4px;
+    padding: 0 var(--space) 0 var(--space);
     background: none;
     border: none;
     color: var(--muted);
@@ -725,17 +727,17 @@
     justify-content: center;
   }
   .kids {
-    margin: 1px 0 6px 15px;
-    padding-left: 6px;
+    margin: var(--space) 0 calc(var(--space) * 2) calc(var(--space) * 4);
+    padding-left: calc(var(--space) * 2);
     border-left: 1px solid var(--line);
   }
   .note {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: calc(var(--space) * 2);
     width: 100%;
     height: 27px;
-    padding: 0 8px;
+    padding: 0 calc(var(--space) * 2);
     background: none;
     border: none;
     border-radius: var(--radius);
@@ -745,11 +747,11 @@
     cursor: pointer;
   }
   .note:hover {
-    background: color-mix(in srgb, var(--text) 5%, transparent);
+    background: var(--hover);
     color: var(--text);
   }
   .note.on {
-    background: var(--line);
+    background: var(--selected);
     color: var(--text);
   }
   .from {
@@ -766,17 +768,17 @@
     color: var(--warn);
   }
   .empty {
-    margin: 2px 8px 4px;
+    margin: var(--space) calc(var(--space) * 2) var(--space);
     font-size: var(--fs-sm);
     color: var(--muted);
   }
   .draft {
-    padding: 2px 0;
+    padding: var(--space) 0;
   }
   .draft input {
     width: 100%;
     height: 27px;
-    padding: 0 8px;
+    padding: 0 calc(var(--space) * 2);
     background: var(--bg);
     border: 1px solid var(--accent);
     border-radius: var(--radius);
@@ -786,11 +788,11 @@
   .new-project {
     display: flex;
     align-items: center;
-    gap: 7px;
+    gap: calc(var(--space) * 2);
     width: 100%;
     height: 30px;
-    margin-top: 6px;
-    padding: 0 8px;
+    margin-top: calc(var(--space) * 2);
+    padding: 0 calc(var(--space) * 2);
     background: none;
     border: none;
     border-radius: var(--radius);
@@ -812,9 +814,9 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
     min-height: 56px;
-    padding: 8px 12px 8px 24px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 4);
     border-bottom: 1px solid var(--line);
   }
   .titles {
@@ -822,12 +824,12 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--space);
   }
   .title-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     min-width: 0;
   }
   .titles h2 {
@@ -839,7 +841,7 @@
   }
   .badge {
     flex: none;
-    padding: 1px 8px;
+    padding: var(--space) calc(var(--space) * 2);
     border-radius: 999px;
     background: color-mix(in srgb, var(--warn) 16%, transparent);
     color: var(--warn);
@@ -851,9 +853,9 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 10px 16px;
-    margin: 12px 24px 0;
-    padding: 12px 16px;
+    gap: calc(var(--space) * 3) calc(var(--space) * 4);
+    margin: calc(var(--space) * 3) calc(var(--space) * 6) 0;
+    padding: calc(var(--space) * 3) calc(var(--space) * 4);
     border: 1px solid var(--warn);
     border-radius: var(--radius-lg);
   }
@@ -867,7 +869,7 @@
   .actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
   }
   .path {
     overflow: hidden;
@@ -879,23 +881,6 @@
   }
   .seg {
     flex: none;
-    display: inline-flex;
-    padding: 2px;
-    background: var(--panel);
-    border-radius: 999px;
-  }
-  .seg button {
-    padding: 3px 10px;
-    background: none;
-    border: none;
-    border-radius: 999px;
-    color: var(--muted);
-    font-size: var(--fs-sm);
-    cursor: pointer;
-  }
-  .seg button.on {
-    background: var(--line);
-    color: var(--text);
   }
   .icon {
     width: 30px;
@@ -912,7 +897,7 @@
     cursor: pointer;
   }
   .icon:hover {
-    background: var(--line);
+    background: var(--hover);
     color: var(--text);
   }
   .icon.danger:hover {
@@ -931,14 +916,14 @@
   }
   .doc {
     max-width: 760px;
-    padding: 20px 28px 40px;
+    padding: calc(var(--space) * 6) calc(var(--space) * 8) calc(var(--space) * 8);
     font-size: var(--fs-base);
     user-select: text;
   }
   textarea {
     width: 100%;
     height: 100%;
-    padding: 20px 28px;
+    padding: calc(var(--space) * 6) calc(var(--space) * 8);
     background: transparent;
     border: none;
     outline: none;
@@ -953,24 +938,24 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 28px 32px 48px;
+    padding: calc(var(--space) * 8) calc(var(--space) * 8) calc(var(--space) * 8);
   }
   .page > * {
     max-width: 720px;
   }
   .page h2 {
-    margin: 0 0 8px;
+    margin: 0 0 calc(var(--space) * 2);
     font-size: var(--fs-xl);
     font-weight: 600;
   }
   .lead {
-    margin: 0 0 8px;
+    margin: 0 0 calc(var(--space) * 2);
     font-size: var(--fs-base);
     line-height: 1.55;
     color: var(--muted);
   }
   .hint {
-    margin: 0 0 16px;
+    margin: 0 0 calc(var(--space) * 4);
     font-size: var(--fs-md);
     line-height: 1.55;
     color: var(--muted);
@@ -983,7 +968,7 @@
     position: fixed;
     z-index: 900;
     max-width: 240px;
-    padding: 5px 10px;
+    padding: var(--space) calc(var(--space) * 3);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

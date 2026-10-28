@@ -30,10 +30,10 @@
 </div>
 
 <style>
-  .row { display: grid; grid-template-columns: 132px 1fr; align-items: center; gap: 14px; width: 100%; }
-  .info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .row { display: grid; grid-template-columns: 132px 1fr; align-items: center; gap: calc(var(--space) * 4); width: 100%; }
+  .info { display: flex; flex-direction: column; gap: var(--space); min-width: 0; }
   .lab { font-size: var(--fs-md); font-weight: 500; color: var(--text); }
-  .ctl { display: flex; align-items: center; gap: 12px; }
+  .ctl { display: flex; align-items: center; gap: calc(var(--space) * 3); }
   input[type="range"] {
     -webkit-appearance: none; appearance: none;
     flex: 1; min-width: 0; height: 4px; margin: 0; border-radius: 999px; outline: none; cursor: pointer; font-size: var(--fs-sm);

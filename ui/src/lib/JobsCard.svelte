@@ -96,7 +96,7 @@
   .line {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     min-height: 24px;
     color: var(--text);
     font-size: var(--fs-sm);
@@ -109,9 +109,9 @@
     color: var(--muted);
   }
   .row {
-    width: calc(100% + 12px);
-    margin: 0 -6px;
-    padding: 0 6px;
+    width: 100%;
+    margin: 0;
+    padding: calc(var(--space) * 2);
     background: none;
     border: none;
     border-radius: var(--radius);
@@ -160,7 +160,7 @@
   .square {
     width: 8px;
     height: 8px;
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     background: var(--muted);
   }
   .stop:hover .square {

@@ -4,33 +4,25 @@
 
 ## Product
 
-Lean Rust agent harness and browser. Dark, matte, quiet. Local-first,
-keyboard-first; silent failures are bugs, so every action toasts success or
-error.
+Parzi is the agent harness and the browser. Local-first, keyboard-first.
+Silent failures are bugs, so every action toasts success or error.
 
 ## Tokens (`ui/src/theme.css` `:root`)
 
-Ten colours, nothing else. `theme.toml` sets four of them (background, text,
-muted, accent) through `Theme::to_css_vars()`; `--panel`, `--line` and
-`--faint` are mixed from those. Components use only these names. No hex or
-`rgba()` colours in a `<style>` block (shadows, diff tints and the Windows
-close-button red excepted). `user.css` loads last and may override any token.
-Charts read tokens through `resolveColor()` in `lib/theme.ts`.
+A theme sets four colors: `--bg`, `--text`, `--accent`, and `--panel` (empty
+panel means text at 6% over the background). Muted, line, faint, hover,
+selected, and link are mixed from those in `theme.css`. `--ok` `--warn`
+`--bad` are fixed status colors. `npm run lint:tokens` rejects a raw px
+padding, margin, gap, or an off-scale radius. No hex in a `<style>` block.
+`user.css` loads last and may override any token. Charts read tokens through
+`resolveColor()` in `lib/theme.ts`.
 
-| Token | Role |
-|---|---|
-| `--bg` | window background, inputs, code |
-| `--panel` | raised surfaces: cards, composer, menus, popovers |
-| `--line` | borders, dividers, hover and selected fills |
-| `--text` | primary text |
-| `--muted` | secondary text and icons |
-| `--faint` | placeholders, hints, disabled |
-| `--accent` | the one colour with a job: focus, selection, primary action |
-| `--ok` `--warn` `--bad` | state only, never decoration |
-
-Non-colour tokens: `--font` `--font-size` `--mono` `--mono-size` (type),
-`--bg-dim` `--bg-blur` `--vignette` (wallpaper), `--radius` (8px)
-`--radius-lg` (12px), `--shadow`. Pills use `999px`; motion is `140ms ease`.
+Spacing is `--space` (4px). Legal steps are 1, 2, 3, 4, 6, and 8 times that.
+`--radius` is 12px, the chat window's corner, and `--radius-lg` is the same.
+A box inside a rounded box sets its radius to `calc(var(--r) - var(--pad))`
+and does not redefine `--r` (that cycles). `--radius-sm` is one `--space`
+step, for chips and thin bars. Pills are `999px`, dots are `50%`, marks may use `25%`.
+Motion is `--ease-out` and `140ms`. Wallpaper knobs are not component tokens.
 
 Appearance UI (`settings/AppearanceSection.svelte`) edits the four input
 colours, type and the wallpaper grade. Edits preview through
@@ -42,7 +34,9 @@ a pack without art keeps the current wallpaper.
 ## Layout
 
 - Top bar (38px): menu, home, tabs, window controls. The bar is the drag region.
-- Tabs are sessions, pages, the brain or history. Drag reorders them (pointer events,
+- Tabs are sessions and pages. Brain, settings, and history open inside the
+  session, with a back arrow at the top right, and the session column stays.
+  Drag reorders tabs (pointer events,
   not HTML5 drag, which WebView2 hands to the file-drop handler);
   Ctrl+Shift+←/→ moves the focused tab. A session tab shows the thread card
   and the docked composer; an empty draft shows the composer centred.
@@ -64,12 +58,12 @@ a pack without art keeps the current wallpaper.
   phrases, then history/bookmark matches; inline completion selects the
   completed part. Over a page, the native view hides while the list is open
   and a JPEG snapshot of the page (taken on focus) stands in for it.
-- History is a tab (Ctrl+H): History | Bookmarks, one search field, rows
+- History opens in the session (Ctrl+H): Sessions, Pages, Bookmarks, Downloads, one search field, rows
   grouped by day with a hover ×. A new tab focuses the composer.
 - An empty session tab is Home: the composer with pinned (or most visited)
   sites and recent sessions under it. New tab and the Home button land here.
-- Switcher (Ctrl+P / Ctrl+K): actions, open tabs, sessions. Settings is a full
-  pane (Ctrl+,).
+- Switcher (Ctrl+P / Ctrl+K): actions, open tabs, sessions. Settings opens in
+  the session (Ctrl+,).
 
 ## Components (states: default / hover / active / focus-visible / disabled)
 
@@ -80,15 +74,15 @@ a pack without art keeps the current wallpaper.
   events, not HTML5 drag). A note shows one header row (title, pin, Read/Edit,
   Open in Obsidian, Open file, Delete) and the note. No chips, no footer.
   Reloads on window focus.
-- Composer: one box (attachments, textarea, send), then a quiet row: attach,
-  Agent (robot) / Web (globe) mode (Tab), permissions, project (+ git
-  branch) on the left; model, effort, context ring on the right. The project chip opens a
-  picker (projects, make this folder a project, new project from a folder, no
-  project); it never opens a bare folder dialog. Send fills with the accent
-  once there is text. `/` opens commands, `@` lists files. Esc stops a run.
-- Buttons: `.btn` is a raised neutral (hover brightens fill and border);
-  `.btn.primary` is the accent with an inner highlight and no glow,
-  lifting 1px on hover. Every button presses (scale 0.97). Disabled is 45%.
+- Composer: one evenly padded box. The textarea sits above a quiet row:
+  model, effort, and permission as plain text on the left; a browser icon,
+  attach, and send on the right. The browser icon turns the box into search
+  or an address (Tab does the same on a new tab). Above the box, "Let's build
+  in {project} on {branch}" is plain text and opens the same pickers. Send fills once there is
+  text. `/` opens commands, `@` lists files. Esc stops a run.
+- Buttons: `.btn` and settings `.sbtn` are the same outline (transparent,
+  text color, line border, hover wash). `.primary` is the accent fill with
+  the background as its label. Every button presses (scale 0.97). Disabled is 45%.
 - Model picker: one list sized to its content. Search, Starred
   (set in Settings › Providers), then each ready agent's models under its
   name, and agents that are not set up last. Opens from its button.
@@ -116,7 +110,7 @@ a pack without art keeps the current wallpaper.
 
 - New `backdrop-filter` surfaces without a perf note.
 - Dead controls: every visible button and command has a handler.
-- Hardcoded hex where a token exists; new radii/spacing off-scale.
+- Hardcoded hex where a token exists; spacing or radii off the `--space` / `--radius` scale.
 - Silent catch blocks in UI code; missing toast on failure paths.
 - `unwrap()` in Rust outside tests; secrets in logs; unbounded lists
   without caps (200 files, 50 rows, 8 attachments, 12k chars).

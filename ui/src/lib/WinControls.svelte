@@ -44,7 +44,7 @@
   .window-controls {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: var(--space);
     flex: none;
   }
   .win-btn {
@@ -60,7 +60,7 @@
     cursor: pointer;
   }
   .win-btn:hover {
-    background: var(--line);
+    background: var(--panel);
     color: var(--text);
   }
   .win-btn.close:hover {

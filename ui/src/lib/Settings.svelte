@@ -19,7 +19,7 @@
 
 <div class="settings">
   <nav>
-    <div class="sections" role="tablist" aria-label="Settings sections">
+    <div class="sections page-tabs" role="tablist" aria-label="Settings sections">
       {#each SECTIONS as s (s.id)}
         <button role="tab" aria-selected={section === s.id} class:active={section === s.id} on:click={() => (section = s.id)}>
           {s.label}
@@ -54,31 +54,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px 16px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 4);
     border-bottom: 1px solid var(--line);
   }
   .sections {
-    display: flex;
-    gap: 8px;
     overflow-x: auto;
-  }
-  .sections button {
-    padding: 5px 11px;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    font-size: var(--fs-sm);
-    cursor: pointer;
-  }
-  .sections button:hover {
-    background: var(--line);
-    color: var(--text);
-  }
-  .sections button.active {
-    background: var(--line);
-    color: var(--text);
-    font-weight: 500;
   }
   .scroll {
     flex: 1;
@@ -87,10 +67,10 @@
   .content {
     display: flex;
     flex-direction: column;
-    gap: 26px;
+    gap: calc(var(--space) * 6);
     width: 100%;
     max-width: 840px;
     margin: 0 auto;
-    padding: 26px 28px 48px;
+    padding: calc(var(--space) * 6) calc(var(--space) * 8) calc(var(--space) * 8);
   }
 </style>

@@ -59,8 +59,8 @@
   .pics {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    margin: 2px 0;
+    gap: calc(var(--space) * 2);
+    margin: var(--space) 0;
   }
   .pic {
     padding: 0;

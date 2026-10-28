@@ -17,11 +17,9 @@
   import Omnibar from "./lib/Omnibar.svelte";
   import PanelHeader from "./lib/PanelHeader.svelte";
   import SessionInfo from "./lib/SessionInfo.svelte";
-  import RecentSessions from "./lib/RecentSessions.svelte";
   import ImageViewer from "./lib/ImageViewer.svelte";
   import PlanInline from "./lib/PlanInline.svelte";
   import Thread from "./lib/Thread.svelte";
-  import SessionHeader from "./lib/SessionHeader.svelte";
   import PageView from "./lib/PageView.svelte";
   import HistoryView from "./lib/HistoryView.svelte";
   import PreviewView from "./lib/PreviewView.svelte";
@@ -38,7 +36,7 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { artifactTab, brainTab, ensureComposer, historyTab, hostOf, isExplicitUrl, pageTab, previewTab, rememberModel, sessionTab, settingsTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
+  import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, previewTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
   import { openBrainNote, brainTabRequested } from "./lib/brainStore";
   import { sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
   import { addQuote, MAX_QUOTES, quoteBlock, sameSlug, splitQuotes } from "./lib/planModel";
@@ -404,12 +402,40 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   let historyView: "sessions" | "history" | "bookmarks" | "downloads" = "sessions";
+  // Brain, settings, and history replace the thread. The session column stays.
+  let cover: "brain" | "settings" | "history" | null = null;
+  let coverFor = "";
+  $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
+
+  function clearCover() {
+    cover = null;
+    coverFor = "";
+  }
+
+  // A session tab hosts the cover, so the column has somewhere to stay.
+  function sessionHost(): string {
+    if (tab.kind === "session") return tab.id;
+    const home = tabs.find((t) => t.kind === "session" && !t.sessionId);
+    if (home) return home.id;
+    const any = tabs.find((t) => t.kind === "session");
+    if (any) return any.id;
+    const draft = sessionTab();
+    draft.composer = ensureComposer(draft.composer);
+    tabs = [...tabs, draft];
+    return draft.id;
+  }
+
+  function showCover(kind: "brain" | "settings" | "history") {
+    switcherOpen = false;
+    const id = sessionHost();
+    cover = kind;
+    coverFor = id;
+    if (activeId !== id) selectTab(id);
+  }
 
   function openHistory(view = historyView) {
     historyView = view;
-    const existing = tabs.find((t) => t.kind === "history");
-    if (existing) selectTab(existing.id);
-    else addTab(historyTab());
+    showCover("history");
   }
 
   function reopenClosed() {
@@ -421,9 +447,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   function openBrain(path: string | unknown = "") {
     if (typeof path === "string" && path) openBrainNote(path);
-    const existing = tabs.find((t) => t.kind === "brain");
-    if (existing) selectTab(existing.id);
-    else addTab(brainTab());
+    showCover("brain");
   }
 
   // The session's project: its plan and its name.
@@ -434,25 +458,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   // environment, and the project plan when the draft names a project).
   $: infoShown = tab.kind === "session" && infoOpen && innerWidth >= 900;
 
-  // The recent sessions column on the left, beside session tabs, when
-  // there is room for it next to the session (and the right column).
-  let railOpen = true;
-  try {
-    railOpen = localStorage.getItem("parzi.recent.open") !== "0";
-  } catch {}
-  $: railFits = innerWidth >= (infoShown ? 900 + infoWidth : 900);
-  $: railShown = tab.kind === "session" && railOpen && railFits;
-  // The composer stays centered over the thread's text: half the column
-  // sticking out on the right (width + gutter). The left rail needs no
-  // term: it sits outside main, so the composer is already clear of it.
+  // The composer stays centered over the thread: half the right column.
   $: shift = Math.round((infoShown ? infoWidth + 8 : 0) / 2);
-  function toggleRail(open = !railShown) {
-    railOpen = open;
-    try {
-      localStorage.setItem("parzi.recent.open", open ? "1" : "0");
-    } catch {}
-    if (open && !railFits) toast("Widen the window to see your sessions");
-  }
 
   function toggleInfo(open = !infoShown) {
     infoOpen = open;
@@ -635,6 +642,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function selectTab(id: string) {
     const next = tabs.find((t) => t.id === id);
     if (!next) return;
+    // A real switch leaves the cover. Opening it sets coverFor first.
+    if (cover && id !== coverFor) clearCover();
     // Each tab owns its composer; switching only changes the active tab
     // so drafts, mode, model, effort and attachments are preserved intact.
     activeId = id;
@@ -668,7 +677,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function closeTab(id: string) {
     const idx = tabs.findIndex((t) => t.id === id);
     if (idx < 0) return;
-    const closedKind = tabs[idx].kind;
     // A page under a session (the agent's, or a link from its thread).
     const under = tabs[idx].kind === "page" ? (tabs[idx].owner ?? tabs[idx].group ?? null) : null;
     // Closing a session tab takes its agent-owned pages with it.
@@ -686,7 +694,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         if (url) closedTabs.update((list) => pushClosed(list, { url, title: t.title, at: Date.now() }));
       }
     }
-    if (settingsReturn && doomed.has(settingsReturn)) settingsReturn = null;
     const kept = tabs.filter((t) => !doomed.has(t.id));
     if (!kept.length) {
       const fresh = sessionTab();
@@ -696,13 +703,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
     tabs = kept;
     if (!doomed.has(activeId)) return;
-    // Settings (and friends) return to the tab you came from, not a neighbor.
-    if (closedKind === "settings" && settingsReturn && kept.some((t) => t.id === settingsReturn)) {
-      const back = settingsReturn;
-      settingsReturn = null;
-      selectTab(back);
-      return;
-    }
     // Closing a page under a session goes back to that session.
     const home = under ? kept.find((t) => t.kind === "session" && t.sessionId === under) : undefined;
     if (home) {
@@ -972,20 +972,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     else addTab(previewTab(which));
   }
 
-  // Closing settings always lands back where you came from.
-  let settingsReturn: string | null = null;
-
   function openSettings(section = "general") {
     // System lives at the bottom of General now.
     settingsSection = section === "system" ? "general" : section;
-    switcherOpen = false;
-    const existing = tabs.find((t) => t.kind === "settings");
-    if (existing) {
-      selectTab(existing.id);
-      return;
-    }
-    if (tab.kind !== "settings") settingsReturn = activeId;
-    addTab(settingsTab());
+    showCover("settings");
   }
 
   async function send() {
@@ -1512,19 +1502,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     void send();
   }
 
-  async function rename(title: string) {
-    if (!shown) return;
-    const id = shown;
-    try {
-      await api.renameThread(id, title);
-      if (meta?.id === id) meta = { ...meta, title };
-      tabs = tabs.map((t) => (t.sessionId === id ? { ...t, title } : t));
-      void refreshThreads();
-    } catch (e) {
-      toastError(e);
-    }
-  }
-
   async function remove(id: string) {
     const title = threads.find((t) => t.id === id)?.title || meta?.title || "this session";
     const ok = await ask(`Delete "${title}" and its transcript?`, { title: "Delete session", kind: "warning" }).catch(() => false);
@@ -1547,14 +1524,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } catch (e) {
       toastError(e);
     }
-  }
-
-  function copyId() {
-    if (!shown) return;
-    navigator.clipboard.writeText(shown).then(
-      () => toast("Session ID copied"),
-      (e) => toast(`Couldn't copy: ${e}`, true),
-    );
   }
 
   // History's Clear sessions: purge finished threads, close their tabs.
@@ -1606,7 +1575,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   const titleOf = (session: string) => threads.find((t) => t.id === session)?.title || "Agent";
 
-  // One announcement per event: a toast and a bell entry, both skipped for
+  // One announcement per event: a toast and a column entry, both skipped for
   // the session you are looking at. Approvals and questions also chime,
   // since the backend denies them after a while.
   function announce(session: string, what: string, kind: NotificationItem["kind"], opts: { key?: string; chime?: boolean } = {}) {
@@ -1697,12 +1666,20 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     else if (name === "ctrl+w") {
       closeTab(activeId);
     }
-    else if (name === "ctrl+comma") tab.kind === "settings" ? closeTab(activeId) : openSettings();
-    else if (name === "ctrl+b") openBrain();
-    else if (name === "ctrl+j" || name === "ctrl+shift+a") toggleInfo();
-    else if (name === "ctrl+h") openHistory();
-    else if (name === "ctrl+shift+s") toggleRail();
-    else if (name === "ctrl+shift+t") reopenClosed();
+    else if (name === "ctrl+comma") {
+      if (tab.kind === "settings") closeTab(activeId);
+      else if (cover === "settings") clearCover();
+      else openSettings();
+    } else if (name === "ctrl+b") {
+      if (tab.kind === "brain") closeTab(activeId);
+      else if (cover === "brain") clearCover();
+      else openBrain();
+    } else if (name === "ctrl+j" || name === "ctrl+shift+a") toggleInfo();
+    else if (name === "ctrl+h") {
+      if (tab.kind === "history") closeTab(activeId);
+      else if (cover === "history") clearCover();
+      else openHistory();
+    } else if (name === "ctrl+shift+t") reopenClosed();
     else if (name === "f11") void setImmersive(!immersive);
     else if (name === "ctrl+l") {
       if (tab.kind === "page") {
@@ -1738,8 +1715,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             ? "ctrl+comma"
           : mod && e.shiftKey && key === "t"
             ? "ctrl+shift+t"
-          : mod && e.shiftKey && key === "s"
-            ? "ctrl+shift+s"
             : mod && e.shiftKey && key === "a"
               ? "ctrl+shift+a"
               : mod && ["p", "k", "t", "w", "l", "b", "h", "j"].includes(key)
@@ -1751,6 +1726,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       // Never stops an agent: Esc closes things, and a run cut short by a
       // stray Esc read as a crash. The Stop button stops it.
       if (immersive) void setImmersive(false);
+      else if (coverOn) clearCover();
       else if (tab.kind === "settings") closeTab(activeId);
     }
   }
@@ -1950,10 +1926,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       on:history={() => openHistory()}
       on:setup={openSetup}
       on:report={reportProblem}
-      on:openSession={(e) => openSession(e.detail.id)}
-      railable={tab.kind === "session"}
-      railOpen={railShown}
-      on:rail={() => toggleRail()}
       panelable={tab.kind === "session"}
       panelOpen={infoShown}
       panelCount={familyActive}
@@ -1962,17 +1934,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   {/if}
 
   <div class="content">
-    {#if railShown}
-      <RecentSessions
-        {threads}
-        {running}
-        {approvals}
-        questions={asks}
-        current={shown ?? ""}
-        on:open={(e) => openSession(e.detail.id)}
-        on:all={() => openHistory("sessions")}
-      />
-    {/if}
     <main>
     {#if tab.kind === "settings"}
       <div class="fill col" in:fly={{ y: 8, ...motion }}>
@@ -2023,28 +1984,40 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         />
       {/key}
     {:else}
-      {#if tab.kind === "session" && (hasSession || infoShown)}
-        <div class="stagerow" class:solo={!hasSession}>
-          {#if hasSession}
-          <section class="session">
-            <SessionHeader
-              title={meta?.title || tab.title}
-              {branch}
-              {folder}
-              parentTitle={parent ? parent.title || "Untitled" : ""}
-              canAct={!!shown}
-              contextUsed={context.used}
-              contextLimit={infoShown ? 0 : context.limit}
-              {compacting}
-              {streaming}
-              costUsd={meta?.cost_usd ?? 0}
-              on:rename={(e) => rename(e.detail.title)}
-              on:fork={fork}
-              on:copyId={copyId}
-              on:delete={() => shown && remove(shown)}
-              on:compact={() => onCommand("compact")}
-              on:back={() => parent && openSession(parent.id)}
-            />
+      {#if tab.kind === "session" && (hasSession || infoShown || coverOn)}
+        <div class="stagerow" class:solo={!hasSession && !coverOn} out:fade|local={{ duration: motion.duration }}>
+          {#if hasSession || coverOn}
+          <section class="session" out:fade|local={{ duration: motion.duration }}>
+            {#if coverOn || parent}
+              <button
+                class="back"
+                aria-label={coverOn ? "Back" : `Back to ${parent?.title || "Untitled"}`}
+                use:tooltip={coverOn ? "Back" : `Back to ${parent?.title || "Untitled"}`}
+                transition:fly|global={{ x: 28, ...motion }}
+                on:click={() => (coverOn ? clearCover() : parent && openSession(parent.id))}
+              >
+                <Icon name="arrowLeft" />
+              </button>
+            {/if}
+            {#if coverOn && cover === "brain"}
+              <div class="cover" transition:fade|global={{ duration: motion.duration }}><BrainView /></div>
+            {:else if coverOn && cover === "settings"}
+              <div class="cover" transition:fade|global={{ duration: motion.duration }}>
+                <Settings bind:section={settingsSection} on:setupRemote={openRemoteSetup} />
+              </div>
+            {:else if coverOn && cover === "history"}
+              <div class="cover" transition:fade|global={{ duration: motion.duration }}>
+                <HistoryView
+                  {threads}
+                  {running}
+                  bind:view={historyView}
+                  on:open={(e) => openPageNext(e.detail.url)}
+                  on:openSession={(e) => openSession(e.detail.id)}
+                  on:deleteSession={(e) => remove(e.detail.id)}
+                  on:clearSessions={clearFinishedSessions}
+                />
+              </div>
+            {:else if hasSession}
             <div class="workarea">
               <div class="scroll" style:--dock="{dockHeight}px" bind:this={scrollEl} use:follow.attach>
                 <Thread
@@ -2098,6 +2071,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                 </Thread>
               </div>
             </div>
+            {/if}
           </section>
           {/if}
           {#if infoShown}
@@ -2135,6 +2109,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         </div>
       {/if}
 
+      {#if !coverOn}
       <div
         class="composer"
         class:docked={hasSession}
@@ -2189,6 +2164,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           on:brain={openBrain}
         />
       </div>
+      {/if}
     {/if}
     </main>
   </div>
@@ -2279,10 +2255,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html.parzi-maximized) .shell {
     border-radius: 0;
   }
-  /* The shell is always a column: the top bar spans the full width and
-     the sidebar (when enabled) sits inside .content next to main. (An
-     older row direction here crumpled the top bar into a dead column
-     once the top bar became always-on.) */
+  /* The shell is a column: the top bar spans the width, and the session
+     fills what is under it. An older row direction crumpled that bar. */
   main {
     position: relative;
     z-index: 1;
@@ -2331,11 +2305,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     flex-direction: column;
     margin: 0 var(--gap);
     overflow: hidden;
-    background: var(--glass-bg-solid);
-    border: var(--glass-border);
+    background: none;
+    border: 1px solid var(--line);
     border-bottom: none;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    box-shadow: var(--glass-inner);
     animation: enter 600ms var(--ease-out);
   }
   @keyframes enter {
@@ -2349,18 +2322,61 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     min-height: 0;
     display: flex;
   }
+  /* Floats in the corner, so the page under it still starts at the top. */
+  .back {
+    position: absolute;
+    top: calc(var(--space) * 2);
+    right: calc(var(--space) * 2);
+    z-index: 5;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  /* The top bars keep their right-hand controls clear of the arrow. */
+  .cover :global(nav),
+  .cover :global(header),
+  .cover :global(.bar) {
+    anchor-name: --cover-bar;
+    padding-right: calc(var(--space) * 8 + var(--space) * 2);
+  }
+  /* Half of the 28px control, on the bar's midline. */
+  .session:has(.cover) .back {
+    position-anchor: --cover-bar;
+    /* Fallback keeps the old corner when a cover has no top bar. */
+    top: anchor(center, calc(var(--space) * 2 + 14px));
+    translate: 0 -50%;
+  }
+  .back:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .cover {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
   .scroll {
     flex: 1;
     overflow-x: hidden;
     overflow-y: auto;
-    padding-bottom: calc(var(--dock) + 30px);
-    /* The thread fades in under the header and out behind the composer. */
+    padding-bottom: calc(var(--dock) + calc(var(--space) * 8));
+    /* A short fade at the rim, then out behind the composer. */
     mask-image: linear-gradient(
       to bottom,
       transparent 0,
-      #000 18px,
-      #000 calc(100% - var(--dock) - 28px),
-      transparent calc(100% - var(--dock) - 4px)
+      black calc(var(--space) * 2),
+      black calc(100% - var(--dock) - calc(var(--space) * 6)),
+      transparent calc(100% - var(--dock) - var(--space))
     );
   }
   /* Home is the composer alone, a little above the middle. In a session
@@ -2390,12 +2406,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     z-index: 1200;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: calc(var(--space) * 2);
     pointer-events: none;
   }
   .toast {
     max-width: 360px;
-    padding: 8px 14px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 4);
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -2420,7 +2436,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   .toast.acts {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     pointer-events: auto;
   }
   .toast-text {
@@ -2433,7 +2449,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     flex: none;
     width: 64px;
     height: 4px;
-    margin-left: 8px;
+    margin-left: calc(var(--space) * 2);
     border-radius: 999px;
     background: var(--line);
     overflow: hidden;
@@ -2447,7 +2463,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   .toast-act {
     flex: none;
     min-height: 24px;
-    padding: 2px 10px;
+    padding: var(--space) calc(var(--space) * 3);
     background: var(--hover);
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -2470,10 +2486,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     align-items: center;
     max-width: min(440px, 45vw);
     min-height: 28px;
-    padding: 2px 6px 2px 12px;
+    padding: var(--space) calc(var(--space) * 2) var(--space) calc(var(--space) * 3);
     white-space: nowrap;
   }
   .toasts.chrome .toast:not(.acts) {
-    padding-right: 12px;
+    padding-right: calc(var(--space) * 3);
   }
 </style>

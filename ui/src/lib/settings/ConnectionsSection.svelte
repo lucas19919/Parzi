@@ -469,8 +469,8 @@
   .tools {
     display: flex;
     flex-direction: column;
-    margin: -4px 0 8px;
-    padding: 4px 0;
+    margin: calc(var(--space) * -1) 0 calc(var(--space) * 2);
+    padding: var(--space) 0;
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
@@ -478,8 +478,8 @@
   .tool {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 8px 14px;
+    gap: calc(var(--space) * 3);
+    padding: calc(var(--space) * 2) calc(var(--space) * 4);
   }
   .tool + .tool {
     border-top: 1px solid var(--line);
@@ -489,7 +489,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--space);
   }
   .tool-name {
     font-family: var(--mono);
@@ -500,7 +500,7 @@
     color: var(--muted);
   }
   .tag {
-    margin-left: 8px;
+    margin-left: calc(var(--space) * 2);
     font-family: var(--font);
     font-size: var(--fs-xs);
     color: var(--muted);
@@ -520,14 +520,14 @@
   .modes {
     flex: none;
     display: inline-flex;
-    gap: 2px;
-    padding: 2px;
+    gap: var(--space);
+    padding: var(--space);
     border-radius: var(--radius);
     background: color-mix(in srgb, var(--text) 5%, transparent);
   }
   .modes button {
     height: 24px;
-    padding: 0 10px;
+    padding: 0 calc(var(--space) * 3);
     background: none;
     border: none;
     border-radius: var(--radius-sm);
@@ -544,7 +544,7 @@
     color: var(--text);
   }
   .tools-empty {
-    margin: 6px 14px;
+    margin: calc(var(--space) * 2) calc(var(--space) * 4);
     font-size: var(--fs-sm);
     color: var(--muted);
   }
@@ -554,9 +554,9 @@
   .empty {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: calc(var(--space) * 4);
     width: 100%;
-    padding: 14px 16px;
+    padding: calc(var(--space) * 4) calc(var(--space) * 4);
     background: var(--panel);
     border: 1px dashed var(--line);
     border-radius: var(--radius-lg);
@@ -575,7 +575,7 @@
     flex: none;
   }
   .faces > :global(* + *) {
-    margin-left: -6px;
+    margin-left: calc(var(--space) * -2);
   }
   .empty-text {
     flex: 1;
@@ -610,7 +610,7 @@
   .field-card {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
   }
   .field-hint.ok {
     color: var(--ok);

@@ -7,7 +7,7 @@
   import ModelPicker from "./ModelPicker.svelte";
   import { api, brain, type ComposerMode, type PlanQuote, type Project, type ProviderStatus } from "./api";
   import { remote as server } from "./remote";
-  import { effortsFor, fitEffort, seesImages, shownOf } from "./providerRows";
+  import { effortLabel, effortsFor, fitEffort, seesImages, shownOf } from "./providerRows";
   import { permissionBlocked } from "./permission";
   import { folderName, toAddress } from "./tabs";
   import { relativeTo, sameDir, shortAttachment as shortName } from "./paths";
@@ -105,6 +105,9 @@
   let permBtn: HTMLButtonElement | null = null;
   let permOpen = false;
   let permStyle = "";
+  let effortBtn: HTMLButtonElement | null = null;
+  let effortOpen = false;
+  let effortStyle = "";
   let projBtn: HTMLButtonElement | null = null;
   // Where a new session works: the folder as it is (""), or a worktree of
   // its own made from this branch.
@@ -172,6 +175,7 @@
     const next = fitEffort(effort, efforts);
     if (next !== effort) effort = next;
   }
+  $: if (efforts.length < 2) effortOpen = false;
   // A stored choice from before the menu shrank (read-only, auto-edits)
   // falls back to Supervised rather than a blank button.
   $: perm = PERMS.find((p) => p.id === permission) ?? PERMS[0];
@@ -218,7 +222,11 @@
 
   function setWeb(on: boolean) {
     mode = on ? "search" : "build";
-    if (on) projOpen = false;
+    if (on) {
+      projOpen = false;
+      permOpen = false;
+      effortOpen = false;
+    }
     textarea?.focus();
   }
 
@@ -537,73 +545,22 @@
   }
 
   function togglePerm() {
+    effortOpen = false;
     permOpen = !permOpen;
     if (permOpen && permBtn) permStyle = placeAbove(permBtn, 280);
+  }
+
+  function toggleEffort() {
+    if (efforts.length < 2) return;
+    permOpen = false;
+    effortOpen = !effortOpen;
+    if (effortOpen && effortBtn) effortStyle = placeAbove(effortBtn, 220);
   }
 </script>
 
 <div class="ob" class:hero>
-  <!-- The project rides on the box's top edge: where this session works.
-       A web search has no project, so it folds away behind the box. -->
-  {#if remote}
-    <button
-      bind:this={projBtn}
-      class="proj set"
-      class:folded={web}
-      aria-hidden={web || undefined}
-      tabindex={web ? -1 : undefined}
-      aria-haspopup={folderLocked ? undefined : "menu"}
-      aria-expanded={folderLocked ? undefined : projOpen}
-      on:click|stopPropagation={toggleProject}
-      use:tooltip={remoteCwd ? `Runs on ${remoteHost} in ${remoteCwd}` : `Runs on ${remoteHost}, in its own scratch folder`}
-    >
-      <Icon name="server" size={12} />
-      <span class="proj-title">{remoteProject ? `${remoteProject} · ${remoteHost}` : remoteHost}</span>
-      {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
-    </button>
-  {:else}
-    <div class="tops">
-      <button
-        bind:this={projBtn}
-        class="proj"
-        class:set={!!project}
-        class:folded={web}
-        aria-hidden={web || undefined}
-        tabindex={web ? -1 : undefined}
-        aria-haspopup={folderLocked ? undefined : "menu"}
-        aria-expanded={folderLocked ? undefined : projOpen}
-        on:click|stopPropagation={toggleProject}
-        use:tooltip={project ? `Project ${project.title}` : folder ? folder : "Pick a folder to work in"}
-      >
-        <Icon name={project || !folder ? "project" : "folder"} size={12} />
-        <span class="proj-title">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
-        {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
-      </button>
-      {#if folder && branch}
-        <!-- Which branch: the folder as it is, or a worktree of its own. -->
-        <button
-          bind:this={branchBtn}
-          class="proj branch-tab"
-          class:folded={web}
-          class:fresh={!!worktree}
-          aria-hidden={web || undefined}
-          tabindex={web ? -1 : undefined}
-          aria-haspopup={folderLocked ? undefined : "menu"}
-          aria-expanded={folderLocked ? undefined : branchOpen}
-          on:click|stopPropagation={toggleBranch}
-          use:tooltip={folderLocked ? `On ${branch}` : worktree ? `A worktree of its own, from ${worktree}` : `In the folder, on ${branch}`}
-        >
-          <Icon name="branch" size={12} />
-          <span class="proj-branch">{worktree && !folderLocked ? `new from ${worktree}` : branch}</span>
-          {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
-        </button>
-      {/if}
-    </div>
-  {/if}
-
   {#if queue.length}
-    <!-- The queue is its own bar above the composer: numbered, in send
-         order, each with its own actions. Drag the grip to reorder. -->
+    <!-- The queue sits above the composer, so the project stays on the box. -->
     <div class="queue-bar" role="list" aria-label="Queued messages">
       <div class="queue-head">
         <span class="queue-title">Queue · {queue.length}{queuePaused ? " · paused" : streaming ? " · sends in order" : ""}</span>
@@ -648,6 +605,49 @@
         </div>
       {/each}
     </div>
+  {/if}
+
+  <!-- Where a new session will work. A started one, and a web search, have none. -->
+  {#if !web && !started}
+    {#if remote}
+      <div class="where">
+        <span>Let's build {remoteProject ? "in" : "on"}</span>
+        <button
+          bind:this={projBtn}
+          class="where-name"
+          class:quiet={!remoteProject && !remoteHost}
+          aria-haspopup={folderLocked ? undefined : "menu"}
+          aria-expanded={folderLocked ? undefined : projOpen}
+          on:click|stopPropagation={toggleProject}
+          use:tooltip={remoteCwd ? `Runs on ${remoteHost} in ${remoteCwd}` : `Runs on ${remoteHost}, in its own scratch folder`}
+        >{remoteProject || remoteHost || "a project"}</button>
+        {#if remoteProject && remoteHost}<span>on {remoteHost}</span>{/if}
+      </div>
+    {:else}
+      <div class="where">
+        <span>Let's build in</span>
+        <button
+          bind:this={projBtn}
+          class="where-name"
+          class:quiet={!project && !folder}
+          aria-haspopup={folderLocked ? undefined : "menu"}
+          aria-expanded={folderLocked ? undefined : projOpen}
+          on:click|stopPropagation={toggleProject}
+          use:tooltip={project ? `Project ${project.title}` : folder ? folder : "Pick a folder to work in"}
+        >{project ? project.title : folder ? folderName(folder) : "a project"}</button>
+        {#if folder && branch}
+          <span>on</span>
+          <button
+            bind:this={branchBtn}
+            class="where-branch"
+            aria-haspopup={folderLocked ? undefined : "menu"}
+            aria-expanded={folderLocked ? undefined : branchOpen}
+            on:click|stopPropagation={toggleBranch}
+            use:tooltip={folderLocked ? `On ${branch}` : worktree ? `A worktree of its own, from ${worktree}` : `In the folder, on ${branch}`}
+          >{worktree && !folderLocked ? `new from ${worktree}` : branch}</button>
+        {/if}
+      </div>
+    {/if}
   {/if}
 
   <div class="box" class:web role="group" aria-label="Composer" on:dragover|preventDefault on:drop|preventDefault={onDrop}>
@@ -704,75 +704,80 @@
       </div>
     {/if}
 
-    <div class="row">
-      {#if web}
-        <span class="lead" aria-hidden="true"><Icon name="globe" /></span>
-      {:else}
-        <button class="lead btn" use:tooltip={"Attach files"} on:click={pickFiles}><Icon name="plus" /></button>
+    <textarea
+      bind:this={textarea}
+      bind:value={input}
+      rows="1"
+      aria-label={web ? "Search or address" : "Message"}
+      {placeholder}
+      on:keydown={onKeydown}
+      on:input={onInput}
+      on:focus={() => (focused = true)}
+      on:blur={() => (focused = false)}
+      on:paste={onPaste}
+    />
+    <!-- One row: model, effort, permission as text. Send sits with attach. -->
+    <div class="tools">
+      {#if !web}
+        <ModelPicker bind:this={picker} bind:value={model} bind:effort {board} on:unavailable />
+        {#if efforts.length > 1}
+          <button
+            bind:this={effortBtn}
+            class="text"
+            class:open={effortOpen}
+            use:tooltip={"Effort"}
+            aria-haspopup="menu"
+            aria-expanded={effortOpen}
+            on:click|stopPropagation={toggleEffort}
+          >{effortLabel(effort)}</button>
+        {/if}
+        <button
+          bind:this={permBtn}
+          class="text perm-btn"
+          class:open={permOpen}
+          use:tooltip={perm.desc}
+          aria-haspopup="menu"
+          aria-expanded={permOpen}
+          on:click|stopPropagation={togglePerm}
+        >{perm.label}</button>
+        {#if remoteHost}
+          <button
+            class="text"
+            disabled={remoteLocked}
+            aria-pressed={remote}
+            use:tooltip={remoteLocked ? "A session stays where it started" : remote ? "Run on this computer instead" : `Run on ${remoteHost} instead`}
+            on:click|stopPropagation={() => dispatch("remote", { on: !remote })}
+          >
+            <span class="truncate">{remote ? remoteHost : "This computer"}</span>
+          </button>
+        {/if}
       {/if}
-      <textarea
-        bind:this={textarea}
-        bind:value={input}
-        rows="1"
-        aria-label={web ? "Search or address" : "Message"}
-        {placeholder}
-        on:keydown={onKeydown}
-        on:input={onInput}
-        on:focus={() => (focused = true)}
-        on:blur={() => (focused = false)}
-        on:paste={onPaste}
-      />
-      <!-- While it works, a typed message sends (it waits its turn): the
-           button only stops the agent when there is nothing to send, so a
-           habitual click never ends a run by accident. -->
-      {#if streaming && !canSubmit}
-        <button class="go stop" use:tooltip={"Stop"} on:click={() => dispatch("stop")}><span class="square" /></button>
-      {:else}
-        <button class="go" class:ready={canSubmit} use:tooltip={web ? "Open (Enter)" : "Send (Enter)"} disabled={!canSubmit} on:click={submit}>
-          <Icon name="arrowUp" />
-        </button>
-      {/if}
+      <div class="acts">
+        {#if !started}
+          <button
+            class="icon"
+            class:on={web}
+            aria-pressed={web}
+            aria-label="Browser"
+            use:tooltip={web ? "Back to the agent" : "Browse the web"}
+            on:click={() => setWeb(!web)}
+          ><Icon name="globe" /></button>
+        {/if}
+        {#if !web}
+          <button class="icon" aria-label="Attach files" use:tooltip={"Attach files"} on:click={pickFiles}><Icon name="plus" /></button>
+        {/if}
+        <!-- A typed message waits its turn. Stop shows only when the box is empty. -->
+        {#if streaming && !canSubmit}
+          <button class="go stop" use:tooltip={"Stop"} on:click={() => dispatch("stop")}><span class="square" /></button>
+        {:else}
+          <button class="go" class:ready={canSubmit} use:tooltip={web ? "Open (Enter)" : "Send (Enter)"} disabled={!canSubmit} on:click={submit}>
+            <Icon name="arrowUp" />
+          </button>
+        {/if}
+      </div>
     </div>
   </div>
 
-  <!-- Suggestions open under the box on Home: the line steps aside. -->
-  <div class="under" class:hidden={webOpen && hero}>
-    {#if !started}
-      <div class="seg" role="group" aria-label="Send to" data-ui-segmented>
-        <button class:on={!web} aria-pressed={!web} use:tooltip={"Ask the agent (Tab switches)"} on:click={() => setWeb(false)}>Agent</button>
-        <button class:on={web} aria-pressed={web} use:tooltip={"Search the web (Tab switches)"} on:click={() => setWeb(true)}>Web</button>
-      </div>
-    {/if}
-    {#if !web}
-      {#if remoteHost}
-        <button
-          class="ctl"
-          class:on={remote}
-          disabled={remoteLocked}
-          aria-pressed={remote}
-          use:tooltip={remoteLocked ? "A session stays where it started" : remote ? "Run on this computer instead" : `Run on ${remoteHost} instead`}
-          on:click|stopPropagation={() => dispatch("remote", { on: !remote })}
-        >
-          <Icon name={remote ? "server" : "desktop"} size={12} />
-          <span class="truncate">{remote ? remoteHost : "This computer"}</span>
-        </button>
-      {/if}
-      <button
-        bind:this={permBtn}
-        class="ctl"
-        class:open={permOpen}
-        use:tooltip={perm.desc}
-        aria-haspopup="menu"
-        aria-expanded={permOpen}
-        on:click|stopPropagation={togglePerm}
-      >
-        <Icon name={permission === "supervised" ? "lock" : "unlock"} size={12} />
-        <span>{perm.label}</span>
-      </button>
-      <span class="spacer" />
-      <ModelPicker bind:this={picker} bind:value={model} bind:effort {board} on:unavailable />
-    {/if}
-  </div>
   {#if attachError}<div class="error" role="alert">{attachError}</div>{/if}
 
   {#if projOpen}
@@ -832,12 +837,31 @@
     </div>
   {/if}
 
+  {#if effortOpen}
+    <div class="menu-pop" data-ui-list style={effortStyle} use:popover={{ anchor: effortBtn, close: () => (effortOpen = false) }} transition:fly={{ y: effortStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
+      {#each efforts as level (level)}
+        <button
+          class="opt"
+          class:on={effort === level}
+          on:click={() => {
+            effort = level;
+            effortOpen = false;
+          }}
+        >
+          <span class="name">{effortLabel(level)}</span>
+          {#if effort === level}<span class="tick"><Icon name="check" /></span>{/if}
+        </button>
+      {/each}
+    </div>
+  {/if}
+
   {#if permOpen}
     <div class="menu-pop perms" data-ui-list style={permStyle} use:popover={{ anchor: permBtn, close: () => (permOpen = false) }} transition:fly={{ y: permStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
       {#each PERMS as p (p.id)}
         {@const off = permissionBlocked(p.id, policy)}
         <button
           class="perm"
+          class:on={permission === p.id}
           disabled={!!off}
           on:click={() => {
             permission = p.id;
@@ -860,100 +884,61 @@
     margin: 0 auto;
   }
 
-  /* The project tab, fused to the box's top edge. */
-  .proj {
+  /* A caption on the box: "Let's build in Parzi on main". */
+  .where {
     display: flex;
-    align-items: center;
-    gap: 6px;
-    width: fit-content;
-    max-width: calc(100% - 24px);
-    height: 24px;
-    margin: 0 0 0 14px;
-    padding: 0 10px;
-    transform: translateY(1px);
-    background: var(--glass-strong-bg);
-    -webkit-backdrop-filter: var(--glass-strong-blur);
-    backdrop-filter: var(--glass-strong-blur);
-    border: var(--glass-hairline);
-    border-bottom: none;
-    border-radius: var(--radius) var(--radius) 0 0;
-    color: var(--muted);
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--space);
+    min-width: 0;
+    margin: 0 0 calc(var(--space) * 2) calc(var(--space) * 3);
     font-size: var(--fs-sm);
-    cursor: pointer;
-    transition:
-      transform 220ms var(--ease-out),
-      opacity 160ms ease;
+    line-height: 1.4;
+    color: var(--muted);
   }
-  .proj.folded {
-    transform: translateY(100%);
-    opacity: 0;
-    pointer-events: none;
-  }
-  .proj:hover {
-    color: var(--text);
-  }
-  .proj.set :global(svg:first-child) {
-    color: var(--accent);
-  }
-  .proj-title {
+  .where-name,
+  .where-branch {
+    min-width: 0;
+    max-width: 100%;
+    padding: 0;
     overflow: hidden;
+    background: none;
+    border: none;
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+    line-height: inherit;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 600;
-    color: var(--text);
+    cursor: pointer;
   }
-  .proj-branch {
-    flex: none;
-    padding: 0 6px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--text) 7%, transparent);
-    font-family: var(--mono);
-    font-size: var(--fs-xs);
+  .where-name.quiet {
     color: var(--muted);
+  }
+  .where-name:hover,
+  .where-branch:hover,
+  .where-name.quiet:hover {
+    color: var(--text);
   }
 
   .box {
     position: relative;
     z-index: 1;
-    padding: 6px;
-    background: var(--glass-strong-bg);
-    -webkit-backdrop-filter: var(--glass-strong-blur);
-    backdrop-filter: var(--glass-strong-blur);
-    border: var(--glass-hairline);
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space) * 3);
+    padding: calc(var(--space) * 3);
+    background: none;
+    border: 1px solid var(--line);
     border-radius: var(--radius-lg);
     box-shadow: none;
   }
-  .row {
-    display: flex;
-    align-items: flex-end;
-    gap: 6px;
-  }
-  .lead {
-    width: 30px;
-    height: 30px;
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--muted);
-  }
-  .lead.btn {
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: 999px;
-    cursor: pointer;
-  }
-  .lead.btn:hover {
-    background: color-mix(in srgb, var(--text) 8%, transparent);
-    color: var(--text);
-  }
   textarea {
-    flex: 1;
+    width: 100%;
     min-width: 0;
-    min-height: 30px;
+    min-height: calc(var(--space) * 6);
     max-height: 40vh;
-    padding: 5px 2px;
+    padding: 0;
     background: transparent;
     border: none;
     outline: none;
@@ -969,29 +954,24 @@
   textarea::placeholder {
     color: var(--muted);
   }
-  .hero .box {
-    padding: 8px;
-  }
-  .hero textarea {
-    font-size: var(--fs-lg);
-    padding: 4px 2px;
-  }
+
   .go {
-    width: 30px;
-    height: 30px;
+    width: calc(var(--space) * 6);
+    height: calc(var(--space) * 6);
     flex: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     padding: 0;
-    background: color-mix(in srgb, var(--text) 6%, transparent);
-    border: none;
+    background: none;
+    border: 1px solid var(--line);
     border-radius: 999px;
     color: var(--muted);
     cursor: pointer;
   }
   .go.ready:not(:disabled) {
     background: var(--text);
+    border-color: var(--text);
     color: var(--bg);
   }
   .go.ready:hover:not(:disabled) {
@@ -1006,98 +986,82 @@
   }
   .go.stop {
     background: var(--line);
+    border-color: var(--line);
     color: var(--text);
   }
   .go.stop:hover {
     background: color-mix(in srgb, var(--bad) 22%, var(--bg));
+    border-color: color-mix(in srgb, var(--bad) 22%, var(--bg));
     color: var(--bad);
   }
   .square {
     width: 9px;
     height: 9px;
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     background: currentColor;
   }
 
-  /* The line under the box: each control on its own small glass, like the
-     project tab above it, so it reads on any wallpaper without joining the
-     box. */
-  .under {
+  .tools {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: calc(var(--space) * 3);
     min-width: 0;
-    min-height: 32px;
-    padding: 6px 0 0;
   }
-  .under.hidden {
-    visibility: hidden;
-  }
-  .seg,
-  .under :global(.ctl) {
-    box-sizing: border-box;
-    height: 26px;
-    background: var(--glass-strong-bg);
-    -webkit-backdrop-filter: var(--glass-strong-blur);
-    backdrop-filter: var(--glass-strong-blur);
-    border: var(--glass-hairline);
-    border-radius: var(--radius);
-  }
-  .seg {
+  .tools .text,
+  .tools :global(.model) {
     display: inline-flex;
     align-items: center;
     flex: none;
-    gap: 2px;
-    padding: 2px;
-  }
-  .seg button {
-    height: 20px;
-    padding: 0 8px;
+    height: calc(var(--space) * 6);
+    max-width: 200px;
+    min-width: 0;
+    padding: 0;
     background: none;
     border: none;
-    border-radius: var(--radius-sm);
     color: var(--muted);
-    font-size: var(--fs-sm);
+    font: inherit;
+    font-size: var(--fs-base);
+    line-height: 1.45;
     cursor: pointer;
   }
-  .seg button:hover {
+  .tools .text:hover:not(:disabled),
+  .tools .text.open,
+  .tools :global(.model:hover),
+  .tools :global(.model.open) {
     color: var(--text);
   }
-  .seg button.on {
-    background: var(--selected);
-    color: var(--text);
-    font-weight: 600;
-  }
-  .under :global(.ctl) {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    padding: 0 8px;
-    color: var(--muted);
-    font-size: var(--fs-sm);
-    cursor: pointer;
-  }
-  .under :global(.ctl:hover:not(:disabled)),
-  .under :global(.ctl.open) {
-    background: var(--panel);
-    color: var(--text);
-  }
-  .under :global(.ctl:disabled) {
+  .tools .text:disabled {
     cursor: default;
   }
-  .ctl.on :global(svg) {
-    color: var(--accent);
+  .acts {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    gap: calc(var(--space) * 2);
+    margin-left: auto;
+  }
+  .icon {
+    width: calc(var(--space) * 6);
+    height: calc(var(--space) * 6);
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .icon:hover,
+  .icon.on {
+    color: var(--text);
   }
   .truncate {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     min-width: 0;
-  }
-  .spacer {
-    flex: 1 1 auto;
-    min-width: 4px;
   }
 
   /* The queue bar: its own row above the composer, one card per
@@ -1106,16 +1070,16 @@
   .queue-bar {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space);
     max-height: 220px;
-    margin: 0 0 8px;
+    margin: 0 0 calc(var(--space) * 2);
     overflow-y: auto;
   }
   .queue-head {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 0 4px;
+    gap: calc(var(--space) * 2);
+    padding: 0 var(--space);
   }
   .queue-title {
     font-size: var(--fs-xs);
@@ -1124,7 +1088,7 @@
   }
   .queue-resume {
     margin-left: auto;
-    padding: 2px 10px;
+    padding: var(--space) calc(var(--space) * 3);
     background: var(--text);
     border: none;
     border-radius: 999px;
@@ -1136,12 +1100,10 @@
   .queue-item {
     display: flex;
     align-items: flex-start;
-    gap: 6px;
-    padding: 6px 4px 6px 2px;
-    background: var(--glass-strong-bg);
-    -webkit-backdrop-filter: var(--glass-strong-blur);
-    backdrop-filter: var(--glass-strong-blur);
-    border: var(--glass-hairline);
+    gap: calc(var(--space) * 2);
+    padding: calc(var(--space) * 2) var(--space) calc(var(--space) * 2) var(--space);
+    background: none;
+    border: 1px solid var(--line);
     border-radius: var(--radius);
   }
   .queue-item.dragover {
@@ -1167,7 +1129,7 @@
   .queue-num {
     flex: none;
     min-width: 16px;
-    padding-top: 3px;
+    padding-top: var(--space);
     font-family: var(--mono);
     font-size: var(--fs-xs);
     color: var(--muted);
@@ -1180,7 +1142,7 @@
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    gap: 2px;
+    gap: var(--space);
     padding: 0;
     background: none;
     border: none;
@@ -1209,7 +1171,7 @@
   .queue-acts {
     flex: none;
     display: inline-flex;
-    gap: 2px;
+    gap: var(--space);
   }
   .queue-acts button {
     width: 22px;
@@ -1231,11 +1193,11 @@
   .held {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     height: 26px;
     flex: none;
-    margin: 2px 2px 6px;
-    padding: 0 4px 0 10px;
+    margin: 0;
+    padding: 0 var(--space) 0 calc(var(--space) * 3);
     background: color-mix(in srgb, var(--text) 5%, transparent);
     border-radius: var(--radius);
     color: var(--muted);
@@ -1265,7 +1227,7 @@
   }
   .held button.held-side {
     width: auto;
-    padding: 0 6px;
+    padding: 0 calc(var(--space) * 2);
     font: inherit;
     font-size: var(--fs-sm);
   }
@@ -1279,16 +1241,15 @@
   .attachments {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
-    padding: 2px 2px 6px;
+    gap: calc(var(--space) * 2);
   }
   .chip {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: calc(var(--space) * 2);
     height: 26px;
     max-width: 220px;
-    padding: 0 4px 0 8px;
+    padding: 0 var(--space) 0 calc(var(--space) * 2);
     background: color-mix(in srgb, var(--text) 5%, transparent);
     border-radius: var(--radius);
     color: var(--muted);
@@ -1298,7 +1259,7 @@
     width: 18px;
     height: 18px;
     object-fit: cover;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
   }
   /* The chip's own thumbnail opens the picture big. */
   .chip .thumb {
@@ -1306,7 +1267,7 @@
     padding: 0;
     background: none;
     border: none;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     cursor: zoom-in;
   }
   .chip-name {
@@ -1336,7 +1297,7 @@
     border-radius: 999px;
   }
   .error {
-    padding: 4px 12px 0;
+    padding: var(--space) calc(var(--space) * 3) 0;
     font-size: var(--fs-xs);
     color: var(--bad);
   }
@@ -1359,9 +1320,9 @@
     z-index: 5;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: var(--space);
     max-height: 240px;
-    padding: 5px;
+    padding: var(--space);
     overflow-y: auto;
     background: var(--panel);
     border: 1px solid var(--line);
@@ -1370,8 +1331,8 @@
   .suggest button {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 8px;
+    gap: calc(var(--space) * 2);
+    padding: calc(var(--space) * 2) calc(var(--space) * 2);
     background: transparent;
     border: none;
     border-radius: var(--radius);
@@ -1382,7 +1343,7 @@
   }
   .suggest button.on,
   .suggest button:hover {
-    background: var(--line);
+    background: var(--hover);
     color: var(--text);
   }
   .mono {
@@ -1397,7 +1358,7 @@
 
   .menu-pop {
     width: 260px;
-    padding: 4px;
+    padding: var(--space);
     overflow-y: auto;
   }
   .menu-pop.perms {
@@ -1406,9 +1367,9 @@
   .perm {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
     width: 100%;
-    padding: 7px 8px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 2);
     background: transparent;
     border: none;
     border-radius: var(--radius);
@@ -1416,8 +1377,11 @@
     text-align: left;
     cursor: pointer;
   }
-  .perm:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--text) 7%, transparent);
+  .perm:hover:not(:disabled):not(.on) {
+    background: var(--hover);
+  }
+  .perm.on {
+    background: var(--selected);
   }
   .perm:disabled {
     opacity: 0.45;
@@ -1428,7 +1392,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: var(--space);
   }
   .perm-name {
     font-size: var(--fs-md);
@@ -1443,7 +1407,7 @@
   }
   .pop-empty {
     margin: 0;
-    padding: 6px 8px 8px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 2);
     font-size: var(--fs-sm);
     color: var(--muted);
   }
@@ -1452,26 +1416,14 @@
   }
   .pop-head {
     margin: 0;
-    padding: 4px 10px 2px;
+    padding: var(--space) calc(var(--space) * 3) var(--space);
     font-size: var(--fs-xs);
     font-weight: 600;
     color: var(--muted);
   }
-  /* The project and branch tabs sit side by side on the box's top edge. */
-  .tops {
-    display: flex;
-    align-items: flex-end;
-    gap: 8px;
-  }
-  .proj.branch-tab {
-    margin-left: 0;
-  }
-  .proj.branch-tab.fresh :global(svg:first-child) {
-    color: var(--accent);
-  }
   .sep {
     height: 1px;
-    margin: 4px 6px;
+    margin: var(--space) calc(var(--space) * 2);
     background: var(--line);
   }
   .count {
@@ -1482,21 +1434,22 @@
   .opt {
     display: flex;
     align-items: center;
-    gap: 9px;
+    gap: calc(var(--space) * 2);
     width: 100%;
     height: 32px;
-    padding: 0 8px;
+    padding: 0 calc(var(--space) * 2);
     background: transparent;
     border: none;
     border-radius: var(--radius);
-    color: var(--muted);
+    color: var(--text);
     text-align: left;
     cursor: pointer;
   }
-  .opt:hover,
+  .opt:hover:not(.on) {
+    background: var(--hover);
+  }
   .opt.on {
-    background: var(--line);
-    color: var(--text);
+    background: var(--selected);
   }
   .opt.on :global(svg) {
     color: var(--accent);

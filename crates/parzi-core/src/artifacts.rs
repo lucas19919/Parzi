@@ -79,25 +79,47 @@ fn is_valid_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
+/// Live components a preview may mount. Variants match ui/src/lib/previewSpec.ts.
+fn preview_variants(component: &str) -> Option<&'static [u64]> {
+    match component {
+        "omnibar" => Some(&[1, 2]),
+        _ => None,
+    }
+}
+
 fn validate_preview(content: &str) -> Result<()> {
     let v: serde_json::Value = serde_json::from_str(content).map_err(|_| {
         ParziError::Validation(
-            "preview content must be JSON like {\"component\":\"omnibar\",\"variant\":2}".into(),
+            "preview content must be JSON like {\"component\":\"omnibar\",\"variant\":1}".into(),
         )
     })?;
-    let component = v.get("component").and_then(|c| c.as_str()).unwrap_or("");
-    if component.trim().is_empty() {
+    let component = v.get("component").and_then(|c| c.as_str()).unwrap_or("").trim();
+    let Some(variants) = preview_variants(component) else {
         return Err(ParziError::Validation(
-            "preview content needs a \"component\" string".into(),
+            "unknown preview component. Known: omnibar (variant 1 agent, 2 web)".into(),
         ));
-    }
-    let variant_ok = v.get("variant").is_some_and(|n| n.as_u64().is_some());
+    };
+    let variant_ok = v
+        .get("variant")
+        .and_then(|n| n.as_u64())
+        .is_some_and(|n| variants.contains(&n));
     if !variant_ok {
         return Err(ParziError::Validation(
-            "preview content needs an integer \"variant\"".into(),
+            "omnibar variant must be 1 (agent) or 2 (web)".into(),
         ));
     }
+    if let Some(tokens) = v.get("tokens") {
+        if !tokens.is_object() {
+            return Err(ParziError::Validation(
+                "preview tokens must be an object of bg, text, accent, panel as #hex and radius, space as Npx".into(),
+            ));
+        }
+    }
     Ok(())
+}
+
+fn mentions_live_ui(title: &str, content: &str) -> bool {
+    format!("{title}\n{content}").to_ascii_lowercase().contains("omnibar")
 }
 
 pub fn validate_artifact(v: &serde_json::Value) -> Result<ArtifactV1> {
@@ -153,6 +175,17 @@ pub fn validate_artifact(v: &serde_json::Value) -> Result<ArtifactV1> {
     }
     if a.content.trim().is_empty() {
         return Err(ParziError::Validation("artifact content is empty".into()));
+    }
+    // A design of a live component sent as html or json still mounts the
+    // component. A hand-drawn mock of one is refused so the model retries.
+    if a.kind == "html" || a.kind == "json" {
+        if validate_preview(&a.content).is_ok() {
+            a.kind = "preview".into();
+        } else if mentions_live_ui(&a.title, &a.content) {
+            return Err(ParziError::Validation(
+                "Parzi UI renders as kind preview, not html or json. content is {\"component\":\"omnibar\",\"variant\":1} (1 agent, 2 web). tokens restyle the real component: bg, text, accent, panel as #hex, radius and space as Npx.".into(),
+            ));
+        }
     }
     if a.kind == "preview" {
         validate_preview(&a.content)?;

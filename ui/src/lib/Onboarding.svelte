@@ -434,8 +434,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
-    background: rgba(0, 0, 0, 0.6);
+    padding: calc(var(--space) * 6);
+    background: var(--scrim);
   }
   .card {
     width: min(620px, 100%);
@@ -453,12 +453,12 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 12px 20px;
+    gap: calc(var(--space) * 2);
+    padding: calc(var(--space) * 3) calc(var(--space) * 6);
   }
   /* The close button's glyph, not its box, lines up with the 20px inset. */
   header {
-    padding-right: 14px;
+    padding-right: calc(var(--space) * 4);
     border-bottom: 1px solid var(--line);
   }
   footer {
@@ -466,12 +466,12 @@
   }
   .steps {
     display: flex;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     flex: 1;
   }
   .steps button {
     min-height: 24px;
-    padding: 4px 10px;
+    padding: var(--space) calc(var(--space) * 3);
     background: none;
     border: none;
     border-radius: 999px;
@@ -515,16 +515,16 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 20px;
+    padding: calc(var(--space) * 6);
   }
   h2 {
-    margin: 0 0 6px;
+    margin: 0 0 calc(var(--space) * 2);
     font-size: var(--fs-xl);
     font-weight: 600;
     color: var(--text);
   }
   .lead {
-    margin: 0 0 16px;
+    margin: 0 0 calc(var(--space) * 4);
     font-size: var(--fs-md);
     line-height: 1.5;
     color: var(--muted);
@@ -532,20 +532,20 @@
   .list {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--space);
   }
   /* A tool's notes, under its row and in line with its name. */
   .list.picks {
     max-height: 220px;
-    margin-left: 26px;
+    margin-left: calc(var(--space) * 6);
     overflow-y: auto;
   }
   .item {
     position: relative;
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
+    gap: calc(var(--space) * 3);
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
     border: 1px solid transparent;
     border-radius: var(--radius);
     cursor: default;
@@ -562,7 +562,7 @@
     background: var(--line);
   }
   .item.compact {
-    padding: 5px 10px;
+    padding: var(--space) calc(var(--space) * 3);
   }
   .logo {
     width: 28px;
@@ -583,7 +583,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: var(--space);
   }
   .title {
     overflow: hidden;
@@ -607,7 +607,7 @@
     min-width: 0;
     display: flex;
     align-items: baseline;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
   }
   .muted {
     overflow: hidden;
@@ -627,7 +627,7 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
     cursor: pointer;
   }
   .more,
@@ -635,9 +635,9 @@
     flex: none;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: calc(var(--space) * 2);
     min-height: 24px;
-    padding: 4px 8px;
+    padding: var(--space) calc(var(--space) * 2);
     background: none;
     border: none;
     border-radius: var(--radius);
@@ -654,15 +654,15 @@
   }
   /* The disclosure's chevron lines up with the lead's text. */
   .disclose {
-    margin-left: -8px;
+    margin-left: calc(var(--space) * -2);
     font-size: var(--fs-md);
   }
   .server {
-    margin-top: 12px;
+    margin-top: calc(var(--space) * 3);
   }
   .skipped {
     list-style: none;
-    margin: 8px 0 0;
+    margin: calc(var(--space) * 2) 0 0;
     padding: 0;
     font-size: var(--fs-sm);
     line-height: 1.6;
@@ -670,20 +670,20 @@
   }
   .remote-form {
     display: flex;
-    gap: 8px;
-    margin: 4px 0 8px;
+    gap: calc(var(--space) * 2);
+    margin: var(--space) 0 calc(var(--space) * 2);
   }
   .remote-form label {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space);
     font-size: var(--fs-sm);
     color: var(--muted);
   }
   .remote-form input {
-    padding: 7px 10px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
     background: var(--bg);
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -700,17 +700,17 @@
   }
   .setup-log {
     list-style: none;
-    margin: 12px 0 0;
+    margin: calc(var(--space) * 3) 0 0;
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space);
   }
   .setup-log li {
     display: grid;
     grid-template-columns: 18px 130px 1fr;
     align-items: baseline;
-    gap: 6px;
+    gap: calc(var(--space) * 2);
     font-size: var(--fs-md);
   }
   .setup-log .name {
@@ -749,7 +749,7 @@
     }
   }
   .fine {
-    margin: 12px 0 0;
+    margin: calc(var(--space) * 3) 0 0;
     font-size: var(--fs-sm);
     color: var(--muted);
   }
@@ -760,7 +760,7 @@
     bottom: 3px;
     height: 2px;
     overflow: hidden;
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     background: var(--line);
   }
   .progress span {
@@ -794,22 +794,22 @@
   }
   .checks {
     display: flex;
-    gap: 18px;
-    margin: 12px 10px 0;
+    gap: calc(var(--space) * 4);
+    margin: calc(var(--space) * 3) calc(var(--space) * 3) 0;
     font-size: var(--fs-md);
     color: var(--muted);
   }
   .checks label {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: calc(var(--space) * 2);
     cursor: pointer;
   }
   .action {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-top: 16px;
+    gap: calc(var(--space) * 3);
+    margin-top: calc(var(--space) * 4);
   }
   .action .btn {
     flex: none;
@@ -825,12 +825,12 @@
   }
   code {
     font-size: var(--fs-sm);
-    padding: 1px 5px;
+    padding: var(--space) var(--space);
     background: var(--bg);
     border-radius: var(--radius-sm);
   }
   .link {
-    padding: 4px 8px;
+    padding: var(--space) calc(var(--space) * 2);
     background: none;
     border: none;
     color: var(--muted);

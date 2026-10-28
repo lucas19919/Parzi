@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
+  import ChromeIcon from "./ChromeIcon.svelte";
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
@@ -15,18 +16,15 @@
   export let threads: { id: string; model: string }[] = [];
   export let liveModel = "";
 
-  // The agent behind a session tab, from the thread's model.
-  const providerOf = (sid?: string | null) => {
-    const m = sid ? threads.find((t) => t.id === sid)?.model : undefined;
-    return m ? m.split("/")[0] : "";
-  };
-  // A draft tab has no thread yet: the logo of the model it will start
-  // with. The active draft reads the live composer (tabs never invalidate
-  // on keystrokes); a parked draft reads what it saved.
-  const draftProvider = (tab: Tab) => {
-    const m = tab.id === activeTabId && liveModel ? liveModel : tab.composer?.model;
-    return m ? m.split("/")[0] : "";
-  };
+  // Open tab: the live composer. Parked: the thread, then its saved pick.
+  // The args are the reactive inputs; a read buried in a helper would not invalidate.
+  function sessionMark(tab: Tab, activeId: string, live: string, list: { id: string; model: string }[]) {
+    if (tab.kind !== "session") return "";
+    if (tab.id === activeId && live) return live.split("/")[0];
+    const stored = tab.sessionId ? list.find((t) => t.id === tab.sessionId)?.model : undefined;
+    return (stored ? stored.split("/")[0] : "") || (tab.composer?.model?.split("/")[0] ?? "");
+  }
+  $: markById = new Map(tabs.map((tab) => [tab.id, sessionMark(tab, activeTabId, liveModel, threads)]));
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -211,7 +209,7 @@
     {@const attached = tab.kind === "session" && tab.sessionId ? (groups.kids.get(tab.sessionId) ?? []) : []}
     {@const shut = tab.sessionId ? collapsed.has(tab.sessionId) && !attached.some((a) => a.id === activeTabId) : false}
     {@const linked = `${attached.length} page${attached.length === 1 ? "" : "s"} from this session`}
-    {@const provider = tab.kind === "session" ? providerOf(tab.sessionId) || draftProvider(tab) : ""}
+    {@const provider = markById.get(tab.id) ?? ""}
     {#if attached.length && !shut}
       <div class="group">
         <div
@@ -235,8 +233,8 @@
             <span class="kind">
               {#if tab.loading || markOf(tab.sessionId) === "running"}
                 <span class="spinner" />
-              {:else if tab.sessionId && hasMark(providerOf(tab.sessionId))}
-                <ProviderLogo provider={providerOf(tab.sessionId)} size={14} />
+              {:else if hasMark(provider)}
+                <ProviderLogo {provider} size={14} mono />
               {:else}
                 <Icon name="bot" />
               {/if}
@@ -264,6 +262,7 @@
           </button>
         </div>
         {#each attached as sub (sub.id)}
+          {@const subProvider = markById.get(sub.id) ?? ""}
           <div class="tab sub" class:active={sub.id === activeTabId} on:auxclick={(e) => onAux(e, sub.id)}>
             <div
               class="pick"
@@ -277,8 +276,8 @@
             <span class="kind">
               {#if sub.loading || markOf(sub.sessionId) === "running"}
                 <span class="spinner" />
-              {:else if sub.kind === "session" && sub.sessionId && hasMark(providerOf(sub.sessionId))}
-                <ProviderLogo provider={providerOf(sub.sessionId)} size={14} />
+              {:else if hasMark(subProvider)}
+                <ProviderLogo provider={subProvider} size={14} mono />
               {:else if sub.kind === "session"}
                 <Icon name="bot" />
               {:else if sub.kind === "artifact"}
@@ -329,7 +328,7 @@
               {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
                 <img src={tab.favicon || faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
               {:else if provider && hasMark(provider)}
-                <ProviderLogo {provider} size={14} />
+                <ProviderLogo {provider} size={14} mono />
               {:else if tab.kind === "session" && !tab.sessionId}
                 <Icon name="home" />
               {:else}
@@ -365,7 +364,7 @@
 </div>
 {#if !vertical}
   <button class="new" use:tooltip={"New session (Ctrl+T)"} on:click={() => dispatch("newTab")}>
-    <Icon name="plus" />
+    <ChromeIcon name="plus" />
   </button>
 {/if}
 
@@ -374,7 +373,7 @@
     position: relative;
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space);
     min-width: 0;
     overflow-x: auto;
   }
@@ -409,7 +408,7 @@
     max-width: 220px;
     flex: 0 1 auto;
     min-width: 96px;
-    padding: 0 4px 0 0;
+    padding: 0 var(--space) 0 0;
     border-radius: var(--radius);
     color: var(--muted);
     font-size: var(--fs-sm);
@@ -434,9 +433,7 @@
   /* Glass tinted with the theme's panel, not a white veil: the title stays
      readable when a light theme's dark text sits over a dimmed picture. */
   .tab.active {
-    background: color-mix(in srgb, var(--panel) 82%, transparent);
-    -webkit-backdrop-filter: var(--glass-blur);
-    backdrop-filter: var(--glass-blur);
+    background: var(--panel);
     color: var(--text);
   }
   /* The tab proper: fills the pill up to its buttons. Focus rings the pill. */
@@ -446,8 +443,8 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 0 6px 0 10px;
+    gap: calc(var(--space) * 2);
+    padding: 0 calc(var(--space) * 2) 0 calc(var(--space) * 3);
     border-radius: inherit;
   }
   .pick:focus-visible {
@@ -487,7 +484,7 @@
     }
   }
   .tab.active .kind {
-    color: var(--accent);
+    color: var(--text);
   }
   /* A page under its session: same type as any tab, a little narrower,
      inside the session's frame. */
@@ -500,8 +497,8 @@
   .group {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px;
+    gap: var(--space);
+    padding: var(--space);
     border-radius: var(--radius-lg);
     background: color-mix(in srgb, var(--text) 5%, transparent);
     box-shadow: inset 0 0 0 1px var(--line);
@@ -513,7 +510,7 @@
     width: auto;
     min-width: 18px;
     height: 18px;
-    padding: 0 5px;
+    padding: 0 var(--space);
     border-radius: 999px;
     background: var(--hover);
     background-clip: border-box;
@@ -539,7 +536,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 4px;
+    padding: var(--space);
     background: transparent;
     background-clip: content-box;
     border: none;
@@ -549,7 +546,7 @@
     opacity: 0;
   }
   .close + .close {
-    margin-left: 4px;
+    margin-left: var(--space);
   }
   .tab:hover .close,
   .tab.active .close {
@@ -574,7 +571,7 @@
     cursor: pointer;
   }
   .new:hover {
-    background: var(--hover);
+    background: var(--panel);
     color: var(--text);
   }
 </style>

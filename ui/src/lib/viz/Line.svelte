@@ -162,25 +162,25 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     min-width: 0;
   }
   .legend {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px 16px;
+    gap: var(--space) calc(var(--space) * 4);
   }
   .key {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: calc(var(--space) * 2);
     font-size: var(--fs-sm);
     color: var(--muted);
   }
   .key i {
     width: 12px;
     height: 2px;
-    border-radius: 1px;
+    border-radius: 0;
   }
   .plot-wrap {
     width: 100%;

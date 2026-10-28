@@ -94,7 +94,6 @@ function themeVars(t: Theme): Record<string, string> {
     "--bg": t.colors.stage,
     "--accent": t.colors.accent,
     "--text": t.colors.text,
-    "--muted": t.colors.text_dim,
     "--panel": t.colors.panel?.trim() ? t.colors.panel : "color-mix(in srgb, var(--text) 6%, var(--bg))",
     "--bg-dim": String(clamp01(t.background.dim)),
     "--vignette": String(clamp01(t.background.vignette)),

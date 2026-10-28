@@ -40,7 +40,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 56px 40px;
+    padding: calc(var(--space) * 8) calc(var(--space) * 8);
     background: var(--scrim);
     -webkit-backdrop-filter: blur(6px);
     backdrop-filter: blur(6px);
@@ -78,7 +78,7 @@
     left: 50%;
     max-width: 70%;
     transform: translateX(-50%);
-    padding: 4px 10px;
+    padding: var(--space) calc(var(--space) * 3);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

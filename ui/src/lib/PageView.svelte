@@ -481,8 +481,8 @@
   .zoom {
     flex: none;
     height: 22px;
-    margin-right: 4px;
-    padding: 0 8px;
+    margin-right: var(--space);
+    padding: 0 calc(var(--space) * 2);
     background: var(--hover);
     border: none;
     border-radius: 999px;
@@ -507,8 +507,8 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 0 8px;
+    gap: calc(var(--space) * 2);
+    padding: 0 calc(var(--space) * 2);
     border-bottom: 1px solid var(--line);
   }
   .nav {
@@ -541,16 +541,16 @@
   }
   .logins {
     width: 280px;
-    padding: 5px;
+    padding: var(--space);
     overflow-y: auto;
   }
   .login {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 1px;
+    gap: var(--space);
     width: 100%;
-    padding: 7px 10px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
     background: none;
     border: none;
     border-radius: var(--radius);
@@ -572,8 +572,8 @@
     position: relative;
     width: auto;
     min-width: 30px;
-    gap: 4px;
-    padding: 0 7px;
+    gap: var(--space);
+    padding: 0 calc(var(--space) * 2);
     color: var(--accent);
   }
   .shield.off {
@@ -591,8 +591,8 @@
     height: 30px;
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 0 10px;
+    gap: calc(var(--space) * 2);
+    padding: 0 calc(var(--space) * 3);
     background: var(--panel);
     border: 1px solid transparent;
     border-radius: 999px;
@@ -649,9 +649,9 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     min-height: 44px;
-    padding: 6px 8px 6px 14px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 2) calc(var(--space) * 4);
     border-bottom: 1px solid var(--line);
     color: var(--muted);
     font-size: var(--fs-md);
@@ -668,7 +668,7 @@
     font-weight: 600;
   }
   .link {
-    margin-left: 4px;
+    margin-left: var(--space);
     color: var(--muted);
   }
   .slot {
@@ -680,7 +680,7 @@
     background: var(--bg);
   }
   .slot.dark {
-    background: #000;
+    background: black;
   }
   .snap {
     width: 100%;
@@ -692,13 +692,13 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
-    padding: 24px;
+    gap: calc(var(--space) * 2);
+    padding: calc(var(--space) * 6);
     color: var(--muted);
     text-align: center;
   }
   .crash-title {
-    margin: 4px 0 0;
+    margin: var(--space) 0 0;
     font-size: var(--fs-lg);
     font-weight: 600;
     color: var(--text);
@@ -709,8 +709,8 @@
   }
   .crash-actions {
     display: flex;
-    gap: 8px;
-    margin-top: 8px;
+    gap: calc(var(--space) * 2);
+    margin-top: calc(var(--space) * 2);
   }
   .suggest {
     position: absolute;

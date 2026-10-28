@@ -12,7 +12,7 @@ export const PRESS_SLOP = 5;
 // bar, so a press on their padding is still a press on the popover. The tab
 // strip is too: a press on the gap between pills is not a window drag.
 export const WINDOW_DRAG_SKIP =
-  "button, input, textarea, select, a, label, [role='tab'], [role='menuitem'], [role='menu'], [role='dialog'], [contenteditable], .tab, .tabs, .dropdown, .noti-popover, .picker, .home-menu, .menu-pop";
+  "button, input, textarea, select, a, label, [role='tab'], [role='menuitem'], [role='menu'], [role='dialog'], [contenteditable], .tab, .tabs, .dropdown, .picker, .home-menu, .menu-pop";
 
 type WithClosest = { closest: (selector: string) => unknown };
 

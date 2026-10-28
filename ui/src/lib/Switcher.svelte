@@ -73,7 +73,7 @@
       ? [{ id: "previews", icon: "spark" as IconName, title: "Component previews", sub: "", keys: "omnibar gallery", run: () => dispatch("previews") }]
       : []),
     { id: "settings", icon: "settings", title: "Settings", sub: "", keys: "agents providers appearance theme system connectors", run: () => dispatch("settings") },
-    { id: "setup", icon: "spark", title: "Set up Parzi", sub: "", keys: "agents browser tools remote wizard", run: () => dispatch("setup") },
+    { id: "setup", icon: "wrench", title: "Set up Parzi", sub: "", keys: "agents browser tools remote wizard", run: () => dispatch("setup") },
   ];
   const MAX_SESSIONS = 50;
 
@@ -207,7 +207,7 @@
     display: flex;
     justify-content: center;
     padding-top: 14vh;
-    background: rgba(0, 0, 0, 0.6);
+    background: var(--scrim);
   }
   .box {
     width: min(580px, 92vw);
@@ -222,8 +222,8 @@
   .head {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 12px 20px;
+    gap: calc(var(--space) * 3);
+    padding: calc(var(--space) * 3) calc(var(--space) * 6);
     color: var(--muted);
     border-bottom: 1px solid var(--line);
   }
@@ -244,8 +244,8 @@
     align-items: center;
     height: 17px;
     vertical-align: middle;
-    padding: 0 5px;
-    margin-right: 3px;
+    padding: 0 var(--space);
+    margin-right: var(--space);
     font-size: var(--fs-xs);
     color: var(--muted);
     background: var(--line);
@@ -255,10 +255,10 @@
   .list {
     flex: 1;
     overflow-y: auto;
-    padding: 6px;
+    padding: calc(var(--space) * 2);
   }
   .group {
-    padding: 8px 10px 4px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 3) var(--space);
     font-size: var(--fs-xs);
     font-weight: 600;
     color: var(--muted);
@@ -266,19 +266,19 @@
   .row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     border-radius: var(--radius);
   }
   .row.on {
-    background: var(--line);
+    background: var(--hover);
   }
   .pick {
     flex: 1;
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
+    gap: calc(var(--space) * 3);
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
     background: transparent;
     border: none;
     color: inherit;
@@ -301,7 +301,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: var(--space);
   }
   .title,
   .sub {
@@ -321,7 +321,7 @@
   .del {
     width: 26px;
     height: 26px;
-    margin-right: 6px;
+    margin-right: calc(var(--space) * 2);
     flex: none;
     display: inline-flex;
     align-items: center;
@@ -342,15 +342,15 @@
     background: transparent;
   }
   .empty {
-    padding: 32px 16px;
+    padding: calc(var(--space) * 8) calc(var(--space) * 4);
     text-align: center;
     font-size: var(--fs-md);
     color: var(--muted);
   }
   .foot {
     display: flex;
-    gap: 14px;
-    padding: 8px 20px;
+    gap: calc(var(--space) * 4);
+    padding: calc(var(--space) * 2) calc(var(--space) * 6);
     font-size: var(--fs-xs);
     color: var(--muted);
     border-top: 1px solid var(--line);

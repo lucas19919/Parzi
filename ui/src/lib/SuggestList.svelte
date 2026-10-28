@@ -59,7 +59,7 @@
   .list {
     display: flex;
     flex-direction: column;
-    padding: 5px;
+    padding: var(--space);
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
@@ -67,10 +67,10 @@
   .row {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
     min-width: 0;
     height: 34px;
-    padding: 0 10px;
+    padding: 0 calc(var(--space) * 3);
     background: none;
     border: none;
     border-radius: var(--radius);
@@ -80,7 +80,7 @@
     cursor: pointer;
   }
   .row.on {
-    background: var(--line);
+    background: var(--hover);
   }
   .icon {
     width: 18px;
@@ -92,7 +92,7 @@
   .icon img {
     width: 16px;
     height: 16px;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
   }
   .main {
     flex: 0 1 auto;

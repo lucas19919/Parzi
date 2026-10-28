@@ -263,7 +263,7 @@ impl Theme {
         };
         format!(
             ":root{{--font:{};--font-size:{}px;--mono:{};--mono-size:{}px;\
-            --bg:{};--text:{};--muted:{};--accent:{};--panel:{};\
+            --bg:{};--text:{};--accent:{};--panel:{};\
             --bg-dim:{};--vignette:{};--bg-blur:{}px;\
             --grain:{};--grain-size:{}px;--bg-height:{}%;--bg-y:{}%;\
             --glass:{};{}}}\n",
@@ -273,7 +273,6 @@ impl Theme {
             t.font.mono_size,
             css_value(&c.stage),
             css_value(&c.text),
-            css_value(&c.text_dim),
             css_value(&c.accent),
             panel,
             num(b.dim),
@@ -841,11 +840,58 @@ mod css_tests {
         assert!(css.contains("--glass:1;"));
         // No custom panel: the derived whisper, and no solid overrides.
         assert!(css.contains("--panel:color-mix(in srgb, var(--text) 6%, var(--bg));"));
+        // Muted is mixed in theme.css from text and background, not stored.
+        assert!(!css.contains("--muted:"));
         assert!(!css.contains("--glass-bg:var(--panel)"));
         assert!(!css.contains("--parzi-"));
         let mut t = Theme::default();
         t.background.dim = 1.0;
         assert!(t.to_css_vars().contains("--bg-dim:1;"));
+    }
+
+    fn channel(hex: &str) -> (f64, f64, f64) {
+        let h = hex.trim().trim_start_matches('#');
+        let n = u32::from_str_radix(h, 16).unwrap();
+        (
+            ((n >> 16) & 0xff) as f64,
+            ((n >> 8) & 0xff) as f64,
+            (n & 0xff) as f64,
+        )
+    }
+
+    fn mix(a: (f64, f64, f64), b: (f64, f64, f64), t: f64) -> (f64, f64, f64) {
+        (
+            b.0 + (a.0 - b.0) * t,
+            b.1 + (a.1 - b.1) * t,
+            b.2 + (a.2 - b.2) * t,
+        )
+    }
+
+    fn lin(c: f64) -> f64 {
+        let s = c / 255.0;
+        if s <= 0.04045 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    fn contrast(a: (f64, f64, f64), b: (f64, f64, f64)) -> f64 {
+        let lum = |c: (f64, f64, f64)| 0.2126 * lin(c.0) + 0.7152 * lin(c.1) + 0.0722 * lin(c.2);
+        let (x, y) = (lum(a), lum(b));
+        let (hi, lo) = if x > y { (x, y) } else { (y, x) };
+        (hi + 0.05) / (lo + 0.05)
+    }
+
+    #[test]
+    fn derived_muted_clears_body_text_on_the_default_theme() {
+        let text = channel("#ECECEC");
+        let bg = channel("#161616");
+        // Same ratios as theme.css: muted is text at 78% over bg, panel at 6%.
+        let muted = mix(text, bg, 0.78);
+        let panel = mix(text, bg, 0.06);
+        assert!(contrast(muted, bg) >= 4.5, "{}", contrast(muted, bg));
+        assert!(contrast(muted, panel) >= 4.5, "{}", contrast(muted, panel));
     }
 
     #[test]

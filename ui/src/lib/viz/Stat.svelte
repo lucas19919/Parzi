@@ -22,7 +22,7 @@
   .stat {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space);
     min-width: 0;
   }
   .label {
@@ -36,7 +36,7 @@
     display: flex;
     align-items: baseline;
     flex-wrap: wrap;
-    gap: 4px 8px;
+    gap: var(--space) calc(var(--space) * 2);
     min-width: 0;
   }
   /* Proportional digits: a lone big number reads tighter than tabular. */

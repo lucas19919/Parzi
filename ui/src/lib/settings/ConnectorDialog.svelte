@@ -191,8 +191,8 @@
 <style>
   .group {
     grid-column: 1 / -1;
-    margin: 6px 0 2px;
-    padding: 0 6px;
+    margin: calc(var(--space) * 2) 0 var(--space);
+    padding: 0 calc(var(--space) * 2);
     font-size: var(--fs-sm);
     color: var(--muted);
   }
@@ -203,7 +203,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: calc(var(--space) * 6);
     background: color-mix(in srgb, var(--bg) 60%, transparent);
   }
   .card {
@@ -219,11 +219,11 @@
   header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 14px 14px 10px 20px;
+    gap: calc(var(--space) * 2);
+    padding: calc(var(--space) * 4) calc(var(--space) * 4) calc(var(--space) * 3) calc(var(--space) * 6);
   }
   header:has(.icon:first-child) {
-    padding-left: 12px;
+    padding-left: calc(var(--space) * 3);
   }
   h2 {
     flex: 1;
@@ -253,9 +253,9 @@
   .search {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin: 0 20px 12px;
-    padding: 8px 12px;
+    gap: calc(var(--space) * 2);
+    margin: 0 calc(var(--space) * 6) calc(var(--space) * 3);
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
     background: var(--bg);
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -274,15 +274,15 @@
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 8px;
-    padding: 0 20px 16px;
+    gap: calc(var(--space) * 2);
+    padding: 0 calc(var(--space) * 6) calc(var(--space) * 4);
     overflow-y: auto;
   }
   .item {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 10px 12px;
+    gap: calc(var(--space) * 3);
+    padding: calc(var(--space) * 3) calc(var(--space) * 3);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
   }
@@ -291,7 +291,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--space);
   }
   .name {
     font-size: var(--fs-md);
@@ -308,7 +308,7 @@
     flex: none;
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space);
     font-size: var(--fs-sm);
     color: var(--muted);
   }
@@ -317,15 +317,15 @@
   }
   .none {
     margin: 0;
-    padding: 12px 4px;
+    padding: calc(var(--space) * 3) var(--space);
     font-size: var(--fs-md);
     color: var(--muted);
   }
   footer {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px 20px;
+    gap: calc(var(--space) * 3);
+    padding: calc(var(--space) * 3) calc(var(--space) * 6);
     border-top: 1px solid var(--line);
   }
   .hint {
@@ -350,8 +350,8 @@
   .step {
     display: flex;
     align-items: flex-end;
-    gap: 16px;
-    padding: 4px 20px 20px;
+    gap: calc(var(--space) * 4);
+    padding: var(--space) calc(var(--space) * 6) calc(var(--space) * 6);
   }
   .step label {
     flex: 1;
@@ -359,14 +359,14 @@
   .form {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding: 4px 20px 20px;
+    gap: calc(var(--space) * 3);
+    padding: var(--space) calc(var(--space) * 6) calc(var(--space) * 6);
     overflow-y: auto;
   }
   label {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: calc(var(--space) * 2);
   }
   .label {
     font-size: var(--fs-sm);
@@ -384,7 +384,7 @@
     color: var(--text);
     border: 1px solid var(--line);
     border-radius: var(--radius);
-    padding: 8px 10px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
     font: inherit;
     font-size: var(--fs-md);
     resize: vertical;
@@ -397,12 +397,5 @@
   .mono {
     font-family: var(--mono);
   }
-  .sbtn.primary {
-    background: var(--text);
-    border-color: var(--text);
-    color: var(--bg);
-  }
-  .sbtn.primary:disabled {
-    opacity: 0.4;
-  }
+
 </style>

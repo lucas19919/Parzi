@@ -103,6 +103,21 @@ fn artifact_validation_versions_and_dedups() {
         "kind": "preview", "content": "just text",
     });
     assert!(validate_artifact(&bare_preview).is_err());
+    let dead_variant = serde_json::json!({
+        "artifact": 1, "id": "omni-z", "title": "Old variant",
+        "kind": "preview", "content": "{\"component\":\"omnibar\",\"variant\":7}",
+    });
+    assert!(validate_artifact(&dead_variant).is_err());
+    let mock = serde_json::json!({
+        "artifact": 1, "id": "omni-html", "title": "Omnibar redesign",
+        "kind": "html", "content": "<div class=\"omnibar\">mock</div>",
+    });
+    assert!(validate_artifact(&mock).is_err());
+    let as_json = serde_json::json!({
+        "artifact": 1, "id": "omni-json", "title": "Omnibar",
+        "kind": "json", "content": "{\"component\":\"omnibar\",\"variant\":1,\"tokens\":{\"radius\":\"16px\"}}",
+    });
+    assert_eq!(validate_artifact(&as_json).unwrap().kind, "preview");
     let v2 = next_version("auth-hook", std::slice::from_ref(&a));
     assert_eq!(v2, 2);
     assert!(is_same_content(

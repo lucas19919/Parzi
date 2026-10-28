@@ -34,7 +34,7 @@
   const MONO_FONTS = ["JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "SF Mono", "ui-monospace"];
   const SIZES_UI = [12, 13, 14, 15, 16].map((n) => ({ value: String(n), label: String(n) }));
   const SIZES_MONO = [11, 12, 13, 14, 15].map((n) => ({ value: String(n), label: String(n) }));
-  const COLOR_KEYS = ["stage", "accent", "text", "text_dim"] as const;
+  const COLOR_KEYS = ["stage", "accent", "text"] as const;
   type ColorKey = (typeof COLOR_KEYS)[number] | "panel";
 
   onMount(() => {
@@ -449,7 +449,6 @@
         {/if}
       </div>
       <div class="row"><ColorField label="Text" value={theme.colors.text} on:input={(e) => setColor("text", e.detail)} /></div>
-      <div class="row"><ColorField label="Muted text" value={theme.colors.text_dim} on:input={(e) => setColor("text_dim", e.detail)} /></div>
     </div>
   </section>
 
@@ -483,34 +482,34 @@
 {/if}
 
 <style>
-  .packs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .packs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: calc(var(--space) * 3); }
   .pack { position: relative; }
   .pack-btn {
-    width: 100%; display: flex; flex-direction: column; gap: 7px; padding: 5px;
+    width: 100%; display: flex; flex-direction: column; gap: calc(var(--space) * 2); padding: var(--space);
     background: transparent; border: 1px solid transparent; border-radius: var(--radius-lg);
     cursor: pointer; text-align: left; font: inherit; color: var(--muted);
   }
   .pack-btn:hover { background: var(--panel); border-color: var(--line); color: var(--text); }
   .pack.on .pack-btn { border-color: var(--accent); background: var(--line); color: var(--text); }
   .pp {
-    position: relative; display: flex; flex-direction: column; gap: 5px; height: 68px; padding: 11px 10px 0;
+    position: relative; display: flex; flex-direction: column; gap: var(--space); height: 68px; padding: calc(var(--space) * 3) calc(var(--space) * 3) 0;
     border-radius: var(--radius); overflow: hidden; background: var(--pp-st);
     border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
   }
-  .pp-line { display: block; height: 4px; border-radius: 2px; background: var(--pp-tx); opacity: 0.85; width: 62%; }
+  .pp-line { display: block; height: 4px; border-radius: var(--radius-sm); background: var(--pp-tx); opacity: 0.85; width: 62%; }
   .pp-line.short { width: 40%; background: var(--pp-td); }
   .pp-bar {
     position: absolute; left: 10px; right: 10px; bottom: 8px; height: 16px;
     border-radius: var(--radius-sm); background: color-mix(in srgb, var(--pp-tx) 6%, var(--pp-st));
     border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
   }
-  .pp-bar i { position: absolute; right: 4px; top: 3px; width: 8px; height: 8px; border-radius: 3px; background: var(--pp-ac); }
-  .pack-name { font-size: var(--fs-sm); padding: 0 3px; }
+  .pp-bar i { position: absolute; right: 4px; top: 3px; width: 8px; height: 8px; border-radius: var(--radius-sm); background: var(--pp-ac); }
+  .pack-name { font-size: var(--fs-sm); padding: 0 var(--space); }
   .art-dot { display: inline-flex; flex: none; color: var(--muted); }
-  .pack-actions { position: absolute; top: 9px; right: 9px; display: flex; gap: 4px; opacity: 0; }
+  .pack-actions { position: absolute; top: 9px; right: 9px; display: flex; gap: var(--space); opacity: 0; }
   .pack:hover .pack-actions, .pack-actions:focus-within { opacity: 1; }
   .pack-act {
-    min-width: 20px; height: 20px; padding: 0 4px; line-height: 1;
+    min-width: 20px; height: 20px; padding: 0 var(--space); line-height: 1;
     border-radius: var(--radius-sm); border: none; background: var(--panel); color: var(--muted);
     font: inherit; font-size: var(--fs-xs); cursor: pointer;
     display: inline-flex; align-items: center; justify-content: center;
@@ -520,16 +519,16 @@
   .pack-rename {
     font: inherit; font-size: var(--fs-sm); color: var(--text);
     background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius-sm);
-    padding: 1px 5px; width: 100%; box-sizing: border-box; outline: none;
+    padding: var(--space) var(--space); width: 100%; box-sizing: border-box; outline: none;
   }
 
-  .save-row { display: flex; gap: 8px; }
+  .save-row { display: flex; gap: calc(var(--space) * 2); }
   .save-row .tin { flex: 1; }
 
   .section-head-with-action { align-items: center; }
-  .walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+  .walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: calc(var(--space) * 3); }
   .wall {
-    display: block; width: 100%; padding: 4px;
+    display: block; width: 100%; padding: var(--space);
     background: transparent; border: 1px solid transparent; border-radius: var(--radius-lg);
     cursor: pointer; font: inherit; color: var(--muted);
   }
@@ -545,7 +544,7 @@
   }
   .wall-wrap { position: relative; min-width: 0; }
   .wall-del {
-    position: absolute; top: 9px; right: 9px; min-width: 20px; height: 20px; padding: 0 4px; line-height: 1;
+    position: absolute; top: 9px; right: 9px; min-width: 20px; height: 20px; padding: 0 var(--space); line-height: 1;
     border-radius: var(--radius-sm); border: none; background: var(--panel); color: var(--muted);
     font: inherit; font-size: var(--fs-xs); cursor: pointer; opacity: 0;
     display: inline-flex; align-items: center; justify-content: center;
@@ -554,14 +553,14 @@
   .wall-del:hover { color: var(--text); }
   .wall-del.armed { opacity: 1; color: var(--bad); font-weight: 600; }
 
-  .field-card.stack { flex-direction: column; align-items: stretch; gap: 12px; }
+  .field-card.stack { flex-direction: column; align-items: stretch; gap: calc(var(--space) * 3); }
 
   .rows > .row > :global(.cf) { flex: 1; min-width: 0; }
   .panel-wrap { display: flex; flex: 1; min-width: 0; }
   .panel-wrap.auto { opacity: 0.55; }
   .mini {
     flex: none;
-    padding: 3px 10px;
+    padding: var(--space) calc(var(--space) * 3);
     background: none;
     border: 1px solid var(--line);
     border-radius: 999px;
@@ -574,7 +573,7 @@
     color: var(--text);
     background: var(--hover);
   }
-  .swatches { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%; }
+  .swatches { display: flex; align-items: center; gap: calc(var(--space) * 3); flex-wrap: wrap; width: 100%; }
   .swatch-gap { flex: 1; }
   .swatch {
     width: 22px; height: 22px; border-radius: 50%; background: var(--sw);

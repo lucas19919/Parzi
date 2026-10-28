@@ -34,6 +34,7 @@ const MAP = {
   lock: "lock",
   unlock: "unlock",
   spark: "sparkle",
+  wrench: "tools",
   folder: "file-directory",
   project: "stack",
   shield: "shield",

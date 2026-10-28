@@ -24,14 +24,14 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 14px 0 20px;
+    padding: 0 calc(var(--space) * 4) 0 calc(var(--space) * 6);
     border-bottom: 1px solid var(--line);
     user-select: none;
   }
   .left {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
     min-width: 0;
     flex: 1;
   }

@@ -34,7 +34,7 @@
   li {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
     min-width: 0;
     height: 32px;
   }
@@ -87,7 +87,7 @@
     font-variant-numeric: tabular-nums;
   }
   .more {
-    margin: 4px 0 0;
+    margin: var(--space) 0 0;
     font-size: var(--fs-sm);
     color: var(--muted);
   }

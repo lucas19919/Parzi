@@ -1,13 +1,10 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount } from "svelte";
-  import Icon from "./Icon.svelte";
-  import type { IconName } from "./icons";
+  import { createEventDispatcher } from "svelte";
+  import ChromeIcon from "./ChromeIcon.svelte";
+  import type { ChromeIconName } from "./ChromeIcon.svelte";
   import TabBar from "./TabBar.svelte";
   import WinControls from "./WinControls.svelte";
-  import NotificationDropdown from "./NotificationDropdown.svelte";
-  import { notifications } from "./notificationStore";
   import type { Tab } from "./tabs";
-  import { setOverlay } from "./overlay";
   import { updateVersion } from "./updateStore";
   import { startWindowDrag } from "./windowChrome";
   import { tooltip } from "./tooltip";
@@ -18,9 +15,6 @@
   // The active draft's picked model, by value: tabs never invalidate on
   // composer edits, so the strip would otherwise keep a stale icon.
   export let liveModel = "";
-  // The recent sessions column: offered on session tabs, and whether it shows.
-  export let railable = false;
-  export let railOpen = false;
   // The session column: offered on session tabs, and whether it shows.
   export let panelable = false;
   export let panelOpen = false;
@@ -37,46 +31,29 @@
     history: void;
     setup: void;
     report: void;
-    openSession: { id: string };
-    rail: void;
     panel: void;
   }>();
 
   $: panelAgents = panelCount > 99 ? "99+" : String(panelCount);
 
   let menuOpen = false;
-  let notiOpen = false;
 
-  $: setOverlay("topbar-menu", menuOpen || notiOpen);
-  $: unreadCount = $notifications.filter((n) => !n.read).length;
-
-  const MENU: { label: string; key: string; icon: IconName; run: () => void }[] = [
+  const MENU: { label: string; key: string; icon: ChromeIconName; run: () => void }[] = [
     { label: "History", key: "Ctrl+H", icon: "clock", run: () => dispatch("history") },
     { label: "Brain", key: "Ctrl+B", icon: "brain", run: () => dispatch("brain") },
     { label: "Settings", key: "Ctrl+,", icon: "settings", run: () => dispatch("settings") },
-    { label: "Set up Parzi", key: "", icon: "spark", run: () => dispatch("setup") },
+    { label: "Set up Parzi", key: "", icon: "wrench", run: () => dispatch("setup") },
     { label: "Report a problem", key: "", icon: "alert", run: () => dispatch("report") },
   ];
 
-  function onDocClick(e: MouseEvent) {
-    if (!(e.target as HTMLElement).closest(".menuzone")) menuOpen = false;
-    if (!(e.target as HTMLElement).closest(".noti-wrap")) notiOpen = false;
-  }
-
-  onMount(() => {
-    document.addEventListener("click", onDocClick);
-    return () => {
-      document.removeEventListener("click", onDocClick);
-      setOverlay("topbar-menu", false);
-    };
-  });
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div class="chrome">
 <header class="topbar" on:mousedown={startWindowDrag}>
   <div class="left">
-    <div class="menuzone">
+    <!-- Open, the button and the icons are one pill. It stays until the button is clicked again. -->
+    <div class="menu-pill" class:open={menuOpen}>
       <button
         class="icon-btn"
         class:active={menuOpen}
@@ -85,57 +62,38 @@
         use:tooltip={$updateVersion ? "Menu, update available" : "Menu"}
         on:click={() => (menuOpen = !menuOpen)}
       >
-        <Icon name="menu" />
+        <ChromeIcon name="menu" />
         {#if $updateVersion}<span class="dot" />{/if}
       </button>
+      {#if menuOpen}
+        <div class="opts" role="menu" data-ui-list>
+          {#each MENU as item, i}
+            <button
+              class="opt"
+              style="--i: {i}"
+              role="menuitem"
+              aria-label={item.key ? `${item.label} (${item.key})` : item.label}
+              use:tooltip={item.key ? `${item.label} (${item.key})` : item.label}
+              on:click={() => item.run()}
+            >
+              <ChromeIcon name={item.icon} />
+            </button>
+          {/each}
+          {#if $updateVersion}
+            <button
+              class="opt update"
+              style="--i: {MENU.length}"
+              role="menuitem"
+              aria-label="Update to v{$updateVersion}"
+              use:tooltip={"Update to v" + $updateVersion}
+              on:click={() => dispatch("update")}
+            >
+              <ChromeIcon name="arrowDown" />
+            </button>
+          {/if}
+        </div>
+      {/if}
     </div>
-    {#if menuOpen}
-      <!-- Icons unfold rightward in the bar with a stagger; names and keys
-           live in the tooltips. No popout, no second row. -->
-      <div class="menuzone opts" role="menu" data-ui-list>
-        {#each MENU as item, i}
-          <button
-            class="opt"
-            style="--i: {i}"
-            role="menuitem"
-            aria-label={item.key ? `${item.label} (${item.key})` : item.label}
-            use:tooltip={item.key ? `${item.label} (${item.key})` : item.label}
-            on:click={() => {
-              menuOpen = false;
-              item.run();
-            }}
-          >
-            <Icon name={item.icon} />
-          </button>
-        {/each}
-        {#if $updateVersion}
-          <button
-            class="opt update"
-            style="--i: {MENU.length}"
-            role="menuitem"
-            aria-label="Update to v{$updateVersion}"
-            use:tooltip={"Update to v" + $updateVersion}
-            on:click={() => {
-              menuOpen = false;
-              dispatch("update");
-            }}
-          >
-            <Icon name="arrowDown" />
-          </button>
-        {/if}
-      </div>
-    {/if}
-    {#if railable}
-      <button
-        class="icon-btn rail-btn"
-        class:active={railOpen}
-        aria-pressed={railOpen}
-        use:tooltip={railOpen ? "Hide sessions (Ctrl+Shift+S)" : "Sessions by project (Ctrl+Shift+S)"}
-        on:click={() => dispatch("rail")}
-      >
-        <Icon name="panel" />
-      </button>
-    {/if}
       <TabBar
         {tabs}
         {activeTabId}
@@ -149,40 +107,16 @@
   </div>
 
   <div class="right">
-    <div class="noti-wrap">
-      <button
-        class="icon-btn noti-btn"
-        class:active={notiOpen}
-        aria-haspopup="dialog"
-        aria-expanded={notiOpen}
-        use:tooltip={unreadCount ? `${unreadCount} unread notification${unreadCount === 1 ? "" : "s"}` : "Notifications"}
-        on:click={() => (notiOpen = !notiOpen)}
-      >
-        <Icon name="bell" />
-        {#if unreadCount > 0}
-          <span class="noti-badge" />
-        {/if}
-      </button>
-        {#if notiOpen}
-          <NotificationDropdown
-            on:openSession={(e) => {
-              notiOpen = false;
-              dispatch("openSession", e.detail);
-            }}
-            on:close={() => (notiOpen = false)}
-          />
-        {/if}
-      </div>
       {#if panelable}
         <button
-          class="icon-btn"
+          class="icon-btn panel-btn"
           class:active={panelOpen}
           aria-pressed={panelOpen}
           aria-label={panelCount > 0 ? `Session column, ${panelAgents} agents running` : "Session column"}
           use:tooltip={"Session column (Ctrl+J)"}
           on:click={() => dispatch("panel")}
         >
-          <Icon name="panel" />
+          <ChromeIcon name="panel" />
           {#if panelCount > 0}<span class="count">{panelAgents}</span>{/if}
         </button>
       {/if}
@@ -210,14 +144,14 @@
     user-select: none;
   }
   /* One 4px step between the menu, Home, the tabs and +. */
-  /* The session column's icon, mirrored: this one opens on the left. */
-  .rail-btn :global(svg) {
+  /* The drawn bar sits on the left. The right column's icon flips it. */
+  .panel-btn :global(svg) {
     transform: scaleX(-1);
   }
   .left {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space);
     height: 100%;
     flex: 1;
     min-width: 0;
@@ -225,30 +159,10 @@
   .right {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: calc(var(--space) * 2);
     height: 100%;
     flex: none;
-    padding-right: 2px;
-  }
-  .noti-wrap {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-  .noti-btn.active {
-    color: var(--text);
-    background: var(--hover);
-  }
-  /* Unread is a dot; the count is in the button's name and tooltip. */
-  .noti-badge {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    background: var(--accent);
-    border: 1.5px solid var(--bg);
+    padding-right: var(--space);
   }
   .icon-btn {
     position: relative;
@@ -274,12 +188,9 @@
     border-radius: 50%;
     background: var(--accent);
   }
-  .icon-btn:hover {
-    background: var(--hover);
-    color: var(--text);
-  }
+  .icon-btn:hover,
   .icon-btn.active {
-    background: var(--selected);
+    background: var(--panel);
     color: var(--text);
   }
   .count {
@@ -288,7 +199,7 @@
     right: -1px;
     min-width: 14px;
     height: 14px;
-    padding: 0 3px;
+    padding: 0 var(--space);
     border-radius: 999px;
     background: var(--ok);
     color: var(--on-ok);
@@ -297,18 +208,34 @@
     line-height: 14px;
     text-align: center;
   }
-  /* The menu unfolds rightward into the bar as icons, each stepping in
-     just after the last. No popout, no second row. */
+  /* One capsule: the menu button is the left end, the icons continue it. */
+  .menu-pill {
+    display: flex;
+    align-items: center;
+    flex: none;
+    height: 28px;
+  }
+  .menu-pill.open {
+    background: var(--panel);
+    border-radius: 999px;
+  }
+  .menu-pill.open .icon-btn,
+  .menu-pill.open .icon-btn.active {
+    background: transparent;
+    border-radius: 999px;
+    color: var(--muted);
+  }
+  .menu-pill.open .icon-btn:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
   .opts {
     display: flex;
     align-items: center;
-    gap: 4px;
     flex: none;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .opts::-webkit-scrollbar {
-    display: none;
+    height: 28px;
+    background: none;
+    border: none;
   }
   .opt {
     display: inline-flex;
@@ -320,7 +247,7 @@
     padding: 0;
     background: none;
     border: none;
-    border-radius: var(--radius);
+    border-radius: 999px;
     color: var(--muted);
     cursor: pointer;
     animation: opt-in 180ms var(--ease-out) backwards;
@@ -342,6 +269,6 @@
     color: var(--text);
   }
   .opt.update {
-    color: var(--accent);
+    color: var(--text);
   }
 </style>

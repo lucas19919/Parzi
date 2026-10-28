@@ -47,6 +47,6 @@
     width: min(1020px, 94vw); max-height: 88vh; overflow: auto;
     background: var(--bg);
     border: 1px solid var(--line); border-radius: var(--radius-lg);
-    padding: 18px 20px;
+    padding: calc(var(--space) * 4) calc(var(--space) * 6);
   }
 </style>

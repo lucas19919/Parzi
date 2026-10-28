@@ -123,23 +123,23 @@
 
 <style>
   .plan {
-    margin: 4px 0 0;
-    padding: 8px 6px;
+    margin: var(--space) 0 0;
+    padding: calc(var(--space) * 2) calc(var(--space) * 2);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
   }
   .head-row {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space);
   }
   .head {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     flex: 1;
     min-width: 0;
-    padding: 2px 6px 6px;
+    padding: var(--space) calc(var(--space) * 2) calc(var(--space) * 2);
     background: none;
     border: none;
     color: var(--muted);
@@ -155,7 +155,7 @@
     justify-content: center;
     width: 24px;
     height: 24px;
-    margin-bottom: 4px;
+    margin-bottom: var(--space);
     padding: 0;
     background: none;
     border: none;
@@ -168,7 +168,7 @@
     color: var(--text);
   }
   .empty {
-    margin: 0 6px 4px;
+    margin: 0 calc(var(--space) * 2) var(--space);
     color: var(--muted);
     font-size: var(--fs-sm);
     line-height: 1.5;
@@ -203,10 +203,10 @@
   .item {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
     width: 100%;
     min-height: 30px;
-    padding: 4px 6px;
+    padding: var(--space) calc(var(--space) * 2);
     background: none;
     border: none;
     border-radius: var(--radius);

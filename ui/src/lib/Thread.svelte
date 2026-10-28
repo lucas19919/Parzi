@@ -731,21 +731,21 @@ ${e.text}` : e.text;
               {#if fixWait}
                 <span class="err-hint">{fixWait.note}</span>
               {:else if fix}
-                <button class="err-btn" on:click={() => fix?.run(provider)}>{fix.label}</button>
+                <button class="btn" on:click={() => fix?.run(provider)}>{fix.label}</button>
                 <span class="err-hint">Then try again.</span>
               {/if}
             </div>
           {:else if item.class === "context_overflow"}
-            <div class="err-fix"><button class="err-btn" on:click={() => dispatch("compact")}>Compact and go on</button></div>
+            <div class="err-fix"><button class="btn" on:click={() => dispatch("compact")}>Compact and go on</button></div>
           {:else if item.class === "context_overflow"}
             <span class="err-hint">Start a new session to go on.</span>
           {:else if item.class === "rate_limit"}
             <div class="err-fix">
-              <button class="err-btn" on:click={() => dispatch("pickModel")}>Change model</button>
-              <button class="err-btn" on:click={() => dispatch("retry")}>Try again</button>
+              <button class="btn" on:click={() => dispatch("pickModel")}>Change model</button>
+              <button class="btn" on:click={() => dispatch("retry")}>Try again</button>
             </div>
           {:else if RETRYABLE.has(item.class)}
-            <div class="err-fix"><button class="err-btn" on:click={() => dispatch("retry")}>Try again</button></div>
+            <div class="err-fix"><button class="btn" on:click={() => dispatch("retry")}>Try again</button></div>
           {/if}
         {/if}
       </div>
@@ -869,11 +869,11 @@ ${e.text}` : e.text;
   .thread-col {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: calc(var(--space) * 3);
     width: 100%;
     max-width: calc(var(--read) + 48px);
     margin: 0 auto;
-    padding: 16px 24px 8px;
+    padding: calc(var(--space) * 8) calc(var(--space) * 6) calc(var(--space) * 2);
   }
   .row {
     display: flex;
@@ -884,13 +884,13 @@ ${e.text}` : e.text;
   }
   /* A new turn stands a little apart from the last one. */
   .row.user:not(:first-child) {
-    margin-top: 14px;
+    margin-top: calc(var(--space) * 4);
   }
   .fold {
     align-self: flex-start;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: calc(var(--space) * 2);
     min-height: 24px;
     padding: 0;
     background: none;
@@ -921,12 +921,12 @@ ${e.text}` : e.text;
   }
   /* What a fold holds, when open: set in under its line. */
   .in-fold {
-    margin-left: 5px;
-    padding-left: 14px;
+    margin-left: var(--space);
+    padding-left: calc(var(--space) * 4);
     border-left: 1px solid var(--line);
   }
   .side-from {
-    margin-bottom: 4px;
+    margin-bottom: var(--space);
     font-size: var(--fs-xs);
     color: var(--muted);
   }
@@ -934,14 +934,14 @@ ${e.text}` : e.text;
     display: inline-flex;
     align-items: center;
     justify-content: flex-end;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     max-width: 85%;
   }
   .bubble {
     min-width: 0;
     max-width: 100%;
-    padding: 8px 16px;
-    background: var(--line);
+    padding: calc(var(--space) * 4);
+    background: color-mix(in srgb, var(--text) 5%, var(--bg));
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
     color: var(--text);
@@ -961,7 +961,7 @@ ${e.text}` : e.text;
   .bubble :global(ul),
   .bubble :global(ol) {
     margin: 0.4em 0;
-    padding-left: 20px;
+    padding-left: calc(var(--space) * 6);
   }
   /* Plan items the message quoted: the desk sends them as blocks after the
      text; they read as chips. */
@@ -969,7 +969,7 @@ ${e.text}` : e.text;
     display: flex;
     flex-wrap: wrap;
     justify-content: flex-end;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     min-width: 0;
     max-width: 85%;
   }
@@ -977,16 +977,16 @@ ${e.text}` : e.text;
     max-width: none;
   }
   .row.user > .quotes {
-    margin-top: 8px;
+    margin-top: calc(var(--space) * 2);
   }
   .quote {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: calc(var(--space) * 2);
     min-width: 0;
     max-width: 280px;
     height: 26px;
-    padding: 0 10px;
+    padding: 0 calc(var(--space) * 3);
     border: 1px solid var(--line);
     border-radius: 999px;
     background: var(--hover);
@@ -1004,8 +1004,8 @@ ${e.text}` : e.text;
     display: flex;
     flex-wrap: wrap;
     justify-content: flex-end;
-    gap: 6px;
-    margin-top: 6px;
+    gap: calc(var(--space) * 2);
+    margin-top: calc(var(--space) * 2);
   }
   /* One tile height, whatever the picture's shape: a row of them lines
      up. A click shows the whole picture. */
@@ -1022,15 +1022,15 @@ ${e.text}` : e.text;
   .body {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     color: color-mix(in srgb, var(--text) 92%, transparent);
   }
   .actions {
     height: 24px;
-    margin-left: -4px;
+    margin-left: calc(var(--space) * -1);
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
   }
   .copy {
     width: 24px;
@@ -1087,13 +1087,13 @@ ${e.text}` : e.text;
   .sysline {
     font-size: var(--fs-sm);
     color: var(--muted);
-    padding-left: 2px;
+    padding-left: var(--space);
   }
   .inter {
     display: flex;
     flex-direction: column;
-    gap: 3px;
-    padding: 8px 12px;
+    gap: var(--space);
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
     border: 1px solid var(--line);
     border-radius: var(--radius);
     font-size: var(--fs-sm);
@@ -1109,8 +1109,8 @@ ${e.text}` : e.text;
   .turn-error {
     display: flex;
     flex-direction: column;
-    gap: 3px;
-    padding: 8px 12px;
+    gap: var(--space);
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
     background: transparent;
     border: 1px solid var(--bad);
     border-radius: var(--radius);
@@ -1135,7 +1135,7 @@ ${e.text}` : e.text;
   }
   .err-more pre {
     max-height: 160px;
-    margin: 4px 0 0;
+    margin: var(--space) 0 0;
     overflow: auto;
     font-family: var(--mono);
     font-size: var(--fs-xs);
@@ -1146,29 +1146,16 @@ ${e.text}` : e.text;
   .err-fix {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-top: 4px;
+    gap: calc(var(--space) * 3);
+    margin-top: var(--space);
   }
-  .err-btn {
-    padding: 4px 12px;
-    background: var(--line);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    color: var(--text);
-    font: inherit;
-    font-size: var(--fs-sm);
-    font-weight: 500;
-    cursor: pointer;
-  }
-  .err-btn:hover {
-    border-color: var(--muted);
-  }
+
   /* Quiet like the thread around it: the live line already says it waits. */
   .approval {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 12px 14px;
+    gap: calc(var(--space) * 3);
+    padding: calc(var(--space) * 3) calc(var(--space) * 4);
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
@@ -1184,7 +1171,7 @@ ${e.text}` : e.text;
   }
   .ask-detail {
     max-height: 7.5em;
-    padding: 8px 10px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
     overflow: auto;
     background: var(--bg);
     border-radius: var(--radius);
@@ -1204,7 +1191,7 @@ ${e.text}` : e.text;
   .ask-raw {
     max-height: 160px;
     margin: 0;
-    padding: 8px 10px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
     overflow: auto;
     background: var(--bg);
     border-radius: var(--radius);
@@ -1215,11 +1202,11 @@ ${e.text}` : e.text;
   .approval-actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
   }
   .raw-toggle {
     margin-left: auto;
-    padding: 4px 6px;
+    padding: var(--space) calc(var(--space) * 2);
     background: none;
     border: none;
     border-radius: var(--radius);
@@ -1240,12 +1227,12 @@ ${e.text}` : e.text;
   }
   .ask-free {
     display: flex;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
   }
   .ask-free input {
     flex: 1;
     min-width: 0;
-    padding: 7px 10px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
     background: var(--bg);
     border: 1px solid var(--line);
     border-radius: var(--radius);

@@ -40,9 +40,9 @@
   li {
     position: relative;
     display: flex;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
     min-width: 0;
-    padding-bottom: 10px;
+    padding-bottom: calc(var(--space) * 3);
   }
   li:last-child {
     padding-bottom: 0;
@@ -54,7 +54,7 @@
     justify-content: center;
     width: 6px;
     flex: none;
-    padding-top: 7px;
+    padding-top: calc(var(--space) * 2);
   }
   li:not(:last-child) .rail::after {
     content: "";
@@ -86,14 +86,14 @@
   .body {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: var(--space);
     flex: 1;
     min-width: 0;
   }
   .head {
     display: flex;
     align-items: baseline;
-    gap: 12px;
+    gap: calc(var(--space) * 3);
     min-width: 0;
   }
   .label {
@@ -118,7 +118,7 @@
     color: var(--muted);
   }
   .more {
-    margin: 4px 0 0;
+    margin: var(--space) 0 0;
     font-size: var(--fs-sm);
     color: var(--muted);
   }

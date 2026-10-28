@@ -163,7 +163,7 @@
         <div class="err">Couldn't render this. Showing what came.</div>
         <pre class="source">{JSON.stringify(d, null, 2)?.slice(0, 4000)}</pre>
       {:else if kind === "preview" && preview}
-        <div class="preview">
+        <div class="preview" style={preview.style}>
           <svelte:component this={preview.entry.component} {...previewProps} />
         </div>
       {:else if kind === "preview"}
@@ -227,16 +227,16 @@
     margin: 0 auto;
   }
   .art.reader .head {
-    padding: 6px 12px 0 24px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 3) 0 calc(var(--space) * 6);
     border-bottom: none;
   }
   .reader .doc {
-    padding: 4px 24px 64px;
+    padding: var(--space) calc(var(--space) * 6) calc(var(--space) * 8);
     font-size: var(--fs-md);
     line-height: 1.65;
   }
   .reader .code {
-    padding: 8px 12px 48px;
+    padding: calc(var(--space) * 2) calc(var(--space) * 3) calc(var(--space) * 8);
   }
   .reader .code :global(.codeblock) {
     border: 1px solid var(--line);
@@ -249,9 +249,9 @@
   .head {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     min-height: 40px;
-    padding: 0 8px 0 14px;
+    padding: 0 calc(var(--space) * 2) 0 calc(var(--space) * 4);
   }
   .art:not(.old) .head {
     border-bottom: 1px solid var(--line);
@@ -261,7 +261,7 @@
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     padding: 0;
     background: none;
     border: none;
@@ -292,7 +292,7 @@
   .tools {
     display: inline-flex;
     flex: none;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
   }
   .tool {
     min-width: 26px;
@@ -300,7 +300,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0 6px;
+    padding: 0 calc(var(--space) * 2);
     background: none;
     border: none;
     border-radius: var(--radius);
@@ -332,7 +332,7 @@
   }
   /* A document reads like a reply, with room around it. */
   .doc {
-    padding: 14px 18px 16px;
+    padding: calc(var(--space) * 4) calc(var(--space) * 4) calc(var(--space) * 4);
     font-size: var(--fs-base);
   }
   .doc :global(:first-child) {
@@ -349,12 +349,12 @@
     width: 100%;
     max-width: 720px;
     margin: 0 auto;
-    padding: 12px 0 4px;
+    padding: calc(var(--space) * 3) 0 var(--space);
   }
   .zoom {
     display: block;
     width: 100%;
-    padding: 12px;
+    padding: calc(var(--space) * 3);
     background: none;
     border: none;
     cursor: zoom-in;
@@ -375,20 +375,20 @@
     overflow: auto;
   }
   .err {
-    padding: 10px 14px 0;
+    padding: calc(var(--space) * 3) calc(var(--space) * 4) 0;
     font-size: var(--fs-sm);
     color: var(--bad);
   }
   .source {
-    margin: 8px 14px 14px;
-    padding: 8px;
+    margin: calc(var(--space) * 2) calc(var(--space) * 4) calc(var(--space) * 4);
+    padding: calc(var(--space) * 2);
     overflow: auto;
     background: var(--bg);
     border-radius: var(--radius);
     font-size: var(--fs-xs);
   }
   .more {
-    padding: 8px;
+    padding: calc(var(--space) * 2);
     background: none;
     border: none;
     border-top: 1px solid var(--line);

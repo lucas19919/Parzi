@@ -27,21 +27,21 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 28px;
-    padding: 28px 24px 40px;
+    gap: calc(var(--space) * 8);
+    padding: calc(var(--space) * 8) calc(var(--space) * 6) calc(var(--space) * 8);
     align-items: center;
   }
   section {
     width: min(720px, 100%);
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
   }
   header {
     display: flex;
     align-items: baseline;
-    gap: 10px;
-    padding: 0 4px;
+    gap: calc(var(--space) * 3);
+    padding: 0 var(--space);
   }
   header b {
     font-size: var(--fs-md);

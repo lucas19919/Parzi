@@ -55,21 +55,23 @@
 
 <style>
   .card {
+    --pad: calc(var(--space) * 3);
+    --r: var(--radius);
     flex: none;
-    background: var(--glass-bg-solid);
-    border: var(--glass-border);
-    border-radius: var(--radius-lg);
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: var(--r);
   }
   .head {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     width: 100%;
-    height: 36px;
-    padding: 0 12px 0 14px;
+    height: calc(var(--space) * 9);
+    padding: 0 var(--pad);
     background: none;
     border: none;
-    border-radius: var(--radius-lg);
+    border-radius: var(--r);
     color: var(--text);
     font: inherit;
     text-align: left;
@@ -78,16 +80,16 @@
   .head:hover {
     background: var(--hover);
   }
-  /* Open: square the head's bottom into the body, so the hover fill never
-     rounds off mid-card. Shut: the head is the whole card, fully round. */
+  /* Open: the head's bottom is square so the hover fill does not round mid-card. */
   .open .head {
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-radius: var(--r) var(--r) 0 0;
   }
   .title {
     flex: none;
-    font-size: var(--fs-base);
-    font-weight: 650;
-    letter-spacing: -0.2px;
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    letter-spacing: 0;
+    color: var(--muted);
   }
   .aside {
     flex: 1;
@@ -113,7 +115,7 @@
   .body {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 2px 12px 12px;
+    gap: calc(var(--space) * 2);
+    padding: 0 var(--pad) var(--pad);
   }
 </style>

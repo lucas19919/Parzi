@@ -177,9 +177,9 @@ text_dim = \"#9B9B9B\"\nbar = \"#1C1C1C\"\nborder = \"#2A2A2A\"\n\n\
     (
         "light",
         "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#FAFAFA\"\nstage = \"#FFFFFF\"\naccent = \"#000000\"\ntext = \"#171717\"\n\
-text_dim = \"#666666\"\nbar = \"#FAFAFA\"\nborder = \"#EAEAEA\"\n\n\
-[background]\nimage = \"\"\ndim = 0.40\nvignette = 0.08\nblur = 0.0\ngrain = 0.0\n",
+[colors]\nsidebar = \"#F6F0E6\"\nstage = \"#F6F0E6\"\naccent = \"#6B6156\"\ntext = \"#6B6156\"\n\
+text_dim = \"#9A8C7A\"\nbar = \"#FBF7F1\"\nborder = \"#E6DCCE\"\npanel = \"#FBF7F1\"\n\n\
+[background]\nimage = \"\"\ndim = 0.06\nvignette = 0.02\nblur = 0.0\ngrain = 0.0\n",
     ),
 ];
 
@@ -229,6 +229,27 @@ text_dim = \"#4B5563\"\nbar = \"#E2E5EA\"\nborder = \"#C9CFD8\"\n\n\
 [colors]\nsidebar = \"#FAFAFA\"\nstage = \"#FFFFFF\"\naccent = \"#000000\"\ntext = \"#171717\"\n\
 text_dim = \"#666666\"\nbar = \"#FAFAFA\"\nborder = \"#EAEAEA\"\n\n\
 [background]\nimage = \"\"\ndim = 0.40\nvignette = 0.12\nblur = 0.0\n",
+    ),
+    (
+        "light",
+        "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+[colors]\nsidebar = \"#FAFAFA\"\nstage = \"#FFFFFF\"\naccent = \"#000000\"\ntext = \"#171717\"\n\
+text_dim = \"#666666\"\nbar = \"#FAFAFA\"\nborder = \"#EAEAEA\"\n\n\
+[background]\nimage = \"\"\ndim = 0.40\nvignette = 0.08\nblur = 0.0\ngrain = 0.0\n",
+    ),
+    (
+        "light",
+        "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+[colors]\nsidebar = \"#F4F4F5\"\nstage = \"#F4F4F5\"\naccent = \"#18181B\"\ntext = \"#18181B\"\n\
+text_dim = \"#71717A\"\nbar = \"#FFFFFF\"\nborder = \"#E4E4E7\"\npanel = \"#FFFFFF\"\n\n\
+[background]\nimage = \"\"\ndim = 0.16\nvignette = 0.04\nblur = 0.0\ngrain = 0.0\n",
+    ),
+    (
+        "light",
+        "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+[colors]\nsidebar = \"#FFFFFF\"\nstage = \"#FFFFFF\"\naccent = \"#18181B\"\ntext = \"#18181B\"\n\
+text_dim = \"#71717A\"\nbar = \"#FFFFFF\"\nborder = \"#ECECEE\"\npanel = \"#FFFFFF\"\n\n\
+[background]\nimage = \"\"\ndim = 0.06\nvignette = 0.02\nblur = 0.0\ngrain = 0.0\n",
     ),
 ];
 

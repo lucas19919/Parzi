@@ -42,10 +42,10 @@
     <div class="actions">
       {#if state?.state === "started"}
         <span class="done"><Icon name="check" size={12} />Started</span>
-        <button on:click={() => state?.state === "started" && dispatch("open", { id: state.session })}>Open</button>
+        <button class="btn" on:click={() => state?.state === "started" && dispatch("open", { id: state.session })}>Open</button>
       {:else}
-        <button class="primary" disabled={starting} on:click={start}>{starting ? "Starting…" : "Start"}</button>
-        <button on:click={() => t.id && markCard(t.id, { state: "dismissed" })}>Dismiss</button>
+        <button class="btn primary" disabled={starting} on:click={start}>{starting ? "Starting…" : "Start"}</button>
+        <button class="btn" on:click={() => t.id && markCard(t.id, { state: "dismissed" })}>Dismiss</button>
       {/if}
     </div>
   </div>
@@ -55,9 +55,9 @@
   .task {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    margin: 4px 0;
-    padding: 12px 14px;
+    gap: calc(var(--space) * 2);
+    margin: var(--space) 0;
+    padding: calc(var(--space) * 3) calc(var(--space) * 4);
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
@@ -65,7 +65,7 @@
   .head {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     min-width: 0;
   }
   .head :global(svg) {
@@ -83,7 +83,7 @@
   }
   .proj {
     flex: none;
-    padding: 0 7px;
+    padding: 0 calc(var(--space) * 2);
     border-radius: 999px;
     background: var(--hover);
     color: var(--muted);
@@ -107,36 +107,17 @@
   .actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
   }
   button {
     height: 28px;
-    padding: 0 12px;
-    background: var(--hover);
-    border: var(--glass-hairline);
-    border-radius: var(--radius);
-    color: var(--text);
-    font: inherit;
+    padding: 0 calc(var(--space) * 3);
     font-size: var(--fs-sm);
-    font-weight: 600;
-    cursor: pointer;
-  }
-  button:hover:not(:disabled) {
-    background: var(--selected);
-  }
-  button.primary {
-    background: var(--accent);
-    border-color: transparent;
-    color: var(--bg);
-  }
-  button:disabled {
-    opacity: 0.6;
-    cursor: default;
   }
   .done {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: calc(var(--space) * 2);
     color: var(--ok);
     font-size: var(--fs-sm);
     font-weight: 600;

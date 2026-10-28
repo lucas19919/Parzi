@@ -28,7 +28,7 @@
   .live {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
     min-height: 28px;
     font-size: var(--fs-md);
   }
@@ -59,7 +59,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 4px;
+    gap: var(--space);
     border-radius: 50%;
     background: color-mix(in srgb, var(--text) 10%, transparent);
     border: 1px solid color-mix(in srgb, var(--text) 16%, transparent);
@@ -68,7 +68,7 @@
   .eye {
     width: 3px;
     height: 4.5px;
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     background: var(--text);
     opacity: 0.85;
     animation: blink 4.4s ease-in-out infinite;

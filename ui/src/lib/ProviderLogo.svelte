@@ -3,15 +3,18 @@
 
   export let provider: string;
   export let size = 14;
+  // The tab strip wants the mark in the icon color, not the brand paint.
+  export let mono = false;
 
   $: mark = PROVIDER_MARKS[provider];
+  $: body = mark && mono ? mark.body.replace(/fill="(?!#(?:fff|ffffff)\b)[^"]*"/gi, 'fill="currentColor"') : mark?.body;
 </script>
 
 {#if mark}
   <svg
     width={size} height={size} viewBox={mark.viewBox} aria-hidden="true"
-    class="mark" fill={mark.fill} fill-rule={mark.fillRule}
-  >{@html mark.body}</svg>
+    class="mark" fill={mono ? "currentColor" : mark.fill} fill-rule={mark.fillRule}
+  >{@html body}</svg>
 {/if}
 
 <style>

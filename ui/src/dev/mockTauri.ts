@@ -311,6 +311,28 @@ function transcript() {
         fence: "parzi-replies",
         payload: { question: "Release this as 0.1.36?", replies: [{ label: "Release 0.1.36", message: "Looks good, release 0.1.36." }, { label: "Not yet", message: "Not yet, I have more changes first." }] },
       });
+      // ?preview=1 mounts the live omnibar with token overrides.
+      if (params.get("preview")) {
+        out.push({
+          kind: "artifact",
+          id: "omnibar",
+          title: "Omnibar",
+          artifact_kind: "preview",
+          version: 1,
+          payload: {
+            id: "omnibar",
+            title: "Omnibar",
+            kind: "preview",
+            version: 1,
+            content: JSON.stringify({
+              component: "omnibar",
+              variant: 1,
+              input: "Redesign me",
+              tokens: { radius: "20px", panel: "#1a2744", text: "#f4f4f5", bg: "#0e1420", accent: "#d6e4ff" },
+            }),
+          },
+        });
+      }
     }
   }
   return out;

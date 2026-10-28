@@ -145,7 +145,7 @@
   .rows {
     display: grid;
     grid-template-columns: fit-content(40%) minmax(40px, 1fr) max-content;
-    column-gap: 12px;
+    column-gap: calc(var(--space) * 3);
   }
   .row {
     display: grid;
@@ -153,8 +153,8 @@
     grid-template-columns: subgrid;
     align-items: center;
     height: 26px;
-    padding: 0 6px;
-    margin: 0 -6px;
+    padding: 0 calc(var(--space) * 2);
+    margin: 0 calc(var(--space) * -2);
     border-radius: var(--radius-sm);
   }
   .row.on {

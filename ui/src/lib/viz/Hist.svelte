@@ -116,12 +116,12 @@
     stroke-width: 1;
   }
   .mean {
-    stroke: var(--work);
+    stroke: var(--warn);
     stroke-width: 1;
     stroke-dasharray: 3 3;
   }
   .mean-tag {
-    fill: var(--work);
+    fill: var(--warn);
     font-size: var(--fs-xs);
   }
   .tick {

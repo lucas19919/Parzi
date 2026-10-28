@@ -90,7 +90,7 @@ const MAX_ITEMS = 50;
 // The categorical palette: the theme's own accent first, then its link and
 // work hues, then its muted grey (validated for adjacent separation on the
 // dark surface). Text never wears these; marks do.
-export const SERIES_COLORS = ["var(--accent)", "var(--link)", "var(--work)", "var(--muted)"];
+export const SERIES_COLORS = ["var(--accent)", "var(--link)", "var(--warn)", "var(--muted)"];
 
 const ALIASES: Record<string, VizType> = {
   bar: "bars",

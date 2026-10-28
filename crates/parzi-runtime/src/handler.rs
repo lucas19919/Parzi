@@ -127,8 +127,7 @@ pub(crate) fn user_event_text(
 }
 
 // The harness prompt lives in parzi.md at the repo root so it reads like a
-// doc, not code. Sections are ## Tools, ## Teamwork, ## Build, ## Work,
-// ## Plans, ## Delivery.
+// doc, not code. Sections are ## Tools, ## Teamwork, ## Plans, ## Delivery.
 const HARNESS_DOC: &str = include_str!("../../../parzi.md");
 
 fn harness_section(name: &str) -> String {
@@ -187,13 +186,11 @@ pub fn ui_event(session: &str, ev: &RunEvent) -> Option<serde_json::Value> {
     })
 }
 
-/// The instructions every session gets: one agent that builds, studies and
-/// writes, with every tool.
+/// The instructions every session gets.
 pub fn system_parts(cwd: &str) -> Vec<String> {
     let mut parts = vec![harness_intro()];
     parts.push(harness_section("tools"));
     parts.push(harness_section("teamwork"));
-    parts.push(harness_section("work"));
     parts.push(harness_section("plans"));
     parts.push(harness_section("delivery"));
     if let Some(text) = parzi_core::system::global() {
@@ -211,7 +208,7 @@ mod tests {
 
     #[test]
     fn harness_doc_has_every_section() {
-        for s in ["tools", "teamwork", "work", "plans", "delivery"] {
+        for s in ["tools", "teamwork", "plans", "delivery"] {
             let body = harness_section(s);
             assert!(body.lines().count() > 3, "section {s} is missing or empty");
         }
@@ -236,7 +233,6 @@ mod tests {
         for section in [
             "## tools",
             "## teamwork",
-            "## work",
             "## plans",
             "## delivery",
         ] {

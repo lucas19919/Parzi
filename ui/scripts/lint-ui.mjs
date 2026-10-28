@@ -16,10 +16,10 @@ const click = (name, selector, ready) => ({ name, action: "click", selector, rea
 const nth = (list, i) => `${list} > :nth-child(${i})`;
 const STATES = {
   home: [
-    click("project menu", ".ob .proj:not(.branch-tab)", ".menu-pop"),
+    click("project menu", ".ob .where-name", ".menu-pop"),
     // Pressed in the composer: the audit may already have scrolled the menu shut.
     { name: "project menu closed", action: "press", selector: ".ob textarea", key: "Escape", ready: { selector: ".menu-pop", state: "hidden" } },
-    click("web", ".under .seg > button:last-child", ".box.web"),
+    click("web", ".ob .browser", ".box.web"),
     { name: "web suggestions", action: "fill", selector: ".ob textarea", value: "parzi docs", ready: { selector: ".web-suggest" } },
   ],
   session: [
@@ -27,9 +27,8 @@ const STATES = {
     { name: "viz readout", action: "hover", selector: '.viz[data-viz="line"] svg.plot', ready: { selector: ".viz-tip:not([hidden])" } },
     { name: "switcher", action: "press", selector: ".ob textarea", key: "Control+p", ready: { selector: '.box[role="dialog"]' } },
     { name: "switcher closed", action: "press", selector: '.box[role="dialog"] input', key: "Escape", ready: { selector: '.box[role="dialog"]', state: "hidden" } },
-    click("model picker", ".under .model", ".picker"),
-    click("permission menu", '.under button[aria-haspopup="menu"]', ".menu-pop.perms"),
-    click("session actions", '.session .menu button[aria-haspopup="menu"]', '.dropdown[role="menu"]'),
+    click("model picker", ".ob .model", ".picker"),
+    click("permission menu", ".ob .perm-btn", ".menu-pop.perms"),
     // The plan checklist, opened from the session column: then its done
     // items, then an item quoted into the composer.
     click("plan checklist", ".info .plan-row", ".thread-col .plan ul"),

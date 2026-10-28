@@ -23,7 +23,7 @@
     position: absolute;
     width: 1px;
     height: 1px;
-    margin: -1px;
+    margin: calc(var(--space) * -1);
     padding: 0;
     overflow: hidden;
     clip-path: inset(50%);

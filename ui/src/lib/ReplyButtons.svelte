@@ -17,7 +17,7 @@
     {#if p.question}<div class="q">{p.question}</div>{/if}
     <div class="row">
       {#each replies as r, i (i)}
-        <button class:primary={i === 0} on:click={() => dispatch("reply", { text: r.message || r.label })}>{r.label}</button>
+        <button class="btn" class:primary={i === 0} on:click={() => dispatch("reply", { text: r.message || r.label })}>{r.label}</button>
       {/each}
     </div>
   </div>
@@ -27,8 +27,8 @@
   .replies {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    margin: 4px 0 2px;
+    gap: calc(var(--space) * 2);
+    margin: var(--space) 0 var(--space);
   }
   .q {
     font-size: var(--fs-md);
@@ -38,29 +38,11 @@
   .row {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
   }
   button {
     height: 30px;
-    padding: 0 14px;
-    background: var(--hover);
-    border: var(--glass-hairline);
-    border-radius: var(--radius);
-    color: var(--text);
-    font: inherit;
+    padding: 0 calc(var(--space) * 4);
     font-size: var(--fs-sm);
-    font-weight: 600;
-    cursor: pointer;
-  }
-  button:hover {
-    background: var(--selected);
-  }
-  button.primary {
-    background: var(--accent);
-    border-color: transparent;
-    color: var(--bg);
-  }
-  button.primary:hover {
-    background: color-mix(in srgb, var(--accent) 86%, var(--text));
   }
 </style>

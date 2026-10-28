@@ -1,7 +1,5 @@
 <script lang="ts">
-  // The column beside a session: where it runs, how full its context is,
-  // what changed in its folder and the helpers it started. Read at a
-  // glance; the few things to click open what they name.
+  // Column beside a session: where it runs, context, folder changes, helpers.
   import { createEventDispatcher, onMount } from "svelte";
   import { fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -9,6 +7,7 @@
   import InfoCard from "./InfoCard.svelte";
   import ContextBreakdown from "./ContextBreakdown.svelte";
   import JobsCard from "./JobsCard.svelte";
+  import NotificationsCard from "./NotificationsCard.svelte";
   import { board } from "./providerStore";
   import { nameOf } from "./providerRows";
   import { api, onRunEvent, type GitStatus, type Question, type SessionMeta } from "./api";
@@ -43,9 +42,7 @@
   export let questions: Question[] = [];
   // The plan checklist is in the thread already.
   export let planInline = false;
-  // A markdown document pinned beside the thread, if one was opened here.
-  // It renders as a card on top of the column: no mode switch, Info stays
-  // visible below. Null when nothing is pinned.
+  // A markdown document pinned on top of the column. Null when nothing is pinned.
   export let doc: { title: string; content: string; version: number } | null = null;
   // The column width, owned by App (persisted there). The grip dispatches
   // resize while dragging.
@@ -147,12 +144,13 @@
     on:pointerup={endResize}
     on:pointercancel={endResize}
   />
+  <NotificationsCard on:openSession />
   {#if doc}
     <InfoCard id="doc" title={doc.version > 1 ? `${doc.title} · v${doc.version}` : doc.title}>
       <svelte:fragment slot="aside">
         <span class="doc-acts">
-          <button class="doc-btn" use:tooltip={"Open in its own tab"} aria-label="Open document in its own tab" on:click={() => dispatch("openDoc")}><Icon name="external" size={12} /></button>
-          <button class="doc-btn" use:tooltip={"Unpin"} aria-label="Unpin document" on:click={() => dispatch("closeDoc")}><Icon name="close" size={12} /></button>
+          <button class="doc-btn" use:tooltip={"Open in its own tab"} aria-label="Open document in its own tab" on:click={() => dispatch("openDoc")}><Icon name="external" size={8} /></button>
+          <button class="doc-btn" use:tooltip={"Unpin"} aria-label="Unpin document" on:click={() => dispatch("closeDoc")}><Icon name="close" size={8} /></button>
         </span>
       </svelte:fragment>
       {#key `${doc.title}:${doc.version}`}
@@ -223,10 +221,10 @@
       {/if}
       {#if pr}
         <button class="line row" use:tooltip={pr.title} on:click={() => pr && dispatch("openUrl", { url: pr.url })}>
-          <Icon name="pr" size={12} />
+          <Icon name="pr" size={8} />
           <span class="v">PR #{pr.number}</span>
           {#if pr.checks !== "none"}
-            <span class="checks {pr.checks}"><Icon name={pr.checks === "pass" ? "checkCircle" : pr.checks === "fail" ? "xCircle" : "clock"} size={12} /></span>
+            <span class="checks {pr.checks}"><Icon name={pr.checks === "pass" ? "checkCircle" : pr.checks === "fail" ? "xCircle" : "clock"} size={8} /></span>
           {/if}
         </button>
       {/if}
@@ -238,12 +236,12 @@
       <svelte:fragment slot="aside">{planAside}</svelte:fragment>
       {#if plan && planCount}
         <button class="line row plan-row" use:tooltip={planInline ? "Hide the plan checklist" : "Show the plan checklist"} on:click={() => dispatch("plan")}>
-          <Icon name="plan" size={12} />
+          <Icon name="plan" size={8} />
           <span class="v">{planInline ? "Hide plan" : plan.title || "Plan"}</span>
         </button>
       {:else}
         <button class="line row plan-row" use:tooltip={"Show why the plan can't be read"} on:click={() => dispatch("plan")}>
-          <Icon name="plan" size={12} />
+          <Icon name="plan" size={8} />
           <span class="v">Plan unreadable</span>
         </button>
       {/if}
@@ -267,23 +265,20 @@
 </aside>
 
 <style>
-  /* Cards that float beside the session, not a panel inside it. The
-     width rides inline (App owns it, persisted); the grip drags the left
-     edge. */
+  /* Floating cards beside the session. Width is inline; the grip drags the left edge. */
   .info {
     position: relative;
     flex: none;
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     margin: 0 var(--gap) 0 0;
-    padding-bottom: 12px;
+    padding-bottom: calc(var(--space) * 3);
     overflow-y: auto;
     scrollbar-width: none;
   }
-  /* The hit area fills the gutter between the session and this column,
-     so the grab line sits dead center in the gap. */
+  /* The hit area fills the gutter, so the grab line sits in the middle of the gap. */
   .grip {
     position: absolute;
     left: calc(-1 * var(--gap));
@@ -300,7 +295,7 @@
     top: 12px;
     bottom: 12px;
     width: 2px;
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     background: transparent;
     transition: background 120ms ease;
   }
@@ -309,12 +304,12 @@
   }
   .doc-acts {
     display: inline-flex;
-    gap: 2px;
+    gap: var(--space);
   }
   .doc-btn {
     flex: none;
-    width: 22px;
-    height: 22px;
+    width: calc(var(--space) * 6);
+    height: calc(var(--space) * 6);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -341,8 +336,8 @@
   .line {
     display: flex;
     align-items: center;
-    gap: 8px;
-    min-height: 24px;
+    gap: calc(var(--space) * 2);
+    min-height: calc(var(--space) * 4);
     color: var(--text);
     font-size: var(--fs-sm);
   }
@@ -355,9 +350,9 @@
     color: var(--muted);
   }
   .row {
-    width: calc(100% + 8px);
-    margin: 0 -4px;
-    padding: 8px;
+    width: 100%;
+    margin: 0;
+    padding: calc(var(--space) * 2);
     background: none;
     border: none;
     border-radius: var(--radius);
@@ -398,8 +393,8 @@
     color: var(--bad);
   }
   .dot {
-    width: 7px;
-    height: 7px;
+    width: calc(var(--space) * 2);
+    height: calc(var(--space) * 2);
     flex: none;
     border-radius: 50%;
     background: var(--muted);

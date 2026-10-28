@@ -43,17 +43,17 @@
 
 <style>
   .todo {
-    margin: 4px 0 0;
-    padding: 8px 6px;
+    margin: var(--space) 0 0;
+    padding: calc(var(--space) * 2) calc(var(--space) * 2);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
   }
   .head {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(var(--space) * 2);
     width: 100%;
-    padding: 2px 6px 6px;
+    padding: var(--space) calc(var(--space) * 2) calc(var(--space) * 2);
     background: none;
     border: none;
     color: var(--muted);
@@ -84,9 +84,9 @@
   .item {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: calc(var(--space) * 3);
     min-height: 30px;
-    padding: 4px 6px;
+    padding: var(--space) calc(var(--space) * 2);
     color: var(--text);
     font-size: var(--fs-md);
   }
