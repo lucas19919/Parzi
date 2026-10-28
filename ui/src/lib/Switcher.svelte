@@ -35,8 +35,6 @@
     id: string;
     group: string;
     icon: IconName;
-    // A product mark instead of an icon (Set up Parzi wears the favicon).
-    img?: string;
     // The agent behind a session row: its logo instead of the generic bot.
     provider?: string;
     title: string;
@@ -75,7 +73,7 @@
       ? [{ id: "previews", icon: "spark" as IconName, title: "Component previews", sub: "", keys: "omnibar gallery", run: () => dispatch("previews") }]
       : []),
     { id: "settings", icon: "settings", title: "Settings", sub: "", keys: "agents providers appearance theme system connectors", run: () => dispatch("settings") },
-    { id: "setup", icon: "spark", img: "/parzi-mark.svg", title: "Set up Parzi", sub: "", keys: "agents browser tools remote wizard", run: () => dispatch("setup") },
+    { id: "setup", icon: "spark", title: "Set up Parzi", sub: "", keys: "agents browser tools remote wizard", run: () => dispatch("setup") },
   ];
   const MAX_SESSIONS = 50;
 
@@ -174,7 +172,7 @@
               on:click={() => choose(item)}
               on:mouseenter={() => (index = i)}
             >
-              <span class="ico">{#if item.img}<img src={item.img} alt="" />{:else if item.provider && hasMark(item.provider)}<ProviderLogo provider={item.provider} size={16} />{:else}<Icon name={item.icon} />{/if}</span>
+              <span class="ico">{#if item.provider && hasMark(item.provider)}<ProviderLogo provider={item.provider} size={16} />{:else}<Icon name={item.icon} />{/if}</span>
               <span class="info">
                 <span class="title">{item.title}</span>
                 {#if item.sub}<span class="sub">{item.sub}</span>{/if}
@@ -298,11 +296,6 @@
     border-radius: var(--radius);
     background: var(--line);
     color: var(--muted);
-  }
-  .ico img {
-    width: 16px;
-    height: 16px;
-    border-radius: 4px;
   }
   .info {
     flex: 1;

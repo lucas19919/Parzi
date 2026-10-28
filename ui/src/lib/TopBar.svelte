@@ -47,12 +47,11 @@
   $: setOverlay("topbar-menu", menuOpen || notiOpen);
   $: unreadCount = $notifications.filter((n) => !n.read).length;
 
-  const MENU: { label: string; key: string; icon: IconName; img?: string; run: () => void }[] = [
-    { label: "New session", key: "Ctrl+T", icon: "plus", run: () => dispatch("newTab") },
+  const MENU: { label: string; key: string; icon: IconName; run: () => void }[] = [
     { label: "History", key: "Ctrl+H", icon: "clock", run: () => dispatch("history") },
     { label: "Brain", key: "Ctrl+B", icon: "brain", run: () => dispatch("brain") },
     { label: "Settings", key: "Ctrl+,", icon: "settings", run: () => dispatch("settings") },
-    { label: "Set up Parzi", key: "", icon: "spark", img: "/parzi-mark.svg", run: () => dispatch("setup") },
+    { label: "Set up Parzi", key: "", icon: "spark", run: () => dispatch("setup") },
     { label: "Report a problem", key: "", icon: "alert", run: () => dispatch("report") },
   ];
 
@@ -88,9 +87,9 @@
       </button>
     </div>
     {#if menuOpen}
-      <!-- Icons only, unfolding rightward with a stagger; names and keys
-           live in the tooltips. -->
-      <div class="menuzone opts" role="menu" data-ui-list>
+      <!-- A popout box anchored to the rail's edge: icons unfold with a
+           stagger, names and keys live in the tooltips. -->
+      <div class="menuzone pop" role="menu" data-ui-list>
         {#each MENU as item, i}
           <button
             class="opt"
@@ -103,7 +102,7 @@
               item.run();
             }}
           >
-            {#if item.img}<img class="fav" src={item.img} alt="" />{:else}<Icon name={item.icon} />{/if}
+            <Icon name={item.icon} />
           </button>
         {/each}
         {#if $updateVersion}
@@ -294,18 +293,23 @@
     line-height: 14px;
     text-align: center;
   }
-  /* The menu unfolds rightward into the bar as icons, each stepping in
-     just after the last, never a floating popout or a second row. */
-  .opts {
+  /* The menu is a popout box anchored to the rail's edge: icons unfold
+     with a stagger, names and keys live in the tooltips. */
+  .pop {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: var(--gap);
+    z-index: 500;
     display: flex;
     align-items: center;
     gap: 4px;
-    flex: none;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .opts::-webkit-scrollbar {
-    display: none;
+    padding: 6px;
+    background: var(--glass-strong-bg);
+    -webkit-backdrop-filter: var(--glass-strong-blur);
+    backdrop-filter: var(--glass-strong-blur);
+    border: var(--glass-hairline);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--glass-shadow);
   }
   .opt {
     display: inline-flex;
