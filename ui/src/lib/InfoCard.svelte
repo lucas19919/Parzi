@@ -113,7 +113,7 @@
   .body {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
     padding: 2px 12px 12px;
   }
 </style>
