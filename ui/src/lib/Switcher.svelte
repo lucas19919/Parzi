@@ -2,6 +2,8 @@
   import { createEventDispatcher, tick } from "svelte";
   import { fade, fly } from "svelte/transition";
   import Icon from "./Icon.svelte";
+  import ProviderLogo from "./ProviderLogo.svelte";
+  import { hasMark } from "./providerMarks";
   import type { IconName } from "./icons";
   import type { SessionMeta } from "./api";
   import { shownOf } from "./providerRows";
@@ -35,6 +37,8 @@
     icon: IconName;
     // A product mark instead of an icon (Set up Parzi wears the favicon).
     img?: string;
+    // The agent behind a session row: its logo instead of the generic bot.
+    provider?: string;
     title: string;
     sub: string;
     // Words that find it without showing (actions carry no subtitle).
@@ -75,8 +79,11 @@
   ];
   const MAX_SESSIONS = 50;
 
+  const agentOf = (model: string | undefined): string => (model ? model.split("/")[0] : "");
+
   function build(q: string, tabs: Tab[], threads: SessionMeta[], activeTabId: string): Item[] {
     const openSessions = new Set(tabs.map((t) => t.sessionId).filter(Boolean));
+    const byId = new Map(threads.map((t) => [t.id, t]));
     return [
       ...ACTIONS.filter((c) => hit(q, c.title, c.keys)).map((c): Item => ({ ...c, group: "Actions" })),
       ...tabs
@@ -86,6 +93,7 @@
             id: `tab:${t.id}`,
             group: "Tabs",
             icon: t.kind === "page" ? "globe" : "chat",
+            provider: t.kind === "session" ? agentOf(t.sessionId ? byId.get(t.sessionId)?.model : t.composer?.model) : undefined,
             title: t.title || "New session",
             sub: t.id === activeTabId ? "Current tab" : t.url || "Open tab",
             run: () => dispatch("selectTab", { id: t.id }),
@@ -99,6 +107,7 @@
             id: `session:${t.id}`,
             group: "Sessions",
             icon: "chat",
+            provider: agentOf(t.model),
             title: t.title || "Untitled session",
             sub: [t.model && t.model !== "auto" ? shownOf(t.model, $board).name : "", t.cwd ? folderName(t.cwd) : ""].filter(Boolean).join(" · "),
             run: () => dispatch("openSession", { id: t.id }),
@@ -165,7 +174,7 @@
               on:click={() => choose(item)}
               on:mouseenter={() => (index = i)}
             >
-              <span class="ico">{#if item.img}<img src={item.img} alt="" />{:else}<Icon name={item.icon} />{/if}</span>
+              <span class="ico">{#if item.img}<img src={item.img} alt="" />{:else if item.provider && hasMark(item.provider)}<ProviderLogo provider={item.provider} size={16} />{:else}<Icon name={item.icon} />{/if}</span>
               <span class="info">
                 <span class="title">{item.title}</span>
                 {#if item.sub}<span class="sub">{item.sub}</span>{/if}
