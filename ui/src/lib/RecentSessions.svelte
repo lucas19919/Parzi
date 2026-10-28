@@ -3,7 +3,6 @@
   // each like the session column's, the project with the newest work
   // first. Helpers stay under their session (the right column lists them).
   import { createEventDispatcher, onDestroy, onMount } from "svelte";
-  import Icon from "./Icon.svelte";
   import InfoCard from "./InfoCard.svelte";
   import { brain, type Project, type Question, type SessionMeta } from "./api";
   import type { Approval } from "./live";
@@ -22,7 +21,7 @@
   // All sessions.
   const PER = 5;
   const CARDS = 8;
-  const dispatch = createEventDispatcher<{ open: { id: string }; all: void; settings: void }>();
+  const dispatch = createEventDispatcher<{ open: { id: string }; all: void }>();
 
   // Project names, from the brain; a slug it doesn't know reads as itself.
   let titles = new Map<string, string>();
@@ -79,13 +78,6 @@
 </script>
 
 <aside class="rail" aria-label="Sessions by project">
-  <div class="head">
-    <span class="spacer" />
-    <button class="settings-btn" use:tooltip={"Settings (Ctrl+,)"} on:click={() => dispatch("settings")}>
-      <Icon name="settings" /><span>Settings</span>
-    </button>
-  </div>
-  <div class="list">
   {#if pinned.length}
     <InfoCard id="recent:pinned" title="Pinned">
       <svelte:fragment slot="aside">{live(pinned) ? `${live(pinned)} running` : ""}</svelte:fragment>
@@ -129,7 +121,6 @@
       <span class="age">{top.length}</span>
     </button>
   {/if}
-  </div>
 </aside>
 
 <style>
@@ -143,49 +134,12 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+    gap: 8px;
     margin: 0 0 0 var(--gap);
     padding-bottom: 12px;
-    animation: enter 600ms var(--ease-out);
-  }
-  /* Icon header, pinned: menu, hide, and Settings. The list scrolls under it. */
-  .head {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 4px 6px;
-  }
-  .spacer {
-    flex: 1;
-  }
-  .settings-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    height: 28px;
-    padding: 0 10px 0 8px;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    font: inherit;
-    font-size: var(--fs-sm);
-    font-weight: 500;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .settings-btn:hover {
-    background: var(--hover);
-    color: var(--text);
-  }
-  .list {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
     overflow-y: auto;
     scrollbar-width: none;
+    animation: enter 600ms var(--ease-out);
   }
   @keyframes enter {
     from {

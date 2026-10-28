@@ -78,6 +78,11 @@
   .head:hover {
     background: var(--hover);
   }
+  /* Open: square the head's bottom into the body, so the hover fill never
+     rounds off mid-card. Shut: the head is the whole card, fully round. */
+  .open .head {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
   .title {
     flex: none;
     font-size: var(--fs-md);

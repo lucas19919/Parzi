@@ -197,20 +197,20 @@
   .compact {
     width: 100%;
     padding: 6px;
-    background: var(--hover);
-    border: var(--glass-hairline);
+    background: var(--text);
+    border: 1px solid transparent;
     border-radius: var(--radius);
-    color: var(--text);
+    color: var(--bg);
     font: inherit;
     font-size: var(--fs-sm);
     font-weight: 600;
     cursor: pointer;
   }
   .compact:hover:not(:disabled) {
-    background: var(--selected);
+    opacity: 0.88;
   }
   .compact:disabled {
-    opacity: 0.5;
+    opacity: 0.4;
     cursor: default;
   }
 </style>

@@ -19,6 +19,12 @@
     const m = sid ? threads.find((t) => t.id === sid)?.model : undefined;
     return m ? m.split("/")[0] : "";
   };
+  // A draft tab has no thread yet: the logo of the model it will start
+  // with, or nothing (the home mark below).
+  const draftProvider = (tab: Tab) => {
+    const m = tab.composer?.model;
+    return m ? m.split("/")[0] : "";
+  };
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -203,7 +209,7 @@
     {@const attached = tab.kind === "session" && tab.sessionId ? (groups.kids.get(tab.sessionId) ?? []) : []}
     {@const shut = tab.sessionId ? collapsed.has(tab.sessionId) && !attached.some((a) => a.id === activeTabId) : false}
     {@const linked = `${attached.length} page${attached.length === 1 ? "" : "s"} from this session`}
-    {@const provider = tab.kind === "session" ? providerOf(tab.sessionId) : ""}
+    {@const provider = tab.kind === "session" ? providerOf(tab.sessionId) || draftProvider(tab) : ""}
     {#if attached.length && !shut}
       <div class="group">
         <div
@@ -322,6 +328,8 @@
                 <img src={tab.favicon || faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
               {:else if provider && hasMark(provider)}
                 <ProviderLogo {provider} size={14} />
+              {:else if tab.kind === "session" && !tab.sessionId}
+                <Icon name="home" />
               {:else}
                 <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.kind === "artifact" ? "file" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : "bot"} />
               {/if}
