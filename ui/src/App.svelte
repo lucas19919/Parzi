@@ -1958,8 +1958,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         current={shown ?? ""}
         on:open={(e) => openSession(e.detail.id)}
         on:all={() => openHistory("sessions")}
-        on:menu={() => (switcherOpen = true)}
-        on:rail={() => toggleRail()}
         on:settings={() => openSettings()}
       />
     {/if}

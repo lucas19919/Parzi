@@ -22,7 +22,7 @@
   // All sessions.
   const PER = 5;
   const CARDS = 8;
-  const dispatch = createEventDispatcher<{ open: { id: string }; all: void; menu: void; rail: void; settings: void }>();
+  const dispatch = createEventDispatcher<{ open: { id: string }; all: void; settings: void }>();
 
   // Project names, from the brain; a slug it doesn't know reads as itself.
   let titles = new Map<string, string>();
@@ -80,12 +80,6 @@
 
 <aside class="rail" aria-label="Sessions by project">
   <div class="head">
-    <button class="icon-btn" use:tooltip={"Search and commands (Ctrl+K)"} aria-label="Search and commands" on:click={() => dispatch("menu")}>
-      <Icon name="menu" />
-    </button>
-    <button class="icon-btn on" use:tooltip={"Hide sessions"} aria-label="Hide sessions" aria-pressed="true" on:click={() => dispatch("rail")}>
-      <Icon name="panel" />
-    </button>
     <span class="spacer" />
     <button class="settings-btn" use:tooltip={"Settings (Ctrl+,)"} on:click={() => dispatch("settings")}>
       <Icon name="settings" /><span>Settings</span>
@@ -163,28 +157,6 @@
   }
   .spacer {
     flex: 1;
-  }
-  .icon-btn {
-    width: 28px;
-    height: 28px;
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .icon-btn:hover {
-    background: var(--hover);
-    color: var(--text);
-  }
-  .icon-btn.on {
-    background: var(--selected);
-    color: var(--text);
   }
   .settings-btn {
     display: inline-flex;
