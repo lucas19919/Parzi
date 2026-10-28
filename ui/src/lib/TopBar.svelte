@@ -87,6 +87,39 @@
         {#if $updateVersion}<span class="dot" />{/if}
       </button>
     </div>
+    {#if menuOpen}
+      <!-- The menu expands rightward into the bar: options inline beside
+           the button, never a floating popout or a second row. -->
+      <div class="menuzone opts" role="menu" data-ui-list>
+        {#each MENU as item}
+          <button
+            class="opt"
+            role="menuitem"
+            on:click={() => {
+              menuOpen = false;
+              item.run();
+            }}
+          >
+            {#if item.img}<img class="fav" src={item.img} alt="" />{:else}<Icon name={item.icon} />{/if}
+            <span class="label">{item.label}</span>
+            {#if item.key}<span class="key">{item.key}</span>{/if}
+          </button>
+        {/each}
+        {#if $updateVersion}
+          <button
+            class="opt update"
+            role="menuitem"
+            on:click={() => {
+              menuOpen = false;
+              dispatch("update");
+            }}
+          >
+            <Icon name="arrowDown" />
+            <span class="label">Update to v{$updateVersion}</span>
+          </button>
+        {/if}
+      </div>
+    {/if}
     {#if railable}
       <button
         class="icon-btn rail-btn"
@@ -147,44 +180,9 @@
           {#if panelCount > 0}<span class="count">{panelAgents}</span>{/if}
         </button>
       {/if}
-      <button class="icon-btn" use:tooltip={"Settings (Ctrl+,)"} aria-label="Settings" on:click={() => dispatch("settings")}>
-        <Icon name="settings" />
-      </button>
       <WinControls />
   </div>
 </header>
-{#if menuOpen}
-  <!-- The menu expands into the bar as its own row, never a floating popout. -->
-  <div class="menuzone menurow" role="menu" data-ui-list>
-    {#each MENU as item}
-      <button
-        class="opt"
-        role="menuitem"
-        on:click={() => {
-          menuOpen = false;
-          item.run();
-        }}
-      >
-        {#if item.img}<img class="fav" src={item.img} alt="" />{:else}<Icon name={item.icon} />{/if}
-        <span class="label">{item.label}</span>
-        {#if item.key}<span class="key">{item.key}</span>{/if}
-      </button>
-    {/each}
-    {#if $updateVersion}
-      <button
-        class="opt update"
-        role="menuitem"
-        on:click={() => {
-          menuOpen = false;
-          dispatch("update");
-        }}
-      >
-        <Icon name="arrowDown" />
-        <span class="label">Update to v{$updateVersion}</span>
-      </button>
-    {/if}
-  </div>
-{/if}
 </div>
 
 <style>
@@ -293,15 +291,18 @@
     line-height: 14px;
     text-align: center;
   }
-  /* The menu expands into the bar as its own row: one quiet strip of
-     options, never a floating popout. */
-  .menuzone.menurow {
+  /* The menu expands rightward into the bar: options inline beside the
+     button, never a floating popout or a second row. */
+  .opts {
     display: flex;
     align-items: center;
     gap: 2px;
+    flex: none;
     overflow-x: auto;
-    padding: 4px var(--gap);
-    border-bottom: 1px solid var(--line);
+    scrollbar-width: none;
+  }
+  .opts::-webkit-scrollbar {
+    display: none;
   }
   .opt {
     display: inline-flex;
