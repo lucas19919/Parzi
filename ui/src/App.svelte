@@ -1930,6 +1930,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     <TopBar
       {tabs}
       activeTabId={activeId}
+      {threads}
       on:select={(e) => selectTab(e.detail.id)}
       on:close={(e) => closeTab(e.detail.id)}
       on:move={(e) => moveTab(e.detail.id, e.detail.to)}
@@ -1945,6 +1946,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       railable={tab.kind === "session"}
       railOpen={railShown}
       on:rail={() => toggleRail()}
+      panelable={tab.kind === "session"}
+      panelOpen={infoShown}
+      panelCount={familyActive}
+      on:panel={() => toggleInfo()}
     />
   {/if}
 
@@ -2019,8 +2024,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
               {branch}
               {folder}
               parentTitle={parent ? parent.title || "Untitled" : ""}
-              agentCount={familyActive}
-              panelOpen={infoShown}
               canAct={!!shown}
               contextUsed={context.used}
               contextLimit={infoShown ? 0 : context.limit}
@@ -2032,7 +2035,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
               on:copyId={copyId}
               on:delete={() => shown && remove(shown)}
               on:compact={() => onCommand("compact")}
-              on:plan={() => toggleInfo()}
               on:back={() => parent && openSession(parent.id)}
             />
             <div class="workarea">

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
   import Icon from "./Icon.svelte";
+  import ProviderLogo from "./ProviderLogo.svelte";
+  import { hasMark } from "./providerMarks";
   import type { Tab } from "./tabs";
   import { faviconUrl } from "./browserData";
   import { pressDrag, tabDragStarted, tabRelease, type PressDrag } from "./gestures";
@@ -10,6 +12,13 @@
   export let tabs: Tab[] = [];
   export let activeTabId = "";
   export let vertical = false;
+  export let threads: { id: string; model: string }[] = [];
+
+  // The agent behind a session tab, from the thread's model.
+  const providerOf = (sid?: string | null) => {
+    const m = sid ? threads.find((t) => t.id === sid)?.model : undefined;
+    return m ? m.split("/")[0] : "";
+  };
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -194,6 +203,7 @@
     {@const attached = tab.kind === "session" && tab.sessionId ? (groups.kids.get(tab.sessionId) ?? []) : []}
     {@const shut = tab.sessionId ? collapsed.has(tab.sessionId) && !attached.some((a) => a.id === activeTabId) : false}
     {@const linked = `${attached.length} page${attached.length === 1 ? "" : "s"} from this session`}
+    {@const provider = tab.kind === "session" ? providerOf(tab.sessionId) : ""}
     {#if attached.length && !shut}
       <div class="group">
         <div
@@ -217,6 +227,8 @@
             <span class="kind">
               {#if tab.loading || markOf(tab.sessionId) === "running"}
                 <span class="spinner" />
+              {:else if tab.sessionId && hasMark(providerOf(tab.sessionId))}
+                <ProviderLogo provider={providerOf(tab.sessionId)} size={14} />
               {:else}
                 <Icon name="bot" />
               {/if}
@@ -254,12 +266,14 @@
               on:click={() => onPick(sub.id)}
               on:keydown={(e) => onKey(e, sub.id)}
             >
-              <span class="kind">
-                {#if sub.loading || markOf(sub.sessionId) === "running"}
-                  <span class="spinner" />
-                {:else if sub.kind === "session"}
-                  <Icon name="bot" />
-                {:else if sub.kind === "artifact"}
+            <span class="kind">
+              {#if sub.loading || markOf(sub.sessionId) === "running"}
+                <span class="spinner" />
+              {:else if sub.kind === "session" && sub.sessionId && hasMark(providerOf(sub.sessionId))}
+                <ProviderLogo provider={providerOf(sub.sessionId)} size={14} />
+              {:else if sub.kind === "session"}
+                <Icon name="bot" />
+              {:else if sub.kind === "artifact"}
                   <Icon name="file" />
                 {:else if sub.url && !broken.has(sub.url)}
                   <img src={sub.favicon || faviconUrl(sub.url)} alt="" on:error={() => sub.url && (broken = new Set(broken).add(sub.url))} />
@@ -301,15 +315,17 @@
         on:click={() => onPick(tab.id)}
         on:keydown={(e) => onKey(e, tab.id)}
       >
-        <span class="kind">
-          {#if tab.loading || markOf(tab.sessionId) === "running"}
-            <span class="spinner" />
-          {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
-            <img src={tab.favicon || faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
-          {:else}
-            <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.kind === "artifact" ? "file" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : "bot"} />
-          {/if}
-        </span>
+            <span class="kind">
+              {#if tab.loading || markOf(tab.sessionId) === "running"}
+                <span class="spinner" />
+              {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
+                <img src={tab.favicon || faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
+              {:else if provider && hasMark(provider)}
+                <ProviderLogo {provider} size={14} />
+              {:else}
+                <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.kind === "artifact" ? "file" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : "bot"} />
+              {/if}
+            </span>
         <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>
         {#if markOf(tab.sessionId) === "waiting"}<span class="waiting" />{/if}
       </div>

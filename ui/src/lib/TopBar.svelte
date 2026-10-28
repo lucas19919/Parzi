@@ -13,17 +13,22 @@
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
+  export let threads: { id: string; model: string }[] = [];
   // The recent sessions column: offered on session tabs, and whether it shows.
   export let railable = false;
   export let railOpen = false;
+  // The session column: offered on session tabs, and whether it shows.
+  export let panelable = false;
+  export let panelOpen = false;
+  export let panelCount = 0;
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
     close: { id: string };
     move: { id: string; to: number };
     newTab: void;
-    settings: void;
     search: void;
+    settings: void;
     update: void;
     brain: void;
     history: void;
@@ -31,7 +36,10 @@
     report: void;
     openSession: { id: string };
     rail: void;
+    panel: void;
   }>();
+
+  $: panelAgents = panelCount > 99 ? "99+" : String(panelCount);
 
   let menuOpen = false;
   let notiOpen = false;
@@ -121,14 +129,15 @@
         <Icon name="panel" />
       </button>
     {/if}
-    <TabBar
-      {tabs}
-      {activeTabId}
-      on:select={(e) => dispatch("select", e.detail)}
-      on:close={(e) => dispatch("close", e.detail)}
-      on:move={(e) => dispatch("move", e.detail)}
-      on:newTab={() => dispatch("newTab")}
-    />
+      <TabBar
+        {tabs}
+        {activeTabId}
+        {threads}
+        on:select={(e) => dispatch("select", e.detail)}
+        on:close={(e) => dispatch("close", e.detail)}
+        on:move={(e) => dispatch("move", e.detail)}
+        on:newTab={() => dispatch("newTab")}
+      />
   </div>
 
   <div class="right">
@@ -146,17 +155,33 @@
           <span class="noti-badge" />
         {/if}
       </button>
-      {#if notiOpen}
-        <NotificationDropdown
-          on:openSession={(e) => {
-            notiOpen = false;
-            dispatch("openSession", e.detail);
-          }}
-          on:close={() => (notiOpen = false)}
-        />
+        {#if notiOpen}
+          <NotificationDropdown
+            on:openSession={(e) => {
+              notiOpen = false;
+              dispatch("openSession", e.detail);
+            }}
+            on:close={() => (notiOpen = false)}
+          />
+        {/if}
+      </div>
+      {#if panelable}
+        <button
+          class="icon-btn"
+          class:active={panelOpen}
+          aria-pressed={panelOpen}
+          aria-label={panelCount > 0 ? `Session column, ${panelAgents} agents running` : "Session column"}
+          use:tooltip={"Session column (Ctrl+J)"}
+          on:click={() => dispatch("panel")}
+        >
+          <Icon name="panel" />
+          {#if panelCount > 0}<span class="count">{panelAgents}</span>{/if}
+        </button>
       {/if}
-    </div>
-    <WinControls />
+      <button class="icon-btn" use:tooltip={"Settings (Ctrl+,)"} aria-label="Settings" on:click={() => dispatch("settings")}>
+        <Icon name="settings" />
+      </button>
+      <WinControls />
   </div>
 </header>
 
@@ -251,6 +276,21 @@
   .icon-btn.active {
     background: var(--selected);
     color: var(--text);
+  }
+  .count {
+    position: absolute;
+    top: 0;
+    right: -1px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 999px;
+    background: var(--ok);
+    color: var(--on-ok);
+    font-size: var(--fs-xs);
+    font-weight: 700;
+    line-height: 14px;
+    text-align: center;
   }
   .dropdown {
     position: absolute;
