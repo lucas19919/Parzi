@@ -30,7 +30,7 @@
 </div>
 
 <style>
-  .row { display: grid; grid-template-columns: 132px 1fr; align-items: center; gap: 14px; }
+  .row { display: grid; grid-template-columns: 132px 1fr; align-items: center; gap: 14px; width: 100%; }
   .info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   .lab { font-size: var(--fs-md); font-weight: 500; color: var(--text); }
   .ctl { display: flex; align-items: center; gap: 12px; }

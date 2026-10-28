@@ -344,7 +344,7 @@
     </div>
     <div class="save-row">
       <input
-        class="text"
+        class="tin"
         placeholder="Save the current look as…"
         aria-label="Theme name"
         bind:value={packName}
@@ -403,46 +403,46 @@
 
   <section class="pref-section">
     <h3 class="section-title">Colours</h3>
-    <div class="field-card">
-      <div class="swatches">
-        {#each ACCENTS as hex}
-          <button
-            class="swatch"
-            class:on={theme.colors.accent.toLowerCase() === hex.toLowerCase()}
-            style="--sw:{hex}"
-            use:tooltip={hex}
-            aria-label="Accent {hex}"
-            on:click={() => setColor("accent", hex)}
-          />
-        {/each}
-        <span class="swatch-gap" />
-        <ColorField label="Accent" value={theme.colors.accent} on:input={(e) => setColor("accent", e.detail)} />
+    <div class="rows">
+      <div class="row">
+        <div class="swatches">
+          {#each ACCENTS as hex}
+            <button
+              class="swatch"
+              class:on={theme.colors.accent.toLowerCase() === hex.toLowerCase()}
+              style="--sw:{hex}"
+              use:tooltip={hex}
+              aria-label="Accent {hex}"
+              on:click={() => setColor("accent", hex)}
+            />
+          {/each}
+          <span class="swatch-gap" />
+          <ColorField label="Accent" value={theme.colors.accent} on:input={(e) => setColor("accent", e.detail)} />
+        </div>
       </div>
-    </div>
-    <div class="field-card grid2">
-      <ColorField label="Background" value={theme.colors.stage} on:input={(e) => setColor("stage", e.detail)} />
-      <ColorField label="Text" value={theme.colors.text} on:input={(e) => setColor("text", e.detail)} />
-      <ColorField label="Muted text" value={theme.colors.text_dim} on:input={(e) => setColor("text_dim", e.detail)} />
+      <div class="row"><ColorField label="Background" value={theme.colors.stage} on:input={(e) => setColor("stage", e.detail)} /></div>
+      <div class="row"><ColorField label="Text" value={theme.colors.text} on:input={(e) => setColor("text", e.detail)} /></div>
+      <div class="row"><ColorField label="Muted text" value={theme.colors.text_dim} on:input={(e) => setColor("text_dim", e.detail)} /></div>
     </div>
   </section>
 
   <section class="pref-section">
     <h3 class="section-title">Type</h3>
-    <div class="field-card grid2 type">
-      <label class="fld">
-        <span>Interface font</span>
-        <input class="text" list="parzi-ui-fonts" bind:value={theme.font.family} on:input={touch} spellcheck="false" />
-      </label>
-      <div class="fld">
-        <span>Size</span>
+    <div class="rows">
+      <div class="row">
+        <span class="row-label">Interface font</span>
+        <input class="tin fixed" list="parzi-ui-fonts" bind:value={theme.font.family} on:input={touch} spellcheck="false" aria-label="Interface font" />
+      </div>
+      <div class="row">
+        <span class="row-label">Size</span>
         <SegControl label="Interface font size" options={SIZES_UI} value={String(theme.font.size)} on:pick={(e) => setSize("size", e.detail)} />
       </div>
-      <label class="fld">
-        <span>Code font</span>
-        <input class="text" list="parzi-mono-fonts" bind:value={theme.font.mono} on:input={touch} spellcheck="false" />
-      </label>
-      <div class="fld">
-        <span>Code size</span>
+      <div class="row">
+        <span class="row-label">Code font</span>
+        <input class="tin fixed mono" list="parzi-mono-fonts" bind:value={theme.font.mono} on:input={touch} spellcheck="false" aria-label="Code font" />
+      </div>
+      <div class="row">
+        <span class="row-label">Code size</span>
         <SegControl label="Code font size" options={SIZES_MONO} value={String(theme.font.mono_size)} on:pick={(e) => setSize("mono_size", e.detail)} />
       </div>
     </div>
@@ -497,13 +497,7 @@
   }
 
   .save-row { display: flex; gap: 8px; }
-  .text {
-    flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line);
-    border-radius: var(--radius); color: var(--text); padding: 7px 10px;
-    font: inherit; font-size: var(--fs-md); outline: none;
-  }
-  .text::placeholder { color: var(--muted); }
-  .text:focus { border-color: var(--accent) !important; box-shadow: none; }
+  .save-row .tin { flex: 1; }
 
   .section-head-with-action { align-items: center; }
   .walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
@@ -534,23 +528,18 @@
   .wall-del.armed { opacity: 1; color: var(--bad); font-weight: 600; }
 
   .field-card.stack { flex-direction: column; align-items: stretch; gap: 12px; }
-  .field-card.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px 24px; align-items: center; }
-  .field-card.grid2.type { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
+  .rows > .row > :global(.cf) { flex: 1; min-width: 0; }
   .swatches { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%; }
   .swatch-gap { flex: 1; }
   .swatch {
-    width: 24px; height: 24px; border-radius: 50%; background: var(--sw);
+    width: 22px; height: 22px; border-radius: 50%; background: var(--sw);
     border: 2px solid transparent; padding: 0; cursor: pointer;
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--line);
     transition: transform 140ms ease, border-color 140ms ease;
   }
   .swatch:hover { transform: scale(1.1); }
   .swatch.on { border-color: var(--text); }
-
-  .fld { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: var(--fs-md); color: var(--muted); min-width: 0; }
-  .fld > span { flex: none; }
-  .fld .text { max-width: 190px; }
 
   .actions-row-end { display: flex; justify-content: flex-end; }
 </style>

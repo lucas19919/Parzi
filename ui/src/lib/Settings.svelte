@@ -91,10 +91,10 @@
   .content {
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 26px;
     width: 100%;
-    max-width: 980px;
+    max-width: 840px;
     margin: 0 auto;
-    padding: 26px 28px 40px;
+    padding: 26px 28px 48px;
   }
 </style>

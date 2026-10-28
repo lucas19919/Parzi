@@ -213,12 +213,12 @@
           {#if isOpen}
             <div class="details">
               {#if p?.models.length}
-                {#if p.models.length > SEARCH_FROM}
-                  <div class="models-search">
-                    <Icon name="search" size={12} />
-                    <input placeholder="Search {p.models.length} models" aria-label="Search {nameOf(id)} models" bind:value={queries[id]} />
-                  </div>
-                {/if}
+              {#if p.models.length > SEARCH_FROM}
+                <div class="models-search">
+                  <Icon name="search" size={12} />
+                  <input class="tin" placeholder="Search {p.models.length} models" aria-label="Search {nameOf(id)} models" bind:value={queries[id]} />
+                </div>
+              {/if}
                 <div class="model-list">
                   {#each filtered(p, queries[id] ?? "") as m (m.id)}
                     <div class="model-row">
@@ -238,7 +238,7 @@
               <label class="path-row">
                 <span class="path-label">Program</span>
                 <input
-                  class="path-in"
+                  class="tin mono"
                   placeholder="Found automatically ({PROGRAM[id]})"
                   aria-label="{nameOf(id)} program path"
                   spellcheck="false"
@@ -256,20 +256,21 @@
 
   <div class="pref-section">
     <h3 class="section-title">Spending limits</h3>
-    <div class="field-card">
-      <div class="field-info">
-        <span class="field-label">Max spend per run</span>
+    <p class="section-desc">Empty means no cap.</p>
+    <div class="rows">
+      <div class="row">
+        <span class="row-label">Max spend per run</span>
+        <span class="row-ctl">
+          <span class="cur">$</span>
+          <input class="tin nums" inputmode="decimal" placeholder="None" aria-label="Max spend per run in US dollars" bind:value={spendUsd} on:change={saveSpend} />
+        </span>
       </div>
-      <div class="spend">
-        <span class="cur">$</span>
-        <input class="spend-in" inputmode="decimal" placeholder="None" aria-label="Max spend per run in US dollars" bind:value={spendUsd} on:change={saveSpend} />
+      <div class="row">
+        <span class="row-label">Max tokens per run</span>
+        <span class="row-ctl">
+          <input class="tin nums" inputmode="numeric" placeholder="None" aria-label="Max tokens per run" bind:value={spendTok} on:change={saveSpend} />
+        </span>
       </div>
-    </div>
-    <div class="field-card">
-      <div class="field-info">
-        <span class="field-label">Max tokens per run</span>
-      </div>
-      <input class="spend-in wide" inputmode="numeric" placeholder="None" aria-label="Max tokens per run" bind:value={spendTok} on:change={saveSpend} />
     </div>
   </div>
 {/if}
@@ -340,13 +341,16 @@
 
   .details { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
   .models-search {
-    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
-    background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); color: var(--muted);
+    display: flex; align-items: center; gap: 8px;
+    background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius);
+    color: var(--muted); padding-left: 10px;
   }
-  .models-search input {
-    flex: 1; min-width: 0; background: transparent; border: none; outline: none;
-    color: var(--text); font: inherit; font-size: var(--fs-sm);
+  .models-search:focus-within { border-color: var(--accent); }
+  .models-search .tin {
+    flex: 1; background: transparent; border: none; border-radius: 0;
+    padding-left: 0;
   }
+  .models-search .tin:focus { border-color: transparent; }
   .model-list { display: flex; flex-direction: column; gap: 2px; max-height: 340px; overflow-y: auto; }
   .model-row {
     display: flex; align-items: center; gap: 8px; padding: 5px 8px;
@@ -362,22 +366,8 @@
 
   .path-row { display: flex; align-items: center; gap: 8px; }
   .path-label { font-size: var(--fs-sm); color: var(--muted); flex: none; width: 58px; }
-  .path-in {
-    flex: 1; min-width: 0; background: var(--bg);
-    border: 1px solid var(--line); border-radius: var(--radius);
-    color: var(--text); font-size: var(--fs-sm); padding: 5px 9px; outline: none;
-    font-family: var(--mono), ui-monospace, monospace;
-  }
-  .path-in:focus { border-color: var(--accent); }
-  .path-in::placeholder { color: var(--muted); }
+  .path-row .tin { flex: 1; }
 
-  .spend { display: flex; align-items: center; gap: 6px; }
   .cur { font-size: var(--fs-md); color: var(--muted); }
-  .spend-in {
-    width: 88px; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius);
-    color: var(--text); font: inherit; font-size: var(--fs-md); padding: 6px 8px; outline: none;
-    font-variant-numeric: tabular-nums;
-  }
-  .spend-in.wide { width: 120px; }
-  .spend-in:focus { border-color: var(--accent); }
+  .row-ctl .tin { width: 104px; }
 </style>
