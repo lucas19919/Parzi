@@ -3,6 +3,8 @@
   // what changed in its folder and the helpers it started. Read at a
   // glance; the few things to click open what they name.
   import { createEventDispatcher, onMount } from "svelte";
+  import { fly } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
   import InfoCard from "./InfoCard.svelte";
   import ContextBreakdown from "./ContextBreakdown.svelte";
@@ -133,7 +135,7 @@
   });
 </script>
 
-<aside class="info" aria-label="Session" style="width: {width}px">
+<aside class="info" aria-label="Session" style="width: {width}px" transition:fly={{ x: 12, duration: 200, easing: cubicOut }}>
   <div
     class="grip"
     role="separator"
@@ -279,13 +281,6 @@
     padding-bottom: 12px;
     overflow-y: auto;
     scrollbar-width: none;
-    animation: enter 600ms var(--ease-out);
-  }
-  @keyframes enter {
-    from {
-      opacity: 0;
-      transform: translateX(8px);
-    }
   }
   /* The hit area fills the gutter between the session and this column,
      so the grab line sits dead center in the gap. */

@@ -2370,10 +2370,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     left: 50%;
     bottom: 46%;
     z-index: 20;
-    /* One width everywhere: as wide as a session's text column. */
+    /* One width everywhere: as wide as a session's text column. Docking,
+       shifting for the side column and resizing all glide together. */
     width: min(var(--read), calc(100% - 64px - 2 * var(--shift, 0px)));
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
-    transition: width 300ms ease;
+    transition: width 300ms ease, bottom 300ms ease, transform 300ms ease;
   }
   .composer.docked {
     bottom: 14px;

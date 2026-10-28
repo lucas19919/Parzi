@@ -3,6 +3,8 @@
   // each like the session column's, the project with the newest work
   // first. Helpers stay under their session (the right column lists them).
   import { createEventDispatcher, onDestroy, onMount } from "svelte";
+  import { fly } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
   import InfoCard from "./InfoCard.svelte";
   import { brain, type Project, type Question, type SessionMeta } from "./api";
   import type { Approval } from "./live";
@@ -77,7 +79,7 @@
   $: age = (at: string) => ago(Date.parse(at), now).replace(" ago", "").replace("just now", "now");
 </script>
 
-<aside class="rail" aria-label="Sessions by project">
+<aside class="rail" aria-label="Sessions by project" transition:fly={{ x: -12, duration: 200, easing: cubicOut }}>
   {#if pinned.length}
     <InfoCard id="recent:pinned" title="Pinned">
       <svelte:fragment slot="aside">{live(pinned) ? `${live(pinned)} running` : ""}</svelte:fragment>
@@ -139,13 +141,6 @@
     padding-bottom: 12px;
     overflow-y: auto;
     scrollbar-width: none;
-    animation: enter 600ms var(--ease-out);
-  }
-  @keyframes enter {
-    from {
-      opacity: 0;
-      transform: translateX(-8px);
-    }
   }
   /* All sessions: a one-line bubble under the project cards. */
   .pill {
