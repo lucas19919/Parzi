@@ -75,7 +75,7 @@
       ? [{ id: "previews", icon: "spark" as IconName, title: "Component previews", sub: "", keys: "omnibar gallery", run: () => dispatch("previews") }]
       : []),
     { id: "settings", icon: "settings", title: "Settings", sub: "", keys: "agents providers appearance theme system connectors", run: () => dispatch("settings") },
-    { id: "setup", icon: "spark", img: "/favicon.svg", title: "Set up Parzi", sub: "", keys: "agents browser tools remote wizard", run: () => dispatch("setup") },
+    { id: "setup", icon: "spark", img: "/parzi-mark.svg", title: "Set up Parzi", sub: "", keys: "agents browser tools remote wizard", run: () => dispatch("setup") },
   ];
   const MAX_SESSIONS = 50;
 

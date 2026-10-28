@@ -52,7 +52,7 @@
     { label: "History", key: "Ctrl+H", icon: "clock", run: () => dispatch("history") },
     { label: "Brain", key: "Ctrl+B", icon: "brain", run: () => dispatch("brain") },
     { label: "Settings", key: "Ctrl+,", icon: "settings", run: () => dispatch("settings") },
-    { label: "Set up Parzi", key: "", icon: "spark", img: "/favicon.svg", run: () => dispatch("setup") },
+    { label: "Set up Parzi", key: "", icon: "spark", img: "/parzi-mark.svg", run: () => dispatch("setup") },
     { label: "Report a problem", key: "", icon: "alert", run: () => dispatch("report") },
   ];
 
@@ -88,34 +88,37 @@
       </button>
     </div>
     {#if menuOpen}
-      <!-- The menu expands rightward into the bar: options inline beside
-           the button, never a floating popout or a second row. -->
+      <!-- Icons only, unfolding rightward with a stagger; names and keys
+           live in the tooltips. -->
       <div class="menuzone opts" role="menu" data-ui-list>
-        {#each MENU as item}
+        {#each MENU as item, i}
           <button
             class="opt"
+            style="--i: {i}"
             role="menuitem"
+            aria-label={item.key ? `${item.label} (${item.key})` : item.label}
+            use:tooltip={item.key ? `${item.label} (${item.key})` : item.label}
             on:click={() => {
               menuOpen = false;
               item.run();
             }}
           >
             {#if item.img}<img class="fav" src={item.img} alt="" />{:else}<Icon name={item.icon} />{/if}
-            <span class="label">{item.label}</span>
-            {#if item.key}<span class="key">{item.key}</span>{/if}
           </button>
         {/each}
         {#if $updateVersion}
           <button
             class="opt update"
+            style="--i: {MENU.length}"
             role="menuitem"
+            aria-label="Update to v{$updateVersion}"
+            use:tooltip={"Update to v" + $updateVersion}
             on:click={() => {
               menuOpen = false;
               dispatch("update");
             }}
           >
             <Icon name="arrowDown" />
-            <span class="label">Update to v{$updateVersion}</span>
           </button>
         {/if}
       </div>
@@ -291,12 +294,12 @@
     line-height: 14px;
     text-align: center;
   }
-  /* The menu expands rightward into the bar: options inline beside the
-     button, never a floating popout or a second row. */
+  /* The menu unfolds rightward into the bar as icons, each stepping in
+     just after the last, never a floating popout or a second row. */
   .opts {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
     flex: none;
     overflow-x: auto;
     scrollbar-width: none;
@@ -307,17 +310,29 @@
   .opt {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    justify-content: center;
     flex: none;
-    padding: 5px 10px;
-    background: transparent;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: none;
     border: none;
     border-radius: var(--radius);
     color: var(--muted);
-    font: inherit;
-    font-size: var(--fs-sm);
-    white-space: nowrap;
     cursor: pointer;
+    animation: opt-in 180ms var(--ease-out) backwards;
+    animation-delay: calc(var(--i, 0) * 30ms);
+  }
+  @keyframes opt-in {
+    from {
+      opacity: 0;
+      transform: translateX(-6px) scale(0.92);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .opt {
+      animation: none;
+    }
   }
   .opt:hover {
     background: var(--hover);
@@ -325,13 +340,6 @@
   }
   .opt.update {
     color: var(--accent);
-  }
-  .opt .label {
-    flex: none;
-  }
-  .opt .key {
-    font-size: var(--fs-xs);
-    color: var(--muted);
   }
   .fav {
     width: 16px;
