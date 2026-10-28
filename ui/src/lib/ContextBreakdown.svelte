@@ -176,7 +176,7 @@
     width: 8px;
     height: 8px;
     flex: none;
-    border-radius: 2px;
+    border-radius: 50%;
   }
   .label {
     flex: 1;

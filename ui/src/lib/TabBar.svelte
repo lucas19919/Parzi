@@ -20,7 +20,7 @@
     return m ? m.split("/")[0] : "";
   };
   // A draft tab has no thread yet: the logo of the model it will start
-  // with, or nothing (the home mark below).
+  // with, from its own composer (seeded from the last send).
   const draftProvider = (tab: Tab) => {
     const m = tab.composer?.model;
     return m ? m.split("/")[0] : "";

@@ -425,8 +425,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   // The session's project: its plan and its name.
   $: planProject = (hasSession ? meta?.project : "") || project?.slug || "";
   $: planTitle = project && sameSlug(project.slug, planProject) ? project.title : "";
-  $: if (hasSession) watchPlan(planProject, folder);
-  $: infoShown = hasSession && infoOpen && innerWidth >= 900;
+  $: if (tab.kind === "session") watchPlan(planProject, folder);
+  // Open on drafts too: with no run yet it shows what it knows (the
+  // environment, and the project plan when the draft names a project).
+  $: infoShown = tab.kind === "session" && infoOpen && innerWidth >= 900;
 
   // The recent sessions column on the left, beside session tabs, when
   // there is room for it next to the session (and the right column).
@@ -465,9 +467,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   // Agents ask for "the plan": the checklist shows in this session's
   // thread. A second click (or the checklist's own X) hides it again.
+  // A draft has no thread: its plan card opens the plan note instead.
   function showPlan() {
     if (!hasSession) {
-      toast("Open a session in a project to see its plan");
+      if (planProject) openBrainNote(`projects/${planProject}/plan.md`);
+      else toast("Pick a project to see its plan");
       return;
     }
     if (!shown) return;
@@ -2015,8 +2019,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         />
       {/key}
     {:else}
-      {#if hasSession}
-        <div class="stagerow">
+      {#if tab.kind === "session" && (hasSession || infoShown)}
+        <div class="stagerow" class:solo={!hasSession}>
+          {#if hasSession}
           <section class="session">
             <SessionHeader
               title={meta?.title || tab.title}
@@ -2090,6 +2095,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
               </div>
             </div>
           </section>
+          {/if}
           {#if infoShown}
             <SessionInfo
               session={shown ?? ""}
@@ -2307,6 +2313,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     flex: 1;
     min-height: 0;
     display: flex;
+  }
+  /* A draft shows only the column: pin it right. */
+  .stagerow.solo {
+    justify-content: flex-end;
   }
   .session {
     position: relative;

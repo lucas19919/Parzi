@@ -200,7 +200,7 @@
     background: color-mix(in srgb, var(--text) 6%, transparent);
   }
   .row.here {
-    background: color-mix(in srgb, var(--text) 9%, transparent);
+    background: var(--selected);
   }
   .quiet,
   .quiet .v {
