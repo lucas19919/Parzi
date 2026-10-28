@@ -1,5 +1,6 @@
 mod harness;
 mod launch;
+pub use launch::ContextParts;
 mod queue;
 mod wake;
 
@@ -28,7 +29,7 @@ const BUS_CAPACITY: usize = 4_096;
 
 static HEADLESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// `parzi serve` runs with no desk, so its lanes offer no browser tools.
+/// `parzi serve` runs with no desk, so it offers no browser tools.
 pub fn set_headless() {
     HEADLESS.store(true, std::sync::atomic::Ordering::Relaxed);
 }
@@ -188,6 +189,19 @@ impl Orchestrator {
 
     /// Kill every background shell of a session and forget its registry.
     /// Called when sessions are deleted or purged so nothing outlives them.
+    /// The commands a session's agents ran, for its column. None started
+    /// yet: an empty list, not a new registry.
+    pub fn shell_jobs(&self, sid: &str) -> Vec<crate::shell::ShellJob> {
+        let reg = self.shells.lock().ok().and_then(|m| m.get(sid).cloned());
+        reg.map(|r| r.jobs()).unwrap_or_default()
+    }
+
+    /// Stops one of a session's background commands.
+    pub fn shell_kill(&self, sid: &str, id: &str) -> bool {
+        let reg = self.shells.lock().ok().and_then(|m| m.get(sid).cloned());
+        reg.is_some_and(|r| r.kill(id))
+    }
+
     pub fn drop_shells(&self, id: &str) {
         let reg = self.shells.lock().map(|mut m| m.remove(id)).unwrap_or(None);
         if let Some(reg) = reg {
@@ -330,8 +344,45 @@ impl Orchestrator {
         Ok(())
     }
 
-    pub async fn fork(&self, id: &str, at_step: Option<usize>) -> Result<SessionMeta> {
+    pub fn fork(&self, id: &str, at_step: Option<usize>) -> Result<SessionMeta> {
         self.store.fork(id, at_step)
+    }
+
+    /// The conversation as it stood before the person's `nth` message, as
+    /// a new session to go on from; the original stays.
+    pub fn rewind(&self, id: &str, nth: usize) -> Result<SessionMeta> {
+        self.store.rewind(id, nth)
+    }
+
+    /// A name the person gave: one line, never empty.
+    pub fn rename(&self, id: &str, title: &str) -> Result<()> {
+        let title = parzi_core::text::fold(title);
+        if title.is_empty() {
+            return Err(parzi_core::ParziError::Store("title is required".into()));
+        }
+        self.store.set_title(id, &title)
+    }
+
+    /// Deletes a session with the subsessions it started: their runs are
+    /// stopped and their shells killed first, so nothing outlives them.
+    pub async fn delete_thread(&self, id: &str) -> Result<usize> {
+        let all = self.store.list()?;
+        self.store.get(id)?;
+        for sid in parzi_core::store::subtree_ids(&all, id) {
+            let _ = self.kill(&sid).await;
+            self.drop_shells(&sid);
+        }
+        self.store.delete_thread(id)
+    }
+
+    /// Removes finished sessions (live runs and their ancestors stay) and
+    /// kills the shells of exactly those removed.
+    pub fn purge_finished(&self) -> Result<usize> {
+        let gone = self.store.purge_finished_ids()?;
+        for sid in &gone {
+            self.drop_shells(sid);
+        }
+        Ok(gone.len())
     }
 
     pub fn harness(&self) -> Arc<dyn HarnessBridge> {

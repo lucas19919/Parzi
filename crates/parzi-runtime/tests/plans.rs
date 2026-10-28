@@ -78,7 +78,6 @@ async fn an_agent_plans_marks_an_item_active_and_names_its_session() {
     let (meta, _rx) = orch
         .spawn(
             "plans-demo",
-            "build",
             "claude",
             "lets plan the next release",
             None,
@@ -180,7 +179,6 @@ async fn a_session_without_a_project_has_no_plan_to_write() {
     let (meta, _rx) = orch
         .spawn(
             "default",
-            "build",
             "claude",
             "plan it",
             None,
@@ -221,17 +219,7 @@ async fn the_plan_opens_a_turn_only_when_it_changed() {
     );
     let (orch, store) = orch(std::slice::from_ref(&fake));
     let (meta, _rx) = orch
-        .spawn(
-            slug,
-            "build",
-            "claude",
-            "work on it",
-            None,
-            "",
-            "low",
-            vec![],
-            None,
-        )
+        .spawn(slug, "claude", "work on it", None, "", "low", vec![], None)
         .await
         .unwrap();
     settle(&store, &meta.id).await;
@@ -365,17 +353,7 @@ async fn a_plan_a_turn_never_showed_is_sent_again() {
     );
     let (orch, store) = orch(std::slice::from_ref(&fake));
     let (meta, _rx) = orch
-        .spawn(
-            slug,
-            "build",
-            "claude",
-            "start",
-            None,
-            "",
-            "low",
-            vec![],
-            None,
-        )
+        .spawn(slug, "claude", "start", None, "", "low", vec![], None)
         .await
         .unwrap();
     settle(&store, &meta.id).await;
@@ -408,11 +386,7 @@ async fn a_plan_a_turn_never_showed_is_sent_again() {
         "the failed turn never showed it: {}",
         turns[1].prompt
     );
-    assert!(
-        turns[2].prompt.starts_with("/compact"),
-        "{}",
-        turns[2].prompt
-    );
+    assert!(turns[2].compact, "{}", turns[2].prompt);
     assert!(
         turns[3].prompt.contains(&block),
         "compacted away: {}",
@@ -468,7 +442,6 @@ async fn a_read_only_lane_reads_the_plan_and_changes_nothing() {
     let (meta, _rx) = orch
         .spawn(
             slug,
-            "build",
             "claude",
             "look at the plan",
             None,

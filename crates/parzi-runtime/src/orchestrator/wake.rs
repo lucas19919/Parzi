@@ -114,7 +114,7 @@ pub(crate) fn report(child: &SessionMeta, stopped: bool, cap: usize) -> String {
     if !child.branch.is_empty() {
         out.push_str(&format!("\nBranch: {}.", child.branch));
     }
-    let more = format!("\nMore: session.read_session {}", child.id);
+    let more = format!("\nMore: session.read {}", child.id);
     let room = cap.saturating_sub(more.chars().count());
     format!("{}{more}", clip(&out, room))
 }
@@ -242,7 +242,6 @@ impl Pump {
         let q = QueuedRun {
             session_id: parent.to_string(),
             project: meta.project.clone(),
-            lane: meta.lane.clone(),
             model_spec: meta.model.clone(),
             prompt: "Sessions you started in the background have ended; their reports are above."
                 .into(),
@@ -308,7 +307,6 @@ mod tests {
             title: "Write the parser".into(),
             pinned: false,
             project: "demo".into(),
-            lane: "build".into(),
             model: String::new(),
             parent_id: Some("p1".into()),
             status: SessionStatus::Done,
@@ -346,7 +344,7 @@ mod tests {
         assert!(text.contains("(+4 more)."), "{text}");
         assert!(text.contains("\nChecks: cargo test passed."), "{text}");
         assert!(text.contains("\nBranch: plan/parser."), "{text}");
-        assert!(text.ends_with("\nMore: session.read_session c1"), "{text}");
+        assert!(text.ends_with("\nMore: session.read c1"), "{text}");
         let stopped = report(&c, true, REPORT_CAP);
         assert!(stopped.starts_with("Session \"Write the parser\" was stopped."));
         let mut bare = c;
@@ -355,7 +353,7 @@ mod tests {
         bare.branch.clear();
         assert_eq!(
             report(&bare, false, REPORT_CAP),
-            "Session \"Write the parser\" ended.\nMore: session.read_session c1"
+            "Session \"Write the parser\" ended.\nMore: session.read c1"
         );
     }
 }

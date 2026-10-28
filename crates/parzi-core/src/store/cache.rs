@@ -35,11 +35,15 @@ pub(crate) const MAX_SESSIONS: usize = 16;
 #[derive(Debug, Default)]
 pub(crate) struct SessionCache {
     pub events: Vec<Event>,
+    /// One per event, in step: when the line said (None: lines from before
+    /// timestamps existed).
+    pub times: Vec<Option<i64>>,
     pub len: u64,
     pub pending_updated: Option<DateTime<Utc>>,
     pub md_dirty: bool,
     /// Bumped on every mark, so a render only clears marks it has seen.
     pub md_seq: u64,
+    /// A torn tail must never misalign events and times: both are rebuilt.
     pub used: u64,
 }
 
@@ -104,13 +108,19 @@ impl StoreCache {
     }
 }
 
-pub(crate) fn fold_lines(bytes: &[u8], path: &Path, out: &mut Vec<Event>) {
-    out.extend(parse_lines(bytes, path).into_iter().map(|(_, e)| e));
+/// One transcript line: since timestamps, an envelope with the event;
+/// older lines are the bare event and carry no time.
+#[derive(Debug, serde::Deserialize)]
+struct Stamped {
+    #[allow(dead_code)]
+    at: Option<i64>,
+    ev: Event,
 }
 
-/// Events with the byte offset just past their line, so a caller can drop
-/// the ones another thread already cached.
-pub(crate) fn parse_lines(bytes: &[u8], path: &Path) -> Vec<(usize, Event)> {
+/// Events with the byte offset just past their line (so a caller can drop
+/// the ones another thread already cached) and their Unix time, if the
+/// line said (lines from before timestamps existed say nothing).
+pub(crate) fn parse_lines(bytes: &[u8], path: &Path) -> Vec<(usize, Event, Option<i64>)> {
     let mut out = vec![];
     let mut end = 0;
     for line in bytes.split(|b| *b == b'\n') {
@@ -118,9 +128,12 @@ pub(crate) fn parse_lines(bytes: &[u8], path: &Path) -> Vec<(usize, Event)> {
         if line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        match serde_json::from_slice::<Event>(line) {
-            Ok(e) => out.push((end, e)),
-            Err(err) => tracing::warn!("skipping unreadable event in {}: {err}", path.display()),
+        if let Ok(e) = serde_json::from_slice::<Event>(line) {
+            out.push((end, e, None));
+        } else if let Ok(s) = serde_json::from_slice::<Stamped>(line) {
+            out.push((end, s.ev, s.at));
+        } else {
+            tracing::warn!("skipping unreadable event in {}", path.display());
         }
     }
     out

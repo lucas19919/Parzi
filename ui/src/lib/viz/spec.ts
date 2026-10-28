@@ -3,7 +3,7 @@
 // Pure, so tests pin it down; the components only draw what comes out.
 //   { "type": "bars", "title": "Open PRs", "data": [{ "label": "parzi", "value": 4 }] }
 
-export const VIZ_TYPES = ["bars", "line", "spark", "stat", "progress", "table", "list", "timeline"] as const;
+export const VIZ_TYPES = ["bars", "line", "hist", "spark", "stat", "progress", "table", "list", "timeline"] as const;
 export type VizType = (typeof VIZ_TYPES)[number];
 
 // Status words for dots. Anything else draws a quiet dot.
@@ -12,6 +12,12 @@ export type Tone = "ok" | "warn" | "bad" | "accent" | "";
 export interface Point {
   label: string;
   value: number;
+}
+
+export interface HistBin {
+  lo: number;
+  hi: number;
+  count: number;
 }
 
 export interface Series {
@@ -61,6 +67,7 @@ interface Base {
 export type VizSpec = Base &
   (
     | { type: "bars"; items: Point[]; orient: "h" | "v" }
+    | { type: "hist"; bins: HistBin[]; total: number; mean: number; min: number; max: number }
     | { type: "line"; labels: string[]; series: Series[]; area: boolean; points: boolean }
     | { type: "spark"; values: number[]; area: boolean }
     | { type: "stat"; stats: StatItem[] }
@@ -94,7 +101,10 @@ const ALIASES: Record<string, VizType> = {
   hbar: "bars",
   column: "bars",
   columns: "bars",
-  histogram: "bars",
+  hist: "hist",
+  histogram: "hist",
+  "histogram-chart": "hist",
+  distribution: "hist",
   line: "line",
   lines: "line",
   "line-chart": "line",
@@ -313,6 +323,41 @@ function readLine(o: Obj, data: unknown, kind: string): Partial<VizSpec> | strin
   };
 }
 
+function readHist(o: Obj, data: unknown): Partial<VizSpec> | string {
+  const src = isObj(data) ? (data.values ?? data.points ?? data.data ?? data) : data;
+  const vals = (Array.isArray(src) ? src : [])
+    .map((x) => (isObj(x) ? num(pick(x, VALUE_KEYS)) : num(x)))
+    .filter((v): v is number => v !== null);
+  if (!vals.length) return 'a histogram needs numbers, like {"data": [12, 19, 8, 21, 15]}';
+  let lo = Math.min(...vals);
+  let hi = Math.max(...vals);
+  if (lo === hi) {
+    const pad = Math.abs(lo) * 0.1 || 1;
+    lo -= pad;
+    hi += pad;
+  }
+  const want = num(o.bins ?? o.buckets);
+  const target = want !== null ? Math.max(2, Math.min(40, Math.floor(want))) : Math.max(3, Math.min(24, Math.ceil(Math.log2(vals.length)) + 1));
+  // Round bin edges like axis ticks; widen the step until they fit the cap.
+  const raw = (hi - lo) / Math.max(1, target);
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  let step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
+  let e0 = Math.floor(lo / step + 1e-9) * step;
+  let nb = Math.max(1, Math.ceil((hi - e0) / step - 1e-9));
+  while (nb > 40) {
+    step *= 2;
+    e0 = Math.floor(lo / step + 1e-9) * step;
+    nb = Math.max(1, Math.ceil((hi - e0) / step - 1e-9));
+  }
+  const bins: HistBin[] = Array.from({ length: nb }, (_, i) => ({ lo: e0 + i * step, hi: e0 + (i + 1) * step, count: 0 }));
+  for (const v of vals) {
+    const i = Math.max(0, Math.min(nb - 1, Math.floor((v - e0) / step + 1e-9)));
+    bins[i].count += 1;
+  }
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+  return { type: "hist", bins, total: vals.length, mean, min: Math.min(...vals), max: Math.max(...vals), more: 0 };
+}
+
 function readSpark(data: unknown): Partial<VizSpec> | string {
   const src = isObj(data) ? (data.values ?? data.points ?? data.data) : data;
   const vals = (Array.isArray(src) && src.some((x) => isObj(x) || Array.isArray(x)) ? points(src, []).map((p) => p.value) : values(src))
@@ -461,8 +506,10 @@ export function parseViz(input: unknown): Parsed {
   const body =
     type === "bars"
       ? readBars(raw, data, kind)
-      : type === "line"
-        ? readLine(raw, data, kind)
+    : type === "line"
+      ? readLine(raw, data, kind)
+      : type === "hist"
+        ? readHist(raw, data)
         : type === "spark"
           ? readSpark(data)
           : type === "stat"
@@ -516,6 +563,8 @@ export function describe(spec: VizSpec): string {
       const v = spec.values;
       return `${name}trend of ${v.length} values, last ${fmt(v[v.length - 1], spec.unit)}`;
     }
+    case "hist":
+      return `${name}histogram of ${spec.total} values, from ${fmt(spec.min, spec.unit)} to ${fmt(spec.max, spec.unit)}, mean ${fmt(spec.mean, spec.unit)}`;
     default:
       return spec.title || spec.type;
   }

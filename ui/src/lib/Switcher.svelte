@@ -2,8 +2,12 @@
   import { createEventDispatcher, tick } from "svelte";
   import { fade, fly } from "svelte/transition";
   import Icon from "./Icon.svelte";
+  import ProviderLogo from "./ProviderLogo.svelte";
+  import { hasMark } from "./providerMarks";
   import type { IconName } from "./icons";
   import type { SessionMeta } from "./api";
+  import { shownOf } from "./providerRows";
+  import { board } from "./providerStore";
   import { folderName, type Tab } from "./tabs";
   import { setOverlay } from "./overlay";
   import { tooltip } from "./tooltip";
@@ -31,8 +35,12 @@
     id: string;
     group: string;
     icon: IconName;
+    // The agent behind a session row: its logo instead of the generic bot.
+    provider?: string;
     title: string;
     sub: string;
+    // Words that find it without showing (actions carry no subtitle).
+    keys?: string;
     run: () => void;
     remove?: () => void;
   }
@@ -55,29 +63,27 @@
     return !q || fields.some((f) => f?.toLowerCase().includes(q));
   }
 
-  function tokens(t: SessionMeta) {
-    const n = (t.tokens_in || 0) + (t.tokens_out || 0);
-    return n >= 1000 ? `${Math.round(n / 1000)}k tokens` : `${n} tokens`;
-  }
-
   // The component gallery is a design tool: dev builds only.
   const ACTIONS: Omit<Item, "group">[] = [
-    { id: "new-session", icon: "chat", title: "New session", sub: "Start a draft", run: () => dispatch("newSession") },
-    { id: "new-page", icon: "globe", title: "New page", sub: "Open a web page", run: () => dispatch("newPage") },
-    { id: "history", icon: "clock", title: "History", sub: "Pages you visited and bookmarks", run: () => dispatch("history") },
-    { id: "brain", icon: "brain", title: "Brain", sub: "Notes and projects", run: () => dispatch("brain") },
+    { id: "new-session", icon: "chat", title: "New session", sub: "", keys: "draft chat", run: () => dispatch("newSession") },
+    { id: "new-page", icon: "globe", title: "New page", sub: "", keys: "web browser", run: () => dispatch("newPage") },
+    { id: "history", icon: "clock", title: "History", sub: "", keys: "pages visited bookmarks downloads", run: () => dispatch("history") },
+    { id: "brain", icon: "brain", title: "Brain", sub: "", keys: "notes projects", run: () => dispatch("brain") },
     ...(import.meta.env.DEV
-      ? [{ id: "previews", icon: "spark" as IconName, title: "Component previews", sub: "Live Omnibar variants, side by side", run: () => dispatch("previews") }]
+      ? [{ id: "previews", icon: "spark" as IconName, title: "Component previews", sub: "", keys: "omnibar gallery", run: () => dispatch("previews") }]
       : []),
-    { id: "settings", icon: "settings", title: "Settings", sub: "Agents, appearance, system", run: () => dispatch("settings") },
-    { id: "setup", icon: "spark", title: "Set up Parzi", sub: "Agents, browser, tools, brain, remote", run: () => dispatch("setup") },
+    { id: "settings", icon: "settings", title: "Settings", sub: "", keys: "agents providers appearance theme system connectors", run: () => dispatch("settings") },
+    { id: "setup", icon: "spark", title: "Set up Parzi", sub: "", keys: "agents browser tools remote wizard", run: () => dispatch("setup") },
   ];
   const MAX_SESSIONS = 50;
 
+  const agentOf = (model: string | undefined): string => (model ? model.split("/")[0] : "");
+
   function build(q: string, tabs: Tab[], threads: SessionMeta[], activeTabId: string): Item[] {
     const openSessions = new Set(tabs.map((t) => t.sessionId).filter(Boolean));
+    const byId = new Map(threads.map((t) => [t.id, t]));
     return [
-      ...ACTIONS.filter((c) => hit(q, c.title, c.sub)).map((c): Item => ({ ...c, group: "Actions" })),
+      ...ACTIONS.filter((c) => hit(q, c.title, c.keys)).map((c): Item => ({ ...c, group: "Actions" })),
       ...tabs
         .filter((t) => hit(q, t.title, t.url))
         .map(
@@ -85,6 +91,7 @@
             id: `tab:${t.id}`,
             group: "Tabs",
             icon: t.kind === "page" ? "globe" : "chat",
+            provider: t.kind === "session" ? agentOf(t.sessionId ? byId.get(t.sessionId)?.model : t.composer?.model) : undefined,
             title: t.title || "New session",
             sub: t.id === activeTabId ? "Current tab" : t.url || "Open tab",
             run: () => dispatch("selectTab", { id: t.id }),
@@ -98,8 +105,9 @@
             id: `session:${t.id}`,
             group: "Sessions",
             icon: "chat",
+            provider: agentOf(t.model),
             title: t.title || "Untitled session",
-            sub: [t.model && t.model !== "auto" ? t.model : "no model yet", t.cwd ? folderName(t.cwd) : "", tokens(t)].filter(Boolean).join(" · "),
+            sub: [t.model && t.model !== "auto" ? shownOf(t.model, $board).name : "", t.cwd ? folderName(t.cwd) : ""].filter(Boolean).join(" · "),
             run: () => dispatch("openSession", { id: t.id }),
             remove: () => dispatch("deleteSession", { id: t.id }),
           }),
@@ -164,10 +172,10 @@
               on:click={() => choose(item)}
               on:mouseenter={() => (index = i)}
             >
-              <span class="ico"><Icon name={item.icon} /></span>
+              <span class="ico">{#if item.provider && hasMark(item.provider)}<ProviderLogo provider={item.provider} size={16} />{:else}<Icon name={item.icon} />{/if}</span>
               <span class="info">
                 <span class="title">{item.title}</span>
-                <span class="sub">{item.sub}</span>
+                {#if item.sub}<span class="sub">{item.sub}</span>{/if}
               </span>
             </button>
             {#if item.remove}
@@ -210,7 +218,6 @@
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
   }
   .head {
     display: flex;

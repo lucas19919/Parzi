@@ -2,12 +2,11 @@ use std::sync::Arc;
 
 use parzi_core::store::{Event, SessionMeta};
 use parzi_runtime::tools::{Approval, Approver};
-use parzi_runtime::Orchestrator;
 use serde_json::json;
 use tauri::State;
 
 use crate::remote::{self, mirror_id, remote_id, RemoteState};
-use crate::{AppState, GuiApprover, Mismatch};
+use crate::{AppState, GuiApprover};
 
 /// This machine's sessions, then the linked server's (ids tagged `r:`).
 #[tauri::command]
@@ -15,7 +14,7 @@ pub async fn list_threads(
     state: State<'_, AppState>,
     far: State<'_, RemoteState>,
 ) -> Result<Vec<SessionMeta>, String> {
-    let mut all = on_store(&state.orch, |o| o.store().list().map_err(|e| e.to_string())).await?;
+    let mut all = state.orch.store().list().map_err(|e| e.to_string())?;
     all.extend(remote::sessions(&state.app, &far).await);
     Ok(all)
 }
@@ -25,36 +24,50 @@ pub async fn get_thread(
     state: State<'_, AppState>,
     far: State<'_, RemoteState>,
     id: String,
-) -> Result<(SessionMeta, Vec<Event>), String> {
+) -> Result<(SessionMeta, Vec<serde_json::Value>), String> {
     if let Some((device, sid)) = mirror_id(&id) {
-        return remote::mirror_thread(&state.app, &far, device, sid).await;
+        return remote::mirror_thread(&state.app, &far, device, sid)
+            .await
+            .map(|(m, evs)| (m, evs.iter().map(stamped_plain).collect()));
     }
     if let Some(rid) = remote_id(&id) {
-        return remote::thread(&state.app, &far, rid).await;
+        return remote::thread(&state.app, &far, rid)
+            .await
+            .map(|(m, evs)| (m, evs.iter().map(stamped_plain).collect()));
     }
-    on_store(&state.orch, move |o| {
-        let meta = o.store().get(&id).map_err(|e| e.to_string())?;
-        let events = o.store().events(&id).map_err(|e| e.to_string())?;
-        Ok((meta, events))
-    })
-    .await
+    let meta = state.orch.store().get(&id).map_err(|e| e.to_string())?;
+    let stamped = state
+        .orch
+        .store()
+        .events_with_times(&id)
+        .map_err(|e| e.to_string())?;
+    Ok((
+        meta,
+        stamped
+            .into_iter()
+            .map(|(e, at)| stamped_of(&e, at))
+            .collect(),
+    ))
 }
 
-/// Store calls read and write session files: they run on the blocking pool,
-/// never on the three async workers every command shares.
-pub(crate) async fn on_store<T, F>(orch: &Arc<Orchestrator>, f: F) -> Result<T, String>
-where
-    T: Send + 'static,
-    F: FnOnce(&Orchestrator) -> Result<T, String> + Send + 'static,
-{
-    let orch = orch.clone();
-    tauri::async_runtime::spawn_blocking(move || f(&orch))
-        .await
-        .map_err(|e| e.to_string())?
+/// A transcript event as the thread shows it, with its Unix time when the
+/// line said (lines from before timestamps existed say nothing).
+fn stamped_of(event: &Event, at: Option<i64>) -> serde_json::Value {
+    let mut v = serde_json::to_value(event).unwrap_or(serde_json::Value::Null);
+    if let (Some(at), Some(map)) = (at, v.as_object_mut()) {
+        map.insert("at".into(), at.into());
+    }
+    v
+}
+
+fn stamped_plain(event: &Event) -> serde_json::Value {
+    stamped_of(event, None)
 }
 
 /// `remote` starts a new session on the linked server; an `r:` id continues
-/// one there. Either way the reply is the session's (tagged) id.
+/// one there. Either way the reply is the session's (tagged) id. `quotes`
+/// are plan items the person quoted: each goes after their text as a
+/// `<plan-item>` block, and the session is linked to the first.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn send_message(
@@ -67,9 +80,36 @@ pub async fn send_message(
     effort: Option<String>,
     attachments: Option<Vec<String>>,
     mode: Option<String>,
-    lane: Option<String>,
     remote: Option<bool>,
+    quotes: Option<Vec<crate::plans::Quote>>,
+    parent: Option<String>,
+    worktree: Option<String>,
 ) -> Result<String, String> {
+    let quoted = match quotes.filter(|q| !q.is_empty()) {
+        Some(q) => {
+            let found = tauri::async_runtime::spawn_blocking(move || crate::plans::resolve(&q))
+                .await
+                .map_err(|e| e.to_string())?;
+            if found.is_empty() && prompt.trim().is_empty() {
+                return Err(
+                    "Nothing to send: the quoted plan items are gone from the plan.".into(),
+                );
+            }
+            found
+        }
+        None => vec![],
+    };
+    // A new session that says little more than "start this" is the item's.
+    let name = quoted
+        .first()
+        .filter(|_| session_id.is_none() && crate::plans::named_after_item(&prompt))
+        .map(|(_, item)| item.title.clone());
+    let text = prompt;
+    let prompt = if quoted.is_empty() {
+        text
+    } else {
+        crate::plans::quoted_prompt(&text, &quoted, &cwd)
+    };
     let effort =
         parzi_runtime::orchestrator::normalize_effort(effort.as_deref().unwrap_or("medium"));
     let attached = {
@@ -90,16 +130,24 @@ pub async fn send_message(
         (None, None) => None,
     };
     if let Some(target) = far_target {
-        return remote::send(
-            &state.app, &far, target, &model, &prompt, &cwd, &effort, attached, mode, lane,
+        let item = quoted.first().map(|(_, i)| i.id.as_str());
+        let id = remote::send(
+            &state.app, &far, target, &model, &prompt, &cwd, &effort, attached, mode, item,
         )
-        .await;
+        .await?;
+        if let (Some(title), Some(rid)) = (name, remote_id(&id)) {
+            let renamed = json!({ "id": rid, "title": title });
+            if let Err(e) = remote::call(&state.app, &far, "session.rename", renamed).await {
+                tracing::warn!("session {id} not named after its item: {e}");
+            }
+        }
+        return Ok(id);
     }
     let approver: Arc<dyn Approver> = Arc::new(GuiApprover {
         app: state.app.clone(),
         pending: state.pending.clone(),
     });
-    match session_id {
+    let sid = match session_id {
         Some(id) => {
             state
                 .orch
@@ -115,15 +163,29 @@ pub async fn send_message(
                 )
                 .await
                 .map_err(|e| e.to_string())?;
-            Ok(id)
+            id
         }
         None => {
             let project = project_for(&cwd).await;
-            Ok(state
+            // Its own worktree, from the branch the person picked: the
+            // session works there, never in their checkout.
+            let cwd = match worktree.filter(|b| !b.trim().is_empty() && !cwd.is_empty()) {
+                Some(base) => {
+                    let (repo, about) = (std::path::PathBuf::from(&cwd), prompt.clone());
+                    tauri::async_runtime::spawn_blocking(move || {
+                        crate::worktree::create(&repo, base.trim(), &about)
+                    })
+                    .await
+                    .map_err(|e| e.to_string())??
+                    .display()
+                    .to_string()
+                }
+                None => cwd.clone(),
+            };
+            state
                 .orch
                 .spawn(
                     &project,
-                    lane.as_deref().unwrap_or(""),
                     &model,
                     &prompt,
                     Some(approver),
@@ -135,7 +197,44 @@ pub async fn send_message(
                 .await
                 .map_err(|e| e.to_string())?
                 .0
-                .id)
+                .id
+        }
+    };
+    // A side task: the new session lists under the one it came from, which
+    // goes on undisturbed (nothing is sent to it).
+    if let Some(parent) = parent.filter(|p| !p.is_empty() && *p != sid) {
+        if let Err(e) = state.orch.store().set_parent(&sid, &parent) {
+            tracing::warn!("side task {sid} not linked to {parent}: {e}");
+        }
+    }
+    if !quoted.is_empty() {
+        let store = state.orch.store().clone();
+        let (sid, quoted) = (sid.clone(), quoted.clone());
+        let _ =
+            tauri::async_runtime::spawn_blocking(move || link(&store, &sid, &quoted, name)).await;
+    }
+    Ok(sid)
+}
+
+/// A session sent quoted plan items works on the first of its project's,
+/// and, new and told little else, is named after it.
+fn link(
+    store: &parzi_core::store::SessionStore,
+    sid: &str,
+    quoted: &[(String, parzi_core::plan::PlanItem)],
+    name: Option<String>,
+) {
+    let Ok(meta) = store.get(sid) else {
+        return;
+    };
+    if let Some(item) = crate::plans::link_for(&meta.project, quoted) {
+        if let Err(e) = store.set_plan_item(sid, Some(item)) {
+            tracing::warn!("session {sid} not linked to its plan item: {e}");
+        }
+    }
+    if let Some(title) = name {
+        if let Err(e) = store.set_title(sid, &title) {
+            tracing::warn!("session {sid} not named after its item: {e}");
         }
     }
 }
@@ -237,7 +336,22 @@ pub async fn fork_thread(
     if let Some(rid) = remote_id(&id) {
         return remote::fork(&state.app, &far, rid).await;
     }
-    state.orch.fork(&id, None).await.map_err(|e| e.to_string())
+    state.orch.fork(&id, None).map_err(|e| e.to_string())
+}
+
+/// The session as it stood before the person's `nth` message (0 is the
+/// first), as a new session under the same title; the original stays.
+#[tauri::command]
+pub async fn rewind_thread(
+    state: State<'_, AppState>,
+    id: String,
+    nth: usize,
+) -> Result<SessionMeta, String> {
+    read_only(&id)?;
+    if remote_id(&id).is_some() {
+        return Err("Rewind works on this computer's sessions.".into());
+    }
+    state.orch.rewind(&id, nth).map_err(|e| e.to_string())
 }
 
 /// Another device's session is read here, not changed: its run lives
@@ -270,10 +384,11 @@ pub async fn rename_thread(
         .await
         .map(drop);
     }
-    on_store(&state.orch, move |o| {
-        o.store().set_title(&id, &title).map_err(|e| e.to_string())
-    })
-    .await
+    state
+        .orch
+        .store()
+        .set_title(&id, &title)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -291,42 +406,44 @@ pub async fn delete_thread(
             .unwrap_or(1);
         return Ok(usize::try_from(removed).unwrap_or(1));
     }
-    delete_with_runs(&state.orch, &id).await
-}
-
-/// Stops and deletes a session with every subsession under it: the same
-/// set the store deletes.
-pub(crate) async fn delete_with_runs(orch: &Arc<Orchestrator>, id: &str) -> Result<usize, String> {
-    let root = id.to_string();
-    let doomed = on_store(orch, move |o| {
-        let all = o.store().list().map_err(|e| e.to_string())?;
-        o.store().get(&root).map_err(|e| e.to_string())?;
-        Ok(parzi_core::store::subtree_ids(&all, &root))
-    })
-    .await?;
-    for sid in &doomed {
-        let _ = orch.kill(sid).await;
-        orch.drop_shells(sid);
+    let cwd = state
+        .orch
+        .store()
+        .get(&id)
+        .map(|m| m.cwd)
+        .unwrap_or_default();
+    let removed = state
+        .orch
+        .delete_thread(&id)
+        .await
+        .map_err(|e| e.to_string())?;
+    // A worktree goes with the last session working in it.
+    if !cwd.is_empty() {
+        let store = state.orch.store().clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let used = store
+                .list()
+                .unwrap_or_default()
+                .iter()
+                .any(|m| m.cwd == cwd);
+            if !used {
+                let dir = std::path::Path::new(&cwd);
+                // An agent kept running there holds the folder: it goes first.
+                if parzi_providers::drop_live_in(dir) > 0 {
+                    std::thread::sleep(std::time::Duration::from_millis(800));
+                }
+                if let Some(note) = crate::worktree::remove(dir) {
+                    tracing::warn!("worktree {note}");
+                }
+            }
+        });
     }
-    let root = id.to_string();
-    on_store(orch, move |o| {
-        o.store().delete_thread(&root).map_err(|e| e.to_string())
-    })
-    .await
+    Ok(removed)
 }
 
 #[tauri::command]
 pub async fn purge_sessions(state: State<'_, AppState>) -> Result<usize, String> {
-    // What the purge really removed: a session that started meanwhile keeps
-    // its shells.
-    let gone = on_store(&state.orch, |o| {
-        o.store().purge_finished_ids().map_err(|e| e.to_string())
-    })
-    .await?;
-    for sid in &gone {
-        state.orch.drop_shells(sid);
-    }
-    Ok(gone.len())
+    state.orch.purge_finished().map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -348,13 +465,15 @@ pub async fn answer_question(
         .await
         .map(drop);
     }
-    match state.questions.take(&key, Some(&session)) {
-        Ok((_, tx)) => {
+    let mut lock = state.questions.lock().await;
+    match lock.get(&key) {
+        Some((bound, _)) if bound != &session => Err("answer is for another session".into()),
+        Some(_) => {
+            let (_, tx) = lock.remove(&key).unwrap();
             let _ = tx.send(answer);
             Ok(())
         }
-        Err(Mismatch::Other) => Err("answer is for another session".into()),
-        Err(Mismatch::Gone) => Err("question expired or unknown".into()),
+        None => Err("question expired or unknown".into()),
     }
 }
 
@@ -376,18 +495,18 @@ pub async fn approve_tool(
         .await
         .map(drop);
     }
-    match state.pending.take(&key, Some(&session)) {
-        Ok((_, tx)) => {
-            let decision = if allow {
+    let mut lock = state.pending.lock().await;
+    match lock.get(&key) {
+        Some((bound, _)) if bound != &session => Err("approval is for another session".into()),
+        Some(_) => {
+            let (_, tx) = lock.remove(&key).unwrap();
+            let _ = tx.send(if allow {
                 Approval::Allow
             } else {
                 Approval::Deny
-            };
-            // A run that stopped meanwhile cleared its own wait.
-            tx.send(decision)
-                .map_err(|_| "the run is no longer waiting".to_string())
+            });
+            Ok(())
         }
-        Err(Mismatch::Other) => Err("approval is for another session".into()),
-        Err(Mismatch::Gone) => Err("approval expired or unknown".into()),
+        None => Err("approval expired or unknown".into()),
     }
 }

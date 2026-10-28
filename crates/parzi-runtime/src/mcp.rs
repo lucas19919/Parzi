@@ -9,13 +9,30 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufRea
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
+/// What Parzi offers a hosted server (Streamable HTTP came with 2025-03-26).
+const HTTP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 const HANDSHAKE_FLOOR: Duration = Duration::from_secs(10);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct McpTool {
     pub server: String,
     pub name: String,
+    /// What it does, as the server says it.
+    pub description: String,
+    /// The server's hints: it only reads, or it destroys.
+    pub read_only: bool,
+    pub destructive: bool,
+}
+
+/// What a connector says about itself on connecting, and its tools.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct ServerDetails {
+    pub title: String,
+    pub website: String,
+    /// Icon addresses (https or data:) the server declares, best first.
+    pub icons: Vec<String>,
+    pub tools: Vec<McpTool>,
 }
 
 impl McpTool {
@@ -24,10 +41,20 @@ impl McpTool {
     }
 }
 
+/// How Parzi reaches a server: one it started (stdio), or a hosted one.
+enum Conn {
+    Stdio {
+        child: Child,
+        stdin: ChildStdin,
+        stdout: BufReader<ChildStdout>,
+    },
+    Http(Arc<std::sync::Mutex<crate::mcp_http::HttpConn>>),
+}
+
 struct LiveServer {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
+    conn: Conn,
+    /// `serverInfo` from its initialize answer.
+    info: serde_json::Value,
     next_id: u64,
     tools: Option<Vec<McpTool>>,
     last_used: Instant,
@@ -115,6 +142,34 @@ fn child_env_from(
 
 fn tool_err(msg: String) -> ParziError {
     ParziError::Tool("mcp".into(), msg)
+}
+
+/// One message to a hosted server, off the async workers.
+async fn http_send(
+    conn: Arc<std::sync::Mutex<crate::mcp_http::HttpConn>>,
+    name: &str,
+    msg: serde_json::Value,
+    timeout: Duration,
+) -> Result<Option<serde_json::Value>> {
+    let name = name.to_string();
+    let out = tokio::task::spawn_blocking(move || {
+        let mut c = conn
+            .lock()
+            .map_err(|_| crate::mcp_http::HttpError::Other("connection poisoned".into()))?;
+        c.send(&msg, timeout)
+    })
+    .await
+    .map_err(|e| tool_err(e.to_string()))?;
+    out.map_err(|e| match e {
+        crate::mcp_http::HttpError::SignIn(challenge) => {
+            crate::mcp_http::remember_challenge(&name, challenge);
+            tool_err(format!(
+                "{}: sign in to {name} in Settings › Connections",
+                crate::mcp_http::SIGN_IN
+            ))
+        }
+        crate::mcp_http::HttpError::Other(e) => tool_err(format!("`{name}`: {e}")),
+    })
 }
 
 async fn rpc_round_trip<W, R>(
@@ -256,47 +311,92 @@ impl McpManager {
 
     async fn request(
         sv: &mut LiveServer,
+        name: &str,
         method: &str,
         params: serde_json::Value,
         timeout: Duration,
     ) -> Result<std::result::Result<serde_json::Value, String>> {
         sv.next_id += 1;
         let id = sv.next_id;
-        rpc_round_trip(&mut sv.stdin, &mut sv.stdout, id, method, params, timeout).await
+        match &mut sv.conn {
+            Conn::Stdio { stdin, stdout, .. } => {
+                rpc_round_trip(stdin, stdout, id, method, params, timeout).await
+            }
+            Conn::Http(h) => {
+                let msg = serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+                let reply = http_send(h.clone(), name, msg, timeout)
+                    .await?
+                    .unwrap_or(serde_json::Value::Null);
+                Ok(match reply.get("error") {
+                    Some(err) => Err(format!("server error: {err}")),
+                    None => Ok(reply
+                        .get("result")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null)),
+                })
+            }
+        }
+    }
+
+    async fn notify(
+        sv: &mut LiveServer,
+        name: &str,
+        method: &str,
+        timeout: Duration,
+    ) -> Result<()> {
+        let note = serde_json::json!({"jsonrpc": "2.0", "method": method});
+        match &mut sv.conn {
+            Conn::Stdio { stdin, .. } => {
+                let mut wire = serde_json::to_string(&note)?;
+                wire.push('\n');
+                stdin
+                    .write_all(wire.as_bytes())
+                    .await
+                    .map_err(|e| tool_err(format!("write failed: {e}")))?;
+                stdin
+                    .flush()
+                    .await
+                    .map_err(|e| tool_err(format!("flush failed: {e}")))
+            }
+            Conn::Http(h) => http_send(h.clone(), name, note, timeout).await.map(|_| ()),
+        }
     }
 
     async fn handshake(sv: &mut LiveServer, name: &str, timeout: Duration) -> Result<()> {
+        let offered = match sv.conn {
+            Conn::Stdio { .. } => PROTOCOL_VERSION,
+            Conn::Http(_) => HTTP_PROTOCOL_VERSION,
+        };
         let init = serde_json::json!({
-            "protocolVersion": PROTOCOL_VERSION,
+            "protocolVersion": offered,
             "capabilities": {},
             "clientInfo": {"name": "parzi", "version": env!("CARGO_PKG_VERSION")},
         });
-        let res = Self::request(sv, "initialize", init, timeout)
+        let res = Self::request(sv, name, "initialize", init, timeout)
             .await?
             .map_err(tool_err)?;
+        sv.info = res
+            .get("serverInfo")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         match res.get("protocolVersion").and_then(|v| v.as_str()) {
-            Some(v) if v != PROTOCOL_VERSION => {
-                tracing::warn!(server = name, version = v, "mcp: server negotiated down");
+            Some(v) => {
+                if v != offered {
+                    tracing::debug!(server = name, version = v, "mcp: server negotiated {v}");
+                }
+                if let Conn::Http(h) = &sv.conn {
+                    if let Ok(mut c) = h.lock() {
+                        c.set_protocol(v);
+                    }
+                }
             }
             None => {
                 return Err(tool_err(format!(
                     "`{name}`: initialize answered without protocolVersion"
                 )))
             }
-            _ => {}
         }
-        let note = serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
-        let mut wire = serde_json::to_string(&note)?;
-        wire.push('\n');
-        sv.stdin
-            .write_all(wire.as_bytes())
-            .await
-            .map_err(|e| tool_err(format!("write failed: {e}")))?;
-        sv.stdin
-            .flush()
-            .await
-            .map_err(|e| tool_err(format!("flush failed: {e}")))?;
-        Ok(())
+        Self::notify(sv, name, "notifications/initialized", timeout).await
     }
 
     async fn ensure_live(
@@ -314,7 +414,34 @@ impl McpManager {
         if !cfg.enabled {
             return Err(tool_err(format!("server `{name}` disabled")));
         }
-        let mut cmd = Command::new(&cfg.command);
+        let epoch = self.epoch.fetch_add(1, Ordering::Relaxed) + 1;
+        let timeout = Duration::from_millis(cfg.timeout_ms.max(1_000));
+        let handshake = timeout.max(HANDSHAKE_FLOOR);
+        // A hosted one: nothing to start, a connection to open.
+        if !cfg.url.trim().is_empty() {
+            let mut sv = LiveServer {
+                conn: Conn::Http(Arc::new(std::sync::Mutex::new(
+                    crate::mcp_http::HttpConn::new(name, &cfg),
+                ))),
+                next_id: 0,
+                tools: None,
+                info: serde_json::Value::Null,
+                last_used: Instant::now(),
+                epoch,
+            };
+            Self::handshake(&mut sv, name, handshake).await?;
+            *guard = Some(sv);
+            Self::spawn_reaper(name.to_string(), slot.clone(), self.idle_kill, epoch);
+            return Ok(());
+        }
+        // `npx` on Windows is npx.cmd, which a bare name never starts.
+        let program = parzi_providers::process::which(&cfg.command).ok_or_else(|| {
+            tool_err(format!(
+                "`{}` isn't installed on this computer",
+                cfg.command
+            ))
+        })?;
+        let mut cmd = Command::new(program);
         cmd.args(&cfg.args)
             .env_clear()
             .envs(child_env(&cfg.env))
@@ -336,20 +463,20 @@ impl McpManager {
             .stdout
             .take()
             .ok_or_else(|| tool_err("no stdout".into()))?;
-        let epoch = self.epoch.fetch_add(1, Ordering::Relaxed) + 1;
         let mut sv = LiveServer {
-            child,
-            stdin,
-            stdout: BufReader::new(stdout),
+            conn: Conn::Stdio {
+                child,
+                stdin,
+                stdout: BufReader::new(stdout),
+            },
             next_id: 0,
             tools: None,
+            info: serde_json::Value::Null,
             last_used: Instant::now(),
             epoch,
         };
-        let timeout = Duration::from_millis(cfg.timeout_ms.max(1_000));
-        let handshake = timeout.max(HANDSHAKE_FLOOR);
         if let Err(e) = Self::handshake(&mut sv, name, handshake).await {
-            kill_tree(&mut sv.child).await;
+            Self::drop_live(&mut Some(sv)).await;
             return Err(e);
         }
         *guard = Some(sv);
@@ -378,8 +505,12 @@ impl McpManager {
     }
 
     async fn drop_live(guard: &mut Option<LiveServer>) {
-        if let Some(mut sv) = guard.take() {
-            kill_tree(&mut sv.child).await;
+        if let Some(LiveServer {
+            conn: Conn::Stdio { mut child, .. },
+            ..
+        }) = guard.take()
+        {
+            kill_tree(&mut child).await;
         }
     }
 
@@ -407,7 +538,7 @@ impl McpManager {
         let timeout = self.timeout_for(name);
         let res = {
             let sv = guard.as_mut().expect("live after ensure");
-            Self::request(sv, "tools/list", serde_json::json!({}), timeout).await
+            Self::request(sv, name, "tools/list", serde_json::json!({}), timeout).await
         };
         let res = match res {
             Ok(Ok(v)) => v,
@@ -420,9 +551,22 @@ impl McpManager {
         let mut out = vec![];
         if let Some(arr) = res.get("tools").and_then(|t| t.as_array()) {
             for t in arr {
+                let hint = |k: &str| {
+                    t.pointer(&format!("/annotations/{k}"))
+                        .and_then(serde_json::Value::as_bool)
+                        == Some(true)
+                };
                 out.push(McpTool {
                     server: name.to_string(),
                     name: t.get("name").and_then(|n| n.as_str()).unwrap_or("?").into(),
+                    description: t
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string(),
+                    read_only: hint("readOnlyHint"),
+                    destructive: hint("destructiveHint"),
                 });
             }
         }
@@ -430,6 +574,45 @@ impl McpManager {
             sv.tools = Some(out.clone());
         }
         Ok(out)
+    }
+
+    /// What the server said about itself and every tool it has (the ones
+    /// switched off included, for Settings to show).
+    pub async fn details(&self, name: &str) -> Result<ServerDetails> {
+        let tools = self.list_tools(name).await?;
+        let slot = self.slot_for(name).await;
+        let info = slot
+            .lock()
+            .await
+            .as_ref()
+            .map(|sv| sv.info.clone())
+            .unwrap_or_default();
+        let text = |k: &str| {
+            info.get(k)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        };
+        let icons = info
+            .get("icons")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|i| i.get("src").and_then(serde_json::Value::as_str))
+            .filter(|s| s.starts_with("https://") || s.starts_with("data:image/"))
+            .map(str::to_string)
+            .collect();
+        Ok(ServerDetails {
+            title: if text("title").is_empty() {
+                text("name")
+            } else {
+                text("title")
+            },
+            website: text("websiteUrl"),
+            icons,
+            tools,
+        })
     }
 
     pub async fn call_tool(
@@ -459,7 +642,7 @@ impl McpManager {
         let res = {
             let sv = guard.as_mut().expect("live after ensure");
             sv.last_used = Instant::now();
-            Self::request(sv, "tools/call", params, timeout).await
+            Self::request(sv, server, "tools/call", params, timeout).await
         };
         let res = match res {
             Ok(Ok(v)) => v,

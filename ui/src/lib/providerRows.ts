@@ -38,8 +38,9 @@ export const modelLabel = (m: { id: string; name: string }): string =>
 
 const sourceOf = (id: string): string => id.split("/").slice(0, -1).join("/");
 
-export const isUsable = (p: ProviderStatus | undefined): boolean =>
-  !!p && (p.state === "ready" || p.state === "unchecked");
+// Only an agent that answered "ready" is offered: a never-checked one may
+// not even be installed.
+export const isUsable = (p: ProviderStatus | undefined): boolean => p?.state === "ready";
 
 function rowsOf(p: ProviderStatus): PickRow[] {
   const usable = isUsable(p);
@@ -62,7 +63,7 @@ export function stateLabel(p: ProviderStatus): string {
     case "ready":
       return p.account || "Ready";
     case "unchecked":
-      return "Installed";
+      return "Checking…";
     case "signed_out":
       return "Not signed in";
     case "not_installed":
@@ -83,16 +84,28 @@ export function shownOf(value: string, board: ProviderStatus[]): { provider: str
   return { provider: p, name: id ? prettyModel(id) : nameOf(p) };
 }
 
-export const DEFAULT_EFFORTS = ["low", "medium", "high", "extra", "ultra"];
-
+// The effort levels the model itself lists. ACP agents (opencode, grok,
+// cursor, antigravity) take no --effort flag but still record the choice on
+// the session, so they fall back to the standard five rather than hiding
+// the picker.
+const FALLBACK_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 export function effortsFor(value: string, board: ProviderStatus[]): string[] {
-  if (!value || value === "auto") return DEFAULT_EFFORTS;
+  if (!value) return [];
   const [p, ...rest] = value.split("/");
   const models = board.find((b) => b.provider === p)?.models ?? [];
   const id = rest.join("/");
-  const m = models.find((x) => x.id === id) ?? models.find((x) => x.is_default);
-  const list = m?.efforts ?? [];
-  return list.length ? list : DEFAULT_EFFORTS;
+  const m = (id && models.find((x) => x.id === id)) || models.find((x) => x.is_default);
+  const listed = m?.efforts ?? [];
+  if (listed.length) return listed;
+  if (["opencode", "grok", "cursor", "antigravity"].includes(p)) return [...FALLBACK_EFFORTS];
+  return [];
+}
+
+// False only when the agent said this model can't see images.
+export function seesImages(value: string, board: ProviderStatus[]): boolean {
+  const [p, ...rest] = value.split("/");
+  const id = rest.join("/");
+  return board.find((b) => b.provider === p)?.models.find((x) => x.id === id)?.images !== false;
 }
 
 export function fitEffort(current: string, efforts: string[]): string {
@@ -103,3 +116,6 @@ export function fitEffort(current: string, efforts: string[]): string {
 
 export const effortLabel = (e: string): string =>
   e === "xhigh" ? "Extra high" : e ? e[0].toUpperCase() + e.slice(1) : e;
+
+// On a segment, where five must fit side by side: "Extra", as Claude says it.
+export const effortShort = (e: string): string => (e === "xhigh" ? "Extra" : effortLabel(e));

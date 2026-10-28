@@ -1,8 +1,11 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
+  import type { IconName } from "./icons";
   import TabBar from "./TabBar.svelte";
   import WinControls from "./WinControls.svelte";
+  import NotificationDropdown from "./NotificationDropdown.svelte";
+  import { notifications } from "./notificationStore";
   import type { Tab } from "./tabs";
   import { setOverlay } from "./overlay";
   import { updateVersion } from "./updateStore";
@@ -11,37 +14,53 @@
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
-  export let sessionLanes: Record<string, string> = {};
+  export let threads: { id: string; model: string }[] = [];
+  // The active draft's picked model, by value: tabs never invalidate on
+  // composer edits, so the strip would otherwise keep a stale icon.
+  export let liveModel = "";
+  // The recent sessions column: offered on session tabs, and whether it shows.
+  export let railable = false;
+  export let railOpen = false;
+  // The session column: offered on session tabs, and whether it shows.
+  export let panelable = false;
+  export let panelOpen = false;
+  export let panelCount = 0;
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
     close: { id: string };
     move: { id: string; to: number };
     newTab: void;
-    home: void;
     settings: void;
-    search: void;
     update: void;
     brain: void;
     history: void;
     setup: void;
+    report: void;
+    openSession: { id: string };
+    rail: void;
+    panel: void;
   }>();
 
+  $: panelAgents = panelCount > 99 ? "99+" : String(panelCount);
+
   let menuOpen = false;
+  let notiOpen = false;
 
-  $: setOverlay("topbar-menu", menuOpen);
+  $: setOverlay("topbar-menu", menuOpen || notiOpen);
+  $: unreadCount = $notifications.filter((n) => !n.read).length;
 
-  const MENU = [
-    { label: "New tab", key: "Ctrl+T", icon: "plus", run: () => dispatch("newTab") },
-    { label: "Search", key: "Ctrl+P", icon: "search", run: () => dispatch("search") },
+  const MENU: { label: string; key: string; icon: IconName; run: () => void }[] = [
     { label: "History", key: "Ctrl+H", icon: "clock", run: () => dispatch("history") },
     { label: "Brain", key: "Ctrl+B", icon: "brain", run: () => dispatch("brain") },
     { label: "Settings", key: "Ctrl+,", icon: "settings", run: () => dispatch("settings") },
     { label: "Set up Parzi", key: "", icon: "spark", run: () => dispatch("setup") },
-  ] as const;
+    { label: "Report a problem", key: "", icon: "alert", run: () => dispatch("report") },
+  ];
 
   function onDocClick(e: MouseEvent) {
-    if (!(e.target as HTMLElement).closest(".menu")) menuOpen = false;
+    if (!(e.target as HTMLElement).closest(".menuzone")) menuOpen = false;
+    if (!(e.target as HTMLElement).closest(".noti-wrap")) notiOpen = false;
   }
 
   onMount(() => {
@@ -54,9 +73,10 @@
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
+<div class="chrome">
 <header class="topbar" on:mousedown={startWindowDrag}>
   <div class="left">
-    <div class="menu">
+    <div class="menuzone">
       <button
         class="icon-btn"
         class:active={menuOpen}
@@ -68,76 +88,167 @@
         <Icon name="menu" />
         {#if $updateVersion}<span class="dot" />{/if}
       </button>
-      {#if menuOpen}
-        <div class="dropdown" role="menu" data-ui-list>
-          {#each MENU as item}
-            <button
-              class="menu-item"
-              role="menuitem"
-              on:click={() => {
-                menuOpen = false;
-                item.run();
-              }}
-            >
-              <Icon name={item.icon} />
-              <span class="label">{item.label}</span>
-              <span class="key">{item.key}</span>
-            </button>
-          {/each}
-          {#if $updateVersion}
-            <button
-              class="menu-item update"
-              role="menuitem"
-              on:click={() => {
-                menuOpen = false;
-                dispatch("update");
-              }}
-            >
-              <Icon name="arrowDown" />
-              <span class="label">Update to v{$updateVersion}</span>
-            </button>
-          {/if}
-        </div>
-      {/if}
     </div>
-    <button class="icon-btn" use:tooltip={"Home"} on:click={() => dispatch("home")}>
-      <Icon name="home" />
-    </button>
-    <TabBar
-      {tabs}
-      {activeTabId}
-      {sessionLanes}
-      on:select={(e) => dispatch("select", e.detail)}
-      on:close={(e) => dispatch("close", e.detail)}
-      on:move={(e) => dispatch("move", e.detail)}
-      on:newTab={() => dispatch("newTab")}
-    />
+    {#if menuOpen}
+      <!-- Icons unfold rightward in the bar with a stagger; names and keys
+           live in the tooltips. No popout, no second row. -->
+      <div class="menuzone opts" role="menu" data-ui-list>
+        {#each MENU as item, i}
+          <button
+            class="opt"
+            style="--i: {i}"
+            role="menuitem"
+            aria-label={item.key ? `${item.label} (${item.key})` : item.label}
+            use:tooltip={item.key ? `${item.label} (${item.key})` : item.label}
+            on:click={() => {
+              menuOpen = false;
+              item.run();
+            }}
+          >
+            <Icon name={item.icon} />
+          </button>
+        {/each}
+        {#if $updateVersion}
+          <button
+            class="opt update"
+            style="--i: {MENU.length}"
+            role="menuitem"
+            aria-label="Update to v{$updateVersion}"
+            use:tooltip={"Update to v" + $updateVersion}
+            on:click={() => {
+              menuOpen = false;
+              dispatch("update");
+            }}
+          >
+            <Icon name="arrowDown" />
+          </button>
+        {/if}
+      </div>
+    {/if}
+    {#if railable}
+      <button
+        class="icon-btn rail-btn"
+        class:active={railOpen}
+        aria-pressed={railOpen}
+        use:tooltip={railOpen ? "Hide sessions (Ctrl+Shift+S)" : "Sessions by project (Ctrl+Shift+S)"}
+        on:click={() => dispatch("rail")}
+      >
+        <Icon name="panel" />
+      </button>
+    {/if}
+      <TabBar
+        {tabs}
+        {activeTabId}
+        {threads}
+        {liveModel}
+        on:select={(e) => dispatch("select", e.detail)}
+        on:close={(e) => dispatch("close", e.detail)}
+        on:move={(e) => dispatch("move", e.detail)}
+        on:newTab={() => dispatch("newTab")}
+      />
   </div>
 
-  <WinControls />
+  <div class="right">
+    <div class="noti-wrap">
+      <button
+        class="icon-btn noti-btn"
+        class:active={notiOpen}
+        aria-haspopup="dialog"
+        aria-expanded={notiOpen}
+        use:tooltip={unreadCount ? `${unreadCount} unread notification${unreadCount === 1 ? "" : "s"}` : "Notifications"}
+        on:click={() => (notiOpen = !notiOpen)}
+      >
+        <Icon name="bell" />
+        {#if unreadCount > 0}
+          <span class="noti-badge" />
+        {/if}
+      </button>
+        {#if notiOpen}
+          <NotificationDropdown
+            on:openSession={(e) => {
+              notiOpen = false;
+              dispatch("openSession", e.detail);
+            }}
+            on:close={() => (notiOpen = false)}
+          />
+        {/if}
+      </div>
+      {#if panelable}
+        <button
+          class="icon-btn"
+          class:active={panelOpen}
+          aria-pressed={panelOpen}
+          aria-label={panelCount > 0 ? `Session column, ${panelAgents} agents running` : "Session column"}
+          use:tooltip={"Session column (Ctrl+J)"}
+          on:click={() => dispatch("panel")}
+        >
+          <Icon name="panel" />
+          {#if panelCount > 0}<span class="count">{panelAgents}</span>{/if}
+        </button>
+      {/if}
+      <WinControls />
+  </div>
 </header>
+</div>
 
 <style>
+  .chrome {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+  }
+  /* 44px holds a 28px tab with 8px above it; the panels below start right
+     under the bar, so the gap under the tab is the same 8px. */
   .topbar {
-    height: 38px;
+    height: 44px;
     display: flex;
     align-items: center;
     justify-content: space-between;
     position: relative;
     z-index: 100;
-    padding-left: 10px;
+    padding-left: var(--gap);
     user-select: none;
+  }
+  /* One 4px step between the menu, Home, the tabs and +. */
+  /* The session column's icon, mirrored: this one opens on the left. */
+  .rail-btn :global(svg) {
+    transform: scaleX(-1);
   }
   .left {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     height: 100%;
     flex: 1;
     min-width: 0;
   }
-  .menu {
+  .right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 100%;
+    flex: none;
+    padding-right: 2px;
+  }
+  .noti-wrap {
     position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .noti-btn.active {
+    color: var(--text);
+    background: var(--hover);
+  }
+  /* Unread is a dot; the count is in the button's name and tooltip. */
+  .noti-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--accent);
+    border: 1.5px solid var(--bg);
   }
   .icon-btn {
     position: relative;
@@ -163,9 +274,6 @@
     border-radius: 50%;
     background: var(--accent);
   }
-  .menu-item.update {
-    color: var(--accent);
-  }
   .icon-btn:hover {
     background: var(--hover);
     color: var(--text);
@@ -174,43 +282,66 @@
     background: var(--selected);
     color: var(--text);
   }
-  .dropdown {
+  .count {
     position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    width: 200px;
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
-    z-index: 500;
+    top: 0;
+    right: -1px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 3px;
+    border-radius: 999px;
+    background: var(--ok);
+    color: var(--on-ok);
+    font-size: var(--fs-xs);
+    font-weight: 700;
+    line-height: 14px;
+    text-align: center;
   }
-  .menu-item {
+  /* The menu unfolds rightward into the bar as icons, each stepping in
+     just after the last. No popout, no second row. */
+  .opts {
     display: flex;
     align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 6px 8px;
-    background: transparent;
+    gap: 4px;
+    flex: none;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .opts::-webkit-scrollbar {
+    display: none;
+  }
+  .opt {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: none;
     border: none;
     border-radius: var(--radius);
-    color: var(--text);
-    font-size: var(--fs-sm);
-    text-align: left;
-    cursor: pointer;
-  }
-  .menu-item:hover {
-    background: var(--line);
-  }
-  .label {
-    flex: 1;
-  }
-  .key {
-    font-size: var(--fs-xs);
     color: var(--muted);
+    cursor: pointer;
+    animation: opt-in 180ms var(--ease-out) backwards;
+    animation-delay: calc(var(--i, 0) * 30ms);
+  }
+  @keyframes opt-in {
+    from {
+      opacity: 0;
+      transform: translateX(-6px) scale(0.92);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .opt {
+      animation: none;
+    }
+  }
+  .opt:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .opt.update {
+    color: var(--accent);
   }
 </style>

@@ -36,22 +36,12 @@ async fn busy_spawn_queues_then_pump_starts_it() {
     let pump = orch.clone();
     tokio::spawn(async move { pump.pump_loop().await });
     let (first, _rx) = orch
-        .spawn("t", "", "claude", "first", None, "", "medium", vec![], None)
+        .spawn("t", "claude", "first", None, "", "medium", vec![], None)
         .await
         .unwrap();
     assert!(wait_status(&store, &first.id, SessionStatus::Active).await);
     let (second, _rx2) = orch
-        .spawn(
-            "t",
-            "",
-            "claude",
-            "second",
-            None,
-            "",
-            "medium",
-            vec![],
-            None,
-        )
+        .spawn("t", "claude", "second", None, "", "medium", vec![], None)
         .await
         .unwrap();
     assert!(wait_status(&store, &second.id, SessionStatus::Queued).await);
@@ -68,21 +58,11 @@ async fn queue_reject_mode_errors_loudly() {
     home("queue");
     let (orch, _store) = orch_with(capped(1, false), &[hang()]);
     let (first, _rx) = orch
-        .spawn("t", "", "claude", "first", None, "", "medium", vec![], None)
+        .spawn("t", "claude", "first", None, "", "medium", vec![], None)
         .await
         .unwrap();
     let err = orch
-        .spawn(
-            "t",
-            "",
-            "claude",
-            "second",
-            None,
-            "",
-            "medium",
-            vec![],
-            None,
-        )
+        .spawn("t", "claude", "second", None, "", "medium", vec![], None)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("busy"), "{err}");
@@ -95,14 +75,13 @@ async fn queued_run_survives_a_restart() {
     let fake = hang();
     let (orch, store) = orch_with(capped(1, true), std::slice::from_ref(&fake));
     let (first, _rx) = orch
-        .spawn("t", "", "claude", "first", None, "", "medium", vec![], None)
+        .spawn("t", "claude", "first", None, "", "medium", vec![], None)
         .await
         .unwrap();
     assert!(wait_status(&store, &first.id, SessionStatus::Active).await);
     let (second, _rx2) = orch
         .spawn(
             "t",
-            "",
             "claude",
             "queued work",
             None,
@@ -145,7 +124,7 @@ async fn launch_failure_parks_the_session_and_reports_on_the_bus() {
     let (orch, store) = orch_with(ParziConfig::default(), &[]);
     let mut bus = orch.subscribe();
     let err = orch
-        .spawn("t", "", "claude", "work", None, "", "medium", vec![], None)
+        .spawn("t", "claude", "work", None, "", "medium", vec![], None)
         .await
         .unwrap_err();
     assert!(!err.to_string().is_empty());
@@ -186,17 +165,7 @@ async fn kill_mid_stream_stops_within_one_event_and_stays_killed() {
         }
     });
     let (meta, _rx) = orch
-        .spawn(
-            "t",
-            "",
-            "claude",
-            "stream on",
-            None,
-            "",
-            "medium",
-            vec![],
-            None,
-        )
+        .spawn("t", "claude", "stream on", None, "", "medium", vec![], None)
         .await
         .unwrap();
     assert!(wait_status(&store, &meta.id, SessionStatus::Active).await);

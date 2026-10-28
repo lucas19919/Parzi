@@ -12,12 +12,10 @@ use crate::process::{self, Proc, STOP_GRACE};
 use crate::types::{
     or_cancel, sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision,
     PermissionGate, PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus,
-    State, TurnEnd, TurnSpec, UsageWindow,
+    State, TurnEnd, TurnSpec, UsageWindow, INSTALL_HINT,
 };
 
 pub const ID: &str = "codex";
-const INSTALL_HINT: &str = "Install Codex from Set up Parzi, or set its path in Settings.";
-const LOGIN_HINT: &str = "Sign in from Set up Parzi (it runs `codex login`), then check again.";
 
 pub struct Codex {
     binary: String,
@@ -100,7 +98,7 @@ impl Provider for Codex {
 
     async fn status(&self) -> ProviderStatus {
         let Some(program) = self.program() else {
-            return ProviderStatus::new(ID, State::NotInstalled, INSTALL_HINT);
+            return ProviderStatus::new(ID, State::NotInstalled, "");
         };
         let mut server = match open(&program, &std::env::temp_dir()).await {
             Ok(s) => s,
@@ -161,7 +159,7 @@ async fn probe(peer: &Peer, version: Option<String>) -> ProviderStatus {
     };
     let signed_in = account.get("account").is_some_and(|a| !a.is_null());
     if !signed_in && account.get("requiresOpenaiAuth").and_then(Value::as_bool) == Some(true) {
-        let mut s = ProviderStatus::new(ID, State::SignedOut, LOGIN_HINT);
+        let mut s = ProviderStatus::new(ID, State::SignedOut, "");
         s.version = version;
         return s;
     }
@@ -246,6 +244,7 @@ async fn list_models(peer: &Peer) -> Vec<ModelInfo> {
                             .collect()
                     })
                     .unwrap_or_default(),
+                images: None,
             });
         }
         cursor = page
@@ -333,6 +332,12 @@ async fn drive(
         .and_then(|r| r.get("thread_id"))
         .and_then(Value::as_str)
         .map(str::to_string);
+    if spec.compact && resume.is_none() {
+        return Err(ProviderError::new(
+            ErrorClass::Unsupported,
+            "Codex has no conversation here to compact",
+        ));
+    }
     let tid = match resume {
         Some(tid) => {
             let mut p = thread.clone();
@@ -357,6 +362,23 @@ async fn drive(
     let _ = events.send(ProviderEvent::Session {
         resume: json!({"thread_id": tid}),
     });
+    if spec.compact {
+        let ask = peer.request_within("thread/compact/start", json!({"threadId": tid}), limit);
+        let Some(asked) = or_cancel(cancel, ask).await else {
+            return Ok(TurnEnd::Interrupted);
+        };
+        asked.map_err(rpc_failure)?;
+        // It runs as a turn of its own: whichever turn ends next is it.
+        return follow(
+            peer,
+            incoming,
+            Turn::new(tid, String::new()),
+            gate,
+            events,
+            cancel,
+        )
+        .await;
+    }
     let mut input = vec![json!({"type": "text", "text": spec.prompt})];
     for p in &spec.images {
         input.push(json!({"type": "localImage", "path": p.display().to_string()}));
@@ -383,13 +405,26 @@ async fn drive(
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    let mut st = Turn {
-        thread: tid,
-        turn: turn_id,
-        file_paths: HashMap::new(),
-        last_error: None,
-        interrupting: false,
-    };
+    follow(
+        peer,
+        incoming,
+        Turn::new(tid, turn_id),
+        gate,
+        events,
+        cancel,
+    )
+    .await
+}
+
+/// Answers and relays what Codex says until the turn ends.
+async fn follow(
+    peer: &Arc<Peer>,
+    incoming: &mut mpsc::UnboundedReceiver<Incoming>,
+    mut st: Turn,
+    gate: Arc<dyn PermissionGate>,
+    events: &EventTx,
+    cancel: &CancellationToken,
+) -> Result<TurnEnd, ProviderError> {
     let mut stop_by: Option<tokio::time::Instant> = None;
     loop {
         let msg = tokio::select! {
@@ -476,6 +511,7 @@ async fn answer(
                 ("edit", format!("Edit {}", paths.join(", ")))
             };
             let request = PermissionRequest {
+                name: String::new(),
                 id: params
                     .get("itemId")
                     .and_then(Value::as_str)
@@ -512,6 +548,16 @@ struct Turn {
 }
 
 impl Turn {
+    fn new(thread: String, turn: String) -> Self {
+        Self {
+            thread,
+            turn,
+            file_paths: HashMap::new(),
+            last_error: None,
+            interrupting: false,
+        }
+    }
+
     fn ours(&self, params: &Value) -> bool {
         params
             .get("threadId")
@@ -668,6 +714,12 @@ fn item_completed(item: &Value, events: &EventTx) {
         });
     };
     match item.get("type").and_then(Value::as_str).unwrap_or("") {
+        "contextCompaction" => {
+            let _ = events.send(ProviderEvent::Compacted {
+                before: None,
+                after: None,
+            });
+        }
         "agentMessage" => {
             let text = item.get("text").and_then(Value::as_str).unwrap_or("");
             if !text.trim().is_empty() {
@@ -810,6 +862,7 @@ mod tests {
             resume: None,
             prompt: "hi".into(),
             images: vec![],
+            compact: false,
             tools: None,
         }
     }

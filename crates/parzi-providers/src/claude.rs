@@ -14,13 +14,10 @@ use crate::process::{self, Proc, STOP_GRACE};
 use crate::types::{
     sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
     PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd,
-    TurnSpec, UsageWindow,
+    TurnSpec, UsageWindow, INSTALL_HINT,
 };
 
 pub const ID: &str = "claude";
-const INSTALL_HINT: &str = "Install Claude Code from Set up Parzi, or set its path in Settings.";
-const LOGIN_HINT: &str =
-    "Sign in from Set up Parzi (it runs `claude auth login`), then check again.";
 
 pub struct Claude {
     binary: String,
@@ -54,7 +51,7 @@ impl Provider for Claude {
 
     async fn status(&self) -> ProviderStatus {
         let Some(program) = self.program() else {
-            return ProviderStatus::new(ID, State::NotInstalled, INSTALL_HINT);
+            return ProviderStatus::new(ID, State::NotInstalled, "");
         };
         let version = process::first_line(&program, &["--version"])
             .await
@@ -68,7 +65,7 @@ impl Provider for Claude {
                 s.account = Some(account_label(a));
                 s
             }
-            Some(_) => ProviderStatus::new(ID, State::SignedOut, LOGIN_HINT),
+            Some(_) => ProviderStatus::new(ID, State::SignedOut, ""),
             None => ProviderStatus::new(
                 ID,
                 State::Error,
@@ -95,6 +92,12 @@ impl Provider for Claude {
         let program = self.program().ok_or_else(|| {
             ProviderError::process(format!("Claude Code is not installed. {INSTALL_HINT}"))
         })?;
+        if spec.compact && spec.resume.is_none() {
+            return Err(ProviderError::new(
+                ErrorClass::Unsupported,
+                "Claude has no conversation here to compact",
+            ));
+        }
         if cancel.is_cancelled() {
             return Ok(TurnEnd::Interrupted);
         }
@@ -178,6 +181,7 @@ fn models_from_init(init: &Value) -> Vec<ModelInfo> {
                 id,
                 name,
                 efforts,
+                images: None,
             })
         })
         .collect()
@@ -634,7 +638,14 @@ async fn converse(
     if cancel.is_cancelled() {
         return Ok(TurnEnd::Interrupted);
     }
-    let (content, unreadable) = user_content(&spec.prompt, &spec.images);
+    let prompt = if spec.compact {
+        format!("/compact {}", spec.prompt.trim())
+            .trim_end()
+            .to_string()
+    } else {
+        spec.prompt.clone()
+    };
+    let (content, unreadable) = user_content(&prompt, &spec.images);
     for p in unreadable {
         let _ = events.send(ProviderEvent::Notice(format!(
             "{} was not sent: Claude Code takes PNG, JPEG, GIF or WebP images",
@@ -755,9 +766,12 @@ async fn handle(
                 )));
             }
             "compact_boundary" => {
-                let _ = events.send(ProviderEvent::Notice(
-                    "Claude compacted the conversation".into(),
-                ));
+                let _ = events.send(ProviderEvent::Compacted {
+                    before: v
+                        .pointer("/compact_metadata/pre_tokens")
+                        .and_then(Value::as_u64),
+                    after: None,
+                });
             }
             _ => {}
         },
@@ -927,6 +941,7 @@ fn permission_request(req: &Value) -> (PermissionRequest, Value) {
         })
         .collect();
     let request = PermissionRequest {
+        name: String::new(),
         id: req
             .get("tool_use_id")
             .and_then(Value::as_str)
@@ -1076,6 +1091,7 @@ mod tests {
             resume: None,
             prompt: "hi".into(),
             images: vec![],
+            compact: false,
             tools: None,
         }
     }

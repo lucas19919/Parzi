@@ -167,7 +167,7 @@ async fn setup_link_and_answer_through_wsl() {
     let server = "e2e@wsl";
     let store = parzi_core::store::SessionStore::open().unwrap();
     let desk_sid = store
-        .create("desk session", "default", "build", "claude")
+        .create("desk session", "default", "claude")
         .unwrap()
         .id;
     store

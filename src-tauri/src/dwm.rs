@@ -3,11 +3,10 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use tokio::sync::oneshot;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2, ICoreWebView2AcceleratorKeyPressedEventArgs, ICoreWebView2Controller,
     ICoreWebView2Deferral, ICoreWebView2DownloadOperation, ICoreWebView2Environment,
@@ -49,17 +48,19 @@ use webview2_com::{
     NewWindowRequestedEventHandler, PermissionRequestedEventHandler, ProcessFailedEventHandler,
     StateChangedEventHandler, TrySuspendCompletedHandler, WebMessageReceivedEventHandler,
     WebResourceRequestedEventHandler, WindowCloseRequestedEventHandler,
+    ZoomFactorChangedEventHandler,
 };
 use windows::core::{w, Interface, BOOL, HSTRING, PWSTR};
 use windows::Win32::Foundation::{HGLOBAL, HWND, RECT};
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
 use windows::Win32::System::Com::{IStream, STREAM_SEEK_END, STREAM_SEEK_SET};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyState, VIRTUAL_KEY, VK_B, VK_CONTROL, VK_F11, VK_H, VK_K, VK_L, VK_MENU, VK_OEM_COMMA,
-    VK_SHIFT, VK_T, VK_TAB, VK_W,
+    GetAsyncKeyState, GetKeyState, ReleaseCapture, VIRTUAL_KEY, VK_B, VK_CONTROL, VK_F11, VK_H,
+    VK_J, VK_K, VK_L, VK_LBUTTON, VK_MENU, VK_OEM_COMMA, VK_SHIFT, VK_T, VK_TAB, VK_W,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    SetWindowPos, HWND_TOP, SWP_NOACTIVATE, SWP_SHOWWINDOW,
+    SetWindowPos, HWND_BOTTOM, HWND_TOP, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_SHOWWINDOW,
 };
 
 use crate::downloads::State as DownloadState;
@@ -74,21 +75,12 @@ struct Asked {
     tab: String,
 }
 
-/// A download a page started, while it runs.
-struct Running {
-    op: ICoreWebView2DownloadOperation,
-    tab: String,
-}
-
 // WebView2 objects live on the UI thread that made them, so do these.
 thread_local! {
     static ASKED: RefCell<HashMap<String, Asked>> = RefCell::new(HashMap::new());
-    static DOWNLOADS: RefCell<HashMap<String, Running>> = RefCell::new(HashMap::new());
-    static NEW_WINDOWS: RefCell<crate::browser::NewWindows> =
-        RefCell::new(crate::browser::NewWindows::default());
-    /// Each live page's navigation state, by webview label, for syncing
-    /// its request filters when the blocker changes.
-    static NAVS: RefCell<HashMap<String, Weak<Nav>>> = RefCell::new(HashMap::new());
+    static DOWNLOADS: RefCell<HashMap<String, ICoreWebView2DownloadOperation>> =
+        RefCell::new(HashMap::new());
+    static NEW_WINDOW: RefCell<Option<(String, bool)>> = const { RefCell::new(None) };
 }
 
 pub fn stash_page_environment(env: ICoreWebView2Environment) {
@@ -180,6 +172,38 @@ fn fit_controller(
     }
 }
 
+pub fn hide_page_surface<R: tauri::Runtime>(wv: &tauri::Webview<R>) -> Result<(), String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    wv.with_webview(move |platform| {
+        let result = hide_controller(&platform.controller());
+        let _ = tx.send(result.map_err(|e| e.to_string()));
+    })
+    .map_err(|e| e.to_string())?;
+    match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+        Ok(result) => result,
+        Err(_) => Err("page surface hide timed out".into()),
+    }
+}
+
+fn hide_controller(controller: &ICoreWebView2Controller) -> windows::core::Result<()> {
+    let mut host = HWND::default();
+    unsafe {
+        let _ = controller.SetIsVisible(false);
+        if controller.ParentWindow(&raw mut host).is_ok() {
+            SetWindowPos(
+                host,
+                Some(HWND_BOTTOM),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_HIDEWINDOW,
+            )?;
+        }
+    }
+    Ok(())
+}
+
 pub fn steer_page<R: tauri::Runtime>(wv: &tauri::Webview<R>, action: String) -> Result<(), String> {
     wv.with_webview(move |platform| {
         // SAFETY: with_webview runs this on the UI thread that owns the controller.
@@ -201,34 +225,8 @@ pub fn steer_page<R: tauri::Runtime>(wv: &tauri::Webview<R>, action: String) -> 
     .map_err(|e| e.to_string())
 }
 
-/// How long the UI thread gets to answer a quick question about a page.
-const ASK_WAIT: Duration = Duration::from_secs(2);
-
-/// One answer from the UI thread. The completion handler and the error path
-/// both hold the sender; whichever runs first answers.
-type Answer<T> = Rc<Cell<Option<oneshot::Sender<Result<T, String>>>>>;
-
-fn answer<T>(slot: &Answer<T>, value: Result<T, String>) {
-    if let Some(tx) = slot.take() {
-        let _ = tx.send(value);
-    }
-}
-
-/// Waits for the UI thread's answer without holding a thread: a page that
-/// never answers costs a timer, not one of the blocking threads.
-async fn answered<T>(
-    rx: oneshot::Receiver<Result<T, String>>,
-    wait: Duration,
-) -> Result<T, String> {
-    match tokio::time::timeout(wait, rx).await {
-        Ok(Ok(value)) => value,
-        _ => Err("the page did not answer".into()),
-    }
-}
-
-/// The URL the page shows now.
-pub async fn page_source<R: tauri::Runtime>(wv: &tauri::Webview<R>) -> Result<String, String> {
-    let (tx, rx) = oneshot::channel();
+pub fn page_source<R: tauri::Runtime>(wv: &tauri::Webview<R>) -> Result<String, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
     wv.with_webview(move |platform| {
         // SAFETY: with_webview runs this on the UI thread that owns the
         // controller; take_pwstr frees the string Source allocates.
@@ -241,7 +239,8 @@ pub async fn page_source<R: tauri::Runtime>(wv: &tauri::Webview<R>) -> Result<St
         let _ = tx.send(url.map_err(|e| e.to_string()));
     })
     .map_err(|e| e.to_string())?;
-    answered(rx, ASK_WAIT).await
+    rx.recv_timeout(Duration::from_secs(2))
+        .map_err(|_| "the page did not answer".to_string())?
 }
 
 /// A suspended background page runs no script and paints nothing: wake it
@@ -254,16 +253,13 @@ unsafe fn resume(core: &ICoreWebView2) {
     }
 }
 
-/// Runs a script in the page; its result as JSON, or an error after `wait`.
-pub async fn run_page_script<R: tauri::Runtime>(
+pub fn run_page_script<R: tauri::Runtime>(
     wv: &tauri::Webview<R>,
     script: String,
-    wait: Duration,
 ) -> Result<String, String> {
-    let (tx, rx) = oneshot::channel();
+    let (tx, rx) = std::sync::mpsc::channel();
     wv.with_webview(move |platform| {
-        let slot: Answer<String> = Rc::new(Cell::new(Some(tx)));
-        let done = slot.clone();
+        let done = tx.clone();
         // SAFETY: with_webview runs this on the UI thread that owns the
         // controller, and WebView2 calls the completion handler on that same
         // thread; the script string outlives the ExecuteScript call.
@@ -273,29 +269,25 @@ pub async fn run_page_script<R: tauri::Runtime>(
                 core.ExecuteScript(
                     &HSTRING::from(script),
                     &ExecuteScriptCompletedHandler::create(Box::new(move |result, json| {
-                        answer(&done, result.map(|()| json).map_err(|e| e.to_string()));
+                        let _ = done.send(result.map(|()| json).map_err(|e| e.to_string()));
                         Ok(())
                     })),
                 )
             })
         };
         if let Err(e) = started {
-            answer(&slot, Err(e.to_string()));
+            let _ = tx.send(Err(e.to_string()));
         }
     })
     .map_err(|e| e.to_string())?;
-    answered(rx, wait).await
+    rx.recv_timeout(Duration::from_secs(5))
+        .map_err(|_| "the page did not answer".to_string())?
 }
 
-/// A JPEG of what the page shows, or an error after `wait`.
-pub async fn capture_page<R: tauri::Runtime>(
-    wv: &tauri::Webview<R>,
-    wait: Duration,
-) -> Result<Vec<u8>, String> {
-    let (tx, rx) = oneshot::channel();
+pub fn capture_page<R: tauri::Runtime>(wv: &tauri::Webview<R>) -> Result<Vec<u8>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
     wv.with_webview(move |platform| {
-        let slot: Answer<Vec<u8>> = Rc::new(Cell::new(Some(tx)));
-        let done = slot.clone();
+        let done = tx.clone();
         // SAFETY: with_webview runs this on the UI thread that owns the
         // controller, and WebView2 calls the completion handler on that same
         // thread after it has written the whole image into the stream.
@@ -309,18 +301,19 @@ pub async fn capture_page<R: tauri::Runtime>(
                     &stream,
                     &CapturePreviewCompletedHandler::create(Box::new(move |result| {
                         let bytes = result.and_then(|()| stream_bytes(&image));
-                        answer(&done, bytes.map_err(|e| e.to_string()));
+                        let _ = done.send(bytes.map_err(|e| e.to_string()));
                         Ok(())
                     })),
                 )
             })
         };
         if let Err(e) = started {
-            answer(&slot, Err(e.to_string()));
+            let _ = tx.send(Err(e.to_string()));
         }
     })
     .map_err(|e| e.to_string())?;
-    answered(rx, wait).await
+    rx.recv_timeout(Duration::from_secs(3))
+        .map_err(|_| "the page did not answer".to_string())?
 }
 
 unsafe fn stream_bytes(stream: &IStream) -> windows::core::Result<Vec<u8>> {
@@ -413,10 +406,8 @@ pub fn answer_permission(id: &str, allow: bool) {
     }
 }
 
-/// A tab's page went (closed, evicted, reloaded after a crash): its
-/// unanswered prompts are refused and its download handles let go, so
-/// neither map keeps a dead page's objects. Call on the UI thread.
-pub fn drop_page(tab: &str) {
+/// A closed tab's unanswered prompts are refused. Call on the UI thread.
+pub fn drop_permissions(tab: &str) {
     let ids: Vec<String> = ASKED.with(|m| {
         m.borrow()
             .iter()
@@ -427,12 +418,11 @@ pub fn drop_page(tab: &str) {
     for id in ids {
         answer_permission(&id, false);
     }
-    DOWNLOADS.with(|m| m.borrow_mut().retain(|_, d| d.tab != tab));
 }
 
 /// Call on the UI thread.
 pub fn cancel_download(id: &str) {
-    if let Some(op) = DOWNLOADS.with(|m| m.borrow().get(id).map(|d| d.op.clone())) {
+    if let Some(op) = DOWNLOADS.with(|m| m.borrow().get(id).cloned()) {
         // SAFETY: on the UI thread that owns the download operation.
         if let Err(e) = unsafe { op.Cancel() } {
             tracing::debug!("download not cancelled: {e}");
@@ -440,11 +430,14 @@ pub fn cancel_download(id: &str) {
     }
 }
 
-/// Whether the new-window request for `url` (a link with a target,
-/// `window.open`) came from a click or key press. `WebView2` has no popup
-/// blocker of its own. Call on the UI thread.
+/// Whether the last new-window request (a link with a target, `window.open`)
+/// came from a click or key press. `WebView2` has no popup blocker of its own.
+/// Unknown counts as yes: a missed record must not break a site's links.
 pub fn user_opened(url: &str) -> bool {
-    NEW_WINDOWS.with(|asked| asked.borrow_mut().user(url, Instant::now()))
+    NEW_WINDOW.with(|slot| match slot.borrow_mut().take() {
+        Some((asked, user)) if crate::browser::same_page(&asked, url) => user,
+        _ => true,
+    })
 }
 
 pub enum PageSignal {
@@ -456,6 +449,8 @@ pub enum PageSignal {
         ok: bool,
     },
     Fullscreen(bool),
+    /// The page's zoom changed (1.0 is 100%).
+    Zoom(f64),
     Key(&'static str),
     Blocked(u32),
     Background(String),
@@ -495,11 +490,7 @@ pub enum Role {
 }
 
 pub struct Hook {
-    /// The webview's own label.
-    pub label: String,
     pub tab: String,
-    /// A page an agent drives: no remembered permission is granted to it.
-    pub agent: bool,
     /// The URL the page was created with: its first navigation may start
     /// before the hooks are attached.
     pub seed: String,
@@ -536,7 +527,55 @@ pub fn watch_page<R: tauri::Runtime>(
 ) -> Result<(), String> {
     wv.with_webview(move |platform| {
         if let Err(e) = hook_page(&platform.controller(), &hook, Rc::new(signal)) {
-            tracing::warn!("page hooks not attached: {e}");
+            tracing::debug!("page hooks failed: {e}");
+        }
+    })
+    .map_err(|e| e.to_string())
+}
+
+/// Parzi's own window. A page process that dies or hangs reloads instead of
+/// leaving the window white or frozen; a dead browser process takes every
+/// view with it, so `restart` brings the app back. Each says so in the log.
+pub fn watch_shell<R: tauri::Runtime>(
+    wv: &tauri::Webview<R>,
+    restart: impl Fn() + Send + 'static,
+) -> Result<(), String> {
+    wv.with_webview(move |platform| {
+        let controller = platform.controller();
+        let mut token = 0i64;
+        // SAFETY: on the UI thread that owns the controller; WebView2 calls
+        // the handler on that same thread.
+        let hooked = unsafe {
+            controller.CoreWebView2().and_then(|core| {
+                core.add_ProcessFailed(
+                    &ProcessFailedEventHandler::create(Box::new(move |core, args| {
+                        let Some(args) = args else { return Ok(()) };
+                        let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+                        args.ProcessFailedKind(&raw mut kind)?;
+                        match crash_kind(kind) {
+                            Some("browser") => {
+                                tracing::error!("the window's browser process exited; restarting");
+                                restart();
+                            }
+                            Some(what) => {
+                                tracing::error!("the window's page process {what}; reloading it");
+                                if let Some(core) = core {
+                                    let _ = core.Reload();
+                                }
+                            }
+                            None => tracing::warn!(
+                                "a helper process of the window failed (kind {})",
+                                kind.0
+                            ),
+                        }
+                        Ok(())
+                    })),
+                    &raw mut token,
+                )
+            })
+        };
+        if let Err(e) = hooked {
+            tracing::warn!("window crash recovery not attached: {e}");
         }
     })
     .map_err(|e| e.to_string())
@@ -549,21 +588,10 @@ struct Nav {
     id: Cell<Option<u64>>,
     top: RefCell<String>,
     filtering: Cell<bool>,
-    /// Whether the page's request filters are registered: only while its
-    /// requests are filtered, so an allowed site or a disabled blocker
-    /// sends no request through the UI thread.
-    filters: Cell<bool>,
     blocked: Cell<u32>,
     // Kept from the DOMContentLoaded pass for the second generic pass after
     // load; None when the site turns generic hiding off.
     exceptions: RefCell<Option<Rc<HashSet<String>>>>,
-}
-
-/// A hook that did not attach is logged; the others still attach.
-fn attached(what: &str, done: windows::core::Result<()>) {
-    if let Err(e) = done {
-        tracing::warn!("page hook `{what}` not attached: {e}");
-    }
 }
 
 #[allow(
@@ -579,14 +607,8 @@ fn hook_page(
         id: Cell::new(Some(ANY_NAV)),
         top: RefCell::new(hook.seed.clone()),
         filtering: Cell::new(crate::adblock::filtering(&hook.seed)),
-        filters: Cell::new(false),
         blocked: Cell::new(0),
         exceptions: RefCell::new(None),
-    });
-    NAVS.with(|navs| {
-        let mut navs = navs.borrow_mut();
-        navs.retain(|_, n| n.strong_count() > 0);
-        navs.insert(hook.label.clone(), Rc::downgrade(&nav));
     });
     let page = hook.role == Role::Page;
     let mut token = 0i64;
@@ -594,275 +616,230 @@ fn hook_page(
     // invokes every handler on that same thread, and each out-param outlives
     // the call that writes it.
     unsafe {
-        // Without the core nothing attaches.
         let core = controller.CoreWebView2()?;
         if let Ok(settings) = core.Settings() {
             let _ = settings.SetAreDevToolsEnabled(hook.devtools);
         }
         let (s, n) = (signal.clone(), nav.clone());
-        attached(
-            "navigation starting",
-            core.add_NavigationStarting(
-                &NavigationStartingEventHandler::create(Box::new(move |core, args| {
-                    let Some(args) = args else { return Ok(()) };
-                    let mut cancel = BOOL::default();
-                    let mut id = 0u64;
-                    let mut uri = PWSTR::null();
-                    args.Cancel(&raw mut cancel)?;
-                    args.NavigationId(&raw mut id)?;
-                    args.Uri(&raw mut uri)?;
-                    let uri = take_pwstr(uri);
-                    if !cancel.as_bool() {
-                        n.filtering.set(crate::adblock::filtering(&uri));
-                        if let Some(core) = &core {
-                            set_filters(core, &n);
-                        }
-                        n.exceptions.borrow_mut().take();
-                        *n.top.borrow_mut() = uri;
-                        n.blocked.set(0);
-                        n.id.set(Some(id));
-                        if page {
-                            s(PageSignal::Loading);
-                        }
+        core.add_NavigationStarting(
+            &NavigationStartingEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let mut cancel = BOOL::default();
+                let mut id = 0u64;
+                let mut uri = PWSTR::null();
+                args.Cancel(&raw mut cancel)?;
+                args.NavigationId(&raw mut id)?;
+                args.Uri(&raw mut uri)?;
+                let uri = take_pwstr(uri);
+                if !cancel.as_bool() {
+                    n.filtering.set(crate::adblock::filtering(&uri));
+                    n.exceptions.borrow_mut().take();
+                    *n.top.borrow_mut() = uri;
+                    n.blocked.set(0);
+                    n.id.set(Some(id));
+                    if page {
+                        s(PageSignal::Loading);
                     }
-                    Ok(())
-                })),
-                &raw mut token,
-            ),
-        );
+                }
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
         let (s, n) = (signal.clone(), nav.clone());
-        attached(
-            "navigation completed",
-            core.add_NavigationCompleted(
-                &NavigationCompletedEventHandler::create(Box::new(move |core, args| {
-                    let mut id = ANY_NAV;
-                    let mut ok = BOOL::from(true);
-                    if let Some(args) = &args {
-                        args.NavigationId(&raw mut id)?;
-                        let _ = args.IsSuccess(&raw mut ok);
-                    }
-                    if !matches!(n.id.get(), Some(cur) if cur == id || cur == ANY_NAV) {
-                        return Ok(());
-                    }
-                    n.id.set(None);
-                    let Some(core) = core else { return Ok(()) };
-                    if let Some(exceptions) = n.exceptions.borrow_mut().take() {
-                        hide_generic(&core, exceptions);
-                    }
-                    if !page {
-                        return Ok(());
-                    }
-                    s(loaded(&core, ok.as_bool()));
-                    s(PageSignal::Blocked(n.blocked.get()));
-                    // Pages committed before the document-created script was
-                    // added (the first one) still get the key listener.
-                    let _ = core.ExecuteScript(
-                        &HSTRING::from(KEY_SCRIPT),
-                        &ExecuteScriptCompletedHandler::create(Box::new(|_, _| Ok(()))),
-                    );
-                    let paint = s.clone();
-                    let _ = core.ExecuteScript(
-                        w!("(() => { const c = (e) => { const v = e && getComputedStyle(e).backgroundColor; return v && v !== 'transparent' && !v.endsWith(', 0)') ? v : ''; }; return c(document.documentElement) || c(document.body) || 'rgb(255, 255, 255)'; })()"),
-                        &ExecuteScriptCompletedHandler::create(Box::new(move |_, json| {
-                            if let Some(color) = page_color(&json) {
-                                paint(PageSignal::Background(color));
-                            }
-                            Ok(())
-                        })),
-                    );
-                    Ok(())
-                })),
-                &raw mut token,
-            ),
-        );
-        let n = nav.clone();
-        attached(
-            "content loaded",
-            core.cast::<ICoreWebView2_2>().and_then(|core2| {
-                core2.add_DOMContentLoaded(
-                    &DOMContentLoadedEventHandler::create(Box::new(move |core, _| {
-                        if let (true, Some(core)) = (n.filtering.get(), core) {
-                            let top = n.top.borrow().clone();
-                            if let Some(found) = crate::adblock::cosmetic(&top) {
-                                inject_css(&core, &found.css);
-                                if found.generic {
-                                    let exceptions = Rc::new(found.exceptions);
-                                    *n.exceptions.borrow_mut() = Some(exceptions.clone());
-                                    hide_generic(&core, exceptions);
-                                }
-                            }
+        core.add_NavigationCompleted(
+            &NavigationCompletedEventHandler::create(Box::new(move |core, args| {
+                let mut id = ANY_NAV;
+                let mut ok = BOOL::from(true);
+                if let Some(args) = &args {
+                    args.NavigationId(&raw mut id)?;
+                    let _ = args.IsSuccess(&raw mut ok);
+                }
+                if !matches!(n.id.get(), Some(cur) if cur == id || cur == ANY_NAV) {
+                    return Ok(());
+                }
+                n.id.set(None);
+                let Some(core) = core else { return Ok(()) };
+                if let Some(exceptions) = n.exceptions.borrow_mut().take() {
+                    hide_generic(&core, exceptions);
+                }
+                if !page {
+                    return Ok(());
+                }
+                s(loaded(&core, ok.as_bool()));
+                s(PageSignal::Blocked(n.blocked.get()));
+                // Pages committed before the document-created script was
+                // added (the first one) still get the key listener.
+                let _ = core.ExecuteScript(
+                    &HSTRING::from(KEY_SCRIPT),
+                    &ExecuteScriptCompletedHandler::create(Box::new(|_, _| Ok(()))),
+                );
+                let paint = s.clone();
+                let _ = core.ExecuteScript(
+                    w!("(() => { const c = (e) => { const v = e && getComputedStyle(e).backgroundColor; return v && v !== 'transparent' && !v.endsWith(', 0)') ? v : ''; }; return c(document.documentElement) || c(document.body) || 'rgb(255, 255, 255)'; })()"),
+                    &ExecuteScriptCompletedHandler::create(Box::new(move |_, json| {
+                        if let Some(color) = page_color(&json) {
+                            paint(PageSignal::Background(color));
                         }
                         Ok(())
                     })),
-                    &raw mut token,
-                )
-            }),
-        );
-        attached("blocker", hook_blocker(&core, signal.clone(), nav.clone()));
-        attached(
-            "downloads",
-            hook_downloads(
-                &core,
-                signal.clone(),
-                hook.tab.clone(),
-                hook.downloads.clone(),
-            ),
-        );
-        attached(
-            "permissions",
-            hook_permissions(&core, signal.clone(), hook.tab.clone(), hook.agent),
-        );
-        attached(
-            "new windows",
-            core.add_NewWindowRequested(
-                &NewWindowRequestedEventHandler::create(Box::new(|_, args| {
-                    let Some(args) = args else { return Ok(()) };
-                    let mut user = BOOL::default();
-                    let mut uri = PWSTR::null();
-                    args.IsUserInitiated(&raw mut user)?;
-                    args.Uri(&raw mut uri)?;
-                    let uri = take_pwstr(uri);
-                    NEW_WINDOWS.with(|asked| {
-                        asked
-                            .borrow_mut()
-                            .record(uri, user.as_bool(), Instant::now());
-                    });
-                    Ok(())
-                })),
-                &raw mut token,
-            ),
-        );
+                );
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
+        let n = nav.clone();
+        core.cast::<ICoreWebView2_2>()?.add_DOMContentLoaded(
+            &DOMContentLoadedEventHandler::create(Box::new(move |core, _| {
+                if let (true, Some(core)) = (n.filtering.get(), core) {
+                    let top = n.top.borrow().clone();
+                    if let Some(found) = crate::adblock::cosmetic(&top) {
+                        inject_css(&core, &found.css);
+                        if found.generic {
+                            let exceptions = Rc::new(found.exceptions);
+                            *n.exceptions.borrow_mut() = Some(exceptions.clone());
+                            hide_generic(&core, exceptions);
+                        }
+                    }
+                }
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
+        hook_blocker(&core, signal.clone(), nav.clone())?;
+        hook_downloads(&core, signal.clone(), hook.downloads.clone())?;
+        hook_permissions(&core, signal.clone(), hook.tab.clone())?;
+        core.add_NewWindowRequested(
+            &NewWindowRequestedEventHandler::create(Box::new(|_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let mut user = BOOL::default();
+                let mut uri = PWSTR::null();
+                args.IsUserInitiated(&raw mut user)?;
+                args.Uri(&raw mut uri)?;
+                let uri = take_pwstr(uri);
+                NEW_WINDOW.with(|slot| *slot.borrow_mut() = Some((uri, user.as_bool())));
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
         if !page {
             let s = signal.clone();
-            attached(
-                "close requested",
-                core.add_WindowCloseRequested(
-                    &WindowCloseRequestedEventHandler::create(Box::new(move |_, _| {
-                        s(PageSignal::CloseRequested);
-                        Ok(())
-                    })),
-                    &raw mut token,
-                ),
-            );
+            core.add_WindowCloseRequested(
+                &WindowCloseRequestedEventHandler::create(Box::new(move |_, _| {
+                    s(PageSignal::CloseRequested);
+                    Ok(())
+                })),
+                &raw mut token,
+            )?;
             return Ok(());
         }
         let s = signal.clone();
-        attached(
-            "process failed",
-            core.add_ProcessFailed(
-                &ProcessFailedEventHandler::create(Box::new(move |_, args| {
-                    let Some(args) = args else { return Ok(()) };
-                    let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
-                    args.ProcessFailedKind(&raw mut kind)?;
-                    if let Some(what) = crash_kind(kind) {
-                        s(PageSignal::Crashed(what));
+        core.add_ProcessFailed(
+            &ProcessFailedEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+                args.ProcessFailedKind(&raw mut kind)?;
+                if let Some(what) = crash_kind(kind) {
+                    s(PageSignal::Crashed(what));
+                }
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
+        {
+            let s = signal.clone();
+            controller.add_ZoomFactorChanged(
+                &ZoomFactorChangedEventHandler::create(Box::new(move |controller, _| {
+                    if let Some(c) = controller {
+                        let mut factor = 1.0;
+                        c.ZoomFactor(&raw mut factor)?;
+                        s(PageSignal::Zoom(factor));
                     }
                     Ok(())
                 })),
                 &raw mut token,
-            ),
-        );
+            )?;
+        }
         if let Ok(core15) = core.cast::<ICoreWebView2_15>() {
             let s = signal.clone();
-            attached(
-                "favicon",
-                core15.add_FaviconChanged(
-                    &FaviconChangedEventHandler::create(Box::new(move |core, _| {
-                        if let Some(core) = core.and_then(|c| c.cast::<ICoreWebView2_15>().ok()) {
-                            favicon(&core, s.clone());
-                        }
-                        Ok(())
-                    })),
-                    &raw mut token,
-                ),
-            );
+            core15.add_FaviconChanged(
+                &FaviconChangedEventHandler::create(Box::new(move |core, _| {
+                    if let Some(core) = core.and_then(|c| c.cast::<ICoreWebView2_15>().ok()) {
+                        favicon(&core, s.clone());
+                    }
+                    Ok(())
+                })),
+                &raw mut token,
+            )?;
         }
         let (s, n) = (signal.clone(), nav.clone());
-        attached(
-            "history",
-            core.add_HistoryChanged(
-                &HistoryChangedEventHandler::create(Box::new(move |core, _| {
-                    if let (None, Some(core)) = (n.id.get(), core) {
-                        s(loaded(&core, true));
-                    }
-                    Ok(())
-                })),
-                &raw mut token,
-            ),
-        );
+        core.add_HistoryChanged(
+            &HistoryChangedEventHandler::create(Box::new(move |core, _| {
+                if let (None, Some(core)) = (n.id.get(), core) {
+                    s(loaded(&core, true));
+                }
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
         let s = signal.clone();
-        attached(
-            "fullscreen",
-            core.add_ContainsFullScreenElementChanged(
-                &ContainsFullScreenElementChangedEventHandler::create(Box::new(move |core, _| {
-                    let mut full = BOOL::default();
-                    if let Some(core) = core {
-                        core.ContainsFullScreenElement(&raw mut full)?;
-                    }
-                    s(PageSignal::Fullscreen(full.as_bool()));
-                    Ok(())
-                })),
-                &raw mut token,
-            ),
-        );
-        attached(
-            "key script",
-            core.AddScriptToExecuteOnDocumentCreated(
-                &HSTRING::from(KEY_SCRIPT),
-                &AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(|_, _| {
-                    Ok(())
-                })),
-            ),
-        );
+        core.add_ContainsFullScreenElementChanged(
+            &ContainsFullScreenElementChangedEventHandler::create(Box::new(move |core, _| {
+                let mut full = BOOL::default();
+                if let Some(core) = core {
+                    core.ContainsFullScreenElement(&raw mut full)?;
+                }
+                s(PageSignal::Fullscreen(full.as_bool()));
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
+        core.AddScriptToExecuteOnDocumentCreated(
+            &HSTRING::from(KEY_SCRIPT),
+            &AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(|_, _| Ok(()))),
+        )?;
         let claimed: Rc<Cell<Option<(&'static str, Instant)>>> = Rc::new(Cell::new(None));
         let (s, waiting) = (signal.clone(), claimed.clone());
-        attached(
-            "key messages",
-            core.add_WebMessageReceived(
-                &WebMessageReceivedEventHandler::create(Box::new(move |_, args| {
-                    let Some(args) = args else { return Ok(()) };
-                    let mut raw = PWSTR::null();
-                    if args.WebMessageAsJson(&raw mut raw).is_err() {
-                        return Ok(());
+        core.add_WebMessageReceived(
+            &WebMessageReceivedEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let mut raw = PWSTR::null();
+                if args.WebMessageAsJson(&raw mut raw).is_err() {
+                    return Ok(());
+                }
+                let Some(name) = key_message(&take_pwstr(raw)) else {
+                    return Ok(());
+                };
+                // Only a key the user really pressed a moment ago: a page
+                // can't post its way into app shortcuts.
+                if let Some((key, at)) = waiting.get() {
+                    if key == name && at.elapsed() < KEY_CLAIM {
+                        waiting.set(None);
+                        s(PageSignal::Key(key));
                     }
-                    let Some(name) = key_message(&take_pwstr(raw)) else {
-                        return Ok(());
-                    };
-                    // Only a key the user really pressed a moment ago: a page
-                    // can't post its way into app shortcuts.
-                    if let Some((key, at)) = waiting.get() {
-                        if key == name && at.elapsed() < KEY_CLAIM {
-                            waiting.set(None);
-                            s(PageSignal::Key(key));
+                }
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
+        controller.add_AcceleratorKeyPressed(
+            &AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else { return Ok(()) };
+                if let Some((key, first)) = browser_key(&args)? {
+                    if page_first(key) {
+                        if first {
+                            claimed.set(Some((key, Instant::now())));
+                        }
+                    } else {
+                        args.SetHandled(true)?;
+                        if first {
+                            signal(PageSignal::Key(key));
                         }
                     }
-                    Ok(())
-                })),
-                &raw mut token,
-            ),
-        );
-        attached(
-            "app keys",
-            controller.add_AcceleratorKeyPressed(
-                &AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
-                    let Some(args) = args else { return Ok(()) };
-                    if let Some((key, first)) = browser_key(&args)? {
-                        if page_first(key) {
-                            if first {
-                                claimed.set(Some((key, Instant::now())));
-                            }
-                        } else {
-                            args.SetHandled(true)?;
-                            if first {
-                                signal(PageSignal::Key(key));
-                            }
-                        }
-                    }
-                    Ok(())
-                })),
-                &raw mut token,
-            ),
-        );
+                }
+                Ok(())
+            })),
+            &raw mut token,
+        )?;
     }
     Ok(())
 }
@@ -960,54 +937,6 @@ unsafe fn hide_generic(core: &ICoreWebView2, exceptions: Rc<HashSet<String>>) {
     );
 }
 
-/// Registers or drops the page's request filters to match whether its
-/// requests are filtered now. Web requests only: data:, blob: and the like
-/// are never filtered, so they never cross to this thread at all.
-///
-/// SAFETY: call on the UI thread that owns `core`.
-unsafe fn set_filters(core: &ICoreWebView2, nav: &Nav) {
-    let want = nav.filtering.get();
-    if want == nav.filters.get() {
-        return;
-    }
-    for filter in [w!("http://*"), w!("https://*"), w!("ws://*"), w!("wss://*")] {
-        let done = if want {
-            core.AddWebResourceRequestedFilter(filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)
-        } else {
-            core.RemoveWebResourceRequestedFilter(filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)
-        };
-        if let Err(e) = done {
-            tracing::debug!("page request filter not changed: {e}");
-        }
-    }
-    nav.filters.set(want);
-}
-
-/// The blocker was turned on or off, or a site allowed: a live page
-/// follows at once, not at its next navigation.
-pub fn sync_filters<R: tauri::Runtime>(wv: &tauri::Webview<R>) {
-    let label = wv.label().to_string();
-    let _ = wv.with_webview(move |platform| {
-        let Some(nav) = NAVS.with(|navs| navs.borrow().get(&label).and_then(Weak::upgrade)) else {
-            return;
-        };
-        // SAFETY: with_webview runs this on the UI thread that owns the
-        // controller; take_pwstr frees the string Source allocates.
-        unsafe {
-            let Ok(core) = platform.controller().CoreWebView2() else {
-                return;
-            };
-            let mut url = PWSTR::null();
-            if core.Source(&raw mut url).is_ok() {
-                *nav.top.borrow_mut() = take_pwstr(url);
-            }
-            let top = nav.top.borrow().clone();
-            nav.filtering.set(crate::adblock::filtering(&top));
-            set_filters(&core, &nav);
-        }
-    });
-}
-
 fn hook_blocker(
     core: &ICoreWebView2,
     signal: Rc<dyn Fn(PageSignal)>,
@@ -1019,12 +948,16 @@ fn hook_blocker(
     // outlives the call that writes it.
     unsafe {
         let env = core.cast::<ICoreWebView2_2>()?.Environment()?;
-        let filters = nav.clone();
+        // Web requests only: data:, blob: and the like are never filtered,
+        // so they need not cross to this thread at all.
+        for filter in [w!("http://*"), w!("https://*"), w!("ws://*"), w!("wss://*")] {
+            core.AddWebResourceRequestedFilter(filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)?;
+        }
         let last = Rc::new(Cell::new(Instant::now()));
         core.add_WebResourceRequested(
             &WebResourceRequestedEventHandler::create(Box::new(move |_, args| {
-                // Filters exist only while the page is filtered; this check
-                // covers the moment between a toggle and its sync.
+                // Decided per navigation: an allowed site or a disabled
+                // blocker costs no string work per request.
                 if !nav.filtering.get() || !crate::adblock::enabled() {
                     return Ok(());
                 }
@@ -1054,7 +987,6 @@ fn hook_blocker(
             })),
             &raw mut token,
         )?;
-        set_filters(core, &filters);
     }
     Ok(())
 }
@@ -1062,7 +994,6 @@ fn hook_blocker(
 fn hook_downloads(
     core: &ICoreWebView2,
     signal: Rc<dyn Fn(PageSignal)>,
-    tab: String,
     dir: Option<PathBuf>,
 ) -> windows::core::Result<()> {
     let mut token = 0i64;
@@ -1146,11 +1077,7 @@ fn hook_downloads(
                     })),
                     &raw mut token,
                 )?;
-                let running = Running {
-                    op,
-                    tab: tab.clone(),
-                };
-                DOWNLOADS.with(|m| m.borrow_mut().insert(id, running));
+                DOWNLOADS.with(|m| m.borrow_mut().insert(id, op));
                 Ok(())
             })),
             &raw mut token,
@@ -1181,7 +1108,6 @@ fn hook_permissions(
     core: &ICoreWebView2,
     signal: Rc<dyn Fn(PageSignal)>,
     tab: String,
-    agent: bool,
 ) -> windows::core::Result<()> {
     let mut token = 0i64;
     // SAFETY: this runs on the UI thread that owns the webview; WebView2
@@ -1204,10 +1130,10 @@ fn hook_permissions(
                 }
                 let mut uri = PWSTR::null();
                 args.Uri(&raw mut uri)?;
-                let Some(origin) = crate::urls::site_origin(&take_pwstr(uri)) else {
+                let Some(origin) = crate::siteprefs::site_origin(&take_pwstr(uri)) else {
                     return args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY);
                 };
-                match remembered(crate::siteprefs::decision(&origin, name), agent) {
+                match crate::siteprefs::decision(&origin, name) {
                     Some(true) => args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW),
                     Some(false) => args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY),
                     None => {
@@ -1236,16 +1162,6 @@ fn hook_permissions(
         )?;
     }
     Ok(())
-}
-
-/// What a remembered decision does on a page: the person's own pages
-/// follow it; a page an agent drives is still refused what the person
-/// refused, but asks again for what they allowed on their own browsing.
-fn remembered(decision: Option<bool>, agent: bool) -> Option<bool> {
-    match decision {
-        Some(true) if agent => None,
-        other => other,
-    }
 }
 
 fn resource_kind(
@@ -1328,6 +1244,8 @@ fn key_name(ctrl: bool, shift: bool, key: VIRTUAL_KEY) -> Option<&'static str> {
         (true, false, VK_K) => "ctrl+k",
         (true, false, VK_B) => "ctrl+b",
         (true, false, VK_H) => "ctrl+h",
+        // Tasks; in Chrome it is downloads, so no page expects it.
+        (true, false, VK_J) => "ctrl+j",
         (true, true, VK_T) => "ctrl+shift+t",
         (true, false, VK_OEM_COMMA) => "ctrl+comma",
         (true, false, VK_TAB) => "ctrl+tab",
@@ -1380,6 +1298,33 @@ pub fn alert(title: &str, text: &str) {
     }
 }
 
+/// The shell asks to drag after a few pixels of movement. The call arrives
+/// later, on this thread. If the button was released in between, dragging
+/// here makes Windows wait for a later click, and that click never reaches
+/// the shell.
+pub fn drag_allowed(button_down: bool) -> bool {
+    button_down
+}
+
+pub fn begin_window_drag(window: tauri::Window) {
+    let drag = window.clone();
+    let posted = window.run_on_main_thread(move || {
+        // SAFETY: a process-wide key state read and a capture release. Both
+        // are valid on the UI thread that owns the window.
+        let down = unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON.0)) } < 0;
+        if !drag_allowed(down) {
+            unsafe {
+                let _ = ReleaseCapture();
+            }
+            return;
+        }
+        let _ = drag.start_dragging();
+    });
+    if let Err(e) = posted {
+        tracing::debug!("window drag was not started: {e}");
+    }
+}
+
 pub fn round_window_corners(window: &tauri::WebviewWindow) {
     use windows::Win32::Graphics::Dwm::{
         DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
@@ -1403,12 +1348,19 @@ pub fn round_window_corners(window: &tauri::WebviewWindow) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_J, VK_P, VK_R};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_P, VK_R};
+
+    #[test]
+    fn a_late_window_drag_is_refused_once_the_button_is_up() {
+        assert!(drag_allowed(true));
+        assert!(!drag_allowed(false));
+    }
 
     #[test]
     fn page_keys_go_to_the_page_first_and_print_stays_the_pages() {
         assert_eq!(key_name(true, false, VK_K), Some("ctrl+k"));
-        assert_eq!(key_name(true, false, VK_J), None, "Ctrl+J is the page's");
+        assert_eq!(key_name(true, false, VK_J), Some("ctrl+j"));
+        assert!(!page_first("ctrl+j"));
         assert!(page_first("ctrl+k") && page_first("ctrl+b") && page_first("ctrl+h"));
         for reserved in [
             "ctrl+t",
@@ -1469,16 +1421,6 @@ mod tests {
             ),
             None
         );
-    }
-
-    #[test]
-    fn agent_pages_never_get_a_remembered_allow() {
-        assert_eq!(remembered(Some(true), false), Some(true));
-        assert_eq!(remembered(Some(false), false), Some(false));
-        assert_eq!(remembered(None, false), None);
-        assert_eq!(remembered(Some(true), true), None, "asks instead");
-        assert_eq!(remembered(Some(false), true), Some(false));
-        assert_eq!(remembered(None, true), None);
     }
 
     #[test]

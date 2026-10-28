@@ -1,9 +1,10 @@
 <script lang="ts">
   export let bg = "";
-  export let blurred = false;
 </script>
 
-<div class="backdrop" class:blurred>
+<!-- Behind everything, pages included: a page covers all but the top bar,
+     which keeps the window's own background. -->
+<div class="backdrop">
   {#if bg}
     <!-- The picture, its shade and the dither reach --bg-height down the
          window and fade into the stage colour there. -->
@@ -23,15 +24,6 @@
     overflow: hidden;
     pointer-events: none;
     background: var(--bg);
-    transition:
-      transform 750ms var(--ease-out),
-      opacity 650ms ease,
-      filter 650ms ease;
-  }
-  .backdrop.blurred {
-    transform: translateY(-32px) scale(1.03);
-    opacity: 0;
-    filter: blur(16px);
   }
   .art {
     position: absolute;
@@ -49,6 +41,7 @@
     width: calc(100% + var(--bg-blur) * 4);
     height: calc(100% + var(--bg-blur) * 4);
     object-fit: cover;
+    object-position: center var(--bg-y, 50%);
     filter: blur(var(--bg-blur)) saturate(1.06);
   }
   .shade {
@@ -63,6 +56,7 @@
       radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, var(--vignette)) 100%),
       color-mix(in srgb, #000 calc(var(--bg-dim) * 100%), transparent);
   }
+  /* The dither lies over the whole picture and fades out with it. */
   .grain {
     position: absolute;
     inset: 0;

@@ -23,14 +23,13 @@ function omnibarProps(variant: number, extra: Record<string, unknown>) {
     model: "",
     effort: "medium",
     permission: "full",
-    mode: "build",
+    mode: variant === 2 ? "search" : "build",
     attachments: [],
-    folder: "C:\\demo\\parzi",
+    folder: "C:/demo/parzi",
     branch: "main",
     hero: true,
     project: { slug: "ui-polish", title: "UI Polish", tokens: 1200 },
     ...extra,
-    variant,
   };
 }
 
@@ -42,13 +41,8 @@ const ENTRIES: PreviewEntry[] = [
     title: "Omnibar",
     component: Omnibar as unknown as ComponentType,
     variants: [
-      { n: 1, label: "Current", blurb: "Baseline. Full labels, full controls." },
-      { n: 2, label: "Edition A · Priority row", blurb: "Icon-only modes, project-first with accent, one row." },
-      { n: 3, label: "Edition B · Two-line calm", blurb: "Project on its own full-width row, controls below." },
-      { n: 4, label: "Edition C · Compact", blurb: "Tighter pills, everything kept, nothing hidden." },
-      { n: 5, label: "Edition D · Outside eyebrow", blurb: "Project lives above the box as a quiet row." },
-      { n: 6, label: "Edition E · Fused tab", blurb: "Project as a tab fused to the top edge." },
-      { n: 7, label: "Edition F · Inline @mention", blurb: "Project as @slug inside the input, minimal bar." },
+      { n: 1, label: "Agent", blurb: "Talking to the agent." },
+      { n: 2, label: "Web", blurb: "Searching the web or opening an address." },
     ],
     props: omnibarProps,
   },

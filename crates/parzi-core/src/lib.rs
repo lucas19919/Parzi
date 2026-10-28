@@ -1,6 +1,7 @@
 pub mod artifacts;
 pub mod brain;
 pub mod config;
+pub mod connectors;
 pub mod context;
 pub mod device;
 pub mod error;

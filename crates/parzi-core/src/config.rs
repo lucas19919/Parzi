@@ -145,9 +145,21 @@ impl Default for ImageConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct McpServerCfg {
+    /// What starts a server on this computer; empty for a hosted one (`url`).
+    #[serde(default)]
     pub command: String,
+    /// A hosted server's address, spoken to over Streamable HTTP.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub url: String,
+    /// Headers every request to `url` carries (an API key, say).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub headers: HashMap<String, String>,
+    /// How a hosted server is signed in to: "" for its headers or its own
+    /// sign-in (OAuth, kept by Parzi), "gh" for the GitHub CLI's login.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub auth: String,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -204,7 +216,7 @@ pub struct OrchLimits {
 }
 
 fn default_mode() -> String {
-    "ask".into()
+    "full".into()
 }
 fn default_timeout_ms() -> u64 {
     30_000
@@ -319,6 +331,11 @@ impl ParziConfig {
             }
         }
         self.routing.order = order;
+        // Hosted connectors once ran through `npx mcp-remote`: Parzi speaks
+        // to them itself now.
+        for srv in self.mcp.servers.values_mut() {
+            crate::connectors::unwrap_remote(srv);
+        }
         if from_v1 {
             self.favorite_models.clear();
         }

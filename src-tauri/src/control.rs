@@ -10,21 +10,20 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use parzi_core::store::RunCause;
-use parzi_runtime::desk::{check_page_url, GuiFile, CONFIRM_WAIT};
+use parzi_runtime::desk::{check_page_url, GuiFile};
 use parzi_runtime::handler::{ui_event, RunEvent};
 use parzi_runtime::tools::{humanize_tool_call, Approval, Approver, AutoApprover, ToolCallInfo};
 use parzi_runtime::Orchestrator;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::{MessageDialogButtons, MessageDialogResult};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::tcp::OwnedWriteHalf;
 use tokio::net::TcpStream;
 use tokio::sync::{broadcast, OwnedSemaphorePermit, Semaphore};
 
-use crate::sessions::on_store;
-use crate::{AppState, GuiApprover, Mismatch, Pending};
+use crate::{AppState, GuiApprover, Pending};
 
 const MAX_REQUEST: u64 = 1024 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
@@ -37,12 +36,6 @@ const MAX_STREAMS: usize = 16;
 const PENDING_FOR: Duration = Duration::from_secs(15);
 const CONSENT_FOR: Duration = Duration::from_secs(10 * 60);
 const KEEPALIVE: Duration = Duration::from_secs(30);
-/// A dialog (and its wait for the one before it) ends unanswered, as a
-/// no, while the client still waits: its deadline grows by `CONFIRM_WAIT`
-/// once it hears the window is asking, plus the op's own time after.
-const DIALOG_WAIT: Duration = CONFIRM_WAIT.saturating_sub(Duration::from_secs(30));
-/// The window itself, for consent to screenshot it.
-const DESK_TAB: &str = "desk";
 const SETTINGS: &[&str] = &[
     "general",
     "providers",
@@ -101,85 +94,14 @@ pub struct Desk {
     /// Approvals, tab changes and notices, for `subscribe` streams.
     events: broadcast::Sender<Value>,
     approvals: Mutex<BTreeMap<String, Value>>,
-    /// Pages the person allowed for a while, until when.
-    consents: Mutex<HashMap<Consent, Instant>>,
+    /// Page tabs the person allowed for a while: tab id, until when.
+    consents: Mutex<HashMap<String, Instant>>,
     /// One dialog at a time.
     dialogs: tokio::sync::Mutex<()>,
 }
 
-/// What "Allow for 10 minutes" covers: one tab, for the one asker (an
-/// agent's session, or "" for the CLI), while the tab stays on that site.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct Consent {
-    tab: String,
-    session: String,
-    origin: String,
-}
-
-impl Consent {
-    fn new(tab: &str, session: &str, origin: &str) -> Self {
-        Self {
-            tab: tab.into(),
-            session: session.into(),
-            origin: origin.into(),
-        }
-    }
-}
-
-/// The person's answer to a page access dialog.
-#[derive(Debug, PartialEq, Eq)]
-enum Allowed {
-    AWhile,
-    Once,
-    No,
-}
-
-/// Only the allow buttons allow: closing the dialog, Escape, a timeout or
-/// any result this code does not know is a no.
-fn allowed(answer: &MessageDialogResult) -> Allowed {
-    match answer {
-        MessageDialogResult::Custom(s) if s == ALLOW_A_WHILE => Allowed::AWhile,
-        MessageDialogResult::Custom(s) if s == ALLOW_ONCE => Allowed::Once,
-        _ => Allowed::No,
-    }
-}
-
-/// A confirm dialog said yes: its own button, nothing else.
-fn confirmed(answer: &MessageDialogResult, ok: &str) -> bool {
-    matches!(answer, MessageDialogResult::Custom(s) if s == ok)
-}
-
 fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-fn active_title(tabs: &[TabSnap], active: &str) -> Option<String> {
-    tabs.iter()
-        .find(|t| t.id == active)
-        .map(|t| t.title.clone())
-}
-
-/// What an agent sees of the tabs: its own page tabs, and only the title
-/// of the one in front.
-fn agent_view(tabs: &[TabSnap], active: &str, session: &str) -> Value {
-    let own: Vec<&TabSnap> = tabs
-        .iter()
-        .filter(|t| t.page() && t.session_id == session)
-        .collect();
-    json!({ "tabs": own, "active_title": active_title(tabs, active) })
-}
-
-/// A `tabs` event as a session's subscriber may see it.
-fn scoped_tabs_event(v: &Value, session: &str) -> Value {
-    let tabs: Vec<TabSnap> = v
-        .get("tabs")
-        .cloned()
-        .and_then(|t| serde_json::from_value(t).ok())
-        .unwrap_or_default();
-    let active = v.get("active").and_then(Value::as_str).unwrap_or("");
-    let mut out = agent_view(&tabs, active, session);
-    out["kind"] = json!("tabs");
-    out
 }
 
 impl Default for Desk {
@@ -235,7 +157,6 @@ impl Desk {
         st.active = active;
         let alive: Vec<String> = st.tabs.iter().map(|t| t.id.clone()).collect();
         st.current.retain(|_, id| alive.contains(id));
-        locked(&self.consents).retain(|c, _| c.tab == DESK_TAB || alive.contains(&c.tab));
         if changed {
             let _ = self.events.send(json!({
                 "kind": "tabs",
@@ -319,8 +240,8 @@ impl Desk {
     /// The page a request is about, and whether the person must allow it.
     /// An agent names one of its tabs or `active` (the person's own), else
     /// gets the tab it used last, else its newest. The CLI names a tab or
-    /// gets the one in front. Consent: anything but an agent's own tab. The
-    /// CLI always asks: an agent's shell holds the same token.
+    /// gets the one in front. Consent: a tab no agent owns, or another
+    /// agent's.
     fn find_page(&self, session: &str, tab: &str) -> Result<(TabSnap, bool), String> {
         let st = locked(&self.state);
         let page = |id: &str| st.tabs.iter().find(|t| t.id == id && t.page()).cloned();
@@ -344,7 +265,8 @@ impl Desk {
                 })
                 .ok_or_else(|| NO_TAB.to_string())?
         };
-        let foreign = session.is_empty() || picked.session_id != session;
+        let foreign =
+            picked.session_id.is_empty() || (!session.is_empty() && picked.session_id != session);
         Ok((picked, foreign))
     }
 
@@ -366,17 +288,25 @@ impl Desk {
     /// approval card covered).
     fn tab_list(&self, session: &str, all: bool) -> Value {
         let st = locked(&self.state);
+        let active_title = st
+            .tabs
+            .iter()
+            .find(|t| t.id == st.active)
+            .map(|t| t.title.clone());
         if session.is_empty() || all {
             return json!({
                 "ok": true,
                 "tabs": st.tabs,
                 "active": st.active,
-                "active_title": active_title(&st.tabs, &st.active),
+                "active_title": active_title,
             });
         }
-        let mut v = agent_view(&st.tabs, &st.active, session);
-        v["ok"] = json!(true);
-        v
+        let own: Vec<&TabSnap> = st
+            .tabs
+            .iter()
+            .filter(|t| t.page() && t.session_id == session)
+            .collect();
+        json!({ "ok": true, "tabs": own, "active_title": active_title })
     }
 
     fn snapshot(&self) -> (Vec<TabSnap>, String) {
@@ -399,7 +329,6 @@ impl Desk {
             "key": key,
             "session": call.session,
             "name": call.name,
-            "lane": call.lane,
             "label": humanize_tool_call(&call.name, &call.args),
         });
         locked(&self.approvals).insert(key.to_string(), row.clone());
@@ -419,7 +348,7 @@ impl Desk {
         }
     }
 
-    pub(crate) fn approvals(&self) -> Vec<Value> {
+    fn approvals(&self) -> Vec<Value> {
         locked(&self.approvals).values().cloned().collect()
     }
 
@@ -440,21 +369,14 @@ impl Desk {
         }
     }
 
-    fn consented(&self, asked: &Consent) -> bool {
+    fn consented(&self, tab: &str) -> bool {
         let mut map = locked(&self.consents);
         map.retain(|_, until| *until > Instant::now());
-        map.contains_key(asked)
+        map.contains_key(tab)
     }
 
-    fn allow_for_a_while(&self, asked: Consent) {
-        locked(&self.consents).insert(asked, Instant::now() + CONSENT_FOR);
-    }
-
-    /// A page went to `url`: what was allowed on it for another site ends,
-    /// and coming back to that site asks again.
-    pub fn page_moved(&self, tab: &str, url: &str) {
-        let origin = crate::urls::origin(url);
-        locked(&self.consents).retain(|c, _| c.tab != tab || c.origin == origin);
+    fn allow_for_a_while(&self, tab: &str) {
+        locked(&self.consents).insert(tab.to_string(), Instant::now() + CONSENT_FOR);
     }
 }
 
@@ -745,7 +667,7 @@ async fn dispatch(ctx: &Ctx, out: &Out, req: &Value) -> Value {
         "desk.state" => desk_state(ctx, req).await,
         "desk.open" => desk_open(ctx, req).await,
         "desk.notify" => desk_notify(ctx, req),
-        "desk.screenshot" => desk_screenshot(ctx, out, req).await,
+        "desk.screenshot" => desk_screenshot(ctx).await,
         "tab.list" => ctx
             .desk
             .tab_list(&str_arg(req, "session"), bool_arg(req, "all", false)),
@@ -755,28 +677,16 @@ async fn dispatch(ctx: &Ctx, out: &Out, req: &Value) -> Value {
         "tab.read" | "tab.click" | "tab.type" | "tab.press" | "tab.select" | "tab.scroll"
         | "tab.wait" | "tab.shot" => page_op(ctx, out, req, op).await,
         "approval.list" => json!({ "ok": true, "approvals": ctx.desk.approvals() }),
-        "approval.answer" => approval_answer(ctx, out, req).await,
+        "approval.answer" => approval_answer(ctx, req).await,
         "providers" => providers(ctx, req).await,
-        "session.list" | "session.show" | "session.export" | "session.fork" | "session.rename" => {
-            let (op, req) = (op.to_string(), req.clone());
-            on_store(&ctx.orch, move |orch| Ok(session_op(orch, &op, &req)))
-                .await
-                .unwrap_or_else(fail)
+        "session.list" => parzi_runtime::rpc::session_list(&ctx.orch),
+        "session.show" | "session.export" => {
+            parzi_runtime::rpc::session_show(&ctx.orch, req, op == "session.export")
         }
-        "session.kill" => session_kill(&ctx.orch, req).await,
+        "session.kill" => parzi_runtime::rpc::session_kill(&ctx.orch, req).await,
+        "session.fork" => parzi_runtime::rpc::session_fork(&ctx.orch, req),
+        "session.rename" => parzi_runtime::rpc::session_rename(&ctx.orch, req),
         "session.delete" => session_delete(ctx, out, req).await,
-        _ => fail(format!("unknown op `{op}`")),
-    }
-}
-
-/// The session ops that only touch the store, on the blocking pool.
-fn session_op(orch: &Orchestrator, op: &str, req: &Value) -> Value {
-    match op {
-        "session.list" => session_list(orch),
-        "session.show" => session_show(orch, req, false),
-        "session.export" => session_show(orch, req, true),
-        "session.fork" => session_fork(orch, req),
-        "session.rename" => session_rename(orch, req),
         _ => fail(format!("unknown op `{op}`")),
     }
 }
@@ -805,40 +715,33 @@ fn raise(app: &AppHandle) {
     }
 }
 
-fn short_title(url: &str) -> String {
-    crate::urls::host(url).chars().take(24).collect()
+fn host_of(url: &str) -> String {
+    let bare = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_start_matches("www.");
+    bare.split(['/', '?', '#']).next().unwrap_or("").to_string()
 }
 
-/// Who asks, as a dialog names them.
-fn asker(session: &str) -> &'static str {
-    if session.is_empty() {
-        "A command sent to Parzi"
-    } else {
-        "An agent"
-    }
+fn short_title(url: &str) -> String {
+    host_of(url).chars().take(24).collect()
 }
 
 impl Ctx {
     fn tell(&self, payload: Value) {
-        crate::emit(&self.app, "parzi://desk", payload);
+        let _ = self.app.emit("parzi://desk", payload);
     }
 
-    /// A native dialog over the window, which comes forward for it. One at
-    /// a time; unanswered within `DIALOG_WAIT` (waiting for the one before
-    /// it included) it counts as a no, so a later click can't run an op
-    /// its client stopped waiting for.
+    /// A native dialog over the window, which comes forward for it.
     async fn ask_person(
         &self,
         title: &str,
         text: String,
         buttons: MessageDialogButtons,
     ) -> MessageDialogResult {
-        let until = tokio::time::Instant::now() + DIALOG_WAIT;
-        let Ok(_one) = tokio::time::timeout_at(until, self.desk.dialogs.lock()).await else {
-            return MessageDialogResult::Cancel;
-        };
+        let _one = self.desk.dialogs.lock().await;
         let (app, title) = (self.app.clone(), title.to_string());
-        let shown = tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::spawn_blocking(move || {
             use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
             let mut dialog = app
                 .dialog()
@@ -853,11 +756,9 @@ impl Ctx {
                 dialog = dialog.parent(&w);
             }
             dialog.blocking_show_with_result()
-        });
-        match tokio::time::timeout_at(until, shown).await {
-            Ok(Ok(answer)) => answer,
-            _ => MessageDialogResult::Cancel,
-        }
+        })
+        .await
+        .unwrap_or(MessageDialogResult::Cancel)
     }
 
     async fn confirm(&self, out: &Out, title: &str, text: String, ok: &str) -> bool {
@@ -873,28 +774,29 @@ impl Ctx {
                 MessageDialogButtons::OkCancelCustom(ok.into(), "Cancel".into()),
             )
             .await;
-        confirmed(&answer, ok)
+        matches!(answer, MessageDialogResult::Custom(ref s) if s == ok)
+            || answer == MessageDialogResult::Ok
     }
 
-    /// A page that isn't the asker's own (the person's browsing, signed in
-    /// where they are, or another agent's) waits for the person to allow
-    /// it: once, or for a while on this tab, for this asker, on this site.
-    async fn consent(&self, out: &Out, asked: Consent, what: &str, verb: &str) -> bool {
-        if self.desk.consented(&asked) {
+    /// A page tab no agent owns is the person's browsing, signed in where
+    /// they are: reading or driving it waits for them to allow it.
+    async fn consent_page(&self, out: &Out, tab: &TabSnap, verb: &str) -> bool {
+        if self.desk.consented(&tab.id) {
             return true;
         }
+        let title: String = tab.title.chars().take(80).collect();
         out.note(json!({
             "kind": "confirm",
-            "text": format!("waiting for you to allow this in the Parzi window: {verb} {what}"),
+            "text": format!("waiting for you to allow this in the Parzi window: {verb} \"{title}\""),
         }))
         .await;
         let text = format!(
-            "{} asks to {verb} {what}.\n\nIt sees what is shown there, including anything you are signed in to. Allow it only if you started this yourself.",
-            asker(&asked.session),
+            "A command asks to {verb} your page \"{title}\" ({}).\n\nIt sees what the page shows, including anything you are signed in to there. Allow it only if you started this yourself.",
+            host_of(&tab.url)
         );
         let answer = self
             .ask_person(
-                "Allow access?",
+                "Allow access to your page?",
                 text,
                 MessageDialogButtons::YesNoCancelCustom(
                     ALLOW_A_WHILE.into(),
@@ -903,30 +805,19 @@ impl Ctx {
                 ),
             )
             .await;
-        match allowed(&answer) {
-            Allowed::AWhile => {
-                self.desk.allow_for_a_while(asked);
+        match answer {
+            MessageDialogResult::Custom(s) if s == ALLOW_A_WHILE => {
+                self.desk.allow_for_a_while(&tab.id);
                 true
             }
-            Allowed::Once => true,
-            Allowed::No => false,
+            MessageDialogResult::Custom(s) => s == ALLOW_ONCE,
+            MessageDialogResult::Yes => {
+                self.desk.allow_for_a_while(&tab.id);
+                true
+            }
+            MessageDialogResult::No => true,
+            _ => false,
         }
-    }
-}
-
-/// How a dialog names a page: its title and site, never its full address.
-fn page_words(tab: &TabSnap, url: &str) -> String {
-    let title: String = tab.title.chars().take(80).collect();
-    let host = crate::urls::host(url);
-    let owner = if tab.session_id.is_empty() {
-        "your page"
-    } else {
-        "the agent page"
-    };
-    if host.is_empty() {
-        format!("{owner} \"{title}\"")
-    } else {
-        format!("{owner} \"{title}\" ({host})")
     }
 }
 
@@ -941,25 +832,12 @@ async fn page_op(ctx: &Ctx, out: &Out, req: &Value, op: &str) -> Value {
         "tab.shot" => "take a screenshot of",
         _ => "click and type in",
     };
-    // Allowed for the site the page is on now, and only while it stays
-    // there: the page script checks again when it runs.
-    let origin = if foreign {
-        let url = crate::browser::page_url(&ctx.app, &tab.id)
-            .await
-            .unwrap_or_else(|| tab.url.clone());
-        let asked = Consent::new(&tab.id, &session, &crate::urls::origin(&url));
-        if !ctx
-            .consent(out, asked.clone(), &page_words(&tab, &url), verb)
-            .await
-        {
-            return fail("not allowed: the person declined in the Parzi window");
-        }
-        Some(asked.origin)
-    } else {
+    if foreign && !ctx.consent_page(out, &tab, verb).await {
+        return fail("not allowed: the person declined in the Parzi window");
+    }
+    if !foreign {
         ctx.desk.used(&session, &tab.id);
-        None
-    };
-    let step = crate::pagectl::Step::new(origin);
+    }
     let args = req.get("args").cloned().unwrap_or_else(|| json!({}));
     let app = &ctx.app;
     let done = match op {
@@ -970,13 +848,13 @@ async fn page_op(ctx: &Ctx, out: &Out, req: &Value, op: &str) -> Value {
                     window[k] = json!(n);
                 }
             }
-            crate::pagectl::read(app, &tab.id, &window, step).await
+            crate::pagectl::read(app, &tab.id, &window).await
         }
-        "tab.wait" => crate::pagectl::wait(app, &tab.id, &args, step).await,
-        "tab.shot" => crate::pagectl::shot(app, &tab.id, step)
+        "tab.wait" => crate::pagectl::wait(app, &tab.id, &args).await,
+        "tab.shot" => crate::pagectl::shot(app, &tab.id)
             .await
             .map(|jpeg| json!({ "jpeg": jpeg })),
-        _ => crate::pagectl::act(app, &tab.id, op.trim_start_matches("tab."), &args, step).await,
+        _ => crate::pagectl::act(app, &tab.id, op.trim_start_matches("tab."), &args).await,
     };
     match done {
         Ok(mut v) => {
@@ -1047,8 +925,8 @@ fn open_for_agent(ctx: &Ctx, session: &str, url: &str, req: &Value, focus: bool)
         return json!({ "ok": true, "id": tab.id, "url": url });
     }
     let id = format!("tab-{}", uuid::Uuid::new_v4().simple());
-    // The URL is checked again and the page queued to come up before the
-    // tab is recorded or the window hears of it; a refused URL leaves none.
+    // The page comes up (and the URL is checked again) before the tab is
+    // recorded or the window hears of it.
     if let Err(e) = crate::browser::prepare_for_agent(ctx.app.clone(), id.clone(), url) {
         return fail(e);
     }
@@ -1090,52 +968,59 @@ fn tab_close(ctx: &Ctx, req: &Value) -> Value {
     json!({ "ok": true, "id": id })
 }
 
-/// The folder and project of the tab in front, and the sessions running
-/// or queued: read from the store and the vault, on the blocking pool.
-fn front_and_running(orch: &Orchestrator, tab: Option<&TabSnap>) -> (String, Value, Vec<Value>) {
-    use parzi_core::store::SessionStatus;
-    let folder = match tab {
-        Some(t) if t.kind == "session" && !t.session_id.is_empty() => orch
+/// The folder and project of the tab in front.
+async fn front_folder(ctx: &Ctx, tab: Option<&TabSnap>) -> (String, Value) {
+    let Some(tab) = tab else {
+        return (String::new(), Value::Null);
+    };
+    let folder = if tab.kind == "session" && !tab.session_id.is_empty() {
+        ctx.orch
             .store()
-            .get(&t.session_id)
+            .get(&tab.session_id)
             .map(|m| m.cwd)
-            .unwrap_or_default(),
-        Some(t) => t.cwd.clone(),
-        None => String::new(),
-    };
-    let project = if folder.trim().is_empty() || crate::files::remote_or_device(&folder) {
-        Value::Null
+            .unwrap_or_default()
     } else {
-        parzi_core::brain::project_for_folder(&folder)
-            .map_or(Value::Null, |slug| json!({ "slug": slug }))
+        tab.cwd.clone()
     };
-    let running = orch
-        .store()
-        .list()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|m| matches!(m.status, SessionStatus::Active | SessionStatus::Queued))
-        .map(|m| json!({ "id": m.id, "title": m.title, "lane": m.lane, "status": m.status }))
-        .collect();
-    (folder, project, running)
+    if folder.trim().is_empty() || crate::files::remote_or_device(&folder) {
+        return (folder, Value::Null);
+    }
+    let dir = folder.clone();
+    let project =
+        tauri::async_runtime::spawn_blocking(move || parzi_core::brain::project_for_folder(&dir))
+            .await
+            .ok()
+            .flatten();
+    (
+        folder,
+        project.map_or(Value::Null, |slug| json!({ "slug": slug })),
+    )
 }
 
 async fn desk_state(ctx: &Ctx, req: &Value) -> Value {
     let session = str_arg(req, "session");
     let (tabs, active) = ctx.desk.snapshot();
-    let front = tabs.iter().find(|t| t.id == active).cloned();
+    let front = tabs.iter().find(|t| t.id == active);
+    let (folder, project) = front_folder(ctx, front).await;
     let focused = ctx
         .app
         .get_window("main")
         .and_then(|w| w.is_focused().ok())
         .unwrap_or(false);
-    let looked = front.clone();
-    let (folder, project, running) = on_store(&ctx.orch, move |orch| {
-        Ok(front_and_running(orch, looked.as_ref()))
-    })
-    .await
-    .unwrap_or_default();
-    let front = front.as_ref();
+    let running: Vec<Value> = ctx
+        .orch
+        .store()
+        .list()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|m| {
+            matches!(
+                m.status,
+                parzi_core::store::SessionStatus::Active | parzi_core::store::SessionStatus::Queued
+            )
+        })
+        .map(|m| json!({ "id": m.id, "title": m.title, "status": m.status }))
+        .collect();
     if !session.is_empty() {
         let own: Vec<&TabSnap> = tabs
             .iter()
@@ -1194,10 +1079,16 @@ async fn desk_open(ctx: &Ctx, req: &Value) -> Value {
     let (payload, done) = match what.as_str() {
         "url" | "page" => return tab_open(ctx, req).await,
         "session" => {
-            let (id, title) = match find_session(&ctx.orch, str_arg(req, "id")).await {
-                Ok(found) => found,
-                Err(e) => return fail(e),
+            let id = match ctx.orch.store().resolve_id(&str_arg(req, "id")) {
+                Ok(id) => id,
+                Err(e) => return fail(e.to_string()),
             };
+            let title = ctx
+                .orch
+                .store()
+                .get(&id)
+                .map(|m| m.title)
+                .unwrap_or_default();
             (
                 json!({ "op": "show", "what": "session", "id": id, "title": title, "focus": focus }),
                 format!("opened session {}", &id[..8.min(id.len())]),
@@ -1214,7 +1105,7 @@ async fn desk_open(ctx: &Ctx, req: &Value) -> Value {
                 ));
             }
             (
-                json!({ "op": "show", "what": "settings", "section": section, "focus": focus }),
+                json!({ "op": "show", "what": "settings", "section": section, "focus": true }),
                 format!("opened settings, {section}"),
             )
         }
@@ -1224,7 +1115,7 @@ async fn desk_open(ctx: &Ctx, req: &Value) -> Value {
                 Err(e) => return fail(e),
             };
             (
-                json!({ "op": "show", "what": "brain", "path": path, "focus": focus }),
+                json!({ "op": "show", "what": "brain", "path": path, "focus": true }),
                 "opened the brain".to_string(),
             )
         }
@@ -1236,16 +1127,22 @@ async fn desk_open(ctx: &Ctx, req: &Value) -> Value {
                 return fail(format!("history shows {}", HISTORY.join(", ")));
             }
             (
-                json!({ "op": "show", "what": "history", "view": view, "focus": focus }),
+                json!({ "op": "show", "what": "history", "view": view, "focus": true }),
                 "opened history".to_string(),
             )
         }
+        // The plan panel beside the session; "work" and "tasks" are what
+        // it was called before.
+        "plan" | "work" | "tasks" => (
+            json!({ "op": "show", "what": "plan", "focus": true }),
+            "opened the plan".to_string(),
+        ),
         "home" => (
-            json!({ "op": "show", "what": "home", "focus": focus }),
+            json!({ "op": "show", "what": "home", "focus": true }),
             "opened home".to_string(),
         ),
         _ => {
-            return fail("what must be session, settings, brain, history, home or url");
+            return fail("what must be session, settings, brain, history, plan, home or url");
         }
     };
     if bool_arg(req, "raise", false) {
@@ -1275,28 +1172,20 @@ fn desk_notify(ctx: &Ctx, req: &Value) -> Value {
     json!({ "ok": true })
 }
 
-/// The window as it looks: sessions, transcripts, whatever is open. Like a
-/// page that isn't the asker's, the person allows it first.
-async fn desk_screenshot(ctx: &Ctx, out: &Out, req: &Value) -> Value {
+async fn desk_screenshot(ctx: &Ctx) -> Value {
     let Some(wv) = ctx.app.get_webview("main") else {
         return fail("the window is not up");
     };
-    let asked = Consent::new(DESK_TAB, &str_arg(req, "session"), "parzi");
-    if !ctx
-        .consent(out, asked, "the Parzi window", "take a screenshot of")
-        .await
-    {
-        return fail("not allowed: the person declined in the Parzi window");
-    }
     #[cfg(windows)]
     {
         use base64::Engine as _;
-        match crate::dwm::capture_page(&wv, Duration::from_secs(5)).await {
-            Ok(jpeg) => json!({
+        match tauri::async_runtime::spawn_blocking(move || crate::dwm::capture_page(&wv)).await {
+            Ok(Ok(jpeg)) => json!({
                 "ok": true,
                 "jpeg": base64::engine::general_purpose::STANDARD.encode(jpeg),
             }),
-            Err(e) => fail(e),
+            Ok(Err(e)) => fail(e),
+            Err(e) => fail(e.to_string()),
         }
     }
     #[cfg(not(windows))]
@@ -1306,10 +1195,7 @@ async fn desk_screenshot(ctx: &Ctx, out: &Out, req: &Value) -> Value {
     }
 }
 
-/// The token alone must not let a tool call through: an agent's shell can
-/// run `parzi approval allow`. Allowing waits for the person in the window,
-/// like `session send --yes`; denying needs no one.
-async fn approval_answer(ctx: &Ctx, out: &Out, req: &Value) -> Value {
+async fn approval_answer(ctx: &Ctx, req: &Value) -> Value {
     let Some(allow) = req.get("allow").and_then(Value::as_bool) else {
         return fail("allow true or false is required");
     };
@@ -1317,48 +1203,25 @@ async fn approval_answer(ctx: &Ctx, out: &Out, req: &Value) -> Value {
         Ok(found) => found,
         Err(e) => return fail(e),
     };
-    let label = row.get("label").and_then(Value::as_str).unwrap_or("");
-    if allow {
-        let sid = row
-            .get("session")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let title = on_store(&ctx.orch, move |o| {
-            Ok(o.store().get(&sid).map(|m| m.title).unwrap_or_default())
-        })
-        .await
-        .unwrap_or_default();
-        let text = format!(
-            "A command sent to Parzi asks to allow a tool call of the session \"{title}\":\n\n{label}\n\nAllow it only if you just ran this yourself."
-        );
-        if !ctx.confirm(out, "Allow a tool call?", text, "Allow").await {
-            return fail("not allowed: the person declined in the Parzi window");
-        }
-    }
-    let (session, tx) = match ctx.pending.take(&key, None) {
-        Ok(found) => found,
-        Err(Mismatch::Gone | Mismatch::Other) => {
-            ctx.desk.approval_closed(&key);
-            return fail("approval expired or unknown");
-        }
+    let entry = ctx.pending.lock().await.remove(&key);
+    let Some((session, tx)) = entry else {
+        ctx.desk.approval_closed(&key);
+        return fail("approval expired or unknown");
     };
     let decision = if allow {
         Approval::Allow
     } else {
         Approval::Deny
     };
-    let sent = tx.send(decision).is_ok();
-    // Answered or not, nobody waits on it any more.
-    ctx.desk.approval_closed(&key);
-    if !sent {
+    if tx.send(decision).is_err() {
         return fail("the run is no longer waiting");
     }
+    ctx.desk.approval_closed(&key);
     ctx.tell(json!({
         "op": "approval",
         "key": key,
         "allow": allow,
-        "label": label,
+        "label": row.get("label").cloned().unwrap_or_default(),
     }));
     json!({ "ok": true, "key": key, "session": session })
 }
@@ -1380,106 +1243,33 @@ async fn providers(ctx: &Ctx, req: &Value) -> Value {
     json!({ "ok": true, "providers": crate::settings::in_roster_order(all) })
 }
 
-fn session_list(orch: &Orchestrator) -> Value {
-    match orch.store().list() {
-        Ok(rows) => json!({ "ok": true, "sessions": rows }),
-        Err(e) => fail(e.to_string()),
-    }
-}
-
 fn resolve_id(orch: &Orchestrator, id: &str) -> Result<String, String> {
     orch.store().resolve_id(id).map_err(|e| e.to_string())
 }
 
-fn session_show(orch: &Orchestrator, req: &Value, export: bool) -> Value {
-    let id = match resolve_id(orch, &str_arg(req, "id")) {
-        Ok(id) => id,
-        Err(e) => return fail(e),
-    };
-    let meta = match orch.store().get(&id) {
-        Ok(m) => m,
-        Err(e) => return fail(e.to_string()),
-    };
-    let md = parzi_core::paths::sessions_dir()
-        .ok()
-        .and_then(|d| std::fs::read_to_string(d.join(&id).join("session.md")).ok())
-        .unwrap_or_default();
-    let text: String = md.chars().take(20_000).collect();
-    if export {
-        json!({ "ok": true, "id": id, "text": text })
-    } else {
-        json!({ "ok": true, "session": meta, "text": text })
-    }
-}
-
-/// A full id (or a prefix only one session has) and the session's title.
-async fn find_session(orch: &Arc<Orchestrator>, raw: String) -> Result<(String, String), String> {
-    on_store(orch, move |o| {
-        let id = resolve_id(o, &raw)?;
-        let title = o.store().get(&id).map(|m| m.title).unwrap_or_default();
-        Ok((id, title))
-    })
-    .await
-}
-
-async fn session_kill(orch: &Arc<Orchestrator>, req: &Value) -> Value {
-    let id = match find_session(orch, str_arg(req, "id")).await {
-        Ok((id, _)) => id,
-        Err(e) => return fail(e),
-    };
-    match orch.kill(&id).await {
-        Ok(()) => json!({ "ok": true, "id": id }),
-        Err(e) => fail(e.to_string()),
-    }
-}
-
-fn session_fork(orch: &Orchestrator, req: &Value) -> Value {
-    let id = match resolve_id(orch, &str_arg(req, "id")) {
-        Ok(id) => id,
-        Err(e) => return fail(e),
-    };
-    let at = req
-        .get("at")
-        .and_then(Value::as_u64)
-        .and_then(|n| usize::try_from(n).ok());
-    match orch.store().fork(&id, at) {
-        Ok(meta) => json!({ "ok": true, "id": meta.id }),
-        Err(e) => fail(e.to_string()),
-    }
-}
-
-fn session_rename(orch: &Orchestrator, req: &Value) -> Value {
-    let id = match resolve_id(orch, &str_arg(req, "id")) {
-        Ok(id) => id,
-        Err(e) => return fail(e),
-    };
-    let title = str_arg(req, "title");
-    if title.is_empty() {
-        return fail("title is required");
-    }
-    match orch.store().set_title(&id, &title) {
-        Ok(()) => json!({ "ok": true, "id": id }),
-        Err(e) => fail(e.to_string()),
-    }
-}
-
 async fn session_delete(ctx: &Ctx, out: &Out, req: &Value) -> Value {
-    let (id, title) = match find_session(&ctx.orch, str_arg(req, "id")).await {
-        Ok(found) => found,
+    let id = match resolve_id(&ctx.orch, &str_arg(req, "id")) {
+        Ok(id) => id,
         Err(e) => return fail(e),
     };
+    let title = ctx
+        .orch
+        .store()
+        .get(&id)
+        .map(|m| m.title)
+        .unwrap_or_default();
     let text = format!(
         "A command sent to Parzi asks to delete the session \"{title}\" and its transcript, with the subsessions it started.\n\nAllow it only if you just ran this yourself."
     );
     if !ctx.confirm(out, "Delete a session?", text, "Delete").await {
         return fail("not deleted: the person declined in the Parzi window");
     }
-    match crate::sessions::delete_with_runs(&ctx.orch, &id).await {
+    match ctx.orch.delete_thread(&id).await {
         Ok(n) => {
             ctx.tell(json!({ "op": "deleted", "id": id }));
             json!({ "ok": true, "id": id, "removed": n })
         }
-        Err(e) => fail(e),
+        Err(e) => fail(e.to_string()),
     }
 }
 
@@ -1514,15 +1304,22 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
     let continued = if fresh {
         None
     } else {
-        match find_session(&ctx.orch, target).await {
-            Ok(found) => Some(found),
+        match resolve_id(&ctx.orch, &target) {
+            Ok(id) => Some(id),
             Err(e) => return fail(e),
         }
     };
     let yes = bool_arg(req, "yes", false);
     if yes {
         let thread = match &continued {
-            Some((_, title)) => format!("the session \"{title}\""),
+            Some(id) => format!(
+                "the session \"{}\"",
+                ctx.orch
+                    .store()
+                    .get(id)
+                    .map(|m| m.title)
+                    .unwrap_or_default()
+            ),
             None => "a new session".into(),
         };
         let excerpt: String = message.chars().take(300).collect();
@@ -1556,7 +1353,7 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
     // gets its turn.
     let mut runs = ctx.orch.subscribe();
     let mut side = ctx.desk.events.subscribe();
-    let sent = match continued.map(|(id, _)| id) {
+    let sent = match continued {
         None => {
             // Same filing as the desk: a thread belongs to its folder's project.
             let project = crate::sessions::project_for(&cwd).await;
@@ -1564,7 +1361,6 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
                 .spawn_as(
                     RunCause::Cli,
                     &project,
-                    "",
                     &model,
                     &message,
                     Some(approver),
@@ -1617,11 +1413,6 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
     // waiting on a run that already ended.
     let mut check = tokio::time::interval(Duration::from_secs(15));
     check.tick().await;
-    // A client that left quietly is found by the next line that fails, so
-    // one that hears nothing for a while gets a ping: a long run must not
-    // hold a stream slot for a caller that is gone.
-    let mut alive = tokio::time::interval(KEEPALIVE);
-    alive.tick().await;
     loop {
         tokio::select! {
             run = runs.recv() => match run {
@@ -1649,7 +1440,7 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
                 }
                 Ok(_) => {}
                 Err(broadcast::error::RecvError::Lagged(_)) => {
-                    if run_over(&ctx.orch, &id).await {
+                    if run_over(&ctx.orch, &id) {
                         break;
                     }
                 }
@@ -1667,27 +1458,19 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
                 Err(broadcast::error::RecvError::Closed) => side_open = false,
             },
             _ = check.tick() => {
-                if run_over(&ctx.orch, &id).await {
+                if run_over(&ctx.orch, &id) {
                     break;
-                }
-            }
-            _ = alive.tick(), if out.progress => {
-                if out.line(&json!({ "kind": "ping" })).await.is_err() {
-                    return detached();
                 }
             }
         }
     }
-    let sid = id.clone();
-    let status = on_store(&ctx.orch, move |o| {
-        Ok(o.store()
-            .get(&sid)
-            .ok()
-            .and_then(|m| serde_json::to_value(m.status).ok())
-            .unwrap_or(Value::Null))
-    })
-    .await
-    .unwrap_or(Value::Null);
+    let status = ctx
+        .orch
+        .store()
+        .get(&id)
+        .ok()
+        .and_then(|m| serde_json::to_value(m.status).ok())
+        .unwrap_or(Value::Null);
     if let Some(e) = failed {
         return json!({ "ok": false, "id": id, "error": e, "text": text, "status": status });
     }
@@ -1695,16 +1478,11 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
 }
 
 /// The session is neither running nor waiting for its turn.
-async fn run_over(orch: &Arc<Orchestrator>, id: &str) -> bool {
+fn run_over(orch: &Orchestrator, id: &str) -> bool {
     use parzi_core::store::SessionStatus;
-    let id = id.to_string();
-    on_store(orch, move |o| {
-        Ok(o.store()
-            .get(&id)
-            .is_ok_and(|m| !matches!(m.status, SessionStatus::Active | SessionStatus::Queued)))
-    })
-    .await
-    .unwrap_or(false)
+    orch.store()
+        .get(id)
+        .is_ok_and(|m| !matches!(m.status, SessionStatus::Active | SessionStatus::Queued))
 }
 
 /// Every run event, approval, tab change and notice as a line, until the
@@ -1734,11 +1512,6 @@ async fn subscribe(ctx: &Ctx, out: &Out, req: &Value) -> Result<(), String> {
                 Err(broadcast::error::RecvError::Closed) => return Ok(()),
             },
             other = side.recv() => match other {
-                Ok(v) if !session.is_empty()
-                    && v.get("kind").and_then(Value::as_str) == Some("tabs") =>
-                {
-                    Some(scoped_tabs_event(&v, &session))
-                }
                 Ok(v) if ours(&v) => Some(v),
                 Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => None,
                 Err(broadcast::error::RecvError::Closed) => return Ok(()),
@@ -1838,10 +1611,7 @@ mod tests {
         assert_eq!(tab.id, "t2", "the CLI gets the tab in front");
         assert!(foreign);
         let (_, foreign) = desk.find_page("", "t1").unwrap();
-        assert!(
-            foreign,
-            "the CLI on an agent's tab asks too: an agent's shell has the token"
-        );
+        assert!(!foreign, "the CLI on an agent's tab");
     }
 
     #[test]
@@ -1939,7 +1709,6 @@ mod tests {
             id: "c1".into(),
             name: "shell.exec".into(),
             args: json!({ "cmd": "cargo test" }),
-            lane: "build".into(),
             session: "s1".into(),
         };
         desk.approval_opened("abcd-1234", &call);
@@ -1957,100 +1726,12 @@ mod tests {
     }
 
     #[test]
-    fn consent_is_per_tab_asker_and_site() {
+    fn consent_lasts_a_while_per_tab() {
         let desk = Desk::new();
-        let mail = Consent::new("t1", "s1", "https://mail.example");
-        assert!(!desk.consented(&mail));
-        desk.allow_for_a_while(mail.clone());
-        assert!(desk.consented(&mail));
-        assert!(
-            !desk.consented(&Consent::new("t2", "s1", "https://mail.example")),
-            "another tab"
-        );
-        assert!(
-            !desk.consented(&Consent::new("t1", "s2", "https://mail.example")),
-            "another agent"
-        );
-        assert!(
-            !desk.consented(&Consent::new("t1", "", "https://mail.example")),
-            "the CLI"
-        );
-        assert!(
-            !desk.consented(&Consent::new("t1", "s1", "https://bank.example")),
-            "the tab went to another site"
-        );
-        // Same site, another page: still allowed.
-        desk.page_moved("t1", "https://mail.example/inbox/2");
-        assert!(desk.consented(&mail));
-        // Away and back: the person is asked again.
-        desk.page_moved("t1", "https://bank.example/login");
-        desk.page_moved("t1", "https://mail.example/");
-        assert!(!desk.consented(&mail));
-    }
-
-    #[test]
-    fn a_closed_tab_takes_its_consent_along() {
-        let desk = Desk::new();
-        desk.sync(vec![page("t1", "https://a.example/", "")], 0, "t1".into());
-        let asked = Consent::new("t1", "s1", "https://a.example");
-        desk.allow_for_a_while(asked.clone());
-        let shot = Consent::new(DESK_TAB, "s1", "parzi");
-        desk.allow_for_a_while(shot.clone());
-        desk.sync(vec![], 1, String::new());
-        assert!(!desk.consented(&asked));
-        assert!(desk.consented(&shot), "the window is no tab");
-    }
-
-    #[test]
-    fn only_the_allow_buttons_allow() {
-        use MessageDialogResult as R;
-        assert_eq!(allowed(&R::Custom(ALLOW_A_WHILE.into())), Allowed::AWhile);
-        assert_eq!(allowed(&R::Custom(ALLOW_ONCE.into())), Allowed::Once);
-        for no in [
-            R::Custom("Deny".into()),
-            R::No,
-            R::Yes,
-            R::Ok,
-            R::Cancel,
-            R::Custom(String::new()),
-        ] {
-            assert_eq!(allowed(&no), Allowed::No, "{no:?}");
-        }
-        assert!(confirmed(&R::Custom("Delete".into()), "Delete"));
-        assert!(!confirmed(&R::Custom("Cancel".into()), "Delete"));
-        assert!(!confirmed(&R::Ok, "Delete"));
-        assert!(!confirmed(&R::Cancel, "Delete"));
-    }
-
-    #[test]
-    fn a_sessions_subscription_sees_tabs_as_tab_list_shows_them() {
-        let tabs = vec![
-            page("t1", "https://mine.example/", "s1"),
-            page("t2", "https://bank.example/account", ""),
-            page("t3", "https://other.example/", "s2"),
-        ];
-        let event = json!({ "kind": "tabs", "active": "t2", "tabs": tabs });
-        let v = scoped_tabs_event(&event, "s1");
-        assert_eq!(v["kind"], "tabs");
-        assert_eq!(v["active_title"], "title t2");
-        let text = v.to_string();
-        assert!(text.contains("mine.example"));
-        assert!(!text.contains("bank.example"), "{text}");
-        assert!(!text.contains("other.example"), "{text}");
-        assert!(v.get("active").is_none(), "{text}");
-    }
-
-    #[test]
-    fn dialogs_name_pages_by_title_and_site() {
-        let mut tab = page("t1", "", "");
-        tab.title = "Inbox".into();
-        assert_eq!(
-            page_words(&tab, "https://user:pw@Mail.Example.com/u/0#inbox"),
-            "your page \"Inbox\" (mail.example.com)"
-        );
-        tab.session_id = "s2".into();
-        assert_eq!(page_words(&tab, "about:blank"), "the agent page \"Inbox\"");
-        assert_eq!(short_title("https://www.example.com/a/b"), "example.com");
+        assert!(!desk.consented("t1"));
+        desk.allow_for_a_while("t1");
+        assert!(desk.consented("t1"));
+        assert!(!desk.consented("t2"));
     }
 
     #[test]

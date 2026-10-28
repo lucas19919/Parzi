@@ -10,6 +10,8 @@ interface Toast {
   // 0..1 shows a progress bar.
   progress?: number;
   action?: { label: string; run: () => void };
+  // Clicking the toast runs this (open the task it is about).
+  run?: () => void;
 }
 
 export const toasts = writable<Toast[]>([]);

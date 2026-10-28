@@ -1,12 +1,11 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { get } from "svelte/store";
   import { fade, fly } from "svelte/transition";
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
-  import { api, brain, onboard, onSignIn, type ProviderStatus, type Scan } from "./api";
-  import { board, checking, refreshBoard } from "./providerStore";
+  import { brain, onboard, type Scan } from "./api";
+  import { board, checking, nextStep, refreshBoard, setupWaits } from "./providerStore";
   import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "./providerRows";
   import { importBrowser, onboarded } from "./browserData";
   import { setOverlay } from "./overlay";
@@ -16,19 +15,14 @@
 
   const dispatch = createEventDispatcher<{ close: void; openBrain: void }>();
 
-  const STEPS = ["Agents", "Browser", "Your tools", "Brain", "Remote"];
-  const TITLES = ["Your agents", "Bring your browser", "Bring your other tools", "Your brain", "Work from anywhere"];
-  const WATCH_EVERY = 5_000;
-  const INSTALL_WAIT = 600_000;
-  const SIGN_IN_WAIT = 180_000;
-  const START_ETA = 75_000;
-
-  interface Wait {
-    note: string;
-    eta: number;
-  }
-
+  const STEPS = ["Agents", "Browser", "Your tools", "Done"];
+  const TITLES = ["Your agents", "Bring your browser", "Bring your other tools", "You're set"];
+  const LAST = STEPS.length - 1;
+  // The most recent folders you've worked in are offered as projects.
+  const RECENT = 12;
   export let startStep = 0;
+  // Open with the server form showing (Settings asks for that).
+  export let server = false;
 
   let step = startStep;
   let scan: Scan | null = null;
@@ -38,18 +32,30 @@
   let wantHistory = true;
   let browserResult = "";
   let busy = false;
-  let notePicks = new Set<string>();
-  let folderPicks = new Set<string>();
+  let picked = new Set<string>();
+  let open = new Set<string>();
   let toolResult = "";
+  let skipped: string[] = [];
   let vault = "";
-  let waiting = new Map<string, Wait>();
-  let alive = true;
+  let serverOpen = server;
   let card: HTMLDivElement;
+
+  // One group per tool with notes to bring, then the recent folders.
+  type Group = { id: string; name: string; unit: [string, string]; items: { key: string; title: string; hint: string }[] };
 
   $: agents = PROVIDER_ORDER.map((id) => $board.find((b) => b.provider === id)).filter((b) => !!b);
   $: browsers = scan?.browsers ?? [];
-  $: tools = (scan?.tools ?? []).filter((t) => t.found);
-  $: folders = (scan?.folders ?? []).filter((f) => f.exists);
+  $: groups = groupsOf(scan);
+
+  function groupsOf(s: Scan | null): Group[] {
+    if (!s) return [];
+    const tools: Group[] = s.tools
+      .filter((t) => t.found && t.notes.length)
+      .map((t) => ({ id: t.id, name: t.name, unit: ["note", "notes"], items: t.notes.map((n) => ({ key: n.source, title: n.title, hint: n.source })) }));
+    const folders = s.folders.filter((f) => f.exists).slice(0, RECENT);
+    if (!folders.length) return tools;
+    return [...tools, { id: "projects", name: "Projects", unit: ["project", "projects"], items: folders.map((f) => ({ key: f.path, title: f.name, hint: f.path })) }];
+  }
 
   onMount(() => {
     setOverlay("onboarding", true);
@@ -57,18 +63,7 @@
     const before = document.activeElement as HTMLElement | null;
     card.focus();
     void load();
-    const unlisten = onSignIn(({ provider, step }) => {
-      if (!waiting.has(provider)) return;
-      waiting = new Map(waiting).set(
-        provider,
-        step === "starting"
-          ? { note: `Starting ${nameOf(provider)}. This takes about a minute…`, eta: START_ETA }
-          : { note: "Sign in with Google in your browser…", eta: 0 },
-      );
-    });
     return () => {
-      alive = false;
-      void unlisten.then((off) => off());
       setOverlay("onboarding", false);
       before?.focus?.();
     };
@@ -81,11 +76,30 @@
       scan = await onboard.scan();
       const first = scan.browsers.find((b) => b.id === "brave") ?? scan.browsers[0];
       browserPick = first ? `${first.id}:${first.profile}` : "";
-      notePicks = new Set(scan.tools.flatMap((t) => t.notes.map((n) => n.source)));
-      folderPicks = new Set(scan.folders.filter((f) => f.exists).slice(0, 12).map((f) => f.path));
+      picked = new Set(groupsOf(scan).flatMap((g) => g.items.map((i) => i.key)));
     } catch (e) {
       scanError = String(e);
     }
+  }
+
+  const pickedIn = (g: Group, set: Set<string>) => g.items.filter((i) => set.has(i.key)).length;
+
+  function count(g: Group, set: Set<string>) {
+    const n = g.items.length;
+    const k = pickedIn(g, set);
+    const unit = g.unit[n === 1 ? 0 : 1];
+    return k && k < n ? `${k} of ${n} ${unit}` : `${n} ${unit}`;
+  }
+
+  // A tool's box picks all of its notes, or none once all are picked.
+  function pickGroup(g: Group) {
+    const all = pickedIn(g, picked) === g.items.length;
+    const next = new Set(picked);
+    for (const i of g.items) {
+      if (all) next.delete(i.key);
+      else next.add(i.key);
+    }
+    picked = next;
   }
 
   function toggle(set: Set<string>, key: string) {
@@ -95,45 +109,11 @@
     return next;
   }
 
-  const stateOf = (provider: string) => get(board).find((b) => b.provider === provider)?.state;
-
-  async function watch(provider: string, from: string | undefined, ms: number) {
-    const until = Date.now() + ms;
-    while (alive && Date.now() < until) {
-      await new Promise((r) => setTimeout(r, WATCH_EVERY));
-      const fresh = await refreshBoard([provider]).catch(() => [] as ProviderStatus[]);
-      const now = fresh.find((b) => b.provider === provider)?.state;
-      if (now && now !== from) return;
-    }
+  // Some but not all of a tool's notes picked: the box shows a dash.
+  function mixed(node: HTMLInputElement, on: boolean) {
+    node.indeterminate = on;
+    return { update: (v: boolean) => (node.indeterminate = v) };
   }
-
-  async function act(provider: string, note: string, work: () => Promise<number>) {
-    if (waiting.has(provider)) return;
-    const from = stateOf(provider);
-    waiting = new Map(waiting).set(provider, { note, eta: 0 });
-    try {
-      const ms = await work();
-      if (ms) await watch(provider, from, ms);
-      else await refreshBoard([provider]);
-    } catch (e) {
-      toastError(e);
-    } finally {
-      const next = new Map(waiting);
-      next.delete(provider);
-      waiting = next;
-    }
-  }
-
-  const install = (provider: string) =>
-    act(provider, "Installing in the terminal window…", async () => {
-      await onboard.install(provider);
-      return INSTALL_WAIT;
-    });
-
-  const signIn = (provider: string) =>
-    act(provider, "Finish signing in in the window that opens…", async () =>
-      (await onboard.login(provider)) ? 0 : SIGN_IN_WAIT,
-    );
 
   async function importFromBrowser() {
     if (!browserPick) return;
@@ -154,10 +134,13 @@
   }
 
   async function importFromTools() {
+    const keys = (projects: boolean) =>
+      groups.filter((g) => (g.id === "projects") === projects).flatMap((g) => g.items.map((i) => i.key).filter((k) => picked.has(k)));
     busy = true;
     try {
-      const r = await onboard.importTools([...notePicks], [...folderPicks]);
-      toolResult = `Added ${r.notes} notes and ${r.projects} projects to your brain.${r.skipped.length ? ` Skipped ${r.skipped.length}.` : ""}`;
+      const r = await onboard.importTools(keys(false), keys(true));
+      toolResult = `Added ${r.notes} ${r.notes === 1 ? "note" : "notes"} and ${r.projects} ${r.projects === 1 ? "project" : "projects"} to your brain.`;
+      skipped = r.skipped;
     } catch (e) {
       toastError(e);
     } finally {
@@ -166,22 +149,28 @@
   }
 
   function finish(openBrain = false) {
+    if (locked) return;
     onboarded.set(true);
     dispatch("close");
     if (openBrain) dispatch("openBrain");
   }
 
+  // Esc in a field only leaves the field: the wizard stays. It stays too
+  // while a server is being set up.
   function onKey(e: KeyboardEvent) {
-    if (e.key === "Escape" && !e.defaultPrevented) {
-      e.preventDefault();
-      finish();
-    }
+    const typing = (e.target as HTMLElement | null)?.closest?.("input, textarea, select");
+    if (e.key !== "Escape" || e.defaultPrevented || typing) return;
+    e.preventDefault();
+    finish();
   }
 
-  function ago(ms?: number | null) {
-    if (!ms) return "";
-    const days = Math.floor((Date.now() - ms) / 86_400_000);
-    return days <= 0 ? "today" : days === 1 ? "yesterday" : `${days}d ago`;
+  // Next does what the step offers with what is picked, then moves on;
+  // Skip moves on without it.
+  async function next() {
+    if (busy) return;
+    if (step === 1 && !browserResult && browserPick && (wantBookmarks || wantHistory)) await importFromBrowser();
+    else if (step === 2 && !toolResult && picked.size) await importFromTools();
+    step += 1;
   }
 
   let remoteInfo: RemoteInfo | null = null;
@@ -203,9 +192,13 @@
   // The password lives in this field until Set up reads it, then only
   // inside the backend call. It is never written anywhere.
 
+  // Nothing leaves the wizard while a server is being set up.
+  $: locked = setupState === "running";
+
   async function loadRemote() {
     try {
       remoteInfo = await remote.info();
+      if (remoteInfo) serverOpen = true;
     } catch (e) {
       toastError(e);
     }
@@ -236,7 +229,7 @@
     }
   }
 
-  $: if (step === 4 && !remoteLoaded) {
+  $: if (step === LAST && !remoteLoaded) {
     remoteLoaded = true;
     void loadRemote();
   }
@@ -257,10 +250,10 @@
     <header>
       <div class="steps">
         {#each STEPS as s, i}
-          <button class:on={i === step} class:done={i < step} aria-current={i === step ? "step" : undefined} on:click={() => (step = i)}>{s}</button>
+          <button class:on={i === step} class:done={i < step} aria-current={i === step ? "step" : undefined} disabled={locked} on:click={() => (step = i)}>{s}</button>
         {/each}
       </div>
-      <button class="x" use:tooltip={"Close"} on:click={() => finish()}><Icon name="close" /></button>
+      <button class="x" use:tooltip={locked ? "Wait for the remote setup" : "Close"} disabled={locked} on:click={() => finish()}><Icon name="close" /></button>
     </header>
 
     <div class="body">
@@ -269,7 +262,8 @@
         <p class="lead">Parzi drives each agent on your own subscription. Install and sign in right here; each agent keeps its own login, so Parzi never sees your tokens.</p>
         <div class="list">
           {#each agents as a (a.provider)}
-            {@const wait = waiting.get(a.provider)}
+            {@const wait = $setupWaits.get(a.provider)}
+            {@const next = wait ? null : nextStep(a)}
             <div class="item">
               <span class="logo">
                 {#if hasMark(a.provider)}<ProviderLogo provider={a.provider} size={18} />{:else}{a.provider.slice(0, 1).toUpperCase()}{/if}
@@ -283,14 +277,8 @@
                   <span class="progress" class:sweep={!wait.eta} style:--eta="{wait.eta}ms"><span></span></span>
                 {/key}
               {/if}
-              {#if a.state === "not_installed"}
-                <button class="btn" disabled={waiting.has(a.provider)} on:click={() => install(a.provider)}>
-                  {waiting.has(a.provider) ? "Installing…" : "Install"}
-                </button>
-              {:else if a.state === "signed_out" || a.state === "unchecked"}
-                <button class="btn" disabled={waiting.has(a.provider)} on:click={() => signIn(a.provider)}>
-                  {waiting.has(a.provider) ? "Signing in…" : "Sign in"}
-                </button>
+              {#if next}
+                <button class="btn" disabled={$checking.has(a.provider) || $checking.has("*")} on:click={() => next.run(a.provider)}>{next.label}</button>
               {/if}
             </div>
           {/each}
@@ -307,10 +295,11 @@
             {#each browsers as b (b.id + b.profile)}
               <label class="item" class:on={browserPick === `${b.id}:${b.profile}`}>
                 <input type="radio" bind:group={browserPick} value={`${b.id}:${b.profile}`} />
-                <span class="grow">
-                  <span class="title">{b.name}</span>
-                  <span class="sub">{b.profile} · {b.bookmarks} bookmarks{b.history ? " · history" : ""}</span>
+                <span class="line">
+                  <span class="title">{b.label}</span>
+                  <span class="muted">{b.name}</span>
                 </span>
+                <span class="count">{b.bookmarks} {b.bookmarks === 1 ? "bookmark" : "bookmarks"}</span>
               </label>
             {/each}
           </div>
@@ -329,117 +318,109 @@
         <p class="lead">Instructions, memories and skills from your other agents become notes in your brain. Folders you've worked in become projects.</p>
         {#if !scan}
           <p class="empty">{scanError || "Looking…"}</p>
+        {:else if !groups.length}
+          <p class="empty">Nothing to bring over from other agents.</p>
         {:else}
-          {#if tools.length}
-            <h3>Notes</h3>
-            <div class="list scroll">
-              {#each tools as t (t.id)}
-                {#each t.notes as n (n.source)}
-                  <label class="item compact">
-                    <input type="checkbox" checked={notePicks.has(n.source)} on:change={() => (notePicks = toggle(notePicks, n.source))} />
-                    <span class="grow">
-                      <span class="title">{n.title}</span>
-                      <span class="sub">{t.name} · {n.kind}</span>
-                    </span>
-                  </label>
-                {:else}
-                  <div class="item compact"><span class="grow"><span class="title">{t.name}</span><span class="sub">Found, nothing to import</span></span></div>
-                {/each}
-              {/each}
-            </div>
-          {/if}
-          {#if folders.length}
-            <h3>Projects</h3>
-            <div class="list scroll">
-              {#each folders as f (f.path)}
-                <label class="item compact">
-                  <input type="checkbox" checked={folderPicks.has(f.path)} on:change={() => (folderPicks = toggle(folderPicks, f.path))} />
-                  <span class="grow">
-                    <span class="title">{f.name}</span>
-                    <span class="sub">{f.path}{f.last_used ? ` · ${ago(f.last_used)}` : ""}</span>
-                  </span>
+          <div class="list">
+            {#each groups as g (g.id)}
+              {@const k = pickedIn(g, picked)}
+              <div class="item">
+                <label class="pick">
+                  <input type="checkbox" checked={k === g.items.length} use:mixed={k > 0 && k < g.items.length} on:change={() => pickGroup(g)} />
+                  <span class="title">{g.name}</span>
                 </label>
-              {/each}
-            </div>
-          {/if}
+                <button class="more" aria-expanded={open.has(g.id)} on:click={() => (open = toggle(open, g.id))}>
+                  {count(g, picked)}
+                  <Icon name={open.has(g.id) ? "chevDown" : "chevRight"} size={12} />
+                </button>
+              </div>
+              {#if open.has(g.id)}
+                <div class="list picks">
+                  {#each g.items as it (it.key)}
+                    <label class="item compact" title={it.hint}>
+                      <input type="checkbox" checked={picked.has(it.key)} on:change={() => (picked = toggle(picked, it.key))} />
+                      <span class="title">{it.title}</span>
+                    </label>
+                  {/each}
+                </div>
+              {/if}
+            {/each}
+          </div>
           <div class="action">
-            <button class="btn primary" disabled={busy || (!notePicks.size && !folderPicks.size)} on:click={importFromTools}>
-              {busy ? "Importing…" : `Import ${notePicks.size} notes, ${folderPicks.size} projects`}
-            </button>
+            <button class="btn primary" disabled={busy || !picked.size} on:click={importFromTools}>{busy ? "Importing…" : "Import"}</button>
             {#if toolResult}<span class="result">{toolResult}</span>{/if}
           </div>
+          {#if skipped.length}
+            <ul class="skipped">
+              {#each skipped.slice(0, 5) as s}<li>Skipped {s}</li>{/each}
+              {#if skipped.length > 5}<li>Skipped {skipped.length - 5} more</li>{/if}
+            </ul>
+          {/if}
         {/if}
-      {:else if step === 3}
-        <p class="lead">
-          Plain markdown notes in <code>{vault || "~/.parzi/brain"}</code>. Link them with <code>[[wikilinks]]</code>; any Obsidian install can open the folder as a vault.
-        </p>
-        <ul class="points">
-          <li>A project is a note with a folder. Sessions started in that folder get the project's notes automatically.</li>
-          <li>Map a note to a project from the Brain tab, or link it to the project note.</li>
-          <li>Agents can search, read and write the brain while they work. Writes ask first unless you allow them.</li>
-        </ul>
       {:else}
-        <p class="lead">
-          Run Parzi on your own Linux server. It becomes the home of your brain, settings and sessions, and every device you link (this PC, a laptop) stays in step with it. Enter how you reach it over SSH; Parzi installs itself there and links back.
-        </p>
-        {#if remoteInfo && setupState !== "running"}
-          <div class="item">
-            <span class="grow">
-              <span class="title">{remoteInfo.label}</span>
-              <span class="sub ok">Linked{remoteInfo.version ? ` · Parzi ${remoteInfo.version}` : ""}. Turn on Remote in the composer to run a session there.</span>
-            </span>
+        <p class="lead">Your brain is plain markdown in <code>{vault || "~/.parzi/brain"}</code>, so any Obsidian install can open it too.</p>
+        <button class="disclose" aria-expanded={serverOpen} disabled={locked} on:click={() => (serverOpen = !serverOpen)}>
+          <Icon name={serverOpen ? "chevDown" : "chevRight"} size={12} />
+          I have a Linux server
+        </button>
+        {#if serverOpen}
+          <div class="server">
+            <p class="lead">Parzi installs itself there over SSH and becomes the home of your brain, settings and sessions. This PC stays in step with it.</p>
+            {#if remoteInfo && setupState !== "running"}
+              <div class="item">
+                <span class="grow">
+                  <span class="title">{remoteInfo.label}</span>
+                  <span class="sub ok">Linked{remoteInfo.version ? ` · Parzi ${remoteInfo.version}` : ""}. Turn on Remote in the composer to run a session there.</span>
+                </span>
+              </div>
+            {/if}
+            <div class="remote-form">
+              <label>
+                <span>User</span>
+                <input placeholder="you" spellcheck="false" autocomplete="username" disabled={locked} bind:value={remoteUser} />
+              </label>
+              <label>
+                <span>Host</span>
+                <input placeholder="gpu-box or 203.0.113.7" title="host, or host:port" spellcheck="false" disabled={locked} bind:value={remoteHost} />
+              </label>
+              <label>
+                <span>Password <em>(optional)</em></span>
+                <input type="password" placeholder="Only if there is no key login" autocomplete="current-password" disabled={locked} bind:value={remotePass} />
+              </label>
+            </div>
+            <div class="action">
+              <button class="btn primary" disabled={!remoteUser.trim() || !remoteHost.trim() || locked} on:click={setupRemote}>
+                {locked ? "Setting up…" : remoteInfo ? "Set up again" : "Set up"}
+              </button>
+              {#if setupMsg}<span class="result" class:bad={setupState === "error"}>{setupMsg}</span>{/if}
+            </div>
+            {#if setupRows.length}
+              <ul class="setup-log">
+                {#each setupRows as r (r.step)}
+                  <li>
+                    <span class="mark {r.state}">
+                      {#if r.state === "ok"}<Icon name="check" />{:else if r.state === "fail"}<Icon name="close" />{:else if r.state === "run"}<span class="spin" />{/if}
+                    </span>
+                    <span class="name">{stepName(r.step)}</span>
+                    <span class="detail">{r.detail}</span>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+            <p class="fine">With a password, Parzi adds its own SSH key to that account so it can reconnect without one. The password itself is never stored.</p>
           </div>
         {/if}
-        <div class="remote-form">
-          <label>
-            <span>User</span>
-            <input placeholder="you" spellcheck="false" autocomplete="username" bind:value={remoteUser} />
-          </label>
-          <label>
-            <span>Host</span>
-            <input placeholder="gpu-box or 203.0.113.7" title="host, or host:port" spellcheck="false" bind:value={remoteHost} />
-          </label>
-          <label>
-            <span>Password <em>(optional)</em></span>
-            <input type="password" placeholder="Only if there is no key login" autocomplete="current-password" bind:value={remotePass} />
-          </label>
-        </div>
-        <div class="action">
-          <button
-            class="btn primary"
-            disabled={!remoteUser.trim() || !remoteHost.trim() || setupState === "running"}
-            on:click={setupRemote}
-          >
-            {setupState === "running" ? "Setting up…" : remoteInfo ? "Set up again" : "Set up"}
-          </button>
-          {#if setupMsg}<span class="result" class:bad={setupState === "error"}>{setupMsg}</span>{/if}
-        </div>
-        {#if setupRows.length}
-          <ul class="setup-log">
-            {#each setupRows as r (r.step)}
-              <li>
-                <span class="mark {r.state}">
-                  {#if r.state === "ok"}<Icon name="check" />{:else if r.state === "fail"}<Icon name="close" />{:else if r.state === "run"}<span class="spin" />{/if}
-                </span>
-                <span class="name">{stepName(r.step)}</span>
-                <span class="detail">{r.detail}</span>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-        <p class="fine">With a password, Parzi adds its own SSH key to that account so it can reconnect without one. The password itself is never stored.</p>
       {/if}
     </div>
 
     <footer>
-      {#if step > 0}<button class="btn" on:click={() => (step -= 1)}>Back</button>{/if}
+      {#if step > 0}<button class="btn" disabled={locked} on:click={() => (step -= 1)}>Back</button>{/if}
       <span class="grow" />
-      {#if step < STEPS.length - 1}
+      {#if step < LAST}
         <button class="link" on:click={() => (step += 1)}>Skip</button>
-        <button class="btn primary" on:click={() => (step += 1)}>Next</button>
+        <button class="btn primary" disabled={busy} on:click={next}>{busy ? "Importing…" : "Next"}</button>
       {:else}
-        <button class="btn" on:click={() => finish()}>Done</button>
-        <button class="btn primary" on:click={() => finish(true)}>Open brain</button>
+        <button class="btn primary" disabled={locked} on:click={() => finish()}>Done</button>
       {/if}
     </footer>
   </div>
@@ -464,7 +445,6 @@
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
     overflow: hidden;
     outline: none;
   }
@@ -502,12 +482,17 @@
   .steps button.done {
     color: var(--muted);
   }
-  .steps button:hover {
+  .steps button:hover:not(:disabled) {
     color: var(--text);
   }
   .steps button.on {
     background: var(--line);
     color: var(--text);
+  }
+  .steps button:disabled,
+  .x:disabled {
+    cursor: default;
+    opacity: 0.5;
   }
   .x {
     width: 28px;
@@ -522,7 +507,7 @@
     color: var(--muted);
     cursor: pointer;
   }
-  .x:hover {
+  .x:hover:not(:disabled) {
     background: var(--line);
     color: var(--text);
   }
@@ -538,12 +523,6 @@
     font-weight: 600;
     color: var(--text);
   }
-  h3 {
-    margin: 16px 0 6px;
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    color: var(--muted);
-  }
   .lead {
     margin: 0 0 16px;
     font-size: var(--fs-md);
@@ -555,8 +534,10 @@
     flex-direction: column;
     gap: 2px;
   }
-  .list.scroll {
-    max-height: 190px;
+  /* A tool's notes, under its row and in line with its name. */
+  .list.picks {
+    max-height: 220px;
+    margin-left: 26px;
     overflow-y: auto;
   }
   .item {
@@ -621,8 +602,70 @@
   .sub.ok {
     color: var(--ok);
   }
-  .sub.mono {
-    font-family: var(--mono), ui-monospace, monospace;
+  .line {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+  .muted {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-md);
+    color: var(--muted);
+  }
+  .count {
+    flex: none;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .pick {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+  }
+  .more,
+  .disclose {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    padding: 4px 8px;
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-sm);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+  }
+  .more:hover,
+  .disclose:hover:not(:disabled) {
+    background: var(--line);
+    color: var(--text);
+  }
+  /* The disclosure's chevron lines up with the lead's text. */
+  .disclose {
+    margin-left: -8px;
+    font-size: var(--fs-md);
+  }
+  .server {
+    margin-top: 12px;
+  }
+  .skipped {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+    font-size: var(--fs-sm);
+    line-height: 1.6;
     color: var(--muted);
   }
   .remote-form {
@@ -778,13 +821,6 @@
   }
   .empty {
     font-size: var(--fs-md);
-    color: var(--muted);
-  }
-  .points {
-    margin: 0;
-    padding-left: 18px;
-    font-size: var(--fs-md);
-    line-height: 1.6;
     color: var(--muted);
   }
   code {

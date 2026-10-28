@@ -6,7 +6,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 const FILE: &str = "downloads.json";
 const KEEP: usize = 100;
@@ -164,7 +164,7 @@ pub fn target(dir: &Path, suggested: &str) -> PathBuf {
 }
 
 fn tell(app: &AppHandle, d: &Download) {
-    crate::emit(app, EVENT, d);
+    let _ = app.emit_to("main", EVENT, d);
 }
 
 pub fn started(app: &AppHandle, id: &str, tab: &str, url: &str, path: &Path, total: u64) {
@@ -253,17 +253,6 @@ pub fn running_id(url: &str) -> Option<String> {
             .iter()
             .find(|d| d.state == State::Progress && d.url == url)
             .map(|d| d.id.clone())
-    })
-}
-
-/// Tabs with a download still running.
-pub fn running_tabs() -> Vec<String> {
-    book().as_ref().map_or_else(Vec::new, |b| {
-        b.list
-            .iter()
-            .filter(|d| d.state == State::Progress)
-            .map(|d| d.tab.clone())
-            .collect()
     })
 }
 

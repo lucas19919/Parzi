@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fileLink, safeDecode, webLink } from "../src/lib/linkRules.ts";
+import { fileLink, safeDecode, vaultRefs, webLink } from "../src/lib/linkRules.ts";
 
 test("safeDecode survives malformed escapes", () => {
   assert.equal(safeDecode("a%20b"), "a b");
@@ -60,12 +60,43 @@ test("brain markdown file links route to notes", () => {
   assert.deepEqual(fileLink("file:///C:/elsewhere/readme.md"), { kind: "open", path: "C:\\elsewhere\\readme.md" });
 });
 
-test("web links: plain http upgrades, local http is refused up front", () => {
+test("bare vault notes in prose are found as link targets", () => {
+  assert.deepEqual(vaultRefs("see projects/acme/GOALS.md for the plan"), [
+    { path: "projects/acme/GOALS.md", index: 4, length: 22 },
+  ]);
+  assert.deepEqual(vaultRefs("a is notes/a.md, b is widgets/w.md"), [
+    { path: "notes/a.md", index: 5, length: 10 },
+    { path: "widgets/w.md", index: 22, length: 12 },
+  ]);
+  // Trailing prose punctuation stays outside the link.
+  assert.deepEqual(vaultRefs("(see notes/a.md), then notes/b.md."), [
+    { path: "notes/a.md", index: 5, length: 10 },
+    { path: "notes/b.md", index: 23, length: 10 },
+  ]);
+  // A :line suffix rides along for the opener to strip.
+  assert.deepEqual(vaultRefs("at projects/acme/plan.md:12 review"), [
+    { path: "projects/acme/plan.md:12", index: 3, length: 24 },
+  ]);
+  assert.deepEqual(vaultRefs("BRAIN://Notes/A.MD"), [{ path: "BRAIN://Notes/A.MD", index: 0, length: 18 }]);
+});
+
+test("vault refs ignore code ticks, links-in-words and plain words", () => {
+  assert.deepEqual(vaultRefs("`notes/a.md`"), []);
+  assert.deepEqual(vaultRefs("**notes/a.md**"), [{ path: "notes/a.md", index: 2, length: 10 }]);
+  assert.deepEqual(vaultRefs("footnotes/foo.md"), []);
+  assert.deepEqual(vaultRefs("release notes for fun"), []);
+  assert.deepEqual(vaultRefs("no refs here.txt"), []);
+});
+
+test("web links: plain http upgrades, local http opens in a tab", () => {
   assert.deepEqual(webLink("https://example.com/a?b=1"), { kind: "open", url: "https://example.com/a?b=1" });
   assert.deepEqual(webLink("http://example.com/a"), { kind: "open", url: "https://example.com/a" });
   assert.deepEqual(webLink("HTTP://Example.com"), { kind: "open", url: "https://Example.com" });
   for (const href of ["http://localhost:5173/", "http://127.0.0.1:8080", "http://[::1]:3000/x", "http://app.localhost/", "http://user@localhost/"]) {
-    assert.equal(webLink(href).kind, "refuse", href);
+    const link = webLink(href);
+    assert.equal(link.kind, "tab", href);
+    // The scheme stays http: forcing https would break plain local servers.
+    if (link.kind === "tab") assert.ok(link.url.startsWith("http://"), link.url);
   }
   assert.equal(webLink("https://localhost:8443/").kind, "open");
 });

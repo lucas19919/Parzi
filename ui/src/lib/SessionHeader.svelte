@@ -1,20 +1,21 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from "svelte";
   import Icon from "./Icon.svelte";
+  import ContextBreakdown from "./ContextBreakdown.svelte";
   import type { IconName } from "./icons";
   import { tooltip } from "./tooltip";
 
   export let title = "";
   export let branch = "";
-  export let lane = "";
+  // For the context breakdown.
+  export let folder = "";
+  // A side task's session it came from: a way back to it.
+  export let parentTitle = "";
   export let canAct = false;
-  export let backTitle: string | null = null;
   export let contextUsed = 0;
   export let contextLimit = 0;
   export let compacting = false;
   export let streaming = false;
-  export let tokensIn = 0;
-  export let tokensOut = 0;
   export let costUsd = 0;
 
   const dispatch = createEventDispatcher<{ rename: { title: string }; fork: void; copyId: void; delete: void; back: void; compact: void }>();
@@ -32,12 +33,6 @@
   let editing = false;
   let draft = "";
   let field: HTMLInputElement | null = null;
-
-  function kTokens(n: number) {
-    if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
-    return String(n);
-  }
 
   const RING = 2 * Math.PI * 6;
   $: contextPct = contextLimit > 0 ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : 0;
@@ -92,8 +87,8 @@
 
 <div class="head">
   <div class="left">
-    {#if backTitle}
-      <button class="icon-btn" use:tooltip={`Back to ${backTitle}`} on:click={() => dispatch("back")}>
+    {#if parentTitle}
+      <button class="icon-btn back" aria-label="Back to {parentTitle}" use:tooltip={`Back to ${parentTitle}`} on:click={() => dispatch("back")}>
         <Icon name="arrowLeft" />
       </button>
     {/if}
@@ -104,10 +99,6 @@
     {/if}
     {#if branch}
       <span class="branch"><Icon name="branch" size={12} />{branch}</span>
-    {/if}
-    {#if lane === "work" || lane === "build"}
-      {@const work = lane === "work"}
-      <span class="lane" class:worklane={work}>{work ? "Work" : "Build"}</span>
     {/if}
   </div>
   {#if canAct}
@@ -150,24 +141,19 @@
         </div>
       {/if}
       {#if ctxOpen && contextLimit > 0}
-        <div class="dropdown ctx-pop" role="dialog" aria-label="Context usage">
-          <div class="ctx-head"><span>Context · {contextPct}%</span>{#if costUsd > 0}<span class="ctx-cost">${costUsd.toFixed(4)}</span>{/if}</div>
-          <div class="ctx-bar"><i style:width="{contextPct}%" /></div>
-          <div class="ctx-rows">
-            <div><span>Used</span><b>{kTokens(contextUsed)} of {kTokens(contextLimit)}</b></div>
-            <div><span>Session</span><b>{kTokens(tokensIn)} in · {kTokens(tokensOut)} out</b></div>
-          </div>
-          <button
-            class="ctx-compact"
-            disabled={compacting || streaming}
-            on:click={() => {
-              if (compacting || streaming) return;
+        <div class="dropdown ctx-pop" role="dialog" aria-label="Context">
+          <div class="ctx-head"><span>Context</span>{#if costUsd > 0}<span class="ctx-cost">${costUsd.toFixed(2)}</span>{/if}</div>
+          <ContextBreakdown
+            used={contextUsed}
+            limit={contextLimit}
+            {folder}
+            {compacting}
+            {streaming}
+            on:compact={() => {
               ctxOpen = false;
               dispatch("compact");
             }}
-          >
-            {compacting ? "Compacting…" : "Compact"}
-          </button>
+          />
         </div>
       {/if}
     </div>
@@ -175,15 +161,18 @@
 </div>
 
 <style>
+  /* No rule under it: the thread fades in below instead. */
   .head {
-    height: 42px;
+    height: 46px;
     flex: none;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 14px 0 20px;
-    border-bottom: 1px solid var(--line);
+    padding: 0 10px 0 20px;
     user-select: none;
+  }
+  .head:has(.back) {
+    padding-left: 10px;
   }
   .left {
     display: flex;
@@ -222,20 +211,6 @@
     font-size: var(--fs-xs);
     color: var(--muted);
   }
-  .lane {
-    flex: none;
-    padding: 1px 7px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--text) 8%, transparent);
-    color: var(--muted);
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    letter-spacing: 0.2px;
-  }
-  .lane.worklane {
-    background: color-mix(in srgb, var(--work) 18%, transparent);
-    color: var(--work);
-  }
   .menu {
     position: relative;
     display: flex;
@@ -260,6 +235,10 @@
     background: var(--hover);
     color: var(--text);
   }
+  .back {
+    flex: none;
+    margin-right: -2px;
+  }
   .dropdown {
     position: absolute;
     top: calc(100% + 4px);
@@ -272,7 +251,6 @@
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
     z-index: 500;
   }
   .item {
@@ -308,16 +286,7 @@
   .ctx .fill { fill: none; stroke: var(--ctx); stroke-width: 2; stroke-linecap: round; }
   .ctx.warn { --ctx: var(--warn); }
   .ctx.bad { --ctx: var(--bad); }
-  .ctx-pop { padding: 10px 12px 12px; width: 220px; }
-  .ctx-head { display: flex; justify-content: space-between; font-size: var(--fs-sm); font-weight: 600; margin-bottom: 8px; }
-  .ctx-cost { color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; }
-  .ctx-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin-bottom: 8px; }
-  .ctx-bar i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
-  .ctx-rows { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-sm); margin-bottom: 10px; }
-  .ctx-rows div { display: flex; justify-content: space-between; }
-  .ctx-rows span { color: var(--muted); }
-  .ctx-rows b { font-weight: 550; font-variant-numeric: tabular-nums; }
-  .ctx-compact { width: 100%; padding: 5px; background: var(--line); border: none; border-radius: var(--radius); font-size: var(--fs-sm); font-weight: 600; cursor: pointer; color: var(--text); }
-  .ctx-compact:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 16%, transparent); }
-  .ctx-compact:disabled { opacity: 0.45; cursor: default; }
+  .ctx-pop { padding: 12px 14px 14px; width: 280px; gap: 10px; }
+  .ctx-head { display: flex; justify-content: space-between; font-size: var(--fs-sm); font-weight: 600; color: var(--muted); }
+  .ctx-cost { font-weight: 400; font-variant-numeric: tabular-nums; }
 </style>

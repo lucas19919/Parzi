@@ -5,10 +5,10 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import Icon from "./Icon.svelte";
   import ModelPicker from "./ModelPicker.svelte";
-  import { api, brain, MODE_META, type ComposerMode, type Project, type ProviderStatus } from "./api";
+  import { api, brain, type ComposerMode, type PlanQuote, type Project, type ProviderStatus } from "./api";
   import { remote as server } from "./remote";
-  import { effortsFor, fitEffort } from "./providerRows";
-  import { permissionBlocked } from "./lanes";
+  import { effortsFor, fitEffort, seesImages, shownOf } from "./providerRows";
+  import { permissionBlocked } from "./permission";
   import { folderName, toAddress } from "./tabs";
   import { relativeTo, sameDir, shortAttachment as shortName } from "./paths";
   import { popover, placeAbove } from "./popover";
@@ -17,24 +17,37 @@
   import { tooltip } from "./tooltip";
   import { boxText, firstRows, looksLikeUrl, mergeRows, pageRows, phraseRows, type Suggestion } from "./suggest";
   import type { IconName } from "./icons";
+  import { viewImage } from "./imageViewer";
 
   export let input = "";
   export let model = "";
   export let effort = "medium";
-  // Never defaults to full access: App seeds it from Settings' default.
-  export let permission = "supervised";
+  // New sessions start on full: App seeds it from Settings' default.
+  export let permission = "full";
   // Settings' default_mode; options it would ignore are shown disabled.
   export let policy = "";
+  // "search" talks to the web; "build" to the agent, which does everything.
   export let mode: ComposerMode = "build";
   export let attachments: string[] = [];
+  // Plan items quoted from the plan panel: a message can be just these.
+  export let quotes: PlanQuote[] = [];
   export let folder = "";
   export let folderLocked = false;
+  // A session has started here: everything goes to its agent, so Web
+  // (opening a page from the composer) is for a new tab only.
+  export let started = false;
+  $: if (started && mode === "search") mode = "build";
   export let branch = "";
   export let streaming = false;
+  // Messages sent while the agent works, oldest first. Each goes out as its own turn.
+  export let queue: { id: string; text: string; detail?: string }[] = [];
+  // The queue is stopped: items stay listed until resumed.
+  export let queuePaused = false;
+  // A session is open: Ctrl+Enter can start a side task beside it.
+  export let canSide = false;
   export let board: ProviderStatus[] = [];
   export let hero = false;
   export let project: { slug: string; title: string; tokens: number } | null = null;
-  export let lockMode: ComposerMode | null = null;
   // The linked server ("" when none). `remote` sends this composer's
   // sessions there; a started session stays where it began (`remoteLocked`).
   export let remoteHost = "";
@@ -42,41 +55,38 @@
   export let remoteLocked = false;
   // The server folder this composer's new session runs in ("" = scratch).
   export let remoteCwd = "";
-  // Preview variants for live design iteration (Preview tab renders the
-  // real component with variant 1-7). The live composer ships 6:
-  // fused project tab on the top edge, project outside the box.
-  export let variant = 2;
-  $: outsideProject = variant === 5 || variant === 6 || variant === 7;
 
   const dispatch = createEventDispatcher<{
     send: void;
+    unhold: { id: string };
+    side: void;
+    sideHeld: { id: string };
+    sendHeldNow: { id: string };
+    dropHeld: { id: string };
+    moveHeld: { id: string; to: number };
+    resumeQueue: void;
     browse: { url: string };
     stop: void;
     command: { name: string };
     unavailable: { provider: string };
     folder: { path: string };
-    project: void;
+    project: { path?: string };
     brain: void;
     remote: { on: boolean };
     remoteFolder: { path: string };
   }>();
 
   // ids are the `mode` strings the backend reads (ApprovalMode::parse:
-  // "deny" blocks, "auto" and "full" run, anything else asks).
+  // "auto" and "full" run, anything else asks). Three choices, done.
   const PERMS: { id: string; title: string; label: string; desc: string; icon: IconName }[] = [
-    { id: "deny", title: "Read only", label: "Read only", desc: "Block commands and file changes.", icon: "shield" },
-    { id: "supervised", title: "Supervised", label: "Ask", desc: "Ask before commands and file changes.", icon: "lock" },
-    { id: "edits", title: "Auto-accept edits", label: "Edits", desc: "Approve edits, ask before anything else.", icon: "pencil" },
-    { id: "auto", title: "Auto", label: "Auto", desc: "Agents that support it approve routine actions.", icon: "spark" },
-    { id: "full", title: "Full access", label: "Full access", desc: "Run commands and edits without asking.", icon: "unlock" },
+    { id: "supervised", title: "Ask", label: "Ask", desc: "Ask before commands and file changes.", icon: "lock" },
+    { id: "auto", title: "Auto", label: "Auto", desc: "Approve routine actions without asking.", icon: "spark" },
+    { id: "full", title: "Full", label: "Full", desc: "Run commands and edits without asking.", icon: "unlock" },
   ];
 
-  const MODES: ComposerMode[] = ["search", "build", "work"];
-
   const SLASH = [
-    { name: "search", hint: "Search mode" },
-    { name: "build", hint: "Build mode" },
-    { name: "work", hint: "Work mode" },
+    { name: "agent", hint: "Ask the agent" },
+    { name: "web", hint: "Search the web" },
     { name: "new", hint: "New session" },
     { name: "fork", hint: "Branch this session" },
     { name: "compact", hint: "Summarize to free context" },
@@ -88,7 +98,6 @@
   ];
 
   const IMAGE = /\.(png|jpe?g|gif|webp|bmp|svg|avif)$/i;
-  const RING = 2 * Math.PI * 6;
   const MAX_ATTACH = 8;
 
   let textarea: HTMLTextAreaElement | null = null;
@@ -97,6 +106,42 @@
   let permOpen = false;
   let permStyle = "";
   let projBtn: HTMLButtonElement | null = null;
+  // Where a new session works: the folder as it is (""), or a worktree of
+  // its own made from this branch.
+  export let worktree = "";
+  let branchBtn: HTMLButtonElement | null = null;
+  let branchOpen = false;
+  let branchStyle = "";
+  let branchList: string[] = [];
+  // The queue bar above the box: which item is unfolded, and drag state.
+  let expanded: string | null = null;
+  let dragId: string | null = null;
+  let dragOver = -1;
+  function queueDrop(to: number) {
+    if (dragId) dispatch("moveHeld", { id: dragId, to });
+    dragId = null;
+    dragOver = -1;
+  }
+  // Another folder, another repository: back to working in it as it is.
+  let worktreeFor = folder;
+  $: if (folder !== worktreeFor) {
+    worktreeFor = folder;
+    worktree = "";
+  }
+
+  async function toggleBranch() {
+    if (folderLocked) return;
+    branchOpen = !branchOpen;
+    if (!branchOpen || !branchBtn) return;
+    branchStyle = placeAbove(branchBtn, 280);
+    branchList = (await api.gitBranches(folder).catch(() => ({ current: branch, all: [] as string[] }))).all;
+  }
+
+  function pickBranch(base: string) {
+    worktree = base;
+    branchOpen = false;
+    textarea?.focus();
+  }
   let projOpen = false;
   let projStyle = "";
   let projects: Project[] = [];
@@ -106,6 +151,12 @@
   let slashIndex = 0;
   let thumbs: Record<string, string | null> = {};
   let attachError = "";
+  let attachErrorTimer = 0;
+  // A composer error says its piece and goes: it never outlives the moment.
+  $: if (attachError) {
+    clearTimeout(attachErrorTimer);
+    attachErrorTimer = window.setTimeout(() => (attachError = ""), 6000);
+  }
   let webRows: Suggestion[] = [];
   let webActive = -1;
   let webTyped = "";
@@ -121,19 +172,29 @@
     const next = fitEffort(effort, efforts);
     if (next !== effort) effort = next;
   }
-  $: perm = PERMS.find((p) => p.id === permission) ?? PERMS[1];
+  // A stored choice from before the menu shrank (read-only, auto-edits)
+  // falls back to Supervised rather than a blank button.
+  $: perm = PERMS.find((p) => p.id === permission) ?? PERMS[0];
   $: slashQuery = /^\/\w*$/.test(input.trim()) ? input.trim().slice(1).toLowerCase() : null;
-  $: slashItems = slashQuery === null ? [] : SLASH.filter((c) => c.name.startsWith(slashQuery));
+  $: slashItems =
+    slashQuery === null ? [] : SLASH.filter((c) => c.name.startsWith(slashQuery) && !(started && (c.name === "web" || c.name === "agent")));
   $: if (slashIndex >= slashItems.length) slashIndex = 0;
   // Attachments change rarely; guard by key so per-keystroke parent
   // object churn (same array, new dirty flag) doesn't re-decode images.
   $: {
-    const key = `${folder}\n${attachments.join("\n")}`;
+    const files = Array.isArray(attachments) ? attachments : [];
+    const key = `${folder}\n${files.join("\n")}`;
     if (key !== thumbsKey) {
       thumbsKey = key;
-      void loadThumbs(attachments, folder);
+      void loadThumbs(files, folder);
     }
   }
+  // `export let quotes = []` does not refill after mount. A bound composer
+  // with no quote list hands over undefined, and reading `.length` here
+  // aborts the flush so later clicks never update the UI.
+  $: if (!Array.isArray(quotes)) quotes = [];
+  $: if (!Array.isArray(attachments)) attachments = [];
+  $: if (!Array.isArray(queue)) queue = [];
 
   export function focus() {
     textarea?.focus();
@@ -143,11 +204,27 @@
     picker?.show();
   }
 
-  $: canSubmit = !!input.trim();
+  $: web = mode === "search";
+  $: placeholder = streaming
+    ? "Queue a message for when it's done"
+    : web
+      ? "Search the web or type an address"
+      : folder || remoteCwd
+        ? "Describe a task or ask a question"
+        : "Ask anything";
+  // An image is attached and the chosen model can't see it: said before send.
+  $: blind = !web && !!model && (attachments ?? []).some((a) => IMAGE.test(a)) && !seesImages(model, board);
+  $: canSubmit = !!input.trim() || ((quotes?.length ?? 0) > 0 && !web);
+
+  function setWeb(on: boolean) {
+    mode = on ? "search" : "build";
+    if (on) projOpen = false;
+    textarea?.focus();
+  }
 
   function submit() {
     const text = input.trim();
-    if (!canSubmit || streaming) return;
+    if (!canSubmit) return;
     if (mode === "search") {
       if (webActive >= 0 && webRows[webActive]) {
         pickWeb(webRows[webActive]);
@@ -165,22 +242,13 @@
     input = "";
     if (name === "model") picker?.show();
     else if (name === "effort") cycleEffort();
-    else if ((MODES as string[]).includes(name)) {
-      const next = name as ComposerMode;
-      if (!lockMode || next === lockMode) mode = next;
-    }
+    else if (name === "web" || name === "agent") setWeb(name === "web");
     else dispatch("command", { name });
   }
 
   function cycleEffort() {
     if (!efforts.length) return;
     effort = efforts[(Math.max(0, efforts.indexOf(effort)) + 1) % efforts.length];
-  }
-
-  function cycleMode() {
-    if (lockMode) return;
-    const order = MODES.filter((m) => lockMode === null || m === lockMode);
-    mode = order[(order.indexOf(mode) + 1 + order.length) % order.length] ?? mode;
   }
 
   function move(list: unknown[], i: number, delta: number) {
@@ -207,18 +275,21 @@
     } else if (atItems.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
       atIndex = move(atItems, atIndex, e.key === "ArrowDown" ? 1 : -1);
+    } else if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !started && !slashItems.length && !atItems.length) {
+      // A new session: Tab flips between asking the agent and the web.
+      e.preventDefault();
+      setWeb(!web);
+    } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && canSide && !web) {
+      e.preventDefault();
+      if (input.trim() || quotes.length) dispatch("side");
     } else if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (slashItems.length) runSlash(slashItems[slashIndex].name);
       else if (atItems.length) pickMention(atItems[atIndex]);
       else submit();
-    } else if (e.key === "Tab" && !slashItems.length && !atItems.length) {
+    } else if (!started && /^[12]$/.test(e.key) && (e.ctrlKey || e.metaKey) && !slashItems.length && !atItems.length) {
       e.preventDefault();
-      cycleMode();
-    } else if (/^[123]$/.test(e.key) && (e.ctrlKey || e.metaKey) && !slashItems.length && !atItems.length) {
-      e.preventDefault();
-      const next = MODES[Number(e.key) - 1];
-      if (!lockMode || next === lockMode) mode = next;
+      setWeb(e.key === "2");
     } else if (e.key === "Escape" && (slashItems.length || atItems.length)) {
       e.stopPropagation();
       atItems = [];
@@ -226,7 +297,7 @@
     }
   }
 
-  // Fits the box to its text (up to 180px). Writes go through a local:
+  // Fits the box to its text (up to two fifths of the window, then it scrolls). Writes go through a local:
   // `textarea.style.x = …` marks `textarea` dirty in Svelte, which re-ran
   // the `$:` below after every await and froze the composer on the first
   // keystroke (an endless microtask loop).
@@ -239,10 +310,9 @@
       return;
     }
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 180)}px`;
+    el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.4))}px`;
   }
 
-  $: if (lockMode && mode !== lockMode) mode = lockMode;
   // Keystrokes and programmatic fills (edit-load, tab drafts) both land here.
   $: if (textarea) void autosize(input);
   $: if (mode !== "search" || !input.trim()) clearWeb();
@@ -291,7 +361,7 @@
       suggestWeb(typed, completed);
       return;
     }
-    const at = mode === "build" ? /@([\w./-]*)$/.exec(input) : null;
+    const at = !web ? /@([\w./-]*)$/.exec(input) : null;
     if (!at || !folder) {
       atItems = [];
       clearTimeout(atTimer);
@@ -322,6 +392,7 @@
 
   function addAttachments(paths: string[]) {
     const next = paths.map((p) => relativeTo(p, folder)).filter((p) => p && !attachments.includes(p));
+    if (attachments.length + next.length > MAX_ATTACH) attachError = `Up to ${MAX_ATTACH} files a message: the rest were left out.`;
     if (next.length) attachments = [...attachments, ...next].slice(0, MAX_ATTACH);
   }
 
@@ -379,9 +450,11 @@
         const picked = await api.pickFolder(folder);
         if (!picked) return;
         path = (await brain.upsertProject(p.title, picked, p.slug)).folder;
-        dispatch("project");
       }
+      // Folder first so the draft runs there; the project event carries the
+      // same path so the header never reads the previous folder's project.
       dispatch("folder", { path });
+      dispatch("project", { path });
     } catch (e) {
       attachError = String(e);
     }
@@ -405,7 +478,7 @@
     const known = projects.find((p) => sameDir(p.folder, dir));
     if (!known) await brain.upsertProject(folderName(dir), dir);
     if (!sameDir(dir, folder)) dispatch("folder", { path: dir });
-    dispatch("project");
+    dispatch("project", { path: dir });
   }
 
   async function newProject() {
@@ -439,7 +512,9 @@
   async function stageImages(files: FileList) {
     attachError = "";
     const images = [...files].filter((f) => f.type.startsWith("image/") || IMAGE.test(f.name));
-    for (const f of images.slice(0, Math.max(0, MAX_ATTACH - attachments.length))) {
+    const room = Math.max(0, MAX_ATTACH - attachments.length);
+    if (images.length > room) attachError = `Up to ${MAX_ATTACH} files a message: the rest were left out.`;
+    for (const f of images.slice(0, room)) {
       try {
         const b64 = (await readDataUrl(f)).split(",", 2)[1] ?? "";
         if (b64) addAttachments([await api.stageImage(f.name || "pasted.png", b64)]);
@@ -467,44 +542,115 @@
   }
 </script>
 
-<div class="ob" class:hero class:v2={variant === 2} class:v3={variant === 3} class:v4={variant === 4} class:v5={variant === 5} class:v6={variant === 6} class:v7={variant === 7}>
-  {#if outsideProject && remote}
+<div class="ob" class:hero>
+  <!-- The project rides on the box's top edge: where this session works.
+       A web search has no project, so it folds away behind the box. -->
+  {#if remote}
     <button
       bind:this={projBtn}
-      class="proj-out set"
+      class="proj set"
+      class:folded={web}
+      aria-hidden={web || undefined}
+      tabindex={web ? -1 : undefined}
       aria-haspopup={folderLocked ? undefined : "menu"}
       aria-expanded={folderLocked ? undefined : projOpen}
       on:click|stopPropagation={toggleProject}
       use:tooltip={remoteCwd ? `Runs on ${remoteHost} in ${remoteCwd}` : `Runs on ${remoteHost}, in its own scratch folder`}
     >
-      <Icon name="server" />
+      <Icon name="server" size={12} />
       <span class="proj-title">{remoteProject ? `${remoteProject} · ${remoteHost}` : remoteHost}</span>
       {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
     </button>
-  {:else if outsideProject}
-    <button
-      bind:this={projBtn}
-      class="proj-out"
-      class:set={!!project}
-      aria-haspopup={folderLocked ? undefined : "menu"}
-      aria-expanded={folderLocked ? undefined : projOpen}
-      on:click|stopPropagation={toggleProject}
-      use:tooltip={project ? `Project ${project.title}${branch ? ` · ${branch}` : ""}` : "Pick the project this session works on"}
-    >
-      <Icon name={project || !folder ? "project" : "folder"} />
-      <span class="proj-title">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
-      {#if branch}<span class="proj-branch">{branch}</span>{/if}
-      {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
-    </button>
+  {:else}
+    <div class="tops">
+      <button
+        bind:this={projBtn}
+        class="proj"
+        class:set={!!project}
+        class:folded={web}
+        aria-hidden={web || undefined}
+        tabindex={web ? -1 : undefined}
+        aria-haspopup={folderLocked ? undefined : "menu"}
+        aria-expanded={folderLocked ? undefined : projOpen}
+        on:click|stopPropagation={toggleProject}
+        use:tooltip={project ? `Project ${project.title}` : folder ? folder : "Pick a folder to work in"}
+      >
+        <Icon name={project || !folder ? "project" : "folder"} size={12} />
+        <span class="proj-title">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
+        {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
+      </button>
+      {#if folder && branch}
+        <!-- Which branch: the folder as it is, or a worktree of its own. -->
+        <button
+          bind:this={branchBtn}
+          class="proj branch-tab"
+          class:folded={web}
+          class:fresh={!!worktree}
+          aria-hidden={web || undefined}
+          tabindex={web ? -1 : undefined}
+          aria-haspopup={folderLocked ? undefined : "menu"}
+          aria-expanded={folderLocked ? undefined : branchOpen}
+          on:click|stopPropagation={toggleBranch}
+          use:tooltip={folderLocked ? `On ${branch}` : worktree ? `A worktree of its own, from ${worktree}` : `In the folder, on ${branch}`}
+        >
+          <Icon name="branch" size={12} />
+          <span class="proj-branch">{worktree && !folderLocked ? `new from ${worktree}` : branch}</span>
+          {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
+        </button>
+      {/if}
+    </div>
   {/if}
-  <div
-    class="box"
-    class:web={mode === "search"}
-    role="group"
-    aria-label="Composer"
-    on:dragover|preventDefault
-    on:drop|preventDefault={onDrop}
-  >
+
+  {#if queue.length}
+    <!-- The queue is its own bar above the composer: numbered, in send
+         order, each with its own actions. Drag the grip to reorder. -->
+    <div class="queue-bar" role="list" aria-label="Queued messages">
+      <div class="queue-head">
+        <span class="queue-title">Queue · {queue.length}{queuePaused ? " · paused" : streaming ? " · sends in order" : ""}</span>
+        {#if queuePaused}<button class="queue-resume" on:click={() => dispatch("resumeQueue")}>Resume</button>{/if}
+      </div>
+      {#each queue as item, i (item.id)}
+        <div
+          class="queue-item"
+          class:open={expanded === item.id}
+          class:dragover={dragOver === i}
+          role="listitem"
+          transition:slide={{ duration: 160, easing: cubicOut }}
+          on:dragover|preventDefault={() => (dragOver = i)}
+          on:dragleave={() => (dragOver = -1)}
+          on:drop|preventDefault={() => queueDrop(i)}
+        >
+          <span
+            class="grip"
+            draggable="true"
+            role="button"
+            tabindex="0"
+            aria-label="Drag to reorder: {item.text}"
+            title="Drag to reorder"
+            on:dragstart={() => (dragId = item.id)}
+            on:dragend={() => ((dragId = null), (dragOver = -1))}
+            on:keydown={(e) => {
+              if (e.key === "ArrowUp" && i > 0) dispatch("moveHeld", { id: item.id, to: i - 1 });
+              if (e.key === "ArrowDown" && i < queue.length - 1) dispatch("moveHeld", { id: item.id, to: i + 1 });
+            }}
+          ><Icon name="more" size={12} /></span>
+          <span class="queue-num">{i + 1}</span>
+          <button class="queue-text" class:open={expanded === item.id} title={item.text} on:click={() => (expanded = expanded === item.id ? null : item.id)}>
+            <span>{item.text}</span>
+            {#if item.detail}<span class="queue-detail">{item.detail}</span>{/if}
+          </button>
+          <span class="queue-acts">
+            <button aria-label="Send now: {item.text}" use:tooltip={"Send now: stop the agent and send this"} on:click={() => dispatch("sendHeldNow", { id: item.id })}><Icon name="arrowUp" size={12} /></button>
+            <button aria-label="Side task: {item.text}" use:tooltip={"Side task: run it now, beside this session"} on:click={() => dispatch("sideHeld", { id: item.id })}><Icon name="fork" size={12} /></button>
+            <button aria-label="Edit: {item.text}" use:tooltip={"Edit"} on:click={() => dispatch("unhold", { id: item.id })}><Icon name="pencil" size={12} /></button>
+            <button aria-label="Drop: {item.text}" use:tooltip={"Drop this message"} on:click={() => dispatch("dropHeld", { id: item.id })}><Icon name="close" size={12} /></button>
+          </span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  <div class="box" class:web role="group" aria-label="Composer" on:dragover|preventDefault on:drop|preventDefault={onDrop}>
     {#if webOpen}
       <div class="web-suggest" class:below={hero}>
         <SuggestList rows={webRows} active={webActive} typed={webTyped} on:pick={(e) => pickWeb(e.detail.row)} on:hover={(e) => (webActive = e.detail.index)} />
@@ -523,11 +669,32 @@
       </div>
     {/if}
 
-    {#if attachments.length}
+    {#if blind}
+      <div class="held blind" transition:slide={{ duration: 160, easing: cubicOut }}>
+        <Icon name="image" size={12} />
+        <span class="held-text">{shownOf(model, board).name} can't see images</span>
+        <button class="held-side" on:click={() => picker?.show()}>Change model</button>
+      </div>
+    {/if}
+
+    {#if (attachments?.length ?? 0) || (quotes?.length ?? 0)}
       <div class="attachments" transition:slide={{ duration: 160, easing: cubicOut }}>
-        {#each attachments as a (a)}
+        {#each quotes ?? [] as q (`${q.project}/${q.id}`)}
+          <span class="chip quote" transition:scale={{ duration: 140, start: 0.9 }}>
+            <Icon name="plan" size={12} />
+            <span class="chip-name">{q.title}</span>
+            <button use:tooltip={`Remove ${q.title}`} on:click={() => (quotes = quotes.filter((x) => x !== q))}>
+              <Icon name="close" size={12} />
+            </button>
+          </span>
+        {/each}
+        {#each attachments ?? [] as a (a)}
           <span class="chip" transition:scale={{ duration: 140, start: 0.9 }}>
-            {#if thumbs[a]}<img src={thumbs[a]} alt="" draggable="false" />{:else}<Icon name="file" size={12} />{/if}
+            {#if thumbs[a]}
+              <button class="thumb" aria-label="View {shortName(a)}" use:tooltip={"View"} on:click={() => viewImage(thumbs[a] ?? "", shortName(a))}>
+                <img src={thumbs[a]} alt="" draggable="false" />
+              </button>
+            {:else}<Icon name="file" size={12} />{/if}
             <span class="chip-name" title={a}>{shortName(a)}</span>
             <button use:tooltip={`Remove ${a}`} on:click={() => (attachments = attachments.filter((x) => x !== a))}>
               <Icon name="close" size={12} />
@@ -538,187 +705,101 @@
     {/if}
 
     <div class="row">
-      {#if variant === 7}
-        {#if project}<span class="inline-at">@{project.slug}</span>{/if}
-      {/if}
-      {#if streaming}
-        <span class="orb" aria-hidden="true" title="Working…"><span class="eye" /><span class="eye" /></span>
+      {#if web}
+        <span class="lead" aria-hidden="true"><Icon name="globe" /></span>
+      {:else}
+        <button class="lead btn" use:tooltip={"Attach files"} on:click={pickFiles}><Icon name="plus" /></button>
       {/if}
       <textarea
         bind:this={textarea}
         bind:value={input}
         rows="1"
-        aria-label={mode === "search" ? "Search or address" : "Message"}
-        placeholder={streaming ? "Working · Esc to stop" : MODE_META[mode].hint}
+        aria-label={web ? "Search or address" : "Message"}
+        {placeholder}
         on:keydown={onKeydown}
         on:input={onInput}
         on:focus={() => (focused = true)}
         on:blur={() => (focused = false)}
         on:paste={onPaste}
       />
-      {#if streaming}
-        <button class="go stop" use:tooltip={"Stop (Esc)"} on:click={() => dispatch("stop")}><span class="square" /></button>
+      <!-- While it works, a typed message sends (it waits its turn): the
+           button only stops the agent when there is nothing to send, so a
+           habitual click never ends a run by accident. -->
+      {#if streaming && !canSubmit}
+        <button class="go stop" use:tooltip={"Stop"} on:click={() => dispatch("stop")}><span class="square" /></button>
       {:else}
-        <button class="go" class:ready={canSubmit} use:tooltip={mode === "search" ? "Open (Enter)" : "Send (Enter)"} disabled={!canSubmit} on:click={submit}>
+        <button class="go" class:ready={canSubmit} use:tooltip={web ? "Open (Enter)" : "Send (Enter)"} disabled={!canSubmit} on:click={submit}>
           <Icon name="arrowUp" />
         </button>
       {/if}
     </div>
+  </div>
 
-    <div class="bar">
-      <button class="ctl icon-only" use:tooltip={"Attach files"} on:click={pickFiles}><Icon name="plus" /></button>
-    <div class="modes" role="group" aria-label="Mode" data-ui-segmented>
-      {#if lockMode}
-        <span class="mode on solo" style:--tint={MODE_META[lockMode].tint} title={MODE_META[lockMode].label}>
-          <Icon name={MODE_META[lockMode].icon} />
-        </span>
-      {:else}
-        {#each MODES as m, i (m)}
-          {@const locked = lockMode !== null && m !== lockMode}
-          <!-- Named explicitly: some variants hide the label span, and hidden
-               text doesn't name a button. -->
-          <button
-            aria-label={MODE_META[m].label}
-            aria-pressed={mode === m}
-            class="mode"
-            class:on={mode === m}
-            class:off={locked}
-            style:--tint={MODE_META[m].tint}
-            use:tooltip={locked ? `${MODE_META[m].label} (unavailable here)` : `${MODE_META[m].label} (Ctrl+${i + 1}, Tab cycles)`}
-            disabled={locked}
-            on:click={() => {
-              if (locked) return;
-              mode = m;
-              if (m === "build") {
-                effort = "medium";
-              } else if (m === "work") {
-                effort = "low";
-              }
-            }}
-          >
-            <Icon name={MODE_META[m].icon} />
-            <span>{MODE_META[m].label}</span>
-          </button>
-        {/each}
-      {/if}
-    </div>
-      {#if mode !== "search"}
-        <!-- Every agent send carries this choice, so it shows for both lanes. -->
+  <!-- Suggestions open under the box on Home: the line steps aside. -->
+  <div class="under" class:hidden={webOpen && hero}>
+    {#if !started}
+      <div class="seg" role="group" aria-label="Send to" data-ui-segmented>
+        <button class:on={!web} aria-pressed={!web} use:tooltip={"Ask the agent (Tab switches)"} on:click={() => setWeb(false)}>Agent</button>
+        <button class:on={web} aria-pressed={web} use:tooltip={"Search the web (Tab switches)"} on:click={() => setWeb(true)}>Web</button>
+      </div>
+    {/if}
+    {#if !web}
+      {#if remoteHost}
         <button
-          bind:this={permBtn}
-          class="ctl perm-btn"
-          class:open={permOpen}
-          class:full={permission === "full"}
-          use:tooltip={`${perm.title}: ${perm.desc}`}
-          aria-haspopup="menu"
-          aria-expanded={permOpen}
-          on:click|stopPropagation={togglePerm}
-        >
-          <Icon name={perm.icon} />
-          <span class="truncate">{perm.label}</span>
-        </button>
-      {/if}
-      {#if remoteHost && mode !== "search"}
-        <button
-          class="ctl remote-btn"
+          class="ctl"
           class:on={remote}
           disabled={remoteLocked}
-          aria-label="Remote"
           aria-pressed={remote}
-          use:tooltip={remoteLocked
-            ? remote
-              ? `This session runs on ${remoteHost}`
-              : "This session runs on this PC"
-            : remote
-              ? `Runs on ${remoteHost}. Click to run on this PC`
-              : `Run on ${remoteHost}`}
+          use:tooltip={remoteLocked ? "A session stays where it started" : remote ? "Run on this computer instead" : `Run on ${remoteHost} instead`}
           on:click|stopPropagation={() => dispatch("remote", { on: !remote })}
         >
-          <Icon name="server" />
-          {#if remote}<span class="truncate">Remote</span>{/if}
+          <Icon name={remote ? "server" : "desktop"} size={12} />
+          <span class="truncate">{remote ? remoteHost : "This computer"}</span>
         </button>
       {/if}
-      {#if mode === "build" && !outsideProject}
-          <button
-            bind:this={projBtn}
-            class="ctl project"
-            class:open={projOpen}
-            class:set={!!project}
-            class:locked={folderLocked}
-            aria-haspopup={folderLocked ? undefined : "menu"}
-            aria-expanded={folderLocked ? undefined : projOpen}
-            use:tooltip={project ? `Project ${project.title} · ${folder} · about ${project.tokens} tokens of notes per session` : folder ? `${folder} · not a project yet` : "Pick the project this session works on"}
-            on:click|stopPropagation={toggleProject}
-          >
-            <Icon name={project || !folder ? "project" : "folder"} />
-            <span class="truncate">{project ? project.title : folder ? folderName(folder) : "No project"}</span>
-            {#if branch}<span class="dim">{branch}</span>{/if}
-            {#if !folderLocked}<Icon name="chevDown" size={12} />{/if}
-          </button>
-      {/if}
-
+      <button
+        bind:this={permBtn}
+        class="ctl"
+        class:open={permOpen}
+        use:tooltip={perm.desc}
+        aria-haspopup="menu"
+        aria-expanded={permOpen}
+        on:click|stopPropagation={togglePerm}
+      >
+        <Icon name={permission === "supervised" ? "lock" : "unlock"} size={12} />
+        <span>{perm.label}</span>
+      </button>
       <span class="spacer" />
-
-      {#if mode !== "search"}
-        <ModelPicker bind:this={picker} bind:value={model} bind:effort {board} on:unavailable />
-      {/if}
-    </div>
+      <ModelPicker bind:this={picker} bind:value={model} bind:effort {board} on:unavailable />
+    {/if}
   </div>
   {#if attachError}<div class="error" role="alert">{attachError}</div>{/if}
 
   {#if projOpen}
     <div class="menu-pop" data-ui-list style={projStyle} use:popover={{ anchor: projBtn, close: () => (projOpen = false) }} transition:fly={{ y: projStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
-      <div class="pop-head">{remote ? `Project on ${remoteHost}` : "Project"}</div>
       {#each projects as p (p.slug)}
-        <button
-          class="opt"
-          class:on={remote ? !!p.folder && p.folder === remoteCwd : project?.slug === p.slug}
-          on:click={() => chooseProject(p)}
-        >
+        <button class="opt" class:on={remote ? !!p.folder && p.folder === remoteCwd : project?.slug === p.slug} on:click={() => chooseProject(p)}>
           <Icon name="project" />
-          <span class="meta">
-            <span class="name">{p.title}</span>
-            <span class="sub truncate">
-              {#if !p.folder}
-                {remote ? `No folder on ${remoteHost} yet: choose one` : "No folder on this PC yet: pick one"}
-              {:else if !remote && sameDir(p.folder, folder) && branch}
-                {folderName(p.folder)} · {branch}
-              {:else}
-                {remote ? p.folder : folderName(p.folder)}
-              {/if}
-            </span>
-          </span>
-          {#if p.notes.length}<span class="count">{p.notes.length} note{p.notes.length === 1 ? "" : "s"}</span>{/if}
+          <span class="name truncate">{p.title}</span>
+          {#if !p.folder}<span class="count">No folder yet</span>{:else if !remote && sameDir(p.folder, folder) && branch}<span class="count">{branch}</span>{/if}
         </button>
       {:else}
         {#if projErr}
           <p class="pop-empty err">Couldn't load projects: {projErr}</p>
         {:else}
-          <p class="pop-empty">No projects yet. A project is a folder plus the notes your agents should know about it.</p>
+          <p class="pop-empty">No projects yet.</p>
         {/if}
       {/each}
       <div class="sep" />
       {#if remote}
-        <button class="opt" on:click={newRemoteProject}>
-          <Icon name="plus" />
-          <span class="meta"><span class="name">New project…</span><span class="sub">A folder on {remoteHost}</span></span>
-        </button>
+        <button class="opt" on:click={newRemoteProject}><Icon name="plus" /><span class="name">New project…</span></button>
       {:else}
         {#if folder && !project}
-          <button class="opt" on:click={makeProject}>
-            <Icon name="plus" />
-            <span class="meta"><span class="name">Make {folderName(folder)} a project</span><span class="sub">Notes you map to it come along to every session here</span></span>
-          </button>
+          <button class="opt" on:click={makeProject}><Icon name="plus" /><span class="name truncate">Make {folderName(folder)} a project</span></button>
         {/if}
-        <button class="opt" on:click={newProject}>
-          <Icon name="plus" />
-          <span class="meta"><span class="name">New project…</span><span class="sub">Pick the folder it lives in</span></span>
-        </button>
+        <button class="opt" on:click={newProject}><Icon name="plus" /><span class="name">New project…</span></button>
       {/if}
-      <button class="opt" class:on={remote ? !remoteCwd : !folder} on:click={() => chooseProject(null)}>
-        <Icon name="close" />
-        <span class="meta"><span class="name">No project</span><span class="sub">Run in an empty scratch folder</span></span>
-      </button>
+      <button class="opt" class:on={remote ? !remoteCwd : !folder} on:click={() => chooseProject(null)}><Icon name="close" /><span class="name">No project</span></button>
       <button
         class="opt"
         on:click={() => {
@@ -726,26 +807,44 @@
           dispatch("brain");
         }}
       >
-        <Icon name="brain" />
-        <span class="meta"><span class="name">Manage projects in Brain</span></span>
+        <Icon name="brain" /><span class="name">Manage projects</span>
       </button>
+    </div>
+  {/if}
+
+  {#if branchOpen}
+    <div class="menu-pop" data-ui-list style={branchStyle} use:popover={{ anchor: branchBtn, close: () => (branchOpen = false) }} transition:fly={{ y: branchStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
+      <button class="opt" class:on={!worktree} on:click={() => pickBranch("")}>
+        <Icon name="folder" />
+        <span class="name">This folder</span>
+        <span class="count">{branch}</span>
+      </button>
+      <div class="sep" />
+      <p class="pop-head">New worktree from</p>
+      {#each branchList as b (b)}
+        <button class="opt" class:on={worktree === b} on:click={() => pickBranch(b)}>
+          <Icon name="branch" />
+          <span class="name truncate">{b}</span>
+        </button>
+      {:else}
+        <p class="pop-empty">No branches found.</p>
+      {/each}
     </div>
   {/if}
 
   {#if permOpen}
     <div class="menu-pop perms" data-ui-list style={permStyle} use:popover={{ anchor: permBtn, close: () => (permOpen = false) }} transition:fly={{ y: permStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
       {#each PERMS as p (p.id)}
-        {@const blocked = permissionBlocked(p.id, policy)}
+        {@const off = permissionBlocked(p.id, policy)}
         <button
           class="perm"
-          disabled={!!blocked}
+          disabled={!!off}
           on:click={() => {
             permission = p.id;
             permOpen = false;
           }}
         >
-          <span class="perm-icon"><Icon name={p.icon} /></span>
-          <span class="meta"><span class="perm-name">{p.title}</span><span class="perm-sub">{blocked || p.desc}</span></span>
+          <span class="meta"><span class="perm-name">{p.title}</span><span class="perm-sub">{off || p.desc}</span></span>
           {#if permission === p.id}<span class="tick"><Icon name="check" /></span>{/if}
         </button>
       {/each}
@@ -757,84 +856,104 @@
   .ob {
     position: relative;
     width: 100%;
-    max-width: 720px;
     min-width: 0;
     margin: 0 auto;
   }
+
+  /* The project tab, fused to the box's top edge. */
+  .proj {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: fit-content;
+    max-width: calc(100% - 24px);
+    height: 24px;
+    margin: 0 0 0 14px;
+    padding: 0 10px;
+    transform: translateY(1px);
+    background: var(--glass-strong-bg);
+    -webkit-backdrop-filter: var(--glass-strong-blur);
+    backdrop-filter: var(--glass-strong-blur);
+    border: var(--glass-hairline);
+    border-bottom: none;
+    border-radius: var(--radius) var(--radius) 0 0;
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+    transition:
+      transform 220ms var(--ease-out),
+      opacity 160ms ease;
+  }
+  .proj.folded {
+    transform: translateY(100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .proj:hover {
+    color: var(--text);
+  }
+  .proj.set :global(svg:first-child) {
+    color: var(--accent);
+  }
+  .proj-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .proj-branch {
+    flex: none;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text) 7%, transparent);
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    color: var(--muted);
+  }
+
   .box {
     position: relative;
-    padding: 6px 6px 6px 16px;
+    z-index: 1;
+    padding: 6px;
     background: var(--glass-strong-bg);
     -webkit-backdrop-filter: var(--glass-strong-blur);
     backdrop-filter: var(--glass-strong-blur);
     border: var(--glass-hairline);
     border-radius: var(--radius-lg);
-    box-shadow: var(--glass-shadow);
-    outline: none;
-  }
-  .box:focus,
-  .box:focus-within {
-    outline: none;
+    box-shadow: none;
   }
   .row {
     display: flex;
     align-items: flex-end;
-    gap: 8px;
+    gap: 6px;
   }
-  .orb {
-    width: 22px;
-    height: 22px;
+  .lead {
+    width: 30px;
+    height: 30px;
     flex: none;
-    align-self: center;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 4px;
-    border-radius: 50%;
-    background: color-mix(in srgb, var(--text) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--text) 16%, transparent);
-    animation: orb-bob 2.4s ease-in-out infinite;
+    color: var(--muted);
   }
-  .eye {
-    width: 3px;
-    height: 4.5px;
-    border-radius: 2px;
-    background: var(--text);
-    opacity: 0.85;
-    animation: orb-blink 4.4s ease-in-out infinite;
-    transform-origin: center;
+  .lead.btn {
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
   }
-  @keyframes orb-bob {
-    0%,
-    100% {
-      transform: translateY(0);
-    }
-    50% {
-      transform: translateY(-1.5px);
-    }
-  }
-  @keyframes orb-blink {
-    0%,
-    91%,
-    100% {
-      transform: scaleY(1);
-    }
-    94.5% {
-      transform: scaleY(0.12);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .orb,
-    .eye {
-      animation: none;
-    }
+  .lead.btn:hover {
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+    color: var(--text);
   }
   textarea {
     flex: 1;
     min-width: 0;
-    min-height: 22px;
-    max-height: 180px;
-    padding: 6px 0;
+    min-height: 30px;
+    max-height: 40vh;
+    padding: 5px 2px;
     background: transparent;
     border: none;
     outline: none;
@@ -850,32 +969,33 @@
   textarea::placeholder {
     color: var(--muted);
   }
+  .hero .box {
+    padding: 8px;
+  }
   .hero textarea {
     font-size: var(--fs-lg);
-    padding: 9px 0;
+    padding: 4px 2px;
   }
   .go {
-    width: 26px;
-    height: 26px;
+    width: 30px;
+    height: 30px;
     flex: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     padding: 0;
     background: color-mix(in srgb, var(--text) 6%, transparent);
-    border: 1px solid transparent;
+    border: none;
     border-radius: 999px;
     color: var(--muted);
     cursor: pointer;
   }
   .go.ready:not(:disabled) {
-    background: color-mix(in srgb, var(--text) 14%, transparent);
-    color: var(--text);
-    box-shadow: none;
+    background: var(--text);
+    color: var(--bg);
   }
   .go.ready:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--text) 22%, transparent);
-    transform: none;
+    opacity: 0.88;
   }
   .go:active:not(:disabled) {
     transform: scale(0.94);
@@ -893,26 +1013,283 @@
     color: var(--bad);
   }
   .square {
-    width: 8px;
-    height: 8px;
+    width: 9px;
+    height: 9px;
     border-radius: 2px;
     background: currentColor;
+  }
+
+  /* The line under the box: each control on its own small glass, like the
+     project tab above it, so it reads on any wallpaper without joining the
+     box. */
+  .under {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    min-height: 32px;
+    padding: 6px 0 0;
+  }
+  .under.hidden {
+    visibility: hidden;
+  }
+  .seg,
+  .under :global(.ctl) {
+    box-sizing: border-box;
+    height: 26px;
+    background: var(--glass-strong-bg);
+    -webkit-backdrop-filter: var(--glass-strong-blur);
+    backdrop-filter: var(--glass-strong-blur);
+    border: var(--glass-hairline);
+    border-radius: var(--radius);
+  }
+  .seg {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    gap: 2px;
+    padding: 2px;
+  }
+  .seg button {
+    height: 20px;
+    padding: 0 8px;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+  }
+  .seg button:hover {
+    color: var(--text);
+  }
+  .seg button.on {
+    background: var(--selected);
+    color: var(--text);
+    font-weight: 600;
+  }
+  .under :global(.ctl) {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 0 8px;
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+  }
+  .under :global(.ctl:hover:not(:disabled)),
+  .under :global(.ctl.open) {
+    background: var(--panel);
+    color: var(--text);
+  }
+  .under :global(.ctl:disabled) {
+    cursor: default;
+  }
+  .ctl.on :global(svg) {
+    color: var(--accent);
+  }
+  .truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .spacer {
+    flex: 1 1 auto;
+    min-width: 4px;
+  }
+
+  /* The queue bar: its own row above the composer, one card per
+     waiting message in send order. The text folds to two lines until
+     opened, so items stay distinguishable without growing the box. */
+  .queue-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 220px;
+    margin: 0 0 8px;
+    overflow-y: auto;
+  }
+  .queue-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px;
+  }
+  .queue-title {
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    color: var(--muted);
+  }
+  .queue-resume {
+    margin-left: auto;
+    padding: 2px 10px;
+    background: var(--text);
+    border: none;
+    border-radius: 999px;
+    color: var(--bg);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .queue-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 6px 4px 6px 2px;
+    background: var(--glass-strong-bg);
+    -webkit-backdrop-filter: var(--glass-strong-blur);
+    backdrop-filter: var(--glass-strong-blur);
+    border: var(--glass-hairline);
+    border-radius: var(--radius);
+  }
+  .queue-item.dragover {
+    border-color: var(--accent);
+  }
+  .grip {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 22px;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    cursor: grab;
+  }
+  .grip:active {
+    cursor: grabbing;
+  }
+  .queue-num {
+    flex: none;
+    min-width: 16px;
+    padding-top: 3px;
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    color: var(--muted);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .queue-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: var(--fs-sm);
+    text-align: left;
+    cursor: pointer;
+  }
+  .queue-text > span:first-child {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .queue-text.open > span:first-child {
+    display: block;
+  }
+  .queue-detail {
+    font-size: var(--fs-xs);
+    color: var(--muted);
+  }
+  .queue-acts {
+    flex: none;
+    display: inline-flex;
+    gap: 2px;
+  }
+  .queue-acts button {
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .queue-acts button:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .held {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 26px;
+    flex: none;
+    margin: 2px 2px 6px;
+    padding: 0 4px 0 10px;
+    background: color-mix(in srgb, var(--text) 5%, transparent);
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+  }
+  .held-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+  }
+  .held button {
+    width: 18px;
+    height: 18px;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .held button.held-side {
+    width: auto;
+    padding: 0 6px;
+    font: inherit;
+    font-size: var(--fs-sm);
+  }
+  .held.blind > :global(svg) {
+    flex: none;
+    color: var(--warn);
+  }
+  .held button:hover {
+    color: var(--text);
   }
   .attachments {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    padding: 6px 0 2px;
+    padding: 2px 2px 6px;
   }
   .chip {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     height: 26px;
-    max-width: 200px;
-    padding: 0 4px 0 6px;
-    background: var(--bg);
-    border: 1px solid var(--line);
+    max-width: 220px;
+    padding: 0 4px 0 8px;
+    background: color-mix(in srgb, var(--text) 5%, transparent);
     border-radius: var(--radius);
     color: var(--muted);
     font-size: var(--fs-sm);
@@ -923,16 +1300,25 @@
     object-fit: cover;
     border-radius: 3px;
   }
+  /* The chip's own thumbnail opens the picture big. */
+  .chip .thumb {
+    display: inline-flex;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 3px;
+    cursor: zoom-in;
+  }
   .chip-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-family: var(--mono);
-    font-size: var(--fs-xs);
+    color: var(--text);
   }
   .chip button {
     width: 18px;
     height: 18px;
+    flex: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -945,6 +1331,9 @@
   }
   .chip button:hover {
     color: var(--text);
+  }
+  .chip.quote {
+    border-radius: 999px;
   }
   .error {
     padding: 4px 12px 0;
@@ -977,7 +1366,6 @@
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
-    box-shadow: var(--shadow);
   }
   .suggest button {
     display: flex;
@@ -1006,135 +1394,7 @@
     font-size: var(--fs-xs);
     color: var(--muted);
   }
-  .bar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-    margin-top: 6px;
-    padding: 7px 6px 1px;
-    border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .bar::-webkit-scrollbar {
-    display: none;
-  }
-  .bar :global(.ctl) {
-    height: 26px;
-    padding: 0 8px;
-    color: var(--muted);
-    font-size: var(--fs-sm);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--text) 6%, transparent);
-    border: 1px solid transparent;
-  }
-  .bar :global(.ctl.icon-only) {
-    padding: 0;
-    width: 26px;
-    justify-content: center;
-  }
-  .bar :global(.ctl:hover),
-  .bar :global(.ctl.open) {
-    background: color-mix(in srgb, var(--text) 8%, transparent);
-    color: var(--text);
-  }
-  .bar :global(.ctl:active) {
-    transform: scale(0.97);
-  }
-  .perm-btn {
-    flex: none;
-    gap: 5px;
-  }
-  .perm-btn.full :global(svg) {
-    color: var(--warn);
-  }
-  .remote-btn {
-    flex: none;
-    gap: 5px;
-  }
-  .remote-btn.on {
-    color: var(--text);
-  }
-  .remote-btn.on :global(svg) {
-    color: var(--accent);
-  }
-  .remote-btn:disabled {
-    cursor: default;
-  }
-  .project.set {
-    color: var(--text);
-  }
-  .project {
-    flex: none;
-    max-width: 220px;
-  }
-  .project .truncate {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-  .project.set :global(svg:first-child) {
-    color: var(--accent);
-  }
-  .bar :global(.ctl.locked:hover) {
-    background: transparent;
-    transform: none;
-  }
-  .modes {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    padding: 2px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--text) 6%, transparent);
-    border: 1px solid color-mix(in srgb, var(--text) 6%, transparent);
-  }
-  .mode {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    height: 24px;
-    padding: 0 9px;
-    background: transparent;
-    border: none;
-    border-radius: 999px;
-    color: var(--muted);
-    font-size: var(--fs-sm);
-    cursor: pointer;
-  }
-  .mode:hover {
-    color: var(--text);
-  }
-  .mode.on {
-    background: color-mix(in srgb, var(--tint) 18%, transparent);
-    color: var(--text);
-  }
-  .mode.on :global(svg) {
-    color: var(--tint);
-  }
-  .mode.solo {
-    cursor: default;
-    padding: 0 8px;
-  }
-  .mode.off {
-    opacity: 0.35;
-    cursor: default;
-  }
-  .locked {
-    cursor: default;
-  }
-  .dim {
-    flex: none;
-    white-space: nowrap;
-    color: var(--muted);
-    opacity: 0.8;
-  }
-  .spacer {
-    flex: 1 1 auto;
-    min-width: 4px;
-  }
+
   .menu-pop {
     width: 260px;
     padding: 4px;
@@ -1142,7 +1402,6 @@
   }
   .menu-pop.perms {
     width: 280px;
-    padding: 4px;
   }
   .perm {
     display: flex;
@@ -1164,9 +1423,12 @@
     opacity: 0.45;
     cursor: default;
   }
-  .perm-icon {
-    display: inline-flex;
-    color: var(--muted);
+  .meta {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
   }
   .perm-name {
     font-size: var(--fs-md);
@@ -1179,21 +1441,33 @@
     display: inline-flex;
     color: var(--text);
   }
-  .pop-head {
-    padding: 6px 8px 4px;
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    color: var(--muted);
-  }
   .pop-empty {
     margin: 0;
     padding: 6px 8px 8px;
     font-size: var(--fs-sm);
-    line-height: 1.45;
     color: var(--muted);
   }
   .pop-empty.err {
     color: var(--bad);
+  }
+  .pop-head {
+    margin: 0;
+    padding: 4px 10px 2px;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    color: var(--muted);
+  }
+  /* The project and branch tabs sit side by side on the box's top edge. */
+  .tops {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+  }
+  .proj.branch-tab {
+    margin-left: 0;
+  }
+  .proj.branch-tab.fresh :global(svg:first-child) {
+    color: var(--accent);
   }
   .sep {
     height: 1px;
@@ -1210,7 +1484,8 @@
     align-items: center;
     gap: 9px;
     width: 100%;
-    padding: 5px 8px;
+    height: 32px;
+    padding: 0 8px;
     background: transparent;
     border: none;
     border-radius: var(--radius);
@@ -1226,133 +1501,9 @@
   .opt.on :global(svg) {
     color: var(--accent);
   }
-  .meta {
+  .name {
     flex: 1;
     min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
-  .name {
     font-size: var(--fs-md);
-    font-weight: 600;
   }
-  .sub {
-    font-size: var(--fs-xs);
-    line-height: 1.4;
-    color: var(--muted);
-  }
-  /* Preview variants (see PreviewView): same controls, different layout. */
-  /* Edition A — priority row: icon-only modes, project-first, one row. */
-  .ob.v2 .mode span:last-child {
-    display: none;
-  }
-  .ob.v2 .mode {
-    padding: 0 7px;
-  }
-  .ob.v2 .bar :global(.model) {
-    max-width: 200px;
-  }
-  .ob.v2 .project {
-    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-    color: var(--text);
-  }
-  /* Edition B — two-line calm: project on its own full-width row. */
-  .ob.v3 .bar {
-    flex-wrap: wrap;
-  }
-  .ob.v3 .project {
-    order: -1;
-    flex: 1 1 100%;
-    justify-content: flex-start;
-  }
-  .ob.v3 .bar :global(.model) {
-    max-width: 200px;
-  }
-  /* Edition C — compact: tighter pills, everything kept, nothing hidden. */  .ob.v4 .bar {
-    flex-wrap: nowrap;
-  }
-  .ob.v4 .mode {
-    height: 22px;
-    padding: 0 7px;
-    font-size: var(--fs-sm);
-  }
-  .ob.v4 .modes {
-    padding: 1px;
-  }
-  .ob.v4 .bar :global(.ctl) {
-    height: 24px;
-    font-size: var(--fs-sm);
-  }
-  .ob.v4 .bar :global(.ctl.icon-only) {
-    width: 24px;
-  }
-  .ob.v4 .bar :global(.model) {
-    max-width: 150px;
-  }
-  .ob.v4 .project {
-    min-width: 0;
-    max-width: 150px;
-  }
-  .ob.v4 .project .truncate {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /* Shared outside-project header (v5/v6/v7). */
-  .proj-out {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    max-width: 100%;
-    margin: 0 0 6px 2px;
-    padding: 0;
-    background: none;
-    border: none;
-    color: var(--muted);
-    font-size: var(--fs-sm);
-    cursor: pointer;
-    text-align: left;
-  }
-  .proj-out:hover { color: var(--text); }
-  .proj-out.set :global(svg:first-child) { color: var(--accent); }
-  .proj-title { font-weight: 650; color: var(--text); white-space: nowrap; }
-  .proj-branch { flex: none; padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--text) 7%, transparent); font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted); }
-  /* v5: quiet eyebrow row, inline project hidden, box slimmer. */
-  .ob.v5 .bar .project, .ob.v6 .bar .project, .ob.v7 .bar .project { display: none; }
-  .ob.v5 .box { padding-top: 8px; }
-  .ob.v5 .mode span:last-child { display: none; }
-  .ob.v5 .mode { padding: 0 7px; }
-  /* v6: tab fused to box top edge. */
-  .ob.v6 .proj-out {
-    margin: 0 0 0 10px;
-    height: 24px;
-    padding: 0 10px;
-    transform: translateY(1px);
-    background: var(--glass-strong-bg);
-    border: var(--glass-hairline);
-    border-bottom: none;
-    border-radius: var(--radius) var(--radius) 0 0;
-    width: fit-content;
-    max-width: calc(100% - 20px);
-  }
-  .ob.v6 .box { border-radius: var(--radius-lg); }
-  .ob.v6 .mode span:last-child { display: none; }
-  .ob.v6 .mode { padding: 0 7px; }
-  /* v7: innovative inline @mention, minimal bar, icons only. */
-  .ob.v7 .proj-out { margin-bottom: 7px; }
-  .ob.v7 .inline-at {
-    flex: none;
-    align-self: center;
-    padding: 2px 8px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: var(--fs-sm);
-    font-weight: 600;
-  }
-  .ob.v7 .mode span:last-child, .ob.v7 .bar :global(.model .lbl) { display: none; }
-  .ob.v7 .mode { padding: 0 7px; }
-  .ob.v7 .bar { border-top-style: dashed; }
 </style>

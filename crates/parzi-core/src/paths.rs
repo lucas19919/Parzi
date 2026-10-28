@@ -161,32 +161,25 @@ pub fn ensure_dirs() -> Result<PathBuf> {
 /// builtin flag and the rename/delete/save guards all read it.
 pub(crate) const BUILTIN_PACKS: &[(&str, &str)] = &[
     (
-        "tokyo-night",
+        "dark",
         "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#16161E\"\nstage = \"#1A1B26\"\naccent = \"#7AA2F7\"\ntext = \"#C0CAF5\"\n\
-text_dim = \"#8B93B8\"\nbar = \"#1F2330\"\nborder = \"#2A2E3F\"\n\n\
-[background]\nimage = \"\"\ndim = 0.60\nvignette = 0.45\nblur = 0.0\n",
-    ),
-    (
-        "full-dark",
-        "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#000000\"\nstage = \"#000000\"\naccent = \"#5EEAD4\"\ntext = \"#F2F2F2\"\n\
+[colors]\nsidebar = \"#000000\"\nstage = \"#000000\"\naccent = \"#E8E8E8\"\ntext = \"#F2F2F2\"\n\
 text_dim = \"#8A8A8A\"\nbar = \"#0A0A0A\"\nborder = \"#1F1F1F\"\n\n\
 [background]\nimage = \"\"\ndim = 0.60\nvignette = 0.40\nblur = 0.0\n",
     ),
     (
-        "grey",
+        "graphite",
         "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#101012\"\nstage = \"#171719\"\naccent = \"#E6E8EE\"\ntext = \"#EDEDEF\"\n\
-text_dim = \"#9A9AA2\"\nbar = \"#1F1F23\"\nborder = \"#2E2E35\"\n\n\
-[background]\nimage = \"\"\ndim = 0.60\nvignette = 0.40\nblur = 0.0\n",
+[colors]\nsidebar = \"#0F0F0F\"\nstage = \"#161616\"\naccent = \"#E8E8E8\"\ntext = \"#ECECEC\"\n\
+text_dim = \"#9B9B9B\"\nbar = \"#1C1C1C\"\nborder = \"#2A2A2A\"\n\n\
+[background]\nimage = \"\"\ndim = 0.66\nvignette = 0.50\nblur = 0.0\n",
     ),
     (
         "light",
         "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#F2F3F5\"\nstage = \"#FFFFFF\"\naccent = \"#4F5EE0\"\ntext = \"#1A1D24\"\n\
-text_dim = \"#5B6472\"\nbar = \"#E9EBEF\"\nborder = \"#D5D9E0\"\n\n\
-[background]\nimage = \"\"\ndim = 0.40\nvignette = 0.12\nblur = 0.0\n",
+[colors]\nsidebar = \"#FAFAFA\"\nstage = \"#FFFFFF\"\naccent = \"#000000\"\ntext = \"#171717\"\n\
+text_dim = \"#666666\"\nbar = \"#FAFAFA\"\nborder = \"#EAEAEA\"\n\n\
+[background]\nimage = \"\"\ndim = 0.40\nvignette = 0.08\nblur = 0.0\ngrain = 0.0\n",
     ),
 ];
 
@@ -208,13 +201,36 @@ fn seed_builtin_packs(root: &std::path::Path) -> Result<()> {
 }
 
 /// Earlier seeds of a builtin, matched as whole files.
-const OLD_SEEDS: &[(&str, &str)] = &[(
-    "light",
-    "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+const OLD_SEEDS: &[(&str, &str)] = &[
+    (
+        "light",
+        "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
 [colors]\nsidebar = \"#F2F3F5\"\nstage = \"#FFFFFF\"\naccent = \"#4F5EE0\"\ntext = \"#1A1D24\"\n\
 text_dim = \"#5B6472\"\nbar = \"#E9EBEF\"\nborder = \"#D5D9E0\"\n\n\
 [background]\nimage = \"\"\ndim = 0.50\nvignette = 0.35\nblur = 0.0\n",
-)];
+    ),
+    (
+        "light",
+        "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+[colors]\nsidebar = \"#F2F3F5\"\nstage = \"#FFFFFF\"\naccent = \"#4F5EE0\"\ntext = \"#1A1D24\"\n\
+text_dim = \"#5B6472\"\nbar = \"#E9EBEF\"\nborder = \"#D5D9E0\"\n\n\
+[background]\nimage = \"\"\ndim = 0.40\nvignette = 0.12\nblur = 0.0\n",
+    ),
+    (
+        "light",
+        "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+[colors]\nsidebar = \"#E9EBEF\"\nstage = \"#FFFFFF\"\naccent = \"#2A2E35\"\ntext = \"#16181D\"\n\
+text_dim = \"#4B5563\"\nbar = \"#E2E5EA\"\nborder = \"#C9CFD8\"\n\n\
+[background]\nimage = \"\"\ndim = 0.40\nvignette = 0.12\nblur = 0.0\n",
+    ),
+    (
+        "light",
+        "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+[colors]\nsidebar = \"#FAFAFA\"\nstage = \"#FFFFFF\"\naccent = \"#000000\"\ntext = \"#171717\"\n\
+text_dim = \"#666666\"\nbar = \"#FAFAFA\"\nborder = \"#EAEAEA\"\n\n\
+[background]\nimage = \"\"\ndim = 0.40\nvignette = 0.12\nblur = 0.0\n",
+    ),
+];
 
 /// Seeds from before the glass section was dropped ended with this.
 const GLASS_TAIL: &str = "\n[glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n";
@@ -241,6 +257,10 @@ fn refresh_builtin_defaults(root: &std::path::Path) {
 fn retire_legacy_packs(root: &std::path::Path) {
     const LEGACY: &[(&str, &str)] = &[
         ("ember", "accent = \"#E5484D\""),
+        ("tokyo-night", "accent = \"#7AA2F7\""),
+        ("slate", "accent = \"#CBD5E1\""),
+        ("grey", "accent = \"#E6E8EE\""),
+        ("full-dark", "accent = \"#5EEAD4\""),
         ("midnight", "accent = \"#7C8CFF\""),
         ("forest", "accent = \"#34D399\""),
         ("grape", "accent = \"#A78BFA\""),
@@ -290,18 +310,18 @@ mod tests {
         std::fs::create_dir_all(&light).unwrap();
         let marker = light.join("theme.toml");
         let current = BUILTIN_PACKS.iter().find(|(n, _)| *n == "light").unwrap().1;
-        let old = OLD_SEEDS[0].1;
+        for (_, old) in OLD_SEEDS {
+            std::fs::write(&marker, old).unwrap();
+            refresh_builtin_defaults(root.path());
+            assert_eq!(std::fs::read_to_string(&marker).unwrap(), current);
 
-        std::fs::write(&marker, old).unwrap();
-        refresh_builtin_defaults(root.path());
-        assert_eq!(std::fs::read_to_string(&marker).unwrap(), current);
-
-        std::fs::write(&marker, format!("{old}{GLASS_TAIL}")).unwrap();
-        refresh_builtin_defaults(root.path());
-        assert_eq!(std::fs::read_to_string(&marker).unwrap(), current);
+            std::fs::write(&marker, format!("{old}{GLASS_TAIL}")).unwrap();
+            refresh_builtin_defaults(root.path());
+            assert_eq!(std::fs::read_to_string(&marker).unwrap(), current);
+        }
 
         // Same values, one user edit elsewhere: theirs now, left alone.
-        let touched = old.replace("#4F5EE0", "#FF0000");
+        let touched = OLD_SEEDS[0].1.replace("#4F5EE0", "#FF0000");
         std::fs::write(&marker, &touched).unwrap();
         refresh_builtin_defaults(root.path());
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), touched);

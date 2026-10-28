@@ -99,7 +99,7 @@ async fn serve_stays_on_loopback_and_parks_approvals() {
     };
     assert!(second.contains("already running"), "{second}");
 
-    let session = store.create("note", "default", "", "claude/test").unwrap();
+    let session = store.create("note", "default", "claude/test").unwrap();
     let approver = daemon.approver.clone();
     let sid = session.id.clone();
     let waiting = tokio::spawn(async move {
@@ -108,7 +108,6 @@ async fn serve_stays_on_loopback_and_parks_approvals() {
                 id: "call-1".into(),
                 name: "shell.exec".into(),
                 args: json!({ "cmd": "echo hi" }),
-                lane: String::new(),
                 session: sid,
             })
             .await
@@ -133,7 +132,7 @@ async fn serve_stays_on_loopback_and_parks_approvals() {
     let events = store.events(&session.id).unwrap();
     assert!(events.iter().any(|e| matches!(
         e,
-        parzi_core::store::Event::System { text } if text.contains("waiting for approval")
+        parzi_core::store::Event::System { text } if text.contains("Waiting for approval")
     )));
 
     drop(daemon);

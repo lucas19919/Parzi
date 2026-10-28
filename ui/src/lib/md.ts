@@ -2,6 +2,10 @@ import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
 import { writable } from "svelte/store";
 import { toast } from "./toast";
+import { splitSegments, type Segment } from "./segments";
+import { reportMarkdown } from "./mdReport";
+import { mathAt } from "./mdMath";
+import { vaultRefs } from "./linkRules";
 
 // Rich renderers (KaTeX + highlight.js) load on first use, off the
 // startup path. Until then code renders plain and math renders as
@@ -147,33 +151,15 @@ md.block.ruler.before("fence", "parzi-math-block", (state, start, end, silent) =
   return true;
 });
 
-// $…$ inline and $$…$$ single-line display (escaped \$ ignored).
+// $…$ inline and $$…$$ single-line display (escaped \$ and money ignored).
 md.inline.ruler.after("escape", "parzi-math-inline", (state, silent) => {
-  const src = state.src;
-  if (state.pos >= src.length || src[state.pos] !== "$") return false;
-  if (state.pos > 0 && src[state.pos - 1] === "\\") return false;
-  const display = src[state.pos + 1] === "$";
-  const open = display ? state.pos + 2 : state.pos + 1;
-  let end = open;
-  while (end < src.length) {
-    if (src[end] === "\n") return false;
-    if (src[end] === "$" && src[end - 1] !== "\\") {
-      if (display) {
-        if (src[end + 1] === "$") break;
-      } else if (src[end + 1] !== "$") {
-        break;
-      }
-    }
-    end++;
-  }
-  if (end >= src.length) return false;
-  const tex = src.slice(open, end);
-  if (!tex.trim()) return false;
+  const span = mathAt(state.src, state.pos);
+  if (!span) return false;
   if (silent) return true;
   const tok = state.push("parzi_math", "span", 0);
-  tok.content = tex;
-  tok.meta = { display };
-  state.pos = display ? end + 2 : end + 1;
+  tok.content = span.tex;
+  tok.meta = { display: span.display };
+  state.pos = span.next;
   return true;
 });
 
@@ -225,10 +211,47 @@ md.renderer.rules.fence = (tokens, idx) => {
     }
   }
   const label = PLAIN_FENCES.has(lang.toLowerCase()) ? "" : `<span class="code-lang">${safeLang}</span>`;
-  const long = lines.length > 30;
+  // A drawing in text (boxes and arrows) is a picture: it shrinks to fit
+  // instead of scrolling, and shows whole.
+  const cols = isDiagram(lang, body) ? Math.max(...lines.map((l) => [...l].length)) : 0;
+  const long = !cols && lines.length > 30;
   const expand = long ? `<button class="code-expand" data-expand data-label="Show all ${lines.length} lines">Show all ${lines.length} lines</button>` : "";
-  return `<div class="codeblock${long ? " clamped" : ""}"><div class="code-tools">${label}<button data-copy>Copy</button></div><pre><code>${code}</code></pre>${expand}</div>`;
+  const cls = cols ? " diagram" : long ? " clamped" : "";
+  const style = cols ? ` style="--cols:${cols}"` : "";
+  return `<div class="codeblock${cls}"${style}><div class="code-tools">${label}<button data-copy>Copy</button></div><pre><code>${code}</code></pre>${expand}</div>`;
 };
+
+const BOX = /[─-╿▀-▟]/g;
+
+/** A fence that draws (box-drawing lines), not code. */
+export function isDiagram(lang: string, body: string): boolean {
+  if (!PLAIN_FENCES.has(lang.toLowerCase())) return false;
+  return (body.match(BOX)?.length ?? 0) >= 6;
+}
+
+/** A click on a code block's Copy or Show all; true when it was one. */
+export function codeBlockClick(el: HTMLElement): boolean {
+  const copyBtn = el.closest<HTMLElement>("[data-copy]");
+  if (copyBtn) {
+    const code = copyBtn.closest(".codeblock")?.querySelector("code")?.textContent ?? "";
+    navigator.clipboard.writeText(code).then(
+      () => {
+        copyBtn.textContent = "Copied";
+        setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
+      },
+      (e) => toast(`Couldn't copy: ${e}`, true),
+    );
+    return true;
+  }
+  const expand = el.closest<HTMLElement>("[data-expand]");
+  if (expand) {
+    const block = expand.closest(".codeblock");
+    block?.classList.toggle("clamped");
+    expand.textContent = block?.classList.contains("clamped") ? (expand.dataset.label ?? "Show all") : "Show less";
+    return true;
+  }
+  return false;
+}
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -275,6 +298,60 @@ md.renderer.rules.parzi_front = (tokens, idx) => {
     .join("");
   return `<dl class="md-front">${rows}</dl>`;
 };
+
+// Bare vault notes named in prose ("updated projects/acme/GOALS.md") link
+// like Antigravity's file chips: no explicit [label](href) needed. Runs on
+// the token stream so code spans, fences and existing links are untouched
+// (only bare text tokens outside link_open/link_close are split).
+md.core.ruler.push("parzi-file-links", (state) => {
+  for (const block of state.tokens) {
+    if (block.type !== "inline" || !block.children) continue;
+    const kids = block.children;
+    let depth = 0;
+    for (let i = 0; i < kids.length; i++) {
+      const tok = kids[i];
+      if (tok.type === "link_open") {
+        depth++;
+        continue;
+      }
+      if (tok.type === "link_close") {
+        depth = Math.max(0, depth - 1);
+        continue;
+      }
+      if (tok.type !== "text" || depth > 0) continue;
+      const refs = vaultRefs(tok.content);
+      if (!refs.length) continue;
+      const nodes: typeof kids = [];
+      let at = 0;
+      for (const r of refs) {
+        if (r.index > at) {
+          const plain = new state.Token("text", "", 0);
+          plain.content = tok.content.slice(at, r.index);
+          nodes.push(plain);
+        }
+        const open = new state.Token("link_open", "a", 1);
+        open.attrs = [
+          ["href", r.path],
+          ["class", "file-ref"],
+        ];
+        const label = new state.Token("text", "", 0);
+        label.content = r.path;
+        const close = new state.Token("link_close", "a", -1);
+        nodes.push(open, label, close);
+        at = r.index + r.length;
+      }
+      if (at < tok.content.length) {
+        const tail = new state.Token("text", "", 0);
+        tail.content = tok.content.slice(at);
+        nodes.push(tail);
+      }
+      kids.splice(i, 1, ...nodes);
+      i += nodes.length - 1;
+    }
+  }
+});
+
+reportMarkdown(md);
 
 const mdCache = new Map<string, string>();
 const MD_CACHE_MAX = 400;
@@ -326,50 +403,7 @@ export function mdHtml(src: string, _rev: unknown, cache = true): string {
   return renderMarkdown(src, cache);
 }
 
-type Segment =
-  | { kind: "md"; body: string }
-  | { kind: "widget"; body: unknown }
-  | { kind: "artifact"; body: any }
-  // A ```viz block's JSON text, drawn by lib/viz (which explains a bad one).
-  | { kind: "viz"; body: string };
-
-const segCache = new Map<string, Segment[]>();
-const SEG_CACHE_MAX = 400;
-
-export function splitSegments(text: string, cache = true): Segment[] {
-  if (cache) {
-    const hit = segCache.get(text);
-    if (hit !== undefined) return hit;
-  }
-  const out: Segment[] = [];
-  const re = /```(parzi-widget|parzi-artifact|viz)[ \t]*\r?\n([\s\S]*?)```/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push({ kind: "md", body: text.slice(last, m.index) });
-    if (m[1] === "viz") {
-      out.push({ kind: "viz", body: m[2] });
-      last = m.index + m[0].length;
-      continue;
-    }
-    try {
-      const payload = JSON.parse(m[2]);
-      if (m[1] === "parzi-widget") out.push({ kind: "widget", body: payload });
-      else out.push({ kind: "artifact", body: payload });
-    } catch {
-      out.push({ kind: "md", body: m[0] });
-    }
-    last = m.index + m[0].length;
-  }
-  if (last < text.length) out.push({ kind: "md", body: text.slice(last) });
-  if (!cache) return out;
-  if (segCache.size >= SEG_CACHE_MAX) {
-    const first = segCache.keys().next().value;
-    if (first !== undefined) segCache.delete(first);
-  }
-  segCache.set(text, out);
-  return out;
-}
+export { splitSegments, type Segment } from "./segments";
 
 function continues(line: string): boolean {
   return /^(\s*([-*+]|\d+[.)])\s|\s{4,}|>|\||\s*\[[^\]]+\]:)/.test(line);

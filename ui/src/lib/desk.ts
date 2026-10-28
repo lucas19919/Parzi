@@ -3,7 +3,7 @@ import type { Tab } from "./tabs";
 /** A tab as the window's control socket sees it (control.rs TabSnap). */
 export interface DeskTab {
   id: string;
-  kind: "browser" | "session" | "settings" | "preview" | "brain" | "history";
+  kind: "browser" | "session" | "settings" | "preview" | "brain" | "history" | "artifact";
   title: string;
   url: string;
   /** The session a session tab shows, or the agent that owns a page tab. */
@@ -21,7 +21,7 @@ export interface DeskCmd {
   owner?: string | null;
   /** open, show: switch to it; false opens it behind the current tab (agents' pages and views, unless they ask). */
   focus?: boolean;
-  what?: "session" | "settings" | "brain" | "history" | "home";
+  what?: "session" | "settings" | "brain" | "history" | "plan" | "work" | "tasks" | "home";
   title?: string;
   section?: string;
   path?: string;

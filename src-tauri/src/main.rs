@@ -1,17 +1,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex as StdMutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::sync::Arc;
 
 use parzi_core::config::ParziConfig;
 use parzi_core::store::SessionStore;
-use parzi_runtime::handler::{ui_event, RunEvent};
-use parzi_runtime::tools::{Approval, Approver, AskRequest, Asker, ToolCallInfo};
+use parzi_runtime::handler::RunEvent;
+use parzi_runtime::tools::{
+    humanize_tool_call, Approval, Approver, AskRequest, Asker, ToolCallInfo,
+};
 use parzi_runtime::Orchestrator;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::{broadcast, oneshot, Mutex};
 
 #[cfg(target_os = "windows")]
 mod dwm;
@@ -26,97 +27,17 @@ mod files;
 mod job;
 mod onboard;
 mod pagectl;
+mod plans;
 mod remote;
 mod search;
 mod sessions;
 mod settings;
 mod siteprefs;
-mod uilog;
-mod urls;
 mod vault;
+mod worktree;
 
-/// Calls waiting on the person: key -> (session, answer channel). A plain
-/// mutex, never held across an await, so a wait that is dropped (its run
-/// stopped) can clear itself in `Drop`.
-pub(crate) struct Waits<T>(StdMutex<HashMap<String, (String, oneshot::Sender<T>)>>);
-
-pub(crate) type Pending = Arc<Waits<Approval>>;
-pub(crate) type PendingQuestions = Arc<Waits<String>>;
-
-impl<T> Default for Waits<T> {
-    fn default() -> Self {
-        Self(StdMutex::new(HashMap::new()))
-    }
-}
-
-impl<T> Waits<T> {
-    fn map(&self) -> MutexGuard<'_, HashMap<String, (String, oneshot::Sender<T>)>> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Starts a wait. The guard clears the entry (and its row in
-    /// `parzi approval list`) however the wait ends: answered, timed out,
-    /// or dropped with a run that was killed while it waited.
-    pub(crate) fn open(
-        self: &Arc<Self>,
-        key: &str,
-        session: &str,
-        desk: Option<Arc<control::Desk>>,
-    ) -> (oneshot::Receiver<T>, Waiting<T>) {
-        let (tx, rx) = oneshot::channel();
-        self.map()
-            .insert(key.to_string(), (session.to_string(), tx));
-        let guard = Waiting {
-            waits: self.clone(),
-            key: key.to_string(),
-            desk,
-        };
-        (rx, guard)
-    }
-
-    /// The answer channel of a waiting call. With a session, only when the
-    /// call is that session's: a mismatch leaves the wait as it was.
-    pub(crate) fn take(
-        &self,
-        key: &str,
-        session: Option<&str>,
-    ) -> Result<(String, oneshot::Sender<T>), Mismatch> {
-        let mut map = self.map();
-        match map.get(key) {
-            None => Err(Mismatch::Gone),
-            Some((bound, _)) if session.is_some_and(|s| s != bound) => Err(Mismatch::Other),
-            Some(_) => map.remove(key).ok_or(Mismatch::Gone),
-        }
-    }
-
-    #[cfg(test)]
-    fn len(&self) -> usize {
-        self.map().len()
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Mismatch {
-    /// Answered, timed out, or its run stopped.
-    Gone,
-    /// The key belongs to another session.
-    Other,
-}
-
-pub(crate) struct Waiting<T> {
-    waits: Arc<Waits<T>>,
-    key: String,
-    desk: Option<Arc<control::Desk>>,
-}
-
-impl<T> Drop for Waiting<T> {
-    fn drop(&mut self) {
-        self.waits.map().remove(&self.key);
-        if let Some(desk) = &self.desk {
-            desk.approval_closed(&self.key);
-        }
-    }
-}
+pub(crate) type Pending = Arc<Mutex<HashMap<String, (String, oneshot::Sender<Approval>)>>>;
+pub(crate) type PendingQuestions = Arc<Mutex<HashMap<String, (String, oneshot::Sender<String>)>>>;
 
 pub(crate) struct AppState {
     pub(crate) orch: Arc<Orchestrator>,
@@ -126,19 +47,43 @@ pub(crate) struct AppState {
     pub(crate) desk: Arc<control::Desk>,
 }
 
-pub(crate) const RUN_EVENT: &str = "parzi://run-event";
-
-/// Every event goes to the shell webview only: page tabs and popups are
-/// webviews too, and none of this is theirs.
-pub(crate) fn emit<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
-    let _ = app.emit_to("main", event, payload);
-}
-
-/// What the window hears that only the desk knows: a run's own events go
-/// through `parzi_runtime::handler::ui_event`, as `parzi serve` sends them.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum UiEvent {
+    Text {
+        session: String,
+        text: String,
+    },
+    Reasoning {
+        session: String,
+        text: String,
+    },
+    ToolCall {
+        session: String,
+        id: String,
+        name: String,
+        label: String,
+    },
+    ToolResult {
+        session: String,
+        id: String,
+        name: String,
+        ok: bool,
+        ms: u64,
+    },
+    Notice {
+        session: String,
+        text: String,
+    },
+    Todo {
+        session: String,
+        todo: serde_json::Value,
+    },
+    Context {
+        session: String,
+        used: u64,
+        limit: u64,
+    },
     Approval {
         key: String,
         session: String,
@@ -149,6 +94,8 @@ pub(crate) enum UiEvent {
         session: String,
         question: String,
         options: Vec<String>,
+        details: Vec<String>,
+        multi: bool,
     },
     Request {
         key: String,
@@ -156,14 +103,38 @@ pub(crate) enum UiEvent {
         request: String,
         req_kind: String,
     },
+    /// An approval, question or request nobody answered in time: its card
+    /// goes, since answering it now would do nothing.
+    Expired {
+        key: String,
+        session: String,
+    },
+    Done {
+        session: String,
+        turns: u32,
+    },
+    /// Stopped at the budget: no longer running, and not done either.
+    Paused {
+        session: String,
+        reason: String,
+    },
+    Error {
+        session: String,
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ToolCallView {
     id: String,
     name: String,
+    /// What the call does, in words ("Running `npm test`").
+    label: String,
+    /// What the approval card says: "<agent> wants to <action>" over the
+    /// detail.
+    #[serde(flatten)]
+    ask: parzi_runtime::ask_text::AskText,
     args: serde_json::Value,
-    lane: String,
     session: String,
 }
 
@@ -176,25 +147,29 @@ pub(crate) struct GuiApprover {
 impl Approver for GuiApprover {
     async fn approve(&self, call: &ToolCallInfo) -> Approval {
         let key = uuid::Uuid::new_v4().to_string();
-        // Listed for `parzi approval` and streamed to `parzi watch`.
-        let desk = self.app.try_state::<AppState>().map(|s| s.desk.clone());
-        let (rx, _waiting) = self.pending.open(&key, &call.session, desk.clone());
+        let (tx, rx) = oneshot::channel();
+        self.pending
+            .lock()
+            .await
+            .insert(key.clone(), (call.session.clone(), tx));
         let view = ToolCallView {
             id: call.id.clone(),
             name: call.name.clone(),
+            label: humanize_tool_call(&call.name, &call.args),
+            ask: parzi_runtime::ask_text::ask_text(&call.name, &call.args),
             args: call.args.clone(),
-            lane: call.lane.clone(),
             session: call.session.clone(),
         };
-        emit(
-            &self.app,
-            RUN_EVENT,
+        let _ = self.app.emit(
+            "parzi://run-event",
             UiEvent::Approval {
                 key: key.clone(),
                 session: call.session.clone(),
                 call: view,
             },
         );
+        // Listed for `parzi approval` and streamed to `parzi watch`.
+        let desk = self.app.try_state::<AppState>().map(|s| s.desk.clone());
         if let Some(desk) = &desk {
             desk.approval_opened(&key, call);
         }
@@ -204,9 +179,17 @@ impl Approver for GuiApprover {
             .try_state::<AppState>()
             .map_or(900, |s| s.orch.config().orchestrator.approval_wait_secs)
             .max(10);
-        match tokio::time::timeout(Duration::from_secs(wait), rx).await {
+        let out = tokio::time::timeout(std::time::Duration::from_secs(wait), rx).await;
+        self.pending.lock().await.remove(&key);
+        if let Some(desk) = &desk {
+            desk.approval_closed(&key);
+        }
+        match out {
             Ok(Ok(a)) => a,
-            _ => Approval::Deny,
+            _ => {
+                expired(&self.app, &key, &call.session);
+                Approval::Deny
+            }
         }
     }
 }
@@ -220,16 +203,21 @@ pub(crate) struct GuiAsker {
 impl Asker for GuiAsker {
     async fn ask(&self, req: &AskRequest) -> String {
         let key = uuid::Uuid::new_v4().to_string();
-        let (rx, _waiting) = self.pending.open(&key, &req.session, None);
-        emit(
-            &self.app,
-            RUN_EVENT,
+        let (tx, rx) = oneshot::channel();
+        self.pending
+            .lock()
+            .await
+            .insert(key.clone(), (req.session.clone(), tx));
+        let _ = self.app.emit(
+            "parzi://run-event",
             if req.kind.is_empty() {
                 UiEvent::Question {
                     key: key.clone(),
                     session: req.session.clone(),
                     question: req.question.clone(),
                     options: req.options.clone(),
+                    details: req.details.clone(),
+                    multi: req.multi,
                 }
             } else {
                 UiEvent::Request {
@@ -240,17 +228,26 @@ impl Asker for GuiAsker {
                 }
             },
         );
-        // The same wait as approvals (Settings), so serve and the desk agree.
-        let wait = self
-            .app
-            .try_state::<AppState>()
-            .map_or(900, |s| s.orch.config().orchestrator.approval_wait_secs)
-            .max(10);
-        match tokio::time::timeout(Duration::from_secs(wait), rx).await {
+        let out = tokio::time::timeout(std::time::Duration::from_secs(300), rx).await;
+        self.pending.lock().await.remove(&key);
+        if out.is_err() {
+            expired(&self.app, &key, &req.session);
+        }
+        match out {
             Ok(Ok(a)) if !a.trim().is_empty() => a,
-            _ => "the user didn't answer. Decide yourself and say what you assumed.".into(),
+            _ => "the user didn't answer — decide yourself and say what you assumed".into(),
         }
     }
+}
+
+fn expired(app: &AppHandle, key: &str, session: &str) {
+    let _ = app.emit(
+        "parzi://run-event",
+        UiEvent::Expired {
+            key: key.to_string(),
+            session: session.to_string(),
+        },
+    );
 }
 
 fn boot() -> anyhow::Result<(ParziConfig, SessionStore, Option<String>)> {
@@ -325,15 +322,69 @@ async fn app_version() -> Result<String, String> {
     Ok(env!("CARGO_PKG_VERSION").to_string())
 }
 
+/// An error the window did not handle, into the log: a stuck or blank
+/// window leaves a trace. At most 30 a minute, each clipped.
+#[tauri::command]
+fn ui_error(message: &str) {
+    static BUDGET: std::sync::Mutex<(u64, u32)> = std::sync::Mutex::new((0, 0));
+    let minute = parzi_core::now_ms() / 60_000;
+    let mut b = BUDGET
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if b.0 != minute {
+        *b = (minute, 0);
+    }
+    b.1 += 1;
+    if b.1 <= 30 {
+        let text: String = message.chars().take(2000).collect();
+        tracing::error!("window: {text}");
+    }
+}
+
 #[tauri::command]
 fn window_fullscreen(window: tauri::Window, on: bool) -> Result<(), String> {
     window.set_fullscreen(on).map_err(|e| e.to_string())
 }
 
-fn send_run_event(app: &AppHandle, session: &str, ev: &RunEvent) {
-    if let Some(v) = ui_event(session, ev) {
-        emit(app, RUN_EVENT, v);
-    }
+#[tauri::command]
+fn begin_window_drag(window: tauri::Window) -> Result<(), String> {
+    #[cfg(windows)]
+    dwm::begin_window_drag(window);
+    #[cfg(not(windows))]
+    window.start_dragging().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn ui_from_run(session: String, ev: RunEvent) -> Option<UiEvent> {
+    Some(match ev {
+        RunEvent::Text(_)
+        | RunEvent::Reasoning { .. }
+        | RunEvent::Usage { .. }
+        | RunEvent::ApprovalRequest { .. } => return None,
+        RunEvent::ToolCall { id, name, label } => UiEvent::ToolCall {
+            session,
+            id,
+            name,
+            label,
+        },
+        RunEvent::ToolResult { id, name, ok, ms } => UiEvent::ToolResult {
+            session,
+            id,
+            name,
+            ok,
+            ms,
+        },
+        RunEvent::Notice { text } => UiEvent::Notice { session, text },
+        RunEvent::Todo { todo } => UiEvent::Todo { session, todo },
+        RunEvent::Context { used, limit } => UiEvent::Context {
+            session,
+            used,
+            limit,
+        },
+        RunEvent::Done { turns } => UiEvent::Done { session, turns },
+        RunEvent::Paused { reason } => UiEvent::Paused { session, reason },
+        RunEvent::Error(error) => UiEvent::Error { session, error },
+    })
 }
 
 async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, RunEvent)>) {
@@ -343,16 +394,28 @@ async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, R
         reasoning: String,
     }
     let mut bufs: HashMap<String, Buf> = HashMap::new();
-    let flush_interval = Duration::from_millis(30);
+    let flush_interval = std::time::Duration::from_millis(30);
 
     fn flush_sid(app: &AppHandle, sid: &str, buf: &mut Buf) {
         if !buf.text.is_empty() {
             let text = std::mem::take(&mut buf.text);
-            send_run_event(app, sid, &RunEvent::Text(text));
+            let _ = app.emit(
+                "parzi://run-event",
+                UiEvent::Text {
+                    session: sid.to_string(),
+                    text,
+                },
+            );
         }
         if !buf.reasoning.is_empty() {
             let text = std::mem::take(&mut buf.reasoning);
-            send_run_event(app, sid, &RunEvent::Reasoning { text });
+            let _ = app.emit(
+                "parzi://run-event",
+                UiEvent::Reasoning {
+                    session: sid.to_string(),
+                    text,
+                },
+            );
         }
     }
 
@@ -406,7 +469,9 @@ async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, R
                     other,
                     RunEvent::Done { .. } | RunEvent::Paused { .. } | RunEvent::Error(_)
                 );
-                send_run_event(&app, &sid, &other);
+                if let Some(ui) = ui_from_run(sid, other) {
+                    let _ = app.emit("parzi://run-event", ui);
+                }
                 if ended {
                     remote::sync_soon(&app);
                 }
@@ -471,6 +536,40 @@ fn fatal(text: &str) -> ! {
     std::process::exit(1);
 }
 
+/// Present while Parzi runs: one left from before means that run ended
+/// without closing (killed, crashed, or the machine went down).
+fn running_marker() -> Option<std::path::PathBuf> {
+    Some(
+        parzi_core::paths::parzi_dir()
+            .ok()?
+            .join("logs")
+            .join("running"),
+    )
+}
+
+fn mark_running() {
+    let Some(marker) = running_marker() else {
+        return;
+    };
+    if let Ok(prev) = std::fs::read_to_string(&marker) {
+        tracing::warn!("the last Parzi run ({}) ended without closing", prev.trim());
+    }
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let _ = std::fs::write(&marker, format!("pid {} started {now}", std::process::id()));
+    tracing::info!(
+        "Parzi {} started (pid {})",
+        env!("CARGO_PKG_VERSION"),
+        std::process::id()
+    );
+}
+
+fn mark_closed() {
+    tracing::info!("Parzi closed");
+    if let Some(marker) = running_marker() {
+        let _ = std::fs::remove_file(marker);
+    }
+}
+
 fn main() {
     init_log();
     // Mutual exclusion with `parzi serve`: both own ~/.parzi, so the desk
@@ -502,13 +601,9 @@ fn main() {
             }
         }
     }));
-    // Few async workers, more blocking threads: disk work (store, vault,
-    // file walks) and native dialogs wait there, and a handful of slow ones
-    // must not leave the brain, files or the store without a thread. Idle
-    // blocking threads exit after tokio's keep-alive, so this is a ceiling.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(3)
-        .max_blocking_threads(32)
+        .max_blocking_threads(8)
         .enable_all()
         .build()
         .unwrap_or_else(|e| fatal(&format!("The task runtime did not start: {e}")));
@@ -520,8 +615,8 @@ fn main() {
         fatal(&format!("Parzi could not open its data folder {home}: {e}"))
     });
     let orch = Arc::new(Orchestrator::new(cfg, store));
-    let pending: Pending = Arc::default();
-    let questions: PendingQuestions = Arc::default();
+    let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+    let questions: PendingQuestions = Arc::new(Mutex::new(HashMap::new()));
     let desk = Arc::new(control::Desk::new());
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -564,6 +659,7 @@ fn main() {
             // Here, not in main: plugins initialize first, so a second
             // launch has already handed off to the running desk and exited
             // instead of marking that desk's live runs idle.
+            mark_running();
             orch.recover().ok();
             let o = orch.clone();
             parzi_runtime::remote::sweep_askpass();
@@ -588,6 +684,7 @@ fn main() {
                 app: app.handle().clone(),
                 pending: app.state::<AppState>().pending.clone(),
             }));
+            plans::watch(app.handle());
             let ctl_app = app.handle().clone();
             let ctl_orch = o.clone();
             let ctl_pending = app.state::<AppState>().pending.clone();
@@ -610,6 +707,10 @@ fn main() {
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
                 dwm::round_window_corners(&w);
+                let h = app.handle().clone();
+                if let Err(e) = dwm::watch_shell(w.as_ref(), move || h.restart()) {
+                    tracing::warn!("window crash recovery not attached: {e}");
+                }
             }
             adblock::start();
             browser::warm_up();
@@ -622,7 +723,7 @@ fn main() {
             let board_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let all = settings::in_roster_order(board.refresh_providers(&[]).await);
-                emit(&board_app, "parzi://providers", &all);
+                let _ = board_app.emit("parzi://providers", &all);
             });
             tauri::async_runtime::spawn(async move {
                 match o.recover_queue().await {
@@ -637,7 +738,9 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             app_version,
+            ui_error,
             window_fullscreen,
+            begin_window_drag,
             browser::browser_show,
             browser::browser_hide,
             browser::browser_close,
@@ -661,6 +764,20 @@ fn main() {
             adblock::adblock_enable,
             adblock::adblock_site,
             vault::vault_state,
+            vault::vault_install,
+            settings::connector_check,
+            settings::connector_sign_in,
+            settings::connector_forget,
+            settings::connector_details,
+            settings::connector_set_icon,
+            settings::connectors_found,
+            settings::connectors_from_text,
+            settings::context_parts,
+            settings::shell_jobs,
+            sessions::rewind_thread,
+            files::git_branches,
+            files::tool_image,
+            settings::shell_kill,
             vault::vault_unlock,
             vault::vault_lock,
             vault::vault_logins,
@@ -691,17 +808,20 @@ fn main() {
             sessions::purge_sessions,
             sessions::approve_tool,
             sessions::answer_question,
+            plans::plan_view,
+            plans::plan_prs,
             files::pick_folder,
             files::list_files,
             files::git_branch,
             files::git_status,
             files::read_image_data_url,
             files::stage_image,
+            files::save_as,
+            files::reveal_saved,
             files::open_confirmed_url,
             files::open_file_path,
             settings::get_config,
             settings::save_config,
-            settings::toggle_favorite,
             settings::provider_statuses,
             settings::refresh_providers,
             settings::warm_agent,
@@ -722,7 +842,6 @@ fn main() {
             appearance::save_background_data,
             appearance::palette_from_background,
             control::desk_sync,
-            uilog::ui_log,
             onboard::onboard_scan,
             onboard::onboard_browser,
             onboard::onboard_import,
@@ -740,16 +859,10 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| fatal(&format!("Parzi failed to start: {e}")))
-        .run(|app, event| match event {
-            // Sign-in popups are windows of their own: left open, they
-            // would keep Parzi running with no window to come back to.
-            tauri::RunEvent::WindowEvent {
-                label,
-                event: tauri::WindowEvent::Destroyed,
-                ..
-            } if label == "main" => browser::close_popups(app, None),
-            tauri::RunEvent::Exit => {
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
                 control::clear_gui_file();
+                mark_closed();
                 if let Some(state) = app.try_state::<AppState>() {
                     let mcp = state.orch.mcp().clone();
                     let (tx, rx) = std::sync::mpsc::sync_channel(1);
@@ -757,10 +870,9 @@ fn main() {
                         mcp.shutdown().await;
                         let _ = tx.send(());
                     });
-                    let _ = rx.recv_timeout(Duration::from_secs(2));
+                    let _ = rx.recv_timeout(std::time::Duration::from_secs(2));
                 }
             }
-            _ => {}
         });
 }
 
@@ -768,89 +880,29 @@ fn main() {
 mod tests {
     use super::*;
 
-    fn call(session: &str) -> ToolCallInfo {
-        ToolCallInfo {
-            id: "c1".into(),
-            name: "shell.exec".into(),
-            args: serde_json::json!({ "cmd": "cargo test" }),
-            lane: "build".into(),
-            session: session.into(),
-        }
-    }
-
     #[test]
-    fn a_wait_dropped_with_its_run_leaves_no_ghost_approval() {
-        let pending: Pending = Arc::default();
-        let desk = Arc::new(control::Desk::new());
-        let (rx, waiting) = pending.open("k1", "s1", Some(desk.clone()));
-        desk.approval_opened("k1", &call("s1"));
-        assert_eq!((pending.len(), desk.approvals().len()), (1, 1));
-        // A killed run drops its approve() future mid-wait.
-        drop(waiting);
-        drop(rx);
-        assert_eq!((pending.len(), desk.approvals().len()), (0, 0));
-    }
-
-    #[tokio::test]
-    async fn a_cancelled_approve_clears_its_wait() {
-        let pending: Pending = Arc::default();
-        let desk = Arc::new(control::Desk::new());
-        let waiter = {
-            let (pending, desk) = (pending.clone(), desk.clone());
-            async move {
-                let (rx, _waiting) = pending.open("k1", "s1", Some(desk.clone()));
-                desk.approval_opened("k1", &call("s1"));
-                rx.await.ok()
-            }
-        };
-        // The toolhost's select! with the run's cancel token.
-        tokio::select! {
-            _ = waiter => panic!("nobody answered"),
-            () = tokio::time::sleep(Duration::from_millis(20)) => {}
-        }
-        assert_eq!((pending.len(), desk.approvals().len()), (0, 0));
-    }
-
-    #[test]
-    fn an_answer_for_another_session_keeps_the_wait() {
-        let pending: Pending = Arc::default();
-        let (mut rx, _waiting) = pending.open("k1", "s1", None);
-        assert_eq!(pending.take("k1", Some("s2")).err(), Some(Mismatch::Other));
-        assert_eq!(pending.len(), 1, "still waiting for s1");
-        assert!(rx.try_recv().is_err(), "and not denied by the mismatch");
-        let (session, tx) = pending.take("k1", Some("s1")).unwrap();
-        assert_eq!(session, "s1");
-        tx.send(Approval::Allow).unwrap();
-        assert!(matches!(rx.try_recv(), Ok(Approval::Allow)));
-        assert_eq!(pending.take("k1", None).err(), Some(Mismatch::Gone));
-    }
-
-    #[test]
-    fn approvals_reach_the_window_with_their_call() {
-        let v = serde_json::to_value(UiEvent::Approval {
-            key: "k1".into(),
-            session: "s1".into(),
-            call: ToolCallView {
-                id: "c1".into(),
-                name: "shell.exec".into(),
-                args: serde_json::json!({}),
-                lane: "build".into(),
-                session: "s1".into(),
+    fn a_budget_pause_reaches_the_window_as_paused() {
+        let ui = ui_from_run(
+            "s1".into(),
+            RunEvent::Paused {
+                reason: "token budget reached".into(),
             },
-        })
+        )
         .unwrap();
-        assert_eq!(v["kind"], "approval");
-        assert_eq!(v["call"]["name"], "shell.exec");
-        // Run events take the server's mapper, budget pauses included.
-        let paused = ui_event(
+        assert_eq!(
+            serde_json::to_value(ui).unwrap(),
+            serde_json::json!({"kind": "paused", "session": "s1", "reason": "token budget reached"})
+        );
+        let served = parzi_runtime::handler::ui_event(
             "s1",
             &RunEvent::Paused {
                 reason: "token budget reached".into(),
             },
         );
         assert_eq!(
-            paused.unwrap(),
-            serde_json::json!({"kind": "paused", "session": "s1", "reason": "token budget reached"})
+            served.unwrap()["kind"],
+            "paused",
+            "the server streams it too"
         );
     }
 

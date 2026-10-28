@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { folderName, hostOf, isExplicitUrl, restoreComposer, restoreTab, toAddress } from "../src/lib/tabs.ts";
-import { normLane } from "../src/lib/lanes.ts";
+import { ensureComposer, folderName, hostOf, isExplicitUrl, isSystemTab, sessionTab, pageTab, historyTab, brainTab, settingsTab, toAddress, restoreTab } from "../src/lib/tabs.ts";
 
 test("hostOf strips protocol and path", () => {
   assert.equal(hostOf("https://github.com/lucas/parzi"), "github.com");
@@ -26,11 +25,35 @@ test("folderName takes the leaf", () => {
   assert.equal(folderName("/home/u/app/"), "app");
 });
 
-test("legacy lanes normalize", () => {
-  assert.equal(normLane("code"), "build");
-  assert.equal(normLane("research"), "work");
-  assert.equal(normLane("build"), "build");
-  assert.equal(normLane(""), "");
+test("system tabs split from working tabs", () => {
+  assert.equal(isSystemTab(sessionTab()), false);
+  assert.equal(isSystemTab(pageTab("https://example.com")), false);
+  assert.equal(isSystemTab(historyTab()), true);
+  assert.equal(isSystemTab(brainTab()), true);
+  assert.equal(isSystemTab(settingsTab()), true);
+});
+
+test("a composer always has quote and attachment lists", () => {
+  const fresh = ensureComposer();
+  assert.deepEqual(fresh.quotes, []);
+  assert.deepEqual(fresh.attachments, []);
+  // A composer saved before the lanes merged may still say "work": it talks to the agent.
+  const saved = { input: "hi", mode: "work" as unknown as "build", model: "", effort: "medium", attachments: ["a.png"] };
+  const partial = ensureComposer(saved);
+  assert.equal(partial, saved);
+  assert.equal(partial.input, "hi");
+  assert.equal(partial.mode, "build");
+  assert.deepEqual(partial.attachments, ["a.png"]);
+  assert.deepEqual(partial.quotes, []);
+  const kept = [{ project: "parzi", id: "prs", title: "PR badges" }];
+  const quoted = ensureComposer({ quotes: kept, attachments: [] });
+  assert.equal(quoted.quotes, kept);
+  // Same object when the lists are already present, so a tab switch does not
+  // replace the composer the Omnibar is bound to.
+  const ready = ensureComposer({ input: "", mode: "build", model: "", effort: "medium", attachments: [], quotes: [] });
+  assert.equal(ensureComposer(ready), ready);
+  assert.deepEqual(sessionTab().composer.quotes, []);
+  assert.deepEqual(sessionTab().composer.attachments, []);
 });
 
 test("saved Work and Tasks tabs don't come back", () => {
@@ -39,27 +62,4 @@ test("saved Work and Tasks tabs don't come back", () => {
   assert.deepEqual(restoreTab({ id: "t5", kind: "brain", title: "Brain" }), { id: "t5", kind: "brain", title: "Brain" });
   assert.equal(restoreTab({ id: "t3", kind: "settings", title: "Settings" }), null);
   assert.equal(restoreTab({ id: "t4", kind: "mystery", title: "?" }), null);
-});
-
-test("a saved composer comes back whole, whatever an older build saved", () => {
-  assert.deepEqual(restoreComposer(undefined), { input: "", mode: "build", model: "", effort: "medium", attachments: [] });
-  // Older names for the modes, "auto" for no model, junk in the lists.
-  assert.deepEqual(restoreComposer({ mode: "research", model: "auto", attachments: ["a.png", 4], draft: "hi" }), {
-    input: "",
-    mode: "work",
-    model: "",
-    effort: "medium",
-    attachments: ["a.png"],
-  });
-  assert.equal(restoreComposer({ mode: "code" }).mode, "build");
-  assert.equal(restoreComposer({ mode: "chat" }).mode, "build");
-  assert.deepEqual(restoreComposer({ input: "x", mode: "search", model: "codex/gpt-5", effort: "high", attachments: [], remote: true, remoteCwd: "/srv" }), {
-    input: "x",
-    mode: "search",
-    model: "codex/gpt-5",
-    effort: "high",
-    attachments: [],
-    remote: true,
-    remoteCwd: "/srv",
-  });
 });

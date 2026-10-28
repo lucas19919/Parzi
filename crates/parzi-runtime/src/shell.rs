@@ -141,6 +141,25 @@ pub struct ExecResult {
     pub spill: Option<PathBuf>,
 }
 
+/// A command an agent ran in this session, for the session column: what,
+/// since when, and whether it still runs.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ShellJob {
+    pub id: String,
+    pub cmd: String,
+    /// Started in the background (`shell.start`), else in the foreground.
+    pub background: bool,
+    pub running: bool,
+    pub exit: Option<i32>,
+    /// Unix milliseconds it started.
+    pub started: i64,
+    /// How long it ran, or has run so far.
+    pub ms: u64,
+}
+
+/// Foreground runs kept for the list, newest last.
+const FG_KEEP: usize = 30;
+
 pub struct LogTail {
     pub text: String,
     pub next_offset: u64,
@@ -149,6 +168,8 @@ pub struct LogTail {
 }
 
 struct LiveShell {
+    cmd: String,
+    started_at: i64,
     /// None while the slot is reserved but the process is not up yet.
     child: Option<Child>,
     /// Last RING_KEEP bytes; `total` counts everything ever appended.
@@ -164,8 +185,10 @@ struct LiveShell {
 }
 
 impl LiveShell {
-    fn reserved() -> Self {
+    fn reserved(cmd: &str) -> Self {
         Self {
+            cmd: cmd.to_string(),
+            started_at: now_ms(),
             child: None,
             buf: Vec::new(),
             total: 0,
@@ -228,6 +251,36 @@ impl LiveShell {
 struct Registry {
     shells: HashMap<String, LiveShell>,
     seq: u64,
+    /// Foreground runs: done ones, and the one running now (exit None).
+    foreground: Vec<ShellJob>,
+}
+
+/// A foreground run's entry in the list, closed when this drops: with its
+/// exit code, or -1 when it was cut short.
+struct FgMark {
+    inner: Arc<Mutex<Registry>>,
+    id: String,
+    begun: Instant,
+    exit: Option<i32>,
+}
+
+impl Drop for FgMark {
+    fn drop(&mut self) {
+        let mut reg = lock(&self.inner);
+        if let Some(j) = reg.foreground.iter_mut().find(|j| j.id == self.id) {
+            j.running = false;
+            j.exit = Some(self.exit.unwrap_or(-1));
+            j.ms = u64::try_from(self.begun.elapsed().as_millis()).unwrap_or(u64::MAX);
+        }
+        let extra = reg.foreground.len().saturating_sub(FG_KEEP);
+        reg.foreground.drain(..extra);
+    }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 /// A panic while holding the lock must not brick every shell tool after it.
@@ -317,6 +370,28 @@ impl ShellRegistry {
             .dir()?
             .join(format!("fg-{}.log", uuid::Uuid::new_v4().simple()));
         let (child, mut stdout, stderr) = Self::spawn_shell(cmd, workdir)?;
+        let fg_id = {
+            let mut reg = self.reg();
+            reg.seq += 1;
+            let id = format!("fg-{}", reg.seq);
+            reg.foreground.push(ShellJob {
+                id: id.clone(),
+                cmd: cmd.to_string(),
+                background: false,
+                running: true,
+                exit: None,
+                started: now_ms(),
+                ms: 0,
+            });
+            id
+        };
+        // Closes the entry however this call ends, a stopped turn included.
+        let mut mark = FgMark {
+            inner: self.inner.clone(),
+            id: fg_id,
+            begun: Instant::now(),
+            exit: None,
+        };
         let mut fg = Fg(Some(child));
         let Some(child) = fg.0.as_mut() else {
             return Err(std::io::Error::other("the shell vanished"));
@@ -358,6 +433,8 @@ impl ShellRegistry {
                 }
             }
         };
+        mark.exit = exit;
+        drop(mark);
         if out_open {
             drain_stdout(&mut stdout, &mut ring, &mut spill, &mut spilled).await;
         }
@@ -410,7 +487,7 @@ impl ShellRegistry {
             }
             reg.seq += 1;
             let id = format!("sh-{}", reg.seq);
-            reg.shells.insert(id.clone(), LiveShell::reserved());
+            reg.shells.insert(id.clone(), LiveShell::reserved(cmd));
             id
         };
         let spill = std::fs::File::create(dir.join(format!("{id}.log"))).ok();
@@ -477,6 +554,44 @@ impl ShellRegistry {
             running: exit.is_none(),
             exit,
         })
+    }
+
+    /// Every command of this session: background ones and recent
+    /// foreground ones, oldest first.
+    pub fn jobs(&self) -> Vec<ShellJob> {
+        let mut reg = self.reg();
+        let mut expired = vec![];
+        let mut out: Vec<ShellJob> = reg
+            .shells
+            .iter_mut()
+            .map(|(id, sh)| {
+                let (running, gone) = sh.enforce();
+                expired.extend(gone);
+                let ms = sh.exited_at.unwrap_or_else(Instant::now) - sh.started;
+                ShellJob {
+                    id: id.clone(),
+                    cmd: sh.cmd.clone(),
+                    background: true,
+                    running,
+                    exit: sh.exit,
+                    started: sh.started_at,
+                    ms: u64::try_from(ms.as_millis()).unwrap_or(u64::MAX),
+                }
+            })
+            .collect();
+        let now = now_ms();
+        out.extend(reg.foreground.iter().cloned().map(|mut j| {
+            if j.running {
+                j.ms = u64::try_from(now - j.started).unwrap_or(0);
+            }
+            j
+        }));
+        drop(reg);
+        for child in expired {
+            reap(child);
+        }
+        out.sort_by_key(|j| j.started);
+        out
     }
 
     pub fn kill(&self, id: &str) -> bool {
@@ -587,6 +702,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn jobs_list_background_and_foreground_commands() {
+        let reg = ShellRegistry::new("test-jobs");
+        reg.exec(cmd_echo(), &tmp(), Duration::from_secs(30))
+            .await
+            .unwrap();
+        let sleeper = cmd_sleep(30);
+        let id = reg.start(&sleeper, &tmp()).unwrap();
+        let jobs = reg.jobs();
+        assert_eq!(jobs.len(), 2);
+        assert!(!jobs[0].background && !jobs[0].running && jobs[0].cmd == cmd_echo());
+        assert!(jobs[1].background && jobs[1].running && jobs[1].cmd == sleeper);
+        assert!(reg.kill(&id));
+        assert!(!reg.jobs()[1].running, "killed is no longer running");
+        scrub("test-jobs");
+    }
+
+    #[tokio::test]
     async fn foreground_echo_returns_output() {
         let reg = ShellRegistry::new("test-echo");
         let out = reg
@@ -648,7 +780,7 @@ mod tests {
     #[test]
     fn logs_tail_never_splits_a_char() {
         let reg = ShellRegistry::new("test-utf8");
-        let mut sh = LiveShell::reserved();
+        let mut sh = LiveShell::reserved("test");
         sh.ingest("é".repeat(100).as_bytes());
         sh.exit = Some(0);
         sh.drained = true;

@@ -34,13 +34,47 @@ impl Started {
     }
 }
 
+/// What Parzi itself puts into a session's context, estimated at four
+/// characters a token: its instructions, the project notes they carry and
+/// the definitions of the tools a session is offered. The rest of what the agent
+/// reports is the conversation and the agent's own.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct ContextParts {
+    pub instructions: u64,
+    pub notes: u64,
+    pub tools: u64,
+}
+
+/// How long getting a run going may take (not the run: its start).
+const LAUNCH_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
+
 impl Orchestrator {
+    pub fn context_parts(&self, cwd: &str) -> ContextParts {
+        let tokens = |chars: usize| (chars as u64).div_ceil(4);
+        let notes = parzi_core::brain::context_for(std::path::Path::new(cwd.trim()))
+            .map_or(0, |c| tokens(c.chars));
+        let all: usize = crate::handler::system_parts(cwd)
+            .iter()
+            .map(|p| p.chars().count())
+            .sum();
+        let (_, allowed) = Self::tool_policy(&self.config());
+        let tools: usize = crate::tools::all_defs()
+            .iter()
+            .filter(|t| allowed.iter().any(|a| a == &t.name))
+            .map(|t| t.name.len() + t.description.chars().count() + t.schema.to_string().len())
+            .sum();
+        ContextParts {
+            instructions: tokens(all).saturating_sub(notes),
+            notes,
+            tools: tokens(tools),
+        }
+    }
+
     /// A new session with a first run the person sent.
     #[allow(clippy::too_many_arguments)]
     pub async fn spawn(
         &self,
         project: &str,
-        lane: &str,
         model_spec: &str,
         prompt: &str,
         approver: Option<Arc<dyn Approver>>,
@@ -52,7 +86,6 @@ impl Orchestrator {
         self.spawn_as(
             RunCause::Send,
             project,
-            lane,
             model_spec,
             prompt,
             approver,
@@ -70,7 +103,6 @@ impl Orchestrator {
         &self,
         cause: RunCause,
         project: &str,
-        lane: &str,
         model_spec: &str,
         prompt: &str,
         approver: Option<Arc<dyn Approver>>,
@@ -87,7 +119,7 @@ impl Orchestrator {
         let effort = normalize_effort(effort);
         let title = parzi_core::text::name_from_prompt(prompt);
 
-        let mut meta = self.store.create(&title, project, lane, model_spec)?;
+        let mut meta = self.store.create(&title, project, model_spec)?;
         if !cwd.trim().is_empty() {
             self.store.set_cwd(&meta.id, cwd)?;
         }
@@ -95,7 +127,6 @@ impl Orchestrator {
         let q = QueuedRun {
             session_id: meta.id.clone(),
             project: project.to_string(),
-            lane: lane.to_string(),
             model_spec: model_spec.to_string(),
             prompt: prompt.to_string(),
             cwd: cwd.to_string(),
@@ -184,7 +215,6 @@ impl Orchestrator {
         let q = QueuedRun {
             session_id: id.to_string(),
             project: meta.project.clone(),
-            lane: meta.lane.clone(),
             model_spec: spec,
             prompt: prompt.to_string(),
             cwd: if cwd.is_empty() {
@@ -220,17 +250,13 @@ impl Orchestrator {
         Ok(Self::launch(self.pump_parts(), q).await?.events())
     }
 
+    /// Compacts a thread's conversation: its agent's own way, else Parzi
+    /// has it summarize and carries on from that (see `EngineRun`).
     pub async fn compact(&self, id: &str, focus: &str) -> Result<String> {
         let provider = run_session(id).map(|s| s.provider).ok_or_else(|| {
             ParziError::Store("nothing to compact yet: this thread has no conversation".into())
         })?;
-        if !matches!(provider.as_str(), "claude" | "opencode") {
-            return Err(ParziError::Store(format!(
-                "{} compacts its conversation on its own",
-                display_name(&provider)
-            )));
-        }
-        let prompt = format!("/compact {}", focus.trim()).trim_end().to_string();
+        let prompt = focus.trim().to_string();
         // The plan the conversation saw goes with what it compacts away:
         // the next run sends it again.
         set_brief_hash(id, None);
@@ -296,57 +322,43 @@ impl Orchestrator {
         Ok((provider, model))
     }
 
-    fn lane_policy_for(cfg: &ParziConfig, lane: &str) -> (ApprovalMode, Vec<String>) {
+    /// What every session may use: all of Parzi's tools, the shell
+    /// included unless Settings turns it off. How freely they run is the
+    /// mode's to say, not the session's.
+    fn tool_policy(cfg: &ParziConfig) -> (ApprovalMode, Vec<String>) {
         let mode = ApprovalMode::parse(&cfg.lanes.default_mode);
         let mut allowed = cfg.lanes.default_allowed_tools.clone();
         for u in [
-            "ui.show_markdown",
             "ui.show_artifact",
+            "ui.offer_replies",
+            "ui.propose_task",
+            "todo.write",
             "image.generate",
-            "doc.read",
+            "github.issue",
             "models.list",
             "ask.user",
-            "request.user",
             "shell.exec",
             "shell.start",
             "shell.logs",
             "shell.kill",
             "brain.search",
             "brain.read",
-            "brain.list",
             "brain.write",
             "brain.delete",
+            "project.create",
             "project.archive",
             "project.delete",
-            "lane.status",
-            "memory.review",
-            // The project's plan and the session's own name: both lanes.
             "plan.read",
             "plan.write",
             "session.rename",
-        ] {
-            if !allowed.contains(&u.to_string()) {
-                allowed.push(u.into());
-            }
-        }
-        // Work staffs read/write workers; shell and cross-lane dispatch stay Build-only.
-        for u in [
             "session.spawn",
-            "session.send_message",
-            "session.read_session",
-            "session.list_sessions",
-            "project.create",
+            "session.send",
+            "session.read",
+            "session.list",
         ] {
             if !allowed.contains(&u.to_string()) {
                 allowed.push(u.into());
             }
-        }
-        if lane != "work" {
-            if !allowed.contains(&"lane.dispatch".to_string()) {
-                allowed.push("lane.dispatch".into());
-            }
-        } else {
-            allowed.retain(|t| !t.starts_with("shell."));
         }
         if cfg.lanes.no_shell {
             allowed.retain(|t| !t.starts_with("shell."));
@@ -365,32 +377,23 @@ impl Orchestrator {
         (mode, allowed)
     }
 
-    /// The turn's mode, auto-accept-edits and full flags. A composer choice
-    /// only tightens the Settings floor; Full access lifts it, except
-    /// Lockdown, which nothing lifts.
-    fn effective_mode(floor: ApprovalMode, choice: Option<&str>) -> (ApprovalMode, bool, bool) {
+    /// The turn's mode, auto-accept-edits and full flags. Settings picks
+    /// where a session starts; the composer's choice for a send is what
+    /// runs, so "Auto" never quietly means "Ask". Lockdown alone holds
+    /// over every choice.
+    fn effective_mode(default: ApprovalMode, choice: Option<&str>) -> (ApprovalMode, bool, bool) {
         match choice {
-            None => (floor, false, false),
-            Some(o) if ApprovalMode::is_full_override(Some(o)) && floor != ApprovalMode::Deny => {
-                (ApprovalMode::Auto, false, true)
-            }
+            None => (default, false, false),
+            Some(_) if default == ApprovalMode::Deny => (ApprovalMode::Deny, false, false),
+            Some(o) if ApprovalMode::is_full_override(Some(o)) => (ApprovalMode::Auto, false, true),
             Some(o) => {
-                let mode = Self::restrict_mode(floor, ApprovalMode::parse(o));
+                let mode = ApprovalMode::parse(o);
                 (
                     mode,
                     o.trim() == "edits" && mode != ApprovalMode::Deny,
                     false,
                 )
             }
-        }
-    }
-
-    fn restrict_mode(a: ApprovalMode, b: ApprovalMode) -> ApprovalMode {
-        use ApprovalMode::{Ask, Auto, Deny};
-        match (a, b) {
-            (Deny, _) | (_, Deny) => Deny,
-            (Ask, _) | (_, Ask) => Ask,
-            (Auto, Auto) => Auto,
         }
     }
 
@@ -428,9 +431,23 @@ impl Orchestrator {
                 "session {sid} already has a live run; kill it first"
             )));
         };
-        match Self::launch_inner(p.clone(), q, id, cancel, seen).await {
+        // Getting a run going never takes this long: a start that hangs
+        // fails, so the session is never left showing a run that never was.
+        let started = tokio::time::timeout(
+            LAUNCH_WAIT,
+            Self::launch_inner(p.clone(), q, id, cancel, seen),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            Err(ParziError::Store(format!(
+                "the run did not start within {}s",
+                LAUNCH_WAIT.as_secs()
+            )))
+        });
+        match started {
             Ok(rx) => Ok(Started::Running(rx)),
             Err(e) => {
+                tracing::warn!(session = %sid, "run failed to start: {e}");
                 {
                     let mut h = p.handles.lock().await;
                     if h.get(&sid).is_some_and(|x| x.id == id) {
@@ -484,8 +501,8 @@ impl Orchestrator {
                 q.cwd.trim()
             )));
         };
-        let (floor, allowed) = Self::lane_policy_for(&snap, &q.lane);
-        let (mode, edits_auto, full) = Self::effective_mode(floor, q.mode_override.as_deref());
+        let (start, allowed) = Self::tool_policy(&snap);
+        let (mode, edits_auto, full) = Self::effective_mode(start, q.mode_override.as_deref());
         let tools = Arc::new(ToolExecutor {
             cwd: cwd.clone(),
             mcp: p.mcp.clone(),
@@ -500,7 +517,18 @@ impl Orchestrator {
             Arc::new(std::sync::Mutex::new(t))
         };
         let bridge: Arc<dyn HarnessBridge> = Arc::new(p.clone());
-        let instructions = system_parts(&q.lane, &cwd);
+        let mut instructions = system_parts(&cwd);
+        // A folder of its own for scratch work (a session with no project
+        // already works in it).
+        if let Ok(dir) = parzi_core::paths::scratch_dir(&q.session_id) {
+            if std::path::Path::new(&cwd) != dir.as_path() && std::fs::create_dir_all(&dir).is_ok()
+            {
+                instructions.push(format!(
+                    "# Scratch\n\nYour scratch folder is {}: yours for temporary files, notes and experiments that do not belong in the project. Writing there needs no approval. Never leave scratch files in the project.",
+                    dir.display()
+                ));
+            }
+        }
         // The project's plan goes in the opening turn, never in the
         // instructions: those are re-sent every turn, and a changing plan
         // there would spoil the prompt cache.
@@ -521,13 +549,12 @@ impl Orchestrator {
         };
         if mode == ApprovalMode::Deny && !provider.gated() {
             return Err(ParziError::Validation(format!(
-                "this lane is read-only, and {} cannot run read-only; pick another agent for it",
+                "agents are locked to read-only in Settings, and {} cannot run read-only; pick another agent for it",
                 display_name(&provider_id)
             )));
         }
         let host = Arc::new(ToolHost::new(ToolHostParts {
             session_id: q.session_id.clone(),
-            lane: q.lane.clone(),
             mode,
             edits_auto,
             full,
@@ -572,6 +599,7 @@ impl Orchestrator {
             inbox_from: q.inbox_from,
             tally: tally.clone(),
             brief,
+            compact: q.cause == RunCause::Compact,
         });
         set_run_note(&q.session_id, None);
         if q.cause.recorded() {
@@ -677,123 +705,67 @@ mod tests {
     use super::*;
 
     #[test]
-    fn lane_policy_offers_the_page_and_not_the_crew() {
+    fn every_session_gets_every_tool_and_the_shell() {
         let cfg = ParziConfig::default();
-        let (_mode, allowed) = Orchestrator::lane_policy_for(&cfg, "work");
+        let (_mode, allowed) = Orchestrator::tool_policy(&cfg);
         for t in [
+            "shell.exec",
+            "shell.start",
+            "shell.logs",
+            "shell.kill",
             "browser.open",
-            "browser.tabs",
             "browser.read",
             "browser.click",
-            "browser.type",
-            "browser.shot",
             "image.generate",
-            "doc.read",
-            "models.list",
             "ui.show_artifact",
             "brain.search",
             "brain.write",
             "session.spawn",
-            "session.send_message",
-            "session.read_session",
-            "session.list_sessions",
+            "session.send",
+            "session.read",
+            "session.list",
+            "session.rename",
             "project.create",
+            "plan.read",
+            "plan.write",
+            "todo.write",
         ] {
-            assert!(allowed.iter().any(|a| a == t), "lane missing {t}");
+            assert!(allowed.iter().any(|a| a == t), "missing {t}");
         }
-        assert!(allowed.iter().all(|a| !a.starts_with("task.")));
-        assert!(allowed.iter().all(|a| a != "lane.dispatch"));
-    }
-
-    #[test]
-    fn every_lane_reads_and_writes_the_plan_and_names_itself() {
-        let mut cfg = ParziConfig::default();
-        cfg.lanes.no_shell = true;
-        for lane in ["build", "work", ""] {
-            let (_, allowed) = Orchestrator::lane_policy_for(&cfg, lane);
-            for t in ["plan.read", "plan.write", "session.rename"] {
-                assert!(allowed.iter().any(|a| a == t), "{lane} lane missing {t}");
-            }
-        }
+        assert!(
+            allowed.iter().all(|a| !a.starts_with("lane.")),
+            "no lanes left"
+        );
     }
 
     #[test]
     fn the_shell_switch_turns_shell_off_everywhere() {
         let mut cfg = ParziConfig::default();
-        let (_, on) = Orchestrator::lane_policy_for(&cfg, "build");
+        let (_, on) = Orchestrator::tool_policy(&cfg);
         assert!(
             on.iter().any(|t| t == "shell.exec"),
             "shell is on by default"
         );
         cfg.lanes.no_shell = true;
-        for lane in ["build", "work", ""] {
-            let (_, off) = Orchestrator::lane_policy_for(&cfg, lane);
-            assert!(off.iter().all(|t| !t.starts_with("shell.")), "{lane}");
-        }
+        let (_, off) = Orchestrator::tool_policy(&cfg);
+        assert!(off.iter().all(|t| !t.starts_with("shell.")));
+        assert!(off.iter().any(|t| t == "plan.write"), "the rest stays");
     }
 
     #[test]
-    fn both_lanes_orchestrate_but_only_build_dispatches() {
-        let cfg = ParziConfig::default();
-        for lane in ["build", "code", ""] {
-            let (_, allowed) = Orchestrator::lane_policy_for(&cfg, lane);
-            for t in [
-                "session.spawn",
-                "session.send_message",
-                "session.read_session",
-                "session.list_sessions",
-                "lane.dispatch",
-            ] {
-                assert!(allowed.iter().any(|a| a == t), "{lane} lane missing {t}");
-            }
-        }
-        let (_, allowed) = Orchestrator::lane_policy_for(&cfg, "work");
-        for t in ["session.spawn", "session.send_message", "project.create"] {
-            assert!(allowed.iter().any(|a| a == t), "work lane missing {t}");
-        }
-        assert!(
-            allowed.iter().all(|a| a != "lane.dispatch"),
-            "cross-lane dispatch stays Build-only"
-        );
-    }
-
-    #[test]
-    fn work_lane_is_stripped_of_shell() {
-        let cfg = ParziConfig::default();
-        let (_, build) = Orchestrator::lane_policy_for(&cfg, "build");
-        for t in ["shell.exec", "shell.start", "shell.logs", "shell.kill"] {
-            assert!(build.iter().any(|a| a == t), "build lane missing {t}");
-        }
-        let (_, research) = Orchestrator::lane_policy_for(&cfg, "work");
-        for t in ["shell.exec", "shell.start", "shell.logs", "shell.kill"] {
-            assert!(
-                research.iter().all(|a| a != t),
-                "work lane must not offer {t}"
-            );
-        }
-    }
-
-    #[test]
-    fn full_access_lifts_every_floor_but_lockdown() {
+    fn the_composer_choice_runs_and_only_lockdown_holds_over_it() {
         use crate::tools::ApprovalMode::{Ask, Auto, Deny};
         let eff = Orchestrator::effective_mode;
         assert_eq!(eff(Ask, Some("full")), (Auto, false, true));
         assert_eq!(eff(Auto, Some("full")), (Auto, false, true));
-        assert_eq!(eff(Deny, Some("full")), (Deny, false, false));
-        assert_eq!(eff(Deny, Some("edits")), (Deny, false, false));
+        assert_eq!(eff(Ask, Some("auto")), (Auto, false, false));
+        assert_eq!(eff(Auto, Some("supervised")), (Ask, false, false));
         assert_eq!(eff(Ask, Some("edits")), (Ask, true, false));
-        assert_eq!(eff(Ask, Some("auto")), (Ask, false, false));
+        assert_eq!(eff(Auto, Some("deny")), (Deny, false, false));
+        assert_eq!(eff(Deny, Some("full")), (Deny, false, false));
+        assert_eq!(eff(Deny, Some("auto")), (Deny, false, false));
+        assert_eq!(eff(Deny, Some("edits")), (Deny, false, false));
         assert_eq!(eff(Auto, None), (Auto, false, false));
-    }
-
-    #[test]
-    fn mode_floor_never_lifts_only_tightens() {
-        use crate::tools::ApprovalMode::{Ask, Auto, Deny};
-        assert_eq!(Orchestrator::restrict_mode(Auto, Auto), Auto);
-        assert_eq!(Orchestrator::restrict_mode(Auto, Ask), Ask);
-        assert_eq!(Orchestrator::restrict_mode(Ask, Auto), Ask);
-        assert_eq!(Orchestrator::restrict_mode(Auto, Deny), Deny);
-        assert_eq!(Orchestrator::restrict_mode(Deny, Auto), Deny);
-        assert_eq!(Orchestrator::restrict_mode(Ask, Ask), Ask);
+        assert_eq!(eff(Ask, None), (Ask, false, false));
     }
 }

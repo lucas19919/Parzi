@@ -247,12 +247,7 @@ pub(crate) async fn state(json_out: bool) -> Result<()> {
     } else {
         println!("running");
         for r in running {
-            println!(
-                "  {}  {}  {}",
-                short(s(r, "id")),
-                s(r, "lane"),
-                s(r, "title")
-            );
+            println!("  {}  {}", short(s(r, "id")), s(r, "title"));
         }
     }
     Ok(())

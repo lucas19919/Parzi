@@ -21,10 +21,10 @@
 }
 
 :root {
-  --bg: #0b0b10;
-  --text: #ededf2;
-  --muted: #9aa0ae;
-  --accent: #e6e8ee;
+  --bg: #161616;
+  --text: #ececec;
+  --muted: #9b9b9b;
+  --accent: #e8e8e8;
   --panel: color-mix(in srgb, var(--text) 6%, var(--bg));
   --line: color-mix(in srgb, var(--text) 12%, var(--bg));
   /* Decoration only (dots, rules, idle icons). Text is --text or --muted:
@@ -35,20 +35,26 @@
   --bad: #ef4444;
   --on-ok: #06110a;
   --work: #e8b64c;
-  --link: #8ab4ff;
-  --link-hover: #aecbff;
+  /* Blue leaning toward the text: pale on a dark theme, deep on a light
+     one, readable on both. */
+  --link: color-mix(in srgb, #60a5fa 60%, var(--text));
+  --link-hover: color-mix(in srgb, #60a5fa 40%, var(--text));
   --scrim: rgba(0, 0, 0, 0.6);
 
-  /* Surfaces are matte: a tint, a blur and a quiet edge. No rim light, no
-     inset highlights: over a wallpaper those read as shine. */
+  /* The one gap: window edges, rails, the session, the columns. Every
+     panel sits on it, so the spacing never drifts. */
+  --gap: 8px;
+  /* Frosted glass: the wallpaper blurs through a tinted veil, lifted by
+     saturation, edged by a hairline and a faint top light. */
   --glass-bg: color-mix(in srgb, var(--panel) 72%, transparent);
-  --glass-bg-solid: color-mix(in srgb, var(--panel) 90%, transparent);
+  /* Nearly opaque: a wallpaper must not tint the text a session is read on. */
+  --glass-bg-solid: color-mix(in srgb, var(--panel) 97%, transparent);
   --glass-strong-bg: color-mix(in srgb, var(--panel) 82%, transparent);
-  --glass-blur: blur(28px) saturate(1.05);
-  --glass-strong-blur: blur(32px) saturate(1.05);
-  --glass-border: 1px solid color-mix(in srgb, var(--text) 7%, transparent);
-  --glass-hairline: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
-  --glass-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+  --glass-blur: blur(28px) saturate(1.6);
+  --glass-strong-blur: blur(32px) saturate(1.6);
+  --glass-border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  --glass-hairline: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.06);
   /* Hover and selected fills for controls sitting on glass or wallpaper. */
   --hover: color-mix(in srgb, var(--text) 6%, transparent);
   --selected: color-mix(in srgb, var(--text) 10%, transparent);
@@ -68,6 +74,8 @@
   --radius-sm: 4px;
   --radius: 8px;
   --radius-lg: 12px;
+  /* The reading column: a thread's text, and the composer under it. */
+  --read: 772px;
   /* One easing for anything that moves. */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
@@ -80,21 +88,6 @@
   --fs-lg: 16px;
   --fs-xl: 18px;
   --fs-2xl: 22px;
-  --shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 2px 10px rgba(0, 0, 0, 0.35);
-}
-
-html.scanlines .shell::after {
-  content: "";
-  pointer-events: none;
-  position: absolute;
-  inset: 0;
-  z-index: 8;
-  opacity: 0.22;
-  background: repeating-linear-gradient(
-    to bottom,
-    transparent 0 2px,
-    color-mix(in srgb, var(--text) 7%, transparent) 2px 3px
-  );
 }
 
 * { box-sizing: border-box; }
@@ -155,13 +148,13 @@ input[type="color"] { background: transparent; border: 1px solid var(--line); bo
 .pop {
   position: fixed; z-index: 600; max-width: calc(100vw - 16px);
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg);
-  box-shadow: var(--shadow); overflow: hidden;
+  overflow: hidden;
 }
 /* lib/tooltip.ts */
 .tip {
   position: fixed; z-index: 2000; max-width: 280px; padding: 4px 8px; pointer-events: none;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); color: var(--text); font-size: var(--fs-sm); line-height: 1.4;
+  color: var(--text); font-size: var(--fs-sm); line-height: 1.4;
 }
 .tip[hidden] { display: none; }
 /* lib/viz/tip.ts: a chart's readout, the value first. */
@@ -198,15 +191,42 @@ kbd {
 .btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
 
 .thread-col { line-height: 1.65; font-size: var(--fs-base); }
-.msg { line-height: 1.65; }
-.msg p { margin: 0 0 0.55em; }
+.msg { line-height: 1.65; user-select: text; }
+.msg p { margin: 0 0 0.75em; }
 .msg p:last-child { margin-bottom: 0; }
 .msg h1, .msg h2, .msg h3, .msg h4, .msg h5, .msg h6 { letter-spacing: -0.01em; margin: 0.9em 0 0.4em; }
 .msg h1 { font-size: var(--fs-xl); }
 .msg h2 { font-size: var(--fs-lg); }
 .msg h3, .msg h4, .msg h5, .msg h6 { font-size: var(--fs-base); }
+/* Any link the app draws without styles of its own (an artifact's
+   markdown, a widget's text) reads in the link colour, never the browser's
+   dark blue on a dark stage. */
+a { color: var(--link); }
+a:hover { color: var(--link-hover); }
 .msg a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: color-mix(in srgb, var(--link) 55%, transparent); }
 .msg a:hover { color: var(--link-hover); text-decoration-color: currentColor; }
+/* A vault note referenced in prose reads as a file chip (Antigravity-style):
+   mono, pill, no underline. Clicking pins it in the session's side column. */
+.msg a.file-ref {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: var(--fs-sm);
+  text-decoration: none;
+}
+.msg a.file-ref:hover {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--text);
+}
 .msg :not(pre) > code { background: var(--line); border-radius: var(--radius-sm); padding: 1px 5px; font-family: var(--mono); font-size: 0.92em; }
 .msg .katex { font-size: 1.1em; color: var(--text); }
 .msg .katex-display { margin: 0.7em 0; }
@@ -255,39 +275,52 @@ kbd {
   content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 70px;
   background: linear-gradient(transparent, var(--bg)); pointer-events: none;
 }
+/* A text drawing: one font whose box lines match its letters (the code
+   font has none, and a fallback's lines come out shorter), never wrapped,
+   shrunk to the width down to a readable floor, then it scrolls. */
+.codeblock.diagram { container-type: inline-size; }
+.codeblock.diagram pre, .codeblock.diagram code {
+  white-space: pre; line-height: 1.17;
+  font-family: "Cascadia Mono", Consolas, Menlo, "DejaVu Sans Mono", monospace;
+  font-size: clamp(9px, calc((100cqw - 28px) / (var(--cols) * 0.6)), var(--mono-size));
+}
 .code-expand {
   display: block; width: 100%; padding: 7px; background: transparent; border: none;
   border-top: 1px solid var(--line); color: var(--muted); font-size: var(--fs-sm); cursor: pointer;
 }
 .code-expand:hover { color: var(--text); background: var(--panel); }
 
-.msg table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: 0.8em 0; font-size: var(--fs-md); border: 1px solid var(--line); border-radius: var(--radius); }
-.msg th, .msg td { padding: 6px 12px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); text-align: left; white-space: nowrap; }
+/* Tables read like a report: a quiet frame, a header that names and
+   measures, numbers right-aligned in even figures (md.ts marks them). */
+.msg .md-table { width: max-content; max-width: 100%; margin: 0.9em 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+.msg table { border-collapse: separate; border-spacing: 0; font-size: var(--fs-md); font-variant-numeric: tabular-nums; }
+.msg th, .msg td { padding: 9px 16px; text-align: left; white-space: nowrap; border-right: 1px solid var(--line); }
+/* Words wrap inside a cell so a table of prose fits the column; figures
+   and headers stay on one line. */
+.msg td:not(.num) { white-space: normal; min-width: 10ch; overflow-wrap: break-word; vertical-align: top; }
 .msg th:last-child, .msg td:last-child { border-right: none; }
-.msg tr:last-child td { border-bottom: none; }
-.msg th { color: var(--muted); font-weight: 600; background: var(--panel); }
+.msg td { border-top: 1px solid var(--line); }
+.msg th { vertical-align: bottom; font-weight: 500; color: var(--text); background: color-mix(in srgb, var(--text) 3%, transparent); }
+.msg th .th-sub { display: block; margin-top: 2px; font-size: var(--fs-xs); font-weight: 400; color: var(--muted); }
+.msg th.num, .msg td.num { text-align: right; }
+.msg td.num { font-family: var(--mono); font-size: 0.92em; letter-spacing: -0.01em; }
+.msg td.na { color: var(--muted); opacity: 0.7; }
+.msg tr.summary td { color: var(--muted); }
+.msg tr.summary td.num { color: var(--text); }
+.msg tbody tr:not(.summary) + tr.summary td { border-top-color: color-mix(in srgb, var(--text) 18%, transparent); }
+.msg .md-table + .md-note, .msg .md-note { margin-top: -0.4em; font-size: var(--fs-sm); color: var(--muted); }
+.msg .md-note em { font-style: normal; }
+/* A source: a small numbered chip after the claim it backs. */
+.msg a.cite {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 17px; height: 17px; padding: 0 5px; margin: 0 1px 0 3px;
+  vertical-align: 1px; border-radius: 9px; background: color-mix(in srgb, var(--link) 16%, transparent); color: var(--link);
+  font-size: 11px; font-weight: 600; line-height: 1; text-decoration: none;
+}
+.msg a.cite:hover { background: color-mix(in srgb, var(--link) 28%, transparent); color: var(--link-hover); }
 .msg blockquote { margin: 0.8em 0; padding: 6px 12px; border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 8px 8px 0; color: var(--muted); }
 .msg ul, .msg ol { margin: 0.5em 0; padding-left: 22px; }
-.msg li { margin: 0.2em 0; }
+.msg li { margin: 0.3em 0; }
 .msg li::marker { color: var(--muted); }
 .msg hr { border: none; border-top: 1px solid var(--line); margin: 1em 0; }
-.msg img { max-width: 100%; border-radius: var(--radius); }
-
-/* lib/crash.ts: one quiet notice after an error the window couldn't handle.
-   Plain DOM, styled like App's toasts; over a web page it sits in the top bar. */
-.crash-note {
-  position: fixed; right: 16px; bottom: 16px; z-index: 1300;
-  display: flex; align-items: center; gap: 8px;
-  max-width: 360px; padding: 6px 6px 6px 14px;
-  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
-  color: var(--text); font-size: var(--fs-sm);
-}
-.crash-note.chrome { top: 5px; right: 150px; bottom: auto; }
-.crash-note span { flex: 1; min-width: 0; }
-.crash-note button {
-  flex: none; min-height: 24px; padding: 2px 10px;
-  background: var(--hover); border: 1px solid var(--line); border-radius: var(--radius);
-  color: var(--text); font: inherit; font-size: var(--fs-sm); cursor: pointer;
-}
-.crash-note button:hover { background: var(--selected); }
+.msg img { max-width: 100%; border-radius: var(--radius); cursor: zoom-in; }
+.msg a img { cursor: pointer; }

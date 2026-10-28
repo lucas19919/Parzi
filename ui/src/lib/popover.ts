@@ -77,3 +77,18 @@ export function popover(node: HTMLElement, opts: PopoverOptions) {
     },
   };
 }
+
+// A dialog at the window's top level: it covers the whole window, not just
+// the panel it is declared in (whose glass would box it in), and hides the
+// native page views while it shows.
+export function portal(node: HTMLElement) {
+  const key = `portal-${++seq}`;
+  document.body.appendChild(node);
+  setOverlay(key, true);
+  return {
+    destroy() {
+      setOverlay(key, false);
+      node.remove();
+    },
+  };
+}

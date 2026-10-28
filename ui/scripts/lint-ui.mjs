@@ -6,7 +6,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { checkUrl } from "lintapple";
 
 const BASE = process.env.PARZI_UI_URL ?? "http://localhost:1420/mock.html";
-const VIEWS = ["home", "session", "brain", "history", "settings", "setup", "page"];
+const VIEWS = ["home", "session", "request", "question", "approval", "brain", "history", "settings", "setup", "page"];
+// Views that are another view in other settings.
+const QUERY = { request: "view=session&request=file", question: "view=session&question=1", approval: "view=session&approval=1" };
 
 // More states per view, each checked again after its action (run in order
 // on one page). Selectors are CSS and must match exactly one element.
@@ -14,16 +16,10 @@ const click = (name, selector, ready) => ({ name, action: "click", selector, rea
 const nth = (list, i) => `${list} > :nth-child(${i})`;
 const STATES = {
   home: [
-    click("project menu", ".proj-out", ".menu-pop"),
-    // Pressed in the composer: the audit may already have scrolled the menu shut,
-    // and the menu fades out, so the ready check reads its button.
-    { name: "project menu closed", action: "press", selector: ".ob textarea", key: "Escape", ready: { selector: '.proj-out[aria-expanded="false"]' } },
-    // The audit scrolls, which closes popovers: the next state starts from the page.
-    click("customize home", ".customize", ".home-menu"),
-    // Its move buttons put a card first.
-    click("customize reorder", '.home-menu button[aria-label="Move Agents up"]', '.cards > .card:first-child[data-id="agents"]'),
-    { name: "customize closed", action: "press", selector: ".ob textarea", key: "Escape", ready: { selector: ".home-menu", state: "hidden" } },
-    click("search mode", ".modes > button:first-child", ".box.web"),
+    click("project menu", ".ob .proj:not(.branch-tab)", ".menu-pop"),
+    // Pressed in the composer: the audit may already have scrolled the menu shut.
+    { name: "project menu closed", action: "press", selector: ".ob textarea", key: "Escape", ready: { selector: ".menu-pop", state: "hidden" } },
+    click("web", ".under .seg > button:last-child", ".box.web"),
     { name: "web suggestions", action: "fill", selector: ".ob textarea", value: "parzi docs", ready: { selector: ".web-suggest" } },
   ],
   session: [
@@ -31,16 +27,41 @@ const STATES = {
     { name: "viz readout", action: "hover", selector: '.viz[data-viz="line"] svg.plot', ready: { selector: ".viz-tip:not([hidden])" } },
     { name: "switcher", action: "press", selector: ".ob textarea", key: "Control+p", ready: { selector: '.box[role="dialog"]' } },
     { name: "switcher closed", action: "press", selector: '.box[role="dialog"] input', key: "Escape", ready: { selector: '.box[role="dialog"]', state: "hidden" } },
-    click("model picker", ".bar .model", ".picker"),
-    click("permission menu", ".perm-btn", ".menu-pop.perms"),
+    click("model picker", ".under .model", ".picker"),
+    click("permission menu", '.under button[aria-haspopup="menu"]', ".menu-pop.perms"),
     click("session actions", '.session .menu button[aria-haspopup="menu"]', '.dropdown[role="menu"]'),
-    click("context usage", ".icon-btn.ctx", ".ctx-pop"),
-    { name: "context closed", action: "press", selector: ".ob textarea", key: "Escape", ready: { selector: ".ctx-pop", state: "hidden" } },
+    // The plan checklist, opened from the session column: then its done
+    // items, then an item quoted into the composer.
+    click("plan checklist", ".info .plan-row", ".thread-col .plan ul"),
+    click("plan done items", ".plan .item.fold", ".plan li:last-child > .item.closed"),
+    click("plan quote chip", ".plan ul > li:nth-child(2) > .item", ".ob .chip.quote"),
+    // A session that is working holds what you send until it is done.
+    click("running session", ".tabs > .tab:nth-child(3) .pick", ".ob .go.stop"),
+    { name: "typed ahead", action: "fill", selector: ".ob textarea", value: "Then add a test for it", ready: { selector: ".ob .go.stop" } },
+    { name: "held", action: "press", selector: ".ob textarea", key: "Enter", ready: { selector: ".ob .held" } },
   ],
   brain: [click("pinned note", ".note:has(.pin)", ".titles h2"), click("conflict copy", ".note.copy", ".conflict")],
   history: [2, 3, 4].map((i) => click(`library ${i}`, nth(".seg", i), `${nth(".seg", i)}[aria-pressed="true"]`)),
-  settings: [2, 3, 4, 5].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
-  setup: [2, 3, 4, 5].map((i) => click(`step ${i}`, nth("header .steps", i), `${nth("header .steps", i)}[aria-current="step"]`)),
+  settings: [
+    ...[2, 3].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
+    // Connections: the add dialog's directory (with what other apps set up),
+    // pasting an address, back, then closed.
+    click("connector directory", ".add-conn", '.card[role="dialog"] .grid'),
+    click("connector custom", ".card footer .link", ".card textarea.mono"),
+    { name: "connector address", action: "fill", selector: ".card textarea.mono", value: "https://mcp.example.com/mcp", ready: { selector: '.card input[type="password"]' } },
+    click("connector back", ".card header .icon:first-child", '.card[role="dialog"] .grid'),
+    { name: "connector closed", action: "click", selector: ".card header .icon:last-child", ready: { selector: '.card[role="dialog"]', state: "hidden" } },
+    // A connector connected: its tools, each with Allow, Ask or Off.
+    click("connector connected", ".conn .sbtn", ".conn .sbtn[aria-expanded]"),
+    click("connector tools", ".conn .sbtn[aria-expanded]", ".tools .tool:first-child"),
+    ...[4, 5].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
+  ],
+  setup: [
+    ...[2, 3].map((i) => click(`step ${i}`, nth("header .steps", i), `${nth("header .steps", i)}[aria-current="step"]`)),
+    click("tool notes", ".body .list > .item:first-child .more", ".list.picks"),
+    click("step 4", nth("header .steps", 4), `${nth("header .steps", 4)}[aria-current="step"]`),
+    click("server form", ".disclose", ".remote-form"),
+  ],
 };
 
 const args = process.argv.slice(2);
@@ -55,7 +76,7 @@ for (const view of views) {
   const interactions = STATES[view] ? { states: STATES[view] } : undefined;
   let report;
   try {
-    report = await checkUrl(`${BASE}?view=${view}`, policy, { ready: "html[data-app-ready]", interactions });
+    report = await checkUrl(`${BASE}?${QUERY[view] ?? `view=${view}`}`, policy, { ready: "html[data-app-ready]", interactions });
   } catch (e) {
     failed = true;
     console.log(`${view}: check did not finish: ${e.message}`);

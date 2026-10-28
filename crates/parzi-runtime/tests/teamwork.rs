@@ -79,9 +79,9 @@ fn id_of(json: &str) -> String {
 fn session_tools_advertised_iff_allowed() {
     for t in [
         "session.spawn",
-        "session.send_message",
-        "session.read_session",
-        "session.list_sessions",
+        "session.send",
+        "session.read",
+        "session.list",
     ] {
         assert!(is_session_tool(t));
     }
@@ -108,7 +108,7 @@ fn makers_and_readers_are_advertised() {
         mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
         allowed: vec!["*".into()],
     };
-    for t in ["image.generate", "doc.read", "models.list", "browser.shot"] {
+    for t in ["image.generate", "models.list", "browser.shot"] {
         assert!(
             open.defs().iter().any(|d| d.name == *t),
             "{t} must be advertised"
@@ -119,7 +119,7 @@ fn makers_and_readers_are_advertised() {
 #[tokio::test]
 async fn spawn_subsession_nests_but_full_session_stays_top_level() {
     let (orch, store) = team(4, answer());
-    let parent = store.create("boss", "t", "", "claude/model").unwrap();
+    let parent = store.create("boss", "t", "claude/model").unwrap();
     let h = orch.harness();
     let sub_id = id_of(
         &h.spawn(
@@ -129,7 +129,6 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
                 prompt: "look into x".into(),
                 is_subsession: true,
                 model: None,
-                lane: None,
                 wait: false,
                 mode_override: None,
                 effort: None,
@@ -156,7 +155,6 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
                 prompt: "do y".into(),
                 is_subsession: false,
                 model: Some("claude/other".into()),
-                lane: None,
                 wait: false,
                 mode_override: None,
                 effort: None,
@@ -173,7 +171,7 @@ async fn spawn_subsession_nests_but_full_session_stays_top_level() {
 #[tokio::test]
 async fn spawn_wait_collects_child_reply() {
     let (orch, store) = team(4, answer());
-    let parent = store.create("boss", "t", "", "claude/model").unwrap();
+    let parent = store.create("boss", "t", "claude/model").unwrap();
     let out = tokio::time::timeout(
         std::time::Duration::from_secs(60),
         orch.harness().spawn(
@@ -183,7 +181,6 @@ async fn spawn_wait_collects_child_reply() {
                 prompt: "look into x".into(),
                 is_subsession: true,
                 model: None,
-                lane: None,
                 wait: true,
                 mode_override: None,
                 effort: None,
@@ -225,7 +222,6 @@ async fn a_code_run_can_spawn_a_crew() {
     let (meta, _rx) = orch
         .spawn(
             "t",
-            "",
             "claude",
             "delegate the research",
             Some(Arc::new(Allow)),
@@ -285,7 +281,6 @@ async fn full_access_reaches_the_children() {
     let (meta, _rx) = orch
         .spawn(
             "t",
-            "",
             "claude",
             "delegate the writing",
             Some(Arc::new(DenyAll)),
@@ -311,8 +306,8 @@ async fn full_access_reaches_the_children() {
 async fn send_message_continues_target_and_can_wait() {
     let fake = answer();
     let (orch, store) = team(4, fake.clone());
-    let parent = store.create("boss", "t", "", "claude/model").unwrap();
-    let target = store.create("worker", "t", "", "claude/model").unwrap();
+    let parent = store.create("boss", "t", "claude/model").unwrap();
+    let target = store.create("worker", "t", "claude/model").unwrap();
     let out = tokio::time::timeout(
         std::time::Duration::from_secs(60),
         orch.harness().send_message(
@@ -350,7 +345,7 @@ async fn send_message_continues_target_and_can_wait() {
 #[tokio::test]
 async fn read_and_list_inspect_sessions() {
     let (orch, store) = team(4, answer());
-    let parent = store.create("boss", "t", "", "claude/model").unwrap();
+    let parent = store.create("boss", "t", "claude/model").unwrap();
     let h = orch.harness();
     let sub_id = id_of(
         &h.spawn(
@@ -360,7 +355,6 @@ async fn read_and_list_inspect_sessions() {
                 prompt: "look into x".into(),
                 is_subsession: true,
                 model: None,
-                lane: None,
                 wait: false,
                 mode_override: None,
                 effort: None,
@@ -389,7 +383,7 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
     let (orch, store) = team(1, hang());
     let pump = orch.clone();
     tokio::spawn(async move { pump.pump_loop().await });
-    let parent = store.create("boss", "t", "", "claude/model").unwrap();
+    let parent = store.create("boss", "t", "claude/model").unwrap();
     let h = orch.harness();
     let first_id = id_of(
         &h.spawn(
@@ -399,7 +393,6 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
                 prompt: "first work".into(),
                 is_subsession: true,
                 model: None,
-                lane: None,
                 wait: false,
                 mode_override: None,
                 effort: None,
@@ -417,7 +410,6 @@ async fn spawn_wait_degrades_to_queued_when_slots_full() {
                 prompt: "second work".into(),
                 is_subsession: true,
                 model: None,
-                lane: None,
                 wait: true,
                 mode_override: None,
                 effort: None,
@@ -443,7 +435,7 @@ impl Asker for Echo {
 fn build_host(asker: Option<Arc<dyn Asker>>) -> (ToolHost, SessionStore, String) {
     home("teamwork-tools");
     let store = SessionStore::open().unwrap();
-    let sid = store.create("tools", "", "", "claude/m").unwrap().id;
+    let sid = store.create("tools", "", "claude/m").unwrap().id;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let folder = std::env::temp_dir()
         .join(format!("parzi-tools-{}", std::process::id()))
@@ -452,7 +444,6 @@ fn build_host(asker: Option<Arc<dyn Asker>>) -> (ToolHost, SessionStore, String)
     std::fs::create_dir_all(&folder).unwrap();
     let host = ToolHost::new(ToolHostParts {
         session_id: sid.clone(),
-        lane: "build".into(),
         mode: ApprovalMode::Auto,
         edits_auto: false,
         full: false,
@@ -492,8 +483,17 @@ async fn ask_user_returns_the_answer_or_says_so() {
 }
 
 #[tokio::test]
-async fn request_user_validates_kind_and_echoes_the_reply() {
+async fn ask_user_asks_for_things_too_and_the_old_request_user_still_works() {
     let (host, _store, _sid) = build_host(Some(Arc::new(Echo("here.png".into()))));
+    let (ok, out) = host
+        .call(
+            "ask.user",
+            &json!({"question": "send a picture", "kind": "image"}),
+        )
+        .await;
+    assert!(ok && out == "here.png", "{out}");
+
+    // An agent that learned request.user reaches the same question.
     let (ok, out) = host
         .call(
             "request.user",
@@ -504,21 +504,21 @@ async fn request_user_validates_kind_and_echoes_the_reply() {
 
     let (ok, out) = host
         .call(
-            "request.user",
-            &json!({"request": "send a picture", "kind": "telepathy"}),
+            "ask.user",
+            &json!({"question": "send a picture", "kind": "telepathy"}),
         )
         .await;
-    assert!(
-        ok && out == "here.png",
-        "unknown kinds fall back to text: {out}"
-    );
+    assert!(ok && out == "here.png", "unknown kinds ask plainly: {out}");
 
-    let (ok, out) = host.call("request.user", &json!({})).await;
-    assert!(!ok && out.contains("needs a `request`"), "{out}");
+    let (ok, out) = host.call("ask.user", &json!({})).await;
+    assert!(!ok && out.contains("needs a `question`"), "{out}");
 
     let (lonely, _store, _sid) = build_host(None);
     let (ok, out) = lonely
-        .call("request.user", &json!({"request": "send a picture"}))
+        .call(
+            "ask.user",
+            &json!({"question": "send a picture", "kind": "image"}),
+        )
         .await;
     assert!(ok && out.contains("no one to ask"), "{out}");
 }
@@ -549,7 +549,7 @@ async fn project_create_makes_a_home() {
 #[tokio::test]
 async fn a_child_that_cannot_start_fails_the_call_instead_of_promising_a_report() {
     let (orch, store) = team(4, answer());
-    let parent = store.create("boss", "t", "", "claude/model").unwrap();
+    let parent = store.create("boss", "t", "claude/model").unwrap();
     let h = orch.harness();
     for wait in [false, true] {
         let err = h
@@ -560,7 +560,6 @@ async fn a_child_that_cannot_start_fails_the_call_instead_of_promising_a_report(
                     prompt: "do x".into(),
                     is_subsession: true,
                     model: Some("nobody/x".into()),
-                    lane: None,
                     wait,
                     mode_override: None,
                     effort: None,
@@ -583,7 +582,7 @@ async fn a_child_that_cannot_start_fails_the_call_instead_of_promising_a_report(
 
     // A message to a session whose agent is switched off fails the same way.
     let child = store
-        .create_with_parent("helper", "t", "", "claude/model", Some(&parent.id))
+        .create_with_parent("helper", "t", "claude/model", Some(&parent.id))
         .unwrap();
     let mut cfg = orch.config();
     cfg.providers.entry("claude".into()).or_default().enabled = false;

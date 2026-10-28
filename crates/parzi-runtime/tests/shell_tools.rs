@@ -25,11 +25,10 @@ impl Approver for Allow {
 fn host(cwd: &str) -> ToolHost {
     home("shell-tools");
     let store = SessionStore::open().unwrap();
-    let sid = store.create("shell", "", "", "claude/m").unwrap().id;
+    let sid = store.create("shell", "", "claude/m").unwrap().id;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     ToolHost::new(ToolHostParts {
         session_id: sid.clone(),
-        lane: "build".into(),
         mode: ApprovalMode::Auto,
         edits_auto: false,
         full: false,
@@ -134,15 +133,22 @@ async fn workdir_outside_the_folder_is_refused() {
         .call("shell.exec", &json!({"cmd": "echo hi", "workdir": away}))
         .await;
     assert!(!ok, "outside the fence must not run: {out}");
-    assert!(out.contains("outside"), "{out}");
+    assert!(out.contains("outside"), "{out}"); // The folder itself, named in full, is inside.
+    let here = workdir();
+    let (ok, out) = h
+        .call("shell.exec", &json!({"cmd": "echo hi", "workdir": here}))
+        .await;
+    assert!(ok, "the session's own folder runs: {out}");
 }
 
 #[tokio::test]
 async fn vendor_shell_is_rerouted_not_carded() {
     let h = host(&workdir());
-    for tool in ["Bash", "bash", "shell", "execute", "run_command"] {
+    // Claude Code's shell is pointed at shell.exec (its refusal carries why).
+    for tool in ["Bash", "bash"] {
         let d = h
             .decide(PermissionRequest {
+                name: String::new(),
                 id: "req-1".into(),
                 tool: tool.into(),
                 title: tool.into(),
@@ -157,27 +163,47 @@ async fn vendor_shell_is_rerouted_not_carded() {
         if let PermissionDecision::Deny(why) = d {
             assert!(why.contains("shell.exec"), "{tool}: {why}");
         }
+    } // An ACP agent's terminal gets a bare "rejected" and ends its turn:
+      // it is judged as shell.exec would be, never just turned away.
+    for tool in ["shell", "execute", "run_command"] {
+        let d = h
+            .decide(PermissionRequest {
+                name: String::new(),
+                id: "req-2".into(),
+                tool: tool.into(),
+                title: "run_terminal_command".into(),
+                input: json!({"command": "echo hi"}),
+                paths: vec![],
+            })
+            .await;
+        assert_ne!(
+            d,
+            PermissionDecision::Deny("use shell.exec".into()),
+            "{tool}"
+        );
     }
 }
 
 #[tokio::test]
-async fn research_offers_no_shell() {
-    home("shell-research");
+async fn the_shell_switch_turns_off_parzis_shell_and_the_agents_own() {
+    home("shell-off");
     let store = SessionStore::open().unwrap();
-    let sid = store.create("shell", "", "", "claude/m").unwrap().id;
+    let sid = store.create("shell", "", "claude/m").unwrap().id;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut cfg = ParziConfig::default();
+    cfg.lanes.no_shell = true;
     let host = ToolHost::new(ToolHostParts {
         session_id: sid.clone(),
-        lane: "work".into(),
-        mode: ApprovalMode::Ask,
+        mode: ApprovalMode::Auto,
         edits_auto: false,
         full: false,
-        cfg: ParziConfig::default(),
+        cfg,
         store,
         tools: Arc::new(ToolExecutor {
             cwd: workdir(),
             mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
-            allowed: vec!["*".into()],
+            // As the policy hands it out with the switch off: no shell.*.
+            allowed: vec!["fs.*".into(), "plan.read".into()],
         }),
         approver: Arc::new(Allow),
         asker: None,
@@ -187,9 +213,10 @@ async fn research_offers_no_shell() {
         cancel: CancellationToken::new(),
     });
     let (ok, _) = host.call("shell.exec", &json!({"cmd": "echo hi"})).await;
-    assert!(!ok, "work must not run commands");
+    assert!(!ok, "no commands with the shell off");
     let d = host
         .decide(PermissionRequest {
+            name: String::new(),
             id: "req-1".into(),
             tool: "Bash".into(),
             title: "Bash".into(),
@@ -199,6 +226,6 @@ async fn research_offers_no_shell() {
         .await;
     assert!(
         matches!(d, PermissionDecision::Deny(_)),
-        "work denies vendor shell too"
+        "the agent's own shell is off too"
     );
 }

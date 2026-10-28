@@ -5,10 +5,11 @@
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
-  import { api, type ProviderStatus } from "./api";
+  import type { ProviderStatus } from "./api";
   import { ageOf, checking, refreshBoard } from "./providerStore";
   import { PROVIDER_ORDER, allRows, isUsable, nameOf, shownOf, type PickRow } from "./providerRows";
-  import { effortLabel, effortsFor } from "./providerRows";
+  import { effortLabel, effortShort, effortsFor } from "./providerRows";
+  import { recentModels } from "./tabs";
   import { popover, placeAbove } from "./popover";
   import { tooltip } from "./tooltip";
 
@@ -31,7 +32,7 @@
   let open = false;
   let query = "";
   let index = 0;
-  let favorites: string[] = [];
+  let recent: string[] = [];
   let trigger: HTMLButtonElement | null = null;
   let searchEl: HTMLInputElement | null = null;
   let listEl: HTMLDivElement | null = null;
@@ -41,8 +42,9 @@
   $: shown = shownOf(value, board);
   $: modelEfforts = effortsFor(value, board);
   $: q = query.trim().toLowerCase();
-  $: groups = groupsFor(board, favorites, q);
+  $: groups = groupsFor(board, recent, q);
   $: flat = groups.flatMap((g) => g.rows);
+  $: offsets = groups.map((_, gi) => groups.slice(0, gi).reduce((n, g) => n + g.rows.length, 0));
   $: if (index >= flat.length) index = 0;
   $: idle = board.filter((b) => !isUsable(b) && PROVIDER_ORDER.includes(b.provider));
   $: busy = $checking.size > 0;
@@ -51,15 +53,15 @@
     return !q || `${row.label} ${row.value} ${nameOf(row.provider)}`.toLowerCase().includes(q);
   }
 
-  function groupsFor(board: ProviderStatus[], favorites: string[], q: string): Group[] {
-    const rows = allRows(board).filter((r) => r.usable);
+  // Recent models sit on top and stay in their agent's list too, so no
+  // model ever seems to go missing from its agent.
+  function groupsFor(board: ProviderStatus[], recent: string[], q: string): Group[] {
+    const rows = allRows(board).filter((r) => r.usable && matches(r, q));
     const out: Group[] = [];
-    const starred = favorites.map((v) => rows.find((r) => r.value === v)).filter((r): r is PickRow => !!r && matches(r, q));
-    if (starred.length) out.push({ key: "starred", label: "Starred", rows: starred });
+    const used = q ? [] : recent.map((v) => rows.find((r) => r.value === v)).filter((r): r is PickRow => !!r);
+    if (used.length) out.push({ key: "recent", label: "Recent", rows: used });
     for (const id of PROVIDER_ORDER) {
-      const status = board.find((b) => b.provider === id);
-      if (!status || !isUsable(status)) continue;
-      const mine = rows.filter((r) => r.provider === id && !favorites.includes(r.value) && matches(r, q));
+      const mine = rows.filter((r) => r.provider === id);
       if (mine.length) out.push({ key: id, label: nameOf(id), rows: mine });
     }
     return out;
@@ -107,10 +109,7 @@
       .filter((b) => isUsable(b) && (ageOf(b) >= (b.provider === current ? FRESH_SECS : Infinity) || (!b.models.length && ageOf(b) >= RETRY_SECS)))
       .map((b) => b.provider);
     if (stale.length) void refreshBoard(stale).catch(() => {});
-    api
-      .getConfig()
-      .then((c) => (favorites = c.favorite_models ?? []))
-      .catch(() => {});
+    recent = recentModels();
     void focusSearch();
   }
 
@@ -120,7 +119,18 @@
   }
 
   function setupLabel(b: ProviderStatus) {
-    return b.state === "not_installed" ? "install" : b.state === "disabled" ? "turn on" : "sign in";
+    switch (b.state) {
+      case "not_installed":
+        return "install";
+      case "disabled":
+        return "turn on";
+      case "error":
+        return "check failed";
+      case "unchecked":
+        return "checking";
+      default:
+        return "sign in";
+    }
   }
 
   function setUp(provider: string) {
@@ -155,6 +165,7 @@
   on:click|stopPropagation={() => (open ? (open = false) : show())}
 >
   <span class="truncate">{shortModel(shown.name)}</span>
+  {#if value && modelEfforts.length > 1}<span class="eff">{effortLabel(effort)}</span>{/if}
   <Icon name="chevDown" size={12} />
 </button>
 
@@ -174,11 +185,11 @@
       {#if busy}<span class="spin" use:tooltip={"Checking your agents"} />{/if}
     </div>
     <div class="list" bind:this={listEl}>
-      {#each groups as g (g.key)}
+      {#each groups as g, gi (g.key)}
         <div class="head">{g.label}</div>
         <div class="rows" data-ui-list>
-          {#each g.rows as row (g.key + row.value)}
-            {@const i = flat.indexOf(row)}
+          {#each g.rows as row, j (g.key + row.value)}
+            {@const i = offsets[gi] + j}
             <button
               class="row"
               class:active={i === index}
@@ -194,10 +205,10 @@
           {/each}
         </div>
       {:else}
-        <div class="empty">{busy ? "Checking your agents…" : "No matching models"}</div>
+        <div class="empty">{busy ? "Checking your agents…" : q ? "No matching models" : "No agent is ready yet"}</div>
       {/each}
     </div>
-    {#if (value && modelEfforts.length > 1) || (idle.length && !q)}
+    {#if (value && modelEfforts.length > 1) || idle.length}
       <div class="foot">
         <!-- Effort belongs to a model: none until one is picked. -->
         {#if value && modelEfforts.length > 1}
@@ -205,14 +216,21 @@
             <span class="foot-label">Effort</span>
             <div class="effort-row" role="group" aria-label="Effort" data-ui-segmented>
               {#each modelEfforts as e (e)}
-                <button class="effort" class:on={effort === e} aria-pressed={effort === e} on:click={() => (effort = e)}>
-                  {effortLabel(e)}
+                <button
+                  class="effort"
+                  class:on={effort === e}
+                  aria-pressed={effort === e}
+                  aria-label={effortLabel(e)}
+                  use:tooltip={effortShort(e) === effortLabel(e) ? "" : effortLabel(e)}
+                  on:click={() => (effort = e)}
+                >
+                  {effortShort(e)}
                 </button>
               {/each}
             </div>
           </div>
         {/if}
-        {#if idle.length && !q}
+        {#if idle.length}
           <!-- One row for every agent not ready yet; Settings sets them up. -->
           <button class="row idle" use:tooltip={idle.map((b) => `${nameOf(b.provider)}: ${setupLabel(b)}`).join(", ")} on:click={() => setUp(idle[0].provider)}>
             <span class="logos">
@@ -234,6 +252,10 @@
     flex: none;
     min-width: 0;
     max-width: 200px;
+  }
+  .model .eff {
+    flex: none;
+    color: var(--muted);
   }
   .model .truncate {
     overflow: hidden;
@@ -357,14 +379,16 @@
     padding: 8px 4px 4px;
     border-top: 1px solid var(--line);
   }
+  /* The label over a full-width row: up to five efforts fit the picker,
+     each on one line. */
   .effort-line {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 0 4px 0 8px;
+    flex-direction: column;
+    gap: 6px;
+    padding: 2px 4px 4px;
   }
   .foot-label {
-    flex: 1;
+    padding-left: 4px;
     font-size: var(--fs-sm);
     color: var(--muted);
   }
@@ -376,8 +400,11 @@
     background: var(--hover);
   }
   .effort {
+    flex: 1 1 0;
+    min-width: 0;
     height: 24px;
-    padding: 0 10px;
+    padding: 0 4px;
+    white-space: nowrap;
     background: transparent;
     border: none;
     border-radius: 999px;

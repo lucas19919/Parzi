@@ -16,11 +16,11 @@ fn builtin_packs_parse_and_ship_no_wallpaper() {
     let packs = theme::list_pack_infos().unwrap();
     assert_eq!(
         packs.iter().filter(|p| p.builtin).count(),
-        4,
+        3,
         "builtin set changed; update this list: {:?}",
         packs.iter().map(|p| &p.name).collect::<Vec<_>>()
     );
-    for want in ["tokyo-night", "full-dark", "grey", "light"] {
+    for want in ["dark", "graphite", "light"] {
         let p = packs
             .iter()
             .find(|p| p.name == want)

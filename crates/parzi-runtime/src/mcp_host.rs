@@ -18,26 +18,38 @@ use crate::tools::{from_mcp, to_mcp};
 const SERVER_NAME: &str = "parzi";
 const PROTOCOLS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_BODY: usize = 8 * 1024 * 1024;
-/// What the server says it offers: the families of `tools.rs`.
-const INSTRUCTIONS: &str = "Parzi's own tools: widgets and artifacts in the thread, teamwork across sessions, the project's plans, the notes vault, the window and its pages, and the shell where the lane allows it.";
+/// What the server says it offers: the families of `tools.rs`. Names the
+/// tools so agents that only read MCP instructions still route to them
+/// instead of answering from memory or retrying refused native tools.
+const INSTRUCTIONS: &str = "Parzi's own tools, call these (MCP underscores read back with dots: plan_write is plan.write): ui.show_artifact, todo.write, ui.offer_replies, ui.propose_task for the thread; plan.read and plan.write for the project's plans; session.spawn, session.send, session.read, session.list and session.rename for teamwork; brain.search, brain.read, brain.write and brain.delete for the notes vault; shell.exec, shell.start, shell.logs and shell.kill for commands; browser.open/read/click/type/press/select/scroll/wait/shot/close/tabs and desk.state/open/notify/screenshot for the window and its pages; ask.user for questions; image.generate, github.issue, models.list and project.create/archive/delete. Prefer these over native vendor tools; a refused native tool names its Parzi replacement to call instead.";
 
 type Runs = Arc<RwLock<HashMap<String, Arc<ToolHost>>>>;
 
 pub struct McpHost {
     addr: SocketAddr,
     runs: Runs,
+    /// One token per session for the app's life: an agent kept running
+    /// between turns still reaches its tools at the same address, which
+    /// always leads to the session's current turn.
+    tokens: std::sync::Mutex<HashMap<String, String>>,
 }
 
 pub struct Registration {
     runs: Runs,
     token: String,
+    host: Arc<ToolHost>,
     pub server: ToolServer,
 }
 
 impl Drop for Registration {
     fn drop(&mut self) {
         if let Ok(mut r) = self.runs.write() {
-            r.remove(&self.token);
+            // A later turn of the session may hold the address already.
+            if r.get(&self.token)
+                .is_some_and(|h| Arc::ptr_eq(h, &self.host))
+            {
+                r.remove(&self.token);
+            }
         }
     }
 }
@@ -50,6 +62,7 @@ impl McpHost {
         let host = Arc::new(Self {
             addr,
             runs: runs.clone(),
+            tokens: std::sync::Mutex::default(),
         });
         tokio::spawn(async move {
             loop {
@@ -72,17 +85,24 @@ impl McpHost {
         Ok(host)
     }
 
-    pub fn register(&self, host: Arc<ToolHost>) -> Registration {
-        let token = format!(
-            "{}{}",
-            uuid::Uuid::new_v4().simple(),
-            uuid::Uuid::new_v4().simple()
-        );
+    pub fn register(&self, session: &str, host: Arc<ToolHost>) -> Registration {
+        let fresh = || {
+            format!(
+                "{}{}",
+                uuid::Uuid::new_v4().simple(),
+                uuid::Uuid::new_v4().simple()
+            )
+        };
+        let token = match self.tokens.lock() {
+            Ok(mut t) => t.entry(session.to_string()).or_insert_with(fresh).clone(),
+            Err(_) => fresh(),
+        };
         if let Ok(mut r) = self.runs.write() {
-            r.insert(token.clone(), host);
+            r.insert(token.clone(), host.clone());
         }
         Registration {
             runs: self.runs.clone(),
+            host,
             server: ToolServer {
                 name: SERVER_NAME.into(),
                 url: format!("http://{}/mcp/{token}", self.addr),

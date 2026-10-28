@@ -68,11 +68,10 @@ impl Approver for Person {
 fn gate(folder: &Path, mode: ApprovalMode, edits_auto: bool, person: Arc<Person>) -> ToolHost {
     common::home("allowlist");
     let store = SessionStore::open().unwrap();
-    let sid = store.create("gate", "", "", "claude/m").unwrap().id;
+    let sid = store.create("gate", "", "claude/m").unwrap().id;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     ToolHost::new(ToolHostParts {
         session_id: sid.clone(),
-        lane: String::new(),
         mode,
         edits_auto,
         full: false,
@@ -94,6 +93,7 @@ fn gate(folder: &Path, mode: ApprovalMode, edits_auto: bool, person: Arc<Person>
 
 async fn ask(host: &ToolHost, tool: &str, paths: &[&str]) -> PermissionDecision {
     host.decide(PermissionRequest {
+        name: String::new(),
         id: format!("req-{}", uuid::Uuid::new_v4()),
         tool: tool.into(),
         title: tool.into(),
@@ -133,7 +133,7 @@ async fn writes_outside_the_folder_need_a_person() {
                 ask(&host, "Write", &[evil]).await,
                 PermissionDecision::Deny(_)
             ),
-            "{evil} must not be written on the lane's say-so"
+            "{evil} must not be written on the allowlist's say-so"
         );
     }
     assert!(
@@ -167,13 +167,10 @@ async fn writes_outside_the_folder_need_a_person() {
     );
     let cards = person.seen.lock().unwrap().clone();
     assert_eq!(cards.len(), 1, "one card, for the write outside");
-    assert!(
-        cards[0].args["title"]
-            .as_str()
-            .unwrap_or("")
-            .contains("outside"),
-        "{:?}",
-        cards[0].args
+    assert_eq!(cards[0].args["outside"], true, "{:?}", cards[0].args);
+    assert_eq!(
+        parzi_runtime::ask_text::ask_text(&cards[0].name, &cards[0].args).note,
+        "Outside this session's folder."
     );
     let _ = std::fs::remove_dir_all(&folder);
 }
@@ -188,12 +185,11 @@ async fn full_access_writes_anywhere_without_a_card() {
     let folder = std::env::temp_dir().join(format!("parzi-fence-full-{}", std::process::id()));
     std::fs::create_dir_all(folder.join("src")).unwrap();
     let store = SessionStore::open().unwrap();
-    let sid = store.create("gate", "", "", "claude/m").unwrap().id;
+    let sid = store.create("gate", "", "claude/m").unwrap().id;
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let person = nobody();
     let host = ToolHost::new(ToolHostParts {
         session_id: sid.clone(),
-        lane: String::new(),
         mode: ApprovalMode::Auto,
         edits_auto: false,
         full: true,
@@ -219,88 +215,6 @@ async fn full_access_writes_anywhere_without_a_card() {
     assert!(
         person.seen.lock().unwrap().is_empty(),
         "full access never shows a card"
-    );
-    let _ = std::fs::remove_dir_all(&folder);
-}
-
-fn research_host(folder: &Path, person: Arc<Person>) -> ToolHost {
-    common::home("allowlist-research");
-    let store = SessionStore::open().unwrap();
-    let sid = store.create("gate", "", "", "claude/m").unwrap().id;
-    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-    ToolHost::new(ToolHostParts {
-        session_id: sid.clone(),
-        lane: "work".into(),
-        mode: ApprovalMode::Ask,
-        edits_auto: false,
-        full: false,
-        cfg: parzi_core::config::ParziConfig::default(),
-        store,
-        tools: Arc::new(ToolExecutor {
-            cwd: folder.display().to_string(),
-            mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
-            allowed: vec!["*".into()],
-        }),
-        approver: person,
-        asker: None,
-        shell: Arc::new(parzi_runtime::shell::ShellRegistry::new("test")),
-        harness: None,
-        sink: RunSink::new(&sid, tx, None),
-        cancel: CancellationToken::new(),
-    })
-}
-
-#[tokio::test]
-async fn research_lane_answers_without_cards_and_staffs_workers() {
-    let folder = std::env::temp_dir().join(format!("parzi-fence-research-{}", std::process::id()));
-    std::fs::create_dir_all(folder.join("src")).unwrap();
-    let person = nobody();
-    let host = research_host(&folder, person.clone());
-
-    for tool in ["Write", "Edit"] {
-        assert!(
-            matches!(
-                ask(&host, tool, &["src/a.rs"]).await,
-                PermissionDecision::Deny(_)
-            ),
-            "{tool} must not edit the repo on the work lane — notes go through brain.write"
-        );
-    }
-    for tool in ["session.spawn", "session.read_session", "project.create"] {
-        assert_eq!(
-            ask(&host, tool, &[]).await,
-            PermissionDecision::Allow,
-            "{tool} staffs and homes work"
-        );
-    }
-    for tool in ["Bash", "Task"] {
-        assert!(
-            matches!(
-                ask(&host, tool, &["src/a.rs"]).await,
-                PermissionDecision::Deny(_)
-            ),
-            "{tool} must be refused silently on the work lane"
-        );
-    }
-    assert_eq!(
-        ask(&host, "Read", &["src/a.rs"]).await,
-        PermissionDecision::Allow
-    );
-    assert!(
-        person.seen.lock().unwrap().is_empty(),
-        "work never shows an approval card"
-    );
-
-    let (ok, _) = host
-        .call(
-            "brain.write",
-            &serde_json::json!({"path": "x", "content": "y"}),
-        )
-        .await;
-    assert!(ok, "work may write notes, just never run shell");
-    assert!(
-        person.seen.lock().unwrap().is_empty(),
-        "still no card after an allowed write"
     );
     let _ = std::fs::remove_dir_all(&folder);
 }

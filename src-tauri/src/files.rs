@@ -264,10 +264,34 @@ pub async fn git_branch(state: State<'_, AppState>, cwd: String) -> Result<Strin
     }
     let orch = state.orch.clone();
     let cwd = off_thread(move || confined_path(orch.store(), &cwd)).await?;
-    Ok(git_out(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .await
-        .map(|out| out.trim().to_string())
-        .unwrap_or_default())
+    let mut cmd = tokio::process::Command::new("git");
+    cmd.args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&cwd)
+        .stdin(std::process::Stdio::null());
+    #[cfg(windows)]
+    cmd.creation_flags(parzi_providers::process::CREATE_NO_WINDOW);
+    let out = cmd.output().await.map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Ok(String::new());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// A folder's local branches, for the composer's branch menu.
+#[tauri::command]
+pub async fn git_branches(
+    state: State<'_, AppState>,
+    cwd: String,
+) -> Result<crate::worktree::Branches, String> {
+    if cwd.is_empty() {
+        return Ok(crate::worktree::Branches::default());
+    }
+    let orch = state.orch.clone();
+    off_thread(move || {
+        let dir = confined_path(orch.store(), &cwd)?;
+        Ok(crate::worktree::branches(&dir))
+    })
+    .await
 }
 
 /// What Home's Git card shows for a folder.
@@ -280,9 +304,23 @@ pub struct GitStatus {
     /// Tracked files with staged or unstaged changes, conflicts included.
     pub changed: u32,
     pub untracked: u32,
+    /// Lines added and removed in tracked files, staged or not.
+    pub added: u32,
+    pub removed: u32,
     pub last_subject: String,
     /// Unix seconds of the last commit, 0 when the branch has none.
     pub last_time: i64,
+}
+
+/// Totals `git diff --numstat`: added and removed lines ("-" for binary
+/// files counts nothing).
+fn sum_numstat(out: &str) -> (u32, u32) {
+    out.lines().fold((0, 0), |(a, r), line| {
+        let mut cols = line.split('\t');
+        let add = cols.next().and_then(|n| n.parse::<u32>().ok()).unwrap_or(0);
+        let del = cols.next().and_then(|n| n.parse::<u32>().ok()).unwrap_or(0);
+        (a.saturating_add(add), r.saturating_add(del))
+    })
 }
 
 /// Reads `git status --porcelain=v2 --branch`.
@@ -310,35 +348,12 @@ fn parse_git_status(out: &str) -> GitStatus {
     s
 }
 
-/// `git` gets this long; a slow folder just shows nothing this time.
-const GIT_BUDGET: Duration = Duration::from_secs(10);
-
-/// What the desk runs: a read that never takes git's optional locks (a
-/// `status` would otherwise refresh `.git/index.lock` under an agent's own
-/// `git add` or `commit`), never prompts, and dies with its caller.
-fn git_args<'a>(args: &[&'a str]) -> Vec<&'a str> {
-    let mut all = vec!["--no-optional-locks"];
-    all.extend_from_slice(args);
-    all
-}
-
-/// `git <args>` in `cwd`, in a hidden console. None when git fails, is
-/// missing, or takes longer than `GIT_BUDGET` (it is killed then).
 async fn git_out(cwd: &Path, args: &[&str]) -> Option<String> {
     let mut cmd = tokio::process::Command::new("git");
-    cmd.args(git_args(args))
-        .current_dir(cwd)
-        .env("GIT_OPTIONAL_LOCKS", "0")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
+    cmd.args(args).current_dir(cwd).stdin(Stdio::null());
     #[cfg(windows)]
     cmd.creation_flags(parzi_providers::process::CREATE_NO_WINDOW);
-    let out = tokio::time::timeout(GIT_BUDGET, cmd.output())
-        .await
-        .ok()?
-        .ok()?;
+    let out = cmd.output().await.ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
@@ -359,6 +374,9 @@ pub async fn git_status(
         return Ok(None);
     };
     let mut s = parse_git_status(&out);
+    if let Some(stat) = git_out(&cwd, &["diff", "HEAD", "--numstat"]).await {
+        (s.added, s.removed) = sum_numstat(&stat);
+    }
     if let Some(log) = git_out(&cwd, &["log", "-1", "--format=%ct%x1f%s"]).await {
         if let Some((time, subject)) = log.trim().split_once('\u{1f}') {
             s.last_time = time.parse().unwrap_or(0);
@@ -476,6 +494,141 @@ pub async fn read_image_data_url(
         Ok(img.data_url())
     })
     .await
+}
+
+/// A picture one of this session's tools made, wherever it saved it (an
+/// agent's own image model keeps them in its folder): only a path the
+/// session's own tool results name is read.
+#[tauri::command]
+pub async fn tool_image(
+    state: State<'_, AppState>,
+    session: String,
+    path: String,
+) -> Result<String, String> {
+    let orch = state.orch.clone();
+    off_thread(move || {
+        let fold = |s: &str| s.replace('\\', "/").to_lowercase();
+        let want = fold(&path);
+        let named = orch
+            .store()
+            .events(&session)
+            .map_err(|e| e.to_string())?
+            .iter()
+            .any(|e| match e {
+                parzi_core::store::Event::ToolResult { output, .. } => fold(output)
+                    .replace("//", "/")
+                    .contains(&want.replace("//", "/")),
+                _ => false,
+            });
+        if !named {
+            return Err("no tool in this session made that picture".into());
+        }
+        let p = Path::new(&path);
+        let meta = std::fs::metadata(p).map_err(|e| format!("{path}: {e}"))?;
+        if !meta.is_file() || meta.len() > READ_IMAGE_MAX {
+            return Err(format!("{path} is not a picture Parzi can show"));
+        }
+        let img = parzi_core::context::encode_image_file(p)
+            .ok_or_else(|| format!("{path} is not a supported image"))?;
+        Ok(img.data_url())
+    })
+    .await
+}
+
+/// Files saved with `save_as` this run: the only ones `reveal_saved` shows.
+static SAVED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// A name the Save dialog can offer: no folders, no characters Windows
+/// refuses, never empty.
+fn file_name_for(name: &str) -> String {
+    let clean: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+                '-'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let clean = clean.trim().trim_matches('.').to_string();
+    if clean.is_empty() {
+        "file.txt".into()
+    } else {
+        clean.chars().take(120).collect()
+    }
+}
+
+/// Saves something the window holds (an artifact, a chart's data) where
+/// the person picks in the system's Save dialog. The window's own download
+/// links go nowhere in a desktop app; nothing is written without the
+/// dialog. `base64`: `content` is encoded bytes (a picture). None: the
+/// person cancelled.
+#[tauri::command]
+pub async fn save_as(
+    app: AppHandle,
+    name: String,
+    content: String,
+    base64: Option<bool>,
+) -> Result<Option<String>, String> {
+    use base64::Engine as _;
+    const SAVE_MAX: usize = 64 * 1024 * 1024;
+    let bytes = if base64.unwrap_or(false) {
+        base64::engine::general_purpose::STANDARD
+            .decode(content.trim())
+            .map_err(|_| "that file's data is damaged".to_string())?
+    } else {
+        content.into_bytes()
+    };
+    if bytes.len() > SAVE_MAX {
+        return Err("that is too big to save from here (64 MB at most)".into());
+    }
+    let name = file_name_for(&name);
+    let mut builder = app
+        .dialog()
+        .file()
+        .set_title("Save as")
+        .set_file_name(&name);
+    if let Ok(dir) = tauri::Manager::path(&app).download_dir() {
+        builder = builder.set_directory(dir);
+    }
+    if let Some(ext) = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()) {
+        if !ext.is_empty() && ext.len() <= 8 {
+            builder = builder.add_filter(ext.to_ascii_uppercase(), &[ext.as_str()]);
+        }
+    }
+    let (tx, rx) = oneshot::channel();
+    builder.save_file(move |picked| {
+        let _ = tx.send(picked);
+    });
+    let Some(picked) = rx.await.map_err(|_| "the save dialog closed".to_string())? else {
+        return Ok(None);
+    };
+    let path = picked.into_path().map_err(|e| e.to_string())?;
+    let target = path.clone();
+    off_thread(move || {
+        std::fs::write(&target, &bytes).map_err(|e| format!("couldn't save: {e}"))?;
+        let mut saved = SAVED.lock().unwrap_or_else(PoisonError::into_inner);
+        saved.retain(|p| p != &target);
+        saved.push(target);
+        Ok(())
+    })
+    .await?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+/// Shows a file `save_as` wrote in the file manager.
+#[tauri::command]
+pub async fn reveal_saved(path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    let known = SAVED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .contains(&path);
+    if !known {
+        return Err("Parzi didn't save that file".into());
+    }
+    off_thread(move || launch(&reveal(&path, false))).await
 }
 
 #[tauri::command]
@@ -799,6 +952,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn numstat_sums_lines_and_skips_binaries() {
+        assert_eq!(
+            sum_numstat("3\t1\tsrc/a.rs\n-\t-\tlogo.png\n10\t0\tb.rs\n"),
+            (13, 1)
+        );
+        assert_eq!(sum_numstat(""), (0, 0));
+    }
+
+    #[test]
     fn git_status_counts_branch_changes_and_untracked_files() {
         let out = "# branch.oid 0123abcd\n\
                    # branch.head main\n\
@@ -826,20 +988,6 @@ mod tests {
             (fresh.upstream, fresh.changed, fresh.untracked),
             (false, 0, 0)
         );
-    }
-
-    #[test]
-    fn the_desks_git_never_takes_the_index_lock() {
-        assert_eq!(
-            git_args(&["status", "--porcelain=v2", "--branch"]),
-            [
-                "--no-optional-locks",
-                "status",
-                "--porcelain=v2",
-                "--branch"
-            ]
-        );
-        assert_eq!(git_args(&[]), ["--no-optional-locks"]);
     }
 
     #[test]

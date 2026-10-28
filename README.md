@@ -50,13 +50,36 @@ their reason.
   `Ctrl+Shift+T` reopen the last closed page, `Ctrl+Tab` cycle, `Ctrl+H`
   history and bookmarks, `Ctrl+P` search sessions, tabs and actions, `Ctrl+,`
   settings. These work while a page has focus too.
-- **Home** is where a new tab lands: the composer, pinned sites (pin any page
-  from its toolbar; until you do, your most visited sites show), and recent
-  sessions.
-- **Plans**: agents can keep a living plan for a project (ask one to "plan
-  the next release"). It is a note in the Brain (`projects/<slug>/plan.md`)
-  that agents read and update with their plan tools; every session also
-  keeps how its latest run went: what it changed, the checks it ran, the cost.
+- **Home** is where a new tab lands: just the composer. The project tab on
+  its top edge picks the folder a session works in; with a folder the agent
+  can build there, without one it is a plain assistant. **Agent** and **Web**
+  under the box choose who answers: the agent, or the web (a search, or an
+  address to open).
+- **The session column** (`Ctrl+J`) sits beside a session: where it runs,
+  how full its context is (with Compact), what changed in its folder and its
+  PR, and the helpers it started.
+- **Plan**: agents write a project's plan (ask one to "plan the next
+  release") and keep it current. A session working on it shows the plan as a
+  checklist at the end of the thread: each item reads as working, needing
+  you, in review, started or not started, and done items fold away. Click an
+  item to quote it into the composer, then say what you want ("start this",
+  "split this"). The plan is a note in the Brain (`projects/<slug>/plan.md`),
+  so it syncs like the rest. Every session keeps how its latest run went: what
+  it changed, the checks it ran, what it cost.
+- **Providers** (Settings) lists every agent with what it needs next: Install
+  or Sign in right on its row, checked again on its own.
+- **Side tasks**: while an agent works, Enter queues your next message for
+  when it is done; **Ctrl+Enter** starts it now as a side task instead, beside
+  the running session and without touching it ("@website do the same here"
+  points it at another project). It knows what the main session was asked,
+  lists under it as a helper, and opens as a tab inside that session's group.
+- **Connectors** (Settings, Connections, **Add connector**) give your agents
+  more tools: GitHub, Higgsfield, Notion, Linear, Canva, Sentry, Stripe,
+  Hugging Face and DeepWiki, each one click; you sign in to the service in
+  your browser, and GitHub takes a personal access token instead. **Custom
+  connector** adds any hosted MCP server by its address (with an API key if
+  it uses one), or a local one by its command. Hosted ones run through
+  [mcp-remote](https://github.com/geelen/mcp-remote), so they need Node.js.
 - **Set up Parzi** (first launch, or the menu) signs you in to each agent with
   its own login, imports Brave/Chrome/Edge bookmarks and history (never
   passwords or cookies), and turns your other agents' instructions, memories

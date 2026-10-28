@@ -100,12 +100,6 @@
     });
   }
 
-  // Someone typing in the shell keeps the keyboard when the page reappears.
-  function typing() {
-    const el = document.activeElement;
-    return el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || (el instanceof HTMLElement && el.isContentEditable);
-  }
-
   // A picture of the page to show while HTML covers it, taken while it is
   // still up. Waits briefly: past that the page hides anyway and the
   // picture lands when it is ready.
@@ -138,7 +132,7 @@
       const x = Math.floor(r.x);
       const y = Math.floor(r.y);
       const rect = { x, y, width: Math.ceil(r.x + r.width) - x, height: Math.ceil(r.y + r.height) - y };
-      await api.browserShow(tab.id, rect, url, tab.owner ?? null, !editing && !typing());
+      await api.browserShow(tab.id, rect, url, tab.owner ?? null, false);
       shownNow = true;
       setPageArea({ left: rect.x, top: rect.y, right: rect.x + rect.width, bottom: rect.y + rect.height });
     } catch (e) {
@@ -265,7 +259,7 @@
     if (next) leaveFor(next);
   }
 
-  function nav(action: "back" | "forward" | "reload" | "stop") {
+  function nav(action: "back" | "forward" | "reload" | "stop" | "zoom-reset") {
     api.browserNav(tab.id, action).catch((e) => dispatch("error", { text: String(e) }));
   }
 
@@ -302,7 +296,15 @@
     else if (yes && p.url) dispatch("openTab", { url: p.url });
   }
 
+  // The login key shows only with Bitwarden's CLI installed: a button
+  // that can only say "install something first" is noise.
+  let hasVault = false;
+
   onMount(() => {
+    vault
+      .state()
+      .then((s) => (hasVault = s.status !== "missing"))
+      .catch(() => {});
     const ro = new ResizeObserver(schedule);
     if (slot) ro.observe(slot);
     window.addEventListener("resize", schedule);
@@ -353,6 +355,12 @@
           spellcheck="false"
           autocomplete="off"
         />
+        {#if tab.zoom}
+          <!-- Zoomed (Ctrl+plus/minus or Ctrl+wheel): how much, and back to 100%. -->
+          <button type="button" class="zoom" use:tooltip={"Reset zoom (Ctrl+0)"} on:click={() => nav("zoom-reset")}>
+            {Math.round(tab.zoom * 100)}%
+          </button>
+        {/if}
         {#if tab.loading}<span class="progress" />{/if}
       </form>
       {#if shield}
@@ -375,18 +383,28 @@
           {#if count}<span class="count">{count}</span>{/if}
         </button>
       {/if}
-      <button
-        bind:this={keyBtn}
-        class="nav"
-        class:busy={filling}
-        use:tooltip={"Fill a login from Bitwarden"}
-        disabled={!url.startsWith("https://")}
-        on:click={fillLogin}
-      >
-        <Icon name="key" />
-      </button>
+      {#if hasVault}
+        <button
+          bind:this={keyBtn}
+          class="nav"
+          class:busy={filling}
+          use:tooltip={"Fill a login from Bitwarden"}
+          disabled={!url.startsWith("https://")}
+          on:click={fillLogin}
+        >
+          <Icon name="key" />
+        </button>
+      {/if}
       <button class="nav" class:on={pinned} use:tooltip={pinned ? "Unpin from Home" : "Pin to Home"} disabled={!url} on:click={togglePin}>
         <Icon name="pin" />
+      </button>
+      <button
+        class="nav"
+        use:tooltip={"Open outside Parzi, in the system browser"}
+        disabled={!/^https?:\/\//i.test(url)}
+        on:click={() => api.openConfirmedUrl(url).catch((e) => dispatch("error", { text: String(e) }))}
+      >
+        <Icon name="external" />
       </button>
     </div>
   {/if}
@@ -460,6 +478,23 @@
 </div>
 
 <style>
+  .zoom {
+    flex: none;
+    height: 22px;
+    margin-right: 4px;
+    padding: 0 8px;
+    background: var(--hover);
+    border: none;
+    border-radius: 999px;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-xs);
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+  }
+  .zoom:hover {
+    color: var(--text);
+  }
   .page {
     position: relative;
     flex: 1;

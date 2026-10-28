@@ -8,8 +8,7 @@ use adblock::lists::{FilterSet, ParseOptions, RuleTypes};
 use adblock::request::Request;
 use adblock::Engine;
 use serde::{Deserialize, Serialize};
-
-use crate::urls::host as host_of;
+use tauri::Url;
 
 const LISTS: &[(&str, &str)] = &[
     ("easylist.txt", "https://easylist.to/easylist/easylist.txt"),
@@ -157,19 +156,14 @@ pub fn adblock_state(url: &str) -> AdblockState {
 
 // Sync commands run on the main thread; the settings write must not.
 #[tauri::command]
-pub async fn adblock_enable(app: tauri::AppHandle, on: bool) -> Result<AdblockState, String> {
+pub async fn adblock_enable(on: bool) -> Result<AdblockState, String> {
     ENABLED.store(on, Ordering::Relaxed);
-    crate::browser::refilter(&app);
     save_off_thread().await?;
     Ok(state(""))
 }
 
 #[tauri::command]
-pub async fn adblock_site(
-    app: tauri::AppHandle,
-    url: String,
-    allow: bool,
-) -> Result<AdblockState, String> {
+pub async fn adblock_site(url: String, allow: bool) -> Result<AdblockState, String> {
     let host = host_of(&url);
     if host.is_empty() {
         return Err("no site to change".into());
@@ -185,7 +179,6 @@ pub async fn adblock_site(
     if !allow {
         ENABLED.store(true, Ordering::Relaxed);
     }
-    crate::browser::refilter(&app);
     save_off_thread().await?;
     Ok(state(&host))
 }
@@ -222,6 +215,14 @@ fn allowed(host: &str) -> bool {
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .contains(host)
+}
+
+fn host_of(url: &str) -> String {
+    Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+        .map(|h| h.strip_prefix("www.").map_or(h.clone(), str::to_string))
+        .unwrap_or_default()
 }
 
 fn settings_path() -> Option<PathBuf> {

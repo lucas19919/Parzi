@@ -1,9 +1,8 @@
 <script lang="ts">
   import GeneralSection from "./settings/GeneralSection.svelte";
   import ProvidersSection from "./settings/ProvidersSection.svelte";
-  import AppearanceSection from "./settings/AppearanceSection.svelte";
-  import SystemSection from "./settings/SystemSection.svelte";
   import ConnectionsSection from "./settings/ConnectionsSection.svelte";
+  import AppearanceSection from "./settings/AppearanceSection.svelte";
   import { toast } from "./toast";
 
   export let section = "general";
@@ -13,10 +12,9 @@
     { id: "providers", label: "Providers" },
     { id: "connections", label: "Connections" },
     { id: "appearance", label: "Appearance" },
-    { id: "system", label: "System" },
   ];
 
-  const notify = (msg: string) => toast(msg);
+  const notify = (msg: string, err = false) => toast(msg, err);
 </script>
 
 <div class="settings">
@@ -37,8 +35,6 @@
         <ConnectionsSection {notify} on:setupRemote />
       {:else if section === "appearance"}
         <AppearanceSection {notify} />
-      {:else if section === "system"}
-        <SystemSection {notify} />
       {:else}
         <GeneralSection {notify} />
       {/if}
@@ -91,11 +87,10 @@
   .content {
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 26px;
     width: 100%;
-    max-width: 980px;
+    max-width: 840px;
     margin: 0 auto;
-    padding: 26px 28px 40px;
-    user-select: none;
+    padding: 26px 28px 48px;
   }
 </style>

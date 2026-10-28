@@ -96,7 +96,6 @@ async fn rig(n: usize) -> Rig {
     let (meta, _rx) = orch
         .spawn(
             "wake-tests",
-            "build",
             "claude",
             "build it in parts",
             None,
@@ -196,11 +195,7 @@ async fn children_ending_together_wake_the_parent_once_with_its_posture() {
         w.prompt
     );
     assert!(w.prompt.contains("Files: part.rs."), "{}", w.prompt);
-    assert!(
-        w.prompt.contains("More: session.read_session "),
-        "{}",
-        w.prompt
-    );
+    assert!(w.prompt.contains("More: session.read "), "{}", w.prompt);
     assert_eq!(w.effort.as_deref(), Some("high"), "its effort came back");
     assert_eq!(
         w.write,
@@ -315,7 +310,6 @@ async fn a_wake_asks_the_person_only_for_a_session_that_had_them() {
     ] {
         orch.spawn(
             "wake-approver",
-            "build",
             "claude",
             prompt,
             approver,

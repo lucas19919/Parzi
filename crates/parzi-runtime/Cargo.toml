@@ -22,8 +22,8 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 bytes = "1"
 ureq = "3"
-pdf-extract = "0.12.1"
 base64 = "0.22"
+sha2 = "0.10"
 fs4 = "0.13"
 chrono = "0.4"
 

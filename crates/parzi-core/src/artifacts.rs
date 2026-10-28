@@ -15,22 +15,6 @@ const ARTIFACT_KINDS: &[&str] = &[
     "preview",
 ];
 
-const CODE_LANGS: &[&str] = &[
-    "rust",
-    "typescript",
-    "javascript",
-    "python",
-    "toml",
-    "json",
-    "bash",
-    "sh",
-    "diff",
-    "markdown",
-    "md",
-    "html",
-    "css",
-];
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactV1 {
     pub artifact: u64,
@@ -45,6 +29,20 @@ pub struct ArtifactV1 {
     pub content: String,
     #[serde(default = "default_version")]
     pub version: u32,
+}
+
+/// The kind an agent meant: models say `doc`, `md` or `report` for a
+/// document, and a refusal only costs them a retry.
+fn kind_named(raw: &str) -> String {
+    let k = raw.trim().to_ascii_lowercase();
+    match k.as_str() {
+        "doc" | "document" | "md" | "report" | "note" | "notes" | "readme" => "markdown".into(),
+        "txt" | "plain" | "plaintext" => "text".into(),
+        "page" | "htm" => "html".into(),
+        "patch" => "diff".into(),
+        "table" => "csv".into(),
+        _ => k,
+    }
 }
 
 fn default_kind() -> String {
@@ -122,6 +120,7 @@ pub fn validate_artifact(v: &serde_json::Value) -> Result<ArtifactV1> {
             a.id
         )));
     }
+    a.kind = kind_named(&a.kind);
     if !ARTIFACT_KINDS.contains(&a.kind.as_str()) {
         return Err(ParziError::Validation(format!(
             "unknown artifact kind `{}`",
@@ -134,12 +133,18 @@ pub fn validate_artifact(v: &serde_json::Value) -> Result<ArtifactV1> {
         )));
     }
     if let Some(lang) = &a.language {
-        let l = lang.to_lowercase();
-        if !CODE_LANGS.contains(&l.as_str()) {
+        // Any language name: it only picks the highlighting.
+        let l = lang.trim().to_ascii_lowercase();
+        let named = !l.is_empty()
+            && l.len() <= 24
+            && l.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '#' | '-' | '_' | '.'));
+        if !named {
             return Err(ParziError::Validation(format!(
                 "unsupported language `{lang}`"
             )));
         }
+        a.language = Some(l);
     }
     if a.content.chars().count() > MAX_ARTIFACT_CHARS {
         return Err(ParziError::Validation(format!(

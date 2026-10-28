@@ -118,7 +118,6 @@ impl Pump {
             prompt,
             is_subsession,
             model,
-            lane,
             wait,
             mode_override,
             effort,
@@ -126,21 +125,16 @@ impl Pump {
         let caller = self.store.get(caller_id)?;
         // The tools' stand-in names say nothing: name it after its prompt.
         let title: String = match title.trim() {
-            "" | "subsession" | "lane worker" => parzi_core::text::name_from_prompt(&prompt),
+            "" | "subsession" => parzi_core::text::name_from_prompt(&prompt),
             t => t.chars().take(80).collect(),
         };
         let model_spec = model.unwrap_or_else(|| caller.model.clone());
-        let lane_name = lane.unwrap_or_else(|| caller.lane.clone());
         // Ask/Deny parents pass no posture: warn that the child is crippled.
         let crippled = mode_override.is_none();
         let parent = if is_subsession { Some(caller_id) } else { None };
-        let meta = self.store.create_with_parent(
-            &title,
-            &caller.project,
-            &lane_name,
-            &model_spec,
-            parent,
-        )?;
+        let meta = self
+            .store
+            .create_with_parent(&title, &caller.project, &model_spec, parent)?;
         if !caller.cwd.is_empty() {
             let _ = self.store.set_cwd(&meta.id, &caller.cwd);
         }
@@ -151,7 +145,6 @@ impl Pump {
         let q = QueuedRun {
             session_id: meta.id.clone(),
             project: caller.project.clone(),
-            lane: lane_name,
             model_spec,
             prompt,
             cwd: caller.cwd.clone(),
@@ -263,7 +256,7 @@ impl Pump {
         serde_json::json!({
             "session_id": target,
             "status": "timeout",
-            "note": "target still running; check later with session.read_session",
+            "note": "target still running; check later with session.read",
         })
         .to_string()
     }
@@ -298,12 +291,6 @@ impl HarnessBridge for Pump {
     ) -> Result<String> {
         let target = self.in_scope(caller_id, session_id)?;
         let caller = self.store.get(caller_id)?;
-        // Work has no shell; waking a Build session would hand it one.
-        if caller.lane == "work" && self.store.get(session_id)?.lane != "work" {
-            return Err(parzi_core::ParziError::Validation(
-                "a Work session can only message Work sessions".into(),
-            ));
-        }
         let msg = inter::from_caller(&caller, kind, message);
         // A session the caller started answers back when it ends.
         let reports = target.parent_id.as_deref() == Some(caller_id);
@@ -334,7 +321,6 @@ impl HarnessBridge for Pump {
         let q = QueuedRun {
             session_id: session_id.to_string(),
             project: target.project.clone(),
-            lane: target.lane.clone(),
             model_spec: target.model.clone(),
             prompt: msg.render(),
             cwd: target.cwd.clone(),
@@ -424,7 +410,7 @@ impl HarnessBridge for Pump {
                     format!("tool_result({name}, ok={ok}): {}\n", clip(output, 1_500))
                 }
                 Event::Reasoning { text } => format!("reasoning: {}\n", clip(text, 300)),
-                Event::Checkpoint { summary } => {
+                Event::Checkpoint { summary, .. } => {
                     format!("checkpoint: {}\n", clip(summary, 300))
                 }
                 Event::Widget { .. } => "[widget]\n".to_string(),

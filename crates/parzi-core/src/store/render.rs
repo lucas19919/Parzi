@@ -10,8 +10,8 @@ pub(crate) fn session_md(meta: &SessionMeta, events: &[Event]) -> String {
         .map(|p| format!("- parent_id: {p}\n"))
         .unwrap_or_default();
     let mut md = format!(
-        "# {}\n\n- id: {}\n{parent_line}- project: {} / lane: {}\n- model: {}\n- status: {:?}\n- tokens: {} in / {} out (${:.4})\n\n---\n\n",
-        meta.title, meta.id, meta.project, meta.lane, meta.model,
+        "# {}\n\n- id: {}\n{parent_line}- project: {}\n- model: {}\n- status: {:?}\n- tokens: {} in / {} out (${:.4})\n\n---\n\n",
+        meta.title, meta.id, meta.project, meta.model,
         meta.status, meta.tokens_in, meta.tokens_out, meta.cost_usd,
     );
     for e in events {
@@ -62,7 +62,10 @@ pub(crate) fn session_md(meta: &SessionMeta, events: &[Event]) -> String {
                     "### artifact: {title} ({id} v{version})\n\n```{fence_lang}\n{content}\n```\n\n"
                 ));
             }
-            Event::Checkpoint { summary } => {
+            Event::Checkpoint { summary, .. } if summary.is_empty() => {
+                md.push_str("> compacted\n\n");
+            }
+            Event::Checkpoint { summary, .. } => {
                 md.push_str(&format!("> checkpoint: {summary}\n\n"));
             }
             Event::Reasoning { text } => {

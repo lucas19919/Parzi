@@ -6,9 +6,7 @@ use std::path::PathBuf;
 use std::sync::{PoisonError, RwLock};
 
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
-
-use crate::urls::site_origin;
+use tauri::{AppHandle, Url};
 
 const FILE: &str = "browser.json";
 
@@ -105,6 +103,16 @@ impl Prefs {
             })
             .collect()
     }
+}
+
+/// `https://host[:port]` for a page URL; None for anything that is not a
+/// web origin (a decision for `data:` or `file:` would never match again).
+pub fn site_origin(raw: &str) -> Option<String> {
+    let url = Url::parse(raw).ok()?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return None;
+    }
+    Some(url.origin().ascii_serialization().to_ascii_lowercase())
 }
 
 static PREFS: RwLock<Option<Prefs>> = RwLock::new(None);
@@ -219,6 +227,21 @@ pub async fn browser_forget_site(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn origins_are_web_origins_only() {
+        assert_eq!(
+            site_origin("https://Meet.Google.com/abc?x=1#y").as_deref(),
+            Some("https://meet.google.com")
+        );
+        assert_eq!(
+            site_origin("http://localhost:3000/a").as_deref(),
+            Some("http://localhost:3000")
+        );
+        assert_eq!(site_origin("data:text/html,hi"), None);
+        assert_eq!(site_origin("file:///C:/x.html"), None);
+        assert_eq!(site_origin("not a url"), None);
+    }
 
     #[test]
     fn decisions_are_per_site_and_kind() {

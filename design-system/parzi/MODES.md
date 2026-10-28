@@ -1,5 +1,10 @@
 # Modes Plan — Search / Build / Work
 
+Superseded 2026-10-19: Build and Work merged into one lane. Every session
+has the shell and every tool; how freely they run is the approval mode's
+to say (Settings), and Settings can still switch the shell off. The rest
+of this note is history.
+
 Status: Build + Work lanes, switch UI, dock, shell ownership shipped
 (2026-10-07). Remaining: decompose proposal, track staffing, CLI catalog.
 

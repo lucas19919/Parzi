@@ -15,11 +15,13 @@ pub enum ParziError {
     TomlDe(#[from] toml::de::Error),
     #[error("config: {0}")]
     Config(String),
-    #[error("store: {0}")]
+    // These two and Provider carry a sentence meant for the person, shown
+    // as is: the kind is for code, not for the toast.
+    #[error("{0}")]
     Store(String),
-    #[error("validation: {0}")]
+    #[error("{0}")]
     Validation(String),
-    #[error("provider `{0}`: {1}")]
+    #[error("{1}")]
     Provider(String, String),
     #[error("tool `{0}`: {1}")]
     Tool(String, String),

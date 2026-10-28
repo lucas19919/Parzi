@@ -14,7 +14,7 @@ use crate::setup;
 use crate::types::{
     or_cancel, sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision,
     PermissionGate, PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus,
-    State, TurnEnd, TurnSpec,
+    State, TurnEnd, TurnSpec, INSTALL_HINT, LOGIN_HINT,
 };
 
 const AUTH_REQUIRED: i64 = -32000;
@@ -31,9 +31,10 @@ pub struct Agent {
     locate: fn() -> Option<PathBuf>,
     gated: bool,
     slow_start: bool,
+    /// Takes `/compact` as a prompt even when it does not list the
+    /// command (OpenCode); any other compacts only if it lists it.
+    compacts: bool,
     sign_in: Option<&'static str>,
-    install_hint: &'static str,
-    login_hint: &'static str,
     probe: Probe,
 }
 
@@ -47,6 +48,17 @@ enum Probe {
 
 fn no_env() -> Vec<(String, String)> {
     vec![]
+}
+
+/// Effort levels Parzi offers for ACP agents (OpenCode, Grok, Cursor,
+/// Antigravity): the agents take no `--effort` flag, so Parzi tries a
+/// `session/set_config_option` with `effort` and always records the choice
+/// on the session. Never empty, or the composer hides the effort picker.
+fn default_efforts() -> Vec<String> {
+    ["low", "medium", "high", "xhigh", "max"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn opencode_env() -> Vec<(String, String)> {
@@ -82,9 +94,8 @@ pub fn agent(id: &str) -> Option<Agent> {
             locate: nowhere,
             gated: true,
             slow_start: false,
+            compacts: true,
             sign_in: None,
-            install_hint: "Install OpenCode from Set up Parzi, or set its path in Settings.",
-            login_hint: "Sign in from Set up Parzi (it runs `opencode auth login`), then check again.",
             probe: Probe::OpencodeModels,
         },
         "grok" => Agent {
@@ -96,9 +107,8 @@ pub fn agent(id: &str) -> Option<Agent> {
             locate: nowhere,
             gated: false,
             slow_start: false,
+            compacts: true,
             sign_in: None,
-            install_hint: "Install Grok from Set up Parzi, or set its path in Settings.",
-            login_hint: "Sign in from Set up Parzi (it runs `grok login`), then check again.",
             probe: Probe::GrokModels,
         },
         "antigravity" => Agent {
@@ -110,9 +120,8 @@ pub fn agent(id: &str) -> Option<Agent> {
             locate: setup::antigravity_program,
             gated: false,
             slow_start: true,
+            compacts: false,
             sign_in: Some("oauth-personal"),
-            install_hint: "Install Google's Antigravity agent from Set up Parzi, or set the path to agy_acp_server in Settings.",
-            login_hint: "Sign in with Google from Set up Parzi, then check again.",
             probe: Probe::GeminiSettings,
         },
         "cursor" => Agent {
@@ -124,9 +133,8 @@ pub fn agent(id: &str) -> Option<Agent> {
             locate: nowhere,
             gated: false,
             slow_start: false,
+            compacts: false,
             sign_in: None,
-            install_hint: "Install Cursor's CLI from Set up Parzi, or set the path to cursor-agent in Settings.",
-            login_hint: "Sign in from Set up Parzi (it runs `cursor-agent login`), then check again.",
             probe: Probe::CursorStatus,
         },
         _ => return None,
@@ -155,8 +163,8 @@ impl Acp {
 
     fn not_installed(&self) -> ProviderError {
         ProviderError::process(format!(
-            "{} is not installed. {}",
-            self.agent.name, self.agent.install_hint
+            "{} is not installed. {INSTALL_HINT}",
+            self.agent.name
         ))
     }
 
@@ -337,7 +345,8 @@ fn session_models(session: &Value) -> Vec<ModelInfo> {
         id: id.to_string(),
         name: name.unwrap_or(id).to_string(),
         is_default: current == Some(id),
-        efforts: vec![],
+        efforts: default_efforts(),
+        images: None,
     };
     if let Some(list) = session
         .pointer("/models/availableModels")
@@ -399,6 +408,9 @@ fn take_warm(program: &Path) -> Option<Conn> {
         if !matches!(conn.proc.child.try_wait(), Ok(None)) {
             continue;
         }
+        if conn.incoming.is_closed() {
+            continue;
+        }
         // An agent that asked something while parked waits for an answer
         // nobody gave: it may never answer the next turn. It goes (dropping
         // it kills it) and a fresh one starts instead.
@@ -411,6 +423,108 @@ fn take_warm(program: &Path) -> Option<Conn> {
         }
     }
     None
+}
+
+/// An agent process kept after a clean turn with its session still open,
+/// so the next message in that conversation goes straight to it: no
+/// start, no reconnecting tools, no reloading the history.
+struct Live {
+    id: u64,
+    program: PathBuf,
+    sid: String,
+    cwd: PathBuf,
+    tools: Option<String>,
+    model: Option<String>,
+    session: Value,
+    commands: Vec<String>,
+    conn: Conn,
+}
+
+/// What a turn opened, so a clean end can keep it.
+#[derive(Default)]
+struct Opened {
+    sid: String,
+    session: Value,
+    commands: Vec<String>,
+}
+
+/// A session reused from the pool: its id, what opening it said, the
+/// model it runs and the commands it listed.
+struct Reused {
+    sid: String,
+    session: Value,
+    model: Option<String>,
+    commands: Vec<String>,
+}
+
+static LIVE: Mutex<Vec<Live>> = Mutex::new(Vec::new());
+const LIVE_FOR: Duration = Duration::from_secs(10 * 60);
+/// Kept at once; the oldest goes first.
+const LIVE_MAX: usize = 4;
+
+fn take_live(program: &Path, sid: &str, cwd: &Path, tools: Option<&str>) -> Option<Live> {
+    let mut live = LIVE.lock().ok()?;
+    let i = live.iter().position(|l| {
+        l.program == program && l.sid == sid && l.cwd == cwd && l.tools.as_deref() == tools
+    })?;
+    let mut l = live.remove(i);
+    drop(live);
+    if !matches!(l.conn.proc.child.try_wait(), Ok(None)) {
+        return None;
+    }
+    // The reader ended (EOF): the process is gone even if the handle
+    // lingers. Reusing it would fail the turn with "exited before it
+    // finished".
+    if l.conn.incoming.is_closed() {
+        return None;
+    }
+    // Something it asked while parked went unanswered: start fresh.
+    let mut asked = false;
+    while let Ok(msg) = l.conn.incoming.try_recv() {
+        asked |= matches!(msg, Incoming::Request { .. });
+    }
+    (!asked).then_some(l)
+}
+
+/// Stops every agent kept running in `cwd`: its folder is going (a
+/// deleted session's worktree), and a process sitting in it would keep it.
+pub fn drop_live_in(cwd: &Path) -> usize {
+    let Ok(mut live) = LIVE.lock() else {
+        return 0;
+    };
+    let before = live.len();
+    // Dropping one kills its process.
+    live.retain(|l| l.cwd != cwd);
+    before - live.len()
+}
+
+fn park_live(mut l: Live) {
+    l.id = WARM_ID.fetch_add(1, Ordering::Relaxed);
+    let id = l.id;
+    let Ok(mut live) = LIVE.lock() else {
+        return;
+    };
+    live.push(l);
+    // Dropping one kills its process.
+    while live.len() > LIVE_MAX {
+        live.remove(0);
+    }
+    drop(live);
+    tokio::spawn(async move {
+        tokio::time::sleep(LIVE_FOR).await;
+        let stale = LIVE.lock().ok().and_then(|mut live| {
+            let i = live.iter().position(|l| l.id == id)?;
+            Some(live.remove(i))
+        });
+        if let Some(mut l) = stale {
+            l.conn.proc.kill().await;
+        }
+    });
+}
+
+fn can_resume(init: &Value) -> bool {
+    init.pointer("/agentCapabilities/sessionCapabilities/resume")
+        .is_some_and(|v| !v.is_null())
 }
 
 fn park(program: PathBuf, conn: Conn) {
@@ -444,11 +558,7 @@ impl Provider for Acp {
 
     async fn status(&self) -> ProviderStatus {
         let Some(program) = self.program() else {
-            return ProviderStatus::new(
-                self.agent.id,
-                State::NotInstalled,
-                self.agent.install_hint,
-            );
+            return ProviderStatus::new(self.agent.id, State::NotInstalled, "");
         };
         let mut status = match self.agent.probe {
             Probe::OpencodeModels => opencode_status(&program, self.agent).await,
@@ -456,8 +566,17 @@ impl Provider for Acp {
             Probe::CursorStatus => cursor_status(&program, self.agent).await,
             Probe::GeminiSettings => gemini_status(self.agent),
         };
-        if status.models.is_empty() && status.state == State::Ready {
+        // A probe that lists nothing (transient failure, signed out)
+        // falls back to the last models a session saw, so the picker
+        // keeps its models and effort levels instead of blinking out.
+        // Caches from before effort levels backfill to the default five.
+        if status.models.is_empty() {
             status.models = cached_models(self.agent.id);
+            for m in &mut status.models {
+                if m.efforts.is_empty() {
+                    m.efforts = default_efforts();
+                }
+            }
             if status.models.is_empty() && self.agent.slow_start {
                 self.warm_up(program.clone());
             }
@@ -471,6 +590,17 @@ impl Provider for Acp {
                 .or_else(|| conn.init.pointer("/_meta/agentVersion"))
                 .and_then(Value::as_str)
                 .map(str::to_string);
+            // An agent whose own status lists no models (Cursor) names them
+            // in a session; asking once here beats waiting for a first turn.
+            // Bounded well inside the board's 90 s limit on a whole check.
+            let asked = status.models.is_empty() && status.state == State::Ready;
+            if asked
+                && tokio::time::timeout(Duration::from_secs(30), self.learn_models(&conn))
+                    .await
+                    .unwrap_or(false)
+            {
+                status.models = cached_models(self.agent.id);
+            }
             conn.proc.kill().await;
         }
         status
@@ -485,11 +615,32 @@ impl Provider for Acp {
     ) -> Result<TurnEnd, ProviderError> {
         let program = self.program().ok_or_else(|| self.not_installed())?;
         process::existing_folder(&spec.cwd)?;
-        // Dropping a half-open connection kills its process.
-        let Some(conn) = or_cancel(&cancel, self.connect(&program, &spec.cwd)).await else {
-            return Ok(TurnEnd::Interrupted);
+        let tools = spec.tools.as_ref().map(|t| t.url.clone());
+        let earlier = spec
+            .resume
+            .as_ref()
+            .and_then(|r| r.get("session_id"))
+            .and_then(Value::as_str);
+        let live = earlier.and_then(|sid| take_live(&program, sid, &spec.cwd, tools.as_deref()));
+        let (mut conn, reused) = match live {
+            Some(l) => (
+                l.conn,
+                Some(Reused {
+                    sid: l.sid,
+                    session: l.session,
+                    model: l.model,
+                    commands: l.commands,
+                }),
+            ),
+            None => {
+                // Dropping a half-open connection kills its process.
+                let Some(conn) = or_cancel(&cancel, self.connect(&program, &spec.cwd)).await else {
+                    return Ok(TurnEnd::Interrupted);
+                };
+                (conn?, None)
+            }
         };
-        let mut conn = conn?;
+        let mut opened = Opened::default();
         let outcome = drive(
             &conn.peer,
             &mut conn.incoming,
@@ -499,6 +650,8 @@ impl Provider for Acp {
             gate,
             &events,
             &cancel,
+            reused,
+            &mut opened,
         )
         .await;
         let outcome = match outcome {
@@ -510,7 +663,22 @@ impl Provider for Acp {
             other => other,
         };
         let reusable = matches!(outcome, Ok(TurnEnd::Completed));
-        self.release(program, conn, reusable).await;
+        // Only a session the next turn can name (one that resumes) is kept.
+        if reusable && !opened.sid.is_empty() && can_resume(&conn.init) {
+            park_live(Live {
+                id: 0,
+                program,
+                sid: opened.sid,
+                cwd: spec.cwd.clone(),
+                tools,
+                model: spec.model.clone().filter(|m| !m.is_empty()),
+                session: opened.session,
+                commands: opened.commands,
+                conn,
+            });
+        } else {
+            self.release(program, conn, reusable).await;
+        }
         outcome
     }
 }
@@ -539,7 +707,7 @@ fn read_gemini_settings() -> Option<Value> {
 
 fn gemini_status(agent: Agent) -> ProviderStatus {
     let Some(kind) = read_gemini_settings().as_ref().and_then(gemini_auth_type) else {
-        return ProviderStatus::new(agent.id, State::SignedOut, agent.login_hint);
+        return ProviderStatus::new(agent.id, State::SignedOut, "");
     };
     let mut s = ProviderStatus::new(agent.id, State::Ready, "");
     s.account = Some(
@@ -605,7 +773,7 @@ fn cursor_read(out: &str, agent: Agent) -> ProviderStatus {
             );
             s
         }
-        Some(_) => ProviderStatus::new(agent.id, State::SignedOut, agent.login_hint),
+        Some(_) => ProviderStatus::new(agent.id, State::SignedOut, ""),
         None => ProviderStatus::new(
             agent.id,
             State::Error,
@@ -615,27 +783,54 @@ fn cursor_read(out: &str, agent: Agent) -> ProviderStatus {
 }
 
 async fn opencode_status(program: &Path, agent: Agent) -> ProviderStatus {
-    // Stdout only: stderr log lines can look like model ids.
-    let Some(out) = process::stdout(program, &["models"], 60).await else {
+    // Stdout only: stderr log lines can look like model ids. Verbose adds
+    // each model's details (whether it sees images); an older OpenCode
+    // without it still lists the ids.
+    let out = match process::stdout(program, &["models", "--verbose"], 60).await {
+        Some(out) => Some(out),
+        None => process::stdout(program, &["models"], 60).await,
+    };
+    let Some(out) = out else {
         return ProviderStatus::new(agent.id, State::Error, "`opencode models` gave no answer.");
     };
     opencode_read(&out, agent)
 }
 
+/// Reads `opencode models`, plain (one id a line) or `--verbose` (each id
+/// followed by its details as JSON).
 fn opencode_read(out: &str, agent: Agent) -> ProviderStatus {
-    let models: Vec<ModelInfo> = out
-        .lines()
-        .map(str::trim)
-        .filter(|l| l.contains('/') && !l.contains(' '))
-        .map(|id| ModelInfo {
-            id: id.to_string(),
-            name: id.to_string(),
-            is_default: false,
-            efforts: vec![],
-        })
-        .collect();
+    let is_id = |l: &str| {
+        l.contains('/') && !l.contains(' ') && !l.contains('"') && !l.starts_with(['{', '}'])
+    };
+    let mut models: Vec<ModelInfo> = vec![];
+    let mut details = String::new();
+    let close = |models: &mut Vec<ModelInfo>, details: &mut String| {
+        if let (Some(m), Ok(v)) = (models.last_mut(), serde_json::from_str::<Value>(details)) {
+            m.images = v
+                .pointer("/capabilities/input/image")
+                .and_then(Value::as_bool);
+        }
+        details.clear();
+    };
+    for line in out.lines() {
+        let l = line.trim();
+        if is_id(l) && !line.starts_with(char::is_whitespace) {
+            close(&mut models, &mut details);
+            models.push(ModelInfo {
+                id: l.to_string(),
+                name: l.to_string(),
+                is_default: false,
+                efforts: default_efforts(),
+                images: None,
+            });
+        } else if !models.is_empty() {
+            details.push_str(line);
+            details.push('\n');
+        }
+    }
+    close(&mut models, &mut details);
     if models.is_empty() {
-        return ProviderStatus::new(agent.id, State::SignedOut, agent.login_hint);
+        return ProviderStatus::new(agent.id, State::SignedOut, "");
     }
     let providers: HashSet<&str> = models
         .iter()
@@ -675,7 +870,8 @@ fn grok_read(out: &str, agent: Agent) -> ProviderStatus {
                 name: id.clone(),
                 id,
                 is_default,
-                efforts: vec![],
+                efforts: default_efforts(),
+                images: None,
             });
         }
     }
@@ -683,7 +879,7 @@ fn grok_read(out: &str, agent: Agent) -> ProviderStatus {
         return s;
     }
     if lower.contains("not logged in") || lower.contains("not authenticated") {
-        return ProviderStatus::new(agent.id, State::SignedOut, agent.login_hint);
+        return ProviderStatus::new(agent.id, State::SignedOut, "");
     }
     ProviderStatus::new(
         agent.id,
@@ -726,6 +922,54 @@ struct Buffers {
     thought: String,
 }
 
+type Names = Arc<Mutex<HashMap<String, String>>>;
+
+/// What a turn has heard so far.
+struct Seen {
+    buffers: Buffers,
+    names: Names,
+    last_cost: Option<f64>,
+    /// The slash commands the agent lists (`available_commands_update`).
+    commands: Vec<String>,
+    /// How full the context was at the last model call, when the agent
+    /// says per call (Grok's `response_completed`): a turn's totals add
+    /// up every call and overstate it.
+    context: Option<u64>,
+}
+
+/// The commands an `available_commands_update` lists, by name.
+fn listed_commands(u: &Value) -> Option<Vec<String>> {
+    if u.get("sessionUpdate").and_then(Value::as_str) != Some("available_commands_update") {
+        return None;
+    }
+    Some(
+        u.get("availableCommands")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|c| c.get("name").and_then(Value::as_str))
+            .map(|n| n.trim_start_matches('/').to_string())
+            .collect(),
+    )
+}
+
+/// The session update a notification carries, when it is for `sid`:
+/// `session/update`, or Grok's own `_x.ai/session_notification`.
+fn update_of<'a>(method: &str, params: &'a Value, sid: &str) -> Option<&'a Value> {
+    if !matches!(method, "session/update" | "_x.ai/session_notification") {
+        return None;
+    }
+    let ours = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .is_none_or(|s| s == sid);
+    ours.then(|| params.get("update")).flatten()
+}
+
+/// How long a turn that compacts waits for the agent to list its
+/// commands before deciding it cannot.
+const COMMANDS_WAIT: Duration = Duration::from_secs(3);
+
 impl Buffers {
     fn flush(&mut self, events: &EventTx) {
         let thought = std::mem::take(&mut self.thought);
@@ -743,7 +987,7 @@ fn rpc_failure(agent: Agent, e: RpcError) -> ProviderError {
     match e.code {
         AUTH_REQUIRED => ProviderError::new(
             ErrorClass::Auth,
-            format!("{} is not signed in. {}", agent.name, agent.login_hint),
+            format!("{} is not signed in. {LOGIN_HINT}", agent.name),
         ),
         RpcError::CLOSED | RpcError::TIMEOUT => ProviderError::process(e.to_string()),
         _ => ProviderError::sniffed(ErrorClass::Unknown, format!("{}: {e}", agent.name)),
@@ -757,6 +1001,9 @@ fn rpc_failure(agent: Agent, e: RpcError) -> ProviderError {
 struct Answerer {
     peer: Arc<Peer>,
     gate: Arc<dyn PermissionGate>,
+    /// Each tool call's own name, by id: a permission ask gives only the
+    /// call's kind and a title.
+    names: Names,
     /// Fires once session/cancel is out, so pending permission asks answer
     /// "cancelled".
     cancel_sent: CancellationToken,
@@ -770,7 +1017,8 @@ impl Answerer {
                 self.gate.clone(),
                 self.cancel_sent.clone(),
             );
-            tokio::spawn(async move { permission(&peer, id, &params, gate, &sent).await });
+            let names = self.names.clone();
+            tokio::spawn(async move { permission(&peer, id, &params, gate, &names, &sent).await });
         } else {
             let _ = self
                 .peer
@@ -810,6 +1058,8 @@ async fn drive(
     gate: Arc<dyn PermissionGate>,
     events: &EventTx,
     cancel: &CancellationToken,
+    reused: Option<Reused>,
+    opened: &mut Opened,
 ) -> Result<TurnEnd, ProviderError> {
     let caps = init.get("agentCapabilities").unwrap_or(&Value::Null);
     let http_mcp = caps
@@ -850,13 +1100,23 @@ async fn drive(
     let answers = Answerer {
         peer: peer.clone(),
         gate,
+        names: Names::default(),
         cancel_sent: CancellationToken::new(),
     };
     let mut held: Vec<Incoming> = vec![];
     let mut fresh = true;
     let mut session = Value::Null;
     let mut sid = String::new();
-    if let Some(id) = earlier.filter(|_| can_resume) {
+    // The session is still open in this process: nothing to open, and the
+    // model only changes when the person picked another.
+    let live_model = reused.as_ref().map(|r| r.model.clone());
+    let mut commands = vec![];
+    if let Some(r) = reused {
+        session = r.session;
+        sid = r.sid;
+        commands = r.commands;
+        fresh = false;
+    } else if let Some(id) = earlier.filter(|_| can_resume) {
         let resume = peer.request_within(
             "session/resume",
             json!({"sessionId": id, "cwd": cwd, "mcpServers": mcp_servers}),
@@ -902,19 +1162,84 @@ async fn drive(
             })?;
     }
     remember_models(agent.id, &session_models(&session));
+    opened.sid = sid.clone();
+    opened.session = session.clone();
     if can_resume {
         let _ = events.send(ProviderEvent::Session {
             resume: json!({"session_id": sid}),
         });
     }
-    if let Some(model) = spec.model.as_deref().filter(|m| !m.is_empty()) {
+    let wanted = spec.model.as_deref().filter(|m| !m.is_empty());
+    let same_model = live_model.is_some_and(|m| m.as_deref() == wanted);
+    if let Some(model) = wanted.filter(|_| !same_model) {
         let chosen = select_model(peer, &session, &sid, model, agent, events);
         let chosen = answers.meanwhile(chosen, incoming, &mut held);
         if or_cancel(cancel, chosen).await.is_none() {
             return Ok(TurnEnd::Interrupted);
         }
     }
-    let mut text = spec.prompt.clone();
+    if let Some(effort) = spec.effort.as_deref().filter(|e| !e.is_empty()) {
+        let set = select_effort(peer, &session, &sid, effort);
+        let set = answers.meanwhile(set, incoming, &mut held);
+        if or_cancel(cancel, set).await.is_none() {
+            return Ok(TurnEnd::Interrupted);
+        }
+    }
+    for msg in &held {
+        if let Incoming::Notification { method, params } = msg {
+            if let Some(list) = update_of(method, params, &sid).and_then(listed_commands) {
+                commands = list;
+            }
+        }
+    }
+    if spec.compact {
+        // A new conversation has nothing to compact; one that is gone is
+        // Parzi's to summarize from the transcript.
+        if fresh {
+            return Err(ProviderError::new(
+                ErrorClass::Unsupported,
+                format!("{} has no conversation here to compact", agent.name),
+            ));
+        }
+        let lists = |c: &[String]| c.iter().any(|n| n == "compact");
+        if !agent.compacts && !lists(&commands) {
+            let wait = async {
+                while let Some(msg) = incoming.recv().await {
+                    match msg {
+                        Incoming::Request { id, method, params } => {
+                            answers.answer(id, &method, params).await;
+                        }
+                        Incoming::Notification { method, params } => {
+                            let list = update_of(&method, &params, &sid).and_then(listed_commands);
+                            held.push(Incoming::Notification { method, params });
+                            if let Some(list) = list {
+                                return Some(list);
+                            }
+                        }
+                        Incoming::Raw(_) => {}
+                    }
+                }
+                None
+            };
+            if let Ok(Some(list)) = tokio::time::timeout(COMMANDS_WAIT, wait).await {
+                commands = list;
+            }
+            if !lists(&commands) {
+                return Err(ProviderError::new(
+                    ErrorClass::Unsupported,
+                    format!("{} cannot compact its conversation", agent.name),
+                ));
+            }
+        }
+    }
+    opened.commands.clone_from(&commands);
+    let mut text = if spec.compact {
+        format!("/compact {}", spec.prompt.trim())
+            .trim_end()
+            .to_string()
+    } else {
+        spec.prompt.clone()
+    };
     if fresh {
         if let Some(i) = spec
             .instructions
@@ -955,34 +1280,25 @@ async fn drive(
             let _ = done_tx.send(peer.request("session/prompt", params).await);
         });
     }
-    let mut buffers = Buffers::default();
-    let mut tool_names: HashMap<String, String> = HashMap::new();
-    let mut last_cost: Option<f64> = if fresh {
-        Some(0.0)
-    } else {
-        spec.resume
-            .as_ref()
-            .and_then(|r| r.get("cost"))
-            .and_then(Value::as_f64)
+    let mut seen = Seen {
+        buffers: Buffers::default(),
+        names: answers.names.clone(),
+        last_cost: if fresh {
+            Some(0.0)
+        } else {
+            spec.resume
+                .as_ref()
+                .and_then(|r| r.get("cost"))
+                .and_then(Value::as_f64)
+        },
+        commands,
+        context: None,
     };
     // What came while the session opened goes first, in order.
     for msg in held {
         if let Incoming::Notification { method, params } = msg {
-            let ours = params
-                .get("sessionId")
-                .and_then(Value::as_str)
-                .is_none_or(|s| s == sid);
-            if method == "session/update" && ours {
-                let u = params.get("update").unwrap_or(&Value::Null);
-                update(
-                    u,
-                    &sid,
-                    can_resume,
-                    &mut buffers,
-                    &mut tool_names,
-                    &mut last_cost,
-                    events,
-                );
+            if let Some(u) = update_of(&method, &params, &sid) {
+                update(u, &sid, can_resume, &mut seen, events);
             }
         }
     }
@@ -999,7 +1315,7 @@ async fn drive(
                 answers.cancel_sent.cancel();
             }
             () = sleep_until(stop_by) => {
-                buffers.flush(events);
+                seen.buffers.flush(events);
                 return Ok(TurnEnd::Interrupted);
             }
             msg = incoming.recv(), if open => {
@@ -1008,21 +1324,20 @@ async fn drive(
                     continue;
                 };
                 match msg {
-                    Incoming::Notification { method, params } if method == "session/update" => {
-                        if params.get("sessionId").and_then(Value::as_str).is_some_and(|s| s != sid) {
-                            continue;
+                    Incoming::Notification { method, params } => {
+                        if let Some(u) = update_of(&method, &params, &sid) {
+                            update(u, &sid, can_resume, &mut seen, events);
                         }
-                        let u = params.get("update").unwrap_or(&Value::Null);
-                        update(u, &sid, can_resume, &mut buffers, &mut tool_names, &mut last_cost, events);
                     }
                     Incoming::Request { id, method, params } => {
                         answers.answer(id, &method, params).await;
                     }
-                    _ => {}
+                    Incoming::Raw(_) => {}
                 }
             }
             done = &mut done_rx => {
-                buffers.flush(events);
+                seen.buffers.flush(events);
+                opened.commands.clone_from(&seen.commands);
                 let answer = done.unwrap_or_else(|_| Err(RpcError { code: RpcError::CLOSED, message: format!("{} exited before the turn finished", agent.name), data: None }));
                 let answer = match answer {
                     Ok(v) => v,
@@ -1032,6 +1347,16 @@ async fn drive(
                 if let Some(u) = answer.get("usage").filter(|u| !u.is_null()) {
                     let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
                     let _ = events.send(ProviderEvent::Usage { input: n("inputTokens"), output: n("outputTokens"), cost_usd: None });
+                } else if let Some(u) = answer.pointer("/_meta/usage").filter(|u| u.is_object()) {
+                    // Grok says it under _meta: tokens, cost in ticks (1e-10 USD),
+                    // and with its window known, how full the context is.
+                    let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
+                    let cost = u.get("costUsdTicks").and_then(Value::as_f64).map(|t| t / 1e10);
+                    let _ = events.send(ProviderEvent::Usage { input: n("inputTokens"), output: n("outputTokens"), cost_usd: cost });
+                    let used = seen.context.unwrap_or_else(|| n("totalTokens").max(n("inputTokens") + n("outputTokens")));
+                    if let Some(limit) = context_window(&session, spec.model.as_deref()).filter(|_| used > 0) {
+                        let _ = events.send(ProviderEvent::Context { used, limit });
+                    }
                 }
                 return match answer.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn") {
                     "cancelled" => Ok(TurnEnd::Interrupted),
@@ -1050,6 +1375,22 @@ async fn drive(
             }
         }
     }
+}
+
+/// The context window of the model a session runs, when the agent lists
+/// it (Grok: models.availableModels[]._meta.totalContextTokens).
+fn context_window(session: &Value, wanted: Option<&str>) -> Option<u64> {
+    let models = session.get("models")?;
+    let current = wanted
+        .filter(|m| !m.is_empty())
+        .or_else(|| models.get("currentModelId").and_then(Value::as_str))?;
+    models
+        .get("availableModels")?
+        .as_array()?
+        .iter()
+        .find(|m| m.get("modelId").and_then(Value::as_str) == Some(current))?
+        .pointer("/_meta/totalContextTokens")
+        .and_then(Value::as_u64)
 }
 
 async fn select_model(
@@ -1099,16 +1440,44 @@ async fn select_model(
     }
 }
 
-fn update(
-    u: &Value,
-    sid: &str,
-    resumable: bool,
-    buffers: &mut Buffers,
-    tool_names: &mut HashMap<String, String>,
-    last_cost: &mut Option<f64>,
-    events: &EventTx,
-) {
+/// Best-effort effort level for ACP agents: many list no `effort` config
+/// option, in which case the choice is still recorded on the session (and
+/// shown in the UI) but the agent runs its own default. Never fails a turn.
+async fn select_effort(peer: &Peer, session: &Value, sid: &str, effort: &str) {
+    let limit = Duration::from_secs(15);
+    let has_effort_option = session
+        .get("configOptions")
+        .and_then(Value::as_array)
+        .is_some_and(|opts| {
+            opts.iter().any(|o| {
+                matches!(
+                    o.get("id").and_then(Value::as_str),
+                    Some("effort" | "effortLevel" | "reasoningEffort")
+                )
+            })
+        });
+    if !has_effort_option {
+        return;
+    }
+    for id in ["effort", "effortLevel", "reasoningEffort"] {
+        let ok = peer
+            .request_within(
+                "session/set_config_option",
+                json!({"sessionId": sid, "configId": id, "value": effort}),
+                limit,
+            )
+            .await
+            .is_ok();
+        if ok {
+            return;
+        }
+    }
+}
+
+fn update(u: &Value, sid: &str, resumable: bool, seen: &mut Seen, events: &EventTx) {
     let chunk = || u.get("content").map(text_of).unwrap_or_default();
+    let buffers = &mut seen.buffers;
+    let last_cost = &mut seen.last_cost;
     match u.get("sessionUpdate").and_then(Value::as_str).unwrap_or("") {
         "agent_message_chunk" => {
             let t = chunk();
@@ -1133,7 +1502,9 @@ fn update(
                 .and_then(Value::as_str)
                 .unwrap_or("tool")
                 .to_string();
-            tool_names.insert(id.clone(), name.clone());
+            if let Ok(mut names) = seen.names.lock() {
+                names.insert(id.clone(), name.clone());
+            }
             let _ = events.send(ProviderEvent::ToolStarted {
                 id: id.clone(),
                 name: name.clone(),
@@ -1147,9 +1518,11 @@ fn update(
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            let name = tool_names
-                .get(&id)
-                .cloned()
+            let name = seen
+                .names
+                .lock()
+                .ok()
+                .and_then(|n| n.get(&id).cloned())
                 .unwrap_or_else(|| "tool".into());
             finish_tool(u, &id, &name, events);
         }
@@ -1176,6 +1549,36 @@ fn update(
                     });
                 }
             }
+        }
+        "available_commands_update" => {
+            if let Some(list) = listed_commands(u) {
+                seen.commands = list;
+            }
+        }
+        // Grok, asked to or when its context fills.
+        // Grok, after each model call: what that call read and wrote.
+        "response_completed" => {
+            let n = |k: &str| {
+                u.pointer(&format!("/usage/{k}"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            let used = n("input_tokens")
+                + n("cache_read_input_tokens")
+                + n("cache_creation_input_tokens")
+                + n("output_tokens");
+            if used > 0 {
+                seen.context = Some(used);
+            }
+        }
+        "auto_compact_completed" => {
+            buffers.flush(events);
+            let n = |k: &str| u.get(k).and_then(Value::as_u64);
+            seen.context = n("tokens_after");
+            let _ = events.send(ProviderEvent::Compacted {
+                before: n("tokens_before"),
+                after: n("tokens_after"),
+            });
         }
         _ => {}
     }
@@ -1213,6 +1616,7 @@ async fn permission(
     id: Value,
     params: &Value,
     gate: Arc<dyn PermissionGate>,
+    names: &Names,
     cancelled: &CancellationToken,
 ) {
     let call = params.get("toolCall").unwrap_or(&Value::Null);
@@ -1233,13 +1637,20 @@ async fn permission(
     } else {
         vec![]
     };
+    let call_id = call
+        .get("toolCallId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let name = names
+        .lock()
+        .ok()
+        .and_then(|n| n.get(&call_id).cloned())
+        .unwrap_or_default();
     let request = PermissionRequest {
-        id: call
-            .get("toolCallId")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
+        id: call_id,
         tool: kind.to_string(),
+        name,
         title: call
             .get("title")
             .and_then(Value::as_str)
@@ -1253,8 +1664,18 @@ async fn permission(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    tracing::debug!(
+        "permission asked: {} ({}), options {:?}",
+        request.title,
+        request.tool,
+        options
+            .iter()
+            .filter_map(|o| o.get("kind").and_then(serde_json::Value::as_str))
+            .collect::<Vec<_>>()
+    );
     // After session/cancel the spec wants every pending ask answered "cancelled".
     let decision = or_cancel(cancelled, gate.decide(request)).await;
+    tracing::debug!("permission decided: {decision:?}");
     let chosen =
         decision.and_then(|d| option_for(&options, &d).filter(|_| !cancelled.is_cancelled()));
     let outcome = match chosen {
@@ -1302,6 +1723,7 @@ mod tests {
             resume,
             prompt: "hi".into(),
             images: vec![],
+            compact: false,
             tools: Some(ToolServer {
                 name: "parzi".into(),
                 url: "http://127.0.0.1:1/mcp/t".into(),
@@ -1327,6 +1749,124 @@ mod tests {
             "promptCapabilities": {"image": true},
             "sessionCapabilities": {"resume": {}}
         }})
+    }
+
+    #[tokio::test]
+    async fn grok_says_its_context_and_cost_under_meta() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["method"], "session/prompt");
+            // Two model calls: the second read 9,000 + 8,800 cached.
+            for (input, cached) in [(8000, 0), (9000, 8800)] {
+                send(&mut w, json!({"jsonrpc": "2.0", "method": "_x.ai/session_notification", "params": {"sessionId": "S0", "update": {
+                    "sessionUpdate": "response_completed", "usage": {"input_tokens": input, "cache_read_input_tokens": cached, "output_tokens": 196}
+                }}})).await;
+            }
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn", "_meta": {"usage": {
+                    "inputTokens": 17803, "outputTokens": 193, "totalTokens": 35000, "costUsdTicks": 116511200
+                }}}}),
+            )
+            .await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let mut spec = spec(Some(json!({"session_id": "S0"})));
+        spec.model = Some("grok-4.7".into());
+        let session = json!({"sessionId": "S0", "models": {"currentModelId": "grok-4.7", "availableModels": [
+            {"modelId": "grok-4.7", "_meta": {"totalContextTokens": 256000}}
+        ]}});
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent("grok").unwrap(),
+            &spec,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+            Some(Reused {
+                sid: "S0".into(),
+                session,
+                model: Some("grok-4.7".into()),
+                commands: vec![],
+            }),
+            &mut Opened::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(end, TurnEnd::Completed);
+        server.await.unwrap();
+        drop(tx);
+        let mut got = vec![];
+        while let Some(e) = rx.recv().await {
+            got.push(e);
+        }
+        assert!(got.contains(&ProviderEvent::Context {
+            used: 17996,
+            limit: 256_000
+        }));
+        assert!(got.iter().any(|e| matches!(e, ProviderEvent::Usage { input: 17803, output: 193, cost_usd: Some(c) } if (c - 0.011_651_12).abs() < 1e-9)));
+    }
+
+    #[tokio::test]
+    async fn a_live_session_goes_straight_to_the_prompt() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            // No session/resume or session/new, and no model switch: the
+            // model is the one it already runs.
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["method"], "session/prompt");
+            assert_eq!(prompt["params"]["sessionId"], "S0");
+            let text = prompt["params"]["prompt"][0]["text"].as_str().unwrap();
+            assert_eq!(text, "hi", "a live session has its instructions already");
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn"}}),
+            )
+            .await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let mut opened = Opened::default();
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent("opencode").unwrap(),
+            &spec(Some(json!({"session_id": "S0"}))),
+            gate,
+            &tx,
+            &CancellationToken::new(),
+            Some(Reused {
+                sid: "S0".into(),
+                session: json!({"sessionId": "S0"}),
+                model: Some("opencode/big-pickle".into()),
+                commands: vec![],
+            }),
+            &mut opened,
+        )
+        .await
+        .unwrap();
+        assert_eq!(end, TurnEnd::Completed);
+        assert_eq!(opened.sid, "S0", "kept for the next turn");
+        server.await.unwrap();
     }
 
     #[tokio::test]
@@ -1390,6 +1930,8 @@ mod tests {
             gate.clone(),
             &tx,
             &CancellationToken::new(),
+            None,
+            &mut Opened::default(),
         )
         .await
         .unwrap();
@@ -1462,6 +2004,8 @@ mod tests {
             gate,
             &tx,
             &CancellationToken::new(),
+            None,
+            &mut Opened::default(),
         )
         .await
         .unwrap();
@@ -1494,6 +2038,8 @@ mod tests {
             gate,
             &tx,
             &CancellationToken::new(),
+            None,
+            &mut Opened::default(),
         )
         .await
         .unwrap_err();
@@ -1527,6 +2073,8 @@ mod tests {
             gate,
             &tx,
             &CancellationToken::new(),
+            None,
+            &mut Opened::default(),
         )
         .await
         .unwrap_err();
@@ -1598,6 +2146,8 @@ mod tests {
             Arc::new(Undecided),
             &tx,
             &cancel,
+            None,
+            &mut Opened::default(),
         )
         .await
         .unwrap();
@@ -1634,6 +2184,8 @@ mod tests {
             gate,
             &tx,
             &cancel,
+            None,
+            &mut Opened::default(),
         )
         .await
         .unwrap();
@@ -1702,6 +2254,8 @@ mod tests {
             gate.clone(),
             &tx,
             &CancellationToken::new(),
+            None,
+            &mut Opened::default(),
         )
         .await
         .unwrap();
@@ -1719,6 +2273,46 @@ mod tests {
         assert_eq!(s.models.len(), 3);
         assert_eq!(s.account.as_deref(), Some("2 providers connected"));
         assert_eq!(opencode_read("", opencode).state, State::SignedOut);
+    }
+
+    /// Against the OpenCode installed here: `cargo test -p parzi-providers
+    /// --lib opencode_live -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "needs OpenCode installed and signed in"]
+    async fn opencode_live_lists_models_with_image_support() {
+        let opencode = agent("opencode").unwrap();
+        let program = process::resolve("opencode").expect("opencode on PATH");
+        let s = opencode_status(&program, opencode).await;
+        assert_eq!(s.state, State::Ready, "{}", s.hint);
+        for m in &s.models {
+            println!("{} images={:?}", m.id, m.images);
+        }
+        assert!(
+            s.models.iter().all(|m| m.images.is_some()),
+            "verbose gives every model's input kinds"
+        );
+    }
+
+    #[test]
+    fn opencode_verbose_says_which_models_see_images() {
+        let opencode = agent("opencode").unwrap();
+        let out = concat!(
+            "opencode/beam-free\n{\n",
+            "  \"id\": \"beam-free\",\n",
+            "  \"api\": {\"npm\": \"@ai-sdk/openai-compatible\"},\n",
+            "  \"capabilities\": {\"input\": {\"text\": true, \"image\": false}}\n}\n",
+            "anthropic/claude-sonnet-4-5\n{\n",
+            "  \"capabilities\": {\"input\": {\"image\": true}}\n}\n",
+        );
+        let s = opencode_read(out, opencode);
+        let seen: Vec<_> = s.models.iter().map(|m| (m.id.as_str(), m.images)).collect();
+        assert_eq!(
+            seen,
+            [
+                ("opencode/beam-free", Some(false)),
+                ("anthropic/claude-sonnet-4-5", Some(true))
+            ]
+        );
     }
 
     #[test]
@@ -1835,5 +2429,133 @@ mod tests {
             Some("no")
         );
         assert_eq!(option_for(&[always], &PermissionDecision::Allow), None);
+    }
+
+    /// Drives one turn of `agent` on the live session "S0" against a
+    /// scripted other end; returns the turn's end and what it relayed.
+    async fn live_turn<F, Fut>(
+        agent_id: &str,
+        spec: TurnSpec,
+        commands: Vec<String>,
+        gate: Arc<Gate>,
+        other_end: F,
+    ) -> (Result<TurnEnd, ProviderError>, Vec<ProviderEvent>)
+    where
+        F: FnOnce(
+                tokio::io::Lines<BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>>,
+                tokio::io::WriteHalf<tokio::io::DuplexStream>,
+            ) -> Fut
+            + Send
+            + 'static,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, w) = tokio::io::split(theirs);
+            other_end(BufReader::new(r).lines(), w).await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent(agent_id).unwrap(),
+            &spec,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+            Some(Reused {
+                sid: "S0".into(),
+                session: json!({"sessionId": "S0"}),
+                model: spec.model.clone(),
+                commands,
+            }),
+            &mut Opened::default(),
+        )
+        .await;
+        server.abort();
+        drop(tx);
+        let mut got = vec![];
+        while let Some(e) = rx.recv().await {
+            got.push(e);
+        }
+        (end, got)
+    }
+
+    fn gate() -> Arc<Gate> {
+        Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ))
+    }
+
+    #[tokio::test]
+    async fn grok_compacts_when_asked_and_says_how_much() {
+        let mut spec = spec(Some(json!({"session_id": "S0"})));
+        spec.model = None;
+        spec.compact = true;
+        spec.prompt = "the API shape".into();
+        let (end, got) = live_turn("grok", spec, vec![], gate(), |mut lines, mut w| async move {
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["params"]["prompt"][0]["text"], "/compact the API shape");
+            send(&mut w, json!({"jsonrpc": "2.0", "method": "_x.ai/session_notification", "params": {"sessionId": "S0", "update": {
+                "sessionUpdate": "auto_compact_completed", "tokens_before": 90000, "tokens_after": 12000
+            }}})).await;
+            send(&mut w, json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn"}})).await;
+        })
+        .await;
+        assert_eq!(end.unwrap(), TurnEnd::Completed);
+        assert!(got.contains(&ProviderEvent::Compacted {
+            before: Some(90_000),
+            after: Some(12_000)
+        }));
+    }
+
+    #[tokio::test]
+    async fn an_agent_that_lists_no_compact_cannot_be_asked_to() {
+        let mut spec = spec(Some(json!({"session_id": "S0"})));
+        spec.compact = true;
+        let (end, _) = live_turn(
+            "cursor",
+            spec.clone(),
+            vec!["review".into()],
+            gate(),
+            |_l, _w| async {},
+        )
+        .await;
+        assert_eq!(end.unwrap_err().class, ErrorClass::Unsupported);
+        // One that lists it is asked.
+        let (end, _) = live_turn("cursor", spec, vec!["compact".into()], gate(), |mut lines, mut w| async move {
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["params"]["prompt"][0]["text"], "/compact hi");
+            send(&mut w, json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn"}})).await;
+        })
+        .await;
+        assert_eq!(end.unwrap(), TurnEnd::Completed);
+    }
+
+    #[tokio::test]
+    async fn a_permission_ask_names_the_tool_the_call_started_as() {
+        let gate = gate();
+        let (end, _) = live_turn("grok", spec(Some(json!({"session_id": "S0"}))), vec![], gate.clone(), |mut lines, mut w| async move {
+            let prompt = read(&mut lines).await;
+            let update = |u: Value| json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": "S0", "update": u}});
+            send(&mut w, update(json!({"sessionUpdate": "tool_call", "toolCallId": "c1", "title": "image_gen", "kind": "other", "rawInput": {"prompt": "an apple"}}))).await;
+            send(&mut w, json!({"jsonrpc": "2.0", "id": 5, "method": "session/request_permission", "params": {
+                "sessionId": "S0",
+                "toolCall": {"toolCallId": "c1", "title": "An apple on white", "kind": "other", "rawInput": {"prompt": "an apple"}},
+                "options": [{"optionId": "yes", "kind": "allow_once"}]
+            }})).await;
+            let answer = read(&mut lines).await;
+            assert_eq!(answer["result"]["outcome"]["optionId"], "yes");
+            send(&mut w, json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn"}})).await;
+        })
+        .await;
+        assert_eq!(end.unwrap(), TurnEnd::Completed);
+        let asked = gate.1.lock().unwrap();
+        assert_eq!(asked[0].tool, "other");
+        assert_eq!(asked[0].name, "image_gen");
     }
 }

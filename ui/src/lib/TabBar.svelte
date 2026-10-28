@@ -1,14 +1,32 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
   import Icon from "./Icon.svelte";
+  import ProviderLogo from "./ProviderLogo.svelte";
+  import { hasMark } from "./providerMarks";
   import type { Tab } from "./tabs";
   import { faviconUrl } from "./browserData";
-  import { laneIcon, normLane } from "./lanes";
+  import { pressDrag, tabDragStarted, tabRelease, type PressDrag } from "./gestures";
+  import { sessionMarks } from "./activity";
   import { tooltip } from "./tooltip";
 
   export let tabs: Tab[] = [];
   export let activeTabId = "";
-  export let sessionLanes: Record<string, string> = {};
+  export let vertical = false;
+  export let threads: { id: string; model: string }[] = [];
+  export let liveModel = "";
+
+  // The agent behind a session tab, from the thread's model.
+  const providerOf = (sid?: string | null) => {
+    const m = sid ? threads.find((t) => t.id === sid)?.model : undefined;
+    return m ? m.split("/")[0] : "";
+  };
+  // A draft tab has no thread yet: the logo of the model it will start
+  // with. The active draft reads the live composer (tabs never invalidate
+  // on keystrokes); a parked draft reads what it saved.
+  const draftProvider = (tab: Tab) => {
+    const m = tab.id === activeTabId && liveModel ? liveModel : tab.composer?.model;
+    return m ? m.split("/")[0] : "";
+  };
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -17,17 +35,22 @@
     newTab: void;
   }>();
 
-  const DRAG_START = 5;
-
   let strip: HTMLElement;
   const els: Record<string, HTMLElement> = {};
   let broken = new Set<string>();
-  let press: { id: string; x: number; grab: number; pointer: number } | null = null;
   let dragId = "";
   let dragX = 0;
   let order: string[] | null = null;
+  // Set when a drag swallowed the click, so that click does not select again.
+  let swallow = "";
 
   $: shown = order ? order.map((id) => tabs.find((t) => t.id === id)).filter((t): t is Tab => !!t) : tabs;
+  $: markOf = (sessionId?: string | null) => (sessionId ? $sessionMarks[sessionId] : undefined);
+  $: markTitle = (title: string, sessionId?: string | null) =>
+    markOf(sessionId) === "waiting" ? `${title} · waiting for you` : markOf(sessionId) === "running" ? `${title} · working` : title;
+
+  // The tab you are on stays in view when the strip overflows.
+  $: if (strip && activeTabId) void tick().then(() => strip?.querySelector('[aria-selected="true"]')?.closest(".tab")?.scrollIntoView({ block: "nearest", inline: "nearest" }));
 
   let collapsed = new Set<string>();
   let touched = new Set<string>();
@@ -48,30 +71,34 @@
     if (changed) collapsed = new Set(collapsed);
   }
 
-  function laneOf(t: Tab): string {
-    if (t.kind !== "session" || !t.sessionId) return "";
-    return normLane(sessionLanes[t.sessionId] ?? "");
-  }
-
-  // Page tabs opened by an agent attach under their session tab instead
-  // of cluttering the strip. Sessions with attached pages get a collapse
-  // caret; attached pages render smaller and indented.
+  // Pages opened from a session (by its agent, or a link in its thread)
+  // attach under its tab instead of cluttering the strip: one framed
+  // group, the session first, its pages after it.
   $: groups = (() => {
     const bySession = new Map<string, Tab>();
     for (const t of shown) if (t.kind === "session" && t.sessionId) bySession.set(t.sessionId, t);
     const kids = new Map<string, Tab[]>();
     const lone: Tab[] = [];
     for (const t of shown) {
-      if (t.kind === "page" && t.owner && bySession.has(t.owner)) {
-        const arr = kids.get(t.owner) ?? [];
+      const parent = t.kind === "page" ? t.owner || t.group : t.kind === "session" || t.kind === "artifact" ? t.group : null;
+      if (parent && bySession.has(parent)) {
+        const arr = kids.get(parent) ?? [];
         arr.push(t);
-        kids.set(t.owner, arr);
+        kids.set(parent, arr);
       } else {
         lone.push(t);
       }
     }
     return { bySession, kids, lone };
   })();
+
+  const hostOfUrl = (url?: string) => {
+    try {
+      return url ? new URL(url).hostname.replace(/^www\./, "") : "page";
+    } catch {
+      return "page";
+    }
+  };
 
   function toggleGroup(sessionId: string) {
     touched = new Set(touched).add(sessionId);
@@ -98,35 +125,61 @@
     if (e.button === 1) dispatch("close", { id });
   }
 
-  function onDown(e: PointerEvent, id: string) {
-    if (e.button !== 0 || (e.target as HTMLElement).closest(".close")) return;
-    const el = els[id];
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    press = { id, x: e.clientX, grab: e.clientX - r.left, pointer: e.pointerId };
-  }
-
-  function onMove(e: PointerEvent) {
-    if (!press) return;
-    if (!dragId) {
-      if (Math.abs(e.clientX - press.x) < DRAG_START) return;
-      dragId = press.id;
-      order = tabs.map((t) => t.id);
-      try {
-        els[dragId]?.setPointerCapture(press.pointer);
-      } catch {}
+  function onPick(id: string) {
+    if (swallow === id) {
+      swallow = "";
+      return;
     }
-    void follow(e.clientX);
+    dispatch("select", { id });
   }
 
-  async function follow(client: number) {
+  type Press = { id: string; x: number; y: number; grab: number };
+
+  // A press on a tab: a click selects through the tab's own handler, a drag
+  // past the slop moves it.
+  const drag = (id: string): PressDrag<Press> => ({
+    press(e) {
+      swallow = "";
+      if ((e.target as HTMLElement).closest(".close")) return null;
+      const el = els[id];
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { id, x: e.clientX, y: e.clientY, grab: vertical ? e.clientY - r.top : e.clientX - r.left };
+    },
+    starts: (p, e) => tabDragStarted(p.x, p.y, e.clientX, e.clientY, vertical),
+    start(p) {
+      dragId = p.id;
+      order = tabs.map((t) => t.id);
+    },
+    drag: (p, e) => void follow(p, vertical ? e.clientY : e.clientX),
+    release(p) {
+      const result = tabRelease({ pressId: p.id, dragId, order, ids: tabs.map((t) => t.id) });
+      reset();
+      if (result.kind === "move") {
+        swallow = result.id;
+        dispatch("move", { id: result.id, to: result.to });
+        dispatch("select", { id: result.id });
+      } else if (result.kind === "select") {
+        swallow = result.id;
+        dispatch("select", { id: result.id });
+      }
+    },
+    cancel() {
+      reset();
+      swallow = "";
+    },
+  });
+
+  async function follow(press: Press, client: number) {
     const el = els[dragId];
-    if (!el || !order || !press) return;
+    if (!el || !order) return;
     const box = strip.getBoundingClientRect();
-    const size = (id: string) => els[id]?.offsetWidth ?? 0;
-    const start = (id: string) => els[id]?.offsetLeft ?? 0;
+    const size = (id: string) => (els[id] ? (vertical ? els[id].offsetHeight : els[id].offsetWidth) : 0);
+    const start = (id: string) => (els[id] ? (vertical ? els[id].offsetTop : els[id].offsetLeft) : 0);
     const end = Math.max(...order.map((id) => (els[id] ? start(id) + size(id) : 0)));
-    const pos = Math.max(0, Math.min(client - box.left + strip.scrollLeft - press.grab, end - size(dragId)));
+    const scroll = vertical ? strip.scrollTop : strip.scrollLeft;
+    const origin = vertical ? box.top : box.left;
+    const pos = Math.max(0, Math.min(client - origin + scroll - press.grab, end - size(dragId)));
     const far = pos + size(dragId);
     const mine = order.indexOf(dragId);
     const before = order.filter((id, i) => {
@@ -139,29 +192,26 @@
       order = next;
       await tick();
     }
+    if (!dragId) return;
     dragX = pos - start(dragId);
   }
 
-  function onUp() {
-    if (dragId && order) dispatch("move", { id: dragId, to: order.indexOf(dragId) });
-    press = null;
+  function reset() {
     dragId = "";
     dragX = 0;
     order = null;
   }
 </script>
 
-<svelte:window on:pointermove={onMove} on:pointerup={onUp} on:pointercancel={onUp} />
-
 <!-- A tablist may only own tabs, so each tab is a plain pill holding the
      role="tab" element and, beside it, pointer-only caret and close
      buttons (hidden from assistive tech; Ctrl+W closes the active tab). -->
-<div class="tabs" role="tablist" bind:this={strip}>
+<div class="tabs" class:vertical class:none={!shown.length} role="tablist" bind:this={strip}>
   {#each groups.lone as tab (tab.id)}
-    {@const lane = laneOf(tab)}
     {@const attached = tab.kind === "session" && tab.sessionId ? (groups.kids.get(tab.sessionId) ?? []) : []}
-    {@const shut = tab.sessionId ? collapsed.has(tab.sessionId) : false}
-    {@const linked = `${attached.length} linked page${attached.length === 1 ? "" : "s"}`}
+    {@const shut = tab.sessionId ? collapsed.has(tab.sessionId) && !attached.some((a) => a.id === activeTabId) : false}
+    {@const linked = `${attached.length} page${attached.length === 1 ? "" : "s"} from this session`}
+    {@const provider = tab.kind === "session" ? providerOf(tab.sessionId) || draftProvider(tab) : ""}
     {#if attached.length && !shut}
       <div class="group">
         <div
@@ -169,8 +219,8 @@
           class="tab"
           class:active={tab.id === activeTabId}
           class:dragging={tab.id === dragId}
-          style={tab.id === dragId ? `transform: translateX(${dragX}px)` : ""}
-          on:pointerdown={(e) => onDown(e, tab.id)}
+          style={tab.id === dragId ? `transform: ${vertical ? "translateY" : "translateX"}(${dragX}px)` : ""}
+          use:pressDrag={drag(tab.id)}
           on:auxclick={(e) => onAux(e, tab.id)}
         >
           <div
@@ -178,40 +228,40 @@
             role="tab"
             tabindex="0"
             aria-selected={tab.id === activeTabId}
-            title={tab.title}
-            on:click={() => dispatch("select", { id: tab.id })}
+            title={markTitle(tab.title, tab.sessionId)}
+            on:click={() => onPick(tab.id)}
             on:keydown={(e) => onKey(e, tab.id)}
           >
             <span class="kind">
-              {#if tab.loading}
+              {#if tab.loading || markOf(tab.sessionId) === "running"}
                 <span class="spinner" />
+              {:else if tab.sessionId && hasMark(providerOf(tab.sessionId))}
+                <ProviderLogo provider={providerOf(tab.sessionId)} size={14} />
               {:else}
-                <Icon name={laneIcon(lane)} />
+                <Icon name="bot" />
               {/if}
             </span>
             <span class="title">{tab.title || "New session"}</span>
+            {#if markOf(tab.sessionId) === "waiting"}<span class="waiting" />{/if}
           </div>
           <button
-            class="close group-caret"
+            class="close count on"
             tabindex="-1"
             aria-hidden="true"
             use:tooltip={`Hide ${linked}`}
             on:click|stopPropagation={() => tab.sessionId && toggleGroup(tab.sessionId)}
           >
-            <Icon name="chevDown" size={12} />
-            <span class="n">{attached.length}</span>
+            {attached.length}
           </button>
-          {#if tabs.length > 1}
-            <button
-              class="close"
-              tabindex="-1"
-              aria-hidden="true"
-              use:tooltip={"Close tab"}
-              on:click|stopPropagation={() => dispatch("close", { id: tab.id })}
-            >
-              <Icon name="close" size={12} />
-            </button>
-          {/if}
+          <button
+            class="close"
+            tabindex="-1"
+            aria-hidden="true"
+            use:tooltip={"Close tab"}
+            on:click|stopPropagation={() => dispatch("close", { id: tab.id })}
+          >
+            <Icon name="close" size={12} />
+          </button>
         </div>
         {#each attached as sub (sub.id)}
           <div class="tab sub" class:active={sub.id === activeTabId} on:auxclick={(e) => onAux(e, sub.id)}>
@@ -220,20 +270,27 @@
               role="tab"
               tabindex="0"
               aria-selected={sub.id === activeTabId}
-              title={sub.url || sub.title}
-              on:click={() => dispatch("select", { id: sub.id })}
+              title={`${tab.title || "Session"} › ${sub.title || sub.url || "New page"}`}
+              on:click={() => onPick(sub.id)}
               on:keydown={(e) => onKey(e, sub.id)}
             >
-              <span class="kind">
-                {#if sub.loading}
-                  <span class="spinner" />
+            <span class="kind">
+              {#if sub.loading || markOf(sub.sessionId) === "running"}
+                <span class="spinner" />
+              {:else if sub.kind === "session" && sub.sessionId && hasMark(providerOf(sub.sessionId))}
+                <ProviderLogo provider={providerOf(sub.sessionId)} size={14} />
+              {:else if sub.kind === "session"}
+                <Icon name="bot" />
+              {:else if sub.kind === "artifact"}
+                  <Icon name="file" />
                 {:else if sub.url && !broken.has(sub.url)}
                   <img src={sub.favicon || faviconUrl(sub.url)} alt="" on:error={() => sub.url && (broken = new Set(broken).add(sub.url))} />
                 {:else}
                   <Icon name="globe" />
                 {/if}
               </span>
-              <span class="title">{sub.title || "New page"}</span>
+              <span class="title">{sub.title || (sub.kind === "session" ? "Side task" : "New page")}</span>
+              {#if markOf(sub.sessionId) === "waiting"}<span class="waiting" />{/if}
             </div>
             <button
               class="close"
@@ -253,8 +310,8 @@
       class="tab"
       class:active={tab.id === activeTabId}
       class:dragging={tab.id === dragId}
-      style={tab.id === dragId ? `transform: translateX(${dragX}px)` : ""}
-      on:pointerdown={(e) => onDown(e, tab.id)}
+      style={tab.id === dragId ? `transform: ${vertical ? "translateY" : "translateX"}(${dragX}px)` : ""}
+      use:pressDrag={drag(tab.id)}
       on:auxclick={(e) => onAux(e, tab.id)}
     >
       <div
@@ -262,51 +319,55 @@
         role="tab"
         tabindex="0"
         aria-selected={tab.id === activeTabId}
-        title={tab.kind === "page" ? tab.url || tab.title : tab.title}
-        on:click={() => dispatch("select", { id: tab.id })}
+        title={tab.kind === "page" ? tab.url || tab.title : markTitle(tab.title, tab.sessionId)}
+        on:click={() => onPick(tab.id)}
         on:keydown={(e) => onKey(e, tab.id)}
       >
-        <span class="kind">
-          {#if tab.loading}
-            <span class="spinner" />
-          {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
-            <img src={tab.favicon || faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
-          {:else}
-            <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : laneIcon(lane)} />
-          {/if}
-        </span>
+            <span class="kind">
+              {#if tab.loading || markOf(tab.sessionId) === "running"}
+                <span class="spinner" />
+              {:else if tab.kind === "page" && tab.url && !broken.has(tab.url)}
+                <img src={tab.favicon || faviconUrl(tab.url)} alt="" on:error={() => tab.url && (broken = new Set(broken).add(tab.url))} />
+              {:else if provider && hasMark(provider)}
+                <ProviderLogo {provider} size={14} />
+              {:else if tab.kind === "session" && !tab.sessionId}
+                <Icon name="home" />
+              {:else}
+                <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.kind === "artifact" ? "file" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : "bot"} />
+              {/if}
+            </span>
         <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>
+        {#if markOf(tab.sessionId) === "waiting"}<span class="waiting" />{/if}
       </div>
       {#if attached.length}
         <button
-          class="close group-caret shut"
+          class="close count"
           tabindex="-1"
           aria-hidden="true"
-          use:tooltip={`Show ${linked}`}
+          use:tooltip={`Show ${linked}: ${attached.map((a) => a.title || hostOfUrl(a.url)).join(", ")}`}
           on:click|stopPropagation={() => tab.sessionId && toggleGroup(tab.sessionId)}
         >
-          <Icon name="chevDown" size={12} />
-          <span class="n">{attached.length}</span>
+          {attached.length}
         </button>
       {/if}
-      {#if tabs.length > 1}
-        <button
-          class="close"
-          tabindex="-1"
-          aria-hidden="true"
-          use:tooltip={"Close tab"}
-          on:click|stopPropagation={() => dispatch("close", { id: tab.id })}
-        >
-          <Icon name="close" size={12} />
-        </button>
-      {/if}
+      <button
+        class="close"
+        tabindex="-1"
+        aria-hidden="true"
+        use:tooltip={"Close tab"}
+        on:click|stopPropagation={() => dispatch("close", { id: tab.id })}
+      >
+        <Icon name="close" size={12} />
+      </button>
     </div>
     {/if}
   {/each}
 </div>
-<button class="new" use:tooltip={"New tab (Ctrl+T)"} on:click={() => dispatch("newTab")}>
-  <Icon name="plus" />
-</button>
+{#if !vertical}
+  <button class="new" use:tooltip={"New session (Ctrl+T)"} on:click={() => dispatch("newTab")}>
+    <Icon name="plus" />
+  </button>
+{/if}
 
 <style>
   .tabs {
@@ -317,12 +378,35 @@
     min-width: 0;
     overflow-x: auto;
   }
-  /* Equal widths keep the strip's rhythm even; the fill is the only state. */
+  /* No tabs: no slot, so Home and + sit one gap apart. */
+  .tabs.none {
+    display: none;
+  }
+  .tabs.vertical {
+    flex-direction: column;
+    align-items: stretch;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .tabs.vertical .tab {
+    max-width: none;
+    width: 100%;
+    flex: none;
+  }
+  .tabs.vertical .group {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .tabs.vertical .tab.sub {
+    max-width: none;
+  }
+  /* Each tab fits its title, up to a limit; the fill is the only state. */
   .tab {
     display: inline-flex;
     align-items: center;
     height: 28px;
-    width: 220px;
+    max-width: 220px;
     flex: 0 1 auto;
     min-width: 96px;
     padding: 0 4px 0 0;
@@ -382,6 +466,13 @@
     width: 14px;
     height: 14px;
   }
+  .waiting {
+    width: 7px;
+    height: 7px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--warn);
+  }
   .spinner {
     width: 11px;
     height: 11px;
@@ -398,37 +489,41 @@
   .tab.active .kind {
     color: var(--accent);
   }
+  /* A page under its session: same type as any tab, a little narrower,
+     inside the session's frame. */
   .tab.sub {
     height: 24px;
-    width: 160px;
-    min-width: 72px;
-    font-size: var(--fs-xs);
-    opacity: 0.85;
+    max-width: 168px;
+    min-width: 80px;
   }
+  /* The session and its pages read as one unit: framed and tinted. */
   .group {
     display: inline-flex;
     align-items: center;
-    gap: 2px;
-    padding: 2px;
+    gap: 4px;
+    padding: 4px;
     border-radius: var(--radius-lg);
-    background: var(--hover);
+    background: color-mix(in srgb, var(--text) 5%, transparent);
+    box-shadow: inset 0 0 0 1px var(--line);
   }
-  .close.group-caret {
+  /* How many pages and side tasks sit under a session; a click shows or
+     hides them. */
+  .close.count {
     opacity: 1;
-    gap: 1px;
     width: auto;
-    min-width: 24px;
-    padding: 4px 2px;
-  }
-  .group-caret :global(svg) {
-    transition: transform 140ms ease;
-  }
-  .group-caret.shut :global(svg) {
-    transform: rotate(-90deg);
-  }
-  .group-caret .n {
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--hover);
+    background-clip: border-box;
     font-size: var(--fs-xs);
+    font-weight: 600;
     font-variant-numeric: tabular-nums;
+  }
+  .close.count.on {
+    background: var(--selected);
+    color: var(--text);
   }
   .title {
     flex: 1;
@@ -454,15 +549,11 @@
     opacity: 0;
   }
   .close + .close {
-    margin-left: 8px;
+    margin-left: 4px;
   }
   .tab:hover .close,
   .tab.active .close {
     opacity: 1;
-  }
-  /* An idle tab lends its close button's room to the title. */
-  .tab:not(:hover):not(.active) .close:not(.group-caret) {
-    display: none;
   }
   .close:hover {
     background: var(--selected);

@@ -1,6 +1,6 @@
 use parzi_core::config::ParziConfig;
 use parzi_providers::ProviderStatus;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 use crate::AppState;
@@ -20,21 +20,26 @@ pub async fn save_config(
         return Err("config version mismatch — reload settings".into());
     }
     let old = ParziConfig::load().unwrap_or_default();
+    // Each new or changed program, as the line it runs (never its env:
+    // that holds tokens).
     let mut changed: Vec<String> = mcp_command_changes(&old, &cfg)
         .into_iter()
-        .map(|s| format!("connector {s}"))
+        .map(|name| {
+            let srv = &cfg.mcp.servers[&name];
+            format!("{name}: {} {}", srv.command, srv.args.join(" "))
+        })
         .collect();
     changed.extend(binary_changes(&old, &cfg));
     if !changed.is_empty() {
         let msg = format!(
-            "Changed: {}. A malicious program runs with your user account on every agent turn. Save anyway?",
-            changed.join(", ")
+            "These run as programs on this computer, with your account:\n\n{}\n\nOnly add ones you trust.",
+            changed.join("\n")
         );
         let ask = app.clone();
         let allow = tokio::task::spawn_blocking(move || {
             ask.dialog()
                 .message(msg)
-                .title("Parzi — confirm connector")
+                .title("Add to Parzi?")
                 .buttons(MessageDialogButtons::OkCancel)
                 .blocking_show()
         })
@@ -67,6 +72,10 @@ fn binary_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
 fn mcp_command_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
     let mut out = vec![];
     for (name, srv) in &new.mcp.servers {
+        // A hosted connector runs nothing here: nothing to confirm.
+        if srv.command.trim().is_empty() {
+            continue;
+        }
         match old.mcp.servers.get(name) {
             // An added or changed env var (PATH, NODE_OPTIONS, LD_PRELOAD...)
             // can swap the program as surely as a new command line.
@@ -81,17 +90,178 @@ fn mcp_command_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
     out
 }
 
+/// Starts a connector and lists its tools: how many it offers, or why it
+/// can't start. A connector that signs in opens the browser here, the
+/// first time.
 #[tauri::command]
-pub async fn toggle_favorite(spec: String) -> Result<Vec<String>, String> {
-    let mut cfg = ParziConfig::load().map_err(|e| e.to_string())?;
-    if cfg.favorite_models.iter().any(|f| f == &spec) {
-        cfg.favorite_models.retain(|f| f != &spec);
-    } else {
-        cfg.favorite_models.push(spec);
-        cfg.favorite_models.truncate(9);
-    }
-    cfg.save().map_err(|e| e.to_string())?;
-    Ok(cfg.favorite_models)
+pub async fn connector_check(state: State<'_, AppState>, name: String) -> Result<usize, String> {
+    state
+        .orch
+        .mcp()
+        .exposed_tools(&name)
+        .await
+        .map(|tools| tools.len())
+        .map_err(|e| e.to_string())
+}
+
+/// Signs in to a hosted connector the way its server asks (OAuth): the
+/// sign-in page opens in the person's browser, Parzi keeps the token, and
+/// the connector reconnects with it. How many tools it offers then.
+#[tauri::command]
+pub async fn connector_sign_in(state: State<'_, AppState>, name: String) -> Result<usize, String> {
+    let cfg = ParziConfig::load().map_err(|e| e.to_string())?;
+    let url = cfg
+        .mcp
+        .servers
+        .get(&name)
+        .map(|s| s.url.clone())
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| format!("{name} is not a hosted connector"))?;
+    let challenge = parzi_runtime::mcp_http::last_challenge(&name);
+    parzi_runtime::mcp_oauth::sign_in(&name, &url, challenge, |page| {
+        crate::files::launch(&crate::files::open_with_default(page.into()))
+    })
+    .await?;
+    // Reconnect with the token.
+    state.orch.mcp().stop(&name).await;
+    state
+        .orch
+        .mcp()
+        .exposed_tools(&name)
+        .await
+        .map(|tools| tools.len())
+        .map_err(|e| e.to_string())
+}
+
+/// Forgets what Parzi kept for a removed connector: its sign-in and logo.
+#[tauri::command]
+pub async fn connector_forget(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    parzi_runtime::mcp_oauth::forget(&name);
+    parzi_runtime::connector_icon::forget(&name);
+    state.orch.mcp().stop(&name).await;
+    Ok(())
+}
+
+/// One of a connector's tools, as Settings lists it.
+#[derive(serde::Serialize)]
+pub struct ToolRow {
+    name: String,
+    description: String,
+    read_only: bool,
+    destructive: bool,
+    /// "auto" (runs without asking), "ask", "off", or "" (the approval
+    /// mode decides).
+    mode: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct ConnectorDetails {
+    title: String,
+    /// Its logo as an image (a data URL), when it has one.
+    icon: Option<String>,
+    tools: Vec<ToolRow>,
+}
+
+/// A connector as it describes itself (connecting if needed): its title,
+/// its logo, and every tool with how it runs here.
+#[tauri::command]
+pub async fn connector_details(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<ConnectorDetails, String> {
+    let d = state
+        .orch
+        .mcp()
+        .details(&name)
+        .await
+        .map_err(|e| e.to_string())?;
+    let cfg = ParziConfig::load().map_err(|e| e.to_string())?;
+    let srv = cfg.mcp.servers.get(&name).cloned().unwrap_or_default();
+    let (icons, website, url, who) = (
+        d.icons.clone(),
+        d.website.clone(),
+        srv.url.clone(),
+        name.clone(),
+    );
+    let icon = tauri::async_runtime::spawn_blocking(move || {
+        parzi_runtime::connector_icon::resolve(&who, &icons, &website, &url)
+    })
+    .await
+    .unwrap_or(None);
+    let tools = d
+        .tools
+        .into_iter()
+        .map(|t| ToolRow {
+            mode: if srv.deny.iter().any(|x| x == &t.name) {
+                "off".into()
+            } else {
+                srv.tool_mode(&t.name).unwrap_or_default()
+            },
+            name: t.name,
+            description: t.description,
+            read_only: t.read_only,
+            destructive: t.destructive,
+        })
+        .collect();
+    Ok(ConnectorDetails {
+        title: d.title,
+        icon,
+        tools,
+    })
+}
+
+/// Sets a connector's logo from a picture the person picked.
+#[tauri::command]
+pub async fn connector_set_icon(name: String, path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        parzi_runtime::connector_icon::set_picked(&name, std::path::Path::new(&path))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Connectors set up in the other apps on this computer (Claude Code,
+/// Claude Desktop, Cursor, VS Code, Codex, Grok), ready to add.
+#[tauri::command]
+pub async fn connectors_found() -> Vec<parzi_core::connectors::Found> {
+    tauri::async_runtime::spawn_blocking(parzi_core::connectors::found_on_this_computer)
+        .await
+        .unwrap_or_default()
+}
+
+/// What a pasted text adds: an `mcpServers` block, an address, or nothing.
+#[tauri::command]
+pub fn connectors_from_text(text: String) -> Vec<(String, parzi_core::config::McpServerCfg)> {
+    parzi_core::connectors::from_pasted(&text)
+}
+
+/// The commands a session's agents ran (background and recent foreground
+/// ones), for the session column.
+#[tauri::command]
+pub fn shell_jobs(
+    state: State<'_, AppState>,
+    session: String,
+) -> Vec<parzi_runtime::shell::ShellJob> {
+    state.orch.shell_jobs(&session)
+}
+
+/// Stops one of a session's background commands.
+#[tauri::command]
+pub fn shell_kill(state: State<'_, AppState>, session: String, id: String) -> bool {
+    state.orch.shell_kill(&session, &id)
+}
+
+/// What Parzi adds to a session's context (instructions, notes, tools),
+/// for the session column's breakdown.
+#[tauri::command]
+pub async fn context_parts(
+    state: State<'_, AppState>,
+    cwd: String,
+) -> Result<parzi_runtime::orchestrator::ContextParts, String> {
+    let orch = state.orch.clone();
+    tauri::async_runtime::spawn_blocking(move || orch.context_parts(&cwd))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 pub fn in_roster_order(mut all: Vec<ProviderStatus>) -> Vec<ProviderStatus> {
@@ -116,7 +286,7 @@ pub async fn refresh_providers(
     ids: Option<Vec<String>>,
 ) -> Result<Vec<ProviderStatus>, String> {
     let all = in_roster_order(state.orch.refresh_providers(&ids.unwrap_or_default()).await);
-    crate::emit(&app, "parzi://providers", &all);
+    let _ = app.emit("parzi://providers", &all);
     Ok(all)
 }
 
@@ -192,6 +362,16 @@ mod tests {
         assert_eq!(mcp_command_changes(&old, &new), vec!["s".to_string()]);
         assert!(mcp_command_changes(&new, &new).is_empty());
         assert!(mcp_command_changes(&new, &old).is_empty());
+        // A hosted one runs nothing on this computer: nothing to confirm.
+        let mut hosted = ParziConfig::default();
+        hosted.mcp.servers.insert(
+            "notion".into(),
+            parzi_core::config::McpServerCfg {
+                url: "https://mcp.notion.com/mcp".into(),
+                ..Default::default()
+            },
+        );
+        assert!(mcp_command_changes(&old, &hosted).is_empty());
     }
 
     #[test]

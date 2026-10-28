@@ -68,6 +68,7 @@ async fn one_turn(
         resume: None,
         prompt: prompt.into(),
         images: vec![],
+        compact: false,
         tools: None,
     };
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();

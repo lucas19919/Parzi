@@ -77,8 +77,16 @@ fn artifact_validation_versions_and_dedups() {
     assert_eq!(a.version, 1);
     let bad_kind = serde_json::json!({"artifact": 1, "id": "x", "kind": "nuke", "content": "hi"});
     assert!(validate_artifact(&bad_kind).is_err());
-    let bad_lang = serde_json::json!({"artifact": 1, "id": "x", "kind": "code", "language": "cobol-x", "content": "hi"});
+    let bad_lang = serde_json::json!({"artifact": 1, "id": "x", "kind": "code", "language": "rust; <b>", "content": "hi"});
     assert!(validate_artifact(&bad_lang).is_err());
+    let go = serde_json::json!({"artifact": 1, "id": "x", "kind": "code", "language": "Go", "content": "package main"});
+    assert_eq!(
+        validate_artifact(&go).unwrap().language.as_deref(),
+        Some("go")
+    );
+    // Models name a document `doc`: it is one.
+    let doc = serde_json::json!({"artifact": 1, "id": "x", "kind": "doc", "content": "# Hi"});
+    assert_eq!(validate_artifact(&doc).unwrap().kind, "markdown");
     let preview = serde_json::json!({
         "artifact": 1, "id": "omni-v2", "title": "Omnibar v2",
         "kind": "preview", "content": "{\"component\":\"omnibar\",\"variant\":2}",
@@ -143,14 +151,14 @@ fn subsession_hierarchy_lists_children() {
     std::fs::create_dir_all(&dir).unwrap();
     std::env::set_var("PARZI_HOME", &dir);
     let store = SessionStore::open().unwrap();
-    let parent = store.create("team-parent", "t", "", "m").unwrap();
+    let parent = store.create("team-parent", "t", "m").unwrap();
     assert_eq!(parent.parent_id, None);
     let child = store
-        .create_with_parent("team-child", "t", "", "m", Some(&parent.id))
+        .create_with_parent("team-child", "t", "m", Some(&parent.id))
         .unwrap();
     assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
     let grand = store
-        .create_with_parent("team-grand", "t", "", "m", Some(&child.id))
+        .create_with_parent("team-grand", "t", "m", Some(&child.id))
         .unwrap();
     let kids = store.list_children(&parent.id).unwrap();
     assert!(kids.iter().any(|m| m.id == child.id));
@@ -175,7 +183,6 @@ fn purge_cascade_kills_descendants_at_any_depth() {
         title: id.into(),
         pinned: false,
         project: "t".into(),
-        lane: "".into(),
         model: "m".into(),
         parent_id: parent.map(|s| s.into()),
         status,
@@ -218,7 +225,6 @@ fn purge_spares_live_runs_and_the_ancestors_they_report_to() {
         title: id.into(),
         pinned: false,
         project: "t".into(),
-        lane: "".into(),
         model: "m".into(),
         parent_id: parent.map(|s| s.into()),
         status,
@@ -260,7 +266,7 @@ fn theme_emits_css_vars_with_a_neutral_default() {
     let t = Theme::default();
     assert_eq!(t.background.image, "");
     let css = t.to_css_vars();
-    assert!(css.contains("--accent:#E6E8EE"));
+    assert!(css.contains("--accent:#E8E8E8"), "the graphite default");
     assert!(css.contains("--bg-blur:"));
 }
 

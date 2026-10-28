@@ -792,6 +792,42 @@ pub fn summary(plan: &Plan) -> String {
     clip(&text, SUMMARY_CAP + 200)
 }
 
+/// One plan item quoted into a prompt, as the person sent it: a block
+/// after their text that the Thread shows as a chip. `pr` is how its pull
+/// request stands ("PR #42 open, checks pass."), when known.
+#[must_use]
+pub fn quote_block(project: &str, item: &PlanItem, pr: Option<&str>) -> String {
+    let attr = |s: &str| fold(s).replace('"', "&quot;");
+    let mut body = vec![];
+    if !item.detail.trim().is_empty() {
+        body.push(item.detail.trim().to_string());
+    }
+    if !item.note.trim().is_empty() {
+        body.push(format!("Note: {}", item.note.trim()));
+    }
+    let needs = if item.needs.is_empty() {
+        "none".to_string()
+    } else {
+        item.needs.join(", ")
+    };
+    let mut status = format!("State: {}. Needs: {needs}.", item.state.word());
+    if !item.branch.is_empty() {
+        status.push_str(&format!(" Branch: {}.", item.branch));
+    }
+    if let Some(pr) = pr.map(str::trim).filter(|p| !p.is_empty()) {
+        status.push(' ');
+        status.push_str(pr);
+    }
+    body.push(status);
+    format!(
+        "<plan-item project=\"{}\" id=\"{}\" title=\"{}\">\n{}\n</plan-item>",
+        attr(project),
+        attr(&item.id),
+        attr(&item.title),
+        body.join("\n")
+    )
+}
+
 /// A project slug that can hold a plan: one plain name, never the
 /// sessions-without-a-project "default" or the everywhere "all".
 pub fn check_slug(slug: &str) -> Result<&str, String> {
@@ -1250,6 +1286,28 @@ mod tests {
         assert!(s.chars().count() <= SUMMARY_CAP, "{}", s.chars().count());
         assert!(s.contains("more open items"), "{s}");
         assert!(s.ends_with("Read it in full with plan.read."), "{s}");
+    }
+
+    #[test]
+    fn a_quote_reads_as_the_desk_sends_it() {
+        let p = sample();
+        let q = quote_block(
+            "parzi",
+            p.item("names").unwrap(),
+            Some("PR #42 open, checks pass."),
+        );
+        assert_eq!(
+            q,
+            "<plan-item project=\"parzi\" id=\"names\" title=\"Session names\">\nName sessions in 3 to 5 words\nState: active. Needs: none. Branch: plan/names. PR #42 open, checks pass.\n</plan-item>"
+        );
+        let mut odd = p.item("panel").unwrap().clone();
+        odd.title = "Say \"hi\"".into();
+        let q = quote_block("parzi", &odd, None);
+        assert!(q.contains("title=\"Say &quot;hi&quot;\""), "{q}");
+        assert!(
+            q.ends_with("State: planned. Needs: names.\n</plan-item>"),
+            "{q}"
+        );
     }
 
     #[test]

@@ -78,6 +78,7 @@ fn manager(tag: &str, timeout_ms: u64, idle_secs: u64) -> (McpManager, std::path
         tool_modes: HashMap::new(),
         timeout_ms,
         enabled: true,
+        ..Default::default()
     };
     let mut servers = HashMap::new();
     servers.insert("fake".to_string(), cfg);
@@ -162,4 +163,30 @@ async fn shutdown_kills_the_server() {
     assert!(alive(pid), "server should be running before shutdown");
     mgr.shutdown().await;
     assert!(!alive(pid), "shutdown left pid {pid} running");
+}
+
+// A hosted server as the connector catalog adds one: `npx` (npx.cmd on
+// Windows, which a bare name never starts) running mcp-remote. Needs the
+// network and Node, so it runs on demand: `cargo test -- --ignored`.
+#[tokio::test]
+#[ignore = "network: reaches a hosted MCP server through mcp-remote"]
+async fn a_hosted_server_answers_through_mcp_remote() {
+    let cfg = McpServerCfg {
+        command: "npx".into(),
+        args: vec![
+            "-y".into(),
+            "mcp-remote@0.14.3".into(),
+            "https://mcp.deepwiki.com/mcp".into(),
+        ],
+        timeout_ms: 180_000,
+        enabled: true,
+        ..Default::default()
+    };
+    let mgr = McpManager::new(HashMap::from([("deepwiki".to_string(), cfg)]), 60);
+    let tools = mgr
+        .exposed_tools("deepwiki")
+        .await
+        .expect("lists its tools");
+    assert!(!tools.is_empty(), "a hosted server offers tools");
+    mgr.shutdown().await;
 }

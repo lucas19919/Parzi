@@ -174,6 +174,21 @@ pub async fn vault_state(webview: Webview) -> Result<VaultState, String> {
     Ok(current_state().await)
 }
 
+/// Opens Bitwarden's own installer in a terminal; Settings checks again
+/// when the person comes back to the window.
+#[tauri::command]
+pub async fn vault_install(webview: Webview) -> Result<(), String> {
+    from_shell(&webview)?;
+    let script = if cfg!(windows) {
+        "winget install --id Bitwarden.CLI --exact"
+    } else if cfg!(target_os = "macos") {
+        "brew install bitwarden-cli"
+    } else {
+        "npm install -g @bitwarden/cli"
+    };
+    crate::onboard::open_terminal("Install Bitwarden", script)
+}
+
 #[tauri::command]
 pub async fn vault_lock(webview: Webview) -> Result<VaultState, String> {
     from_shell(&webview)?;
@@ -300,17 +315,19 @@ fn origin_of(url: &str) -> Option<(String, String)> {
 
 async fn page_origin(app: &AppHandle, tab: &str) -> Result<(String, String), String> {
     let wv = page(app, tab)?;
-    let source = page_source(&wv).await?;
+    let source = tauri::async_runtime::spawn_blocking(move || page_source(&wv))
+        .await
+        .map_err(|e| e.to_string())??;
     origin_of(&source).ok_or_else(|| "Passwords are only filled on https pages".into())
 }
 
 #[cfg(windows)]
-async fn page_source(wv: &Webview) -> Result<String, String> {
-    crate::dwm::page_source(wv).await
+fn page_source(wv: &Webview) -> Result<String, String> {
+    crate::dwm::page_source(wv)
 }
 
 #[cfg(not(windows))]
-async fn page_source(wv: &Webview) -> Result<String, String> {
+fn page_source(wv: &Webview) -> Result<String, String> {
     wv.url().map(|u| u.to_string()).map_err(|e| e.to_string())
 }
 
@@ -376,17 +393,19 @@ pub async fn vault_fill(
         &login.password.unwrap_or_default(),
     );
     let wv = page(&app, &tab)?;
-    let result = run_script(&wv, script).await?;
+    let result = tauri::async_runtime::spawn_blocking(move || run_script(&wv, script))
+        .await
+        .map_err(|e| e.to_string())??;
     Ok(serde_json::from_str::<String>(&result).unwrap_or_default())
 }
 
 #[cfg(windows)]
-async fn run_script(wv: &Webview, script: String) -> Result<String, String> {
-    crate::dwm::run_page_script(wv, script, std::time::Duration::from_secs(5)).await
+fn run_script(wv: &Webview, script: String) -> Result<String, String> {
+    crate::dwm::run_page_script(wv, script)
 }
 
 #[cfg(not(windows))]
-async fn run_script(wv: &Webview, script: String) -> Result<String, String> {
+fn run_script(wv: &Webview, script: String) -> Result<String, String> {
     wv.eval(&script)
         .map(|()| "\"filled\"".to_string())
         .map_err(|e| e.to_string())

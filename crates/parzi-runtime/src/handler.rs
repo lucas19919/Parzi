@@ -38,6 +38,10 @@ pub enum RunEvent {
     Notice {
         text: String,
     },
+    /// The session's checklist, as `todo.write` just set it.
+    Todo {
+        todo: serde_json::Value,
+    },
     Done {
         turns: u32,
     },
@@ -83,7 +87,6 @@ pub struct SpawnSpec {
     pub prompt: String,
     pub is_subsession: bool,
     pub model: Option<String>,
-    pub lane: Option<String>,
     pub wait: bool,
     pub mode_override: Option<String>,
     pub effort: Option<String>,
@@ -171,6 +174,7 @@ pub fn ui_event(session: &str, ev: &RunEvent) -> Option<serde_json::Value> {
             json!({ "kind": "tool_result", "session": session, "id": id, "name": name, "ok": ok, "ms": ms })
         }
         RunEvent::Notice { text } => json!({ "kind": "notice", "session": session, "text": text }),
+        RunEvent::Todo { todo } => json!({ "kind": "todo", "session": session, "todo": todo }),
         RunEvent::Context { used, limit } => {
             json!({ "kind": "context", "session": session, "used": used, "limit": limit })
         }
@@ -183,20 +187,13 @@ pub fn ui_event(session: &str, ev: &RunEvent) -> Option<serde_json::Value> {
     })
 }
 
-pub fn system_parts(lane: &str, cwd: &str) -> Vec<String> {
-    let mut parts = vec![if lane.is_empty() {
-        harness_intro()
-    } else {
-        format!("{} Lane: {lane}.", harness_intro())
-    }];
+/// The instructions every session gets: one agent that builds, studies and
+/// writes, with every tool.
+pub fn system_parts(cwd: &str) -> Vec<String> {
+    let mut parts = vec![harness_intro()];
     parts.push(harness_section("tools"));
-    if lane == "work" {
-        parts.push(harness_section("work"));
-    } else {
-        parts.push(harness_section("teamwork"));
-        parts.push(harness_section("build"));
-    }
-    // Both lanes plan, and both name their sessions.
+    parts.push(harness_section("teamwork"));
+    parts.push(harness_section("work"));
     parts.push(harness_section("plans"));
     parts.push(harness_section("delivery"));
     if let Some(text) = parzi_core::system::global() {
@@ -214,7 +211,7 @@ mod tests {
 
     #[test]
     fn harness_doc_has_every_section() {
-        for s in ["tools", "teamwork", "build", "work", "plans", "delivery"] {
+        for s in ["tools", "teamwork", "work", "plans", "delivery"] {
             let body = harness_section(s);
             assert!(body.lines().count() > 3, "section {s} is missing or empty");
         }
@@ -234,20 +231,23 @@ mod tests {
     }
 
     #[test]
-    fn lanes_get_the_right_sections() {
-        let build = system_parts("build", "C:\\x");
-        assert!(build.iter().any(|p| p.starts_with("## teamwork")));
-        assert!(build.iter().any(|p| p.starts_with("## build")));
-        assert!(build.iter().any(|p| p.starts_with("## delivery")));
-        let work = system_parts("work", "C:\\x");
-        assert!(work.iter().any(|p| p.starts_with("## work")));
-        assert!(!work.iter().any(|p| p.starts_with("## teamwork")));
-        assert!(work.iter().any(|p| p.starts_with("## delivery")));
-        for parts in [&build, &work] {
+    fn every_session_gets_every_section() {
+        let parts = system_parts("C:\\x");
+        for section in [
+            "## tools",
+            "## teamwork",
+            "## work",
+            "## plans",
+            "## delivery",
+        ] {
+            assert!(parts.iter().any(|p| p.starts_with(section)), "{section}");
+        }
+        assert!(!parts.iter().any(|p| p.contains("Lane:")), "no lanes");
+        {
             let plans = parts
                 .iter()
                 .find(|p| p.starts_with("## plans"))
-                .expect("both lanes plan");
+                .expect("it plans");
             for word in [
                 "plan.write",
                 "plan.read",
@@ -269,10 +269,8 @@ mod tests {
     fn the_plan_stays_out_of_the_instructions() {
         // The instructions are re-sent every turn; a changing plan there
         // would spoil the prompt cache.
-        for lane in ["build", "work"] {
-            assert!(system_parts(lane, "C:\\x")
-                .iter()
-                .all(|p| !p.contains("<parzi:plan project")));
-        }
+        assert!(system_parts("C:\\x")
+            .iter()
+            .all(|p| !p.contains("<parzi:plan project")));
     }
 }

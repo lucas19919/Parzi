@@ -29,17 +29,7 @@ async fn a_read_only_lane_refuses_an_agent_that_acts_unasked() {
     cfg.lanes.default_mode = "deny".into();
     let (orch, store) = orch_with(cfg, std::slice::from_ref(&agent));
     let err = orch
-        .spawn(
-            "t",
-            "",
-            "claude",
-            "look around",
-            None,
-            "",
-            "low",
-            vec![],
-            None,
-        )
+        .spawn("t", "claude", "look around", None, "", "low", vec![], None)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("read-only"), "{err}");
@@ -66,7 +56,7 @@ async fn a_thread_stays_quiet_about_how_its_agent_is_gated() {
     );
     let (orch, store) = orch(std::slice::from_ref(&agent));
     let (meta, _rx) = orch
-        .spawn("t", "", "claude", "first", None, "", "low", vec![], None)
+        .spawn("t", "claude", "first", None, "", "low", vec![], None)
         .await
         .unwrap();
     settle(&store, &meta.id).await;
@@ -111,17 +101,7 @@ async fn a_lost_conversation_goes_on_with_the_history() {
     );
     let (orch, store) = orch(std::slice::from_ref(&agent));
     let (meta, _rx) = orch
-        .spawn(
-            "t",
-            "",
-            "claude",
-            "what is it?",
-            None,
-            "",
-            "low",
-            vec![],
-            None,
-        )
+        .spawn("t", "claude", "what is it?", None, "", "low", vec![], None)
         .await
         .unwrap();
     settle(&store, &meta.id).await;
@@ -172,7 +152,7 @@ async fn a_dollar_cap_the_agent_cannot_price_is_said_to_be_so() {
     };
     let (orch, store) = orch_with(cfg, std::slice::from_ref(&agent));
     let (meta, _rx) = orch
-        .spawn("t", "", "claude", "work", None, "", "low", vec![], None)
+        .spawn("t", "claude", "work", None, "", "low", vec![], None)
         .await
         .unwrap();
     settle(&store, &meta.id).await;

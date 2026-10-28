@@ -9,12 +9,9 @@ pub fn from_caller(
     kind: InterKind,
     body: impl Into<String>,
 ) -> InterSessionMessage {
-    let lane = if caller.lane.is_empty() {
-        caller.project.clone()
-    } else {
-        caller.lane.clone()
-    };
-    InterSessionMessage::new(caller.id.clone(), lane, kind, body)
+    // `from_lane` keeps its name on the wire (older transcripts carry it);
+    // it says where the sender works: its project.
+    InterSessionMessage::new(caller.id.clone(), caller.project.clone(), kind, body)
 }
 
 pub fn deliver(store: &SessionStore, target_id: &str, msg: &InterSessionMessage) -> Result<()> {

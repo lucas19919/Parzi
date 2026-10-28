@@ -20,6 +20,7 @@ fn broken_server() -> HashMap<String, McpServerCfg> {
             tool_modes: HashMap::new(),
             timeout_ms: 1_000,
             enabled: true,
+            ..Default::default()
         },
     );
     servers
@@ -51,7 +52,7 @@ async fn the_tool_list_is_built_once_per_run() {
     cfg.mcp.servers = broken_server();
     let (orch, store) = orch_with(cfg, &[fake]);
     let (meta, _rx) = orch
-        .spawn("t", "", "claude", "go", None, "", "low", vec![], None)
+        .spawn("t", "claude", "go", None, "", "low", vec![], None)
         .await
         .unwrap();
     settle(&store, &meta.id).await;

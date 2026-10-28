@@ -212,3 +212,27 @@ test("charts describe themselves in one line", () => {
   assert.equal(describe(ok({ type: "bars", title: "PRs", data: { parzi: 4, thesis: 1 } })), "PRs: bar chart, parzi 4, thesis 1");
   assert.equal(describe(ok({ type: "line", data: [3, 9, 4], unit: "ms" })), "line chart, one series over 3 points, from 3 ms to 9 ms");
 });
+
+test("histograms bucket raw numbers into round bins", () => {
+  const read = (input: unknown) => {
+    const s = ok(input);
+    assert.equal(s.type, "hist");
+    return s.type === "hist" ? s : null;
+  };
+  const s = read({ type: "hist", data: [1, 2, 2, 3, 3, 3, 10], bins: 3 })!;
+  assert.equal(s.total, 7);
+  assert.equal(s.bins.reduce((a, b) => a + b.count, 0), 7);
+  assert.ok(s.bins[0].lo <= 1 && s.bins[s.bins.length - 1].hi >= 10);
+  // Contiguous: each bin starts where the last ended.
+  for (let i = 1; i < s.bins.length; i++) assert.equal(s.bins[i].lo, s.bins[i - 1].hi);
+  assert.equal(s.mean, 24 / 7);
+  // Aliases and object shapes work; junk drops out.
+  assert.equal(ok({ type: "histogram", data: [1, 2, 3] }).type, "hist");
+  assert.equal(ok({ type: "hist", data: [{ value: 1 }, { value: "x" }, 2] }).total, 2);
+  const flat = read({ type: "hist", data: [5, 5, 5] });
+  assert.equal(flat.total, 3);
+  assert.ok(flat.bins.length >= 1);
+  assert.match(bad({ type: "hist", data: ["x"] }), /needs numbers/);
+  assert.match(bad({ type: "hist" }), /needs numbers/);
+  assert.equal(describe(ok({ type: "hist", title: "Lat", data: [1, 2, 3], unit: "ms" })), "Lat: histogram of 3 values, from 1 ms to 3 ms, mean 2 ms");
+});

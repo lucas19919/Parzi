@@ -11,7 +11,7 @@ use parzi_core::store::{Event, SessionMeta};
 use parzi_providers::ProviderStatus;
 use parzi_runtime::remote::{self, Link, Progress, SetupOptions, Target, Transport, REMOTE_BIN};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 
 pub const PREFIX: &str = "r:";
@@ -108,6 +108,7 @@ pub(crate) async fn sync_now(app: &AppHandle) -> Result<String, String> {
     if done.brain.changed() {
         status(app, "brain", "");
     }
+    crate::plans::synced(app, &done.brain.changed);
     *st.synced_at.lock().unwrap_or_else(|p| p.into_inner()) = now_ms();
     let summary = done.summary();
     if done.errors.is_empty() {
@@ -162,8 +163,7 @@ pub(crate) fn start_ticker(app: &AppHandle) {
 /// Connection news for the UI: `up`, `down`, `updating`, `ready`, `error`,
 /// `resync` (the stream restarted, reload what is shown).
 fn status(app: &AppHandle, state: &str, detail: impl Into<String>) {
-    crate::emit(
-        app,
+    let _ = app.emit(
         "parzi://remote",
         json!({ "state": state, "detail": detail.into() }),
     );
@@ -243,7 +243,7 @@ async fn forward(app: AppHandle, mut rx: tokio::sync::mpsc::UnboundedReceiver<Va
             Some("done" | "paused" | "error")
         );
         retag(&mut ev);
-        crate::emit(&app, crate::RUN_EVENT, &ev);
+        let _ = app.emit("parzi://run-event", &ev);
         if ended {
             sync_soon(&app);
         }
@@ -474,15 +474,16 @@ pub(crate) async fn send(
     effort: &str,
     attachments: Vec<parzi_core::context::AttachedFile>,
     mode: Option<String>,
-    lane: Option<String>,
+    plan_item: Option<&str>,
 ) -> Result<String, String> {
     let body = json!({
         "target": target.unwrap_or("new"),
+        // The plan item the person quoted: the server links the session.
+        "plan_item": plan_item.unwrap_or_default(),
         "message": prompt,
         "model": model,
         "effort": effort,
         "mode": mode.unwrap_or_default(),
-        "lane": lane.unwrap_or_default(),
         "attachments": attachments,
         // A folder on the server (a project there), or its scratch folder.
         "cwd": if cwd.starts_with('/') || cwd.starts_with('~') { cwd } else { "" },
@@ -621,7 +622,7 @@ pub async fn remote_setup(
         ..Default::default()
     };
     let emit = |p: Progress| {
-        crate::emit(&app, "parzi://remote-setup", &p);
+        let _ = app.emit("parzi://remote-setup", &p);
     };
     let (saved, setup_link) = remote::setup(target, opts, &emit).await?;
     drop(setup_link);

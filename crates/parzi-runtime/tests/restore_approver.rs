@@ -56,7 +56,6 @@ async fn a_restored_run_asks_through_the_hosts_approver() {
     let (first, _rx) = orch
         .spawn(
             "t",
-            "",
             "claude",
             "hold the slot",
             Some(Arc::new(Counting(before.clone()))),
@@ -71,7 +70,6 @@ async fn a_restored_run_asks_through_the_hosts_approver() {
     let (second, _rx2) = orch
         .spawn(
             "t",
-            "",
             "claude",
             "write the notes",
             Some(Arc::new(Counting(before.clone()))),

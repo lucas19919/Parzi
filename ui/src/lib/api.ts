@@ -7,7 +7,6 @@ export interface SessionMeta {
   title: string;
   pinned: boolean;
   project: string;
-  lane: string;
   model: string;
   status: "active" | "idle" | "done" | "killed" | "queued";
   tokens_in: number;
@@ -21,6 +20,8 @@ export interface SessionMeta {
   updated: string;
   // How the last run ended (absent from older backends).
   last_run?: RunOutcome | null;
+  // The plan item this session works on; children count for their parent's.
+  plan_item?: string | null;
   // The git branch the last run ended on ("" outside a repo).
   branch?: string;
   effort?: string;
@@ -42,16 +43,16 @@ export interface RunOutcome {
 }
 
 export type ChatEvent =
-  | { kind: "system"; text: string }
-  | { kind: "user"; text: string }
-  | { kind: "assistant"; text: string; done: boolean }
-  | { kind: "reasoning"; text: string }
-  | { kind: "tool_call"; id: string; name: string; args: unknown }
-  | { kind: "tool_result"; id: string; name: string; ok: boolean; output: string; ms: number }
-  | { kind: "widget"; fence: string; payload: unknown }
-  | { kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
-  | { kind: "error"; message: string; class: string }
-  | { kind: "checkpoint"; summary: string };
+  | { kind: "system"; text: string; at?: number }
+  | { kind: "user"; text: string; at?: number }
+  | { kind: "assistant"; text: string; done: boolean; at?: number }
+  | { kind: "reasoning"; text: string; at?: number }
+  | { kind: "tool_call"; id: string; name: string; args: unknown; at?: number }
+  | { kind: "tool_result"; id: string; name: string; ok: boolean; output: string; ms: number; at?: number }
+  | { kind: "widget"; fence: string; payload: unknown; at?: number }
+  | { kind: "artifact"; id: string; title: string; artifact_kind: string; version: number; payload: unknown; at?: number }
+  | { kind: "error"; message: string; class: string; at?: number }
+  | { kind: "checkpoint"; summary: string; before?: number; after?: number; at?: number };
 
 type ProviderState = "ready" | "signed_out" | "not_installed" | "disabled" | "error" | "unchecked";
 
@@ -66,6 +67,8 @@ interface ProviderModel {
   name: string;
   is_default: boolean;
   efforts: string[];
+  // Whether it sees images, when its agent says (OpenCode does).
+  images?: boolean;
 }
 
 export interface ProviderStatus {
@@ -83,8 +86,15 @@ export interface ProviderStatus {
 export interface ApprovalCall {
   id: string;
   name: string;
+  // What the call does, in words ("Running `npm test`").
+  label?: string;
+  // What the approval card says: "<agent> wants to <action>", over the
+  // exact thing (`detail`: the command, the files, the picture's prompt).
+  action?: string;
+  detail?: string;
+  detail_kind?: "command" | "paths" | "url" | "text";
+  note?: string;
   args: unknown;
-  lane: string;
   session: string;
 }
 
@@ -93,6 +103,9 @@ export interface Question {
   session: string;
   question: string;
   options: string[];
+  // A line under each option ("" where none), and whether several may be picked.
+  details?: string[];
+  multi?: boolean;
 }
 
 export interface AgentRequest {
@@ -105,12 +118,14 @@ export interface AgentRequest {
 export type UiEvent =
   | { kind: "text"; session: string; text: string }
   | { kind: "reasoning"; session: string; text: string }
+  | { kind: "todo"; session: string; todo: unknown }
   | { kind: "tool_call"; session: string; id: string; name: string; label: string }
   | { kind: "tool_result"; session: string; id: string; name: string; ok: boolean; ms: number }
   | { kind: "notice"; session: string; text: string }
   | { kind: "context"; session: string; used: number; limit: number }
   | { kind: "approval"; key: string; session: string; call: ApprovalCall }
-  | { kind: "question"; key: string; session: string; question: string; options: string[] }
+  | { kind: "expired"; key: string; session: string }
+  | { kind: "question"; key: string; session: string; question: string; options: string[]; details?: string[]; multi?: boolean }
   | { kind: "request"; key: string; session: string; request: string; req_kind: string }
   | { kind: "done"; session: string; turns: number }
   // The run stopped at its budget; like done for the running set.
@@ -132,7 +147,7 @@ export interface ProviderEntry {
 export interface ParziConfig {
   version: number;
   providers: Record<string, ProviderEntry>;
-  lanes: { default_mode: string; default_allowed_tools: string[]; max_steps: number; no_shell?: boolean };
+  lanes: { default_mode: string; default_allowed_tools: string[]; no_shell?: boolean };
   mcp: { servers: Record<string, unknown> };
   orchestrator: { max_concurrent: number; mcp_idle_kill_secs: number; queue_when_busy: boolean; approval_wait_secs?: number };
   routing: { order: string[] };
@@ -142,17 +157,20 @@ export interface ParziConfig {
 
 export interface Theme {
   font: { family: string; size: number; mono: string; mono_size: number };
-  colors: { sidebar: string; stage: string; accent: string; text: string; text_dim: string; bar: string; border: string };
+  colors: { sidebar: string; stage: string; accent: string; text: string; text_dim: string; bar: string; border: string; panel?: string };
   background: {
     image: string;
     dim: number;
     vignette: number;
     blur: number;
     auto_accent?: boolean;
+    glass?: boolean;
     // Dither strength (0-1) and tile size (px); how far down the wallpaper reaches (0.3-1).
     grain: number;
     grain_size: number;
     height: number;
+    // Which part of the picture shows: 0 is the top, 1 the bottom.
+    y: number;
   };
 }
 
@@ -182,17 +200,17 @@ interface SendArgs {
   effort: string;
   attachments: string[];
   mode: string;
-  lane: string;
   remote?: boolean;
+  // Plan items quoted into the message (at most 4).
+  quotes?: { project: string; id: string }[];
+  // A side task: the session it was started from, which it lists under.
+  parent?: string | null;
+  // A new session in a worktree of its own, made from this branch.
+  worktree?: string;
 }
 
-export type ComposerMode = "search" | "build" | "work";
-
-export const MODE_META: Record<ComposerMode, { label: string; icon: "globe" | "bot" | "brain"; tint: string; hint: string }> = {
-  search: { label: "Search", icon: "globe", tint: "#6aa8ff", hint: "Search or enter an address" },
-  build: { label: "Build", icon: "bot", tint: "#4e8f5c", hint: "Ask anything" },
-  work: { label: "Work", icon: "brain", tint: "#e8b64c", hint: "Ask a quick question" },
-};
+// What the composer sends to: an agent ("build") or the web ("search").
+export type ComposerMode = "search" | "build";
 
 export const api = {
   appVersion: () => invoke<string>("app_version"),
@@ -210,13 +228,17 @@ export const api = {
       effort: a.effort,
       attachments: a.attachments,
       mode: a.mode,
-      lane: a.lane,
       remote: a.remote ?? false,
+      quotes: a.quotes ?? [],
+      parent: a.parent ?? null,
+      worktree: a.worktree || null,
     }),
   saveAnswer: (content: string) => invoke<NoteMeta>("brain_save_answer", { content }),
   renameThread: (id: string, title: string) => invoke<void>("rename_thread", { id, title }),
   deleteThread: (id: string) => invoke<number>("delete_thread", { id }),
   forkThread: (id: string) => invoke<SessionMeta>("fork_thread", { id }),
+  // The session before the person's nth message, as a new session.
+  rewindThread: (id: string, nth: number) => invoke<SessionMeta>("rewind_thread", { id, nth }),
   compactThread: (id: string) => invoke<string>("compact_thread", { id }),
   killRun: (id: string) => invoke<void>("kill_run", { id }),
   approveTool: (key: string, session: string, allow: boolean) =>
@@ -228,16 +250,42 @@ export const api = {
   pickFolder: (start?: string) => invoke<string | null>("pick_folder", { start: start || null }),
   listFiles: (root: string, query: string) => invoke<string[]>("list_files", { root, query }),
   gitBranch: (cwd: string) => invoke<string>("git_branch", { cwd }),
+  gitBranches: (cwd: string) => invoke<{ current: string; all: string[] }>("git_branches", { cwd }),
   gitStatus: (cwd: string) => invoke<GitStatus | null>("git_status", { cwd }),
   stageImage: (name: string, base64Data: string) => invoke<string>("stage_image", { name, base64Data }),
   readImageDataUrl: (path: string, cwd: string) => invoke<string>("read_image_data_url", { path, cwd }),
+  // A picture one of the session's tools made, wherever it was saved.
+  toolImage: (session: string, path: string) => invoke<string>("tool_image", { session, path }),
 
   providerStatuses: () => invoke<ProviderStatus[]>("provider_statuses"),
   refreshProviders: (ids?: string[]) => invoke<ProviderStatus[]>("refresh_providers", { ids: ids ?? null }),
-  toggleFavorite: (spec: string) => invoke<string[]>("toggle_favorite", { spec }),
   warmAgent: (provider: string) => invoke<void>("warm_agent", { provider }),
   getConfig: () => invoke<ParziConfig>("get_config"),
   saveConfig: (cfg: ParziConfig) => invoke<void>("save_config", { cfg }),
+  // The commands a session's agents ran, and stopping a background one.
+  shellJobs: (session: string) => invoke<ShellJob[]>("shell_jobs", { session }),
+  shellKill: (session: string, id: string) => invoke<boolean>("shell_kill", { session, id }),
+  // What Parzi adds to a session's context, in estimated tokens.
+  contextParts: (cwd: string) => invoke<{ instructions: number; notes: number; tools: number }>("context_parts", { cwd }),
+  // Starts a connector (signing in, the first time) and counts its tools.
+  connectorCheck: (name: string) => invoke<number>("connector_check", { name }),
+  // Signs in to a hosted connector (its page opens in the browser): how many tools it offers then.
+  connectorSignIn: (name: string) => invoke<number>("connector_sign_in", { name }),
+  // Forgets a removed connector's sign-in and logo.
+  connectorForget: (name: string) => invoke<void>("connector_forget", { name }),
+  // Its title, logo (a data URL) and tools, each with how it runs here.
+  connectorDetails: (name: string) =>
+    invoke<{
+      title: string;
+      icon: string | null;
+      tools: { name: string; description: string; read_only: boolean; destructive: boolean; mode: "" | "auto" | "ask" | "off" }[];
+    }>("connector_details", { name }),
+  // A picture the person picked as its logo: the logo as a data URL.
+  connectorSetIcon: (name: string, path: string) => invoke<string>("connector_set_icon", { name, path }),
+  // Connectors set up in Claude Code, Claude Desktop, Cursor, VS Code, Codex or Grok.
+  connectorsFound: () => invoke<{ name: string; source: string; server: Record<string, unknown> }[]>("connectors_found"),
+  // A pasted mcpServers block or address, as connectors.
+  connectorsFromText: (text: string) => invoke<[string, Record<string, unknown>][]>("connectors_from_text", { text }),
   runDoctorQuick: () => invoke<Check[]>("run_doctor_quick"),
 
   getTheme: () => invoke<Theme>("get_theme"),
@@ -260,14 +308,16 @@ export const api = {
   deleteBackground: (name: string) => invoke<string>("delete_background", { name }),
   paletteFromBackground: () => invoke<Palette>("palette_from_background"),
 
-  // `owner`: the agent session a page belongs to; `focus`: hand it the
-  // keyboard when it appears (never while the user types in the shell).
+  // `owner`: the agent session a page belongs to. `focus` stays off: focusing
+  // the page window as it appears turns the next shell click into an
+  // activation click, so that click never selects. Enter in the address bar
+  // calls browserFocus when the keyboard should move.
   browserShow: (
     tab: string,
     rect: { x: number; y: number; width: number; height: number },
     url: string,
     owner: string | null = null,
-    focus = true,
+    focus = false,
   ) => invoke<void>("browser_show", { tab, ...rect, url, owner, focus }),
   browserHide: () => invoke<void>("browser_hide"),
   browserPrepare: (tab: string, url: string, owner: string | null = null) => invoke<void>("browser_prepare", { tab, url, owner }),
@@ -279,10 +329,21 @@ export const api = {
   searchSuggest: (query: string) => invoke<string[]>("search_suggest", { query }),
   browserClose: (tab: string) => invoke<void>("browser_close", { tab }),
   browserNavigate: (tab: string, url: string) => invoke<void>("browser_navigate", { tab, url }),
-  browserNav: (tab: string, action: "back" | "forward" | "reload" | "stop") =>
+  browserNav: (tab: string, action: "back" | "forward" | "reload" | "stop" | "zoom-reset") =>
     invoke<void>("browser_nav", { tab, action }),
   windowFullscreen: (on: boolean) => invoke<void>("window_fullscreen", { on }),
 };
+
+export interface ShellJob {
+  id: string;
+  cmd: string;
+  background: boolean;
+  running: boolean;
+  exit: number | null;
+  // Unix ms it started; ms it ran (so far).
+  started: number;
+  ms: number;
+}
 
 export interface GitStatus {
   branch: string;
@@ -291,6 +352,8 @@ export interface GitStatus {
   behind: number;
   changed: number;
   untracked: number;
+  added: number;
+  removed: number;
   last_subject: string;
   last_time: number;
 }
@@ -336,7 +399,10 @@ export type ObsidianState = "missing" | "unregistered" | "ready";
 interface BrowserSource {
   id: string;
   name: string;
+  // The profile's folder, which the import asks for.
   profile: string;
+  // Its name as the browser shows it.
+  label: string;
   bookmarks: number;
   history: boolean;
 }
@@ -418,6 +484,8 @@ export interface PageEvent {
   canGoBack?: boolean;
   canGoForward?: boolean;
   fullscreen?: boolean;
+  // The page's zoom (1 is 100%).
+  zoom?: number;
   blocked?: number;
   bg?: string;
   // false: the load failed (no network, DNS, an error page): not history.
@@ -502,6 +570,7 @@ export interface VaultLogin {
 
 export const vault = {
   state: () => invoke<VaultState>("vault_state"),
+  install: () => invoke<void>("vault_install"),
   unlock: () => invoke<VaultState>("vault_unlock"),
   lock: () => invoke<VaultState>("vault_lock"),
   logins: (tab: string) => invoke<{ status: string; host: string; items: VaultLogin[] }>("vault_logins", { tab }),
@@ -551,4 +620,71 @@ export function deskSync(tabs: DeskTab[], rev: number, active: string) {
 
 export function onDesk(cb: (cmd: DeskCmd) => void) {
   return listen<DeskCmd>("parzi://desk", (ev) => cb(ev.payload));
+}
+
+// Plans (PLAN_CONTRACT.md): one living plan per project, a Brain note the
+// agents write. Item states beyond what agents declare (working, needs you,
+// in review) are read live in planModel.ts.
+export type PlanState = "planned" | "active" | "done" | "dropped";
+
+export interface PlanItem {
+  id: string;
+  title: string;
+  detail: string;
+  // One of Plan.phases, or "" for the first phase.
+  phase: string;
+  // Ids in the same plan.
+  needs: string[];
+  state: PlanState;
+  // "" when unknown; agents use "plan/<id>".
+  branch: string;
+  note: string;
+}
+
+export interface Plan {
+  version: 1;
+  title: string;
+  goal: string;
+  // In order; may be empty (one group).
+  phases: string[];
+  items: PlanItem[];
+  updated: number;
+  by: string;
+}
+
+export interface PlanView {
+  project: string;
+  path: string;
+  // null when the project has no plan.
+  plan: Plan | null;
+  // The note exists but its parzi-plan block can't be read.
+  error: string | null;
+}
+
+export interface PrInfo {
+  number: number;
+  title: string;
+  url: string;
+  // The head branch.
+  head: string;
+  state: "open" | "closed" | "merged";
+  draft: boolean;
+  checks: "pass" | "fail" | "pending" | "none";
+}
+
+// An item quoted into the composer; sent as { project, id }.
+export interface PlanQuote {
+  project: string;
+  id: string;
+  title: string;
+}
+
+export const planApi = {
+  view: (project: string) => invoke<PlanView>("plan_view", { project }),
+  // Empty when gh is missing, signed out, or the folder isn't on GitHub.
+  prs: (cwd: string) => invoke<PrInfo[]>("plan_prs", { cwd }),
+};
+
+export function onPlan(cb: (e: { project: string }) => void) {
+  return listen<{ project: string }>("parzi://plan", (ev) => cb(ev.payload));
 }
