@@ -38,9 +38,9 @@ impl McpTool {
 
 enum Conn {
     Stdio {
-        child: Child,
-        stdin: ChildStdin,
-        stdout: BufReader<ChildStdout>,
+        child: Box<Child>,
+        stdin: Box<ChildStdin>,
+        stdout: Box<BufReader<ChildStdout>>,
     },
     Http(Arc<std::sync::Mutex<crate::mcp_http::HttpConn>>),
 }
@@ -451,9 +451,9 @@ impl McpManager {
             .ok_or_else(|| tool_err("no stdout".into()))?;
         let mut sv = LiveServer {
             conn: Conn::Stdio {
-                child,
-                stdin,
-                stdout: BufReader::new(stdout),
+                child: Box::new(child),
+                stdin: Box::new(stdin),
+                stdout: Box::new(BufReader::new(stdout)),
             },
             next_id: 0,
             tools: None,

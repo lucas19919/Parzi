@@ -37,7 +37,7 @@ async fn an_agent_that_compacts_is_asked_to_and_says_how_much() {
             Ok(TurnEnd::Completed)
         }),
     );
-    let (orch, store) = orch(&[fake.clone()]);
+    let (orch, store) = orch(std::slice::from_ref(&fake));
     let (meta, _rx) = orch
         .spawn("compact", "grok", "build it", None, "", "low", vec![], None)
         .await
@@ -83,7 +83,7 @@ async fn an_agent_that_cannot_compact_summarizes_and_goes_on_from_the_summary() 
             Ok(TurnEnd::Completed)
         }),
     );
-    let (orch, store) = orch(&[fake.clone()]);
+    let (orch, store) = orch(std::slice::from_ref(&fake));
     let (meta, _rx) = orch
         .spawn(
             "compact",
