@@ -92,6 +92,13 @@ pub struct ProviderEntry {
     pub binary: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub default_model: String,
+    /// Extra arguments for a generic ACP command (`--acp`). Empty for the
+    /// built-in agents, which carry their own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    /// What Settings calls a generic ACP agent. Empty uses "ACP".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
 }
 
 impl Default for ProviderEntry {
@@ -100,6 +107,8 @@ impl Default for ProviderEntry {
             enabled: true,
             binary: String::new(),
             default_model: String::new(),
+            args: Vec::new(),
+            label: String::new(),
         }
     }
 }

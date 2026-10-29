@@ -158,7 +158,7 @@ mod tests {
         // Google ships Antigravity's ACP server for Windows and macOS only.
         let antigravity = cfg!(any(windows, target_os = "macos"));
         for id in crate::PROVIDERS {
-            if *id == "antigravity" && !antigravity {
+            if *id == "acp" || (*id == "antigravity" && !antigravity) {
                 assert!(install_script(id).is_none());
                 continue;
             }

@@ -230,6 +230,100 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     None
 }
 
+/// A Windows executable starts with MZ. The extensionless file npm writes
+/// next to a `.cmd` is a shell script, and spawning it fails with
+/// "not a valid Win32 application".
+fn looks_like_pe(path: &Path) -> bool {
+    let mut magic = [0u8; 2];
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    std::io::Read::read_exact(&mut file, &mut magic).is_ok() && magic == *b"MZ"
+}
+
+pub(crate) fn start_error(name: &str, program: &Path, err: &std::io::Error) -> String {
+    let mut msg = format!("could not start {name} ({}): {err}", program.display());
+    #[cfg(windows)]
+    if err.raw_os_error() == Some(193) {
+        msg.push_str(&format!(
+            ". That file is not a Windows program (starts with {})",
+            file_head(program)
+        ));
+    }
+    msg
+}
+
+fn file_head(path: &Path) -> String {
+    let mut buf = [0u8; 8];
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return "unreadable".into();
+    };
+    let n = std::io::Read::read(&mut file, &mut buf).unwrap_or(0);
+    if n == 0 {
+        return "empty".into();
+    }
+    buf[..n]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A `.cmd` that launches `node` plus a script becomes that pair, so ACP
+/// stdio never goes through `cmd.exe` (it buffers and breaks kill).
+pub(crate) fn launch_parts(program: &Path, args: &[String]) -> (PathBuf, Vec<String>) {
+    let ext = program
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if ext == "cmd" || ext == "bat" {
+        if let Some((node, script)) = node_and_script(program) {
+            let mut all = vec![script];
+            all.extend(args.iter().cloned());
+            return (node, all);
+        }
+    }
+    (program.to_path_buf(), args.to_vec())
+}
+
+fn dp0_files(text: &str, dir: &Path) -> Vec<PathBuf> {
+    let mut out = vec![];
+    for marker in ["\"%dp0%\\", "\"%~dp0\\", "\"%dp0%/", "\"%~dp0/"] {
+        for (i, _) in text.match_indices(marker) {
+            let rest = &text[i + marker.len()..];
+            let Some(end) = rest.find('"') else { continue };
+            let rel = rest[..end].replace('\\', std::path::MAIN_SEPARATOR_STR);
+            if !rel.is_empty() {
+                out.push(dir.join(rel));
+            }
+        }
+    }
+    out
+}
+
+fn node_and_script(cmd: &Path) -> Option<(PathBuf, String)> {
+    let text = std::fs::read_to_string(cmd).ok()?;
+    let dir = cmd.parent()?;
+    let files = dp0_files(&text, dir);
+    let script = files.iter().find(|p| {
+        p.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "js" | "mjs" | "cjs"))
+            && p.is_file()
+    })?;
+    let node = files
+        .iter()
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.eq_ignore_ascii_case("node.exe"))
+                && looks_like_pe(p)
+        })
+        .cloned()
+        .or_else(|| resolve("node"))?;
+    Some((node, script.display().to_string()))
+}
+
 fn follow_npm_shim(path: &Path) -> Option<PathBuf> {
     let ext = path.extension()?.to_string_lossy().to_ascii_lowercase();
     if ext != "cmd" && ext != "bat" {
@@ -244,7 +338,9 @@ fn follow_npm_shim(path: &Path) -> Option<PathBuf> {
             dir.join(stem),
             dir.join(format!("{stem}-x86_64.exe")),
         ] {
-            if candidate.is_file() {
+            // The extensionless neighbor is npm's shell script. Only a PE
+            // is a program CreateProcess can start.
+            if candidate.is_file() && looks_like_pe(&candidate) {
                 return Some(candidate);
             }
         }
@@ -255,6 +351,11 @@ fn follow_npm_shim(path: &Path) -> Option<PathBuf> {
             let rest = &text[i + marker.len()..];
             let Some(end) = rest.find('"') else { continue };
             let rel = &rest[..end];
+            // `node.exe` beside an npm shim is the runtime, not the agent.
+            // The script it names is paired with node in `launch_parts`.
+            if rel.eq_ignore_ascii_case("node.exe") {
+                continue;
+            }
             if rel.to_ascii_lowercase().ends_with(".exe") {
                 let exe = dir.join(rel.replace('\\', std::path::MAIN_SEPARATOR_STR));
                 if exe.is_file() {
@@ -278,10 +379,11 @@ impl Proc {
         cwd: &Path,
         env: &[(String, String)],
     ) -> std::io::Result<Self> {
-        let mut cmd = Command::new(program);
-        // Drop kills root and tree off-thread; tokio killing the root first
-        // would cut the tree walk short.
-        cmd.args(args)
+        // A cmd shim becomes node plus its script. Drop kills root and
+        // tree off-thread; tokio killing the root first would cut that walk short.
+        let (program, args) = launch_parts(program, args);
+        let mut cmd = Command::new(&program);
+        cmd.args(&args)
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -292,7 +394,10 @@ impl Proc {
         }
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
-        let mut child = cmd.spawn()?;
+        tracing::info!(path = %program.display(), ?args, "spawn");
+        let mut child = cmd.spawn().inspect_err(|e| {
+            tracing::warn!(path = %program.display(), bytes = %file_head(&program), "spawn failed: {e}");
+        })?;
         adopt(&child);
         let stderr = Arc::new(Mutex::new(String::new()));
         if let Some(mut pipe) = child.stderr.take() {
@@ -471,6 +576,86 @@ mod tests {
         .unwrap();
         assert!(follow_npm_shim(&shim).is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_shell_script_beside_the_cmd_is_not_the_program() {
+        let dir = std::env::temp_dir().join(format!("parzi-shim-script-{}", std::process::id()));
+        let bin = dir.join("node_modules").join("tool").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("tool.exe"), b"MZ").unwrap();
+        std::fs::write(dir.join("tool"), b"#!/bin/sh\nexec tool.exe\n").unwrap();
+        let shim = dir.join("tool.cmd");
+        std::fs::write(
+            &shim,
+            "@ECHO off\r\n\"%dp0%\\node_modules\\tool\\bin\\tool.exe\"   %*\r\n",
+        )
+        .unwrap();
+        let got = follow_npm_shim(&shim).expect("shim followed");
+        assert!(
+            got.ends_with(Path::new("node_modules/tool/bin/tool.exe")),
+            "{got:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cmd_that_runs_node_and_a_script_launches_that_pair() {
+        let dir = std::env::temp_dir().join(format!("parzi-shim-node-{}", std::process::id()));
+        let mods = dir.join("node_modules");
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::write(dir.join("node.exe"), b"MZ").unwrap();
+        std::fs::write(mods.join("gemini.js"), b"// gemini").unwrap();
+        let shim = dir.join("gemini.cmd");
+        std::fs::write(
+            &shim,
+            "@ECHO off\r\nIF EXIST \"%dp0%\\node.exe\" (\r\n  SET \"_prog=%dp0%\\node.exe\"\r\n)\r\n\"%_prog%\"  \"%dp0%\\node_modules\\gemini.js\" %*\r\n",
+        )
+        .unwrap();
+        assert!(
+            follow_npm_shim(&shim).is_none(),
+            "node.exe is not the agent"
+        );
+        let (program, args) = launch_parts(&shim, &["--acp".into()]);
+        assert!(program.ends_with("node.exe"), "{program:?}");
+        assert_eq!(args.len(), 2, "{args:?}");
+        assert!(args[0].ends_with("gemini.js"), "{args:?}");
+        assert_eq!(args[1], "--acp");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// This PC's npm shims. Missing programs skip, so a machine without them still passes.
+    #[test]
+    fn installed_npm_shims_launch_a_real_program() {
+        if let Some(path) = resolve("opencode") {
+            assert!(
+                looks_like_pe(&path),
+                "opencode resolved to {} which is not a Windows program",
+                path.display()
+            );
+        }
+        for name in ["gemini", "copilot"] {
+            let Some(path) = resolve(name) else { continue };
+            let ext = path
+                .extension()
+                .map(|e| e.to_string_lossy().to_ascii_lowercase())
+                .unwrap_or_default();
+            if ext == "cmd" || ext == "bat" {
+                let (program, args) = launch_parts(&path, &["--acp".into()]);
+                assert!(
+                    looks_like_pe(&program),
+                    "{name} launch is not a program: {} {args:?}",
+                    program.display()
+                );
+                assert!(
+                    args.iter()
+                        .any(|a| a.replace('\\', "/").to_ascii_lowercase().contains(name)),
+                    "{name} script missing from {args:?}"
+                );
+            } else {
+                assert!(looks_like_pe(&path), "{name} {}", path.display());
+            }
+        }
     }
 
     #[test]

@@ -132,7 +132,7 @@
   });
 </script>
 
-<aside class="info" aria-label="Session" style="width: {width}px" transition:fly={{ x: 12, duration: 200, easing: cubicOut }}>
+<aside class="info" aria-label="Session" style="width: {width}px" transition:fly={{ x: 28, duration: 220, easing: cubicOut }}>
   <div
     class="grip"
     role="separator"

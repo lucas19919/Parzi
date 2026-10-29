@@ -1,5 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from "svelte";
+  import { fly } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
   import { adblock, api, vault, BITWARDEN_INSTALL, type AdblockState, type VaultLogin } from "./api";
   import { popover, placeAbove } from "./popover";
@@ -439,7 +441,7 @@
     </div>
   {/if}
   {#if choices.length}
-    <div class="logins" style={choiceStyle} data-ui-list use:popover={{ anchor: keyBtn, close: () => (choices = []) }}>
+    <div class="logins" style={choiceStyle} data-ui-list use:popover={{ anchor: keyBtn, close: () => (choices = []) }} transition:fly={{ y: choiceStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
       {#each choices as login (login.id)}
         <button class="login" on:click={() => fillWith(login)}>
           <span class="login-name">{login.name}</span>

@@ -74,6 +74,10 @@ pub struct BackgroundTheme {
     /// Which part of the picture sits in the window: 0 is its top, 1 its bottom.
     #[serde(default = "d_bg_y")]
     pub y: f64,
+    /// The picture shows only on home (a new session). Off keeps it behind
+    /// every page.
+    #[serde(default)]
+    pub home_only: bool,
 }
 
 fn d_ui_font() -> String {
@@ -205,6 +209,7 @@ impl Default for BackgroundTheme {
             grain_size: d_grain_size(),
             height: d_bg_height(),
             y: d_bg_y(),
+            home_only: false,
         }
     }
 }
@@ -929,8 +934,8 @@ mod css_tests {
         let old: Theme = toml::from_str("[background]\nimage = \"\"\ndim = 0.5\n").unwrap();
         let b = old.background;
         assert_eq!(
-            (b.grain, b.grain_size, b.height, b.y),
-            (0.16, 32.0, 1.0, 0.5)
+            (b.grain, b.grain_size, b.height, b.y, b.home_only),
+            (0.16, 32.0, 1.0, 0.5, false)
         );
     }
 

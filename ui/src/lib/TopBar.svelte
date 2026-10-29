@@ -236,6 +236,14 @@
     height: 28px;
     background: none;
     border: none;
+    transform-origin: left center;
+    animation: menu-in 200ms var(--ease-out);
+  }
+  @keyframes menu-in {
+    from {
+      opacity: 0;
+      transform: translateX(-10px);
+    }
   }
   .opt {
     display: inline-flex;
@@ -260,7 +268,8 @@
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .opt {
+    .opt,
+    .opts {
       animation: none;
     }
   }

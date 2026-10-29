@@ -9,6 +9,7 @@ const PROVIDER_NAME: Record<string, string> = {
   grok: "Grok",
   antigravity: "Antigravity",
   cursor: "Cursor",
+  acp: "ACP",
 };
 
 export const nameOf = (id: string): string => PROVIDER_NAME[id] ?? id;
@@ -35,6 +36,34 @@ export function prettyModel(id: string): string {
 
 export const modelLabel = (m: { id: string; name: string }): string =>
   m.name && m.name !== m.id ? m.name : prettyModel(m.id);
+
+const CHIP_FILLER = new Set(["contributor", "free", "preview", "latest", "thinking", "new", "fast"]);
+const CHIP_LAB = new Set(["claude", "anthropic", "openai"]);
+const CHIP_VERSION = /^(?:v|k)?\d+(?:\.\d+)+$|^\d+$/i;
+
+// The omnibar chip. The logo already says OpenCode, so "OpenCode Go/Muse
+// Spark 1.3 Contributor" reads as Muse and 1.3. The full name stays on the
+// tooltip.
+export function chipOf(name: string): { title: string; version: string } {
+  const slash = name.indexOf("/");
+  const body = (slash >= 0 ? name.slice(slash + 1) : name).replace(/\s*\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+  if (!body) return { title: name, version: "" };
+  const words: string[] = [];
+  let version = "";
+  for (const token of body.split(" ")) {
+    if (CHIP_FILLER.has(token.toLowerCase())) continue;
+    if (!version && words.length && CHIP_VERSION.test(token)) {
+      version = token;
+      continue;
+    }
+    words.push(token);
+  }
+  if (words.length >= 2 && CHIP_LAB.has(words[0].toLowerCase())) words.shift();
+  const head = (words[0] ?? body).replace(/^(.+?\d(?:\.\d+)?)-[A-Za-z].*$/, "$1");
+  if (version) return { title: head, version };
+  if (words.length >= 2 && head === words[0]) return { title: `${words[0]} ${words[1]}`, version: "" };
+  return { title: head, version: "" };
+}
 
 const sourceOf = (id: string): string => id.split("/").slice(0, -1).join("/");
 
@@ -97,7 +126,7 @@ export function effortsFor(value: string, board: ProviderStatus[]): string[] {
   const m = (id && models.find((x) => x.id === id)) || models.find((x) => x.is_default);
   const listed = m?.efforts ?? [];
   if (listed.length) return listed;
-  if (["opencode", "grok", "cursor", "antigravity"].includes(p)) return [...FALLBACK_EFFORTS];
+  if (["opencode", "grok", "cursor", "antigravity", "acp"].includes(p)) return [...FALLBACK_EFFORTS];
   return [];
 }
 

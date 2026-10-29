@@ -24,6 +24,32 @@ export function splitLine(text: string): string[] {
   return out;
 }
 
+// What a paste is, without asking the person to name the kind.
+export function classifyPaste(text: string): "link" | "block" | "program" | "" {
+  const t = text.trim();
+  if (!t) return "";
+  if (/^https?:\/\//i.test(t)) return "link";
+  if (t.startsWith("{")) return "block";
+  return "program";
+}
+
+// A config key from a program path. A Node launcher yields the script or
+// package it runs, not "npx" or "node".
+export function nameFromProgram(line: string): string {
+  const words = splitLine(line);
+  let file = words[0] ?? "";
+  const launcher = /^(npx|npm|node|bun|deno)(\.exe|\.cmd)?$/i.test(file.split(/[\\/]/).pop() ?? "");
+  if (launcher) {
+    const pkg = words.find((w, i) => i > 0 && !w.startsWith("-"));
+    if (pkg) file = pkg;
+  }
+  const leaf = (file.split(/[\\/]/).pop() ?? "").replace(/\.(exe|cmd|bat|js|mjs|cjs)$/i, "");
+  let id = leaf.replace(/[^a-z0-9_-]/gi, "").toLowerCase();
+  if (!/^[a-z0-9]/.test(id)) id = `app${id}`;
+  id = id.slice(0, 32);
+  return /^[a-z0-9][a-z0-9_-]{0,31}$/.test(id) ? id : "app";
+}
+
 // NAME=value per line; blank lines are skipped. A string is an error.
 export function parseEnv(text: string): Record<string, string> | string {
   const env: Record<string, string> = {};

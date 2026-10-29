@@ -24,8 +24,6 @@
 
   // The wallpaper's fractions (0-1) as the whole percents the sliders show.
   let dimPct = 66;
-  let vignettePct = 50;
-  let grainPct = 16;
   let heightPct = 100;
   let yPct = 50;
 
@@ -71,8 +69,6 @@
   function syncPercents() {
     if (!theme) return;
     dimPct = Math.round(theme.background.dim * 100);
-    vignettePct = Math.round(theme.background.vignette * 100);
-    grainPct = Math.round(theme.background.grain * 100);
     heightPct = Math.round(theme.background.height * 100);
     yPct = Math.round((theme.background.y ?? 0.5) * 100);
   }
@@ -263,7 +259,7 @@
     if (theme.background.auto_accent) await sampleAccent();
   }
 
-  function onPct(key: "dim" | "vignette" | "grain" | "height" | "y", pct: number) {
+  function onPct(key: "dim" | "height" | "y", pct: number) {
     if (!theme) return;
     theme.background[key] = pct / 100;
     touch();
@@ -285,6 +281,11 @@
   function toggleGlass() {
     if (!theme) return;
     theme.background.glass = !(theme.background.glass ?? true);
+    touch();
+  }
+  function toggleHomeOnly() {
+    if (!theme) return;
+    theme.background.home_only = !(theme.background.home_only ?? false);
     touch();
   }
   function setSize(key: "size" | "mono_size", v: string) {
@@ -374,10 +375,7 @@
       <input type="file" accept="image/png,image/jpeg,image/webp" hidden bind:this={fileInputEl} on:change={onFile} />
     </div>
     <div class="field-card">
-      <div class="field-info">
-        <span class="field-label">Glass panels</span>
-        <span class="field-hint">Blur the wallpaper through the panels. Off is solid.</span>
-      </div>
+      <span class="field-label">Glass panels</span>
       <Switch on={theme.background.glass ?? true} title="Blur the wallpaper through the panels" on:toggle={toggleGlass} />
     </div>
     <div class="walls">
@@ -402,16 +400,15 @@
       {/each}
     </div>
     {#if theme.background.image}
+      <div class="field-card">
+        <span class="field-label">Only on home</span>
+        <Switch on={theme.background.home_only ?? false} title="Wallpaper only on home" on:toggle={toggleHomeOnly} />
+      </div>
       <div class="field-card stack">
         <Slider label="Dim" bind:value={dimPct} min={0} max={95} unit="%" on:input={() => onPct("dim", dimPct)} />
         <Slider label="Blur" bind:value={theme.background.blur} min={0} max={20} step={0.5} unit="px" on:input={touch} />
-        <Slider label="Vignette" bind:value={vignettePct} min={0} max={100} unit="%" on:input={() => onPct("vignette", vignettePct)} />
         <Slider label="Height" bind:value={heightPct} min={30} max={100} unit="%" on:input={() => onPct("height", heightPct)} />
         <Slider label="Position" bind:value={yPct} min={0} max={100} unit="%" on:input={() => onPct("y", yPct)} />
-      </div>
-      <div class="field-card stack">
-        <Slider label="Dither" bind:value={grainPct} min={0} max={100} unit="%" on:input={() => onPct("grain", grainPct)} />
-        <Slider label="Dither size" bind:value={theme.background.grain_size} min={16} max={128} step={4} unit="px" on:input={touch} />
       </div>
       <div class="field-card">
         <span class="field-label">Accent follows the wallpaper</span>

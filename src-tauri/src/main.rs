@@ -822,6 +822,7 @@ fn main() {
             files::open_file_path,
             settings::get_config,
             settings::save_config,
+            settings::acp_registry,
             settings::provider_statuses,
             settings::refresh_providers,
             settings::warm_agent,

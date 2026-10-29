@@ -76,6 +76,7 @@ pub fn portable(mut cfg: ParziConfig) -> ParziConfig {
     cfg.mcp = parzi_core::config::McpConfig::default();
     for entry in cfg.providers.values_mut() {
         entry.binary.clear();
+        entry.args.clear();
     }
     cfg
 }
@@ -90,6 +91,10 @@ pub fn merge_config(local: ParziConfig, incoming: ParziConfig) -> ParziConfig {
     for (id, mine) in local.providers {
         let entry = out.providers.entry(id).or_insert_with(|| mine.clone());
         entry.binary = mine.binary;
+        entry.args = mine.args;
+        if !mine.label.is_empty() {
+            entry.label = mine.label;
+        }
     }
     out
 }

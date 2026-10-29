@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
   import { fade, fly } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
@@ -72,7 +73,7 @@
     ...(import.meta.env.DEV
       ? [{ id: "previews", icon: "spark" as IconName, title: "Component previews", sub: "", keys: "omnibar gallery", run: () => dispatch("previews") }]
       : []),
-    { id: "settings", icon: "settings", title: "Settings", sub: "", keys: "agents providers appearance theme system connectors", run: () => dispatch("settings") },
+    { id: "settings", icon: "settings", title: "Settings", sub: "", keys: "agents providers appearance theme system connectors apps remote mcp", run: () => dispatch("settings") },
     { id: "setup", icon: "wrench", title: "Set up Parzi", sub: "", keys: "agents browser tools remote wizard", run: () => dispatch("setup") },
   ];
   const MAX_SESSIONS = 50;
@@ -149,7 +150,7 @@
 
 {#if open}
   <div class="backdrop" transition:fade={{ duration: 120 }} on:click|self={() => dispatch("close")} role="presentation">
-    <div class="box" role="dialog" aria-modal="true" aria-label="Search" transition:fly={{ y: -10, duration: 160 }}>
+    <div class="box" role="dialog" aria-modal="true" aria-label="Search" transition:fly={{ y: -6, duration: 140, easing: cubicOut }}>
       <div class="head">
         <Icon name="search" />
         <input bind:this={inputEl} bind:value={query} aria-label="Search" placeholder="Search sessions, tabs, or actions" />
@@ -223,7 +224,7 @@
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 3);
-    padding: calc(var(--space) * 3) calc(var(--space) * 6);
+    padding: calc(var(--space) * 3) calc(var(--space) * 4);
     color: var(--muted);
     border-bottom: 1px solid var(--line);
   }
@@ -350,7 +351,7 @@
   .foot {
     display: flex;
     gap: calc(var(--space) * 4);
-    padding: calc(var(--space) * 2) calc(var(--space) * 6);
+    padding: calc(var(--space) * 2) calc(var(--space) * 4);
     font-size: var(--fs-xs);
     color: var(--muted);
     border-top: 1px solid var(--line);

@@ -104,8 +104,9 @@ impl Provider for Claude {
         process::existing_folder(&spec.cwd)?;
         let scratch = TurnFiles::write(&spec)?;
         let args = turn_args(&spec, &scratch)?;
-        let mut proc = Proc::spawn(&program, &args, &spec.cwd, &[])
-            .map_err(|e| ProviderError::process(format!("could not start Claude Code: {e}")))?;
+        let mut proc = Proc::spawn(&program, &args, &spec.cwd, &[]).map_err(|e| {
+            ProviderError::process(process::start_error("Claude Code", &program, &e))
+        })?;
         let stdin = proc.child.stdin.take();
         let stdout = proc.child.stdout.take();
         let (Some(stdin), Some(stdout)) = (stdin, stdout) else {
@@ -204,7 +205,7 @@ async fn handshake(program: &Path) -> Result<Value, ProviderError> {
     .collect();
     let cwd = std::env::temp_dir();
     let mut proc = Proc::spawn(program, &args, &cwd, &[])
-        .map_err(|e| ProviderError::process(format!("could not start Claude Code: {e}")))?;
+        .map_err(|e| ProviderError::process(process::start_error("Claude Code", program, &e)))?;
     let (Some(stdin), Some(stdout)) = (proc.child.stdin.take(), proc.child.stdout.take()) else {
         proc.kill().await;
         return Err(ProviderError::process("Claude Code started without stdio"));

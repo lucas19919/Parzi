@@ -33,7 +33,7 @@
   import { isRemote, loadRemoteInfo, onRemoteStatus, refreshRemoteBoard, remote, remoteBoard, remoteInfo } from "./lib/remote";
   import { permissionFor } from "./lib/permission";
   import { provideClearSessions } from "./lib/sessions";
-  import { applyThemeCss } from "./lib/theme";
+  import { applyThemeCss, wallpaperHomeOnly } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
   import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, previewTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
@@ -44,7 +44,7 @@
   import { nameOf } from "./lib/providerRows";
   import { follower } from "./lib/follow";
   import { draftKey, flushDrafts, loadDrafts, sameDraft, saveDrafts, withDraft } from "./lib/drafts";
-import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, moveId, putFront, saveHeld, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
+import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, moveId, putFront, saveHeld, stillWorking, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
   import { addNotification, dropNotification, markSessionRead, type NotificationItem } from "./lib/notificationStore";
   import { covered } from "./lib/overlay";
   import { tooltip } from "./lib/tooltip";
@@ -406,6 +406,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let cover: "brain" | "settings" | "history" | null = null;
   let coverFor = "";
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
+  // Home is a new session with nothing covering it. A wallpaper can stay there.
+  $: showWallpaper = !$wallpaperHomeOnly || (tab.kind === "session" && !hasSession && !coverOn);
 
   function clearCover() {
     cover = null;
@@ -973,8 +975,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   function openSettings(section = "general") {
-    // System lives at the bottom of General now.
-    settingsSection = section === "system" ? "general" : section;
+    // Updates, remote and the old skills page all live on General.
+    settingsSection = section === "system" || section === "remote" || section === "skills" ? "general" : section;
     showCover("settings");
   }
 
@@ -1081,11 +1083,27 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         inflight.delete(target.sessionId);
         release(target.sessionId);
       }
+      events = events.filter((ev) => ev !== optimistic);
+      // The turn is still going. The message waits with the others and
+      // sends when that turn ends. A full queue keeps the draft.
+      if (target.sessionId && !fresh && stillWorking(e)) {
+        const queued = enqueue(held, target.sessionId, { tab: target.id, text: prompt, quotes, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn });
+        if (!queued.ok) {
+          draft.input = prompt;
+          draft.attachments = files;
+          draft.quotes = quotes;
+          comp = comp;
+          toast(`The queue holds ${MAX_HELD} messages`);
+        } else {
+          held = queued.queue;
+          console.info("queue: still working; the message stays queued", { session: target.sessionId });
+        }
+        return;
+      }
       draft.input = prompt;
       draft.attachments = files;
       draft.quotes = quotes;
       comp = comp;
-      events = events.filter((ev) => ev !== optimistic);
       toastError(e);
     } finally {
       sending = false;
@@ -1168,6 +1186,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       release(sid);
       held = putFront(held, sid, h);
       if (shown === sid) events = events.filter((ev) => ev !== optimistic);
+      if (stillWorking(e)) {
+        console.info("queue: still working; the message stays queued", { session: sid });
+        return;
+      }
       toastError(e);
     }
   }
@@ -1617,6 +1639,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     if (e.kind === "done" || e.kind === "error" || e.kind === "paused") {
+      // The agent closed. The queue stays listed and paused, same as Stop,
+      // so Resume sends the rows in order.
+      if (e.kind === "error" && /exited before/i.test(e.error) && (held[e.session]?.length ?? 0) > 0) {
+        queuePaused = new Set(queuePaused).add(e.session);
+      }
       release(e.session);
       for (const k of [...approvals, ...questions, ...requests].filter((x) => x.session === e.session).map((x) => x.key)) settle(k);
       void refreshThreads();
@@ -1881,6 +1908,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       try {
         applyThemeCss(await api.getThemeCss());
         bg = await api.backgroundUrl();
+        api.getTheme().then((t) => wallpaperHomeOnly.set(!!t.background.home_only)).catch(() => {});
         await ensureBoard();
         checkForUpdatesSoon();
       } catch (e) {
@@ -1908,7 +1936,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 <svelte:window on:keydown={onKey} on:pagehide={persistDrafts} on:beforeunload={persistDrafts} bind:innerWidth />
 
 <div class="shell">
-  <DefaultArt {bg} />
+  <DefaultArt bg={showWallpaper ? bg : ""} />
 
   {#if !immersive}
     <TopBar
@@ -1941,12 +1969,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         <Settings bind:section={settingsSection} on:close={() => closeTab(activeId)} on:setupRemote={openRemoteSetup} />
       </div>
     {:else if tab.kind === "brain"}
-      <div class="fill col" in:fade={{ duration: 150 }}>
+      <div class="fill col" in:fly={{ y: 8, ...motion }}>
         <PanelHeader title="Brain" on:close={() => closeTab(activeId)} />
         <BrainView />
       </div>
     {:else if tab.kind === "history"}
-      <div class="fill col" in:fade={{ duration: 150 }}>
+      <div class="fill col" in:fly={{ y: 8, ...motion }}>
         <PanelHeader title="History" on:close={() => closeTab(activeId)} />
         <HistoryView
           {threads}
@@ -1990,7 +2018,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           <section class="session" out:fade|local={{ duration: motion.duration }}>
             {#if coverOn || parent}
               <button
-                class="back"
+                class="back back-btn"
                 aria-label={coverOn ? "Back" : `Back to ${parent?.title || "Untitled"}`}
                 use:tooltip={coverOn ? "Back" : `Back to ${parent?.title || "Untitled"}`}
                 transition:fly|global={{ x: 28, ...motion }}
@@ -2000,13 +2028,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
               </button>
             {/if}
             {#if coverOn && cover === "brain"}
-              <div class="cover" transition:fade|global={{ duration: motion.duration }}><BrainView /></div>
+              <div class="cover" transition:fly|global={{ y: 8, ...motion }}><BrainView /></div>
             {:else if coverOn && cover === "settings"}
-              <div class="cover" transition:fade|global={{ duration: motion.duration }}>
+              <div class="cover" transition:fly|global={{ y: 8, ...motion }}>
                 <Settings bind:section={settingsSection} on:setupRemote={openRemoteSetup} />
               </div>
             {:else if coverOn && cover === "history"}
-              <div class="cover" transition:fade|global={{ duration: motion.duration }}>
+              <div class="cover" transition:fly|global={{ y: 8, ...motion }}>
                 <HistoryView
                   {threads}
                   {running}
@@ -2071,6 +2099,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                 </Thread>
               </div>
             </div>
+            {/if}
+            {#if hasSession && !coverOn}
+              <div class="thread-fade" style:--dock="{dockHeight}px" aria-hidden="true"></div>
             {/if}
           </section>
           {/if}
@@ -2159,7 +2190,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           on:browse={(e) => browse(e.detail.url)}
           on:stop={stop}
           on:command={(e) => onCommand(e.detail.name)}
-          on:unavailable={() => openSettings(remoteOn ? "connections" : "providers")}
+          on:unavailable={() => openSettings(remoteOn ? "remote" : "providers")}
           on:folder={(e) => patchTab(tab.id, { cwd: e.detail.path })}
           on:project={(e) => loadProject(e.detail.path ?? tab.cwd ?? folder)}
           on:brain={openBrain}
@@ -2323,30 +2354,22 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     min-height: 0;
     display: flex;
   }
-  /* Floats in the corner, so the page under it still starts at the top. */
+  /* Floats in the corner, so the page under it still starts at the top.
+     The 16px inset is the same side padding the cover bars use. */
   .back {
     position: absolute;
     top: calc(var(--space) * 2);
-    right: calc(var(--space) * 2);
+    right: calc(var(--space) * 4);
     z-index: 5;
-    width: 28px;
-    height: 28px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
   }
-  /* The top bars keep their right-hand controls clear of the arrow. */
+  /* The top bars keep their right-hand controls clear of the arrow:
+     the bar's own 16px side padding, the 28px control, and 8px between them. */
   .cover :global(nav),
   .cover :global(header),
-  .cover :global(.bar) {
+  .cover :global(.bar),
+  .cover :global(.page-bar) {
     anchor-name: --cover-bar;
-    padding-right: calc(var(--space) * 8 + var(--space) * 2);
+    padding-right: calc(var(--space) * 4 + 28px + var(--space) * 2);
   }
   /* Half of the 28px control, on the bar's midline. */
   .session:has(.cover) .back {
@@ -2354,10 +2377,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     /* Fallback keeps the old corner when a cover has no top bar. */
     top: anchor(center, calc(var(--space) * 2 + 14px));
     translate: 0 -50%;
-  }
-  .back:hover {
-    background: var(--hover);
-    color: var(--text);
   }
   .cover {
     flex: 1;
@@ -2371,14 +2390,20 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     overflow-x: hidden;
     overflow-y: auto;
     padding-bottom: calc(var(--dock) + calc(var(--space) * 8));
-    /* A short fade at the rim, then out behind the composer. */
-    mask-image: linear-gradient(
-      to bottom,
-      transparent 0,
-      black calc(var(--space) * 2),
-      black calc(100% - var(--dock) - calc(var(--space) * 6)),
-      transparent calc(100% - var(--dock) - var(--space))
-    );
+    /* Text stays selectable. A mask here made copy come back empty. */
+    user-select: text;
+  }
+  /* The last lines fade into the page colour. The text itself is not masked,
+     so a copy still carries the words. */
+  .thread-fade {
+    pointer-events: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: calc(var(--dock, 140px) + 28px);
+    z-index: 15;
+    background: linear-gradient(to bottom, transparent, var(--bg) 55%);
   }
   /* Home is the composer alone, a little above the middle. In a session
      it docks at the bottom of the thread, beside the info column. */
@@ -2405,6 +2430,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
        margins (16px), the thread's padding (48px) and the column. */
     width: min(var(--read), calc(100% - 64px - 2 * var(--shift, 0px)));
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
+  }
+  /* The field covers the thread. A mask on the text made copy come back empty. */
+  .composer.docked :global(.box) {
+    background: var(--bg);
   }
   .toasts {
     position: fixed;

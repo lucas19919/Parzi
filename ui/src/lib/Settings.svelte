@@ -7,10 +7,15 @@
 
   export let section = "general";
 
+  // Old pages: remote and skills are not tabs. Remote is on General.
+  $: if (section === "skills" || section === "remote" || section === "system") section = "general";
+
+  // "connections" stays the id so openSettings("connections") still lands here.
+  // Remote lives on General. Skills is not a settings page.
   const SECTIONS = [
     { id: "general", label: "General" },
     { id: "providers", label: "Providers" },
-    { id: "connections", label: "Connections" },
+    { id: "connections", label: "MCPs and Connectors" },
     { id: "appearance", label: "Appearance" },
   ];
 
@@ -18,7 +23,7 @@
 </script>
 
 <div class="settings">
-  <nav>
+  <nav class="page-bar">
     <div class="sections page-tabs" role="tablist" aria-label="Settings sections">
       {#each SECTIONS as s (s.id)}
         <button role="tab" aria-selected={section === s.id} class:active={section === s.id} on:click={() => (section = s.id)}>
@@ -32,11 +37,11 @@
       {#if section === "providers"}
         <ProvidersSection {notify} />
       {:else if section === "connections"}
-        <ConnectionsSection {notify} on:setupRemote />
+        <ConnectionsSection which="apps" {notify} />
       {:else if section === "appearance"}
         <AppearanceSection {notify} />
       {:else}
-        <GeneralSection {notify} />
+        <GeneralSection {notify} on:setupRemote />
       {/if}
     </div>
   </div>
@@ -51,19 +56,8 @@
     background: transparent;
   }
   nav {
-    display: flex;
-    align-items: center;
     justify-content: space-between;
-    /* First tab shares the session's top-left corner. */
-    padding: calc(var(--radius) - var(--radius-sm)) calc(var(--space) * 4);
-    padding-left: calc(var(--radius) - var(--radius-sm));
-    border-bottom: 1px solid var(--line);
-  }
-  .sections {
-    overflow-x: auto;
-  }
-  .sections > button {
-    border-radius: var(--radius-sm);
+    border-bottom: none;
   }
   .scroll {
     flex: 1;

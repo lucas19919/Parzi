@@ -47,7 +47,7 @@ struct Server {
 async fn open(program: &Path, cwd: &Path) -> Result<Server, ProviderError> {
     process::existing_folder(cwd)?;
     let mut proc = Proc::spawn(program, &["app-server".to_string()], cwd, &[])
-        .map_err(|e| ProviderError::process(format!("could not start Codex: {e}")))?;
+        .map_err(|e| ProviderError::process(process::start_error("Codex", program, &e)))?;
     let (Some(stdin), Some(stdout)) = (proc.child.stdin.take(), proc.child.stdout.take()) else {
         proc.kill().await;
         return Err(ProviderError::process("Codex started without stdio"));

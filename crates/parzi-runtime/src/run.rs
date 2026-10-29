@@ -82,6 +82,8 @@ pub struct EngineRun {
 enum Outcome {
     Completed,
     Interrupted,
+    /// The agent closed. The sentence is already in the thread.
+    Closed(String),
     Paused(String),
     Failed(ProviderError),
 }
@@ -152,16 +154,11 @@ impl EngineRun {
             match self.turn(&text, false).await {
                 Outcome::Completed => self.brief_seen(),
                 Outcome::Interrupted => {
-                    // One quiet line where the answer would be.
-                    let _ = self.p.store.append(
-                        &sid,
-                        &Event::System {
-                            text: "Stopped".into(),
-                        },
-                    );
-                    self.tally(|t| t.end = Some((RunEndKind::Stopped, None)));
-                    self.end(SessionStatus::Killed).await;
-                    self.p.sink.emit(RunEvent::Error("cancelled".into()));
+                    self.stopped(None).await;
+                    return Ok(());
+                }
+                Outcome::Closed(reason) => {
+                    self.stopped(Some(reason)).await;
                     return Ok(());
                 }
                 Outcome::Paused(reason) => {
@@ -312,9 +309,11 @@ impl EngineRun {
                 Ok(())
             }
             Outcome::Interrupted => {
-                self.tally(|t| t.end = Some((RunEndKind::Stopped, None)));
-                self.end(SessionStatus::Killed).await;
-                self.p.sink.emit(RunEvent::Error("cancelled".into()));
+                self.stopped(None).await;
+                Ok(())
+            }
+            Outcome::Closed(reason) => {
+                self.stopped(Some(reason)).await;
                 Ok(())
             }
             Outcome::Paused(reason) => {
@@ -584,7 +583,13 @@ impl EngineRun {
         };
         let mut turn = Turn::default();
         let mut paused: Option<String> = None;
+        let mut closed: Option<String> = None;
         while let Some(ev) = rx.recv().await {
+            if let ProviderEvent::Notice(ref text) = ev {
+                if text.contains("exited before it answered") {
+                    closed = Some(text.clone());
+                }
+            }
             if let Some(reason) = self.on_event(ev, &mut turn) {
                 if paused.is_none() {
                     paused = Some(reason);
@@ -616,10 +621,36 @@ impl EngineRun {
         }
         match result {
             Ok(TurnEnd::Completed) => Outcome::Completed,
-            Ok(TurnEnd::Interrupted) => Outcome::Interrupted,
+            Ok(TurnEnd::Interrupted) => match closed.filter(|_| !self.p.cancel.is_cancelled()) {
+                Some(reason) => Outcome::Closed(reason),
+                None => Outcome::Interrupted,
+            },
             Err(_) if self.p.cancel.is_cancelled() => Outcome::Interrupted,
             Err(e) => Outcome::Failed(e),
         }
+    }
+
+    /// A stop the person asked for says "Stopped" and stays killed.
+    /// An agent that closed says why, goes idle so Stop clears, and
+    /// leaves every other session alone.
+    async fn stopped(&self, closed: Option<String>) {
+        let sid = &self.p.session_id;
+        if let Some(reason) = closed {
+            tracing::warn!(session = %sid, "agent closed: {reason}");
+            self.tally(|t| t.end = Some((RunEndKind::Interrupted, Some(reason.clone()))));
+            self.end(SessionStatus::Idle).await;
+            self.p.sink.emit(RunEvent::Error(reason));
+            return;
+        }
+        let _ = self.p.store.append(
+            sid,
+            &Event::System {
+                text: "Stopped".into(),
+            },
+        );
+        self.tally(|t| t.end = Some((RunEndKind::Stopped, None)));
+        self.end(SessionStatus::Killed).await;
+        self.p.sink.emit(RunEvent::Error("cancelled".into()));
     }
 
     fn flush(&self, turn: &mut Turn, done: bool) {

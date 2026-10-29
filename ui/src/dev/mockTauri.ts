@@ -435,6 +435,10 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   provider_statuses: () => board,
   refresh_providers: () => board,
   get_config: () => structuredClone(config),
+  acp_registry: () => [
+    { id: "gemini", name: "Gemini CLI", command: "gemini", args: ["--acp"] },
+    { id: "github-copilot-cli", name: "GitHub Copilot", command: "copilot", args: ["--acp"] },
+  ],
   // Settings save over the mock's copy, so a reload of Settings sees them.
   save_config: (a) => {
     Object.assign(config, structuredClone((a as { cfg: typeof config }).cfg));

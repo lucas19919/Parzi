@@ -93,7 +93,11 @@ fn validate_preview(content: &str) -> Result<()> {
             "preview content must be JSON like {\"component\":\"omnibar\",\"variant\":1}".into(),
         )
     })?;
-    let component = v.get("component").and_then(|c| c.as_str()).unwrap_or("").trim();
+    let component = v
+        .get("component")
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .trim();
     let Some(variants) = preview_variants(component) else {
         return Err(ParziError::Validation(
             "unknown preview component. Known: omnibar (variant 1 agent, 2 web)".into(),
@@ -119,7 +123,9 @@ fn validate_preview(content: &str) -> Result<()> {
 }
 
 fn mentions_live_ui(title: &str, content: &str) -> bool {
-    format!("{title}\n{content}").to_ascii_lowercase().contains("omnibar")
+    format!("{title}\n{content}")
+        .to_ascii_lowercase()
+        .contains("omnibar")
 }
 
 pub fn validate_artifact(v: &serde_json::Value) -> Result<ArtifactV1> {

@@ -242,22 +242,21 @@
     class="card"
     role="dialog"
     aria-modal="true"
-    aria-labelledby="onboarding-title"
+    aria-label={TITLES[step]}
     tabindex="-1"
     bind:this={card}
     transition:fly={{ y: 10, duration: 180 }}
   >
-    <header>
-      <div class="steps">
+    <header class="page-bar">
+      <div class="page-tabs" role="tablist" aria-label="Setup">
         {#each STEPS as s, i}
-          <button class:on={i === step} class:done={i < step} aria-current={i === step ? "step" : undefined} disabled={locked} on:click={() => (step = i)}>{s}</button>
+          <button role="tab" aria-selected={i === step} disabled={locked} on:click={() => (step = i)}>{s}</button>
         {/each}
       </div>
-      <button class="x" use:tooltip={locked ? "Wait for the remote setup" : "Close"} disabled={locked} on:click={() => finish()}><Icon name="close" /></button>
+      <button class="back-btn" use:tooltip={locked ? "Wait for the remote setup" : "Back"} disabled={locked} on:click={() => finish()}><Icon name="arrowLeft" /></button>
     </header>
 
     <div class="body">
-      <h2 id="onboarding-title">{TITLES[step]}</h2>
       {#if step === 0}
         <p class="lead">Parzi drives each agent on your own subscription. Install and sign in right here; each agent keeps its own login, so Parzi never sees your tokens.</p>
         <div class="list">
@@ -278,7 +277,7 @@
                 {/key}
               {/if}
               {#if next}
-                <button class="btn" disabled={$checking.has(a.provider) || $checking.has("*")} on:click={() => next.run(a.provider)}>{next.label}</button>
+                <button class="sbtn" disabled={$checking.has(a.provider) || $checking.has("*")} on:click={() => next.run(a.provider)}>{next.label}</button>
               {/if}
             </div>
           {/each}
@@ -308,7 +307,7 @@
             <label><input type="checkbox" bind:checked={wantHistory} /> History</label>
           </div>
           <div class="action">
-            <button class="btn primary" disabled={busy || !browserPick || (!wantBookmarks && !wantHistory)} on:click={importFromBrowser}>
+            <button class="sbtn primary" disabled={busy || !browserPick || (!wantBookmarks && !wantHistory)} on:click={importFromBrowser}>
               {busy ? "Importing…" : "Import"}
             </button>
             {#if browserResult}<span class="result">{browserResult}</span>{/if}
@@ -347,7 +346,7 @@
             {/each}
           </div>
           <div class="action">
-            <button class="btn primary" disabled={busy || !picked.size} on:click={importFromTools}>{busy ? "Importing…" : "Import"}</button>
+            <button class="sbtn primary" disabled={busy || !picked.size} on:click={importFromTools}>{busy ? "Importing…" : "Import"}</button>
             {#if toolResult}<span class="result">{toolResult}</span>{/if}
           </div>
           {#if skipped.length}
@@ -389,7 +388,7 @@
               </label>
             </div>
             <div class="action">
-              <button class="btn primary" disabled={!remoteUser.trim() || !remoteHost.trim() || locked} on:click={setupRemote}>
+              <button class="sbtn primary" disabled={!remoteUser.trim() || !remoteHost.trim() || locked} on:click={setupRemote}>
                 {locked ? "Setting up…" : remoteInfo ? "Set up again" : "Set up"}
               </button>
               {#if setupMsg}<span class="result" class:bad={setupState === "error"}>{setupMsg}</span>{/if}
@@ -414,13 +413,13 @@
     </div>
 
     <footer>
-      {#if step > 0}<button class="btn" disabled={locked} on:click={() => (step -= 1)}>Back</button>{/if}
+      {#if step > 0}<button class="sbtn" disabled={locked} on:click={() => (step -= 1)}>Back</button>{/if}
       <span class="grow" />
       {#if step < LAST}
         <button class="link" on:click={() => (step += 1)}>Skip</button>
-        <button class="btn primary" disabled={busy} on:click={next}>{busy ? "Importing…" : "Next"}</button>
+        <button class="sbtn primary" disabled={busy} on:click={next}>{busy ? "Importing…" : "Next"}</button>
       {:else}
-        <button class="btn primary" disabled={locked} on:click={() => finish()}>Done</button>
+        <button class="sbtn primary" disabled={locked} on:click={() => finish()}>Done</button>
       {/if}
     </footer>
   </div>
@@ -438,8 +437,13 @@
     background: var(--scrim);
   }
   .card {
-    width: min(620px, 100%);
-    max-height: min(720px, 100%);
+    width: min(640px, calc(100vw - 48px));
+    height: min(640px, calc(100vh - 48px));
+    min-width: 0;
+    min-height: 0;
+    max-width: min(640px, calc(100vw - 48px));
+    max-height: min(640px, calc(100vh - 48px));
+    flex: none;
     display: flex;
     flex-direction: column;
     background: var(--panel);
@@ -448,80 +452,21 @@
     overflow: hidden;
     outline: none;
   }
-  header,
+  header .page-tabs {
+    flex: 1;
+  }
   footer {
     flex: none;
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 2);
-    padding: calc(var(--space) * 3) calc(var(--space) * 6);
-  }
-  /* The close button's glyph, not its box, lines up with the 20px inset. */
-  header {
-    padding-right: calc(var(--space) * 4);
-    border-bottom: 1px solid var(--line);
-  }
-  footer {
-    border-top: 1px solid var(--line);
-  }
-  .steps {
-    display: flex;
-    gap: calc(var(--space) * 2);
-    flex: 1;
-  }
-  .steps button {
-    min-height: 24px;
-    padding: var(--space) calc(var(--space) * 3);
-    background: none;
-    border: none;
-    border-radius: 999px;
-    color: var(--muted);
-    font-size: var(--fs-sm);
-    cursor: pointer;
-  }
-  .steps button.done {
-    color: var(--muted);
-  }
-  .steps button:hover:not(:disabled) {
-    color: var(--text);
-  }
-  .steps button.on {
-    background: var(--line);
-    color: var(--text);
-  }
-  .steps button:disabled,
-  .x:disabled {
-    cursor: default;
-    opacity: 0.5;
-  }
-  .x {
-    width: 28px;
-    height: 28px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .x:hover:not(:disabled) {
-    background: var(--line);
-    color: var(--text);
+    padding: calc(var(--space) * 2) calc(var(--space) * 4);
   }
   .body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     padding: calc(var(--space) * 6);
-  }
-  h2 {
-    margin: 0 0 calc(var(--space) * 2);
-    font-size: var(--fs-xl);
-    font-weight: 600;
-    color: var(--text);
   }
   .lead {
     margin: 0 0 calc(var(--space) * 4);
@@ -811,7 +756,7 @@
     gap: calc(var(--space) * 3);
     margin-top: calc(var(--space) * 4);
   }
-  .action .btn {
+  .action .sbtn {
     flex: none;
     white-space: nowrap;
   }

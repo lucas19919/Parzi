@@ -230,12 +230,7 @@ mod tests {
     #[test]
     fn every_session_gets_every_section() {
         let parts = system_parts("C:\\x");
-        for section in [
-            "## tools",
-            "## teamwork",
-            "## plans",
-            "## delivery",
-        ] {
+        for section in ["## tools", "## teamwork", "## plans", "## delivery"] {
             assert!(parts.iter().any(|p| p.starts_with(section)), "{section}");
         }
         assert!(!parts.iter().any(|p| p.contains("Lane:")), "no lanes");

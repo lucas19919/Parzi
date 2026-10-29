@@ -182,7 +182,67 @@ kbd {
 .btn:active:not(:disabled) { transform: translateY(0) scale(0.97); transition-duration: 60ms; }
 .btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
 
-/* Settings, History, and Brain share this tab row. */
+/* One top bar for Settings, History, Brain and the setup modal. No rule under it. */
+.page-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 3);
+  min-width: 0;
+  width: 100%;
+  padding: calc(var(--space) * 2) calc(var(--space) * 4);
+  border-bottom: none;
+}
+/* The search field on those bars. */
+.page-search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: calc(var(--space) * 2);
+  height: 28px;
+  padding: 0 calc(var(--space) * 3);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+}
+.page-search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  box-shadow: none !important;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-md);
+}
+/* The back arrow on a cover and on the setup modal. */
+.back-btn {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius);
+  color: var(--muted);
+  cursor: pointer;
+}
+.back-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.back-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Settings, History, Brain and setup share this tab row. Words only, no pills. */
 .page-tabs {
   display: flex;
   align-items: center;
@@ -190,28 +250,32 @@ kbd {
   min-width: 0;
 }
 .page-tabs > button {
-  height: 28px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   flex: none;
   padding: 0 calc(var(--space) * 3);
   background: transparent;
   border: none;
-  border-radius: var(--radius);
+  border-radius: 0;
   color: var(--muted);
   font-size: var(--fs-sm);
   cursor: pointer;
   white-space: nowrap;
 }
-.page-tabs > button:hover {
-  background: var(--hover);
+.page-tabs > button:hover:not(:disabled) {
+  background: transparent;
   color: var(--text);
+}
+.page-tabs > button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .page-tabs > button[aria-selected="true"],
 .page-tabs > button[aria-pressed="true"] {
-  background: var(--selected);
+  background: transparent;
   color: var(--text);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .thread-col { line-height: 1.65; font-size: var(--fs-base); }

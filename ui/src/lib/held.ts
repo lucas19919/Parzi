@@ -83,6 +83,11 @@ export function takeAll(queue: HoldQueue, sid: string): { queue: HoldQueue; item
   return { queue: next, items: [...items] };
 }
 
+/** The server refused a second run because this session is still in one. */
+export function stillWorking(error: unknown): boolean {
+  return /still working/i.test(String(error));
+}
+
 /** A send that failed goes back to the front. The ones queued behind it stay behind it. */
 export function putFront(queue: HoldQueue, sid: string, item: HeldItem): HoldQueue {
   const list = queue[sid] ?? [];

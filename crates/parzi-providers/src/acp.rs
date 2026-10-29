@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -44,6 +44,9 @@ enum Probe {
     GrokModels,
     CursorStatus,
     GeminiSettings,
+    /// Models come from a session the agent opens, the way Cursor's do
+    /// when its own status lists none.
+    ListedBySession,
 }
 
 fn no_env() -> Vec<(String, String)> {
@@ -141,6 +144,50 @@ pub fn agent(id: &str) -> Option<Agent> {
     })
 }
 
+/// One generic ACP command (`id` is always `acp`). The label and args are
+/// leaked once per distinct command: Settings changes them rarely, and
+/// `Agent` has to stay `'static` for the read loop.
+fn custom_agent(label: &str, args: &[String]) -> Agent {
+    let label = {
+        let trimmed = label.trim();
+        if trimmed.is_empty() {
+            "ACP"
+        } else {
+            trimmed
+        }
+    };
+    let key = format!("{label}\n{}", args.join("\n"));
+    static CACHE: OnceLock<Mutex<HashMap<String, Agent>>> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(agent) = cache.get(&key) {
+        return *agent;
+    }
+    let name: &'static str = Box::leak(label.to_string().into_boxed_str());
+    let leaked: Vec<&'static str> = args
+        .iter()
+        .map(|a| &*Box::leak(a.clone().into_boxed_str()))
+        .collect();
+    let args: &'static [&'static str] = Box::leak(leaked.into_boxed_slice());
+    let agent = Agent {
+        id: "acp",
+        name,
+        program: "",
+        args,
+        env: no_env,
+        locate: nowhere,
+        gated: true,
+        slow_start: false,
+        compacts: false,
+        sign_in: None,
+        probe: Probe::ListedBySession,
+    };
+    cache.insert(key, agent);
+    agent
+}
+
 pub struct Acp {
     agent: Agent,
     binary: String,
@@ -152,6 +199,11 @@ impl Acp {
             agent,
             binary: binary.to_string(),
         }
+    }
+
+    /// A command from Settings: registry id or a local program plus args.
+    pub fn custom(binary: &str, args: &[String], label: &str) -> Self {
+        Self::new(custom_agent(label, args), binary)
     }
 
     fn program(&self) -> Option<PathBuf> {
@@ -172,7 +224,7 @@ impl Acp {
         let args: Vec<String> = self.agent.args.iter().map(|a| (*a).to_string()).collect();
         let env = (self.agent.env)();
         let mut proc = Proc::spawn(program, &args, cwd, &env).map_err(|e| {
-            ProviderError::process(format!("could not start {}: {e}", self.agent.name))
+            ProviderError::process(process::start_error(self.agent.name, program, &e))
         })?;
         let (Some(stdin), Some(stdout)) = (proc.child.stdin.take(), proc.child.stdout.take())
         else {
@@ -558,13 +610,19 @@ impl Provider for Acp {
 
     async fn status(&self) -> ProviderStatus {
         let Some(program) = self.program() else {
-            return ProviderStatus::new(self.agent.id, State::NotInstalled, "");
+            let hint = if self.agent.id == "acp" {
+                "Add its command in Settings."
+            } else {
+                ""
+            };
+            return ProviderStatus::new(self.agent.id, State::NotInstalled, hint);
         };
         let mut status = match self.agent.probe {
             Probe::OpencodeModels => opencode_status(&program, self.agent).await,
             Probe::GrokModels => grok_status(&program, self.agent).await,
             Probe::CursorStatus => cursor_status(&program, self.agent).await,
             Probe::GeminiSettings => gemini_status(self.agent),
+            Probe::ListedBySession => ProviderStatus::new(self.agent.id, State::Ready, ""),
         };
         // A probe that lists nothing (transient failure, signed out)
         // falls back to the last models a session saw, so the picker
@@ -1338,10 +1396,26 @@ async fn drive(
             done = &mut done_rx => {
                 seen.buffers.flush(events);
                 opened.commands.clone_from(&seen.commands);
-                let answer = done.unwrap_or_else(|_| Err(RpcError { code: RpcError::CLOSED, message: format!("{} exited before the turn finished", agent.name), data: None }));
+                let answer = done.unwrap_or_else(|_| {
+                    Err(RpcError {
+                        code: RpcError::CLOSED,
+                        message: format!("{} exited before it answered", agent.name),
+                        data: None,
+                    })
+                });
                 let answer = match answer {
                     Ok(v) => v,
                     Err(_) if interrupting => return Ok(TurnEnd::Interrupted),
+                    // The process closed. The sentence stays on the turn;
+                    // the run ends so this session's Stop clears and the
+                    // others keep going.
+                    Err(e) if e.code == RpcError::CLOSED => {
+                        let sentence = e.to_string();
+                        tracing::warn!("{} closed during the turn: {sentence}", agent.name);
+                        let _ = events.send(ProviderEvent::Notice(sentence));
+                        seen.buffers.flush(events);
+                        return Ok(TurnEnd::Interrupted);
+                    }
                     Err(e) => return Err(rpc_failure(agent, e)),
                 };
                 if let Some(u) = answer.get("usage").filter(|u| !u.is_null()) {
@@ -1867,6 +1941,76 @@ mod tests {
         assert_eq!(end, TurnEnd::Completed);
         assert_eq!(opened.sid, "S0", "kept for the next turn");
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_closed_prompt_ends_interrupted_and_another_peer_still_answers() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["method"], "session/prompt");
+            drop(w);
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("OpenCode", r, w);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent("opencode").unwrap(),
+            &spec(Some(json!({"session_id": "S0"}))),
+            gate,
+            &tx,
+            &CancellationToken::new(),
+            Some(Reused {
+                sid: "S0".into(),
+                session: json!({"sessionId": "S0"}),
+                model: Some("opencode/big-pickle".into()),
+                commands: vec![],
+            }),
+            &mut Opened::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(end, TurnEnd::Interrupted);
+        drop(tx);
+        let mut notices = vec![];
+        while let Some(e) = rx.recv().await {
+            if let ProviderEvent::Notice(text) = e {
+                notices.push(text);
+            }
+        }
+        assert!(
+            notices
+                .iter()
+                .any(|t| t.contains("exited before it answered")),
+            "{notices:?}"
+        );
+        server.await.unwrap();
+
+        let (client_io, server_io) = tokio::io::duplex(1024);
+        let (cr, cw) = tokio::io::split(client_io);
+        let (other, _incoming) = Peer::start("Other", cr, cw);
+        let (sr, mut sw) = tokio::io::split(server_io);
+        let other_server = tokio::spawn(async move {
+            let mut lines = BufReader::new(sr).lines();
+            let req: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            let answer = json!({"jsonrpc": "2.0", "id": req["id"], "result": {"ok": true}});
+            sw.write_all(format!("{answer}\n").as_bytes())
+                .await
+                .unwrap();
+        });
+        let result = other.request("ping", json!({})).await.unwrap();
+        assert_eq!(result["ok"], true);
+        other_server.await.unwrap();
     }
 
     #[tokio::test]

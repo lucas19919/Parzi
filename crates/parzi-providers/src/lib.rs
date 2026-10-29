@@ -1,4 +1,5 @@
 mod acp;
+mod registry;
 
 pub use acp::drop_live_in;
 mod claude;
@@ -26,7 +27,10 @@ pub const PROVIDERS: &[&str] = &[
     "grok",
     "antigravity",
     "cursor",
+    "acp",
 ];
+
+pub use registry::{parse_registry, registry_url, RegistryAgent};
 
 pub fn display_name(id: &str) -> &'static str {
     match canonical_id(id) {
@@ -36,6 +40,7 @@ pub fn display_name(id: &str) -> &'static str {
         Some("grok") => "Grok",
         Some("antigravity") => "Antigravity",
         Some("cursor") => "Cursor",
+        Some("acp") => "ACP",
         _ => "Unknown",
     }
 }
@@ -48,6 +53,7 @@ pub fn canonical_id(id: &str) -> Option<&'static str> {
         "grok" | "xai" | "grok-cli" => Some("grok"),
         "antigravity" => Some("antigravity"),
         "cursor" => Some("cursor"),
+        "acp" => Some("acp"),
         _ => None,
     }
 }
@@ -73,6 +79,10 @@ pub fn provider(id: &str, cfg: &ParziConfig) -> Option<Arc<dyn Provider>> {
     Some(match id {
         claude::ID => Arc::new(claude::Claude::new(&binary)),
         codex::ID => Arc::new(codex::Codex::new(&binary)),
+        "acp" => {
+            let entry = cfg.provider("acp");
+            Arc::new(acp::Acp::custom(&binary, &entry.args, &entry.label))
+        }
         other => Arc::new(acp::Acp::new(acp::agent(other)?, &binary)),
     })
 }

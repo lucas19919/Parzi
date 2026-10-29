@@ -1,3 +1,6 @@
+use std::sync::OnceLock;
+use std::time::Duration;
+
 use parzi_core::config::ParziConfig;
 use parzi_providers::ProviderStatus;
 use tauri::{AppHandle, Emitter, State};
@@ -55,18 +58,63 @@ pub async fn save_config(
     Ok(())
 }
 
+/// The line a person confirms. Empty args keep `{id} → {path}`.
+fn command_line(entry: &parzi_core::config::ProviderEntry) -> String {
+    let path = entry.binary.trim();
+    if entry.args.is_empty() {
+        return path.to_string();
+    }
+    if path.is_empty() {
+        return entry.args.join(" ");
+    }
+    format!("{path} {}", entry.args.join(" "))
+}
+
 fn binary_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
     let mut out: Vec<String> = new
         .providers
         .iter()
         .filter_map(|(id, entry)| {
-            let path = Some(entry.binary.trim()).filter(|p| !p.is_empty())?;
-            let before = old.providers.get(id).map(|e| e.binary.trim());
-            (before != Some(path)).then(|| format!("{id} → {path}"))
+            let line = command_line(entry);
+            if line.is_empty() {
+                return None;
+            }
+            let before = old.providers.get(id).map(command_line).unwrap_or_default();
+            (before != line).then(|| format!("{id} → {line}"))
         })
         .collect();
     out.sort();
     out
+}
+
+fn registry_agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(20)))
+            .build()
+            .into()
+    })
+}
+
+/// The public ACP registry, as commands this computer can run. Parzi does
+/// not download or install those programs.
+#[tauri::command]
+pub async fn acp_registry() -> Result<Vec<parzi_providers::RegistryAgent>, String> {
+    let url = parzi_providers::registry_url().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let body = registry_agent()
+            .get(&url)
+            .header("User-Agent", "Parzi")
+            .call()
+            .map_err(|e| e.to_string())?
+            .body_mut()
+            .read_to_string()
+            .map_err(|e| e.to_string())?;
+        parzi_providers::parse_registry(&body)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn mcp_command_changes(old: &ParziConfig, new: &ParziConfig) -> Vec<String> {
@@ -344,6 +392,44 @@ mod tests {
             binary_changes(&ParziConfig::default(), &set).len(),
             1,
             "a provider the old file never named"
+        );
+    }
+
+    #[test]
+    fn an_acp_argument_change_is_confirmed_too() {
+        let mut plain = ParziConfig::default();
+        plain.providers.insert(
+            "acp".into(),
+            parzi_core::config::ProviderEntry {
+                binary: "gemini".into(),
+                ..Default::default()
+            },
+        );
+        let mut with_args = plain.clone();
+        with_args.providers.get_mut("acp").unwrap().args = vec!["--acp".into()];
+        assert_eq!(
+            binary_changes(&plain, &with_args),
+            vec!["acp → gemini --acp".to_string()]
+        );
+        assert!(
+            binary_changes(&with_args, &with_args).is_empty(),
+            "an identical command is silent"
+        );
+        let mut flagged = ParziConfig::default();
+        flagged.providers.insert(
+            "claude".into(),
+            parzi_core::config::ProviderEntry {
+                binary: r"C:\tools\claude.exe".into(),
+                args: vec!["--flag".into()],
+                ..Default::default()
+            },
+        );
+        let mut cleared = flagged.clone();
+        cleared.providers.get_mut("claude").unwrap().args.clear();
+        assert_eq!(
+            binary_changes(&flagged, &cleared),
+            vec![r"claude → C:\tools\claude.exe".to_string()],
+            "empty args keep the path-only line"
         );
     }
 

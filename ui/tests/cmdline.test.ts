@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseEnv, splitLine } from "../src/lib/cmdline.ts";
+import { classifyPaste, nameFromProgram, parseEnv, splitLine } from "../src/lib/cmdline.ts";
 import { mergeProgress, stepName } from "../src/lib/remote.ts";
 
 test("command lines split like a shell, without expansion", () => {
@@ -8,6 +8,17 @@ test("command lines split like a shell, without expansion", () => {
   assert.deepEqual(splitLine(`run "C:\\My Files\\x" 'a b' ""`), ["run", "C:\\My Files\\x", "a b", ""]);
   assert.deepEqual(splitLine("   "), []);
   assert.deepEqual(splitLine("echo $HOME"), ["echo", "$HOME"]);
+});
+
+test("a paste is a link, a copied app, or a program", () => {
+  assert.equal(classifyPaste(""), "");
+  assert.equal(classifyPaste("  https://mcp.notion.com/mcp  "), "link");
+  assert.equal(classifyPaste('{"mcpServers":{"a":{"command":"x"}}}'), "block");
+  assert.equal(classifyPaste("npx -y some-server"), "program");
+  assert.equal(nameFromProgram(`"C:\\Program Files\\node.exe" server.js`), "server");
+  assert.equal(nameFromProgram("npx -y @scope/server"), "server");
+  assert.equal(nameFromProgram(".hidden"), "hidden");
+  assert.equal(nameFromProgram("..."), "app");
 });
 
 test("env lines need NAME=value", () => {

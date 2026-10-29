@@ -78,10 +78,10 @@
 
   // ids are the `mode` strings the backend reads (ApprovalMode::parse:
   // "auto" and "full" run, anything else asks). Three choices, done.
-  const PERMS: { id: string; title: string; label: string; desc: string; icon: IconName }[] = [
-    { id: "supervised", title: "Ask", label: "Ask", desc: "Ask before commands and file changes.", icon: "lock" },
-    { id: "auto", title: "Auto", label: "Auto", desc: "Approve routine actions without asking.", icon: "spark" },
-    { id: "full", title: "Full", label: "Full", desc: "Run commands and edits without asking.", icon: "unlock" },
+  const PERMS: { id: string; title: string; label: string; icon: IconName }[] = [
+    { id: "supervised", title: "Ask", label: "Ask", icon: "lock" },
+    { id: "auto", title: "Auto", label: "Auto", icon: "spark" },
+    { id: "full", title: "Full", label: "Full", icon: "unlock" },
   ];
 
   const SLASH = [
@@ -533,8 +533,22 @@
   }
 
   function onPaste(e: ClipboardEvent) {
-    const files = e.clipboardData?.files;
-    if (!files?.length || ![...files].some((f) => f.type.startsWith("image/"))) return;
+    const data = e.clipboardData;
+    if (!data) return;
+    const types = [...data.types];
+    // Windows often puts an image flavor next to real text. Taking the
+    // image and cancelling the paste swallows the words.
+    const text = data.getData("text/plain");
+    if (text.trim()) {
+      console.info("paste", { types, inserted: "text" });
+      return;
+    }
+    const files = data.files;
+    if (!files?.length || ![...files].some((f) => f.type.startsWith("image/"))) {
+      console.info("paste", { types, inserted: "none" });
+      return;
+    }
+    console.info("paste", { types, inserted: "image" });
     e.preventDefault();
     void stageImages(files);
   }
@@ -547,7 +561,7 @@
   function togglePerm() {
     effortOpen = false;
     permOpen = !permOpen;
-    if (permOpen && permBtn) permStyle = placeAbove(permBtn, 280);
+    if (permOpen && permBtn) permStyle = placeAbove(permBtn, 260);
   }
 
   function toggleEffort() {
@@ -562,10 +576,11 @@
   {#if queue.length}
     <!-- The queue sits above the composer, so the project stays on the box. -->
     <div class="queue-bar" role="list" aria-label="Queued messages">
-      <div class="queue-head">
-        <span class="queue-title">Queue · {queue.length}{queuePaused ? " · paused" : streaming ? " · sends in order" : ""}</span>
-        {#if queuePaused}<button class="queue-resume" on:click={() => dispatch("resumeQueue")}>Resume</button>{/if}
-      </div>
+      {#if queuePaused}
+        <div class="queue-head">
+          <button class="queue-resume" on:click={() => dispatch("resumeQueue")}>Resume</button>
+        </div>
+      {/if}
       {#each queue as item, i (item.id)}
         <div
           class="queue-item"
@@ -719,7 +734,7 @@
     <!-- One row: model, effort, permission as text. Send sits with attach. -->
     <div class="tools">
       {#if !web}
-        <ModelPicker bind:this={picker} bind:value={model} bind:effort {board} on:unavailable />
+        <ModelPicker bind:this={picker} bind:value={model} {board} on:unavailable />
         {#if efforts.length > 1}
           <button
             bind:this={effortBtn}
@@ -735,7 +750,6 @@
           bind:this={permBtn}
           class="text perm-btn"
           class:open={permOpen}
-          use:tooltip={perm.desc}
           aria-haspopup="menu"
           aria-expanded={permOpen}
           on:click|stopPropagation={togglePerm}
@@ -856,19 +870,20 @@
   {/if}
 
   {#if permOpen}
-    <div class="menu-pop perms" data-ui-list style={permStyle} use:popover={{ anchor: permBtn, close: () => (permOpen = false) }} transition:fly={{ y: permStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
+    <div class="menu-pop" data-ui-list style={permStyle} use:popover={{ anchor: permBtn, close: () => (permOpen = false) }} transition:fly={{ y: permStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
       {#each PERMS as p (p.id)}
         {@const off = permissionBlocked(p.id, policy)}
         <button
-          class="perm"
+          class="opt"
           class:on={permission === p.id}
           disabled={!!off}
+          title={off || p.title}
           on:click={() => {
             permission = p.id;
             permOpen = false;
           }}
         >
-          <span class="meta"><span class="perm-name">{p.title}</span><span class="perm-sub">{off || p.desc}</span></span>
+          <span class="name">{p.title}</span>
           {#if permission === p.id}<span class="tick"><Icon name="check" /></span>{/if}
         </button>
       {/each}
@@ -961,6 +976,7 @@
     color: var(--text);
     font-size: var(--fs-base);
     line-height: 1.45;
+    user-select: text;
   }
   textarea:focus {
     border-color: transparent !important;
@@ -1083,16 +1099,11 @@
   .queue-head {
     display: flex;
     align-items: center;
-    gap: calc(var(--space) * 2);
+    justify-content: flex-end;
+    min-height: 28px;
     padding: 0 var(--space);
   }
-  .queue-title {
-    font-size: var(--fs-xs);
-    font-weight: 600;
-    color: var(--muted);
-  }
   .queue-resume {
-    margin-left: auto;
     padding: var(--space) calc(var(--space) * 3);
     background: var(--text);
     border: none;
@@ -1104,9 +1115,10 @@
   }
   .queue-item {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: calc(var(--space) * 2);
-    padding: calc(var(--space) * 2) var(--space) calc(var(--space) * 2) var(--space);
+    min-height: 36px;
+    padding: var(--space) calc(var(--space) * 2);
     background: none;
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -1119,7 +1131,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
+    width: 22px;
     height: 22px;
     padding: 0;
     background: none;
@@ -1133,12 +1145,15 @@
   }
   .queue-num {
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
     min-width: 16px;
-    padding-top: var(--space);
+    height: 22px;
     font-family: var(--mono);
     font-size: var(--fs-xs);
+    line-height: 22px;
     color: var(--muted);
-    text-align: right;
     font-variant-numeric: tabular-nums;
   }
   .queue-text {
@@ -1146,28 +1161,28 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    align-items: stretch;
+    justify-content: center;
     gap: var(--space);
     padding: 0;
     background: none;
     border: none;
     color: var(--text);
     font-size: var(--fs-sm);
+    line-height: 22px;
     text-align: left;
     cursor: pointer;
   }
   .queue-text > span:first-child {
     overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    line-height: 1.4;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 22px;
   }
   .queue-text.open > span:first-child {
-    display: block;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    text-overflow: unset;
+    line-height: 1.4;
   }
   .queue-detail {
     font-size: var(--fs-xs);
@@ -1176,6 +1191,7 @@
   .queue-acts {
     flex: none;
     display: inline-flex;
+    align-items: center;
     gap: var(--space);
   }
   .queue-acts button {
@@ -1366,46 +1382,6 @@
     padding: var(--space);
     overflow-y: auto;
   }
-  .menu-pop.perms {
-    width: 280px;
-  }
-  .perm {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 3);
-    width: 100%;
-    padding: calc(var(--space) * 2) calc(var(--space) * 2);
-    background: transparent;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--text);
-    text-align: left;
-    cursor: pointer;
-  }
-  .perm:hover:not(:disabled):not(.on) {
-    background: var(--hover);
-  }
-  .perm.on {
-    background: var(--selected);
-  }
-  .perm:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-  .meta {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space);
-  }
-  .perm-name {
-    font-size: var(--fs-md);
-  }
-  .perm-sub {
-    font-size: var(--fs-sm);
-    color: var(--muted);
-  }
   .tick {
     display: inline-flex;
     color: var(--text);
@@ -1458,6 +1434,10 @@
   }
   .opt.on :global(svg) {
     color: var(--accent);
+  }
+  .opt:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
   .name {
     flex: 1;

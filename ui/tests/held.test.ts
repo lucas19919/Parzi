@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dropId, enqueue, heldLabel, moveHeld, moveId, putFront, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "../src/lib/held.ts";
+import { dropId, enqueue, heldLabel, moveHeld, moveId, putFront, stillWorking, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "../src/lib/held.ts";
 
 const item = (text: string, extra: Partial<HeldItem> = {}): Omit<HeldItem, "id"> & { id?: string } => ({
   tab: "tab",
@@ -74,6 +74,12 @@ test("a session that continues under a new id keeps its queue", () => {
   assert.equal(queue.old, undefined);
   assert.deepEqual(queue.new.map((entry) => entry.id), ["b", "a"]);
   assert.equal(moveHeld(queue, "new", "new"), queue);
+});
+
+test("a session that is still working is told apart from any other failure", () => {
+  assert.equal(stillWorking("still working on s1"), true);
+  assert.equal(stillWorking(new Error("Still working on abc")), true);
+  assert.equal(stillWorking("run s1 is active; kill it first"), false);
 });
 
 test("a message that is only quoted plan items still has a label", () => {

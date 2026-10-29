@@ -1,50 +1,52 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { ask, open as pickFile } from "@tauri-apps/plugin-dialog";
+  import { ask } from "@tauri-apps/plugin-dialog";
   import { api, type ParziConfig } from "../api";
-  import { splitLine } from "../cmdline";
+  import { classifyPaste, nameFromProgram, splitLine } from "../cmdline";
   import type { ProviderStatus } from "../api";
   import { remote, remoteBoard, remoteInfo as linked, type RemoteInfo } from "../remote";
   import { PROVIDER_ORDER, nameOf, stateLabel } from "../providerRows";
+  import SegControl from "./SegControl.svelte";
   import Switch from "./Switch.svelte";
-  import Icon from "../Icon.svelte";
-  import { tooltip } from "../tooltip";
   import { updateConfig } from "../config";
-  import { CATALOG, hostedServer, nameFromUrl, serverLine, type CatalogConnector, type ServerCfg as Server } from "../connectorCatalog";
+  import { CATALOG, hostedServer, nameFromUrl, type CatalogConnector, type ServerCfg as Server } from "../connectorCatalog";
   import ConnectorLogo from "../ConnectorLogo.svelte";
-  import ConnectorDialog from "./ConnectorDialog.svelte";
   import "./shared.css";
 
   export let notify: (msg: string, err?: boolean) => void = () => {};
+  // "apps" is MCPs and connectors. "remote" is the block on General.
+  export let which: "apps" | "remote" = "apps";
 
   const dispatch = createEventDispatcher<{ setupRemote: void }>();
-
 
   let cfg: ParziConfig | null = null;
   let loadError = "";
   let info: RemoteInfo | null = null;
   let saving = false;
-  // The add dialog, open on its directory or its custom form.
-  let dialog: "browse" | "custom" | null = null;
+  // Add custom: an optional name, then a link, a copied block, or a command.
+  let adding = false;
+  let pasted = "";
+  let customName = "";
 
-  $: servers = Object.entries((cfg?.mcp.servers ?? {}) as Record<string, Server>).sort(([a], [b]) => a.localeCompare(b));
-  $: known = new Map(CATALOG.map((c) => [c.id, c]));
-  $: added = new Set(Object.keys(cfg?.mcp.servers ?? {}));
-
-  // How each connector answered when it last started, this visit.
+  // How each app answered when it last started, this visit.
   interface Health {
     state: "checking" | "signing" | "signin" | "ok" | "error";
     tools?: number;
     error?: string;
+    // The raw failure, shown only as a tooltip on the sentence.
+    raw?: string;
   }
   let health: Record<string, Health> = {};
 
   const SIGN_IN = "sign-in needed";
 
-  function plainError(e: string): string {
-    if (e.includes("isn't installed") && e.includes("npx")) return "Needs Node.js";
-    if (/timed out/i.test(e)) return "Didn't answer in time";
-    return e.replace(/^tool `[^`]*`: /, "").replace(/^`[^`]*`: /, "");
+  // One sentence on the row. The raw error stays on the tooltip.
+  function failureOf(raw: string): { text: string; title: string } {
+    if (raw.includes("isn't installed") && raw.includes("npx")) return { text: "Needs Node.js", title: raw };
+    if (/timed out/i.test(raw)) return { text: "Didn't answer in time", title: raw };
+    const clean = raw.replace(/^tool `[^`]*`: /, "").replace(/^`[^`]*`: /, "").split("\n")[0].trim();
+    const text = clean.length > 80 ? `${clean.slice(0, 77)}...` : clean;
+    return { text: text || "Couldn't connect", title: raw };
   }
 
   // Connects and counts its tools. One that asks to sign in, just added,
@@ -61,7 +63,8 @@
         if (signInIfAsked) void signIn(id);
         return;
       }
-      health = { ...health, [id]: { state: "error", error: plainError(String(e)) } };
+      const fail = failureOf(String(e));
+      health = { ...health, [id]: { state: "error", error: fail.text, raw: fail.title } };
     }
   }
 
@@ -73,14 +76,14 @@
       health = { ...health, [id]: { state: "ok", tools } };
       void loadDetails(id);
     } catch (e) {
-      health = { ...health, [id]: { state: "error", error: plainError(String(e)) } };
+      const fail = failureOf(String(e));
+      health = { ...health, [id]: { state: "error", error: fail.text, raw: fail.title } };
     }
   }
 
   // What each connected one says about itself: title, logo and tools.
   type Details = Awaited<ReturnType<typeof api.connectorDetails>>;
   let details: Record<string, Details> = {};
-  let openTools: string | null = null;
 
   async function loadDetails(id: string) {
     try {
@@ -96,11 +99,16 @@
   // approval mode's (Settings › General).
   $: policyAuto = (cfg?.lanes.default_mode ?? "ask") === "auto";
   const effective = (mode: string) => mode || (policyAuto ? "auto" : "ask");
-  const TOOL_MODES: ["auto" | "ask" | "off", string][] = [
-    ["auto", "Allow"],
-    ["ask", "Ask"],
-    ["off", "Off"],
+  const TOOL_OPTIONS = [
+    { value: "ask", label: "Ask" },
+    { value: "auto", label: "Auto" },
+    { value: "off", label: "Off" },
   ];
+
+  function pickMode(id: string, tool: string, mode: string) {
+    if (mode !== "ask" && mode !== "auto" && mode !== "off") return;
+    void setToolMode(id, tool, mode);
+  }
 
   async function setToolMode(id: string, tool: string, mode: "auto" | "ask" | "off") {
     const ok = await save((c) => {
@@ -117,36 +125,143 @@
     }
   }
 
-  // A logo of the person's own choosing.
-  async function chooseLogo(id: string) {
-    const path = await pickFile({ multiple: false, filters: [{ name: "Pictures", extensions: ["png", "jpg", "jpeg", "svg", "webp", "ico", "gif"] }] }).catch(() => null);
-    if (typeof path !== "string") return;
-    try {
-      const icon = await api.connectorSetIcon(id, path);
-      details = { ...details, [id]: { ...(details[id] ?? { title: "", tools: [] }), icon } };
-    } catch (e) {
-      notify(String(e), true);
-    }
+  // Apps set up in Claude, Cursor, or Grok, not added here yet.
+  let found: { name: string; source: string; server: Server }[] = [];
+
+  interface AppRow {
+    id: string;
+    name: string;
+    site: string;
+    about: string;
+    kind: "found" | "ready" | "added";
+    server?: Server;
   }
 
-  // Connectors set up in your other apps, offered in the add dialog.
-  let found: { name: string; source: string; server: Server }[] = [];
+  // Catalog order, then apps copied from other programs, then anything
+  // added by a paste that is not in the catalog.
+  function appList(config: ParziConfig | null, hits: typeof found, titles: Record<string, string>): AppRow[] {
+    const map = (config?.mcp.servers ?? {}) as Record<string, Server>;
+    const have = new Set(Object.keys(map));
+    const knownIds = new Set(CATALOG.map((c) => c.id));
+    const rows: AppRow[] = [];
+    for (const c of CATALOG) {
+      if (have.has(c.id)) rows.push({ id: c.id, name: c.name, site: c.site, about: c.about, kind: "added", server: map[c.id] });
+      else {
+        const hit = hits.find((f) => f.name === c.id);
+        if (hit) rows.push({ id: c.id, name: c.name, site: c.site, about: "Already on this computer", kind: "found", server: hit.server });
+        else rows.push({ id: c.id, name: c.name, site: c.site, about: c.about, kind: "ready" });
+      }
+    }
+    for (const f of hits) {
+      if (have.has(f.name) || knownIds.has(f.name)) continue;
+      let site = "";
+      try {
+        site = f.server.url ? new URL(f.server.url).origin : "";
+      } catch {
+        site = "";
+      }
+      rows.push({ id: f.name, name: f.name, site, about: "Already on this computer", kind: "found", server: f.server });
+    }
+    for (const [id, server] of Object.entries(map).sort(([a], [b]) => a.localeCompare(b))) {
+      if (knownIds.has(id)) continue;
+      rows.push({ id, name: titles[id] || id, site: "", about: "", kind: "added", server });
+    }
+    return rows;
+  }
+
+  $: titles = Object.fromEntries(Object.entries(details).map(([id, d]) => [id, d.title || ""]));
+  $: rows = which === "apps" ? appList(cfg, found, titles) : [];
+  const catalogIds = new Set(CATALOG.map((c) => c.id));
+  // The catalog is the grid. Anything else is a connector the person added.
+  $: mcpRows = rows.filter((row) => catalogIds.has(row.id));
+  $: customRows = rows.filter((row) => !catalogIds.has(row.id));
+  $: groups = [
+    { id: "mcp" as const, rows: mcpRows },
+    { id: "custom" as const, rows: customRows },
+  ];
 
   const openOutside = (url: string) => api.openConfirmedUrl(url).catch((e) => notify(String(e), true));
 
-  // A directory connector: added, then connected; one that signs in opens
-  // its page right away.
-  async function addKnown(c: CatalogConnector, token: string) {
-    const server = hostedServer(c.url, { token, auth: c.auth === "gh" ? "gh" : "" });
+  function connectRow(row: AppRow) {
+    if (row.kind === "found" && row.server) void addFound(row.id, row.server);
+    else if (row.kind === "ready") {
+      const c = CATALOG.find((item) => item.id === row.id);
+      if (c) void addKnown(c);
+    }
+  }
+
+  // A known app: one button. Sign-in opens the service's page. GitHub uses
+  // the GitHub login Parzi already has. The person never picks an auth type.
+  async function addKnown(c: CatalogConnector) {
+    const server = hostedServer(c.url, { auth: c.auth === "gh" ? "gh" : "" });
     if (!(await save((cf) => (cf.mcp.servers[c.id] = server), ""))) return;
     if (c.auth === "signin") void signIn(c.id);
     else void check(c.id);
   }
 
-  // One found in another app, as it was set up there.
+  // One found in another app, as it was set up there. No second form.
   async function addFound(name: string, server: Server) {
-    if (cfg?.mcp.servers[name]) return notify(`A connector called ${name} already exists`, true);
+    if (cfg?.mcp.servers[name]) return notify(`${name} is already here`, true);
     if (await save((c) => (c.mcp.servers[name] = { ...server, enabled: true }), "")) void check(name, true);
+  }
+
+  function freeName(base: string): string {
+    const have = cfg?.mcp.servers ?? {};
+    let id = base.slice(0, 32);
+    if (!have[id]) return id;
+    let n = 2;
+    while (have[`${id.slice(0, 28)}${n}`]) n += 1;
+    return `${id.slice(0, 28)}${n}`.slice(0, 32);
+  }
+
+  const NAME_OK = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
+
+  // A typed name, or the one taken from the paste. A block keeps its own names.
+  function slugId(raw: string): string {
+    let id = raw.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+    if (!id) return "";
+    if (!/^[a-z0-9]/.test(id)) id = `app${id}`;
+    id = id.slice(0, 32);
+    return NAME_OK.test(id) ? id : "";
+  }
+
+  function chosenName(fallback: string): string | null {
+    const raw = customName.trim();
+    if (!raw) return freeName(fallback || "app");
+    const id = slugId(raw);
+    if (!id) return null;
+    return freeName(id);
+  }
+
+  // One paste. A link connects like a catalog app. A block copied from
+  // another app is added as those apps. A program is started as itself.
+  async function addPasted() {
+    const text = pasted.trim();
+    const kind = classifyPaste(text);
+    if (!kind) return;
+    let list: [string, Server][];
+    if (kind === "link") {
+      const id = chosenName(nameFromUrl(text));
+      if (!id) return notify("Use letters and numbers for the name", true);
+      list = [[id, hostedServer(text)]];
+    } else if (kind === "block") {
+      list = ((await api.connectorsFromText(text).catch(() => [])) as [string, Server][]).filter(([id]) => NAME_OK.test(id));
+      if (!list.length) return notify("That did not include a connector", true);
+    } else {
+      const words = splitLine(text);
+      if (!words.length) return notify("Paste a link, a config block, or a command", true);
+      const id = chosenName(nameFromProgram(text));
+      if (!id) return notify("Use letters and numbers for the name", true);
+      list = [[id, { command: words[0], args: words.slice(1), env: {}, enabled: true }]];
+    }
+    const fresh = list.filter(([id]) => !cfg?.mcp.servers[id]);
+    if (!fresh.length) return notify(list.length === 1 ? `${list[0][0]} is already here` : "Those are already here", true);
+    if (await save((c) => fresh.forEach(([id, srv]) => (c.mcp.servers[id] = srv)), "")) {
+      pasted = "";
+      customName = "";
+      adding = false;
+      for (const [id] of fresh) void check(id, true);
+    }
   }
 
   // Linked from Set up Parzi while this shows: follow it.
@@ -154,13 +269,15 @@
 
   onMount(() => {
     void load();
-    void api
-      .connectorsFound()
-      .then((all) => (found = all as typeof found))
-      .catch(() => {});
+    if (which === "apps") {
+      void api
+        .connectorsFound()
+        .then((all) => (found = all as typeof found))
+        .catch(() => {});
+    }
     // Back from a terminal that installed or signed in an agent there.
     const onFocus = () => {
-      if (info && agents.length) void checkAgents(true);
+      if (which === "remote" && info && agents.length) void checkAgents(true);
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
@@ -170,7 +287,12 @@
     try {
       [cfg, info] = await Promise.all([api.getConfig(), remote.info()]);
       loadError = "";
-      if (info) void checkAgents(false);
+      if (which === "remote" && info) void checkAgents(false);
+      if (which === "apps" && cfg) {
+        for (const [id, srv] of Object.entries(cfg.mcp.servers)) {
+          if ((srv as Server).enabled !== false) void check(id);
+        }
+      }
     } catch (e) {
       loadError = String(e);
     }
@@ -192,31 +314,6 @@
     }
   }
 
-  // Anything else, pasted: a hosted server's address (it signs in itself,
-  // or takes an API key), an mcpServers block (every server in it), or the
-  // command that starts a local one.
-  async function addCustom(a: { text: string; name: string; token: string }) {
-    let list: [string, Server][];
-    if (/^https?:\/\//i.test(a.text)) {
-      list = [[a.name || nameFromUrl(a.text), hostedServer(a.text, { token: a.token })]];
-    } else if (a.text.startsWith("{")) {
-      list = (await api.connectorsFromText(a.text).catch(() => [])) as [string, Server][];
-      if (!list.length) return notify("No servers in that block", true);
-    } else {
-      const words = splitLine(a.text);
-      if (!words.length) return notify("Paste an address, a command or a config block", true);
-      list = [[a.name, { command: words[0], args: words.slice(1), env: {}, enabled: true }]];
-    }
-    const bad = list.find(([id]) => !/^[a-z0-9][a-z0-9_-]{0,31}$/i.test(id));
-    if (bad) return notify("Name it with letters, digits, - or _ (up to 32)", true);
-    const taken = list.find(([id]) => cfg?.mcp.servers[id]);
-    if (taken) return notify(`A connector called ${taken[0]} already exists`, true);
-    if (await save((c) => list.forEach(([id, srv]) => (c.mcp.servers[id] = srv)), "")) {
-      dialog = null;
-      for (const [id] of list) void check(id, true);
-    }
-  }
-
   async function toggle(id: string) {
     const on = (cfg?.mcp.servers[id] as Server | undefined)?.enabled === false;
     await save((c) => {
@@ -225,8 +322,8 @@
     }, `${id} ${on ? "on" : "off"}`);
   }
 
-  async function removeServer(id: string) {
-    const ok = await ask(`Remove the connector "${id}"?`, { title: "Remove connector", kind: "warning" }).catch(() => false);
+  async function removeServer(id: string, label = id) {
+    const ok = await ask(`Remove ${label}?`, { title: "Remove", kind: "warning" }).catch(() => false);
     if (!ok) return;
     await save((c) => delete c.mcp.servers[id], "");
     await api.connectorForget(id).catch(() => {});
@@ -308,10 +405,12 @@
   <div class="pref-section">
     <div class="skel tall" />
   </div>
-{:else}
+{:else if which === "remote"}
   <div class="pref-section">
     <div class="section-head-with-action">
-      <h3 class="section-title">Remote</h3>
+      <div>
+        <h3 class="section-title">Remote</h3>
+      </div>
       {#if !info}
         <button class="sbtn" on:click={() => dispatch("setupRemote")}>Set up</button>
       {/if}
@@ -352,267 +451,173 @@
     {/if}
   </div>
 
+{:else}
   <div class="pref-section">
-    <div class="section-head-with-action">
-      <h3 class="section-title">Connectors</h3>
-      <button class="sbtn add-conn" on:click={() => (dialog = "browse")}><Icon name="plus" size={12} /><span>Add connector</span></button>
-    </div>
-
-    {#each servers as [id, srv] (id)}
-      {@const k = known.get(id)}
-      {@const h = health[id]}
-      {@const off = srv.enabled === false}
-      <div class="field-card conn" class:off>
-        <button class="logo-pick" use:tooltip={"Choose a logo"} aria-label="Choose a logo for {k?.name ?? id}" on:click={() => chooseLogo(id)}>
-          <ConnectorLogo id={id} name={k?.name ?? id} site={k?.site ?? ""} src={details[id]?.icon ?? null} size={32} />
-        </button>
-        <div class="field-info">
-          <span class="field-label">{k?.name ?? id}</span>
-          <span class="field-hint" class:ok={h?.state === "ok"} class:bad={h?.state === "error"} title={serverLine(srv)}>
-            {#if off}
-              Off
-            {:else if h?.state === "checking"}
-              {srv.url ? "Connecting…" : "Starting…"}
-            {:else if h?.state === "signing"}
-              Finish signing in in your browser…
-            {:else if h?.state === "signin"}
-              Needs you to sign in
-            {:else if h?.state === "ok"}
-              Connected
-            {:else if h?.state === "error"}
-              {h.error}
-            {:else}
-              {k?.about ?? serverLine(srv)}
-            {/if}
-          </span>
+    {#each groups as group (group.id)}
+      {#if group.id === "mcp"}
+        <h3 class="section-title">MCPs</h3>
+      {:else}
+        <div class="section-head-with-action">
+          <h3 class="section-title">Connectors</h3>
+          <button class="sbtn" aria-expanded={adding} on:click={() => (adding = !adding)}>Add custom</button>
         </div>
-        {#if h?.state === "error" && h.error === "Needs Node.js"}
-          <button class="sbtn" on:click={() => openOutside("https://nodejs.org")}>Get Node.js</button>
-        {:else if !off && (h?.state === "signin" || h?.state === "signing")}
-          <button class="sbtn primary" disabled={h?.state === "signing"} on:click={() => signIn(id)}>{h?.state === "signing" ? "Signing in…" : "Sign in"}</button>
-        {:else if !off && h?.state !== "ok"}
-          <button class="sbtn" disabled={h?.state === "checking"} on:click={() => check(id)}>{h?.state === "checking" ? "Connecting…" : "Connect"}</button>
-        {:else if !off && h?.state === "ok"}
-          <button class="sbtn" aria-expanded={openTools === id} on:click={() => (openTools = openTools === id ? null : id)}>
-            {h.tools} tool{h.tools === 1 ? "" : "s"}
-            <Icon name="chevDown" size={12} />
-          </button>
+        {#if adding}
+          <div class="paste">
+            <input class="tin" bind:value={customName} placeholder="Name (optional)" aria-label="Name" spellcheck="false" />
+            <textarea class="tin" rows="4" bind:value={pasted} placeholder="Paste a link, a config block, or a command" aria-label="Paste a link, a config block, or a command" spellcheck="false"></textarea>
+            <button class="sbtn primary" disabled={saving || !pasted.trim()} on:click={() => void addPasted()}>Add</button>
+          </div>
         {/if}
-        <Switch on={!off} title={off ? `Turn ${k?.name ?? id} on` : `Turn ${k?.name ?? id} off`} on:toggle={() => toggle(id)} />
-        <button class="remove" disabled={saving} use:tooltip={`Remove ${k?.name ?? id}`} aria-label="Remove {k?.name ?? id}" on:click={() => removeServer(id)}>
-          <Icon name="trash" size={12} />
-        </button>
-      </div>
-      {#if openTools === id && !off}
-        <div class="tools" data-ui-list>
-          {#each details[id]?.tools ?? [] as t (t.name)}
-            {@const m = effective(t.mode)}
-            <div class="tool" class:off={m === "off"}>
-              <div class="tool-text">
-                <span class="tool-name">{t.name}{#if t.read_only}<span class="tag">reads only</span>{:else if t.destructive}<span class="tag warn">can delete</span>{/if}</span>
-                {#if t.description}<span class="tool-about" title={t.description}>{t.description}</span>{/if}
-              </div>
-              <div class="modes" role="group" aria-label="When {t.name} runs" data-ui-segmented>
-                {#each TOOL_MODES as [v, label] (v)}
-                  <button class:on={m === v} aria-pressed={m === v} on:click={() => setToolMode(id, t.name, v)}>{label}</button>
-                {/each}
-              </div>
-            </div>
-          {:else}
-            <p class="tools-empty">{details[id] ? "It offers no tools." : "Loading its tools…"}</p>
-          {/each}
-        </div>
+        {#if !group.rows.length && !adding}
+          <p class="section-desc">None yet.</p>
+        {/if}
       {/if}
-    {:else}
-      <button class="empty" on:click={() => (dialog = "browse")}>
-        <span class="faces">
-          {#each CATALOG.slice(0, 5) as c (c.id)}
-            <ConnectorLogo id={c.id} name={c.name} site={c.site} size={28} />
-          {/each}
-        </span>
-        <span class="empty-text">Give your agents GitHub, Notion, Linear, Higgsfield and more</span>
-        <Icon name="chevRight" size={12} />
-      </button>
+      {#if group.rows.length}
+      <div class={group.id === "mcp" ? "mcp-grid" : "stack"}>
+        {#each group.rows as row (row.kind + row.id)}
+          {@const h = health[row.id]}
+          {@const off = row.server?.enabled === false}
+          {@const sentence = row.kind !== "added" ? "" : off ? "Off" : h?.state === "checking" ? "Connecting…" : h?.state === "signing" ? "Finish signing in in your browser" : h?.state === "signin" ? "Sign in to use it" : h?.state === "ok" ? "Connected" : h?.state === "error" ? (h.error ?? "Couldn't connect") : "Added"}
+          <div class="app-block">
+            <div class="field-card" class:off={row.kind === "added" && off}>
+              <span class="mark"><ConnectorLogo id={row.id} name={row.name} site={row.site} src={details[row.id]?.icon ?? null} size={28} /></span>
+              <div class="field-info">
+                <span class="field-label">{row.name}</span>
+                {#if sentence}<span class="field-hint" class:ok={!off && h?.state === "ok"} class:bad={!off && h?.state === "error"} title={h?.raw ?? ""}>{sentence}</span>{/if}
+              </div>
+              {#if row.kind !== "added"}
+                <button class="sbtn" disabled={saving} on:click={() => connectRow(row)}>{row.kind === "found" ? "Add" : "Connect"}</button>
+              {:else if !off && h?.error === "Needs Node.js"}
+                <button class="sbtn" on:click={() => openOutside("https://nodejs.org")}>Get Node.js</button>
+              {:else if !off && (h?.state === "signin" || h?.state === "signing")}
+                <button class="sbtn primary" disabled={h?.state === "signing"} on:click={() => signIn(row.id)}>{h?.state === "signing" ? "Signing in…" : "Sign in"}</button>
+              {:else if !off && h?.state === "error"}
+                <button class="sbtn" on:click={() => check(row.id, true)}>Try again</button>
+              {:else if h?.state === "ok" || off || !h}
+                <Switch on={!off} title={off ? `Turn ${row.name} on` : `Turn ${row.name} off`} on:toggle={() => toggle(row.id)} />
+              {/if}
+            </div>
+            {#if row.kind === "added"}
+              <details class="can">
+                <summary>Tools</summary>
+                <div class="rows">
+                  {#each details[row.id]?.tools ?? [] as t (t.name)}
+                    {@const m = effective(t.mode)}
+                    <div class="row" class:off={m === "off"}>
+                      <span class="row-label" title={t.name}>{t.name}</span>
+                      <SegControl label={t.name} options={TOOL_OPTIONS} value={m} on:pick={(e) => pickMode(row.id, t.name, e.detail)} />
+                    </div>
+                  {:else}
+                    <p class="section-desc">{h?.state === "ok" ? (details[row.id] ? "No tools." : "Loading…") : "Connect it to see its tools."}</p>
+                  {/each}
+                </div>
+                <button class="remove" disabled={saving} on:click={() => removeServer(row.id, row.name)}>Remove</button>
+              </details>
+            {/if}
+          </div>
+        {/each}
+      </div>
+      {/if}
     {/each}
   </div>
 {/if}
 
-{#if dialog}
-  <ConnectorDialog
-    start={dialog}
-    {added}
-    {health}
-    {found}
-    busy={saving}
-    on:connect={(e) => void addKnown(e.detail.connector, e.detail.token)}
-    on:custom={(e) => void addCustom(e.detail)}
-    on:import={(e) => void addFound(e.detail.name, e.detail.server)}
-    on:open={(e) => openOutside(e.detail.url)}
-    on:close={() => (dialog = null)}
-  />
-{/if}
-
 <style>
-  .logo-pick {
-    flex: none;
-    display: inline-flex;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: 25%;
-    cursor: pointer;
-  }
-  .logo-pick:hover {
-    outline: 1px solid var(--line);
-    outline-offset: 2px;
-  }
-  .tools {
-    display: flex;
-    flex-direction: column;
-    margin: calc(var(--space) * -1) 0 calc(var(--space) * 2);
-    padding: var(--space) 0;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
-  }
-  .tool {
-    display: flex;
-    align-items: center;
+  .mcp-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: calc(var(--space) * 3);
-    padding: calc(var(--space) * 2) calc(var(--space) * 4);
+    align-items: stretch;
   }
-  .tool + .tool {
-    border-top: 1px solid var(--line);
+  .stack {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space) * 2);
   }
-  .tool-text {
-    flex: 1;
-    min-width: 0;
+  .app-block {
     display: flex;
     flex-direction: column;
     gap: var(--space);
-  }
-  .tool-name {
-    font-family: var(--mono);
-    font-size: var(--fs-sm);
-    color: var(--text);
-  }
-  .tool.off .tool-name {
-    color: var(--muted);
-  }
-  .tag {
-    margin-left: calc(var(--space) * 2);
-    font-family: var(--font);
-    font-size: var(--fs-xs);
-    color: var(--muted);
-  }
-  .tag.warn {
-    color: var(--warn);
-  }
-  .tool-about {
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    font-size: var(--fs-sm);
-    color: var(--muted);
-  }
-  .modes {
-    flex: none;
-    display: inline-flex;
-    gap: var(--space);
-    padding: var(--space);
-    border-radius: var(--radius);
-    background: color-mix(in srgb, var(--text) 5%, transparent);
-  }
-  .modes button {
-    height: 24px;
-    padding: 0 calc(var(--space) * 3);
-    background: none;
-    border: none;
-    border-radius: var(--radius-sm);
-    color: var(--muted);
-    font: inherit;
-    font-size: var(--fs-sm);
-    cursor: pointer;
-  }
-  .modes button:hover {
-    color: var(--text);
-  }
-  .modes button.on {
-    background: var(--selected);
-    color: var(--text);
-  }
-  .tools-empty {
-    margin: calc(var(--space) * 2) calc(var(--space) * 4);
-    font-size: var(--fs-sm);
-    color: var(--muted);
-  }
-  .conn.off .field-label {
-    opacity: 0.55;
-  }
-  .empty {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 4);
-    width: 100%;
-    padding: calc(var(--space) * 4) calc(var(--space) * 4);
-    background: var(--panel);
-    border: 1px dashed var(--line);
-    border-radius: var(--radius-lg);
-    color: var(--muted);
-    font: inherit;
-    font-size: var(--fs-md);
-    text-align: left;
-    cursor: pointer;
-  }
-  .empty:hover {
-    border-color: var(--muted);
-    color: var(--text);
-  }
-  .faces {
-    display: inline-flex;
-    flex: none;
-  }
-  .faces > :global(* + *) {
-    margin-left: calc(var(--space) * -2);
-  }
-  .empty-text {
-    flex: 1;
     min-width: 0;
   }
-  .conn .field-hint {
+  .mcp-grid .field-label {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .field-hint.bad {
-    color: var(--bad);
-  }
-  .remove {
-    width: 28px;
-    height: 28px;
+  .mark {
     flex: none;
     display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
   }
-  .remove:hover:not(:disabled) {
-    background: var(--line);
-    color: var(--bad);
+  .field-card.off .field-label {
+    opacity: 0.55;
   }
-  .field-card {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
+  .field-hint {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .field-hint.ok {
     color: var(--ok);
+  }
+  .field-hint.bad {
+    color: var(--bad);
+  }
+  .can {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+  }
+  .can summary {
+    padding: calc(var(--space) * 3) calc(var(--space) * 4);
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-md);
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .can[open] summary {
+    color: var(--text);
+  }
+  .can .rows {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    border-top: 1px solid var(--line);
+  }
+  .can .section-desc {
+    padding: calc(var(--space) * 2) calc(var(--space) * 4);
+  }
+  .row.off .row-label {
+    color: var(--muted);
+  }
+  .remove {
+    margin: calc(var(--space) * 2) calc(var(--space) * 4) calc(var(--space) * 3);
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--fs-md);
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .remove:hover:not(:disabled) {
+    color: var(--bad);
+  }
+  .paste {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: calc(var(--space) * 2);
+    width: 100%;
+  }
+  .paste .tin,
+  .paste textarea {
+    width: 100%;
+  }
+  .paste textarea {
+    min-height: 88px;
+    resize: vertical;
   }
 </style>

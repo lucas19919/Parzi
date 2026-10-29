@@ -149,6 +149,7 @@ pub(crate) async fn run_ended(store: &SessionStore, t: &Tally, stopped: bool, se
         if let Some(e) = error.filter(|e| !e.trim().is_empty()) {
             outcome.summary = match outcome.end {
                 RunEndKind::Paused => format!("Paused: {e}"),
+                RunEndKind::Interrupted => e,
                 _ => format!("Failed: {e}"),
             };
         }

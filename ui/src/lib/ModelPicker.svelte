@@ -7,16 +7,13 @@
   import { hasMark } from "./providerMarks";
   import type { ProviderStatus } from "./api";
   import { ageOf, checking, refreshBoard } from "./providerStore";
-  import { PROVIDER_ORDER, allRows, isUsable, nameOf, shownOf, type PickRow } from "./providerRows";
-  import { effortLabel, effortShort, effortsFor } from "./providerRows";
+  import { PROVIDER_ORDER, allRows, chipOf, isUsable, nameOf, shownOf, type PickRow } from "./providerRows";
   import { recentModels } from "./tabs";
   import { popover, placeAbove } from "./popover";
   import { tooltip } from "./tooltip";
 
   export let value = "";
   export let board: ProviderStatus[] = [];
-  // Two-way: parent binds its effort; picking here updates the composer.
-  export let effort = "medium";
 
   const dispatch = createEventDispatcher<{ unavailable: { provider: string } }>();
 
@@ -40,7 +37,6 @@
   let above = true;
 
   $: shown = shownOf(value, board);
-  $: modelEfforts = effortsFor(value, board);
   $: q = query.trim().toLowerCase();
   $: groups = groupsFor(board, recent, q);
   $: flat = groups.flatMap((g) => g.rows);
@@ -64,6 +60,15 @@
       const mine = rows.filter((r) => r.provider === id);
       if (mine.length) out.push({ key: id, label: nameOf(id), rows: mine });
     }
+    // A generic ACP agent is not in the install list, but its models still show.
+    const extra: string[] = [];
+    for (const row of rows) {
+      if (!PROVIDER_ORDER.includes(row.provider) && !extra.includes(row.provider)) extra.push(row.provider);
+    }
+    for (const id of extra) {
+      const mine = rows.filter((r) => r.provider === id);
+      if (mine.length) out.push({ key: id, label: nameOf(id), rows: mine });
+    }
     return out;
   }
 
@@ -71,22 +76,7 @@
     return row.value === row.provider ? "Default model" : row.label;
   }
 
-  // Long names collapse to two words so the row stays one line.
-  function shortModel(name: string) {
-    if (!value) return "Pick a model";
-    if (name.length <= 24) return name;
-    const skip = new Set(["contributor", "free", "preview", "latest", "thinking"]);
-    const keep: string[] = [];
-    const parts = name.split(/\s+/);
-    for (let i = 0; i < parts.length && keep.length < 2; i++) {
-      const p = parts[i];
-      if (/\d/.test(p) && i > 0) continue;
-      if (skip.has(p.toLowerCase())) continue;
-      keep.push(p);
-    }
-    const short = (keep.length ? keep : parts.slice(0, 2)).join(" ");
-    return short.length > 22 ? `${short.slice(0, 22)}…` : short;
-  }
+  $: chip = value ? chipOf(shown.name) : { title: "Pick a model", version: "" };
 
   async function focusSearch() {
     await tick();
@@ -162,7 +152,9 @@
   aria-expanded={open}
   on:click|stopPropagation={() => (open ? (open = false) : show())}
 >
-  <span class="truncate">{shortModel(shown.name)}</span>
+  {#if hasMark(shown.provider)}<ProviderLogo provider={shown.provider} size={14} />{/if}
+  <span class="truncate">{chip.title}</span>
+  {#if chip.version}<span class="ver">{chip.version}</span>{/if}
 </button>
 
 {#if open}
@@ -176,70 +168,44 @@
     transition:fly={{ y: above ? 6 : -6, duration: 140, easing: cubicOut }}
   >
     <div class="search">
-      <Icon name="search" />
+      <Icon name="search" size={12} />
       <input bind:this={searchEl} bind:value={query} on:keydown={onKey} aria-label="Search models" placeholder="Search models" spellcheck="false" />
       {#if busy}<span class="spin" use:tooltip={"Checking your agents"} />{/if}
     </div>
-    <div class="list" bind:this={listEl}>
+    <div class="list" bind:this={listEl} data-ui-list>
       {#each groups as g, gi (g.key)}
         <div class="head">{g.label}</div>
-        <div class="rows" data-ui-list>
-          {#each g.rows as row, j (g.key + row.value)}
-            {@const i = offsets[gi] + j}
-            <button
-              class="row"
-              class:active={i === index}
-              class:picked={row.value === value}
-              on:click={() => pick(row)}
-              on:mousemove={() => (index = i)}
-            >
-              <span class="logo">{#if hasMark(row.provider)}<ProviderLogo provider={row.provider} size={14} />{/if}</span>
-              <span class="name">{labelOf(row)}</span>
-              {#if row.note}<span class="note">{row.note}</span>{/if}
-              <span class="tick">{#if row.value === value}<Icon name="check" />{/if}</span>
-            </button>
-          {/each}
-        </div>
-      {:else}
-        <div class="empty">{busy ? "Checking your agents…" : q ? "No matching models" : "No agent is ready yet"}</div>
-      {/each}
-    </div>
-    {#if (value && modelEfforts.length > 1) || idle.length}
-      <div class="foot">
-        <!-- Effort belongs to a model: none until one is picked. -->
-        {#if value && modelEfforts.length > 1}
-          <div class="effort-line">
-            <span class="foot-label">Effort</span>
-            <div class="effort-row" role="group" aria-label="Effort" data-ui-segmented>
-              {#each modelEfforts as e (e)}
-                <button
-                  class="effort"
-                  class:on={effort === e}
-                  aria-pressed={effort === e}
-                  aria-label={effortLabel(e)}
-                  use:tooltip={effortShort(e) === effortLabel(e) ? "" : effortLabel(e)}
-                  on:click={() => (effort = e)}
-                >
-                  {effortShort(e)}
-                </button>
-              {/each}
-            </div>
-          </div>
-        {/if}
-        {#if idle.length}
-          <!-- One row for every agent not ready yet; Settings sets them up. -->
-          <button class="row idle" use:tooltip={idle.map((b) => `${nameOf(b.provider)}: ${setupLabel(b)}`).join(", ")} on:click={() => setUp(idle[0].provider)}>
-            <span class="logos">
-              {#each idle.slice(0, 3) as b (b.provider)}
-                {#if hasMark(b.provider)}<ProviderLogo provider={b.provider} size={14} />{/if}
-              {/each}
-            </span>
-            <span class="name">Set up {idle.length === 1 ? nameOf(idle[0].provider) : `${idle.length} more agents`}</span>
-            <Icon name="chevRight" size={12} />
+        {#each g.rows as row, j (g.key + row.value)}
+          {@const i = offsets[gi] + j}
+          <button
+            class="row"
+            class:active={i === index}
+            class:picked={row.value === value}
+            on:click={() => pick(row)}
+            on:mousemove={() => (index = i)}
+          >
+            <span class="logo">{#if hasMark(row.provider)}<ProviderLogo provider={row.provider} size={14} />{/if}</span>
+            <span class="name">{labelOf(row)}</span>
+            <span class="tick">{#if row.value === value}<Icon name="check" />{/if}</span>
           </button>
+        {/each}
+      {:else}
+        {#if !idle.length}
+          <div class="empty">{busy ? "Checking your agents…" : q ? "No matching models" : "No agent is ready yet"}</div>
         {/if}
-      </div>
-    {/if}
+      {/each}
+      {#if idle.length}
+        <button class="row idle" use:tooltip={idle.map((b) => `${nameOf(b.provider)}: ${setupLabel(b)}`).join(", ")} on:click={() => setUp(idle[0].provider)}>
+          <span class="logos">
+            {#each idle.slice(0, 3) as b (b.provider)}
+              {#if hasMark(b.provider)}<ProviderLogo provider={b.provider} size={14} />{/if}
+            {/each}
+          </span>
+          <span class="name">Set up {idle.length === 1 ? nameOf(idle[0].provider) : `${idle.length} more agents`}</span>
+          <Icon name="chevRight" size={12} />
+        </button>
+      {/if}
+    </div>
   </div>
 {/if}
 
@@ -248,6 +214,13 @@
     flex: none;
     min-width: 0;
     max-width: 200px;
+    gap: var(--space);
+  }
+  .ver {
+    flex: none;
+    color: var(--muted);
+    font-size: var(--fs-md);
+    font-variant-numeric: tabular-nums;
   }
   .model .truncate {
     overflow: hidden;
@@ -259,6 +232,8 @@
     width: 280px;
     display: flex;
     flex-direction: column;
+    gap: var(--space);
+    padding: var(--space);
     transform-origin: bottom left;
   }
   .picker:not(.above) {
@@ -267,12 +242,13 @@
   .search {
     display: flex;
     align-items: center;
-    gap: calc(var(--space) * 3);
+    gap: calc(var(--space) * 2);
     flex: none;
-    height: 40px;
-    padding: 0 calc(var(--space) * 3);
+    height: 32px;
+    padding: 0 calc(var(--space) * 2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
     color: var(--muted);
-    border-bottom: 1px solid var(--line);
   }
   .search input {
     flex: 1;
@@ -303,20 +279,12 @@
     min-height: 0;
     max-height: 360px;
     overflow-y: auto;
-    padding: var(--space);
   }
   .head {
-    padding: calc(var(--space) * 3) calc(var(--space) * 2) var(--space);
-    font-size: var(--fs-xs);
+    padding: calc(var(--space) * 2) calc(var(--space) * 2) var(--space);
+    font-size: var(--fs-md);
     font-weight: 600;
     color: var(--muted);
-  }
-  .head:first-child {
-    padding-top: calc(var(--space) * 2);
-  }
-  .rows {
-    display: flex;
-    flex-direction: column;
   }
   .row {
     display: flex;
@@ -351,68 +319,11 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .note {
-    flex: none;
-    max-width: 40%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: var(--fs-sm);
-    color: var(--muted);
-  }
   .tick {
     display: inline-flex;
     width: 16px;
     flex: none;
     color: var(--accent);
-  }
-  .foot {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space);
-    flex: none;
-    padding: calc(var(--space) * 2) var(--space) var(--space);
-    border-top: 1px solid var(--line);
-  }
-  /* The label over a full-width row: up to five efforts fit the picker,
-     each on one line. */
-  .effort-line {
-    display: flex;
-    flex-direction: column;
-    gap: calc(var(--space) * 2);
-    padding: var(--space) var(--space) var(--space);
-  }
-  .foot-label {
-    padding-left: var(--space);
-    font-size: var(--fs-sm);
-    color: var(--muted);
-  }
-  .effort-row {
-    display: flex;
-    gap: var(--space);
-    padding: var(--space);
-    border-radius: 999px;
-    background: var(--hover);
-  }
-  .effort {
-    flex: 1 1 0;
-    min-width: 0;
-    height: 24px;
-    padding: 0 var(--space);
-    white-space: nowrap;
-    background: transparent;
-    border: none;
-    border-radius: 999px;
-    color: var(--muted);
-    font-size: var(--fs-sm);
-    cursor: pointer;
-  }
-  .effort:hover {
-    color: var(--text);
-  }
-  .effort.on {
-    background: var(--selected);
-    color: var(--text);
   }
   .row.idle {
     color: var(--muted);
@@ -430,7 +341,7 @@
   .empty {
     padding: calc(var(--space) * 4);
     text-align: center;
-    font-size: var(--fs-sm);
+    font-size: var(--fs-md);
     color: var(--muted);
   }
 </style>

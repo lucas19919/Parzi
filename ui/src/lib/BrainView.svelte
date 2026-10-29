@@ -22,7 +22,6 @@
   // Pinned notes too long to send in full: path -> project slugs.
   let overflow: Record<string, string[]> = {};
   let conflictsShown = false;
-  let folder = EVERYWHERE;
   let selected = "";
   let raw = "";
   let editing = false;
@@ -42,7 +41,6 @@
 
   $: byPath = new Map(notes.map((n) => [n.path, n]));
   $: folders = buildFolders(notes, projects, query);
-  $: current = folders.find((f) => f.key === folder) ?? null;
   $: note = byPath.get(selected) ?? null;
   $: noteProject = projects.find((p) => p.note === selected) ?? null;
   $: copyOf = note?.conflict_of ?? "";
@@ -156,19 +154,12 @@
     if (document.visibilityState === "visible") void onFocus();
   }
 
-  function isCurrent(f: Folder, sel: string, at: string) {
-    return f.project ? sel === f.project.note : at === f.key && !sel;
-  }
-
-  async function openFolder(f: Folder) {
-    toggle(f.key, !(expanded.has(f.key) && isCurrent(f, selected, folder)));
-    folder = f.key;
-    if (f.project && byPath.has(f.project.note)) {
-      await openNote(f.project.note);
-      return;
-    }
+  async function showList() {
     await flush();
     selected = "";
+    raw = "";
+    editing = false;
+    dirty = false;
   }
 
   async function openNote(path: string) {
@@ -181,12 +172,8 @@
       selected = resolved;
       editing = false;
       dirty = false;
-      // Auto-expand the folder containing the note so it stays visible.
       const holder = folders.find((f) => f.items.some((n) => n.path === resolved)) ?? folders.find((f) => f.project && resolved.startsWith(`projects/${f.key}/`));
-      if (holder) {
-        folder = holder.key;
-        toggle(holder.key, true);
-      }
+      if (holder) toggle(holder.key, true);
       // Fallback so the note view renders even if the index hasn't caught up.
       if (!byPath.get(selected)) {
         const title = selected.split("/").pop()?.replace(/\.md$/, "") ?? selected;
@@ -326,7 +313,6 @@
       const known = projects.find((p) => p.folder.toLowerCase() === dir.toLowerCase());
       const p = known ?? (await brain.upsertProject(folderName(dir), dir));
       await refresh();
-      folder = p.slug;
       toggle(p.slug, true);
       await openNote(p.note);
     } catch (e) {
@@ -340,7 +326,6 @@
     try {
       await brain.remove(p.note);
       await refresh();
-      folder = EVERYWHERE;
       selected = "";
       raw = "";
       dirty = false;
@@ -452,97 +437,48 @@
 </script>
 
 <div class="brain" class:dragging>
-  <aside>
-    <div class="top">
-      <div class="search">
+  <div class="bar page-bar">
+    <div class="seg page-tabs" role="tablist" aria-label="Brain">
+      <button aria-pressed={!note} on:click={showList}>Notes</button>
+      {#if note}
+        <button aria-pressed={!editing} on:click={() => (editing = false)}>Read</button>
+        <button aria-pressed={editing} on:click={() => (editing = true)}>Edit</button>
+      {/if}
+    </div>
+    {#if note}
+      <h2 class="note-title" title={noteProject ? noteProject.folder : note.path}>{note.title}</h2>
+      {#if copyOf}<span class="badge">Conflict</span>{/if}
+    {:else}
+      <div class="page-search">
         <Icon name="search" />
         <input bind:value={query} placeholder="Search" aria-label="Search notes" spellcheck="false" />
       </div>
-    </div>
-
-    <div class="tree">
-      {#each folders as f (f.key)}
-        {@const open = !!query.trim() || expanded.has(f.key)}
-        {@const fixed = f.key === UNUSED || f.key === CONFLICTS}
-        {@const drop = f.key === CONFLICTS ? undefined : f.key}
-        {#if !fixed || f.items.length || !query.trim()}
-          <div class="folder" class:on={isCurrent(f, selected, folder)} class:drop={dragging && dropOn === f.key} data-folder={drop}>
-            <button class="folder-name" title={f.project?.folder ?? ""} aria-expanded={open} on:click={() => openFolder(f)}>
-              <span class="chev"><Icon name={open ? "chevDown" : "chevRight"} size={12} /></span>
-              <Icon name={f.key === EVERYWHERE ? "globe" : f.key === CONFLICTS ? "fork" : "folder"} />
-              <span class="name">{f.title}</span>
-            </button>
-            {#if !fixed}
-              <button class="add" use:tooltip={`New note in ${f.title}`} on:click={() => startNote(f.key)}><Icon name="plus" size={12} /></button>
-            {/if}
-          </div>
-          {#if open}
-            <div class="kids" data-folder={drop} data-ui-list>
-              {#each f.items as n (n.path)}
-                <button
-                  class="note"
-                  class:on={n.path === selected}
-                  class:copy={!!n.conflict_of}
-                  data-note={n.path}
-                  title={n.conflict_of ? `Sync conflict copy of ${n.conflict_of}` : n.summary || n.path}
-                  use:pressDrag={noteDrag(n, f.key)}
-                  on:keydown={(e) => e.key === "Enter" && openNote(n.path)}
-                >
-                  <span class="name">{n.title}</span>
-                  {#if twin(n, f)}<span class="from">{twin(n, f)}</span>{/if}
-                  {#if n.pinned && !n.conflict_of}
-                    <span class="pin" class:over={!!overflow[n.path]} title={overflow[n.path] ? "Too big to send in full, listed instead" : "Always included in full"}><Icon name="pin" size={12} /></span>
-                  {/if}
-                </button>
-              {/each}
-              {#if creatingIn === f.key}
-                <form class="draft" on:submit|preventDefault={createNote}>
-                  <input bind:this={draftField} bind:value={draftName} placeholder="Note name" aria-label="Note name" on:blur={createNote} />
-                </form>
-              {:else if !f.items.length}
-                <p class="empty">{fixed ? "Nothing here." : "Empty. Drag notes here."}</p>
-              {/if}
-            </div>
-          {/if}
-        {/if}
-      {/each}
-      <button class="new-project" on:click={newProject}><Icon name="plus" size={12} /> New project</button>
-    </div>
-  </aside>
-
-  <section>
+    {/if}
     {#if note}
-      <div class="bar">
-        <div class="titles">
-          <div class="title-row">
-            <h2>{note.title}</h2>
-            {#if copyOf}<span class="badge">Conflict</span>{/if}
-          </div>
-          <span class="path">{noteProject ? `Project · ${noteProject.folder}` : note.path}</span>
-        </div>
-        {#if !noteProject && !copyOf}
-          <button
-            class="icon"
-            class:pinned={note.pinned}
-            class:over={tooBig.length > 0}
-            aria-label="Pin note"
-            aria-pressed={note.pinned}
-            use:tooltip={pinTip(note, tooBig)}
-            on:click={togglePin}
-          >
-            <Icon name="pin" />
-          </button>
-        {/if}
-        <div class="seg page-tabs" role="group" aria-label="View" data-ui-segmented>
-          <button class:on={!editing} aria-pressed={!editing} on:click={() => (editing = false)}>Read</button>
-          <button class:on={editing} aria-pressed={editing} on:click={() => (editing = true)}>Edit</button>
-        </div>
-        {#if obsidian !== "missing"}
-          <button class="icon" use:tooltip={"Open in Obsidian"} on:click={() => openOutside(note?.path ?? "", "obsidian")}><Icon name="arrowRight" /></button>
-        {/if}
-        <button class="icon" use:tooltip={"Open the file"} on:click={() => openOutside(note?.path ?? "", "file")}><Icon name="file" /></button>
-        <button class="icon danger" use:tooltip={noteProject ? "Remove project (its notes stay)" : "Delete note"} on:click={removeNote}><Icon name="trash" /></button>
-      </div>
+      {#if !noteProject && !copyOf}
+        <button
+          class="back-btn"
+          class:pinned={note.pinned}
+          class:over={tooBig.length > 0}
+          aria-label="Pin note"
+          aria-pressed={note.pinned}
+          use:tooltip={pinTip(note, tooBig)}
+          on:click={togglePin}
+        >
+          <Icon name="pin" />
+        </button>
+      {/if}
+      {#if obsidian !== "missing"}
+        <button class="back-btn" use:tooltip={"Open in Obsidian"} on:click={() => openOutside(note?.path ?? "", "obsidian")}><Icon name="arrowRight" /></button>
+      {/if}
+      <button class="back-btn" use:tooltip={"Open the file"} on:click={() => openOutside(note?.path ?? "", "file")}><Icon name="file" /></button>
+      <button class="back-btn danger" use:tooltip={noteProject ? "Remove project (its notes stay)" : "Delete note"} on:click={removeNote}><Icon name="trash" /></button>
+    {:else}
+      <button class="link" on:click={newProject}>New project</button>
+    {/if}
+  </div>
+
+  {#if note}
       {#if copyOf}
         <div class="conflict">
           <p>
@@ -570,24 +506,48 @@
           <div class="msg doc" on:click={onPreviewClick}>{@html mdHtml(withLinks(body(raw)), $richReady, false)}</div>
         {/if}
       </div>
-    {:else if current}
-      <div class="page">
-        <h2>{current.title}</h2>
-        <p class="lead">
-          {#if current.key === CONFLICTS}
-            These notes changed on two devices before they synced. Open each one and keep one version; agents skip the copies until then.
-          {:else if current.key === UNUSED}
-            No session gets these notes. Drag one onto a folder to use it.
-          {:else if current.project}
-            Sessions started in <span class="mono">{current.project.folder}</span> get these notes.
-          {:else}
-            Every session gets these notes.
+    {:else}
+      <div class="list">
+        {#each folders as f (f.key)}
+          {@const fixed = f.key === UNUSED || f.key === CONFLICTS}
+          {@const drop = f.key === CONFLICTS ? undefined : f.key}
+          {#if !fixed || f.items.length || !query.trim()}
+            <div class="group" data-folder={drop} class:drop={dragging && dropOn === f.key}>
+              <div class="group-head">
+                <h3 title={f.project?.folder ?? ""}>{f.title}</h3>
+                {#if !fixed}
+                  <button class="add" use:tooltip={`New note in ${f.title}`} on:click={() => startNote(f.key)}><Icon name="plus" size={12} /></button>
+                {/if}
+              </div>
+              {#each f.items as n (n.path)}
+                <div class="row">
+                  <button
+                    class="open"
+                    data-note={n.path}
+                    title={n.conflict_of ? `Sync conflict copy of ${n.conflict_of}` : n.summary || n.path}
+                    use:pressDrag={noteDrag(n, f.key)}
+                    on:keydown={(e) => e.key === "Enter" && openNote(n.path)}
+                  >
+                    <span class="title">{n.title}</span>
+                    {#if twin(n, f)}<span class="url">{twin(n, f)}</span>{/if}
+                    {#if n.pinned && !n.conflict_of}
+                      <span class="pin" class:over={!!overflow[n.path]} title={overflow[n.path] ? "Too big to send in full, listed instead" : "Always included in full"}><Icon name="pin" size={12} /></span>
+                    {/if}
+                  </button>
+                </div>
+              {/each}
+              {#if creatingIn === f.key}
+                <form class="draft" on:submit|preventDefault={createNote}>
+                  <input bind:this={draftField} bind:value={draftName} placeholder="Note name" aria-label="Note name" on:blur={createNote} />
+                </form>
+              {:else if !f.items.length}
+                <p class="empty">{fixed ? "Nothing here." : "Empty. Drag notes here."}</p>
+              {/if}
+            </div>
           {/if}
-        </p>
-        <p class="hint">Drag a note onto a folder to move it; hold Ctrl to copy it. Pin a note to send all of it; one too big to fit is listed instead.</p>
+        {/each}
       </div>
     {/if}
-  </section>
 
   {#if dragging && press}
     <div class="ghost" style={`left:${dragX + 14}px;top:${dragY + 10}px`}>{press.title}</div>
@@ -600,73 +560,57 @@
     min-width: 0;
     min-height: 0;
     display: flex;
+    flex-direction: column;
   }
   .brain.dragging,
   .brain.dragging * {
     cursor: grabbing !important;
     user-select: none;
   }
-  aside {
-    width: 270px;
+  .link {
     flex: none;
-    display: flex;
-    flex-direction: column;
-    border-right: 1px solid var(--line);
-  }
-  .top {
-    display: flex;
-    align-items: center;
-    padding: calc(var(--space) * 3) calc(var(--space) * 3) calc(var(--space) * 2);
-  }
-  .search {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    height: 30px;
-    padding: 0 calc(var(--space) * 3);
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    color: var(--muted);
-  }
-  .search input {
-    flex: 1;
-    min-width: 0;
+    padding: var(--space) calc(var(--space) * 2);
     background: none;
     border: none;
-    outline: none;
-    box-shadow: none !important;
-    color: var(--text);
-    font-size: var(--fs-md);
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    cursor: pointer;
   }
-  .tree {
+  .link:hover {
+    color: var(--text);
+  }
+  .list {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: var(--space) calc(var(--space) * 2) calc(var(--space) * 4);
+    width: 100%;
+    padding: 0 calc(var(--space) * 4) calc(var(--space) * 8);
   }
-  .folder {
+  .group.drop {
+    border-radius: var(--radius);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  .group-head {
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 2);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
+    margin: calc(var(--space) * 4) calc(var(--space) * 3) calc(var(--space) * 2);
   }
-  .folder:hover {
-    background: var(--hover);
-  }
-  .folder.on {
-    background: var(--selected);
-  }
-  .folder.drop {
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
+  h3 {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-md);
+    font-weight: 600;
+    color: var(--muted);
   }
   .add {
     width: 22px;
-    height: 28px;
+    height: 22px;
     flex: none;
     display: inline-flex;
     align-items: center;
@@ -677,86 +621,53 @@
     border-radius: var(--radius);
     color: var(--muted);
     cursor: pointer;
+    opacity: 0;
   }
   .add:hover {
     color: var(--text);
   }
-  .add {
-    opacity: 0;
-  }
-  .folder:hover .add,
+  .group:hover .add,
   .add:focus-visible {
     opacity: 1;
   }
-  .folder-name {
+  .row {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space) * 2);
+    border-radius: var(--radius);
+  }
+  .row:hover {
+    background: var(--hover);
+  }
+  .open {
     flex: 1;
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: calc(var(--space) * 2);
-    height: 30px;
-    padding: 0 var(--space) 0 var(--space);
+    gap: calc(var(--space) * 3);
+    height: 34px;
+    padding: 0 calc(var(--space) * 3);
     background: none;
     border: none;
-    color: var(--muted);
+    color: var(--text);
     font-size: var(--fs-md);
     text-align: left;
     cursor: pointer;
   }
-  .folder-name :global(svg) {
-    flex: none;
-    color: var(--muted);
-  }
-  .folder:hover .folder-name,
-  .folder.on .folder-name {
-    color: var(--text);
-  }
-  .folder.on .folder-name :global(svg) {
-    color: var(--accent);
-  }
-  .name {
-    flex: 1;
+  .title {
+    flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .chev {
-    width: 12px;
-    display: inline-flex;
-    justify-content: center;
-  }
-  .kids {
-    margin: var(--space) 0 calc(var(--space) * 2) calc(var(--space) * 4);
-    padding-left: calc(var(--space) * 2);
-    border-left: 1px solid var(--line);
-  }
-  .note {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    width: 100%;
-    height: 27px;
-    padding: 0 calc(var(--space) * 2);
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    font-size: var(--fs-md);
-    text-align: left;
-    cursor: pointer;
-  }
-  .note:hover {
-    background: var(--hover);
-    color: var(--text);
-  }
-  .note.on {
-    background: var(--selected);
-    color: var(--text);
-  }
-  .from {
-    flex: none;
-    font-size: var(--fs-xs);
+  .url {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-sm);
     color: var(--muted);
   }
   .pin {
@@ -768,86 +679,43 @@
     color: var(--warn);
   }
   .empty {
-    margin: var(--space) calc(var(--space) * 2) var(--space);
+    margin: 0 0 calc(var(--space) * 2) calc(var(--space) * 3);
     font-size: var(--fs-sm);
     color: var(--muted);
   }
   .draft {
-    padding: var(--space) 0;
+    padding: 0 calc(var(--space) * 3) calc(var(--space) * 2);
   }
   .draft input {
     width: 100%;
-    height: 27px;
-    padding: 0 calc(var(--space) * 2);
+    height: 34px;
+    padding: 0 calc(var(--space) * 3);
     background: var(--bg);
     border: 1px solid var(--accent);
     border-radius: var(--radius);
     color: var(--text);
     font-size: var(--fs-md);
   }
-  .new-project {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    width: 100%;
-    height: 30px;
-    margin-top: calc(var(--space) * 2);
-    padding: 0 calc(var(--space) * 2);
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    font-size: var(--fs-md);
-    cursor: pointer;
-  }
-  .new-project:hover {
-    background: color-mix(in srgb, var(--text) 5%, transparent);
-    color: var(--text);
-  }
-  section {
+  .note-title {
     flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .bar {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 3);
-    min-height: 56px;
-    padding: calc(var(--space) * 2) calc(var(--space) * 4);
-    border-bottom: 1px solid var(--line);
-  }
-  .titles {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space);
-  }
-  .title-row {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    min-width: 0;
-  }
-  .titles h2 {
     margin: 0;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--fs-lg);
+    font-size: var(--fs-md);
+    font-weight: 600;
+    color: var(--text);
   }
   .badge {
     flex: none;
-    padding: var(--space) calc(var(--space) * 2);
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--warn) 16%, transparent);
     color: var(--warn);
-    font-size: var(--fs-xs);
+    font-size: var(--fs-md);
     font-weight: 600;
   }
+  .back-btn.pinned { color: var(--accent); }
+  .back-btn.pinned.over { color: var(--warn); }
+  .back-btn.danger:hover { color: var(--bad); }
   .conflict {
     flex: none;
     display: flex;
@@ -871,43 +739,8 @@
     flex-wrap: wrap;
     gap: calc(var(--space) * 2);
   }
-  .path {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: var(--mono);
-    font-size: var(--fs-xs);
-    color: var(--muted);
-  }
   .seg {
     flex: none;
-  }
-  .icon {
-    width: 30px;
-    height: 30px;
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .icon:hover {
-    background: var(--hover);
-    color: var(--text);
-  }
-  .icon.danger:hover {
-    color: var(--bad);
-  }
-  .icon.pinned {
-    color: var(--accent);
-  }
-  .icon.pinned.over {
-    color: var(--warn);
   }
   .content {
     flex: 1;
@@ -933,36 +766,6 @@
     font-family: var(--mono);
     font-size: var(--mono-size);
     line-height: 1.6;
-  }
-  .page {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: calc(var(--space) * 8) calc(var(--space) * 8) calc(var(--space) * 8);
-  }
-  .page > * {
-    max-width: 720px;
-  }
-  .page h2 {
-    margin: 0 0 calc(var(--space) * 2);
-    font-size: var(--fs-xl);
-    font-weight: 600;
-  }
-  .lead {
-    margin: 0 0 calc(var(--space) * 2);
-    font-size: var(--fs-base);
-    line-height: 1.55;
-    color: var(--muted);
-  }
-  .hint {
-    margin: 0 0 calc(var(--space) * 4);
-    font-size: var(--fs-md);
-    line-height: 1.55;
-    color: var(--muted);
-  }
-  .mono {
-    font-family: var(--mono);
-    font-size: var(--fs-sm);
   }
   .ghost {
     position: fixed;

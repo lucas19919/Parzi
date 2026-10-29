@@ -142,6 +142,18 @@ export interface ProviderEntry {
   enabled: boolean;
   binary?: string;
   default_model?: string;
+  /** Extra arguments for a generic ACP command. Empty for the built-in agents. */
+  args?: string[];
+  /** What Settings calls a generic ACP agent. Empty shows as ACP. */
+  label?: string;
+}
+
+/** One agent from the public ACP registry, already turned into a command. */
+export interface RegistryAgent {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
 }
 
 export interface ParziConfig {
@@ -171,6 +183,8 @@ export interface Theme {
     height: number;
     // Which part of the picture shows: 0 is the top, 1 the bottom.
     y: number;
+    // The picture stays on home. Other pages are the solid stage colour.
+    home_only?: boolean;
   };
 }
 
@@ -262,6 +276,8 @@ export const api = {
   warmAgent: (provider: string) => invoke<void>("warm_agent", { provider }),
   getConfig: () => invoke<ParziConfig>("get_config"),
   saveConfig: (cfg: ParziConfig) => invoke<void>("save_config", { cfg }),
+  // Commands from the public ACP registry. Parzi does not install them.
+  acpRegistry: () => invoke<RegistryAgent[]>("acp_registry"),
   // The commands a session's agents ran, and stopping a background one.
   shellJobs: (session: string) => invoke<ShellJob[]>("shell_jobs", { session }),
   shellKill: (session: string, id: string) => invoke<boolean>("shell_kill", { session, id }),

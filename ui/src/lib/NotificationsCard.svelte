@@ -1,10 +1,22 @@
 <script lang="ts">
   // The session column's notice list. It stays at the top while the column scrolls.
-  import { createEventDispatcher } from "svelte";
+  import { createEventDispatcher, tick } from "svelte";
   import InfoCard from "./InfoCard.svelte";
   import { notifications, markAllRead, markRead, clearNotifications, type NotificationItem } from "./notificationStore";
 
   const dispatch = createEventDispatcher<{ openSession: { id: string } }>();
+
+  let listEl: HTMLDivElement | null = null;
+  let cut = false;
+
+  // The list clips. A blur only while more sits below the fold.
+  async function measure() {
+    await tick();
+    const el = listEl;
+    cut = !!el && el.scrollHeight - el.scrollTop - el.clientHeight > 8;
+  }
+
+  $: if ($notifications) void measure();
 
   $: unread = $notifications.filter((n) => !n.read).length;
 
@@ -28,14 +40,16 @@
   <div class="pin">
     <InfoCard id="notifications" title="Notifications">
       <svelte:fragment slot="aside">{unread ? `${unread} new` : ""}</svelte:fragment>
-      <div class="list">
-        {#each $notifications as n (n.id)}
-          <button class="item" class:unread={!n.read} on:click={() => open(n)}>
-            <span class="name">{n.title}</span>
-            <span class="time">{timeAgo(n.time)}</span>
-            {#if n.body}<span class="body">{n.body}</span>{/if}
-          </button>
-        {/each}
+      <div class="clip" class:cut>
+        <div class="list" bind:this={listEl} on:scroll={measure}>
+          {#each $notifications as n (n.id)}
+            <button class="item" class:unread={!n.read} on:click={() => open(n)}>
+              <span class="name">{n.title}</span>
+              <span class="time">{timeAgo(n.time)}</span>
+              {#if n.body}<span class="body">{n.body}</span>{/if}
+            </button>
+          {/each}
+        </div>
       </div>
       <div class="acts">
         {#if unread}<button type="button" on:click={markAllRead}>Mark read</button>{/if}
@@ -52,12 +66,33 @@
     z-index: 2;
     flex: none;
   }
+  .clip {
+    position: relative;
+  }
   .list {
     display: flex;
     flex-direction: column;
     gap: calc(var(--space) * 2);
     max-height: calc(var(--space) * 48);
     overflow-y: auto;
+  }
+  /* The last row dissolves instead of being sliced off above Clear. */
+  .clip.cut .list {
+    -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 36px), transparent);
+    mask-image: linear-gradient(to bottom, black calc(100% - 36px), transparent);
+  }
+  .clip.cut::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 10px;
+    bottom: 0;
+    height: 36px;
+    pointer-events: none;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent, black);
+    mask-image: linear-gradient(to bottom, transparent, black);
   }
   .item {
     display: grid;

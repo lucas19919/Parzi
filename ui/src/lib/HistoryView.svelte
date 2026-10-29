@@ -100,14 +100,14 @@
 </script>
 
 <div class="library">
-  <header>
+  <header class="page-bar">
     <div class="seg page-tabs" role="group" aria-label="Library" data-ui-segmented>
       <button class:on={view === "sessions"} aria-pressed={view === "sessions"} on:click={() => show("sessions")}>Sessions</button>
       <button class:on={view === "history"} aria-pressed={view === "history"} on:click={() => show("history")}>Pages</button>
       <button class:on={view === "bookmarks"} aria-pressed={view === "bookmarks"} on:click={() => show("bookmarks")}>Bookmarks</button>
       <button class:on={view === "downloads"} aria-pressed={view === "downloads"} on:click={() => show("downloads")}>Downloads</button>
     </div>
-    <div class="search">
+    <div class="page-search">
       <Icon name="search" />
       <input bind:this={field} bind:value={query} placeholder={PLACEHOLDER[view]} aria-label={PLACEHOLDER[view]} spellcheck="false" />
     </div>
@@ -225,40 +225,8 @@
     display: flex;
     flex-direction: column;
   }
-  header {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 3);
-    width: 100%;
-    padding: calc(var(--space) * 2) calc(var(--space) * 4);
-    border-bottom: 1px solid var(--line);
-  }
   .seg {
     flex: none;
-  }
-  .search {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    height: 28px;
-    padding: 0 calc(var(--space) * 3);
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    color: var(--muted);
-  }
-  .search input {
-    flex: 1;
-    min-width: 0;
-    background: none;
-    border: none;
-    outline: none;
-    box-shadow: none !important;
-    color: var(--text);
-    font-size: var(--fs-md);
   }
   .link {
     flex: none;

@@ -184,6 +184,95 @@ async fn kill_mid_stream_stops_within_one_event_and_stays_killed() {
         .any(|e| matches!(e, Event::Assistant { text, done: false } if text.contains("tick"))));
 }
 
+#[tokio::test]
+async fn a_second_send_while_active_does_not_queue_another_run() {
+    home("queue");
+    let (orch, store) = orch(&[hang()]);
+    let (first, _rx) = orch
+        .spawn("t", "claude", "first", None, "", "medium", vec![], None)
+        .await
+        .unwrap();
+    assert!(wait_status(&store, &first.id, SessionStatus::Active).await);
+    let err = orch
+        .send_to(&first.id, "second", None, "", "medium", vec![], None, None)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("still working"), "{err}");
+    // Active is set before the run records the prompt, so wait for that line.
+    let mut texts = Vec::new();
+    for _ in 0..40 {
+        texts = events(&store, &first.id)
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::User { text } => Some(text),
+                _ => None,
+            })
+            .collect();
+        if !texts.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(
+        texts,
+        vec!["first".to_string()],
+        "the follow-up stays in the composer, not the transcript"
+    );
+    let path = home("queue")
+        .join("sessions")
+        .join(&first.id)
+        .join("run.json");
+    if let Ok(text) = std::fs::read_to_string(&path) {
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::json!({}));
+        assert!(
+            v.get("queued").map(|q| q.is_null()).unwrap_or(true),
+            "no second PersistedRun: {text}"
+        );
+    }
+    assert_eq!(store.get(&first.id).unwrap().status, SessionStatus::Active);
+    orch.kill(&first.id).await.unwrap();
+}
+
+#[tokio::test]
+async fn one_agent_dying_leaves_the_other_session_running() {
+    home("queue");
+    let die = Fake::new(
+        "claude",
+        script(|_a: Agent| async move {
+            Err(parzi_providers::ProviderError::process(
+                "claude exited before it answered",
+            ))
+        }),
+    );
+    let stay = Fake::new(
+        "codex",
+        script(|a: Agent| async move {
+            a.cancel.cancelled().await;
+            Ok(TurnEnd::Interrupted)
+        }),
+    );
+    let (orch, store) = orch(&[die, stay]);
+    let (dead, _rx) = orch
+        .spawn("t", "claude", "die", None, "", "medium", vec![], None)
+        .await
+        .unwrap();
+    let (live, _rx) = orch
+        .spawn("t", "codex", "live", None, "", "medium", vec![], None)
+        .await
+        .unwrap();
+    let settled = settle(&store, &dead.id).await;
+    assert_eq!(settled.status, SessionStatus::Idle);
+    assert!(
+        events(&store, &dead.id).iter().any(|e| matches!(
+            e,
+            Event::Error { message, .. } if message.contains("exited before it answered")
+        )),
+        "the closed sentence stays on that session"
+    );
+    assert_eq!(store.get(&live.id).unwrap().status, SessionStatus::Active);
+    orch.kill(&live.id).await.unwrap();
+}
+
 #[test]
 fn an_empty_source_has_no_providers() {
     let src = source(&[]);

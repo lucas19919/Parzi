@@ -270,7 +270,14 @@ async fn read_loop<R>(
     let mut buf = Vec::new();
     loop {
         match read_line(&mut reader, &mut buf, MAX_LINE).await {
-            Ok(Line::Eof) | Err(_) => break,
+            Ok(Line::Eof) => {
+                tracing::info!("{who} closed its output; the turn's waiters fail");
+                break;
+            }
+            Err(e) => {
+                tracing::warn!("{who} read failed: {e}; the turn's waiters fail");
+                break;
+            }
             Ok(Line::Dropped(n)) => {
                 tracing::warn!("dropped a {n}-byte line from {who}: over the 32 MiB cap");
                 continue;
@@ -464,5 +471,41 @@ mod tests {
             panic!("expected a notification");
         };
         assert_eq!(params["s"], "Grüße");
+    }
+
+    #[tokio::test]
+    async fn closing_one_reader_fails_that_waiter_and_another_peer_answers() {
+        let (client_io, server_io) = tokio::io::duplex(1024);
+        let (cr, cw) = tokio::io::split(client_io);
+        let (peer, _incoming) = Peer::start("OpenCode", cr, cw);
+        let (sr, sw) = tokio::io::split(server_io);
+        let asked = tokio::spawn(async move {
+            let mut lines = BufReader::new(sr).lines();
+            let req: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            assert_eq!(req["method"], "session/prompt");
+            drop(sw);
+        });
+        let err = peer.request("session/prompt", json!({})).await.unwrap_err();
+        assert_eq!(err.code, RpcError::CLOSED);
+        assert!(err.message.contains("exited before it answered"), "{err}");
+        asked.await.unwrap();
+
+        let (client_io, server_io) = tokio::io::duplex(1024);
+        let (cr, cw) = tokio::io::split(client_io);
+        let (other, _incoming) = Peer::start("Other", cr, cw);
+        let (sr, mut sw) = tokio::io::split(server_io);
+        let server = tokio::spawn(async move {
+            let mut lines = BufReader::new(sr).lines();
+            let req: Value =
+                serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+            let answer = json!({"jsonrpc": "2.0", "id": req["id"], "result": {"ok": true}});
+            sw.write_all(format!("{answer}\n").as_bytes())
+                .await
+                .unwrap();
+        });
+        let result = other.request("session/prompt", json!({})).await.unwrap();
+        assert_eq!(result["ok"], true);
+        server.await.unwrap();
     }
 }

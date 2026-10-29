@@ -4,6 +4,8 @@ import { api, type Theme } from "./api";
 // Bumps whenever the theme's colours may have changed (applied
 // stylesheet or live preview); chart palettes are cached per revision.
 export const themeRev = writable(0);
+// Wallpaper stays on the new-session screen when this is on.
+export const wallpaperHomeOnly = writable(false);
 let rev = 0;
 function bump() {
   rev++;
@@ -117,6 +119,7 @@ function themeVars(t: Theme): Record<string, string> {
 export function previewTheme(t: Theme) {
   const s = document.documentElement.style;
   for (const [k, v] of Object.entries(themeVars(t))) s.setProperty(k, v);
+  wallpaperHomeOnly.set(!!t.background.home_only);
   bump();
 }
 

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use parzi_core::config::ParziConfig;
 use parzi_core::error::{ParziError, Result};
-use parzi_core::store::{Event, RunCause, SessionMeta, SessionStatus};
+use parzi_core::store::{Event, RunCause, RunEndKind, SessionMeta, SessionStatus};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -198,16 +198,35 @@ impl Orchestrator {
         model_override: Option<String>,
         mode_override: Option<String>,
     ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
+        let meta = self.store.get(id)?;
+        // A second message while this session works stays in the composer's
+        // queue. The runtime must not also store it as a PersistedRun.
+        if cause.from_person()
+            && matches!(meta.status, SessionStatus::Active | SessionStatus::Queued)
+        {
+            tracing::info!(
+                session = %id,
+                status = meta.status.word(),
+                "queue: composer holds the send (still working); no PersistedRun"
+            );
+            return Err(ParziError::Store(format!("still working on {id}")));
+        }
         {
             let mut h = self.handles.lock().await;
             h.retain(|_, handle| !handle.finished());
             if h.contains_key(id) {
+                if cause.from_person() {
+                    tracing::info!(
+                        session = %id,
+                        "queue: composer holds the send (still working); a run is live"
+                    );
+                    return Err(ParziError::Store(format!("still working on {id}")));
+                }
                 return Err(ParziError::Store(format!(
                     "run {id} is active; kill it first"
                 )));
             }
         }
-        let meta = self.store.get(id)?;
         let spec = model_override
             .filter(|m| !m.trim().is_empty())
             .unwrap_or_else(|| meta.model.clone());
@@ -243,6 +262,10 @@ impl Orchestrator {
                     "busy: max concurrent runs reached".into(),
                 ));
             }
+            tracing::info!(
+                session = %id,
+                "queue: PersistedRun (at the concurrent limit; the launch has not started)"
+            );
             self.store.set_status(id, SessionStatus::Queued)?;
             self.pump_parts().enqueue(q).await;
             return Ok(Self::closed_rx());
@@ -422,8 +445,20 @@ impl Orchestrator {
             }
         };
         let Some((id, seen)) = claim else {
-            // A lost claim is "retry", never a dead channel.
+            // A person's second send stays in the composer. An internal
+            // launch that lost the race can still wait as a PersistedRun.
+            if q.cause.from_person() {
+                tracing::info!(
+                    session = %sid,
+                    "queue: lost the claim; composer holds the send (still working)"
+                );
+                return Err(ParziError::Store(format!("still working on {sid}")));
+            }
             if q.inbox_from.is_none() && p.cfg_snapshot().orchestrator.queue_when_busy {
+                tracing::info!(
+                    session = %sid,
+                    "queue: PersistedRun (internal launch lost the claim)"
+                );
                 p.enqueue(q).await;
                 return Ok(Started::Queued);
             }
@@ -672,18 +707,26 @@ impl Drop for RunEnd {
             }
             // A panicking task never settles: stand it down with an error.
             // A killed (aborted) one is kill()'s to mark; never turn Killed into Idle.
+            // Only this session. A panic here must not cancel the others,
+            // and a run the person killed stays killed.
             if !done.load(std::sync::atomic::Ordering::SeqCst) && !cancel.is_cancelled() {
+                let sentence = "run task ended without settling; transcript kept, nothing was sent";
+                tracing::warn!(session = %sid, "{sentence}");
                 if let Ok(m) = p.store.get(&sid) {
                     if m.status == SessionStatus::Active {
                         let _ = p.store.set_status(&sid, SessionStatus::Idle);
                         let _ = p.store.append(
                             &sid,
                             &Event::Error {
-                                message: "run task ended without settling; transcript kept, nothing was sent".into(),
+                                message: sentence.into(),
                                 class: "harness".into(),
                             },
                         );
                     }
+                }
+                let mut t = crate::run_hooks::lock(&tally);
+                if t.end.is_none() {
+                    t.end = Some((RunEndKind::Interrupted, Some(sentence.into())));
                 }
             }
             // The slot is free: a queued run need not wait for the record.
