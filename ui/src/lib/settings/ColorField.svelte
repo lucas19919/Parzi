@@ -21,10 +21,10 @@
 </script>
 
 <label class="cf">
+  <span class="lab">{label}</span>
   <span class="sw" style="background:{value}">
     <input type="color" value={isHex(value) ? normalizeHex(value) : "#000000"} on:input={fromPicker} aria-label="{label} colour" />
   </span>
-  <span class="lab">{label}</span>
   <input
     class="hex"
     bind:value={draft}
@@ -42,7 +42,7 @@
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--line); cursor: pointer;
   }
   .sw input { position: absolute; inset: -10px; width: 44px; height: 44px; opacity: 0; cursor: pointer; padding: 0; border: none; }
-  .lab { flex: 1; min-width: 0; font-size: var(--fs-md); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lab { flex: 1; min-width: 0; font-size: var(--fs-md); font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hex {
     width: 84px; flex: none; background: var(--bg); border: 1px solid var(--line);
     border-radius: var(--radius); color: var(--muted); padding: var(--space) calc(var(--space) * 2); outline: none;

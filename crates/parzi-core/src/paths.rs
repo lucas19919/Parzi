@@ -168,6 +168,13 @@ text_dim = \"#9B9B9B\"\nbar = \"#1C1C1C\"\nborder = \"#2A2A2A\"\n\n\
 text_dim = \"#9A8C7A\"\nbar = \"#FBF7F1\"\nborder = \"#E6DCCE\"\npanel = \"#FBF7F1\"\n\n\
 [background]\nimage = \"\"\n",
     ),
+    (
+        "tokyo-night",
+        "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+[colors]\nsidebar = \"#16161E\"\nstage = \"#1A1B26\"\naccent = \"#7AA2F7\"\ntext = \"#C0CAF5\"\n\
+text_dim = \"#9AA5CE\"\nbar = \"#16161E\"\nborder = \"#3B4261\"\n\n\
+[background]\nimage = \"\"\n",
+    ),
 ];
 
 fn seed_builtin_packs(root: &std::path::Path) -> Result<()> {
@@ -257,7 +264,6 @@ fn refresh_builtin_defaults(root: &std::path::Path) {
 fn retire_legacy_packs(root: &std::path::Path) {
     const LEGACY: &[(&str, &str)] = &[
         ("ember", "accent = \"#E5484D\""),
-        ("tokyo-night", "accent = \"#7AA2F7\""),
         ("slate", "accent = \"#CBD5E1\""),
         ("grey", "accent = \"#E6E8EE\""),
         ("full-dark", "accent = \"#5EEAD4\""),

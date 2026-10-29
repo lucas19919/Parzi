@@ -158,6 +158,7 @@ export interface Theme {
   colors: { sidebar: string; stage: string; accent: string; text: string; text_dim: string; bar: string; border: string; panel?: string };
   background: {
     image: string;
+    height: number;
     y: number;
   };
 }

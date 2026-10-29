@@ -17,6 +17,7 @@
   let packs: PackInfo[] = [];
   let backgrounds: BackgroundFile[] = [];
   let yPct = 50;
+  let hPct = 34;
   let loading = true;
   let err = "";
   let packName = "";
@@ -24,7 +25,6 @@
 
 
 
-  const ACCENTS = ["#E8E8E8", "#CBD5E1", "#7AA2F7", "#88C0D0", "#34D399", "#A6DA95", "#5EEAD4", "#EB6F92", "#F5A97F", "#E8B64C"];
   const UI_FONTS = ["Inter", "system-ui", "Segoe UI", "SF Pro Text", "Roboto", "IBM Plex Sans"];
   const MONO_FONTS = ["JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "SF Mono", "ui-monospace"];
   const SIZES_UI = [12, 13, 14, 15, 16].map((n) => ({ value: String(n), label: String(n) }));
@@ -69,9 +69,18 @@
     touch();
   }
 
+  function onHeight(v: number) {
+    if (!theme || !Number.isFinite(v)) return;
+    hPct = Math.round(v);
+    theme.background.height = hPct / 100;
+    touch();
+  }
+
   function syncPos() {
     const y = theme?.background.y;
     yPct = typeof y === "number" && Number.isFinite(y) ? Math.round(y * 100) : 50;
+    const h = theme?.background.height;
+    hPct = typeof h === "number" && Number.isFinite(h) ? Math.round(h * 100) : 34;
   }
 
   function sameColors(a: Theme["colors"], b: Theme["colors"]): boolean {
@@ -189,7 +198,7 @@
       syncPos();
       await refreshBackground();
     } catch (e) {
-      notify(`Could not set the backdrop: ${e}`, true);
+      notify(`Could not set the wallpaper: ${e}`, true);
     }
   }
   function pickFile() {
@@ -248,7 +257,7 @@
   }
 
   async function resetAppearance() {
-    if (!(await ask("Theme, backdrop, colours and fonts go back to the defaults.", { title: "Reset appearance?", kind: "warning" }))) return;
+    if (!(await ask("Theme, wallpaper, colours and fonts go back to the defaults.", { title: "Reset appearance?", kind: "warning" }))) return;
     try {
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = null;
@@ -276,108 +285,104 @@
   </div>
 {:else}
   <section class="pref-section">
-    <h3 class="section-title">Theme</h3>
-    <div class="packs">
-      {#each packs as p (p.name)}
-        {@const c = p.colors}
-        <div class="pack" class:on={activePack === p.name}>
-          <button
-            class="pack-btn"
-            on:click={() => applyPack(p)}
-            title={p.builtin ? packLabel(p.name) : `${packLabel(p.name)} (yours)`}
-            aria-pressed={activePack === p.name}
-          >
-            <span
-              class="pp"
-              style="--pp-st:{c.stage};--pp-ac:{c.accent};--pp-tx:{c.text};--pp-td:{c.text_dim}"
-            >
-              <span class="pp-line" /><span class="pp-line short" />
-              <span class="pp-bar"><i /></span>
-            </span>
-            <span class="pack-name">{#if renamingPack === p.name && !p.builtin}<input class="pack-rename" aria-label="New name for {packLabel(p.name)}" bind:value={renameDraft} use:focusRename on:click|stopPropagation on:keydown={(e) => { if (e.key === "Enter") commitPackRename(p); else if (e.key === "Escape") renamingPack = null; }} />{:else}{packLabel(p.name)}{/if}</span>{#if p.has_art}<span class="art-dot" use:tooltip={"Comes with a wallpaper"}><Icon name="image" size={12} /></span>{/if}
-          </button>
-          {#if !p.builtin}
-            <div class="pack-actions">
-              <button class="mini-icon" use:tooltip={`Rename ${packLabel(p.name)}`}
-                on:click={() => { renamingPack = p.name; renameDraft = p.name; delPack = null; }}><Icon name="pencil" size={12} /></button>
-              <button class="mini-icon" class:armed={delPack === p.name}
-                use:tooltip={delPack === p.name ? "Click again to delete" : "Delete"}
-                aria-label="Delete {packLabel(p.name)}" on:click={() => deletePack(p)}>{#if delPack === p.name}Sure?{:else}<Icon name="trash" size={12} />{/if}</button>
-            </div>
-          {/if}
-        </div>
-      {/each}
-    </div>
-    <div class="save-row">
-      <input
-        class="tin"
-        placeholder="Save the current look as…"
-        aria-label="Theme name"
-        bind:value={packName}
-        on:keydown={(e) => e.key === "Enter" && savePack()}
-        spellcheck="false"
-      />
-      <button class="sbtn" disabled={!packName.trim()} on:click={savePack}>Save</button>
-    </div>
-  </section>
-
-  <section class="pref-section">
-    <div class="section-head-with-action">
-      <h3 class="section-title">Backdrop</h3>
-      <button class="sbtn" on:click={pickFile}><Icon name="plus" size={12} /><span>Add image</span></button>
-      <input type="file" accept="image/png,image/jpeg,image/webp" hidden bind:this={fileInputEl} on:change={onFile} />
-    </div>
-    <p class="section-desc">One picture behind a new session. Nothing else.</p>
-    {#if theme.background.image}
-      <div class="field-card stack">
-        <Slider label="Position" bind:value={yPct} min={0} max={100} unit="%" on:input={(e) => onPos(e.detail)} />
-      </div>
-    {/if}
-    <div class="walls">
-      <button class="wall" class:on={!theme.background.image} on:click={() => setBg("")}>
-        <span class="wall-pre none"><span>None</span></span>
-      </button>
-      {#each backgrounds as b (b.name)}
-        <div class="wall-wrap">
-          <button
-            class="wall"
-            class:on={theme.background.image.endsWith("/" + b.name)}
-            on:click={() => setBg(b.name)}
-            title={b.name}
-          >
-            <img class="wall-pre" src={convertFileSrc(b.url)} alt={b.name} loading="lazy" draggable="false" />
-          </button>
-          <button class="mini-icon" class:armed={delWall === b.name}
-            use:tooltip={delWall === b.name ? "Click again to delete" : "Delete"}
-            aria-label={delWall === b.name ? `Confirm delete ${b.name}` : `Delete ${b.name}`}
-            on:click={() => deleteWall(b)}>{#if delWall === b.name}Sure?{:else}<Icon name="close" size={12} />{/if}</button>
-        </div>
-      {/each}
-    </div>
-  </section>
-
-  <section class="pref-section">
-    <h3 class="section-title">Colours</h3>
-    <div class="rows">
+    <div class="rows pad-even">
+      <div class="row row-title"><span>Theme</span></div>
       <div class="row">
-        <div class="swatches">
-          {#each ACCENTS as hex}
-            <button
-              class="swatch"
-              class:on={theme.colors.accent.toLowerCase() === hex.toLowerCase()}
-              style="--sw:{hex}"
-              use:tooltip={hex}
-              aria-label="Accent {hex}"
-              on:click={() => setColor("accent", hex)}
-            />
+        <div class="packs">
+          {#each packs as p (p.name)}
+            {@const c = p.colors}
+            <div class="pack" class:on={activePack === p.name}>
+              <button
+                class="pack-btn"
+                on:click={() => applyPack(p)}
+                title={p.builtin ? packLabel(p.name) : `${packLabel(p.name)} (yours)`}
+                aria-pressed={activePack === p.name}
+              >
+                <span
+                  class="pp"
+                  style="--pp-st:{c.stage};--pp-ac:{c.accent};--pp-tx:{c.text};--pp-td:{c.text_dim}"
+                >
+                  <span class="pp-line" /><span class="pp-line short" />
+                  <span class="pp-bar"><i /></span>
+                </span>
+                <span class="pack-name">{#if renamingPack === p.name && !p.builtin}<input class="pack-rename" aria-label="New name for {packLabel(p.name)}" bind:value={renameDraft} use:focusRename on:click|stopPropagation on:keydown={(e) => { if (e.key === "Enter") commitPackRename(p); else if (e.key === "Escape") renamingPack = null; }} />{:else}{packLabel(p.name)}{/if}</span>{#if p.has_art}<span class="art-dot" use:tooltip={"Comes with a wallpaper"}><Icon name="image" size={12} /></span>{/if}
+              </button>
+              {#if !p.builtin}
+                <div class="pack-actions">
+                  <button class="mini-icon" use:tooltip={`Rename ${packLabel(p.name)}`}
+                    on:click={() => { renamingPack = p.name; renameDraft = p.name; delPack = null; }}><Icon name="pencil" size={12} /></button>
+                  <button class="mini-icon" class:armed={delPack === p.name}
+                    use:tooltip={delPack === p.name ? "Click again to delete" : "Delete"}
+                    aria-label="Delete {packLabel(p.name)}" on:click={() => deletePack(p)}>{#if delPack === p.name}Sure?{:else}<Icon name="trash" size={12} />{/if}</button>
+                </div>
+              {/if}
+            </div>
           {/each}
-          <span class="swatch-gap" />
-          <ColorField label="Accent" value={theme.colors.accent} on:input={(e) => setColor("accent", e.detail)} />
         </div>
       </div>
+      <div class="row save-row">
+        <input
+          class="tin"
+          placeholder="Save the current look as…"
+          aria-label="Theme name"
+          bind:value={packName}
+          on:keydown={(e) => e.key === "Enter" && savePack()}
+          spellcheck="false"
+        />
+        <button class="sbtn" disabled={!packName.trim()} on:click={savePack}>Save</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="pref-section">
+    <input type="file" accept="image/png,image/jpeg,image/webp" hidden bind:this={fileInputEl} on:change={onFile} />
+    <div class="rows pad-even">
+      <div class="row row-title"><span>Wallpaper</span></div>
+      <div class="row thumbs-row">
+        <div class="thumbs">
+          <button class="thumb" class:on={!theme.background.image} on:click={() => setBg("")} title="No picture" aria-pressed={!theme.background.image}>
+            <span class="none">None</span>
+          </button>
+          {#each backgrounds as b (b.name)}
+            <div class="thumb-wrap">
+              <button
+                class="thumb"
+                class:on={theme.background.image.endsWith("/" + b.name)}
+                on:click={() => setBg(b.name)}
+                title={b.name}
+                aria-pressed={theme.background.image.endsWith("/" + b.name)}
+              >
+                <img src={convertFileSrc(b.url)} alt="" loading="lazy" draggable="false" />
+              </button>
+              <button class="mini-icon" class:armed={delWall === b.name}
+                use:tooltip={delWall === b.name ? "Click again to delete" : `Delete ${b.name}`}
+                aria-label={delWall === b.name ? `Confirm delete ${b.name}` : `Delete ${b.name}`}
+                on:click={() => deleteWall(b)}>{#if delWall === b.name}Sure?{:else}<Icon name="close" size={12} />{/if}</button>
+            </div>
+          {/each}
+          <button class="thumb add" on:click={pickFile} title="Add image" aria-label="Add image"><Icon name="plus" size={12} /></button>
+        </div>
+      </div>
+      {#if theme.background.image}
+        <div class="row">
+          <span class="row-label">Height</span>
+          <div class="pos"><Slider bare label="Wallpaper height" bind:value={hPct} min={20} max={60} unit="%" on:input={(e) => onHeight(e.detail)} /></div>
+        </div>
+        <div class="row">
+          <span class="row-label">Position</span>
+          <div class="pos"><Slider bare label="Wallpaper position" bind:value={yPct} min={0} max={100} unit="%" on:input={(e) => onPos(e.detail)} /></div>
+        </div>
+      {/if}
+    </div>
+  </section>
+
+  <section class="pref-section">
+    <div class="rows">
+      <div class="row row-title"><span>Colours</span></div>
+      <div class="row"><ColorField label="Accent" value={theme.colors.accent} on:input={(e) => setColor("accent", e.detail)} /></div>
       <div class="row"><ColorField label="Background" value={theme.colors.stage} on:input={(e) => setColor("stage", e.detail)} /></div>
       <div class="row">
-        <span class="panel-wrap" class:auto={!theme.colors.panel}>
+        <span class="panel-wrap">
           <ColorField label="Panels" value={theme.colors.panel || "#808080"} on:input={(e) => setColor("panel", e.detail)} />
         </span>
         {#if theme.colors.panel}
@@ -389,8 +394,8 @@
   </section>
 
   <section class="pref-section">
-    <h3 class="section-title">Type</h3>
     <div class="rows">
+      <div class="row row-title"><span>Type</span></div>
       <div class="row">
         <span class="row-label">Interface font</span>
         <input class="tin fixed" list="parzi-ui-fonts" bind:value={theme.font.family} on:input={touch} spellcheck="false" aria-label="Interface font" />
@@ -458,36 +463,74 @@
     padding: var(--space) var(--space); width: 100%; box-sizing: border-box; outline: none;
   }
 
-  .save-row { display: flex; gap: calc(var(--space) * 2); }
-  .save-row .tin { flex: 1; }
-
-  .section-head-with-action { align-items: center; }
-  .field-card.stack { flex-direction: column; align-items: stretch; gap: calc(var(--space) * 3); }
-
-  .walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: calc(var(--space) * 3); }
-  .wall {
-    display: block; width: 100%; padding: var(--space);
-    background: transparent; border: 1px solid transparent; border-radius: var(--radius-lg);
-    cursor: pointer; font: inherit; color: var(--muted);
+  .thumbs {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: calc(var(--space) * 3);
+    width: 100%;
   }
-  .wall:hover { background: var(--panel); border-color: var(--line); }
-  .wall.on { border-color: var(--accent); background: var(--line); }
-  .wall-pre {
-    display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover;
-    border-radius: var(--radius); border: 1px solid var(--line);
+  .thumb {
+    width: 100%;
+    height: 68px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+    overflow: hidden;
   }
-  .wall-pre.none {
-    background: var(--bg); display: flex; align-items: center; justify-content: center;
-    font-size: var(--fs-sm); color: var(--muted);
+  .thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
   }
-  .wall-wrap { position: relative; min-width: 0; }
-  .wall-wrap .mini-icon { position: absolute; top: 9px; right: 9px; opacity: 0; }
-  .wall-wrap:hover .mini-icon, .mini-icon:focus-visible { opacity: 1; }
+  .thumb:hover { border-color: var(--text); color: var(--text); }
+  .thumb.on { border-color: var(--accent); }
+  .thumb.add { border-style: dashed; }
+  .thumb-wrap { position: relative; }
+  .thumb-wrap .mini-icon { position: absolute; top: 4px; right: 4px; opacity: 0; }
+  .thumb-wrap:hover .mini-icon, .mini-icon:focus-visible { opacity: 1; }
   .mini-icon.armed { opacity: 1; }
+  .pos { flex: none; width: 240px; max-width: 100%; }
+
+  .row > .packs {
+    flex: 1;
+    min-width: 0;
+  }
+  .save-row > .tin,
+  .save-row > .sbtn {
+    height: calc(var(--space) * 8);
+  }
+  .rows > .row > .tin:not(.fixed) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .rows .tin.fixed,
+  .rows :global(.segmented-control) {
+    height: calc(var(--space) * 8);
+  }
+  .rows :global(.segmented-control) {
+    align-items: center;
+    width: 190px;
+    box-sizing: border-box;
+  }
+  .rows :global(.segmented-control .seg-btn) {
+    flex: 1 1 0;
+    text-align: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
 
   .rows > .row > :global(.cf) { flex: 1; min-width: 0; }
   .panel-wrap { display: flex; flex: 1; min-width: 0; }
-  .panel-wrap.auto { opacity: 0.55; }
+  .panel-wrap > :global(.cf) { flex: 1; min-width: 0; }
   .mini {
     flex: none;
     padding: var(--space) calc(var(--space) * 3);
@@ -503,16 +546,6 @@
     color: var(--text);
     background: var(--hover);
   }
-  .swatches { display: flex; align-items: center; gap: calc(var(--space) * 3); flex-wrap: wrap; width: 100%; }
-  .swatch-gap { flex: 1; }
-  .swatch {
-    width: 22px; height: 22px; border-radius: 50%; background: var(--sw);
-    border: 2px solid transparent; padding: 0; cursor: pointer;
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--line);
-    transition: transform 140ms ease, border-color 140ms ease;
-  }
-  .swatch:hover { transform: scale(1.1); }
-  .swatch.on { border-color: var(--text); }
 
   .actions-row-end { display: flex; justify-content: flex-end; }
 </style>

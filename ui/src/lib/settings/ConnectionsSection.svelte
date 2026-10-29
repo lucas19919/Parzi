@@ -381,47 +381,52 @@
   </div>
 {:else if which === "remote"}
   <div class="pref-section">
-    <div class="section-head-with-action">
-      <div>
-        <h3 class="section-title">Remote</h3>
-      </div>
-      {#if !info}
-        <button class="sbtn" on:click={() => dispatch("setupRemote")}>Set up</button>
+    <div class="rows">
+      <div class="row row-title"><span>Remote</span></div>
+      {#if info}
+        <div class="row">
+          <span class="row-label">{info.label}
+            <small>Parzi {info.version || "?"}{
+                info.linked_at ? ` · linked ${when(info.linked_at)}` : ""
+              }</small>
+          </span>
+          <span class="row-ctl auto">
+            <button class="sbtn" on:click={() => dispatch("setupRemote")}>Set up again</button>
+            <button class="sbtn danger" on:click={unlink}>Unlink</button>
+          </span>
+        </div>
+        <div class="row">
+          <span class="row-label">Sync<small>{syncedLine}</small></span>
+          <span class="row-ctl auto"><button class="sbtn" disabled={syncing} on:click={syncNow}>{syncing ? "Syncing…" : "Sync now"}</button></span>
+        </div>
+      {:else}
+        <div class="row">
+          <span class="row-label">Not linked</span>
+          <span class="row-ctl auto"><button class="sbtn" on:click={() => dispatch("setupRemote")}>Set up</button></span>
+        </div>
       {/if}
     </div>
     {#if info}
-      <div class="field-card">
-        <div class="field-info">
-          <span class="field-label">{info.label}</span>
-          <span class="field-hint">Parzi {info.version || "?"}{info.linked_at ? ` · linked ${when(info.linked_at)}` : ""}</span>
+      <div class="rows">
+        <div class="row row-title">
+          <span>Agents on the remote</span>
+          <span class="row-ctl auto"><button class="sbtn" disabled={checking} on:click={() => checkAgents(true)}>{checking ? "Checking…" : "Check again"}</button></span>
         </div>
-        <button class="sbtn" on:click={() => dispatch("setupRemote")}>Set up again</button>
-        <button class="sbtn danger" on:click={unlink}>Unlink</button>
-      </div>
-      <div class="field-card">
-        <div class="field-info">
-          <span class="field-label">Sync</span>
-          <span class="field-hint">{syncedLine}</span>
-        </div>
-        <button class="sbtn" disabled={syncing} on:click={syncNow}>{syncing ? "Syncing…" : "Sync now"}</button>
-      </div>
-      <div class="section-head-with-action">
-        <h3 class="section-title">Agents on the remote</h3>
-        <button class="sbtn" disabled={checking} on:click={() => checkAgents(true)}>{checking ? "Checking…" : "Check again"}</button>
-      </div>
-      {#each agents as a (a.provider)}
-        <div class="field-card">
-          <div class="field-info">
-            <span class="field-label">{nameOf(a.provider)}</span>
-            <span class="field-hint" class:ok={a.state === "ready"}>{agentState(a)}</span>
+        {#each agents as a (a.provider)}
+          <div class="row">
+            <span class="row-label">{nameOf(a.provider)}
+              <small class:ok={a.state === "ready"}>{agentState(a)}</small>
+            </span>
+            <span class="row-ctl auto">
+              {#if a.state === "not_installed"}
+                <button class="sbtn" on:click={() => agentAction(a.provider, "install")}>Install</button>
+              {:else if a.state !== "ready" && a.state !== "disabled"}
+                <button class="sbtn" on:click={() => agentAction(a.provider, "login")}>Sign in</button>
+              {/if}
+            </span>
           </div>
-          {#if a.state === "not_installed"}
-            <button class="sbtn" on:click={() => agentAction(a.provider, "install")}>Install</button>
-          {:else if a.state !== "ready" && a.state !== "disabled"}
-            <button class="sbtn" on:click={() => agentAction(a.provider, "login")}>Sign in</button>
-          {/if}
-        </div>
-      {/each}
+        {/each}
+      </div>
     {/if}
   </div>
 

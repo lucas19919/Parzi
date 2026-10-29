@@ -233,6 +233,7 @@ kbd {
   border-radius: 0;
   color: var(--muted);
   font-size: var(--fs-sm);
+  line-height: 1;
   cursor: pointer;
   white-space: nowrap;
 }

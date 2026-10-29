@@ -149,7 +149,7 @@
   aria-expanded={open}
   on:click|stopPropagation={() => (open ? (open = false) : show())}
 >
-  {#if hasMark(shown.provider)}<ProviderLogo provider={shown.provider} size={14} />{/if}
+  {#if hasMark(shown.provider)}<ProviderLogo provider={shown.provider} size={14} mono />{/if}
   <span class="truncate">{chip.title}</span>
   {#if chip.version}<span class="ver">{chip.version}</span>{/if}
 </button>
@@ -181,7 +181,7 @@
             on:click={() => pick(row)}
             on:mousemove={() => (index = i)}
           >
-            <span class="logo">{#if hasMark(row.provider)}<ProviderLogo provider={row.provider} size={14} />{/if}</span>
+            <span class="logo">{#if hasMark(row.provider)}<ProviderLogo provider={row.provider} size={14} mono />{/if}</span>
             <span class="name">{labelOf(row)}</span>
             <span class="tick">{#if row.value === value}<Icon name="check" />{/if}</span>
           </button>
@@ -194,9 +194,9 @@
       {#if idle.length}
         <button class="row idle" use:tooltip={idle.map((b) => `${nameOf(b.provider)}: ${setupLabel(b)}`).join(", ")} on:click={() => setUp(idle[0].provider)}>
           <span class="logos">
-            {#each idle.slice(0, 3) as b (b.provider)}
-              {#if hasMark(b.provider)}<ProviderLogo provider={b.provider} size={14} />{/if}
-            {/each}
+          {#each idle.slice(0, 3) as b (b.provider)}
+            {#if hasMark(b.provider)}<ProviderLogo provider={b.provider} size={14} mono />{/if}
+          {/each}
           </span>
           <span class="name">Set up {idle.length === 1 ? nameOf(idle[0].provider) : `${idle.length} more agents`}</span>
           <Icon name="chevRight" size={12} />

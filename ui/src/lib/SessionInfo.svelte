@@ -329,7 +329,7 @@
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 2);
-    min-height: calc(var(--space) * 4);
+    min-height: calc(var(--space) * 6);
     color: var(--text);
     font-size: var(--fs-sm);
   }

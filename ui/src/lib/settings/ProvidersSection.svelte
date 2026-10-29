@@ -172,13 +172,6 @@
   <div class="load-err"><span>{err}</span></div>
 {:else}
   <div class="pref-section">
-    <div class="section-head-with-action">
-      <h3 class="section-title">Providers</h3>
-      <button class="icon-btn" class:spin={allChecking} disabled={allChecking} use:tooltip={allChecking ? "Checking…" : "Check all again"} aria-label="Check all agents again" on:click={() => recheck()}>
-        <Icon name="reload" size={12} />
-      </button>
-    </div>
-
     <div class="providers-list">
       {#each AGENT_ORDER as id (id)}
         {@const p = statusOf(id)}
@@ -292,16 +285,6 @@
 {/if}
 
 <style>
-  .icon-btn {
-    width: 28px; height: 28px; flex: none; display: inline-flex; align-items: center; justify-content: center;
-    background: transparent; border: 1px solid var(--line); border-radius: var(--radius);
-    color: var(--muted); cursor: pointer; padding: 0;
-  }
-  .icon-btn:hover:not(:disabled) { color: var(--text); background: var(--line); }
-  .icon-btn:disabled { cursor: default; }
-  .icon-btn.spin :global(svg) { animation: spin 0.9s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
   .providers-list { display: flex; flex-direction: column; gap: calc(var(--space) * 2); }
   .provider-card {
     background: var(--panel);
@@ -334,7 +317,7 @@
   @keyframes fill { from { transform: scaleX(0); } to { transform: scaleX(0.95); } }
   @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
   @media (prefers-reduced-motion: reduce) {
-    .progress > span, .progress.sweep > span, .icon-btn.spin :global(svg) { animation: none; }
+    .progress > span, .progress.sweep > span { animation: none; }
   }
 
   .usage { display: flex; flex-direction: column; gap: var(--space); }

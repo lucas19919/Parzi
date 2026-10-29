@@ -89,6 +89,7 @@ function themeVars(t: Theme): Record<string, string> {
     "--accent": t.colors.accent,
     "--text": t.colors.text,
     "--panel": t.colors.panel?.trim() ? t.colors.panel : "color-mix(in srgb, var(--text) 6%, var(--bg))",
+    "--bg-height": `${Math.round(t.background.height * 100)}%`,
     "--bg-y": `${Math.round(t.background.y * 100)}%`,
   };
 }
@@ -99,7 +100,7 @@ export function previewTheme(t: Theme) {
   bump();
 }
 
-const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--panel", "--bg-y"];
+const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--panel", "--bg-height", "--bg-y"];
 
 function clearPreview() {
   const s = document.documentElement.style;

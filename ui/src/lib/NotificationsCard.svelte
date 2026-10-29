@@ -37,11 +37,12 @@
 {#if $notifications.length}
   <div class="pin">
     <InfoCard id="notifications" title="Notifications">
-      <svelte:fragment slot="aside">{unread ? `${unread} new` : ""}</svelte:fragment>
+      <svelte:fragment slot="aside">{#if unread}<span class="fresh"><b>{unread}</b> new</span>{/if}</svelte:fragment>
       <div class="clip" class:cut>
         <div class="list" bind:this={listEl} on:scroll={measure}>
           {#each $notifications as n (n.id)}
             <button class="item" class:unread={!n.read} on:click={() => open(n)}>
+              <i class="dot" />
               <span class="name">{n.title}</span>
               <span class="time">{timeAgo(n.time)}</span>
               {#if n.body}<span class="body">{n.body}</span>{/if}
@@ -88,15 +89,19 @@
     pointer-events: none;
     background: linear-gradient(to bottom, transparent, var(--panel));
   }
+  .fresh b {
+    color: var(--text);
+    font-weight: 600;
+  }
   .item {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
     column-gap: calc(var(--space) * 2);
     row-gap: var(--space);
-    align-items: baseline;
     width: 100%;
     margin: 0;
-    padding: calc(var(--space) * 2);
+    padding: var(--space) calc(var(--space) * 2);
     background: none;
     border: none;
     border-radius: var(--radius);
@@ -109,10 +114,21 @@
   .item:hover {
     background: var(--hover);
   }
+  .dot {
+    align-self: center;
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border-radius: 50%;
+  }
+  .unread .dot {
+    background: var(--accent);
+  }
   .unread .name {
-    font-weight: 650;
+    font-weight: 600;
   }
   .name {
+    flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -122,9 +138,11 @@
     color: var(--muted);
     font-size: var(--fs-xs);
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
   .body {
-    grid-column: 1 / -1;
+    flex: 1 1 100%;
+    margin-left: calc(var(--space) * 4);
     color: var(--muted);
     font-size: var(--fs-xs);
     line-height: 1.35;
@@ -139,13 +157,14 @@
   }
   .acts button {
     height: calc(var(--space) * 6);
-    padding: 0 calc(var(--space) * 2);
-    background: none;
-    border: none;
-    border-radius: var(--radius-sm);
+    padding: 0 calc(var(--space) * 3);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
     color: var(--muted);
     font: inherit;
-    font-size: var(--fs-xs);
+    font-size: var(--fs-sm);
+    font-weight: 500;
     cursor: pointer;
   }
   .acts button:hover {

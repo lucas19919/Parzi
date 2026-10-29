@@ -1500,6 +1500,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       running = new Set(running).add(e.session);
     }
     if (e.kind === "tool_result" && e.name === "session.rename" && e.ok) void renamed(e.session);
+    if (e.kind === "tool_result" && e.name === "ui.show_artifact" && e.ok) announce(e.session, "published an artifact", "success", { chime: false });
     if (e.session !== shown) return;
     if (e.kind === "text") {
       pending += e.text;

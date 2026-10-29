@@ -340,7 +340,7 @@ const config = {
 const theme = {
   font: { family: "Inter", size: 14, mono: "JetBrains Mono", mono_size: 13 },
   colors: { sidebar: "#0f0f0f", stage: "#161616", accent: "#e8e8e8", text: "#ececec", text_dim: "#9b9b9b", bar: "#1c1c1c", border: "#2a2a2a", panel: "" },
-  background: { image: params.get("bg") ? "backgrounds/mock.png" : "", y: 0.5 },
+  background: { image: params.get("bg") ? "backgrounds/mock.png" : "", height: 0.34, y: 0.5 },
 };
 
 const project = { slug: "parzi", title: "Parzi", folder: "D:\\Repos\\Parzi", note: "projects/parzi.md", notes: ["notes/style.md", "notes/release.conflict-laptop-macos.md", "notes/release.md"] };

@@ -1,7 +1,8 @@
-∩╗┐<script lang="ts">
+<script lang="ts">
   import { createEventDispatcher } from "svelte";
 
   export let label = "";
+  export let bare = false;
   export let value = 0;
   export let min = 0;
   export let max = 100;
@@ -19,11 +20,13 @@
   }
 </script>
 
-<div class="row">
-  <div class="info">
-    <span class="lab">{label}</span>
-  </div>
-  <div class="ctl">
+<div class="row" class:bare>
+  {#if !bare}
+    <div class="info">
+      <span class="lab">{label}</span>
+    </div>
+  {/if}
+  <div class="sctl">
     <input type="range" {min} {max} {step} value={value} style="--p:{pct}%" aria-label={label} on:input={onRange} />
     <span class="val">{shown}{unit}</span>
   </div>
@@ -31,9 +34,10 @@
 
 <style>
   .row { display: grid; grid-template-columns: 132px 1fr; align-items: center; gap: calc(var(--space) * 4); width: 100%; }
+  .row.bare { grid-template-columns: 1fr; }
   .info { display: flex; flex-direction: column; gap: var(--space); min-width: 0; }
   .lab { font-size: var(--fs-md); font-weight: 500; color: var(--text); }
-  .ctl { display: flex; align-items: center; gap: calc(var(--space) * 3); }
+  .sctl { display: flex; align-items: center; gap: calc(var(--space) * 3); min-width: 0; }
   input[type="range"] {
     -webkit-appearance: none; appearance: none;
     flex: 1; min-width: 0; height: 4px; margin: 0; border-radius: 999px; outline: none; cursor: pointer; font-size: var(--fs-sm);

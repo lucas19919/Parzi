@@ -49,6 +49,8 @@ pub struct ColorTheme {
 pub struct BackgroundTheme {
     #[serde(default = "d_bg_image")]
     pub image: String,
+    #[serde(default = "d_bg_height")]
+    pub height: f64,
     #[serde(default = "d_bg_y")]
     pub y: f64,
 }
@@ -115,6 +117,9 @@ impl ColorTheme {
 fn d_bg_image() -> String {
     "".into()
 }
+fn d_bg_height() -> f64 {
+    0.34
+}
 fn d_bg_y() -> f64 {
     0.5
 }
@@ -147,6 +152,7 @@ impl Default for BackgroundTheme {
     fn default() -> Self {
         Self {
             image: d_bg_image(),
+            height: d_bg_height(),
             y: d_bg_y(),
         }
     }
@@ -173,6 +179,7 @@ impl Theme {
     fn normalized(&self) -> Theme {
         let mut t = self.clone();
         t.colors.panel = t.colors.panel.trim().to_string();
+        t.background.height = t.background.height.clamp(0.2, 0.6);
         t.background.y = t.background.y.clamp(0.0, 1.0);
         t.font.size = t.font.size.clamp(10, 20);
         t.font.mono_size = t.font.mono_size.clamp(9, 18);
@@ -189,7 +196,7 @@ impl Theme {
         };
         format!(
             ":root{{--font:{};--font-size:{}px;--mono:{};--mono-size:{}px;\
-            --bg:{};--text:{};--accent:{};--panel:{};--bg-y:{}%;}}\n",
+            --bg:{};--text:{};--accent:{};--panel:{};--bg-height:{}%;--bg-y:{}%;}}\n",
             css_font_list(&t.font.family),
             t.font.size,
             css_font_list(&t.font.mono),
@@ -198,6 +205,7 @@ impl Theme {
             css_value(&c.text),
             css_value(&c.accent),
             panel,
+            (t.background.height * 100.0).round(),
             (t.background.y * 100.0).round(),
         )
     }
@@ -639,6 +647,7 @@ mod css_tests {
         assert!(css.contains("--font:\"Inter\""));
         assert!(css.contains("--accent:#E8E8E8"));
         assert!(css.contains("--panel:color-mix(in srgb, var(--text) 6%, var(--bg));"));
+        assert!(css.contains("--bg-height:34%;"));
         assert!(css.contains("--bg-y:50%;"));
         assert!(!css.contains("--muted:"));
         assert!(!css.contains("--bg-dim:"));
@@ -703,6 +712,9 @@ mod css_tests {
         let low: Theme =
             toml::from_str("[background]\nimage = \"\"\ny = 2.0\n").unwrap();
         assert!(low.to_css_vars().contains("--bg-y:100%;"));
+        let tall: Theme =
+            toml::from_str("[background]\nimage = \"\"\nheight = 1.0\n").unwrap();
+        assert!(tall.to_css_vars().contains("--bg-height:60%;"));
     }
 
 }

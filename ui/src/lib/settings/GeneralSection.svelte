@@ -98,57 +98,78 @@
 </script>
 
 <div class="pref-section">
-  <h3 class="section-title">Browser</h3>
-  <div class="field-card">
-    <div class="field-info">
-      <span class="field-label">Block ads and trackers</span>
-      {#if web && !web.windows}<span class="field-hint">Windows only for now.</span>{/if}
-    </div>
-    <Switch on={blockAds} title="Block ads and trackers" on:toggle={toggleAds} />
-  </div>
-  <div class="field-card">
-    <div class="field-info">
-      <span class="field-label">Passwords from Bitwarden</span>
-      <span class="field-hint">
-        {#if !pw}
-          Checking…
-        {:else if pw.status === "missing"}
-          Not installed
-        {:else if pw.status === "unlocked"}
-          Unlocked{pw.email ? ` as ${pw.email}` : ""}
-        {:else if pw.status === "unauthenticated"}
-          Not signed in
+  <div class="rows">
+    <div class="row row-title"><span>Updates</span></div>
+    <div class="row">
+      <span class="row-label">Parzi {version}
+        {#if $updateState === "error" || $updateState === "uptodate" || $updateState === "ready"}
+          <small class:bad={$updateState === "error"}>{$updateState === "error" ? "Couldn't check for updates." : $updateMsg}</small>
+        {/if}
+      </span>
+      <span class="row-ctl auto">
+        {#if $updateState === "ready"}
+          <button class="sbtn" on:click={installUpdate}>Install {$updateVersion}</button>
+        {:else if $updateState === "available" || $updateState === "downloading"}
+          <span class="progress-text">Downloading {$updateVersion}{pct ? ` · ${pct}%` : "…"}</span>
         {:else}
-          Locked{pw.email ? ` · ${pw.email}` : ""}
+          <button class="sbtn" disabled={$updateState === "checking"} on:click={() => checkUpdates(true)}>
+            {$updateState === "checking" ? "Checking…" : "Check for updates"}
+          </button>
         {/if}
       </span>
     </div>
-    {#if pw?.status === "missing"}
-      <button class="sbtn" disabled={pwBusy} on:click={installVault}>{pwBusy ? "Installing…" : "Install"}</button>
-    {:else if pw}
-      <button class="sbtn" disabled={pwBusy} on:click={pwAction}>
-        {pwBusy ? "Waiting…" : pw.status === "unlocked" ? "Lock" : pw.status === "unauthenticated" ? "Sign in" : "Unlock"}
-      </button>
-    {/if}
   </div>
-  {#if web}
-    <div class="field-card">
-      <div class="field-info">
-        <span class="field-label">Agent tabs use your sign-ins</span>
-      </div>
-      <Switch on={web.agentSignIns} title="Agent tabs use your sign-ins" on:toggle={() => setWeb("agentSignIns")} />
+</div>
+
+<div class="pref-section">
+  <div class="rows">
+    <div class="row row-title"><span>Browser</span></div>
+    <div class="row">
+      <span class="row-label">Block ads and trackers
+        {#if web && !web.windows}<small>Windows only for now.</small>{/if}
+      </span>
+      <span class="row-ctl auto"><Switch on={blockAds} title="Block ads and trackers" on:toggle={toggleAds} /></span>
     </div>
-    <div class="field-card">
-      <div class="field-info">
-        <span class="field-label">Developer tools for pages</span>
-        {#if !web.windows}<span class="field-hint">Windows only for now.</span>{/if}
-      </div>
-      <Switch on={web.devtools} title="Developer tools for pages" on:toggle={() => setWeb("devtools")} />
+    <div class="row">
+      <span class="row-label">Passwords from Bitwarden
+        <small>
+          {#if !pw}
+            Checking…
+          {:else if pw.status === "missing"}
+            Not installed
+          {:else if pw.status === "unlocked"}
+            Unlocked{pw.email ? ` as ${pw.email}` : ""}
+          {:else if pw.status === "unauthenticated"}
+            Not signed in
+          {:else}
+            Locked{pw.email ? ` · ${pw.email}` : ""}
+          {/if}
+        </small>
+      </span>
+      <span class="row-ctl auto">
+        {#if pw?.status === "missing"}
+          <button class="sbtn" disabled={pwBusy} on:click={installVault}>{pwBusy ? "Installing…" : "Install"}</button>
+        {:else if pw}
+          <button class="sbtn" disabled={pwBusy} on:click={pwAction}>
+            {pwBusy ? "Waiting…" : pw.status === "unlocked" ? "Lock" : pw.status === "unauthenticated" ? "Sign in" : "Unlock"}
+          </button>
+        {/if}
+      </span>
     </div>
-    {#if web.sites.length}
-      <div class="field-card sites">
-        <div class="field-info">
-          <span class="field-label">Site permissions</span>
+    {#if web}
+      <div class="row">
+        <span class="row-label">Agent tabs use your sign-ins</span>
+        <span class="row-ctl auto"><Switch on={web.agentSignIns} title="Agent tabs use your sign-ins" on:toggle={() => setWeb("agentSignIns")} /></span>
+      </div>
+      <div class="row">
+        <span class="row-label">Developer tools for pages
+          {#if !web.windows}<small>Windows only for now.</small>{/if}
+        </span>
+        <span class="row-ctl auto"><Switch on={web.devtools} title="Developer tools for pages" on:toggle={() => setWeb("devtools")} /></span>
+      </div>
+      {#if web.sites.length}
+        <div class="row sites">
+          <span class="row-label">Site permissions</span>
           <ul class="site-list">
             {#each web.sites as s (s.origin + s.kind)}
               <li class="site">
@@ -162,28 +183,7 @@
             {/each}
           </ul>
         </div>
-      </div>
-    {/if}
-  {/if}
-</div>
-
-<div class="pref-section">
-  <h3 class="section-title">Updates</h3>
-  <div class="field-card">
-    <div class="field-info">
-      <span class="field-label">Parzi {version}</span>
-      {#if $updateState === "error" || $updateState === "uptodate" || $updateState === "ready"}
-        <span class="field-hint" class:bad={$updateState === "error"}>{$updateState === "error" ? "Couldn't check for updates." : $updateMsg}</span>
       {/if}
-    </div>
-    {#if $updateState === "ready"}
-      <button class="sbtn" on:click={installUpdate}>Install {$updateVersion}</button>
-    {:else if $updateState === "available" || $updateState === "downloading"}
-      <span class="progress-text">Downloading {$updateVersion}{pct ? ` · ${pct}%` : "…"}</span>
-    {:else}
-      <button class="sbtn" disabled={$updateState === "checking"} on:click={() => checkUpdates(true)}>
-        {$updateState === "checking" ? "Checking…" : "Check for updates"}
-      </button>
     {/if}
   </div>
 </div>
@@ -191,21 +191,24 @@
 <ConnectionsSection which="remote" {notify} on:setupRemote />
 
 <div class="pref-section">
-  <h3 class="section-title">Sessions</h3>
-  <div class="field-card">
-    <span class="field-label">{sessions} {sessions === 1 ? "session" : "sessions"}</span>
-    <button class="sbtn" on:click={clearSessions}><Icon name="trash" size={12} /><span>Clear finished</span></button>
+  <div class="rows">
+    <div class="row row-title"><span>Sessions</span></div>
+    <div class="row">
+      <span class="row-label">{sessions} {sessions === 1 ? "session" : "sessions"}</span>
+      <span class="row-ctl auto"><button class="sbtn" on:click={clearSessions}><Icon name="trash" size={12} /><span>Clear finished</span></button></span>
+    </div>
   </div>
 </div>
 
 <style>
-  .field-card.sites {
-    align-items: flex-start;
+  .row.sites {
+    flex-wrap: wrap;
   }
-  .site-list {
+  .row.sites .site-list {
+    flex: 1 1 100%;
     display: flex;
     flex-direction: column;
-    margin: calc(var(--space) * 2) 0 0;
+    margin: var(--space) 0 0;
     padding: 0;
     list-style: none;
   }
@@ -258,9 +261,6 @@
   .forget:hover {
     background: var(--selected);
     color: var(--text);
-  }
-  .field-hint.bad {
-    color: var(--bad);
   }
   .progress-text {
     flex: none;
