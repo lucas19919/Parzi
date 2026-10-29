@@ -59,7 +59,6 @@ async fn run_hook(
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
-    // A timed-out hook dies with the dropped future instead of lingering.
     cmd.kill_on_drop(true);
     let body = payload.to_string();
     let work = async {
@@ -107,7 +106,6 @@ fn reason(mut s: String) -> String {
     }
 }
 
-/// hooks.toml, re-read only when its mtime or size changes.
 fn hook_set() -> HookSet {
     type Cached = (PathBuf, Option<SystemTime>, u64, HookSet);
     static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
@@ -149,7 +147,6 @@ pub async fn pre_tool(
 ) -> (Option<String>, Vec<String>) {
     let set = hook_set();
     let defs: Vec<&HookDef> = set.pre_tool.iter().filter(|d| d.matches(tool)).collect();
-    // No hook for this tool: skip the session lookup entirely.
     if defs.is_empty() {
         return (None, vec![]);
     }

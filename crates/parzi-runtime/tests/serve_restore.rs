@@ -1,9 +1,3 @@
-// Its own test binary (and so its own PARZI_HOME): `parzi serve` holds a
-// lock per home and re-enqueues every queued session on disk.
-//
-// A run queued with someone to ask comes back after a restart under
-// `parzi serve`, and asks through serve's ParkedApprover (a client answers
-// on the socket) instead of being denied every gated call.
 mod common;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -106,11 +100,9 @@ async fn a_restored_run_under_serve_asks_through_the_socket() {
         .await
         .unwrap();
     assert!(wait_status(&store, &second.id, SessionStatus::Queued).await);
-    // The desk closes for good: the first run goes, the queue stays on disk.
     orch.kill(&first.id).await.unwrap();
     drop(orch);
 
-    // `parzi serve` starts on the same home and picks the queue up.
     let served = Arc::new(
         Orchestrator::new(asking(8), store.clone())
             .with_source(source(&[fake]))

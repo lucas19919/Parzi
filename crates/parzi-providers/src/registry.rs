@@ -1,6 +1,3 @@
-//! The public ACP registry, turned into a command Parzi can spawn.
-//! Parzi does not download the registry's archives. A listed agent becomes
-//! the program name and arguments the person already has, or can type.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -108,9 +105,6 @@ fn strings(v: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The program `npm install -g` puts on PATH. Scoped packages do not use
-/// their full name: Gemini's package is `@google/gemini-cli`, the command
-/// is `gemini`.
 fn npm_bin(spec: &str) -> String {
     match package_name(spec) {
         "@google/gemini-cli" => "gemini".into(),

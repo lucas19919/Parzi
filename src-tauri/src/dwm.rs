@@ -68,14 +68,12 @@ use crate::downloads::State as DownloadState;
 static PAGE_ENV: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
-/// A permission prompt the page is waiting on.
 struct Asked {
     args: ICoreWebView2PermissionRequestedEventArgs,
     deferral: ICoreWebView2Deferral,
     tab: String,
 }
 
-// WebView2 objects live on the UI thread that made them, so do these.
 thread_local! {
     static ASKED: RefCell<HashMap<String, Asked>> = RefCell::new(HashMap::new());
     static DOWNLOADS: RefCell<HashMap<String, ICoreWebView2DownloadOperation>> =
@@ -87,8 +85,6 @@ pub fn stash_page_environment(env: ICoreWebView2Environment) {
     let raw = Interface::into_raw(env) as isize;
     let prev = PAGE_ENV.swap(raw, std::sync::atomic::Ordering::SeqCst);
     if prev != 0 {
-        // SAFETY: `prev` came from `into_raw` and was swapped out, so this is
-        // the only owner of that reference.
         unsafe {
             let old: ICoreWebView2Environment = Interface::from_raw(prev as *mut core::ffi::c_void);
             drop(old);
@@ -101,8 +97,6 @@ pub fn take_page_environment() -> Option<ICoreWebView2Environment> {
     if raw == 0 {
         None
     } else {
-        // SAFETY: `raw` came from `into_raw` and was swapped out, so ownership
-        // moves here exactly once.
         Some(unsafe { Interface::from_raw(raw as *mut core::ffi::c_void) })
     }
 }
@@ -142,9 +136,6 @@ fn fit_controller(
     let mut host = HWND::default();
     let mut visible = BOOL::default();
     let mut current = RECT::default();
-    // SAFETY: this runs on the UI thread that owns the controller, `host` is
-    // the controller's own container window, and every out-param outlives
-    // the call that writes it.
     unsafe {
         controller.ParentWindow(&raw mut host)?;
         SetWindowPos(
@@ -206,7 +197,6 @@ fn hide_controller(controller: &ICoreWebView2Controller) -> windows::core::Resul
 
 pub fn steer_page<R: tauri::Runtime>(wv: &tauri::Webview<R>, action: String) -> Result<(), String> {
     wv.with_webview(move |platform| {
-        // SAFETY: with_webview runs this on the UI thread that owns the controller.
         let done = unsafe {
             platform
                 .controller()
@@ -228,8 +218,6 @@ pub fn steer_page<R: tauri::Runtime>(wv: &tauri::Webview<R>, action: String) -> 
 pub fn page_source<R: tauri::Runtime>(wv: &tauri::Webview<R>) -> Result<String, String> {
     let (tx, rx) = std::sync::mpsc::channel();
     wv.with_webview(move |platform| {
-        // SAFETY: with_webview runs this on the UI thread that owns the
-        // controller; take_pwstr frees the string Source allocates.
         let url = unsafe {
             platform.controller().CoreWebView2().and_then(|core| {
                 let mut url = PWSTR::null();
@@ -243,10 +231,6 @@ pub fn page_source<R: tauri::Runtime>(wv: &tauri::Webview<R>) -> Result<String, 
         .map_err(|_| "the page did not answer".to_string())?
 }
 
-/// A suspended background page runs no script and paints nothing: wake it
-/// before anything that needs either.
-///
-/// SAFETY: call on the UI thread that owns `core`.
 unsafe fn resume(core: &ICoreWebView2) {
     if let Ok(core) = core.cast::<ICoreWebView2_3>() {
         let _ = core.Resume();
@@ -260,9 +244,6 @@ pub fn run_page_script<R: tauri::Runtime>(
     let (tx, rx) = std::sync::mpsc::channel();
     wv.with_webview(move |platform| {
         let done = tx.clone();
-        // SAFETY: with_webview runs this on the UI thread that owns the
-        // controller, and WebView2 calls the completion handler on that same
-        // thread; the script string outlives the ExecuteScript call.
         let started = unsafe {
             platform.controller().CoreWebView2().and_then(|core| {
                 resume(&core);
@@ -288,9 +269,6 @@ pub fn capture_page<R: tauri::Runtime>(wv: &tauri::Webview<R>) -> Result<Vec<u8>
     let (tx, rx) = std::sync::mpsc::channel();
     wv.with_webview(move |platform| {
         let done = tx.clone();
-        // SAFETY: with_webview runs this on the UI thread that owns the
-        // controller, and WebView2 calls the completion handler on that same
-        // thread after it has written the whole image into the stream.
         let started = unsafe {
             CreateStreamOnHGlobal(HGLOBAL::default(), true).and_then(|stream| {
                 let image = stream.clone();
@@ -330,13 +308,8 @@ unsafe fn stream_bytes(stream: &IStream) -> windows::core::Result<Vec<u8>> {
     Ok(buf)
 }
 
-/// A hidden page gives memory back: a low memory target soon, and after a
-/// while a suspend (which `WebView2` refuses while media plays). Showing it
-/// again resumes it.
 pub fn rest_page<R: tauri::Runtime>(wv: &tauri::Webview<R>, deep: bool) {
     let _ = wv.with_webview(move |platform| {
-        // SAFETY: with_webview runs this on the UI thread that owns the
-        // controller; the suspend handler runs on that thread too.
         unsafe {
             let Ok(core) = platform.controller().CoreWebView2() else {
                 return;
@@ -356,7 +329,6 @@ pub fn rest_page<R: tauri::Runtime>(wv: &tauri::Webview<R>, deep: bool) {
 
 pub fn wake_page<R: tauri::Runtime>(wv: &tauri::Webview<R>) {
     let _ = wv.with_webview(move |platform| {
-        // SAFETY: with_webview runs this on the UI thread that owns the controller.
         unsafe {
             let Ok(core) = platform.controller().CoreWebView2() else {
                 return;
@@ -370,11 +342,8 @@ pub fn wake_page<R: tauri::Runtime>(wv: &tauri::Webview<R>) {
     });
 }
 
-/// F12 and Inspect. Set directly: Tauri drops `devtools(true)` in release
-/// builds without its devtools feature.
 pub fn set_devtools<R: tauri::Runtime>(wv: &tauri::Webview<R>, on: bool) {
     let _ = wv.with_webview(move |platform| {
-        // SAFETY: with_webview runs this on the UI thread that owns the controller.
         let done = unsafe {
             platform
                 .controller()
@@ -388,7 +357,6 @@ pub fn set_devtools<R: tauri::Runtime>(wv: &tauri::Webview<R>, on: bool) {
     });
 }
 
-/// Answers a permission prompt. Call on the UI thread.
 pub fn answer_permission(id: &str, allow: bool) {
     let Some(asked) = ASKED.with(|m| m.borrow_mut().remove(id)) else {
         return;
@@ -398,15 +366,12 @@ pub fn answer_permission(id: &str, allow: bool) {
     } else {
         COREWEBVIEW2_PERMISSION_STATE_DENY
     };
-    // SAFETY: on the UI thread that raised the request, whose deferral is
-    // still open; completing it hands the decision back to the page.
     unsafe {
         let _ = asked.args.SetState(state);
         let _ = asked.deferral.Complete();
     }
 }
 
-/// A closed tab's unanswered prompts are refused. Call on the UI thread.
 pub fn drop_permissions(tab: &str) {
     let ids: Vec<String> = ASKED.with(|m| {
         m.borrow()
@@ -420,19 +385,14 @@ pub fn drop_permissions(tab: &str) {
     }
 }
 
-/// Call on the UI thread.
 pub fn cancel_download(id: &str) {
     if let Some(op) = DOWNLOADS.with(|m| m.borrow().get(id).cloned()) {
-        // SAFETY: on the UI thread that owns the download operation.
         if let Err(e) = unsafe { op.Cancel() } {
             tracing::debug!("download not cancelled: {e}");
         }
     }
 }
 
-/// Whether the last new-window request (a link with a target, `window.open`)
-/// came from a click or key press. `WebView2` has no popup blocker of its own.
-/// Unknown counts as yes: a missed record must not break a site's links.
 pub fn user_opened(url: &str) -> bool {
     NEW_WINDOW.with(|slot| match slot.borrow_mut().take() {
         Some((asked, user)) if crate::browser::same_page(&asked, url) => user,
@@ -449,7 +409,6 @@ pub enum PageSignal {
         ok: bool,
     },
     Fullscreen(bool),
-    /// The page's zoom changed (1.0 is 100%).
     Zoom(f64),
     Key(&'static str),
     Blocked(u32),
@@ -482,17 +441,12 @@ pub enum PageSignal {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Role {
-    /// A tab's page: everything.
     Page,
-    /// A window a page opened (sign-in popups): filtering, downloads and
-    /// prompts, but none of the tab's own signals or app keys.
     Popup,
 }
 
 pub struct Hook {
     pub tab: String,
-    /// The URL the page was created with: its first navigation may start
-    /// before the hooks are attached.
     pub seed: String,
     pub role: Role,
     pub downloads: Option<PathBuf>,
@@ -500,12 +454,7 @@ pub struct Hook {
 }
 
 const BLOCKED_EVERY: Duration = Duration::from_millis(400);
-// A page's own Ctrl+B/H/K handler had this long to claim the key.
 const KEY_CLAIM: Duration = Duration::from_millis(1500);
-// Ctrl+B, Ctrl+H and Ctrl+K belong to the page first (bold in editors, the
-// command palettes of GitHub, Slack or Linear). This reports the key back
-// only when nothing on the page used it. An object, not a string: Tauri's
-// own IPC listener reads string messages and would log an error for it.
 const KEY_SCRIPT: &str = r#"(() => {
   if (window.top !== window || window.__parziKeys) return;
   Object.defineProperty(window, "__parziKeys", { value: true });
@@ -533,9 +482,6 @@ pub fn watch_page<R: tauri::Runtime>(
     .map_err(|e| e.to_string())
 }
 
-/// Parzi's own window. A page process that dies or hangs reloads instead of
-/// leaving the window white or frozen; a dead browser process takes every
-/// view with it, so `restart` brings the app back. Each says so in the log.
 pub fn watch_shell<R: tauri::Runtime>(
     wv: &tauri::Webview<R>,
     restart: impl Fn() + Send + 'static,
@@ -543,8 +489,6 @@ pub fn watch_shell<R: tauri::Runtime>(
     wv.with_webview(move |platform| {
         let controller = platform.controller();
         let mut token = 0i64;
-        // SAFETY: on the UI thread that owns the controller; WebView2 calls
-        // the handler on that same thread.
         let hooked = unsafe {
             controller.CoreWebView2().and_then(|core| {
                 core.add_ProcessFailed(
@@ -583,14 +527,11 @@ pub fn watch_shell<R: tauri::Runtime>(
 
 const ANY_NAV: u64 = u64::MAX;
 
-/// Per-navigation state the handlers share.
 struct Nav {
     id: Cell<Option<u64>>,
     top: RefCell<String>,
     filtering: Cell<bool>,
     blocked: Cell<u32>,
-    // Kept from the DOMContentLoaded pass for the second generic pass after
-    // load; None when the site turns generic hiding off.
     exceptions: RefCell<Option<Rc<HashSet<String>>>>,
 }
 
@@ -612,9 +553,6 @@ fn hook_page(
     });
     let page = hook.role == Role::Page;
     let mut token = 0i64;
-    // SAFETY: this runs on the UI thread that owns the controller; WebView2
-    // invokes every handler on that same thread, and each out-param outlives
-    // the call that writes it.
     unsafe {
         let core = controller.CoreWebView2()?;
         if let Ok(settings) = core.Settings() {
@@ -667,8 +605,6 @@ fn hook_page(
                 }
                 s(loaded(&core, ok.as_bool()));
                 s(PageSignal::Blocked(n.blocked.get()));
-                // Pages committed before the document-created script was
-                // added (the first one) still get the key listener.
                 let _ = core.ExecuteScript(
                     &HSTRING::from(KEY_SCRIPT),
                     &ExecuteScriptCompletedHandler::create(Box::new(|_, _| Ok(()))),
@@ -809,8 +745,6 @@ fn hook_page(
                 let Some(name) = key_message(&take_pwstr(raw)) else {
                     return Ok(());
                 };
-                // Only a key the user really pressed a moment ago: a page
-                // can't post its way into app shortcuts.
                 if let Some((key, at)) = waiting.get() {
                     if key == name && at.elapsed() < KEY_CLAIM {
                         waiting.set(None);
@@ -849,15 +783,10 @@ fn crash_kind(kind: COREWEBVIEW2_PROCESS_FAILED_KIND) -> Option<&'static str> {
         COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED => Some("browser"),
         COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED => Some("exited"),
         COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_UNRESPONSIVE => Some("unresponsive"),
-        // A frame's, the GPU's or a helper's process: the page recovers.
         _ => None,
     }
 }
 
-/// The page's own icon: its URL when the shell can load it (https), else
-/// the decoded image as a data URL.
-///
-/// SAFETY: call on the UI thread that owns `core`.
 unsafe fn favicon(core: &ICoreWebView2_15, signal: Rc<dyn Fn(PageSignal)>) {
     let mut uri = PWSTR::null();
     let uri = if core.FaviconUri(&raw mut uri).is_ok() {
@@ -886,10 +815,6 @@ unsafe fn favicon(core: &ICoreWebView2_15, signal: Rc<dyn Fn(PageSignal)>) {
     );
 }
 
-/// Adds a hide stylesheet. A constructed sheet is not subject to the page's
-/// CSP; a `<style>` is the fallback for engines without one.
-///
-/// SAFETY: call on the UI thread that owns `core`.
 unsafe fn inject_css(core: &ICoreWebView2, css: &str) {
     if css.is_empty() {
         return;
@@ -912,10 +837,6 @@ const CLASS_ID_SCRIPT: &str = "(() => { const c = new Set(), i = new Set(); \
   for (const e of document.querySelectorAll('[class],[id]')) { if (c.size + i.size > 4000) break; \
   if (e.id) i.add(e.id); for (const k of e.classList) c.add(k); } return [[...c], [...i]]; })()";
 
-/// Generic class and id rules, for the classes and ids the page uses now.
-/// Runs at `DOMContentLoaded` and again after load for late ad slots.
-///
-/// SAFETY: call on the UI thread that owns `core`.
 unsafe fn hide_generic(core: &ICoreWebView2, exceptions: Rc<HashSet<String>>) {
     let target = core.clone();
     let _ = core.ExecuteScript(
@@ -943,21 +864,14 @@ fn hook_blocker(
     nav: Rc<Nav>,
 ) -> windows::core::Result<()> {
     let mut token = 0i64;
-    // SAFETY: this runs on the UI thread that owns the webview; WebView2
-    // invokes the request handler on that same thread, and each out-param
-    // outlives the call that writes it.
     unsafe {
         let env = core.cast::<ICoreWebView2_2>()?.Environment()?;
-        // Web requests only: data:, blob: and the like are never filtered,
-        // so they need not cross to this thread at all.
         for filter in [w!("http://*"), w!("https://*"), w!("ws://*"), w!("wss://*")] {
             core.AddWebResourceRequestedFilter(filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL)?;
         }
         let last = Rc::new(Cell::new(Instant::now()));
         core.add_WebResourceRequested(
             &WebResourceRequestedEventHandler::create(Box::new(move |_, args| {
-                // Decided per navigation: an allowed site or a disabled
-                // blocker costs no string work per request.
                 if !nav.filtering.get() || !crate::adblock::enabled() {
                     return Ok(());
                 }
@@ -997,9 +911,6 @@ fn hook_downloads(
     dir: Option<PathBuf>,
 ) -> windows::core::Result<()> {
     let mut token = 0i64;
-    // SAFETY: this runs on the UI thread that owns the webview; WebView2
-    // invokes the download handlers on that same thread, and each out-param
-    // outlives the call that writes it.
     unsafe {
         core.cast::<ICoreWebView2_4>()?.add_DownloadStarting(
             &DownloadStartingEventHandler::create(Box::new(move |_, args| {
@@ -1018,7 +929,6 @@ fn hook_downloads(
                 let Some(folder) = folder else { return Ok(()) };
                 let path = crate::downloads::target(&folder, &name);
                 args.SetResultFilePath(&HSTRING::from(path.as_os_str()))?;
-                // Parzi shows the download; Edge's own panel stays shut.
                 args.SetHandled(true)?;
                 let mut uri = PWSTR::null();
                 op.Uri(&raw mut uri)?;
@@ -1099,7 +1009,6 @@ fn permission_name(kind: COREWEBVIEW2_PERMISSION_KIND) -> Option<&'static str> {
         COREWEBVIEW2_PERMISSION_KIND_LOCAL_FONTS => "fonts",
         COREWEBVIEW2_PERMISSION_KIND_MIDI_SYSTEM_EXCLUSIVE_MESSAGES => "midi",
         COREWEBVIEW2_PERMISSION_KIND_WINDOW_MANAGEMENT => "windows",
-        // Autoplay and kinds newer than this list keep WebView2's default.
         _ => return None,
     })
 }
@@ -1110,10 +1019,6 @@ fn hook_permissions(
     tab: String,
 ) -> windows::core::Result<()> {
     let mut token = 0i64;
-    // SAFETY: this runs on the UI thread that owns the webview; WebView2
-    // invokes the handler on that same thread, the deferral keeps the args
-    // alive until answer_permission completes it, and each out-param
-    // outlives the call that writes it.
     unsafe {
         core.add_PermissionRequested(
             &PermissionRequestedEventHandler::create(Box::new(move |_, args| {
@@ -1123,8 +1028,6 @@ fn hook_permissions(
                 let Some(name) = permission_name(kind) else {
                     return Ok(());
                 };
-                // Parzi remembers decisions itself, per site, where Settings
-                // can show and forget them.
                 if let Ok(args3) = args.cast::<ICoreWebView2PermissionRequestedEventArgs3>() {
                     let _ = args3.SetSavesInProfile(false);
                 }
@@ -1170,8 +1073,6 @@ fn resource_kind(
     top: &str,
 ) -> Option<&'static str> {
     Some(match context {
-        // The page's own document (an in-page #fragment link reloads it
-        // with a fragment the top URL may not have) is never filtered.
         COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT if crate::browser::same_page(uri, top) => {
             return None
         }
@@ -1204,8 +1105,6 @@ fn loaded(core: &ICoreWebView2, ok: bool) -> PageSignal {
     let mut url = PWSTR::null();
     let mut back = BOOL::default();
     let mut forward = BOOL::default();
-    // SAFETY: called from a WebView2 handler on the UI thread; the out-params
-    // outlive the calls and `take_pwstr` frees the string Source allocates.
     unsafe {
         let _ = core.Source(&raw mut url);
         let _ = core.CanGoBack(&raw mut back);
@@ -1219,7 +1118,6 @@ fn loaded(core: &ICoreWebView2, ok: bool) -> PageSignal {
     }
 }
 
-/// `{"parzi":"key","key":"ctrl+k"}` from the key script: the key's name.
 fn key_message(json: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     if v.get("parzi")?.as_str()? != "key" {
@@ -1228,13 +1126,10 @@ fn key_message(json: &str) -> Option<String> {
     v.get("key")?.as_str().map(str::to_string)
 }
 
-/// App keys a page sees first; the rest are the app's, like Chrome's
-/// Ctrl+T, Ctrl+W or Ctrl+L, which no page can take.
 fn page_first(name: &str) -> bool {
     matches!(name, "ctrl+b" | "ctrl+h" | "ctrl+k")
 }
 
-/// Ctrl+P is not here: in a page it prints, as in any browser.
 fn key_name(ctrl: bool, shift: bool, key: VIRTUAL_KEY) -> Option<&'static str> {
     Some(match (ctrl, shift, key) {
         (false, false, VK_F11) => "f11",
@@ -1244,7 +1139,6 @@ fn key_name(ctrl: bool, shift: bool, key: VIRTUAL_KEY) -> Option<&'static str> {
         (true, false, VK_K) => "ctrl+k",
         (true, false, VK_B) => "ctrl+b",
         (true, false, VK_H) => "ctrl+h",
-        // Tasks; in Chrome it is downloads, so no page expects it.
         (true, false, VK_J) => "ctrl+j",
         (true, true, VK_T) => "ctrl+shift+t",
         (true, false, VK_OEM_COMMA) => "ctrl+comma",
@@ -1260,9 +1154,6 @@ fn browser_key(
     let mut kind = COREWEBVIEW2_KEY_EVENT_KIND::default();
     let mut key = 0u32;
     let mut status = COREWEBVIEW2_PHYSICAL_KEY_STATUS::default();
-    // SAFETY: called from the accelerator handler on the UI thread, whose
-    // input queue the page shares, so GetKeyState sees this key event; the
-    // out-params outlive the calls.
     let (ctrl, shift, alt) = unsafe {
         args.KeyEventKind(&raw mut kind)?;
         args.VirtualKey(&raw mut key)?;
@@ -1280,14 +1171,11 @@ fn browser_key(
     Ok(key_name(ctrl, shift, vk).map(|name| (name, !status.WasKeyDown.as_bool())))
 }
 
-/// A blocking native message box: works before any window or event loop.
 pub fn alert(title: &str, text: &str) {
     use windows::Win32::UI::WindowsAndMessaging::{
         MessageBoxW, MB_ICONWARNING, MB_OK, MB_SETFOREGROUND,
     };
     let (title, text) = (HSTRING::from(title), HSTRING::from(text));
-    // SAFETY: both strings outlive the call, and a box without an owner
-    // window needs no other state.
     unsafe {
         MessageBoxW(
             None,
@@ -1298,10 +1186,6 @@ pub fn alert(title: &str, text: &str) {
     }
 }
 
-/// The shell asks to drag after a few pixels of movement. The call arrives
-/// later, on this thread. If the button was released in between, dragging
-/// here makes Windows wait for a later click, and that click never reaches
-/// the shell.
 pub fn drag_allowed(button_down: bool) -> bool {
     button_down
 }
@@ -1309,8 +1193,6 @@ pub fn drag_allowed(button_down: bool) -> bool {
 pub fn begin_window_drag(window: tauri::Window) {
     let drag = window.clone();
     let posted = window.run_on_main_thread(move || {
-        // SAFETY: a process-wide key state read and a capture release. Both
-        // are valid on the UI thread that owns the window.
         let down = unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON.0)) } < 0;
         if !drag_allowed(down) {
             unsafe {
@@ -1333,8 +1215,6 @@ pub fn round_window_corners(window: &tauri::WebviewWindow) {
     let Ok(hwnd) = window.hwnd() else { return };
     let pref: DWM_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND;
     let size = u32::try_from(std::mem::size_of_val(&pref)).unwrap_or(4);
-    // SAFETY: `hwnd` is the live window handle Tauri just handed us and
-    // `pref` outlives the call, which copies `size` bytes out of it.
     unsafe {
         let _ = DwmSetWindowAttribute(
             hwnd,

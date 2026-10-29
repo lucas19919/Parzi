@@ -1,12 +1,6 @@
-// Writes src/lib/icons.ts from GitHub's Octicons (@primer/octicons, MIT):
-//   node scripts/icons.mjs
-// Octicons are drawn on a 16px (and, for some, 12px) pixel grid, so at
-// 100% scaling every edge lands on a pixel: Parzi uses them at 16px, and
-// at 12px only where Octicons has a 12px drawing (else the 16px one scaled).
 import { writeFile } from "node:fs/promises";
 import octicons from "@primer/octicons";
 
-// Parzi's name -> Octicon.
 const MAP = {
   menu: "three-bars",
   home: "home",

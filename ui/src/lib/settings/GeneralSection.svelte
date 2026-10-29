@@ -39,8 +39,6 @@
     }
   }
 
-  // Bitwarden's CLI installs in a terminal; coming back to the window
-  // checks whether it is there now.
   async function installVault() {
     pwBusy = true;
     try {
@@ -81,8 +79,6 @@
     sessions = (await api.listThreads().catch(() => [])).length;
   }
 
-  // Same flow as History's: asks first, keeps running sessions, closes
-  // the tabs of the ones it deletes.
   async function clearSessions() {
     try {
       await clearFinishedSessions();

@@ -1,8 +1,3 @@
-//! Signing in to a hosted MCP server the way the MCP spec says (OAuth 2.1):
-//! find the server's authorization server, register Parzi as a client, send
-//! the person to sign in once in their browser (PKCE, a loopback callback
-//! on 127.0.0.1), and keep the token, refreshing it when it runs out.
-//! Tokens live in `~/.parzi/mcp-auth/<connector>.json`.
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -13,7 +8,6 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// How long the person has to finish signing in.
 const SIGN_IN_WAIT: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -21,14 +15,12 @@ pub struct Token {
     pub access_token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<String>,
-    /// Unix seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
     pub client_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_secret: Option<String>,
     pub token_endpoint: String,
-    /// The server the token is for (OAuth's `resource`).
     pub resource: String,
 }
 
@@ -62,21 +54,18 @@ fn save(name: &str, t: &Token) -> Result<(), String> {
     parzi_core::atomic_write(&path, text.as_bytes()).map_err(|e| e.to_string())
 }
 
-/// Signs out: the kept token goes.
 pub fn forget(name: &str) {
     if let Some(p) = store_path(name) {
         let _ = std::fs::remove_file(p);
     }
 }
 
-/// PKCE's S256 challenge for a verifier.
 #[must_use]
 pub fn challenge(verifier: &str) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 
 fn verifier() -> String {
-    // 64 characters from two random UUIDs: inside PKCE's 43 to 128.
     format!(
         "{}{}",
         uuid::Uuid::new_v4().simple(),
@@ -84,7 +73,6 @@ fn verifier() -> String {
     )
 }
 
-/// Percent-encoding for a query value.
 fn enc(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
@@ -137,7 +125,6 @@ fn query(pairs: &[(&str, &str)]) -> String {
         .join("&")
 }
 
-/// `scheme://host[:port]` and the path of an address.
 fn split_url(url: &str) -> Option<(String, String)> {
     let (scheme, rest) = url.split_once("://")?;
     let (host, path) = match rest.find('/') {
@@ -151,8 +138,6 @@ fn split_url(url: &str) -> Option<(String, String)> {
     ))
 }
 
-/// Where a server's protected-resource metadata may be: the address its
-/// 401 named, else the well-known spots for its path and its origin.
 fn resource_metadata_urls(server: &str, www_auth: Option<&str>) -> Vec<String> {
     let mut out = vec![];
     if let Some(named) = www_auth.and_then(|h| param(h, "resource_metadata")) {
@@ -169,7 +154,6 @@ fn resource_metadata_urls(server: &str, www_auth: Option<&str>) -> Vec<String> {
     out
 }
 
-/// Where an authorization server's metadata may be (RFC 8414, then OpenID).
 fn auth_server_metadata_urls(issuer: &str) -> Vec<String> {
     let Some((origin, path)) = split_url(issuer) else {
         return vec![];
@@ -188,7 +172,6 @@ fn auth_server_metadata_urls(issuer: &str) -> Vec<String> {
     }
 }
 
-/// A `key="value"` (or bare `key=value`) out of a WWW-Authenticate header.
 fn param(header: &str, key: &str) -> Option<String> {
     let at = header.find(&format!("{key}="))? + key.len() + 1;
     let rest = &header[at..];
@@ -220,7 +203,6 @@ fn get_json(url: &str) -> Option<Value> {
     serde_json::from_str(&res.body_mut().read_to_string().ok()?).ok()
 }
 
-/// What signing in needs from the server's side.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Endpoints {
     pub authorize: String,
@@ -229,8 +211,6 @@ pub struct Endpoints {
     pub scopes: Vec<String>,
 }
 
-/// Finds where to sign in for `server` (blocking: run it off the async
-/// workers). `www_auth` is the header of the 401 that asked, if one did.
 pub fn discover(server: &str, www_auth: Option<&str>) -> Result<Endpoints, String> {
     let resource = resource_metadata_urls(server, www_auth)
         .into_iter()
@@ -245,7 +225,6 @@ pub fn discover(server: &str, www_auth: Option<&str>) -> Result<Endpoints, Strin
         .collect();
     let (origin, _) =
         split_url(server).ok_or_else(|| format!("`{server}` is not a web address"))?;
-    // An older server has no resource metadata: it is its own authority.
     let issuer = resource
         .as_ref()
         .and_then(|r| r.get("authorization_servers"))
@@ -285,7 +264,6 @@ pub fn discover(server: &str, www_auth: Option<&str>) -> Result<Endpoints, Strin
     })
 }
 
-/// Registers Parzi as a client (RFC 7591): its id, and a secret if given.
 fn register(endpoint: &str, redirect: &str) -> Result<(String, Option<String>), String> {
     let body = serde_json::json!({
         "client_name": "Parzi",
@@ -336,7 +314,6 @@ fn token_request(endpoint: &str, form: &[(&str, &str)]) -> Result<Value, String>
             text.chars().take(200).collect::<String>()
         ));
     }
-    // A few services answer form-encoded.
     serde_json::from_str(&text).or_else(|_| {
         let o: serde_json::Map<String, Value> = text
             .split('&')
@@ -369,7 +346,6 @@ fn token_from(v: &Value, base: &Token) -> Result<Token, String> {
     })
 }
 
-/// A fresh token for one that ran out (blocking).
 pub fn refresh(name: &str) -> Result<Token, String> {
     let old = load(name).ok_or("not signed in")?;
     let refresh = old
@@ -390,8 +366,6 @@ pub fn refresh(name: &str) -> Result<Token, String> {
     Ok(fresh)
 }
 
-/// The token to send now, refreshed first when it is about to run out
-/// (blocking). None when not signed in.
 #[must_use]
 pub fn bearer(name: &str) -> Option<String> {
     let t = load(name)?;
@@ -404,7 +378,6 @@ pub fn bearer(name: &str) -> Option<String> {
     Some(t.access_token)
 }
 
-/// The query of the request line that reached the callback, if it did.
 fn callback_query(request: &str) -> Option<String> {
     let line = request.lines().next()?;
     let target = line.split_whitespace().nth(1)?;
@@ -421,8 +394,6 @@ fn query_value(q: &str, key: &str) -> Option<String> {
 
 const DONE_PAGE: &str = "<!doctype html><meta charset=utf-8><title>Parzi</title><body style=\"font:15px system-ui;background:#161616;color:#ececec;display:grid;place-items:center;height:100vh;margin:0\"><p>Signed in. You can close this tab and go back to Parzi.</p>";
 
-/// Signs in to `server` as connector `name`: `open` shows the person the
-/// sign-in page (their browser). Keeps the token and returns it.
 pub async fn sign_in(
     name: &str,
     server: &str,
@@ -441,8 +412,6 @@ pub async fn sign_in(
             .register
             .clone()
             .ok_or("this server's sign-in does not let apps register; add an API key instead")?;
-        // The loopback port changes each time, so each sign-in registers
-        // anew: cheap, and what the spec expects of a native app.
         let (id, secret) = register(&endpoint, &redirect_s)?;
         Ok::<_, String>((ends, id, secret))
     })
@@ -470,8 +439,6 @@ pub async fn sign_in(
         '?'
     };
     open(&format!("{}{sep}{}", ends.authorize, query(&q)))?;
-    // The browser comes back here with the code (other requests, a
-    // favicon say, get an empty answer).
     let code = tokio::time::timeout(SIGN_IN_WAIT, async {
         loop {
             let (mut sock, _) = listener.accept().await.map_err(|e| e.to_string())?;
@@ -538,7 +505,6 @@ mod tests {
 
     #[test]
     fn pkce_matches_the_rfc_example() {
-        // RFC 7636, appendix B.
         assert_eq!(
             challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
             "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"

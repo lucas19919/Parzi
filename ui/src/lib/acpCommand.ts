@@ -1,5 +1,4 @@
-/** A generic ACP command line: the program, then its arguments.
- *  Quote rules match cmdline.splitLine: backslashes stay, quotes group words. */
+
 
 function splitWords(text: string): string[] {
   const out: string[] = [];
@@ -34,7 +33,6 @@ export function formatCommand(binary: string, args: string[]): string {
   return [binary, ...args].filter((part) => part.length > 0).map(quoteToken).join(" ");
 }
 
-/** Split on spaces. Quoted parts stay together, including a path with spaces. */
 export function splitCommand(line: string): { binary: string; args: string[] } {
   const [binary = "", ...args] = splitWords(line);
   return { binary, args };

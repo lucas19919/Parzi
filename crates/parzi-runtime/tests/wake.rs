@@ -1,8 +1,3 @@
-//! A session drives the sessions it starts in the background, and Parzi
-//! wakes it: each reports back when its run ends, built from its
-//! `last_run`, and an idle parent runs again on the reports, once for
-//! children ending together, with its own posture. No wake for a stopped
-//! parent or a child the person stopped. (The hourly cap is a unit test.)
 
 mod common;
 
@@ -18,8 +13,6 @@ use parzi_runtime::Orchestrator;
 use serde_json::json;
 use tokio::sync::Semaphore;
 
-/// What a woken parent saw: its prompt, its effort, and whether a file
-/// write passed the gate without anyone to ask.
 #[derive(Debug, Clone)]
 struct Woke {
     prompt: String,
@@ -35,9 +28,6 @@ struct Rig {
     lead: String,
 }
 
-/// A parent that starts `n` children in the background; the children
-/// hold until `release` lets them finish. Lanes ask by default and nobody
-/// answers, so only a restored Full posture lets a write through.
 async fn rig(n: usize) -> Rig {
     home("wake");
     let release = Arc::new(Semaphore::new(0));
@@ -132,7 +122,6 @@ impl Rig {
             .collect()
     }
 
-    /// Reports the parent holds, from its transcript.
     fn reports(&self) -> Vec<String> {
         self.store
             .events(&self.lead)
@@ -145,7 +134,6 @@ impl Rig {
             .collect()
     }
 
-    /// Every child's report is in, then the debounce has passed.
     async fn quiet(&self, children: usize) {
         for _ in 0..200 {
             if self.reports().len() >= children {
@@ -264,7 +252,6 @@ async fn a_wake_asks_the_person_only_for_a_session_that_had_them() {
             async move {
                 let prompt = a.spec.prompt.clone();
                 if prompt.contains("<parzi:inter") {
-                    // A write outside its folder asks, even in Auto.
                     let away = std::env::temp_dir().join("parzi-wake-elsewhere.txt");
                     let away = away.display().to_string();
                     let d = a.ask("Write", json!({"file_path": away}), &[&away]).await;
@@ -299,8 +286,6 @@ async fn a_wake_asks_the_person_only_for_a_session_that_had_them() {
     cfg.orchestrator.max_concurrent = 8;
     let (orch, store) = orch_with(cfg, &[fake]);
     orch.set_approver(Arc::new(AllowAll));
-    // A, sent by the person, has someone to ask; B, like a session an agent
-    // started, has nobody.
     for (prompt, approver) in [
         (
             "lead A",

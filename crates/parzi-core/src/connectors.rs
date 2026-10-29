@@ -1,6 +1,3 @@
-//! Connectors (MCP servers) as other apps keep them, read into Parzi's own
-//! shape: a pasted `mcpServers` block, Claude Code, Claude Desktop, Cursor,
-//! VS Code, Codex and Grok. And the old `npx mcp-remote` wrapping, undone.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -9,16 +6,13 @@ use serde_json::Value;
 
 use crate::config::McpServerCfg;
 
-/// A connector set up in another app, ready to add here.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Found {
     pub name: String,
-    /// Where it was found ("Claude Code", "Grok").
     pub source: String,
     pub server: McpServerCfg,
 }
 
-/// A name Parzi can key a connector by: letters, digits, `-` and `_`.
 #[must_use]
 pub fn connector_name(raw: &str) -> String {
     let n: String = raw
@@ -59,8 +53,6 @@ fn string_map(v: Option<&Value>) -> HashMap<String, String> {
         .collect()
 }
 
-/// One server as the usual JSON writes it: `{command, args, env}` or
-/// `{url, headers}` (VS Code and others also say `type`, `serverUrl`).
 fn one_from_json(v: &Value) -> Option<McpServerCfg> {
     let o = v.as_object()?;
     let url = ["url", "serverUrl", "httpUrl"]
@@ -92,9 +84,6 @@ fn one_from_json(v: &Value) -> Option<McpServerCfg> {
     Some(srv)
 }
 
-/// The servers in a JSON block: `{"mcpServers": {...}}`, VS Code's
-/// `{"servers": {...}}`, a bare `{name: server}` map, or one server alone
-/// (named `connector`).
 #[must_use]
 pub fn from_json(v: &Value) -> Vec<(String, McpServerCfg)> {
     if let Some(one) = one_from_json(v) {
@@ -115,7 +104,6 @@ pub fn from_json(v: &Value) -> Vec<(String, McpServerCfg)> {
     out
 }
 
-/// Codex's and Grok's `[mcp_servers.<name>]` tables.
 #[must_use]
 pub fn from_toml(t: &toml::Value) -> Vec<(String, McpServerCfg)> {
     let Some(table) = t.get("mcp_servers").and_then(toml::Value::as_table) else {
@@ -123,13 +111,11 @@ pub fn from_toml(t: &toml::Value) -> Vec<(String, McpServerCfg)> {
     };
     let mut out = vec![];
     for (name, s) in table {
-        // TOML to JSON: the same keys read the same way.
         let Ok(json) = serde_json::to_value(s) else {
             continue;
         };
         let mut json = json;
         if let Some(o) = json.as_object_mut() {
-            // Codex's own spelling of headers.
             if let Some(h) = o.remove("http_headers") {
                 o.entry("headers").or_insert(h);
             }
@@ -142,8 +128,6 @@ pub fn from_toml(t: &toml::Value) -> Vec<(String, McpServerCfg)> {
     out
 }
 
-/// What a text the person pasted says: a JSON block, a web address, or the
-/// command line that starts a server.
 #[must_use]
 pub fn from_pasted(text: &str) -> Vec<(String, McpServerCfg)> {
     let t = text.trim();
@@ -178,8 +162,6 @@ pub fn from_pasted(text: &str) -> Vec<(String, McpServerCfg)> {
     vec![]
 }
 
-/// `npx -y mcp-remote@x URL [--header K:${VAR}]` back to the hosted server
-/// it reaches: its address and headers, Parzi speaking to it itself.
 pub fn unwrap_remote(srv: &mut McpServerCfg) {
     let at = srv.args.iter().position(|a| a.starts_with("mcp-remote"));
     let (Some(at), "npx" | "npx.cmd") = (at, srv.command.as_str()) else {
@@ -193,7 +175,6 @@ pub fn unwrap_remote(srv: &mut McpServerCfg) {
     while i < srv.args.len() {
         if srv.args[i] == "--header" {
             if let Some((k, v)) = srv.args.get(i + 1).and_then(|h| h.split_once(':')) {
-                // `${VAR}` stood for an env var (Windows splits spaces).
                 let v = v.trim();
                 let v = match v.strip_prefix("${").and_then(|r| r.strip_suffix('}')) {
                     Some(var) => srv.env.get(var).cloned().unwrap_or_default(),
@@ -221,8 +202,6 @@ fn read_toml(path: &Path) -> Option<toml::Value> {
     toml::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
-/// Every connector set up in the other apps on this computer, the first of
-/// each name kept.
 #[must_use]
 pub fn found_on_this_computer() -> Vec<Found> {
     let home = dirs::home_dir().unwrap_or_default();
@@ -243,7 +222,6 @@ pub fn found_on_this_computer() -> Vec<Found> {
     };
     if let Some(claude) = read_json(&home.join(".claude.json")) {
         add("Claude Code", from_json(&claude));
-        // Each project's own servers too.
         for p in claude
             .get("projects")
             .and_then(Value::as_object)
@@ -307,7 +285,6 @@ mod tests {
             got[2].1.headers.get("Authorization").map(String::as_str),
             Some("Bearer x")
         );
-        // One server alone, and VS Code's spelling.
         assert_eq!(from_json(&json!({"url": "https://x.dev/mcp"})).len(), 1);
         assert_eq!(from_json(&json!({"servers": {"gh": {"type": "http", "url": "https://api.githubcopilot.com/mcp/"}}}))[0].0, "gh");
     }
@@ -369,7 +346,6 @@ mod tests {
             Some("Bearer ghp_x")
         );
         assert!(srv.command.is_empty() && srv.args.is_empty() && srv.env.is_empty());
-        // A plain local server is left as it is.
         let mut local = McpServerCfg {
             command: "node".into(),
             args: vec!["s.js".into()],

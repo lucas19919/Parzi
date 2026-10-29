@@ -1,16 +1,9 @@
-//! Talking to a hosted MCP server over Streamable HTTP: each JSON-RPC
-//! message is a POST; the reply comes back as JSON or as an event stream
-//! that carries it. The session id the server hands out on `initialize`
-//! goes back on every later request. Who signs the requests: the
-//! connector's own headers, its kept sign-in (OAuth), or the GitHub CLI.
 
 use std::collections::HashMap;
 use std::time::Duration;
 
 use serde_json::Value;
 
-/// What a request needs before it can go: a sign-in, and the 401's
-/// WWW-Authenticate header that says where.
 #[derive(Debug, Clone, PartialEq)]
 pub enum HttpError {
     SignIn(Option<String>),
@@ -26,14 +19,10 @@ impl std::fmt::Display for HttpError {
     }
 }
 
-/// The words a connector's error starts with when it needs signing in:
-/// Settings shows Sign in on them.
 pub const SIGN_IN: &str = "sign-in needed";
 
 static CHALLENGES: std::sync::Mutex<Option<HashMap<String, String>>> = std::sync::Mutex::new(None);
 
-/// Keeps the WWW-Authenticate header a server sent when it asked for a
-/// sign-in: it names where to sign in.
 pub fn remember_challenge(name: &str, header: Option<String>) {
     if let (Ok(mut m), Some(h)) = (CHALLENGES.lock(), header) {
         m.get_or_insert_with(HashMap::new)
@@ -41,7 +30,6 @@ pub fn remember_challenge(name: &str, header: Option<String>) {
     }
 }
 
-/// The header `name` last asked with, if it did.
 #[must_use]
 pub fn last_challenge(name: &str) -> Option<String> {
     CHALLENGES.lock().ok()?.as_ref()?.get(name).cloned()
@@ -49,9 +37,7 @@ pub fn last_challenge(name: &str) -> Option<String> {
 
 #[derive(Debug, Clone, PartialEq)]
 enum Auth {
-    /// The connector's own headers, if any.
     Headers,
-    /// The GitHub CLI's login (`gh auth token`).
     Gh,
 }
 
@@ -83,14 +69,10 @@ impl HttpConn {
         }
     }
 
-    /// Says which protocol version `initialize` settled on, for the header
-    /// later requests carry.
     pub fn set_protocol(&mut self, v: &str) {
         self.protocol = Some(v.to_string());
     }
 
-    /// Sends one message: the reply to a request, None for a notification.
-    /// Blocking: run it off the async workers.
     pub fn send(&mut self, msg: &Value, timeout: Duration) -> Result<Option<Value>, HttpError> {
         let mut retried = false;
         loop {
@@ -98,7 +80,6 @@ impl HttpConn {
             let (status, www_auth, session, ctype, body) =
                 self.post(msg, bearer.as_deref(), timeout)?;
             if status == 401 || (status == 403 && www_auth.is_some()) {
-                // A kept sign-in may only have run out: refresh once.
                 if !retried
                     && self.auth == Auth::Headers
                     && crate::mcp_oauth::refresh(&self.name).is_ok()
@@ -165,7 +146,6 @@ impl HttpConn {
                 }
                 Ok(self.gh_token.clone())
             }
-            // Headers that sign already win; else a kept sign-in, if any.
             Auth::Headers
                 if self
                     .headers
@@ -236,8 +216,6 @@ impl HttpConn {
     }
 }
 
-/// The JSON messages in an event stream's text: each event's `data:`
-/// lines, joined.
 #[must_use]
 pub fn events(body: &str) -> Vec<Value> {
     let mut out = vec![];
@@ -262,7 +240,6 @@ pub fn events(body: &str) -> Vec<Value> {
     out
 }
 
-/// The GitHub CLI's token, when it is installed and signed in.
 fn gh_token() -> Result<String, HttpError> {
     let gh = parzi_providers::process::which("gh").ok_or_else(|| {
         HttpError::Other(

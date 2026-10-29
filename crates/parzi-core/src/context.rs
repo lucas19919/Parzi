@@ -73,9 +73,7 @@ pub fn encode_image(path: &str, bytes: &[u8]) -> Option<ImageData> {
     })
 }
 
-/// Image files past this are skipped before they are read or decoded.
 pub const IMAGE_FILE_CAP: u64 = 20 * 1024 * 1024;
-/// Text attachments keep 12k chars; 48 KB holds that even at 4 bytes a char.
 const TEXT_READ_CAP: u64 = 48 * 1024;
 const TEXT_CHARS: usize = 12_000;
 

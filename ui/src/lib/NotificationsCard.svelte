@@ -1,5 +1,4 @@
 <script lang="ts">
-  // The session column's notice list. It stays at the top while the column scrolls.
   import { createEventDispatcher, tick } from "svelte";
   import InfoCard from "./InfoCard.svelte";
   import { notifications, markAllRead, markRead, clearNotifications, type NotificationItem } from "./notificationStore";
@@ -9,7 +8,6 @@
   let listEl: HTMLDivElement | null = null;
   let cut = false;
 
-  // The list clips. A blur only while more sits below the fold.
   async function measure() {
     await tick();
     const el = listEl;
@@ -76,7 +74,6 @@
     max-height: calc(var(--space) * 48);
     overflow-y: auto;
   }
-  /* The last row dissolves instead of being sliced off above Clear. */
   .clip.cut .list {
     -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 36px), transparent);
     mask-image: linear-gradient(to bottom, black calc(100% - 36px), transparent);
@@ -89,10 +86,7 @@
     bottom: 0;
     height: 36px;
     pointer-events: none;
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    -webkit-mask-image: linear-gradient(to bottom, transparent, black);
-    mask-image: linear-gradient(to bottom, transparent, black);
+    background: linear-gradient(to bottom, transparent, var(--panel));
   }
   .item {
     display: grid;

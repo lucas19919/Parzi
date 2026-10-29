@@ -13,15 +13,13 @@
   import { toastError } from "./toast";
   import { tooltip } from "./tooltip";
 
-  const dispatch = createEventDispatcher<{ close: void; openBrain: void }>();
+  const dispatch = createEventDispatcher<{ close: void }>();
 
   const STEPS = ["Agents", "Browser", "Your tools", "Done"];
   const TITLES = ["Your agents", "Bring your browser", "Bring your other tools", "You're set"];
   const LAST = STEPS.length - 1;
-  // The most recent folders you've worked in are offered as projects.
   const RECENT = 12;
   export let startStep = 0;
-  // Open with the server form showing (Settings asks for that).
   export let server = false;
 
   let step = startStep;
@@ -40,7 +38,6 @@
   let serverOpen = server;
   let card: HTMLDivElement;
 
-  // One group per tool with notes to bring, then the recent folders.
   type Group = { id: string; name: string; unit: [string, string]; items: { key: string; title: string; hint: string }[] };
 
   $: agents = PROVIDER_ORDER.map((id) => $board.find((b) => b.provider === id)).filter((b) => !!b);
@@ -59,7 +56,6 @@
 
   onMount(() => {
     setOverlay("onboarding", true);
-    // A modal takes focus while open and hands it back on close.
     const before = document.activeElement as HTMLElement | null;
     card.focus();
     void load();
@@ -91,7 +87,6 @@
     return k && k < n ? `${k} of ${n} ${unit}` : `${n} ${unit}`;
   }
 
-  // A tool's box picks all of its notes, or none once all are picked.
   function pickGroup(g: Group) {
     const all = pickedIn(g, picked) === g.items.length;
     const next = new Set(picked);
@@ -109,7 +104,6 @@
     return next;
   }
 
-  // Some but not all of a tool's notes picked: the box shows a dash.
   function mixed(node: HTMLInputElement, on: boolean) {
     node.indeterminate = on;
     return { update: (v: boolean) => (node.indeterminate = v) };
@@ -148,15 +142,12 @@
     }
   }
 
-  function finish(openBrain = false) {
+  function finish() {
     if (locked) return;
     onboarded.set(true);
     dispatch("close");
-    if (openBrain) dispatch("openBrain");
   }
 
-  // Esc in a field only leaves the field: the wizard stays. It stays too
-  // while a server is being set up.
   function onKey(e: KeyboardEvent) {
     const typing = (e.target as HTMLElement | null)?.closest?.("input, textarea, select");
     if (e.key !== "Escape" || e.defaultPrevented || typing) return;
@@ -164,8 +155,6 @@
     finish();
   }
 
-  // Next does what the step offers with what is picked, then moves on;
-  // Skip moves on without it.
   async function next() {
     if (busy) return;
     if (step === 1 && !browserResult && browserPick && (wantBookmarks || wantHistory)) await importFromBrowser();
@@ -189,10 +178,7 @@
     localStorage.setItem("parzi.remote.user", remoteUser);
     localStorage.setItem("parzi.remote.host", remoteHost);
   } catch {}
-  // The password lives in this field until Set up reads it, then only
-  // inside the backend call. It is never written anywhere.
 
-  // Nothing leaves the wizard while a server is being set up.
   $: locked = setupState === "running";
 
   async function loadRemote() {
@@ -215,14 +201,12 @@
     remotePass = "";
     const off = await onRemoteProgress((p) => (setupRows = mergeProgress(setupRows, p)));
     try {
-      // Notes and settings move by sync once linked, not in setup.
       remoteInfo = await remote.setup(user, host, password, false);
       linked.set(remoteInfo);
       setupState = "done";
       setupMsg = `Linked to ${remoteInfo.label}.`;
     } catch (e) {
       setupState = "error";
-      // The failed step row already says why; repeat it only if no row did.
       setupMsg = setupRows.some((r) => r.state === "fail") ? "" : String(e);
     } finally {
       off();
@@ -357,14 +341,14 @@
           {/if}
         {/if}
       {:else}
-        <p class="lead">Your brain is plain markdown in <code>{vault || "~/.parzi/brain"}</code>, so any Obsidian install can open it too.</p>
+        <p class="lead">Your project notes are plain markdown in <code>{vault || "~/.parzi/brain"}</code>, so any Obsidian install can open them too.</p>
         <button class="disclose" aria-expanded={serverOpen} disabled={locked} on:click={() => (serverOpen = !serverOpen)}>
           <Icon name={serverOpen ? "chevDown" : "chevRight"} size={12} />
           I have a Linux server
         </button>
         {#if serverOpen}
           <div class="server">
-            <p class="lead">Parzi installs itself there over SSH and becomes the home of your brain, settings and sessions. This PC stays in step with it.</p>
+            <p class="lead">Parzi installs itself there over SSH and becomes the home of your projects, settings and sessions. This PC stays in step with it.</p>
             {#if remoteInfo && setupState !== "running"}
               <div class="item">
                 <span class="grow">
@@ -479,7 +463,6 @@
     flex-direction: column;
     gap: var(--space);
   }
-  /* A tool's notes, under its row and in line with its name. */
   .list.picks {
     max-height: 220px;
     margin-left: calc(var(--space) * 6);
@@ -597,7 +580,6 @@
     background: var(--line);
     color: var(--text);
   }
-  /* The disclosure's chevron lines up with the lead's text. */
   .disclose {
     margin-left: calc(var(--space) * -2);
     font-size: var(--fs-md);

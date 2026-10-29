@@ -3,8 +3,6 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
-// srcdoc frames inherit the app's CSP, so the artifact height script runs
-// only while its hash is listed in tauri.conf.json's script-src.
 test("the artifact height script is allowed by the app CSP", async () => {
   const card = await readFile(new URL("../src/lib/widgets/ArtifactCard.svelte", import.meta.url), "utf8");
   const open = "const RESIZE = `<script>";

@@ -44,9 +44,7 @@ pub struct Scan {
 pub struct BrowserSource {
     pub id: String,
     pub name: String,
-    /// The profile's folder ("Default", "Profile 3"): what the import asks for.
     pub profile: String,
-    /// The profile's name as the browser shows it.
     pub label: String,
     pub bookmarks: usize,
     pub history: bool,
@@ -1111,7 +1109,6 @@ fn import_with(env: &Env, notes: &[String], folders: &[String]) -> ImportReport 
     let mut report = ImportReport::default();
     let (mut index, mut used) = project_index(&vault, &env.home);
     let mut done = HashSet::new();
-    // Skips name what was skipped as the wizard listed it, not by its path.
     let plain = |path: &str| match last_segment(path) {
         n if n.is_empty() => path.to_string(),
         n => n,
@@ -1189,8 +1186,6 @@ fn browser_profiles(root: &Path) -> Vec<String> {
         .collect()
 }
 
-/// Profile folder -> the name the browser shows for it, from `Local State`.
-/// A profile still on its default name ("Person 1") goes by its account's.
 fn profile_names(local_state: &Value) -> HashMap<String, String> {
     let Some(cache) = local_state
         .pointer("/profile/info_cache")

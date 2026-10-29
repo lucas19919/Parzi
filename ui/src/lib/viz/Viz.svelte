@@ -1,6 +1,4 @@
 <script lang="ts">
-  // Draws a viz spec (lib/viz/spec.ts): a ```viz block in a thread, or a
-  // custom widget on Home. A spec it can't draw says why, in one line.
   import Icon from "../Icon.svelte";
   import Bars from "./Bars.svelte";
   import Hist from "./Hist.svelte";
@@ -13,9 +11,7 @@
   import Timeline from "./Timeline.svelte";
   import { fmt, parseViz } from "./spec";
 
-  // The block's JSON text, or the parsed object.
   export let spec: unknown;
-  // On a Home card: no frame and no title (the card has both), shorter charts.
   export let bare = false;
 
   $: parsed = parseViz(spec);
@@ -70,12 +66,17 @@
     flex-direction: column;
     gap: calc(var(--space) * 3);
     min-width: 0;
-    margin: var(--space) 0;
-    padding: calc(var(--space) * 4) calc(var(--space) * 4);
+    margin: 1em 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    line-height: 1.4;
+  }
+  .viz.bad {
+    padding: calc(var(--space) * 3) calc(var(--space) * 4);
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
-    background: var(--glass-bg);
-    line-height: 1.4;
+    background: var(--panel);
   }
   .viz.bare {
     margin: 0;
@@ -110,10 +111,6 @@
     margin: 0;
     font-size: var(--fs-sm);
     color: var(--muted);
-  }
-  .bad {
-    gap: var(--space);
-    padding: calc(var(--space) * 3) calc(var(--space) * 3);
   }
   .why {
     display: flex;

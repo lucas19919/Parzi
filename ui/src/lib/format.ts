@@ -1,4 +1,3 @@
-// How long ago, in a few words: "just now", "5m ago", "yesterday", "Oct 3".
 export function ago(at: number, now = Date.now()): string {
   if (!Number.isFinite(at) || at <= 0) return "";
   const s = (now - at) / 1000;

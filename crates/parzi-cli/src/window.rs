@@ -1,4 +1,3 @@
-//! Commands that drive the open Parzi window over its control socket.
 
 use std::collections::HashMap;
 use std::io::Write as _;
@@ -13,7 +12,6 @@ fn s<'a>(v: &'a Value, k: &str) -> &'a str {
     v.get(k).and_then(Value::as_str).unwrap_or("")
 }
 
-/// The window's answer, or its error (`Parzi is not open` when none runs).
 pub(crate) async fn ask(op: &str, body: Value) -> Result<Value> {
     ask_with(op, body, &mut |v| say_confirm(v)).await
 }
@@ -29,7 +27,6 @@ pub(crate) async fn ask_with(
         .map_err(|e| anyhow::anyhow!(e))
 }
 
-/// A consent dialog is up in the window: say so, or the CLI looks stuck.
 fn say_confirm(v: &Value) {
     if s(v, "kind") == "confirm" {
         eprintln!("{}", s(v, "text"));
@@ -47,8 +44,6 @@ fn put(body: &mut Value, key: &str, value: Option<impl Into<Value>>) {
     }
 }
 
-/// What a page command sends: the tab (default: the one in front) and the
-/// action's own args.
 pub(crate) fn page_body(tab: Option<String>, args: Value) -> Value {
     let mut body = json!({ "args": args });
     put(&mut body, "tab", tab);
@@ -253,8 +248,6 @@ pub(crate) async fn state(json_out: bool) -> Result<()> {
     Ok(())
 }
 
-/// The id of the tab in front: `desk.state` names it as a bare id or as an
-/// object with an `id`.
 fn active_tab(v: &Value) -> &str {
     match v.get("active") {
         Some(Value::String(id)) => id,
@@ -271,7 +264,6 @@ fn ago(secs: u64) -> String {
     }
 }
 
-/// `--yes` runs approve every tool call: the window asks the person first.
 pub(crate) fn send_body(
     target: &str,
     message: &str,
@@ -291,8 +283,6 @@ pub(crate) fn send_body(
     })
 }
 
-/// How `session send` shows a streamed run: the reply on stdout, the rest
-/// (tools, approvals, notices) on stderr.
 #[derive(Default)]
 pub(crate) struct SendView {
     pub session: Option<String>,
@@ -351,7 +341,6 @@ impl SendView {
     }
 }
 
-/// `parzi watch`: one line per thing that happens.
 #[derive(Default)]
 pub(crate) struct WatchView {
     partial: HashMap<String, String>,
@@ -365,7 +354,6 @@ impl WatchView {
         }
     }
 
-    /// The lines an event prints (text is cut at newlines per session).
     pub(crate) fn lines(&mut self, v: &Value) -> Vec<String> {
         let session = s(v, "session").to_string();
         let id = short(&session).to_string();
@@ -462,7 +450,6 @@ pub(crate) async fn watch(session: Option<String>, json_out: bool) -> Result<()>
     }
 }
 
-/// Approvals: the window's when it is open, else `parzi serve`'s.
 pub(crate) async fn approvals(op: &str, body: Value) -> Result<Value> {
     match desk::request(op, body.clone()).await {
         Ok(v) => Ok(v),

@@ -86,8 +86,6 @@ pub(crate) fn session_md(meta: &SessionMeta, events: &[Event]) -> String {
 
 impl SessionStore {
     pub fn transcript_md(&self, id: &str) -> Result<String> {
-        // Snapshot the marks before reading, so an append that lands while
-        // this renders keeps the flag for the next flush.
         let (dirty, seq) = match self.cache().sessions.get(id) {
             Some(s) => (s.md_dirty, Some(s.md_seq)),
             None => (true, None),

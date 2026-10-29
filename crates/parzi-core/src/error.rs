@@ -15,8 +15,6 @@ pub enum ParziError {
     TomlDe(#[from] toml::de::Error),
     #[error("config: {0}")]
     Config(String),
-    // These two and Provider carry a sentence meant for the person, shown
-    // as is: the kind is for code, not for the toast.
     #[error("{0}")]
     Store(String),
     #[error("{0}")]
@@ -29,11 +27,8 @@ pub enum ParziError {
 
 pub type Result<T> = std::result::Result<T, ParziError>;
 
-/// Position and reason only: the full Display quotes the offending line,
-/// which in config.toml can be a connector secret.
 pub(crate) fn toml_brief(e: &toml::de::Error) -> String {
     let full = e.to_string();
-    // A type error can quote the value, and the value may be a key.
     let reason = unquoted(e.message().trim());
     match full
         .lines()
@@ -45,7 +40,6 @@ pub(crate) fn toml_brief(e: &toml::de::Error) -> String {
     }
 }
 
-/// Replace every "quoted" or `ticked` stretch with an ellipsis.
 fn unquoted(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut open: Option<char> = None;
@@ -63,7 +57,6 @@ fn unquoted(s: &str) -> String {
     out
 }
 
-/// Keeps the kind (callers test `NotFound`) and adds which file failed.
 #[allow(clippy::needless_pass_by_value)]
 pub(crate) fn io_at(path: &Path, e: std::io::Error) -> ParziError {
     ParziError::Io(std::io::Error::new(
@@ -72,14 +65,10 @@ pub(crate) fn io_at(path: &Path, e: std::io::Error) -> ParziError {
     ))
 }
 
-/// Replaces `path` in one step: a unique dot-prefixed sibling is written,
-/// synced and renamed over it, and removed again on failure. On unix an
-/// existing file keeps its permission bits.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     write_atomic(path, bytes, None)
 }
 
-/// `atomic_write` for files that can hold secrets: owner-only (0600) on unix.
 pub fn atomic_write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     write_atomic(path, bytes, Some(0o600))
 }

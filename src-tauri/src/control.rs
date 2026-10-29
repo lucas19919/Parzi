@@ -1,9 +1,3 @@
-//! The window's control socket. One JSON line per connection on 127.0.0.1,
-//! authorized by the token in `~/.parzi/gui.json`; the CLI and the agent
-//! tools both come through here. The token is the person's authority, so
-//! what a token alone must not do (run an agent unasked, delete a session,
-//! read or drive a page tab no agent owns) waits for the person to allow
-//! it in a dialog the window shows.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -28,11 +22,7 @@ use crate::{AppState, GuiApprover, Pending};
 const MAX_REQUEST: u64 = 1024 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_CLIENTS: usize = 64;
-/// Streams (`subscribe`, a running `session.send`) have their own pool, so
-/// watchers can never starve plain requests.
 const MAX_STREAMS: usize = 16;
-/// How long a tab the window was told to open may be missing from its
-/// syncs before it counts as gone.
 const PENDING_FOR: Duration = Duration::from_secs(15);
 const CONSENT_FOR: Duration = Duration::from_secs(10 * 60);
 const KEEPALIVE: Duration = Duration::from_secs(30);
@@ -55,10 +45,8 @@ pub struct TabSnap {
     pub title: String,
     #[serde(default)]
     pub url: String,
-    /// The session a session tab shows, or the agent that owns a page tab.
     #[serde(default)]
     pub session_id: String,
-    /// A draft session tab's folder.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub cwd: String,
 }
@@ -69,7 +57,6 @@ impl TabSnap {
     }
 }
 
-/// A tab the window was told to open and has not synced back yet.
 struct Opened {
     rev: u64,
     tab: TabSnap,
@@ -82,7 +69,6 @@ struct DeskState {
     tabs: Vec<TabSnap>,
     active: String,
     pending: Vec<Opened>,
-    /// The page tab each session used last.
     current: HashMap<String, String>,
 }
 
@@ -91,12 +77,9 @@ pub struct Desk {
     token: String,
     instance: String,
     started: u64,
-    /// Approvals, tab changes and notices, for `subscribe` streams.
     events: broadcast::Sender<Value>,
     approvals: Mutex<BTreeMap<String, Value>>,
-    /// Page tabs the person allowed for a while: tab id, until when.
     consents: Mutex<HashMap<String, Instant>>,
-    /// One dialog at a time.
     dialogs: tokio::sync::Mutex<()>,
 }
 
@@ -139,9 +122,6 @@ impl Desk {
         }
     }
 
-    /// The window's own list wins, except for tabs it was just told to open
-    /// and has not shown yet: a sync racing an open must not drop them. A
-    /// window that reloaded starts again from rev 0 and is still heard.
     pub fn sync(&self, tabs: Vec<TabSnap>, rev: u64, active: String) {
         let mut st = locked(&self.state);
         st.pending.retain(|p| {
@@ -166,7 +146,6 @@ impl Desk {
         }
     }
 
-    /// Records a tab the window is about to open; returns the rev it carries.
     fn record_open(&self, tab: TabSnap, focus: bool) -> u64 {
         let mut st = locked(&self.state);
         st.rev += 1;
@@ -219,7 +198,6 @@ impl Desk {
         }
     }
 
-    /// Removes a tab. With a session, only one of its own.
     fn close(&self, id: &str, session: &str) -> Result<(), String> {
         let mut st = locked(&self.state);
         let Some(tab) = st.tabs.iter().find(|t| t.id == id) else {
@@ -237,11 +215,6 @@ impl Desk {
         Ok(())
     }
 
-    /// The page a request is about, and whether the person must allow it.
-    /// An agent names one of its tabs or `active` (the person's own), else
-    /// gets the tab it used last, else its newest. The CLI names a tab or
-    /// gets the one in front. Consent: a tab no agent owns, or another
-    /// agent's.
     fn find_page(&self, session: &str, tab: &str) -> Result<(TabSnap, bool), String> {
         let st = locked(&self.state);
         let page = |id: &str| st.tabs.iter().find(|t| t.id == id && t.page()).cloned();
@@ -270,7 +243,6 @@ impl Desk {
         Ok((picked, foreign))
     }
 
-    /// An agent's tab to navigate: the one it names, else its last one.
     fn own_tab(&self, session: &str, tab: &str) -> Result<Option<TabSnap>, String> {
         if tab.is_empty() {
             return Ok(self.find_page(session, "").ok().map(|(t, _)| t));
@@ -283,9 +255,6 @@ impl Desk {
         }
     }
 
-    /// The CLI sees every tab. An agent sees its own page tabs and only
-    /// the title of the one in front, unless `all` (which the agent's
-    /// approval card covered).
     fn tab_list(&self, session: &str, all: bool) -> Value {
         let st = locked(&self.state);
         let active_title = st
@@ -352,7 +321,6 @@ impl Desk {
         locked(&self.approvals).values().cloned().collect()
     }
 
-    /// A full key, or a prefix only one waiting approval has.
     fn approval_key(&self, asked: &str) -> Result<(String, Value), String> {
         let rows = locked(&self.approvals);
         if let Some(row) = rows.get(asked) {
@@ -393,7 +361,6 @@ pub async fn desk_sync(
 
 static WRITTEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-/// On exit: the file goes only if it is still this window's.
 pub fn clear_gui_file() {
     let Some(path) = parzi_runtime::desk::gui_path() else {
         return;
@@ -444,7 +411,6 @@ pub async fn serve(app: AppHandle, orch: Arc<Orchestrator>, pending: Pending, de
         let (sock, peer) = match listener.accept().await {
             Ok(pair) => pair,
             Err(e) => {
-                // Persistent errors (fd exhaustion) would otherwise spin.
                 tracing::debug!("desk control accept: {e}");
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
@@ -454,7 +420,6 @@ pub async fn serve(app: AppHandle, orch: Arc<Orchestrator>, pending: Pending, de
             continue;
         }
         let (ctx, streams) = (ctx.clone(), streams.clone());
-        // Full means a quick "busy", never an accept loop that waits.
         let slot = slots.clone().try_acquire_owned();
         tokio::spawn(async move {
             let _ = match slot {
@@ -467,8 +432,6 @@ pub async fn serve(app: AppHandle, orch: Arc<Orchestrator>, pending: Pending, de
 
 async fn busy(sock: TcpStream) -> Result<(), String> {
     let (read, mut write) = sock.into_split();
-    // Read the request first: closing on unread bytes resets the
-    // connection, and the client would lose this answer.
     let mut sink = String::new();
     let _ = tokio::time::timeout(
         Duration::from_secs(2),
@@ -482,9 +445,6 @@ async fn busy(sock: TcpStream) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// gui.json carries the bridge token: born owner-only (0600 on unix; on
-/// Windows inheritance cut and the file granted to this account alone) and
-/// swapped in whole, never half-written.
 fn write_private(path: &std::path::Path, body: &str) -> Result<(), String> {
     let tmp = path.with_file_name(format!(".gui.{}.tmp", std::process::id()));
     let _ = std::fs::remove_file(&tmp);
@@ -511,8 +471,6 @@ fn write_private(path: &std::path::Path, body: &str) -> Result<(), String> {
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
-/// Best effort: icacls with this account's SID. If the file cannot be read
-/// back afterwards it is written again with the folder's own ACL.
 #[cfg(windows)]
 fn restrict_to_owner(path: &std::path::Path, body: &str) {
     use std::os::windows::process::CommandExt as _;
@@ -546,7 +504,6 @@ fn restrict_to_owner(path: &std::path::Path, body: &str) {
     }
 }
 
-/// Constant-time: the reply time must not reveal how much of a guess matched.
 fn tokens_equal(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
     if a.len() != b.len() {
@@ -564,8 +521,6 @@ enum Gate {
     Run(Value),
 }
 
-/// What a request line gets before any op runs: `hello` is answered for
-/// anyone (it only names this window), everything else needs the token.
 fn gate_line(desk: &Desk, line: &str) -> Gate {
     if line.len() as u64 >= MAX_REQUEST {
         return Gate::Reply(fail("request too large"));
@@ -582,8 +537,6 @@ fn gate_line(desk: &Desk, line: &str) -> Gate {
     }
 }
 
-/// The write half of one connection. Progress lines (no `ok` field) go out
-/// only to clients that asked for them; old clients read one line.
 struct Out {
     write: tokio::sync::Mutex<OwnedWriteHalf>,
     progress: bool,
@@ -616,7 +569,6 @@ async fn answer(
 ) -> Result<(), String> {
     let (read, write) = sock.into_split();
     let mut line = String::new();
-    // A client that connects and never finishes its line must not hold a slot.
     tokio::time::timeout(
         IO_TIMEOUT,
         BufReader::new(read.take(MAX_REQUEST)).read_line(&mut line),
@@ -732,7 +684,6 @@ impl Ctx {
         let _ = self.app.emit("parzi://desk", payload);
     }
 
-    /// A native dialog over the window, which comes forward for it.
     async fn ask_person(
         &self,
         title: &str,
@@ -778,8 +729,6 @@ impl Ctx {
             || answer == MessageDialogResult::Ok
     }
 
-    /// A page tab no agent owns is the person's browsing, signed in where
-    /// they are: reading or driving it waits for them to allow it.
     async fn consent_page(&self, out: &Out, tab: &TabSnap, verb: &str) -> bool {
         if self.desk.consented(&tab.id) {
             return true;
@@ -869,13 +818,11 @@ async fn page_op(ctx: &Ctx, out: &Out, req: &Value, op: &str) -> Value {
 }
 
 async fn tab_open(ctx: &Ctx, req: &Value) -> Value {
-    // Checked before anything is recorded: a refused URL leaves no tab.
     let url = match check_page_url(&str_arg(req, "url")) {
         Ok(u) => u,
         Err(e) => return fail(e),
     };
     let session = str_arg(req, "session");
-    // The CLI is the person: its tab comes forward. An agent's opens behind.
     let focus = bool_arg(req, "focus", session.is_empty());
     if bool_arg(req, "raise", false) {
         raise(&ctx.app);
@@ -925,8 +872,6 @@ fn open_for_agent(ctx: &Ctx, session: &str, url: &str, req: &Value, focus: bool)
         return json!({ "ok": true, "id": tab.id, "url": url });
     }
     let id = format!("tab-{}", uuid::Uuid::new_v4().simple());
-    // The page comes up (and the URL is checked again) before the tab is
-    // recorded or the window hears of it.
     if let Err(e) = crate::browser::prepare_for_agent(ctx.app.clone(), id.clone(), url) {
         return fail(e);
     }
@@ -968,7 +913,6 @@ fn tab_close(ctx: &Ctx, req: &Value) -> Value {
     json!({ "ok": true, "id": id })
 }
 
-/// The folder and project of the tab in front.
 async fn front_folder(ctx: &Ctx, tab: Option<&TabSnap>) -> (String, Value) {
     let Some(tab) = tab else {
         return (String::new(), Value::Null);
@@ -1056,7 +1000,6 @@ async fn desk_state(ctx: &Ctx, req: &Value) -> Value {
     })
 }
 
-/// A vault-relative note path: no climbing out, no drive, `.md` added.
 fn note_path(raw: &str) -> Result<String, String> {
     let p = raw.trim().replace('\\', "/");
     if p.is_empty() {
@@ -1131,8 +1074,6 @@ async fn desk_open(ctx: &Ctx, req: &Value) -> Value {
                 "opened history".to_string(),
             )
         }
-        // The plan panel beside the session; "work" and "tasks" are what
-        // it was called before.
         "plan" | "work" | "tasks" => (
             json!({ "op": "show", "what": "plan", "focus": true }),
             "opened the plan".to_string(),
@@ -1163,7 +1104,6 @@ fn desk_notify(ctx: &Ctx, req: &Value) -> Value {
         .desk
         .events
         .send(json!({ "kind": "notify", "text": text, "session": session }));
-    // In the background the taskbar button flashes until the window is used.
     if let Some(w) = ctx.app.get_window("main") {
         if !w.is_focused().unwrap_or(false) {
             let _ = w.request_user_attention(Some(tauri::UserAttentionType::Informational));
@@ -1273,8 +1213,6 @@ async fn session_delete(ctx: &Ctx, out: &Out, req: &Value) -> Value {
     }
 }
 
-/// `yes` makes a run approve its own shell commands and file writes: the
-/// person has to say so in the window, whoever holds the token.
 async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
     let message = str_arg(req, "message");
     if message.is_empty() {
@@ -1282,7 +1220,6 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
     }
     let target = str_arg(req, "target");
     let fresh = target.is_empty() || target == "new";
-    // No automatic models: a new thread needs one, a continued thread keeps its own.
     let model = str_arg(req, "model");
     if fresh && model.is_empty() {
         return fail(
@@ -1290,8 +1227,6 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
         );
     }
     let cwd = str_arg(req, "cwd");
-    // A relative folder would resolve against the window's own directory,
-    // not the caller's: the agent would work somewhere nobody chose.
     if !cwd.is_empty() && !std::path::Path::new(&cwd).is_absolute() {
         return fail(format!(
             "`{cwd}` is not a full path: pass the folder as an absolute path"
@@ -1348,14 +1283,10 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
             pending: ctx.pending.clone(),
         })
     };
-    // Subscribed before the run starts, so nothing it says is missed. The
-    // bus, not the run's own channel: a queued run reports there once it
-    // gets its turn.
     let mut runs = ctx.orch.subscribe();
     let mut side = ctx.desk.events.subscribe();
     let sent = match continued {
         None => {
-            // Same filing as the desk: a thread belongs to its folder's project.
             let project = crate::sessions::project_for(&cwd).await;
             ctx.orch
                 .spawn_as(
@@ -1389,7 +1320,6 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
             .map(|rx| (id, rx)),
     };
     let id = match sent {
-        // Everything the channel carries also goes over the bus.
         Ok((id, rx)) => {
             drop(rx);
             id
@@ -1409,8 +1339,6 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
     let mut text = String::new();
     let mut failed = None;
     let mut side_open = stream;
-    // A backstop: an event lost to a lagging bus must not leave this
-    // waiting on a run that already ended.
     let mut check = tokio::time::interval(Duration::from_secs(15));
     check.tick().await;
     loop {
@@ -1428,7 +1356,6 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
                     );
                     if stream {
                         if let Some(v) = ui_event(&id, &ev) {
-                            // The client left: the run goes on in the window.
                             if out.line(&v).await.is_err() {
                                 return detached();
                             }
@@ -1477,7 +1404,6 @@ async fn session_send(ctx: &Ctx, out: &Out, req: &Value) -> Value {
     json!({ "ok": true, "id": id, "text": text, "status": status })
 }
 
-/// The session is neither running nor waiting for its turn.
 fn run_over(orch: &Orchestrator, id: &str) -> bool {
     use parzi_core::store::SessionStatus;
     orch.store()
@@ -1485,8 +1411,6 @@ fn run_over(orch: &Orchestrator, id: &str) -> bool {
         .is_ok_and(|m| !matches!(m.status, SessionStatus::Active | SessionStatus::Queued))
 }
 
-/// Every run event, approval, tab change and notice as a line, until the
-/// client leaves. A keepalive finds clients that left quietly.
 async fn subscribe(ctx: &Ctx, out: &Out, req: &Value) -> Result<(), String> {
     let session = str_arg(req, "session");
     let mut runs = ctx.orch.subscribe();
@@ -1539,8 +1463,6 @@ mod tests {
         }
     }
 
-    /// Rows in the shape `deskRows` in ui/src/lib/desk.ts sends, through
-    /// the same serde path `desk_sync` takes: a page carries its owner.
     fn ui_rows(tabs: &[TabSnap]) -> Vec<TabSnap> {
         let rows: Vec<Value> = tabs
             .iter()
@@ -1583,8 +1505,6 @@ mod tests {
 
     #[test]
     fn a_synced_page_keeps_its_owner() {
-        // The bug this guards: the window synced session_id from
-        // t.sessionId only, so after the first sync an agent lost its tab.
         let desk = Desk::new();
         desk.record_open(page("t1", "https://a.example/", "s1"), false);
         desk.sync(
@@ -1619,17 +1539,14 @@ mod tests {
         let desk = Desk::new();
         desk.sync(vec![page("u1", "https://x.example/", "")], 0, "u1".into());
         let rev = desk.record_open(page("t1", "https://a.example/", "s1"), false);
-        // A sync sent before the window saw the open lacks the tab.
         desk.sync(
             vec![page("u1", "https://x.example/", "")],
             rev - 1,
             "u1".into(),
         );
         assert!(desk.find_page("s1", "").is_ok(), "kept while pending");
-        // The window has seen it (rev) and no longer lists it: closed.
         desk.sync(vec![page("u1", "https://x.example/", "")], rev, "u1".into());
         assert!(desk.find_page("s1", "").is_err(), "closed by the person");
-        // A reloaded window starts from rev 0 and is still heard.
         desk.sync(vec![page("u2", "https://y.example/", "")], 0, "u2".into());
         let (tab, _) = desk.find_page("", "").unwrap();
         assert_eq!(tab.id, "u2");
@@ -1688,8 +1605,6 @@ mod tests {
 
     #[test]
     fn refused_urls_never_become_tabs() {
-        // tab_open checks with check_page_url before record_open; the same
-        // check, here, keeps the list empty.
         let desk = Desk::new();
         for bad in [
             "file:///C:/x",

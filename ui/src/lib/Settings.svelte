@@ -7,11 +7,8 @@
 
   export let section = "general";
 
-  // Old pages: remote and skills are not tabs. Remote is on General.
   $: if (section === "skills" || section === "remote" || section === "system") section = "general";
 
-  // "connections" stays the id so openSettings("connections") still lands here.
-  // Remote lives on General. Skills is not a settings page.
   const SECTIONS = [
     { id: "general", label: "General" },
     { id: "providers", label: "Providers" },

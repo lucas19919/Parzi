@@ -1,20 +1,7 @@
-// Dev-only stand-in for the Tauri backend, so the UI runs in a plain
-// browser (`npm run dev`, then open /mock.html). Used to profile the UI and
-// to run `npm run lint:ui`. Only mock.html loads this; index.html and the
-// app build never do.
 import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 
 const params = new URLSearchParams(location.search);
-// ?view=home | session | settings | brain | history | setup | page (default: session)
-// ?plan=none: the project has no plan yet (the empty plan panel).
-// ?quote=1: the open session's composer has two plan items quoted.
-// ?request=file|image|text: the open session's agent needs something from you.
-// ?live=1 streams tool calls for the running sessions (the plan's live
-// lines); off for the UI lint, which needs a still page.
 const view = params.get("view") ?? "session";
-// ?turns=N sizes the open session's transcript (default 40).
-// ?bg=1 shows a wallpaper, served at http://asset.localhost/ (route it to a file).
-// ?layout=sidebar: the tabs in a sidebar (Settings > Appearance), else in the top bar.
 const turns = Math.max(1, Number(params.get("turns")) || 40);
 
 const now = Date.now();
@@ -22,7 +9,6 @@ const iso = (ago: number) => new Date(now - ago).toISOString();
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 
-// How a session's last run ended (PLAN_CONTRACT.md RunOutcome).
 const outcome = (over: Record<string, unknown> = {}) => ({
   end: "completed",
   summary: "",
@@ -36,8 +22,6 @@ const outcome = (over: Record<string, unknown> = {}) => ({
 });
 const files = (...paths: string[]) => paths.map((path) => ({ path, via: "tool" }));
 
-// Newest first, as list_threads sends them. The first four are Home's
-// recent sessions: running, waiting on an approval, failed, done.
 const session = (id: string, title: string, ago: number, over: Record<string, unknown> = {}) => ({
   id,
   title,
@@ -98,12 +82,6 @@ const sessions = [
   session("r:a2", "Bump them and run the tests", 7 * HOUR, { project: "memory-ai", parent_id: "r:a1", status: "active", model: "claude/claude-sonnet-5-5" }),
 ];
 
-// Parzi's plan (PLAN_CONTRACT.md): nine items, one per state the panel
-// reads. Done by its state (outcomes) and by a merged PR (strip), dropped
-// (tasks), needs you through an approval (panel, emitted by mockMain),
-// working with two agents (sidebar), in review with checks passing (names)
-// and failing (prs), started (quotes), and not started with open needs
-// (widgets). s2 runs outside the plan.
 const item = (id: string, title: string, over: Record<string, unknown> = {}) => ({
   id,
   title,
@@ -173,7 +151,6 @@ const ANSWER = [
   "*Measured in a dev build on a 300-turn thread. n.m. = not measured.*",
 ].join("\n");
 
-// The last turn's charts: one ```viz block per type, and one it can't draw.
 const viz = (spec: unknown) => ["```viz", JSON.stringify(spec), "```", ""];
 const VIZ_ANSWER = [
   "Here is where the release stands.",
@@ -255,7 +232,6 @@ const VIZ_ANSWER = [
 function transcript() {
   const out: unknown[] = [];
   for (let i = 0; i < turns; i++) {
-    // The last turn quotes a plan item, as the desk sends it.
     const last = i === turns - 1;
     const quote = `\n\n<plan-item project="parzi" id="quotes" title="Quote chips">\nClick an item to quote it into the composer.\nState: active. Needs: none. Branch: none.\n</plan-item>`;
     out.push({ kind: "user", text: last ? `Start this, and keep it small.${quote}` : `Turn ${i + 1}: look at why typing stalls, and check the thread too.` });
@@ -300,7 +276,6 @@ function transcript() {
         fence: "parzi-todo",
         payload: { items: [{ title: "Find where typing stalls", state: "done" }, { title: "Cache the markdown head", state: "done" }, { title: "Check the thread at 300 turns", state: "active" }, { title: "Run the UI tests", state: "pending" }] },
       });
-      // What an agent offers at the end of a turn: a side task and replies.
       out.push({
         kind: "widget",
         fence: "parzi-task",
@@ -311,7 +286,6 @@ function transcript() {
         fence: "parzi-replies",
         payload: { question: "Release this as 0.1.36?", replies: [{ label: "Release 0.1.36", message: "Looks good, release 0.1.36." }, { label: "Not yet", message: "Not yet, I have more changes first." }] },
       });
-      // ?preview=1 mounts the live omnibar with token overrides.
       if (params.get("preview")) {
         out.push({
           kind: "artifact",
@@ -366,22 +340,19 @@ const config = {
 const theme = {
   font: { family: "Inter", size: 14, mono: "JetBrains Mono", mono_size: 13 },
   colors: { sidebar: "#0f0f0f", stage: "#161616", accent: "#e8e8e8", text: "#ececec", text_dim: "#9b9b9b", bar: "#1c1c1c", border: "#2a2a2a", panel: "" },
-  background: { image: params.get("bg") ? "backgrounds/mock.png" : "", dim: 0.66, vignette: 0.5, blur: 0, grain: 0.16, grain_size: 32, height: 1, y: 0.5, glass: true },
+  background: { image: params.get("bg") ? "backgrounds/mock.png" : "", y: 0.5 },
 };
 
 const project = { slug: "parzi", title: "Parzi", folder: "D:\\Repos\\Parzi", note: "projects/parzi.md", notes: ["notes/style.md", "notes/release.conflict-laptop-macos.md", "notes/release.md"] };
 const notes = [
   { path: "notes/style.md", title: "Writing style", projects: ["all"], tags: [], pinned: true, links: [], modified: now / 1000, bytes: 1200, summary: "Short sentences. No em dashes." },
   { path: "notes/release.md", title: "Release checklist", projects: ["parzi"], tags: [], pinned: false, links: [], modified: now / 1000, bytes: 900, summary: "Bump versions, tag, attach installers." },
-  // A sync conflict copy (both devices edited the checklist).
   { path: "notes/release.conflict-laptop-macos.md", title: "Release checklist", projects: ["parzi"], tags: [], pinned: false, links: [], modified: now / 1000, bytes: 950, summary: "Bump versions, tag, sign, attach installers.", conflict_of: "notes/release.md" },
   { path: "projects/parzi.md", title: "Parzi", projects: [], tags: [], folder: "D:\\Repos\\Parzi", pinned: false, links: [], modified: now / 1000, bytes: 300, summary: "The harness itself." },
   { path: "widgets/open-prs.md", title: "Open pull requests", projects: [], tags: [], pinned: false, links: [], modified: now / 1000, bytes: 280, summary: "Open pull requests by repository." },
-  // No title of its own: the card takes the chart's.
   { path: "widgets/release.md", title: "release", projects: [], tags: [], pinned: false, links: [], modified: now / 1000, bytes: 320, summary: "Where the release stands." },
 ];
 
-// Home widgets agents wrote: Brain notes under widgets/ with a ```viz block.
 const widgetNotes: Record<string, string> = {
   "widgets/open-prs.md": [
     "---",
@@ -439,12 +410,10 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
     { id: "gemini", name: "Gemini CLI", command: "gemini", args: ["--acp"] },
     { id: "github-copilot-cli", name: "GitHub Copilot", command: "copilot", args: ["--acp"] },
   ],
-  // Settings save over the mock's copy, so a reload of Settings sees them.
   save_config: (a) => {
     Object.assign(config, structuredClone((a as { cfg: typeof config }).cfg));
     return null;
   },
-  // A connector "starts" after a moment and offers a few tools.
   shell_jobs: () => [
     { id: "fg-1", cmd: "cargo test -p parzi-runtime", background: false, running: false, exit: 0, started: now - 600_000, ms: 48_000 },
     { id: "fg-2", cmd: "npm run lint:ui", background: false, running: false, exit: 1, started: now - 300_000, ms: 18_000 },
@@ -456,7 +425,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   context_parts: () => ({ instructions: 6400, notes: 1800, tools: 9200 }),
   connector_check: () => new Promise((r) => setTimeout(() => r(14), 900)),
   connector_sign_in: () => new Promise((r) => setTimeout(() => r(12), 1200)),
-  // Set up in other apps on this computer.
   connectors_found: () => [
     { name: "isar", source: "Claude Code", server: { command: "node", args: ["mcp/src/index.js"], enabled: true } },
     { name: "conductor", source: "Grok", server: { command: "conductor.exe", args: ["mcp"], enabled: true } },
@@ -478,7 +446,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   background_url: () => (params.get("bg") ? "C:/mock/wallpaper.png" : ""),
   list_background_urls: () => [],
   list_pack_infos: () => [{ name: "Default", builtin: true, colors: theme.colors, has_art: false }],
-  // ?remote=1 links a server.
   remote_info: () =>
     params.get("remote")
       ? { label: "box", user: "lucas", host: "box.example.net", version: "0.1.27", linked_at: now, alive: true, synced_at: now - 180_000, device: "pc" }
@@ -487,7 +454,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   remote_providers: () => [],
   remote_projects: () => [],
   brain_context: () => ({ project, text: "", attached: [], listed: [], overflow: [], chars: 0, tokens: 1840 }),
-  // The pinned style note is too big to send in full in Thesis sessions.
   brain_overflow: () => ({ "notes/style.md": ["thesis"] }),
   brain_resolve_conflict: () => "notes/release.md",
   brain_projects: () => [
@@ -519,13 +485,11 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   browser_downloads: () => downloadsList,
   browser_downloads_clear: () => downloadsList.filter((d) => d.state === "progress"),
   onboard_scan: () => scan,
-  // One note is skipped, as a real import can.
   onboard_import: (a) => ({
     notes: Math.max(0, (a.notes as string[]).length - 1),
     projects: (a.folders as string[]).length,
     skipped: (a.notes as string[]).length ? ["Claude Code CLAUDE.md: larger than 256 KB"] : [],
   }),
-  // Setup runs a while, so the wizard is seen holding still.
   remote_setup: async () => {
     const { emit } = await import("@tauri-apps/api/event");
     await emit("parzi://remote-setup", { step: "connect", state: "ok", detail: "box.example.net:22" });
@@ -538,7 +502,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   send_message: (a) => (a.sessionId as string | null) ?? (a.parent ? `side-${Date.now()}` : "s1"),
 };
 
-// What the setup wizard finds on this PC.
 const win = (...parts: string[]) => parts.join("\\");
 const note = (tool: string, title: string, file: string, kind = "skill") => ({ source: win("C:", "Users", "dev", `.${tool}`, file), title, kind, bytes: 2048 });
 const scan = {
@@ -572,7 +535,6 @@ const scan = {
   })),
 };
 
-// Backend events (`listen`) are mocked too, so subscriptions resolve.
 mockWindows("main");
 mockConvertFileSrc("windows");
 mockIPC((cmd, payload) => handlers[cmd]?.((payload ?? {}) as Record<string, unknown>) ?? null, { shouldMockEvents: true });
@@ -596,14 +558,11 @@ try {
     : [];
   const title = (id: string) => sessions.find((x) => x.id === id)?.title ?? "Session";
   const tabs = [tab("t-home", "session", "New session"), tab("t-s1", "session", title("s1"), "s1", { quotes }), tab("t-s2", "session", title("s2"), "s2")];
-  if (view === "brain") tabs.push(tab("t-brain", "brain", "Brain"));
   if (view === "history") tabs.push(tab("t-history", "history", "History"));
-  // Earlier builds saved a Work tab: it is dropped on load.
   tabs.push(tab("t-work", "work", "Work"));
-  // ?view=page: a web page tab (no native page here), asking for the camera.
   const saved: unknown[] = [...tabs];
   if (view === "page") saved.push({ id: "t-page", kind: "page", title: "Example", url: "https://example.com/" });
-  const active = { home: "t-home", session: "t-s1", brain: "t-brain", history: "t-history", page: "t-page" }[view] ?? "t-s1";
+  const active = { home: "t-home", session: "t-s1", history: "t-history", page: "t-page" }[view] ?? "t-s1";
   localStorage.setItem("parzi.tabs.v1", JSON.stringify({ tabs: saved, active }));
   const sites = [
     ["https://github.com/lucas19919/Parzi", "Parzi on GitHub"],
@@ -617,7 +576,5 @@ try {
 export const mockView = view;
 export const mockLive = !!params.get("live");
 export const mockRequest = params.get("request") ?? "";
-// ?question=1 (or =multi): the open session's agent asks at a fork.
 export const mockQuestion = params.get("question") ?? "";
-// ?approval=1: the open session's agent asks to run a command.
 export const mockApproval = params.get("approval") ?? "";

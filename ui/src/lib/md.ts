@@ -7,9 +7,6 @@ import { reportMarkdown } from "./mdReport";
 import { mathAt } from "./mdMath";
 import { vaultRefs } from "./linkRules";
 
-// Rich renderers (KaTeX + highlight.js) load on first use, off the
-// startup path. Until then code renders plain and math renders as
-// escaped source; `richReady` flips and cached fallbacks are dropped.
 export const richReady = writable(false);
 
 type Katex = { renderToString: (tex: string, opts: Record<string, unknown>) => string };
@@ -43,7 +40,6 @@ export function ensureRich(): Promise<void> {
           import("highlight.js/lib/languages/c"),
           import("highlight.js/lib/languages/cpp"),
         ]),
-        // KaTeX's stylesheet ships with the lazy chunk, not the startup CSS.
         import("katex/dist/katex.min.css"),
       ]);
       katex = ((k as any).default ?? k) as Katex;
@@ -84,8 +80,6 @@ export function ensureRich(): Promise<void> {
       mdCache.clear();
       richReady.set(true);
     })().catch((e) => {
-      // Keep the settled promise: a missing chunk stays missing, so one
-      // toast beats a failed import (and a retry) on every render.
       toast(`Code highlighting and math are off: ${e}`, true);
     });
   }
@@ -117,7 +111,6 @@ function texHtml(tex: string, display: boolean): string | null {
   }
 }
 
-// $$…$$ display blocks (single- or multi-line).
 md.block.ruler.before("fence", "parzi-math-block", (state, start, end, silent) => {
   const first = state.getLines(start, start + 1, 0, false).trim();
   if (!first.startsWith("$$")) return false;
@@ -151,7 +144,6 @@ md.block.ruler.before("fence", "parzi-math-block", (state, start, end, silent) =
   return true;
 });
 
-// $…$ inline and $$…$$ single-line display (escaped \$ and money ignored).
 md.inline.ruler.after("escape", "parzi-math-inline", (state, silent) => {
   const span = mathAt(state.src, state.pos);
   if (!span) return false;
@@ -183,9 +175,6 @@ const PLAIN_FENCES = new Set([
   "log",
 ]);
 
-// Set while LiveMarkdown renders a tail whose fence is still open: that
-// block re-renders on every streamed chunk, so it stays escaped text and
-// highlights once, after the fence closes.
 let streamingFence = false;
 
 md.renderer.rules.fence = (tokens, idx) => {
@@ -211,8 +200,6 @@ md.renderer.rules.fence = (tokens, idx) => {
     }
   }
   const label = PLAIN_FENCES.has(lang.toLowerCase()) ? "" : `<span class="code-lang">${safeLang}</span>`;
-  // A drawing in text (boxes and arrows) is a picture: it shrinks to fit
-  // instead of scrolling, and shows whole.
   const cols = isDiagram(lang, body) ? Math.max(...lines.map((l) => [...l].length)) : 0;
   const long = !cols && lines.length > 30;
   const expand = long ? `<button class="code-expand" data-expand data-label="Show all ${lines.length} lines">Show all ${lines.length} lines</button>` : "";
@@ -223,13 +210,11 @@ md.renderer.rules.fence = (tokens, idx) => {
 
 const BOX = /[─-╿▀-▟]/g;
 
-/** A fence that draws (box-drawing lines), not code. */
 export function isDiagram(lang: string, body: string): boolean {
   if (!PLAIN_FENCES.has(lang.toLowerCase())) return false;
   return (body.match(BOX)?.length ?? 0) >= 6;
 }
 
-/** A click on a code block's Copy or Show all; true when it was one. */
 export function codeBlockClick(el: HTMLElement): boolean {
   const copyBtn = el.closest<HTMLElement>("[data-copy]");
   if (copyBtn) {
@@ -299,10 +284,6 @@ md.renderer.rules.parzi_front = (tokens, idx) => {
   return `<dl class="md-front">${rows}</dl>`;
 };
 
-// Bare vault notes named in prose ("updated projects/acme/GOALS.md") link
-// like Antigravity's file chips: no explicit [label](href) needed. Runs on
-// the token stream so code spans, fences and existing links are untouched
-// (only bare text tokens outside link_open/link_close are split).
 md.core.ruler.push("parzi-file-links", (state) => {
   for (const block of state.tokens) {
     if (block.type !== "inline" || !block.children) continue;
@@ -359,7 +340,6 @@ const MD_CACHE_MAX = 400;
 const LOCAL_IMAGE = /^(data:image\/|asset:|https?:\/\/asset\.localhost\/)/i;
 
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-  // HTML tagNames are upper-case, SVG ones (<image>) keep their case.
   const tag = (node.tagName ?? "").toLowerCase();
   if (tag === "a") {
     node.setAttribute("target", "_blank");
@@ -374,10 +354,6 @@ DOMPurify.addHook("afterSanitizeAttributes", (node) => {
 });
 
 export function renderMarkdown(src: string, cache = true): string {
-  // Kick the rich renderers off the startup path, and only for text that
-  // can use them (a fence or math). The first render may fall back to
-  // plain code / escaped math and upgrades when they land (callers pass
-  // $richReady via mdHtml so markup re-renders then).
   if (src.includes("```") || src.includes("~~~") || src.includes("$")) void ensureRich();
   if (cache) {
     const hit = mdCache.get(src);
@@ -397,8 +373,6 @@ export function renderMarkdown(src: string, cache = true): string {
   return res;
 }
 
-// Reactive wrapper for markup: `{@html mdHtml(body, $richReady)}`
-// re-renders with highlighting/math once the lazy chunks arrive.
 export function mdHtml(src: string, _rev: unknown, cache = true): string {
   return renderMarkdown(src, cache);
 }
@@ -437,8 +411,6 @@ function stableCut(text: string): number {
   return cut;
 }
 
-// True when `text` ends inside a ``` / ~~~ fence (the closing line may
-// still be streaming in).
 function fenceOpen(text: string): boolean {
   let mark = "";
   for (const line of text.split("\n")) {

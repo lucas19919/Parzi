@@ -1,6 +1,4 @@
 <script lang="ts">
-  // Rows and columns: hairlines between rows, numbers right-aligned in
-  // tabular figures so they line up.
   export let columns: string[] = [];
   export let rows: string[][] = [];
   export let numeric: boolean[] = [];

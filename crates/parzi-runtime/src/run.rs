@@ -26,8 +26,6 @@ use crate::tools::{display_name, edit_paths, humanize_tool_call, shell_command};
 const MAX_TURNS: u32 = 8;
 const HISTORY_CHARS: usize = 12_000;
 
-/// What Parzi asks an agent that cannot compact on its own: a summary the
-/// next conversation starts from.
 const SUMMARIZE: &str = "Summarize this conversation so a fresh session can carry on from it alone. \
 Keep: the goal and what the person asked for, decisions made and why, files and places touched, \
 what is done, what is in progress, open questions, and the next step. Be specific (names, paths, \
@@ -55,10 +53,7 @@ pub struct EngineRunParts {
     pub seen: usize,
     pub inbox_from: Option<usize>,
     pub(crate) tally: Tally,
-    /// The project's plan (`<parzi:plan>`), for the opening turn.
     pub brief: Option<String>,
-    /// Compacts the conversation instead of answering; the prompt is what
-    /// the summary should keep.
     pub compact: bool,
 }
 
@@ -67,22 +62,16 @@ pub struct EngineRun {
     resume: std::sync::Mutex<Option<Value>>,
     spent: std::sync::Mutex<(u64, f64)>,
     cost_seen: AtomicBool,
-    // Token estimate for providers that never emit Usage (else caps never trip).
     usage_seen: AtomicBool,
     est_tokens: std::sync::Mutex<u64>,
-    /// The hash of the plan this run's opening carried, kept on the session
-    /// once a turn with it completed (a turn that failed never showed it).
     brief_sent: std::sync::Mutex<Option<String>>,
-    /// While compacting: what the agent says goes here, not the thread.
     captured: std::sync::Mutex<Option<String>>,
-    /// The agent's own word that it compacted (context before and after).
     compacted: std::sync::Mutex<Option<(Option<u64>, Option<u64>)>>,
 }
 
 enum Outcome {
     Completed,
     Interrupted,
-    /// The agent closed. The sentence is already in the thread.
     Closed(String),
     Paused(String),
     Failed(ProviderError),
@@ -95,8 +84,6 @@ struct Turn {
     started: HashMap<String, Instant>,
 }
 
-/// What an agent says when its turn is cancelled ("The request was
-/// cancelled by the client."): a short line about cancelling, nothing more.
 fn cancel_notice(text: &str) -> bool {
     let t = text.trim().to_ascii_lowercase();
     !t.is_empty() && t.len() <= 100 && (t.contains("cancelled") || t.contains("canceled"))
@@ -123,7 +110,6 @@ impl EngineRun {
     pub async fn run(&self, prompt: &str) -> Result<()> {
         let sid = self.p.session_id.clone();
         let name = parzi_providers::display_name(&self.p.provider_id);
-        // A compact run says what it did with a checkpoint, not a message.
         if !self.p.prompt_recorded && !self.p.compact {
             let text = user_event_text(prompt, &self.p.attachments);
             self.p.store.append(&sid, &Event::User { text })?;
@@ -199,11 +185,6 @@ impl EngineRun {
             }
             let (mut fresh, mut upto) = self.inbox(seen, None);
             if fresh.is_empty() {
-                // Quiet: the outcome (git's look included) is kept while the
-                // run still holds its slot, so nothing new starts on the
-                // session before it is on record and a Stop cannot catch a
-                // run that has finished. Then the last look, under the lock
-                // that deliveries take, settles it and gives the slot back.
                 self.tally(|t| t.end = Some((RunEndKind::Completed, None)));
                 self.record().await;
                 (fresh, upto) = self
@@ -219,16 +200,12 @@ impl EngineRun {
                     self.p.sink.emit(RunEvent::Done { turns });
                     return Ok(());
                 }
-                // A message came while the outcome was kept: it is answered,
-                // and the outcome kept again when the run ends.
                 self.tally(|t| {
                     t.end = None;
                     t.recorded = false;
                 });
             }
             if turns >= MAX_TURNS {
-                // Left unread, not lost: the next run of this session reads
-                // on from the first of them.
                 self.p.slot.set_read_mark(seen);
                 self.note(format!(
                     "Stopped after {MAX_TURNS} turns in one run: {} message(s) from other \
@@ -248,9 +225,6 @@ impl EngineRun {
         }
     }
 
-    /// Compacts the conversation: the agent's own way when it has one,
-    /// else Parzi asks it for a summary, keeps that as a checkpoint and
-    /// starts the next turn in a new conversation handed only that.
     async fn compact(&self, focus: &str) -> Result<()> {
         let sid = self.p.session_id.clone();
         let name = parzi_providers::display_name(&self.p.provider_id);
@@ -286,7 +260,6 @@ impl EngineRun {
                         .filter(|&t| t > 0)
                 });
                 if !native {
-                    // The next turn opens a new conversation handed the summary.
                     self.forget_session();
                     after = Some(est_tokens(&summary_text));
                 }
@@ -324,15 +297,11 @@ impl EngineRun {
         }
     }
 
-    /// Starts (true) or ends what a compact turn keeps out of the thread,
-    /// handing back what it caught.
     fn capture(&self, on: bool) -> Option<String> {
         let mut c = self.captured.lock().ok()?;
         std::mem::replace(&mut *c, on.then(String::new))
     }
 
-    /// Holds what the agent says while capturing; false when it is the
-    /// thread's.
     fn caught(&self, text: &str, replace: bool) -> bool {
         let Ok(mut c) = self.captured.lock() else {
             return false;
@@ -365,9 +334,6 @@ impl EngineRun {
         ))
     }
 
-    /// What the first turn answers: a message run's messages (or its
-    /// prompt when they were read already); otherwise the prompt, after any
-    /// messages an earlier run left unanswered (see `MAX_TURNS`).
     fn first_input(&self, prompt: &str, seen: usize) -> String {
         let Some(start) = self.p.slot.read_mark().or(self.p.inbox_from) else {
             return prompt.to_string();
@@ -385,15 +351,11 @@ impl EngineRun {
         f(&mut crate::run_hooks::lock(&self.p.tally));
     }
 
-    /// A run that ends here: its outcome kept, then its status, with the
-    /// slot given back in the same step (the window hears of it after).
     async fn end(&self, status: SessionStatus) {
         self.record().await;
         self.p.slot.release(|| self.settle(status)).await;
     }
 
-    /// The run's outcome kept on its session, before the window hears it
-    /// ended: what it reads then is already this run's.
     async fn record(&self) {
         let stopped = self.p.cancel.is_cancelled();
         crate::run_hooks::run_ended(&self.p.store, &self.p.tally, stopped, true).await;
@@ -455,10 +417,6 @@ impl EngineRun {
         parts.join("\n\n")
     }
 
-    /// The plan, unless this conversation has seen this exact text: a fresh
-    /// one never has; a resumed one saw what run.json's hash says. Never
-    /// written to the transcript, and never part of the instructions (those
-    /// are re-sent every turn and a changing plan would spoil their cache).
     fn brief(&self, fresh: bool) -> Option<String> {
         let text = self.p.brief.as_ref()?;
         let hash = parzi_core::hash::fnv_hex(text.as_bytes());
@@ -472,7 +430,6 @@ impl EngineRun {
         Some(text.clone())
     }
 
-    /// A turn completed: the plan it carried is the conversation's now.
     fn brief_seen(&self) {
         let sent = self.brief_sent.lock().ok().and_then(|mut s| s.take());
         if let Some(hash) = sent {
@@ -482,7 +439,6 @@ impl EngineRun {
 
     fn history(&self, prompt: &str) -> Option<String> {
         let events = self.p.store.events(&self.p.session_id).ok()?;
-        // A summary stands for everything before it.
         let from = events
             .iter()
             .rposition(
@@ -499,7 +455,6 @@ impl EngineRun {
                 Event::User { text } => Some(format!("user: {text}")),
                 Event::Assistant { text, .. } => Some(format!("assistant: {text}")),
                 Event::Checkpoint { .. } => None,
-                // Replacements must also see tool calls and results, not just chat.
                 Event::ToolCall { name, args, .. } => {
                     let a: String = fold(&args.to_string()).chars().take(200).collect();
                     Some(format!("tool_call: {name} {a}"))
@@ -603,8 +558,6 @@ impl EngineRun {
         drop(registration);
         let completed = paused.is_none() && matches!(result, Ok(TurnEnd::Completed));
         if !completed {
-            // The agent's own "the request was cancelled" is not an answer:
-            // the thread says the run stopped.
             if turn.pending.as_deref().is_some_and(cancel_notice) {
                 turn.pending = None;
             }
@@ -630,9 +583,6 @@ impl EngineRun {
         }
     }
 
-    /// A stop the person asked for says "Stopped" and stays killed.
-    /// An agent that closed says why, goes idle so Stop clears, and
-    /// leaves every other session alone.
     async fn stopped(&self, closed: Option<String>) {
         let sid = &self.p.session_id;
         if let Some(reason) = closed {
@@ -722,7 +672,6 @@ impl EngineRun {
                 let shown = display_name(&name);
                 let label = humanize_tool_call(&name, &input);
                 crate::run_hooks::tool_started(&self.p.tally, &id, &shown, &input);
-                // The agent's own checklist is the session's checklist.
                 if let Some(todo) = parzi_core::widgets::todo_from_agent(&shown, &input) {
                     let _ = self.p.store.append(
                         sid,
@@ -812,12 +761,10 @@ impl EngineRun {
             ProviderEvent::Notice(text) => self.note(text),
             ProviderEvent::Compacted { before, after } => {
                 if self.p.compact {
-                    // The compact run keeps one checkpoint when it ends.
                     if let Ok(mut c) = self.compacted.lock() {
                         *c = Some((before, after));
                     }
                 } else {
-                    // On its own, mid-turn: the thread says so where it happened.
                     self.flush(turn, false);
                     let _ = self.p.store.append(
                         sid,
@@ -844,7 +791,6 @@ impl EngineRun {
         None
     }
 
-    // ~4 chars/token estimate so silent providers still trip budget caps.
     fn count_estimate(&self, text: &str) {
         if self.usage_seen.load(Ordering::Relaxed) {
             return;
@@ -859,7 +805,6 @@ impl EngineRun {
             return None;
         }
         let (tokens, cost) = self.spent.lock().ok().map(|s| *s)?;
-        // Real usage wins once seen; the estimate covers silent providers only.
         let est = if self.usage_seen.load(Ordering::Relaxed) {
             0
         } else {
@@ -881,7 +826,6 @@ impl EngineRun {
         self.p.sink.emit(RunEvent::Notice { text });
         self.tally(|t| t.end = Some((RunEndKind::Paused, Some(reason.to_string()))));
         self.end(SessionStatus::Idle).await;
-        // The UI's running set clears on this, as it does on done.
         self.p.sink.emit(RunEvent::Paused {
             reason: reason.to_string(),
         });
@@ -902,12 +846,10 @@ impl EngineRun {
     }
 }
 
-/// About how many tokens a text is (four characters each).
 fn est_tokens(text: &str) -> u64 {
     (text.chars().count() as u64).div_ceil(4)
 }
 
-/// Whether a command line builds, tests or lints: its result is a check.
 #[must_use]
 pub(crate) fn is_check(cmd: &str) -> bool {
     cmd.split([';', '|', '&', '\n'])
@@ -915,7 +857,6 @@ pub(crate) fn is_check(cmd: &str) -> bool {
 }
 
 fn check_words(mut words: Vec<&str>) -> bool {
-    // `FOO=1 npx tsc`, `python -m pytest`, `uv run pytest`: look past the wrapper.
     while let Some(first) = words.first().copied() {
         let env = first.contains('=') && !first.starts_with('-');
         let module = matches!(first, "python" | "python3" | "py") && words.get(1) == Some(&"-m");
@@ -949,7 +890,6 @@ fn check_words(mut words: Vec<&str>) -> bool {
         "go" => matches!(subcommand(rest), Some("test" | "build" | "vet")),
         "dotnet" => matches!(subcommand(rest), Some("test" | "build")),
         "npm" | "pnpm" | "yarn" | "bun" => package_script_check(rest),
-        // `make` alone builds the default target; `make clean` does not.
         "make" => match subcommand(rest) {
             None => true,
             Some(target) => target == "all" || checks_by_name(target),
@@ -960,15 +900,12 @@ fn check_words(mut words: Vec<&str>) -> bool {
     }
 }
 
-/// Names a script or target that builds, tests or lints.
 fn checks_by_name(name: &str) -> bool {
     ["test", "build", "check", "lint", "tsc"]
         .iter()
         .any(|k| name.contains(k))
 }
 
-/// The first word that is not a flag (`-j8`, `+nightly`), skipping the
-/// value of the flags that take one (`--prefix ui`, `-C dir`).
 fn subcommand<'a>(rest: &[&'a str]) -> Option<&'a str> {
     const TAKES_VALUE: &[&str] = &[
         "--prefix",
@@ -993,9 +930,6 @@ fn subcommand<'a>(rest: &[&'a str]) -> Option<&'a str> {
     None
 }
 
-/// `npm test`, `npm t`, `npm run build`, `pnpm lint`, `yarn test:unit`:
-/// the test command or a script named for a check. Installs (`pnpm add -D
-/// vitest`, `npm i jest`) are not checks, whatever they install.
 fn package_script_check(rest: &[&str]) -> bool {
     let Some(sub) = subcommand(rest) else {
         return false;
@@ -1018,18 +952,14 @@ fn package_script_check(rest: &[&str]) -> bool {
         }
         "add" | "i" | "install" | "ci" | "remove" | "rm" | "uninstall" | "update" | "up"
         | "upgrade" | "link" | "publish" | "init" | "create" => false,
-        // pnpm, yarn and bun run a script by its bare name.
         script => checks_by_name(script),
     }
 }
 
-/// A command shown as a check: one line, at most 120 chars.
 fn check_label(cmd: &str) -> String {
     clip(&fold(cmd), 120)
 }
 
-/// A file path as the run's folder sees it: relative inside it, with
-/// forward slashes; anything outside stays absolute.
 #[must_use]
 pub(crate) fn display_path(cwd: &str, path: &str) -> String {
     let p = path.trim().replace('\\', "/");
@@ -1043,23 +973,18 @@ pub(crate) fn display_path(cwd: &str, path: &str) -> String {
         .to_string()
 }
 
-/// What a run did, gathered while it runs: the session's `last_run` comes
-/// from this when the run ends.
 pub(crate) struct RunTally {
     pub(crate) session: String,
     pub(crate) cause: RunCause,
     pub(crate) cwd: String,
-    /// Where the run's events start in the transcript.
     pub(crate) first_event: usize,
     pub(crate) started: Instant,
     edits: Vec<String>,
     shells: HashMap<String, String>,
     pub(crate) checks: Vec<Check>,
     pub(crate) cost: Option<f64>,
-    /// How it ended (and the error), set by the run itself.
     pub(crate) end: Option<(RunEndKind, Option<String>)>,
     pub(crate) git: Option<tokio::task::JoinHandle<Option<crate::gitmark::GitMark>>>,
-    /// Its outcome is on the session: the run's guard need not keep it.
     pub(crate) recorded: bool,
 }
 
@@ -1081,7 +1006,6 @@ impl RunTally {
         }
     }
 
-    /// Counts a call: the files an edit names, and a check it runs.
     pub(crate) fn tool_started(&mut self, id: &str, name: &str, input: &Value) {
         for p in edit_paths(name, input) {
             let shown = display_path(&self.cwd, &p);
@@ -1110,7 +1034,6 @@ impl RunTally {
         }
     }
 
-    /// Files the run's tool calls edited, relative to its folder.
     pub(crate) fn edits(&self) -> &[String] {
         &self.edits
     }

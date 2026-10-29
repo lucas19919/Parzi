@@ -1,7 +1,4 @@
 <script lang="ts">
-  // A distribution: raw values bucketed into round-edged bins (spec.ts),
-  // drawn as contiguous columns with a dashed mean. Hover a bin for its
-  // range, count and share.
   import { fmt, type HistBin } from "./spec";
   import { hideTip, showTip } from "./tip";
   import DataTable from "./DataTable.svelte";
@@ -31,7 +28,6 @@
   $: lo = bins.length ? bins[0].lo : 0;
   $: hi = bins.length ? bins[bins.length - 1].hi : 1;
   $: meanX = bins.length ? Math.max(0, Math.min(w, ((mean - lo) / (hi - lo || 1)) * w)) : 0;
-  // Edge labels that fit: first, last, and every kth in between.
   $: every = Math.max(1, Math.ceil(bins.length / Math.max(1, Math.floor(w / 64))));
   $: edges = bins.length ? [...bins.map((b) => b.lo), bins[bins.length - 1].hi] : [];
 

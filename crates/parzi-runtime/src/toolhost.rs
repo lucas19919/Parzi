@@ -45,18 +45,13 @@ pub struct ToolHost {
 }
 
 fn worktree_relative(cwd: &str, path: &str) -> Option<String> {
-    // The text must stay inside first: no `~`, no climbing out, no odd names.
     let rel = relative_text(cwd, path)?;
     let root = std::fs::canonicalize(cwd).ok()?;
-    // Then judge where it really lands. Unix applies `..` after following a
-    // link (`link/../x` sits beside the target), so walk the raw segments;
-    // Windows collapses `..` by text first, so the clean form is what opens.
     let walk: Vec<String> = if cfg!(windows) {
         rel.split('/').map(str::to_string).collect()
     } else {
         relative_segments(cwd, path)?
     };
-    // Push segment by segment: a verbatim (\\?\) root would not split on `/`.
     let mut target = root.clone();
     target.extend(&walk);
     let landed = land(&target)?;
@@ -69,9 +64,6 @@ fn worktree_relative(cwd: &str, path: &str) -> Option<String> {
     (!out.is_empty()).then(|| out.join("/"))
 }
 
-/// Where an absolute path really lands: links resolved the way the OS
-/// resolves them, a missing tail kept as text. None for a dangling link
-/// or `..` above the root.
 fn land(path: &Path) -> Option<PathBuf> {
     use std::path::Component;
     let mut here = PathBuf::new();
@@ -79,7 +71,6 @@ fn land(path: &Path) -> Option<PathBuf> {
         match comp {
             Component::CurDir => {}
             Component::ParentDir => {
-                // Unix: `..` of a link is the parent of its target.
                 if !cfg!(windows) && std::fs::symlink_metadata(&here).is_ok() {
                     here = std::fs::canonicalize(&here).ok()?;
                 }
@@ -103,8 +94,6 @@ fn land(path: &Path) -> Option<PathBuf> {
     Some(real)
 }
 
-/// `path` relative to `cwd` as raw segments, `..` kept. None when it is
-/// rooted elsewhere, starts with `~`, or names something Windows rewrites.
 fn relative_segments(cwd: &str, path: &str) -> Option<Vec<String>> {
     let base = cwd.trim().replace('\\', "/");
     let base = base.trim_end_matches('/');
@@ -168,7 +157,6 @@ fn windows_plain_name(seg: &str) -> bool {
         && !port("lpt")
 }
 
-/// Every path a vendor tool call names, for the secret-file guard.
 fn named_paths(req: &PermissionRequest) -> Vec<String> {
     let mut out = req.paths.clone();
     for k in [
@@ -192,7 +180,6 @@ fn named_paths(req: &PermissionRequest) -> Vec<String> {
     out
 }
 
-/// The command text a shell-like vendor call carries.
 fn command_text(input: &Value) -> String {
     match input.get("command").or_else(|| input.get("cmd")) {
         Some(Value::Array(parts)) => parts
@@ -208,8 +195,6 @@ fn command_text(input: &Value) -> String {
 const SECRET_FILE: &str =
     "that file holds Parzi's or an agent's sign-in tokens, so agents cannot open it";
 
-/// The files a vendor write names: its locations, else the path keys its
-/// input uses (Claude's `file_path`, Antigravity's `TargetFile`, ...).
 fn write_targets(req: &PermissionRequest) -> Vec<String> {
     if !req.paths.is_empty() {
         return req.paths.clone();
@@ -257,7 +242,6 @@ fn execute_brain(name: &str, args: &Value) -> (bool, String) {
         }
         "brain.write" => match args.get("content").and_then(Value::as_str) {
             Some(content) if !arg("path").is_empty() => {
-                // A plan note is also written by plan.write: one at a time.
                 let path = note(arg("path"));
                 let _plan = parzi_core::plan::lock_if_plan(&path);
                 vault
@@ -279,7 +263,6 @@ fn note_line(n: &brain::NoteMeta, projects: bool) -> String {
     if projects && !n.projects.is_empty() {
         line.push_str(&format!(" [{}]", n.projects.join(", ")));
     }
-    // A copy is never attached, pinned or not; the user keeps one version.
     if let Some(original) = &n.conflict_of {
         line.push_str(&format!(
             " (sync conflict copy of {original}; the user settles it in the Brain view)"
@@ -296,10 +279,8 @@ fn note_line(n: &brain::NoteMeta, projects: bool) -> String {
     line
 }
 
-/// Notes one listing shows: one curious list must not evict the task.
 const SHOWN: usize = 50;
 
-/// Up to `SHOWN` note lines, then how many more there are.
 fn note_lines<'a>(
     out: &mut String,
     notes: impl Iterator<Item = &'a brain::NoteMeta>,
@@ -344,7 +325,6 @@ fn brain_listing(vault: &brain::Vault, project: &str) -> Result<String> {
             "{} ({}), folder {}\n- {} — project note",
             p.title, p.slug, p.folder, p.note
         );
-        // The project's notes come from the same scan, so each one is here.
         let mapped = p
             .notes
             .iter()
@@ -388,8 +368,6 @@ fn url_encode(s: &str) -> String {
 
 const IMAGE_FETCH_CAP: u64 = 12 * 1024 * 1024 + 1;
 async fn fetch_bytes(url: &str, max_bytes: u64) -> std::result::Result<(Vec<u8>, String), String> {
-    // ureq blocks, so the download runs on the blocking pool and never
-    // stalls the async workers that serve all other commands.
     let url = url.to_string();
     tokio::task::spawn_blocking(move || fetch_blocking(&url, max_bytes))
         .await
@@ -435,7 +413,6 @@ fn fetch_blocking(url: &str, max_bytes: u64) -> std::result::Result<(Vec<u8>, St
     Ok((bytes, content_type))
 }
 
-/// Seconds plus a random tag: two saves in one second must not overwrite.
 fn file_stamp() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -456,8 +433,6 @@ fn image_ext(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
-/// A page action's reply: what was done, the element's label quoted as
-/// page data.
 fn page_done(v: &Value) -> String {
     let done = v.get("done").and_then(Value::as_str).unwrap_or("done");
     match v.get("label").and_then(Value::as_str).map(str::trim) {
@@ -466,8 +441,6 @@ fn page_done(v: &Value) -> String {
     }
 }
 
-/// A page read for the agent. Everything the page wrote (title, URL,
-/// text, control labels) sits inside one untrusted block.
 fn page_text(v: &Value) -> String {
     let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("");
     let n = |k: &str| v.get(k).and_then(Value::as_u64).unwrap_or(0);
@@ -511,9 +484,6 @@ fn page_text(v: &Value) -> String {
     out
 }
 
-/// The tab the human is on, from `desk.state`'s `active`: an object
-/// (`kind`, `title`, maybe `id`) as the window sends it to agents, or a bare
-/// tab id looked up in `tabs` (the shape the CLI's full state used).
 fn front_tab(v: &Value) -> Option<Value> {
     match v.get("active")? {
         a @ Value::Object(_) => Some(a.clone()),
@@ -537,7 +507,6 @@ fn front_tab(v: &Value) -> Option<Value> {
     }
 }
 
-/// `desk.state` for the agent: its own tabs, and only titles of the rest.
 fn desk_state_text(v: &Value) -> String {
     let s = |v: &Value, k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let mut out = vec![format!(
@@ -598,8 +567,6 @@ fn desk_state_text(v: &Value) -> String {
     out.join("\n")
 }
 
-/// A merged tool's arguments as the tool it became takes them: request.user's
-/// `request` is ask.user's `question`.
 fn legacy_args(name: &str, args: &Value) -> Value {
     let mut a = args.clone();
     if name == "ask.user" {
@@ -614,7 +581,6 @@ fn legacy_args(name: &str, args: &Value) -> Value {
     a
 }
 
-/// The reply to a call the mode (Settings) or the person refused.
 fn denied(name: &str) -> (bool, String) {
     (
         false,
@@ -649,8 +615,6 @@ impl ToolHost {
         if is_ui_tool(name) {
             return self.execute_ui_tool(name, args);
         }
-        // Stop must reach long calls too (a hook, shell.exec, a waited spawn,
-        // a download), not only approval cards; a dropped shell.exec kills its tree.
         let guarded = async {
             let (denied, warnings) =
                 crate::hooks::pre_tool(&self.p.store, &self.p.session_id, name, args).await;
@@ -694,7 +658,6 @@ impl ToolHost {
             let every_tab =
                 name == "browser.tabs" && args.get("all").and_then(Value::as_bool) == Some(true);
             let allowed = if every_tab {
-                // Every tab's URL is the person's browsing: their call, even in Auto.
                 self.p.mode != ApprovalMode::Deny
                     && self.p.tools.is_allowed(name)
                     && (self.p.full || self.ask(id, name, args).await)
@@ -722,7 +685,6 @@ impl ToolHost {
             return self.execute_browser(name, args).await;
         }
         if is_brain_tool(name) {
-            // Writes and deletes change the vault: approval-gated.
             let allowed = if name == "brain.write" || name == "brain.delete" {
                 self.approved(id, name, args).await
             } else {
@@ -737,9 +699,6 @@ impl ToolHost {
                 .unwrap_or_else(|e| (false, e.to_string()));
         }
         if is_plan_tool(name) || name == "session.rename" {
-            // The project's plan and this session's own name: Parzi's own
-            // state the person watches, nothing outside it, so no card. A
-            // read-only mode still only reads: no plan writes, no renames.
             let writes = name != "plan.read";
             if !self.p.tools.is_allowed(name) || (writes && self.p.mode == ApprovalMode::Deny) {
                 return denied(name);
@@ -771,8 +730,6 @@ impl ToolHost {
             return self.execute_image(args).await;
         }
         if is_github_tool(name) {
-            // It posts where anyone can read it: asked every time, unless
-            // the run is Full. Read-only never posts.
             if self.p.mode == ApprovalMode::Deny || !self.p.tools.is_allowed(name) {
                 return denied(name);
             }
@@ -868,17 +825,12 @@ impl ToolHost {
         if parzi != req.tool {
             return PermissionDecision::Allow;
         }
-        // ACP agents (Grok) send the action's kind as the tool and its name
-        // as the title, and may wrap the call in their own `use_tool`. One
-        // of Parzi's own goes through: Parzi's rules judge the call itself.
         let ours = |t: &str| crate::tools::is_parzi_tool(&display_name(t)) && display_name(t) != t;
         let wrapped = req.input.get("tool_name").and_then(Value::as_str);
         if ours(&req.title) || (req.title == "use_tool" && wrapped.is_some_and(ours)) {
             return PermissionDecision::Allow;
         }
         let kind = category(&req.tool);
-        // Token files stay shut in every mode, Full included: with one, a
-        // run could drive the window or approve its own calls.
         if let Some(why) = self.secret_guard(req, kind) {
             return PermissionDecision::Deny(why);
         }
@@ -897,17 +849,10 @@ impl ToolHost {
                 return PermissionDecision::Deny(format!("Settings do not allow {k}"));
             }
         }
-        // The harness owns the shell: vendor-native shell tools are refused
-        // wherever shell.* is offered.
-        // Claude Code's own shell is pointed at shell.exec: its refusal
-        // carries the reason, and it goes on with Parzi's. An ACP agent's
-        // terminal (Grok's, as kind "execute") gets only a bare "rejected"
-        // and ends its turn there, so it is judged like shell.exec below.
         const VENDOR_SHELL: &[&str] = &["Bash", "bash", "BashOutput", "KillShell"];
         if VENDOR_SHELL.contains(&req.tool.as_str()) && self.p.tools.is_allowed("shell.exec") {
             return PermissionDecision::Deny("use shell.exec".into());
         }
-        // Shell switched off in Settings is off for the agent's own shell too.
         if kind == Some("shell.exec") && self.p.cfg.lanes.no_shell {
             return PermissionDecision::Deny("the shell is switched off in Settings".into());
         }
@@ -928,16 +873,12 @@ impl ToolHost {
         if let Some(reason) = denied {
             return PermissionDecision::Deny(format!("blocked by a workspace hook: {reason}"));
         }
-        // This session's own screenshots live outside its folder, in ~/.parzi/shots.
         if self.p.full || (kind == Some("fs.read") && self.own_shot(req)) {
             return PermissionDecision::Allow;
         }
-        // Its own scratch folder is its to write in.
         if kind == Some("fs.write") && self.in_scratch(req) {
             return PermissionDecision::Allow;
         }
-        // Making a picture or a video changes nothing here: its output lands
-        // in the agent's own store, and the person asked for it.
         if kind.is_none() && (makes_media(&req.name) || makes_media(&req.tool)) {
             return PermissionDecision::Allow;
         }
@@ -956,8 +897,6 @@ impl ToolHost {
                         o.insert("outside".into(), Value::Bool(true));
                     }
                 }
-                // An ACP agent says only "other" of its own tools; the card
-                // names the tool the call started as.
                 let asked = if req.tool == "other" && !req.name.is_empty() {
                     req.name.as_str()
                 } else {
@@ -992,9 +931,6 @@ impl ToolHost {
         None
     }
 
-    /// A read of a file under this session's own screenshot folder.
-    /// Every file the request writes is in this session's scratch folder,
-    /// named by full path (a relative one is the session's folder's).
     fn in_scratch(&self, req: &PermissionRequest) -> bool {
         let Ok(dir) = parzi_core::paths::scratch_dir(&self.p.session_id) else {
             return false;
@@ -1088,7 +1024,6 @@ impl ToolHost {
         };
         match out {
             Ok(text) => {
-                // The tool result carries this; no extra System copy.
                 if matches!(name, "session.spawn" | "session.send") {
                     self.p.sink.emit(RunEvent::Notice {
                         text: text.chars().take(240).collect(),
@@ -1100,8 +1035,6 @@ impl ToolHost {
         }
     }
 
-    /// Approval posture children inherit. Ask/Deny never propagate: a child
-    /// must not pop cards on the user's screen uninvited.
     fn child_mode(&self) -> Option<String> {
         if self.p.full {
             Some("full".into())
@@ -1162,7 +1095,6 @@ impl ToolHost {
         if title.is_empty() {
             return (false, "an issue needs a title".into());
         }
-        // gh missing or signed out: a link that opens the form filled in.
         let by_hand = |why: &str| {
             if repo.is_empty() {
                 return (false, format!("{why}. Name the repo (owner/name) to get a link the person can file it from."));
@@ -1302,7 +1234,6 @@ impl ToolHost {
         if question.is_empty() {
             return (false, "ask.user needs a `question`".into());
         }
-        // Each option a label, or {label, description}.
         let (options, details): (Vec<String>, Vec<String>) = args
             .get("options")
             .and_then(Value::as_array)
@@ -1319,7 +1250,6 @@ impl ToolHost {
             .take(6)
             .unzip();
         let multi = args.get("multi").and_then(Value::as_bool).unwrap_or(false);
-        // Asked to hand something over (no options to pick from): what kind.
         let kind = match args.get("kind").and_then(Value::as_str).map(str::trim) {
             Some(k @ ("file" | "image" | "text")) if options.is_empty() => k.to_string(),
             _ => String::new(),
@@ -1343,8 +1273,6 @@ impl ToolHost {
         (true, answer)
     }
 
-    /// project.create's folder made absolute and `..`-free: `~` expanded,
-    /// a relative name placed under the session's folder.
     fn project_folder(&self, raw: &str) -> Option<PathBuf> {
         use std::path::Component;
         let p = match raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
@@ -1352,8 +1280,6 @@ impl ToolHost {
             None if raw == "~" => std::env::home_dir()?,
             None => PathBuf::from(raw),
         };
-        // A bare name goes beside the person's other projects, never into
-        // this session's folder (which may be its throwaway scratch).
         let p = if p.is_absolute() {
             p
         } else {
@@ -1374,8 +1300,6 @@ impl ToolHost {
         out.is_absolute().then_some(out)
     }
 
-    /// Inside this session's folder, an already registered project, or
-    /// where new projects go.
     fn known_folder(&self, folder: &Path) -> bool {
         let Some(real) = land(folder) else {
             return false;
@@ -1452,7 +1376,6 @@ impl ToolHost {
                 format!("`{folder}` is not a folder path Parzi can use"),
             );
         };
-        // Anywhere else on disk is the person's call, even in Auto.
         if !self.p.full && !self.known_folder(&path) {
             let mut card = args.clone();
             if let Value::Object(o) = &mut card {
@@ -1489,8 +1412,6 @@ impl ToolHost {
                 )
             }
         };
-        // The session files under the project from here on, so its plan is
-        // the project's.
         let moved = self
             .p
             .store
@@ -1517,7 +1438,6 @@ impl ToolHost {
         if raw.is_empty() {
             return Ok(PathBuf::from(&self.p.tools.cwd));
         }
-        // The session's folder itself (no path below it to name).
         let same = |a: &str, b: &str| {
             std::fs::canonicalize(a)
                 .ok()
@@ -1618,12 +1538,10 @@ impl ToolHost {
         }
     }
 
-    /// One request to the window, its errors in words an agent can act on.
     async fn desk_call(&self, op: &str, body: Value) -> std::result::Result<Value, String> {
         crate::desk::request(op, body).await.map_err(String::from)
     }
 
-    /// The body every page op takes: this session, the tab it names, its args.
     fn page_body(&self, args: &Value) -> Value {
         let mut body = serde_json::json!({ "session": self.p.session_id, "args": args });
         if let Some(tab) = args
@@ -1921,7 +1839,6 @@ impl ToolHost {
         ))
     }
 
-    /// Earlier versions of one artifact; other artifacts are never decoded.
     fn existing_artifacts(&self, id: &str) -> Vec<artifacts::ArtifactV1> {
         let slug = artifacts::slugify_id(id);
         let events = self.p.store.events(&self.p.session_id).unwrap_or_default();
@@ -2157,7 +2074,6 @@ mod tests {
         assert!(out.contains("https://docs.rs"));
         assert!(out.contains("- 01234567 Fix it"));
         assert!(out.contains("C:/src/app (project app)"));
-        // The same answer with `active` as a bare tab id reads the same.
         let by_id = serde_json::json!({
             "active": "t9",
             "tabs": [{"id": "t9", "kind": "browser", "title": "Bank", "url": "https://bank"}],

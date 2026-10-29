@@ -300,7 +300,6 @@ async fn the_agents_own_actions_pass_the_allowlist_and_the_mode() {
         no_kinds.decide(request("Bash")).await,
         PermissionDecision::Allow
     );
-    // The shell switched off in Settings is off for the agent's own too.
     let mut off = ParziConfig::default();
     off.lanes.no_shell = true;
     let no_shell = host_with(vec!["session.*".into()], ApprovalMode::Auto, off);
@@ -362,7 +361,6 @@ async fn project_create_outside_the_folder_asks() {
     let base = std::env::temp_dir().join(format!("parzi-proj-{}", std::process::id()));
     let (cwd, away) = (base.join("here"), base.join("away").join("paper"));
     std::fs::create_dir_all(&cwd).unwrap();
-    // Where new projects go, instead of the real ~/Projects.
     let projects = base.join("projects");
     std::env::set_var("PARZI_PROJECTS", &projects);
     let cwd_s = cwd.display().to_string();
@@ -394,8 +392,6 @@ async fn project_create_outside_the_folder_asks() {
 async fn grok_reaches_parzis_tools_through_its_use_tool() {
     home("approval");
     let ask = host(vec!["*".into()], ApprovalMode::Ask);
-    // As Grok sends it: the kind as the tool, the name as the title, the
-    // tool it means inside.
     let wrapped = |inner: &str| PermissionRequest {
         name: String::new(),
         id: "r2".into(),
@@ -408,7 +404,6 @@ async fn grok_reaches_parzis_tools_through_its_use_tool() {
         ask.decide(wrapped("parzi__ui_propose_task")).await,
         PermissionDecision::Allow
     );
-    // And as it asks for one directly: the name as the title.
     let direct = PermissionRequest {
         name: String::new(),
         title: "parzi__todo_write".into(),
@@ -416,8 +411,6 @@ async fn grok_reaches_parzis_tools_through_its_use_tool() {
         ..wrapped("")
     };
     assert_eq!(ask.decide(direct).await, PermissionDecision::Allow);
-    // Another server's tool still goes through Parzi's own rules (with
-    // nobody to answer the card here, that is a no).
     let locked = host(vec!["*".into()], ApprovalMode::Deny);
     assert!(matches!(
         locked.decide(wrapped("github__create_issue")).await,
@@ -428,7 +421,6 @@ async fn grok_reaches_parzis_tools_through_its_use_tool() {
 #[tokio::test]
 async fn its_own_scratch_folder_is_the_sessions_to_write_in() {
     home("approval");
-    // A write asks (here: no one says yes), except in its own scratch folder.
     let store = parzi_core::store::SessionStore::open().unwrap();
     let meta = store.create("scratch", "t", "claude").unwrap();
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
@@ -471,7 +463,6 @@ async fn its_own_scratch_folder_is_the_sessions_to_write_in() {
         work.decide(write(elsewhere)).await,
         PermissionDecision::Deny(_)
     ));
-    // A relative path is the session's folder's, not the scratch folder's.
     assert!(matches!(
         work.decide(write("notes.md".into())).await,
         PermissionDecision::Deny(_)

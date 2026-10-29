@@ -1,11 +1,3 @@
-//! A project's living plan: one brain note per project,
-//! `projects/<slug>/plan.md`. Its frontmatter names it, a short summary
-//! reads for people, and a fenced `parzi-plan` JSON block holds the plan
-//! itself: the shared structure agents across the project's sessions work
-//! from, read and changed with `plan.read` and `plan.write`. A replaced
-//! plan moves to `projects/<slug>/plans/`,
-//! history that stays out of agent context. Living in the brain, it syncs
-//! to the server and other devices with the rest of the notes.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
@@ -21,20 +13,15 @@ pub const TITLE_CAP: usize = 80;
 pub const DETAIL_CAP: usize = 400;
 pub const NOTE_CAP: usize = 400;
 pub const ID_CAP: usize = 24;
-/// About what `summary` writes for an agent's opening turn.
 pub const SUMMARY_CAP: usize = 1_500;
 const GOAL_CAP: usize = 400;
 const MAX_PHASES: usize = 8;
 const PHASE_CAP: usize = 40;
 const BRANCH_CAP: usize = 120;
 const FENCE: &str = "parzi-plan";
-/// What the brain lists for the note: fixed, so a changing plan does not
-/// change the instructions every session starts with.
 const DESCRIPTION: &str =
     "The living plan of this project. Agents read and change it with plan.read and plan.write.";
 
-/// What an agent declares about an item. Working, waiting on the person,
-/// in review and the like are read live from sessions and pull requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanState {
@@ -67,7 +54,6 @@ impl PlanState {
         }
     }
 
-    /// Done or dropped: nothing is left to do for it.
     #[must_use]
     pub fn settled(self) -> bool {
         matches!(self, Self::Done | Self::Dropped)
@@ -80,15 +66,12 @@ pub struct PlanItem {
     pub title: String,
     #[serde(default)]
     pub detail: String,
-    /// One of the plan's phases, or "" for the first.
     #[serde(default)]
     pub phase: String,
-    /// Items of the same plan this one builds on.
     #[serde(default)]
     pub needs: Vec<String>,
     #[serde(default)]
     pub state: PlanState,
-    /// "" until known; agents work an item on `plan/<id>`.
     #[serde(default)]
     pub branch: String,
     #[serde(default)]
@@ -105,10 +88,8 @@ pub struct Plan {
     pub phases: Vec<String>,
     #[serde(default)]
     pub items: Vec<PlanItem>,
-    /// When it last changed (ms since the epoch).
     #[serde(default)]
     pub updated: u64,
-    /// Who changed it last: a session id, or "you".
     #[serde(default)]
     pub by: String,
 }
@@ -133,7 +114,6 @@ impl Plan {
         self.items.iter().find(|i| i.id == id)
     }
 
-    /// (done, counted): dropped items count for neither.
     #[must_use]
     pub fn progress(&self) -> (usize, usize) {
         let counted = self
@@ -150,21 +130,14 @@ impl Plan {
     }
 }
 
-/// A project's plan as the desk shows it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct PlanView {
     pub project: String,
-    /// Brain path of the note, `projects/<slug>/plan.md`.
     pub path: String,
-    /// None when the project has no plan (or its note cannot be read).
     pub plan: Option<Plan>,
-    /// The note exists but its `parzi-plan` block cannot be read.
     pub error: Option<String>,
 }
 
-/// What `plan.write` asks for: any field left out stays as it is, and
-/// items merge by id (a partial item changes only what it names). A field
-/// it does not know is an error, never silently dropped.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlanWrite {
@@ -176,7 +149,6 @@ pub struct PlanWrite {
     pub phases: Option<Vec<String>>,
     #[serde(default)]
     pub items: Option<Vec<ItemWrite>>,
-    /// Start a new plan; the old note moves to the project's plan history.
     #[serde(default)]
     pub replace: bool,
 }
@@ -193,30 +165,23 @@ pub struct ItemWrite {
     pub phase: Option<String>,
     #[serde(default)]
     pub needs: Option<Vec<String>>,
-    /// `status` is the name an earlier version of the tool used.
     #[serde(default, alias = "status")]
     pub state: Option<String>,
     #[serde(default)]
     pub branch: Option<String>,
     #[serde(default)]
     pub note: Option<String>,
-    /// Take the item out of the plan (a mistake; finished or abandoned
-    /// work is `done` or `dropped` instead).
     #[serde(default)]
     pub remove: bool,
 }
 
-/// What a write did.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Written {
     pub plan: Plan,
-    /// Items this write marked active: the writing session works on them.
     pub activated: Vec<String>,
-    /// Where a replaced plan went, when one was.
     pub archived: Option<String>,
 }
 
-/// An item id an agent may choose: 1 to 24 of `a-z`, `0-9` and `-`.
 #[must_use]
 pub fn valid_id(id: &str) -> bool {
     (1..=ID_CAP).contains(&id.len())
@@ -225,9 +190,6 @@ pub fn valid_id(id: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-/// Every graph rule holds, or the first one broken in words an agent can
-/// act on: ids are unique, needs name other items of the plan, and nothing
-/// waits on itself in a circle.
 pub fn validate(items: &[PlanItem]) -> Result<(), String> {
     let mut seen = HashSet::new();
     for i in items {
@@ -250,7 +212,6 @@ pub fn validate(items: &[PlanItem]) -> Result<(), String> {
             }
         }
     }
-    // Iterative DFS: 1 = on the stack, 2 = finished.
     let mut color = vec![0u8; items.len()];
     for start in 0..items.len() {
         if color[start] != 0 {
@@ -284,9 +245,6 @@ pub fn validate(items: &[PlanItem]) -> Result<(), String> {
     Ok(())
 }
 
-/// A list made valid without losing an item: a repeated id keeps its first
-/// copy, needs on missing items (or itself) go, and a need that closes a
-/// circle is cut.
 #[must_use]
 pub fn sanitize(items: Vec<PlanItem>) -> Vec<PlanItem> {
     let mut seen = HashSet::new();
@@ -321,7 +279,6 @@ fn cut_back_edges(
     color: &mut [u8],
     start: usize,
 ) {
-    // (item, index of the next need to look at); 1 = on the path, 2 = done.
     let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
     color[start] = 1;
     while let Some(top) = stack.len().checked_sub(1) {
@@ -345,7 +302,6 @@ fn cut_back_edges(
     }
 }
 
-/// The `parzi-plan` block of a note, if it has one.
 fn block(note: &str) -> Option<String> {
     let mut lines = note.lines();
     lines.find(|l| {
@@ -361,7 +317,6 @@ fn block(note: &str) -> Option<String> {
         out.push_str(l);
         out.push('\n');
     }
-    // An unclosed fence still holds whatever JSON there is.
     Some(out)
 }
 
@@ -380,9 +335,6 @@ fn strings_of(v: &Value, key: &str) -> Vec<String> {
         .collect()
 }
 
-/// A plan from its note. Lenient: what it can read it keeps (unknown
-/// fields and states, a bad item, a broken need or circle are mended or
-/// left out); only a missing or unreadable block is an error, in words.
 pub fn parse(note: &str) -> Result<Plan, String> {
     let raw = block(note).ok_or("the note has no ```parzi-plan block")?;
     let v: Value = serde_json::from_str(&raw)
@@ -466,14 +418,10 @@ pub fn parse(note: &str) -> Result<Plan, String> {
     })
 }
 
-/// YAML's double-quoted string is JSON's.
 fn yaml_str(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "\"\"".into())
 }
 
-/// The items of each phase, in plan order. An item of no phase, or of a
-/// phase the plan does not list, counts for the first phase; a plan with
-/// no phases has one group, "".
 #[must_use]
 pub fn grouped(plan: &Plan) -> Vec<(String, Vec<&PlanItem>)> {
     let first = plan.phases.first().cloned().unwrap_or_default();
@@ -492,8 +440,6 @@ pub fn grouped(plan: &Plan) -> Vec<(String, Vec<&PlanItem>)> {
     groups
 }
 
-/// The note for a plan: frontmatter, a short summary people read, and the
-/// plan itself in a `parzi-plan` block (the part that counts).
 #[must_use]
 pub fn render(plan: &Plan) -> String {
     let title = if plan.title.trim().is_empty() {
@@ -542,7 +488,6 @@ pub fn render(plan: &Plan) -> String {
     out
 }
 
-/// A one-line piece of free text an agent gave, checked against its cap.
 fn capped(what: &str, text: &str, cap: usize) -> Result<String, String> {
     let t = text.trim();
     if t.chars().count() > cap {
@@ -554,9 +499,6 @@ fn capped(what: &str, text: &str, cap: usize) -> Result<String, String> {
     Ok(t.to_string())
 }
 
-/// `plan` (None: there is none yet) with `w` applied by `by` at `now`.
-/// Items merge by id; a new item needs a title. Every id, need, circle and
-/// cap is checked, and the first problem comes back in words instead.
 pub fn apply(
     plan: Option<Plan>,
     w: PlanWrite,
@@ -645,8 +587,6 @@ pub fn apply(
             item.branch = fold(&capped(&format!("item `{id}`'s branch"), b, BRANCH_CAP)?);
         }
         if let Some(p) = &iw.phase {
-            // Checked like the plan's own phases: a long name is an error,
-            // never cut (a cut name would not match it on the next write).
             let p = fold(&capped(&format!("item `{id}`'s phase"), p, PHASE_CAP)?);
             if !p.is_empty() && !plan.phases.contains(&p) {
                 if plan.phases.len() >= MAX_PHASES {
@@ -689,10 +629,6 @@ pub fn apply(
     Ok((plan, activated))
 }
 
-/// The plan as an agent's opening turn carries it: title, goal, progress,
-/// each open item on a line (id, state, needs, branch, title, the start of
-/// its detail), and the ids of the finished ones. About `SUMMARY_CAP`
-/// chars: details go first when it runs long, then the last open items.
 #[must_use]
 pub fn summary(plan: &Plan) -> String {
     let (done, counted) = plan.progress();
@@ -708,7 +644,6 @@ pub fn summary(plan: &Plan) -> String {
             .filter(|i| !i.state.settled())
             .map(|i| {
                 let mut tags = vec![i.state.word().to_string()];
-                // Only what it still waits on: a finished need is no news.
                 let waits: Vec<&str> = i
                     .needs
                     .iter()
@@ -792,9 +727,6 @@ pub fn summary(plan: &Plan) -> String {
     clip(&text, SUMMARY_CAP + 200)
 }
 
-/// One plan item quoted into a prompt, as the person sent it: a block
-/// after their text that the Thread shows as a chip. `pr` is how its pull
-/// request stands ("PR #42 open, checks pass."), when known.
 #[must_use]
 pub fn quote_block(project: &str, item: &PlanItem, pr: Option<&str>) -> String {
     let attr = |s: &str| fold(s).replace('"', "&quot;");
@@ -828,8 +760,6 @@ pub fn quote_block(project: &str, item: &PlanItem, pr: Option<&str>) -> String {
     )
 }
 
-/// A project slug that can hold a plan: one plain name, never the
-/// sessions-without-a-project "default" or the everywhere "all".
 pub fn check_slug(slug: &str) -> Result<&str, String> {
     let s = slug.trim();
     if s.is_empty() || s.eq_ignore_ascii_case("default") {
@@ -846,13 +776,11 @@ pub fn check_slug(slug: &str) -> Result<&str, String> {
     Ok(s)
 }
 
-/// Where a project's plan lives in the brain.
 #[must_use]
 pub fn note_path(slug: &str) -> String {
     format!("projects/{slug}/plan.md")
 }
 
-/// The project whose plan a brain path is, if it is one.
 #[must_use]
 pub fn project_of_note(path: &str) -> Option<String> {
     let p = path.replace('\\', "/");
@@ -861,8 +789,6 @@ pub fn project_of_note(path: &str) -> Option<String> {
     (file.eq_ignore_ascii_case("plan.md") && check_slug(slug).is_ok()).then(|| slug.to_string())
 }
 
-/// A project's plan as it stands in `vault`. No project (an empty slug,
-/// "default") has no plan, and that is no error.
 #[must_use]
 pub fn load(vault: &Vault, slug: &str) -> PlanView {
     let path = note_path(slug.trim());
@@ -894,7 +820,6 @@ fn read_note(vault: &Vault, path: &str) -> Result<Option<String>, String> {
     vault.read(path).map(Some).map_err(|e| e.to_string())
 }
 
-/// A name for a file: lowercase words joined by `-`, at most 40 chars.
 fn file_slug(s: &str) -> String {
     let mut out = String::new();
     for c in s.chars().flat_map(char::to_lowercase) {
@@ -915,8 +840,6 @@ fn file_slug(s: &str) -> String {
     }
 }
 
-/// Moves the plan note at `path` into the project's history and returns
-/// where it went: `plans/<date>-<title>.md`, numbered when taken.
 fn archive(vault: &Vault, slug: &str, text: &str, title: &str) -> Result<String, String> {
     let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let stem = format!("projects/{slug}/plans/{date}-{}", file_slug(title));
@@ -937,18 +860,12 @@ fn archive(vault: &Vault, slug: &str, text: &str, title: &str) -> Result<String,
     Ok(to)
 }
 
-/// Writes are read-change-save: one at a time in this process.
 static WRITING: Mutex<()> = Mutex::new(());
 
-/// Held while a plan note is read, changed and saved. Every other writer of
-/// a plan note in this process (a sync pull, the server's `brain.apply`, an
-/// agent's `brain.write`) takes it around its own check and write, so the
-/// two never interleave and neither loses the other's change.
 pub fn write_lock() -> MutexGuard<'static, ()> {
     WRITING.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// `write_lock` when `path` (a brain path) is a plan note, else nothing.
 #[must_use]
 pub fn lock_if_plan(path: &str) -> Option<MutexGuard<'static, ()>> {
     project_of_note(path).map(|_| write_lock())
@@ -957,7 +874,6 @@ pub fn lock_if_plan(path: &str) -> Option<MutexGuard<'static, ()>> {
 type Watcher = Arc<dyn Fn(&str) + Send + Sync>;
 static WATCHER: RwLock<Option<Watcher>> = RwLock::new(None);
 
-/// Called with the project's slug whenever this process writes a plan.
 pub fn on_change(f: impl Fn(&str) + Send + Sync + 'static) {
     *WATCHER.write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(f));
 }
@@ -972,9 +888,6 @@ fn changed(slug: &str) {
     }
 }
 
-/// `w` applied to the project's plan by `by` (a session id, or "you"), and
-/// saved. A note whose block cannot be read is only replaced (`replace`),
-/// never merged into; a replaced note moves to the project's history.
 pub fn write(vault: &Vault, slug: &str, w: PlanWrite, by: &str) -> Result<Written, String> {
     let slug = check_slug(slug)?.to_string();
     let one = write_lock();
@@ -994,8 +907,6 @@ pub fn write(vault: &Vault, slug: &str, w: PlanWrite, by: &str) -> Result<Writte
     };
     let replace = w.replace;
     let (plan, activated) = apply(old.clone(), w, by, crate::now_ms())?;
-    // A replace starts a new plan as surely as a first write: it must not
-    // archive the old one and leave a blank in its place.
     if plan.items.is_empty() && plan.title.is_empty() && (old.is_none() || replace) {
         return Err("a new plan needs a title and its items".into());
     }
@@ -1446,7 +1357,6 @@ mod tests {
         };
         let err = apply(None, w, "s", 1).unwrap_err();
         assert!(err.contains(&format!("keep it to {PHASE_CAP}")), "{err}");
-        // A phase at the cap is one phase, however often it is written.
         let at_cap = "q".repeat(PHASE_CAP);
         let mut plan = None;
         for n in 0..3 {

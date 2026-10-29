@@ -12,8 +12,6 @@ pub fn adopt(pid: u32) {
     if job == 0 {
         return;
     }
-    // SAFETY: `job` is a job handle this process created and never closes,
-    // and the process handle is closed right after it is assigned.
     unsafe {
         if let Ok(process) = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, false, pid) {
             let _ = AssignProcessToJobObject(HANDLE(job as *mut _), process);
@@ -29,8 +27,6 @@ fn create() -> usize {
         CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
-    // SAFETY: the limit struct outlives the call that copies it, and a job
-    // that cannot be set up is closed before reporting none.
     unsafe {
         let Ok(job) = CreateJobObjectW(None, None) else {
             return 0;

@@ -1,13 +1,7 @@
-//! A session's own copy of a repository: a git worktree on a new branch,
-//! made from a branch the person picks, so the session never touches their
-//! checkout or another session's files. Worktrees live under
-//! `~/.parzi/worktrees/<repo>/`, and go when the last session in one does
-//! (only when nothing in it is left uncommitted).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// A folder's local branches, and the one it is on.
 #[derive(Debug, Default, serde::Serialize)]
 pub struct Branches {
     pub current: String,
@@ -32,8 +26,6 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
-/// The local branches of the repository at `dir`, most recently used first.
-/// Not a repository: none.
 pub fn branches(dir: &Path) -> Branches {
     let current = git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
     let all = git(
@@ -55,14 +47,12 @@ pub fn branches(dir: &Path) -> Branches {
     Branches { current, all }
 }
 
-/// Where Parzi keeps its worktrees.
 pub fn root() -> Result<PathBuf, String> {
     Ok(parzi_core::paths::parzi_dir()
         .map_err(|e| e.to_string())?
         .join("worktrees"))
 }
 
-/// A short name from the first words of `text`: lowercase, dashes.
 fn slug(text: &str) -> String {
     let mut out = String::new();
     for word in text.split_whitespace().take(5) {
@@ -93,8 +83,6 @@ fn slug(text: &str) -> String {
     }
 }
 
-/// A new worktree of the repository at `repo`, on a new branch
-/// `parzi/<name>` made from `base`; its folder.
 pub fn create(repo: &Path, base: &str, about: &str) -> Result<PathBuf, String> {
     create_in(&root()?, repo, base, about)
 }
@@ -120,8 +108,6 @@ fn create_in(root: &Path, repo: &Path, base: &str, about: &str) -> Result<PathBu
     Ok(dir)
 }
 
-/// Removes the worktree at `dir` when it is one of Parzi's and nothing in
-/// it is uncommitted; its branch stays. Says what happened, if anything.
 pub fn remove(dir: &Path) -> Option<String> {
     remove_in(&root().ok()?, dir)
 }
@@ -149,7 +135,6 @@ fn remove_in(root: &Path, dir: &Path) -> Option<String> {
     .ok()?;
     let main = Path::new(&common).parent()?.to_path_buf();
     let dir_s = dir.display().to_string();
-    // A process just stopped may still hold the folder a moment.
     let mut tried = git(&main, &["worktree", "remove", &dir_s]);
     if tried.is_err() && dir.exists() {
         std::thread::sleep(std::time::Duration::from_millis(1500));

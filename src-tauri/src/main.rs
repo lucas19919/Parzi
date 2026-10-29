@@ -103,8 +103,6 @@ pub(crate) enum UiEvent {
         request: String,
         req_kind: String,
     },
-    /// An approval, question or request nobody answered in time: its card
-    /// goes, since answering it now would do nothing.
     Expired {
         key: String,
         session: String,
@@ -113,7 +111,6 @@ pub(crate) enum UiEvent {
         session: String,
         turns: u32,
     },
-    /// Stopped at the budget: no longer running, and not done either.
     Paused {
         session: String,
         reason: String,
@@ -128,10 +125,7 @@ pub(crate) enum UiEvent {
 pub(crate) struct ToolCallView {
     id: String,
     name: String,
-    /// What the call does, in words ("Running `npm test`").
     label: String,
-    /// What the approval card says: "<agent> wants to <action>" over the
-    /// detail.
     #[serde(flatten)]
     ask: parzi_runtime::ask_text::AskText,
     args: serde_json::Value,
@@ -168,12 +162,10 @@ impl Approver for GuiApprover {
                 call: view,
             },
         );
-        // Listed for `parzi approval` and streamed to `parzi watch`.
         let desk = self.app.try_state::<AppState>().map(|s| s.desk.clone());
         if let Some(desk) = &desk {
             desk.approval_opened(&key, call);
         }
-        // Long enough to come back to the desk; then the run moves on denied.
         let wait = self
             .app
             .try_state::<AppState>()
@@ -292,8 +284,6 @@ fn load_or_recover() -> anyhow::Result<(ParziConfig, Option<String>)> {
     }
 }
 
-/// Where the config broke, never what it says: a parse error quotes the
-/// offending line, which may hold an API key, into the log and the dialog.
 fn config_fault(e: &parzi_core::ParziError, path: &std::path::Path) -> String {
     match e {
         parzi_core::ParziError::TomlDe(de) => de
@@ -304,7 +294,6 @@ fn config_fault(e: &parzi_core::ParziError, path: &std::path::Path) -> String {
             })
             .unwrap_or_else(|| "a syntax error".into()),
         parzi_core::ParziError::Io(io) => format!("read failed: {}", io.kind()),
-        // Built by parzi-core from versions and paths, never file content.
         parzi_core::ParziError::Config(msg) => msg.clone(),
         _ => "an invalid value".into(),
     }
@@ -322,8 +311,6 @@ async fn app_version() -> Result<String, String> {
     Ok(env!("CARGO_PKG_VERSION").to_string())
 }
 
-/// An error the window did not handle, into the log: a stuck or blank
-/// window leaves a trace. At most 30 a minute, each clipped.
 #[tauri::command]
 fn ui_error(message: &str) {
     static BUDGET: std::sync::Mutex<(u64, u32)> = std::sync::Mutex::new((0, 0));
@@ -419,8 +406,6 @@ async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, R
         }
     }
 
-    // Fixed from when the buffer first fills: a timer re-armed per event
-    // would never fire while tokens stream faster than the interval.
     let mut deadline: Option<tokio::time::Instant> = None;
     loop {
         let has_buf = bufs
@@ -464,7 +449,6 @@ async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, R
                 if let Some(buf) = bufs.get_mut(&sid) {
                     flush_sid(&app, &sid, buf);
                 }
-                // A finished local run goes to the server's mirror.
                 let ended = matches!(
                     other,
                     RunEvent::Done { .. } | RunEvent::Paused { .. } | RunEvent::Error(_)
@@ -521,8 +505,6 @@ fn init_log() {
         .init();
 }
 
-/// Before the app is built there is no dialog plugin, and a release build
-/// has no console: a native box is the only way the user learns why.
 fn alert(title: &str, text: &str) {
     #[cfg(target_os = "windows")]
     dwm::alert(title, text);
@@ -536,8 +518,6 @@ fn fatal(text: &str) -> ! {
     std::process::exit(1);
 }
 
-/// Present while Parzi runs: one left from before means that run ended
-/// without closing (killed, crashed, or the machine went down).
 fn running_marker() -> Option<std::path::PathBuf> {
     Some(
         parzi_core::paths::parzi_dir()
@@ -572,9 +552,6 @@ fn mark_closed() {
 
 fn main() {
     init_log();
-    // Mutual exclusion with `parzi serve`: both own ~/.parzi, so the desk
-    // refuses to start while the headless lock is held. Checked before the
-    // store opens: recovery would flip serve's live sessions to idle.
     if parzi_runtime::osserve::serve_locked() {
         tracing::warn!("parzi serve holds the lock; the desk is not starting");
         alert(
@@ -622,9 +599,6 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            // The window, not the webview window: with page tabs open it holds
-            // several webviews and get_webview_window finds nothing, so a second
-            // launch tried to rebuild it, failed, and quit the running desk.
             if let Some(w) = app.get_window("main") {
                 let _ = w.unminimize();
                 let _ = w.show();
@@ -656,9 +630,6 @@ fn main() {
             }
         }))
         .setup(move |app| {
-            // Here, not in main: plugins initialize first, so a second
-            // launch has already handed off to the running desk and exited
-            // instead of marking that desk's live runs idle.
             mark_running();
             orch.recover().ok();
             let o = orch.clone();
@@ -679,7 +650,6 @@ fn main() {
                 app: app.handle().clone(),
                 pending: questions.clone(),
             }));
-            // Queued runs restored after a restart ask the desk, as they did.
             o.set_approver(Arc::new(GuiApprover {
                 app: app.handle().clone(),
                 pending: app.state::<AppState>().pending.clone(),
@@ -841,7 +811,6 @@ fn main() {
             appearance::set_background,
             appearance::delete_background,
             appearance::save_background_data,
-            appearance::palette_from_background,
             control::desk_sync,
             onboard::onboard_scan,
             onboard::onboard_browser,

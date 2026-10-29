@@ -1,16 +1,3 @@
-//! ParziOS sync. The server is home for brain notes, settings and session
-//! history; every device keeps a replica in step with it over its link.
-//!
-//! Notes sync three ways: what is here, what is on the server, and what both
-//! agreed on last time (`~/.parzi/sync/brain.json`). A note changed on one
-//! side moves to the other; a note deleted on one side and untouched on the
-//! other is deleted; a note changed on both sides keeps the server's text
-//! and saves this device's as `<name>.conflict-<device>.md` next to it, on
-//! both sides. Nothing is ever dropped silently.
-//!
-//! Settings: the portable config (connectors and agent paths stay per
-//! machine), newest change wins. Sessions: each device mirrors its own
-//! history to the server, which any device can read and continue there.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -32,8 +19,6 @@ const BATCH_PATHS: usize = 200;
 const BATCH_BYTES: usize = 4 * 1024 * 1024;
 const CALL: Duration = Duration::from_secs(60);
 
-/// Every `.md` note under `root` (forward-slash paths) with its hash.
-/// Hidden folders, links and notes over 1 MB are left out.
 #[must_use]
 pub fn manifest(root: &Path) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
@@ -73,17 +58,14 @@ pub fn manifest(root: &Path) -> BTreeMap<String, String> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Act {
-    /// Same on both sides.
     Keep,
     Pull,
     Push,
     DeleteHere,
     DeleteThere,
-    /// Changed on both sides since they last agreed.
     Conflict,
 }
 
-/// What to do with each note, from both sides and their last agreement.
 #[must_use]
 pub fn plan(
     here: &BTreeMap<String, String>,
@@ -100,8 +82,6 @@ pub fn plan(
                 (Some(_), Some(t)) if b == Some(t) => Act::Push,
                 (Some(h), Some(_)) if b == Some(h) => Act::Pull,
                 (Some(_), Some(_)) => Act::Conflict,
-                // Deleted there and untouched here: delete. Changed here
-                // (or new here): it wins and goes back.
                 (Some(h), None) if b == Some(h) => Act::DeleteHere,
                 (Some(_), None) => Act::Push,
                 (None, Some(t)) if b == Some(t) => Act::DeleteThere,
@@ -113,7 +93,6 @@ pub fn plan(
         .collect()
 }
 
-/// `notes/a.md` -> `notes/a.conflict-<device>.md`, numbered when taken.
 #[must_use]
 pub fn conflict_path(path: &str, device: &str, taken: &dyn Fn(&str) -> bool) -> String {
     let stem = path.strip_suffix(".md").unwrap_or(path);
@@ -167,8 +146,6 @@ pub struct BrainReport {
     pub deleted_here: usize,
     pub deleted_there: usize,
     pub conflicts: usize,
-    /// Notes this sync changed on this device (pulled, deleted, or set to
-    /// the server's side of a conflict), for whoever shows them.
     #[serde(skip)]
     pub changed: Vec<String>,
 }
@@ -180,9 +157,6 @@ impl BrainReport {
     }
 }
 
-/// The server end of a brain sync: `parzi serve`'s socket over a link, or
-/// anything else that answers `brain.manifest`, `brain.read` and
-/// `brain.apply` the same way.
 #[async_trait::async_trait]
 pub trait NoteServer: Send + Sync {
     async fn call(&self, op: &str, body: Value) -> Result<Value, String>;
@@ -219,18 +193,13 @@ async fn read_there(
     Ok(out)
 }
 
-/// A note going to the server, with the hash the server held for it when
-/// this sync listed it ("" for none): a server whose copy changed since
-/// refuses it.
 struct Put {
     path: String,
     text: String,
     expect: String,
-    /// A note pushed as such (counted in `pushed`), not a conflict copy.
     counted: bool,
 }
 
-/// What the server refused as stale (an old server refuses nothing).
 fn stale_of(v: &Value) -> Vec<String> {
     v.get("stale")
         .and_then(Value::as_array)
@@ -262,13 +231,10 @@ async fn push_there(server: &dyn NoteServer, notes: &[Put]) -> Result<Vec<String
     Ok(stale)
 }
 
-/// The hash of a note on disk now; None when it is gone.
 fn hash_now(full: &Path) -> Option<String> {
     std::fs::read(full).ok().map(|b| fnv(&b))
 }
 
-/// Bring this device's brain and the server's into step. `server` names the
-/// link (user@host) so a different server starts from no agreement.
 pub async fn sync_brain(link: &Link, server: &str) -> Result<BrainReport, String> {
     let vault = Vault::open().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(vault.root()).map_err(|e| e.to_string())?;
@@ -279,12 +245,6 @@ pub async fn sync_brain(link: &Link, server: &str) -> Result<BrainReport, String
     Ok(report)
 }
 
-/// One sync of `vault` with `server` from the last agreement `base`: the
-/// report, and the new agreement. The agreement is built path by path from
-/// what both sides really held, never from a fresh listing: an edit made
-/// here while the sync ran is not in it, so the next sync sends it on. A
-/// path the sync could not settle (the server refused it, a note changed
-/// under it) keeps its old agreement and is planned again next time.
 pub async fn sync_notes(
     vault: &Vault,
     server: &dyn NoteServer,
@@ -317,7 +277,6 @@ pub async fn sync_notes(
     let mut deletes: Vec<String> = vec![];
     let local =
         |p: &str| -> Result<PathBuf, String> { vault.resolve(p).map_err(|e| e.to_string()) };
-    // A note edited here since the listing is left for the next sync.
     let untouched = |p: &str, full: &Path| hash_now(full).as_ref() == here.get(p);
     for (path, act) in &steps {
         match act {
@@ -331,8 +290,6 @@ pub async fn sync_notes(
                     continue;
                 };
                 let full = local(path)?;
-                // Checked and written under the plan lock: a plan.write here
-                // cannot land between the check and the write.
                 let plan_lock = parzi_core::plan::lock_if_plan(path);
                 if !untouched(path, &full) {
                     continue;
@@ -347,7 +304,6 @@ pub async fn sync_notes(
             Act::Push => {
                 let text = match std::fs::read(local(path)?) {
                     Ok(t) => t,
-                    // Deleted here since the listing: the next sync sees it.
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
                     Err(e) => return Err(format!("{path}: {e}")),
                 };
@@ -404,8 +360,6 @@ pub async fn sync_notes(
     let stale = push_there(server, &puts).await?;
     for p in &puts {
         if stale.contains(&p.path) {
-            // Only a counted push is taken back; a refused conflict copy
-            // was never counted.
             if p.counted {
                 report.pushed = report.pushed.saturating_sub(1);
             }
@@ -455,20 +409,16 @@ fn config_mtime() -> u64 {
 pub enum SettingsOutcome {
     Same,
     Pushed,
-    /// The merged config now on disk; the caller applies it to its engine.
     Pulled(Box<ParziConfig>),
 }
 
-/// Which way settings move. `None` state means never synced with this server.
 #[must_use]
 pub fn settings_direction(
     local_mtime: u64,
     server_rev: u64,
     last: Option<(u64, u64)>,
 ) -> Option<bool> {
-    // Some(true) = push, Some(false) = pull, None = nothing to do.
     let Some((last_rev, last_mtime)) = last else {
-        // First contact: the server is home once anyone has set it.
         return Some(server_rev == 0);
     };
     let local_changed = local_mtime != last_mtime;
@@ -539,8 +489,6 @@ struct Mirrored {
     updated: String,
 }
 
-/// Send this device's sessions to the server's mirror: new events only,
-/// and a delete for sessions gone here. Returns how many sessions moved.
 pub async fn mirror_sessions(
     link: &Link,
     store: &SessionStore,
@@ -570,8 +518,6 @@ pub async fn mirror_sessions(
                 "from": start, "events": chunk,
             })
         };
-        // The server answers how many events it holds; when that is not
-        // where this chunk ended, stop: the next sync resends from there.
         let mut held = None;
         for ev in events {
             let v = serde_json::to_value(&ev).unwrap_or(Value::Null);
@@ -624,12 +570,10 @@ pub struct Synced {
     pub settings: SettingsOutcome,
     pub brain: BrainReport,
     pub sessions: usize,
-    /// A part that failed does not stop the others; each says why here.
     pub errors: Vec<String>,
 }
 
 impl Synced {
-    /// "3 notes in, 1 out, settings from the server" or "" when nothing moved.
     #[must_use]
     pub fn summary(&self) -> String {
         let b = &self.brain;
@@ -658,7 +602,6 @@ impl Synced {
     }
 }
 
-/// Settings, then notes, then this device's sessions.
 pub async fn everything(link: &Link, store: &SessionStore, server: &str) -> Synced {
     let mut errors = vec![];
     let settings = sync_settings(link, server).await.unwrap_or_else(|e| {
@@ -683,7 +626,6 @@ pub async fn everything(link: &Link, store: &SessionStore, server: &str) -> Sync
     }
 }
 
-/// One `mirror.put`; the server answers how many events it now holds.
 async fn put_mirror(link: &Link, body: Value) -> Result<usize, String> {
     let v = link.call("mirror.put", body, CALL).await?;
     Ok(v.get("have")
@@ -798,9 +740,6 @@ mod tests {
 
     type Hook = Box<dyn FnOnce() + Send>;
 
-    /// A server over a second vault, answering as `parzi serve` does. A
-    /// hook runs once just before the server answers its op: something
-    /// that happens while a sync is under way.
     struct Server {
         vault: Vault,
         hooks: std::sync::Mutex<Vec<(&'static str, Hook)>>,
@@ -860,7 +799,6 @@ mod tests {
         put(&there, "c.md", "same");
         put(&there, "projects/p/plan.md", "theirs");
         let server = Server::new(&there);
-        // While the notes go out, the person (or an agent) edits two here.
         let (a, c) = (here.join("a.md"), here.join("c.md"));
         server.on("brain.apply", move || {
             std::fs::write(&a, "v2").unwrap();
@@ -941,8 +879,6 @@ mod tests {
             "a changed note is not deleted"
         );
 
-        // In a sync: another device's edit lands between the listing and
-        // the push. The push is refused; the next sync keeps both sides.
         let h = tempfile::tempdir().unwrap();
         let here = h.path().to_path_buf();
         put(&there, "m.md", "orig");
@@ -976,7 +912,6 @@ mod tests {
             ("n.md".to_string(), fnv(b"orig")),
         ]);
         let server = Server::new(&there);
-        // Another device's copy lands first: this one's is refused.
         let aside = format!("n.conflict-{}.md", parzi_core::device::id());
         let taken = there.join(&aside);
         server.on("brain.apply", move || {

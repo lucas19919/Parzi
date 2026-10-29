@@ -1,7 +1,3 @@
-//! A run's outcome lives on its session: how it ended, its last reply, the
-//! files it changed (named by its tools, or seen by git), the checks it
-//! ran, the branch it ended on, and the effort it used. Sessions get a
-//! readable first name.
 
 mod common;
 
@@ -24,7 +20,6 @@ fn git(dir: &Path, args: &[&str]) {
     assert!(ok, "git {args:?}");
 }
 
-/// A repo on branch `plan/names` with one commit.
 fn repo() -> tempfile::TempDir {
     let d = tempfile::tempdir().unwrap();
     git(d.path(), &["init", "-q"]);
@@ -38,7 +33,6 @@ fn repo() -> tempfile::TempDir {
     d
 }
 
-/// The session once its run's outcome is kept.
 async fn recorded(store: &SessionStore, id: &str) -> SessionMeta {
     for _ in 0..200 {
         let m = store.get(id).unwrap();
@@ -65,9 +59,6 @@ async fn a_run_keeps_its_summary_files_checks_and_branch_on_the_session() {
                 || async { (true, "ok".to_string()) },
             )
             .await;
-            // A file the agent's own tools never named: git sees it. Git
-            // looks at the repo in the background as the run starts; real
-            // edits come later than that, and so does this one.
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             std::fs::write(cwd.join("generated.txt"), "made").unwrap();
             a.own_tool(
@@ -256,7 +247,6 @@ async fn a_failed_compact_launch_leaves_the_last_run_alone() {
         .await
         .unwrap();
     let first = recorded(&store, &meta.id).await.last_run.unwrap();
-    // Claude switched off: the /compact run cannot start.
     let mut cfg = orch.config();
     cfg.providers.entry("claude".into()).or_default().enabled = false;
     orch.apply_config(cfg).await;
@@ -304,8 +294,6 @@ async fn a_run_is_on_record_before_it_reads_as_finished() {
         )
         .await
         .unwrap();
-    // The moment it stops reading as running, its outcome (git's look
-    // included) is kept: the slot was held until then.
     let mut m = store.get(&meta.id).unwrap();
     for _ in 0..400 {
         m = store.get(&meta.id).unwrap();
@@ -322,7 +310,6 @@ async fn a_run_is_on_record_before_it_reads_as_finished() {
         "{:?}",
         out.files
     );
-    // And the Done the window hears comes after both.
     while let Some(ev) = rx.recv().await {
         if matches!(ev, parzi_runtime::handler::RunEvent::Done { .. }) {
             let now = store.get(&meta.id).unwrap();

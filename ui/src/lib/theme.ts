@@ -1,11 +1,7 @@
 import { writable } from "svelte/store";
 import { api, type Theme } from "./api";
 
-// Bumps whenever the theme's colours may have changed (applied
-// stylesheet or live preview); chart palettes are cached per revision.
 export const themeRev = writable(0);
-// Wallpaper stays on the new-session screen when this is on.
-export const wallpaperHomeOnly = writable(false);
 let rev = 0;
 function bump() {
   rev++;
@@ -35,8 +31,6 @@ export function normalizeHex(s: string): string {
   if (h.length === 4) return ("#" + h[1] + h[1] + h[2] + h[2] + h[3] + h[3]).toUpperCase();
   return h.toUpperCase();
 }
-
-const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
 let probe: CanvasRenderingContext2D | null = null;
 
@@ -70,8 +64,6 @@ export interface ChartPalette {
 
 let palette: { rev: number; value: ChartPalette } | null = null;
 
-// Each resolveColor forces a style pass and a canvas read; charts share
-// one resolved palette per theme revision instead of a dozen per widget.
 export function chartPalette(_rev: number = rev): ChartPalette {
   if (palette?.rev === rev) return palette.value;
   const accent = resolveColor("--accent", "#5eb1ff");
@@ -97,33 +89,17 @@ function themeVars(t: Theme): Record<string, string> {
     "--accent": t.colors.accent,
     "--text": t.colors.text,
     "--panel": t.colors.panel?.trim() ? t.colors.panel : "color-mix(in srgb, var(--text) 6%, var(--bg))",
-    "--bg-dim": String(clamp01(t.background.dim)),
-    "--vignette": String(clamp01(t.background.vignette)),
-    "--bg-blur": `${t.background.blur}px`,
-    "--grain": String(clamp01(t.background.grain)),
-    "--grain-size": `${t.background.grain_size}px`,
-    "--bg-height": `${Math.round(t.background.height * 100)}%`,
-    "--bg-y": `${Math.round((t.background.y ?? 0.5) * 100)}%`,
-    "--glass": t.background.glass === false ? "0" : "1",
-    ...(t.background.glass === false
-      ? {
-          "--glass-bg": "var(--panel)",
-          "--glass-strong-bg": "var(--panel)",
-          "--glass-bg-solid": "var(--panel)",
-          "--glass-blur": "none",
-        }
-      : {}),
+    "--bg-y": `${Math.round(t.background.y * 100)}%`,
   };
 }
 
 export function previewTheme(t: Theme) {
   const s = document.documentElement.style;
   for (const [k, v] of Object.entries(themeVars(t))) s.setProperty(k, v);
-  wallpaperHomeOnly.set(!!t.background.home_only);
   bump();
 }
 
-const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--panel", "--bg-dim", "--vignette", "--bg-blur", "--grain", "--grain-size", "--bg-height", "--bg-y", "--glass", "--glass-bg", "--glass-strong-bg", "--glass-bg-solid", "--glass-blur"];
+const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--panel", "--bg-y"];
 
 function clearPreview() {
   const s = document.documentElement.style;

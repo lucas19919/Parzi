@@ -22,38 +22,26 @@
   export let input = "";
   export let model = "";
   export let effort = "medium";
-  // New sessions start on full: App seeds it from Settings' default.
   export let permission = "full";
-  // Settings' default_mode; options it would ignore are shown disabled.
   export let policy = "";
-  // "search" talks to the web; "build" to the agent, which does everything.
   export let mode: ComposerMode = "build";
   export let attachments: string[] = [];
-  // Plan items quoted from the plan panel: a message can be just these.
   export let quotes: PlanQuote[] = [];
   export let folder = "";
   export let folderLocked = false;
-  // A session has started here: everything goes to its agent, so Web
-  // (opening a page from the composer) is for a new tab only.
   export let started = false;
   $: if (started && mode === "search") mode = "build";
   export let branch = "";
   export let streaming = false;
-  // Messages sent while the agent works, oldest first. Each goes out as its own turn.
   export let queue: { id: string; text: string; detail?: string }[] = [];
-  // The queue is stopped: items stay listed until resumed.
   export let queuePaused = false;
-  // A session is open: Ctrl+Enter can start a side task beside it.
   export let canSide = false;
   export let board: ProviderStatus[] = [];
   export let hero = false;
   export let project: { slug: string; title: string; tokens: number } | null = null;
-  // The linked server ("" when none). `remote` sends this composer's
-  // sessions there; a started session stays where it began (`remoteLocked`).
   export let remoteHost = "";
   export let remote = false;
   export let remoteLocked = false;
-  // The server folder this composer's new session runs in ("" = scratch).
   export let remoteCwd = "";
 
   const dispatch = createEventDispatcher<{
@@ -71,13 +59,10 @@
     unavailable: { provider: string };
     folder: { path: string };
     project: { path?: string };
-    brain: void;
     remote: { on: boolean };
     remoteFolder: { path: string };
   }>();
 
-  // ids are the `mode` strings the backend reads (ApprovalMode::parse:
-  // "auto" and "full" run, anything else asks). Three choices, done.
   const PERMS: { id: string; title: string; label: string; icon: IconName }[] = [
     { id: "supervised", title: "Ask", label: "Ask", icon: "lock" },
     { id: "auto", title: "Auto", label: "Auto", icon: "spark" },
@@ -109,14 +94,11 @@
   let effortOpen = false;
   let effortStyle = "";
   let projBtn: HTMLButtonElement | null = null;
-  // Where a new session works: the folder as it is (""), or a worktree of
-  // its own made from this branch.
   export let worktree = "";
   let branchBtn: HTMLButtonElement | null = null;
   let branchOpen = false;
   let branchStyle = "";
   let branchList: string[] = [];
-  // The queue bar above the box: which item is unfolded, and drag state.
   let expanded: string | null = null;
   let dragId: string | null = null;
   let dragOver = -1;
@@ -125,7 +107,6 @@
     dragId = null;
     dragOver = -1;
   }
-  // Another folder, another repository: back to working in it as it is.
   let worktreeFor = folder;
   $: if (folder !== worktreeFor) {
     worktreeFor = folder;
@@ -149,13 +130,13 @@
   let projStyle = "";
   let projects: Project[] = [];
   let projErr = "";
+  let delSlug: string | null = null;
   let atItems: string[] = [];
   let atIndex = 0;
   let slashIndex = 0;
   let thumbs: Record<string, string | null> = {};
   let attachError = "";
   let attachErrorTimer = 0;
-  // A composer error says its piece and goes: it never outlives the moment.
   $: if (attachError) {
     clearTimeout(attachErrorTimer);
     attachErrorTimer = window.setTimeout(() => (attachError = ""), 6000);
@@ -176,15 +157,11 @@
     if (next !== effort) effort = next;
   }
   $: if (efforts.length < 2) effortOpen = false;
-  // A stored choice from before the menu shrank (read-only, auto-edits)
-  // falls back to Supervised rather than a blank button.
   $: perm = PERMS.find((p) => p.id === permission) ?? PERMS[0];
   $: slashQuery = /^\/\w*$/.test(input.trim()) ? input.trim().slice(1).toLowerCase() : null;
   $: slashItems =
     slashQuery === null ? [] : SLASH.filter((c) => c.name.startsWith(slashQuery) && !(started && (c.name === "web" || c.name === "agent")));
   $: if (slashIndex >= slashItems.length) slashIndex = 0;
-  // Attachments change rarely; guard by key so per-keystroke parent
-  // object churn (same array, new dirty flag) doesn't re-decode images.
   $: {
     const files = Array.isArray(attachments) ? attachments : [];
     const key = `${folder}\n${files.join("\n")}`;
@@ -193,9 +170,6 @@
       void loadThumbs(files, folder);
     }
   }
-  // `export let quotes = []` does not refill after mount. A bound composer
-  // with no quote list hands over undefined, and reading `.length` here
-  // aborts the flush so later clicks never update the UI.
   $: if (!Array.isArray(quotes)) quotes = [];
   $: if (!Array.isArray(attachments)) attachments = [];
   $: if (!Array.isArray(queue)) queue = [];
@@ -216,7 +190,6 @@
       : folder || remoteCwd
         ? "Describe a task or ask a question"
         : "Ask anything";
-  // An image is attached and the chosen model can't see it: said before send.
   $: blind = !web && !!model && (attachments ?? []).some((a) => IMAGE.test(a)) && !seesImages(model, board);
   $: canSubmit = !!input.trim() || ((quotes?.length ?? 0) > 0 && !web);
 
@@ -284,7 +257,6 @@
       e.preventDefault();
       atIndex = move(atItems, atIndex, e.key === "ArrowDown" ? 1 : -1);
     } else if (e.key === "Tab" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !started && !slashItems.length && !atItems.length) {
-      // A new session: Tab flips between asking the agent and the web.
       e.preventDefault();
       setWeb(!web);
     } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && canSide && !web) {
@@ -305,10 +277,6 @@
     }
   }
 
-  // Fits the box to its text (up to two fifths of the window, then it scrolls). Writes go through a local:
-  // `textarea.style.x = …` marks `textarea` dirty in Svelte, which re-ran
-  // the `$:` below after every await and froze the composer on the first
-  // keystroke (an endless microtask loop).
   async function autosize(text: string) {
     await tick();
     const el = textarea;
@@ -321,7 +289,6 @@
     el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.4))}px`;
   }
 
-  // Keystrokes and programmatic fills (edit-load, tab drafts) both land here.
   $: if (textarea) void autosize(input);
   $: if (mode !== "search" || !input.trim()) clearWeb();
   $: webOpen = focused && mode === "search" && webRows.length > 0;
@@ -375,7 +342,6 @@
       clearTimeout(atTimer);
       return;
     }
-    // Debounce FS walks: one in-flight query per pause, stale wins dropped.
     const query = at[1].split("/").pop() ?? "";
     const seq = ++atSeq;
     clearTimeout(atTimer);
@@ -430,7 +396,6 @@
     projStyle = placeAbove(projBtn, 260);
     projErr = "";
     try {
-      // With Remote on these are the server's projects: same notes, its folders.
       projects = remote ? await server.projects() : await brain.projects();
     } catch (e) {
       projects = [];
@@ -438,8 +403,6 @@
     }
   }
 
-  // A project synced from elsewhere may have no folder on this machine
-  // (or on the server) yet: choosing it asks for one first.
   async function chooseProject(p: Project | null) {
     projOpen = false;
     try {
@@ -459,8 +422,6 @@
         if (!picked) return;
         path = (await brain.upsertProject(p.title, picked, p.slug)).folder;
       }
-      // Folder first so the draft runs there; the project event carries the
-      // same path so the header never reads the previous folder's project.
       dispatch("folder", { path });
       dispatch("project", { path });
     } catch (e) {
@@ -508,6 +469,21 @@
     }
   }
 
+  async function deleteProject(p: Project) {
+    if (delSlug !== p.slug) {
+      delSlug = p.slug;
+      return;
+    }
+    delSlug = null;
+    try {
+      await brain.remove(p.note);
+      projects = await brain.projects();
+      if (project?.slug === p.slug) dispatch("project", {});
+    } catch (e) {
+      attachError = String(e);
+    }
+  }
+
   function readDataUrl(file: File) {
     return new Promise<string>((resolve, reject) => {
       const r = new FileReader();
@@ -536,8 +512,6 @@
     const data = e.clipboardData;
     if (!data) return;
     const types = [...data.types];
-    // Windows often puts an image flavor next to real text. Taking the
-    // image and cancelling the paste swallows the words.
     const text = data.getData("text/plain");
     if (text.trim()) {
       console.info("paste", { types, inserted: "text" });
@@ -574,7 +548,7 @@
 
 <div class="ob" class:hero>
   {#if queue.length}
-    <!-- The queue sits above the composer, so the project stays on the box. -->
+    
     <div class="queue-bar" role="list" aria-label="Queued messages">
       {#if queuePaused}
         <div class="queue-head">
@@ -622,7 +596,7 @@
     </div>
   {/if}
 
-  <!-- Where a new session will work. A started one, and a web search, have none. -->
+  
   {#if !web && !started}
     {#if remote}
       <div class="where">
@@ -731,7 +705,7 @@
       on:blur={() => (focused = false)}
       on:paste={onPaste}
     />
-    <!-- One row: model, effort, permission as text. Send sits with attach. -->
+    
     <div class="tools">
       {#if !web}
         <ModelPicker bind:this={picker} bind:value={model} {board} on:unavailable />
@@ -778,9 +752,9 @@
           ><Icon name="globe" /></button>
         {/if}
         {#if !web}
-          <button class="icon" aria-label="Attach files" use:tooltip={"Attach files"} on:click={pickFiles}><Icon name="plus" /></button>
+          <button class="icon" aria-label="Attach files" use:tooltip={"Attach files"} on:click={pickFiles}><Icon name="paperclip" /></button>
         {/if}
-        <!-- A typed message waits its turn. Stop shows only when the box is empty. -->
+        
         {#if streaming && !canSubmit}
           <button class="go stop" use:tooltip={"Stop"} on:click={() => dispatch("stop")}><span class="square" /></button>
         {:else}
@@ -797,11 +771,22 @@
   {#if projOpen}
     <div class="menu-pop" data-ui-list style={projStyle} use:popover={{ anchor: projBtn, close: () => (projOpen = false) }} transition:fly={{ y: projStyle.includes("bottom:") ? 6 : -6, duration: 140, easing: cubicOut }}>
       {#each projects as p (p.slug)}
-        <button class="opt" class:on={remote ? !!p.folder && p.folder === remoteCwd : project?.slug === p.slug} on:click={() => chooseProject(p)}>
-          <Icon name="project" />
-          <span class="name truncate">{p.title}</span>
-          {#if !p.folder}<span class="count">No folder yet</span>{:else if !remote && sameDir(p.folder, folder) && branch}<span class="count">{branch}</span>{/if}
-        </button>
+        <div class="opt-row" class:on={remote ? !!p.folder && p.folder === remoteCwd : project?.slug === p.slug}>
+          <button class="opt grow" on:click={() => chooseProject(p)}>
+            <Icon name="project" />
+            <span class="name truncate">{p.title}</span>
+            {#if !p.folder}<span class="count">No folder yet</span>{:else if !remote && sameDir(p.folder, folder) && branch}<span class="count">{branch}</span>{/if}
+          </button>
+          {#if !remote}
+            <button
+              class="del"
+              class:armed={delSlug === p.slug}
+              use:tooltip={delSlug === p.slug ? "Click again to delete" : `Delete ${p.title}`}
+              aria-label={delSlug === p.slug ? `Confirm delete ${p.title}` : `Delete ${p.title}`}
+              on:click={() => deleteProject(p)}
+            >{#if delSlug === p.slug}Sure?{:else}<Icon name="trash" size={12} />{/if}</button>
+          {/if}
+        </div>
       {:else}
         {#if projErr}
           <p class="pop-empty err">Couldn't load projects: {projErr}</p>
@@ -819,15 +804,6 @@
         <button class="opt" on:click={newProject}><Icon name="plus" /><span class="name">New project…</span></button>
       {/if}
       <button class="opt" class:on={remote ? !remoteCwd : !folder} on:click={() => chooseProject(null)}><Icon name="close" /><span class="name">No project</span></button>
-      <button
-        class="opt"
-        on:click={() => {
-          projOpen = false;
-          dispatch("brain");
-        }}
-      >
-        <Icon name="brain" /><span class="name">Manage projects</span>
-      </button>
     </div>
   {/if}
 
@@ -899,7 +875,6 @@
     margin: 0 auto;
   }
 
-  /* A caption on the box: "Let's build in Parzi on main". */
   .where {
     display: flex;
     align-items: baseline;
@@ -948,7 +923,6 @@
     border-radius: var(--radius-lg);
     box-shadow: none;
   }
-  /* Search is one row, so the text and the arrow share a center. */
   .box.web {
     flex-direction: row;
     align-items: center;
@@ -1000,7 +974,9 @@
     cursor: pointer;
   }
   .go.ready:not(:disabled) {
-    color: var(--text);
+    background: var(--accent);
+    border-radius: 50%;
+    color: var(--bg);
   }
   .go:active:not(:disabled) {
     transform: scale(0.94);
@@ -1041,7 +1017,8 @@
     border: none;
     color: var(--muted);
     font: inherit;
-    font-size: var(--fs-base);
+    font-size: var(--fs-sm);
+    font-weight: 500;
     line-height: 1.45;
     cursor: pointer;
   }
@@ -1053,6 +1030,9 @@
   }
   .tools .text:disabled {
     cursor: default;
+  }
+  .tools :global(.model .ver) {
+    font-size: inherit;
   }
   .acts {
     display: inline-flex;
@@ -1085,9 +1065,8 @@
     min-width: 0;
   }
 
-  /* The queue bar: its own row above the composer, one card per
-     waiting message in send order. The text folds to two lines until
-     opened, so items stay distinguishable without growing the box. */
+
+
   .queue-bar {
     display: flex;
     flex-direction: column;
@@ -1282,7 +1261,6 @@
     object-fit: cover;
     border-radius: var(--radius-sm);
   }
-  /* The chip's own thumbnail opens the picture big. */
   .chip .thumb {
     display: inline-flex;
     padding: 0;
@@ -1436,8 +1414,56 @@
     color: var(--accent);
   }
   .opt:disabled {
-    opacity: 0.45;
+    opacity: 0.5;
     cursor: default;
+  }
+  .opt-row {
+    display: flex;
+    align-items: center;
+    border-radius: var(--radius);
+  }
+  .opt-row:hover:not(.on) {
+    background: var(--hover);
+  }
+  .opt-row.on {
+    background: var(--selected);
+  }
+  .opt-row .opt.grow {
+    flex: 1;
+    min-width: 0;
+    width: auto;
+  }
+  .opt-row:hover:not(.on) .opt.grow,
+  .opt-row.on .opt.grow {
+    background: transparent;
+  }
+  .opt-row .del {
+    flex: none;
+    min-width: 20px;
+    height: 20px;
+    margin-right: var(--space);
+    padding: 0 var(--space);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    font-size: var(--fs-xs);
+    cursor: pointer;
+  }
+  .opt-row:hover .del,
+  .opt-row .del:focus-visible,
+  .opt-row .del.armed {
+    display: inline-flex;
+  }
+  .opt-row .del:hover {
+    color: var(--text);
+  }
+  .opt-row .del.armed {
+    color: var(--bad);
+    font-weight: 600;
   }
   .name {
     flex: 1;

@@ -16,8 +16,6 @@
   export let threads: { id: string; model: string }[] = [];
   export let liveModel = "";
 
-  // Open tab: the live composer. Parked: the thread, then its saved pick.
-  // The args are the reactive inputs; a read buried in a helper would not invalidate.
   function sessionMark(tab: Tab, activeId: string, live: string, list: { id: string; model: string }[]) {
     if (tab.kind !== "session") return "";
     if (tab.id === activeId && live) return live.split("/")[0];
@@ -39,7 +37,6 @@
   let dragId = "";
   let dragX = 0;
   let order: string[] | null = null;
-  // Set when a drag swallowed the click, so that click does not select again.
   let swallow = "";
 
   $: shown = order ? order.map((id) => tabs.find((t) => t.id === id)).filter((t): t is Tab => !!t) : tabs;
@@ -47,17 +44,11 @@
   $: markTitle = (title: string, sessionId?: string | null) =>
     markOf(sessionId) === "waiting" ? `${title} · waiting for you` : markOf(sessionId) === "running" ? `${title} · working` : title;
 
-  // The tab you are on stays in view when the strip overflows.
   $: if (strip && activeTabId) void tick().then(() => strip?.querySelector('[aria-selected="true"]')?.closest(".tab")?.scrollIntoView({ block: "nearest", inline: "nearest" }));
 
   let collapsed = new Set<string>();
   let touched = new Set<string>();
 
-  // Groups start collapsed (agent tabs arrive quietly); explicit
-  // user toggles win from then on. Guarded: only reassign when the set
-  // actually changed, otherwise `collapsed = collapsed` self-invalidates
-  // (objects are always dirty) and loops the reactive flush forever,
-  // freezing the UI on the next tabs change / keystroke.
   $: {
     let changed = false;
     for (const [sid, kids] of groups.kids) {
@@ -69,9 +60,6 @@
     if (changed) collapsed = new Set(collapsed);
   }
 
-  // Pages opened from a session (by its agent, or a link in its thread)
-  // attach under its tab instead of cluttering the strip: one framed
-  // group, the session first, its pages after it.
   $: groups = (() => {
     const bySession = new Map<string, Tab>();
     for (const t of shown) if (t.kind === "session" && t.sessionId) bySession.set(t.sessionId, t);
@@ -133,8 +121,6 @@
 
   type Press = { id: string; x: number; y: number; grab: number };
 
-  // A press on a tab: a click selects through the tab's own handler, a drag
-  // past the slop moves it.
   const drag = (id: string): PressDrag<Press> => ({
     press(e) {
       swallow = "";
@@ -201,9 +187,7 @@
   }
 </script>
 
-<!-- A tablist may only own tabs, so each tab is a plain pill holding the
-     role="tab" element and, beside it, pointer-only caret and close
-     buttons (hidden from assistive tech; Ctrl+W closes the active tab). -->
+
 <div class="tabs" class:vertical class:none={!shown.length} role="tablist" bind:this={strip}>
   {#each groups.lone as tab (tab.id)}
     {@const attached = tab.kind === "session" && tab.sessionId ? (groups.kids.get(tab.sessionId) ?? []) : []}
@@ -332,7 +316,7 @@
               {:else if tab.kind === "session" && !tab.sessionId}
                 <Icon name="home" />
               {:else}
-                <Icon name={tab.kind === "page" ? "globe" : tab.kind === "brain" ? "brain" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.kind === "artifact" ? "file" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : "bot"} />
+                <Icon name={tab.kind === "page" ? "globe" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.kind === "artifact" ? "file" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : "bot"} />
               {/if}
             </span>
         <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>
@@ -377,7 +361,6 @@
     min-width: 0;
     overflow-x: auto;
   }
-  /* No tabs: no slot, so Home and + sit one gap apart. */
   .tabs.none {
     display: none;
   }
@@ -400,7 +383,6 @@
   .tabs.vertical .tab.sub {
     max-width: none;
   }
-  /* Each tab fits its title, up to a limit; the fill is the only state. */
   .tab {
     display: inline-flex;
     align-items: center;
@@ -409,6 +391,7 @@
     flex: 0 1 auto;
     min-width: 96px;
     padding: 0 var(--space) 0 0;
+    border: 1px solid transparent;
     border-radius: var(--radius);
     color: var(--muted);
     font-size: var(--fs-sm);
@@ -430,13 +413,12 @@
     background: var(--hover);
     color: var(--text);
   }
-  /* Glass tinted with the theme's panel, not a white veil: the title stays
-     readable when a light theme's dark text sits over a dimmed picture. */
+
   .tab.active {
-    background: var(--panel);
+    background: transparent;
+    border-color: var(--line);
     color: var(--text);
   }
-  /* The tab proper: fills the pill up to its buttons. Focus rings the pill. */
   .pick {
     flex: 1;
     align-self: stretch;
@@ -486,14 +468,12 @@
   .tab.active .kind {
     color: var(--text);
   }
-  /* A page under its session: same type as any tab, a little narrower,
-     inside the session's frame. */
+
   .tab.sub {
     height: 24px;
     max-width: 168px;
     min-width: 80px;
   }
-  /* The session and its pages read as one unit: framed and tinted. */
   .group {
     display: inline-flex;
     align-items: center;
@@ -503,8 +483,7 @@
     background: color-mix(in srgb, var(--text) 5%, transparent);
     box-shadow: inset 0 0 0 1px var(--line);
   }
-  /* How many pages and side tasks sit under a session; a click shows or
-     hides them. */
+
   .close.count {
     opacity: 1;
     width: auto;
@@ -528,7 +507,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* 24px hit area; the padding is clipped so the hover chip stays 16px. */
   .close {
     width: 24px;
     height: 24px;

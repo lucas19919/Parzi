@@ -1,4 +1,3 @@
-// Shared path helpers (attachments, project folders).
 export function sameDir(a: string, b: string): boolean {
   const norm = (p: string) => p.replace(/[/\\]+$/, "").replace(/\\/g, "/").toLowerCase();
   return !!a && !!b && norm(a) === norm(b);

@@ -92,11 +92,8 @@ pub struct ProviderEntry {
     pub binary: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub default_model: String,
-    /// Extra arguments for a generic ACP command (`--acp`). Empty for the
-    /// built-in agents, which carry their own.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
-    /// What Settings calls a generic ACP agent. Empty uses "ACP".
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub label: String,
 }
@@ -119,7 +116,6 @@ pub struct LaneDefaults {
     pub default_mode: String,
     #[serde(default)]
     pub default_allowed_tools: Vec<String>,
-    /// Settings › General's shell switch, off: no lane gets `shell.*`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub no_shell: bool,
 }
@@ -156,17 +152,12 @@ impl Default for ImageConfig {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct McpServerCfg {
-    /// What starts a server on this computer; empty for a hosted one (`url`).
     #[serde(default)]
     pub command: String,
-    /// A hosted server's address, spoken to over Streamable HTTP.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub url: String,
-    /// Headers every request to `url` carries (an API key, say).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub headers: HashMap<String, String>,
-    /// How a hosted server is signed in to: "" for its headers or its own
-    /// sign-in (OAuth, kept by Parzi), "gh" for the GitHub CLI's login.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub auth: String,
     #[serde(default)]
@@ -219,7 +210,6 @@ pub struct OrchLimits {
     pub mcp_idle_kill_secs: u64,
     #[serde(default = "default_true")]
     pub queue_when_busy: bool,
-    /// How long the desk holds a run at an approval card before denying.
     #[serde(default = "default_approval_wait")]
     pub approval_wait_secs: u64,
 }
@@ -287,7 +277,6 @@ impl ParziConfig {
         Ok(cfg)
     }
 
-    /// Owner-only on unix: MCP server entries can carry secrets in `env`.
     pub fn save(&self) -> Result<()> {
         let path = paths::config_path()?;
         atomic_write_private(&path, toml::to_string(self)?.as_bytes())
@@ -340,8 +329,6 @@ impl ParziConfig {
             }
         }
         self.routing.order = order;
-        // Hosted connectors once ran through `npx mcp-remote`: Parzi speaks
-        // to them itself now.
         for srv in self.mcp.servers.values_mut() {
             crate::connectors::unwrap_remote(srv);
         }

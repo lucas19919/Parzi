@@ -77,7 +77,6 @@ pub async fn brain_save_answer(app: tauri::AppHandle, content: String) -> Result
     synced(&app, saved)
 }
 
-/// A brain edit here goes to the linked server a moment later.
 fn synced<T>(app: &tauri::AppHandle, out: Result<T, String>) -> Result<T, String> {
     if out.is_ok() {
         crate::remote::sync_soon(app);
@@ -107,11 +106,9 @@ pub async fn brain_project_upsert(
     folder: String,
     slug: Option<String>,
 ) -> Result<Project, String> {
-    // The vault resolves project folders; a network one would be contacted.
     if remote_or_device(&folder) {
         return Err("network and device folders cannot be projects".into());
     }
-    // A slug gives an existing (perhaps synced) project this PC's folder.
     synced(
         &app,
         blocking(move || brain::project_upsert(slug.as_deref(), &title, &folder)).await,
@@ -144,14 +141,11 @@ pub async fn brain_pin(app: tauri::AppHandle, path: String, on: bool) -> Result<
     synced(&app, blocking(move || brain::pin(&path, on)).await)
 }
 
-/// Pinned notes too long to send in full: path -> project slugs (`all`
-/// for sessions outside every project).
 #[tauri::command]
 pub async fn brain_overflow() -> Result<BTreeMap<String, Vec<String>>, String> {
     blocking(brain::overflow).await
 }
 
-/// Keep one side of a sync conflict; returns the original note's path.
 #[tauri::command]
 pub async fn brain_resolve_conflict(
     app: tauri::AppHandle,

@@ -1,5 +1,3 @@
-// Shell-like split for a connector's command line: quotes group words,
-// nothing is expanded. "a 'b c' \"\"" -> ["a", "b c", ""].
 export function splitLine(text: string): string[] {
   const out: string[] = [];
   let cur = "";
@@ -24,7 +22,6 @@ export function splitLine(text: string): string[] {
   return out;
 }
 
-// What a paste is, without asking the person to name the kind.
 export function classifyPaste(text: string): "link" | "block" | "program" | "" {
   const t = text.trim();
   if (!t) return "";
@@ -33,8 +30,6 @@ export function classifyPaste(text: string): "link" | "block" | "program" | "" {
   return "program";
 }
 
-// A config key from a program path. A Node launcher yields the script or
-// package it runs, not "npx" or "node".
 export function nameFromProgram(line: string): string {
   const words = splitLine(line);
   let file = words[0] ?? "";
@@ -50,7 +45,6 @@ export function nameFromProgram(line: string): string {
   return /^[a-z0-9][a-z0-9_-]{0,31}$/.test(id) ? id : "app";
 }
 
-// NAME=value per line; blank lines are skipped. A string is an error.
 export function parseEnv(text: string): Record<string, string> | string {
   const env: Record<string, string> = {};
   for (const raw of text.split(/\r?\n/)) {

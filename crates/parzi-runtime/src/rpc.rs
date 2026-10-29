@@ -1,17 +1,11 @@
-//! What the desk's control socket and `parzi serve` answer the same way:
-//! request arguments, the token check, and the session ops that need no
-//! window. Each socket keeps only what is its own (tabs and dialogs on the
-//! desk, sync and the mirror on serve).
 
 use serde_json::{json, Value};
 
 use crate::orchestrator::Orchestrator;
 use crate::tools::{humanize_tool_call, ToolCallInfo};
 
-/// What a run hears when nobody answered its question in time.
 pub const NO_ANSWER: &str = "the user didn't answer. Decide yourself and say what you assumed";
 
-/// Characters of `session.md` a `session.show` or `session.export` returns.
 const TRANSCRIPT_CAP: usize = 20_000;
 
 #[must_use]
@@ -19,7 +13,6 @@ pub fn fail(error: impl Into<String>) -> Value {
     json!({ "ok": false, "error": error.into() })
 }
 
-/// A string argument, trimmed; missing is empty.
 #[must_use]
 pub fn str_arg(req: &Value, key: &str) -> String {
     req.get(key)
@@ -34,7 +27,6 @@ pub fn bool_arg(req: &Value, key: &str, dflt: bool) -> bool {
     req.get(key).and_then(Value::as_bool).unwrap_or(dflt)
 }
 
-/// Constant-time: the reply time must not reveal how much of a guess matched.
 #[must_use]
 pub fn tokens_equal(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
@@ -48,7 +40,6 @@ pub fn tokens_equal(a: &str, b: &str) -> bool {
     diff == 0
 }
 
-/// A waiting approval as `approval.list` and the event streams show it.
 #[must_use]
 pub fn approval_row(key: &str, call: &ToolCallInfo) -> Value {
     json!({
@@ -59,8 +50,6 @@ pub fn approval_row(key: &str, call: &ToolCallInfo) -> Value {
     })
 }
 
-/// A full key, or a prefix (4 characters or more) only one key has: what
-/// `parzi approval allow <short>` sends.
 pub fn match_key<'a, I>(keys: I, asked: &str) -> Result<String, String>
 where
     I: IntoIterator<Item = &'a String>,
@@ -85,9 +74,6 @@ where
     }
 }
 
-/// The project a folder's sessions belong to: the brain project whose
-/// folder holds it, else `default`. Network and device paths are never
-/// looked at, and the vault scan runs off the async threads.
 pub async fn project_for(cwd: &str) -> String {
     if cwd.trim().is_empty() || parzi_core::paths::is_network_path(cwd) {
         return "default".into();
@@ -123,8 +109,6 @@ pub fn session_list(orch: &Orchestrator) -> Value {
     }
 }
 
-/// The session and its transcript, rendered now: `session.md` on disk lags
-/// a running or renamed session.
 #[must_use]
 pub fn session_show(orch: &Orchestrator, req: &Value, export: bool) -> Value {
     let id = resolved!(orch, req);
@@ -174,7 +158,6 @@ pub fn session_rename(orch: &Orchestrator, req: &Value) -> Value {
     }
 }
 
-/// Deletes without asking: the desk asks the person before it calls this.
 pub async fn session_delete(orch: &Orchestrator, req: &Value) -> Value {
     let id = resolved!(orch, req);
     match orch.delete_thread(&id).await {

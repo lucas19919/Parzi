@@ -25,8 +25,6 @@
     return `${Math.round(ms)}ms`;
   }
 
-  // Heartbeat for live work: ticking elapsed so a hung call is obvious,
-  // open or not. Only the live group ticks.
   let elapsed = 0;
   let timer: number | null = null;
   $: live = !!status;

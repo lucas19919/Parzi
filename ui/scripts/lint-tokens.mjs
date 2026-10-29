@@ -1,5 +1,3 @@
-// Fails when a component invents spacing, a radius, or a color the theme
-// sheet does not name. Run from ui/: npm run lint:tokens
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 

@@ -34,7 +34,6 @@ async fn the_tool_list_is_built_once_per_run() {
         script(|a: Agent| async move {
             for _ in 0..3 {
                 assert!(a.tool_names().await.iter().any(|n| n == "brain_search"));
-                // No window in this process: page and desk tools are not offered.
                 assert!(a
                     .tool_names()
                     .await

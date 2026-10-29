@@ -1,6 +1,3 @@
-// Pure rules for web pages in tabs: prompts' wording, recently closed tabs,
-// favicons, downloads and where a tooltip may go while a page is shown.
-// No imports, so node tests load it directly.
 
 const PERMISSION_TEXT: Record<string, string> = {
   camera: "use your camera",
@@ -58,7 +55,6 @@ const APPS: Record<string, string> = {
   "ms-windows-store": "Microsoft Store",
 };
 
-/** "Zoom" for zoommtg://..., else the scheme, for "Open this link in X?". */
 export function appFor(url: string): string {
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url)?.[1]?.toLowerCase() ?? "";
   return APPS[scheme] ?? (scheme ? `the app for ${scheme} links` : "another app");
@@ -70,7 +66,6 @@ export interface Closed {
   at: number;
 }
 
-/** Newest last; reopening a page drops its older entries. */
 export function pushClosed(list: Closed[], entry: Closed, max = 25): Closed[] {
   if (!/^https?:\/\//i.test(entry.url)) return list;
   return [...list.filter((c) => c.url !== entry.url), entry].slice(-max);
@@ -90,17 +85,15 @@ export function originOf(url: string): string {
   }
 }
 
-/** The site's real icon when a page reported one, else /favicon.ico. */
 export function iconFor(icons: Record<string, string>, url: string): string {
   const origin = originOf(url);
   if (!origin) return "";
   return icons[origin] ?? `${origin}/favicon.ico`;
 }
 
-/**
- * Remembers a page's icon for its site: an https URL or a small data URL
- * (what the shell may load). Returns null when nothing changes.
- */
+
+
+
 export function rememberIcon(icons: Record<string, string>, pageUrl: string, icon: string, max = 300): Record<string, string> | null {
   const origin = originOf(pageUrl);
   const usable = (/^https:\/\//i.test(icon) && icon.length <= 1024) || (/^data:image\/png;base64,/i.test(icon) && icon.length <= 8192);
@@ -127,7 +120,6 @@ export interface DownloadLike {
   total: number;
 }
 
-/** 0..1 while the size is known, else undefined. */
 export function downloadShare(d: DownloadLike): number | undefined {
   if (d.state !== "progress" || d.total <= 0) return undefined;
   return Math.max(0, Math.min(1, d.received / d.total));
@@ -151,10 +143,9 @@ function overlaps(a: Box, b: Box): boolean {
   return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
 }
 
-/**
- * Where a tooltip goes: below its control, else above, else beside it,
- * never over `avoid` (the native page, which is drawn above all HTML).
- */
+
+
+
 export function tipSpot(
   anchor: Box,
   tip: { width: number; height: number },

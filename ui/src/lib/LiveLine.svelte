@@ -1,11 +1,7 @@
 <script lang="ts">
-  // What an agent is doing right now, as one line under the thread: its
-  // face, the step it is on, how long the turn has run and roughly how
-  // much it has written.
   import { onDestroy } from "svelte";
 
   export let text = "";
-  // Rough tokens written this turn (characters / 4).
   export let tokens = 0;
 
   const t0 = Date.now();
@@ -51,7 +47,6 @@
     font-size: var(--fs-sm);
     font-variant-numeric: tabular-nums;
   }
-  /* The face: a soft round with two eyes that blink now and then. */
   .face {
     width: 22px;
     height: 22px;

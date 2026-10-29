@@ -1,13 +1,9 @@
 <script lang="ts">
-  // Lines over a shared x: 2px strokes in the theme's series colours, a
-  // hairline grid at round numbers, and a crosshair that reads every series
-  // at the x under the pointer.
   import { axisFloor, fmt, niceTicks, SERIES_COLORS, type Series } from "./spec";
   import { onDestroy } from "svelte";
   import { hideTip, showTip } from "./tip";
   import DataTable from "./DataTable.svelte";
 
-  // A readout left up by a chart that went away goes with it.
   onDestroy(hideTip);
 
   export let labels: string[] = [];
@@ -21,7 +17,6 @@
   const TOP = 8;
   const BOTTOM = 22;
   const RIGHT = 8;
-  // Inter's tabular digits at 11px.
   const CH = 6.4;
 
   let w = 0;
@@ -46,7 +41,6 @@
   $: color = (i: number) => SERIES_COLORS[i % SERIES_COLORS.length];
   $: aria = `${label ? `${label}: ` : ""}line chart, ${series.length > 1 ? `${series.length} series` : "one series"} over ${n} points${all.length ? `, from ${fmt(Math.min(...all), unit)} to ${fmt(Math.max(...all), unit)}` : ""}`;
 
-  // A series as path segments; a null breaks the line.
   function trace(vals: (number | null)[], x: (i: number) => number, y: (v: number) => number): string {
     let d = "";
     let pen = false;
@@ -77,7 +71,6 @@
     return d;
   }
 
-  // As many x labels as fit, evenly spaced, the last one always shown.
   function pickLabels(count: number, width: number, text: string[]): number[] {
     if (!count) return [];
     const longest = Math.max(...text.map((t) => t.length), 1);

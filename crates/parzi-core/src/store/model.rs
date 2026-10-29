@@ -17,8 +17,6 @@ impl SessionStatus {
         matches!(self, Self::Idle | Self::Done | Self::Killed)
     }
 
-    /// How the status reads to an agent or a person: the one word every
-    /// tool reply and listing uses (the stored form stays `serde`'s).
     #[must_use]
     pub fn word(self) -> &'static str {
         match self {
@@ -58,24 +56,18 @@ pub struct SessionMeta {
     pub context_limit: u64,
     #[serde(default)]
     pub cwd: String,
-    /// How its latest run ended and what that run did; None before any.
     #[serde(default)]
     pub last_run: Option<RunOutcome>,
-    /// The plan item it works on. A child counts for its parent's item.
     #[serde(default)]
     pub plan_item: Option<String>,
-    /// The git branch its folder was on when its latest run ended.
     #[serde(default)]
     pub branch: String,
-    /// The effort its latest run used ("" before any).
     #[serde(default)]
     pub effort: String,
     pub created: DateTime<Utc>,
     pub updated: DateTime<Utc>,
 }
 
-/// Why a run started: a person's send (the desk's or the CLI's), or Parzi
-/// on its own (a message from another session, a wake, a restart).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunCause {
@@ -85,18 +77,15 @@ pub enum RunCause {
     Message,
     Cli,
     Restart,
-    /// A `/compact` turn: housekeeping, never recorded as the session's run.
     Compact,
 }
 
 impl RunCause {
-    /// A person asked for it, at the desk or on the command line.
     #[must_use]
     pub fn from_person(self) -> bool {
         matches!(self, Self::Send | Self::Cli)
     }
 
-    /// Whether its outcome becomes the session's `last_run`.
     #[must_use]
     pub fn recorded(self) -> bool {
         self != Self::Compact
@@ -129,8 +118,6 @@ pub enum RunEndKind {
 }
 
 impl RunEndKind {
-    /// How a run's end reads after "the run" or a session's name: one
-    /// wording for reports, listings and replies.
     #[must_use]
     pub fn word(self) -> &'static str {
         match self {
@@ -148,9 +135,7 @@ impl RunEndKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Via {
-    /// Named by one of the run's edit tool calls.
     Tool,
-    /// Seen changed by git only.
     Git,
 }
 
@@ -160,33 +145,27 @@ pub struct FileTouch {
     pub via: Via,
 }
 
-/// A build, test or lint command the run ran, and whether it passed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Check {
     pub cmd: String,
     pub ok: bool,
 }
 
-/// A run's outcome as its session keeps it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunOutcome {
     pub end: RunEndKind,
-    /// Its last finished reply, or why it stopped, as one short paragraph.
     #[serde(default)]
     pub summary: String,
     #[serde(default)]
     pub files: Vec<FileTouch>,
-    /// Files changed beyond those listed.
     #[serde(default)]
     pub files_more: usize,
-    /// The latest result of each check command, oldest first.
     #[serde(default)]
     pub checks: Vec<Check>,
     #[serde(default)]
     pub cost_usd: Option<f64>,
     #[serde(default)]
     pub ms: u64,
-    /// When it ended (ms since the epoch).
     #[serde(default)]
     pub ended: u64,
 }
@@ -196,7 +175,6 @@ impl RunOutcome {
     pub const FILES_CAP: usize = 20;
     pub const CHECKS_CAP: usize = 10;
 
-    /// An outcome with nothing measured: a run cut off, or never started.
     #[must_use]
     pub fn bare(end: RunEndKind, ended: u64) -> Self {
         Self {
@@ -211,10 +189,6 @@ impl RunOutcome {
         }
     }
 
-    /// The same outcome cut to what a session keeps: the summary to
-    /// `SUMMARY_CAP` chars, the files to `FILES_CAP` (the rest counted),
-    /// and the checks to the latest result of each command, the last
-    /// `CHECKS_CAP` of those.
     #[must_use]
     pub fn capped(mut self) -> Self {
         self.summary = crate::text::clip(self.summary.trim(), Self::SUMMARY_CAP);
@@ -273,9 +247,6 @@ pub enum Event {
         version: u32,
         payload: serde_json::Value,
     },
-    /// The conversation was compacted. `summary` is what carries on (empty
-    /// when the agent kept it to itself); `before` and `after` the
-    /// context's size around it, when known.
     Checkpoint {
         summary: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1,8 +1,5 @@
 <script lang="ts">
-  // Column beside a session: where it runs, context, folder changes, helpers.
   import { createEventDispatcher, onMount } from "svelte";
-  import { fly } from "svelte/transition";
-  import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
   import InfoCard from "./InfoCard.svelte";
   import ContextBreakdown from "./ContextBreakdown.svelte";
@@ -24,14 +21,11 @@
   export let projectTitle = "";
   export let folder = "";
   export let branch = "";
-  // The server's name when the session runs there.
   export let remoteHost = "";
   export let contextUsed = 0;
   export let contextLimit = 0;
   export let compacting = false;
   export let streaming = false;
-  // What the session spent, for agents that report no context window, and
-  // the agent whose plan limits apply.
   export let tokensIn = 0;
   export let tokensOut = 0;
   export let costUsd = 0;
@@ -40,13 +34,12 @@
   export let running: Set<string> = new Set();
   export let approvals: Approval[] = [];
   export let questions: Question[] = [];
-  // The plan checklist is in the thread already.
   export let planInline = false;
-  // A markdown document pinned on top of the column. Null when nothing is pinned.
   export let doc: { title: string; content: string; version: number } | null = null;
-  // The column width, owned by App (persisted there). The grip dispatches
-  // resize while dragging.
   export let width = 264;
+  // Open or shut: the column animates its own width instead of mounting
+  // in and out, so the thread never jumps.
+  export let open = true;
 
   const dispatch = createEventDispatcher<{
     openSession: { id: string };
@@ -58,8 +51,6 @@
     resize: { width: number };
   }>();
 
-  // Drag the left edge to resize. Pointer capture keeps the drag alive
-  // outside the grip; clamp keeps the thread readable on both ends.
   let dragging = false;
   function startResize(e: PointerEvent) {
     dragging = true;
@@ -70,7 +61,6 @@
     if (!dragging) return;
     const aside = (e.currentTarget as HTMLElement).closest(".info") as HTMLElement | null;
     const rect = aside?.getBoundingClientRect();
-    // Fall back to window math when the aside isn't laid out yet.
     const next = rect ? rect.right - e.clientX : window.innerWidth - e.clientX - 16;
     dispatch("resize", { width: Math.round(Math.min(520, Math.max(220, next))) });
   }
@@ -80,7 +70,6 @@
 
   $: pct = contextLimit > 0 ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : 0;
 
-  // Git, for a folder on this computer.
   let git: GitStatus | null = null;
   let gitFor: string | null = null;
   $: gitDir = remoteHost ? "" : folder;
@@ -96,7 +85,6 @@
   }
   $: pr = branch && !isTrunk(branch) ? ($planState.prs.find((p) => p.head === branch && p.state === "open") ?? null) : null;
 
-  // Helpers: every session this one started, and theirs.
   $: waiting = new Set([...approvals.map((a) => a.session), ...questions.map((q) => q.session)]);
   $: helpers = (() => {
     const out: SessionMeta[] = [];
@@ -132,7 +120,7 @@
   });
 </script>
 
-<aside class="info" aria-label="Session" style="width: {width}px" transition:fly={{ x: 28, duration: 220, easing: cubicOut }}>
+<aside class="info" class:shut={!open} aria-label="Session" style="width: {open ? width : 0}px" inert={!open}>
   <div
     class="grip"
     role="separator"
@@ -149,8 +137,8 @@
     <InfoCard id="doc" title={doc.version > 1 ? `${doc.title} · v${doc.version}` : doc.title}>
       <svelte:fragment slot="aside">
         <span class="doc-acts">
-          <button class="doc-btn" use:tooltip={"Open in its own tab"} aria-label="Open document in its own tab" on:click={() => dispatch("openDoc")}><Icon name="external" size={8} /></button>
-          <button class="doc-btn" use:tooltip={"Unpin"} aria-label="Unpin document" on:click={() => dispatch("closeDoc")}><Icon name="close" size={8} /></button>
+          <button class="doc-btn" use:tooltip={"Open in its own tab"} aria-label="Open document in its own tab" on:click={() => dispatch("openDoc")}><Icon name="external" size={12} /></button>
+          <button class="doc-btn" use:tooltip={"Unpin"} aria-label="Unpin document" on:click={() => dispatch("closeDoc")}><Icon name="close" size={12} /></button>
         </span>
       </svelte:fragment>
       {#key `${doc.title}:${doc.version}`}
@@ -189,7 +177,7 @@
       />
     </InfoCard>
   {:else if tokensIn || tokensOut || limits.length}
-    <!-- No context window from this agent: what the session spent. -->
+    
     <InfoCard id="usage" title="Usage">
       <svelte:fragment slot="aside">{costUsd > 0 ? `$${costUsd.toFixed(2)}` : ""}</svelte:fragment>
       {#if tokensIn || tokensOut}
@@ -221,10 +209,10 @@
       {/if}
       {#if pr}
         <button class="line row" use:tooltip={pr.title} on:click={() => pr && dispatch("openUrl", { url: pr.url })}>
-          <Icon name="pr" size={8} />
+          <Icon name="pr" size={12} />
           <span class="v">PR #{pr.number}</span>
           {#if pr.checks !== "none"}
-            <span class="checks {pr.checks}"><Icon name={pr.checks === "pass" ? "checkCircle" : pr.checks === "fail" ? "xCircle" : "clock"} size={8} /></span>
+            <span class="checks {pr.checks}"><Icon name={pr.checks === "pass" ? "checkCircle" : pr.checks === "fail" ? "xCircle" : "clock"} size={12} /></span>
           {/if}
         </button>
       {/if}
@@ -236,12 +224,12 @@
       <svelte:fragment slot="aside">{planAside}</svelte:fragment>
       {#if plan && planCount}
         <button class="line row plan-row" use:tooltip={planInline ? "Hide the plan checklist" : "Show the plan checklist"} on:click={() => dispatch("plan")}>
-          <Icon name="plan" size={8} />
+          <Icon name="plan" size={12} />
           <span class="v">{planInline ? "Hide plan" : plan.title || "Plan"}</span>
         </button>
       {:else}
         <button class="line row plan-row" use:tooltip={"Show why the plan can't be read"} on:click={() => dispatch("plan")}>
-          <Icon name="plan" size={8} />
+          <Icon name="plan" size={12} />
           <span class="v">Plan unreadable</span>
         </button>
       {/if}
@@ -265,20 +253,24 @@
 </aside>
 
 <style>
-  /* Floating cards beside the session. Width is inline; the grip drags the left edge. */
   .info {
     position: relative;
     flex: none;
+    min-width: 0;
     min-height: 0;
     display: flex;
     flex-direction: column;
     gap: calc(var(--space) * 2);
     margin: 0 var(--gap) 0 0;
     padding-bottom: calc(var(--space) * 3);
+    overflow-x: hidden;
     overflow-y: auto;
     scrollbar-width: none;
+    transition: width 300ms var(--ease-out), margin-right 300ms var(--ease-out);
   }
-  /* The hit area fills the gutter, so the grab line sits in the middle of the gap. */
+  .info.shut {
+    margin-right: 0;
+  }
   .grip {
     position: absolute;
     left: calc(-1 * var(--gap));
@@ -375,7 +367,6 @@
     font-family: var(--mono);
     font-size: var(--fs-xs);
   }
-  /* Lightened toward the text so small numbers stay readable on a card. */
   .pct {
     flex: none;
     font-variant-numeric: tabular-nums;

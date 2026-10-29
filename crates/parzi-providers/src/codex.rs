@@ -119,7 +119,6 @@ impl Provider for Codex {
         let program = self.program().ok_or_else(|| {
             ProviderError::process(format!("Codex is not installed. {INSTALL_HINT}"))
         })?;
-        // Dropping a half-open server kills it.
         let Some(server) = or_cancel(&cancel, open(&program, &spec.cwd)).await else {
             return Ok(TurnEnd::Interrupted);
         };
@@ -368,7 +367,6 @@ async fn drive(
             return Ok(TurnEnd::Interrupted);
         };
         asked.map_err(rpc_failure)?;
-        // It runs as a turn of its own: whichever turn ends next is it.
         return follow(
             peer,
             incoming,
@@ -416,7 +414,6 @@ async fn drive(
     .await
 }
 
-/// Answers and relays what Codex says until the turn ends.
 async fn follow(
     peer: &Arc<Peer>,
     incoming: &mut mpsc::UnboundedReceiver<Incoming>,

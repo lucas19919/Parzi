@@ -12,9 +12,6 @@ impl SessionStore {
         self.fork_as(id, at_step, &title)
     }
 
-    /// A copy of `id` as it stood just before its `nth` message from the
-    /// person (0 is the first), under the same title, to go on from there
-    /// differently. The original stays as it was.
     pub fn rewind(&self, id: &str, nth: usize) -> Result<SessionMeta> {
         let src = self.get(id)?;
         count_read(1);
@@ -61,12 +58,9 @@ impl SessionStore {
             entry.len = 0;
             entry.mark_md();
         }
-        // create() starts in a scratch folder; a fork keeps working where its
-        // source did. Tokens and cost stay with the source that spent them.
         self.update_meta(&meta.id, |m| {
             m.cwd.clone_from(&src.cwd);
             m.context_limit = src.context_limit;
-            // It goes on with the same item, on the same branch.
             m.plan_item.clone_from(&src.plan_item);
             m.branch.clone_from(&src.branch);
             m.effort.clone_from(&src.effort);
@@ -80,8 +74,6 @@ impl SessionStore {
         self.purge_finished_ids().map(|ids| ids.len())
     }
 
-    /// `purge_finished`, naming the sessions it removed (from one listing,
-    /// so a caller cleaning up after them sees exactly that set).
     pub fn purge_finished_ids(&self) -> Result<Vec<String>> {
         let all = self.list().unwrap_or_default();
         Ok(self.remove_dirs(cascade_kill_ids(&all)))
@@ -93,7 +85,6 @@ impl SessionStore {
         Ok(self.remove_dirs(subtree_ids(&all, id)).len())
     }
 
-    /// The ids whose folders were removed.
     fn remove_dirs(&self, ids: HashSet<String>) -> Vec<String> {
         let mut gone = vec![];
         for id in ids {
@@ -107,8 +98,6 @@ impl SessionStore {
     }
 }
 
-/// A transcript line holding the person's message: the bare event, or one
-/// inside its timestamp envelope.
 fn is_user_line(line: &str) -> bool {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
         return false;

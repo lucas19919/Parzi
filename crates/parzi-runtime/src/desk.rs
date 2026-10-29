@@ -1,8 +1,3 @@
-//! The open window's control socket, client side. The CLI and the agent
-//! tools find the window through `~/.parzi/gui.json` and send one JSON line
-//! per connection. Before the token goes out, the window has to answer a
-//! `hello` with the instance id the file names: a file left by a crash is
-//! removed instead of handing the token to whatever owns that port now.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,27 +11,17 @@ use tokio::time::Instant;
 
 const CONNECT_WAIT: Duration = Duration::from_millis(600);
 const HELLO_WAIT: Duration = Duration::from_millis(1500);
-/// Time a person gets to answer a consent dialog the window shows.
 pub const CONFIRM_WAIT: Duration = Duration::from_secs(600);
-/// The window's worst case for one page step: the page coming up (10s),
-/// settling (10s) and the script itself (5s). Client deadlines sit above it.
 pub const PAGE_STEP: Duration = Duration::from_secs(25);
 const PAGE_DEADLINE: Duration = Duration::from_secs(45);
-/// `tab.wait` without a timeout waits this long; never longer than the max.
 pub const WAIT_DEFAULT_MS: u64 = 10_000;
 pub const WAIT_MAX_MS: u64 = 60_000;
 
-/// Why a desk call failed. `NotOpen` means no window answers, so callers
-/// may fall back to `parzi serve` or the files; `ServeNotRunning` the same
-/// for serve. Anything else is the other end's own answer and must not
-/// trigger a fallback.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeskError {
     NotOpen,
     ServeNotRunning,
-    /// The window or serve does not know the op: it is an older build.
     UnknownOp(String),
-    /// The connection closed before an answer came.
     Closed,
     Failed(String),
 }
@@ -59,9 +44,6 @@ impl From<DeskError> for String {
     }
 }
 
-/// A refusal as the window or serve words it, typed: both answer an op
-/// they do not know with "unknown op", and this is the one place that
-/// reads their words.
 fn refusal(op: &str, error: &str) -> DeskError {
     if error.starts_with("unknown op") {
         DeskError::UnknownOp(op.to_string())
@@ -72,19 +54,15 @@ fn refusal(op: &str, error: &str) -> DeskError {
 
 static ATTACHED: AtomicBool = AtomicBool::new(false);
 
-/// The desktop app calls this once its control socket listens: from then
-/// on this process has a window, and its runs are offered the desk tools.
 pub fn attach() {
     ATTACHED.store(true, Ordering::Relaxed);
 }
 
-/// A window lives in this process (not `parzi serve`, not a CLI run).
 #[must_use]
 pub fn attached() -> bool {
     ATTACHED.load(Ordering::Relaxed)
 }
 
-/// Page tools drive WebView2 pages, which only the Windows build has.
 #[must_use]
 pub fn page_tools_ready() -> bool {
     attached() && cfg!(windows)
@@ -103,15 +81,12 @@ pub fn serve_path() -> Option<PathBuf> {
         .map(|d| d.join("serve.json"))
 }
 
-/// What `gui.json` (and `serve.json`) hold. A file from before instance
-/// ids has only port and token.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuiFile {
     pub port: u16,
     pub token: String,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub pid: u32,
-    /// Unix seconds when the window started.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub started: u64,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -138,8 +113,6 @@ impl GuiFile {
     }
 }
 
-/// The file only when it still holds what was read: a window that started
-/// in the meantime keeps its fresh file.
 fn forget(path: &Path, raw: &str) {
     if std::fs::read_to_string(path).ok().as_deref() == Some(raw) {
         let _ = std::fs::remove_file(path);
@@ -149,9 +122,7 @@ fn forget(path: &Path, raw: &str) {
 #[derive(Debug, PartialEq, Eq)]
 enum Hello {
     Ours,
-    /// Something answered, but not this window.
     Stranger,
-    /// Connected, then nothing within the wait.
     Silent,
     Unreachable,
 }
@@ -179,8 +150,6 @@ async fn hello(port: u16, instance: &str) -> Hello {
     }
 }
 
-/// Whether a Parzi process still runs under `pid`. The name check guards
-/// against the pid having gone to another program. None when unknown.
 async fn parzi_alive(pid: u32) -> Option<bool> {
     if pid == 0 {
         return None;
@@ -190,7 +159,6 @@ async fn parzi_alive(pid: u32) -> Option<bool> {
         let filter = format!("PID eq {pid}");
         let mut cmd = tokio::process::Command::new("tasklist");
         cmd.args(["/FI", &filter, "/FO", "CSV", "/NH"]);
-        // A console program started from the GUI would flash a window.
         cmd.creation_flags(parzi_providers::process::CREATE_NO_WINDOW);
         let out = tokio::time::timeout(Duration::from_secs(5), cmd.output())
             .await
@@ -221,14 +189,11 @@ async fn parzi_alive(pid: u32) -> Option<bool> {
     }
 }
 
-/// How a look at `gui.json` went.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Probe {
     Open(GuiFile),
-    /// No window, and a file a crash left behind was removed.
     Cleared,
     NotOpen,
-    /// The window's process lives but does not answer.
     Stuck(String),
 }
 
@@ -240,8 +205,6 @@ async fn probe_at(path: &Path) -> Probe {
         forget(path, &raw);
         return Probe::Cleared;
     };
-    // A window from before instance ids cannot say hello: something must
-    // at least listen there.
     if file.instance.is_empty() {
         let listening =
             tokio::time::timeout(CONNECT_WAIT, TcpStream::connect(("127.0.0.1", file.port)))
@@ -269,7 +232,6 @@ async fn probe_at(path: &Path) -> Probe {
     Probe::Cleared
 }
 
-/// The window, checked live, for `doctor` and `state`.
 pub async fn probe() -> Probe {
     match gui_path() {
         Some(path) => probe_at(&path).await,
@@ -285,10 +247,6 @@ async fn reach(path: &Path) -> Result<GuiFile, DeskError> {
     }
 }
 
-/// One request: the token goes out only after `reach` vouched for the
-/// listener. Lines without an `ok` field are progress (`confirm`, run
-/// events) and go to `on_event`; the first line with `ok` is the answer.
-/// `wait` None waits as long as the window streams.
 async fn exchange(
     file: &GuiFile,
     op: &str,
@@ -337,12 +295,9 @@ async fn exchange(
         }
         let v: Value = serde_json::from_str(buf.trim())
             .map_err(|e| DeskError::Failed(format!("the window sent something odd: {e}")))?;
-        // Progress lines carry a `kind`; only the reply has none. A tool
-        // result has its own `ok`, so `ok` alone can't mark the reply.
         let ok = match (v.get("kind"), v.get("ok")) {
             (None, Some(ok)) => ok,
             _ => {
-                // A person is deciding: give them time, then the op its own.
                 if !confirming && v.get("kind").and_then(Value::as_str) == Some("confirm") {
                     confirming = true;
                     deadline = wait.map(|w| Instant::now() + CONFIRM_WAIT + w);
@@ -359,9 +314,6 @@ async fn exchange(
     }
 }
 
-/// How long the client waits for `op`: always longer than the window's own
-/// waits for it, so a slow page answers with the page's error. A body
-/// `timeout_ms` can only lengthen it. None: as long as the window streams.
 #[must_use]
 pub fn deadline(op: &str, body: &Value) -> Option<Duration> {
     let base = match op {
@@ -401,14 +353,11 @@ async fn request_at(
     exchange(&file, op, body, wait, true, on_event).await
 }
 
-/// A request to the window with the op's own deadline.
 pub async fn request(op: &str, body: Value) -> Result<Value, DeskError> {
     let wait = deadline(op, &body);
     request_within(op, body, wait, &mut |_| {}).await
 }
 
-/// A request to the window; progress lines (consent prompts, run events)
-/// go to `on_event`.
 pub async fn request_within(
     op: &str,
     body: Value,
@@ -419,8 +368,6 @@ pub async fn request_within(
     request_at(&path, op, body, wait, on_event).await
 }
 
-/// Desk first. If no window answers, the ParziOS socket; when neither
-/// answers, `NotOpen`.
 pub async fn call_desk_or_serve(op: &str, body: Value, wait: Duration) -> Result<Value, DeskError> {
     match request_within(op, body.clone(), Some(wait), &mut |_| {}).await {
         Err(DeskError::NotOpen) => match call_serve(op, body, wait).await {
@@ -440,7 +387,6 @@ async fn serve_at(path: &Path, op: &str, body: Value, wait: Duration) -> Result<
     }
 }
 
-/// A request to `parzi serve` on this machine.
 pub async fn call_serve(op: &str, body: Value, wait: Duration) -> Result<Value, DeskError> {
     let path = serve_path().ok_or(DeskError::ServeNotRunning)?;
     serve_at(&path, op, body, wait).await
@@ -459,7 +405,6 @@ pub fn normalize_url(raw: &str) -> String {
     if t.starts_with("http://") || t.starts_with("https://") {
         return t.to_string();
     }
-    // Another scheme stays itself, so the tab check can refuse it by name.
     if let Some((scheme, _)) = t.split_once("://") {
         if !scheme.is_empty()
             && scheme
@@ -493,9 +438,6 @@ pub fn normalize_url(raw: &str) -> String {
     format!("https://duckduckgo.com/?q={q}")
 }
 
-/// The address a page tab may open, normalized: http(s) with a host, never
-/// Parzi's own origin (`tauri.localhost` and friends, which app commands
-/// trust). Checked before a tab is recorded, so a refused URL leaves no tab.
 pub fn check_page_url(raw: &str) -> Result<String, String> {
     const OWN: &[&str] = &["tauri", "ipc", "asset", "isolation"];
     let url = normalize_url(raw);
@@ -535,9 +477,6 @@ pub fn check_page_url(raw: &str) -> Result<String, String> {
     Ok(url)
 }
 
-/// The folder a session's screenshots land in, `~/.parzi/shots/<session>/`,
-/// never the person's project. None for a name that is not a plain id (1
-/// to 64 of letters, digits, `-` and `_`): the read allowance trusts it.
 #[must_use]
 pub fn shots_dir(session: &str) -> Option<PathBuf> {
     let plain = (1..=64).contains(&session.len())
@@ -552,7 +491,6 @@ pub fn shots_dir(session: &str) -> Option<PathBuf> {
         .map(|d| d.join("shots").join(session))
 }
 
-/// The JPEG a `tab.shot` or `desk.screenshot` answer carries.
 pub fn shot_bytes(answer: &Value) -> Result<Vec<u8>, String> {
     use base64::Engine as _;
     let raw = answer.get("jpeg").and_then(Value::as_str).unwrap_or("");
@@ -563,8 +501,6 @@ pub fn shot_bytes(answer: &Value) -> Result<Vec<u8>, String> {
     }
 }
 
-/// Saves a screenshot in the session's shots folder (see `shots_dir`);
-/// the CLI's own go under `cli`.
 pub fn save_shot(session: &str, prefix: &str, bytes: &[u8]) -> Result<PathBuf, String> {
     let dir = shots_dir(session).ok_or_else(|| format!("`{session}` is not a session id"))?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
@@ -581,9 +517,6 @@ fn home() -> Option<PathBuf> {
     std::env::home_dir()
 }
 
-/// Files an agent's own tools must never open: the window's and the
-/// engine's control tokens, Parzi's config (connector env holds API keys),
-/// its SSH key for the server, and the agents' own sign-in tokens.
 fn guarded() -> Vec<(PathBuf, bool)> {
     let mut out = vec![];
     let mut roots = vec![];
@@ -604,8 +537,6 @@ fn guarded() -> Vec<(PathBuf, bool)> {
     out
 }
 
-/// Folders a search tool must not be pointed at: grepping them reads the
-/// guarded files. A search from an ancestor skips them as hidden folders.
 fn guarded_roots() -> Vec<PathBuf> {
     let mut out = vec![];
     if let Ok(p) = parzi_core::paths::parzi_dir() {
@@ -619,8 +550,6 @@ fn guarded_roots() -> Vec<PathBuf> {
     out
 }
 
-/// `~`, `$HOME` and `%USERPROFILE%` expanded, relative paths placed under
-/// `cwd`, `.` and `..` folded by text.
 fn expand(raw: &str, cwd: &str) -> Option<PathBuf> {
     let t = raw.trim().trim_matches(['"', '\'']);
     if t.is_empty() {
@@ -650,8 +579,6 @@ fn expand(raw: &str, cwd: &str) -> Option<PathBuf> {
             break;
         }
     }
-    // Elsewhere a backslash may be a name character; here it is safer read
-    // as a separator.
     let p = p.unwrap_or_else(|| PathBuf::from(t));
     let p = if cfg!(windows) {
         p
@@ -676,13 +603,10 @@ fn expand(raw: &str, cwd: &str) -> Option<PathBuf> {
     Some(out)
 }
 
-/// One spelling for comparing paths (see `parzi_core::paths::path_key`).
 fn fold(p: &Path) -> String {
     parzi_core::paths::path_key(&p.to_string_lossy())
 }
 
-/// The path as written and, when it exists, where it really lands
-/// (links, junctions and 8.3 names resolved).
 fn spellings(p: &Path) -> Vec<String> {
     let mut out = vec![fold(p)];
     if let Ok(real) = std::fs::canonicalize(p) {
@@ -695,8 +619,6 @@ fn inside(path: &str, guard: &str, dir: bool) -> bool {
     path == guard || (dir && path.starts_with(&format!("{guard}/")))
 }
 
-/// True when `raw` (as an agent's tool would open it, relative to `cwd`)
-/// names a guarded file.
 #[must_use]
 pub fn protected_path(raw: &str, cwd: &str) -> bool {
     let Some(p) = expand(raw, cwd) else {
@@ -708,7 +630,6 @@ pub fn protected_path(raw: &str, cwd: &str) -> bool {
             .iter()
             .any(|gf| forms.iter().any(|f| inside(f, gf, *dir)))
     });
-    // A token file under any `.parzi` folder, wherever the home is.
     let named = p
         .file_name()
         .map(|n| n.to_string_lossy().to_lowercase())
@@ -719,7 +640,6 @@ pub fn protected_path(raw: &str, cwd: &str) -> bool {
     hit || named
 }
 
-/// True when a search tool rooted at `raw` would read guarded files.
 #[must_use]
 pub fn protected_root(raw: &str, cwd: &str) -> bool {
     let Some(p) = expand(raw, cwd) else {
@@ -735,9 +655,6 @@ pub fn protected_root(raw: &str, cwd: &str) -> bool {
         })
 }
 
-/// Best effort for shell commands: a command that names a guarded file.
-/// A file name alone is not enough (`rg gui.json src` in Parzi's own repo),
-/// so it must also point at a `.parzi` folder, or run from inside one.
 #[must_use]
 pub fn mentions_protected(cmd: &str, cwd: &str) -> bool {
     let l = cmd.to_lowercase().replace('\\', "/");
@@ -756,10 +673,6 @@ pub fn mentions_protected(cmd: &str, cwd: &str) -> bool {
         || (l.contains(".codex") && l.contains("auth.json"))
 }
 
-/// Whether `cmd` (lowercase, forward slashes) runs where the guarded files
-/// are: from the Parzi data folder itself, or from a session's scratch
-/// folder under it while climbing out with `..`. A scratch folder is the
-/// session's own: a `config.toml` there is the agent's, not Parzi's.
 fn runs_in_parzi_home(cwd: &str, cmd: &str) -> bool {
     let Ok(home) = parzi_core::paths::parzi_dir() else {
         return false;
@@ -895,7 +808,6 @@ mod tests {
     #[tokio::test]
     async fn a_file_left_by_a_crash_is_removed() {
         let path = temp("dead");
-        // Bind, learn a free port, close it: nothing listens there now.
         let port = {
             let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
             l.local_addr().unwrap().port()
@@ -963,7 +875,6 @@ mod tests {
                 } else {
                     assert_eq!(v["token"], "secret-token");
                     assert_eq!(v["progress"], true);
-                    // A tool result carries its own `ok`: progress, not the reply.
                     concat!(
                         "{\"kind\":\"confirm\",\"text\":\"allow?\"}\n",
                         "{\"kind\":\"tool_result\",\"name\":\"shell_exec\",\"ok\":false}\n",

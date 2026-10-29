@@ -1,6 +1,3 @@
-// Older messages carry quoted plan items as blocks after the text:
-//   <plan-item project="parzi" id="names" title="Session names">...</plan-item>
-// The thread shows the text and, apart, the titles they quoted.
 const BLOCK = /\n*<plan-item\b([^>]*)>[\s\S]*?<\/plan-item>\n*/g;
 
 export function hidePlanItems(text: string): { text: string; items: string[] } {

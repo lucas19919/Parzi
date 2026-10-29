@@ -1,10 +1,3 @@
-//! The desktop's side of ParziOS: reach a Linux machine over the user's
-//! own `ssh`, put Parzi there, and talk to its engine through `parzi rpc`.
-//!
-//! No port is ever opened. Every remote action is `ssh … sh -s` with the
-//! script on stdin, so the remote login shell (bash, zsh or fish) only ever
-//! parses `sh -s`. The live link is one long `ssh … parzi rpc` whose stdio
-//! carries newline JSON.
 
 use std::collections::HashMap;
 use std::ffi::OsString;
@@ -25,8 +18,6 @@ use tokio::sync::oneshot;
 
 use crate::provision::{self, Spec, SpecNote, Step, SPEC_VERSION};
 
-/// Where setup puts the binary. `~` works in every login shell; scripts
-/// run by `sh -s` use `$HOME` instead.
 pub const REMOTE_BIN: &str = "~/.local/bin/parzi";
 pub const RELEASES: &str = "lucas19919/Parzi";
 const CONNECT: Duration = Duration::from_secs(30);
@@ -42,15 +33,11 @@ pub struct Target {
     pub host: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
-    /// Parzi's own key, when setup added it to the server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity: Option<PathBuf>,
 }
 
 impl Target {
-    /// `host` may carry a port (`box:2222`). A user or host with spaces,
-    /// control characters or a leading dash is refused: they reach `ssh`
-    /// as arguments.
     pub fn parse(user: &str, host: &str) -> Result<Self, String> {
         let user = word(user, "user")?;
         let host = word(host, "host")?;
@@ -100,8 +87,6 @@ fn word(field: &str, what: &str) -> Result<String, String> {
     Ok(t.to_string())
 }
 
-/// The remote the desktop links to, kept in `~/.parzi/remote.json`. No
-/// secret is ever in it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Saved {
     #[serde(flatten)]
@@ -137,8 +122,6 @@ pub fn forget() -> Result<(), String> {
     }
 }
 
-/// How a remote command is started: the program plus the arguments in
-/// front of the remote command line, which is always one last argument.
 #[derive(Debug, Clone)]
 pub struct Transport {
     program: OsString,
@@ -147,7 +130,6 @@ pub struct Transport {
 }
 
 impl Transport {
-    /// Key login only, never a prompt. This is what the live link uses.
     #[must_use]
     pub fn ssh(target: &Target) -> Self {
         Self::build(target, true)
@@ -196,8 +178,6 @@ impl Transport {
         t
     }
 
-    /// Any program that runs its last argument as a shell command line on
-    /// the other side, e.g. `wsl.exe -d Ubuntu -e sh -c`.
     #[must_use]
     pub fn custom(program: impl Into<OsString>, args: &[&str]) -> Self {
         Self {
@@ -219,7 +199,6 @@ impl Transport {
         cmd
     }
 
-    /// Run a POSIX script on the remote with `sh -s`.
     pub async fn script(&self, script: &str, wait: Duration) -> Result<Ran, String> {
         let mut lines = vec![];
         let ran = self
@@ -231,7 +210,6 @@ impl Transport {
         })
     }
 
-    /// Like [`Transport::script`], handing each stdout line over as it arrives.
     pub async fn script_lines(
         &self,
         script: &str,
@@ -280,8 +258,6 @@ impl Transport {
         })
     }
 
-    /// The command line for a visible terminal: `ssh -t … target 'cmd'`.
-    /// Returns None for a custom transport.
     #[must_use]
     pub fn terminal_args(&self, remote: &str) -> Option<Vec<String>> {
         if self.program != "ssh" {
@@ -310,7 +286,6 @@ pub struct Ran {
 }
 
 impl Ran {
-    /// The last useful stderr line, or the stdout `PARZI-ERR` line.
     #[must_use]
     pub fn why(&self) -> String {
         if let Some(line) = self
@@ -377,8 +352,6 @@ pub fn unreachable(stderr: &str) -> bool {
     .any(|m| l.contains(m))
 }
 
-/// A one-line askpass program holding the password, deleted on drop.
-/// The password never reaches a log, a setting or the saved remote.
 struct Askpass {
     path: PathBuf,
 }
@@ -395,8 +368,6 @@ fn askpass_dir() -> Result<PathBuf, String> {
         .join("tmp"))
 }
 
-/// Remove password helpers a crash left behind. Setup only ever runs one
-/// at a time, so any found here are stale.
 pub fn sweep_askpass() {
     let Ok(dir) = askpass_dir() else { return };
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -423,7 +394,6 @@ impl Askpass {
         let id = uuid::Uuid::new_v4().simple().to_string();
         if cfg!(windows) {
             let path = dir.join(format!("askpass-{id}.bat"));
-            // Delayed expansion would eat `!` in the password.
             let body = format!(
                 "@echo off\r\nsetlocal DisableDelayedExpansion\r\necho({}\r\n",
                 batch_escape(password)
@@ -458,7 +428,6 @@ fn write_private(path: &Path, bytes: &[u8], _mode: u32) -> Result<(), String> {
     }
 }
 
-/// Escape for `echo(` in a batch file.
 fn batch_escape(password: &str) -> String {
     let mut out = String::with_capacity(password.len() + 4);
     for c in password.chars() {
@@ -474,13 +443,11 @@ fn batch_escape(password: &str) -> String {
     out
 }
 
-/// Single-quote for POSIX sh.
 #[must_use]
 pub fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// Parzi's own SSH key, made once with `ssh-keygen` and no passphrase.
 fn parzi_key() -> Result<PathBuf, String> {
     Ok(parzi_core::paths::parzi_dir()
         .map_err(|e| e.to_string())?
@@ -586,7 +553,6 @@ impl Probe {
         p
     }
 
-    /// The release asset for this machine, or why there is none.
     pub fn asset(&self) -> Result<&'static str, String> {
         match (self.os.as_str(), self.arch.as_str()) {
             ("Linux", "x86_64" | "amd64") => Ok("parzi-linux-x64"),
@@ -620,8 +586,6 @@ fn download_script(repo: &str, version: &str, asset: &str, fetch: &str) -> Strin
     )
 }
 
-/// Upload a local Linux build through the script itself, base64 in a
-/// here-document, so no second channel (scp) is needed.
 fn upload_script(binary: &[u8]) -> String {
     let b64 = base64::engine::general_purpose::STANDARD.encode(binary);
     let mut wrapped = String::with_capacity(b64.len() + b64.len() / 76 + 1);
@@ -650,11 +614,8 @@ fn spec_script(spec_json: &str) -> String {
 
 const SETUP: &str =
     "\"$HOME/.local/bin/parzi\" setup --spec \"$HOME/.parzi/setup-spec.json\" --enable --json\n";
-/// An upgrade keeps the server's own settings: no spec.
 const UPGRADE: &str = "\"$HOME/.local/bin/parzi\" setup --enable --json\n";
 
-/// What travels: the portable config, plus brain notes when asked.
-/// Project notes stay home: they point at folders on this machine.
 #[must_use]
 pub fn local_spec(with_notes: bool) -> Spec {
     let host = std::env::var("COMPUTERNAME")
@@ -692,11 +653,9 @@ pub fn local_spec(with_notes: bool) -> Spec {
     }
 }
 
-/// One progress line of a remote setup, for the wizard.
 #[derive(Debug, Clone, Serialize)]
 pub struct Progress {
     pub step: String,
-    /// "run", "ok", "fail" or "note".
     pub state: &'static str,
     pub detail: String,
 }
@@ -714,11 +673,9 @@ impl Progress {
 pub struct SetupOptions {
     pub password: Option<String>,
     pub notes: bool,
-    /// A local Linux build to upload instead of downloading the release.
     pub binary: Option<PathBuf>,
     pub version: String,
     pub repo: String,
-    /// Replaces ssh, for tests and other transports.
     pub transport: Option<Transport>,
 }
 
@@ -735,9 +692,6 @@ impl Default for SetupOptions {
     }
 }
 
-/// Connect, install Parzi, hand it the spec, start the engine, link.
-/// Each step reports through `on`; the first failure ends setup with its
-/// reason.
 pub async fn setup(
     target: Target,
     opts: SetupOptions,
@@ -868,8 +822,6 @@ pub async fn setup(
     Ok((saved, link))
 }
 
-/// Probe the machine, install the matching build, send the spec when asked,
-/// and run `parzi setup --enable` there. Each failure is reported via `on`.
 async fn provision_remote(
     ssh: &Transport,
     opts: &SetupOptions,
@@ -979,7 +931,6 @@ async fn provision_remote(
                 let Ok(step) = serde_json::from_str::<Step>(line) else {
                     return;
                 };
-                // The desk already reported its own spec and home rows.
                 if step.step == "done" || (step.ok && (step.step == "spec" || step.step == "home"))
                 {
                     return;
@@ -1003,8 +954,6 @@ async fn provision_remote(
     Ok(())
 }
 
-/// Bring the linked server to this desk's version: install the matching
-/// build and restart its engine, keeping the server's own settings.
 pub async fn upgrade(
     saved: &Saved,
     on: &(dyn Fn(Progress) + Send + Sync),
@@ -1029,8 +978,6 @@ fn chrono_now() -> i64 {
 type Waiters = Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>;
 type EventSink = Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Value>>>>;
 
-/// One live `parzi rpc` over ssh. Calls are matched to replies by id; a
-/// dead link fails every waiting call and reports `alive() == false`.
 pub struct Link {
     stdin: tokio::sync::Mutex<ChildStdin>,
     waiters: Waiters,
@@ -1127,8 +1074,6 @@ impl Link {
         })
     }
 
-    /// Live run events, approvals and questions from the server, in the
-    /// desk's UI shape. The receiver ends when the link closes.
     pub async fn subscribe(&self) -> Result<tokio::sync::mpsc::UnboundedReceiver<Value>, String> {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         *self.events.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
@@ -1146,14 +1091,12 @@ impl Link {
         self.alive.load(Ordering::Relaxed)
     }
 
-    /// Send one op. A reply with `ok: false` becomes `Err(error)`.
     pub async fn call(&self, op: &str, body: Value, wait: Duration) -> Result<Value, String> {
         if !self.alive() {
             return Err(self.dead_reason());
         }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let mut req = if body.is_object() { body } else { json!({}) };
-        // `rid`, not `id`: session ops already use `id` for the session.
         req["rid"] = json!(id);
         req["op"] = json!(op);
         let mut line = serde_json::to_string(&req).map_err(|e| e.to_string())?;
@@ -1239,8 +1182,6 @@ async fn pump(
         let Some(obj) = v.as_object_mut() else {
             continue;
         };
-        // `rid` from this release on; an older `parzi rpc` echoed a numeric
-        // `id` (session ids are uuids, so the two never mix).
         let id = match obj.get("rid").and_then(Value::as_u64) {
             Some(rid) => {
                 obj.remove("rid");
@@ -1264,7 +1205,6 @@ async fn pump(
     }
     alive.store(false, Ordering::Relaxed);
     waiters.lock().unwrap_or_else(|e| e.into_inner()).clear();
-    // Closing the sink ends the subscriber's loop, so it can reconnect.
     events.lock().unwrap_or_else(|e| e.into_inner()).take();
 }
 

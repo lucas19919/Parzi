@@ -244,9 +244,6 @@ enum OpenCmd {
     Url { url: String },
 }
 
-/// Page commands work on the tab in front unless `--tab` names one. A tab
-/// no agent opened is yours: the window asks you before a command reads
-/// or drives it.
 #[derive(Subcommand)]
 enum TabCmd {
     List {
@@ -461,7 +458,6 @@ async fn cmd_serve() -> Result<()> {
     Ok(())
 }
 
-/// SIGTERM, which is how systemd stops the service.
 async fn terminated() {
     #[cfg(unix)]
     {
@@ -564,7 +560,6 @@ async fn cmd_setup(spec: Option<&std::path::Path>, enable: bool, json: bool) -> 
     Ok(())
 }
 
-/// "2 of 6 ready: Claude, Codex" from a `providers` reply.
 fn agents_line(v: &Value) -> String {
     let rows = v
         .get("providers")
@@ -799,7 +794,6 @@ async fn answer_approval(key: &str, allow: bool) -> Result<()> {
     Ok(())
 }
 
-/// Neither the window nor `parzi serve` answers: the files are ours.
 fn offline(err: &DeskError) -> bool {
     *err == DeskError::NotOpen
 }
@@ -942,15 +936,12 @@ async fn session_send(
     if message.trim().is_empty() {
         anyhow::bail!("empty message");
     }
-    // No automatic models: a new thread is told which agent runs it.
     let model = model.map(str::trim).filter(|m| !m.is_empty());
     if target == "new" && model.is_none() {
         anyhow::bail!(
             "a new session needs a model: --model claude (or claude/opus, codex, ...). `parzi providers` lists them"
         );
     }
-    // The window runs elsewhere: a relative folder would resolve against
-    // its own working directory, not this shell's.
     let base = match cwd.filter(|c| !c.trim().is_empty()) {
         Some(c) => std::path::absolute(c).with_context(|| format!("resolving {c}"))?,
         None => std::env::current_dir().context("reading the current directory")?,
@@ -975,7 +966,6 @@ async fn session_send(
         r = sent => r,
         r = tokio::signal::ctrl_c() => {
             r.context("waiting for ctrl-c")?;
-            // Ctrl-C stops the run in the window too, not just this command.
             let id = view.lock().ok().and_then(|v| v.session.clone());
             if let Some(id) = id {
                 let _ = desk::request("session.kill", json!({ "id": id })).await;
@@ -991,7 +981,6 @@ async fn session_send(
     match got {
         Ok(v) => {
             if !view.0 {
-                // A window from before streaming answers with the whole text.
                 if let Some(id) = v.get("id").and_then(Value::as_str) {
                     eprintln!("session {id}");
                 }
@@ -1096,7 +1085,6 @@ async fn send_local(
             ev = rx.recv() => ev,
             r = tokio::signal::ctrl_c() => {
                 r.context("waiting for ctrl-c")?;
-                // The run and its agent process stop with this command.
                 let _ = orch.kill(&id).await;
                 eprintln!("\nstopped {id}");
                 std::process::exit(130);
@@ -1231,8 +1219,6 @@ async fn session_delete(id: &str) -> Result<()> {
     }
 }
 
-/// The op and body a tab command sends; None for the ones that print
-/// something richer (list, read, shot).
 fn tab_body(cmd: TabCmd) -> Option<(&'static str, Value)> {
     let opt = |v: Option<String>| v.map_or(Value::Null, Value::String);
     Some(match cmd {
@@ -1356,7 +1342,6 @@ async fn cmd_open(what: OpenCmd, background: bool, raise: bool) -> Result<()> {
     window::simple("desk.open", open_body(what, background, raise)).await
 }
 
-/// The window, checked for real: the file, the hello, then the token.
 async fn window_check() -> parzi_runtime::doctor::Check {
     let check = |ok: bool, detail: String| parzi_runtime::doctor::Check {
         name: "window".into(),
@@ -1453,8 +1438,6 @@ async fn cmd_providers(only: Option<&str>, json: bool) -> Result<()> {
         }
         None => vec![],
     };
-    // The window's board when it is open: one set of probes, the same
-    // answer the window shows.
     let shown = desk::request("providers", json!({ "refresh": true, "ids": ids }))
         .await
         .ok()

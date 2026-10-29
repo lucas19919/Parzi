@@ -32,7 +32,6 @@ fn valid_numbers(arr: &[serde_json::Value]) -> bool {
     arr.iter().all(|p| {
         p.is_null()
             || p.is_number()
-            // "NaN" and "inf" parse as f64 but cannot be plotted.
             || p.as_str()
                 .is_some_and(|s| s.trim().parse::<f64>().is_ok_and(f64::is_finite))
     })
@@ -258,8 +257,6 @@ fn check_kind(w: &WidgetV1) -> Result<()> {
     Ok(())
 }
 
-/// `ui.offer_replies`: one to three reply buttons under the agent's last
-/// reply. Each has a short label and the message a click sends.
 pub fn replies(args: &serde_json::Value) -> std::result::Result<serde_json::Value, String> {
     let text = |v: Option<&serde_json::Value>| {
         v.and_then(|s| s.as_str())
@@ -301,7 +298,6 @@ pub fn replies(args: &serde_json::Value) -> std::result::Result<serde_json::Valu
     Ok(serde_json::json!({"question": question, "replies": out}))
 }
 
-/// `todo.write`: the session's checklist, replaced whole each time.
 pub fn todo(args: &serde_json::Value) -> std::result::Result<serde_json::Value, String> {
     let list = args
         .get("items")
@@ -337,9 +333,6 @@ pub fn todo(args: &serde_json::Value) -> std::result::Result<serde_json::Value, 
     Ok(serde_json::json!({"items": out}))
 }
 
-/// An agent's own checklist tool (Claude's `TodoWrite`, OpenCode's
-/// `todowrite`, Codex's `update_plan`) as the session checklist
-/// `todo.write` makes, so the person sees one list whoever keeps it.
 #[must_use]
 pub fn todo_from_agent(tool: &str, input: &serde_json::Value) -> Option<serde_json::Value> {
     let t = tool.to_ascii_lowercase();
@@ -371,8 +364,6 @@ pub fn todo_from_agent(tool: &str, input: &serde_json::Value) -> Option<serde_js
     (!items.is_empty()).then(|| serde_json::json!({"items": items}))
 }
 
-/// `ui.propose_task`: a card the person can start as a side task. The id
-/// lets the card remember whether it was started or dismissed.
 pub fn task(args: &serde_json::Value) -> std::result::Result<serde_json::Value, String> {
     let text = |k: &str| {
         args.get(k)

@@ -1,13 +1,9 @@
 <script lang="ts">
-  // Bars from one baseline, in the accent, with a 4px round at the data end
-  // only. Rows (horizontal) carry their label and value as text; columns
-  // (vertical) put the value on the cap when it fits, else an axis.
   import { fmt, niceTicks, SERIES_COLORS, type Point } from "./spec";
   import { onDestroy } from "svelte";
   import { hideTip, showTip } from "./tip";
   import DataTable from "./DataTable.svelte";
 
-  // A readout left up by a chart that went away goes with it.
   onDestroy(hideTip);
 
   export let items: Point[] = [];
@@ -22,9 +18,7 @@
   const BOTTOM = 22;
   const CH = 6.4;
 
-  // Rows: each track's width, measured.
   let tracks: number[] = [];
-  // Columns: the plot's width.
   let w = 0;
   let hover = -1;
 
@@ -34,14 +28,12 @@
   $: texts = items.map((p) => fmt(p.value, unit));
   $: aria = `${label ? `${label}: ` : ""}bar chart, ${items.map((p, i) => `${p.label} ${texts[i]}`).join(", ")}`;
 
-  // Horizontal: a rounded end on the right, square at the baseline.
   function rowPath(len: number, h: number): string {
     if (len <= 0.5) return "";
     const r = Math.min(4, len, h / 2);
     return `M0,0H${(len - r).toFixed(1)}A${r},${r} 0 0 1 ${len.toFixed(1)},${r}V${h - r}A${r},${r} 0 0 1 ${(len - r).toFixed(1)},${h}H0Z`;
   }
 
-  // Vertical: from y0 (baseline) to y1, rounded at y1.
   function colPath(x: number, bw: number, y0: number, y1: number): string {
     const hgt = Math.abs(y0 - y1);
     if (hgt <= 0.5) return "";
@@ -52,10 +44,10 @@
     return `M${x.toFixed(1)},${y0.toFixed(1)}V${e.toFixed(1)}A${r},${r} 0 0 ${sweep} ${(x + r).toFixed(1)},${y1.toFixed(1)}H${(x + bw - r).toFixed(1)}A${r},${r} 0 0 ${sweep} ${(x + bw).toFixed(1)},${e.toFixed(1)}V${y0.toFixed(1)}Z`;
   }
 
-  // Columns.
   $: n = items.length;
   $: band = n ? w / n : 0;
-  $: bw = Math.max(2, Math.min(24, band * 0.62));
+  // Few categories get chunky bars instead of sticks in an empty field.
+  $: bw = Math.max(2, Math.min(band * 0.62, n <= 2 ? 120 : n <= 4 ? 64 : 24));
   $: capsFit = n > 0 && texts.every((t) => t.length * CH <= band - 2);
   $: ticks = capsFit ? [min, max] : niceTicks(min, max, height < 140 ? 2 : 3);
   $: lo = Math.min(min, ticks[0]);

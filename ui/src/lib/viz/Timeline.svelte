@@ -1,5 +1,4 @@
 <script lang="ts">
-  // Events in order on a hairline rail: a dot per event, when on the right.
   import { whenText, type TimelineItem } from "./spec";
 
   export let items: TimelineItem[] = [];
@@ -47,7 +46,6 @@
   li:last-child {
     padding-bottom: 0;
   }
-  /* The rail: a hairline from this dot down to the next. */
   .rail {
     position: relative;
     display: flex;

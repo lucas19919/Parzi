@@ -19,8 +19,6 @@ export interface Pin {
 const HISTORY_MAX = 2000;
 const BOOKMARKS_MAX = 5000;
 
-// A stored value of another shape than its fallback (hand-edited, or from
-// an older build) would break every reader: it reads as the fallback.
 function sameShape(v: unknown, fallback: unknown): boolean {
   if (fallback === null) return true;
   if (Array.isArray(fallback)) return Array.isArray(v);
@@ -39,8 +37,6 @@ function read<T>(key: string, fallback: T): T {
   }
 }
 
-// A full (or blocked) localStorage fails every write after the first;
-// say so once instead of on every keystroke-sized save.
 let warnedFull = false;
 
 function store(key: string, value: unknown) {
@@ -129,10 +125,7 @@ export function loadTabs(): { tabs: Tab[]; active: string } | null {
   return { tabs, active: tabs.some((t) => t.id === saved.active) ? saved.active : tabs[0].id };
 }
 
-// Each site's real icon (from the page's <link rel=icon>, reported by
-// WebView2), so lists don't guess /favicon.ico for sites that have none.
 export const favicons = persisted<Record<string, string>>("parzi.favicons.v1", {});
-// Read in templates for every row: one subscription, not one per call.
 let iconMap: Record<string, string> = {};
 favicons.subscribe((m) => (iconMap = m));
 
@@ -145,7 +138,6 @@ export function faviconUrl(url: string): string {
   return iconFor(iconMap, url);
 }
 
-// Recently closed pages for Ctrl+Shift+T, kept across restarts.
 export const closedTabs = persisted<Closed[]>("parzi.closed.v1", []);
 
 export interface Bookmark {

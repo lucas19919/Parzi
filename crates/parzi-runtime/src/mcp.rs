@@ -9,7 +9,6 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufRea
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
-/// What Parzi offers a hosted server (Streamable HTTP came with 2025-03-26).
 const HTTP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 const HANDSHAKE_FLOOR: Duration = Duration::from_secs(10);
@@ -18,19 +17,15 @@ const HANDSHAKE_FLOOR: Duration = Duration::from_secs(10);
 pub struct McpTool {
     pub server: String,
     pub name: String,
-    /// What it does, as the server says it.
     pub description: String,
-    /// The server's hints: it only reads, or it destroys.
     pub read_only: bool,
     pub destructive: bool,
 }
 
-/// What a connector says about itself on connecting, and its tools.
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct ServerDetails {
     pub title: String,
     pub website: String,
-    /// Icon addresses (https or data:) the server declares, best first.
     pub icons: Vec<String>,
     pub tools: Vec<McpTool>,
 }
@@ -41,7 +36,6 @@ impl McpTool {
     }
 }
 
-/// How Parzi reaches a server: one it started (stdio), or a hosted one.
 enum Conn {
     Stdio {
         child: Child,
@@ -53,7 +47,6 @@ enum Conn {
 
 struct LiveServer {
     conn: Conn,
-    /// `serverInfo` from its initialize answer.
     info: serde_json::Value,
     next_id: u64,
     tools: Option<Vec<McpTool>>,
@@ -71,8 +64,6 @@ pub struct McpManager {
     exposed_calls: AtomicU64,
 }
 
-/// The parent variables any spawned helper (MCP server, hook, shell.exec)
-/// sees: OS plumbing and toolchain homes, never keys or tokens.
 const CHILD_ENV_PASSTHROUGH: &[&str] = &[
     "PATH",
     "SYSTEMROOT",
@@ -104,7 +95,6 @@ const CHILD_ENV_PASSTHROUGH: &[&str] = &[
     "JAVA_HOME",
 ];
 
-/// Scrubbed child environment: the passthrough list plus `extra`.
 pub(crate) fn child_env(extra: &HashMap<String, String>) -> HashMap<String, String> {
     let parent: HashMap<String, String> = std::env::vars().collect();
     child_env_from(&parent, extra)
@@ -144,7 +134,6 @@ fn tool_err(msg: String) -> ParziError {
     ParziError::Tool("mcp".into(), msg)
 }
 
-/// One message to a hosted server, off the async workers.
 async fn http_send(
     conn: Arc<std::sync::Mutex<crate::mcp_http::HttpConn>>,
     name: &str,
@@ -234,7 +223,6 @@ where
 }
 
 async fn kill_tree(child: &mut Child) {
-    // Descendants first (blocking taskkill/ps, off the workers), then the root.
     if let Some(pid) = child.id() {
         let _ = tokio::task::spawn_blocking(move || parzi_providers::process::kill_tree(pid)).await;
     }
@@ -417,7 +405,6 @@ impl McpManager {
         let epoch = self.epoch.fetch_add(1, Ordering::Relaxed) + 1;
         let timeout = Duration::from_millis(cfg.timeout_ms.max(1_000));
         let handshake = timeout.max(HANDSHAKE_FLOOR);
-        // A hosted one: nothing to start, a connection to open.
         if !cfg.url.trim().is_empty() {
             let mut sv = LiveServer {
                 conn: Conn::Http(Arc::new(std::sync::Mutex::new(
@@ -434,7 +421,6 @@ impl McpManager {
             Self::spawn_reaper(name.to_string(), slot.clone(), self.idle_kill, epoch);
             return Ok(());
         }
-        // `npx` on Windows is npx.cmd, which a bare name never starts.
         let program = parzi_providers::process::which(&cfg.command).ok_or_else(|| {
             tool_err(format!(
                 "`{}` isn't installed on this computer",
@@ -576,8 +562,6 @@ impl McpManager {
         Ok(out)
     }
 
-    /// What the server said about itself and every tool it has (the ones
-    /// switched off included, for Settings to show).
     pub async fn details(&self, name: &str) -> Result<ServerDetails> {
         let tools = self.list_tools(name).await?;
         let slot = self.slot_for(name).await;

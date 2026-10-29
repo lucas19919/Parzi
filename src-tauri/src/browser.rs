@@ -14,16 +14,11 @@ const PAGE_PREFIX: &str = "page-";
 const POPUP_PREFIX: &str = "popup-";
 const OFFSCREEN: f64 = -30_000.0;
 
-// Live page renderers are the app's biggest memory cost (~50-150MB each).
-// Hidden pages give memory back first (a low memory target, then a
-// suspend); only past this many does the least recently shown one close,
-// keeping its URL so reopening restores it.
 const PAGE_CAP: usize = 20;
 const TRIM_AFTER: Duration = Duration::from_secs(30);
 const SLEEP_AFTER: Duration = Duration::from_mins(5);
 const REFIT_AFTER: Duration = Duration::from_millis(300);
 const SWEEP_EVERY: Duration = Duration::from_secs(10);
-// A page asking to open another app again this soon is ignored.
 const EXTERNAL_EVERY: Duration = Duration::from_secs(1);
 
 static GEN: AtomicU64 = AtomicU64::new(0);
@@ -40,18 +35,15 @@ static WORKER: OnceLock<Sender<Work>> = OnceLock::new();
 struct Slot {
     tab: String,
     url: Url,
-    /// Opened for an agent session: may get its own profile.
     agent: bool,
 }
 
-/// A hidden page and what was done to save its memory.
 struct Rest {
     since: Instant,
     trimmed: bool,
     slept: bool,
 }
 
-/// A page asked to open a link in another app; the user decides.
 struct Offer {
     tab: String,
     url: String,
@@ -69,8 +61,6 @@ struct Fit {
     focus: bool,
 }
 
-/// Page work runs on one thread, in order: a resize sends ~60 shows a
-/// second and only the newest matters.
 enum Work {
     Show(AppHandle, Fit),
     Open(AppHandle, String, bool),
@@ -181,9 +171,6 @@ fn http_page(raw: &str) -> Result<Url, String> {
     Ok(url)
 }
 
-/// Tauri serves the app UI, IPC and assets on `http(s)://<scheme>.localhost`
-/// (Windows) and `<scheme>://` elsewhere. A tab there would run as the app's
-/// own local origin, which app commands trust.
 fn app_origin(url: &Url) -> bool {
     const OWN: &[&str] = &["tauri", "ipc", "asset", "isolation"];
     if OWN.contains(&url.scheme()) {
@@ -202,21 +189,14 @@ fn app_origin(url: &Url) -> bool {
 
 fn page_navigation(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https" | "about" | "blob" | "data") && !app_origin(url) && {
-        // blob:http://tauri.localhost/... carries the app origin inside.
         url.scheme() != "blob" || Url::parse(url.path()).map_or(true, |inner| !app_origin(&inner))
     }
 }
 
-/// Where a link may go.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Target {
-    /// Loads in the page.
     Page,
-    /// Another app's link (mailto:, tel:, zoommtg:, vscode:...): opened by
-    /// the OS once the user says yes.
     External,
-    /// Never: local files, script URLs, Windows handlers known to run code,
-    /// Parzi's own origins.
     Refuse,
 }
 
@@ -279,7 +259,6 @@ pub(crate) fn classify(url: &Url) -> Target {
     }
 }
 
-/// Same document, ignoring the #fragment (and URL spelling differences).
 pub(crate) fn same_page(a: &str, b: &str) -> bool {
     let bare = |raw: &str| match Url::parse(raw) {
         Ok(mut url) => {
@@ -304,8 +283,6 @@ fn page_bounds(
     let max_h = f64::from(inner.height) / scale;
     let x = x.clamp(0.0, max_w);
     let y = y.clamp(0.0, max_h);
-    // Allow a 2px bleed past the window edge: the UI overscans the slot
-    // rect outward so no background sliver shows around the page.
     let width = width.min((max_w - x + 2.0).max(0.0));
     let height = height.min((max_h - y + 2.0).max(0.0));
     if width < 8.0 || height < 8.0 {
@@ -346,8 +323,6 @@ fn hide_pages(app: &AppHandle, keep: &str) {
     }
 }
 
-/// Hidden pages past their time get a low memory target, later a suspend.
-/// Agent pages are left awake: their session drives them in the background.
 fn rest_pages(app: &AppHandle) {
     let shown = locked(&SHOWN).clone();
     let awake: Vec<String> = locked(&TABS)
@@ -397,8 +372,6 @@ fn live_pages(app: &AppHandle) -> Vec<String> {
         .collect()
 }
 
-/// Remembers where a page is, so a page made again (evicted, crashed)
-/// opens there and not at the address it was first opened with.
 fn keep_url(label: &str, url: &Url) {
     if (url.scheme() == "http" || url.scheme() == "https") && !app_origin(url) {
         if let Some(slot) = locked(&TABS).get_mut(label) {
@@ -407,8 +380,6 @@ fn keep_url(label: &str, url: &Url) {
     }
 }
 
-/// Closes least-recently-shown pages past the cap, never one in `keep`.
-/// Counted once up front: a closing webview may still be listed.
 fn evict_lru(app: &AppHandle, keep: &[&str]) {
     let mut live = live_pages(app);
     let mut excess = live.len().saturating_sub(PAGE_CAP);
@@ -482,7 +453,6 @@ pub fn browser_show(
     Ok(())
 }
 
-/// UI warm-up of a background tab.
 #[tauri::command]
 pub fn browser_prepare(
     app: AppHandle,
@@ -494,12 +464,10 @@ pub fn browser_prepare(
     prepare(app, tab, url, false, agent)
 }
 
-/// A background tab an agent is about to drive: it has to be live.
 pub fn prepare_for_agent(app: AppHandle, tab: String, url: &str) -> Result<(), String> {
     prepare(app, tab, url, true, true)
 }
 
-/// Brings back an agent's tab whose page was evicted since it last drove it.
 pub fn revive(app: &AppHandle, tab: &str) {
     let Ok(label) = page_label(tab) else {
         return;
@@ -529,8 +497,6 @@ fn open_background(app: &AppHandle, label: String, evict: bool) {
     if app.get_webview(&label).is_some() || !locked(&TABS).contains_key(&label) {
         return;
     }
-    // A warm-up past the cap only records the entry (the page is made on
-    // first show); an agent's page evicts the stalest background one.
     if !evict && live_pages(app).len() >= PAGE_CAP {
         return;
     }
@@ -602,8 +568,6 @@ fn mount_page(app: &AppHandle, job: &Fit) -> bool {
     let mut shown = locked(&SHOWN);
     if *shown != job.label {
         shown.clone_from(&job.label);
-        // Only when the UI says nobody is typing in it: closing the address
-        // suggestions must not hand the keyboard to the page mid-edit.
         if job.focus {
             let _ = wv.set_focus();
         }
@@ -611,8 +575,6 @@ fn mount_page(app: &AppHandle, job: &Fit) -> bool {
     true
 }
 
-/// Where pages an agent opens keep their cookies when they must not see
-/// the user's sign-ins.
 #[cfg(windows)]
 fn agent_profile(app: &AppHandle) -> Option<std::path::PathBuf> {
     Some(app.path().app_local_data_dir().ok()?.join("agent-pages"))
@@ -626,7 +588,6 @@ fn open_page(app: &AppHandle, window: &tauri::Window, job: &Fit) -> Option<Webvi
     #[cfg(windows)]
     let builder = if isolated {
         let Some(dir) = agent_profile(app) else {
-            // Never fall back to the user's profile: that is the point.
             tracing::warn!("no folder for the agent page profile; the page was not opened");
             return None;
         };
@@ -668,9 +629,6 @@ fn allow_navigation(app: &AppHandle, tab: &str, url: &Url) -> bool {
     }
 }
 
-/// A link that opens a new window: a tab next to its page (the UI decides
-/// foreground or, for an agent's page, background), a real window for
-/// sign-in popups that need their opener, the OS for other apps' links.
 fn new_window(
     app: &AppHandle,
     tab: &str,
@@ -713,9 +671,6 @@ fn new_window(
     }
 }
 
-/// A window the page opened with `window.open` and a size, typically a
-/// sign-in: it shares the page's profile (the opener must reach it) and
-/// gets the same filtering, downloads and prompts.
 fn open_popup(
     app: &AppHandle,
     tab: &str,
@@ -764,8 +719,6 @@ fn page_builder(
     let (open_app, open_tab, title_tab) = (app.clone(), tab.to_string(), tab.to_string());
     let builder = WebviewBuilder::new(label, WebviewUrl::External(url))
         .devtools(crate::siteprefs::devtools())
-        // Ctrl+plus/minus/0 and Ctrl+wheel zoom a page, as in any browser
-        // (Tauri turns them off by default).
         .zoom_hotkeys_enabled(true)
         .background_color(backdrop())
         .on_navigation(move |url| allow_navigation(&nav_app, &nav_tab, url))
@@ -781,8 +734,6 @@ fn page_builder(
     let _ = isolated;
     #[cfg(not(windows))]
     let builder = {
-        // No separate profile folder on WebKit: an agent's page gets a
-        // private data store instead (signed out, forgotten on close).
         let builder = builder.incognito(isolated);
         let (load_app, load_tab, load_label) = (app.clone(), tab.to_string(), label.to_string());
         let builder = builder.on_page_load(move |_wv, payload| {
@@ -846,8 +797,6 @@ fn webkit_download(app: &AppHandle, tab: &str, event: tauri::webview::DownloadEv
     }
 }
 
-/// `WebKit` reports no back/forward state here: this follows the page's own
-/// loads and the toolbar's back and forward to guess it.
 #[derive(Default, Debug)]
 #[cfg_attr(
     windows,
@@ -873,7 +822,6 @@ impl NavGuess {
         };
     }
 
-    /// Records a finished load; returns (can go back, can go forward).
     pub(crate) fn loaded(&mut self, url: &str) -> (bool, bool) {
         match self.pending.take() {
             Some("back") if self.at > 0 => self.at -= 1,
@@ -1021,7 +969,6 @@ fn on_signal(app: &AppHandle, label: &str, tab: &str, signal: crate::dwm::PageSi
         }
         PageSignal::CloseRequested => {
             let (app, label) = (app.clone(), label.to_string());
-            // Not from inside the WebView2 handler that asked.
             std::thread::spawn(move || {
                 if let Some(window) = app.get_webview_window(&label) {
                     let _ = window.close();
@@ -1070,7 +1017,6 @@ fn offer_external(app: &AppHandle, tab: &str, url: &str) {
     );
 }
 
-/// The user's answer to "Open this link in another app?".
 #[tauri::command]
 pub async fn browser_external(id: String, open: bool) -> Result<(), String> {
     let offer = locked(&OFFERS)
@@ -1090,7 +1036,6 @@ pub async fn browser_external(id: String, open: bool) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
-/// The user's answer to a page's permission prompt, remembered for the site.
 #[tauri::command]
 pub async fn browser_permission(
     app: AppHandle,
@@ -1114,7 +1059,6 @@ pub async fn browser_permission(
     }
 }
 
-/// Settings turned page devtools on or off: live pages follow at once.
 pub fn apply_devtools(app: &AppHandle, on: bool) {
     for (label, wv) in app.webviews() {
         if label.starts_with(PAGE_PREFIX) || label.starts_with(POPUP_PREFIX) {
@@ -1126,7 +1070,6 @@ pub fn apply_devtools(app: &AppHandle, on: bool) {
     }
 }
 
-/// Loads what page handlers read on the UI thread before a page needs it.
 pub fn warm_up() {
     std::thread::spawn(|| {
         let _ = crate::siteprefs::get();
@@ -1189,8 +1132,6 @@ fn place_page(wv: &Webview, job: &Fit) -> Result<(), String> {
     #[cfg(windows)]
     {
         let scale = job.scale.max(0.01);
-        // Overscan 1 device px per side: CSS/device rounding otherwise
-        // leaves a hairline of Parzi background around the page.
         let px = |v: f64| (v * scale).round() as i32;
         crate::dwm::fit_page_surface(
             wv,
@@ -1238,7 +1179,6 @@ pub fn browser_hide(app: AppHandle) {
     hide_pages(&app, "");
 }
 
-/// Hands the keyboard to the shown page (after Enter in the address bar).
 #[tauri::command]
 pub fn browser_focus(app: AppHandle, tab: &str) -> Result<(), String> {
     let label = page_label(tab)?;
@@ -1251,8 +1191,6 @@ pub fn browser_focus(app: AppHandle, tab: &str) -> Result<(), String> {
     }
 }
 
-/// "This page crashed" › Reload: a fresh page at the last address. The
-/// next show makes it.
 #[tauri::command]
 pub fn browser_recover(app: AppHandle, tab: &str) -> Result<(), String> {
     let label = page_label(tab)?;

@@ -26,14 +26,10 @@ pub fn adopt(child: &Child) {
     }
 }
 
-/// Kill a process and its whole descendant tree (best effort).
-/// Windows uses taskkill /T /F; unix walks `ps` and kills descendants.
 pub fn kill_tree(pid: u32) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
-        // Full path: a `taskkill.exe` planted next to the app or on PATH
-        // must never run in its place.
         let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
         let taskkill = std::path::Path::new(&root)
             .join("System32")
@@ -59,7 +55,6 @@ pub fn kill_tree(pid: u32) {
     }
 }
 
-// The root too: on unix kill_tree leaves it to the caller.
 fn kill_all(pid: u32) {
     kill_tree(pid);
     #[cfg(unix)]
@@ -72,8 +67,6 @@ fn kill_all(pid: u32) {
     }
 }
 
-/// The harness shell: pwsh when present, else powershell, else sh.
-/// Returns the program plus the argument prefix placed before the command.
 pub fn shell_program() -> (String, Vec<String>) {
     #[cfg(windows)]
     {
@@ -117,7 +110,6 @@ pub(crate) fn existing_folder(cwd: &Path) -> Result<(), ProviderError> {
     ))
 }
 
-// A young folder may belong to an agent still unpacking itself.
 fn sweep_unpack_dirs(dir: &Path, min_age: Duration) {
     if !cfg!(windows) {
         return;
@@ -159,9 +151,6 @@ pub fn resolve(program: &str) -> Option<PathBuf> {
     Some(follow_npm_shim(&found).unwrap_or(found))
 }
 
-/// A program as the shell would find it, `.cmd` and `.bat` included, but
-/// not followed into an npm shim: `npx` has to stay `npx.cmd`, since the
-/// node.exe its shim names runs nothing without the script beside it.
 pub fn which(program: &str) -> Option<PathBuf> {
     let program = program.trim();
     if program.is_empty() {
@@ -230,9 +219,6 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     None
 }
 
-/// A Windows executable starts with MZ. The extensionless file npm writes
-/// next to a `.cmd` is a shell script, and spawning it fails with
-/// "not a valid Win32 application".
 fn looks_like_pe(path: &Path) -> bool {
     let mut magic = [0u8; 2];
     let Ok(mut file) = std::fs::File::open(path) else {
@@ -269,8 +255,6 @@ fn file_head(path: &Path) -> String {
         .join(" ")
 }
 
-/// A `.cmd` that launches `node` plus a script becomes that pair, so ACP
-/// stdio never goes through `cmd.exe` (it buffers and breaks kill).
 pub(crate) fn launch_parts(program: &Path, args: &[String]) -> (PathBuf, Vec<String>) {
     let ext = program
         .extension()
@@ -330,16 +314,12 @@ fn follow_npm_shim(path: &Path) -> Option<PathBuf> {
         return None;
     }
     let dir = path.parent()?;
-    // A native binary next to the shim wins: no cmd.exe wrapper in the
-    // ACP stdio path, so no extra shell to buffer, quote or kill.
     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
         for candidate in [
             dir.join(format!("{stem}.exe")),
             dir.join(stem),
             dir.join(format!("{stem}-x86_64.exe")),
         ] {
-            // The extensionless neighbor is npm's shell script. Only a PE
-            // is a program CreateProcess can start.
             if candidate.is_file() && looks_like_pe(&candidate) {
                 return Some(candidate);
             }
@@ -351,8 +331,6 @@ fn follow_npm_shim(path: &Path) -> Option<PathBuf> {
             let rest = &text[i + marker.len()..];
             let Some(end) = rest.find('"') else { continue };
             let rel = &rest[..end];
-            // `node.exe` beside an npm shim is the runtime, not the agent.
-            // The script it names is paired with node in `launch_parts`.
             if rel.eq_ignore_ascii_case("node.exe") {
                 continue;
             }
@@ -379,8 +357,6 @@ impl Proc {
         cwd: &Path,
         env: &[(String, String)],
     ) -> std::io::Result<Self> {
-        // A cmd shim becomes node plus its script. Drop kills root and
-        // tree off-thread; tokio killing the root first would cut that walk short.
         let (program, args) = launch_parts(program, args);
         let mut cmd = Command::new(&program);
         cmd.args(&args)
@@ -442,7 +418,6 @@ impl Drop for Proc {
         let Some(pid) = self.child.id() else {
             return;
         };
-        // taskkill and ps are slow; never block whoever drops this.
         let spawned = std::thread::Builder::new()
             .name("parzi-kill".into())
             .spawn(move || kill_all(pid));
@@ -483,8 +458,6 @@ fn descendants(root: u32) -> Vec<u32> {
 
 pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
-// Stdout and stderr of a short command; on timeout its whole tree dies,
-// not just the direct child.
 async fn probe(program: &Path, args: &[&str], secs: u64) -> Option<(String, String)> {
     let mut cmd = Command::new(program);
     cmd.args(args)
@@ -522,7 +495,6 @@ async fn probe(program: &Path, args: &[&str], secs: u64) -> Option<(String, Stri
 fn kill_probe(pid: u32) {
     #[cfg(windows)]
     kill_tree(pid);
-    // The probe leads its own group, so one signal reaches every descendant.
     #[cfg(unix)]
     {
         let _ = std::process::Command::new("kill")
@@ -624,7 +596,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// This PC's npm shims. Missing programs skip, so a machine without them still passes.
     #[test]
     fn installed_npm_shims_launch_a_real_program() {
         if let Some(path) = resolve("opencode") {

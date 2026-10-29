@@ -1,7 +1,3 @@
-//! Compacting works for every agent: its own way when it has one, else
-//! Parzi has it summarize and the next turn starts a new conversation
-//! handed only that summary. An agent that compacts on its own mid-turn
-//! leaves a mark in the thread where it happened.
 
 mod common;
 

@@ -51,7 +51,6 @@ pub struct HookSet {
 
 impl HookSet {
     fn capped(mut self) -> Self {
-        // Blank entries first, so they never use up one of the 16 slots.
         self.pre_tool.retain(|h| !h.command.trim().is_empty());
         self.post_tool.retain(|h| !h.command.trim().is_empty());
         self.pre_tool.truncate(HOOK_MAX_ENTRIES);
@@ -74,13 +73,10 @@ fn read_file(path: &Path) -> Result<HookSet> {
         .map_err(|e| ParziError::Config(format!("hooks.toml: {}", toml_brief(&e))))
 }
 
-/// The hooks in `~/.parzi/hooks.toml`, or why that file is unusable, for
-/// doctor to show. A missing or blank file is no hooks, not an error.
 pub fn load_global() -> Result<HookSet> {
     read_file(&paths::parzi_dir()?.join("hooks.toml"))
 }
 
-/// Like `load_global`, but a broken file runs with no hooks and a warning.
 #[must_use]
 pub fn global() -> HookSet {
     load_global().unwrap_or_else(|e| {

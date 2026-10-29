@@ -4,16 +4,11 @@ use parzi_runtime::desk::{WAIT_DEFAULT_MS, WAIT_MAX_MS};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, Webview};
 
-// A field's typed value is never shown to the agent or matched against when
-// it holds a secret: a password (also after a show-password toggle flips its
-// type), a one-time code or a card number. Matching would be an oracle.
 const SECRET: &str = r#"
   const secret = (e) => e.tagName === "INPUT" && (String(e.type).toLowerCase() === "password" || /password|one-time-code|cc-number|cc-csc/i.test(e.getAttribute("autocomplete") || ""));
   const typed = (e) => (secret(e) ? "" : e.value);
 "#;
 
-// The page and its same-origin frames (a cross-origin frame's document is
-// out of reach and skipped), and the lookups every action shares.
 const DOM: &str = r#"
   const docs = () => {
     const out = [document];
@@ -339,9 +334,6 @@ fn script_result(_: &Webview, _: String) -> Result<String, String> {
     Err("page control needs Windows".into())
 }
 
-/// Up to 10s for the page to finish loading. Together with the 10s for the
-/// tab to come up and the 5s script limit this stays under
-/// `parzi_runtime::desk::PAGE_STEP`.
 async fn settle(wv: &Webview) {
     for _ in 0..20 {
         let state = run(wv, "document.readyState".into()).await.ok();
@@ -353,8 +345,6 @@ async fn settle(wv: &Webview) {
 }
 
 fn script(args: &Value, body: &str) -> String {
-    // The args go in as JSON, which is a JavaScript literal: page text the
-    // agent passes on can never break out of it.
     format!("(() => {{ const a = {args}; {SECRET} {DOM} {body} }})()")
 }
 
@@ -366,14 +356,12 @@ fn answer(v: Value) -> Result<Value, String> {
     }
 }
 
-/// Title, URL, a window of the text (`offset`, `limit`) and the controls.
 pub async fn read(app: &AppHandle, tab: &str, window: &Value) -> Result<Value, String> {
     let wv = webview(app, tab).await?;
     settle(&wv).await;
     answer(run(&wv, script(window, READ)).await?)
 }
 
-/// click, type, press, select or scroll; `{done, label}` on success.
 pub async fn act(app: &AppHandle, tab: &str, kind: &str, args: &Value) -> Result<Value, String> {
     let body = match kind {
         "click" => CLICK,
@@ -388,7 +376,6 @@ pub async fn act(app: &AppHandle, tab: &str, kind: &str, args: &Value) -> Result
     answer(run(&wv, script(args, body)).await?)
 }
 
-/// Polls until the selector or text shows up (or, with `gone`, leaves).
 pub async fn wait(app: &AppHandle, tab: &str, args: &Value) -> Result<Value, String> {
     let limit = Duration::from_millis(
         args.get("timeout_ms")
@@ -401,7 +388,6 @@ pub async fn wait(app: &AppHandle, tab: &str, args: &Value) -> Result<Value, Str
     let started = Instant::now();
     let probe = script(args, WAIT);
     loop {
-        // A page mid-navigation fails the script: that is "not yet".
         if let Ok(v) = run(&wv, probe.clone()).await {
             let v = answer(v)?;
             if v.get("found").and_then(Value::as_bool) == Some(!gone) {
@@ -462,7 +448,6 @@ mod tests {
 
     #[test]
     fn typed_values_go_through_the_secret_guard() {
-        // Every place a field value could reach the agent reads it via typed().
         for (name, s) in every_script() {
             assert!(
                 s.contains(r#"const typed = (e) => (secret(e) ? "" : e.value);"#),
@@ -483,7 +468,6 @@ mod tests {
         assert!(!t.contains("requestSubmit"), "type submits through press()");
         assert!(!t.contains("KeyboardEvent"), "{t}");
         assert_eq!(DOM.matches("requestSubmit()").count(), 1);
-        // The submit waits on the keydown and keypress no handler cancelled.
         let submit = DOM.find("el.form.requestSubmit()").unwrap();
         let gate = DOM.find("if (down && !chord)").unwrap();
         assert!(gate < submit);
@@ -500,7 +484,6 @@ mod tests {
 
     #[test]
     fn scripts_parse_as_javascript() {
-        // Where node is installed, every script must at least parse.
         let Ok(out) = std::process::Command::new("node").arg("--version").output() else {
             return;
         };

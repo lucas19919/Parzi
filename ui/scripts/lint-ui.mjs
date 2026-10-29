@@ -1,56 +1,40 @@
-// Runs lintapple (ui-policy.json) over every main view of the app, served
-// by `npm run dev` with the mock backend (mock.html). Exit 1 on findings.
-//   npm run dev            (in another terminal)
-//   npm run lint:ui        [--json report.json] [view ...]
 import { readFile, writeFile } from "node:fs/promises";
 import { checkUrl } from "lintapple";
 
 const BASE = process.env.PARZI_UI_URL ?? "http://localhost:1420/mock.html";
-const VIEWS = ["home", "session", "request", "question", "approval", "brain", "history", "settings", "setup", "page"];
-// Views that are another view in other settings.
+const VIEWS = ["home", "session", "request", "question", "approval", "history", "settings", "setup", "page"];
 const QUERY = { request: "view=session&request=file", question: "view=session&question=1", approval: "view=session&approval=1" };
 
-// More states per view, each checked again after its action (run in order
-// on one page). Selectors are CSS and must match exactly one element.
 const click = (name, selector, ready) => ({ name, action: "click", selector, ready: { selector: ready } });
 const nth = (list, i) => `${list} > :nth-child(${i})`;
 const STATES = {
   home: [
     click("project menu", ".ob .where-name", ".menu-pop"),
-    // Pressed in the composer: the audit may already have scrolled the menu shut.
     { name: "project menu closed", action: "press", selector: ".ob textarea", key: "Escape", ready: { selector: ".menu-pop", state: "hidden" } },
     click("web", ".ob .browser", ".box.web"),
     { name: "web suggestions", action: "fill", selector: ".ob textarea", value: "parzi docs", ready: { selector: ".web-suggest" } },
   ],
   session: [
-    // The last turn's charts (```viz blocks): the line chart's readout.
     { name: "viz readout", action: "hover", selector: '.viz[data-viz="line"] svg.plot', ready: { selector: ".viz-tip:not([hidden])" } },
     { name: "switcher", action: "press", selector: ".ob textarea", key: "Control+p", ready: { selector: '.box[role="dialog"]' } },
     { name: "switcher closed", action: "press", selector: '.box[role="dialog"] input', key: "Escape", ready: { selector: '.box[role="dialog"]', state: "hidden" } },
     click("model picker", ".ob .model", ".picker"),
     click("permission menu", ".ob .perm-btn", ".menu-pop.perms"),
-    // The plan checklist, opened from the session column: then its done
-    // items, then an item quoted into the composer.
     click("plan checklist", ".info .plan-row", ".thread-col .plan ul"),
     click("plan done items", ".plan .item.fold", ".plan li:last-child > .item.closed"),
     click("plan quote chip", ".plan ul > li:nth-child(2) > .item", ".ob .chip.quote"),
-    // A session that is working holds what you send until it is done.
     click("running session", ".tabs > .tab:nth-child(3) .pick", ".ob .go.stop"),
     { name: "typed ahead", action: "fill", selector: ".ob textarea", value: "Then add a test for it", ready: { selector: ".ob .go.stop" } },
     { name: "held", action: "press", selector: ".ob textarea", key: "Enter", ready: { selector: ".ob .held" } },
   ],
-  brain: [click("pinned note", ".note:has(.pin)", ".titles h2"), click("conflict copy", ".note.copy", ".conflict")],
   history: [2, 3, 4].map((i) => click(`library ${i}`, nth(".seg", i), `${nth(".seg", i)}[aria-pressed="true"]`)),
   settings: [
     ...[2, 3].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
-    // Connections: the add dialog's directory (with what other apps set up),
-    // pasting an address, back, then closed.
     click("connector directory", ".add-conn", '.card[role="dialog"] .grid'),
     click("connector custom", ".card footer .link", ".card textarea.mono"),
     { name: "connector address", action: "fill", selector: ".card textarea.mono", value: "https://mcp.example.com/mcp", ready: { selector: '.card input[type="password"]' } },
     click("connector back", ".card header .icon:first-child", '.card[role="dialog"] .grid'),
     { name: "connector closed", action: "click", selector: ".card header .icon:last-child", ready: { selector: '.card[role="dialog"]', state: "hidden" } },
-    // A connector connected: its tools, each with Allow, Ask or Off.
     click("connector connected", ".conn .sbtn", ".conn .sbtn[aria-expanded]"),
     click("connector tools", ".conn .sbtn[aria-expanded]", ".tools .tool:first-child"),
     ...[4, 5].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),

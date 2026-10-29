@@ -1,6 +1,4 @@
 <script lang="ts" context="module">
-  // What Parzi adds to a context depends on the folder only:
-  // asked once per pair.
   type Parts = { instructions: number; notes: number; tools: number };
   const cache = new Map<string, Promise<Parts | null>>();
   function partsFor(folder: string) {
@@ -15,9 +13,6 @@
 </script>
 
 <script lang="ts">
-  // How full a session's context is and what fills it: the conversation,
-  // and what Parzi adds (its instructions, the tools it offers, the
-  // project's notes). Parzi's parts are estimates; the total is the agent's.
   import { createEventDispatcher } from "svelte";
   import { api } from "./api";
 
@@ -41,8 +36,6 @@
   }
 
   $: pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
-  // Parzi's parts are counted inside what the agent reports; whatever is
-  // left is the conversation.
   $: ours = parts ? parts.instructions + parts.tools + parts.notes : 0;
   $: rows = [
     { id: "conv", label: "Conversation", n: Math.max(0, used - ours) },
@@ -105,7 +98,6 @@
   .ctx {
     display: flex;
     flex-direction: column;
-    /* Same inset as the card pad, so the button-to-list gap matches the button-to-edge gap. */
     gap: calc(var(--space) * 3);
   }
   .top {
@@ -151,7 +143,6 @@
     min-width: 0;
     min-height: 0;
   }
-  /* One hue, fading by part, so the bar stays quiet. */
   .s-conv {
     background: var(--accent);
   }

@@ -1,16 +1,9 @@
-// Markdown that reads like a report: tables with numbers set right, a
-// header's unit under its name, muted n.m. cells and summary rows, a table's
-// note, and numbered links as source chips. A markdown-it plugin.
 import type MarkdownIt from "markdown-it";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-// Tables read like a report: numbers right-aligned in even figures, a
-// header's "(unit)" on a quiet second line, n.m. and dashes muted, Total /
-// Mean / Median rows set apart, and an italic line right under the table
-// kept as its note.
 const NUMBER = /^[(+\-−~≈]?[$€£¥]?\s?\d[\d,]*(?:\.\d+)?\s?(?:%|[kKmMbBxX]|bps|pp|ms|s|h)?\)?$/;
 const NOT_APPLICABLE = /^(?:n\.?m\.?|n\/a|na|—|–|-|tbd|\?)$/i;
 const SUMMARY_ROW = /^(?:total|sum|mean|median|average|avg)\b/i;
@@ -57,7 +50,6 @@ export function reportMarkdown(md: MarkdownIt): void {
         for (const cell of r.cells) if (NOT_APPLICABLE.test(cellText(cell.inline))) cell.open.attrJoin("class", "na");
         if (SUMMARY_ROW.test(cellText(r.cells[0]?.inline))) r.tr.attrJoin("class", "summary");
       }
-      // "Growth (FY25A)": the unit goes under the name.
       for (const cell of head?.cells ?? []) {
         const kids = cell.inline.children ?? [];
         const last = kids[kids.length - 1];
@@ -66,7 +58,6 @@ export function reportMarkdown(md: MarkdownIt): void {
         last.content = m[1];
         cell.close.meta = { sub: m[2] };
       }
-      // An italic line straight under the table is its note.
       const after = toks[j + 1];
       const kids = toks[j + 2]?.children ?? [];
       if (after?.type === "paragraph_open" && kids[0]?.type === "em_open" && kids[kids.length - 1]?.type === "em_close") {
@@ -76,8 +67,6 @@ export function reportMarkdown(md: MarkdownIt): void {
     }
   });
 
-  // A link that is only a number ("[2](https://…)") is a source: a small
-  // chip that names its site on hover.
   md.core.ruler.push("parzi-cites", (state) => {
     for (const tok of state.tokens) {
       const kids = tok.children ?? [];
@@ -88,7 +77,6 @@ export function reportMarkdown(md: MarkdownIt): void {
         try {
           kids[k].attrSet("title", new URL(kids[k].attrGet("href") ?? "").hostname.replace(/^www\./, ""));
         } catch {
-          // Not a web address: no site to name.
         }
       }
     }

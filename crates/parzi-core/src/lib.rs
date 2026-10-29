@@ -19,7 +19,6 @@ pub mod widgets;
 
 pub use error::{atomic_write, atomic_write_private, ParziError, Result};
 
-/// Milliseconds since the Unix epoch (0 when the clock is before it).
 #[must_use]
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()

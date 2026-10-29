@@ -1,8 +1,3 @@
-//! The agent side of plans: `plan.read`, `plan.write` and `session.rename`,
-//! and the plan an agent's opening turn carries. A plan is looked up by
-//! the session's project (`SessionMeta.project`), so it works the same on
-//! the desk and on the server; sessions link to items through
-//! `SessionMeta.plan_item`.
 
 use parzi_core::brain::Vault;
 use parzi_core::plan::{self, Plan, PlanWrite};
@@ -10,8 +5,6 @@ use parzi_core::store::{SessionMeta, SessionStore};
 use parzi_core::text::{fold, short_id, NAME_CHARS, NAME_WORDS};
 use serde_json::Value;
 
-/// One of the three tools, for the session `sid`. Runs on a blocking
-/// thread: it reads and writes notes and session files.
 pub(crate) fn execute(store: &SessionStore, sid: &str, name: &str, args: &Value) -> (bool, String) {
     let out = match name {
         "plan.read" => read(store, sid, args),
@@ -37,8 +30,6 @@ fn vault() -> Result<Vault, String> {
     Vault::open().map_err(|e| e.to_string())
 }
 
-/// A session's name, held to the one rule automatic names follow too:
-/// at most `NAME_WORDS` words and `NAME_CHARS` chars.
 fn rename(store: &SessionStore, sid: &str, args: &Value) -> Result<String, String> {
     let title = str_arg(args, "title")
         .map(|t| fold(&t))
@@ -77,8 +68,6 @@ fn write(store: &SessionStore, sid: &str, args: &Value) -> Result<String, String
     Ok(out)
 }
 
-/// The item a session counts for: its own, or its parent's (one level up
-/// is enough: children of children are rare and stay their parent's).
 fn item_of<'a>(m: &'a SessionMeta, all: &'a [SessionMeta]) -> Option<&'a str> {
     m.plan_item.as_deref().or_else(|| {
         let parent = m.parent_id.as_deref()?;
@@ -88,7 +77,6 @@ fn item_of<'a>(m: &'a SessionMeta, all: &'a [SessionMeta]) -> Option<&'a str> {
     })
 }
 
-/// Branches that say nothing about an item.
 fn shared_branch(b: &str) -> bool {
     matches!(b, "" | "main" | "master" | "HEAD" | "develop" | "trunk")
 }
@@ -100,7 +88,6 @@ fn when(ms: u64) -> String {
         .map_or_else(String::new, |t| t.format("%Y-%m-%d %H:%M UTC").to_string())
 }
 
-/// The plan in full for an agent, with the sessions working on each item.
 fn listing(slug: &str, path: &str, p: &Plan, sessions: &[SessionMeta]) -> String {
     let (done, counted) = p.progress();
     let by = match p.by.as_str() {
@@ -119,7 +106,6 @@ fn listing(slug: &str, path: &str, p: &Plan, sessions: &[SessionMeta]) -> String
     if !p.phases.is_empty() {
         out.push(format!("Phases: {}.", p.phases.join(", ")));
     }
-    // The same grouping the plan note shows.
     for (phase, items) in plan::grouped(p) {
         if items.is_empty() {
             continue;
@@ -134,7 +120,6 @@ fn listing(slug: &str, path: &str, p: &Plan, sessions: &[SessionMeta]) -> String
     out.join("\n")
 }
 
-/// One item of `listing`: its line, detail, note and sessions.
 fn listed(out: &mut Vec<String>, i: &plan::PlanItem, sessions: &[SessionMeta]) {
     let mut head = format!("- {}: {} [{}]", i.id, i.title, i.state.word());
     if !i.needs.is_empty() {
@@ -212,9 +197,6 @@ fn read(store: &SessionStore, sid: &str, args: &Value) -> Result<String, String>
     Ok(listing(&slug, &view.path, &p, &sessions))
 }
 
-/// The `<parzi:plan>` block a run in `project` opens with: the plan's
-/// summary, and the item the session works on. None without a project or
-/// a plan.
 pub(crate) fn brief_for(project: &str, item: Option<&str>) -> Option<String> {
     let slug = plan::check_slug(project).ok()?.to_string();
     let p = plan::load(&Vault::open().ok()?, &slug).plan?;

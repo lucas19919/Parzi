@@ -18,7 +18,6 @@ test("reports are rate limited, and the browser's resize notices aren't faults",
   const at = 1_000_000;
   for (let i = 0; i < 5; i++) assert.ok(allowReport(sent, at + i));
   assert.ok(!allowReport(sent, at + 10));
-  // A minute after the first, room again.
   assert.ok(allowReport(sent, at + 60_000));
   assert.ok(isNoise("ResizeObserver loop completed with undelivered notifications."));
   assert.ok(!isNoise("TypeError: x is undefined"));

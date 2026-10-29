@@ -1,5 +1,3 @@
-//! Files pages download: saved to the user's Downloads folder, listed in
-//! History › Downloads (kept in ~/.parzi/downloads.json).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -11,7 +9,6 @@ use tauri::{AppHandle, Emitter, Manager};
 const FILE: &str = "downloads.json";
 const KEEP: usize = 100;
 const EVENT: &str = "parzi://download";
-// Progress reaches the UI at most this often per download.
 const PROGRESS_EVERY: Duration = Duration::from_millis(400);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,7 +44,6 @@ static BOOK: Mutex<Option<Book>> = Mutex::new(None);
 fn book() -> MutexGuard<'static, Option<Book>> {
     let mut guard = BOOK.lock().unwrap_or_else(PoisonError::into_inner);
     if guard.is_none() {
-        // A download still "in progress" in the file died with the last run.
         let mut list = load();
         for d in &mut list {
             if d.state == State::Progress {
@@ -74,7 +70,6 @@ fn load() -> Vec<Download> {
 }
 
 fn save_soon() {
-    // Download events arrive on the UI thread: never write files there.
     std::thread::spawn(|| {
         static SAVE: Mutex<()> = Mutex::new(());
         let _one = SAVE.lock().unwrap_or_else(PoisonError::into_inner);
@@ -88,8 +83,6 @@ fn save_soon() {
     });
 }
 
-/// A file name that is safe to create: no folders, no characters Windows
-/// refuses, no trailing dots or spaces, never empty.
 pub fn safe_name(raw: &str) -> String {
     let leaf = raw.rsplit(['/', '\\']).next().unwrap_or("");
     let clean: String = leaf
@@ -119,7 +112,6 @@ pub fn safe_name(raw: &str) -> String {
     }
 }
 
-/// `name`, else `name (1)`, `name (2)`... before the extension, like a browser.
 pub fn unique_path(dir: &Path, name: &str, taken: impl Fn(&Path) -> bool) -> PathBuf {
     let first = dir.join(name);
     if !taken(&first) {
@@ -138,15 +130,12 @@ pub fn unique_path(dir: &Path, name: &str, taken: impl Fn(&Path) -> bool) -> Pat
     dir.join(format!("{stem} ({}){ext}", uuid::Uuid::new_v4().simple()))
 }
 
-/// The user's Downloads folder (made if missing).
 pub fn downloads_dir(app: &AppHandle) -> Option<PathBuf> {
     let dir = app.path().download_dir().ok()?;
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }
 
-/// Where a new download goes in `dir`, unique among files on disk and
-/// downloads still running.
 pub fn target(dir: &Path, suggested: &str) -> PathBuf {
     let running: Vec<String> = book()
         .as_ref()
@@ -244,8 +233,6 @@ pub fn finished(app: &AppHandle, id: &str, state: State, path: Option<&str>) {
     save_soon();
 }
 
-/// The newest running download of `url`, for platforms that only report
-/// the URL when a download ends.
 #[cfg(not(windows))]
 pub fn running_id(url: &str) -> Option<String> {
     book().as_ref().and_then(|b| {
@@ -296,7 +283,6 @@ pub fn browser_download_cancel(app: AppHandle, id: String) -> Result<(), String>
     }
 }
 
-/// Drops finished entries from the list; the files stay.
 #[tauri::command]
 pub fn browser_downloads_clear() -> Vec<Download> {
     let list = {

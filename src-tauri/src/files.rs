@@ -12,7 +12,6 @@ use tokio::sync::oneshot;
 use crate::AppState;
 
 static GRANTED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
-// Session folders change rarely but @-mentions ask on every keystroke.
 static SESSION_ROOTS: Mutex<Option<(Instant, Vec<PathBuf>)>> = Mutex::new(None);
 const ROOTS_TTL: Duration = Duration::from_secs(5);
 const OUTSIDE: &str = "that location is outside the workspace, choose the folder first";
@@ -27,9 +26,6 @@ where
         .map_err(|e| e.to_string())?
 }
 
-/// `\\host\share`, `//host`, `\\?\`, `\\.\` and `\??\` reach the network or
-/// raw devices. Merely resolving one makes Windows authenticate to the host,
-/// so these are refused on the raw text, before any filesystem call.
 pub(crate) fn remote_or_device(raw: &str) -> bool {
     let b = raw.trim().as_bytes();
     let sep = |c: &u8| *c == b'\\' || *c == b'/';
@@ -38,8 +34,6 @@ pub(crate) fn remote_or_device(raw: &str) -> bool {
     unc || nt
 }
 
-/// A drive-letter absolute path (`C:\...`) on Windows, `/...` elsewhere.
-/// Alternate data streams (`name:stream`) are never plain files.
 #[cfg(windows)]
 pub(crate) fn plain_local(p: &Path) -> bool {
     use std::path::{Component, Prefix};
@@ -94,7 +88,6 @@ fn grant_folder(path: &Path) {
 #[tauri::command]
 pub async fn pick_folder(app: AppHandle, start: Option<String>) -> Result<Option<String>, String> {
     let mut builder = app.dialog().file().set_title("Choose a folder");
-    // A network start folder would be browsed (and authenticated to) on open.
     if let Some(dir) = start.filter(|s| plain_local(Path::new(s.trim()))) {
         builder = builder.set_directory(dir.trim());
     }
@@ -118,8 +111,6 @@ pub async fn pick_folder(app: AppHandle, start: Option<String>) -> Result<Option
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
-/// Both the given and the canonical form: the textual pre-check compares the
-/// former, the post-canonicalize check the latter.
 fn push_root(roots: &mut Vec<PathBuf>, p: PathBuf) {
     if let Ok(c) = p.canonicalize() {
         if c != p {
@@ -193,7 +184,6 @@ fn contained_in(target: &Path, roots: &[PathBuf]) -> bool {
     roots.iter().any(|r| target.starts_with(r))
 }
 
-/// `\\?\C:\x` as `C:\x`, so canonical roots compare against typed paths.
 fn simplified(p: &Path) -> PathBuf {
     #[cfg(windows)]
     {
@@ -210,7 +200,6 @@ fn simplified(p: &Path) -> PathBuf {
     p.to_path_buf()
 }
 
-/// Textual containment: decided before the target is touched at all.
 fn lexically_inside(target: &Path, roots: &[PathBuf]) -> bool {
     let key = |p: &Path| -> Vec<String> {
         p.components()
@@ -231,8 +220,6 @@ fn lexically_inside(target: &Path, roots: &[PathBuf]) -> bool {
     })
 }
 
-/// The lexical path plus the canonical form of its deepest existing
-/// ancestor. Nothing is resolved until the text alone sits inside a root.
 fn confine(store: &SessionStore, raw: &str) -> Result<(PathBuf, PathBuf), String> {
     let normal = normalize_lexical(&local_abs(raw)?);
     let mut roots = file_roots(store, false);
@@ -277,7 +264,6 @@ pub async fn git_branch(state: State<'_, AppState>, cwd: String) -> Result<Strin
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// A folder's local branches, for the composer's branch menu.
 #[tauri::command]
 pub async fn git_branches(
     state: State<'_, AppState>,
@@ -294,26 +280,20 @@ pub async fn git_branches(
     .await
 }
 
-/// What Home's Git card shows for a folder.
 #[derive(serde::Serialize, Default, Debug, PartialEq)]
 pub struct GitStatus {
     pub branch: String,
     pub upstream: bool,
     pub ahead: u32,
     pub behind: u32,
-    /// Tracked files with staged or unstaged changes, conflicts included.
     pub changed: u32,
     pub untracked: u32,
-    /// Lines added and removed in tracked files, staged or not.
     pub added: u32,
     pub removed: u32,
     pub last_subject: String,
-    /// Unix seconds of the last commit, 0 when the branch has none.
     pub last_time: i64,
 }
 
-/// Totals `git diff --numstat`: added and removed lines ("-" for binary
-/// files counts nothing).
 fn sum_numstat(out: &str) -> (u32, u32) {
     out.lines().fold((0, 0), |(a, r), line| {
         let mut cols = line.split('\t');
@@ -323,7 +303,6 @@ fn sum_numstat(out: &str) -> (u32, u32) {
     })
 }
 
-/// Reads `git status --porcelain=v2 --branch`.
 fn parse_git_status(out: &str) -> GitStatus {
     let mut s = GitStatus::default();
     for line in out.lines() {
@@ -359,7 +338,6 @@ async fn git_out(cwd: &Path, args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// `None` for an empty path or a folder that isn't in a git repository.
 #[tauri::command]
 pub async fn git_status(
     state: State<'_, AppState>,
@@ -405,8 +383,6 @@ pub async fn list_files(
     }
     let orch = state.orch.clone();
     let q = query.to_lowercase();
-    // FS walks run on the blocking pool so per-keystroke @-mentions
-    // never stall the 3 async workers that serve all other commands.
     off_thread(move || {
         let root_path = confined_path(orch.store(), &root)?;
         let mut out = vec![];
@@ -474,7 +450,6 @@ pub async fn read_image_data_url(
         )
     };
     let orch = state.orch.clone();
-    // Confinement, the read and the decode/resize all block.
     off_thread(move || {
         let p = confined_path(orch.store(), &abs)?;
         let meta = std::fs::metadata(&p).map_err(|e| format!("{}: {e}", p.display()))?;
@@ -496,9 +471,6 @@ pub async fn read_image_data_url(
     .await
 }
 
-/// A picture one of this session's tools made, wherever it saved it (an
-/// agent's own image model keeps them in its folder): only a path the
-/// session's own tool results name is read.
 #[tauri::command]
 pub async fn tool_image(
     state: State<'_, AppState>,
@@ -535,11 +507,8 @@ pub async fn tool_image(
     .await
 }
 
-/// Files saved with `save_as` this run: the only ones `reveal_saved` shows.
 static SAVED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
-/// A name the Save dialog can offer: no folders, no characters Windows
-/// refuses, never empty.
 fn file_name_for(name: &str) -> String {
     let clean: String = name
         .chars()
@@ -559,11 +528,6 @@ fn file_name_for(name: &str) -> String {
     }
 }
 
-/// Saves something the window holds (an artifact, a chart's data) where
-/// the person picks in the system's Save dialog. The window's own download
-/// links go nowhere in a desktop app; nothing is written without the
-/// dialog. `base64`: `content` is encoded bytes (a picture). None: the
-/// person cancelled.
 #[tauri::command]
 pub async fn save_as(
     app: AppHandle,
@@ -617,7 +581,6 @@ pub async fn save_as(
     Ok(Some(path.to_string_lossy().into_owned()))
 }
 
-/// Shows a file `save_as` wrote in the file manager.
 #[tauri::command]
 pub async fn reveal_saved(path: String) -> Result<(), String> {
     let path = PathBuf::from(path);
@@ -687,8 +650,6 @@ pub async fn open_confirmed_url(url: String) -> Result<(), String> {
     off_thread(move || launch(&open_with_default(url.into()))).await
 }
 
-// Types the shell runs (or that make Windows fetch a remote path) when
-// opened. A deny list on purpose: everything else opens in its viewer.
 const RUNS_CODE: &[&str] = &[
     "exe",
     "bat",
@@ -753,9 +714,6 @@ const RUNS_CODE: &[&str] = &[
     "app",
 ];
 
-/// True when opening `p` with the default handler would run it. Windows
-/// drops trailing dots and spaces, so `x.exe.` is `x.exe`; PATHEXT adds
-/// whatever else this machine treats as a program.
 fn runs_code(p: &Path) -> bool {
     let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_lowercase()) else {
         return false;
@@ -771,8 +729,6 @@ fn runs_code(p: &Path) -> bool {
         })
 }
 
-/// What may be opened: confined, existing, and not a program. Folders open
-/// in the file manager; only an `.app` bundle folder would launch.
 fn openable(store: &SessionStore, raw: &str) -> Result<(PathBuf, bool), String> {
     let (normal, canon) = confine(store, raw)?;
     let meta = std::fs::metadata(&normal)
@@ -794,7 +750,6 @@ fn openable(store: &SessionStore, raw: &str) -> Result<(PathBuf, bool), String> 
     Ok((normal, dir))
 }
 
-/// Bidi overrides could make `exe.pdf` read as `pdf.exe` in the dialog.
 fn shown_path(p: &Path) -> String {
     p.display()
         .to_string()
@@ -837,7 +792,6 @@ pub async fn open_file_path(
     }
     let orch = state.orch.clone();
     off_thread(move || {
-        // Re-check after the dialog: the path may have changed meanwhile.
         let (again, still_dir) = openable(orch.store(), &path)?;
         if again != target || still_dir != dir {
             return Err("the file changed while the dialog was open".into());
@@ -852,7 +806,6 @@ pub async fn open_file_path(
     .await
 }
 
-/// One external program run: the OS default handler, or the file manager.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Opener {
     pub(crate) program: &'static str,
@@ -867,8 +820,6 @@ pub(crate) const OPEN: (&str, &[&str]) = ("open", &[]);
 #[cfg(not(any(windows, target_os = "macos")))]
 pub(crate) const OPEN: (&str, &[&str]) = ("xdg-open", &[]);
 
-/// The default handler for a file or URL. Callers vet the target first:
-/// on Windows this runs whatever the extension is associated with.
 pub(crate) fn open_with_default(target: OsString) -> Opener {
     Opener {
         program: OPEN.0,
@@ -919,7 +870,6 @@ pub(crate) fn reveal(full: &Path, root: bool) -> Opener {
     }
 }
 
-/// Blocks until the handler exits when `wait`: call off the async runtime.
 pub(crate) fn launch(o: &Opener) -> Result<(), String> {
     let mut cmd = std::process::Command::new(o.program);
     cmd.args(&o.args)

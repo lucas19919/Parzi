@@ -1,7 +1,5 @@
 use parzi_core::theme;
 
-// Own process, own home: this binary holds a single test, so no other
-// test can race the directories it asserts on.
 fn fresh_home() {
     let dir = std::env::temp_dir().join(format!("parzi-test-packs-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -28,8 +26,6 @@ fn builtin_packs_parse_and_ship_no_wallpaper() {
         assert!(p.builtin, "{want} must stay builtin");
         assert!(!p.has_art, "{want} must not bundle a wallpaper");
     }
-    // No pre-made backgrounds ride along: the folder starts empty and
-    // users upload their own.
     let bgs = parzi_core::paths::backgrounds_dir().unwrap();
     let n = std::fs::read_dir(&bgs).map(|rd| rd.count()).unwrap_or(0);
     assert_eq!(n, 0, "backgrounds/ must start empty");

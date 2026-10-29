@@ -1,15 +1,8 @@
-// Themed tooltips for controls without a visible label:
-//   <button use:tooltip={"Close tab"}><Icon name="close" /></button>
-// The text names the control (aria-label, unless it has its own name) and
-// lives in a role="tooltip" element linked to it, shown after a short
-// hover or on keyboard focus. Use it instead of `title`, whose native popup
-// ignores the theme and is invisible to keyboard users.
 
 import { pageArea } from "./overlay";
 import { tipSpot } from "./pageRules";
 
 const DELAY = 450;
-// Moving between controls within this window shows the next tip at once.
 const WARM = 400;
 
 let seq = 0;
@@ -17,13 +10,10 @@ let openTip: { el: HTMLElement; hide: () => void } | null = null;
 let closedAt = 0;
 let listening = false;
 
-// One listener for all tips: anchors move on scroll, the tip is fixed.
 function hideOpen() {
   openTip?.hide();
 }
 
-// A web page tab's native view is drawn above all HTML: a tip over it would
-// be hidden, so tips there flip above or beside their control.
 function place(tip: HTMLElement, anchor: HTMLElement) {
   const r = anchor.getBoundingClientRect();
   const t = tip.getBoundingClientRect();
@@ -43,7 +33,6 @@ export function tooltip(node: HTMLElement, text: string | null | undefined) {
 
   let label = "";
   let timer = 0;
-  // aria-label we set ourselves (vs. one the component owns).
   let ownLabel = false;
 
   function apply(next: string | null | undefined) {
@@ -54,7 +43,6 @@ export function tooltip(node: HTMLElement, text: string | null | undefined) {
       node.setAttribute("aria-label", label);
       ownLabel = true;
     } else if (named && label) {
-      // The control has its own name: the tip adds to it.
       node.setAttribute("aria-describedby", tip.id);
     }
     if (!label) hide();

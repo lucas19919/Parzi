@@ -1,5 +1,3 @@
-//! Browser preferences and the per-site permission decisions the user made
-//! in a page's prompt, kept in ~/.parzi/browser.json.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -10,8 +8,6 @@ use tauri::{AppHandle, Url};
 
 const FILE: &str = "browser.json";
 
-/// What a page may ask for. Anything else `WebView2` adds later stays on its
-/// default instead of being remembered under a name the UI can't show.
 pub const KINDS: &[&str] = &[
     "camera",
     "microphone",
@@ -29,11 +25,8 @@ pub const KINDS: &[&str] = &[
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
-    /// F12 and Inspect in pages.
     pub devtools: bool,
-    /// Pages an agent opens share the user's cookies and sign-ins.
     pub agent_sign_ins: bool,
-    /// origin -> permission kind -> allowed.
     pub sites: BTreeMap<String, BTreeMap<String, bool>>,
 }
 
@@ -50,7 +43,6 @@ pub struct PrefsView {
     devtools: bool,
     agent_sign_ins: bool,
     sites: Vec<SiteRow>,
-    /// Ad blocking, prompts, downloads progress and devtools hook `WebView2`.
     windows: bool,
 }
 
@@ -59,7 +51,6 @@ impl Prefs {
         self.sites.get(origin)?.get(kind).copied()
     }
 
-    /// False when the origin or kind is not one a page prompt can carry.
     pub fn remember(&mut self, origin: &str, kind: &str, allow: bool) -> bool {
         let Some(origin) = site_origin(origin) else {
             return false;
@@ -74,7 +65,6 @@ impl Prefs {
         true
     }
 
-    /// Forgets one decision, or every decision for the site without a kind.
     pub fn forget(&mut self, origin: &str, kind: Option<&str>) {
         match kind {
             Some(kind) => {
@@ -105,8 +95,6 @@ impl Prefs {
     }
 }
 
-/// `https://host[:port]` for a page URL; None for anything that is not a
-/// web origin (a decision for `data:` or `file:` would never match again).
 pub fn site_origin(raw: &str) -> Option<String> {
     let url = Url::parse(raw).ok()?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
@@ -160,7 +148,6 @@ pub fn decision(origin: &str, kind: &str) -> Option<bool> {
     get().decision(origin, kind)
 }
 
-/// Remembers a prompt's answer; the save runs on the blocking pool.
 pub async fn remember(origin: String, kind: String, allow: bool) -> Result<(), String> {
     let mut valid = false;
     update(|p| valid = p.remember(&origin, &kind, allow));
@@ -177,8 +164,6 @@ async fn save_off_thread() -> Result<(), String> {
 }
 
 fn save() -> Result<(), String> {
-    // One save at a time, each writing the state it sees once it holds the
-    // lock, so the newest state is the one that lands.
     static SAVE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _one = SAVE.lock().unwrap_or_else(PoisonError::into_inner);
     let path = path().ok_or("no Parzi folder")?;

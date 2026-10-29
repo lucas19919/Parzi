@@ -1,27 +1,22 @@
 import type { Tab } from "./tabs";
 
-/** A tab as the window's control socket sees it (control.rs TabSnap). */
 export interface DeskTab {
   id: string;
-  kind: "browser" | "session" | "settings" | "preview" | "brain" | "history" | "artifact";
+  kind: "browser" | "session" | "settings" | "preview" | "projects" | "brain" | "history" | "artifact";
   title: string;
   url: string;
-  /** The session a session tab shows, or the agent that owns a page tab. */
   session_id: string;
-  /** A draft session tab's folder. */
   cwd: string;
 }
 
-/** What the control socket asks the window to do (`parzi://desk`). */
 export interface DeskCmd {
   op: "open" | "focus" | "close" | "navigate" | "show" | "notify" | "approval" | "deleted";
   id?: string;
   url?: string;
   rev?: number;
   owner?: string | null;
-  /** open, show: switch to it; false opens it behind the current tab (agents' pages and views, unless they ask). */
   focus?: boolean;
-  what?: "session" | "settings" | "brain" | "history" | "plan" | "work" | "tasks" | "home";
+  what?: "session" | "settings" | "projects" | "brain" | "history" | "plan" | "work" | "tasks" | "home";
   title?: string;
   section?: string;
   path?: string;
@@ -33,15 +28,14 @@ export interface DeskCmd {
   label?: string;
 }
 
-/**
- * The rows the window syncs to the control socket. A page carries the
- * agent that owns it: without the owner an agent loses its tab after the
- * first sync.
- */
+
+
+
+
 export function deskRows(tabs: Tab[]): DeskTab[] {
   return tabs.map((t) => ({
     id: t.id,
-    kind: t.kind === "page" ? "browser" : t.kind,
+    kind: t.kind === "page" ? "browser" : (t.kind as DeskTab["kind"]),
     title: t.title,
     url: t.url ?? "",
     session_id: (t.kind === "page" ? t.owner : t.sessionId) ?? "",

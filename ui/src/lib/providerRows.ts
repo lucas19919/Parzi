@@ -41,9 +41,6 @@ const CHIP_FILLER = new Set(["contributor", "free", "preview", "latest", "thinki
 const CHIP_LAB = new Set(["claude", "anthropic", "openai"]);
 const CHIP_VERSION = /^(?:v|k)?\d+(?:\.\d+)+$|^\d+$/i;
 
-// The omnibar chip. The logo already says OpenCode, so "OpenCode Go/Muse
-// Spark 1.3 Contributor" reads as Muse and 1.3. The full name stays on the
-// tooltip.
 export function chipOf(name: string): { title: string; version: string } {
   const slash = name.indexOf("/");
   const body = (slash >= 0 ? name.slice(slash + 1) : name).replace(/\s*\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
@@ -67,8 +64,6 @@ export function chipOf(name: string): { title: string; version: string } {
 
 const sourceOf = (id: string): string => id.split("/").slice(0, -1).join("/");
 
-// Only an agent that answered "ready" is offered: a never-checked one may
-// not even be installed.
 export const isUsable = (p: ProviderStatus | undefined): boolean => p?.state === "ready";
 
 function rowsOf(p: ProviderStatus): PickRow[] {
@@ -113,10 +108,6 @@ export function shownOf(value: string, board: ProviderStatus[]): { provider: str
   return { provider: p, name: id ? prettyModel(id) : nameOf(p) };
 }
 
-// The effort levels the model itself lists. ACP agents (opencode, grok,
-// cursor, antigravity) take no --effort flag but still record the choice on
-// the session, so they fall back to the standard five rather than hiding
-// the picker.
 const FALLBACK_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 export function effortsFor(value: string, board: ProviderStatus[]): string[] {
   if (!value) return [];
@@ -130,7 +121,6 @@ export function effortsFor(value: string, board: ProviderStatus[]): string[] {
   return [];
 }
 
-// False only when the agent said this model can't see images.
 export function seesImages(value: string, board: ProviderStatus[]): boolean {
   const [p, ...rest] = value.split("/");
   const id = rest.join("/");
@@ -146,5 +136,4 @@ export function fitEffort(current: string, efforts: string[]): string {
 export const effortLabel = (e: string): string =>
   e === "xhigh" ? "Extra high" : e ? e[0].toUpperCase() + e.slice(1) : e;
 
-// On a segment, where five must fit side by side: "Extra", as Claude says it.
 export const effortShort = (e: string): string => (e === "xhigh" ? "Extra" : effortLabel(e));

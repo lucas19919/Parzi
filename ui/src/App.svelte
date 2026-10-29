@@ -24,7 +24,6 @@
   import HistoryView from "./lib/HistoryView.svelte";
   import PreviewView from "./lib/PreviewView.svelte";
   import ArtifactCard from "./lib/widgets/ArtifactCard.svelte";
-  import BrainView from "./lib/BrainView.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
   import { loadTabs, onboarded, recordVisit, saveTabs, titleVisit } from "./lib/browserData";
   import Settings from "./lib/Settings.svelte";
@@ -33,11 +32,11 @@
   import { isRemote, loadRemoteInfo, onRemoteStatus, refreshRemoteBoard, remote, remoteBoard, remoteInfo } from "./lib/remote";
   import { permissionFor } from "./lib/permission";
   import { provideClearSessions } from "./lib/sessions";
-  import { applyThemeCss, wallpaperHomeOnly } from "./lib/theme";
+  import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
   import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, previewTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
-  import { openBrainNote, brainTabRequested } from "./lib/brainStore";
+
   import { sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
   import { addQuote, MAX_QUOTES, quoteBlock, sameSlug, splitQuotes } from "./lib/planModel";
   import { toast, toastError, toasts, notify, chime, dismissToast, keyedToast } from "./lib/toast";
@@ -55,12 +54,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   const motion = reduced ? { duration: 0 } : { duration: 200, easing: cubicOut };
 
-  // A draft: a session tab with no session yet, "New session" in the
-  // strip. Sending from it makes it that session's tab, in place.
   const isDraft = (t: Tab) => t.kind === "session" && !t.sessionId;
   const emptyDraft = (t: Tab) => isDraft(t) && !t.composer?.input?.trim() && !t.composer?.attachments?.length;
 
-  // Restored: one empty draft at most (ones with a draft message stay).
   function oneEmptyDraft(list: Tab[]): Tab[] {
     let kept = false;
     return list.filter((t) => {
@@ -90,7 +86,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let approvals: Approval[] = [];
   let questions: Question[] = [];
   let requests: AgentRequest[] = [];
-  // Waiting on you beats working: that is the one to look at.
   $: sessionMarks.set(
     Object.fromEntries<SessionMark>([
       ...[...running].map((id) => [id, "running"] as const),
@@ -110,20 +105,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   let model = "";
   let warmed = "";
-  // Sent as `mode` with every agent message. Every session starts on
-  // full; an explicit "deny" in Settings is the only thing that locks it.
   let permission = permissionFor("");
-  // Settings' default_mode: the floor the composer's choice cannot lift.
   let policy = "";
   let mode: ComposerMode = "build";
   let sending = false;
-  // The backend runs one turn per session. Messages typed while that turn
-  // works queue here, one turn each, and the oldest goes out when it ends.
   let held: HoldQueue = loadHeld();
   $: saveHeld(held);
-  // A stopped queue stays listed until resumed: nothing goes out on its own.
-  // Pauses with no queue left (drained, dropped, session gone) clear
-  // themselves so Resume never shows for nothing.
   let queuePaused = new Set<string>();
   $: if ([...queuePaused].some((sid) => !(held[sid]?.length))) {
     queuePaused = new Set([...queuePaused].filter((sid) => held[sid]?.length));
@@ -134,14 +121,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     detail: [item.files.length ? `${item.files.length} file${item.files.length === 1 ? "" : "s"}` : "", item.quotes.length ? `${item.quotes.length} quote${item.quotes.length === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · "),
   }));
   $: queueIsPaused = !!shown && queuePaused.has(shown);
-  // A send we have started but the server has not settled. A status refresh
-  // must not clear `running` during it, or the next keystroke starts a second run.
   const inflight = new Set<string>();
-  // Ignore a stale "idle" for a moment after we start a run. The list can
-  // answer from before the server marked it active and drop `running`.
   const holdLive = new Map<string, number>();
-  // A run we just saw end. A list fetched earlier still says "active" and
-  // must not put the composer back on Stop.
   const released = new Map<string, number>();
 
   function markLive(id: string) {
@@ -163,16 +144,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     flushHeld();
   }
 
-  // The Omnibar binds to `comp`, the active tab's own composer object
-  // (tab.composer, same reference), so each tab keeps its draft, mode,
-  // model, effort and attachments. `comp` is only ever assigned inside
-  // functions, never by a `$:` statement: a binding to a reactive value
-  // invalidates everything that value derives from, which put every
-  // keystroke through `tabs` (desk sync, tab save, switcher rebuild).
   let comp: TabComposerState = tabs.find((t) => t.id === activeId)?.composer ?? tabs[0].composer;
   let compFor = "";
-  // The active draft's picked model, by value: `tabs` never invalidates on
-  // composer keystrokes, so the tab strip would otherwise keep a stale icon.
   let liveModel = "";
   $: if (comp.model !== liveModel) liveModel = comp.model;
 
@@ -184,8 +157,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     comp = t.composer;
   }
 
-  // What you typed stays with its session (see drafts.ts): an empty
-  // composer picks it back up, and typing writes it.
   let drafts = loadDrafts();
 
   function fillDraft(t: Tab) {
@@ -210,15 +181,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     keepDraft(t, { input: "", quotes: [], attachments: [] });
   }
 
-  // Keyed by the tab `comp` belongs to (`compFor`, set with it), never the
-  // active one: on a switch `tab` moves first and would get the old text.
   $: keepDraft(
     tabs.find((t) => t.id === compFor && t.composer === comp),
     { input: comp.input, quotes: comp.quotes ?? [], attachments: comp.attachments },
   );
 
-  // The nearest session up the parent chain that has a tab: a helper's
-  // tab sits under it in the strip.
   function hostSessionOf(id: string): string | null {
     let cur = threads.find((t) => t.id === id)?.parent_id ?? null;
     for (let guard = 0; cur && guard < 50; guard++) {
@@ -228,7 +195,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     return null;
   }
 
-  // One parent map per threads change instead of a find() per hop.
   $: familyActive = (() => {
     if (!shown) return 0;
     const parent = new Map(threads.map((t) => [t.id, t.parent_id]));
@@ -248,13 +214,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     return n;
   })();
 
-  // Composer state lives on the tab: switching tabs preserves each
-  // tab's composer intact, with no copying and no cross-contamination.
 
   let switcherOpen = false;
-  // The column beside a session: open unless you closed it, and only where
-  // the window has room for it. Its width drags on the left edge and
-  // persists across restarts.
   let infoOpen = true;
   try {
     infoOpen = localStorage.getItem("parzi.info.open") !== "0";
@@ -265,10 +226,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (w >= 220 && w <= 520) infoWidth = w;
   } catch {}
   let innerWidth = 1280;
-  // Sessions where the project plan checklist is shown inline in the
-  // thread. Per session (not global) so opening it in one thread does
-  // not leak it into every other thread of the same project, and the
-  // X / sidebar toggle always hides just this session's copy.
   let planForced: Set<string> = new Set();
   $: planForcedNow = !!shown && planForced.has(shown);
   let planInline = false;
@@ -281,10 +238,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let setupOpen = false;
   let setupStep = 0;
   let setupServer = false;
-  // The last Remote switch position; new drafts start from it.
   let preferRemote = false;
   try {
-    // Linked means the server is home: Remote is on until switched off.
     preferRemote = localStorage.getItem("parzi.remote.prefer") !== "0";
   } catch {}
 
@@ -297,7 +252,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } catch {}
     if (!on) return;
     try {
-      // Opens the link, updating Parzi on the server when it is older.
       remoteInfo.set(await remote.connect());
       await refreshRemoteBoard();
     } catch (e) {
@@ -316,34 +270,23 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   $: tab = tabs.find((t) => t.id === activeId) ?? tabs[0];
   $: syncComposer(tab);
-  // Only mode/model mirror out (agent warmup).
   $: mode = comp.mode;
   $: model = comp.model;
   $: streaming = !!shown && running.has(shown);
   $: hasSession = tab.kind === "session" && (!!shown || sending || events.length > 0);
-  // Where this composer sends: a started session stays where it began; a
-  // draft follows its own switch, else the last choice.
   $: remoteOn = tab.kind === "session" && tab.sessionId ? isRemote(tab.sessionId) : !!$remoteInfo && (comp.remote ?? preferRemote);
-  // A server session's folder is on the server: nothing to list or branch here.
   $: folder = remoteOn ? "" : tab.kind === "session" && tab.sessionId ? (meta?.cwd ?? "") : (tab.cwd ?? "");
   $: approval = approvals.find((a) => a.session === shown) ?? null;
   $: openQuestion = questions.find((q) => q.session === shown) ?? null;
   $: openRequest = requests.find((r) => r.session === shown) ?? null;
-  // Requests wait on you as questions do, in the plan and the session column.
   $: asks = [...questions, ...requests.map((r) => ({ key: r.key, session: r.session, question: r.request, options: [] }))];
-  // A side task (or a helper) leads back to the session it came from.
   $: parent = meta?.parent_id ? (threads.find((t) => t.id === meta?.parent_id) ?? null) : null;
-  // Folder-driven side effects fire on value change only: without the
-  // guard every keystroke (same folder string, fresh dirty flag) would
-  // re-invoke git_branch + brain_context and pile backend work behind typing.
   let lastFolder = "@@none@@";
   $: if (folder !== lastFolder) {
     lastFolder = folder;
     void loadBranch(folder);
     void loadProject(folder);
   }
-  // Page events (loading, back/forward, blocked counts) patch tabs all
-  // the time; the desk and the saved tab list only care about this.
   $: tabsKey = JSON.stringify([activeId, tabs.map((t) => [t.id, t.kind, t.title, t.url ?? "", t.sessionId ?? "", t.owner ?? "", t.group ?? "", t.cwd ?? ""])]);
   let lastTabsKey = "";
   $: if (tabsKey !== lastTabsKey) {
@@ -366,9 +309,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     noteThreads(threads);
   }, 100);
 
-  // The list is the source of truth for who is working. A missed "done"
-  // used to leave the composer on Stop, and every later message waited
-  // for a turn that had already ended.
   function applyLive(id: string, status: string) {
     const live = status === "active" || status === "queued";
     if (live) {
@@ -396,25 +336,21 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   async function loadProject(dir: string) {
     const ctx = dir ? await brain.context(dir).catch(() => null) : null;
-    // A quick tab switch can land an older folder's answer last.
     if (dir !== folder) return;
     project = ctx?.project ? { slug: ctx.project.slug, title: ctx.project.title, tokens: ctx.tokens } : null;
   }
 
   let historyView: "sessions" | "history" | "bookmarks" | "downloads" = "sessions";
-  // Brain, settings, and history replace the thread. The session column stays.
-  let cover: "brain" | "settings" | "history" | null = null;
+  let cover: "settings" | "history" | null = null;
   let coverFor = "";
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
-  // Home is a new session with nothing covering it. A wallpaper can stay there.
-  $: showWallpaper = !$wallpaperHomeOnly || (tab.kind === "session" && !hasSession && !coverOn);
+  $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
 
   function clearCover() {
     cover = null;
     coverFor = "";
   }
 
-  // A session tab hosts the cover, so the column has somewhere to stay.
   function sessionHost(): string {
     if (tab.kind === "session") return tab.id;
     const home = tabs.find((t) => t.kind === "session" && !t.sessionId);
@@ -427,7 +363,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     return draft.id;
   }
 
-  function showCover(kind: "brain" | "settings" | "history") {
+  function showCover(kind: "settings" | "history") {
     switcherOpen = false;
     const id = sessionHost();
     cover = kind;
@@ -447,20 +383,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     openPageNext(last.url);
   }
 
-  function openBrain(path: string | unknown = "") {
-    if (typeof path === "string" && path) openBrainNote(path);
-    showCover("brain");
-  }
-
-  // The session's project: its plan and its name.
   $: planProject = (hasSession ? meta?.project : "") || project?.slug || "";
   $: planTitle = project && sameSlug(project.slug, planProject) ? project.title : "";
   $: if (tab.kind === "session") watchPlan(planProject, folder);
-  // Open on drafts too: with no run yet it shows what it knows (the
-  // environment, and the project plan when the draft names a project).
   $: infoShown = tab.kind === "session" && infoOpen && innerWidth >= 900;
 
-  // The composer stays centered over the thread: half the right column.
   $: shift = Math.round((infoShown ? infoWidth + 8 : 0) / 2);
 
   function toggleInfo(open = !infoShown) {
@@ -478,12 +405,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } catch {}
   }
 
-  // Agents ask for "the plan": the checklist shows in this session's
-  // thread. A second click (or the checklist's own X) hides it again.
-  // A draft has no thread: its plan card opens the plan note instead.
   function showPlan() {
     if (!hasSession) {
-      if (planProject) openBrainNote(`projects/${planProject}/plan.md`);
+      if (planProject) void pinNote(`projects/${planProject}/plan.md`);
       else toast("Pick a project to see its plan");
       return;
     }
@@ -502,8 +426,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     planForced = next;
   }
 
-  // Clicking a plan item quotes it into this tab's composer; clicking a
-  // quoted one takes it back out.
   function quoteItem(q: PlanQuote) {
     const list = comp.quotes ?? [];
     const next = addQuote(list, q);
@@ -526,7 +448,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     omnibar?.focus();
   }
 
-  // An agent renamed its session: the list, the tab and the header follow.
   async function renamed(id: string) {
     await refreshThreads();
     const t = threads.find((x) => x.id === id);
@@ -535,7 +456,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (meta?.id === id) meta = { ...meta, title: t.title };
   }
 
-  // Set up Parzi, opened at its end with the server form showing.
   function openRemoteSetup() {
     setupStep = 3;
     setupServer = true;
@@ -563,7 +483,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     liveTools = [];
   }
 
-  // The thread holds its bottom while you are there (see follow.ts).
   const follow = follower();
 
   async function scrollToBottom(smooth = false) {
@@ -600,7 +519,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       meta = m;
       events = ev;
       context = { used: m.context_tokens ?? 0, limit: m.context_limit ?? 0 };
-      // A session on an agent's own default ("cursor") keeps it too.
       if (m.model) {
         tab.composer.model = m.model;
         comp = comp;
@@ -613,8 +531,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
-  // `swap` runs in the same update as the new events: a finished reply
-  // trades its live copy for the saved one without a blank frame between.
   async function reload(swap?: () => void) {
     if (!shown) return swap?.();
     const id = shown;
@@ -644,16 +560,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function selectTab(id: string) {
     const next = tabs.find((t) => t.id === id);
     if (!next) return;
-    // A real switch leaves the cover. Opening it sets coverFor first.
     if (cover && id !== coverFor) clearCover();
-    // Each tab owns its composer; switching only changes the active tab
-    // so drafts, mode, model, effort and attachments are preserved intact.
     activeId = id;
     if (next.kind === "session") {
       if (next.sessionId) void showSession(next.sessionId);
       else showDraft();
     }
-    // The page warmed at the next launch: the one used last.
     if (next.kind === "page") {
       try {
         localStorage.setItem(LAST_PAGE, id);
@@ -679,9 +591,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function closeTab(id: string) {
     const idx = tabs.findIndex((t) => t.id === id);
     if (idx < 0) return;
-    // A page under a session (the agent's, or a link from its thread).
     const under = tabs[idx].kind === "page" ? (tabs[idx].owner ?? tabs[idx].group ?? null) : null;
-    // Closing a session tab takes its agent-owned pages with it.
     const doomed = new Set([id]);
     const closingSession = tabs[idx].kind === "session" ? tabs[idx].sessionId : null;
     for (const t of tabs) {
@@ -705,16 +615,22 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
     tabs = kept;
     if (!doomed.has(activeId)) return;
-    // Closing a page under a session goes back to that session.
     const home = under ? kept.find((t) => t.kind === "session" && t.sessionId === under) : undefined;
     if (home) {
       selectTab(home.id);
       return;
     }
+    if (tabs[idx].kind === "artifact" && tabs[idx].group) {
+      const g = tabs[idx].group as string;
+      const parent = kept.find((t) => t.id === g) ?? kept.find((t) => t.kind === "session" && t.sessionId === g);
+      if (parent) {
+        selectTab(parent.id);
+        return;
+      }
+    }
     selectTab(kept[Math.max(0, Math.min(idx, kept.length - 1))].id);
   }
 
-  // Home's project cards set the draft's folder, as the composer's picker does.
   function useFolder(path: string) {
     if (remoteOn) {
       comp.remoteCwd = path;
@@ -725,8 +641,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     omnibar?.focus();
   }
 
-  // A new session: a tab of its own beside this one. It becomes the
-  // session when you send.
   function newSession() {
     const draft: Tab = { ...sessionTab(), cwd: folder || undefined };
     draft.composer = ensureComposer(draft.composer);
@@ -753,8 +667,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
-  // A link in a session's thread opens under that session, after the pages
-  // already there, and shows. The page stays the person's own.
   function openInSession(url: string, sessionId: string) {
     const existing = tabs.find((t) => t.kind === "page" && t.url === url);
     if (existing) {
@@ -769,9 +681,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     selectTab(t.id);
   }
 
-  // A markdown document pinned as a card on top of the session's side
-  // column. New versions replace in place; opening one always reveals it
-  // (no tab switch: Info stays visible below).
   let pinnedDocs: Record<string, ArtifactDoc> = {};
   $: pinnedDoc = shown ? (pinnedDocs[shown] ?? null) : null;
 
@@ -782,14 +691,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     pinnedDocs = rest;
   }
 
-  // A vault note referenced in the thread: read it and pin it as this
-  // session's side-column card. Same path re-pinned bumps the version so
-  // the card re-renders with fresh content. Outside a session (or when the
-  // note can't be read) it opens in the Brain instead.
   async function pinNote(path: string) {
     const group = tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null);
     if (!group) {
-      openBrainNote(path);
+      toast("Open a session to pin this note beside it.");
       return;
     }
     let content: string | null = null;
@@ -799,7 +704,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       content = null;
     }
     if (content == null) {
-      openBrainNote(path);
+      toast("That note can't be read.", true);
       return;
     }
     const prev = pinnedDocs[group];
@@ -809,8 +714,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (!infoShown) toggleInfo(true);
   }
 
-  // A markdown read pins beside its session; anything else opens a tab.
-  // `forceTab` opens the full tab even for markdown (the card's pop-out).
   function openArtifact(doc: ArtifactDoc, forceTab = false) {
     const group = tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null);
     if (doc.kind === "markdown" && group && !forceTab) {
@@ -838,8 +741,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     selectTab(t.id);
   }
 
-  // A link that opens a new window: your page's opens in front, next to it;
-  // an agent's page keeps its owner and opens behind, like the agent's own.
   function openFromPage(opener: string, url: string) {
     const from = tabs.find((t) => t.id === opener);
     if (from?.group) {
@@ -862,7 +763,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } catch (e) {
       toastError(e);
     }
-    // The old page has to be gone before the next show makes a new one.
     await new Promise((r) => setTimeout(r, 250));
     patchTab(id, { crashed: undefined, loading: false });
   }
@@ -908,7 +808,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       const at = e.url ?? t.url;
       if (at) recordFavicon(at, e.favicon);
     }
-    // A new load starts without the last site's icon or questions.
     if (e.loading === true && t.favicon) patch.favicon = undefined;
     if (e.loading === true) dropTabPrompts(e.tab);
     if (e.popupBlocked) addPrompt({ id: `popup-${e.tab}-${Date.now()}`, tab: e.tab, kind: "popup", url: e.popupBlocked });
@@ -922,8 +821,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       patch.url = e.url;
       if (e.url !== t.url && !e.title) patch.title = (pending ?? hostOf(e.url)).slice(0, 80);
       if (e.loading === false) {
-        // Failed loads (offline, no such host) stay out of history and
-        // address completion.
         if (e.ok !== false) recordVisit(e.url, pending ?? "");
         pendingTitles.delete(e.tab);
       }
@@ -947,8 +844,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     const title = threads.find((t) => t.id === id)?.title || "Session";
-    // A helper (an agent's, or a side task) opens under the session it came
-    // from, after what is already there: the strip doesn't grow.
     const host = hostSessionOf(id);
     if (host) {
       const t = { ...sessionTab(id, title), group: host };
@@ -975,7 +870,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   function openSettings(section = "general") {
-    // Updates, remote and the old skills page all live on General.
     settingsSection = section === "system" || section === "remote" || section === "skills" ? "general" : section;
     showCover("settings");
   }
@@ -984,7 +878,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     const target = tab;
     const draft = target.composer;
     const prompt = draft.input.trim();
-    // A message can be just quoted plan items.
     const quotes = draft.mode === "search" ? [] : [...(draft.quotes ?? [])];
     if (!prompt && !quotes.length) return;
     if (!draft.model && draft.mode !== "search") {
@@ -999,15 +892,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     const files = [...draft.attachments];
-    // A thread's conversation lives inside one agent: another agent's
-    // model starts a new session instead of failing the send.
     const agentOf = (model: string) => model.split("/")[0];
     const sessionModel = threads.find((t) => t.id === target.sessionId)?.model ?? "";
     const otherAgent = !!sessionModel && !!draft.model && agentOf(sessionModel) !== agentOf(draft.model);
     const fresh = !target.sessionId || otherAgent;
     const where = remoteOn ? (target.sessionId ? (meta?.cwd ?? "") : (draft.remoteCwd ?? "")) : folder;
-    // Queue while this session works, including during the send that just
-    // started: Enter used to be ignored until that request returned.
     if (!fresh && target.sessionId && (running.has(target.sessionId) || inflight.has(target.sessionId))) {
       const queued = enqueue(held, target.sessionId, { tab: target.id, text: prompt, quotes, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn });
       if (!queued.ok) {
@@ -1023,7 +912,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
     if (sending) return;
     if (target.sessionId && otherAgent) toast(`New session on ${nameOf(agentOf(draft.model))}: a thread stays with the agent it started on`);
-    // Quotes go as blocks after the text, as the desk will send them.
     const optimistic: ChatEvent = { kind: "user", text: [prompt, ...quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
     sending = true;
     if (!fresh && target.sessionId) {
@@ -1036,22 +924,18 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     draft.quotes = [];
     comp = comp;
     events = [...events, optimistic];
-    // Your message glides into view above the composer.
     void scrollToBottom(true);
     try {
       const sid = await api.sendMessage({
         sessionId: fresh ? null : target.sessionId,
         model: draft.model,
         prompt,
-        // A started server session keeps its folder there; a draft uses the
-        // server folder picked for it.
         cwd: where,
         effort: draft.effort,
         attachments: files,
         mode: permission,
         remote: remoteOn,
         quotes: quotes.map((q) => ({ project: q.project, id: q.id })),
-        // A brand-new session only: one going on keeps where it works.
         worktree: !target.sessionId && !remoteOn ? draft.worktree : undefined,
       });
       if (target.sessionId) inflight.delete(target.sessionId);
@@ -1063,14 +947,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         held = moveHeld(held, target.sessionId, sid);
       }
       rememberModel(draft.model, draft.effort);
-      // The field was cleared before the await. Drop the stored draft
-      // for the tab that sent, not whichever tab is active now.
       draft.input = "";
       draft.attachments = [];
       draft.quotes = [];
       comp = comp;
       if (fresh) patchTab(target.id, { sessionId: sid, title: (prompt || quotes[0]?.title || "New session").slice(0, 40) });
-      // Another device's session continues on the server under a new id.
       else if (sid !== target.sessionId) patchTab(target.id, { sessionId: sid });
       if (activeId === target.id) {
         shown = sid;
@@ -1084,8 +965,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         release(target.sessionId);
       }
       events = events.filter((ev) => ev !== optimistic);
-      // The turn is still going. The message waits with the others and
-      // sends when that turn ends. A full queue keeps the draft.
       if (target.sessionId && !fresh && stillWorking(e)) {
         const queued = enqueue(held, target.sessionId, { tab: target.id, text: prompt, quotes, files, model: draft.model, effort: draft.effort, mode: permission, cwd: where, remote: remoteOn });
         if (!queued.ok) {
@@ -1110,8 +989,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
-  // A held message goes back into its composer, ahead of anything typed
-  // since: its run stopped short, or sending it failed.
   function restore(sid: string, h: HeldItem) {
     const t = tabs.find((x) => x.id === h.tab) ?? tabs.find((x) => x.sessionId === sid);
     if (!t) return;
@@ -1132,9 +1009,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (next.item) restore(sid, next.item);
   }
 
-  // The oldest queued message goes out. Taken before any await, so a second
-  // "done" cannot send it twice or leave the composer marked busy with nothing to send.
-  // `given`: already taken off the queue (Send now).
   async function sendHeld(sid: string, given?: HeldItem) {
     if (inflight.has(sid)) {
       if (given) held = putFront(held, sid, given);
@@ -1194,8 +1068,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
-  // The run we just started may already have finished (a short turn, a
-  // missed "done"). The next queued message goes out only then.
   async function drainIfIdle(sid: string) {
     if (inflight.has(sid) || queuePaused.has(sid) || !(held[sid]?.length)) return;
     let status = "";
@@ -1217,9 +1089,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (!shown || !running.has(shown)) return;
     const id = shown;
     release(id);
-    // The queue stays listed, paused, in order: nothing goes out when the
-    // killed run reports its end. Resume sends from the top. No queue, no
-    // pause: an empty stop leaves nothing to resume.
     if ((held[id]?.length ?? 0) > 0) queuePaused = new Set(queuePaused).add(id);
     clearLive();
     await reload();
@@ -1241,8 +1110,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     void drainIfIdle(sid);
   }
 
-  // This queued message, now. Taken off the queue first, so the stopped
-  // run's end does not hand it back, and the messages behind it stay queued.
   async function sendHeldNow(itemId?: string) {
     const id = shown;
     if (!id) return;
@@ -1255,8 +1122,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       running = new Set(running);
       clearLive();
       await stopSession(id);
-      // Its end settles before the next run starts, or that end would
-      // read as this one's.
       for (let i = 0; i < 40; i++) {
         const t = (await api.listThreads().catch(() => [])).find((x) => x.id === id);
         if (!t || (t.status !== "active" && t.status !== "queued")) break;
@@ -1319,9 +1184,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
-  // A side task: a new session started now, beside this one, from what the
-  // person typed (or a message waiting on the run). It lists under this
-  // session and never writes to it. "@project" points it at that project.
   async function sideTask(fromHeld = false, itemId?: string) {
     const parent = shown;
     if (!parent || tab.kind !== "session" || !tab.sessionId) return;
@@ -1345,7 +1207,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       comp.quotes = [];
       comp = comp;
     }
-    // A queued message goes back on the queue. A draft goes back in the composer.
     const giveBack = () => {
       if (taken) held = putFront(held, parent, taken);
       else {
@@ -1369,7 +1230,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
-  // Starts a side task of `parent` on the composer's model; its id.
   async function launchSide(parent: string, text: string, quotes: PlanQuote[], files: string[]): Promise<string> {
     const aimed = await aimAt(text);
     const where = aimed.folder || (remoteOn ? (meta?.cwd ?? "") : folder);
@@ -1393,7 +1253,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     return id;
   }
 
-  // A task card an agent proposed, started as a side task of this session.
   async function startTask(task: { title: string; brief: string; project?: string }, done: (session: string | null) => void) {
     const parent = shown;
     if (!parent || !comp.model) {
@@ -1413,8 +1272,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
-  // A reply button the agent offered: sent as the person's message. A
-  // half-typed draft waits in the composer meanwhile.
   async function sendReply(text: string) {
     if (sending || streaming) return;
     const draft = tab.composer;
@@ -1432,7 +1289,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
-  // "@website ..." aims a side task at that project's folder.
   async function aimAt(text: string): Promise<{ text: string; folder: string; title: string }> {
     const m = /(^|\s)@([\w.-]+)/.exec(text);
     if (!m) return { text, folder: "", title: "" };
@@ -1443,8 +1299,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     return { text: text.replace(m[0], m[1]).trim(), folder: p.folder, title: p.title };
   }
 
-  // What a side task knows of the session it came from: what that one was
-  // asked and last said, so "do the same for the website" makes sense.
   function sideBrief(title: string, evs: ChatEvent[], elsewhere: string): string {
     const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n).trimEnd()}…` : s);
     const last = (kind: "user" | "assistant") => {
@@ -1453,7 +1307,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     };
     const asked = last("user");
     const said = last("assistant");
-    // Tagged so the thread shows it as a small label, not as your words.
     const from = title.replace(/["<>]/g, "");
     return [
       `<side-task from="${from}">`,
@@ -1466,9 +1319,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       .join("\n");
   }
 
-  // Rewind: the conversation as it stood before one of the person's
-  // messages, in this tab, with that message back in the composer to
-  // change and send. The full conversation stays in History.
   async function rewindTo(nth: number, text: string, quotes: PlanQuote[]) {
     const from = shown;
     const target = tab;
@@ -1492,7 +1342,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
-  // A new issue on Parzi's GitHub, the version and system already in it.
   async function reportProblem() {
     const version = await api.appVersion().catch(() => "");
     const body = [
@@ -1512,7 +1361,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     await api.openConfirmedUrl(url).catch(toastError);
   }
 
-  // A failed turn's "Try again": the last message goes out once more.
   function retryLast() {
     const last = [...events].reverse().find((e) => e.kind === "user");
     if (!last || last.kind !== "user" || streaming || sending) return;
@@ -1548,8 +1396,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
-  // History's Clear sessions: purge finished threads, close their tabs.
-  // Running threads are left alone.
   async function clearFinishedSessions() {
     const idle = threads.filter((t) => !running.has(t.id));
     if (!idle.length) {
@@ -1581,14 +1427,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     else if (name === "settings") openSettings();
   }
 
-  // Streamed text shows at a steady pace, not in the bursts it arrives
-  // in: each frame reveals a share of what waits, so a burst spreads over
-  // a few frames and a trickle shows at once.
   function revealLive() {
     revealing = 0;
     if (!pending) return;
     let cut = Math.min(pending.length, Math.max(3, Math.ceil(pending.length / 6)));
-    // Never between the halves of an emoji.
     if (cut < pending.length && /[\uD800-\uDBFF]/.test(pending[cut - 1])) cut++;
     live += pending.slice(0, cut);
     pending = pending.slice(cut);
@@ -1597,9 +1439,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   const titleOf = (session: string) => threads.find((t) => t.id === session)?.title || "Agent";
 
-  // One announcement per event: a toast and a column entry, both skipped for
-  // the session you are looking at. Approvals and questions also chime,
-  // since the backend denies them after a while.
   function announce(session: string, what: string, kind: NotificationItem["kind"], opts: { key?: string; chime?: boolean } = {}) {
     if (session === shown && tab.kind === "session" && document.hasFocus()) return;
     const title = titleOf(session);
@@ -1639,17 +1478,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     if (e.kind === "done" || e.kind === "error" || e.kind === "paused") {
-      // The agent closed. The queue stays listed and paused, same as Stop,
-      // so Resume sends the rows in order.
       if (e.kind === "error" && /exited before/i.test(e.error) && (held[e.session]?.length ?? 0) > 0) {
         queuePaused = new Set(queuePaused).add(e.session);
       }
       release(e.session);
       for (const k of [...approvals, ...questions, ...requests].filter((x) => x.session === e.session).map((x) => x.key)) settle(k);
       void refreshThreads();
-      // The oldest queued message goes out after a finished run. A stopped
-      // queue stays put until resumed. An error or a pause leaves the rest
-      // queued: the person sends or edits them.
       const next = e.kind === "done" && !inflight.has(e.session) && !queuePaused.has(e.session) && !!held[e.session]?.length;
       if (e.session === shown) {
         if (next) clearLive();
@@ -1697,10 +1531,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       if (tab.kind === "settings") closeTab(activeId);
       else if (cover === "settings") clearCover();
       else openSettings();
-    } else if (name === "ctrl+b") {
-      if (tab.kind === "brain") closeTab(activeId);
-      else if (cover === "brain") clearCover();
-      else openBrain();
     } else if (name === "ctrl+j" || name === "ctrl+shift+a") toggleInfo();
     else if (name === "ctrl+h") {
       if (tab.kind === "history") closeTab(activeId);
@@ -1717,7 +1547,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         omnibar?.focus();
       }
     } else if (name === "ctrl+tab" || name === "ctrl+shift+tab") {
-      // Cycles the strip.
       const strip = tabs;
       if (strip.length) {
         const idx = strip.findIndex((t) => t.id === activeId);
@@ -1744,23 +1573,18 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             ? "ctrl+shift+t"
             : mod && e.shiftKey && key === "a"
               ? "ctrl+shift+a"
-              : mod && ["p", "k", "t", "w", "l", "b", "h", "j"].includes(key)
+              : mod && ["p", "k", "t", "w", "l", "h", "j"].includes(key)
                   ? `ctrl+${key}`
                   : "";
     if (name && shortcut(name)) {
       e.preventDefault();
     } else if (key === "escape" && !e.defaultPrevented && !$covered) {
-      // Never stops an agent: Esc closes things, and a run cut short by a
-      // stray Esc read as a crash. The Stop button stops it.
       if (immersive) void setImmersive(false);
       else if (coverOn) clearCover();
       else if (tab.kind === "settings") closeTab(activeId);
     }
   }
 
-  // Commands from the control socket (the CLI and agents). A page opens
-  // behind the current tab unless the command asked for focus; the CLI
-  // asks by default, agents do not.
   function onDeskCmd(cmd: DeskCmd) {
     if (cmd.op === "open" && cmd.url) openPage(cmd.url, cmd.id, cmd.owner ?? null, !cmd.focus);
     else if (cmd.op === "navigate" && cmd.id && cmd.url) patchTab(cmd.id, { url: cmd.url, title: hostOf(cmd.url) });
@@ -1771,7 +1595,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       notify(cmd.text, cmd.session ?? "");
       chime(true);
     } else if (cmd.op === "approval" && cmd.key) {
-      // Answered from the command line: the card goes, and says why.
       approvals = approvals.filter((a) => a.key !== cmd.key);
       if (cmd.label) toast(`${cmd.allow ? "Allowed" : "Denied"} from the command line: ${cmd.label}`);
     } else if (cmd.op === "deleted" && cmd.id) {
@@ -1793,14 +1616,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
       }
     } else if (cmd.what === "settings") openSettings(cmd.section || "general");
-    else if (cmd.what === "brain") openBrain(cmd.path ?? "");
+    else if (cmd.what === "projects" || (cmd.what as string) === "brain") toast("Notes live in the vault now ΓÇö there is no notes panel.");
     else if (cmd.what === "history") openHistory(cmd.view ?? "sessions");
     else if (cmd.what === "plan" || cmd.what === "work" || cmd.what === "tasks") showPlan();
     else if (cmd.what === "home") newSession();
   }
 
-  // Only the page used last loads ahead at launch: every renderer costs
-  // memory, and the other tabs load when opened.
   async function warmPages() {
     await new Promise((r) => setTimeout(r, 1500));
     let last = "";
@@ -1826,27 +1647,17 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       .list()
       .then((list) => downloadList.set(list))
       .catch(() => {});
-    let brainSeen = 0;
     const unActivity = watchActivity();
-    const unBrain = brainTabRequested.subscribe((n) => {
-      if (n > 0 && n !== brainSeen) {
-        brainSeen = n;
-        openBrain();
-      }
-    });
     selectTab(activeId);
     if (!$onboarded) setupOpen = true;
     void warmPages();
     const onBg = (e: Event) => (bg = (e as CustomEvent<string>).detail);
     document.addEventListener("parzi:bg", onBg);
-    // Settings › General changed the tool policy: the composer follows.
     const onDefaultMode = (e: Event) => {
       policy = (e as CustomEvent<string>).detail ?? "";
       permission = permissionFor(policy);
     };
     document.addEventListener("parzi:default-mode", onDefaultMode);
-    // A chat link to a local page (an agent's preview, a dev server) opens
-    // as a tab, reusing the agent's page when one shows the same URL.
     const onOpenPage = (e: Event) => {
       const url = (e as CustomEvent<string>).detail ?? "";
       if (!url) return;
@@ -1859,9 +1670,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       if (doc?.content) openArtifact(doc);
     };
     document.addEventListener("parzi:open-artifact", onOpenArtifact);
-    // A vault note referenced in the thread pins into this session's side
-    // column (Antigravity-style): the thread stays put. Outside a session
-    // it falls back to opening the Brain.
     const onPinNote = (e: Event) => {
       const path = (e as CustomEvent<string>).detail ?? "";
       if (path) void pinNote(path);
@@ -1883,7 +1691,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       })
       .catch((e) => toast(`Couldn't load sessions: ${e}`, true));
     void loadRemoteInfo().catch(() => {});
-    // The link to the server: updates, and a stream that restarted.
     const unRemote = onRemoteStatus((s) => {
       if (s.state === "updating" || s.state === "ready") toast(s.detail);
       else if (s.state === "error") toast(s.detail, true);
@@ -1892,7 +1699,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         if (remoteOn) void refreshRemoteBoard().catch(() => {});
         if (isRemote(shown)) void reload();
       }
-      // Another device's sessions and the shared settings arrive by sync.
       if (s.state === "synced") void refreshThreads();
       if (s.state === "settings") {
         void api
@@ -1908,7 +1714,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       try {
         applyThemeCss(await api.getThemeCss());
         bg = await api.backgroundUrl();
-        api.getTheme().then((t) => wallpaperHomeOnly.set(!!t.background.home_only)).catch(() => {});
         await ensureBoard();
         checkForUpdatesSoon();
       } catch (e) {
@@ -1916,7 +1721,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       }
     })();
     return () => {
-      unBrain();
       unActivity();
       unClear();
       document.removeEventListener("parzi:default-mode", onDefaultMode);
@@ -1932,7 +1736,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   });
 </script>
 
-<!-- A draft typed just before closing is written then, not lost. -->
+
 <svelte:window on:keydown={onKey} on:pagehide={persistDrafts} on:beforeunload={persistDrafts} bind:innerWidth />
 
 <div class="shell">
@@ -1950,7 +1754,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       on:newTab={newSession}
       on:settings={() => openSettings()}
       on:update={() => openSettings("system")}
-      on:brain={openBrain}
       on:history={() => openHistory()}
       on:setup={openSetup}
       on:report={reportProblem}
@@ -1967,11 +1770,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       <div class="fill col" in:fly={{ y: 8, ...motion }}>
         <PanelHeader title="Settings" on:close={() => closeTab(activeId)} />
         <Settings bind:section={settingsSection} on:close={() => closeTab(activeId)} on:setupRemote={openRemoteSetup} />
-      </div>
-    {:else if tab.kind === "brain"}
-      <div class="fill col" in:fly={{ y: 8, ...motion }}>
-        <PanelHeader title="Brain" on:close={() => closeTab(activeId)} />
-        <BrainView />
       </div>
     {:else if tab.kind === "history"}
       <div class="fill col" in:fly={{ y: 8, ...motion }}>
@@ -2027,9 +1825,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                 <Icon name="arrowLeft" />
               </button>
             {/if}
-            {#if coverOn && cover === "brain"}
-              <div class="cover" transition:fly|global={{ y: 8, ...motion }}><BrainView /></div>
-            {:else if coverOn && cover === "settings"}
+            {#if coverOn && cover === "settings"}
               <div class="cover" transition:fly|global={{ y: 8, ...motion }}>
                 <Settings bind:section={settingsSection} on:setupRemote={openRemoteSetup} />
               </div>
@@ -2105,38 +1901,37 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             {/if}
           </section>
           {/if}
-          {#if infoShown}
-            <SessionInfo
-              session={shown ?? ""}
-              project={planProject}
-              projectTitle={planTitle}
-              {folder}
-              {branch}
-              remoteHost={remoteOn ? ($remoteInfo?.host ?? "") : ""}
-              contextUsed={context.used}
-              contextLimit={context.limit}
-              {compacting}
-              {streaming}
-              {threads}
-              {running}
-              {approvals}
-              questions={asks}
-              {planInline}
-              doc={pinnedDoc}
-              width={infoWidth}
-              on:resize={resizeInfo}
-              on:openDoc={() => pinnedDoc && openArtifact(pinnedDoc, true)}
-              on:closeDoc={closePinnedDoc}
-              tokensIn={meta?.tokens_in ?? 0}
-              tokensOut={meta?.tokens_out ?? 0}
-              costUsd={meta?.cost_usd ?? 0}
-              provider={meta?.model.split("/")[0] ?? ""}
-              on:openSession={(e) => openSession(e.detail.id)}
-              on:openUrl={(e) => openPage(e.detail.url)}
-              on:compact={compact}
-              on:plan={showPlan}
-            />
-          {/if}
+          <SessionInfo
+            session={shown ?? ""}
+            project={planProject}
+            projectTitle={planTitle}
+            {folder}
+            {branch}
+            remoteHost={remoteOn ? ($remoteInfo?.host ?? "") : ""}
+            contextUsed={context.used}
+            contextLimit={context.limit}
+            {compacting}
+            {streaming}
+            {threads}
+            {running}
+            {approvals}
+            questions={asks}
+            {planInline}
+            doc={pinnedDoc}
+            width={infoWidth}
+            open={infoShown}
+            on:resize={resizeInfo}
+            on:openDoc={() => pinnedDoc && openArtifact(pinnedDoc, true)}
+            on:closeDoc={closePinnedDoc}
+            tokensIn={meta?.tokens_in ?? 0}
+            tokensOut={meta?.tokens_out ?? 0}
+            costUsd={meta?.cost_usd ?? 0}
+            provider={meta?.model.split("/")[0] ?? ""}
+            on:openSession={(e) => openSession(e.detail.id)}
+            on:openUrl={(e) => openPage(e.detail.url)}
+            on:compact={compact}
+            on:plan={showPlan}
+          />
         </div>
       {/if}
 
@@ -2193,7 +1988,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           on:unavailable={() => openSettings(remoteOn ? "remote" : "providers")}
           on:folder={(e) => patchTab(tab.id, { cwd: e.detail.path })}
           on:project={(e) => loadProject(e.detail.path ?? tab.cwd ?? folder)}
-          on:brain={openBrain}
         />
       </div>
       {/if}
@@ -2219,16 +2013,14 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     on:settings={() => openSettings()}
     on:previews={() => openPreview()}
     on:setup={openSetup}
-    on:brain={openBrain}
     on:history={() => openHistory()}
   />
 
   {#if setupOpen}
-    <Onboarding startStep={setupStep} server={setupServer} on:close={() => (setupOpen = false)} on:openBrain={openBrain} />
+    <Onboarding startStep={setupStep} server={setupServer} on:close={() => (setupOpen = false)} />
   {/if}
 
-  <!-- While a web page is shown its native view covers the bottom corner:
-       toasts move up into the window chrome, newest only. -->
+  
   <div class="toasts" class:chrome={toastsUp} aria-live="polite">
     {#each toastsUp ? $toasts.slice(-1) : $toasts as t (t.id)}
       {#if t.run}
@@ -2287,8 +2079,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   :global(html.parzi-maximized) .shell {
     border-radius: 0;
   }
-  /* The shell is a column: the top bar spans the width, and the session
-     fills what is under it. An older row direction crumpled that bar. */
+
   main {
     position: relative;
     z-index: 1;
@@ -2309,22 +2100,19 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     display: flex;
     margin: 0 var(--gap);
     overflow: hidden;
-    background: var(--glass-bg-solid);
-    border: var(--glass-border);
+    background: var(--panel);
+    border: 1px solid var(--line);
     border-bottom: none;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    box-shadow: var(--glass-inner);
   }
   .fill.col {
     flex-direction: column;
   }
-  /* The session and, beside it, the cards about it. */
   .stagerow {
     flex: 1;
     min-height: 0;
     display: flex;
   }
-  /* A draft shows only the column: pin it right. */
   .stagerow.solo {
     justify-content: flex-end;
   }
@@ -2354,27 +2142,24 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     min-height: 0;
     display: flex;
   }
-  /* Floats in the corner, so the page under it still starts at the top.
-     The 16px inset is the same side padding the cover bars use. */
+
   .back {
     position: absolute;
     top: calc(var(--space) * 2);
     right: calc(var(--space) * 4);
     z-index: 5;
   }
-  /* The top bars keep their right-hand controls clear of the arrow:
-     the bar's own 16px side padding, the 28px control, and 8px between them. */
+
+
   .cover :global(nav),
   .cover :global(header),
   .cover :global(.bar),
   .cover :global(.page-bar) {
     anchor-name: --cover-bar;
-    padding-right: calc(var(--space) * 4 + 28px + var(--space) * 2);
+    padding-right: calc(var(--space) * 4 + var(--space) * 7 + var(--space) * 2);
   }
-  /* Half of the 28px control, on the bar's midline. */
   .session:has(.cover) .back {
     position-anchor: --cover-bar;
-    /* Fallback keeps the old corner when a cover has no top bar. */
     top: anchor(center, calc(var(--space) * 2 + 14px));
     translate: 0 -50%;
   }
@@ -2390,11 +2175,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     overflow-x: hidden;
     overflow-y: auto;
     padding-bottom: calc(var(--dock) + calc(var(--space) * 8));
-    /* Text stays selectable. A mask here made copy come back empty. */
     user-select: text;
   }
-  /* The last lines fade into the page colour. The text itself is not masked,
-     so a copy still carries the words. */
+
   .thread-fade {
     pointer-events: none;
     position: absolute;
@@ -2405,33 +2188,28 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     z-index: 15;
     background: linear-gradient(to bottom, transparent, var(--bg) 55%);
   }
-  /* Home is the composer alone, a little above the middle. In a session
-     it docks at the bottom of the thread, beside the info column. */
+
   .composer {
     position: absolute;
     left: 50%;
     bottom: 46%;
     z-index: 20;
-    /* One width everywhere: as wide as a session's text column. Docking,
-       shifting for the side column and resizing all glide together. */
+
     width: min(var(--read), calc(100% - 64px - 2 * var(--shift, 0px)));
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
-    transition: width 300ms ease, bottom 300ms ease, transform 300ms ease;
+    transition: width 300ms var(--ease-out), bottom 300ms var(--ease-out), transform 300ms var(--ease-out);
   }
-  /* Browser mode sits under the tab. The bar already leaves 8px below it,
-     the same gap the tab has above it. */
+
   .composer.browse:not(.docked) {
     top: 0;
     bottom: auto;
   }
   .composer.docked {
     bottom: 14px;
-    /* As wide as the thread's text above it: the session's width less its
-       margins (16px), the thread's padding (48px) and the column. */
+
     width: min(var(--read), calc(100% - 64px - 2 * var(--shift, 0px)));
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
   }
-  /* The field covers the thread. A mask on the text made copy come back empty. */
   .composer.docked :global(.box) {
     background: var(--bg);
   }
@@ -2511,7 +2289,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   .toast-act:hover {
     background: var(--selected);
   }
-  /* Over a page: one line in the top bar, left of the window buttons. */
   .toasts.chrome {
     top: 5px;
     right: 150px;

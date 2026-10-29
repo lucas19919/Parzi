@@ -12,7 +12,6 @@ use parzi_runtime::toolhost::{ToolHost, ToolHostParts};
 use parzi_runtime::tools::{Approval, ApprovalMode, Approver, ToolCallInfo, ToolExecutor};
 use serde_json::json;
 
-/// Says no, and counts how often it was asked.
 #[derive(Default)]
 struct Counter(AtomicUsize);
 #[async_trait::async_trait]

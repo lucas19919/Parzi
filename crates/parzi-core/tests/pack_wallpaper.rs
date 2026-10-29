@@ -1,6 +1,5 @@
 use parzi_core::theme;
 
-// Own process, own home (see builtin_packs.rs).
 fn fresh_home() {
     let dir = std::env::temp_dir().join(format!("parzi-test-pack-art-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

@@ -14,7 +14,6 @@
   import "./shared.css";
 
   export let notify: (msg: string, err?: boolean) => void = () => {};
-  // "apps" is MCPs and connectors. "remote" is the block on General.
   export let which: "apps" | "remote" = "apps";
 
   const dispatch = createEventDispatcher<{ setupRemote: void }>();
@@ -23,24 +22,20 @@
   let loadError = "";
   let info: RemoteInfo | null = null;
   let saving = false;
-  // Add custom: an optional name, then a link, a copied block, or a command.
   let adding = false;
   let pasted = "";
   let customName = "";
 
-  // How each app answered when it last started, this visit.
   interface Health {
     state: "checking" | "signing" | "signin" | "ok" | "error";
     tools?: number;
     error?: string;
-    // The raw failure, shown only as a tooltip on the sentence.
     raw?: string;
   }
   let health: Record<string, Health> = {};
 
   const SIGN_IN = "sign-in needed";
 
-  // One sentence on the row. The raw error stays on the tooltip.
   function failureOf(raw: string): { text: string; title: string } {
     if (raw.includes("isn't installed") && raw.includes("npx")) return { text: "Needs Node.js", title: raw };
     if (/timed out/i.test(raw)) return { text: "Didn't answer in time", title: raw };
@@ -49,8 +44,6 @@
     return { text: text || "Couldn't connect", title: raw };
   }
 
-  // Connects and counts its tools. One that asks to sign in, just added,
-  // goes straight to its sign-in page (`signIn`).
   async function check(id: string, signInIfAsked = false) {
     health = { ...health, [id]: { state: "checking" } };
     try {
@@ -68,7 +61,6 @@
     }
   }
 
-  // Its sign-in page opens in the browser; Parzi keeps the token.
   async function signIn(id: string) {
     health = { ...health, [id]: { state: "signing" } };
     try {
@@ -81,22 +73,17 @@
     }
   }
 
-  // What each connected one says about itself: title, logo and tools.
   type Details = Awaited<ReturnType<typeof api.connectorDetails>>;
   let details: Record<string, Details> = {};
 
   async function loadDetails(id: string) {
     try {
-      // Waited for first: two loading at once must not drop each other.
       const d = await api.connectorDetails(id);
       details = { ...details, [id]: d };
     } catch {
-      // It connected a moment ago; the row still says so.
     }
   }
 
-  // What a tool does when the agent calls it: its own setting, else the
-  // approval mode's (Settings › General).
   $: policyAuto = (cfg?.lanes.default_mode ?? "ask") === "auto";
   const effective = (mode: string) => mode || (policyAuto ? "auto" : "ask");
   const TOOL_OPTIONS = [
@@ -125,7 +112,6 @@
     }
   }
 
-  // Apps set up in Claude, Cursor, or Grok, not added here yet.
   let found: { name: string; source: string; server: Server }[] = [];
 
   interface AppRow {
@@ -137,8 +123,6 @@
     server?: Server;
   }
 
-  // Catalog order, then apps copied from other programs, then anything
-  // added by a paste that is not in the catalog.
   function appList(config: ParziConfig | null, hits: typeof found, titles: Record<string, string>): AppRow[] {
     const map = (config?.mcp.servers ?? {}) as Record<string, Server>;
     const have = new Set(Object.keys(map));
@@ -172,7 +156,6 @@
   $: titles = Object.fromEntries(Object.entries(details).map(([id, d]) => [id, d.title || ""]));
   $: rows = which === "apps" ? appList(cfg, found, titles) : [];
   const catalogIds = new Set(CATALOG.map((c) => c.id));
-  // The catalog is the grid. Anything else is a connector the person added.
   $: mcpRows = rows.filter((row) => catalogIds.has(row.id));
   $: customRows = rows.filter((row) => !catalogIds.has(row.id));
   $: groups = [
@@ -190,8 +173,6 @@
     }
   }
 
-  // A known app: one button. Sign-in opens the service's page. GitHub uses
-  // the GitHub login Parzi already has. The person never picks an auth type.
   async function addKnown(c: CatalogConnector) {
     const server = hostedServer(c.url, { auth: c.auth === "gh" ? "gh" : "" });
     if (!(await save((cf) => (cf.mcp.servers[c.id] = server), ""))) return;
@@ -199,7 +180,6 @@
     else void check(c.id);
   }
 
-  // One found in another app, as it was set up there. No second form.
   async function addFound(name: string, server: Server) {
     if (cfg?.mcp.servers[name]) return notify(`${name} is already here`, true);
     if (await save((c) => (c.mcp.servers[name] = { ...server, enabled: true }), "")) void check(name, true);
@@ -216,7 +196,6 @@
 
   const NAME_OK = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
 
-  // A typed name, or the one taken from the paste. A block keeps its own names.
   function slugId(raw: string): string {
     let id = raw.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
     if (!id) return "";
@@ -233,8 +212,6 @@
     return freeName(id);
   }
 
-  // One paste. A link connects like a catalog app. A block copied from
-  // another app is added as those apps. A program is started as itself.
   async function addPasted() {
     const text = pasted.trim();
     const kind = classifyPaste(text);
@@ -264,7 +241,6 @@
     }
   }
 
-  // Linked from Set up Parzi while this shows: follow it.
   $: if ($linked) info = $linked;
 
   onMount(() => {
@@ -275,7 +251,6 @@
         .then((all) => (found = all as typeof found))
         .catch(() => {});
     }
-    // Back from a terminal that installed or signed in an agent there.
     const onFocus = () => {
       if (which === "remote" && info && agents.length) void checkAgents(true);
     };
@@ -331,7 +306,6 @@
     health = rest;
   }
 
-  // Agents on the server: what it last reported, checked again on demand.
   let agents: ProviderStatus[] = [];
   let checking = false;
 

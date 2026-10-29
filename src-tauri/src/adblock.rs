@@ -18,9 +18,7 @@ const LISTS: &[(&str, &str)] = &[
     ),
 ];
 const STALE: Duration = Duration::from_hours(96);
-// Network and cosmetic rules; the old network-only engine.dat is rebuilt.
 const ENGINE_FILE: &str = "engine2.dat";
-// Bounds the hide stylesheet a page gets (and the script that carries it).
 const MAX_SELECTORS: usize = 4000;
 const SETTINGS_FILE: &str = "adblock.json";
 
@@ -45,7 +43,6 @@ pub struct AdblockState {
     enabled: bool,
     allowed: bool,
     host: String,
-    /// Pages are filtered through `WebView2` hooks: Windows only for now.
     supported: bool,
 }
 
@@ -76,20 +73,16 @@ pub fn should_block(url: &str, source: &str, kind: &str) -> bool {
     filtering(source) && block_request(url, source, kind)
 }
 
-// The page hooks that call these are WebView2's (Windows) for now.
 #[cfg_attr(not(windows), allow(dead_code, reason = "WebView2 hooks only"))]
 pub fn enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
-/// Whether requests of a page at `source` are checked at all: decided once
-/// per navigation so each request skips the host lookup.
 #[cfg_attr(not(windows), allow(dead_code, reason = "WebView2 hooks only"))]
 pub fn filtering(source: &str) -> bool {
     enabled() && !source.is_empty() && current().is_some() && !allowed(&host_of(source))
 }
 
-/// One request of a page `filtering` said yes to.
 #[cfg_attr(not(windows), allow(dead_code, reason = "WebView2 hooks only"))]
 pub fn block_request(url: &str, source: &str, kind: &str) -> bool {
     let Some(engine) = current() else {
@@ -99,8 +92,6 @@ pub fn block_request(url: &str, source: &str, kind: &str) -> bool {
         .is_ok_and(|request| engine.check_network_request(&request).should_block())
 }
 
-/// Element hiding for one page: the site's own rules now, generic class and
-/// id rules once the page reports what it uses.
 #[cfg_attr(not(windows), allow(dead_code, reason = "WebView2 hooks only"))]
 pub struct Cosmetic {
     pub css: String,
@@ -134,8 +125,6 @@ pub fn class_id_css(classes: &[String], ids: &[String], exceptions: &HashSet<Str
     hide_css(found.iter().map(String::as_str))
 }
 
-/// One rule per selector, so a selector the page's CSS parser rejects drops
-/// only itself; braces could close the rule and restyle the page.
 fn hide_css<'a>(selectors: impl Iterator<Item = &'a str>) -> String {
     let mut css = String::new();
     for sel in selectors
@@ -154,7 +143,6 @@ pub fn adblock_state(url: &str) -> AdblockState {
     state(&host_of(url))
 }
 
-// Sync commands run on the main thread; the settings write must not.
 #[tauri::command]
 pub async fn adblock_enable(on: bool) -> Result<AdblockState, String> {
     ENABLED.store(on, Ordering::Relaxed);
@@ -237,8 +225,6 @@ fn read_settings() -> Option<Settings> {
 }
 
 fn save() -> Result<(), String> {
-    // Saves race on the blocking pool: one at a time, each snapshotting
-    // the state once it holds the lock, so the last write is the newest.
     static SAVE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _one = SAVE.lock().unwrap_or_else(PoisonError::into_inner);
     let path = settings_path().ok_or("no Parzi folder")?;

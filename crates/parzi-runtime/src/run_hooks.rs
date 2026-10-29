@@ -1,9 +1,3 @@
-//! Where a run's measurement meets its session. Git is looked at when a
-//! run starts, its tool calls are tallied while it runs, and when it ends
-//! its outcome (how it ended, its last reply, the files it changed, the
-//! checks it ran) and the branch its folder is on are kept on the session
-//! as `last_run`. Every hook logs and moves on when the store cannot be
-//! written: recording never stops a run.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -16,19 +10,12 @@ use crate::run::RunTally;
 
 pub(crate) type Tally = Arc<Mutex<RunTally>>;
 
-/// What git may add to a run's end, all of it: the start snapshot still
-/// coming in, the end's own look and the hashing. A run holds its slot
-/// until its outcome is kept, so a slow repo must not hold it long; past
-/// this the outcome goes without git's files.
 const GIT_WAIT: Duration = Duration::from_secs(3);
 
-/// The tally, even after a panic elsewhere left its lock poisoned: an
-/// update is never dropped.
 pub(crate) fn lock(t: &Tally) -> std::sync::MutexGuard<'_, RunTally> {
     t.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// A run began: git is looked at in the background.
 pub(crate) fn run_started(t: &Tally) {
     let (cause, cwd) = {
         let t = lock(t);
@@ -42,13 +29,10 @@ pub(crate) fn run_started(t: &Tally) {
     }));
 }
 
-/// A tool call began: its edits and checks are counted.
 pub(crate) fn tool_started(t: &Tally, id: &str, name: &str, input: &Value) {
     lock(t).tool_started(id, name, input);
 }
 
-/// A run could not start: the session says why. A housekeeping run (a
-/// `/compact`) is never the session's run, failed or not.
 pub(crate) fn launch_failed(store: &SessionStore, session: &str, cause: RunCause, error: &str) {
     if !cause.recorded() {
         return;
@@ -60,7 +44,6 @@ pub(crate) fn launch_failed(store: &SessionStore, session: &str, cause: RunCause
     }
 }
 
-/// The last finished reply since the run's first event.
 fn summary_of(events: &[Event]) -> String {
     events
         .iter()
@@ -74,7 +57,6 @@ fn summary_of(events: &[Event]) -> String {
         .unwrap_or_default()
 }
 
-/// Tool-named files first, then what only git saw.
 fn merge_files(edits: &[String], git: Vec<String>) -> Vec<FileTouch> {
     let mut out: Vec<FileTouch> = edits
         .iter()
@@ -97,11 +79,6 @@ fn merge_files(edits: &[String], git: Vec<String>) -> Vec<FileTouch> {
     out
 }
 
-/// A run's end, kept on its session once. The run itself records before
-/// it tells the window it is done, so the window reads the outcome with
-/// the news; the run's guard records again only when the run never got
-/// that far (a panic, an abort). `stopped`: the person stopped it;
-/// `settled`: the run returned.
 pub(crate) async fn run_ended(store: &SessionStore, t: &Tally, stopped: bool, settled: bool) {
     let (session, cause, recorded) = {
         let t = lock(t);

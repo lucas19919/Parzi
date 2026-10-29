@@ -251,7 +251,6 @@ async fn messages_left_at_the_turn_cap_reach_the_next_run() {
                     *n += 1;
                     *n
                 };
-                // Every turn leaves this session a message for the next.
                 let (ok, out) = a
                     .parzi(
                         "session.send_message",

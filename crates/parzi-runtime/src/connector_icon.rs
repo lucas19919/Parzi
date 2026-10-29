@@ -1,7 +1,3 @@
-//! A connector's logo, as an image the window can show (a data URL): one
-//! the person picked, else the icon its server declares, else its
-//! website's icon (the page's own `<link rel=icon>`, or `/favicon.ico`).
-//! Kept in the cache, so a site is asked once.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -49,7 +45,6 @@ fn data_url(bytes: &[u8], hint: &str) -> String {
     )
 }
 
-/// Keeps a logo the person picked for `name` (a copy of the file).
 pub fn set_picked(name: &str, file: &std::path::Path) -> Result<String, String> {
     let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
     if bytes.len() as u64 > 2 * MAX_ICON {
@@ -58,7 +53,6 @@ pub fn set_picked(name: &str, file: &std::path::Path) -> Result<String, String> 
     let dir = picked_dir().ok_or("no place to keep it")?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let safe = parzi_core::connectors::connector_name(name);
-    // One picked logo per connector, whatever its type.
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for e in entries.flatten() {
             if e.file_name()
@@ -128,14 +122,12 @@ fn fetch_image(url: &str) -> Option<String> {
     Some(data_url(&bytes, url))
 }
 
-/// `scheme://host` of an address.
 fn origin(url: &str) -> Option<String> {
     let (scheme, rest) = url.split_once("://")?;
     let host = rest.split(['/', '?', '#']).next()?;
     Some(format!("{scheme}://{host}"))
 }
 
-/// The site a hosted server belongs to: `mcp.linear.app` is linear.app.
 fn site_of(url: &str) -> Option<String> {
     let o = origin(url)?;
     let (scheme, host) = o.split_once("://")?;
@@ -148,7 +140,6 @@ fn site_of(url: &str) -> Option<String> {
     Some(format!("{scheme}://{host}"))
 }
 
-/// The `href` of the page's best icon link, made absolute.
 fn icon_link(html: &str, base: &str) -> Option<String> {
     let lower = html.to_ascii_lowercase();
     let mut best: Option<(u8, String)> = None;
@@ -206,9 +197,6 @@ fn from_site(site: &str) -> Option<String> {
     }
     let o = origin(site)?;
     fetch_image(&format!("{o}/favicon.ico")).or_else(|| {
-        // Sites behind a bot wall answer no fetch of their own: Google's
-        // favicon service knows most (only the domain goes; an unknown one
-        // gets a 404, and the initial shows).
         let host = o.split("://").nth(1)?;
         fetch_image(&format!(
             "https://www.google.com/s2/favicons?domain={host}&sz=64"
@@ -216,9 +204,6 @@ fn from_site(site: &str) -> Option<String> {
     })
 }
 
-/// The logo for connector `name` (blocking: it may ask the web). `icons`
-/// and `website` are what its server said about itself; `url` is where a
-/// hosted one lives. None: show its initial.
 #[must_use]
 pub fn resolve(name: &str, icons: &[String], website: &str, url: &str) -> Option<String> {
     if let Some(p) = picked(name) {
@@ -237,13 +222,11 @@ pub fn resolve(name: &str, icons: &[String], website: &str, url: &str) -> Option
         if let Some(dir) = c.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
-        // An empty file remembers there is none, so a site is asked once.
         let _ = std::fs::write(c, found.as_deref().unwrap_or(""));
     }
     found
 }
 
-/// Forgets a connector's logo (it was removed, or its address changed).
 pub fn forget(name: &str) {
     if let Some(c) = cache_path(name) {
         let _ = std::fs::remove_file(c);

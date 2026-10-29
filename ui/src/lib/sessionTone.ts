@@ -1,4 +1,3 @@
-// A session's dot on Home: running, waiting on you, failed, done, or quiet.
 import type { SessionMeta } from "./api";
 
 export type Tone = "live" | "need" | "bad" | "ok" | "idle";

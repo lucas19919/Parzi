@@ -84,7 +84,6 @@ fn artifact_validation_versions_and_dedups() {
         validate_artifact(&go).unwrap().language.as_deref(),
         Some("go")
     );
-    // Models name a document `doc`: it is one.
     let doc = serde_json::json!({"artifact": 1, "id": "x", "kind": "doc", "content": "# Hi"});
     assert_eq!(validate_artifact(&doc).unwrap().kind, "markdown");
     let preview = serde_json::json!({
@@ -256,8 +255,6 @@ fn purge_spares_live_runs_and_the_ancestors_they_report_to() {
         created: Utc::now(),
         updated: Utc::now(),
     };
-    // A finished parent whose background child still runs, with a done
-    // sibling; and a killed parent whose child waits in the queue.
     let all = vec![
         mk("boss", None, SessionStatus::Done),
         mk("mid", Some("boss"), SessionStatus::Idle),
@@ -282,7 +279,7 @@ fn theme_emits_css_vars_with_a_neutral_default() {
     assert_eq!(t.background.image, "");
     let css = t.to_css_vars();
     assert!(css.contains("--accent:#E8E8E8"), "the graphite default");
-    assert!(css.contains("--bg-blur:"));
+    assert!(!css.contains("--bg-blur:"), "no wallpaper grade vars");
 }
 
 #[test]

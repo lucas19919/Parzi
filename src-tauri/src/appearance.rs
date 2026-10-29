@@ -76,9 +76,9 @@ pub async fn background_url(app: AppHandle) -> Result<String, String> {
         .map(|m| (m.size().width, m.size().height, m.scale_factor()))
         .unwrap_or((1920, 1080, 1.0));
     let cache = parzi_core::paths::cache_dir().map_err(|e| e.to_string())?;
-    let (src, blur) = (abs.clone(), theme.background.blur);
+    let src = abs.clone();
     let rendered = tauri::async_runtime::spawn_blocking(move || {
-        parzi_core::wallpaper::prepare(&src, &cache, blur, sw, sh, scale)
+        parzi_core::wallpaper::prepare(&src, &cache, 0.0, sw, sh, scale)
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -120,7 +120,6 @@ pub async fn set_background(name: String) -> Result<String, String> {
 
 fn decode_b64(input: &str) -> Option<Vec<u8>> {
     use base64::Engine as _;
-    // Strip a data: prefix if present, then standard decode.
     let clean = input.split(',').next_back()?.trim();
     base64::engine::general_purpose::STANDARD.decode(clean).ok()
 }
@@ -141,23 +140,6 @@ pub async fn save_background_data(name: String, base64_data: String) -> Result<S
         return Err(e.to_string());
     }
     Ok(saved)
-}
-
-#[tauri::command]
-pub async fn palette_from_background() -> Result<parzi_core::theme::Palette, String> {
-    let theme = Theme::load().map_err(|e| e.to_string())?;
-    if theme.background.image.is_empty() {
-        return Err("no wallpaper set".into());
-    }
-    let path = parzi_core::paths::parzi_dir()
-        .map_err(|e| e.to_string())?
-        .join(&theme.background.image);
-    let path = checked_background(path).ok_or("bad background name")?;
-    tauri::async_runtime::spawn_blocking(move || {
-        parzi_core::theme::extract_palette(&path).map_err(|e| e.to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
 }
 
 fn theme_css(theme: &Theme) -> String {

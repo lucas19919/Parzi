@@ -30,7 +30,6 @@
   let registryErr = "";
   let registryBusy = false;
   let acpLabel = "";
-  // The install list, plus the one generic ACP slot. That slot has no installer.
   const AGENT_ORDER = [...PROVIDER_ORDER, "acp"];
 
   onMount(async () => {
@@ -63,7 +62,6 @@
 
   function statusLine(p: ProviderStatus | undefined, enabled: boolean, busy: boolean): string {
     if (!enabled) return "Off";
-    // Switched on again, but last checked while off: due for a check.
     if (!p || p.state === "unchecked" || p.state === "disabled") return busy ? "Checking…" : "Not checked yet";
     if (p.state === "error") return p.hint || "Check failed";
     const parts = [stateLabel(p)];
@@ -188,7 +186,7 @@
         {@const busy = allChecking || $checking.has(id)}
         {@const wait = $setupWaits.get(id)}
         {@const rawStep = entry.enabled && !wait ? nextStep(p) : null}
-        <!-- ACP has no installer and no sign-in script. The command field is how it is added. -->
+        
         {@const step = id === "acp" && rawStep?.label !== "Try again" ? null : rawStep}
         {@const ready = entry.enabled && isUsable(p)}
         {@const isOpen = open.has(id)}

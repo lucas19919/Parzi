@@ -493,7 +493,6 @@ async fn ask_user_asks_for_things_too_and_the_old_request_user_still_works() {
         .await;
     assert!(ok && out == "here.png", "{out}");
 
-    // An agent that learned request.user reaches the same question.
     let (ok, out) = host
         .call(
             "request.user",
@@ -571,7 +570,6 @@ async fn a_child_that_cannot_start_fails_the_call_instead_of_promising_a_report(
         assert!(err.contains("did not start"), "{err}");
         assert!(err.contains("not a provider"), "the reason: {err}");
     }
-    // The children say so too, and nobody waits on their reports.
     let kids = store.list_children(&parent.id).unwrap();
     assert_eq!(kids.len(), 2);
     for k in &kids {
@@ -580,7 +578,6 @@ async fn a_child_that_cannot_start_fails_the_call_instead_of_promising_a_report(
         assert_eq!(ended, Some(RunEndKind::NotStarted));
     }
 
-    // A message to a session whose agent is switched off fails the same way.
     let child = store
         .create_with_parent("helper", "t", "claude/model", Some(&parent.id))
         .unwrap();

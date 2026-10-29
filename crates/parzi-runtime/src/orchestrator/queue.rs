@@ -25,29 +25,20 @@ struct RunSidecar {
     note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     session: Option<VendorSession>,
-    /// The plan summary this session's conversation last saw.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     brief_hash: Option<String>,
-    /// The session that started this one in the background: told (and
-    /// woken) when its run ends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     report_to: Option<String>,
-    /// How its last run was set up, so a wake runs the same way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last: Option<Posture>,
 }
 
-/// A run's permissions and effort, as the person (or its parent) chose.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Posture {
     #[serde(default)]
     pub(crate) mode_override: Option<String>,
     #[serde(default)]
     pub(crate) effort: String,
-    /// The run had someone to ask (the person's approver). A wake restores
-    /// the host's approver only then: an agent-spawned child, which runs
-    /// without one, never gets the person's cards by being woken. Files
-    /// from before this was kept say yes, as wakes did then.
     #[serde(default = "yes")]
     pub(crate) ask: bool,
 }
@@ -86,15 +77,10 @@ struct PersistedRun {
     mode_override: Option<String>,
     #[serde(default)]
     inbox_from: Option<usize>,
-    // Attachment paths only (snippets already live in the user event).
     #[serde(default)]
     attachments: Vec<String>,
-    /// Queued with someone to ask. An approver cannot persist, so a
-    /// restored run asks through the one the host installs; runs queued
-    /// without one (agent-spawned children) stay without.
     #[serde(default)]
     ask: bool,
-    /// Why it was queued. Files from before causes were kept say Restart.
     #[serde(default = "restarted")]
     cause: RunCause,
 }
@@ -103,7 +89,6 @@ fn restarted() -> RunCause {
     RunCause::Restart
 }
 
-/// run.json is load-modify-saved from several tasks: one writer at a time.
 fn sidecar_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     LOCK.lock()
@@ -177,7 +162,6 @@ pub fn run_session(session_id: &str) -> Option<VendorSession> {
     load_sidecar(session_id).session
 }
 
-/// One load-change-save of a session's run.json, under the lock.
 fn edit_sidecar<R>(session_id: &str, f: impl FnOnce(&mut RunSidecar) -> R) -> R {
     let _write = sidecar_lock();
     let mut sidecar = load_sidecar(session_id);
@@ -197,12 +181,10 @@ pub(crate) fn set_brief_hash(session_id: &str, hash: Option<&str>) {
     edit_sidecar(session_id, |s| s.brief_hash = hash.map(str::to_string));
 }
 
-/// Who hears about this session's next run end.
 pub(crate) fn set_report_to(session_id: &str, parent: &str) {
     edit_sidecar(session_id, |s| s.report_to = Some(parent.to_string()));
 }
 
-/// Who hears about this run end, cleared: only one report goes out.
 pub(crate) fn take_report_to(session_id: &str) -> Option<String> {
     edit_sidecar(session_id, |s| s.report_to.take())
 }
@@ -224,8 +206,6 @@ pub(super) struct QueuedRun {
     pub(super) effort: String,
     pub(super) attachments: Vec<parzi_core::context::AttachedFile>,
     pub(super) approver: Option<Arc<dyn Approver>>,
-    /// Restored from disk after asking through an approver: launch hands it
-    /// the host's (see `Orchestrator::set_approver`).
     pub(super) restore_approver: bool,
     pub(super) mode_override: Option<String>,
     pub(super) prompt_recorded: bool,
@@ -297,8 +277,6 @@ pub(super) struct Pump {
 }
 
 impl Pump {
-    /// One shell registry per session, so background shells survive
-    /// across turns and a later run can read them.
     pub(super) fn shells_for(&self, sid: &str) -> Arc<crate::shell::ShellRegistry> {
         let mut shells = self.shells.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(reg) = shells.get(sid) {
@@ -343,7 +321,6 @@ impl Pump {
             save_sidecar(&q.session_id, &sidecar);
         }
         self.queue.lock().await.push_back(q);
-        // Wake the pump: a slot may already be free again.
         self.notify.notify_one();
     }
 }
@@ -445,14 +422,10 @@ impl Orchestrator {
     }
 }
 
-/// What became of a run Parzi itself started (a child, a message, a wake).
 pub(super) enum Dispatch {
     Launched,
-    /// No slot was free: it runs when one frees.
     Queued,
-    /// No slot was free and queueing is off: nothing will run it.
     Busy,
-    /// It could not start (the session already says why).
     Failed(ParziError),
 }
 

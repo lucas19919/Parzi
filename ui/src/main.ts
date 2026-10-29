@@ -2,8 +2,6 @@ import "./theme.css";
 import { invoke } from "@tauri-apps/api/core";
 import App from "./App.svelte";
 
-// Errors nothing caught go to Parzi's log, so a stuck or blank window
-// leaves a trace to find.
 function report(what: unknown) {
   const text = what instanceof Error ? `${what.message}\n${what.stack ?? ""}` : String(what);
   void invoke("ui_error", { message: text }).catch(() => {});

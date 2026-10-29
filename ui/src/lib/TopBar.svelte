@@ -12,10 +12,7 @@
   export let tabs: Tab[] = [];
   export let activeTabId = "";
   export let threads: { id: string; model: string }[] = [];
-  // The active draft's picked model, by value: tabs never invalidate on
-  // composer edits, so the strip would otherwise keep a stale icon.
   export let liveModel = "";
-  // The session column: offered on session tabs, and whether it shows.
   export let panelable = false;
   export let panelOpen = false;
   export let panelCount = 0;
@@ -27,7 +24,6 @@
     newTab: void;
     settings: void;
     update: void;
-    brain: void;
     history: void;
     setup: void;
     report: void;
@@ -40,7 +36,6 @@
 
   const MENU: { label: string; key: string; icon: ChromeIconName; run: () => void }[] = [
     { label: "History", key: "Ctrl+H", icon: "clock", run: () => dispatch("history") },
-    { label: "Brain", key: "Ctrl+B", icon: "brain", run: () => dispatch("brain") },
     { label: "Settings", key: "Ctrl+,", icon: "settings", run: () => dispatch("settings") },
     { label: "Set up Parzi", key: "", icon: "wrench", run: () => dispatch("setup") },
     { label: "Report a problem", key: "", icon: "alert", run: () => dispatch("report") },
@@ -52,7 +47,7 @@
 <div class="chrome">
 <header class="topbar" on:mousedown={startWindowDrag}>
   <div class="left">
-    <!-- Open, the button and the icons are one pill. It stays until the button is clicked again. -->
+    
     <div class="menu-pill" class:open={menuOpen}>
       <button
         class="icon-btn"
@@ -131,8 +126,7 @@
     display: flex;
     flex-direction: column;
   }
-  /* 44px holds a 28px tab with 8px above it; the panels below start right
-     under the bar, so the gap under the tab is the same 8px. */
+
   .topbar {
     height: 44px;
     display: flex;
@@ -143,8 +137,6 @@
     padding-left: var(--gap);
     user-select: none;
   }
-  /* One 4px step between the menu, Home, the tabs and +. */
-  /* The drawn bar sits on the left. The right column's icon flips it. */
   .panel-btn :global(svg) {
     transform: scaleX(-1);
   }
@@ -208,7 +200,6 @@
     line-height: 14px;
     text-align: center;
   }
-  /* One capsule: the menu button is the left end, the icons continue it. */
   .menu-pill {
     display: flex;
     align-items: center;
@@ -216,7 +207,8 @@
     height: 28px;
   }
   .menu-pill.open {
-    background: var(--panel);
+    background: transparent;
+    border: 1px solid var(--line);
     border-radius: 999px;
   }
   .menu-pill.open .icon-btn,

@@ -147,7 +147,6 @@ fn mtime_secs(m: &std::fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
-/// Two renders of one key in this process must not share a tmp file.
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 pub fn prepare(

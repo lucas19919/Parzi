@@ -1,10 +1,3 @@
-//! ParziOS on the server: apply the spec the desktop sends, install the
-//! user service, keep `parzi serve` answering, and relay `parzi rpc`.
-//!
-//! `parzi rpc` is the only door a remote client uses. It runs on the
-//! server as the SSH user, reads the 0600 `serve.json` itself and relays
-//! newline JSON between its stdio and the loopback socket, so SSH is the
-//! authentication and the serve token never leaves the machine.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,11 +15,8 @@ pub const SPEC_VERSION: u32 = 1;
 pub const SERVICE_NAME: &str = "parzi-os.service";
 const MAX_NOTES: usize = 2_000;
 const MAX_NOTE_BYTES: usize = 256 * 1024;
-/// A message with its attachments inlined fits.
 const MAX_RPC_LINE: usize = 32 * 1024 * 1024;
 
-/// What the desktop sends once at setup. Connectors and agent program
-/// paths are per machine and never travel; neither do secrets.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Spec {
     pub version: u32,
@@ -44,7 +34,6 @@ pub struct SpecNote {
     pub text: String,
 }
 
-/// One line of setup progress. `--json` prints these one per line.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Step {
     pub step: String,
@@ -70,7 +59,6 @@ impl Step {
     }
 }
 
-/// The portable part of a config: what a fresh machine should inherit.
 #[must_use]
 pub fn portable(mut cfg: ParziConfig) -> ParziConfig {
     cfg.mcp = parzi_core::config::McpConfig::default();
@@ -81,8 +69,6 @@ pub fn portable(mut cfg: ParziConfig) -> ParziConfig {
     cfg
 }
 
-/// The incoming config wins, except for what belongs to this machine:
-/// its connectors and the agent program paths it already found.
 #[must_use]
 pub fn merge_config(local: ParziConfig, incoming: ParziConfig) -> ParziConfig {
     let mut out = portable(incoming);
@@ -99,8 +85,6 @@ pub fn merge_config(local: ParziConfig, incoming: ParziConfig) -> ParziConfig {
     out
 }
 
-/// Apply a spec. Notes are only added: a note that already exists here was
-/// written here, and setup never overwrites it.
 pub fn apply_spec(spec: &Spec) -> Vec<Step> {
     if spec.version != SPEC_VERSION {
         return vec![Step::fail(
@@ -112,8 +96,6 @@ pub fn apply_spec(spec: &Spec) -> Vec<Step> {
         )];
     }
     let mut out = vec![];
-    // Once any device has synced settings here, they are the home copy: a
-    // second device joining must not overwrite them with its own.
     if crate::hub::settings_rev() > 0 {
         out.push(Step::ok(
             "config",
@@ -166,7 +148,6 @@ fn restore_notes(notes: &[SpecNote]) -> Result<(usize, usize, usize), String> {
     Ok((added, kept, skipped + notes.len().saturating_sub(MAX_NOTES)))
 }
 
-/// `~/.config/systemd/user/parzi-os.service`, honouring `XDG_CONFIG_HOME`.
 #[must_use]
 pub fn unit_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
@@ -213,15 +194,10 @@ async fn systemctl(args: &[&str]) -> Result<String, String> {
     quiet("systemctl", &all, Duration::from_secs(20)).await
 }
 
-/// True when this login has a systemd user manager to talk to.
 pub async fn systemd_user() -> bool {
     cfg!(target_os = "linux") && systemctl(&["show-environment"]).await.is_ok()
 }
 
-/// Write and enable the unit so the engine starts with the user's login.
-/// [`ensure_serving`] starts it. Without a user manager (containers, WSL
-/// without systemd) there is nothing to install: `parzi rpc` starts the
-/// engine detached whenever it is down.
 pub async fn install_service(exe: &Path) -> Vec<Step> {
     if !systemd_user().await {
         return vec![Step::ok(
@@ -273,8 +249,6 @@ async fn lingering() -> bool {
     .is_ok_and(|s| s.trim() == "Linger=yes")
 }
 
-/// Start `parzi serve` in its own process group with output in the log
-/// folder, so it outlives the SSH session that started it.
 pub fn spawn_detached(exe: &Path) -> Result<(), String> {
     let root = parzi_core::paths::ensure_dirs().map_err(|e| e.to_string())?;
     let log = std::fs::OpenOptions::new()
@@ -305,7 +279,6 @@ pub fn spawn_detached(exe: &Path) -> Result<(), String> {
         .map_err(|e| format!("could not start parzi serve: {e}"))
 }
 
-/// The running engine's version, if it answers.
 pub async fn serving_version() -> Option<String> {
     let v = desk::call_serve("health", json!({}), Duration::from_secs(3))
         .await
@@ -313,8 +286,6 @@ pub async fn serving_version() -> Option<String> {
     Some(v.get("version")?.as_str()?.to_string())
 }
 
-/// Make sure an engine of this binary's version answers. An older one is
-/// asked to stop first, so an upgrade takes effect without a reboot.
 pub async fn ensure_serving(exe: &Path, wait: Duration) -> Result<String, String> {
     let ours = env!("CARGO_PKG_VERSION");
     match serving_version().await {
@@ -350,7 +321,6 @@ pub async fn ensure_serving(exe: &Path, wait: Duration) -> Result<String, String
     }
 }
 
-/// How long a relayed op may take before the client hears a timeout.
 fn op_wait(op: &str) -> Duration {
     match op {
         "providers" | "doctor" => Duration::from_secs(90),
@@ -359,9 +329,6 @@ fn op_wait(op: &str) -> Duration {
     }
 }
 
-/// Relay newline JSON between stdio and the local engine until stdin
-/// closes. Requests carry an `id` that the matching reply echoes; replies
-/// may arrive out of order.
 pub async fn relay(exe: &Path) -> std::io::Result<()> {
     let out = Arc::new(tokio::sync::Mutex::new(tokio::io::stdout()));
     let hello = match ensure_serving(exe, Duration::from_secs(15)).await {
@@ -385,7 +352,6 @@ pub async fn relay(exe: &Path) -> std::io::Result<()> {
             continue;
         }
         if is_subscribe(&line) {
-            // One stream per link; asking twice changes nothing.
             if follower
                 .as_ref()
                 .is_none_or(tokio::task::JoinHandle::is_finished)
@@ -400,7 +366,6 @@ pub async fn relay(exe: &Path) -> std::io::Result<()> {
             let _ = write_line(&out, &reply).await;
         });
     }
-    // stdin closed: answer what was already asked before exiting.
     if let Some(f) = follower {
         f.abort();
     }
@@ -419,9 +384,6 @@ fn is_subscribe(line: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Hold a `subscribe` stream to the engine and write each event to stdout
-/// as `{"event": …}`. When the engine restarts, start it if needed and
-/// follow again; the client is told with a `resync` event so it can reload.
 async fn follow(out: Arc<tokio::sync::Mutex<tokio::io::Stdout>>, exe: PathBuf) {
     let mut first = true;
     loop {
@@ -489,8 +451,6 @@ async fn relay_one(line: &str) -> Value {
     let Ok(Value::Object(mut req)) = serde_json::from_str::<Value>(line) else {
         return json!({ "ok": false, "error": "not a JSON object" });
     };
-    // The request number travels as `rid`; `id` belongs to the op (a
-    // session id). A client from 0.1.23 sent a numeric `id` instead.
     let (key, rid) = match req.remove("rid") {
         Some(rid) => ("rid", rid),
         None if req.get("id").is_some_and(Value::is_u64) => {
@@ -519,8 +479,6 @@ async fn write_line(out: &tokio::sync::Mutex<tokio::io::Stdout>, v: &Value) -> s
     out.flush().await
 }
 
-/// `read_until(b'\n')` with a ceiling: a line longer than `cap` is read to
-/// its end and dropped, so one bad line cannot grow memory without bound.
 pub async fn read_line_capped<R: tokio::io::AsyncBufRead + Unpin>(
     reader: &mut R,
     buf: &mut Vec<u8>,

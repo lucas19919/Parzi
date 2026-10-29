@@ -1,8 +1,3 @@
-//! What a run changed, as git sees it: a snapshot of `git status` and HEAD
-//! when the run starts, diffed when it ends. Files already dirty at the
-//! start count only when the run changed them again. While another run
-//! works in the same repo the two cannot be told apart, so each keeps only
-//! the files its own tool calls named.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -12,14 +7,9 @@ use std::time::Duration;
 
 use parzi_core::paths::same_path;
 
-/// Git gets this long per snapshot; a bigger repo just goes without.
 const BUDGET: Duration = Duration::from_secs(3);
 const MAX_ENTRIES: usize = 5_000;
-/// Files up to this size are hashed; bigger ones go by size and time.
 const HASH_UP_TO: u64 = 256 * 1024;
-/// With more dirty files than this, none are hashed: size and time tell
-/// them apart well enough, and reading thousands of files would hold up
-/// the run's end.
 const HASH_FILES: usize = 500;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,7 +27,6 @@ struct Live {
 
 static LIVE: Mutex<Vec<Live>> = Mutex::new(Vec::new());
 
-/// A run's place in the registry of runs per repo; leaves it when dropped.
 struct Slot {
     id: u64,
     overlapped: Arc<AtomicBool>,
@@ -70,15 +59,11 @@ impl Drop for Slot {
     }
 }
 
-/// The repo as a run found it.
 pub(crate) struct GitMark {
     root: PathBuf,
-    /// The run's folder inside the repo (`ui/src/`), "" at the top.
     prefix: String,
     head: Option<String>,
-    /// The branch checked out at the start ("" when detached).
     branch: String,
-    /// Dirty paths at the start; None for one that did not exist then.
     dirty: HashMap<String, Option<Print>>,
     slot: Slot,
 }
@@ -103,7 +88,6 @@ fn text(bytes: Vec<u8>) -> String {
     String::from_utf8_lossy(&bytes).trim().to_string()
 }
 
-/// Paths `git status --porcelain -z` lists as changed or new.
 fn parse_status(raw: &[u8]) -> Vec<String> {
     let mut out = vec![];
     let mut parts = raw.split(|b| *b == 0);
@@ -113,7 +97,6 @@ fn parse_status(raw: &[u8]) -> Vec<String> {
         }
         let (code, path) = (&rec[..2], &rec[3..]);
         out.push(String::from_utf8_lossy(path).into_owned());
-        // A rename or copy is followed by where it came from.
         if code.contains(&b'R') || code.contains(&b'C') {
             parts.next();
         }
@@ -134,9 +117,6 @@ fn print(path: &Path, hashed: bool) -> Option<Print> {
     })
 }
 
-/// Whether a dirty file is as the run found it: same size and time, and
-/// same content when both looks hashed it (one may not have: see
-/// `HASH_FILES`). None is a file that did not exist.
 fn unchanged(before: Option<&Option<Print>>, now: Option<&Print>) -> bool {
     match (before, now) {
         (Some(Some(a)), Some(b)) => {
@@ -179,8 +159,6 @@ async fn status(root: &Path) -> Option<Vec<String>> {
 }
 
 impl GitMark {
-    /// The snapshot for a run in `cwd`; None outside a repo, without git,
-    /// or when git takes longer than its budget.
     pub(crate) async fn take(cwd: &Path) -> Option<Self> {
         if cwd.as_os_str().is_empty() || !cwd.is_dir() {
             return None;
@@ -209,19 +187,15 @@ impl GitMark {
         })
     }
 
-    /// Whether another run worked in the same repo meanwhile.
     pub(crate) fn overlapped(&self) -> bool {
         self.slot.overlapped.load(Ordering::Relaxed)
     }
 
-    /// The branch checked out when the run started ("" when detached).
     #[cfg(test)]
     pub(crate) fn branch(&self) -> &str {
         &self.branch
     }
 
-    /// What the run did to the repo: the files it changed (see `files`) and
-    /// the branch it ended on (the one it started on when git cannot say).
     pub(crate) async fn finish(self, named: &[String]) -> Finished {
         let branch = current_branch(&self.root)
             .await
@@ -232,9 +206,6 @@ impl GitMark {
         }
     }
 
-    /// Files the run changed, relative to its folder: what it committed and
-    /// what is dirty now that was not (or was different) at the start. With
-    /// an overlapping run, only those `named` by the run's own tool calls.
     async fn files(self, named: &[String]) -> Vec<String> {
         let mut changed: BTreeSet<String> = BTreeSet::new();
         let head = git(&self.root, &["rev-parse", "--verify", "-q", "HEAD"])
@@ -274,21 +245,16 @@ impl GitMark {
     }
 }
 
-/// What a run left in its repo.
 pub(crate) struct Finished {
     pub(crate) files: Vec<String>,
-    /// "" on a detached HEAD.
     pub(crate) branch: String,
 }
 
-/// The branch checked out in `root`: "" when HEAD is detached, None when
-/// git cannot say.
 async fn current_branch(root: &Path) -> Option<String> {
     let name = text(git(root, &["rev-parse", "--abbrev-ref", "HEAD"]).await?);
     Some(if name == "HEAD" { String::new() } else { name })
 }
 
-/// A repo-root path as seen from the run's folder (`prefix` inside it).
 fn from_root(prefix: &str, path: &str) -> String {
     if let Some(rest) = path.strip_prefix(prefix) {
         return rest.to_string();
@@ -383,7 +349,6 @@ mod tests {
     #[tokio::test]
     async fn a_folder_outside_git_has_no_mark() {
         let d = tempfile::tempdir().unwrap();
-        // Inside a temp folder that a parent repo might hold, ask git first.
         let inside = std::process::Command::new("git")
             .args(["rev-parse", "--show-toplevel"])
             .current_dir(d.path())

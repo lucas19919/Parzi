@@ -26,10 +26,7 @@ pub struct NoteMeta {
     pub title: String,
     pub projects: Vec<String>,
     pub tags: Vec<String>,
-    /// This device's folder (a project note only): `folder@<device>`, else
-    /// a plain `folder` from before folders were per device.
     pub folder: Option<String>,
-    /// Every device's folder, keyed by device id ("" for a plain `folder`).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub folders: std::collections::BTreeMap<String, String>,
     pub source: Option<String>,
@@ -40,8 +37,6 @@ pub struct NoteMeta {
     pub modified: i64,
     pub bytes: u64,
     pub summary: String,
-    /// The note this is a sync conflict copy of, while that note exists.
-    /// Copies stay out of agent context and search until the user keeps one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conflict_of: Option<String>,
 }
@@ -77,7 +72,6 @@ pub struct BrainContext {
     pub text: String,
     pub attached: Vec<String>,
     pub listed: Vec<String>,
-    /// Pinned notes too long to fit in full: listed on demand instead.
     #[serde(default)]
     pub overflow: Vec<String>,
     pub chars: usize,
@@ -104,8 +98,6 @@ pub fn projects() -> Result<Vec<Project>> {
     Ok(Vault::open()?.projects())
 }
 
-/// Deepest project whose folder contains `cwd`, or None. New threads use
-/// this instead of a shared fallback so same-project reads stay meaningful.
 #[must_use]
 pub fn project_for_folder(cwd: &str) -> Option<String> {
     Vault::open().ok()?.project_at(cwd)
@@ -123,13 +115,8 @@ pub fn pin(path: &str, on: bool) -> Result<NoteMeta> {
     Vault::open()?.set_pinned(path, on)
 }
 
-/// Where a new project's folder goes when no full path is given: beside
-/// the person's other projects (the folder most of them share, so
-/// `D:\Repos` when Parzi and sepia live there), else `~/Projects`.
-/// Parzi's own folders (scratch, worktrees) never count.
 #[must_use]
 pub fn projects_root() -> PathBuf {
-    // Set by tests (and anyone who wants new projects somewhere fixed).
     if let Some(root) = std::env::var_os("PARZI_PROJECTS").filter(|r| !r.is_empty()) {
         return PathBuf::from(root);
     }
@@ -150,7 +137,6 @@ pub fn projects_root() -> PathBuf {
     })
 }
 
-/// The parent most of `folders` share, skipping any under `own`.
 fn root_of(folders: &[String], own: Option<&Path>) -> Option<PathBuf> {
     let mut counts: Vec<(PathBuf, usize)> = vec![];
     for f in folders.iter().filter(|f| !f.trim().is_empty()) {
@@ -166,7 +152,6 @@ fn root_of(folders: &[String], own: Option<&Path>) -> Option<PathBuf> {
             None => counts.push((parent.to_path_buf(), 1)),
         }
     }
-    // The most shared; the first seen wins a tie.
     let best = counts.iter().map(|(_, n)| *n).max()?;
     counts.into_iter().find(|(_, n)| *n == best).map(|(p, _)| p)
 }
@@ -192,9 +177,6 @@ pub fn resolve_conflict(copy: &str, keep_copy: bool) -> Result<String> {
     Vault::open()?.resolve_conflict(copy, keep_copy)
 }
 
-/// The note a sync conflict copy stands for: the sync saves a device's side
-/// of a two-sided edit of `notes/a.md` as `notes/a.conflict-<device>.md`
-/// (`-2`, `-3`... when taken). None for any other name.
 #[must_use]
 pub fn conflict_original(path: &str) -> Option<String> {
     let (base, device) = strip_md(path).rsplit_once(".conflict-")?;
@@ -216,7 +198,6 @@ pub fn inside(folder: &Path, path: &Path) -> bool {
 
 pub struct Vault {
     root: PathBuf,
-    /// Whose `folder@` keys this vault reads; None is this machine.
     device: Option<String>,
 }
 
@@ -232,7 +213,6 @@ impl Vault {
         }
     }
 
-    /// A vault read as another device would (tests, and the sync's view).
     pub fn at_device(root: impl Into<PathBuf>, device: &str) -> Self {
         Self {
             root: root.into(),
@@ -244,10 +224,6 @@ impl Vault {
         self.device.clone().unwrap_or_else(crate::device::id)
     }
 
-    /// Move every plain `folder:` (no device keys yet) to this device's
-    /// `folder@<id>` key. A note made before folders were per device was
-    /// made here; before it syncs anywhere it must say so. Returns how many
-    /// notes changed.
     pub fn claim_plain_folders(&self) -> usize {
         let key = format!("folder@{}", self.device());
         let mut changed = 0;
@@ -325,9 +301,6 @@ impl Vault {
         Ok(std::fs::remove_file(self.locate(path)?.1)?)
     }
 
-    /// Notes holding every word of `query` in their title or body. More
-    /// words in the title rank first, then more hits overall; ties keep
-    /// vault order. Sync conflict copies would only repeat their original.
     #[must_use]
     pub fn search(&self, query: &str) -> Vec<SearchHit> {
         let mut terms: Vec<String> = vec![];
@@ -377,8 +350,6 @@ impl Vault {
             Err(ParziError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => vec![],
             Err(e) => return Err(e),
         };
-        // This device's folder; a plain `folder` from before is this device's
-        // too (it resolved here), so it moves to the device key.
         let key = format!("folder@{}", self.device());
         let text = rewrite_raw(
             &raw,
@@ -429,7 +400,6 @@ impl Vault {
         self.set_flag(path, "archived", on)
     }
 
-    /// Sets or clears a `key: true` flag; a cleared flag drops its line.
     fn set_flag(&self, path: &str, key: &str, on: bool) -> Result<NoteMeta> {
         let (rel, full) = self.locate(path)?;
         let raw = read_whole(&full, &rel)?;
@@ -445,8 +415,6 @@ impl Vault {
         self.meta(rel, &full)
     }
 
-    /// The note of project `slug`. Plain notes (no `folder`) are refused so
-    /// archive and delete can never reach them.
     fn project_note(&self, slug: &str) -> Result<(String, PathBuf)> {
         let slug = check_slug(slug.trim())?;
         let (rel, full) = self.locate(&format!("projects/{slug}.md"))?;
@@ -461,7 +429,6 @@ impl Vault {
         Ok((rel, full))
     }
 
-    /// Archive/unarchive a project. Archived projects vanish from routing and catalogs.
     fn project_archive(&self, slug: &str, on: bool) -> Result<Project> {
         let (rel, _) = self.project_note(slug)?;
         let slug = slug.trim();
@@ -486,22 +453,18 @@ impl Vault {
         })
     }
 
-    /// Delete a project's note. Mappings to a missing slug are ignored.
     fn project_delete(&self, slug: &str) -> Result<String> {
         let (rel, full) = self.project_note(slug)?;
         std::fs::remove_file(&full)?;
         Ok(rel)
     }
 
-    /// Slug of the project holding `cwd`. Reads only the project notes, not
-    /// every note body, since new threads call this on the hot path.
     fn project_at(&self, cwd: &str) -> Option<String> {
         let homes = self.project_folders();
         let at = deepest(cwd, homes.iter().map(|(s, f)| (s.as_str(), f.as_str())))?;
         homes.into_iter().nth(at).map(|(slug, _)| slug)
     }
 
-    /// (slug, folder) of every live project, from `projects/*.md` alone.
     fn project_folders(&self) -> Vec<(String, String)> {
         let device = self.device();
         let mut out = vec![];
@@ -529,7 +492,6 @@ impl Vault {
                 let Some(slug) = project_slug(&rel) else {
                     continue;
                 };
-                // Same rule as projects_of: a conflict copy routes nothing.
                 if conflict_original(&rel).is_some_and(|o| self.root.join(o).is_file()) {
                     continue;
                 }
@@ -559,8 +521,6 @@ impl Vault {
         assemble(&notes, project)
     }
 
-    /// Pinned notes too long to send in full, each with where that happens:
-    /// project slugs, and `all` for sessions outside every project.
     #[must_use]
     pub fn overflow(&self) -> BTreeMap<String, Vec<String>> {
         let notes = self.scan();
@@ -580,8 +540,6 @@ impl Vault {
         out
     }
 
-    /// Settle a sync conflict: keep the copy (it replaces the original) or
-    /// the original (the copy goes). Returns the original's path.
     pub fn resolve_conflict(&self, copy: &str, keep_copy: bool) -> Result<String> {
         let (rel, full) = self.locate(copy)?;
         let original = conflict_original(&rel).ok_or_else(|| {
@@ -591,7 +549,6 @@ impl Vault {
         if keep_copy {
             atomic_write(&home, &read_whole(&full, &rel)?)?;
         } else if !home.is_file() {
-            // Dropping the copy would lose the only version left.
             return Err(ParziError::Validation(format!(
                 "`{original}` is gone; keep the copy instead"
             )));
@@ -653,13 +610,7 @@ impl Vault {
     }
 }
 
-/// The brain part of the system prompt for sessions in `project` (None:
-/// outside every project), within `CONTEXT_CAP` chars. Pinned notes go in
-/// full while they fit, this project's before the ones for every session
-/// since they matter more here. The rest are listed with a summary, pinned
-/// notes that did not fit first.
 fn assemble(notes: &[Note], project: Option<Project>) -> Option<BrainContext> {
-    // A conflict copy would repeat its original; the user settles it first.
     let by_path: HashMap<&str, &Note> = notes
         .iter()
         .filter(|n| n.meta.conflict_of.is_none())
@@ -702,7 +653,6 @@ fn assemble(notes: &[Note], project: Option<Project>) -> Option<BrainContext> {
     }
     let mut chars = text.chars().count();
     let order: Vec<&Note> = mapped.into_iter().chain(everywhere).collect();
-    // Room for the on-demand header and its last line, whatever is listed.
     let reserve = ON_DEMAND.len() + more_line(order.len()).chars().count();
     let (mut attached, mut overflow, mut rest) = (vec![], vec![], vec![]);
     for n in order {
@@ -731,7 +681,6 @@ fn assemble(notes: &[Note], project: Option<Project>) -> Option<BrainContext> {
         let mut shown = 0;
         for (i, n) in listed.iter().take(MAX_LISTED).enumerate() {
             let line = demand_line(n, i < overflow.len());
-            // Each line leaves room for the "…and N more" that may follow.
             let after = match listed.len() - i - 1 {
                 0 => 0,
                 left => more_line(left).chars().count(),
@@ -810,7 +759,6 @@ impl Resolver {
             .map(String::as_str)
     }
 
-    /// The original of a conflict copy at `path`, while it exists.
     fn original_of(&self, path: &str) -> Option<String> {
         let original = conflict_original(path)?;
         self.paths.get(&strip_md(&original).to_lowercase()).cloned()
@@ -931,7 +879,6 @@ fn walk(root: &Path) -> Vec<(String, PathBuf)> {
 
 fn load(path: String, full: &Path, resolver: &Resolver, device: &str) -> std::io::Result<Note> {
     let md = std::fs::metadata(full)?;
-    // An oversized note still lists with its title and summary.
     let raw = String::from_utf8_lossy(&read_head(full, MAX_BYTES)?).into_owned();
     let modified = md
         .modified()
@@ -1017,7 +964,6 @@ fn summary(description: Option<&str>, body: &str) -> String {
     ellipsize(&text, SUMMARY_MAX)
 }
 
-/// At most `max` chars, ending in `…` when cut.
 fn ellipsize(text: &str, max: usize) -> String {
     if text.char_indices().nth(max).is_none() {
         return text.to_string();
@@ -1155,8 +1101,6 @@ fn key_of(line: &str) -> Option<String> {
     (!key.is_empty()).then(|| key.to_string())
 }
 
-/// `folder@<device>` keys hold each device's folder for a project; a plain
-/// `folder` predates them and counts only while no device key exists.
 fn fields_for(blocks: &[Block], device: &str) -> Fields {
     let mut f = fields_raw(blocks);
     f.folder = f
@@ -1231,8 +1175,6 @@ fn rewrite(raw: &str, edits: &[(&str, Option<String>)]) -> String {
     out
 }
 
-/// `rewrite` over raw bytes: the frontmatter is edited as text and the body
-/// keeps its exact bytes, so a stray non-UTF-8 byte survives a pin.
 fn rewrite_raw(raw: &[u8], edits: &[(&str, Option<String>)]) -> Result<Vec<u8>> {
     let text = String::from_utf8_lossy(raw);
     let body = split(&text).1.len();
@@ -1254,7 +1196,6 @@ fn too_big(path: &str) -> ParziError {
     ))
 }
 
-/// The whole note, refused past the size cap so an edit never truncates it.
 fn read_whole(full: &Path, path: &str) -> Result<Vec<u8>> {
     let raw = read_head(full, MAX_BYTES + 1)?;
     if raw.len() as u64 > MAX_BYTES {
@@ -1263,7 +1204,6 @@ fn read_whole(full: &Path, path: &str) -> Result<Vec<u8>> {
     Ok(raw)
 }
 
-/// At most `cap` bytes from the start of the file.
 fn read_head(full: &Path, cap: u64) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
     let mut raw = vec![];
@@ -1278,7 +1218,6 @@ fn front_blocks(raw: &[u8]) -> Vec<Block> {
         .unwrap_or_default()
 }
 
-/// Frontmatter fields only, for callers that never need the body.
 fn front_fields(full: &Path, device: &str) -> Option<Fields> {
     Some(fields_for(
         &front_blocks(&read_head(full, MAX_BYTES).ok()?),
@@ -1407,13 +1346,9 @@ fn projects_of(notes: &[Note]) -> Vec<Project> {
         .iter()
         .filter_map(|home| {
             let slug = project_slug(&home.meta.path)?;
-            // Archived notes stay on disk but leave every project list, and
-            // a conflict copy of a project note is no second project.
             if home.meta.archived || home.meta.conflict_of.is_some() {
                 return None;
             }
-            // A project is a note with a folder on any device. Here it may
-            // have none yet: it still lists, with an empty folder.
             if home.meta.folders.is_empty() {
                 return None;
             }
@@ -1440,17 +1375,13 @@ fn projects_of(notes: &[Note]) -> Vec<Project> {
         .collect()
 }
 
-/// A note filed directly under `prefix` (`projects/<slug>/`) belongs to that
-/// project even without frontmatter: placement implies membership.
 fn note_in_project_folder(path: &str, prefix: &str) -> bool {
-    // get() instead of slicing: a non-ASCII name may not split at prefix.len().
     path.get(..prefix.len())
         .is_some_and(|h| h.eq_ignore_ascii_case(prefix))
         && path.len() > prefix.len()
         && !path[prefix.len()..].contains('/')
 }
 
-/// A project slug names `projects/<slug>.md`: one plain segment, never `all`.
 fn check_slug(slug: &str) -> Result<&str> {
     if slug.is_empty() {
         return Err(ParziError::Validation("project slug is empty".into()));
@@ -1522,10 +1453,6 @@ fn expand(folder: &str) -> PathBuf {
     }
 }
 
-/// Index of the project whose folder holds `cwd`: the deepest folder wins,
-/// equal folders go to the first slug. Both sides expand `~`, resolve when
-/// they exist and ignore case on Windows, so thread routing and the brain
-/// context always pick the same project.
 fn deepest<'a>(cwd: &str, projects: impl IntoIterator<Item = (&'a str, &'a str)>) -> Option<usize> {
     let cwd = cwd.trim();
     if cwd.is_empty() {
@@ -1548,7 +1475,6 @@ fn deepest<'a>(cwd: &str, projects: impl IntoIterator<Item = (&'a str, &'a str)>
 }
 
 fn normalize(p: &Path) -> String {
-    // A project folder from a note is agent-writable: never resolve a share.
     let real = if crate::paths::is_network_path(&p.to_string_lossy()) {
         p.to_path_buf()
     } else {
@@ -1592,9 +1518,6 @@ fn stem(path: &str) -> &str {
     strip_md(path.rsplit('/').next().unwrap_or(path))
 }
 
-/// How lowercase `terms` match a note: (terms in the title, hits in title
-/// and body, byte offset in `body` of the first body hit). None when any
-/// term is in neither.
 fn score(title: &str, body: &str, terms: &[String]) -> Option<(usize, usize, Option<usize>)> {
     let (title, folded) = (title.to_lowercase(), body.to_lowercase());
     let (mut titled, mut hits, mut first) = (0, 0, None::<usize>);
@@ -1613,8 +1536,6 @@ fn score(title: &str, body: &str, terms: &[String]) -> Option<(usize, usize, Opt
     Some((titled, hits, first.map(|at| unfold(body, at))))
 }
 
-/// The byte in `hay` where byte `pos` of `hay.to_lowercase()` comes from
-/// (lowercasing can change a char's length).
 fn unfold(hay: &str, pos: usize) -> usize {
     let mut seen = 0;
     for (i, c) in hay.char_indices() {
@@ -1643,9 +1564,6 @@ fn snippet(body: &str, at: usize) -> String {
     out
 }
 
-/// The first `max` chars of a note body, marked on a line of its own when
-/// cut: unlike `text::clip`'s ellipsis, an agent must see that the note goes
-/// on, so it can read the rest.
 fn truncated(text: &str, max: usize) -> String {
     match text.char_indices().nth(max) {
         Some((i, _)) => format!("{}\n…(truncated)", &text[..i]),
@@ -1672,9 +1590,7 @@ mod tests {
             root_of(&folders, Some(own)),
             Some(PathBuf::from("D:/Repos"))
         );
-        // Only Parzi's own: no root from them.
         assert_eq!(root_of(&folders[3..], Some(own)), None);
-        // A drive root alone is no parent to put projects in.
         assert_eq!(root_of(&["D:/".to_string()], Some(own)), None);
     }
 
@@ -1768,7 +1684,6 @@ mod tests {
             .project_upsert(Some("app"), "App", "C:\\src\\app")
             .unwrap();
         assert_eq!(p.folder, "C:\\src\\app");
-        // Synced to the laptop it is still a project, with no folder there yet.
         let seen = laptop.projects();
         assert_eq!((seen.len(), seen[0].folder.as_str()), (1, ""));
         assert_eq!(laptop.project_at("/Users/l/src/app"), None);
@@ -1878,7 +1793,6 @@ mod tests {
             .unwrap();
         assert_eq!(updated.title, "Parzi");
         let raw = v.read("projects/parzi-app.md").unwrap();
-        // Unknown keys stay put; the plain folder became this device's.
         assert!(
             raw.starts_with("---\ntitle: Parzi\nowner: lucas\nfolder@"),
             "{raw}"
@@ -2097,7 +2011,6 @@ mod tests {
         v.write("notes/other.md", "Unrelated.").unwrap();
         let ctx = v.context(&folder.join("src")).unwrap();
         assert_eq!(ctx.project.as_ref().map(|p| p.slug.as_str()), Some("demo"));
-        // The project's notes come before the ones for every session.
         assert_eq!(ctx.attached, ["notes/style.md", "notes/me.md"]);
         assert_eq!(ctx.listed, ["notes/release.md", "notes/machines.md"]);
         assert!(ctx.overflow.is_empty());
@@ -2214,8 +2127,6 @@ mod tests {
         std::fs::create_dir_all(&folder).unwrap();
         v.project_upsert(Some("demo"), "Demo", folder.to_str().unwrap())
             .unwrap();
-        // A big note for every session sorts first by title but must not
-        // push this project's own pinned note out.
         let big = "y".repeat(CONTEXT_CAP - 1_000);
         v.write(
             "aaa.md",
@@ -2234,14 +2145,11 @@ mod tests {
         assert_eq!(ctx.attached, ["zzz.md"]);
         assert_eq!(ctx.overflow, ["aaa.md"]);
         assert!(ctx.text.contains("\n- aaa.md — aaa (pinned, too long"));
-        // Outside the project the big note fits.
         let bare = v.context(d.path()).unwrap();
         assert_eq!(bare.attached, ["aaa.md"]);
         assert!(bare.overflow.is_empty());
         assert_eq!(v.overflow()["aaa.md"], ["demo"]);
 
-        // Fill the room exactly: the on-demand header and its last line
-        // still fit within the cap, whatever the pinned notes left.
         for pad in [0, 1, 7, 30, 60, 200] {
             let (d, v) = vault();
             let folder = d.path().join("code");
@@ -2300,7 +2208,6 @@ mod tests {
             .unwrap();
         let ctx = v.context(&inner.join("src")).unwrap();
         assert_eq!(ctx.project.as_ref().unwrap().slug, "inner");
-        // Both is mapped here too, so it counts with the project's notes.
         assert_eq!(ctx.attached, ["local.md", "both.md", "global.md"]);
         assert!(ctx.listed.is_empty());
         assert_eq!(ctx.text.matches("(both.md)").count(), 1);
@@ -2436,7 +2343,6 @@ mod tests {
             "order and repeats do not matter"
         );
         assert!(paths("cargo nope").is_empty());
-        // One word: a title hit first, then more hits (the heading counts).
         assert_eq!(
             paths("cargo"),
             ["titled.md", "both.md", "many.md", "apart.md", "half.md"]
@@ -2448,7 +2354,6 @@ mod tests {
             v.write(&format!("many/{i:02}.md"), "cargo xtask").unwrap();
         }
         assert_eq!(v.search("cargo xtask").len(), MAX_HITS);
-        // Lowercasing can lengthen a char; the snippet still lands on it.
         let wide = "İ".repeat(80);
         let hay = format!("{wide} needle");
         let at = unfold(&hay, hay.to_lowercase().find("needle").unwrap());
@@ -2560,7 +2465,6 @@ mod tests {
         assert!(v.read("notes/rule.conflict-laptop-macos.md").is_err());
         v.resolve_conflict("projects/demo.conflict-laptop-macos.md", false)
             .unwrap();
-        // Dropping a copy whose original is gone would lose the only text.
         assert!(v.resolve_conflict("orphan.conflict-pc.md", false).is_err());
         assert!(v.read("orphan.conflict-pc.md").is_ok());
         assert_eq!(

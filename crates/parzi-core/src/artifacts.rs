@@ -9,9 +9,6 @@ const MAX_ID_LEN: usize = 64;
 
 const ARTIFACT_KINDS: &[&str] = &[
     "code", "markdown", "html", "svg", "json", "csv", "diff", "text", "image",
-    // Live design previews: content is JSON naming a UI-registered component
-    // (see ui previewRegistry). The backend stores and threads it like any
-    // artifact; only the UI resolves component names.
     "preview",
 ];
 
@@ -31,8 +28,6 @@ pub struct ArtifactV1 {
     pub version: u32,
 }
 
-/// The kind an agent meant: models say `doc`, `md` or `report` for a
-/// document, and a refusal only costs them a retry.
 fn kind_named(raw: &str) -> String {
     let k = raw.trim().to_ascii_lowercase();
     match k.as_str() {
@@ -79,7 +74,6 @@ fn is_valid_id(id: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// Live components a preview may mount. Variants match ui/src/lib/previewSpec.ts.
 fn preview_variants(component: &str) -> Option<&'static [u64]> {
     match component {
         "omnibar" => Some(&[1, 2]),
@@ -161,7 +155,6 @@ pub fn validate_artifact(v: &serde_json::Value) -> Result<ArtifactV1> {
         )));
     }
     if let Some(lang) = &a.language {
-        // Any language name: it only picks the highlighting.
         let l = lang.trim().to_ascii_lowercase();
         let named = !l.is_empty()
             && l.len() <= 24
@@ -182,8 +175,6 @@ pub fn validate_artifact(v: &serde_json::Value) -> Result<ArtifactV1> {
     if a.content.trim().is_empty() {
         return Err(ParziError::Validation("artifact content is empty".into()));
     }
-    // A design of a live component sent as html or json still mounts the
-    // component. A hand-drawn mock of one is refused so the model retries.
     if a.kind == "html" || a.kind == "json" {
         if validate_preview(&a.content).is_ok() {
             a.kind = "preview".into();

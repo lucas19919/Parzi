@@ -5,12 +5,9 @@ interface Toast {
   text: string;
   err: boolean;
   session?: string;
-  // A toast that updates in place (a download) carries a key.
   key?: string;
-  // 0..1 shows a progress bar.
   progress?: number;
   action?: { label: string; run: () => void };
-  // Clicking the toast runs this (open the task it is about).
   run?: () => void;
 }
 
@@ -37,10 +34,9 @@ export function dismissToast(id: number) {
   toasts.update((all) => all.filter((t) => t.id !== id));
 }
 
-/**
- * Shows or updates the toast with this key. `ms` 0 keeps it until the next
- * update; `null` text removes it.
- */
+
+
+
 export function keyedToast(
   key: string,
   text: string | null,
@@ -78,8 +74,6 @@ export function toastError(e: unknown) {
 
 let ctx: AudioContext | null = null;
 
-// Short two-tone bell for background completions. Best effort: blocked
-// audio stays silent instead of throwing.
 export function chime(ok: boolean) {
   try {
     ctx ??= new AudioContext();

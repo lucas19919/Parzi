@@ -45,7 +45,6 @@
   let typed = "";
   let snapshot = "";
   let snapAt = 0;
-  // The native page is up right now (the last sync showed it).
   let shownNow = false;
   let remoteSeq = 0;
   let remoteTimer = 0;
@@ -102,9 +101,6 @@
     });
   }
 
-  // A picture of the page to show while HTML covers it, taken while it is
-  // still up. Waits briefly: past that the page hides anyway and the
-  // picture lands when it is ready.
   function freshSnapshot(): Promise<void> {
     if (!shownNow || Date.now() - snapAt < 1500) return Promise.resolve();
     snapAt = Date.now();
@@ -129,8 +125,6 @@
         await api.browserHide();
         return;
       }
-      // Overscan outward: rounding inward leaves a 1px sliver of the
-      // Parzi background around the page, visible as an outline.
       const x = Math.floor(r.x);
       const y = Math.floor(r.y);
       const rect = { x, y, width: Math.ceil(r.x + r.width) - x, height: Math.ceil(r.y + r.height) - y };
@@ -191,7 +185,6 @@
     rows = [];
     active = -1;
     field?.select();
-    // Taken now, while the page is up: the suggestions cover it soon.
     if (url && shownNow) {
       snapAt = Date.now();
       api
@@ -239,8 +232,6 @@
     }, 120);
   }
 
-  // After Enter the keyboard belongs to the page (Space, Page Down, Ctrl+F),
-  // as in any browser.
   function leaveFor(next: string) {
     stopEditing();
     field?.blur();
@@ -298,8 +289,6 @@
     else if (yes && p.url) dispatch("openTab", { url: p.url });
   }
 
-  // The login key shows only with Bitwarden's CLI installed: a button
-  // that can only say "install something first" is noise.
   let hasVault = false;
 
   onMount(() => {
@@ -358,7 +347,7 @@
           autocomplete="off"
         />
         {#if tab.zoom}
-          <!-- Zoomed (Ctrl+plus/minus or Ctrl+wheel): how much, and back to 100%. -->
+          
           <button type="button" class="zoom" use:tooltip={"Reset zoom (Ctrl+0)"} on:click={() => nav("zoom-reset")}>
             {Math.round(tab.zoom * 100)}%
           </button>
@@ -412,8 +401,7 @@
   {/if}
   {#if prompt}
     {@const p = prompt}
-    <!-- Asks live in the window chrome, above the page: nothing here has to
-         hide the page or wait for it. -->
+    
     <div class="infobar" role="status">
       {#if p.kind === "permission"}
         <Icon name="shield" />
@@ -504,8 +492,7 @@
     display: flex;
     flex-direction: column;
   }
-  /* Hugs the 30px field. The tab's own bar already leaves the same gap
-     below the tab that the window leaves above it. */
+
   .toolbar {
     flex: none;
     display: flex;

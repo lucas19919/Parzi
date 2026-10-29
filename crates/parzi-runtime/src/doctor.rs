@@ -48,8 +48,6 @@ impl Doctor {
     }
 
     pub async fn run_quick(&self) -> Vec<Check> {
-        // Quick must return fast: no provider probes here. Providers have
-        // their own section with live checks; System would hang on them.
         vec![
             self.check_dirs(),
             self.check_config(),
@@ -114,7 +112,6 @@ impl Doctor {
             .collect()
     }
 
-    /// A broken hooks.toml runs with no hooks at all, so say it here.
     fn check_hooks() -> Check {
         match parzi_core::hooks::load_global() {
             Ok(_) => Check::ok("hooks", "hooks.toml ok or absent"),

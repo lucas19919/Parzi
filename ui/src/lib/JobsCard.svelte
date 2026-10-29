@@ -1,6 +1,4 @@
 <script lang="ts">
-  // The commands a session's agents ran: what runs now and for how long
-  // (a background one can be stopped), and the finished ones folded away.
   import { onMount } from "svelte";
   import Icon from "./Icon.svelte";
   import InfoCard from "./InfoCard.svelte";
@@ -28,7 +26,6 @@
   $: running = jobs.filter((j) => j.running);
   $: done = jobs.filter((j) => !j.running).reverse();
 
-  // A running one's time counts up between loads.
   const took = (j: ShellJob) => (j.running ? Math.max(j.ms, now - j.started) : j.ms);
   function span(ms: number) {
     const s = Math.round(ms / 1000);
@@ -43,7 +40,6 @@
   }
 
   onMount(() => {
-    // Every second for the clock; a reload every few while something runs.
     let tick = 0;
     const timer = setInterval(() => {
       now = Date.now();

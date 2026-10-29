@@ -1,6 +1,4 @@
 <script lang="ts">
-  // The replies an agent offered at the end of its turn: a click sends one
-  // as the person's next message. The first is the agent's pick.
   import { createEventDispatcher } from "svelte";
 
   export let payload: unknown;

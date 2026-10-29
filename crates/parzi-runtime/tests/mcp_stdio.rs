@@ -165,9 +165,6 @@ async fn shutdown_kills_the_server() {
     assert!(!alive(pid), "shutdown left pid {pid} running");
 }
 
-// A hosted server as the connector catalog adds one: `npx` (npx.cmd on
-// Windows, which a bare name never starts) running mcp-remote. Needs the
-// network and Node, so it runs on demand: `cargo test -- --ignored`.
 #[tokio::test]
 #[ignore = "network: reaches a hosted MCP server through mcp-remote"]
 async fn a_hosted_server_answers_through_mcp_remote() {

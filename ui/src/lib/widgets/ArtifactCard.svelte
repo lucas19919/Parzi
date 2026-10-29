@@ -1,14 +1,11 @@
 <script lang="ts">
-  // What an agent hands over to keep (a document, code, a diagram, a
-  // page): a quiet card in the thread. Its name, kind and version on top
-  // with Copy and Save; the content below in the thread's own type, a long
-  // one folded until asked for. An older version of the same artifact
-  // folds to its header line. Open shows it in its own tab to read
-  // (`reader`): the whole of it, in a centred column.
   import { onMount, tick } from "svelte";
+  import { fly } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
   import { api } from "../api";
   import { codeBlockClick, mdHtml, richReady } from "../md";
   import { handleLinkClick } from "../links";
+  import { popover, placeAbove } from "../popover";
   import { previewSpecOf, previewProblem } from "../previewRegistry";
   import { saveFile } from "../saveFile";
   import { svgDataUrl } from "../svgImage";
@@ -22,9 +19,7 @@
   export let fallbackId = "";
   export let fallbackTitle = "";
   export let fallbackKind = "text";
-  // A newer version follows further down: this one folds to its header.
   export let superseded = false;
-  // Shown on its own in a tab: nothing folds, no card frame.
   export let reader = false;
 
   const d = data ?? {};
@@ -35,37 +30,29 @@
   const content: string = String(d.content ?? "");
   const version: number = Number(d.version ?? 1) || 1;
 
-  // The frame stays sandboxed (scripts, no same-origin). Its own CSP
-  // keeps it offline; if the height script is still blocked the frame
-  // scrolls instead of cutting tall artifacts off.
   const LOCAL_ONLY = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:">`;
   const RESIZE = `<script>function tell(){try{var h=document.documentElement.scrollHeight;parent.postMessage({parziArt:1,height:h},"*")}catch(e){}}addEventListener("load",tell);setTimeout(tell,400);setTimeout(tell,1500);<\/script>`;
   const MAX_FRAME = 4000;
-  // Taller than this, a document or code folds behind Show all.
   const FOLD = 360;
   const bad = !content.trim() && kind !== "preview";
 
-  const KINDS: Record<string, [string, IconName]> = {
-    markdown: ["Document", "file"],
-    text: ["Text", "file"],
-    code: ["Code", "file"],
-    diff: ["Changes", "file"],
-    json: ["Data", "chart"],
-    csv: ["Data", "chart"],
-    svg: ["Diagram", "image"],
-    image: ["Image", "image"],
-    html: ["Page", "browser"],
-    preview: ["Preview", "spark"],
+  const ICONS: Record<string, IconName> = {
+    markdown: "file",
+    text: "file",
+    code: "file",
+    diff: "file",
+    json: "chart",
+    csv: "chart",
+    svg: "image",
+    image: "image",
+    html: "browser",
+    preview: "spark",
   };
-  const [kindWord, icon] = KINDS[kind] ?? ["File", "file"];
-  const label = kind === "code" && language ? language : kindWord;
+  const icon = ICONS[kind] ?? "file";
 
-  // Inline design previews: { "component": "omnibar", "variant": 2 }.
   $: preview = kind === "preview" ? previewSpecOf(content) : null;
   $: previewProps = preview ? preview.entry.props(preview.variant, preview.extra) : {};
   $: canRender = (kind === "html" || kind === "svg") && !!content.trim();
-  // SVG renders as an image, never inline: inline markup keeps its style
-  // element, which would restyle the whole app.
   $: svgUrl = kind === "svg" && content.trim() ? svgImage(content) : "";
   $: imageUrl = kind === "image" && content.trim() ? api.readImageDataUrl(content, "") : null;
   let showCode = false;
@@ -74,11 +61,22 @@
   let open = reader || !superseded;
   let copied = false;
 
-  // Folding: measured once the content is in.
   let body: HTMLDivElement | null = null;
   let tall = false;
   let all = false;
-  // Code folds in its own block; a document folds here.
+  let menuOpen = false;
+  let menuBtn: HTMLButtonElement | null = null;
+  let menuStyle = "";
+
+  function toggleMenu() {
+    menuOpen = !menuOpen;
+    if (menuOpen && menuBtn) menuStyle = placeAbove(menuBtn, 220);
+  }
+
+  function act(fn: () => void) {
+    menuOpen = false;
+    fn();
+  }
   $: foldable = !reader && kind === "markdown";
   async function measure() {
     await tick();
@@ -107,8 +105,7 @@
   }
 
   async function docClick(e: MouseEvent) {
-    if (await handleLinkClick(e, "", { pin: true })) return;
-    // In the thread, the thread handles code blocks; alone, this does.
+    if (await handleLinkClick(e, "")) return;
     if (reader) codeBlockClick(e.target as HTMLElement);
   }
 
@@ -144,19 +141,24 @@
     <button class="name" aria-expanded={superseded ? open : undefined} disabled={reader || bad} on:click={nameClick}>
       <Icon name={icon} size={12} />
       {#if !reader}<span class="title">{title}</span>{/if}
-      <span class="meta">{label}{version > 1 ? ` · v${version}` : ""}{superseded && !open ? " · updated below" : ""}</span>
+      {#if version > 1 || (superseded && !open)}<span class="meta">{version > 1 ? `v${version}` : ""}{(superseded && !open) ? `${version > 1 ? " · " : ""}updated below` : ""}</span>{/if}
     </button>
     <span class="tools">
-      {#if canRender && open}
-        <button class="tool text" on:click={() => (showCode = !showCode)}>{showCode ? "Preview" : "Source"}</button>
-      {/if}
-      {#if !reader && !bad}
-        <button class="tool" aria-label="Open" use:tooltip={"Open to read"} on:click={openToRead}><Icon name="external" size={12} /></button>
-      {/if}
-      <button class="tool" aria-label="Copy" use:tooltip={copied ? "Copied" : "Copy"} on:click={copy}><Icon name={copied ? "check" : "copy"} size={12} /></button>
-      <button class="tool" aria-label="Save" use:tooltip={"Save as a file"} on:click={download}><Icon name="download" size={12} /></button>
+      <button class="tool" aria-label="More actions" use:tooltip={"More actions"} on:click={toggleMenu} bind:this={menuBtn}><Icon name="more" size={12} /></button>
     </span>
   </div>
+  {#if menuOpen}
+    <div class="menu-pop" data-ui-list style={menuStyle} use:popover={{ anchor: menuBtn, close: () => (menuOpen = false) }} transition:fly={{ y: 6, duration: 140, easing: cubicOut }}>
+      {#if canRender && open}
+        <button class="opt" on:click={() => act(() => (showCode = !showCode))}><Icon name="file" size={12} /><span class="name">{showCode ? "Preview" : "Source"}</span></button>
+      {/if}
+      {#if !reader && !bad}
+        <button class="opt" on:click={() => act(openToRead)}><Icon name="external" size={12} /><span class="name">Open to read</span></button>
+      {/if}
+      <button class="opt" on:click={() => act(copy)}><Icon name={copied ? "check" : "copy"} size={12} /><span class="name">{copied ? "Copied" : "Copy"}</span></button>
+      <button class="opt" on:click={() => act(download)}><Icon name="download" size={12} /><span class="name">Save as file</span></button>
+    </div>
+  {/if}
   {#if open}
     <div class="body" class:folded={tall && !all} bind:this={body}>
       {#if bad}
@@ -210,8 +212,7 @@
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
   }
-  /* Alone in a tab: the page scrolls, the content sits in a reading
-     column, no frame around it. */
+
   .art.reader {
     flex: 1;
     min-height: 0;
@@ -313,6 +314,36 @@
     background: var(--hover);
     color: var(--text);
   }
+  .menu-pop {
+    width: 220px;
+    padding: var(--space);
+    overflow-y: auto;
+  }
+  .opt {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space) * 2);
+    width: 100%;
+    height: 32px;
+    padding: 0 calc(var(--space) * 2);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+  }
+  .opt:hover {
+    background: var(--hover);
+  }
+  .opt .name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-md);
+  }
   .body {
     position: relative;
   }
@@ -330,7 +361,6 @@
     background: linear-gradient(transparent, var(--panel));
     pointer-events: none;
   }
-  /* A document reads like a reply, with room around it. */
   .doc {
     padding: calc(var(--space) * 4) calc(var(--space) * 4) calc(var(--space) * 4);
     font-size: var(--fs-base);
@@ -338,7 +368,6 @@
   .doc :global(:first-child) {
     margin-top: 0;
   }
-  /* Code sits flush in the card: no second frame inside the first. */
   .code :global(.codeblock) {
     margin: 0;
     border: none;

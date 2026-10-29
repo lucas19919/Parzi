@@ -10,26 +10,16 @@ use parzi_providers::process;
 #[cfg(windows)]
 use parzi_providers::process::CREATE_NO_WINDOW;
 
-/// Foreground default: Claude-compatible two minutes.
 pub const FOREGROUND_DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
-/// Foreground ceiling: ten minutes, same spirit as BASH_MAX_TIMEOUT_MS.
 pub const FOREGROUND_MAX_TIMEOUT: Duration = Duration::from_secs(600);
-/// What a single tool result carries inline.
 pub const OUTPUT_CAP: usize = 12 * 1024;
-/// In-memory ring per shell; everything also appends to the spill file.
 const RING_KEEP: usize = 64 * 1024;
-/// Spill files stop growing here; the tool result says so when it happens.
 const SPILL_CAP: u64 = 8 * 1024 * 1024;
-/// Foreground stderr kept for the tool result.
 const STDERR_KEEP: usize = 16 * 1024;
-/// Pipes still open after exit (a grandchild holding them) are read this long, then dropped.
 const DRAIN_FOR: Duration = Duration::from_secs(2);
-/// Concurrent background shells per session before we refuse.
 pub const MAX_BACKGROUND_PER_SESSION: usize = 8;
-/// Background shells are killed past this age; servers are restarted, not squatted on.
 pub const BACKGROUND_MAX_LIFETIME: Duration = Duration::from_secs(30 * 60);
 
-/// Append one chunk to the ring and the spill file (until `SPILL_CAP`).
 fn ingest_output(
     ring: &mut Vec<u8>,
     spill: &mut Option<std::fs::File>,
@@ -44,7 +34,6 @@ fn ingest_output(
         if room > 0 && f.write_all(&chunk[..room]).is_ok() {
             *spilled += room as u64;
         } else {
-            // Capped or failing: stop touching the file.
             *spill = None;
         }
     }
@@ -55,7 +44,6 @@ fn ingest_output(
     }
 }
 
-/// Keep at most `keep` trailing bytes, cutting on a char boundary.
 fn keep_tail(text: &mut String, keep: usize) -> bool {
     if text.len() <= keep {
         return false;
@@ -68,9 +56,6 @@ fn keep_tail(text: &mut String, keep: usize) -> bool {
     true
 }
 
-/// Collect output still in flight after the child is gone, so a fast
-/// exit never reports empty output. Bounded overall: a grandchild
-/// holding (or chattering on) the pipe cannot hang the turn.
 async fn drain_stdout(
     stdout: &mut ChildStdout,
     ring: &mut Vec<u8>,
@@ -87,7 +72,6 @@ async fn drain_stdout(
     }
 }
 
-/// Drain stderr off to the side so a chatty child never wedges stdout.
 fn drain_stderr<F>(mut stderr: ChildStderr, mut sink: F) -> tokio::task::JoinHandle<()>
 where
     F: FnMut(&[u8]) + Send + 'static,
@@ -103,8 +87,6 @@ where
     })
 }
 
-/// Kill a child's tree, then the child, off the async workers (taskkill
-/// and ps block). Tree first: taskkill /T cannot find it once the root is gone.
 fn reap(mut child: Child) {
     if matches!(child.try_wait(), Ok(Some(_))) {
         return;
@@ -121,8 +103,6 @@ fn reap(mut child: Child) {
     }
 }
 
-/// A foreground child. Dropped unfinished (Stop cancels the call) it
-/// takes its whole tree down instead of leaving it running.
 struct Fg(Option<Child>);
 
 impl Drop for Fg {
@@ -141,23 +121,17 @@ pub struct ExecResult {
     pub spill: Option<PathBuf>,
 }
 
-/// A command an agent ran in this session, for the session column: what,
-/// since when, and whether it still runs.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ShellJob {
     pub id: String,
     pub cmd: String,
-    /// Started in the background (`shell.start`), else in the foreground.
     pub background: bool,
     pub running: bool,
     pub exit: Option<i32>,
-    /// Unix milliseconds it started.
     pub started: i64,
-    /// How long it ran, or has run so far.
     pub ms: u64,
 }
 
-/// Foreground runs kept for the list, newest last.
 const FG_KEEP: usize = 30;
 
 pub struct LogTail {
@@ -170,9 +144,7 @@ pub struct LogTail {
 struct LiveShell {
     cmd: String,
     started_at: i64,
-    /// None while the slot is reserved but the process is not up yet.
     child: Option<Child>,
-    /// Last RING_KEEP bytes; `total` counts everything ever appended.
     buf: Vec<u8>,
     total: u64,
     spill: Option<std::fs::File>,
@@ -180,7 +152,6 @@ struct LiveShell {
     started: Instant,
     exit: Option<i32>,
     exited_at: Option<Instant>,
-    /// The pump read the last output after exit; only then is it done.
     drained: bool,
 }
 
@@ -206,21 +177,16 @@ impl LiveShell {
         self.exited_at.get_or_insert_with(Instant::now);
     }
 
-    /// The exit code once the output after exit is in the log too. A pump
-    /// that never reports back is given up on after twice the drain time.
     fn settled(&self) -> Option<i32> {
         let late = self.exited_at.is_some_and(|t| t.elapsed() > DRAIN_FOR * 2);
         self.exit.filter(|_| self.drained || late)
     }
 
-    /// Mark killed; the child comes back to be reaped outside the lock.
     fn kill(&mut self) -> Option<Child> {
         self.mark_exit(-1);
         self.child.take()
     }
 
-    /// Lifetime + completion, enforced lazily on every touch. Says whether
-    /// it still runs, plus the child to reap when the lifetime cap just hit.
     fn enforce(&mut self) -> (bool, Option<Child>) {
         if self.exit.is_some() {
             return (false, None);
@@ -233,7 +199,6 @@ impl LiveShell {
         };
         let code = match child.try_wait() {
             Ok(None) => return (true, None),
-            // A signal death has no code; it is still done.
             Ok(Some(status)) => status.code().unwrap_or(-1),
             Err(_) => -1,
         };
@@ -251,12 +216,9 @@ impl LiveShell {
 struct Registry {
     shells: HashMap<String, LiveShell>,
     seq: u64,
-    /// Foreground runs: done ones, and the one running now (exit None).
     foreground: Vec<ShellJob>,
 }
 
-/// A foreground run's entry in the list, closed when this drops: with its
-/// exit code, or -1 when it was cut short.
 struct FgMark {
     inner: Arc<Mutex<Registry>>,
     id: String,
@@ -283,7 +245,6 @@ fn now_ms() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
-/// A panic while holding the lock must not brick every shell tool after it.
 fn lock(inner: &Mutex<Registry>) -> MutexGuard<'_, Registry> {
     inner.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -294,10 +255,6 @@ fn append(inner: &Mutex<Registry>, id: &str, chunk: &[u8]) {
     }
 }
 
-/// The harness shell, per session. Cloned handles share one registry;
-/// completion is keyed on process `exit`, never on pipe close (a
-/// background child inheriting stdio would otherwise hang the wait
-/// forever — the classic cross-spawn hang).
 #[derive(Clone, Default)]
 pub struct ShellRegistry {
     inner: Arc<Mutex<Registry>>,
@@ -332,7 +289,6 @@ impl ShellRegistry {
         let (program, mut args) = process::shell_program();
         args.push(cmd.to_string());
         let mut c = Command::new(program);
-        // Same scrubbed environment as hooks and MCP servers: no API keys.
         c.args(&args)
             .env_clear()
             .envs(crate::mcp::child_env(&HashMap::new()))
@@ -356,7 +312,6 @@ impl ShellRegistry {
         Ok((child, stdout, stderr))
     }
 
-    /// One-shot foreground execution with a deadline.
     pub async fn exec(
         &self,
         cmd: &str,
@@ -364,7 +319,6 @@ impl ShellRegistry {
         timeout: Duration,
     ) -> std::io::Result<ExecResult> {
         let timeout = timeout.clamp(Duration::from_secs(1), FOREGROUND_MAX_TIMEOUT);
-        // One deadline for the whole call: output must not keep pushing it back.
         let deadline = tokio::time::Instant::now() + timeout;
         let spill_path = self
             .dir()?
@@ -385,7 +339,6 @@ impl ShellRegistry {
             });
             id
         };
-        // Closes the entry however this call ends, a stopped turn included.
         let mut mark = FgMark {
             inner: self.inner.clone(),
             id: fg_id,
@@ -417,8 +370,6 @@ impl ShellRegistry {
                 biased;
                 status = child.wait() => break status.ok().and_then(|s| s.code()),
                 n = stdout.read(&mut buf), if out_open => match n {
-                    // EOF is NOT completion (children may hold pipes):
-                    // stop polling stdout and wait on the process instead.
                     Ok(0) | Err(_) => out_open = false,
                     Ok(n) => ingest_output(&mut ring, &mut spill, &mut spilled, &buf[..n]),
                 },
@@ -439,7 +390,6 @@ impl ShellRegistry {
             drain_stdout(&mut stdout, &mut ring, &mut spill, &mut spilled).await;
         }
         drop(spill);
-        // Let the stderr drain land (bounded like stdout) before composing.
         let _ = tokio::time::timeout(DRAIN_FOR, &mut err_task).await;
         err_task.abort();
         let mut text = String::from_utf8_lossy(&ring).into_owned();
@@ -473,10 +423,8 @@ impl ShellRegistry {
         })
     }
 
-    /// Start a background shell; returns its id immediately.
     pub fn start(&self, cmd: &str, workdir: &std::path::Path) -> std::io::Result<String> {
         let dir = self.dir()?;
-        // Claim the slot before anything runs: a refused command never starts.
         let id = {
             let mut reg = self.reg();
             let running = reg.shells.values().filter(|s| s.exit.is_none()).count();
@@ -505,7 +453,6 @@ impl ShellRegistry {
                 sh.child = Some(child);
                 sh.spill = spill;
             }
-            // Killed while starting (session deleted): never let it run on.
             _ => {
                 drop(reg);
                 reap(child);
@@ -535,8 +482,6 @@ impl ShellRegistry {
         Some(out)
     }
 
-    /// Bytes appended since `offset` (clamped to the ring), plus the new
-    /// cursor, liveness, and exit code when done.
     pub fn logs(&self, id: &str, offset: u64, tail: usize) -> Option<LogTail> {
         let (bytes, total, exit) = self.with(id, |sh| {
             let buf_start = sh.total.saturating_sub(sh.buf.len() as u64);
@@ -556,8 +501,6 @@ impl ShellRegistry {
         })
     }
 
-    /// Every command of this session: background ones and recent
-    /// foreground ones, oldest first.
     pub fn jobs(&self) -> Vec<ShellJob> {
         let mut reg = self.reg();
         let mut expired = vec![];
@@ -606,8 +549,6 @@ impl ShellRegistry {
         }
     }
 
-    /// Kill every live shell in this registry. Used when the owning
-    /// session is deleted or purged so nothing outlives it.
     pub fn kill_all(&self) {
         let doomed: Vec<Child> = self
             .reg()
@@ -622,9 +563,6 @@ impl ShellRegistry {
     }
 }
 
-/// Pump a background shell: stream stdout and stderr into ring + spill
-/// until the PROCESS exits (never pipe EOF — children inherit stdio),
-/// then drain the remainder briefly.
 async fn pump(
     inner: Arc<Mutex<Registry>>,
     id: String,
@@ -639,11 +577,9 @@ async fn pump(
         tokio::select! {
             biased;
             n = stdout.read(&mut buf), if out_open => match n {
-                // Pipe EOF: only process exit counts, so stop reading and keep checking.
                 Ok(0) | Err(_) => out_open = false,
                 Ok(n) => append(&inner, &id, &buf[..n]),
             },
-            // Wake to re-check exit even when silent.
             () = tokio::time::sleep(Duration::from_millis(250)) => {}
         }
         let (live, expired) = lock(&inner)
@@ -746,7 +682,6 @@ mod tests {
 
     #[tokio::test]
     async fn foreground_chatty_command_still_times_out() {
-        // Steady output used to re-arm the deadline on every chunk.
         let reg = ShellRegistry::new("test-chatty");
         let chatty = if cfg!(windows) {
             "while ($true) { 'tick'; Start-Sleep -Milliseconds 20 }"

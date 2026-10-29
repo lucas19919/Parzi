@@ -1,6 +1,3 @@
-//! A window attached to this test process: its own binary, so the flag
-//! cannot leak into the tests that run without one. Page tools need the
-//! Windows page engine.
 #![cfg(windows)]
 
 mod common;
@@ -16,7 +13,6 @@ use parzi_runtime::toolhost::{ToolHost, ToolHostParts};
 use parzi_runtime::tools::{Approval, ApprovalMode, Approver, ToolCallInfo, ToolExecutor};
 use serde_json::json;
 
-/// Says no, and counts how often it was asked.
 #[derive(Default)]
 struct Counter(AtomicUsize);
 #[async_trait::async_trait]
@@ -55,11 +51,8 @@ fn host(mode: ApprovalMode, full: bool, approver: Arc<Counter>) -> ToolHost {
 #[tokio::test]
 async fn acting_on_a_page_asks_and_listing_every_tab_always_asks() {
     home("desktools-attached");
-    // This test binary is its own process: pretend a window is attached.
     parzi_runtime::desk::attach();
     let asked = Arc::new(Counter::default());
-    // Ask mode: a click or a keystroke on a page the person may be signed
-    // in to is theirs to allow.
     let work = host(ApprovalMode::Ask, false, asked.clone());
     for tool in [
         "browser.click",

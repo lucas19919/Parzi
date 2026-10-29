@@ -1,7 +1,4 @@
-//! Short text made from longer text: a session's first name from what the
-//! person asked, and a run's summary from its last reply.
 
-/// At most `n` chars, ending in `…` when something was cut.
 #[must_use]
 pub fn clip(s: &str, n: usize) -> String {
     if s.char_indices().nth(n).is_none() {
@@ -11,20 +8,16 @@ pub fn clip(s: &str, n: usize) -> String {
     format!("{}…", head.trim_end())
 }
 
-/// One line: every run of whitespace, newlines included, is one space.
 #[must_use]
 pub fn fold(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The first 8 chars of an id, as ids are shown to people and agents.
 #[must_use]
 pub fn short_id(id: &str) -> &str {
     id.char_indices().nth(8).map_or(id, |(at, _)| &id[..at])
 }
 
-/// A run's last message, made fit for a card: markdown marks and code
-/// blocks go, whitespace folds, and it stops at `cap` chars.
 #[must_use]
 pub fn summarize(text: &str, cap: usize) -> String {
     let mut out: Vec<String> = vec![];
@@ -54,8 +47,6 @@ pub fn summarize(text: &str, cap: usize) -> String {
     clip(&out.join(" "), cap)
 }
 
-/// Openers people start a request with that say nothing about the work.
-/// Longer ones first, so "can you please" goes before "can you".
 const OPENERS: &[&str] = &[
     "hey there",
     "hi there",
@@ -92,24 +83,16 @@ const OPENERS: &[&str] = &[
     "quick question",
 ];
 
-/// Words a name should not end on: what follows them was cut off.
 const DANGLING: &[&str] = &[
     "a", "an", "the", "and", "or", "but", "so", "then", "to", "for", "with", "of", "in", "on",
     "at", "by", "from", "into", "onto", "that", "which", "who", "is", "are", "be", "my", "our",
     "your", "as", "if", "when", "while", "than", "via", "about",
 ];
 
-/// The one rule for a session's name, from its prompt or `session.rename`:
-/// at most 5 words and 60 chars.
 pub const NAME_WORDS: usize = 5;
 pub const NAME_CHARS: usize = 60;
-/// What a session is called when its prompt says nothing at all.
 pub const UNNAMED: &str = "New session";
 
-/// A session's first name from what the person asked: the first clause of
-/// the first line, the openers ("hey", "can you", "please", "lets", "I want
-/// you to") stripped, at most five words, in sentence case. A request that
-/// is nothing but an opener keeps its words; an empty one is a new session.
 #[must_use]
 pub fn name_from_prompt(prompt: &str) -> String {
     let first = prompt
@@ -136,7 +119,6 @@ fn strip_openers(line: &str) -> String {
         OPENERS.iter().find_map(|o| {
             let head = t.get(..o.len())?;
             let next = t[o.len()..].chars().next();
-            // Whole words only: "so" is not the start of "solve".
             (head.eq_ignore_ascii_case(o) && next.is_none_or(|c| !c.is_alphanumeric()))
                 .then_some(o.len())
         })
@@ -152,10 +134,6 @@ fn strip_openers(line: &str) -> String {
     t
 }
 
-/// A request up to the end of its first sentence or clause ("Fix the
-/// autosize. Then..." or "...with the line: hello"), when what comes
-/// before is at least two words. A dot inside a word ("notes.txt") is not
-/// an end.
 fn first_clause(t: &str) -> &str {
     const ENDS: &[&str] = &[
         ". ",
@@ -181,8 +159,6 @@ fn first_clause(t: &str) -> &str {
     }
 }
 
-/// At most `NAME_WORDS` words and `NAME_CHARS` chars, without trailing
-/// punctuation or a word that leaves the name hanging.
 fn shorten(t: &str) -> String {
     let mut words: Vec<&str> = vec![];
     let mut len = 0;
@@ -264,7 +240,6 @@ mod tests {
             ("Plan the next release", "Plan the next release"),
             ("start this", "Start this"),
             ("fix it", "Fix it"),
-            // Five words at most, and never ending on a dangling word.
             ("add a test for the parser, then ship", "Add a test"),
             ("why is the PR badge grey?", "Why is the PR badge"),
         ];

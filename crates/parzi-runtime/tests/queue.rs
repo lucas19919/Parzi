@@ -198,7 +198,6 @@ async fn a_second_send_while_active_does_not_queue_another_run() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("still working"), "{err}");
-    // Active is set before the run records the prompt, so wait for that line.
     let mut texts = Vec::new();
     for _ in 0..40 {
         texts = events(&store, &first.id)

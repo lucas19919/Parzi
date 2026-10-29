@@ -1,9 +1,6 @@
-// Save buttons. A desktop window has nowhere for an <a download> to go, so
-// the app asks where in the system's Save dialog and writes the file itself.
 import { invoke } from "@tauri-apps/api/core";
 import { keyedToast, toast } from "./toast";
 
-/** `content` is text, or a data: URL (a picture). */
 export async function saveFile(name: string, content: string): Promise<void> {
   const data = /^data:[^,]*;base64,/.exec(content);
   let body = content;

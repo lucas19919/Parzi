@@ -1,5 +1,3 @@
-// Its own test binary (and so its own PARZI_HOME): a restart re-enqueues
-// every queued session on disk, which would pick up other tests' queues.
 mod common;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -82,8 +80,6 @@ async fn a_restored_run_asks_through_the_hosts_approver() {
         .unwrap();
     assert!(wait_status(&store, &second.id, SessionStatus::Queued).await);
 
-    // The app restarts: the queue comes back from disk, and the desk
-    // installs its approver before the pump starts.
     let asked = Arc::new(AtomicUsize::new(0));
     let restarted = Arc::new(
         Orchestrator::new(asking(8), store.clone())

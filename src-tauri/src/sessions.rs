@@ -8,7 +8,6 @@ use tauri::State;
 use crate::remote::{self, mirror_id, remote_id, RemoteState};
 use crate::{AppState, GuiApprover};
 
-/// This machine's sessions, then the linked server's (ids tagged `r:`).
 #[tauri::command]
 pub async fn list_threads(
     state: State<'_, AppState>,
@@ -50,8 +49,6 @@ pub async fn get_thread(
     ))
 }
 
-/// A transcript event as the thread shows it, with its Unix time when the
-/// line said (lines from before timestamps existed say nothing).
 fn stamped_of(event: &Event, at: Option<i64>) -> serde_json::Value {
     let mut v = serde_json::to_value(event).unwrap_or(serde_json::Value::Null);
     if let (Some(at), Some(map)) = (at, v.as_object_mut()) {
@@ -64,10 +61,6 @@ fn stamped_plain(event: &Event) -> serde_json::Value {
     stamped_of(event, None)
 }
 
-/// `remote` starts a new session on the linked server; an `r:` id continues
-/// one there. Either way the reply is the session's (tagged) id. `quotes`
-/// are plan items the person quoted: each goes after their text as a
-/// `<plan-item>` block, and the session is linked to the first.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn send_message(
@@ -99,7 +92,6 @@ pub async fn send_message(
         }
         None => vec![],
     };
-    // A new session that says little more than "start this" is the item's.
     let name = quoted
         .first()
         .filter(|_| session_id.is_none() && crate::plans::named_after_item(&prompt))
@@ -118,7 +110,6 @@ pub async fn send_message(
             .await
             .map_err(|e| e.to_string())?
     };
-    // Another device's session goes on on the server: copy it there first.
     let mut adopted = None;
     if let Some((device, sid)) = session_id.as_deref().and_then(mirror_id) {
         adopted = Some(remote::adopt(&state.app, &far, device, sid).await?);
@@ -167,8 +158,6 @@ pub async fn send_message(
         }
         None => {
             let project = project_for(&cwd).await;
-            // Its own worktree, from the branch the person picked: the
-            // session works there, never in their checkout.
             let cwd = match worktree.filter(|b| !b.trim().is_empty() && !cwd.is_empty()) {
                 Some(base) => {
                     let (repo, about) = (std::path::PathBuf::from(&cwd), prompt.clone());
@@ -200,8 +189,6 @@ pub async fn send_message(
                 .id
         }
     };
-    // A side task: the new session lists under the one it came from, which
-    // goes on undisturbed (nothing is sent to it).
     if let Some(parent) = parent.filter(|p| !p.is_empty() && *p != sid) {
         if let Err(e) = state.orch.store().set_parent(&sid, &parent) {
             tracing::warn!("side task {sid} not linked to {parent}: {e}");
@@ -216,8 +203,6 @@ pub async fn send_message(
     Ok(sid)
 }
 
-/// A session sent quoted plan items works on the first of its project's,
-/// and, new and told little else, is named after it.
 fn link(
     store: &parzi_core::store::SessionStore,
     sid: &str,
@@ -239,8 +224,6 @@ fn link(
     }
 }
 
-/// Threads belong to their folder's project, not shared "default". The
-/// vault scan reads notes, so it runs on the blocking pool.
 pub(crate) async fn project_for(cwd: &str) -> String {
     if cwd.trim().is_empty() || crate::files::remote_or_device(cwd) {
         return "default".into();
@@ -255,8 +238,6 @@ pub(crate) async fn project_for(cwd: &str) -> String {
 
 const ATTACH_MAX: u64 = 20 * 1024 * 1024;
 
-/// Network paths are never read (Windows would authenticate to the host)
-/// and nothing over 20 MiB is loaded into memory to be cut down later.
 fn read_attachments(cwd: &str, paths: &[String]) -> Vec<parzi_core::context::AttachedFile> {
     let base = if cwd.is_empty() {
         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
@@ -328,7 +309,6 @@ pub async fn fork_thread(
     far: State<'_, RemoteState>,
     id: String,
 ) -> Result<SessionMeta, String> {
-    // Forking another device's session copies it to the server.
     if let Some((device, sid)) = mirror_id(&id) {
         let new = remote::adopt(&state.app, &far, device, sid).await?;
         return remote::thread(&state.app, &far, &new).await.map(|(m, _)| m);
@@ -339,8 +319,6 @@ pub async fn fork_thread(
     state.orch.fork(&id, None).map_err(|e| e.to_string())
 }
 
-/// The session as it stood before the person's `nth` message (0 is the
-/// first), as a new session under the same title; the original stays.
 #[tauri::command]
 pub async fn rewind_thread(
     state: State<'_, AppState>,
@@ -354,8 +332,6 @@ pub async fn rewind_thread(
     state.orch.rewind(&id, nth).map_err(|e| e.to_string())
 }
 
-/// Another device's session is read here, not changed: its run lives
-/// there. Sending to it or forking it copies it to the server instead.
 fn read_only(id: &str) -> Result<(), String> {
     if mirror_id(id).is_some() {
         return Err(
@@ -417,7 +393,6 @@ pub async fn delete_thread(
         .delete_thread(&id)
         .await
         .map_err(|e| e.to_string())?;
-    // A worktree goes with the last session working in it.
     if !cwd.is_empty() {
         let store = state.orch.store().clone();
         tauri::async_runtime::spawn_blocking(move || {
@@ -428,7 +403,6 @@ pub async fn delete_thread(
                 .any(|m| m.cwd == cwd);
             if !used {
                 let dir = std::path::Path::new(&cwd);
-                // An agent kept running there holds the folder: it goes first.
                 if parzi_providers::drop_live_in(dir) > 0 {
                     std::thread::sleep(std::time::Duration::from_millis(800));
                 }

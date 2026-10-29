@@ -10,8 +10,6 @@ export function whereOf(s: SessionMeta): string {
   return folderName(s.cwd);
 }
 
-// "Clear finished sessions" lives in App (confirm, purge, close the dead
-// tabs). Settings › System runs the same flow through here.
 let clearer: (() => Promise<void>) | null = null;
 
 export function provideClearSessions(fn: () => Promise<void>): () => void {

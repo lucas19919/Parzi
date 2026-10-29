@@ -1,6 +1,4 @@
 <script lang="ts">
-  // Work an agent proposed: Start runs it as a side task beside this
-  // session, Dismiss puts the card away. Both are remembered.
   import { createEventDispatcher } from "svelte";
   import Icon from "./Icon.svelte";
   import { taskCards, markCard } from "./taskCards";

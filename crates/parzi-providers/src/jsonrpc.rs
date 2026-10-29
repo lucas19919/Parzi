@@ -20,7 +20,6 @@ pub struct RpcError {
 impl RpcError {
     pub const CLOSED: i64 = -32099;
     pub const TIMEOUT: i64 = -32098;
-    // ACP's resource-not-found.
     pub const NOT_FOUND: i64 = -32002;
 
     fn closed(who: &str) -> Self {
@@ -31,7 +30,6 @@ impl RpcError {
         }
     }
 
-    // Only a plain "it is gone" may make the caller forget a conversation.
     pub fn not_found(&self) -> bool {
         if self.code == Self::NOT_FOUND {
             return true;
@@ -89,7 +87,6 @@ pub enum Incoming {
 
 type Waiters = Arc<std::sync::Mutex<HashMap<i64, oneshot::Sender<Result<Value, RpcError>>>>>;
 
-// Removes the waiter however the request ends: answered, failed, timed out or dropped.
 struct Waiting<'a> {
     waiters: &'a Waiters,
     id: i64,
@@ -212,8 +209,6 @@ pub(crate) enum Line {
     Dropped(usize),
 }
 
-// One line into `buf`, at most `max` bytes; a longer one is read through to
-// its newline and dropped so a runaway child cannot grow us without bound.
 pub(crate) async fn read_line<R>(
     reader: &mut R,
     buf: &mut Vec<u8>,

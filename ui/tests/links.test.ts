@@ -51,7 +51,7 @@ test("executables and scripts are refused", () => {
   assert.equal(fileLink("file:///C:/x/a.exe.txt").kind, "open");
 });
 
-test("brain markdown file links route to notes", () => {
+test("project markdown file links route to notes", () => {
   assert.deepEqual(fileLink("file:///C:/Users/me/.parzi/brain/notes/a.md"), { kind: "note", path: "notes/a.md" });
   assert.deepEqual(fileLink("file:///C:/vault/projects/x/GOALS.md"), { kind: "note", path: "projects/x/GOALS.md" });
   assert.deepEqual(fileLink("file://notes/a.md"), { kind: "note", path: "notes/a.md" });
@@ -68,12 +68,10 @@ test("bare vault notes in prose are found as link targets", () => {
     { path: "notes/a.md", index: 5, length: 10 },
     { path: "widgets/w.md", index: 22, length: 12 },
   ]);
-  // Trailing prose punctuation stays outside the link.
   assert.deepEqual(vaultRefs("(see notes/a.md), then notes/b.md."), [
     { path: "notes/a.md", index: 5, length: 10 },
     { path: "notes/b.md", index: 23, length: 10 },
   ]);
-  // A :line suffix rides along for the opener to strip.
   assert.deepEqual(vaultRefs("at projects/acme/plan.md:12 review"), [
     { path: "projects/acme/plan.md:12", index: 3, length: 24 },
   ]);
@@ -95,7 +93,6 @@ test("web links: plain http upgrades, local http opens in a tab", () => {
   for (const href of ["http://localhost:5173/", "http://127.0.0.1:8080", "http://[::1]:3000/x", "http://app.localhost/", "http://user@localhost/"]) {
     const link = webLink(href);
     assert.equal(link.kind, "tab", href);
-    // The scheme stays http: forcing https would break plain local servers.
     if (link.kind === "tab") assert.ok(link.url.startsWith("http://"), link.url);
   }
   assert.equal(webLink("https://localhost:8443/").kind, "open");

@@ -1,6 +1,3 @@
-//! The server half of ParziOS sync, behind `parzi serve`'s socket: the
-//! brain notes, the shared settings, and the mirror of every device's
-//! sessions. See `sync.rs` for the device half.
 
 use std::path::{Path, PathBuf};
 
@@ -62,8 +59,6 @@ pub fn brain_read_at(vault: &Vault, req: &Value) -> Value {
     json!({ "ok": true, "notes": notes })
 }
 
-/// Put and delete notes. Paths go through the vault's own checks: `.md`,
-/// inside the vault, no hidden folders.
 pub fn brain_apply(req: &Value) -> Value {
     match Vault::open() {
         Ok(v) => brain_apply_at(&v, req),
@@ -71,8 +66,6 @@ pub fn brain_apply(req: &Value) -> Value {
     }
 }
 
-/// Whether a note stands as a device last saw it: `expect` is its hash,
-/// "" for no note at all. No `expect` (a device from before) is no check.
 fn as_expected(full: &Path, expect: Option<&str>) -> bool {
     let Some(want) = expect else {
         return true;
@@ -86,11 +79,6 @@ fn as_expected(full: &Path, expect: Option<&str>) -> bool {
     }
 }
 
-/// `brain_apply` on `vault`. A put or delete whose note changed since the
-/// device listed it is refused and named in `stale`: the device plans that
-/// path again on its next sync instead of overwriting the change. A plan
-/// note is checked and written under the plan lock, so a `plan.write` here
-/// cannot land between the two.
 pub fn brain_apply_at(vault: &Vault, req: &Value) -> Value {
     let (mut put, mut deleted) = (0, 0);
     let mut stale: Vec<String> = vec![];
@@ -153,7 +141,6 @@ fn rev_file() -> Option<PathBuf> {
         .map(|d| d.join("sync").join("settings-rev"))
 }
 
-/// When a device last put the shared settings here (ms), 0 for never.
 #[must_use]
 pub fn settings_rev() -> u64 {
     rev_file()
@@ -196,7 +183,6 @@ fn valid_session_id(id: &str) -> bool {
     id.len() == 36 && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 
-/// `mirrors/<device>/<session>`, refused unless both parts are plain ids.
 fn mirror_dir(device: &str, id: &str) -> Result<PathBuf, String> {
     if !parzi_core::device::valid_id(device) || !valid_session_id(id) {
         return Err("not a device or session id".into());
@@ -208,9 +194,6 @@ fn line_count(path: &Path) -> usize {
     std::fs::read(path).map_or(0, |b| b.iter().filter(|c| **c == b'\n').count())
 }
 
-/// Store a device's session: its meta, and events appended from `from`. A
-/// `from` that does not match what is held is refused with the count, so
-/// the device resends from there.
 pub fn mirror_put(req: &Value) -> Value {
     let device = req.get("device").and_then(Value::as_str).unwrap_or("");
     let Some(meta) = req.get("session").cloned() else {
@@ -264,7 +247,6 @@ pub fn mirror_put(req: &Value) -> Value {
     }
 }
 
-/// Every mirrored session, newest first, with the device it ran on.
 pub fn mirror_list() -> Value {
     let mut rows: Vec<Value> = vec![];
     let Ok(root) = mirrors_dir() else {
@@ -334,8 +316,6 @@ pub fn mirror_delete(req: &Value) -> Value {
     }
 }
 
-/// Copy a mirrored session into this server's own store, so it can go on
-/// here. Returns the new session.
 pub fn mirror_adopt(orch: &Orchestrator, req: &Value) -> Value {
     let device = req.get("device").and_then(Value::as_str).unwrap_or("");
     let id = req.get("id").and_then(Value::as_str).unwrap_or("");
@@ -375,8 +355,6 @@ pub fn mirror_adopt(orch: &Orchestrator, req: &Value) -> Value {
     }
 }
 
-/// Projects as this server sees them: `folder` is its own folder ("" when
-/// it has none yet).
 pub fn project_list() -> Value {
     match Vault::open() {
         Ok(v) => {
@@ -387,7 +365,6 @@ pub fn project_list() -> Value {
     }
 }
 
-/// Give a project a folder on this server (or start one).
 pub fn project_folder(req: &Value) -> Value {
     let slug = req
         .get("slug")

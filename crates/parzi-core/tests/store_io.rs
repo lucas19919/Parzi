@@ -41,7 +41,6 @@ fn appended_events_carry_times_and_old_lines_still_read() {
     use std::io::Write;
     let store = open();
     let s = store.create("times", "t-times", "m").unwrap();
-    // A line from before timestamps existed: the bare event, no envelope.
     {
         let mut f = std::fs::OpenOptions::new()
             .append(true)
@@ -59,7 +58,6 @@ fn appended_events_carry_times_and_old_lines_still_read() {
         at >= before as i64 - 5 && at <= parzi_core::now_ms() as i64 / 1000 + 5,
         "stamp is now: {at}"
     );
-    // The plain reader is untouched by envelopes.
     assert_eq!(store.events(&s.id).unwrap().len(), 2);
 }
 

@@ -46,7 +46,6 @@
   })();
   $: all = plotSer.flatMap((s) => s.points);
   $: maxLen = Math.max(1, ...plotSer.map((s) => s.points.length));
-  // Only charts read theme colours, and they share one cached palette.
   const charted = ["chart-line", "chart-bar", "histogram", "scatter"].includes(type);
   const NO_PALETTE: ChartPalette = { ink: [""], line: "", faint: "", muted: "", panel: "", text: "" };
   $: pal = charted ? chartPalette($themeRev) : NO_PALETTE;

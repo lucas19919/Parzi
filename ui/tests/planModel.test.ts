@@ -102,7 +102,6 @@ test("a merged PR on the item's branch makes it done; an open one puts it in rev
   assert.equal(y.state, "review");
   assert.equal(y.pr?.number, 42);
   assert.deepEqual(y.branches, ["plan/y"]);
-  // main says nothing about an item.
   assert.equal(z.state, "started");
   assert.equal(z.pr, null);
 });

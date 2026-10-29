@@ -66,8 +66,6 @@ async fn foreground_echo_comes_back() {
 
 #[tokio::test]
 async fn foreground_rapid_exits_keep_every_byte() {
-    // Fast exits used to beat the stdout drain and report empty output
-    // (macOS CI). Every marker must survive, every time.
     let h = host(&workdir());
     for i in 0..50u32 {
         let marker = format!("race-marker-{i}");
@@ -133,7 +131,7 @@ async fn workdir_outside_the_folder_is_refused() {
         .call("shell.exec", &json!({"cmd": "echo hi", "workdir": away}))
         .await;
     assert!(!ok, "outside the fence must not run: {out}");
-    assert!(out.contains("outside"), "{out}"); // The folder itself, named in full, is inside.
+    assert!(out.contains("outside"), "{out}"); 
     let here = workdir();
     let (ok, out) = h
         .call("shell.exec", &json!({"cmd": "echo hi", "workdir": here}))
@@ -144,7 +142,6 @@ async fn workdir_outside_the_folder_is_refused() {
 #[tokio::test]
 async fn vendor_shell_is_rerouted_not_carded() {
     let h = host(&workdir());
-    // Claude Code's shell is pointed at shell.exec (its refusal carries why).
     for tool in ["Bash", "bash"] {
         let d = h
             .decide(PermissionRequest {
@@ -163,8 +160,7 @@ async fn vendor_shell_is_rerouted_not_carded() {
         if let PermissionDecision::Deny(why) = d {
             assert!(why.contains("shell.exec"), "{tool}: {why}");
         }
-    } // An ACP agent's terminal gets a bare "rejected" and ends its turn:
-      // it is judged as shell.exec would be, never just turned away.
+    } 
     for tool in ["shell", "execute", "run_command"] {
         let d = h
             .decide(PermissionRequest {
@@ -202,7 +198,6 @@ async fn the_shell_switch_turns_off_parzis_shell_and_the_agents_own() {
         tools: Arc::new(ToolExecutor {
             cwd: workdir(),
             mcp: Arc::new(McpManager::new(HashMap::new(), 60)),
-            // As the policy hands it out with the switch off: no shell.*.
             allowed: vec!["fs.*".into(), "plan.read".into()],
         }),
         approver: Arc::new(Allow),

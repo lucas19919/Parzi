@@ -1,5 +1,3 @@
-//! An agent's own checklist tool (Claude's TodoWrite, OpenCode's todowrite)
-//! shows as the session's checklist, the one todo.write keeps.
 
 mod common;
 

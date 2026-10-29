@@ -1,7 +1,4 @@
 <script lang="ts" context="module">
-  // Image files a step's tools say they made: a JSON `path` (Grok's
-  // image_gen and image_edit answer that way), or a full path to an image
-  // in the text.
   const IMAGE = /\.(png|jpe?g|webp|gif)$/i;
   const FULL = /(?:[A-Za-z]:[\\/]|\/)[^\s"'`<>|*?]+?\.(?:png|jpe?g|webp|gif)\b/gi;
 
@@ -21,7 +18,6 @@
           continue;
         }
       } catch {
-        /* not JSON: look in the text */
       }
       for (const m of text.matchAll(FULL)) add(m[0]);
     }
@@ -30,8 +26,6 @@
 </script>
 
 <script lang="ts">
-  // The pictures an agent's tools made, shown where they were made: tiles
-  // that open full size.
   import { api } from "./api";
   import { viewImage } from "./imageViewer";
 
@@ -48,8 +42,6 @@
         <button class="pic" aria-label="View {name(p)}" title={name(p)} on:click={() => viewImage(url, name(p))}>
           <img src={url} alt={name(p)} draggable="false" />
         </button>
-      {:catch}
-        <!-- Gone or unreadable: nothing to show. -->
       {/await}
     {/each}
   </div>

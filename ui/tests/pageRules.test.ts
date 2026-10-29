@@ -76,16 +76,12 @@ test("tooltips stay off the page: below, else above, else beside", () => {
   const view = { width: 1000, height: 800 };
   const tip = { width: 80, height: 24 };
   const toolbarButton = { left: 100, top: 78, right: 130, bottom: 108 };
-  // Nothing to avoid: below, as before.
   assert.deepEqual(tipSpot(toolbarButton, tip, view, null), { left: 75, top: 114 });
-  // The page starts under the toolbar: the tip goes above the button.
   const page = { left: 0, top: 118, right: 1000, bottom: 800 };
   assert.deepEqual(tipSpot(toolbarButton, tip, view, page), { left: 75, top: 48 });
-  // No room above either: beside the control.
   const topButton = { left: 100, top: 4, right: 130, bottom: 34 };
   const below = { left: 0, top: 36, right: 1000, bottom: 800 };
   const spot = tipSpot(topButton, tip, view, below);
   assert.equal(spot.left, 136);
-  // Clamped into the window at the right edge.
   assert.ok(tipSpot({ left: 980, top: 10, right: 1000, bottom: 30 }, tip, view, null).left <= 1000 - 80 - 6);
 });

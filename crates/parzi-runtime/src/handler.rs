@@ -38,14 +38,12 @@ pub enum RunEvent {
     Notice {
         text: String,
     },
-    /// The session's checklist, as `todo.write` just set it.
     Todo {
         todo: serde_json::Value,
     },
     Done {
         turns: u32,
     },
-    /// The run stopped at the budget: not running, not done either.
     Paused {
         reason: String,
     },
@@ -80,7 +78,6 @@ impl RunSink {
     }
 }
 
-/// A child session to start, as `HarnessBridge::spawn` takes it.
 #[derive(Debug, Clone, Default)]
 pub struct SpawnSpec {
     pub title: String,
@@ -94,7 +91,6 @@ pub struct SpawnSpec {
 
 #[async_trait::async_trait]
 pub trait HarnessBridge: Send + Sync {
-    /// Starts a child session; the reply is the tool result's JSON.
     async fn spawn(&self, caller_id: &str, spec: SpawnSpec) -> Result<String>;
     async fn send_message(
         &self,
@@ -126,8 +122,6 @@ pub(crate) fn user_event_text(
     text
 }
 
-// The harness prompt lives in parzi.md at the repo root so it reads like a
-// doc, not code. Sections are ## Tools, ## Teamwork, ## Plans, ## Delivery.
 const HARNESS_DOC: &str = include_str!("../../../parzi.md");
 
 fn harness_section(name: &str) -> String {
@@ -154,10 +148,6 @@ fn harness_intro() -> String {
     HARNESS_DOC[..end].trim().to_string()
 }
 
-/// A run event in the shape the desk's UI reads from `parzi://run-event`
-/// (`kind` tagged, snake case). `parzi serve` streams these to a remote
-/// desk, which forwards them unchanged. Usage and approval requests have
-/// their own paths and map to None.
 #[must_use]
 pub fn ui_event(session: &str, ev: &RunEvent) -> Option<serde_json::Value> {
     use serde_json::json;
@@ -186,7 +176,6 @@ pub fn ui_event(session: &str, ev: &RunEvent) -> Option<serde_json::Value> {
     })
 }
 
-/// The instructions every session gets.
 pub fn system_parts(cwd: &str) -> Vec<String> {
     let mut parts = vec![harness_intro()];
     parts.push(harness_section("tools"));
@@ -258,8 +247,6 @@ mod tests {
 
     #[test]
     fn the_plan_stays_out_of_the_instructions() {
-        // The instructions are re-sent every turn; a changing plan there
-        // would spoil the prompt cache.
         assert!(system_parts("C:\\x")
             .iter()
             .all(|p| !p.contains("<parzi:plan project")));

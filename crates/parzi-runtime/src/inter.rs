@@ -9,8 +9,6 @@ pub fn from_caller(
     kind: InterKind,
     body: impl Into<String>,
 ) -> InterSessionMessage {
-    // `from_lane` keeps its name on the wire (older transcripts carry it);
-    // it says where the sender works: its project.
     InterSessionMessage::new(caller.id.clone(), caller.project.clone(), kind, body)
 }
 

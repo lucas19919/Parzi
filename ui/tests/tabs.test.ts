@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ensureComposer, folderName, hostOf, isExplicitUrl, isSystemTab, sessionTab, pageTab, historyTab, brainTab, settingsTab, toAddress, restoreTab } from "../src/lib/tabs.ts";
+import { ensureComposer, folderName, hostOf, isExplicitUrl, isSystemTab, sessionTab, pageTab, historyTab, settingsTab, toAddress, restoreTab } from "../src/lib/tabs.ts";
 
 test("hostOf strips protocol and path", () => {
   assert.equal(hostOf("https://github.com/lucas/parzi"), "github.com");
@@ -29,7 +29,6 @@ test("system tabs split from working tabs", () => {
   assert.equal(isSystemTab(sessionTab()), false);
   assert.equal(isSystemTab(pageTab("https://example.com")), false);
   assert.equal(isSystemTab(historyTab()), true);
-  assert.equal(isSystemTab(brainTab()), true);
   assert.equal(isSystemTab(settingsTab()), true);
 });
 
@@ -37,7 +36,6 @@ test("a composer always has quote and attachment lists", () => {
   const fresh = ensureComposer();
   assert.deepEqual(fresh.quotes, []);
   assert.deepEqual(fresh.attachments, []);
-  // A composer saved before the lanes merged may still say "work": it talks to the agent.
   const saved = { input: "hi", mode: "work" as unknown as "build", model: "", effort: "medium", attachments: ["a.png"] };
   const partial = ensureComposer(saved);
   assert.equal(partial, saved);
@@ -48,18 +46,17 @@ test("a composer always has quote and attachment lists", () => {
   const kept = [{ project: "parzi", id: "prs", title: "PR badges" }];
   const quoted = ensureComposer({ quotes: kept, attachments: [] });
   assert.equal(quoted.quotes, kept);
-  // Same object when the lists are already present, so a tab switch does not
-  // replace the composer the Omnibar is bound to.
   const ready = ensureComposer({ input: "", mode: "build", model: "", effort: "medium", attachments: [], quotes: [] });
   assert.equal(ensureComposer(ready), ready);
   assert.deepEqual(sessionTab().composer.quotes, []);
   assert.deepEqual(sessionTab().composer.attachments, []);
 });
 
-test("saved Work and Tasks tabs don't come back", () => {
+test("saved Work, Tasks, Brain and Projects tabs don't come back", () => {
   assert.equal(restoreTab({ id: "t1", kind: "tasks", title: "Tasks" }), null);
   assert.equal(restoreTab({ id: "t2", kind: "work", title: "Work" }), null);
-  assert.deepEqual(restoreTab({ id: "t5", kind: "brain", title: "Brain" }), { id: "t5", kind: "brain", title: "Brain" });
+  assert.equal(restoreTab({ id: "t5", kind: "brain", title: "Brain" }), null);
+  assert.equal(restoreTab({ id: "t6", kind: "projects", title: "Projects" }), null);
   assert.equal(restoreTab({ id: "t3", kind: "settings", title: "Settings" }), null);
   assert.equal(restoreTab({ id: "t4", kind: "mystery", title: "?" }), null);
 });

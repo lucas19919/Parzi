@@ -15,7 +15,6 @@ pub enum ErrorClass {
     BadRequest,
     Process,
     SessionLost,
-    /// The agent has no way to do what the turn asked (compacting).
     Unsupported,
     Unknown,
 }
@@ -50,9 +49,6 @@ impl ProviderError {
         }
     }
 
-    /// Upgrade a best-guess class from the message text. Vendor drivers
-    /// often surface failures as untyped strings (or JSON blobs), so a
-    /// "Rate limit exceeded" that arrived as Unknown still reads as one.
     pub fn sniffed(class: ErrorClass, message: impl Into<String>) -> Self {
         let message = message.into();
         let class = match class {
@@ -67,7 +63,6 @@ impl ProviderError {
     }
 }
 
-// A status code counts only as a whole number: "429" is not in "14290".
 fn has_number(text: &str, n: &str) -> bool {
     text.match_indices(n).any(|(i, _)| {
         let before = text[..i].chars().next_back();
@@ -172,8 +167,6 @@ pub struct ModelInfo {
     pub is_default: bool,
     #[serde(default)]
     pub efforts: Vec<String>,
-    /// Whether the model can see images, when its agent says so (OpenCode
-    /// does, per model); unknown otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub images: Option<bool>,
 }
@@ -230,9 +223,6 @@ pub struct TurnSpec {
     pub prompt: String,
     pub images: Vec<PathBuf>,
     pub tools: Option<ToolServer>,
-    /// Compact the conversation instead of answering: `prompt` is what the
-    /// summary should keep (may be empty). An agent with no way to compact
-    /// fails the turn as `Unsupported`.
     pub compact: bool,
 }
 
@@ -267,8 +257,6 @@ pub enum ProviderEvent {
     },
     Limits(Vec<UsageWindow>),
     Notice(String),
-    /// The agent compacted its conversation, asked to or on its own, with
-    /// the context's size before and after when it says.
     Compacted {
         before: Option<u64>,
         after: Option<u64>,
@@ -284,11 +272,7 @@ pub enum TurnEnd {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PermissionRequest {
     pub id: String,
-    /// What kind of action it is; an ACP agent says only that ("execute",
-    /// "edit", "other"), its tool's own name is in `name`.
     pub tool: String,
-    /// The tool's own name when the agent gave one ("image_gen"), else
-    /// empty.
     pub name: String,
     pub title: String,
     pub input: serde_json::Value,
@@ -325,8 +309,6 @@ pub trait Provider: Send + Sync {
     ) -> Result<TurnEnd, ProviderError>;
 }
 
-// What to do next, for a status or an error a person reads. The Providers
-// tab in Settings has the button for each.
 pub(crate) const INSTALL_HINT: &str = "Install it from Providers in Settings.";
 pub(crate) const LOGIN_HINT: &str = "Sign in from Providers in Settings.";
 
@@ -354,7 +336,6 @@ pub(crate) async fn sleep_until(deadline: Option<tokio::time::Instant>) {
     }
 }
 
-// None when Stop came first; an already cancelled token never starts `work`.
 pub(crate) async fn or_cancel<T>(
     cancel: &CancellationToken,
     work: impl std::future::Future<Output = T>,

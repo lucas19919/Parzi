@@ -1,13 +1,10 @@
 <script lang="ts">
-  // Every value a chart draws, as a table only screen readers see: the
-  // tooltip is for pointers, this is the same data as text.
   export let caption = "";
   export let head: string[] = [];
   export let rows: string[][] = [];
 </script>
 
-<!-- Hidden by its wrapper: a table ignores height and overflow, so hiding
-     the table itself left its full height to scroll through. -->
+
 <div class="viz-data">
   <table>
     {#if caption}<caption>{caption}</caption>{/if}

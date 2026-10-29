@@ -1,7 +1,4 @@
 <script lang="ts">
-  // The project's plan as a checklist at the end of the thread: what is
-  // done, what runs, what waits on you. Clicking an item quotes it into
-  // the composer; agents change the plan, not this list.
   import { createEventDispatcher } from "svelte";
   import { slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
@@ -19,13 +16,8 @@
   export let running: Set<string> = new Set();
   export let approvals: Approval[] = [];
   export let questions: Question[] = [];
-  // Items already quoted into the composer: clicking one quotes it, clicking
-  // it again takes it back out.
   export let quotes: PlanQuote[] = [];
-  // Shown even when this session works on no item (asked for from the
-  // info column).
   export let force = false;
-  // Out: whether the checklist shows, so the info column can skip its row.
   export let visible = false;
 
   const dispatch = createEventDispatcher<{ quote: PlanQuote; unquote: PlanQuote; close: void }>();
@@ -43,10 +35,6 @@
   $: groups = plan ? groupItems(plan, views) : { open: [], closed: [] };
   $: items = groups.open.flatMap((g) => g.items);
   $: count = progress(views);
-  // The project's plan is its long-lived roadmap: it shows in a thread
-  // only when the person opens it (a session's own steps are its Tasks).
-  // A forced-open panel stays open even with no plan yet or an unreadable
-  // note, so a click always shows something and the X always hides it.
   $: shown = !!project && force;
   $: visible = shown;
   $: path = `projects/${project}/plan.md`;
@@ -76,7 +64,7 @@
     </div>
     {#if open}
       {#if error}
-        <p class="empty">The plan note {path} can't be read: {error}. Fix it in the Brain, or ask the agent for a new plan.</p>
+        <p class="empty">The plan note {path} can't be read: {error}. Fix it in Projects, or ask the agent for a new plan.</p>
       {:else if !plan}
         <p class="empty">No plan yet. Ask the agent for one when the work spans sessions.</p>
       {:else}
@@ -245,8 +233,7 @@
     font-size: var(--fs-sm);
     color: var(--warn);
   }
-  /* One small circle per state, drawn: hollow to do, spinning while an
-     agent works, amber when it needs you, filled when done. */
+
   .mark {
     position: relative;
     width: 14px;

@@ -31,8 +31,6 @@ pub struct Agent {
     locate: fn() -> Option<PathBuf>,
     gated: bool,
     slow_start: bool,
-    /// Takes `/compact` as a prompt even when it does not list the
-    /// command (OpenCode); any other compacts only if it lists it.
     compacts: bool,
     sign_in: Option<&'static str>,
     probe: Probe,
@@ -44,8 +42,6 @@ enum Probe {
     GrokModels,
     CursorStatus,
     GeminiSettings,
-    /// Models come from a session the agent opens, the way Cursor's do
-    /// when its own status lists none.
     ListedBySession,
 }
 
@@ -53,10 +49,6 @@ fn no_env() -> Vec<(String, String)> {
     vec![]
 }
 
-/// Effort levels Parzi offers for ACP agents (OpenCode, Grok, Cursor,
-/// Antigravity): the agents take no `--effort` flag, so Parzi tries a
-/// `session/set_config_option` with `effort` and always records the choice
-/// on the session. Never empty, or the composer hides the effort picker.
 fn default_efforts() -> Vec<String> {
     ["low", "medium", "high", "xhigh", "max"]
         .iter()
@@ -144,9 +136,6 @@ pub fn agent(id: &str) -> Option<Agent> {
     })
 }
 
-/// One generic ACP command (`id` is always `acp`). The label and args are
-/// leaked once per distinct command: Settings changes them rarely, and
-/// `Agent` has to stay `'static` for the read loop.
 fn custom_agent(label: &str, args: &[String]) -> Agent {
     let label = {
         let trimmed = label.trim();
@@ -201,7 +190,6 @@ impl Acp {
         }
     }
 
-    /// A command from Settings: registry id or a local program plus args.
     pub fn custom(binary: &str, args: &[String], label: &str) -> Self {
         Self::new(custom_agent(label, args), binary)
     }
@@ -463,9 +451,6 @@ fn take_warm(program: &Path) -> Option<Conn> {
         if conn.incoming.is_closed() {
             continue;
         }
-        // An agent that asked something while parked waits for an answer
-        // nobody gave: it may never answer the next turn. It goes (dropping
-        // it kills it) and a fresh one starts instead.
         let mut asked = false;
         while let Ok(msg) = conn.incoming.try_recv() {
             asked |= matches!(msg, Incoming::Request { .. });
@@ -477,9 +462,6 @@ fn take_warm(program: &Path) -> Option<Conn> {
     None
 }
 
-/// An agent process kept after a clean turn with its session still open,
-/// so the next message in that conversation goes straight to it: no
-/// start, no reconnecting tools, no reloading the history.
 struct Live {
     id: u64,
     program: PathBuf,
@@ -492,7 +474,6 @@ struct Live {
     conn: Conn,
 }
 
-/// What a turn opened, so a clean end can keep it.
 #[derive(Default)]
 struct Opened {
     sid: String,
@@ -500,8 +481,6 @@ struct Opened {
     commands: Vec<String>,
 }
 
-/// A session reused from the pool: its id, what opening it said, the
-/// model it runs and the commands it listed.
 struct Reused {
     sid: String,
     session: Value,
@@ -511,7 +490,6 @@ struct Reused {
 
 static LIVE: Mutex<Vec<Live>> = Mutex::new(Vec::new());
 const LIVE_FOR: Duration = Duration::from_secs(10 * 60);
-/// Kept at once; the oldest goes first.
 const LIVE_MAX: usize = 4;
 
 fn take_live(program: &Path, sid: &str, cwd: &Path, tools: Option<&str>) -> Option<Live> {
@@ -524,13 +502,9 @@ fn take_live(program: &Path, sid: &str, cwd: &Path, tools: Option<&str>) -> Opti
     if !matches!(l.conn.proc.child.try_wait(), Ok(None)) {
         return None;
     }
-    // The reader ended (EOF): the process is gone even if the handle
-    // lingers. Reusing it would fail the turn with "exited before it
-    // finished".
     if l.conn.incoming.is_closed() {
         return None;
     }
-    // Something it asked while parked went unanswered: start fresh.
     let mut asked = false;
     while let Ok(msg) = l.conn.incoming.try_recv() {
         asked |= matches!(msg, Incoming::Request { .. });
@@ -538,14 +512,11 @@ fn take_live(program: &Path, sid: &str, cwd: &Path, tools: Option<&str>) -> Opti
     (!asked).then_some(l)
 }
 
-/// Stops every agent kept running in `cwd`: its folder is going (a
-/// deleted session's worktree), and a process sitting in it would keep it.
 pub fn drop_live_in(cwd: &Path) -> usize {
     let Ok(mut live) = LIVE.lock() else {
         return 0;
     };
     let before = live.len();
-    // Dropping one kills its process.
     live.retain(|l| l.cwd != cwd);
     before - live.len()
 }
@@ -557,7 +528,6 @@ fn park_live(mut l: Live) {
         return;
     };
     live.push(l);
-    // Dropping one kills its process.
     while live.len() > LIVE_MAX {
         live.remove(0);
     }
@@ -624,10 +594,6 @@ impl Provider for Acp {
             Probe::GeminiSettings => gemini_status(self.agent),
             Probe::ListedBySession => ProviderStatus::new(self.agent.id, State::Ready, ""),
         };
-        // A probe that lists nothing (transient failure, signed out)
-        // falls back to the last models a session saw, so the picker
-        // keeps its models and effort levels instead of blinking out.
-        // Caches from before effort levels backfill to the default five.
         if status.models.is_empty() {
             status.models = cached_models(self.agent.id);
             for m in &mut status.models {
@@ -648,9 +614,6 @@ impl Provider for Acp {
                 .or_else(|| conn.init.pointer("/_meta/agentVersion"))
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            // An agent whose own status lists no models (Cursor) names them
-            // in a session; asking once here beats waiting for a first turn.
-            // Bounded well inside the board's 90 s limit on a whole check.
             let asked = status.models.is_empty() && status.state == State::Ready;
             if asked
                 && tokio::time::timeout(Duration::from_secs(30), self.learn_models(&conn))
@@ -691,7 +654,6 @@ impl Provider for Acp {
                 }),
             ),
             None => {
-                // Dropping a half-open connection kills its process.
                 let Some(conn) = or_cancel(&cancel, self.connect(&program, &spec.cwd)).await else {
                     return Ok(TurnEnd::Interrupted);
                 };
@@ -721,7 +683,6 @@ impl Provider for Acp {
             other => other,
         };
         let reusable = matches!(outcome, Ok(TurnEnd::Completed));
-        // Only a session the next turn can name (one that resumes) is kept.
         if reusable && !opened.sid.is_empty() && can_resume(&conn.init) {
             park_live(Live {
                 id: 0,
@@ -841,9 +802,6 @@ fn cursor_read(out: &str, agent: Agent) -> ProviderStatus {
 }
 
 async fn opencode_status(program: &Path, agent: Agent) -> ProviderStatus {
-    // Stdout only: stderr log lines can look like model ids. Verbose adds
-    // each model's details (whether it sees images); an older OpenCode
-    // without it still lists the ids.
     let out = match process::stdout(program, &["models", "--verbose"], 60).await {
         Some(out) => Some(out),
         None => process::stdout(program, &["models"], 60).await,
@@ -854,8 +812,6 @@ async fn opencode_status(program: &Path, agent: Agent) -> ProviderStatus {
     opencode_read(&out, agent)
 }
 
-/// Reads `opencode models`, plain (one id a line) or `--verbose` (each id
-/// followed by its details as JSON).
 fn opencode_read(out: &str, agent: Agent) -> ProviderStatus {
     let is_id = |l: &str| {
         l.contains('/') && !l.contains(' ') && !l.contains('"') && !l.starts_with(['{', '}'])
@@ -982,20 +938,14 @@ struct Buffers {
 
 type Names = Arc<Mutex<HashMap<String, String>>>;
 
-/// What a turn has heard so far.
 struct Seen {
     buffers: Buffers,
     names: Names,
     last_cost: Option<f64>,
-    /// The slash commands the agent lists (`available_commands_update`).
     commands: Vec<String>,
-    /// How full the context was at the last model call, when the agent
-    /// says per call (Grok's `response_completed`): a turn's totals add
-    /// up every call and overstate it.
     context: Option<u64>,
 }
 
-/// The commands an `available_commands_update` lists, by name.
 fn listed_commands(u: &Value) -> Option<Vec<String>> {
     if u.get("sessionUpdate").and_then(Value::as_str) != Some("available_commands_update") {
         return None;
@@ -1011,8 +961,6 @@ fn listed_commands(u: &Value) -> Option<Vec<String>> {
     )
 }
 
-/// The session update a notification carries, when it is for `sid`:
-/// `session/update`, or Grok's own `_x.ai/session_notification`.
 fn update_of<'a>(method: &str, params: &'a Value, sid: &str) -> Option<&'a Value> {
     if !matches!(method, "session/update" | "_x.ai/session_notification") {
         return None;
@@ -1024,8 +972,6 @@ fn update_of<'a>(method: &str, params: &'a Value, sid: &str) -> Option<&'a Value
     ours.then(|| params.get("update")).flatten()
 }
 
-/// How long a turn that compacts waits for the agent to list its
-/// commands before deciding it cannot.
 const COMMANDS_WAIT: Duration = Duration::from_secs(3);
 
 impl Buffers {
@@ -1052,18 +998,10 @@ fn rpc_failure(agent: Agent, e: RpcError) -> ProviderError {
     }
 }
 
-/// Answers what the agent asks of Parzi while a turn starts or runs: a
-/// permission request goes to the gate, anything else is refused. Never
-/// left unanswered: an agent waiting on an answer hangs the run with
-/// nothing to show for it.
 struct Answerer {
     peer: Arc<Peer>,
     gate: Arc<dyn PermissionGate>,
-    /// Each tool call's own name, by id: a permission ask gives only the
-    /// call's kind and a title.
     names: Names,
-    /// Fires once session/cancel is out, so pending permission asks answer
-    /// "cancelled".
     cancel_sent: CancellationToken,
 }
 
@@ -1085,8 +1023,6 @@ impl Answerer {
         }
     }
 
-    /// `work` (a call made before the prompt goes out), answering what the
-    /// agent asks meanwhile; its notifications wait in `held` for the turn.
     async fn meanwhile<T>(
         &self,
         work: impl std::future::Future<Output = T>,
@@ -1165,8 +1101,6 @@ async fn drive(
     let mut fresh = true;
     let mut session = Value::Null;
     let mut sid = String::new();
-    // The session is still open in this process: nothing to open, and the
-    // model only changes when the person picked another.
     let live_model = reused.as_ref().map(|r| r.model.clone());
     let mut commands = vec![];
     if let Some(r) = reused {
@@ -1251,8 +1185,6 @@ async fn drive(
         }
     }
     if spec.compact {
-        // A new conversation has nothing to compact; one that is gone is
-        // Parzi's to summarize from the transcript.
         if fresh {
             return Err(ProviderError::new(
                 ErrorClass::Unsupported,
@@ -1352,7 +1284,6 @@ async fn drive(
         commands,
         context: None,
     };
-    // What came while the session opened goes first, in order.
     for msg in held {
         if let Incoming::Notification { method, params } = msg {
             if let Some(u) = update_of(&method, &params, &sid) {
@@ -1406,9 +1337,6 @@ async fn drive(
                 let answer = match answer {
                     Ok(v) => v,
                     Err(_) if interrupting => return Ok(TurnEnd::Interrupted),
-                    // The process closed. The sentence stays on the turn;
-                    // the run ends so this session's Stop clears and the
-                    // others keep going.
                     Err(e) if e.code == RpcError::CLOSED => {
                         let sentence = e.to_string();
                         tracing::warn!("{} closed during the turn: {sentence}", agent.name);
@@ -1422,8 +1350,6 @@ async fn drive(
                     let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
                     let _ = events.send(ProviderEvent::Usage { input: n("inputTokens"), output: n("outputTokens"), cost_usd: None });
                 } else if let Some(u) = answer.pointer("/_meta/usage").filter(|u| u.is_object()) {
-                    // Grok says it under _meta: tokens, cost in ticks (1e-10 USD),
-                    // and with its window known, how full the context is.
                     let n = |k: &str| u.get(k).and_then(Value::as_u64).unwrap_or(0);
                     let cost = u.get("costUsdTicks").and_then(Value::as_f64).map(|t| t / 1e10);
                     let _ = events.send(ProviderEvent::Usage { input: n("inputTokens"), output: n("outputTokens"), cost_usd: cost });
@@ -1451,8 +1377,6 @@ async fn drive(
     }
 }
 
-/// The context window of the model a session runs, when the agent lists
-/// it (Grok: models.availableModels[]._meta.totalContextTokens).
 fn context_window(session: &Value, wanted: Option<&str>) -> Option<u64> {
     let models = session.get("models")?;
     let current = wanted
@@ -1514,9 +1438,6 @@ async fn select_model(
     }
 }
 
-/// Best-effort effort level for ACP agents: many list no `effort` config
-/// option, in which case the choice is still recorded on the session (and
-/// shown in the UI) but the agent runs its own default. Never fails a turn.
 async fn select_effort(peer: &Peer, session: &Value, sid: &str, effort: &str) {
     let limit = Duration::from_secs(15);
     let has_effort_option = session
@@ -1629,8 +1550,6 @@ fn update(u: &Value, sid: &str, resumable: bool, seen: &mut Seen, events: &Event
                 seen.commands = list;
             }
         }
-        // Grok, asked to or when its context fills.
-        // Grok, after each model call: what that call read and wrote.
         "response_completed" => {
             let n = |k: &str| {
                 u.pointer(&format!("/usage/{k}"))
@@ -1678,9 +1597,6 @@ fn finish_tool(u: &Value, id: &str, name: &str, events: &EventTx) {
     });
 }
 
-/// Whether a finished tool call went well. Antigravity shows its permission
-/// prompt as a tool call of its own and, once the real call has run under
-/// another id, ends the prompt as failed: that isn't a failure.
 fn tool_ok(status: &str, output: &str) -> bool {
     status == "completed" || (status == "failed" && output.contains("approved but never executed"))
 }
@@ -1747,7 +1663,6 @@ async fn permission(
             .filter_map(|o| o.get("kind").and_then(serde_json::Value::as_str))
             .collect::<Vec<_>>()
     );
-    // After session/cancel the spec wants every pending ask answered "cancelled".
     let decision = or_cancel(cancelled, gate.decide(request)).await;
     tracing::debug!("permission decided: {decision:?}");
     let chosen =
@@ -1833,7 +1748,6 @@ mod tests {
             let mut lines = BufReader::new(r).lines();
             let prompt = read(&mut lines).await;
             assert_eq!(prompt["method"], "session/prompt");
-            // Two model calls: the second read 9,000 + 8,800 cached.
             for (input, cached) in [(8000, 0), (9000, 8800)] {
                 send(&mut w, json!({"jsonrpc": "2.0", "method": "_x.ai/session_notification", "params": {"sessionId": "S0", "update": {
                     "sessionUpdate": "response_completed", "usage": {"input_tokens": input, "cache_read_input_tokens": cached, "output_tokens": 196}
@@ -1898,8 +1812,6 @@ mod tests {
         let server = tokio::spawn(async move {
             let (r, mut w) = tokio::io::split(theirs);
             let mut lines = BufReader::new(r).lines();
-            // No session/resume or session/new, and no model switch: the
-            // model is the one it already runs.
             let prompt = read(&mut lines).await;
             assert_eq!(prompt["method"], "session/prompt");
             assert_eq!(prompt["params"]["sessionId"], "S0");
@@ -2345,7 +2257,6 @@ mod tests {
             let mut lines = BufReader::new(r).lines();
             let new = read(&mut lines).await;
             assert_eq!(new["method"], "session/new");
-            // Before it answers, the agent asks twice and waits.
             send(&mut w, json!({"jsonrpc": "2.0", "id": 7, "method": "session/request_permission", "params": {
                 "sessionId": "S1",
                 "toolCall": {"toolCallId": "c0", "title": "Edit a.rs", "kind": "edit", "locations": [{"path": "a.rs"}]},
@@ -2419,8 +2330,6 @@ mod tests {
         assert_eq!(opencode_read("", opencode).state, State::SignedOut);
     }
 
-    /// Against the OpenCode installed here: `cargo test -p parzi-providers
-    /// --lib opencode_live -- --ignored --nocapture`.
     #[tokio::test]
     #[ignore = "needs OpenCode installed and signed in"]
     async fn opencode_live_lists_models_with_image_support() {
@@ -2575,8 +2484,6 @@ mod tests {
         assert_eq!(option_for(&[always], &PermissionDecision::Allow), None);
     }
 
-    /// Drives one turn of `agent` on the live session "S0" against a
-    /// scripted other end; returns the turn's end and what it relayed.
     async fn live_turn<F, Fut>(
         agent_id: &str,
         spec: TurnSpec,
@@ -2670,7 +2577,6 @@ mod tests {
         )
         .await;
         assert_eq!(end.unwrap_err().class, ErrorClass::Unsupported);
-        // One that lists it is asked.
         let (end, _) = live_turn("cursor", spec, vec!["compact".into()], gate(), |mut lines, mut w| async move {
             let prompt = read(&mut lines).await;
             assert_eq!(prompt["params"]["prompt"][0]["text"], "/compact hi");

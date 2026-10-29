@@ -1,5 +1,4 @@
 <script lang="ts">
-  // Rows like Home's: a status dot, the name, a note, a value at the end.
   import type { ListItem } from "./spec";
 
   export let items: ListItem[] = [];

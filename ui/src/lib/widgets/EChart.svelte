@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
 
-  // echarts loads on first chart, off the startup path.
   type ECharts = import("echarts/core").ECharts;
 
   export let option: any = null;

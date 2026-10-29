@@ -1,6 +1,3 @@
-// Brand marks for the connector catalog: path data from Simple Icons
-// 16.33.0 (CC0 1.0, https://simpleicons.org), one path on a 24x24 grid,
-// with each brand's own colour.
 export interface ConnectorMark {
   path: string;
   hex: string;

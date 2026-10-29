@@ -22,19 +22,22 @@ Spacing is `--space` (4px). Legal steps are 1, 2, 3, 4, 6, and 8 times that.
 A box inside a rounded box sets its radius to `calc(var(--r) - var(--pad))`
 and does not redefine `--r` (that cycles). `--radius-sm` is one `--space`
 step, for chips and thin bars. Pills are `999px`, dots are `50%`, marks may use `25%`.
-Motion is `--ease-out` and `140ms`. Wallpaper knobs are not component tokens.
+Motion is `--ease-out` and `140ms`. Disabled is `0.5` everywhere; dimmed
+rows are `0.55`; icons are 12 or 16 only.
 
 Appearance UI (`settings/AppearanceSection.svelte`) edits the four input
-colours, type and the wallpaper grade. Edits preview through
-inline vars (`lib/theme.ts` `previewTheme`), persist after 400 ms, then the
-authoritative stylesheet from Rust replaces the preview (`applyThemeCss`
-always clears inline vars). Theme packs live in `~/.parzi/themes/<slug>/`;
-a pack without art keeps the current wallpaper.
+colours, type and the one home backdrop picture (plus which slice of it
+shows, `--bg-y`). Edits preview through inline vars (`lib/theme.ts`
+`previewTheme`), persist after 400 ms, then the authoritative stylesheet
+from Rust replaces the preview (`applyThemeCss` always clears inline
+vars). Theme packs live in `~/.parzi/themes/<slug>/`; a pack without art
+keeps the current backdrop. There is no glass, no blur, no wallpaper
+grade: surfaces are solid `--panel` on `--bg`.
 
 ## Layout
 
 - Top bar (38px): menu, home, tabs, window controls. The bar is the drag region.
-- Tabs are sessions and pages. Brain, settings, and history open inside the
+- Tabs are sessions and pages. Settings and history open inside the
   session, with a back arrow at the top right, and the session column stays.
   Drag reorders tabs (pointer events,
   not HTML5 drag, which WebView2 hands to the file-drop handler);
@@ -66,13 +69,14 @@ a pack without art keeps the current wallpaper.
 
 ## Components (states: default / hover / active / focus-visible / disabled)
 
-- Brain is a folder tree, kept simple. Folders: All sessions, each project,
-  Not used, with no counts. Clicking a folder opens or closes it; a project
-  also opens its project note. Notes sit inside; a pin marks "always in
-  full". Drag a note onto a folder to move it, Ctrl+drag to copy (pointer
-  events, not HTML5 drag). A note shows one header row (title, pin, Read/Edit,
-  Open in Obsidian, Open file, Delete) and the note. No chips, no footer.
-  Reloads on window focus.
+- Projects live in the composer's project menu, nowhere else. The menu lists
+  each project (click to work there), Make-this-folder-a-project, New
+  project, and No project. Deleting is a trash button on the project row
+  itself: first click arms ("Sure?"), second removes the project record
+  (its notes stay in the vault). There is no notes UI: notes are vault
+  files for agents (`projects/<slug>/<name>.md` plus plan notes). A note
+  link anywhere pins the note into the session's side column; outside a
+  session it toasts instead of opening anything.
 - Composer: one evenly padded box. The textarea sits above a quiet row:
   model, effort, and permission as plain text on the left; a browser icon,
   attach, and send on the right. Send is the arrow, with no circle, and it
@@ -108,7 +112,7 @@ a pack without art keeps the current wallpaper.
 
 ## Anti-patterns (instant reject in review)
 
-- New `backdrop-filter` surfaces without a perf note.
+- `backdrop-filter` anywhere: surfaces are solid, there is nothing to blur through.
 - Dead controls: every visible button and command has a handler.
 - Hardcoded hex where a token exists; spacing or radii off the `--space` / `--radius` scale.
 - Silent catch blocks in UI code; missing toast on failure paths.

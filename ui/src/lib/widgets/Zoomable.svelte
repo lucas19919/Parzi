@@ -5,8 +5,6 @@
 
   export let enabled = false;
   let open = false;
-  // Registered as an overlay while zoomed so the app's own Esc handling
-  // (stop the run, leave fullscreen) stands down while this one closes.
   const key = `zoom-${Math.random().toString(36).slice(2)}`;
   $: setOverlay(key, open);
   onDestroy(() => setOverlay(key, false));
@@ -36,9 +34,7 @@
 <style>
   .zback {
     position: fixed; inset: 0; z-index: 500; cursor: zoom-out;
-    background: rgba(0, 0, 0, 0.62);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
+    background: var(--scrim);
     border: none; padding: 0; width: 100vw; height: 100vh;
   }
   .zwrap.open {

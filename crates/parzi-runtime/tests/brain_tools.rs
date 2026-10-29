@@ -63,7 +63,6 @@ fn host(approver: Arc<Person>) -> ToolHost {
 #[test]
 fn brain_tools_round_trip_their_mcp_names() {
     let names: Vec<String> = brain_defs().into_iter().map(|d| d.name).collect();
-    // Every brain tool the host runs is offered to agents (tools/list).
     assert_eq!(
         names,
         ["brain.search", "brain.read", "brain.write", "brain.delete"]
@@ -181,11 +180,9 @@ async fn brain_reads_freely_writes_with_approval_and_attaches_project_notes() {
     );
     assert!(setup < me, "the project's pinned notes go first: {last}");
 
-    // Search wants every word, in any order.
     let (ok, out) = h.call("brain.search", &json!({"query": "xtask run"})).await;
     assert!(ok && out.starts_with("- notes/setup.md — setup\n"), "{out}");
 
-    // A sync conflict copy is listed as one, but never searched or attached.
     brain::write(
         "notes/setup.conflict-laptop-macos.md",
         "---\nprojects: [demo]\npinned: true\n---\nRun make.",
@@ -208,7 +205,6 @@ async fn brain_reads_freely_writes_with_approval_and_attaches_project_notes() {
         "notes/setup.md"
     );
 
-    // brain.delete is gated like brain.write.
     let (ok, _) = h.call("brain.delete", &json!({"path": "notes/new"})).await;
     assert!(!ok);
     assert_eq!(
@@ -222,7 +218,6 @@ async fn brain_reads_freely_writes_with_approval_and_attaches_project_notes() {
     assert!(ok && out == "deleted notes/new.md", "{out}");
     assert!(brain::read("notes/new.md").is_err());
 
-    // Every listing stops at 50 notes.
     for i in 0..60 {
         brain::write(
             &format!("bulk/n{i:02}.md"),

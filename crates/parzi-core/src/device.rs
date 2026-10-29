@@ -1,11 +1,3 @@
-//! This machine's name among the user's devices. Synced data keys anything
-//! machine-specific by it: a project's folder (`folder@<id>` in its note)
-//! and the sessions a device mirrors to its server.
-//!
-//! The id is the host name as a slug plus the OS (`lucas-pc-windows`), so a
-//! Linux server under WSL on the same PC still gets its own. It is written
-//! to `~/.parzi/device.json` once and kept, so renaming the machine later
-//! does not orphan its folders. `PARZI_DEVICE` overrides it (tests).
 
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +24,6 @@ fn host() -> String {
         .unwrap_or_else(|| "device".into())
 }
 
-/// Lowercase letters, digits and single dashes, at most 48 characters.
 #[must_use]
 pub fn slug(raw: &str) -> String {
     let mut out = String::new();
@@ -51,8 +42,6 @@ pub fn slug(raw: &str) -> String {
     }
 }
 
-/// True for an id this module could have made: safe in a frontmatter key
-/// and as one path component.
 #[must_use]
 pub fn valid_id(id: &str) -> bool {
     !id.is_empty()
@@ -74,8 +63,6 @@ fn file() -> Option<std::path::PathBuf> {
     paths::parzi_dir().ok().map(|d| d.join("device.json"))
 }
 
-/// This machine. Reads `device.json`, else derives the same values it
-/// would write; never writes (see [`ensure`]).
 #[must_use]
 pub fn this() -> Device {
     if let Ok(id) = std::env::var("PARZI_DEVICE") {
@@ -86,7 +73,6 @@ pub fn this() -> Device {
             };
         }
     }
-    // Read once per home: a vault scan asks for every note.
     static CACHE: std::sync::Mutex<Option<(Option<std::path::PathBuf>, Device)>> =
         std::sync::Mutex::new(None);
     let path = file();
@@ -113,7 +99,6 @@ pub fn id() -> String {
     this().id
 }
 
-/// Write `device.json` if it is missing, so the id survives a rename.
 pub fn ensure() -> Result<Device> {
     let d = this();
     if let Some(path) = file().filter(|p| !p.exists()) {

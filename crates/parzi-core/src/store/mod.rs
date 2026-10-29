@@ -21,8 +21,6 @@ pub use model::{
 };
 pub use tree::{cascade_kill_ids, subtree_ids};
 
-/// Serializes every read-modify-write of meta.json. Process-wide, so two
-/// handles on the same folder cannot drop each other's update either.
 static META_WRITE: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone)]
@@ -129,8 +127,6 @@ impl SessionStore {
         }
     }
 
-    /// Every session, newest first. The folder scan and meta.json reads run
-    /// outside the cache lock; the lock is only taken to look up and merge.
     pub fn list(&self) -> Result<Vec<SessionMeta>> {
         count_read(1);
         let mut dirs = vec![];
@@ -180,8 +176,6 @@ impl SessionStore {
         }
 
         let mut c = self.cache();
-        // A meta write that landed mid-read may have been missed: return the
-        // rows, but let the next list() read them again.
         let index = c.meta_writes == writes_before;
         for (id, dir_mtime, meta) in fresh {
             out.extend(meta.clone());
@@ -216,8 +210,6 @@ impl SessionStore {
         Ok(())
     }
 
-    /// The session this one was started from: a side task the person sent
-    /// while that one worked. It lists among that session's helpers.
     pub fn set_parent(&self, id: &str, parent: &str) -> Result<()> {
         self.update_meta(id, |m| {
             m.parent_id = Some(parent.to_string());
@@ -226,7 +218,6 @@ impl SessionStore {
         Ok(())
     }
 
-    /// The project a session files under, as `project.create` moves it.
     pub fn set_project(&self, id: &str, project: &str) -> Result<()> {
         self.update_meta(id, |m| {
             m.project = project.to_string();
@@ -236,7 +227,6 @@ impl SessionStore {
         Ok(())
     }
 
-    /// The effort a run of the session uses; its list position stays.
     pub fn set_effort(&self, id: &str, effort: &str) -> Result<()> {
         if self.get(id)?.effort != effort {
             self.update_meta(id, |m| m.effort = effort.to_string())?;
@@ -244,7 +234,6 @@ impl SessionStore {
         Ok(())
     }
 
-    /// The plan item the session works on (None: none).
     pub fn set_plan_item(&self, id: &str, item: Option<&str>) -> Result<()> {
         let item = item.map(str::trim).filter(|i| !i.is_empty());
         if self.get(id)?.plan_item.as_deref() != item {
@@ -253,9 +242,6 @@ impl SessionStore {
         Ok(())
     }
 
-    /// How the session's latest run went, and the branch its folder was on
-    /// when it ended (None: unknown, the branch stays). The outcome is cut
-    /// to what a session keeps.
     pub fn set_last_run(&self, id: &str, outcome: RunOutcome, branch: Option<&str>) -> Result<()> {
         let outcome = outcome.capped();
         self.update_meta(id, |m| {
@@ -271,8 +257,6 @@ impl SessionStore {
         self.with_events(id, |(all, _)| <[Event]>::to_vec(all))
     }
 
-    /// Events with their Unix times, if the line said (lines from before
-    /// timestamps existed say nothing).
     pub fn events_with_times(&self, id: &str) -> Result<Vec<(Event, Option<i64>)>> {
         self.with_events(id, |(all, times)| {
             all.iter()
@@ -282,21 +266,16 @@ impl SessionStore {
         })
     }
 
-    /// Transcript length without copying it.
     pub fn event_count(&self, id: &str) -> Result<usize> {
         self.with_events(id, |(all, _)| <[Event]>::len(all))
     }
 
-    /// Events from index `from` on; empty when `from` is past the end.
     pub fn events_from(&self, id: &str, from: usize) -> Result<Vec<Event>> {
         self.with_events(id, |(all, _)| {
             all.get(from..).map_or_else(Vec::new, <[Event]>::to_vec)
         })
     }
 
-    /// Runs `f` on the transcript after catching the cache up to the file's
-    /// last complete line. The tail is read and parsed outside the cache
-    /// lock, so a long read never stalls an append to another session.
     fn with_events<T>(
         &self,
         id: &str,
@@ -335,8 +314,6 @@ impl SessionStore {
             if entry.len > end {
                 return Ok(f((&entry.events, &entry.times)));
             }
-            // Another reader or an append may have cached part of this
-            // tail meanwhile; keep only the lines past what it holds.
             if let Some(skip) = entry.len.checked_sub(from) {
                 let skip = usize::try_from(skip).unwrap_or(usize::MAX);
                 if skip == 0 || bytes.get(skip - 1) == Some(&b'\n') {
@@ -351,8 +328,6 @@ impl SessionStore {
                 }
             }
         }
-        // Still contended after three tries: read under the lock so the
-        // call always finishes.
         let len = file_len()?;
         let mut c = self.cache();
         let entry = c.session_mut(id);
@@ -385,9 +360,6 @@ impl SessionStore {
             .append(true)
             .open(self.events_path(id))
             .map_err(|_| ParziError::Store(format!("session not found: {id}")))?;
-        // A line torn by a crash must not swallow this event: end it first.
-        // The cache already knows where its last whole line ends, so the
-        // tail byte is only read when the file grew behind its back.
         let known = self.cache().sessions.get(id).map(|s| s.len);
         count_stat(1);
         let size = f.metadata()?.len();
@@ -474,8 +446,6 @@ impl SessionStore {
         Ok(())
     }
 
-    /// The one read-modify-write path for meta.json; the lock spans the
-    /// read and the write so concurrent setters cannot lose an update.
     fn update_meta(&self, id: &str, edit: impl FnOnce(&mut SessionMeta)) -> Result<SessionMeta> {
         let _held = META_WRITE.lock().unwrap_or_else(PoisonError::into_inner);
         let mut meta = self.get(id)?;
@@ -491,7 +461,6 @@ impl SessionStore {
         )?;
         let mut c = self.cache();
         if let Some(s) = c.sessions.get_mut(&meta.id) {
-            // An append stamped after our read stays pending for the next flush.
             if s.pending_updated.is_some_and(|p| p <= meta.updated) {
                 s.pending_updated = None;
             }

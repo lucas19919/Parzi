@@ -35,15 +35,11 @@ pub(crate) const MAX_SESSIONS: usize = 16;
 #[derive(Debug, Default)]
 pub(crate) struct SessionCache {
     pub events: Vec<Event>,
-    /// One per event, in step: when the line said (None: lines from before
-    /// timestamps existed).
     pub times: Vec<Option<i64>>,
     pub len: u64,
     pub pending_updated: Option<DateTime<Utc>>,
     pub md_dirty: bool,
-    /// Bumped on every mark, so a render only clears marks it has seen.
     pub md_seq: u64,
-    /// A torn tail must never misalign events and times: both are rebuilt.
     pub used: u64,
 }
 
@@ -57,7 +53,6 @@ impl SessionCache {
 #[derive(Debug)]
 pub(crate) struct IndexEntry {
     pub dir_mtime: Option<SystemTime>,
-    /// None: meta.json did not parse; remembered so `list()` skips it quietly.
     pub meta: Option<SessionMeta>,
 }
 
@@ -65,7 +60,6 @@ pub(crate) struct IndexEntry {
 pub(crate) struct StoreCache {
     pub sessions: HashMap<String, SessionCache>,
     pub index: HashMap<String, IndexEntry>,
-    /// Bumped by every meta write; `list()` skips indexing reads it raced.
     pub meta_writes: u64,
     tick: u64,
 }
@@ -108,8 +102,6 @@ impl StoreCache {
     }
 }
 
-/// One transcript line: since timestamps, an envelope with the event;
-/// older lines are the bare event and carry no time.
 #[derive(Debug, serde::Deserialize)]
 struct Stamped {
     #[allow(dead_code)]
@@ -117,9 +109,6 @@ struct Stamped {
     ev: Event,
 }
 
-/// Events with the byte offset just past their line (so a caller can drop
-/// the ones another thread already cached) and their Unix time, if the
-/// line said (lines from before timestamps existed say nothing).
 pub(crate) fn parse_lines(bytes: &[u8], path: &Path) -> Vec<(usize, Event, Option<i64>)> {
     let mut out = vec![];
     let mut end = 0;
@@ -139,7 +128,6 @@ pub(crate) fn parse_lines(bytes: &[u8], path: &Path) -> Vec<(usize, Event, Optio
     out
 }
 
-/// The shared atomic writer, counted for the bench (tmp write + rename).
 pub(crate) fn atomic_write_sync(path: &Path, bytes: &[u8]) -> Result<()> {
     count_write(2);
     crate::error::atomic_write(path, bytes)

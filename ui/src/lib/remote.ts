@@ -10,7 +10,6 @@ export interface RemoteInfo {
   version: string;
   linked_at: number;
   alive: boolean;
-  // Last finished sync (ms), 0 for not yet.
   synced_at: number;
   device: string;
 }
@@ -26,13 +25,9 @@ export interface RemoteStatus {
   detail: string;
 }
 
-// A session on the linked server is an ordinary session whose id starts
-// with "r:"; every session call routes it there (src-tauri/src/remote.rs).
 export const isRemote = (id: string | null | undefined): boolean => !!id && (id.startsWith("r:") || id.startsWith("m:"));
 
-/** The linked server, or null. Loaded once at startup, kept fresh by setup and unlink. */
 export const remoteInfo = writable<RemoteInfo | null>(null);
-/** Agents on the server, for the composer's model list while Remote is on. */
 export const remoteBoard = writable<ProviderStatus[]>([]);
 
 export const remote = {
@@ -57,8 +52,6 @@ export async function loadRemoteInfo(): Promise<RemoteInfo | null> {
 
 export async function refreshRemoteBoard(refresh = false): Promise<ProviderStatus[]> {
   const got = await remote.providers(refresh);
-  // An older server may answer with nothing: an empty board, not a crash
-  // in every list that reads it.
   const all = Array.isArray(got) ? got : [];
   remoteBoard.set(all);
   return all;
@@ -81,7 +74,7 @@ const STEP_NAMES: Record<string, string> = {
   setup: "Set up",
   home: "Parzi folder",
   config: "Settings",
-  brain: "Brain notes",
+  brain: "Project notes",
   service: "Service",
   linger: "Stay running",
   engine: "Engine",
@@ -91,7 +84,6 @@ const STEP_NAMES: Record<string, string> = {
 
 export const stepName = (step: string): string => STEP_NAMES[step] ?? step;
 
-// One row per step: a later line for the same step replaces the earlier.
 export function mergeProgress(rows: RemoteProgress[], next: RemoteProgress): RemoteProgress[] {
   const at = rows.findIndex((r) => r.step === next.step);
   if (at < 0) return [...rows, next];

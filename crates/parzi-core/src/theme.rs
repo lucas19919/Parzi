@@ -41,8 +41,6 @@ pub struct ColorTheme {
     pub bar: String,
     #[serde(default = "c_border")]
     pub border: String,
-    /// The panels' own colour. Empty means automatic: a whisper of the
-    /// text over the stage, so panels always sit on the theme.
     #[serde(default)]
     pub panel: String,
 }
@@ -51,33 +49,8 @@ pub struct ColorTheme {
 pub struct BackgroundTheme {
     #[serde(default = "d_bg_image")]
     pub image: String,
-    #[serde(default = "d_dim")]
-    pub dim: f64,
-    #[serde(default = "d_vignette")]
-    pub vignette: f64,
-    #[serde(default = "d_bg_blur")]
-    pub blur: f64,
-    #[serde(default)]
-    pub auto_accent: bool,
-    /// Frosted panels: the wallpaper blurs through them. Off means solid
-    /// panels in the panel colour.
-    #[serde(default = "d_glass")]
-    pub glass: bool,
-    /// Dither over the wallpaper: strength (opacity, 0-1) and tile size in px.
-    #[serde(default = "d_grain")]
-    pub grain: f64,
-    #[serde(default = "d_grain_size")]
-    pub grain_size: f64,
-    /// How far down the window the wallpaper reaches (0.3-1); it fades out there.
-    #[serde(default = "d_bg_height")]
-    pub height: f64,
-    /// Which part of the picture sits in the window: 0 is its top, 1 its bottom.
     #[serde(default = "d_bg_y")]
     pub y: f64,
-    /// The picture shows only on home (a new session). Off keeps it behind
-    /// every page.
-    #[serde(default)]
-    pub home_only: bool,
 }
 
 fn d_ui_font() -> String {
@@ -92,8 +65,6 @@ fn d_mono_font() -> String {
 fn d_mono_size() -> u32 {
     13
 }
-// The default look: graphite. Neutral near-black, soft white text and a
-// plain grey for the quiet parts; no tint, so nothing glows.
 fn c_sidebar() -> String {
     "#0F0F0F".into()
 }
@@ -116,13 +87,10 @@ fn c_border() -> String {
     "#2A2A2A".into()
 }
 
-/// Earlier defaults, in the order of `ColorTheme`'s fields. A saved theme
-/// still exactly one of these was never chosen: it moves to the new one.
 const OLD_DEFAULTS: [[&str; 7]; 2] = [
     [
         "#07070B", "#0B0B10", "#E6E8EE", "#EDEDF2", "#9AA0AE", "#0E0E14", "#20232C",
     ],
-    // Slate, the default of 0.1.33 to 0.1.36 (still a theme to pick).
     [
         "#0F1217", "#14181E", "#CBD5E1", "#E2E8F0", "#94A3B8", "#1A1F26", "#283039",
     ],
@@ -146,27 +114,6 @@ impl ColorTheme {
 }
 fn d_bg_image() -> String {
     "".into()
-}
-fn d_dim() -> f64 {
-    0.66
-}
-fn d_vignette() -> f64 {
-    0.5
-}
-fn d_bg_blur() -> f64 {
-    3.0
-}
-fn d_glass() -> bool {
-    true
-}
-fn d_grain() -> f64 {
-    0.16
-}
-fn d_grain_size() -> f64 {
-    32.0
-}
-fn d_bg_height() -> f64 {
-    1.0
 }
 fn d_bg_y() -> f64 {
     0.5
@@ -200,16 +147,7 @@ impl Default for BackgroundTheme {
     fn default() -> Self {
         Self {
             image: d_bg_image(),
-            dim: d_dim(),
-            vignette: d_vignette(),
-            blur: d_bg_blur(),
-            auto_accent: false,
-            glass: d_glass(),
-            grain: d_grain(),
-            grain_size: d_grain_size(),
-            height: d_bg_height(),
             y: d_bg_y(),
-            home_only: false,
         }
     }
 }
@@ -235,13 +173,7 @@ impl Theme {
     fn normalized(&self) -> Theme {
         let mut t = self.clone();
         t.colors.panel = t.colors.panel.trim().to_string();
-        t.background.dim = round2(t.background.dim.clamp(0.0, 1.0));
-        t.background.vignette = round2(t.background.vignette.clamp(0.0, 1.0));
-        t.background.blur = round2(t.background.blur.clamp(0.0, 40.0));
-        t.background.grain = round2(t.background.grain.clamp(0.0, 1.0));
-        t.background.grain_size = t.background.grain_size.clamp(16.0, 128.0).round();
-        t.background.height = round2(t.background.height.clamp(0.3, 1.0));
-        t.background.y = round2(t.background.y.clamp(0.0, 1.0));
+        t.background.y = t.background.y.clamp(0.0, 1.0);
         t.font.size = t.font.size.clamp(10, 20);
         t.font.mono_size = t.font.mono_size.clamp(9, 18);
         t
@@ -250,28 +182,14 @@ impl Theme {
     pub fn to_css_vars(&self) -> String {
         let t = self.normalized();
         let c = &t.colors;
-        let b = &t.background;
-        // A chosen panel colour, else the derived whisper of text over
-        // stage, so custom panels still ride every glass surface.
         let panel = if c.panel.trim().is_empty() {
             "color-mix(in srgb, var(--text) 6%, var(--bg))".to_string()
         } else {
             css_value(&c.panel)
         };
-        // Frost off means solid panels: no translucency, no backdrop blur.
-        let solid = if b.glass {
-            String::new()
-        } else {
-            "--glass-bg:var(--panel);--glass-strong-bg:var(--panel);\
-            --glass-bg-solid:var(--panel);--glass-blur:none;"
-                .to_string()
-        };
         format!(
             ":root{{--font:{};--font-size:{}px;--mono:{};--mono-size:{}px;\
-            --bg:{};--text:{};--accent:{};--panel:{};\
-            --bg-dim:{};--vignette:{};--bg-blur:{}px;\
-            --grain:{};--grain-size:{}px;--bg-height:{}%;--bg-y:{}%;\
-            --glass:{};{}}}\n",
+            --bg:{};--text:{};--accent:{};--panel:{};--bg-y:{}%;}}\n",
             css_font_list(&t.font.family),
             t.font.size,
             css_font_list(&t.font.mono),
@@ -280,30 +198,8 @@ impl Theme {
             css_value(&c.text),
             css_value(&c.accent),
             panel,
-            num(b.dim),
-            num(b.vignette),
-            num(b.blur),
-            num(b.grain),
-            num(b.grain_size),
-            num(b.height * 100.0),
-            num(b.y * 100.0),
-            if b.glass { "1" } else { "0" },
-            solid,
+            (t.background.y * 100.0).round(),
         )
-    }
-}
-
-fn round2(v: f64) -> f64 {
-    (v * 100.0).round() / 100.0
-}
-
-fn num(v: f64) -> String {
-    let s = format!("{v:.2}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s.is_empty() || s == "-0" {
-        "0".into()
-    } else {
-        s.to_string()
     }
 }
 
@@ -356,7 +252,6 @@ pub fn read_user_css() -> Result<String> {
     }
 }
 
-/// Position in the builtin list, or None for a user pack.
 fn builtin_rank(name: &str) -> Option<usize> {
     paths::BUILTIN_PACKS.iter().position(|(n, _)| *n == name)
 }
@@ -442,8 +337,6 @@ pub fn list_pack_infos() -> Result<Vec<PackInfo>> {
     Ok(out)
 }
 
-/// `abs` if it is a regular file inside backgrounds/: no `..`, no escape
-/// through an absolute theme value, no symlink.
 #[must_use]
 pub fn checked_background(abs: std::path::PathBuf) -> Option<std::path::PathBuf> {
     let bgs = paths::backgrounds_dir().ok()?;
@@ -459,7 +352,6 @@ pub fn checked_background(abs: std::path::PathBuf) -> Option<std::path::PathBuf>
         .then_some(abs)
 }
 
-/// The file a theme's `background.image` names, when it is a safe one.
 #[must_use]
 pub fn background_file(image: &str) -> Option<std::path::PathBuf> {
     if image.trim().is_empty() {
@@ -468,7 +360,6 @@ pub fn background_file(image: &str) -> Option<std::path::PathBuf> {
     checked_background(paths::parzi_dir().ok()?.join(image))
 }
 
-/// Two files with the same bytes.
 fn same_content(a: &std::path::Path, b: &std::path::Path) -> bool {
     let same_len = std::fs::metadata(a)
         .ok()
@@ -551,8 +442,6 @@ pub fn apply_pack(name: &str) -> Result<Theme> {
     let mut theme: Theme = toml::from_str(&std::fs::read_to_string(dir.join("theme.toml"))?)?;
     let current = Theme::load().unwrap_or_default();
 
-    // Copies carry the pack's name, so two packs shipping `wall.jpg` never
-    // show each other's picture; a changed file is copied again.
     let bgs = paths::backgrounds_dir()?;
     let mut art = vec![];
     for fname in pack_art(&dir) {
@@ -560,8 +449,6 @@ pub fn apply_pack(name: &str) -> Result<Theme> {
         if !is_bg_file(&src) {
             continue;
         }
-        // A pack saved here carries the wallpaper it was saved with: when
-        // that very picture is still in backgrounds/, use it, not a copy.
         if same_content(&bgs.join(&fname), &src) {
             art.push(fname);
             continue;
@@ -588,7 +475,6 @@ pub fn apply_pack(name: &str) -> Result<Theme> {
     } else if !named_exists {
         theme.background.image = current.background.image.clone();
     }
-    theme.background.auto_accent = current.background.auto_accent;
 
     let css = dir.join("user.css");
     if css.exists() {
@@ -616,8 +502,6 @@ fn is_bg_file(p: &std::path::Path) -> bool {
     }
 }
 
-/// A background is named by one plain file name with an image extension:
-/// no separators, no drive prefix (`C:x` would leave backgrounds/), no `..`.
 fn check_bg_name(name: &str) -> Result<()> {
     let p = std::path::Path::new(name);
     let mut parts = p.components();
@@ -732,94 +616,7 @@ pub fn import_background(name: &str, bytes: &[u8]) -> Result<String> {
     Ok(file)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Palette {
-    pub accent: String,
-    pub average: String,
-    pub deep: String,
-}
 
-fn hex(r: u8, g: u8, b: u8) -> String {
-    format!("#{r:02X}{g:02X}{b:02X}")
-}
-
-pub fn extract_palette(path: &std::path::Path) -> Result<Palette> {
-    let mut reader = image::ImageReader::open(path)
-        .map_err(|e| ParziError::Config(format!("unreadable image: {e}")))?
-        .with_guessed_format()
-        .map_err(|e| ParziError::Config(format!("unreadable image: {e}")))?;
-    reader.limits(crate::wallpaper::limits());
-    let img = reader
-        .decode()
-        .map_err(|e| ParziError::Config(format!("unreadable image: {e}")))?;
-    let thumb = img.thumbnail(64, 64).to_rgb8();
-    let pixels: Vec<[u8; 3]> = thumb.pixels().map(|p| p.0).collect();
-    if pixels.is_empty() {
-        return Err(ParziError::Config("empty image".into()));
-    }
-    let (mut sr, mut sg, mut sb) = (0u64, 0u64, 0u64);
-    #[allow(clippy::type_complexity)]
-    let mut buckets: std::collections::HashMap<(u8, u8, u8), (u64, u64, u64, u64)> =
-        std::collections::HashMap::new();
-    for [r, g, b] in &pixels {
-        sr += *r as u64;
-        sg += *g as u64;
-        sb += *b as u64;
-        let key = (r >> 4, g >> 4, b >> 4);
-        let e = buckets.entry(key).or_insert((0, 0, 0, 0));
-        e.0 += 1;
-        e.1 += *r as u64;
-        e.2 += *g as u64;
-        e.3 += *b as u64;
-    }
-    let n = pixels.len() as u64;
-    let avg = [(sr / n) as u8, (sg / n) as u8, (sb / n) as u8];
-    let mut best: Option<([u8; 3], f32)> = None;
-    for (_, (count, r_sum, g_sum, b_sum)) in &buckets {
-        let (r, g, b) = (
-            (r_sum / count) as f32 / 255.0,
-            (g_sum / count) as f32 / 255.0,
-            (b_sum / count) as f32 / 255.0,
-        );
-        let mx = r.max(g).max(b);
-        let mn = r.min(g).min(b);
-        if mx < 0.08 {
-            continue;
-        }
-        let sat = if mx > 0.0 { (mx - mn) / mx } else { 0.0 };
-        let score = *count as f32 * sat * (0.3 + 0.7 * mx);
-        let rgb = [(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8];
-        if best.map(|(_, s)| score > s).unwrap_or(true) {
-            best = Some((rgb, score));
-        }
-    }
-    let accent = match best {
-        Some((rgb, _)) => {
-            let (r, g, b) = (rgb[0] as f32, rgb[1] as f32, rgb[2] as f32);
-            let mx = r.max(g).max(b);
-            let sat = if mx > 0.0 {
-                (mx - r.min(g).min(b)) / mx
-            } else {
-                0.0
-            };
-            if sat < 0.18 {
-                [0xE8, 0xE8, 0xE8]
-            } else {
-                rgb
-            }
-        }
-        None => [0xE8, 0xE8, 0xE8],
-    };
-    Ok(Palette {
-        accent: hex(accent[0], accent[1], accent[2]),
-        average: hex(avg[0], avg[1], avg[2]),
-        deep: hex(
-            (avg[0] as f32 * 0.35) as u8,
-            (avg[1] as f32 * 0.35) as u8,
-            (avg[2] as f32 * 0.35) as u8,
-        ),
-    })
-}
 
 #[cfg(test)]
 mod css_tests {
@@ -840,18 +637,13 @@ mod css_tests {
     fn css_vars_carry_only_what_the_ui_reads() {
         let css = Theme::default().to_css_vars();
         assert!(css.contains("--font:\"Inter\""));
-        assert!(css.contains("--bg-dim:0.66"));
         assert!(css.contains("--accent:#E8E8E8"));
-        assert!(css.contains("--glass:1;"));
-        // No custom panel: the derived whisper, and no solid overrides.
         assert!(css.contains("--panel:color-mix(in srgb, var(--text) 6%, var(--bg));"));
-        // Muted is mixed in theme.css from text and background, not stored.
+        assert!(css.contains("--bg-y:50%;"));
         assert!(!css.contains("--muted:"));
-        assert!(!css.contains("--glass-bg:var(--panel)"));
+        assert!(!css.contains("--bg-dim:"));
+        assert!(!css.contains("--glass"));
         assert!(!css.contains("--parzi-"));
-        let mut t = Theme::default();
-        t.background.dim = 1.0;
-        assert!(t.to_css_vars().contains("--bg-dim:1;"));
     }
 
     fn channel(hex: &str) -> (f64, f64, f64) {
@@ -892,7 +684,6 @@ mod css_tests {
     fn derived_muted_clears_body_text_on_the_default_theme() {
         let text = channel("#ECECEC");
         let bg = channel("#161616");
-        // Same ratios as theme.css: muted is text at 78% over bg, panel at 6%.
         let muted = mix(text, bg, 0.78);
         let panel = mix(text, bg, 0.06);
         assert!(contrast(muted, bg) >= 4.5, "{}", contrast(muted, bg));
@@ -900,52 +691,20 @@ mod css_tests {
     }
 
     #[test]
-    fn a_chosen_panel_rides_the_glass_and_frost_off_goes_solid() {
+    fn a_chosen_panel_is_emitted_trimmed() {
         let mut t = Theme::default();
         t.colors.panel = " #1C1C1E ".into();
         let css = t.to_css_vars();
         assert!(css.contains("--panel:#1C1C1E;"), "{css}");
-        // Frost on: glass surfaces keep their translucency recipe.
-        assert!(!css.contains("--glass-blur:none"));
-        t.background.glass = false;
-        let css = t.to_css_vars();
-        assert!(css.contains("--glass:0;"), "{css}");
-        assert!(css.contains("--glass-bg:var(--panel);"), "{css}");
-        assert!(css.contains("--glass-blur:none;"), "{css}");
-        // Old theme files without the keys still load frosted and automatic.
-        let old: Theme = toml::from_str("[background]\nimage = \"\"\ndim = 0.5\n").unwrap();
-        assert!(old.background.glass);
+        let old: Theme =
+            toml::from_str("[background]\nimage = \"backgrounds/a.png\"\ndim = 0.5\n").unwrap();
+        assert_eq!(old.background.image, "backgrounds/a.png");
         assert!(old.colors.panel.is_empty());
+        let low: Theme =
+            toml::from_str("[background]\nimage = \"\"\ny = 2.0\n").unwrap();
+        assert!(low.to_css_vars().contains("--bg-y:100%;"));
     }
 
-    #[test]
-    fn grain_and_wallpaper_height_are_clamped_into_css() {
-        let css = Theme::default().to_css_vars();
-        assert!(css.contains("--grain:0.16;--grain-size:32px;--bg-height:100%;--bg-y:50%;"));
-        let mut t = Theme::default();
-        t.background.grain = 3.0;
-        t.background.grain_size = 4.0;
-        t.background.height = 0.7;
-        t.background.y = 2.0;
-        assert!(t
-            .to_css_vars()
-            .contains("--grain:1;--grain-size:16px;--bg-height:70%;--bg-y:100%;"));
-        // Theme files from before these keys still load, with the defaults.
-        let old: Theme = toml::from_str("[background]\nimage = \"\"\ndim = 0.5\n").unwrap();
-        let b = old.background;
-        assert_eq!(
-            (b.grain, b.grain_size, b.height, b.y, b.home_only),
-            (0.16, 32.0, 1.0, 0.5, false)
-        );
-    }
-
-    #[test]
-    fn numbers_print_without_float_noise() {
-        assert_eq!(num(0.6000000238418579), "0.6");
-        assert_eq!(num(0.0), "0");
-        assert_eq!(num(3.0), "3");
-        assert_eq!(num(10.5), "10.5");
-    }
 }
 
 #[cfg(test)]
@@ -979,34 +738,7 @@ mod background_name_tests {
 }
 
 #[cfg(test)]
-mod palette_tests {
-    use super::extract_palette;
-
-    fn solid_png(path: &std::path::Path, rgb: [u8; 3]) {
-        let img = image::RgbImage::from_pixel(16, 16, image::Rgb(rgb));
-        img.save(path).unwrap();
-    }
-
-    #[test]
-    fn vivid_art_yields_vivid_accent() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("red.png");
-        solid_png(&p, [220, 30, 30]);
-        let pal = extract_palette(&p).unwrap();
-        assert_eq!(pal.accent, "#DC1E1E");
-        assert_eq!(pal.average, "#DC1E1E");
-    }
-
-    #[test]
-    fn monochrome_art_falls_back_to_the_neutral_accent() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("gray.png");
-        solid_png(&p, [120, 120, 120]);
-        let pal = extract_palette(&p).unwrap();
-        assert_eq!(pal.accent, "#E8E8E8");
-        assert_eq!(pal.average, "#787878");
-    }
-
+mod default_migration_tests {
     #[test]
     fn the_untouched_old_default_moves_to_slate_and_a_chosen_look_stays() {
         let mut old = super::ColorTheme::default();
@@ -1025,7 +757,6 @@ mod palette_tests {
         old.accent = "#7AA2F7".into();
         assert!(!old.is_old_default(), "a changed accent is a choice");
         assert!(!super::ColorTheme::default().is_old_default());
-        // Slate, the default before graphite, moves on too.
         let slate = super::ColorTheme {
             sidebar: "#0F1217".into(),
             stage: "#14181E".into(),
@@ -1037,11 +768,5 @@ mod palette_tests {
             panel: String::new(),
         };
         assert!(slate.is_old_default());
-    }
-
-    #[test]
-    fn unreadable_file_errors() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(extract_palette(&dir.path().join("nope.png")).is_err());
     }
 }

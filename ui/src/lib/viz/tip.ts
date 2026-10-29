@@ -1,7 +1,3 @@
-// The hover readout charts share: lib/tooltip.ts's look (.tip), placed
-// above the mark it reads. One element for every chart; the value leads,
-// the label follows, and a short line in the series colour keys it. Text
-// goes in with textContent: labels come from agents.
 
 export interface TipRow {
   value: string;
@@ -13,8 +9,6 @@ let tip: HTMLDivElement | null = null;
 let shownAt = 0;
 let listening = false;
 
-// The chart scrolls away under a fixed tip: drop it instead (but not for
-// the scroll that brought the chart under the pointer a moment ago).
 function onScroll() {
   if (performance.now() - shownAt > 150) hideTip();
 }

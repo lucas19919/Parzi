@@ -1,6 +1,4 @@
 <script lang="ts">
-  // An image at full size over the app: click outside it or press Esc to
-  // close it.
   import { onDestroy } from "svelte";
   import { fade, scale } from "svelte/transition";
   import Icon from "./Icon.svelte";
@@ -8,7 +6,6 @@
   import { setOverlay } from "./overlay";
   import { tooltip } from "./tooltip";
 
-  // An overlay while open, so the app's own Esc (stop the run) stands down.
   $: setOverlay("image-viewer", !!$viewed);
   onDestroy(() => setOverlay("image-viewer", false));
 
@@ -23,7 +20,7 @@
 <svelte:window on:keydown|capture={onKey} />
 
 {#if $viewed}
-  <!-- Esc closes it (window handler); the click outside is a mouse shortcut. -->
+  
   <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
   <div class="viewer" role="dialog" aria-modal="true" aria-label={$viewed.alt || "Image"} on:click|self={closeImage} transition:fade={{ duration: 140 }}>
     <img src={$viewed.src} alt={$viewed.alt} draggable="false" transition:scale={{ duration: 180, start: 0.96 }} />
@@ -42,8 +39,6 @@
     justify-content: center;
     padding: calc(var(--space) * 8) calc(var(--space) * 8);
     background: var(--scrim);
-    -webkit-backdrop-filter: blur(6px);
-    backdrop-filter: blur(6px);
     cursor: zoom-out;
   }
   img {
@@ -63,9 +58,9 @@
     align-items: center;
     justify-content: center;
     padding: 0;
-    background: var(--glass-strong-bg);
-    border: var(--glass-border);
-    border-radius: 50%;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
     color: var(--text);
     cursor: pointer;
   }
@@ -82,8 +77,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    border: 1px solid var(--line);
     border-radius: 999px;
-    background: var(--glass-strong-bg);
+    background: var(--panel);
     color: var(--text);
     font-size: var(--fs-sm);
     cursor: default;

@@ -4,7 +4,6 @@
 .section-head-with-action { display: flex; align-items: center; justify-content: space-between; gap: calc(var(--space) * 3); }
 .section-head-with-action > div { display: flex; flex-direction: column; gap: calc(var(--space) * 2); }
 
-/* One row: label left, control right. */
 .field-card {
   display: flex; align-items: center; justify-content: space-between; gap: calc(var(--space) * 4);
   background: var(--panel);
@@ -17,7 +16,6 @@
 .field-hint { font-size: var(--fs-md); color: var(--muted); line-height: 1.4; }
 .field-hint b { color: var(--muted); font-weight: 500; }
 
-/* Settings rows only. A bare .rows elsewhere (the context legend) must not inherit this. */
 .settings .rows {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -29,7 +27,6 @@
 .row-label { font-size: var(--fs-md); font-weight: 500; color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-ctl { display: flex; align-items: center; gap: calc(var(--space) * 2); flex: none; }
 
-/* One text input everywhere: settings, paths, limits, search. */
 .tin {
   background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius);
   color: var(--text); font: inherit; font-size: var(--fs-md);
@@ -87,7 +84,7 @@
 .sbtn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, var(--text)); }
 .sbtn.danger { background: transparent; border-color: var(--bad); color: var(--bad); }
 .sbtn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 12%, transparent); }
-.sbtn:disabled { opacity: 0.4; cursor: not-allowed; }
+.sbtn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .status-badge { font-size: var(--fs-xs); font-weight: 600; padding: var(--space) calc(var(--space) * 2); border-radius: 999px; white-space: nowrap; }
 .status-badge.ok { background: transparent; color: var(--ok); border: 1px solid var(--ok); }

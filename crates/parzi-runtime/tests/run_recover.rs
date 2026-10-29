@@ -1,7 +1,3 @@
-// Its own test binary (and so its own PARZI_HOME): `recover` stands down
-// every session the store thinks is running.
-//
-// A run cut off when the app closed reads as interrupted on its session.
 mod common;
 
 use common::*;

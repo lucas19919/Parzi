@@ -34,9 +34,6 @@ test("the window drags from empty chrome only", () => {
 });
 
 test("a released button never starts a window drag", () => {
-  // The freeze: a drag that starts after mouseup leaves Windows in a drag
-  // loop until some later click. Drop the gesture instead, and the native
-  // side repeats the check because the button can come up during the call.
   assert.equal(commitWindowDrag(false), false);
   assert.equal(commitWindowDrag(true), true);
   assert.equal(windowMove(0, 40), "drop");
@@ -60,13 +57,10 @@ test("tabs ignore jitter, then select when a drag does not reorder", () => {
   assert.equal(tabDragStarted(0, 0, 5, 0, false), true);
   assert.equal(tabDragStarted(10, 10, 10, 14, true), false);
   assert.equal(tabDragStarted(10, 10, 10, 15, true), true);
-  // Horizontal jitter must not start a vertical tab drag.
   assert.equal(tabDragStarted(0, 0, 20, 0, true), false);
 
   const ids = ["a", "b", "c"];
-  // No drag: the click handler selects. Releasing must not select again.
   assert.deepEqual(tabRelease({ pressId: "b", dragId: "", order: null, ids }), { kind: "pending" });
-  // Dragged but put back: capture swallowed the click, so the release selects.
   assert.deepEqual(tabRelease({ pressId: "b", dragId: "b", order: ["a", "b", "c"], ids }), { kind: "select", id: "b" });
   assert.deepEqual(tabRelease({ pressId: "b", dragId: "b", order: ["b", "a", "c"], ids }), { kind: "move", id: "b", to: 0 });
   assert.deepEqual(tabRelease({ pressId: "a", dragId: "a", order: ["b", "c", "a"], ids }), { kind: "move", id: "a", to: 2 });
@@ -75,7 +69,6 @@ test("tabs ignore jitter, then select when a drag does not reorder", () => {
 
 test("a shaky click on a note still opens it", () => {
   const path = "notes/a.md";
-  // Still on the row: the folder underneath must not turn the click into a drag.
   assert.equal(noteMoveStarts(6, path, path), false);
   assert.equal(noteMoveStarts(4, null, path), false);
   assert.equal(noteMoveStarts(5, "notes/b.md", path), true);
@@ -83,7 +76,6 @@ test("a shaky click on a note still opens it", () => {
 
   const press = { path, from: "parzi" };
   assert.deepEqual(noteRelease(press, false, "", path, false), { kind: "open", path });
-  // Moved, released on the same row, drop target is the folder it already lives in.
   assert.deepEqual(noteRelease(press, true, "parzi", path, false), { kind: "open", path });
   assert.deepEqual(noteRelease(press, true, "other", "notes/b.md", false), {
     kind: "move",
@@ -99,14 +91,11 @@ test("a shaky click on a note still opens it", () => {
     to: "other",
     copy: true,
   });
-  // Dragged onto a sibling and let go: not a click on the original.
   assert.deepEqual(noteRelease(press, true, "parzi", "notes/b.md", false), { kind: "cancel" });
   assert.deepEqual(noteRelease(press, true, "", null, false), { kind: "cancel" });
-  // Released off the row without ever dragging.
   assert.deepEqual(noteRelease(press, false, "", null, false), { kind: "cancel" });
 });
 
-// A stand-in window and node: pressDrag only adds and removes listeners.
 function pointer(type: string, over: Record<string, number> = {}) {
   return Object.assign(new Event(type), { button: 0, buttons: 1, pointerId: 1, clientX: 0, clientY: 0, ...over });
 }
@@ -134,7 +123,6 @@ test("a press-drag stays a click under the slop and ends on release", () => {
   send(win, "pointermove", { clientX: 4 });
   send(win, "pointerup", { clientX: 4, buttons: 0 });
   assert.deepEqual(log, ["release click"]);
-  // Nothing armed after the release.
   send(win, "pointermove", { clientX: 40 });
   send(win, "pointerup", { buttons: 0 });
   assert.deepEqual(log, ["release click"]);
@@ -151,7 +139,6 @@ test("a press-drag drags past the slop, once started", () => {
 
 test("a press-drag never stays armed", () => {
   const { win, node, log, send, action } = rig();
-  // Other buttons, other pointers and refused presses arm nothing.
   send(node, "pointerdown", { button: 2 });
   send(node, "pointerdown", { clientX: -1 });
   send(win, "pointerup", { buttons: 0 });
@@ -160,16 +147,13 @@ test("a press-drag never stays armed", () => {
   send(win, "pointermove", { pointerId: 2, clientX: 40 });
   send(win, "pointerup", { pointerId: 2, buttons: 0 });
   assert.deepEqual(log, []);
-  // The pointerup went to a page window: the next move without the button releases.
   send(win, "pointermove", { clientX: 40, buttons: 0 });
   assert.deepEqual(log, ["release click"]);
-  // A press left over is dropped by the next press, which still starts.
   send(node, "pointerdown");
   send(win, "pointerdown");
   send(node, "pointerdown");
   send(win, "pointerup", { buttons: 0 });
   assert.deepEqual(log.slice(1), ["cancel", "release click"]);
-  // Losing capture with the button held, losing focus, or going away cancels.
   log.length = 0;
   send(node, "pointerdown");
   send(win, "lostpointercapture", { buttons: 0 });

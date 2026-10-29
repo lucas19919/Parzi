@@ -2,15 +2,11 @@
   export let bg = "";
 </script>
 
-<!-- Behind everything, pages included: a page covers all but the top bar,
-     which keeps the window's own background. -->
+
 <div class="backdrop">
   {#if bg}
-    <!-- The picture, its shade and the dither reach --bg-height down the
-         window and fade into the stage colour there. -->
     <div class="art">
       <img src={bg} alt="" />
-      <div class="grain" />
       <div class="shade" />
     </div>
   {/if}
@@ -27,39 +23,29 @@
   }
   .art {
     position: absolute;
-    inset: 0 0 auto;
-    height: var(--bg-height, 100%);
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 34%;
     overflow: hidden;
-    /* No fade at full height; the shorter the picture, the longer its fade. */
-    --fade: calc((100% - var(--bg-height, 100%)) * 0.8);
-    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--fade)), transparent);
-    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--fade)), transparent);
+
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, black 28%, black 55%, transparent 100%);
+    mask-image: linear-gradient(to bottom, transparent 0, black 28%, black 55%, transparent 100%);
   }
   img {
     position: absolute;
-    inset: calc(var(--bg-blur) * -2);
-    width: calc(100% + var(--bg-blur) * 4);
-    height: calc(100% + var(--bg-blur) * 4);
+    inset: 0;
+    width: 100%;
+    height: 100%;
     object-fit: cover;
     object-position: center var(--bg-y, 50%);
-    filter: blur(var(--bg-blur)) saturate(1.06);
   }
   .shade {
     position: absolute;
     inset: 0;
-    /* Veil toward the stage, so a light theme stays light over a picture. */
+
     background:
-      linear-gradient(to bottom, color-mix(in srgb, var(--bg) 64%, transparent), transparent 80px),
-      radial-gradient(ellipse at center, transparent 45%, color-mix(in srgb, var(--bg) calc(var(--vignette) * 100%), transparent) 100%),
-      color-mix(in srgb, var(--bg) calc(var(--bg-dim) * 100%), transparent);
-  }
-  /* The dither lies over the whole picture and fades out with it. */
-  .grain {
-    position: absolute;
-    inset: 0;
-    background: url("/dither-bayer.png");
-    background-size: var(--grain-size, 32px) var(--grain-size, 32px);
-    image-rendering: pixelated;
-    opacity: var(--grain, 0.16);
+      linear-gradient(to bottom, color-mix(in srgb, var(--bg) 72%, transparent), transparent 55%),
+      color-mix(in srgb, var(--bg) 30%, transparent);
   }
 </style>

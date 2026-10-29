@@ -14,8 +14,6 @@ export async function windowClose() {
   await getCurrentWindow().close();
 }
 
-// One armed gesture. A second press replaces it: the old listeners must not
-// start a drag after the button is already up.
 let startX = 0;
 let startY = 0;
 
@@ -30,8 +28,6 @@ function disarm() {
 function onMouseMove(moveEvent: MouseEvent) {
   const action = windowMove(moveEvent.buttons, distance(startX, startY, moveEvent.clientX, moveEvent.clientY));
   if (action === "wait") return;
-  // Drop the gesture first. The command checks the button again on the UI
-  // thread and refuses once it is up, so a late call cannot eat the next click.
   disarm();
   if (action === "drag") void invoke("begin_window_drag").catch(() => {});
 }

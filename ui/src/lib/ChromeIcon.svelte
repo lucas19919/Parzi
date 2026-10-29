@@ -1,8 +1,7 @@
-<script lang="ts">
+<script context="module" lang="ts">
   export type ChromeIconName =
     | "menu"
     | "clock"
-    | "brain"
     | "settings"
     | "wrench"
     | "alert"
@@ -10,12 +9,14 @@
     | "bell"
     | "plus"
     | "arrowDown";
+</script>
 
+<script lang="ts">
   export let name: ChromeIconName;
   export let size = 16;
 </script>
 
-<!-- One stroke weight for the top bar. Filled marks read heavier and in more colors. -->
+
 <svg
   width={size}
   height={size}
@@ -32,11 +33,6 @@
   {:else if name === "clock"}
     <circle cx="12" cy="12" r="8" />
     <path d="M12 8v4l2.5 1.5" />
-  {:else if name === "brain"}
-    <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
-    <path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z" />
-    <path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4" />
-    <path d="M12 18v3M8 15.5c-.5.8-1.2 1.4-2 1.8M16 15.5c.5.8 1.2 1.4 2 1.8" />
   {:else if name === "settings"}
     <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
     <circle cx="12" cy="12" r="3" />

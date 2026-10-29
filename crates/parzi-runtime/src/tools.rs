@@ -52,12 +52,8 @@ pub struct AskRequest {
     pub id: String,
     pub question: String,
     pub options: Vec<String>,
-    /// A line under each option, "" where it has none.
     pub details: Vec<String>,
-    /// The person may pick several options.
     pub multi: bool,
-    /// Empty for questions; otherwise the request kind ("text", "file",
-    /// "image"). The UI shows both inline, in the asking session.
     pub kind: String,
     pub session: String,
 }
@@ -98,8 +94,6 @@ impl ToolExecutor {
     }
 
     pub(crate) fn approval_override(&self, name: &str) -> Option<ApprovalMode> {
-        // Connector modes govern connector tools only: a connector named
-        // `shell` or `project` must not relax Parzi's own gates.
         if is_vendor_category(name) || is_parzi_tool(name) {
             return None;
         }
@@ -161,7 +155,6 @@ pub(crate) fn is_vendor_category(name: &str) -> bool {
     matches!(name, "fs.read" | "fs.write" | "fs.list" | "shell.exec")
 }
 
-/// The vendor category of an agent's own tool: shell, write or read.
 pub(crate) fn category(tool: &str) -> Option<&'static str> {
     match tool {
         "Bash" | "BashOutput" | "KillShell" | "shell" | "execute" => Some("shell.exec"),
@@ -170,13 +163,7 @@ pub(crate) fn category(tool: &str) -> Option<&'static str> {
         }
         "Read" | "Glob" | "Grep" | "LS" | "NotebookRead" | "read" | "search" => Some("fs.read"),
         _ => {
-            // The vendor shell list can never be complete: any tool whose
-            // name smells like command execution routes to the shell gate
-            // instead of slipping through as unknown.
             let l = tool.to_lowercase();
-            // ACP agents name a call by its title ("Run create_file?",
-            // "Running edit_file" from Antigravity): the file verb in it says
-            // it writes.
             if FILE_WRITES.iter().any(|w| l.contains(w)) {
                 return Some("fs.write");
             }
@@ -197,7 +184,6 @@ pub(crate) fn category(tool: &str) -> Option<&'static str> {
     }
 }
 
-/// File-writing tool names inside an ACP call's title.
 const FILE_WRITES: &[&str] = &[
     "create_file",
     "edit_file",
@@ -207,9 +193,6 @@ const FILE_WRITES: &[&str] = &[
     "multi_replace_file",
 ];
 
-/// The files an edit tool call names: Claude's `file_path` (and
-/// `notebook_path`), Codex's `paths`, Antigravity's `TargetFile`, and the
-/// usual spellings of others.
 #[must_use]
 pub fn edit_paths(tool: &str, args: &serde_json::Value) -> Vec<String> {
     if category(tool) != Some("fs.write") {
@@ -244,7 +227,6 @@ pub fn edit_paths(tool: &str, args: &serde_json::Value) -> Vec<String> {
     out
 }
 
-/// The command line a shell tool call runs, Parzi's or an agent's own.
 #[must_use]
 pub fn shell_command(tool: &str, args: &serde_json::Value) -> Option<String> {
     if !matches!(tool, "shell.exec" | "shell.start") && category(tool) != Some("shell.exec") {
@@ -262,9 +244,6 @@ pub fn shell_command(tool: &str, args: &serde_json::Value) -> Option<String> {
     Some(cmd.trim().to_string()).filter(|c| !c.is_empty())
 }
 
-/// Every tool Parzi itself offers. Used to tell allowlist entries
-/// that name our own tools apart from entries that speak in vendor
-/// categories (e.g. "fs.*") — "shell.exec" is unfortunately both.
 pub(crate) fn is_parzi_tool(name: &str) -> bool {
     is_ui_tool(name)
         || is_browser_tool(name)
@@ -280,7 +259,6 @@ pub(crate) fn is_parzi_tool(name: &str) -> bool {
         || is_plan_tool(name)
 }
 
-/// Every one of Parzi's own tool definitions, before Settings filter them.
 pub fn all_defs() -> Vec<ToolDef> {
     let mut d = ui_defs();
     d.extend(browser_defs());
@@ -385,8 +363,6 @@ pub(crate) fn is_ui_tool(name: &str) -> bool {
     )
 }
 
-/// The optional `tab` every page tool takes: one of this session's tab ids
-/// from browser.open. Without it the tool works on the tab used last.
 fn tab_arg() -> serde_json::Value {
     serde_json::json!({"type": "string", "description": "a tab id from browser.open; default: the tab you used last"})
 }
@@ -600,7 +576,6 @@ pub(crate) fn is_desk_tool(name: &str) -> bool {
     )
 }
 
-/// Every desk and page tool name, for allowlists.
 pub const DESK_TOOLS: &[&str] = &[
     "browser.open",
     "browser.tabs",
@@ -619,9 +594,6 @@ pub const DESK_TOOLS: &[&str] = &[
     "desk.screenshot",
 ];
 
-/// Desk tools need a window in this process; page tools also need the
-/// Windows page engine. `parzi serve`, a CLI run with no window, a server
-/// session and macOS get neither.
 #[must_use]
 pub fn window_tool_offered(name: &str, attached: bool, pages: bool) -> bool {
     if is_browser_tool(name) {
@@ -817,9 +789,6 @@ fn question_defs() -> Vec<ToolDef> {
     ]
 }
 
-/// The project's plan: read it, change it. Neither shows an approval card:
-/// the plan is Parzi's own note, not the person's files (read-only mode
-/// still only reads it).
 pub fn is_plan_tool(name: &str) -> bool {
     matches!(name, "plan.read" | "plan.write")
 }
@@ -1243,8 +1212,6 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
                 60
             )
         ),
-        // Connector tools ("mcp__github__list_issues", "gh.issue_get")
-        // read by their last word.
         _ => {
             let short = short_tool_name(name).replace('_', " ");
             match hint {
@@ -1263,8 +1230,6 @@ fn short_tool_name(name: &str) -> &str {
         .unwrap_or(name)
 }
 
-/// Every namespace of Parzi's own tools: an MCP name `plan_write` reads
-/// back as `plan.write`, so labels and checks see the real name.
 const NAMESPACES: &[&str] = &[
     "ui", "browser", "desk", "brain", "session", "plan", "shell", "project", "image", "models",
     "ask", "todo", "github",
@@ -1283,8 +1248,6 @@ pub(crate) fn from_mcp(tool: &str) -> String {
     tool.to_string()
 }
 
-/// A tool's current name for one that was renamed or merged, so an
-/// agent that learned the old one still reaches it.
 #[must_use]
 pub fn current_name(name: &str) -> &str {
     match name {
@@ -1305,12 +1268,10 @@ pub fn display_name(name: &str) -> String {
         .map_or_else(|| name.to_string(), from_mcp)
 }
 
-/// A label's argument: its first line, at most `n` chars.
 fn one_line(s: &str, n: usize) -> String {
     parzi_core::text::clip(s.lines().next().unwrap_or("").trim(), n)
 }
 
-/// A session id as labels show it; anything else (a title) as one line.
 fn session_label(s: &str) -> String {
     if s.len() > 8 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
         parzi_core::text::short_id(s).to_string()
@@ -1399,7 +1360,6 @@ mod tests {
             assert!(!window_tool_offered(t, false, false), "{t} with no window");
             assert!(window_tool_offered(t, true, true), "{t} on Windows");
         }
-        // A window without the page engine (macOS) keeps the desk itself.
         assert!(window_tool_offered("desk.notify", true, false));
         assert!(window_tool_offered("desk.open", true, false));
         assert!(!window_tool_offered("desk.screenshot", true, false));
@@ -1413,7 +1373,6 @@ mod tests {
         assert_eq!(all.len(), DESK_TOOLS.len());
         assert!(all.iter().all(|n| DESK_TOOLS.contains(&n.as_str())));
         assert_eq!(display_name("mcp__parzi__desk_notify"), "desk.notify");
-        // Every tool Parzi offers comes back by its own name from MCP.
         for d in all_defs() {
             assert_eq!(
                 from_mcp(&to_mcp(&d.name)),
@@ -1422,7 +1381,6 @@ mod tests {
                 d.name
             );
         }
-        // Grok names them inside its own use_tool.
         assert_eq!(display_name("parzi__ui_propose_task"), "ui.propose_task");
         assert_eq!(display_name("search_tool"), "search_tool");
     }

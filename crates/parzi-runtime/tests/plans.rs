@@ -1,6 +1,3 @@
-//! Agents write the plan, read it, link their session to an item and name
-//! their session; a run opens with the plan only when it changed since the
-//! conversation last saw it, and never in the instructions.
 
 mod common;
 
@@ -71,7 +68,6 @@ async fn an_agent_plans_marks_an_item_active_and_names_its_session() {
             }
         }),
     );
-    // Ask mode with nobody to ask: a card would deny, so none is shown.
     let mut cfg = parzi_core::config::ParziConfig::default();
     cfg.lanes.default_mode = "ask".into();
     let (orch, store) = orch_with(cfg, &[fake]);
@@ -343,7 +339,6 @@ async fn a_plan_a_turn_never_showed_is_sent_again() {
                     *n == 1
                 };
                 if first {
-                    // The conversation exists, but the turn never finished.
                     return Err(parzi_providers::ProviderError::process("dropped"));
                 }
                 a.say("ok");
@@ -361,7 +356,6 @@ async fn a_plan_a_turn_never_showed_is_sent_again() {
         .await
         .unwrap();
     settle(&store, &meta.id).await;
-    // A /compact drops what the conversation saw: the plan goes again.
     orch.compact(&meta.id, "").await.unwrap();
     settle(&store, &meta.id).await;
     orch.send_to(

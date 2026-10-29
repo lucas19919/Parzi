@@ -80,7 +80,7 @@
     {
       "selector": ".viz svg text",
       "rules": ["text-contrast"],
-      "reason": "Reviewed: chart labels are --text or --muted SVG text on the chart's own --glass-bg card (at least 4.5:1 in every built-in theme). axe can't sample the background behind SVG text."
+      "reason": "Reviewed: chart labels are --text or --muted SVG text on the chart's own --panel card (at least 4.5:1 in every built-in theme). axe can't sample the background behind SVG text."
     },
     {
       "selector": ".viz-data, .viz-data *",
@@ -105,7 +105,7 @@
     {
       "selector": ".ob textarea",
       "rules": ["text-contrast"],
-      "reason": "Reviewed: the placeholder sits on blurred glass (backdrop-filter), which axe can't measure. It is --muted, at least 4.7:1 on that glass in every built-in theme."
+      "reason": "Reviewed: on home the placeholder sits over the backdrop picture under a fixed veil, which axe can't measure. It is --muted, at least 4.7:1 there in every built-in theme."
     },
     {
       "selector": ".card .item .about",
@@ -115,7 +115,7 @@
     {
       "selector": ".info h3, .info .line span",
       "rules": ["text-contrast"],
-      "reason": "Reviewed: the session column is --text and --muted on the session's opaque glass. The session actions menu drops over it, and axe can't sample text under the menu."
+      "reason": "Reviewed: the session column is --text and --muted on the session's opaque panel. The session actions menu drops over them, and axe can't sample text under the menu."
     }
   ]
 }

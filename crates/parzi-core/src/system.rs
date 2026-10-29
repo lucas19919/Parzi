@@ -10,7 +10,6 @@ fn read_capped(path: PathBuf) -> Option<String> {
     if text.is_empty() {
         return None;
     }
-    // The cap is in chars; a byte-length check flags short non-ASCII files.
     match text.char_indices().nth(SYSTEM_CAP) {
         None => Some(text.to_string()),
         Some((cut, _)) => Some(format!("{}\n…(truncated)", &text[..cut])),

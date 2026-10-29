@@ -1,5 +1,4 @@
 <script lang="ts">
-  // Meters: how far each thing got, like Home's agent usage rows.
   import type { ProgressItem } from "./spec";
 
   export let items: ProgressItem[] = [];

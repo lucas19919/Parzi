@@ -1,7 +1,3 @@
-//! The desk's door to ParziOS. A remote session is an ordinary session
-//! whose id carries the `r:` prefix: the session commands route it here,
-//! and its live events arrive on `parzi://run-event` like local ones. The
-//! work itself lives in `parzi_runtime::remote`.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -15,23 +11,16 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Mutex;
 
 pub const PREFIX: &str = "r:";
-/// A session another device ran and mirrored to the server:
-/// `m:<device>:<session>`. Read here; continuing it moves it to the server.
 pub const MIRROR: &str = "m:";
-/// After a failed connect, background refreshes wait this long to retry.
 const RETRY_AFTER: Duration = Duration::from_secs(60);
-/// While linked, everything syncs at least this often.
 const SYNC_EVERY: Duration = Duration::from_secs(120);
-/// A change here waits this long for more before it syncs.
 const SYNC_SETTLE: Duration = Duration::from_secs(3);
 
-/// The server's own id for a remote session id, or None for a local one.
 #[must_use]
 pub fn remote_id(id: &str) -> Option<&str> {
     id.strip_prefix(PREFIX)
 }
 
-/// (device, session) of a mirrored session id.
 #[must_use]
 pub fn mirror_id(id: &str) -> Option<(&str, &str)> {
     id.strip_prefix(MIRROR)?.split_once(':')
@@ -45,8 +34,6 @@ fn tag(id: &str) -> String {
 pub struct RemoteState {
     link: Mutex<Option<Arc<Link>>>,
     busy: AtomicBool,
-    /// The server's sessions and other devices' mirrors as last listed,
-    /// ids already tagged.
     sessions: std::sync::Mutex<Vec<SessionMeta>>,
     failed_at: std::sync::Mutex<Option<Instant>>,
     opening: AtomicBool,
@@ -63,9 +50,7 @@ pub struct RemoteInfo {
     pub version: String,
     pub linked_at: i64,
     pub alive: bool,
-    /// Last finished sync (ms), 0 for not yet.
     pub synced_at: i64,
-    /// This machine's device id.
     pub device: String,
 }
 
@@ -91,7 +76,6 @@ fn now_ms() -> i64 {
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
-/// Settings, notes and this device's sessions, once; never two at a time.
 pub(crate) async fn sync_now(app: &AppHandle) -> Result<String, String> {
     let st = app.state::<RemoteState>();
     let _one = st.syncing.lock().await;
@@ -121,7 +105,6 @@ pub(crate) async fn sync_now(app: &AppHandle) -> Result<String, String> {
     }
 }
 
-/// Sync a few seconds from now; changes in between ride along.
 pub(crate) fn sync_soon(app: &AppHandle) {
     if remote::load_saved().is_none() {
         return;
@@ -142,7 +125,6 @@ pub(crate) fn sync_soon(app: &AppHandle) {
     });
 }
 
-/// While a server is linked and reachable, sync on a timer.
 pub(crate) fn start_ticker(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -160,8 +142,6 @@ pub(crate) fn start_ticker(app: &AppHandle) {
     });
 }
 
-/// Connection news for the UI: `up`, `down`, `updating`, `ready`, `error`,
-/// `resync` (the stream restarted, reload what is shown).
 fn status(app: &AppHandle, state: &str, detail: impl Into<String>) {
     let _ = app.emit(
         "parzi://remote",
@@ -169,14 +149,11 @@ fn status(app: &AppHandle, state: &str, detail: impl Into<String>) {
     );
 }
 
-/// `0.1.9 < 0.1.23`: dotted numbers compared as numbers.
 fn older(a: &str, b: &str) -> bool {
     let key = |v: &str| -> Vec<u64> { v.split('.').map(|p| p.parse().unwrap_or(0)).collect() };
     key(a) < key(b)
 }
 
-/// The live link, opened on first use. A server older than this desk is
-/// brought up to date first; if that fails the old one is still used.
 pub(crate) async fn link(app: &AppHandle, state: &RemoteState) -> Result<Arc<Link>, String> {
     let mut slot = state.link.lock().await;
     if let Some(l) = slot.as_ref().filter(|l| l.alive()) {
@@ -226,7 +203,6 @@ pub(crate) async fn link(app: &AppHandle, state: &RemoteState) -> Result<Arc<Lin
     Ok(link)
 }
 
-/// Remote events to the desk's event channel, with ids tagged `r:`.
 async fn forward(app: AppHandle, mut rx: tokio::sync::mpsc::UnboundedReceiver<Value>) {
     while let Some(mut ev) = rx.recv().await {
         match ev.get("kind").and_then(Value::as_str) {
@@ -237,7 +213,6 @@ async fn forward(app: AppHandle, mut rx: tokio::sync::mpsc::UnboundedReceiver<Va
             None => continue,
             Some(_) => {}
         }
-        // A finished run on the server may have written notes there.
         let ended = matches!(
             ev.get("kind").and_then(Value::as_str),
             Some("done" | "paused" | "error")
@@ -288,9 +263,6 @@ fn tagged_meta(v: Value) -> Option<SessionMeta> {
     Some(meta)
 }
 
-/// The server's sessions for the desk's list. Never waits on a connect:
-/// without a live link it starts one in the background and answers from
-/// the last list.
 pub(crate) async fn sessions(app: &AppHandle, state: &RemoteState) -> Vec<SessionMeta> {
     if remote::load_saved().is_none() {
         return vec![];
@@ -318,8 +290,6 @@ pub(crate) async fn sessions(app: &AppHandle, state: &RemoteState) -> Vec<Sessio
             .and_then(Value::as_array)
             .map(|a| a.iter().cloned().filter_map(tagged_meta).collect())
             .unwrap_or_default();
-        // Other devices' sessions, as their mirrors. This device's own
-        // mirrors are its local sessions, already listed.
         let me = parzi_core::device::id();
         if let Ok(Ok(m)) = tokio::time::timeout(
             Duration::from_secs(4),
@@ -370,8 +340,6 @@ fn connect_in_background(app: &AppHandle, state: &RemoteState) {
     });
 }
 
-/// A mirror card's session, its id tagged `m:<device>:` and its title
-/// saying where it ran. It reads as done: its run lives on that device.
 fn mirrored_meta(card: &Value) -> Option<SessionMeta> {
     let device = card.get("device").and_then(Value::as_str)?;
     let name = card.get("name").and_then(Value::as_str).unwrap_or(device);
@@ -417,8 +385,6 @@ pub(crate) async fn mirror_thread(
     Ok((meta, events_of(&v)))
 }
 
-/// Copy another device's session into the server's own store so it can go
-/// on there. Returns the server's id for it (untagged).
 pub(crate) async fn adopt(
     app: &AppHandle,
     state: &RemoteState,
@@ -461,8 +427,6 @@ pub(crate) async fn thread(
     Ok((meta, events))
 }
 
-/// Start or continue a session on the server. Attachments were read here;
-/// they travel inline.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn send(
     app: &AppHandle,
@@ -478,14 +442,12 @@ pub(crate) async fn send(
 ) -> Result<String, String> {
     let body = json!({
         "target": target.unwrap_or("new"),
-        // The plan item the person quoted: the server links the session.
         "plan_item": plan_item.unwrap_or_default(),
         "message": prompt,
         "model": model,
         "effort": effort,
         "mode": mode.unwrap_or_default(),
         "attachments": attachments,
-        // A folder on the server (a project there), or its scratch folder.
         "cwd": if cwd.starts_with('/') || cwd.starts_with('~') { cwd } else { "" },
     });
     let v = call(app, state, "session.send", body).await?;
@@ -508,7 +470,6 @@ pub(crate) async fn fork(
         .ok_or_else(|| "update Parzi on the server to fork there".into())
 }
 
-/// The saved remote, if any. Never opens a connection.
 #[tauri::command]
 pub async fn remote_info(state: State<'_, RemoteState>) -> Result<Option<RemoteInfo>, String> {
     let alive = state
@@ -521,8 +482,6 @@ pub async fn remote_info(state: State<'_, RemoteState>) -> Result<Option<RemoteI
     Ok(remote::load_saved().map(|s| info(&s, alive, synced)))
 }
 
-/// Open the link now (the composer's switch): connects, updates the
-/// server when it is older, and starts the event stream.
 #[tauri::command]
 pub async fn remote_connect(
     app: AppHandle,
@@ -534,8 +493,6 @@ pub async fn remote_connect(
     Ok(info(&saved, true, synced))
 }
 
-/// Projects as the server sees them; `folder` is its own folder for each
-/// ("" when the server has none yet).
 #[tauri::command]
 pub async fn remote_projects(
     app: AppHandle,
@@ -546,7 +503,6 @@ pub async fn remote_projects(
         .map_err(|e| format!("the server's project list is unreadable: {e}"))
 }
 
-/// Give a project a folder on the server (a path there), or start one.
 #[tauri::command]
 pub async fn remote_project_folder(
     app: AppHandle,
@@ -567,13 +523,11 @@ pub async fn remote_project_folder(
         .map_err(|e| e.to_string())
 }
 
-/// Sync now (Settings › Connections). Answers what moved.
 #[tauri::command]
 pub async fn remote_sync(app: AppHandle) -> Result<String, String> {
     sync_now(&app).await
 }
 
-/// The agents on the server, for the composer's model list.
 #[tauri::command]
 pub async fn remote_providers(
     app: AppHandle,
@@ -599,9 +553,6 @@ impl Drop for Busy<'_> {
     }
 }
 
-/// Set a Linux machine up and link to it. Progress arrives as
-/// `parzi://remote-setup` events. The password is used for this call only
-/// and is never stored.
 #[tauri::command]
 pub async fn remote_setup(
     app: AppHandle,
@@ -637,8 +588,6 @@ pub async fn remote_setup(
     Ok(info(&saved, true, synced))
 }
 
-/// Install an agent on the remote, or sign in to it, in a terminal the
-/// user watches: vendor installers and logins are interactive.
 #[tauri::command]
 pub async fn remote_agent(provider: String, action: String) -> Result<(), String> {
     let id = parzi_providers::canonical_id(&provider)
@@ -683,8 +632,6 @@ fn quote(arg: &str) -> String {
     }
 }
 
-/// Unlink: close the link and drop the saved remote. The engine on the
-/// other machine keeps running.
 #[tauri::command]
 pub async fn remote_forget(state: State<'_, RemoteState>) -> Result<(), String> {
     *state.link.lock().await = None;

@@ -3,8 +3,6 @@ import { setOverlay } from "./overlay";
 let seq = 0;
 
 export function placeAbove(anchor: HTMLElement | null, width: number, alignRight = false): string {
-  // A dead anchor must never strand an unpositioned panel (the giant
-  // weird popup): fall back to top-center instead of throwing.
   if (!anchor || !anchor.isConnected) {
     return `left:${Math.max(8, Math.round((window.innerWidth - width) / 2))}px;top:64px;max-height:${Math.round(window.innerHeight - 128)}px;`;
   }
@@ -12,7 +10,6 @@ export function placeAbove(anchor: HTMLElement | null, width: number, alignRight
   const left = Math.max(8, Math.min(alignRight ? r.right - width : r.left, window.innerWidth - width - 8));
   const above = r.top - 46;
   const below = window.innerHeight - r.bottom - 8;
-  // Hug the anchor (4px): popups that float far feel disconnected.
   if (above >= 300 || above >= below) {
     const maxH = Math.max(180, Math.min(above, 560));
     return `left:${Math.round(left)}px;bottom:${Math.round(window.innerHeight - r.top + 4)}px;max-height:${Math.round(maxH)}px;`;
@@ -46,13 +43,9 @@ export function popover(node: HTMLElement, opts: PopoverOptions) {
     current.close();
   }
 
-  // A scroll still settling when the panel opens (trackpad momentum, a
-  // click that scrolled its anchor into view) must not close it at once.
   const opened = performance.now();
 
   function onScroll(e: Event) {
-    // The anchor scrolls but the panel is body-fixed: close instead of
-    // floating detached. Ignore scrolls inside the panel itself.
     if (e.target instanceof Node && node.contains(e.target)) return;
     if (performance.now() - opened < 150) return;
     current.close();
@@ -78,9 +71,6 @@ export function popover(node: HTMLElement, opts: PopoverOptions) {
   };
 }
 
-// A dialog at the window's top level: it covers the whole window, not just
-// the panel it is declared in (whose glass would box it in), and hides the
-// native page views while it shows.
 export function portal(node: HTMLElement) {
   const key = `portal-${++seq}`;
   document.body.appendChild(node);

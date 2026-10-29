@@ -17,11 +17,8 @@ use super::queue::{
 };
 use super::{next_run_id, normalize_effort, Handle, Orchestrator, SessionSlot};
 
-/// How a launch went when it did not fail.
 pub(super) enum Started {
-    /// It runs; its events come on this channel (and the bus).
     Running(mpsc::UnboundedReceiver<RunEvent>),
-    /// Another run of the session was starting: it waits its turn.
     Queued,
 }
 
@@ -34,10 +31,6 @@ impl Started {
     }
 }
 
-/// What Parzi itself puts into a session's context, estimated at four
-/// characters a token: its instructions, the project notes they carry and
-/// the definitions of the tools a session is offered. The rest of what the agent
-/// reports is the conversation and the agent's own.
 #[derive(Debug, Clone, Copy, Default, serde::Serialize)]
 pub struct ContextParts {
     pub instructions: u64,
@@ -45,7 +38,6 @@ pub struct ContextParts {
     pub tools: u64,
 }
 
-/// How long getting a run going may take (not the run: its start).
 const LAUNCH_WAIT: std::time::Duration = std::time::Duration::from_secs(90);
 
 impl Orchestrator {
@@ -70,7 +62,6 @@ impl Orchestrator {
         }
     }
 
-    /// A new session with a first run the person sent.
     #[allow(clippy::too_many_arguments)]
     pub async fn spawn(
         &self,
@@ -97,7 +88,6 @@ impl Orchestrator {
         .await
     }
 
-    /// `spawn` for a run with another cause (the CLI's, say).
     #[allow(clippy::too_many_arguments)]
     pub async fn spawn_as(
         &self,
@@ -157,7 +147,6 @@ impl Orchestrator {
         Ok((meta, rx))
     }
 
-    /// A new run of an existing session that the person sent.
     #[allow(clippy::too_many_arguments)]
     pub async fn send_to(
         &self,
@@ -184,7 +173,6 @@ impl Orchestrator {
         .await
     }
 
-    /// `send_to` for a run with another cause.
     #[allow(clippy::too_many_arguments)]
     pub async fn send_as(
         &self,
@@ -199,8 +187,6 @@ impl Orchestrator {
         mode_override: Option<String>,
     ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
         let meta = self.store.get(id)?;
-        // A second message while this session works stays in the composer's
-        // queue. The runtime must not also store it as a PersistedRun.
         if cause.from_person()
             && matches!(meta.status, SessionStatus::Active | SessionStatus::Queued)
         {
@@ -273,15 +259,11 @@ impl Orchestrator {
         Ok(Self::launch(self.pump_parts(), q).await?.events())
     }
 
-    /// Compacts a thread's conversation: its agent's own way, else Parzi
-    /// has it summarize and carries on from that (see `EngineRun`).
     pub async fn compact(&self, id: &str, focus: &str) -> Result<String> {
         let provider = run_session(id).map(|s| s.provider).ok_or_else(|| {
             ParziError::Store("nothing to compact yet: this thread has no conversation".into())
         })?;
         let prompt = focus.trim().to_string();
-        // The plan the conversation saw goes with what it compacts away:
-        // the next run sends it again.
         set_brief_hash(id, None);
         let _rx = self
             .send_as(
@@ -308,7 +290,6 @@ impl Orchestrator {
         spec: &str,
     ) -> Result<(String, Option<String>)> {
         let bound = run_session(session_id).map(|s| s.provider);
-        // No defaults, no guessing: empty specs keep bound threads put.
         let legacy_auto = spec.trim().is_empty() || spec == "auto" || spec.starts_with("auto/");
         let (provider, model) = match parzi_providers::split_spec(spec) {
             Some((id, model)) => (id.to_string(), model),
@@ -345,9 +326,6 @@ impl Orchestrator {
         Ok((provider, model))
     }
 
-    /// What every session may use: all of Parzi's tools, the shell
-    /// included unless Settings turns it off. How freely they run is the
-    /// mode's to say, not the session's.
     fn tool_policy(cfg: &ParziConfig) -> (ApprovalMode, Vec<String>) {
         let mode = ApprovalMode::parse(&cfg.lanes.default_mode);
         let mut allowed = cfg.lanes.default_allowed_tools.clone();
@@ -386,24 +364,17 @@ impl Orchestrator {
         if cfg.lanes.no_shell {
             allowed.retain(|t| !t.starts_with("shell."));
         }
-        // The window's own tools. ToolHost offers them only when a window
-        // is attached to this process.
         for u in crate::tools::DESK_TOOLS {
             if !allowed.iter().any(|a| a == u) {
                 allowed.push((*u).to_string());
             }
         }
-        // Browser tools drive the desk's tabs; a headless engine has none.
         if super::headless() {
             allowed.retain(|t| !t.starts_with("browser.") && !t.starts_with("desk."));
         }
         (mode, allowed)
     }
 
-    /// The turn's mode, auto-accept-edits and full flags. Settings picks
-    /// where a session starts; the composer's choice for a send is what
-    /// runs, so "Auto" never quietly means "Ask". Lockdown alone holds
-    /// over every choice.
     fn effective_mode(default: ApprovalMode, choice: Option<&str>) -> (ApprovalMode, bool, bool) {
         match choice {
             None => (default, false, false),
@@ -445,8 +416,6 @@ impl Orchestrator {
             }
         };
         let Some((id, seen)) = claim else {
-            // A person's second send stays in the composer. An internal
-            // launch that lost the race can still wait as a PersistedRun.
             if q.cause.from_person() {
                 tracing::info!(
                     session = %sid,
@@ -466,8 +435,6 @@ impl Orchestrator {
                 "session {sid} already has a live run; kill it first"
             )));
         };
-        // Getting a run going never takes this long: a start that hangs
-        // fails, so the session is never left showing a run that never was.
         let started = tokio::time::timeout(
             LAUNCH_WAIT,
             Self::launch_inner(p.clone(), q, id, cancel, seen),
@@ -529,8 +496,6 @@ impl Orchestrator {
         } else if std::path::Path::new(q.cwd.trim()).is_absolute() {
             q.cwd.clone()
         } else {
-            // A relative folder would be Parzi's own working folder, and no
-            // write in it would count as inside the session's folder.
             return Err(ParziError::Validation(format!(
                 "the folder `{}` is not a full path; pick the folder again",
                 q.cwd.trim()
@@ -553,8 +518,6 @@ impl Orchestrator {
         };
         let bridge: Arc<dyn HarnessBridge> = Arc::new(p.clone());
         let mut instructions = system_parts(&cwd);
-        // A folder of its own for scratch work (a session with no project
-        // already works in it).
         if let Ok(dir) = parzi_core::paths::scratch_dir(&q.session_id) {
             if std::path::Path::new(&cwd) != dir.as_path() && std::fs::create_dir_all(&dir).is_ok()
             {
@@ -564,9 +527,6 @@ impl Orchestrator {
                 ));
             }
         }
-        // The project's plan goes in the opening turn, never in the
-        // instructions: those are re-sent every turn, and a changing plan
-        // there would spoil the prompt cache.
         let brief = if q.cause.recorded() {
             let item = meta.plan_item.clone().or_else(|| {
                 let parent = meta.parent_id.as_deref()?;
@@ -639,8 +599,6 @@ impl Orchestrator {
         set_run_note(&q.session_id, None);
         if q.cause.recorded() {
             let _ = p.store.set_effort(&q.session_id, &q.effort);
-            // A run another session's message started, with no posture of
-            // its own, leaves the saved one alone: a wake restores it.
             if q.cause != RunCause::Message || q.mode_override.is_some() {
                 set_posture(
                     &q.session_id,
@@ -667,7 +625,6 @@ impl Orchestrator {
         let task = tokio::spawn(async move {
             let _end = end;
             let _ = run.run(&prompt).await;
-            // Normal returns set done; only a panic skips it.
             done.store(true, std::sync::atomic::Ordering::SeqCst);
         });
         if let Some(h) = p.handles.lock().await.get_mut(&q.session_id) {
@@ -685,7 +642,6 @@ struct RunEnd {
     id: u64,
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
     cancel: CancellationToken,
-    /// What the run did, kept on its session when it ends.
     tally: crate::run_hooks::Tally,
 }
 
@@ -705,10 +661,6 @@ impl Drop for RunEnd {
                     h.remove(&sid);
                 }
             }
-            // A panicking task never settles: stand it down with an error.
-            // A killed (aborted) one is kill()'s to mark; never turn Killed into Idle.
-            // Only this session. A panic here must not cancel the others,
-            // and a run the person killed stays killed.
             if !done.load(std::sync::atomic::Ordering::SeqCst) && !cancel.is_cancelled() {
                 let sentence = "run task ended without settling; transcript kept, nothing was sent";
                 tracing::warn!(session = %sid, "{sentence}");
@@ -729,15 +681,10 @@ impl Drop for RunEnd {
                     t.end = Some((RunEndKind::Interrupted, Some(sentence.into())));
                 }
             }
-            // The slot is free: a queued run need not wait for the record.
             p.notify.notify_one();
-            // A run that returned has kept its outcome already; this one
-            // panicked or was aborted.
             let settled = done.load(std::sync::atomic::Ordering::SeqCst);
             let stopped = cancel.is_cancelled();
             crate::run_hooks::run_ended(&p.store, &tally, stopped, settled).await;
-            // The session that started this one in the background hears how
-            // it went (after its outcome is kept, so the report has it).
             p.report_to_parent(&sid, stopped).await;
         });
     }

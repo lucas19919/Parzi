@@ -26,7 +26,6 @@ test("bad specs come back as one readable line, never a throw", () => {
   assert.match(bad({ type: "spark", data: ["x"] }), /at least two numbers/);
   assert.match(bad({ type: "stat", data: {} }), /needs a value/);
   assert.match(bad({ type: "table", data: [] }), /a table needs/);
-  // The source stays with the error, to show under it.
   const r = parseViz('{"type": "pie"}');
   assert.equal(r.ok ? "" : r.source, '{"type": "pie"}');
 });
@@ -46,7 +45,6 @@ test("bars read every shape agents write", () => {
   assert.deepEqual(read({ parzi: 4, "memory-ai": 2 }), want);
   assert.deepEqual(read([{ name: "parzi", count: 4 }, { x: "memory-ai", y: 2 }]), want);
   assert.deepEqual(read([4, 2], { labels: ["parzi", "memory-ai"] }), want);
-  // Items that aren't numbers drop out; the rest draw.
   assert.deepEqual(read([{ label: "parzi", value: 4 }, { label: "?", value: null }, { label: "memory-ai", value: "2" }]), want);
 });
 
@@ -82,7 +80,6 @@ test("lines take numbers, points, or named series, padded to one length", () => 
   assert.equal(many.area, true);
   assert.deepEqual(many.series[1].values, [1, null, null]);
 
-  // Series past the palette fold away and say so.
   const crowd = ok({ type: "line", series: Array.from({ length: 6 }, (_, i) => ({ name: `s${i}`, values: [i, i + 1] })) });
   assert.equal(crowd.type === "line" && crowd.series.length, 4);
   assert.equal(crowd.more, 2);
@@ -100,7 +97,6 @@ test("stats format their numbers and deltas", () => {
       ["Mood", "good", "+2", 1],
     ],
   );
-  // Top-level fields are one stat; its title stays the title, not its label.
   const top = ok({ type: "kpi", title: "Tests", value: 412, delta: 18, spark: [1, 2, 3] });
   assert.deepEqual(top.type === "stat" && top.stats, [{ label: "", value: "412", delta: "+18", dir: 1, spark: [1, 2, 3] }]);
   assert.equal(top.title, "Tests");
@@ -129,7 +125,6 @@ test("tables come from columns and rows or from objects", () => {
   if (a.type !== "table") return;
   assert.deepEqual(a.columns, ["Repo", "PRs"]);
   assert.deepEqual(a.numeric, [false, true]);
-  // Exact and grouped in a table, not rounded like a chart.
   assert.deepEqual(a.rows, [["parzi", "4"], ["thesis", "12,345"]]);
 
   const b = ok({ type: "table", data: [{ Repo: "parzi", PRs: 4 }, { Repo: "thesis", Owner: "me" }] });
@@ -188,8 +183,6 @@ test("axes tick at round numbers and start at zero unless the data is far off it
   assert.deepEqual(niceTicks(980, 1010), [980, 990, 1000, 1010]);
   assert.deepEqual(niceTicks(0, 0), [0, 1]);
   assert.deepEqual(niceTicks(0, 1, 2), [0, 0.5, 1]);
-  // Huge values over a small range: a running sum would never move past
-  // the start (v + step === v) and freeze the window.
   const big = niceTicks(1.7e18, 1.7e18 + 300);
   assert.ok(big.length >= 2 && big.length <= 51);
   assert.ok(big.every((t, i) => i === 0 || t > big[i - 1]));
@@ -223,10 +216,8 @@ test("histograms bucket raw numbers into round bins", () => {
   assert.equal(s.total, 7);
   assert.equal(s.bins.reduce((a, b) => a + b.count, 0), 7);
   assert.ok(s.bins[0].lo <= 1 && s.bins[s.bins.length - 1].hi >= 10);
-  // Contiguous: each bin starts where the last ended.
   for (let i = 1; i < s.bins.length; i++) assert.equal(s.bins[i].lo, s.bins[i - 1].hi);
   assert.equal(s.mean, 24 / 7);
-  // Aliases and object shapes work; junk drops out.
   assert.equal(ok({ type: "histogram", data: [1, 2, 3] }).type, "hist");
   assert.equal(ok({ type: "hist", data: [{ value: 1 }, { value: "x" }, 2] }).total, 2);
   const flat = read({ type: "hist", data: [5, 5, 5] });

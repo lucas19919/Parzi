@@ -1,5 +1,3 @@
-// The plan and PRs of the session on screen, loaded once and kept fresh:
-// the inline checklist and the info column read the same copy.
 import { writable, get } from "svelte/store";
 import { onPlan, onRunEvent, planApi, type Plan, type PrInfo } from "./api";
 import { sameSlug } from "./planModel";
@@ -8,9 +6,7 @@ import { coalesce } from "./threadList";
 export interface PlanState {
   project: string;
   plan: Plan | null;
-  // The plan note exists but can't be read.
   error: string;
-  // PRs in the folder (`gh`): empty without it.
   prs: PrInfo[];
 }
 
@@ -29,7 +25,6 @@ const loadPlan = coalesce(async () => {
     const view = await planApi.view(slug);
     if (slug === project) planState.update((s) => ({ ...s, plan: view.plan, error: view.error ?? "" }));
   } catch {
-    // A failed load keeps what was shown; the next change or focus retries.
   }
 }, 150);
 
@@ -60,7 +55,6 @@ function listen() {
   }, PR_EVERY);
 }
 
-// Points the store at a project and folder; the same pair again is free.
 export function watchPlan(slug: string, dir: string) {
   listen();
   if (slug !== project) {

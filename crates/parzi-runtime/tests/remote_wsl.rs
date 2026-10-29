@@ -1,10 +1,3 @@
-//! ParziOS end to end, with WSL standing in for the SSH server:
-//!
-//! PARZI_WSL_DISTRO=Ubuntu-24.04 PARZI_LINUX_BIN=C:\path\to\linux\parzi \
-//!   cargo test -p parzi-runtime --test remote_wsl -- --ignored
-//!
-//! The remote side runs with HOME set to a fresh folder under /tmp, so the
-//! distro's own home is never touched.
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -116,8 +109,6 @@ async fn setup_link_and_answer_through_wsl() {
         "the spec is deleted after setup"
     );
 
-    // Live stream: a run on an agent that is not installed there still
-    // starts and streams its end. Nothing reaches a vendor, so no quota.
     let missing = agents["providers"]
         .as_array()
         .and_then(|all| {
@@ -161,8 +152,6 @@ async fn setup_link_and_answer_through_wsl() {
         .unwrap();
     assert!(thread["events"].as_array().is_some_and(|e| !e.is_empty()));
 
-    // Sync: notes both ways, a project folder per device, a conflict, a
-    // delete, settings, and this device's sessions in the server's mirror.
     let wait = Duration::from_secs(20);
     let server = "e2e@wsl";
     let store = parzi_core::store::SessionStore::open().unwrap();
@@ -292,7 +281,6 @@ async fn setup_link_and_answer_through_wsl() {
     assert!(third.errors.is_empty(), "{:?}", third.errors);
     assert_eq!(third.summary(), "", "nothing left to move");
 
-    // A second link while the first is open: both answer.
     let second = remote::Link::open(&transport).await.unwrap();
     assert!(second
         .call("health", json!({}), Duration::from_secs(10))
@@ -305,7 +293,6 @@ async fn setup_link_and_answer_through_wsl() {
     drop(link);
     drop(second);
     tokio::time::sleep(Duration::from_millis(500)).await;
-    // The engine may still write its log while it stops: retry.
     let _ = transport
         .script(
             "for i in 1 2 3 4 5; do rm -rf \"$HOME\"; [ -e \"$HOME\" ] || exit 0; sleep 1; done\n",

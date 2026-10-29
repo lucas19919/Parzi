@@ -2,10 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 
-// In Svelte 4, `el.style.height = …` through a variable bound with
-// bind:this marks `el` dirty. Any `$:` that reads `el` then re-runs, and
-// if it awaits and writes again it never settles: the composer froze on
-// the first keystroke that way. Write through a local (`const node = el`).
 async function svelteFiles(dir: URL): Promise<URL[]> {
   const out: URL[] = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {

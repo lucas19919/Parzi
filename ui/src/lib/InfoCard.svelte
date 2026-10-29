@@ -1,7 +1,6 @@
 <script lang="ts" context="module">
   import { writable } from "svelte/store";
 
-  // Which cards are folded, kept across sessions and restarts.
   const KEY = "parzi.info.folded";
   function load(): string[] {
     try {
@@ -16,19 +15,15 @@
     try {
       localStorage.setItem(KEY, JSON.stringify([...s]));
     } catch {
-      /* private window: folding still works for now */
     }
   });
 </script>
 
 <script lang="ts">
-  // One card of the session column: a title that folds it, a short summary
-  // beside the title, the details below.
   import Icon from "./Icon.svelte";
 
   export let id: string;
   export let title: string;
-  // The summary only while folded, when the details repeat it.
   export let foldedAside = false;
 
   $: open = !$folded.has(id);
@@ -80,7 +75,6 @@
   .head:hover {
     background: var(--hover);
   }
-  /* Open: the head's bottom is square so the hover fill does not round mid-card. */
   .open .head {
     border-radius: var(--r) var(--r) 0 0;
   }

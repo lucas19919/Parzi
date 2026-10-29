@@ -1,5 +1,4 @@
 <script lang="ts">
-  // One number with its label, how it moved, and its recent trend.
   import Spark from "./Spark.svelte";
   import type { StatItem } from "./spec";
 
@@ -39,7 +38,6 @@
     gap: var(--space) calc(var(--space) * 2);
     min-width: 0;
   }
-  /* Proportional digits: a lone big number reads tighter than tabular. */
   .value {
     font-size: var(--fs-2xl);
     font-weight: 600;

@@ -1,4 +1,4 @@
-<script lang="ts">
+∩╗┐<script lang="ts">
   import { createEventDispatcher } from "svelte";
 
   export let label = "";

@@ -22,7 +22,6 @@ test("number columns align right, words stay left", () => {
   assert.match(html, /<td>Visa<\/td>/);
   assert.match(html, /<td class="num">40\.0<\/td>/);
   assert.match(html, /<td class="num">11\.3%<\/td>/);
-  // n.m. does not stop a column of numbers, and reads muted.
   assert.match(html, /<td class="num na">n\.m\.<\/td>/);
 });
 

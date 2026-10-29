@@ -26,7 +26,6 @@
     newSession: void;
     newPage: void;
     settings: void;
-    brain: void;
     history: void;
     previews: void;
     setup: void;
@@ -36,11 +35,9 @@
     id: string;
     group: string;
     icon: IconName;
-    // The agent behind a session row: its logo instead of the generic bot.
     provider?: string;
     title: string;
     sub: string;
-    // Words that find it without showing (actions carry no subtitle).
     keys?: string;
     run: () => void;
     remove?: () => void;
@@ -64,12 +61,10 @@
     return !q || fields.some((f) => f?.toLowerCase().includes(q));
   }
 
-  // The component gallery is a design tool: dev builds only.
   const ACTIONS: Omit<Item, "group">[] = [
     { id: "new-session", icon: "chat", title: "New session", sub: "", keys: "draft chat", run: () => dispatch("newSession") },
     { id: "new-page", icon: "globe", title: "New page", sub: "", keys: "web browser", run: () => dispatch("newPage") },
     { id: "history", icon: "clock", title: "History", sub: "", keys: "pages visited bookmarks downloads", run: () => dispatch("history") },
-    { id: "brain", icon: "brain", title: "Brain", sub: "", keys: "notes projects", run: () => dispatch("brain") },
     ...(import.meta.env.DEV
       ? [{ id: "previews", icon: "spark" as IconName, title: "Component previews", sub: "", keys: "omnibar gallery", run: () => dispatch("previews") }]
       : []),
@@ -117,8 +112,6 @@
   }
 
   $: q = query.trim().toLowerCase();
-  // Closed, the list costs nothing: tab and thread churn (every page
-  // event, every refresh) only rebuilds it while the switcher is up.
   $: items = open ? build(q, tabs, threads, activeTabId) : [];
   $: if (index >= items.length) index = 0;
 
@@ -157,9 +150,7 @@
         <kbd>esc</kbd>
       </div>
 
-      <!-- A listbox may only own options: delete is pointer-only here (sessions
-           can also be deleted from the session's own menu), and the empty
-           state lives outside it. -->
+      
       <div class="list" role="listbox" aria-label="Results" hidden={!items.length}>
         {#each items as item, i (item.id)}
           {#if i === 0 || items[i - 1].group !== item.group}

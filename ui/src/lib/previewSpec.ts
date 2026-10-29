@@ -1,5 +1,3 @@
-// What a preview artifact may name. The registry pairs each name with the
-// live component; this file stays free of components so tests can import it.
 
 export interface PreviewMeta {
   name: string;
@@ -27,7 +25,6 @@ export function previewNames(): string {
   return PREVIEW_META.map((m) => m.name).join(", ");
 }
 
-/** Inline custom properties for a preview stage. Empty when nothing valid was asked. */
 export function tokenStyle(raw: unknown): string {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "";
   const set: Record<string, string> = {};
@@ -39,23 +36,15 @@ export function tokenStyle(raw: unknown): string {
     else if (LENGTHS.has(name) && PX.test(v)) set[name] = v;
   }
   if (!Object.keys(set).length) return "";
-  // Derived tokens are resolved on :root, so a local override would not
-  // reach them unless the same formulas are restated here.
   const derived: string[] = [];
   if ((set.bg || set.text) && !set.panel) derived.push("--panel:color-mix(in srgb, var(--text) 6%, var(--bg))");
   if (set.bg || set.text || set.panel) {
     derived.push(
-      "--muted:color-mix(in srgb, var(--text) 62%, var(--bg))",
+      "--muted:color-mix(in srgb, var(--text) 78%, var(--bg))",
       "--line:color-mix(in srgb, var(--text) 12%, var(--bg))",
       "--faint:color-mix(in srgb, var(--muted) 62%, var(--bg))",
       "--hover:color-mix(in srgb, var(--text) 6%, transparent)",
       "--selected:color-mix(in srgb, var(--text) 10%, transparent)",
-      "--glass-bg:color-mix(in srgb, var(--panel) 72%, transparent)",
-      "--glass-bg-solid:color-mix(in srgb, var(--panel) 97%, transparent)",
-      "--glass-strong-bg:var(--glass-bg)",
-      "--glass-border:1px solid color-mix(in srgb, var(--text) 10%, transparent)",
-      "--glass-hairline:var(--glass-border)",
-      "--glass-inner:inset 0 1px 0 color-mix(in srgb, var(--text) 8%, transparent)",
     );
   }
   if (set.space) derived.push("--gap:calc(var(--space) * 2)", "--radius-sm:calc(var(--space))");

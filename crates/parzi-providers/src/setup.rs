@@ -84,8 +84,6 @@ fn invoke(program: &Path) -> String {
     }
 }
 
-// PowerShell also ends a single-quoted string at the typographic quotes,
-// so each of those is doubled too.
 fn ps_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
@@ -136,8 +134,6 @@ fn antigravity_script(windows: bool, url: &str, dir: &str) -> String {
              Remove-Item $zip; Write-Host '{DONE}'"
         )
     } else {
-        // Straight into our own folder: a fixed name in the shared /tmp
-        // could be planted or swapped by another user.
         let zip = sh_quote(&format!("{dir}/antigravity-acp.zip"));
         let exe = sh_quote(&format!("{dir}/{ANTIGRAVITY_EXE}"));
         let dir = sh_quote(dir);
@@ -155,7 +151,6 @@ mod tests {
 
     #[test]
     fn every_agent_has_an_official_install() {
-        // Google ships Antigravity's ACP server for Windows and macOS only.
         let antigravity = cfg!(any(windows, target_os = "macos"));
         for id in crate::PROVIDERS {
             if *id == "acp" || (*id == "antigravity" && !antigravity) {

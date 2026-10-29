@@ -22,7 +22,6 @@
   const dispatch = createEventDispatcher<{ open: { url: string }; openSession: { id: string }; deleteSession: { id: string }; clearSessions: void }>();
   const PLACEHOLDER = { sessions: "Search sessions", history: "Search history", bookmarks: "Search bookmarks", downloads: "Search downloads" };
 
-  // Lists render a page at a time; "Show more" adds the next page.
   const PAGE = 200;
 
   let query = "";

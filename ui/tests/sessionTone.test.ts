@@ -37,7 +37,6 @@ test("session dots: needs you, running, failed, done", () => {
   assert.equal(sessionTone(session("c", { last_run: run({ checks: [{ cmd: "npm test", ok: false }] }) }), running), "need");
   assert.equal(sessionTone(session("d", { last_run: run() }), running), "ok");
   assert.equal(sessionTone(session("i"), running), "idle");
-  // An older backend's run without checks reads as done.
   assert.equal(sessionTone(session("o", { last_run: { ...run(), checks: undefined as unknown as [] } }), running), "ok");
 });
 

@@ -19,7 +19,6 @@ test("typing keeps it, clearing (or sending) drops it", () => {
   assert.equal(all["s:a"].input, "half a thought");
   all = withDraft(all, "s:a", d("  "), 2);
   assert.equal(all["s:a"], undefined);
-  // Files alone are a draft too.
   all = withDraft(all, "s:b", d("", { attachments: ["C:/x.png"] }), 3);
   assert.deepEqual(all["s:b"].attachments, ["C:/x.png"]);
 });

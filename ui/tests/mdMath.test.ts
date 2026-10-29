@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mathAt } from "../src/lib/mdMath.ts";
 
-// Every math span in a line, as the renderer would find them.
 function spans(line: string): string[] {
   const out: string[] = [];
   for (let i = 0; i < line.length; i++) {

@@ -6,7 +6,6 @@ export interface NotificationItem {
   body: string;
   kind: "info" | "success" | "error" | "question" | "approval" | "subagent";
   sessionId?: string;
-  // An approval or question this entry is about: it goes once answered.
   key?: string;
   time: number;
   read: boolean;
@@ -64,7 +63,6 @@ export function markRead(id: string) {
   });
 }
 
-// Opening a session reads everything it announced.
 export function markSessionRead(sessionId: string) {
   notifications.update((list) => {
     if (!list.some((n) => n.sessionId === sessionId && !n.read)) return list;
@@ -74,7 +72,6 @@ export function markSessionRead(sessionId: string) {
   });
 }
 
-// An answered (or expired) approval or question leaves no entry behind.
 export function dropNotification(key: string) {
   notifications.update((list) => {
     if (!list.some((n) => n.key === key)) return list;

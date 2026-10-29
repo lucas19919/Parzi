@@ -13,9 +13,6 @@ pub fn parzi_dir() -> Result<PathBuf> {
         .ok_or_else(|| ParziError::Config("cannot locate home directory".into()))
 }
 
-/// A UNC share or a device namespace (`\\host\x`, `//host/x`, `\\?\`,
-/// `\\.\`, `\??\`). Touching one makes Windows connect out and offer the
-/// user's login hash, so such paths are refused before any file call.
 #[must_use]
 pub fn is_network_path(raw: &str) -> bool {
     if !cfg!(windows) {
@@ -47,12 +44,8 @@ mod network_tests {
     }
 }
 
-/// Whether this platform's file systems ignore case (by default).
 const FOLDS_CASE: bool = cfg!(any(windows, target_os = "macos"));
 
-/// One spelling of a path for comparing two: forward slashes, no `./` in
-/// front, no verbatim prefix (`\\?\`), no slash at the end, and case folded
-/// where the file system folds it.
 #[must_use]
 pub fn path_key(raw: &str) -> String {
     let s = raw.replace('\\', "/");
@@ -69,15 +62,11 @@ pub fn path_key(raw: &str) -> String {
     }
 }
 
-/// Whether two paths name the same file, by their `path_key`.
 #[must_use]
 pub fn same_path(a: &str, b: &str) -> bool {
     path_key(a) == path_key(b)
 }
 
-/// `s` without `prefix`, compared char by char and without case where the
-/// file system folds it. Byte offsets stay `s`'s own, so the rest keeps its
-/// spelling.
 #[must_use]
 pub fn strip_prefix_fold<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
     let mut rest = s.char_indices();
@@ -157,35 +146,31 @@ pub fn ensure_dirs() -> Result<PathBuf> {
     Ok(root)
 }
 
-/// Built-in packs as (name, theme.toml). The single list: seeding, the
-/// builtin flag and the rename/delete/save guards all read it.
 pub(crate) const BUILTIN_PACKS: &[(&str, &str)] = &[
     (
         "dark",
         "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
 [colors]\nsidebar = \"#000000\"\nstage = \"#000000\"\naccent = \"#E8E8E8\"\ntext = \"#F2F2F2\"\n\
 text_dim = \"#8A8A8A\"\nbar = \"#0A0A0A\"\nborder = \"#1F1F1F\"\n\n\
-[background]\nimage = \"\"\ndim = 0.60\nvignette = 0.40\nblur = 0.0\n",
+[background]\nimage = \"\"\n",
     ),
     (
         "graphite",
         "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
 [colors]\nsidebar = \"#0F0F0F\"\nstage = \"#161616\"\naccent = \"#E8E8E8\"\ntext = \"#ECECEC\"\n\
 text_dim = \"#9B9B9B\"\nbar = \"#1C1C1C\"\nborder = \"#2A2A2A\"\n\n\
-[background]\nimage = \"\"\ndim = 0.66\nvignette = 0.50\nblur = 0.0\n",
+[background]\nimage = \"\"\n",
     ),
     (
         "light",
         "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
 [colors]\nsidebar = \"#F6F0E6\"\nstage = \"#F6F0E6\"\naccent = \"#6B6156\"\ntext = \"#6B6156\"\n\
 text_dim = \"#9A8C7A\"\nbar = \"#FBF7F1\"\nborder = \"#E6DCCE\"\npanel = \"#FBF7F1\"\n\n\
-[background]\nimage = \"\"\ndim = 0.06\nvignette = 0.02\nblur = 0.0\ngrain = 0.0\n",
+[background]\nimage = \"\"\n",
     ),
 ];
 
 fn seed_builtin_packs(root: &std::path::Path) -> Result<()> {
-    // Retire first so removed packs reseed fresh below instead of
-    // vanishing for a launch.
     retire_legacy_packs(root);
     for (name, toml) in BUILTIN_PACKS {
         let dir = root.join("themes").join(name);
@@ -200,7 +185,6 @@ fn seed_builtin_packs(root: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-/// Earlier seeds of a builtin, matched as whole files.
 const OLD_SEEDS: &[(&str, &str)] = &[
     (
         "light",
@@ -253,13 +237,8 @@ text_dim = \"#71717A\"\nbar = \"#FFFFFF\"\nborder = \"#ECECEE\"\npanel = \"#FFFF
     ),
 ];
 
-/// Seeds from before the glass section was dropped ended with this.
 const GLASS_TAIL: &str = "\n[glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n";
 
-/// Builtins are defaults: when a seeded pack still matches an earlier
-/// seed byte-for-byte, move it to the current seed so refreshed defaults
-/// (like light's gentler veil) reach existing installs. Anything the
-/// user touched is left alone.
 fn refresh_builtin_defaults(root: &std::path::Path) {
     for (name, old) in OLD_SEEDS {
         let Some((_, seed)) = BUILTIN_PACKS.iter().find(|(n, _)| n == name) else {
@@ -341,7 +320,6 @@ mod tests {
             assert_eq!(std::fs::read_to_string(&marker).unwrap(), current);
         }
 
-        // Same values, one user edit elsewhere: theirs now, left alone.
         let touched = OLD_SEEDS[0].1.replace("#4F5EE0", "#FF0000");
         std::fs::write(&marker, &touched).unwrap();
         refresh_builtin_defaults(root.path());

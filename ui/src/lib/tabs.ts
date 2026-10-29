@@ -1,7 +1,7 @@
 import type { PlanQuote } from "./api";
 
 export type ComposerMode = "search" | "build";
-type TabKind = "session" | "page" | "brain" | "history" | "settings" | "preview" | "artifact";
+type TabKind = "session" | "page" | "history" | "settings" | "preview" | "artifact";
 
 export interface TabComposerState {
   input: string;
@@ -9,14 +9,9 @@ export interface TabComposerState {
   model: string;
   effort: string;
   attachments: string[];
-  // Plan items quoted into the next message (at most 4).
   quotes?: PlanQuote[];
-  // A new session here starts on the linked server.
   remote?: boolean;
-  // The server folder for that new session ("" = scratch there).
   remoteCwd?: string;
-  // A new session here gets a worktree of its own from this branch;
-  // empty or missing: it works in the folder as it is.
   worktree?: string;
 }
 
@@ -27,8 +22,6 @@ function defaultComposer(): TabComposerState {
 const LAST_MODEL = "parzi.lastModel.v1";
 const RECENT_MODELS = "parzi.recentModels.v1";
 
-// The model and effort of the last send: every new draft starts there
-// instead of on an empty "Pick a model".
 function lastModel(): { model: string; effort: string } {
   try {
     const v = JSON.parse(localStorage.getItem(LAST_MODEL) ?? "null");
@@ -37,7 +30,6 @@ function lastModel(): { model: string; effort: string } {
   return { model: "", effort: "" };
 }
 
-// The last few models sent with, newest first: the picker lists them on top.
 export function recentModels(): string[] {
   try {
     const v = JSON.parse(localStorage.getItem(RECENT_MODELS) ?? "[]");
@@ -55,10 +47,6 @@ export function rememberModel(model: string, effort: string) {
   } catch {}
 }
 
-// Restored tabs persist no composer, and a partial one can omit `quotes`.
-// The Omnibar binds that field. Its prop default applies only on mount, so
-// the next session's missing list is a real `undefined`: `quotes.length`
-// throws inside the Svelte flush and every later click is dropped.
 export function ensureComposer(c?: Partial<TabComposerState> | null): TabComposerState {
   const full = c as TabComposerState | null | undefined;
   if (full && Array.isArray(full.attachments) && Array.isArray(full.quotes)) {
@@ -90,22 +78,16 @@ export interface Tab {
   sessionId?: string | null;
   url?: string;
   cwd?: string;
-  // An agent's page: the session that drives it (its own browser profile).
   owner?: string | null;
-  // A page the person opened from a session (a link in its thread): it sits
-  // under that session in the strip but stays theirs, unlike `owner`.
   group?: string | null;
   loading?: boolean;
   canGoBack?: boolean;
   canGoForward?: boolean;
   blocked?: number;
   bg?: string;
-  // The page's own icon (https or data URL) and why its renderer died.
   favicon?: string;
-  // The page's zoom, when not 100% (1 is 100%).
   zoom?: number;
   crashed?: string;
-  // An artifact opened to read: what it holds.
   doc?: ArtifactDoc;
   composer: TabComposerState;
 }
@@ -138,14 +120,8 @@ export function historyTab(): Tab {
   return { id: tabId(), kind: "history", title: "History", composer: defaultComposer() };
 }
 
-export function brainTab(): Tab {
-  return { id: tabId(), kind: "brain", title: "Brain", composer: defaultComposer() };
-}
+const RESTORED = new Set(["session", "page", "history"]);
 
-const RESTORED = new Set(["session", "page", "brain", "history"]);
-
-/// A saved tab as it comes back, or null for kinds that don't reopen (the
-/// Work and Tasks tabs of earlier builds are gone: the plan panel took over).
 export function restoreTab<T extends { kind?: unknown; title?: unknown }>(t: T): T | null {
   return typeof t.kind === "string" && RESTORED.has(t.kind) ? t : null;
 }
@@ -158,7 +134,6 @@ export function previewTab(which = "omnibar"): Tab {
   return { id: tabId(), kind: "preview", title: `Preview ${which}`, url: which, composer: defaultComposer() };
 }
 
-/// An artifact to read on its own, under the session that made it.
 export function artifactTab(doc: ArtifactDoc, group: string | null): Tab {
   return { id: tabId(), kind: "artifact", title: doc.title, group, doc, composer: defaultComposer() };
 }
@@ -189,7 +164,6 @@ export function folderName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-/// Brain/history/settings/preview live apart from working tabs.
 export function isSystemTab(t: Tab): boolean {
   return t.kind !== "session" && t.kind !== "page";
 }

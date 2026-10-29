@@ -1,9 +1,3 @@
-//! Headless ParziOS control socket.
-//!
-//! Bound to 127.0.0.1. A remote client arrives over SSH through
-//! `parzi rpc`, which runs on this machine and relays stdio to the socket,
-//! so the token never leaves it. The desk and this process must not both
-//! own `~/.parzi`.
 
 use std::collections::HashMap;
 use std::fs::OpenOptions;
@@ -27,14 +21,10 @@ use crate::tools::{
     humanize_tool_call, Approval, Approver, AskRequest, Asker, AutoApprover, ToolCallInfo,
 };
 
-/// Large enough for a message with its attachments inlined.
 const MAX_REQUEST: u64 = 16 * 1024 * 1024;
-/// Events per `session.events` reply: the newest ones. A client that has
-/// some asks with `from` for only what is new since.
 const EVENTS_PAGE: usize = 400;
 const MAX_CONNECTIONS: usize = 64;
 const REQUEST_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
-/// Tool output is cut to this many characters in `session.events`.
 const TOOL_OUTPUT_CAP: usize = 8_000;
 
 struct Pending {
@@ -56,9 +46,6 @@ impl Drop for SlotGuard {
     }
 }
 
-/// How long a person gets to answer: Settings' approval wait, the one the
-/// desk's cards use too. Past it the call is denied (a question decides
-/// itself), so a forgotten run gives its slot back.
 type AnswerWait = Arc<dyn Fn() -> std::time::Duration + Send + Sync>;
 
 fn answer_wait(orch: &Arc<Orchestrator>) -> AnswerWait {
@@ -72,8 +59,6 @@ fn answer_wait(orch: &Arc<Orchestrator>) -> AnswerWait {
     })
 }
 
-/// Approvals that wait until a client answers on the socket. Each one is
-/// also announced on the event stream, shaped like the desk's own cards.
 pub struct ParkedApprover {
     pending: Arc<std::sync::Mutex<HashMap<String, Pending>>>,
     store: SessionStore,
@@ -101,7 +86,6 @@ impl ParkedApprover {
             .collect()
     }
 
-    /// `key` is the whole key or a prefix only one waiting approval has.
     pub fn answer(&self, key: &str, allow: bool) -> Result<String, String> {
         let pending = {
             let mut map = self.pending.lock().unwrap_or_else(|e| e.into_inner());
@@ -169,8 +153,6 @@ impl Approver for ParkedApprover {
 
 type Questions = std::sync::Mutex<HashMap<String, (String, oneshot::Sender<String>)>>;
 
-/// `ask.user` (a question or a request) on a headless engine: the question is
-/// announced on the event stream and waits for `question.answer`.
 pub struct ParkedAsker {
     pending: Questions,
     events: broadcast::Sender<Value>,
@@ -192,7 +174,6 @@ impl ParkedAsker {
                 .pending
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            // Checked before removing: a wrong answer must leave it waiting.
             match map.get(key) {
                 None => return Err("question expired or unknown".into()),
                 Some((bound, _)) if !session.is_empty() && bound != session => {
@@ -245,12 +226,10 @@ struct State {
     token: String,
     approver: Arc<ParkedApprover>,
     asker: Arc<ParkedAsker>,
-    /// Approvals and questions, for `subscribe` streams.
     events: broadcast::Sender<Value>,
     stop: CancellationToken,
 }
 
-/// A running localhost socket. Dropping it stops the accept loop and the queue.
 #[must_use]
 pub struct Daemon {
     pub port: u16,
@@ -263,7 +242,6 @@ pub struct Daemon {
 }
 
 impl Daemon {
-    /// Resolves when a client sent `shutdown`.
     pub async fn stopped(&self) {
         self.cancel.cancelled().await;
     }
@@ -282,10 +260,6 @@ impl Drop for Daemon {
     }
 }
 
-/// Listen on 127.0.0.1 and run the orchestrator queue.
-///
-/// Refuses when the desk's socket is already answering, and when another
-/// `parzi serve` holds the lock.
 pub async fn start(orch: Arc<Orchestrator>) -> Result<Daemon, String> {
     if desk::desk_is_open().await {
         return Err("the desk is open. Close Parzi before `parzi serve`.".into());
@@ -321,8 +295,6 @@ pub async fn start(orch: Arc<Orchestrator>) -> Result<Daemon, String> {
     let approver = ParkedApprover::new(orch.store().clone(), events.clone(), wait.clone());
     let asker = ParkedAsker::new(events.clone(), wait);
     orch.install_asker(asker.clone()).await;
-    // Queued runs restored after a restart (and later starts) ask a client
-    // through the socket instead of being denied every gated call.
     orch.set_approver(approver.clone());
     let cancel = CancellationToken::new();
     let state = Arc::new(State {
@@ -344,7 +316,6 @@ pub async fn start(orch: Arc<Orchestrator>) -> Result<Daemon, String> {
                     if !peer.ip().is_loopback() {
                         continue;
                     }
-                    // Over the cap the connection is dropped unanswered.
                     let Ok(slot) = slots.clone().try_acquire_owned() else { continue };
                     let state = state.clone();
                     tokio::spawn(async move {
@@ -374,7 +345,6 @@ pub async fn start(orch: Arc<Orchestrator>) -> Result<Daemon, String> {
     })
 }
 
-/// User-service unit. Setup writes it on Linux and does not enable it.
 #[must_use]
 pub fn systemd_unit(exe: &Path) -> String {
     let quoted = quote_exec(&exe.display().to_string());
@@ -418,8 +388,6 @@ fn lock_serve(path: &Path) -> Result<std::fs::File, String> {
     }
 }
 
-/// True when another `parzi serve` holds the lock. The desk checks this at
-/// startup: the exclusion is mutual, not just serve-side.
 #[must_use]
 pub fn serve_locked() -> bool {
     let Ok(root) = parzi_core::paths::ensure_dirs() else {
@@ -438,8 +406,6 @@ pub fn serve_locked() -> bool {
     !matches!(file.try_lock_exclusive(), Ok(true))
 }
 
-/// The token file is born 0600 inside a 0700 home: on a shared server it
-/// must never be readable by another account, not even for a moment.
 fn write_serve_file(path: &Path, body: &str) -> Result<(), String> {
     if path.exists() {
         let _ = std::fs::remove_file(path);
@@ -485,7 +451,6 @@ fn tokens_equal(a: &str, b: &str) -> bool {
 async fn answer(sock: tokio::net::TcpStream, state: &State) -> Result<(), String> {
     let (read, mut write) = sock.into_split();
     let mut line = String::new();
-    // A client that never finishes its line loses the connection.
     tokio::time::timeout(
         REQUEST_WAIT,
         BufReader::new(read.take(MAX_REQUEST)).read_line(&mut line),
@@ -516,8 +481,6 @@ async fn answer(sock: tokio::net::TcpStream, state: &State) -> Result<(), String
     Ok(())
 }
 
-/// Keep the connection open and write every run event, approval and
-/// question as one JSON line until the client goes away or serve stops.
 async fn stream(mut write: tokio::net::tcp::OwnedWriteHalf, state: &State) -> Result<(), String> {
     let mut runs = state.orch.subscribe();
     let mut side = state.events.subscribe();
@@ -601,7 +564,6 @@ async fn dispatch(state: &State, req: &Value) -> Value {
         "project.folder" => crate::hub::project_folder(req),
         "providers" => providers(&state.orch, req).await,
         "shutdown" => {
-            // Let this reply reach the client before the accept loop stops.
             let stop = state.stop.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(150)).await;
@@ -621,8 +583,6 @@ fn resolve(orch: &Orchestrator, id: &str) -> Result<String, Value> {
     orch.store().resolve_id(id).map_err(|e| fail(e.to_string()))
 }
 
-/// Metadata plus the stored events from `from` on, at most a page of them.
-/// Long tool output is cut: a remote client shows a thread, not a log.
 fn session_events(orch: &Orchestrator, req: &Value) -> Value {
     let id = match resolve(orch, &str_arg(req, "id")) {
         Ok(id) => id,
@@ -667,7 +627,6 @@ fn capped_event(ev: &Event, at: Option<i64>) -> Value {
     v
 }
 
-/// Agent states on this machine. `refresh` probes the programs and spends no quota.
 async fn providers(orch: &Orchestrator, req: &Value) -> Value {
     let refresh = req.get("refresh").and_then(Value::as_bool).unwrap_or(false);
     let mut all = if refresh {
@@ -703,11 +662,9 @@ async fn session_send(state: &State, req: &Value) -> Value {
     let target = str_arg(req, "target");
     let model = str_arg(req, "model");
     let cwd = str_arg(req, "cwd");
-    // An older desk may still send a "lane": every session works the same now.
     let mode = Some(str_arg(req, "mode")).filter(|m| !m.is_empty());
     let effort = crate::orchestrator::normalize_effort(&str_arg(req, "effort"));
     let yes = req.get("yes").and_then(Value::as_bool).unwrap_or(false);
-    // Read on the desk and sent inline: the desk's files are not here.
     let attachments: Vec<parzi_core::context::AttachedFile> = req
         .get("attachments")
         .cloned()
@@ -719,7 +676,6 @@ async fn session_send(state: &State, req: &Value) -> Value {
         state.approver.clone()
     };
     let project = parzi_core::brain::project_for_folder(&cwd).unwrap_or_else(|| "default".into());
-    // A desktop sends as the person; the CLI says it is the CLI.
     let cause = parzi_core::store::RunCause::parse(&str_arg(req, "cause"))
         .filter(|c| c.from_person())
         .unwrap_or_default();

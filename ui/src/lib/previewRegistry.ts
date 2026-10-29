@@ -7,7 +7,6 @@ export { previewNames, previewProblem };
 
 export interface PreviewEntry extends PreviewMeta {
   component: ComponentType;
-  /** Demo defaults for a variant; artifact props merge over these. */
   props: (variant: number, extra: Record<string, unknown>) => Record<string, unknown>;
 }
 
@@ -27,8 +26,6 @@ function omnibarProps(variant: number, extra: Record<string, unknown>) {
   };
 }
 
-// One component per name in PREVIEW_META. The gallery and ArtifactCard
-// pick a new one up from that list plus this map.
 const BUILT: Record<string, Pick<PreviewEntry, "component" | "props">> = {
   omnibar: { component: Omnibar as unknown as ComponentType, props: omnibarProps },
 };

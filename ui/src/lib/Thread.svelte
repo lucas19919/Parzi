@@ -25,9 +25,6 @@
   import LiveLine from "./LiveLine.svelte";
   import { board, nextStep, setupWaits } from "./providerStore";
 
-  // What the waiting prompt answers: the nearest assistant message above
-  // it, so "the proposal above" names what was actually said. Nothing
-  // when the agent asked without saying anything first.
   $: askContext = (() => {
     for (let i = events.length - 1; i >= 0; i--) {
       const e = events[i];
@@ -54,26 +51,17 @@
   export let liveReasoning = "";
   export let liveTools: LiveTool[] = [];
   export let streaming = false;
-  // Whose thread: pictures its tools made are read by it.
   export let session = "";
-  // The checklist todo.write just set, ahead of the saved one.
   export let liveTodo: unknown = null;
   export let approval: Approval | null = null;
   export let question: Question | null = null;
-  // Something the agent needs from you: text, a file or a picture.
   export let request: AgentRequest | null = null;
-  // Who is asking: the session's title, so a question or approval reads
-  // with its context instead of floating anonymous in the thread.
   export let askerTitle = "";
-  // This thread's agent by name ("Grok"): an approval of its own reads
-  // "Grok wants to …".
   export let agentName = "";
   let rawOpen = false;
   $: if (!approval) rawOpen = false;
   export let folder = "";
-  // The agent this thread runs on, so a failed turn can offer its fix.
   export let provider = "";
-  // Names another session, for messages and reports that come from one.
   export let sessionTitle: (id: string) => string = () => "Another session";
 
   const dispatch = createEventDispatcher<{
@@ -90,8 +78,6 @@
     pickModel: void;
   }>();
 
-  // When the agent's spent limit comes back, from its usage windows: the
-  // soonest reset of one at 100%, else of the fullest one.
   function resetLine(p: string): string {
     const windows = $board.find((b) => b.provider === p)?.usage ?? [];
     const now = Date.now() / 1000;
@@ -116,9 +102,7 @@
     session_lost: "The agent lost this conversation",
     unknown: "The turn failed",
   };
-  // Errors a plain second try can get past.
   const RETRYABLE = new Set(["rate_limit", "overloaded", "process", "session_lost", "unknown"]);
-  // "Conversation compacted · 92k → 12k tokens", with what is known.
   function compactedTitle(before?: number, after?: number): string {
     const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
     if (before && after) return `Conversation compacted · ${k(before)} → ${k(after)} tokens`;
@@ -129,15 +113,12 @@
     rate_limit: "Your message is kept. Nothing was lost.",
   };
 
-  // Vendor errors often trail a raw JSON blob; cut it, it never helped.
   function shortErr(message: string): string {
     const cut = message.search(/\s*\{[\s"]*"errorName"|\s*\{"errorName"|\s*\{"code"/);
     if (cut > 0) return `${message.slice(0, cut).trimEnd()}…`;
     return message.length > 400 ? `${message.slice(0, 400).trimEnd()}…` : message;
   }
 
-  // The first line reads as the reason; the rest (stderr, stack) waits
-  // behind Details.
   function errLead(message: string): { lead: string; more: string } {
     const text = shortErr(message);
     const nl = text.indexOf("\n");
@@ -164,10 +145,6 @@
 
   $: items = buildItems(events);
 
-  // A turn's working (its thinking, tool steps and the narration between
-  // them) folds into one quiet line at the turn's top; its answer, the
-  // pictures it made, artifacts and anything that needs you stay in view.
-  // The running turn folds too, all but what it says now.
   type Fold = { key: string; tools: number; secs: number; live: boolean; only: string };
   let openFolds = new Set<string>();
   $: folds = foldTurns(items, streaming, liveTools.length + (liveReasoning ? 1 : 0));
@@ -187,9 +164,17 @@
       range.forEach((it, i) => {
         if (it.kind === "assistant") answer = i;
       });
-      const work = range.filter(
-        (it, i) => it.kind === "steps" || (it.kind === "assistant" && i !== answer) || (it.kind === "system" && sysTone(it.text) === "line" && !isStop(it.text)),
-      );
+      const work = range.filter((it, i) => {
+        if (it.kind === "steps") return true;
+        if (it.kind === "assistant" && i !== answer) {
+          let j = i + 1;
+          while (j < range.length && range[j].kind === "steps") j++;
+          if (range[j]?.kind === "artifact") return false;
+          return true;
+        }
+        if (it.kind === "system" && sysTone(it.text) === "line" && !isStop(it.text)) return true;
+        return false;
+      });
       if (!work.length && !(current && liveWork)) return;
       const opener = u >= 0 ? items[u] : null;
       const times = [opener, ...range].map((it) => (it && "at" in it ? it.at ?? 0 : 0)).filter((t) => t > 0);
@@ -200,7 +185,6 @@
         live: current,
         only: "",
       };
-      // One step and nothing else: its own words say more than a count.
       const steps = work.flatMap((it) => (it.kind === "steps" ? it.tools : []));
       if (!current && work.length === 1 && steps.length === 1) fold.only = steps[0].label.trim();
       if (current) live = fold;
@@ -228,8 +212,6 @@
     const f = folds.inside.get(key);
     return !!f && !open.has(f);
   };
-  // A turn's last reply carries its actions (copy, save, fork); the replies
-  // before it in the same turn stay close together, as they read.
   $: turnEnds = (() => {
     const ends = new Set<string>();
     let last: string | null = null;
@@ -243,14 +225,11 @@
     if (last && !streaming) ends.add(last);
     return ends;
   })();
-  // Each artifact's newest version: older ones fold to a line.
   $: newest = (() => {
     const m = new Map<string, number>();
     for (const it of items) if (it.kind === "artifact") m.set(it.id, Math.max(m.get(it.id) ?? 0, it.version ?? 1));
     return m;
   })();
-  // Each of the person's messages by its place among them, as the store
-  // counts them for a rewind.
   $: userNth = (() => {
     const m = new Map<string, number>();
     let n = 0;
@@ -259,13 +238,10 @@
     });
     return m;
   })();
-  // The session's checklist: the last one its agent wrote.
   $: todo =
     liveTodo ??
     [...items].reverse().find((i): i is Extract<typeof i, { kind: "widget" }> => i.kind === "widget" && i.fence === "parzi-todo")?.payload ??
     null;
-  // Offered replies stand only until the next message: the latest offer,
-  // with nothing said after it.
   $: replyAt = (() => {
     for (let i = items.length - 1; i >= 0; i--) {
       const it = items[i];
@@ -274,14 +250,10 @@
     }
     return -1;
   })();
-  // Only the newest error offers a fix, and only while the agent still
-  // needs it: once signed in, the card is history.
   $: lastError = [...items].reverse().find((i) => i.kind === "error")?.key;
   $: fix = provider ? nextStep($board.find((b) => b.provider === provider)) : null;
   $: fixWait = provider ? $setupWaits.get(provider) : undefined;
   $: running = liveTools.filter((t) => t.running);
-  // A waiting prompt beats the run status: "Starting…" while an answer sits
-  // open is exactly the confusion this guards.
   $: status = approval
     ? "Needs your approval"
     : question || request
@@ -297,8 +269,6 @@
               : liveTools.length
                 ? "Working…"
                 : "Starting…";
-  // The live line under the thread says it plainly: a running tool, else
-  // the checklist's active item, else thinking or writing.
   $: activeTask = (((todo ?? {}) as { items?: { title: string; state: string }[] }).items ?? []).find((i) => i.state === "active")?.title ?? "";
   $: lineText =
     status && (approval || question || request || running.length)
@@ -394,8 +364,6 @@
       case "ui.show_artifact":
         return `Publishing ${arg(args, "title", "id") || "an artifact"}`;
       default: {
-        // Vendor and connector tools ("mcp__github__list_issues") read by
-        // their last word.
         const short = (name.split(/__|\./).pop() || name).replace(/_/g, " ");
         const hint = arg(args, "path", "file", "cmd", "query", "url", "title", "id");
         return hint ? `Using ${short}: ${hint}` : `Using ${short}`;
@@ -447,7 +415,6 @@ ${e.text}` : e.text;
     return out;
   }
 
-  // Consecutive routine lines join into one whisper instead of a stack.
   function pushSys(key: string, out: Item[], text: string, at?: number) {
     const prev = out[out.length - 1];
     if (prev?.kind === "system" && sysTone(prev.text) === "line" && sysTone(text) === "line") {
@@ -457,8 +424,6 @@ ${e.text}` : e.text;
     out.push({ key, kind: "system", text, at });
   }
 
-  // Another session's message or end-of-run report, stored as
-  // `parzi-inter:1 {json}` for the agent: shown as words, not the wire format.
   function interOf(text: string): { from: string; body: string } | null {
     if (!text.startsWith("parzi-inter:1")) return null;
     try {
@@ -474,8 +439,6 @@ ${e.text}` : e.text;
     return m ? m[1].split(",").map((s) => s.trim()).filter((s) => IMAGE.test(s)) : [];
   }
 
-  // Routine narrations render as a whisper, not a mono block.
-  // A stopped run's line stays in view, outside the fold.
   function isStop(text: string): boolean {
     return /^stopped$/i.test(text.trim());
   }
@@ -495,13 +458,10 @@ ${e.text}` : e.text;
       .trimEnd();
   }
 
-  // The session a side task was started from, from its opening message.
   function sideFrom(text: string): string {
     return /<side-task from="([^"]*)">/.exec(text)?.[1] ?? "";
   }
 
-  // Agent narration that only echoes tool I/O (a pseudo-call or a result
-  // JSON pasted into chat) carries no information — whisper one line.
   function echoLine(text: string): string {
     const t = text.trim();
     if (/^[\w.]+\(\s*['"`{]/.test(t) || (t.length < 500 && /"(session_id|response)"\s*:/.test(t))) {
@@ -534,7 +494,7 @@ ${e.text}` : e.text;
       const note = await api.saveAnswer(text);
       saved = key;
       setTimeout(() => (saved = saved === key ? "" : saved), 1600);
-      toast(`Saved to brain as ${note.title || note.path}`);
+      toast(`Saved to projects as ${note.title || note.path}`);
     } catch (e) {
       toastError(e);
     }
@@ -566,7 +526,6 @@ ${e.text}` : e.text;
 
   let replyText = "";
 
-  // A blank reply declines: the agent goes on without it.
   async function reply(text: string) {
     if (!request) return;
     const { key, session } = request;
@@ -580,7 +539,6 @@ ${e.text}` : e.text;
     }
   }
 
-  // Choosing the file is the reply: its path goes back to the agent.
   async function chooseFile() {
     const picture = request?.kind === "image";
     try {
@@ -598,14 +556,11 @@ ${e.text}` : e.text;
 
   async function onClick(e: MouseEvent) {
     const el = e.target as HTMLElement;
-    // An image you sent or one in a reply opens big; one inside a link
-    // stays a link.
     if (el instanceof HTMLImageElement && el.closest(".sent, .msg") && !el.closest("a")) {
       viewImage(el.currentSrc || el.src, el.alt);
       return;
     }
-    // Note links pin into the session's side column; the Brain tab stays put.
-    if (await handleLinkClick(e, folder, { pin: true })) return;
+    if (await handleLinkClick(e, folder)) return;
     codeBlockClick(el);
   }
 </script>
@@ -622,155 +577,151 @@ ${e.text}` : e.text;
         <span class="chev" class:open={openFolds.has(fold.key)}><Icon name="chevDown" size={12} /></span>
       </button>
     {/if}
-    {#if hidden && item.kind !== "steps"}
-      <!-- Folded into the turn's line above. -->
-    {:else if item.kind === "user"}
-      {@const images = attachedImages(item.text)}
-      {@const said = splitQuotes(stripMarker(item.text))}
-      {@const from = sideFrom(item.text)}
-      <div class="row user">
-        {#if from}<span class="side-from">Side task from {from}</span>{/if}
-        <div class="user-line">
-          {#if when(item.at)}<span class="when">{when(item.at)}</span>{/if}
-          {#if said.text}
-            <button class="copy" use:tooltip={"Copy"} on:click={() => copy(said.text, item.key)}>
-              <Icon name={copied === item.key ? "check" : "copy"} />
+    {#if !(hidden && item.kind !== "steps")}
+      {#if item.kind === "user"}
+        {@const images = attachedImages(item.text)}
+        {@const said = splitQuotes(stripMarker(item.text))}
+        {@const from = sideFrom(item.text)}
+        <div class="row user">
+          {#if from}<span class="side-from">Side task from {from}</span>{/if}
+          <div class="user-line">
+            {#if when(item.at)}<span class="when">{when(item.at)}</span>{/if}
+            {#if said.text}
+              <button class="copy" use:tooltip={"Copy"} on:click={() => copy(said.text, item.key)}>
+                <Icon name={copied === item.key ? "check" : "copy"} />
+              </button>
+            {/if}
+            <button class="copy" use:tooltip={"Edit in composer"} on:click={() => dispatch("edited", { text: said.text, quotes: said.quotes })}>
+              <Icon name="pencil" />
             </button>
-          {/if}
-          <button class="copy" use:tooltip={"Edit in composer"} on:click={() => dispatch("edited", { text: said.text, quotes: said.quotes })}>
-            <Icon name="pencil" />
-          </button>
-          {#if userNth.has(item.key)}
-            <button
-              class="copy"
-              use:tooltip={"Rewind: go on from before this message"}
-              on:click={() => dispatch("rewind", { nth: userNth.get(item.key) ?? 0, text: said.text, quotes: said.quotes })}
-            >
-              <Icon name="rewind" />
-            </button>
-          {/if}
-          {#if said.text}
-            <div class="bubble msg">{@html mdHtml(said.text, $richReady)}</div>
-          {:else}
+            {#if userNth.has(item.key)}
+              <button
+                class="copy"
+                use:tooltip={"Rewind: go on from before this message"}
+                on:click={() => dispatch("rewind", { nth: userNth.get(item.key) ?? 0, text: said.text, quotes: said.quotes })}
+              >
+                <Icon name="rewind" />
+              </button>
+            {/if}
+            {#if said.text}
+              <div class="bubble msg">{@html mdHtml(said.text, $richReady)}</div>
+            {:else}
+              <div class="quotes">{#each said.quotes as q, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">Plan · {q.title}</span></span>{/each}</div>
+            {/if}
+          </div>
+          {#if said.text && said.quotes.length}
             <div class="quotes">{#each said.quotes as q, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">Plan · {q.title}</span></span>{/each}</div>
           {/if}
+          {#if images.length}
+            <div class="sent">
+              {#each images as name}
+                {#await imageUrl(name) then url}
+                  {#if url}<img src={url} alt={name} title={name} />{/if}
+                {/await}
+              {/each}
+            </div>
+          {/if}
         </div>
-        {#if said.text && said.quotes.length}
-          <div class="quotes">{#each said.quotes as q, i (i)}<span class="quote"><Icon name="plan" size={12} /><span class="q-name">Plan · {q.title}</span></span>{/each}</div>
-        {/if}
-        {#if images.length}
-          <div class="sent">
-            {#each images as name}
-              {#await imageUrl(name) then url}
-                {#if url}<img src={url} alt={name} title={name} />{/if}
-              {/await}
+      {:else if item.kind === "assistant"}
+        <div class="row" class:in-fold={folded}>
+          <div class="body">
+            {#each splitSegments(item.text) as seg}
+              {#if seg.kind === "md"}
+                <div class="msg">{@html mdHtml(seg.body, $richReady)}</div>
+              {:else if seg.kind === "widget"}
+                <Widget data={seg.body} />
+              {:else if seg.kind === "artifact"}
+                <ArtifactCard data={seg.body} />
+              {:else if seg.kind === "viz"}
+                <Viz spec={seg.body} />
+              {/if}
             {/each}
           </div>
-        {/if}
-      </div>
-    {:else if item.kind === "assistant"}
-      <div class="row" class:in-fold={folded}>
-        <div class="body">
-          {#each splitSegments(item.text) as seg}
-            {#if seg.kind === "md"}
-              <div class="msg">{@html mdHtml(seg.body, $richReady)}</div>
-            {:else if seg.kind === "widget"}
-              <Widget data={seg.body} />
-            {:else if seg.kind === "artifact"}
-              <ArtifactCard data={seg.body} />
-            {:else if seg.kind === "viz"}
-              <Viz spec={seg.body} />
-            {/if}
-          {/each}
-        </div>
-        {#if turnEnds.has(item.key)}
-        <div class="actions">
-          {#if when(item.at)}<span class="when">{when(item.at)}</span>{/if}
-          <button class="copy" use:tooltip={"Copy"} on:click={() => copy(item.text, item.key)}>
-            <Icon name={copied === item.key ? "check" : "copy"} />
-          </button>
-          <button class="copy" use:tooltip={"Save to brain"} on:click={() => save(item.text, item.key)}>
-            <Icon name={saved === item.key ? "check" : "brain"} />
-          </button>
-          <button class="copy" use:tooltip={"Fork: go on in a copy of this thread"} on:click={() => dispatch("forked")}>
-            <Icon name="fork" />
-          </button>
-        </div>
-        {/if}
-      </div>
-    {:else if item.kind === "steps"}
-      {#if !hidden}<div class:in-fold={folded}><Steps reasoning={item.reasoning} tools={item.tools} /></div>{/if}
-      <!-- What its tools made stays in view, folded or not. -->
-      <ToolPictures {session} paths={picturesIn(item.tools.map((t) => t.output ?? ""))} />
-    {:else if item.kind === "checkpoint"}
-      <Steps title={compactedTitle(item.before, item.after)} reasoning={item.text} />
-    {:else if item.kind === "system"}
-      {#if sysTone(item.text) === "line"}
-        <div class="sysline" class:in-fold={folded} title={whenTitle(item.at)}>{item.text.slice(0, 300)}</div>
-      {:else}
-        <div class="system" title={whenTitle(item.at)}>{item.text.slice(0, 300)}</div>
-      {/if}
-    {:else if item.kind === "inter"}
-      <div class="inter" title={whenTitle(item.at)}>
-        <span class="inter-from">From {item.from}</span>
-        <span class="inter-body">{item.text.slice(0, 2000)}</span>
-      </div>
-    {:else if item.kind === "error"}
-      {@const msg = errLead(item.message)}
-      <div class="turn-error" role="alert" title={whenTitle(item.at)}>
-        <span class="err-class">{ERROR_WORDS[item.class] ?? ERROR_WORDS.unknown}</span>
-        <span class="err-msg">{msg.lead}</span>
-        {#if msg.more}
-          <details class="err-more"><summary>Details</summary><pre>{msg.more}</pre></details>
-        {/if}
-        {#if item.class === "rate_limit" && resetLine(provider)}<span class="err-hint">{resetLine(provider)}</span>{/if}
-        {#if ERROR_HINT[item.class]}<span class="err-hint">{ERROR_HINT[item.class]}</span>{/if}
-        {#if item.key === lastError && !streaming}
-          {#if fix || fixWait}
-            <div class="err-fix">
-              {#if fixWait}
-                <span class="err-hint">{fixWait.note}</span>
-              {:else if fix}
-                <button class="btn" on:click={() => fix?.run(provider)}>{fix.label}</button>
-                <span class="err-hint">Then try again.</span>
-              {/if}
-            </div>
-          {:else if item.class === "context_overflow"}
-            <div class="err-fix"><button class="btn" on:click={() => dispatch("compact")}>Compact and go on</button></div>
-          {:else if item.class === "context_overflow"}
-            <span class="err-hint">Start a new session to go on.</span>
-          {:else if item.class === "rate_limit"}
-            <div class="err-fix">
-              <button class="btn" on:click={() => dispatch("pickModel")}>Change model</button>
-              <button class="btn" on:click={() => dispatch("retry")}>Try again</button>
-            </div>
-          {:else if RETRYABLE.has(item.class)}
-            <div class="err-fix"><button class="btn" on:click={() => dispatch("retry")}>Try again</button></div>
+          {#if turnEnds.has(item.key)}
+          <div class="actions">
+            {#if when(item.at)}<span class="when">{when(item.at)}</span>{/if}
+            <button class="copy" use:tooltip={"Copy"} on:click={() => copy(item.text, item.key)}>
+              <Icon name={copied === item.key ? "check" : "copy"} />
+            </button>
+            <button class="copy" use:tooltip={"Save to projects"} on:click={() => save(item.text, item.key)}>
+              <Icon name={saved === item.key ? "check" : "project"} />
+            </button>
+            <button class="copy" use:tooltip={"Fork: go on in a copy of this thread"} on:click={() => dispatch("forked")}>
+              <Icon name="fork" />
+            </button>
+          </div>
           {/if}
+        </div>
+      {:else if item.kind === "steps"}
+        {#if !hidden}<div class:in-fold={folded}><Steps reasoning={item.reasoning} tools={item.tools} /></div>{/if}
+      
+        <ToolPictures {session} paths={picturesIn(item.tools.map((t) => t.output ?? ""))} />
+      {:else if item.kind === "checkpoint"}
+        <Steps title={compactedTitle(item.before, item.after)} reasoning={item.text} />
+      {:else if item.kind === "system"}
+        {#if sysTone(item.text) === "line"}
+          <div class="sysline" class:in-fold={folded} title={whenTitle(item.at)}>{item.text.slice(0, 300)}</div>
+        {:else}
+          <div class="system" title={whenTitle(item.at)}>{item.text.slice(0, 300)}</div>
         {/if}
-      </div>
-    {:else if item.kind === "widget"}
-      {#if item.fence === "parzi-replies"}
-        <!-- The latest offer is drawn last, after the checklist. -->
-      {:else if item.fence === "parzi-todo"}
-        <!-- Drawn once, as it stands now, at the end of the thread. -->
-      {:else if item.fence === "parzi-task"}
-        <TaskCard payload={item.payload} on:start={(e) => dispatch("startTask", e.detail)} on:open={(e) => dispatch("openSession", e.detail)} />
-      {:else if item.fence === "parzi-widget"}
-        <Widget data={item.payload} />
-      {:else if item.fence === "viz"}
-        <Viz spec={item.payload} />
-      {:else}
-        <div class="msg">{@html mdHtml("```" + item.fence + "\n" + JSON.stringify(item.payload, null, 2) + "\n```", $richReady)}</div>
-      {/if}
-    {:else if item.kind === "artifact"}
-      <ArtifactCard
-        data={item.payload}
-        fallbackId={item.id}
-        fallbackTitle={item.title}
-        fallbackKind={item.artifact_kind}
-        superseded={(item.version ?? 1) < (newest.get(item.id) ?? 0)}
-      />
+      {:else if item.kind === "inter"}
+        <div class="inter" title={whenTitle(item.at)}>
+          <span class="inter-from">From {item.from}</span>
+          <span class="inter-body">{item.text.slice(0, 2000)}</span>
+        </div>
+      {:else if item.kind === "error"}
+        {@const msg = errLead(item.message)}
+        <div class="turn-error" role="alert" title={whenTitle(item.at)}>
+          <span class="err-class">{ERROR_WORDS[item.class] ?? ERROR_WORDS.unknown}</span>
+          <span class="err-msg">{msg.lead}</span>
+          {#if msg.more}
+            <details class="err-more"><summary>Details</summary><pre>{msg.more}</pre></details>
+          {/if}
+          {#if item.class === "rate_limit" && resetLine(provider)}<span class="err-hint">{resetLine(provider)}</span>{/if}
+          {#if ERROR_HINT[item.class]}<span class="err-hint">{ERROR_HINT[item.class]}</span>{/if}
+          {#if item.key === lastError && !streaming}
+            {#if fix || fixWait}
+              <div class="err-fix">
+                {#if fixWait}
+                  <span class="err-hint">{fixWait.note}</span>
+                {:else if fix}
+                  <button class="btn" on:click={() => fix?.run(provider)}>{fix.label}</button>
+                  <span class="err-hint">Then try again.</span>
+                {/if}
+              </div>
+            {:else if item.class === "context_overflow"}
+              <div class="err-fix"><button class="btn" on:click={() => dispatch("compact")}>Compact and go on</button></div>
+            {:else if item.class === "context_overflow"}
+              <span class="err-hint">Start a new session to go on.</span>
+            {:else if item.class === "rate_limit"}
+              <div class="err-fix">
+                <button class="btn" on:click={() => dispatch("pickModel")}>Change model</button>
+                <button class="btn" on:click={() => dispatch("retry")}>Try again</button>
+              </div>
+            {:else if RETRYABLE.has(item.class)}
+              <div class="err-fix"><button class="btn" on:click={() => dispatch("retry")}>Try again</button></div>
+            {/if}
+          {/if}
+        </div>
+      {:else if item.kind === "widget"}
+        {#if item.fence === "parzi-task"}
+          <TaskCard payload={item.payload} on:start={(e) => dispatch("startTask", e.detail)} on:open={(e) => dispatch("openSession", e.detail)} />
+        {:else if item.fence === "parzi-widget"}
+          <Widget data={item.payload} />
+        {:else if item.fence === "viz"}
+          <Viz spec={item.payload} />
+        {:else if item.fence !== "parzi-replies" && item.fence !== "parzi-todo"}
+          <div class="msg">{@html mdHtml("```" + item.fence + "\n" + JSON.stringify(item.payload, null, 2) + "\n```", $richReady)}</div>
+        {/if}
+      {:else if item.kind === "artifact"}
+        <ArtifactCard
+          data={item.payload}
+          fallbackId={item.id}
+          fallbackTitle={item.title}
+          fallbackKind={item.artifact_kind}
+          superseded={(item.version ?? 1) < (newest.get(item.id) ?? 0)}
+        />
+        {/if}
     {/if}
   {/each}
 
@@ -780,7 +731,7 @@ ${e.text}` : e.text;
       <span class="chev" class:open={openFolds.has(folds.tail.key)}><Icon name="chevDown" size={12} /></span>
     </button>
   {/if}
-  <!-- What it is doing now shows in the live line; the steps wait in the fold. -->
+  
   {#if showLiveSteps && folds.live && openFolds.has(folds.live.key)}
     <div class="in-fold" transition:fade|local={spring}>
       <Steps reasoning={liveReasoning} tools={liveTools} />
@@ -804,7 +755,7 @@ ${e.text}` : e.text;
     {/if}
   {/each}
 
-  <!-- The plan checklist, after the conversation and before what waits on you. -->
+  
   {#if todo}<TodoList {todo} working={streaming} />{/if}
   {#if streaming}<LiveLine text={lineText} tokens={lineTokens} />{/if}
   {#if !streaming && replyAt >= 0}
@@ -882,7 +833,6 @@ ${e.text}` : e.text;
   .row.user {
     align-items: flex-end;
   }
-  /* A new turn stands a little apart from the last one. */
   .row.user:not(:first-child) {
     margin-top: calc(var(--space) * 4);
   }
@@ -919,7 +869,6 @@ ${e.text}` : e.text;
       opacity: 0.45;
     }
   }
-  /* What a fold holds, when open: set in under its line. */
   .in-fold {
     margin-left: var(--space);
     padding-left: calc(var(--space) * 4);
@@ -963,8 +912,7 @@ ${e.text}` : e.text;
     margin: 0.4em 0;
     padding-left: calc(var(--space) * 6);
   }
-  /* Plan items the message quoted: the desk sends them as blocks after the
-     text; they read as chips. */
+
   .quotes {
     display: flex;
     flex-wrap: wrap;
@@ -1007,8 +955,7 @@ ${e.text}` : e.text;
     gap: calc(var(--space) * 2);
     margin-top: calc(var(--space) * 2);
   }
-  /* One tile height, whatever the picture's shape: a row of them lines
-     up. A click shows the whole picture. */
+
   .sent img {
     cursor: zoom-in;
     height: 88px;
@@ -1052,7 +999,6 @@ ${e.text}` : e.text;
   .copy:focus-visible {
     opacity: 1;
   }
-  /* A message's clock time, only while its row is hovered. */
   .when {
     flex: none;
     font-size: var(--fs-xs);
@@ -1150,7 +1096,6 @@ ${e.text}` : e.text;
     margin-top: var(--space);
   }
 
-  /* Quiet like the thread around it: the live line already says it waits. */
   .approval {
     display: flex;
     flex-direction: column;

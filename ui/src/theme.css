@@ -11,9 +11,8 @@
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-display: swap; font-weight: 500; src: url(../node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2) format("woff2"); }
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-display: swap; font-weight: 500; src: url(../node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-ext-500-normal.woff2) format("woff2"); }
 
-/* The composer's height, set on the thread's scroller. Not inherited: a
-   change would otherwise restyle every node of a long thread (~80ms per
-   new line of draft at 300 turns). */
+
+
 @property --dock {
   syntax: "<length>";
   inherits: false;
@@ -21,8 +20,7 @@
 }
 
 :root {
-  /* Authored by the theme: background, text, accent, panel. Everything
-     else here is mixed from those four. */
+
   --bg: #161616;
   --text: #ececec;
   --accent: #e8e8e8;
@@ -32,7 +30,6 @@
   --faint: color-mix(in srgb, var(--muted) 62%, var(--bg));
   --hover: color-mix(in srgb, var(--text) 6%, transparent);
   --selected: color-mix(in srgb, var(--text) 10%, transparent);
-  /* Links follow the accent, so a theme never keeps a stray blue. */
   --link: color-mix(in srgb, var(--accent) 70%, var(--text));
   --scrim: rgba(0, 0, 0, 0.6);
   --ok: #22c55e;
@@ -41,38 +38,21 @@
   --on-ok: #06110a;
 
   --space: 4px;
-  /* One corner, the chat window's. Chips and thin bars stay a 4px step. */
   --radius: 12px;
   --gap: calc(var(--space) * 2);
   --radius-sm: calc(var(--space));
   --radius-lg: var(--radius);
 
-  /* One glass recipe. Solid is the reading surface; frost is everything else. */
-  --glass-bg: color-mix(in srgb, var(--panel) 72%, transparent);
-  --glass-bg-solid: color-mix(in srgb, var(--panel) 97%, transparent);
-  --glass-strong-bg: var(--glass-bg);
-  --glass-blur: blur(28px) saturate(1.6);
-  --glass-strong-blur: var(--glass-blur);
-  --glass-border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
-  --glass-hairline: var(--glass-border);
-  --glass-inner: inset 0 1px 0 color-mix(in srgb, var(--text) 8%, transparent);
+
 
   --font: "Inter";
   --font-size: 14px;
   --mono: "JetBrains Mono";
   --mono-size: 13px;
-  --bg-dim: 0.66;
-  --bg-blur: 3px;
-  --vignette: 0.5;
-  --grain: 0.16;
-  --grain-size: 32px;
-  --bg-height: 100%;
-  /* The reading column: a thread's text, and the composer under it. */
   --read: 772px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
 
-  /* Type scale: every font-size in the UI is one of these (ui/ui-policy.json,
-     checked by `npm run lint:ui`). */
+
   --fs-xs: 11px;
   --fs-sm: 12px;
   --fs-md: 13px;
@@ -83,7 +63,6 @@
 }
 
 * { box-sizing: border-box; }
-/* Transparent so the rounded .shell is the window's shape; .shell paints the background. */
 html, body, #app { height: 100%; margin: 0; background: transparent; }
 body {
   font-family: var(--font), Inter, system-ui, sans-serif;
@@ -142,14 +121,12 @@ input[type="color"] { background: transparent; border: 1px solid var(--line); bo
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg);
   overflow: hidden;
 }
-/* lib/tooltip.ts */
 .tip {
   position: fixed; z-index: 2000; max-width: 280px; padding: var(--space) calc(var(--space) * 2); pointer-events: none;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   color: var(--text); font-size: var(--fs-sm); line-height: 1.4;
 }
 .tip[hidden] { display: none; }
-/* lib/viz/tip.ts: a chart's readout, the value first. */
 .viz-tip { display: flex; flex-direction: column; gap: var(--space); padding: calc(var(--space) * 2) calc(var(--space) * 2); }
 .viz-tip-head { color: var(--muted); font-size: var(--fs-xs); }
 .viz-tip-row { display: flex; align-items: center; gap: calc(var(--space) * 2); white-space: nowrap; }
@@ -180,9 +157,8 @@ kbd {
   background: color-mix(in srgb, var(--accent) 86%, var(--text));
 }
 .btn:active:not(:disabled) { transform: translateY(0) scale(0.97); transition-duration: 60ms; }
-.btn:disabled { opacity: 0.45; cursor: default; box-shadow: none; }
+.btn:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
 
-/* One top bar for Settings, History, Brain and the setup modal. No rule under it. */
 .page-bar {
   flex: none;
   display: flex;
@@ -193,7 +169,6 @@ kbd {
   padding: calc(var(--space) * 2) calc(var(--space) * 4);
   border-bottom: none;
 }
-/* The search field on those bars. */
 .page-search {
   flex: 1;
   min-width: 0;
@@ -218,7 +193,6 @@ kbd {
   font: inherit;
   font-size: var(--fs-md);
 }
-/* The back arrow on a cover and on the setup modal. */
 .back-btn {
   width: 28px;
   height: 28px;
@@ -242,7 +216,6 @@ kbd {
   cursor: default;
 }
 
-/* Settings, History, Brain and setup share this tab row. Words only, no pills. */
 .page-tabs {
   display: flex;
   align-items: center;
@@ -279,22 +252,21 @@ kbd {
 }
 
 .thread-col { line-height: 1.65; font-size: var(--fs-base); }
-.msg { line-height: 1.65; user-select: text; }
-.msg p { margin: 0 0 0.75em; }
+.msg { line-height: 1.65; user-select: text; font-variant-numeric: tabular-nums; }
+.msg p { margin: 0 0 1em; }
 .msg p:last-child { margin-bottom: 0; }
 .msg h1, .msg h2, .msg h3, .msg h4, .msg h5, .msg h6 { letter-spacing: -0.01em; margin: 0.9em 0 0.4em; }
 .msg h1 { font-size: var(--fs-xl); }
 .msg h2 { font-size: var(--fs-lg); }
 .msg h3, .msg h4, .msg h5, .msg h6 { font-size: var(--fs-base); }
-/* Any link the app draws without styles of its own (an artifact's
-   markdown, a widget's text) reads in the link colour, never the browser's
-   dark blue on a dark stage. */
+.msg strong { font-weight: 600; }
+
+
 a { color: var(--link); }
 a:hover { color: var(--link); }
 .msg a { color: var(--link); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: color-mix(in srgb, var(--link) 55%, transparent); }
 .msg a:hover { color: var(--link); text-decoration-color: currentColor; }
-/* A vault note referenced in prose reads as a file chip (Antigravity-style):
-   mono, pill, no underline. Clicking pins it in the session's side column. */
+
 .msg a.file-ref {
   display: inline-block;
   max-width: 100%;
@@ -316,16 +288,16 @@ a:hover { color: var(--link); }
   color: var(--text);
 }
 .msg :not(pre) > code { background: var(--line); border-radius: var(--radius-sm); padding: var(--space) var(--space); font-family: var(--mono); font-size: 0.92em; }
-.msg .katex { font-size: 1.1em; color: var(--text); }
-.msg .katex-display { margin: 0.7em 0; }
+.msg .katex { font-size: 1em; color: var(--text); }
+.msg .katex-display { margin: 1em 0; font-size: 1.1em; }
 .msg .katex-display > .katex { display: inline-block; }
-.md-math { margin: 0.7em 0; text-align: center; overflow-x: auto; overflow-y: hidden; padding: 0.2em 0; }
+.md-math { margin: 1em 0; text-align: center; overflow-x: auto; overflow-y: hidden; padding: 0.2em 0; }
 
 .codeblock {
-  position: relative; margin: 0.8em 0; background: var(--bg);
+  position: relative; margin: 1em 0; background: var(--bg);
   border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
 }
-.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-template-tag { color: var(--accent); }
+.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-template-tag { color: var(--accent); font-weight: 600; }
 .hljs-string, .hljs-regexp, .hljs-meta .hljs-string { color: var(--text); }
 .hljs-number, .hljs-literal { color: var(--text); }
 .hljs-title, .hljs-title.function_, .hljs-section { color: var(--text); }
@@ -341,15 +313,15 @@ a:hover { color: var(--link); }
 .hljs-code { color: var(--muted); }
 .code-tools {
   position: absolute; top: 6px; right: 6px; z-index: 1; display: flex; align-items: center; gap: calc(var(--space) * 2);
-  padding: var(--space) var(--space) var(--space) calc(var(--space) * 2); background: var(--bg); border-radius: var(--radius);
-  opacity: 0; transition: opacity 140ms ease;
+  padding: var(--space) var(--space) var(--space) calc(var(--space) * 2); background: transparent; border-radius: var(--radius);
 }
-.codeblock:hover .code-tools, .code-tools:focus-within { opacity: 1; }
 .code-lang { font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted); }
 .code-tools button {
   padding: var(--space) calc(var(--space) * 2); background: var(--line); border: 1px solid var(--line); border-radius: var(--radius-sm);
   color: var(--muted); font-size: var(--fs-xs); cursor: pointer;
+  opacity: 0; transition: opacity 140ms ease;
 }
+.codeblock:hover .code-tools button, .code-tools:focus-within button { opacity: 1; }
 .code-tools button:hover { background: var(--line); color: var(--text); }
 .codeblock pre {
   margin: 0; padding: calc(var(--space) * 3) calc(var(--space) * 4); overflow-x: auto; overflow-y: hidden;
@@ -363,9 +335,8 @@ a:hover { color: var(--link); }
   content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 70px;
   background: linear-gradient(transparent, var(--bg)); pointer-events: none;
 }
-/* A text drawing: one font whose box lines match its letters (the code
-   font has none, and a fallback's lines come out shorter), never wrapped,
-   shrunk to the width down to a readable floor, then it scrolls. */
+
+
 .codeblock.diagram { container-type: inline-size; }
 .codeblock.diagram pre, .codeblock.diagram code {
   white-space: pre; line-height: 1.17;
@@ -378,36 +349,32 @@ a:hover { color: var(--link); }
 }
 .code-expand:hover { color: var(--text); background: var(--panel); }
 
-/* Tables read like a report: a quiet frame, a header that names and
-   measures, numbers right-aligned in even figures (md.ts marks them). */
-.msg .md-table { width: max-content; max-width: 100%; margin: 0.9em 0; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); }
-.msg table { border-collapse: separate; border-spacing: 0; font-size: var(--fs-md); font-variant-numeric: tabular-nums; }
+
+.msg .md-table { width: 100%; margin: 1em 0; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.msg table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: var(--fs-base); }
 .msg th, .msg td { padding: calc(var(--space) * 2) calc(var(--space) * 4); text-align: left; white-space: nowrap; border-right: 1px solid var(--line); }
-/* Words wrap inside a cell so a table of prose fits the column; figures
-   and headers stay on one line. */
+
 .msg td:not(.num) { white-space: normal; min-width: 10ch; overflow-wrap: break-word; vertical-align: top; }
 .msg th:last-child, .msg td:last-child { border-right: none; }
 .msg td { border-top: 1px solid var(--line); }
 .msg th { vertical-align: bottom; font-weight: 500; color: var(--text); background: color-mix(in srgb, var(--text) 3%, transparent); }
-.msg th .th-sub { display: block; margin-top: var(--space); font-size: var(--fs-xs); font-weight: 400; color: var(--muted); }
-.msg th.num, .msg td.num { text-align: right; }
-.msg td.num { font-family: var(--mono); font-size: 0.92em; letter-spacing: -0.01em; }
+.msg th .th-sub { display: inline; margin-left: var(--space); font-size: var(--fs-xs); font-weight: 400; color: var(--muted); }
+.msg th.num, .msg td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .msg td.na { color: var(--muted); opacity: 0.7; }
 .msg tr.summary td { color: var(--muted); }
 .msg tr.summary td.num { color: var(--text); }
 .msg tbody tr:not(.summary) + tr.summary td { border-top-color: color-mix(in srgb, var(--text) 18%, transparent); }
 .msg .md-table + .md-note, .msg .md-note { margin-top: -0.4em; font-size: var(--fs-sm); color: var(--muted); }
 .msg .md-note em { font-style: normal; }
-/* A source: a small numbered chip after the claim it backs. */
 .msg a.cite {
   display: inline-flex; align-items: center; justify-content: center; min-width: 17px; height: 17px; padding: 0 var(--space); margin: 0 var(--space) 0 var(--space);
   vertical-align: 1px; border-radius: var(--radius); background: color-mix(in srgb, var(--link) 16%, transparent); color: var(--link);
   font-size: 11px; font-weight: 600; line-height: 1; text-decoration: none;
 }
 .msg a.cite:hover { background: color-mix(in srgb, var(--link) 28%, transparent); color: var(--link); }
-.msg blockquote { margin: 0.8em 0; padding: calc(var(--space) * 2) calc(var(--space) * 3); border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 var(--radius) var(--radius) 0; color: var(--muted); }
-.msg ul, .msg ol { margin: 0.5em 0; padding-left: calc(var(--space) * 6); }
-.msg li { margin: 0.3em 0; }
+.msg blockquote { margin: 1em 0; padding: calc(var(--space) * 2) calc(var(--space) * 3); border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 var(--radius) var(--radius) 0; color: var(--muted); }
+.msg ul, .msg ol { margin: 0.75em 0; padding-left: calc(var(--space) * 6); }
+.msg li { margin: 0.4em 0; }
 .msg li::marker { color: var(--muted); }
 .msg hr { border: none; border-top: 1px solid var(--line); margin: 1em 0; }
 .msg img { max-width: 100%; border-radius: var(--radius); cursor: zoom-in; }

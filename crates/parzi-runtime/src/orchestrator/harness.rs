@@ -50,7 +50,6 @@ impl Pump {
     }
 
     fn reply_json(&self, session_id: &str, meta: &SessionMeta, note: Option<&str>) -> String {
-        // One read of the transcript serves reply, error, and outcome.
         let events = self.store.events(session_id).unwrap_or_default();
         let status = meta.status.word();
         let reply: String = events
@@ -67,7 +66,6 @@ impl Pump {
             "title": meta.title,
             "response": reply,
         });
-        // Idle with an Error event is failure, not success: pass it on.
         let last_error = events.iter().rev().find_map(|e| match e {
             Event::Error { message, .. } => Some(message.chars().take(500).collect::<String>()),
             _ => None,
@@ -75,7 +73,6 @@ impl Pump {
         if let Some(err) = last_error {
             o["error"] = err.into();
         }
-        // Verifiable outcome alongside the last reply.
         o["outcome"] = run_outcome(&events).into();
         if let Some(n) = note {
             o["note"] = n.into();
@@ -109,9 +106,6 @@ fn run_outcome(events: &[Event]) -> String {
 }
 
 impl Pump {
-    /// A child session, named by its caller or after its prompt. A child left
-    /// running in the background reports back to the caller when its run
-    /// ends.
     async fn spawn_child(&self, caller_id: &str, spec: SpawnSpec) -> Result<String> {
         let SpawnSpec {
             title,
@@ -123,13 +117,11 @@ impl Pump {
             effort,
         } = spec;
         let caller = self.store.get(caller_id)?;
-        // The tools' stand-in names say nothing: name it after its prompt.
         let title: String = match title.trim() {
             "" | "subsession" => parzi_core::text::name_from_prompt(&prompt),
             t => t.chars().take(80).collect(),
         };
         let model_spec = model.unwrap_or_else(|| caller.model.clone());
-        // Ask/Deny parents pass no posture: warn that the child is crippled.
         let crippled = mode_override.is_none();
         let parent = if is_subsession { Some(caller_id) } else { None };
         let meta = self
@@ -139,7 +131,6 @@ impl Pump {
             let _ = self.store.set_cwd(&meta.id, &caller.cwd);
         }
         if !wait {
-            // Set before it can start: a quick child must not end unheard.
             set_report_to(&meta.id, caller_id);
         }
         let q = QueuedRun {
@@ -157,12 +148,10 @@ impl Pump {
             mode_override,
             cause: RunCause::Message,
         };
-        // Say it now instead of a mute child discovered 180s later.
         let crippled_note = "child runs Ask with no approver: approval-gated tools are denied. Staff autonomous work from a Full session.";
         match self.dispatch(q).await {
             Dispatch::Launched => {}
             Dispatch::Queued => {
-                // Waiting would deadlock: it runs when a slot frees, and reports.
                 set_report_to(&meta.id, caller_id);
                 let mut o = serde_json::json!({
                     "session_id": meta.id,
@@ -177,7 +166,6 @@ impl Pump {
                 return Ok(o.to_string());
             }
             Dispatch::Busy => {
-                // Nothing will ever run it: stand it down, don't phantom-run.
                 take_report_to(&meta.id);
                 let _ = self.store.set_status(&meta.id, SessionStatus::Idle);
                 return Ok(serde_json::json!({
@@ -189,7 +177,6 @@ impl Pump {
                 .to_string());
             }
             Dispatch::Failed(e) => {
-                // No run, so no report will ever come: say why, now.
                 take_report_to(&meta.id);
                 return Err(not_started(&meta.id, &e));
             }
@@ -222,8 +209,6 @@ impl Pump {
         }
     }
 
-    /// A wait gave up while `target` still runs: it reports when it ends.
-    /// If it ended in between, the report goes out now.
     async fn report_later(&self, caller_id: &str, target: &str) {
         set_report_to(target, caller_id);
         let running = {
@@ -240,8 +225,6 @@ impl Pump {
         }
     }
 
-    /// The reply to a message whose wait gave up: when the caller started
-    /// the target, it hears back when the target ends.
     async fn timed_out(&self, caller_id: &str, target: &str, reports: bool) -> String {
         if reports {
             self.report_later(caller_id, target).await;
@@ -262,10 +245,8 @@ impl Pump {
     }
 }
 
-/// What a background child's reply promises.
 const REPORTS: &str = "Parzi messages you when it ends, and wakes you if you are idle; do not poll";
 
-/// A run that could not start, as the tool call that asked for it fails.
 fn not_started(session_id: &str, e: &ParziError) -> ParziError {
     let why = match e {
         ParziError::Store(m) | ParziError::Validation(m) | ParziError::Config(m) => m.clone(),
@@ -292,7 +273,6 @@ impl HarnessBridge for Pump {
         let target = self.in_scope(caller_id, session_id)?;
         let caller = self.store.get(caller_id)?;
         let msg = inter::from_caller(&caller, kind, message);
-        // A session the caller started answers back when it ends.
         let reports = target.parent_id.as_deref() == Some(caller_id);
         if reports && !wait {
             set_report_to(session_id, caller_id);

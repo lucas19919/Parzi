@@ -1,12 +1,3 @@
-//! A session that starts others in the background drives them and Parzi
-//! wakes it. A session started in the background (`session.spawn` with
-//! wait=false, or a wait that timed out) carries `report_to` in its
-//! run.json; when its run ends the starter gets a short report built from
-//! the child's `last_run` as an inter-session message and, when idle, a run
-//! of its own (cause Wake, its last posture restored). Children finishing
-//! close together cause one wake: each parent's wake waits out a short
-//! debounce and reads every report delivered meanwhile. A parent woken
-//! `WAKES_PER_HOUR` times in an hour is left alone, with a note saying so.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -22,34 +13,23 @@ use crate::inter;
 use super::normalize_effort;
 use super::queue::{posture, take_report_to, Pump, QueuedRun};
 
-/// Reports from sessions that end this close together share one wake.
 const DEBOUNCE: Duration = Duration::from_secs(2);
-/// A report fits in this many chars.
 pub(crate) const REPORT_CAP: usize = 1_500;
-/// Wakes a parent may have in an hour; past it, Parzi stops waking it.
 pub(crate) const WAKES_PER_HOUR: usize = 12;
 const HOUR: Duration = Duration::from_secs(60 * 60);
 
-/// Why a parent stopped being woken.
 pub(crate) const CAP_NOTE: &str = "Parzi stopped waking this session: it was woken 12 times in the last hour. The reports of the sessions it started are above; send a message to go on.";
 
-/// The wakes of this engine. In memory: a restart starts the count over.
 #[derive(Default)]
 pub(crate) struct WakeState {
-    /// Parents waiting out the debounce: where their first unread report
-    /// starts in their transcript.
     pending: HashMap<String, usize>,
-    /// When each parent was woken, within the last hour.
     woken: HashMap<String, Vec<Instant>>,
-    /// Parents told they hit the cap, until they are under it again.
     capped: HashSet<String>,
 }
 
 pub(crate) type Wakes = Arc<Mutex<WakeState>>;
 
 impl WakeState {
-    /// Whether `parent` may be woken at `now`; and, the first time it may
-    /// not, that it should be told.
     fn allow(&mut self, parent: &str, now: Instant) -> (bool, bool) {
         let list = self.woken.entry(parent.to_string()).or_default();
         list.retain(|t| now.saturating_duration_since(*t) < HOUR);
@@ -69,9 +49,6 @@ fn one_line(s: &str, n: usize) -> String {
     clip(&fold(s), n)
 }
 
-/// A report on `child`'s latest run for the session that started it, at
-/// most `cap` chars: how it ended, its summary, files and checks, its plan
-/// item, and where to read on.
 pub(crate) fn report(child: &SessionMeta, stopped: bool, cap: usize) -> String {
     let o = child.last_run.as_ref();
     let end = if stopped {
@@ -120,10 +97,6 @@ pub(crate) fn report(child: &SessionMeta, stopped: bool, cap: usize) -> String {
 }
 
 impl Pump {
-    /// A run of `child` ended (its outcome is on the session). When it was
-    /// started in the background, the starter hears how it went and, when
-    /// idle, is woken: not when it was stopped, or when the person stopped
-    /// the child (the report still lands).
     pub(super) async fn report_to_parent(&self, child: &str, stopped: bool) {
         let Some(parent) = take_report_to(child) else {
             return;
@@ -136,8 +109,6 @@ impl Pump {
         };
         let body = report(&child_meta, stopped, REPORT_CAP);
         let msg = inter::from_caller(&child_meta, InterKind::Text, body);
-        // Delivered under the handles lock: a parent still running reads it
-        // at its last look before it settles.
         let (at, live) = {
             let mut h = self.handles.lock().await;
             h.retain(|_, x| !x.finished());
@@ -176,8 +147,6 @@ impl Pump {
         }
     }
 
-    /// Whether `parent` may be woken now. At the hourly cap it is not, and
-    /// the first time that happens its transcript says so.
     fn wake_allowed(&self, parent: &str) -> bool {
         let (ok, tell) = self
             .wakes
@@ -196,8 +165,6 @@ impl Pump {
         ok
     }
 
-    /// The debounce is over: `parent` runs on its reports, unless it is
-    /// running, queued or stopped by now.
     async fn wake(&self, parent: &str) {
         let from = self
             .wakes
@@ -218,7 +185,6 @@ impl Pump {
             let mut h = self.handles.lock().await;
             h.retain(|_, x| !x.finished());
             if h.contains_key(parent) {
-                // A run that started meanwhile reads the reports itself.
                 return;
             }
         }
@@ -249,7 +215,6 @@ impl Pump {
             effort: normalize_effort(&last.effort),
             attachments: vec![],
             approver: None,
-            // The person's approver only when the parent ran with one.
             restore_approver: last.ask,
             prompt_recorded: true,
             mode_override: last.mode_override,

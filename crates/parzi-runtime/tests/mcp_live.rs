@@ -1,5 +1,3 @@
-//! Real hosted MCP servers, over the network: run with
-//! `cargo test -p parzi-runtime --test mcp_live -- --ignored --nocapture`.
 
 use std::collections::HashMap;
 
@@ -108,8 +106,6 @@ async fn a_server_that_signs_in_says_so_and_names_where() {
     assert!(ends.authorize.starts_with("https://"));
     assert!(ends.register.is_some(), "it lets apps register");
 
-    // Parzi registers and builds the page the person signs in on; nobody
-    // signs in here, so the wait is cut short.
     let shown = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let seen = shown.clone();
     let attempt = parzi_runtime::mcp_oauth::sign_in(

@@ -1,8 +1,3 @@
-// The plan panel's rules, pure so tests pin them down: what state each item
-// is in right now (read from what agents declared, the sessions linked to
-// it, their runs and the PRs on its branches), how items group, and how
-// their needs are drawn. Agents only declare planned, active, done or
-// dropped; everything else is derived here and never stored.
 import type { Plan, PlanItem, PlanQuote, PrInfo, RunOutcome, SessionMeta } from "./api";
 import type { Activity } from "./activity";
 
@@ -22,7 +17,6 @@ export function sameSlug(a: string | null | undefined, b: string | null | undefi
   return (a ?? "").toLowerCase() === (b ?? "").toLowerCase();
 }
 
-// Branches that say nothing about an item.
 export function isTrunk(branch: string): boolean {
   return ["", "main", "master", "head"].includes(branch.trim().toLowerCase());
 }
@@ -31,8 +25,6 @@ export function isRunning(s: SessionMeta, running: ReadonlySet<string>): boolean
   return running.has(s.id) || s.status === "active";
 }
 
-// Each item's sessions: the ones in this project that name it, and what
-// they spawned (a child that names another item counts for that one).
 export function linkedByItem(threads: SessionMeta[], project: string): Map<string, SessionMeta[]> {
   const kids = new Map<string, SessionMeta[]>();
   for (const t of threads) {
@@ -59,7 +51,6 @@ export function linkedByItem(threads: SessionMeta[], project: string): Map<strin
   return out;
 }
 
-// Why a finished run needs you, or "".
 export function runTrouble(run: RunOutcome | null | undefined): string {
   if (!run) return "";
   if (run.end === "failed") return "The last run failed";
@@ -71,21 +62,14 @@ export function runTrouble(run: RunOutcome | null | undefined): string {
 }
 
 export interface StateFacts {
-  // A PR on one of its branches merged.
   merged: boolean;
-  // A linked session waits on an approval or a question.
   asks: boolean;
-  // Nothing runs and the newest finished run failed, paused or failed a check.
   trouble: boolean;
-  // A linked session runs.
   working: boolean;
-  // An open PR on one of its branches.
   review: boolean;
-  // It has sessions or a branch.
   touched: boolean;
 }
 
-// The precedence, top first.
 export function itemState(item: Pick<PlanItem, "state">, f: StateFacts): ItemState {
   if (item.state === "done" || f.merged) return "done";
   if (item.state === "dropped") return "dropped";
@@ -100,7 +84,6 @@ export interface PlanInputs {
   project: string;
   threads: SessionMeta[];
   running: ReadonlySet<string>;
-  // Session -> what it waits on you for (an approval or a question).
   waiting: ReadonlyMap<string, string>;
   prs: PrInfo[];
   activity: ReadonlyMap<string, Activity>;
@@ -110,18 +93,12 @@ export interface ItemView {
   item: PlanItem;
   state: ItemState;
   sessions: SessionMeta[];
-  // Linked sessions running now.
   agents: number;
   branches: string[];
-  // The open PR on its branches, else the merged one.
   pr: PrInfo | null;
-  // The newest finished run among its sessions.
   last: { session: SessionMeta; run: RunOutcome } | null;
-  // Why it needs you ("" unless it does).
   reason: string;
-  // What its agents do right now: the newest tool call's label.
   doing: string;
-  // Needs not met yet, by title.
   after: string[];
 }
 
@@ -138,7 +115,6 @@ export function newestRun(sessions: SessionMeta[]): { session: SessionMeta; run:
   return best;
 }
 
-// The newest tool call among these sessions (its raw label), or "".
 export function newestActivity(ids: string[], act: ReadonlyMap<string, Activity>): string {
   let latest: Activity | null = null;
   for (const id of ids) {
@@ -158,7 +134,6 @@ export function deriveItems(plan: Plan, inp: PlanInputs): ItemView[] {
     const open = newestPr(prs.filter((p) => p.state === "open"));
     const merged = newestPr(prs.filter((p) => p.state === "merged"));
     const ask = sessions.map((s) => inp.waiting.get(s.id) ?? "").find(Boolean) ?? "";
-    // A run going now supersedes how the last one ended.
     const trouble = live.length ? "" : runTrouble(newestRun(sessions)?.run);
     const state = itemState(item, {
       merged: !!merged,
@@ -201,13 +176,10 @@ export function progress(views: ItemView[]): { done: number; total: number } {
 }
 
 export interface PhaseGroup {
-  // "" when the plan has no phases.
   phase: string;
   items: ItemView[];
 }
 
-// Open items by phase, in the plan's order (an item without a phase is in
-// the first one), and the closed ones apart.
 export function groupItems(plan: Plan, views: ItemView[]): { open: PhaseGroup[]; closed: ItemView[] } {
   const first = plan.phases[0] ?? "";
   const groups = new Map<string, ItemView[]>((plan.phases.length ? plan.phases : [""]).map((p) => [p, []]));
@@ -225,7 +197,6 @@ export function groupItems(plan: Plan, views: ItemView[]): { open: PhaseGroup[];
   return { open: [...groups].filter(([, items]) => items.length).map(([phase, items]) => ({ phase, items })), closed };
 }
 
-// A session's dot: running, waiting on you, failed, done, or quiet.
 export type Tone = "live" | "need" | "bad" | "ok" | "idle";
 
 export const TONE_WORDS: Record<Tone, string> = { live: "Running", need: "Needs you", bad: "Failed", ok: "Done", idle: "Idle" };
@@ -240,10 +211,6 @@ export function sessionTone(s: SessionMeta, running: ReadonlySet<string>, waitin
   return r.end === "completed" ? "ok" : "idle";
 }
 
-// Quotes travel as plain prompt text (PLAN_CONTRACT.md):
-//   <plan-item project="parzi" id="names" title="Session names">
-//   ...
-//   </plan-item>
 const BLOCK = /\n*<plan-item\b([^>]*)>[\s\S]*?<\/plan-item>\n*/g;
 
 function unescapeAttr(v: string): string {
@@ -254,7 +221,6 @@ function escapeAttr(v: string): string {
   return v.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
 
-// A user message without its quote blocks, and what they quoted.
 export function splitQuotes(text: string): { text: string; quotes: PlanQuote[] } {
   const quotes: PlanQuote[] = [];
   const rest = text.replace(BLOCK, (_, attrs: string) => {
@@ -266,15 +232,12 @@ export function splitQuotes(text: string): { text: string; quotes: PlanQuote[] }
   return { text: quotes.length ? rest.trim() : text, quotes };
 }
 
-// The block the desk appends for a quote, as the thread shows it until the
-// sent message comes back.
 export function quoteBlock(q: PlanQuote): string {
   return `<plan-item project="${escapeAttr(q.project)}" id="${escapeAttr(q.id)}" title="${escapeAttr(q.title)}">\n</plan-item>`;
 }
 
 export const MAX_QUOTES = 4;
 
-// The composer's quotes with one more: once each, and never past four.
 export function addQuote(list: PlanQuote[], q: PlanQuote): PlanQuote[] {
   if (list.length >= MAX_QUOTES || list.some((x) => x.id === q.id && sameSlug(x.project, q.project))) return list;
   return [...list, q];

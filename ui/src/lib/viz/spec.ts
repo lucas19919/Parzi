@@ -1,12 +1,7 @@
-// The viz spec: the JSON an agent writes in a ```viz block (or a Home
-// widget note), read leniently into one normalized shape per chart type.
-// Pure, so tests pin it down; the components only draw what comes out.
-//   { "type": "bars", "title": "Open PRs", "data": [{ "label": "parzi", "value": 4 }] }
 
 export const VIZ_TYPES = ["bars", "line", "hist", "spark", "stat", "progress", "table", "list", "timeline"] as const;
 export type VizType = (typeof VIZ_TYPES)[number];
 
-// Status words for dots. Anything else draws a quiet dot.
 export type Tone = "ok" | "warn" | "bad" | "accent" | "";
 
 export interface Point {
@@ -29,14 +24,12 @@ export interface StatItem {
   label: string;
   value: string;
   delta: string;
-  // -1 down, 1 up, 0 flat or unknown.
   dir: -1 | 0 | 1;
   spark: number[];
 }
 
 export interface ProgressItem {
   label: string;
-  // 0 to 1.
   value: number;
   text: string;
 }
@@ -60,7 +53,6 @@ export interface TimelineItem {
 interface Base {
   title: string;
   unit: string;
-  // Items beyond what a chart shows (cut to keep it readable).
   more: number;
 }
 
@@ -79,7 +71,6 @@ export type VizSpec = Base &
 
 export type Parsed = { ok: true; spec: VizSpec } | { ok: false; error: string; source: string };
 
-// Series beyond the palette fold away rather than reuse a colour.
 export const MAX_SERIES = 4;
 const MAX_BARS = 40;
 const MAX_POINTS = 500;
@@ -87,9 +78,6 @@ const MAX_ROWS = 100;
 const MAX_COLUMNS = 12;
 const MAX_ITEMS = 50;
 
-// The categorical palette: the theme's own accent first, then its link and
-// work hues, then its muted grey (validated for adjacent separation on the
-// dark surface). Text never wears these; marks do.
 export const SERIES_COLORS = ["var(--accent)", "var(--link)", "var(--warn)", "var(--muted)"];
 
 const ALIASES: Record<string, VizType> = {
@@ -160,8 +148,6 @@ function pick(o: Obj, keys: string[]): unknown {
   return undefined;
 }
 
-// A number for people: grouped below 10k, compact above (12.9k, 4.2M), with
-// the unit where it reads ($4.2M, 38%, 38 ms).
 export function fmt(n: number, unit = ""): string {
   const a = Math.abs(n);
   let s: string;
@@ -184,7 +170,6 @@ function withUnit(s: string, unit: string): string {
   return `${s} ${unit}`;
 }
 
-// Axis ticks at round numbers covering [lo, hi].
 export function niceTicks(lo: number, hi: number, count = 4): number[] {
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [0, 1];
   if (lo === hi) {
@@ -199,9 +184,6 @@ export function niceTicks(lo: number, hi: number, count = 4): number[] {
   if (!(step > 0) || !Number.isFinite(step)) return [lo, hi];
   const start = Math.floor(lo / step + 1e-9) * step;
   const out: number[] = [];
-  // Each tick from its index, not by adding a step: past 2^53 a small step
-  // can be lost to rounding (v + step === v) and a running sum never ends.
-  // Rounded-away duplicates are dropped, and a few ticks are plenty.
   for (let i = 0; i <= MAX_TICKS; i++) {
     const v = start + i * step;
     if (v >= hi + step - 1e-9) break;
@@ -213,8 +195,6 @@ export function niceTicks(lo: number, hi: number, count = 4): number[] {
 
 const MAX_TICKS = 50;
 
-// The lower bound a value axis starts at: zero unless the data sits far
-// from it (a line of 980 to 1010 would be a flat stripe otherwise).
 export function axisFloor(min: number, max: number): number {
   if (min >= 0) return min <= max * 0.5 ? 0 : min;
   return min;
@@ -231,8 +211,6 @@ function tone(v: unknown): { tone: Tone; status: string } {
   return { tone: "", status };
 }
 
-// Label/value pairs from the shapes agents write: [{label, value}],
-// [[label, value]], {label: value}, or numbers with `labels`.
 function points(data: unknown, labels: string[]): Point[] {
   const out: Point[] = [];
   if (Array.isArray(data)) {
@@ -273,7 +251,6 @@ function readBars(o: Obj, data: unknown, kind: string): Partial<VizSpec> | strin
   const vertical =
     o2.startsWith("v") || o2 === "columns" || o.vertical === true || kind === "column" || kind === "columns" || kind === "histogram";
   const horizontal = o2.startsWith("h") || o.horizontal === true || kind === "hbar";
-  // Unset: short labels (days, months) stand as columns, the rest as rows.
   const auto = items.length <= 12 && items.every((p) => p.label.length <= 4) ? "v" : "h";
   const orient = horizontal ? "h" : vertical ? "v" : auto;
   return { type: "bars", items: items.slice(0, MAX_BARS), orient, more: Math.max(0, items.length - MAX_BARS) };
@@ -338,7 +315,6 @@ function readHist(o: Obj, data: unknown): Partial<VizSpec> | string {
   }
   const want = num(o.bins ?? o.buckets);
   const target = want !== null ? Math.max(2, Math.min(40, Math.floor(want))) : Math.max(3, Math.min(24, Math.ceil(Math.log2(vals.length)) + 1));
-  // Round bin edges like axis ticks; widen the step until they fit the cap.
   const raw = (hi - lo) / Math.max(1, target);
   const mag = 10 ** Math.floor(Math.log10(raw));
   let step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
@@ -389,7 +365,6 @@ function readStat(o: Obj, data: unknown, unit: string): Partial<VizSpec> | strin
       spark: spark.length >= 2 ? spark : [],
     };
   };
-  // Top-level fields work too: {"type": "stat", "value": 12, "label": "Open PRs"}.
   const top = { value: o.value, label: o.label, delta: o.delta ?? o.change, vs: o.vs, spark: o.spark ?? o.trend, unit: o.unit };
   const src = data ?? (o.value !== undefined ? top : undefined);
   const list = Array.isArray(src) ? src : [src];
@@ -407,7 +382,6 @@ function readProgress(o: Obj, data: unknown): Partial<VizSpec> | string {
     const v = num(e.value ?? e.done ?? e.used);
     if (v === null) continue;
     const max = num(e.max ?? e.total ?? o.max);
-    // A fraction (0.42) or a part of max (42 of 100).
     const frac = max !== null && max > 0 ? v / max : v <= 1 ? v : v / 100;
     const f = Math.max(0, Math.min(1, frac));
     const text = max !== null && max > 0 && max !== 100 ? `${fmt(v)} of ${fmt(max)}` : `${Math.round(f * 100)}%`;
@@ -442,7 +416,6 @@ function readTable(o: Obj, data: unknown): Partial<VizSpec> | string {
   return {
     type: "table",
     columns: Array.from({ length: width }, (_, i) => columns[i] ?? ""),
-    // Tables keep exact numbers, grouped; charts are where they round.
     rows: shown.map((r) => r.map((c, i) => (numeric[i] && typeof c === "number" ? c.toLocaleString("en-US", { maximumFractionDigits: 4 }) : str(c, 300)))),
     numeric,
     more: Math.max(0, rows.length - MAX_ROWS),
@@ -480,8 +453,6 @@ function readTimeline(data: unknown): Partial<VizSpec> | string {
   return { type: "timeline", items: items.slice(0, MAX_ITEMS), more: Math.max(0, items.length - MAX_ITEMS) };
 }
 
-// A spec from a ```viz block's text or an already parsed object. Never
-// throws: a spec it can't draw comes back as a short reason.
 export function parseViz(input: unknown): Parsed {
   const source = typeof input === "string" ? input : safeJson(input);
   let raw: unknown = input;
@@ -534,8 +505,6 @@ function safeJson(v: unknown): string {
   }
 }
 
-// When an event happened, short: a date reads "Oct 3" (with the year when
-// it isn't this one) and a time "Oct 3, 14:05"; anything else as written.
 export function whenText(when: string, now = Date.now()): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(when.trim());
   if (!m) return when;
@@ -547,7 +516,6 @@ export function whenText(when: string, now = Date.now()): string {
   return `${name} ${Number(d)}${year}${h ? `, ${h}:${mi}` : ""}`;
 }
 
-// One line a screen reader hears for a chart.
 export function describe(spec: VizSpec): string {
   const name = spec.title ? `${spec.title}: ` : "";
   switch (spec.type) {

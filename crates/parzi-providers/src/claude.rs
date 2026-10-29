@@ -122,8 +122,6 @@ impl Provider for Claude {
             ))),
             other => other,
         };
-        // Its input is closed by now, so a healthy Claude exits at once; a
-        // stop must also fit the runtime's STOP_GRACE + 2s wait.
         let grace = match &outcome {
             Ok(TurnEnd::Interrupted) => Duration::from_secs(1),
             Err(e) if e.class == ErrorClass::Process => Duration::ZERO,
@@ -241,7 +239,6 @@ struct TurnFiles {
 
 impl TurnFiles {
     fn write(spec: &TurnSpec) -> Result<Self, ProviderError> {
-        // Under ~/.parzi, not the shared temp folder: mcp.json holds a bearer token.
         let root = process::private_temp("claude-turns")
             .ok_or_else(|| ProviderError::process("turn scratch dir: no private temp folder"))?;
         let dir = root.join(uuid::Uuid::new_v4().to_string());
@@ -261,9 +258,6 @@ impl TurnFiles {
         .into_iter()
         .flatten()
         .collect();
-        // Parzi's rules win over any repo instructions riding along: the
-        // model must not follow a CLAUDE.md back into native Bash. Only
-        // when Parzi's tools are there to use instead.
         if spec.tools.is_some() {
             text.insert(
                 0,
@@ -291,7 +285,6 @@ impl TurnFiles {
     }
 }
 
-// Every way out of a turn, early returns included, cleans the scratch.
 impl Drop for TurnFiles {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.dir);
@@ -342,7 +335,6 @@ fn effort(e: &str) -> &str {
     }
 }
 
-// A value that cannot pose as a flag or split into two arguments.
 fn flag_value(flag: &str, v: &str) -> Result<String, ProviderError> {
     if v.starts_with('-') || v.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(ProviderError::new(
@@ -505,7 +497,6 @@ impl Link {
         if let Ok(mut w) = self.waiters.lock() {
             w.insert(id.clone(), tx);
         }
-        // Clears the waiter on a failed send, a timeout or a dropped future.
         let _waiting = Waiting {
             waiters: &self.waiters,
             id: &id,
@@ -598,8 +589,6 @@ where
 {
     let (link, incoming) = Link::start(reader, writer);
     let outcome = converse(&link, incoming, spec, gate, events, cancel).await;
-    // EOF on its input lets Claude exit on its own however the turn ended; a
-    // wedged writer must not hold the turn hostage.
     let _ = tokio::time::timeout(Duration::from_millis(500), link.close()).await;
     outcome
 }

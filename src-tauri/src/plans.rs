@@ -1,8 +1,3 @@
-//! The desk's side of plans. The plan panel reads a project's plan
-//! (`plan_view`) and the pull requests of its folder (`plan_prs`, from
-//! `gh`), and hears `parzi://plan` when a plan note changes here or comes
-//! in with a brain sync. Plan items the person quotes into the composer
-//! reach the prompt as `<plan-item>` blocks after their text.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -18,14 +13,10 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::AppState;
 
-/// How long `plan_prs` answers from what `gh` said last.
 const PRS_FRESH: Duration = Duration::from_secs(60);
-/// `gh` gets this long; a slow network just shows no badges.
 const GH_BUDGET: Duration = Duration::from_secs(20);
-/// Plan items one message may quote.
 pub(crate) const MAX_QUOTES: usize = 4;
 
-/// Plans this process writes (an agent's `plan.write`) reach the window.
 pub(crate) fn watch(app: &AppHandle) {
     let app = app.clone();
     plan::on_change(move |slug| emit(&app, slug));
@@ -35,8 +26,6 @@ fn emit(app: &AppHandle, project: &str) {
     let _ = app.emit("parzi://plan", json!({ "project": project }));
 }
 
-/// Notes that changed here (a brain sync, the Brain tab): each plan among
-/// them is news for the window, once.
 pub(crate) fn synced(app: &AppHandle, paths: &[String]) {
     for slug in changed_plans(paths) {
         emit(app, &slug);
@@ -63,23 +52,17 @@ pub async fn plan_view(project: String) -> Result<PlanView, String> {
     .map_err(|e| e.to_string())?
 }
 
-/// A pull request as the plan panel badges it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PrInfo {
     pub number: u64,
     pub title: String,
     pub url: String,
-    /// The head branch's name.
     pub head: String,
-    /// open, closed or merged.
     pub state: String,
     pub draft: bool,
-    /// pass, fail, pending or none.
     pub checks: String,
 }
 
-/// What `statusCheckRollup` says in one word. A check run reports a status
-/// and, once completed, a conclusion; a commit status reports a state.
 fn checks_of(rollup: &Value) -> &'static str {
     let Some(list) = rollup.as_array().filter(|l| !l.is_empty()) else {
         return "none";
@@ -114,8 +97,6 @@ fn checks_of(rollup: &Value) -> &'static str {
     }
 }
 
-/// `gh pr list --json ...` as the panel reads it; anything unreadable is
-/// no pull requests.
 pub(crate) fn parse_prs(json: &str) -> Vec<PrInfo> {
     let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(json) else {
         return vec![];
@@ -159,7 +140,6 @@ fn cache_key(cwd: &str) -> String {
     }
 }
 
-/// What `gh` said about `cwd` within the last minute.
 fn cached(cwd: &str) -> Option<Vec<PrInfo>> {
     let g = PRS.lock().unwrap_or_else(PoisonError::into_inner);
     let (at, prs) = g.as_ref()?.get(&cache_key(cwd))?;
@@ -173,8 +153,6 @@ fn remember(cwd: &str, prs: Vec<PrInfo>) {
     map.insert(cache_key(cwd), (Instant::now(), prs));
 }
 
-/// `gh pr list` in `dir`, in a hidden console. None when `gh` is missing,
-/// not signed in, the folder is no GitHub repo, or it takes too long.
 async fn gh_prs(dir: &Path) -> Option<String> {
     let mut cmd = tokio::process::Command::new("gh");
     cmd.args([
@@ -203,8 +181,6 @@ async fn gh_prs(dir: &Path) -> Option<String> {
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// The pull requests of the repo at `cwd`, newest first. Empty, never an
-/// error, when `gh` cannot tell (missing, signed out, not GitHub).
 #[tauri::command]
 pub async fn plan_prs(state: State<'_, AppState>, cwd: String) -> Result<Vec<PrInfo>, String> {
     if cwd.trim().is_empty() || crate::files::remote_or_device(&cwd) {
@@ -215,7 +191,6 @@ pub async fn plan_prs(state: State<'_, AppState>, cwd: String) -> Result<Vec<PrI
     }
     let orch = state.orch.clone();
     let raw = cwd.clone();
-    // A folder sessions work in, or one inside a project's folder.
     let dir = tauri::async_runtime::spawn_blocking(move || {
         crate::files::confined_path(orch.store(), &raw).or_else(|e| {
             let path = std::path::PathBuf::from(raw.trim());
@@ -241,8 +216,6 @@ pub async fn plan_prs(state: State<'_, AppState>, cwd: String) -> Result<Vec<PrI
     Ok(prs)
 }
 
-/// The pull request of an item: on its branch, or on `plan/<id>`. An open
-/// one first, then a merged one, then the newest.
 fn pr_of<'a>(prs: &'a [PrInfo], item: &PlanItem) -> Option<&'a PrInfo> {
     let own = format!("plan/{}", item.id);
     let mine: Vec<&PrInfo> = prs
@@ -257,7 +230,6 @@ fn pr_of<'a>(prs: &'a [PrInfo], item: &PlanItem) -> Option<&'a PrInfo> {
     mine.iter().min_by_key(|p| rank(p)).copied()
 }
 
-/// How an item's pull request stands, for its quote block.
 fn pr_words(p: &PrInfo) -> String {
     match p.state.as_str() {
         "merged" => format!("PR #{} merged.", p.number),
@@ -275,15 +247,12 @@ fn pr_words(p: &PrInfo) -> String {
     }
 }
 
-/// A plan item quoted into the composer.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Quote {
     pub project: String,
     pub id: String,
 }
 
-/// The items `quotes` name, as their plans hold them now (at most
-/// `MAX_QUOTES`; one gone from its plan is left out).
 pub(crate) fn resolve(quotes: &[Quote]) -> Vec<(String, PlanItem)> {
     let Ok(vault) = Vault::open() else {
         return vec![];
@@ -305,10 +274,6 @@ pub(crate) fn resolve(quotes: &[Quote]) -> Vec<(String, PlanItem)> {
     out
 }
 
-/// The prompt a send with quoted items carries: the person's text (or, with
-/// none, "Work on <title>."), then one `<plan-item>` block per item, so the
-/// session's name still comes from the text. `cwd` finds a pull request
-/// among those the panel last listed.
 pub(crate) fn quoted_prompt(text: &str, items: &[(String, PlanItem)], cwd: &str) -> String {
     let prs = cached(cwd).unwrap_or_default();
     let mut out = match (text.trim(), items.first()) {
@@ -323,14 +288,10 @@ pub(crate) fn quoted_prompt(text: &str, items: &[(String, PlanItem)], cwd: &str)
     out
 }
 
-/// Whether a new session started from quoted items is named after the
-/// first: when the person said little more than "start this".
 pub(crate) fn named_after_item(text: &str) -> bool {
     text.split_whitespace().count() <= 3
 }
 
-/// The item a session in `project` is linked to: the first quoted item of
-/// that project's plan (another project's item is context, not its task).
 pub(crate) fn link_for<'a>(project: &str, items: &'a [(String, PlanItem)]) -> Option<&'a str> {
     items
         .iter()

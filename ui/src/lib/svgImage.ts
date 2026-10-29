@@ -1,11 +1,7 @@
-// SVG artifacts render as <img src="data:image/svg+xml;base64,...">: an
-// image is a sealed document (no scripts, no network, and its <style>
-// can't restyle the app). No imports, so node tests load it.
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const XLINK_NS = "http://www.w3.org/1999/xlink";
 
-// Inline <svg> markup may skip the namespaces a standalone image needs.
 export function withNamespaces(svg: string): string {
   return svg.replace(/<svg\b[^>]*>/i, (open) => {
     let tag = open;

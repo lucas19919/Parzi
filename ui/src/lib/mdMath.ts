@@ -1,13 +1,7 @@
-// Where a `$…$` (or one-line `$$…$$`) math span starting at `pos` ends, or
-// null when the dollar sign is money. Pandoc's rule: an opening `$` has a
-// non-space right after it, a closing `$` a non-space right before it and
-// no digit right after it, so "$40 billion, or $24 billion" stays text.
 
 export interface MathSpan {
   display: boolean;
-  /** The TeX between the delimiters. */
   tex: string;
-  /** Where the text after the span starts. */
   next: number;
 }
 

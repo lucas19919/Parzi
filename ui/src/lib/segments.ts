@@ -1,12 +1,8 @@
-// Splitting chat text into renderable segments: prose, widgets, artifact
-// cards and viz blocks. Pure (no imports), so tests pin it down; md.ts
-// re-exports it for the thread.
 
 export type Segment =
   | { kind: "md"; body: string }
   | { kind: "widget"; body: unknown }
   | { kind: "artifact"; body: any }
-  // A ```viz block's JSON text, drawn by lib/viz (which explains a bad one).
   | { kind: "viz"; body: string };
 
 const segCache = new Map<string, Segment[]>();
@@ -48,10 +44,6 @@ export function splitSegments(text: string, cache = true): Segment[] {
   return finished;
 }
 
-// A trailing fence without its closing line: the agent stopped early, or
-// the text was cut. Render what it managed as the card it meant (parsed
-// when possible; Viz explains a bad body itself) instead of a raw code
-// dump the person can't use.
 const UNCLOSED = /```(parzi-widget|parzi-artifact|viz)[ \t]*\r?\n([\s\S]*)$/;
 
 function finishUnclosed(out: Segment[]): Segment[] {
@@ -69,7 +61,6 @@ function finishUnclosed(out: Segment[]): Segment[] {
       const payload = JSON.parse(m[2]);
       rest.push(m[1] === "parzi-widget" ? { kind: "widget", body: payload } : { kind: "artifact", body: payload });
     } catch {
-      // Not JSON yet (still streaming, or broken): leave the raw text.
       return out;
     }
   }

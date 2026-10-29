@@ -1,13 +1,9 @@
 <script lang="ts">
-  // This session's checklist, as its agent keeps it with todo.write: what
-  // is done, what it works on now, what is next. It folds to a count once
-  // everything is done.
   import { slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
 
   export let todo: unknown;
-  // The turn runs: the active item spins.
   export let working = false;
 
   type Item = { title: string; state: "pending" | "active" | "done" };
@@ -16,8 +12,6 @@
   $: finished = items.length > 0 && done === items.length;
 
   let open: boolean | null = null;
-  // Open while there is work left, folded once it is all done, unless the
-  // person chose otherwise.
   $: shown = open ?? !finished;
 </script>
 
@@ -102,8 +96,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* Hollow to do, accent ring in the works (spinning while the turn
-     runs), filled with a tick when done. */
+
   .mark {
     position: relative;
     width: 14px;

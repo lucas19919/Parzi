@@ -1,7 +1,3 @@
-// Messages typed while a session is already working. Each one stays its own
-// turn and goes out in order when the run finishes. They used to be joined
-// into a single blob, so a later message could not be sent, edited or
-// dropped on its own, and a failed send left the composer looking busy.
 
 import type { PlanQuote } from "./api";
 
@@ -20,7 +16,6 @@ export interface HeldItem {
 
 export type HoldQueue = Record<string, HeldItem[]>;
 
-/** Enough follow-ups for one run. Past this the composer keeps the draft. */
 export const MAX_HELD = 8;
 
 const KEY = "parzi.held.v1";
@@ -83,26 +78,22 @@ export function takeAll(queue: HoldQueue, sid: string): { queue: HoldQueue; item
   return { queue: next, items: [...items] };
 }
 
-/** The server refused a second run because this session is still in one. */
 export function stillWorking(error: unknown): boolean {
   return /still working/i.test(String(error));
 }
 
-/** A send that failed goes back to the front. The ones queued behind it stay behind it. */
 export function putFront(queue: HoldQueue, sid: string, item: HeldItem): HoldQueue {
   const list = queue[sid] ?? [];
   if (list.some((entry) => entry.id === item.id)) return queue;
   return { ...queue, [sid]: [item, ...list] };
 }
 
-/** Drop one queued message without touching the rest. */
 export function dropId(queue: HoldQueue, sid: string, id: string): HoldQueue {
   const list = queue[sid];
   if (!list?.some((item) => item.id === id)) return queue;
   return write(queue, sid, list.filter((entry) => entry.id !== id));
 }
 
-/** Move one queued message to position `to` (clamped), keeping the rest. */
 export function moveId(queue: HoldQueue, sid: string, id: string, to: number): HoldQueue {
   const list = queue[sid];
   const at = list?.findIndex((item) => item.id === id) ?? -1;
@@ -112,7 +103,6 @@ export function moveId(queue: HoldQueue, sid: string, id: string, to: number): H
   return write(queue, sid, [...rest.slice(0, clamped), list[at], ...rest.slice(clamped)]);
 }
 
-/** The server continued this session under another id. The queue follows. */
 export function moveHeld(queue: HoldQueue, from: string, to: string): HoldQueue {
   if (!from || from === to || !queue[from]?.length) return queue;
   const items = queue[from];
@@ -177,7 +167,6 @@ export function flushHeld(): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(latest));
   } catch {
-    // Storage full or blocked: the queue lives on for this run only.
   }
   latest = null;
 }

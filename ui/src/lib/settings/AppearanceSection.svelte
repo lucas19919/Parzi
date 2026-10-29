@@ -5,7 +5,6 @@
   import { api, type Theme, type PackInfo, type BackgroundFile } from "../api";
   import { applyThemeCss, previewTheme, refreshBackground } from "../theme";
   import Icon from "../Icon.svelte";
-  import Switch from "./Switch.svelte";
   import SegControl from "./SegControl.svelte";
   import Slider from "./Slider.svelte";
   import ColorField from "./ColorField.svelte";
@@ -17,15 +16,13 @@
   let theme: Theme | null = null;
   let packs: PackInfo[] = [];
   let backgrounds: BackgroundFile[] = [];
+  let yPct = 50;
   let loading = true;
   let err = "";
   let packName = "";
   let fileInputEl: HTMLInputElement | null = null;
 
-  // The wallpaper's fractions (0-1) as the whole percents the sliders show.
-  let dimPct = 66;
-  let heightPct = 100;
-  let yPct = 50;
+
 
   const ACCENTS = ["#E8E8E8", "#CBD5E1", "#7AA2F7", "#88C0D0", "#34D399", "#A6DA95", "#5EEAD4", "#EB6F92", "#F5A97F", "#E8B64C"];
   const UI_FONTS = ["Inter", "system-ui", "Segoe UI", "SF Pro Text", "Roboto", "IBM Plex Sans"];
@@ -57,8 +54,7 @@
       theme = t;
       packs = p;
       backgrounds = b;
-      lastBlur = t.background.blur;
-      syncPercents();
+      syncPos();
     } catch (e) {
       err = String(e);
     } finally {
@@ -66,14 +62,18 @@
     }
   }
 
-  function syncPercents() {
-    if (!theme) return;
-    dimPct = Math.round(theme.background.dim * 100);
-    heightPct = Math.round(theme.background.height * 100);
-    yPct = Math.round((theme.background.y ?? 0.5) * 100);
+  function onPos(v: number) {
+    if (!theme || !Number.isFinite(v)) return;
+    yPct = Math.round(v);
+    theme.background.y = yPct / 100;
+    touch();
   }
 
-  // The accent can follow the wallpaper, so a theme is matched without it.
+  function syncPos() {
+    const y = theme?.background.y;
+    yPct = typeof y === "number" && Number.isFinite(y) ? Math.round(y * 100) : 50;
+  }
+
   function sameColors(a: Theme["colors"], b: Theme["colors"]): boolean {
     return COLOR_KEYS.filter((k) => k !== "accent").every((k) => (a[k] || "").toLowerCase() === (b[k] || "").toLowerCase());
   }
@@ -84,7 +84,6 @@
   $: activePack = findActive(theme, packs);
 
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
-  let lastBlur = 0;
   function touch() {
     if (!theme) return;
     theme = theme;
@@ -98,16 +97,11 @@
     try {
       await api.saveTheme(theme);
       applyThemeCss(await api.getThemeCss());
-      if (theme.background.blur !== lastBlur) {
-        lastBlur = theme.background.blur;
-        await refreshBackground();
-      }
     } catch (e) {
       notify(`Could not save: ${e}`, true);
       try {
         applyThemeCss(await api.getThemeCss());
         theme = await api.getTheme();
-        syncPercents();
       } catch {}
     }
   }
@@ -123,16 +117,13 @@
       await commitNow();
       applyThemeCss(await api.applyPack(p.name));
       theme = await api.getTheme();
-      syncPercents();
-      lastBlur = theme.background.blur;
+      syncPos();
       const [b] = await Promise.all([api.listBackgroundUrls(), refreshBackground()]);
       backgrounds = b;
-      if (theme.background.auto_accent && theme.background.image) await sampleAccent();
     } catch (e) {
       notify(`Could not apply the theme: ${e}`, true);
     }
   }
-  // Pack folders are slugs (tokyo-night); show them as words, sentence case.
   function packLabel(slug: string): string {
     const words = slug.replace(/[-_]+/g, " ").trim();
     return words ? words[0].toUpperCase() + words.slice(1) : slug;
@@ -195,12 +186,10 @@
       await commitNow();
       applyThemeCss(await api.setBackground(name));
       theme = await api.getTheme();
-      syncPercents();
-      lastBlur = theme.background.blur;
+      syncPos();
       await refreshBackground();
-      if (name && theme.background.auto_accent) await sampleAccent();
     } catch (e) {
-      notify(`Could not set the wallpaper: ${e}`, true);
+      notify(`Could not set the backdrop: ${e}`, true);
     }
   }
   function pickFile() {
@@ -216,8 +205,8 @@
     try {
       applyThemeCss(await api.deleteBackground(b.name));
       theme = await api.getTheme();
+      syncPos();
       backgrounds = await api.listBackgroundUrls();
-      syncPercents();
       await refreshBackground();
     } catch (e) {
       notify(`Could not delete the image: ${e}`, true);
@@ -242,50 +231,14 @@
     reader.onerror = () => notify("Could not read that file", true);
     reader.readAsDataURL(file);
   }
-  // The accent from the wallpaper's most vivid colour; quiet on failure,
-  // the old accent simply stays.
-  async function sampleAccent() {
-    if (!theme?.background.image) return;
-    try {
-      const pal = await api.paletteFromBackground();
-      if (theme) theme.colors.accent = pal.accent;
-      await commitNow();
-    } catch {}
-  }
-  async function toggleAutoAccent() {
-    if (!theme) return;
-    theme.background.auto_accent = !theme.background.auto_accent;
-    await commitNow();
-    if (theme.background.auto_accent) await sampleAccent();
-  }
-
-  function onPct(key: "dim" | "height" | "y", pct: number) {
-    if (!theme) return;
-    theme.background[key] = pct / 100;
-    touch();
-  }
-  // Picking a colour by hand means the wallpaper no longer sets it.
   function setColor(key: ColorKey, hex: string) {
     if (!theme) return;
     theme.colors[key] = hex;
-    if (key === "accent") theme.background.auto_accent = false;
     touch();
   }
-  // An empty panel colour means automatic: a whisper of the text over
-  // the stage, so panels always sit on the theme.
   function clearPanel() {
     if (!theme) return;
     theme.colors.panel = "";
-    touch();
-  }
-  function toggleGlass() {
-    if (!theme) return;
-    theme.background.glass = !(theme.background.glass ?? true);
-    touch();
-  }
-  function toggleHomeOnly() {
-    if (!theme) return;
-    theme.background.home_only = !(theme.background.home_only ?? false);
     touch();
   }
   function setSize(key: "size" | "mono_size", v: string) {
@@ -295,14 +248,14 @@
   }
 
   async function resetAppearance() {
-    if (!(await ask("Theme, wallpaper settings, colours and fonts go back to the defaults.", { title: "Reset appearance?", kind: "warning" }))) return;
+    if (!(await ask("Theme, backdrop, colours and fonts go back to the defaults.", { title: "Reset appearance?", kind: "warning" }))) return;
     try {
       if (saveTimer) clearTimeout(saveTimer);
       saveTimer = null;
       await api.resetTheme();
       applyThemeCss(await api.getThemeCss());
       theme = await api.getTheme();
-      syncPercents();
+      syncPos();
       await refreshBackground();
     } catch (e) {
       notify(`Could not reset: ${e}`, true);
@@ -345,9 +298,9 @@
           </button>
           {#if !p.builtin}
             <div class="pack-actions">
-              <button class="pack-act" use:tooltip={`Rename ${packLabel(p.name)}`}
+              <button class="mini-icon" use:tooltip={`Rename ${packLabel(p.name)}`}
                 on:click={() => { renamingPack = p.name; renameDraft = p.name; delPack = null; }}><Icon name="pencil" size={12} /></button>
-              <button class="pack-act" class:armed={delPack === p.name}
+              <button class="mini-icon" class:armed={delPack === p.name}
                 use:tooltip={delPack === p.name ? "Click again to delete" : "Delete"}
                 aria-label="Delete {packLabel(p.name)}" on:click={() => deletePack(p)}>{#if delPack === p.name}Sure?{:else}<Icon name="trash" size={12} />{/if}</button>
             </div>
@@ -370,14 +323,16 @@
 
   <section class="pref-section">
     <div class="section-head-with-action">
-      <h3 class="section-title">Wallpaper</h3>
+      <h3 class="section-title">Backdrop</h3>
       <button class="sbtn" on:click={pickFile}><Icon name="plus" size={12} /><span>Add image</span></button>
       <input type="file" accept="image/png,image/jpeg,image/webp" hidden bind:this={fileInputEl} on:change={onFile} />
     </div>
-    <div class="field-card">
-      <span class="field-label">Glass panels</span>
-      <Switch on={theme.background.glass ?? true} title="Blur the wallpaper through the panels" on:toggle={toggleGlass} />
-    </div>
+    <p class="section-desc">One picture behind a new session. Nothing else.</p>
+    {#if theme.background.image}
+      <div class="field-card stack">
+        <Slider label="Position" bind:value={yPct} min={0} max={100} unit="%" on:input={(e) => onPos(e.detail)} />
+      </div>
+    {/if}
     <div class="walls">
       <button class="wall" class:on={!theme.background.image} on:click={() => setBg("")}>
         <span class="wall-pre none"><span>None</span></span>
@@ -392,29 +347,13 @@
           >
             <img class="wall-pre" src={convertFileSrc(b.url)} alt={b.name} loading="lazy" draggable="false" />
           </button>
-          <button class="wall-del" class:armed={delWall === b.name}
+          <button class="mini-icon" class:armed={delWall === b.name}
             use:tooltip={delWall === b.name ? "Click again to delete" : "Delete"}
             aria-label={delWall === b.name ? `Confirm delete ${b.name}` : `Delete ${b.name}`}
             on:click={() => deleteWall(b)}>{#if delWall === b.name}Sure?{:else}<Icon name="close" size={12} />{/if}</button>
         </div>
       {/each}
     </div>
-    {#if theme.background.image}
-      <div class="field-card">
-        <span class="field-label">Only on home</span>
-        <Switch on={theme.background.home_only ?? false} title="Wallpaper only on home" on:toggle={toggleHomeOnly} />
-      </div>
-      <div class="field-card stack">
-        <Slider label="Dim" bind:value={dimPct} min={0} max={95} unit="%" on:input={() => onPct("dim", dimPct)} />
-        <Slider label="Blur" bind:value={theme.background.blur} min={0} max={20} step={0.5} unit="px" on:input={touch} />
-        <Slider label="Height" bind:value={heightPct} min={30} max={100} unit="%" on:input={() => onPct("height", heightPct)} />
-        <Slider label="Position" bind:value={yPct} min={0} max={100} unit="%" on:input={() => onPct("y", yPct)} />
-      </div>
-      <div class="field-card">
-        <span class="field-label">Accent follows the wallpaper</span>
-        <Switch on={theme.background.auto_accent ?? false} title="Accent follows the wallpaper" on:toggle={toggleAutoAccent} />
-      </div>
-    {/if}
   </section>
 
   <section class="pref-section">
@@ -505,14 +444,14 @@
   .art-dot { display: inline-flex; flex: none; color: var(--muted); }
   .pack-actions { position: absolute; top: 9px; right: 9px; display: flex; gap: var(--space); opacity: 0; }
   .pack:hover .pack-actions, .pack-actions:focus-within { opacity: 1; }
-  .pack-act {
+  .mini-icon {
     min-width: 20px; height: 20px; padding: 0 var(--space); line-height: 1;
     border-radius: var(--radius-sm); border: none; background: var(--panel); color: var(--muted);
     font: inherit; font-size: var(--fs-xs); cursor: pointer;
     display: inline-flex; align-items: center; justify-content: center;
   }
-  .pack-act:hover { color: var(--text); }
-  .pack-act.armed { color: var(--bad); font-weight: 600; }
+  .mini-icon:hover { color: var(--text); }
+  .mini-icon.armed { color: var(--bad); font-weight: 600; }
   .pack-rename {
     font: inherit; font-size: var(--fs-sm); color: var(--text);
     background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius-sm);
@@ -523,6 +462,8 @@
   .save-row .tin { flex: 1; }
 
   .section-head-with-action { align-items: center; }
+  .field-card.stack { flex-direction: column; align-items: stretch; gap: calc(var(--space) * 3); }
+
   .walls { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: calc(var(--space) * 3); }
   .wall {
     display: block; width: 100%; padding: var(--space);
@@ -540,17 +481,9 @@
     font-size: var(--fs-sm); color: var(--muted);
   }
   .wall-wrap { position: relative; min-width: 0; }
-  .wall-del {
-    position: absolute; top: 9px; right: 9px; min-width: 20px; height: 20px; padding: 0 var(--space); line-height: 1;
-    border-radius: var(--radius-sm); border: none; background: var(--panel); color: var(--muted);
-    font: inherit; font-size: var(--fs-xs); cursor: pointer; opacity: 0;
-    display: inline-flex; align-items: center; justify-content: center;
-  }
-  .wall-wrap:hover .wall-del, .wall-del:focus-visible { opacity: 1; }
-  .wall-del:hover { color: var(--text); }
-  .wall-del.armed { opacity: 1; color: var(--bad); font-weight: 600; }
-
-  .field-card.stack { flex-direction: column; align-items: stretch; gap: calc(var(--space) * 3); }
+  .wall-wrap .mini-icon { position: absolute; top: 9px; right: 9px; opacity: 0; }
+  .wall-wrap:hover .mini-icon, .mini-icon:focus-visible { opacity: 1; }
+  .mini-icon.armed { opacity: 1; }
 
   .rows > .row > :global(.cf) { flex: 1; min-width: 0; }
   .panel-wrap { display: flex; flex: 1; min-width: 0; }

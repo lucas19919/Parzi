@@ -1,12 +1,8 @@
 <script lang="ts">
-  // An agent's question at a fork, in the thread: its options (with a line
-  // of why where the agent gave one), Other for your own words, and Skip
-  // (the agent then decides and says what it assumed).
   import { createEventDispatcher, tick } from "svelte";
   import type { Question } from "./api";
 
   export let question: Question;
-  // Who asks, and what it was doing.
   export let from = "";
   export let about = "";
 
@@ -18,7 +14,6 @@
   let text = "";
   let shownKey = "";
   let field: HTMLTextAreaElement | null = null;
-  // A new question starts clean.
   $: if (question.key !== shownKey) {
     shownKey = question.key;
     picked = new Set();
@@ -192,7 +187,6 @@
     font-size: var(--fs-sm);
     line-height: 1.5;
   }
-  /* A ring to pick (a square when several may be), filled when picked. */
   .mark {
     position: relative;
     width: 16px;

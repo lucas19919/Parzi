@@ -7,8 +7,6 @@ export const board = writable<ProviderStatus[]>([]);
 const boardLoaded = writable(false);
 export const checking = writable<Set<string>>(new Set());
 
-// An install or sign-in in progress: what the person is waiting on, and how
-// long the bar should take to fill (0 sweeps without an end).
 export interface SetupWait {
   action: "install" | "sign_in";
   note: string;
@@ -94,8 +92,6 @@ export function ageOf(p: ProviderStatus | undefined): number {
   return Date.now() / 1000 - p.checked_at;
 }
 
-// Checks again only the agents whose last answer is old, so opening a
-// screen shows where each one stands without a button.
 export async function refreshStale(maxAge = STALE_SECS): Promise<void> {
   const all = await ensureBoard();
   const stale = all.filter((p) => p.state !== "disabled" && ageOf(p) >= maxAge).map((p) => p.provider);
@@ -105,8 +101,6 @@ export async function refreshStale(maxAge = STALE_SECS): Promise<void> {
 
 const stateOf = (id: string) => get(board).find((b) => b.provider === id)?.state;
 
-// Polls one agent until its state moves on (installed, signed in) or the
-// wait runs out; the terminal or browser it opened reports nothing back.
 async function watch(id: string, from: string | undefined, ms: number) {
   const until = Date.now() + ms;
   while (Date.now() < until) {
@@ -144,7 +138,6 @@ export const signInAgent = (id: string) =>
     (await onboard.login(id)) ? 0 : SIGN_IN_WAIT,
   );
 
-// The one step that gets an agent working, or null when it already works.
 export function nextStep(p: ProviderStatus | undefined): { label: string; run: (id: string) => Promise<void> } | null {
   switch (p?.state) {
     case "not_installed":

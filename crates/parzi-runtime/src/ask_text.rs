@@ -1,39 +1,26 @@
-//! What an approval asks, said plainly: the action ("run a command") and
-//! the exact thing it acts on (the command), so the card reads "Grok wants
-//! to run a command" over `cargo test`, never "Using other: …?".
 
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::tools::{category, display_name, edit_paths, shell_command};
 
-/// How the card shows `detail`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DetailKind {
-    /// A command line, in mono.
     Command,
-    /// File paths, one a line, in mono.
     Paths,
-    /// A web address.
     Url,
-    /// Words (a picture's prompt, an issue's title).
     Text,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AskText {
-    /// Follows "<agent> wants to": "run a command", "edit main.rs".
     pub action: String,
-    /// The exact thing: the command, the paths, the prompt. May be empty.
     pub detail: String,
     pub detail_kind: DetailKind,
-    /// Anything that makes it weigh more ("Outside this session's folder").
     pub note: String,
 }
 
-/// Whether a tool makes pictures or video and nothing else: it changes
-/// nothing on this computer (its output lands in the agent's own store).
 #[must_use]
 pub fn makes_media(name: &str) -> bool {
     let n = name.to_lowercase();
@@ -61,14 +48,12 @@ fn base(path: &str) -> &str {
         .unwrap_or(path)
 }
 
-/// An ACP title such as "Execute `npm test`": the part in backticks.
 fn quoted(title: &str) -> Option<String> {
     let start = title.find('`')? + 1;
     let end = start + title[start..].rfind('`')?;
     Some(title[start..end].trim().to_string()).filter(|s| !s.is_empty())
 }
 
-/// What a call to `name` with `args` asks for, as the approval card says it.
 #[must_use]
 pub fn ask_text(name: &str, args: &Value) -> AskText {
     let shown = display_name(name);
@@ -141,8 +126,6 @@ pub fn ask_text(name: &str, args: &Value) -> AskText {
         let label = crate::tools::humanize_tool_call(&shown, args);
         return ask("use this window".into(), label, DetailKind::Text);
     }
-    // A connector's tool ("mcp__linear__create_issue"), an agent's own one
-    // ("x_keyword_search"), or only a kind ("other") with a title.
     let mut parts = shown.rsplit("__");
     let tool = parts.next().unwrap_or(&shown);
     let server = parts.next().filter(|s| *s != "mcp");
@@ -168,7 +151,6 @@ pub fn ask_text(name: &str, args: &Value) -> AskText {
     ask(action, detail, DetailKind::Text)
 }
 
-/// Parzi's own tools and the web ones, by name.
 fn named(shown: &str, args: &Value) -> Option<(String, String, DetailKind)> {
     let url = text(args, &["url", "source"]);
     if matches!(shown, "WebFetch" | "fetch" | "browser.open") && url.starts_with("http") {
@@ -189,7 +171,6 @@ fn named(shown: &str, args: &Value) -> Option<(String, String, DetailKind)> {
     Some((action.into(), text(args, &[key]), kind))
 }
 
-/// The arguments on a line or so, without Parzi's own additions.
 fn compact_args(args: &Value) -> String {
     let Some(o) = args.as_object() else {
         return String::new();
@@ -221,7 +202,6 @@ mod tests {
             say("Bash", json!({"command": "cargo test"})),
             ("run a command".into(), "cargo test".into())
         );
-        // An ACP agent's terminal: only its kind and a title.
         assert_eq!(
             say("execute", json!({"title": "Execute `npm run build`"})),
             ("run a command".into(), "npm run build".into())

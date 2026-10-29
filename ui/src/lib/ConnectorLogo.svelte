@@ -1,24 +1,17 @@
 <script lang="ts">
-  // The initial's size on the type scale, about two fifths of the badge.
   const SCALE = [11, 12, 13, 14, 16, 18, 22];
   const letterSize = (badge: number) => SCALE.reduce((best, n) => (Math.abs(n - badge * 0.42) < Math.abs(best - badge * 0.42) ? n : best), SCALE[0]);
-  // A connector's logo: its bundled mark in the brand's colour, else the
-  // service's own site icon, else its initial.
   import { CONNECTOR_MARKS } from "./connectorMarks";
 
   export let id = "";
   export let name = "";
-  // The service's site, for its icon when no mark is bundled.
   export let site = "";
   export let size = 32;
-  // A logo the server or the person gave (a data URL): it wins.
   export let src: string | null = null;
 
   let broken = false;
 
   $: mark = CONNECTOR_MARKS[id];
-  // Near-black brands (GitHub, Notion) take the theme's text colour, so they
-  // read on a dark window too.
   $: dark = mark ? luma(mark.hex) < 0.25 : false;
   $: icon = site ? `${site.replace(/\/+$/, "")}/favicon.ico` : "";
 

@@ -29,7 +29,6 @@ const BUS_CAPACITY: usize = 4_096;
 
 static HEADLESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// `parzi serve` runs with no desk, so it offers no browser tools.
 pub fn set_headless() {
     HEADLESS.store(true, std::sync::atomic::Ordering::Relaxed);
 }
@@ -68,7 +67,6 @@ fn next_run_id() -> u64 {
 
 type ReadMarks = Arc<std::sync::Mutex<HashMap<String, usize>>>;
 
-/// The approver a host installs for runs restored from disk.
 pub(crate) type HostApprover = Arc<std::sync::RwLock<Option<Arc<dyn crate::tools::Approver>>>>;
 
 pub(crate) struct SessionSlot {
@@ -89,10 +87,6 @@ impl SessionSlot {
         }
     }
 
-    /// The run's last look at its inbox, under the lock deliveries take:
-    /// when nothing new came, `on_quiet` settles the session and the slot is
-    /// given back in the same step, so a message delivered after it starts
-    /// a new run instead of landing unread.
     pub(crate) async fn last_look<L, Q>(&self, look: L, on_quiet: Q) -> (Vec<String>, usize)
     where
         L: FnOnce() -> (Vec<String>, usize),
@@ -110,9 +104,6 @@ impl SessionSlot {
         (fresh, upto)
     }
 
-    /// A run that ends without looking for more (failed, stopped, paused,
-    /// at the turn cap): `settle` and the slot given back in one step, once
-    /// its outcome is kept, so a resend right after it is not refused.
     pub(crate) async fn release<S: FnOnce()>(&self, settle: S) {
         let mut h = self.handles.lock().await;
         settle();
@@ -166,9 +157,6 @@ impl Orchestrator {
         }
     }
 
-    /// The approver queued runs restored after a restart ask through, when
-    /// they were queued with one: without it they would come back unable to
-    /// write or run anything in Ask mode.
     pub fn set_approver(&self, approver: Arc<dyn crate::tools::Approver>) {
         if let Ok(mut a) = self.approver.write() {
             *a = Some(approver);
@@ -176,27 +164,18 @@ impl Orchestrator {
     }
 
     pub fn set_asker(&self, asker: Arc<dyn crate::tools::Asker>) {
-        // Never silently drop the asker: a missed GUI asker turns every
-        // ask.user into "decide yourself". Called from sync setup, so a
-        // blocking lock is safe (must stay out of async contexts).
         *self.asker.blocking_lock() = Some(asker);
     }
 
-    /// `set_asker` for async callers such as `parzi serve`'s start.
     pub async fn install_asker(&self, asker: Arc<dyn crate::tools::Asker>) {
         *self.asker.lock().await = Some(asker);
     }
 
-    /// Kill every background shell of a session and forget its registry.
-    /// Called when sessions are deleted or purged so nothing outlives them.
-    /// The commands a session's agents ran, for its column. None started
-    /// yet: an empty list, not a new registry.
     pub fn shell_jobs(&self, sid: &str) -> Vec<crate::shell::ShellJob> {
         let reg = self.shells.lock().ok().and_then(|m| m.get(sid).cloned());
         reg.map(|r| r.jobs()).unwrap_or_default()
     }
 
-    /// Stops one of a session's background commands.
     pub fn shell_kill(&self, sid: &str, id: &str) -> bool {
         let reg = self.shells.lock().ok().and_then(|m| m.get(sid).cloned());
         reg.is_some_and(|r| r.kill(id))
@@ -269,7 +248,6 @@ impl Orchestrator {
         for m in self.store.list()? {
             if m.status == SessionStatus::Active {
                 self.store.set_status(&m.id, SessionStatus::Idle)?;
-                // Its run was cut off when the app closed: the session says so.
                 let outcome = parzi_core::store::RunOutcome::bare(
                     parzi_core::store::RunEndKind::Interrupted,
                     parzi_core::now_ms(),
@@ -307,8 +285,6 @@ impl Orchestrator {
     }
 
     pub async fn kill(&self, id: &str) -> Result<()> {
-        // The handle stays (cancelled, task taken) until the run has really
-        // stopped, so a resend cannot start a second run in the grace window.
         let stopping = self.handles.lock().await.get_mut(id).map(|h| {
             h.cancel.cancel();
             (h.id, h.task.take())
@@ -348,13 +324,10 @@ impl Orchestrator {
         self.store.fork(id, at_step)
     }
 
-    /// The conversation as it stood before the person's `nth` message, as
-    /// a new session to go on from; the original stays.
     pub fn rewind(&self, id: &str, nth: usize) -> Result<SessionMeta> {
         self.store.rewind(id, nth)
     }
 
-    /// A name the person gave: one line, never empty.
     pub fn rename(&self, id: &str, title: &str) -> Result<()> {
         let title = parzi_core::text::fold(title);
         if title.is_empty() {
@@ -363,8 +336,6 @@ impl Orchestrator {
         self.store.set_title(id, &title)
     }
 
-    /// Deletes a session with the subsessions it started: their runs are
-    /// stopped and their shells killed first, so nothing outlives them.
     pub async fn delete_thread(&self, id: &str) -> Result<usize> {
         let all = self.store.list()?;
         self.store.get(id)?;
@@ -375,8 +346,6 @@ impl Orchestrator {
         self.store.delete_thread(id)
     }
 
-    /// Removes finished sessions (live runs and their ancestors stay) and
-    /// kills the shells of exactly those removed.
     pub fn purge_finished(&self) -> Result<usize> {
         let gone = self.store.purge_finished_ids()?;
         for sid in &gone {

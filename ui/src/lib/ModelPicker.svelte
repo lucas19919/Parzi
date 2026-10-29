@@ -49,8 +49,6 @@
     return !q || `${row.label} ${row.value} ${nameOf(row.provider)}`.toLowerCase().includes(q);
   }
 
-  // Recent models sit on top and stay in their agent's list too, so no
-  // model ever seems to go missing from its agent.
   function groupsFor(board: ProviderStatus[], recent: string[], q: string): Group[] {
     const rows = allRows(board).filter((r) => r.usable && matches(r, q));
     const out: Group[] = [];
@@ -60,7 +58,6 @@
       const mine = rows.filter((r) => r.provider === id);
       if (mine.length) out.push({ key: id, label: nameOf(id), rows: mine });
     }
-    // A generic ACP agent is not in the install list, but its models still show.
     const extra: string[] = [];
     for (const row of rows) {
       if (!PROVIDER_ORDER.includes(row.provider) && !extra.includes(row.provider)) extra.push(row.provider);
