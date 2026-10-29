@@ -1,6 +1,6 @@
 [package]
 name = "parzi-app"
-version = "0.1.43"
+version = "2.0.0"
 edition = "2021"
 
 [workspace]

@@ -2758,7 +2758,7 @@ dependencies = [
 
 [[package]]
 name = "parzi-app"
-version = "0.1.43"
+version = "2.0.0"
 dependencies = [
  "adblock",
  "anyhow",
@@ -2787,7 +2787,7 @@ dependencies = [
 
 [[package]]
 name = "parzi-core"
-version = "0.1.43"
+version = "2.0.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2803,7 +2803,7 @@ dependencies = [
 
 [[package]]
 name = "parzi-providers"
-version = "0.1.43"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2819,7 +2819,7 @@ dependencies = [
 
 [[package]]
 name = "parzi-runtime"
-version = "0.1.43"
+version = "2.0.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
