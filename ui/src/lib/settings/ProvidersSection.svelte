@@ -172,8 +172,7 @@
   <div class="load-err"><span>{err}</span></div>
 {:else}
   <div class="pref-section">
-    <div class="providers-list">
-      {#each AGENT_ORDER as id (id)}
+    {#each AGENT_ORDER as id (id)}
         {@const p = statusOf(id)}
         {@const entry = entryOf(id)}
         {@const busy = allChecking || $checking.has(id)}
@@ -183,134 +182,120 @@
         {@const step = id === "acp" && rawStep?.label !== "Try again" ? null : rawStep}
         {@const ready = entry.enabled && isUsable(p)}
         {@const isOpen = open.has(id)}
-        <div class="provider-card" class:off={!entry.enabled}>
-          <div class="provider-head">
+        <div class="rows" class:off={!entry.enabled}>
+          <div class="row">
             <ProviderLogo provider={id} size={20} />
-            <div class="provider-title">
-              <div class="provider-title-row">
-                <span class="provider-name">{nameOf(id)}{#if id === "acp" && entry.label} · {entry.label}{/if}</span>
-                {#if ready && p && !p.gated}
-                  <span class="chip warn" use:tooltip={"It changes files on its own. Parzi cannot ask you first or keep it inside the project folder."}>Edits without asking</span>
-                {/if}
-              </div>
-              <span class="provider-sub" class:ok={ready && p?.state === "ready"} title={p?.state === "error" ? (p.hint ?? "") : ""}>{wait?.note ?? statusLine(p, entry.enabled, busy)}</span>
-            </div>
-            <span class="head-spacer" />
-            {#if step}
-              <button class="sbtn primary" disabled={busy} on:click={() => step.run(id)}>{busy && step.label === "Try again" ? "Checking…" : step.label}</button>
-            {:else if wait}
-              <span class="waiting">{wait.action === "install" ? "Installing…" : "Signing in…"}</span>
+            <span class="row-label">{nameOf(id)}{#if id === "acp" && entry.label} · {entry.label}{/if}
+              <small class:ok={ready && p?.state === "ready"} title={p?.state === "error" ? (p.hint ?? "") : ""}>{wait?.note ?? statusLine(p, entry.enabled, busy)}</small>
+            </span>
+            {#if ready && p && !p.gated}
+              <span class="chip warn" use:tooltip={"It changes files on its own. Parzi cannot ask you first or keep it inside the project folder."}>Edits without asking</span>
             {/if}
-            <Switch on={entry.enabled} title={entry.enabled ? `Turn ${nameOf(id)} off` : `Turn ${nameOf(id)} on`} on:toggle={() => setEnabled(id, !entry.enabled)} />
+            <span class="row-ctl auto">
+              {#if step}
+                <button class="sbtn primary" disabled={busy} on:click={() => step.run(id)}>{busy && step.label === "Try again" ? "Checking…" : step.label}</button>
+              {:else if wait}
+                <span class="waiting">{wait.action === "install" ? "Installing…" : "Signing in…"}</span>
+              {/if}
+              <Switch on={entry.enabled} title={entry.enabled ? `Turn ${nameOf(id)} off` : `Turn ${nameOf(id)} on`} on:toggle={() => setEnabled(id, !entry.enabled)} />
+            </span>
           </div>
 
           {#if wait}
             {#key wait.note}
-              <span class="progress" class:sweep={!wait.eta} style:--eta="{wait.eta}ms"><span /></span>
+              <div class="bar"><span class="progress" class:sweep={!wait.eta} style:--eta="{wait.eta}ms"><span /></span></div>
             {/key}
           {/if}
 
           {#if ready && p?.usage?.length}
-            <div class="usage">
-              {#each p.usage as w (w.label)}
-                <div class="usage-row">
-                  <span class="usage-label">{w.label}</span>
-                  <span class="usage-bar"><span class="usage-fill" class:hot={w.used_percent >= 80} style="width:{Math.min(100, w.used_percent)}%" /></span>
-                  <span class="usage-num">{Math.round(w.used_percent)}%</span>
-                  {#if w.resets_at}<span class="usage-reset">{resetsIn(w.resets_at)}</span>{/if}
-                </div>
-              {/each}
-            </div>
+            {#each p.usage as w (w.label)}
+              <div class="row">
+                <span class="usage-label">{w.label}</span>
+                <span class="usage-bar"><span class="usage-fill" class:hot={w.used_percent >= 80} style="width:{Math.min(100, w.used_percent)}%" /></span>
+                <span class="usage-num">{Math.round(w.used_percent)}%</span>
+                {#if w.resets_at}<span class="usage-reset">{resetsIn(w.resets_at)}</span>{/if}
+              </div>
+            {/each}
           {/if}
 
-          <button class="models-toggle" aria-expanded={isOpen} on:click={() => toggleOpen(id)}>
+          <button class="row as-toggle" aria-expanded={isOpen} on:click={() => toggleOpen(id)}>
             <span class="disclosure"><Icon name={isOpen ? "chevDown" : "chevRight"} size={12} /></span>
             <span>Program</span>
           </button>
 
           {#if isOpen}
-            <div class="details">
-              {#if id === "acp"}
-                <label class="path-row">
-                  <span class="path-label">Name</span>
-                  <input
-                    class="tin"
-                    placeholder="ACP"
-                    aria-label="ACP name"
-                    spellcheck="false"
-                    bind:value={acpLabel}
-                    on:change={saveAcpLabel}
-                    on:keydown={(e) => e.key === "Enter" && saveAcpLabel()}
-                  />
-                </label>
-              {/if}
-              <label class="path-row">
-                <span class="path-label">{id === "acp" ? "Command" : "Program"}</span>
+            {#if id === "acp"}
+              <label class="row">
+                <span class="row-label">Name</span>
+                <input
+                  class="tin fixed"
+                  placeholder="ACP"
+                  aria-label="ACP name"
+                  spellcheck="false"
+                  bind:value={acpLabel}
+                  on:change={saveAcpLabel}
+                  on:keydown={(e) => e.key === "Enter" && saveAcpLabel()}
+                />
+              </label>
+            {/if}
+              <label class="row">
+                <span class="row-label">{id === "acp" ? "Command" : "Program"}</span>
                 <input
                   class="tin mono"
                   placeholder={id === "acp" ? "gemini --acp" : `Found automatically (${PROGRAM[id]})`}
-                  aria-label={id === "acp" ? "ACP command" : `${nameOf(id)} program path`}
-                  spellcheck="false"
-                  bind:value={paths[id]}
-                  on:change={() => savePath(id)}
-                  on:keydown={(e) => e.key === "Enter" && savePath(id)}
-                />
-              </label>
-              {#if id === "acp"}
-                <div class="acp-add">
-                  <button class="sbtn" type="button" disabled={registryBusy} on:click={loadRegistry}>
-                    {registryBusy ? "Loading registry…" : "Add from registry"}
-                  </button>
-                  {#if registryErr}<div class="provider-how">{registryErr}</div>{/if}
-                  {#if registry.length}
-                    <div class="model-list">
-                      {#each registry as row (row.id)}
-                        <button class="model-row acp-pick" type="button" on:click={() => useRegistry(row)}>
-                          <span class="model-main">
-                            <span class="model-name">{row.name}</span>
-                            <span class="model-meta"><span class="mono">{formatCommand(row.command, row.args)}</span></span>
-                          </span>
-                        </button>
-                      {/each}
-                    </div>
-                  {/if}
-                </div>
+                aria-label={id === "acp" ? "ACP command" : `${nameOf(id)} program path`}
+                spellcheck="false"
+                bind:value={paths[id]}
+                on:change={() => savePath(id)}
+                on:keydown={(e) => e.key === "Enter" && savePath(id)}
+              />
+            </label>
+            {#if id === "acp"}
+              <div class="row">
+                <button class="sbtn" type="button" disabled={registryBusy} on:click={loadRegistry}>
+                  {registryBusy ? "Loading registry…" : "Add from registry"}
+                </button>
+              </div>
+              {#if registryErr}
+                <div class="row"><span class="row-label bad">{registryErr}</span></div>
               {/if}
-            </div>
+              {#each registry as row (row.id)}
+                <button class="row" type="button" on:click={() => useRegistry(row)}>
+                  <span class="row-label">{row.name}<small class="mono">{formatCommand(row.command, row.args)}</small></span>
+                </button>
+              {/each}
+            {/if}
           {/if}
         </div>
       {/each}
-    </div>
   </div>
 {/if}
 
 <style>
-  .providers-list { display: flex; flex-direction: column; gap: calc(var(--space) * 2); }
-  .provider-card {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-lg); padding: calc(var(--space) * 3) calc(var(--space) * 3);
-    display: flex; flex-direction: column; gap: calc(var(--space) * 2);
+  .rows.off .row:first-child > :not(.row-ctl),
+  .rows.off .as-toggle {
+    opacity: 0.55;
   }
-  .provider-card.off .provider-head > :global(:not(.switch)),
-  .provider-card.off .models-toggle { opacity: 0.55; }
-  .provider-head { display: flex; align-items: center; gap: calc(var(--space) * 3); }
-  .provider-title { display: flex; flex-direction: column; gap: var(--space); min-width: 0; }
-  .provider-title-row { display: flex; align-items: center; gap: calc(var(--space) * 2); flex-wrap: wrap; }
-  .provider-name { font-size: var(--fs-md); font-weight: 650; color: var(--text); }
-  .provider-sub { font-size: var(--fs-md); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .provider-sub.ok { color: var(--ok); }
-  .provider-how { font-size: var(--fs-md); color: var(--muted); line-height: 1.45; }
+  .row .chip {
+    flex: none;
+    margin-left: calc(var(--space) * 2);
+  }
+  /* Rows inherit the muted secondary tone; names and values opt back in. */
+  .rows .row {
+    font-size: var(--fs-md);
+    color: var(--muted);
+  }
   .chip {
     font-size: var(--fs-xs); font-weight: 600; padding: var(--space) calc(var(--space) * 2); border-radius: 999px; white-space: nowrap; cursor: default;
   }
   .chip.warn { color: var(--warn); border: 1px solid var(--warn); }
-  .head-spacer { flex: 1; }
   .waiting { font-size: var(--fs-md); color: var(--muted); white-space: nowrap; }
 
-  .progress { display: block; height: 3px; border-radius: var(--radius-sm); background: var(--line); overflow: hidden; }
+  /* Hairline progress strip between rows while a provider sets up. */
+  .rows > .bar { margin: 0; }
+  .progress { display: block; height: 3px; background: var(--line); overflow: hidden; }
   .progress > span {
-    display: block; height: 100%; width: 100%; background: var(--accent); border-radius: var(--radius-sm);
+    display: block; height: 100%; width: 100%; background: var(--accent);
     transform-origin: left; animation: fill var(--eta) linear forwards;
   }
   .progress.sweep > span { width: 30%; animation: sweep 1.4s ease-in-out infinite; }
@@ -320,47 +305,15 @@
     .progress > span, .progress.sweep > span { animation: none; }
   }
 
-  .usage { display: flex; flex-direction: column; gap: var(--space); }
-  .usage-row { display: flex; align-items: center; gap: calc(var(--space) * 2); font-size: var(--fs-md); color: var(--muted); }
   .usage-label { width: 96px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .usage-bar { flex: 1; height: 5px; border-radius: var(--radius-sm); background: var(--line); overflow: hidden; }
+  .row-label.bad { color: var(--bad); }
+  .usage-bar { flex: 1; min-width: 40px; height: 5px; border-radius: var(--radius-sm); background: var(--line); overflow: hidden; }
   .usage-fill { display: block; height: 100%; background: var(--accent); border-radius: var(--radius-sm); }
   .usage-fill.hot { background: var(--warn); }
   .usage-num { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
   .usage-reset { font-size: var(--fs-md); color: var(--muted); flex: none; }
 
-  .models-toggle {
-    display: flex; align-items: center; gap: calc(var(--space) * 2); width: 100%; min-width: 0;
-    background: transparent; border: none; cursor: pointer; min-height: 22px; padding: 0;
-    font: inherit; font-size: var(--fs-md); text-align: left; color: var(--muted);
-  }
-  .models-toggle:hover { color: var(--text); }
+  .as-toggle { color: var(--muted); }
+  .as-toggle:hover { color: var(--text); }
   .disclosure { display: inline-flex; flex: none; }
-
-  .details { display: flex; flex-direction: column; gap: calc(var(--space) * 2); border-top: 1px solid var(--line); padding-top: calc(var(--space) * 2); }
-  .model-list { display: flex; flex-direction: column; gap: var(--space); max-height: 340px; overflow-y: auto; }
-  .model-row {
-    display: flex; align-items: center; gap: calc(var(--space) * 2); padding: var(--space) calc(var(--space) * 2);
-    border-radius: var(--radius); font-size: var(--fs-md);
-  }
-  .model-row:hover { background: var(--line); }
-  .model-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space); }
-  .model-name { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .model-meta { display: flex; align-items: center; gap: calc(var(--space) * 2); font-size: var(--fs-md); color: var(--muted); overflow: hidden; white-space: nowrap; }
-  .model-meta .mono { font-family: var(--mono), ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; }
-
-  .path-row { display: flex; align-items: center; gap: calc(var(--space) * 2); }
-  .path-label { font-size: var(--fs-md); color: var(--muted); flex: none; width: 72px; }
-  .path-row .tin { flex: 1; }
-  .acp-add { display: flex; flex-direction: column; align-items: flex-start; gap: calc(var(--space) * 2); }
-  .acp-add .model-list { width: 100%; }
-  .acp-pick {
-    width: 100%;
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    font: inherit;
-    text-align: left;
-    color: inherit;
-  }
 </style>

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { ask } from "@tauri-apps/plugin-dialog";
+  import { ask, open as pickFile } from "@tauri-apps/plugin-dialog";
+  import Icon from "../Icon.svelte";
+  import { tooltip } from "../tooltip";
   import { api, type ParziConfig } from "../api";
   import { classifyPaste, nameFromProgram, splitLine } from "../cmdline";
   import type { ProviderStatus } from "../api";
@@ -297,9 +299,30 @@
     }, `${id} ${on ? "on" : "off"}`);
   }
 
-  async function removeServer(id: string, label = id) {
-    const ok = await ask(`Remove ${label}?`, { title: "Remove", kind: "warning" }).catch(() => false);
-    if (!ok) return;
+  let openTools: string | null = null;
+  function toggleTools(id: string) {
+    openTools = openTools === id ? null : id;
+  }
+
+  async function chooseLogo(id: string) {
+    const picked = await pickFile({ multiple: false, filters: [{ name: "Pictures", extensions: ["png", "jpg", "jpeg", "svg", "ico", "gif", "webp"] }] }).catch(() => null);
+    if (typeof picked !== "string" || !picked) return;
+    try {
+      const url = await api.connectorSetIcon(id, picked);
+      details = { ...details, [id]: { ...(details[id] ?? { title: "", tools: [] }), icon: url } };
+    } catch (e) {
+      notify(`Could not set the logo: ${e}`, true);
+    }
+  }
+
+  // Always visible: first click arms it, second click removes.
+  let delConn: string | null = null;
+  async function removeServer(id: string) {
+    if (delConn !== id) {
+      delConn = id;
+      return;
+    }
+    delConn = null;
     await save((c) => delete c.mcp.servers[id], "");
     await api.connectorForget(id).catch(() => {});
     const { [id]: _, ...rest } = health;
@@ -452,137 +475,93 @@
         {/if}
       {/if}
       {#if group.rows.length}
-      <div class={group.id === "mcp" ? "mcp-grid" : "stack"}>
         {#each group.rows as row (row.kind + row.id)}
           {@const h = health[row.id]}
-          {@const off = row.server?.enabled === false}
-          {@const sentence = row.kind !== "added" ? "" : off ? "Off" : h?.state === "checking" ? "Connecting…" : h?.state === "signing" ? "Finish signing in in your browser" : h?.state === "signin" ? "Sign in to use it" : h?.state === "ok" ? "Connected" : h?.state === "error" ? (h.error ?? "Couldn't connect") : "Added"}
-          <div class="app-block">
-            <div class="field-card" class:off={row.kind === "added" && off}>
-              <span class="mark"><ConnectorLogo id={row.id} name={row.name} site={row.site} src={details[row.id]?.icon ?? null} size={28} /></span>
-              <div class="field-info">
-                <span class="field-label">{row.name}</span>
-                {#if sentence}<span class="field-hint" class:ok={!off && h?.state === "ok"} class:bad={!off && h?.state === "error"} title={h?.raw ?? ""}>{sentence}</span>{/if}
-              </div>
-              {#if row.kind !== "added"}
-                <button class="sbtn" disabled={saving} on:click={() => connectRow(row)}>{row.kind === "found" ? "Add" : "Connect"}</button>
-              {:else if !off && h?.error === "Needs Node.js"}
-                <button class="sbtn" on:click={() => openOutside("https://nodejs.org")}>Get Node.js</button>
-              {:else if !off && (h?.state === "signin" || h?.state === "signing")}
-                <button class="sbtn primary" disabled={h?.state === "signing"} on:click={() => signIn(row.id)}>{h?.state === "signing" ? "Signing in…" : "Sign in"}</button>
-              {:else if !off && h?.state === "error"}
-                <button class="sbtn" on:click={() => check(row.id, true)}>Try again</button>
-              {:else if h?.state === "ok" || off || !h}
-                <Switch on={!off} title={off ? `Turn ${row.name} on` : `Turn ${row.name} off`} on:toggle={() => toggle(row.id)} />
-              {/if}
+          {@const added = row.kind === "added"}
+          {@const off = !!row.server && row.server.enabled === false}
+          {@const open = openTools === row.id}
+          {@const tools = details[row.id]?.tools ?? []}
+          {@const sentence = !added ? "" : off ? "Off" : h?.state === "checking" ? "Connecting…" : h?.state === "signing" ? "Finish signing in in your browser" : h?.state === "signin" ? "Sign in to use it" : h?.state === "error" ? (h.error ?? "Couldn't connect") : h?.state === "ok" ? "Connected" : "Added"}
+          <div class="rows" class:off={added && off}>
+            <div class="row">
+              <button class="logo-pick" use:tooltip={"Choose a logo"} aria-label="Choose a logo for {row.name}" on:click={() => chooseLogo(row.id)}>
+                <ConnectorLogo id={row.id} name={row.name} site={row.site} src={details[row.id]?.icon ?? null} size={20} />
+              </button>
+              <span class="row-label">{row.name}<small class:ok={added && !off && h?.state === "ok"} class:bad={added && !off && h?.state === "error"} title={h?.raw ?? row.about}>{sentence || row.about}</small></span>
+              <span class="row-ctl auto">
+                {#if !added}
+                  <button class="sbtn" disabled={saving} on:click={() => connectRow(row)}>{row.kind === "found" ? "Add" : "Connect"}</button>
+                {:else if !off && h?.error === "Needs Node.js"}
+                  <button class="sbtn" on:click={() => openOutside("https://nodejs.org")}>Get Node.js</button>
+                {:else if !off && (h?.state === "signin" || h?.state === "signing")}
+                  <button class="sbtn primary" disabled={h?.state === "signing"} on:click={() => signIn(row.id)}>{h?.state === "signing" ? "Signing in…" : "Sign in"}</button>
+                {:else if !off && h?.state === "error"}
+                  <button class="sbtn" on:click={() => check(row.id, true)}>Try again</button>
+                {:else if off || h?.state === "ok" || !h}
+                  <Switch on={!off} title={off ? `Turn ${row.name} on` : `Turn ${row.name} off`} on:toggle={() => toggle(row.id)} />
+                {/if}
+                {#if added}
+                  <button class="icon-btn" class:armed={delConn === row.id} use:tooltip={delConn === row.id ? "Click again to remove" : `Remove ${row.name}`} aria-label={delConn === row.id ? `Confirm remove ${row.name}` : `Remove ${row.name}`} on:click={() => removeServer(row.id)}>
+                    <Icon name="trash" size={12} />
+                  </button>
+                {/if}
+              </span>
             </div>
-            {#if row.kind === "added"}
-              <details class="can">
-                <summary>Tools</summary>
-                <div class="rows">
-                  {#each details[row.id]?.tools ?? [] as t (t.name)}
+            {#if added}
+              <button class="row as-toggle" aria-expanded={open} on:click={() => toggleTools(row.id)}>
+                <span class="disclosure"><Icon name={open ? "chevDown" : "chevRight"} size={12} /></span>
+                <span>Tools{#if tools.length} · {tools.length}{/if}</span>
+              </button>
+              {#if open}
+                <div class="details">
+                  {#each tools as t (t.name)}
                     {@const m = effective(t.mode)}
                     <div class="row" class:off={m === "off"}>
-                      <span class="row-label" title={t.name}>{t.name}</span>
+                      <span class="row-label" title={t.description || t.name}>{t.name}</span>
                       <SegControl label={t.name} options={TOOL_OPTIONS} value={m} on:pick={(e) => pickMode(row.id, t.name, e.detail)} />
                     </div>
                   {:else}
-                    <p class="section-desc">{h?.state === "ok" ? (details[row.id] ? "No tools." : "Loading…") : "Connect it to see its tools."}</p>
+                    <div class="row"><span class="row-label">{#if h}Connect it to see its tools.{:else}Not connected yet.{/if}</span></div>
                   {/each}
                 </div>
-                <button class="remove" disabled={saving} on:click={() => removeServer(row.id, row.name)}>Remove</button>
-              </details>
+              {/if}
             {/if}
           </div>
         {/each}
-      </div>
       {/if}
     {/each}
   </div>
 {/if}
 
 <style>
-  .mcp-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: calc(var(--space) * 3);
-    align-items: stretch;
-  }
-  .stack {
-    display: flex;
-    flex-direction: column;
-    gap: calc(var(--space) * 2);
-  }
-  .app-block {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space);
-    min-width: 0;
-  }
-  .mcp-grid .field-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .mark {
-    flex: none;
-    display: inline-flex;
-  }
-  .field-card.off .field-label {
+  .rows.off .row:first-child > :not(.row-ctl),
+  .rows.off .as-toggle {
     opacity: 0.55;
   }
-  .field-hint {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .field-hint.ok {
-    color: var(--ok);
-  }
-  .field-hint.bad {
-    color: var(--bad);
-  }
-  .can {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
-  }
-  .can summary {
-    padding: calc(var(--space) * 3) calc(var(--space) * 4);
-    color: var(--muted);
-    font: inherit;
-    font-size: var(--fs-md);
-    font-weight: 500;
-    cursor: pointer;
-  }
-  .can[open] summary {
-    color: var(--text);
-  }
-  .can .rows {
+  .logo-pick {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    padding: 0;
+    background: none;
     border: none;
-    border-radius: 0;
-    background: transparent;
-    border-top: 1px solid var(--line);
-  }
-  .can .section-desc {
-    padding: calc(var(--space) * 2) calc(var(--space) * 4);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
   }
   .row.off .row-label {
     color: var(--muted);
   }
-  .remove {
-    margin: calc(var(--space) * 2) calc(var(--space) * 4) calc(var(--space) * 3);
-    padding: 0;
-    background: none;
-    border: none;
+  .as-toggle {
     color: var(--muted);
-    font: inherit;
-    font-size: var(--fs-md);
-    font-weight: 500;
-    cursor: pointer;
   }
-  .remove:hover:not(:disabled) {
-    color: var(--bad);
+  .as-toggle:hover {
+    color: var(--text);
+  }
+  .disclosure {
+    display: inline-flex;
+    flex: none;
   }
   .paste {
     display: flex;
