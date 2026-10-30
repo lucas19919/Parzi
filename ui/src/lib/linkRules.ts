@@ -143,14 +143,20 @@ export function gitRefs(text: string): GitRef[] {
 }
 
 /** True when the whole trimmed line is exactly one linkable ref. */
-export function wholeRef(line: string): string | null {
+export function wholeRef(line: string): { path: string; vault: boolean } | null {
   const t = line.trim().replace(/^`+|`+$/g, "").trim();
   if (!t || /\s/.test(t)) return null;
   const v = vaultRefs(t);
-  if (v.length === 1 && v[0].index === 0 && v[0].length === t.length) return v[0].path;
+  if (v.length === 1 && v[0].index === 0 && v[0].length === t.length) return { path: v[0].path, vault: true };
   const g = gitRefs(t);
-  if (g.length === 1 && g[0].index === 0 && g[0].length === t.length) return g[0].path;
+  if (g.length === 1 && g[0].index === 0 && g[0].length === t.length) return { path: g[0].path, vault: false };
   return null;
+}
+
+/** Chip label: vault notes show just the file name, everything else full. */
+export function chipLabel(path: string, vault: boolean): string {
+  if (!vault) return path;
+  return path.split("/").pop() ?? path;
 }
 
 /**

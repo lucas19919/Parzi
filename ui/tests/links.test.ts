@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fileLink, gitRefs, isBranchLike, safeDecode, vaultRefs, webLink, wholeRef } from "../src/lib/linkRules.ts";
+import { chipLabel, fileLink, gitRefs, isBranchLike, safeDecode, vaultRefs, webLink, wholeRef } from "../src/lib/linkRules.ts";
 
 test("safeDecode survives malformed escapes", () => {
   assert.equal(safeDecode("a%20b"), "a b");
@@ -117,11 +117,21 @@ test("dashes do not smuggle refs out of longer words", () => {
     gitRefs("foo-plan/sidebar-polish").map((r) => r.path),
     ["foo-plan/sidebar-polish"],
   );
-  assert.deepEqual(wholeRef("  notes/a.md  "), "notes/a.md");
-  assert.deepEqual(wholeRef("`plan/sidebar-polish`"), "plan/sidebar-polish");
-  assert.deepEqual(wholeRef("123e4567-e89b-12d3-a456-426614174000"), "123e4567-e89b-12d3-a456-426614174000");
+  assert.deepEqual(wholeRef("  notes/a.md  "), { path: "notes/a.md", vault: true });
+  assert.deepEqual(wholeRef("`plan/sidebar-polish`"), { path: "plan/sidebar-polish", vault: false });
+  assert.deepEqual(wholeRef("123e4567-e89b-12d3-a456-426614174000"), {
+    path: "123e4567-e89b-12d3-a456-426614174000",
+    vault: false,
+  });
   assert.equal(wholeRef("two refs notes/a.md"), null);
   assert.equal(wholeRef("not a ref"), null);
+});
+
+test("vault chips show just the file name", () => {
+  assert.equal(chipLabel("projects/zombie/random-open-test.md", true), "random-open-test.md");
+  assert.equal(chipLabel("notes/a.md:12", true), "a.md:12");
+  assert.equal(chipLabel("plan/sidebar-polish", false), "plan/sidebar-polish");
+  assert.equal(chipLabel("1f0a4718..da9f463f", false), "1f0a4718..da9f463f");
 });
 
 test("branch-like paths are found, files and noise are not", () => {

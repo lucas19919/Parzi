@@ -5,7 +5,7 @@ import { toast } from "./toast";
 import { splitSegments, type Segment } from "./segments";
 import { reportMarkdown } from "./mdReport";
 import { mathAt } from "./mdMath";
-import { gitRefs, vaultRefs, wholeRef } from "./linkRules";
+import { chipLabel, gitRefs, vaultRefs, wholeRef } from "./linkRules";
 
 export const richReady = writable(false);
 
@@ -183,7 +183,7 @@ function linkWholeLine(l: string): string {
   const ref = wholeRef(l);
   if (!ref) return escapeHtml(l) || " ";
   const m = /^(\s*)(.*?)(\s*)$/.exec(l) ?? ["", "", l, ""];
-  return `${escapeHtml(m[1])}<a class="file-ref" href="${escapeHtml(ref)}">${escapeHtml(ref)}</a>${escapeHtml(m[3])}`;
+  return `${escapeHtml(m[1])}<a class="file-ref" href="${escapeHtml(ref.path)}" title="${escapeHtml(ref.path)}">${escapeHtml(chipLabel(ref.path, ref.vault))}</a>${escapeHtml(m[3])}`;
 }
 
 md.renderer.rules.fence = (tokens, idx) => {
@@ -319,11 +319,12 @@ md.core.ruler.push("parzi-file-links", (state) => {
         if (!ref) continue;
         const open = new state.Token("link_open", "a", 1);
         open.attrs = [
-          ["href", ref],
+          ["href", ref.path],
           ["class", "file-ref"],
+          ["title", ref.path],
         ];
         const label = new state.Token("text", "", 0);
-        label.content = ref;
+        label.content = chipLabel(ref.path, ref.vault);
         const close = new state.Token("link_close", "a", -1);
         kids.splice(i, 1, open, label, close);
         i += 2;
@@ -350,9 +351,10 @@ md.core.ruler.push("parzi-file-links", (state) => {
         open.attrs = [
           ["href", r.path],
           ["class", "file-ref"],
+          ["title", r.path],
         ];
         const label = new state.Token("text", "", 0);
-        label.content = r.path;
+        label.content = chipLabel(r.path, r.pri === 0);
         const close = new state.Token("link_close", "a", -1);
         nodes.push(open, label, close);
         at = r.index + r.length;
