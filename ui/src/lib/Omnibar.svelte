@@ -598,8 +598,8 @@
 
   
   {#if !web && !started}
-    {#if remote}
-      <div class="where">
+      {#if remote}
+      <div class="where" transition:slide={{ duration: 160, easing: cubicOut }}>
         <span>Let's build {remoteProject ? "in" : "on"}</span>
         <button
           bind:this={projBtn}
@@ -613,7 +613,7 @@
         {#if remoteProject && remoteHost}<span>on {remoteHost}</span>{/if}
       </div>
     {:else}
-      <div class="where">
+      <div class="where" transition:slide={{ duration: 160, easing: cubicOut }}>
         <span>Let's build in</span>
         <button
           bind:this={projBtn}

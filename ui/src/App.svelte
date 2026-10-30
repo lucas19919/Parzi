@@ -2320,6 +2320,17 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
     width: min(var(--read), calc(100% - 64px - 2 * var(--shift, 0px)));
     transform: translate(calc(-50% - var(--shift, 0px)), 0);
+    animation: dock-in 260ms var(--ease-out);
+  }
+  @keyframes dock-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .composer.docked {
+      animation: none;
+    }
   }
   .composer.docked :global(.box) {
     background: var(--bg);

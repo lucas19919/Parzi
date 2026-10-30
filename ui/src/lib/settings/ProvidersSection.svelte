@@ -299,47 +299,4 @@
   .rows > .details > label.row.prog {
     justify-content: flex-start;
   }
-  /* Registry grid uses the same card theme as Appearance packs. */
-  .packs {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: calc(var(--space) * 3);
-    flex: 1;
-    min-width: 0;
-    width: 100%;
-  }
-  .pack-btn {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space);
-    min-width: 0;
-    padding: calc(var(--space) * 2);
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--radius-lg);
-    color: var(--muted);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-  }
-  .pack-btn:hover {
-    background: var(--panel);
-    border-color: var(--line);
-    color: var(--text);
-  }
-  .pack-name {
-    font-size: var(--fs-sm);
-    font-weight: 500;
-    color: var(--text);
-  }
-  .pack-cmd {
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-family: var(--mono), ui-monospace, monospace;
-    font-size: var(--fs-xs);
-    color: var(--muted);
-  }
 </style>

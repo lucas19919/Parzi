@@ -133,9 +133,14 @@
       "reason": "Reviewed: field placeholders are --muted on the field's opaque --bg (at least 4.5:1 in every built-in theme); axe cannot measure a placeholder background. Typed text is --text on the same surface and passes wherever sampled."
     },
     {
-      "selector": ".rows.off .row span",
+      "selector": ".rows.off .row span, .rows.off .row .row-label",
       "rules": ["text-contrast"],
-      "reason": "Reviewed: turned-off cards deliberately dim their rows to inactive; the same text passes at full opacity when the provider or connector is on."
+      "reason": "Reviewed: turned-off cards dim their rows on purpose; the same text passes at full opacity when the provider or connector is on."
+    },
+    {
+      "selector": ".packs .pack-btn span",
+      "rules": ["content-clipping"],
+      "reason": "Reviewed: catalogue grid cards truncate long names and descriptions with an ellipsis on purpose; the full text shows in the card's title tooltip on hover, like tab titles."
     },
     {
       "selector": ".ob .queue-item span",

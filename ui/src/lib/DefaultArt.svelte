@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { fade } from "svelte/transition";
+
   export let bg = "";
 </script>
 
 <div class="backdrop">
   {#if bg}
-    <div class="art">
+    <div class="art" transition:fade={{ duration: 200 }}>
       <img src={bg} alt="" />
       <div class="shade" />
       <div class="grain" aria-hidden="true" />

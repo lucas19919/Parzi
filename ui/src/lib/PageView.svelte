@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from "svelte";
-  import { fly } from "svelte/transition";
+  import { fade, fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
   import { adblock, api, vault, BITWARDEN_INSTALL, type AdblockState, type VaultLogin } from "./api";
@@ -46,15 +46,38 @@
   let snapshot = "";
   let snapAt = 0;
   let shownNow = false;
+  let freshUrl = "";
+  let fresh = false;
+  let freshTimer: number | null = null;
   let remoteSeq = 0;
   let remoteTimer = 0;
   let listStyle = "";
 
   $: url = tab.url ?? "";
   $: if (!editing) address = url;
+  // Fresh navigations veil behind a blurred placeholder until first paint
+  // (or a failsafe timeout) so a blank webview never flashes in.
+  let wasLoading = false;
+  $: if (url && url !== freshUrl) {
+    freshUrl = url;
+    fresh = true;
+    snapshot = "";
+    if (freshTimer) clearTimeout(freshTimer);
+    freshTimer = window.setTimeout(() => {
+      fresh = false;
+      freshTimer = null;
+    }, 8000);
+  }
+  $: if (wasLoading && !tab.loading) {
+    fresh = false;
+    if (freshTimer) clearTimeout(freshTimer);
+    freshTimer = null;
+  }
+  $: wasLoading = !!tab.loading;
+  $: veiled = !!url && !tab.crashed && !!tab.loading && fresh;
   $: secure = url.startsWith("https://");
   $: pinned = $pins.some((p) => p.url === url);
-  $: url, immersive, $covered, slot, tab.crashed, schedule();
+  $: url, immersive, $covered, slot, tab.crashed, tab.loading, fresh, schedule();
   $: void loadShield(hostOf(url));
   $: open = editing && rows.length > 0;
   $: setOverlay(`address-${tab.id}`, open);
@@ -119,7 +142,7 @@
     if (!alive || !slot) return;
     const r = slot.getBoundingClientRect();
     try {
-      if ($covered || tab.crashed || !url || r.width < 8 || r.height < 8) {
+      if ($covered || tab.crashed || veiled || !url || r.width < 8 || r.height < 8) {
         shownNow = false;
         setPageArea(null);
         await api.browserHide();
@@ -463,6 +486,10 @@
       </div>
     {:else if ($covered || open) && snapshot}
       <img class="snap" src={snapshot} alt="" draggable="false" />
+    {:else if veiled}
+      <div class="loading" transition:fade={{ duration: 160 }}>
+        {#if snapshot}<img class="snap blur" src={snapshot} alt="" draggable="false" />{/if}
+      </div>
     {/if}
   </div>
 </div>
@@ -662,6 +689,7 @@
     color: var(--muted);
   }
   .slot {
+    position: relative;
     flex: 1;
     min-height: 0;
     display: flex;
@@ -677,6 +705,39 @@
     height: 100%;
     display: block;
     object-fit: fill;
+  }
+  .loading {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background: var(--bg);
+  }
+  .loading .blur {
+    filter: blur(18px) saturate(0.9);
+    transform: scale(1.06);
+    opacity: 0.75;
+  }
+  .loading::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--text) 5%, transparent) 50%, transparent 70%);
+    background-size: 200% 100%;
+    animation: load-sweep 1.6s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes load-sweep {
+    from {
+      background-position: 180% 0;
+    }
+    to {
+      background-position: -80% 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .loading::after {
+      animation: none;
+    }
   }
   .crash {
     display: flex;

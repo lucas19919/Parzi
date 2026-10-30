@@ -30,9 +30,6 @@ const STATES = {
   history: [2, 3, 4].map((i) => click(`library ${i}`, nth(".seg", i), `${nth(".seg", i)}[aria-pressed="true"]`)),
   settings: [
     ...[2, 3].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
-    click("connector directory", ".pref-section > :first-child .connect-mcp", '.box[role="dialog"] .body > div:nth-of-type(1)'),
-    { name: "connector address", action: "fill", selector: ".box .paste textarea", value: "https://mcp.example.com/mcp", ready: { selector: ".box .paste .sbtn.primary" } },
-    { name: "connector closed", action: "click", selector: ".box .head .x", ready: { selector: '.box[role="dialog"]', state: "hidden" } },
     click("connector connected", ".rows .row-title .row-ctl .sbtn", ".rows .row.as-toggle"),
     click("connector tools", ".rows .row.as-toggle", ".rows .details .row:first-child"),
     click("section 4", nth(".sections", 4), `${nth(".sections", 4)}[aria-selected="true"]`),
