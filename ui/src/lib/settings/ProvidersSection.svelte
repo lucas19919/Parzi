@@ -11,14 +11,6 @@
 
   export let notify: (msg: string, err?: boolean) => void = () => {};
 
-  const PROGRAM: Record<string, string> = {
-    claude: "claude",
-    codex: "codex",
-    opencode: "opencode",
-    grok: "grok",
-    antigravity: "agy_acp_server",
-    cursor: "cursor-agent",
-  };
   let cfg: ParziConfig | null = null;
   let loading = true;
   let err = "";
@@ -183,9 +175,6 @@
           <div class="row row-title">
             <ProviderLogo provider={id} size={20} />
             <span>{nameOf(id)}{#if id === "acp" && entry.label} · {entry.label}{/if}</span>
-            {#if ready && p && !p.gated}
-              <span class="chip warn" use:tooltip={"It changes files on its own. Parzi cannot ask you first or keep it inside the project folder."}>Edits without asking</span>
-            {/if}
             <span class="row-ctl auto">
               <button
                 class="status-dot {dotState(p, entry.enabled, busy)}"
@@ -213,8 +202,8 @@
             {/each}
           {/if}
 
-          <div class="details">
-            {#if id === "acp"}
+          {#if id === "acp"}
+            <div class="details">
               <label class="row prog">
                 <span class="row-label">Name</span>
                 <input
@@ -227,27 +216,27 @@
                   on:keydown={(e) => e.key === "Enter" && saveAcpLabel()}
                 />
               </label>
-            {/if}
-            <div class="row prog">
-              <span class="row-label">{id === "acp" ? "Command" : "Program"}</span>
-              <input
-                class="tin mono"
-                placeholder={id === "acp" ? "gemini --acp" : `Found automatically (${PROGRAM[id]})`}
-                aria-label={id === "acp" ? "ACP command" : `${nameOf(id)} program path`}
-                spellcheck="false"
-                bind:value={paths[id]}
-                on:change={() => savePath(id)}
-                on:keydown={(e) => e.key === "Enter" && savePath(id)}
-              />
-              <span class="row-ctl auto">
-                {#if step}
-                  <button class="sbtn primary" disabled={busy} on:click={() => step.run(id)}>{busy && step.label === "Try again" ? "Checking…" : step.label}</button>
-                {:else if wait}
-                  <span class="waiting">{wait.action === "install" ? "Installing…" : "Signing in…"}</span>
+              <div class="row prog">
+                <span class="row-label">Command</span>
+                <input
+                  class="tin mono"
+                  placeholder="gemini --acp"
+                  aria-label="ACP command"
+                  spellcheck="false"
+                  bind:value={paths[id]}
+                  on:change={() => savePath(id)}
+                  on:keydown={(e) => e.key === "Enter" && savePath(id)}
+                />
+                {#if step || wait}
+                  <span class="row-ctl auto">
+                    {#if step}
+                      <button class="sbtn primary" disabled={busy} on:click={() => step.run(id)}>{busy && step.label === "Try again" ? "Checking…" : step.label}</button>
+                    {:else if wait}
+                      <span class="waiting">{wait.action === "install" ? "Installing…" : "Signing in…"}</span>
+                    {/if}
+                  </span>
                 {/if}
-              </span>
-            </div>
-            {#if id === "acp"}
+              </div>
               <div class="row row-title">
                 <span>Custom</span>
                 <span class="row-ctl auto">
@@ -271,8 +260,8 @@
                   </div>
                 </div>
               {/if}
-            {/if}
-          </div>
+            </div>
+          {/if}
         </div>
       </div>
       {/each}
@@ -282,14 +271,6 @@
   .rows.off .row:first-child > :not(.row-ctl) {
     opacity: 0.55;
   }
-  .row .chip {
-    flex: none;
-    margin-left: calc(var(--space) * 2);
-  }
-  .chip {
-    font-size: var(--fs-xs); font-weight: 600; padding: var(--space) calc(var(--space) * 2); border-radius: 999px; white-space: nowrap; cursor: default;
-  }
-  .chip.warn { color: var(--warn); border: 1px solid var(--warn); }
   .waiting { font-size: var(--fs-md); color: var(--muted); white-space: nowrap; }
 
   /* Hairline progress strip between rows while a provider sets up. */
@@ -358,17 +339,10 @@
     width: 280px;
     max-width: 100%;
   }
-  /* Fixed label column so every input shares one left edge. */
+  /* Labels take the slack so inputs sit right-aligned. */
   .rows > .details > div.row.prog,
   .rows > .details > label.row.prog {
     justify-content: flex-start;
-  }
-  .rows > .details > .row.prog > .row-label {
-    flex: none;
-    width: 96px;
-  }
-  .rows > .details > .row.prog > .row-ctl {
-    margin-left: auto;
   }
   /* Registry grid uses the same card theme as Appearance packs. */
   .packs {

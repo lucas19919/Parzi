@@ -187,13 +187,17 @@
   }
   .panel-btn {
     background: transparent;
-    border: 1px solid var(--line);
+    border: 1px solid transparent;
     border-radius: 999px;
   }
-  .panel-btn:hover,
+  .panel-btn:hover {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text);
+  }
   .panel-btn.active {
     background: transparent;
-    border: 1px solid var(--line);
+    border-color: var(--line);
     color: var(--text);
   }
   .count {
