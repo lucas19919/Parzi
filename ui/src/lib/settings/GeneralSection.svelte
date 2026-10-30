@@ -195,7 +195,7 @@
     <div class="row row-title"><span>Sessions</span></div>
     <div class="row">
       <span class="row-label">{sessions} {sessions === 1 ? "session" : "sessions"}</span>
-      <span class="row-ctl auto"><button class="sbtn" on:click={clearSessions}><Icon name="trash" size={12} /><span>Clear finished</span></button></span>
+      <span class="row-ctl auto"><button class="sbtn" on:click={clearSessions}><Icon name="trash" size={12} /><span>Delete</span></button></span>
     </div>
   </div>
 </div>

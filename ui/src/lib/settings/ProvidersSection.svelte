@@ -1,10 +1,10 @@
 <script lang="ts">
   import ProviderLogo from "../ProviderLogo.svelte";
   import { onMount } from "svelte";
-  import { api, type ParziConfig, type ProviderEntry, type RegistryAgent } from "../api";
+  import { api, type ParziConfig, type ProviderEntry, type ProviderStatus, type RegistryAgent } from "../api";
   import { formatCommand, splitCommand } from "../acpCommand";
   import { board, checking, ensureBoard, nextStep, refreshBoard, refreshStale, setupWaits } from "../providerStore";
-  import { PROVIDER_ORDER, isUsable, nameOf } from "../providerRows";
+  import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "../providerRows";
   import { updateConfig } from "../config";
   import "./shared.css";
 
@@ -47,6 +47,15 @@
           : (c.providers?.[id]?.binary ?? ""),
       ]),
     );
+
+  function statusLine(p: ProviderStatus | undefined, enabled: boolean, busy: boolean): string {
+    if (!enabled) return "Off";
+    if (!p || p.state === "unchecked" || p.state === "disabled") return busy ? "Checking…" : "Not checked yet";
+    if (p.state === "error") return p.hint || "Check failed";
+    const parts = [stateLabel(p)];
+    if (p.version && p.state === "ready") parts.push(p.version);
+    return parts.join(" · ");
+  }
 
   function resetsIn(at?: number): string {
     if (!at) return "";
@@ -156,6 +165,9 @@
           <div class="row row-title">
             <ProviderLogo provider={id} size={20} />
             <span>{nameOf(id)}{#if id === "acp" && entry.label} · {entry.label}{/if}</span>
+          </div>
+          <div class="row">
+            <span class="row-label">{wait?.note ?? statusLine(p, entry.enabled, busy)}</span>
             <span class="row-ctl auto">
               {#if step}
                 <button class="sbtn primary" disabled={busy} on:click={() => step.run(id)}>{busy && step.label === "Try again" ? "Checking…" : step.label}</button>
