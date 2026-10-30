@@ -161,8 +161,10 @@
                 <button class="sbtn primary" disabled={busy} on:click={() => step.run(id)}>{busy && step.label === "Try again" ? "Checking…" : step.label}</button>
               {:else if wait}
                 <span class="waiting">{wait.action === "install" ? "Installing…" : "Signing in…"}</span>
-              {:else if !entry.enabled}
-                <button class="sbtn" title={`Turn ${nameOf(id)} on`} on:click={() => setEnabled(id, true)}>On</button>
+              {:else if ready}
+                <button class="sbtn" title={`Disconnect ${nameOf(id)}`} on:click={() => setEnabled(id, false)}>Connected</button>
+              {:else}
+                <button class="sbtn" title={`Connect ${nameOf(id)}`} on:click={() => setEnabled(id, true)}>Disconnected</button>
               {/if}
             </span>
           </div>
@@ -209,15 +211,6 @@
                   on:change={() => savePath(id)}
                   on:keydown={(e) => e.key === "Enter" && savePath(id)}
                 />
-                {#if step || wait}
-                  <span class="row-ctl auto">
-                    {#if step}
-                      <button class="sbtn primary" disabled={busy} on:click={() => step.run(id)}>{busy && step.label === "Try again" ? "Checking…" : step.label}</button>
-                    {:else if wait}
-                      <span class="waiting">{wait.action === "install" ? "Installing…" : "Signing in…"}</span>
-                    {/if}
-                  </span>
-                {/if}
               </div>
               <div class="row row-title">
                 <span>Custom</span>
