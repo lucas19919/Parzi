@@ -188,8 +188,3 @@ button.status-dot { cursor: pointer; }
 .status-dot.off { background: var(--faint); }
 .status-dot.idle { background: transparent; border: 1px solid var(--line); }
 
-/* Text on/off control used inline next to a row's primary action. */
-.onoff {
-  min-width: calc(var(--space) * 14);
-  justify-content: center;
-}

@@ -118,14 +118,6 @@
     server: Server;
   }
 
-  function dotState(off: boolean, h: Health | undefined): string {
-    if (off) return "off";
-    if (!h) return "idle";
-    if (h.state === "ok") return "ok";
-    if (h.state === "error") return "bad";
-    return "warn";
-  }
-
   // Only connected connectors live here now; connecting happens in the modal.
   function appList(config: ParziConfig | null, titles: Record<string, string>): AppRow[] {
     const map = (config?.mcp.servers ?? {}) as Record<string, Server>;
@@ -378,20 +370,12 @@
           {@const off = !!row.server && row.server.enabled === false}
           {@const open = openTools === row.id}
           {@const tools = details[row.id]?.tools ?? []}
-          {@const sentence = off ? "Off" : h?.state === "checking" ? "Connecting…" : h?.state === "signing" ? "Finish signing in in your browser" : h?.state === "signin" ? "Sign in to use it" : h?.state === "error" ? (h.error ?? "Couldn't connect") : h?.state === "ok" ? "Connected" : "Added"}
           <div class="rows" class:off={off}>
             <div class="row row-title">
               <button class="logo-pick" use:tooltip={"Choose a logo"} aria-label="Choose a logo for {row.name}" on:click={() => chooseLogo(row.id)}>
                 <ConnectorLogo id={row.id} name={row.name} site={row.site} src={details[row.id]?.icon ?? null} size={20} />
               </button>
-              <span>{row.name}</span>
-              <span class="row-ctl auto">
-                <span class="status-dot {dotState(off, h)}" role="img" aria-label={sentence} use:tooltip={sentence} />
-              </span>
-            </div>
-            <div class="row conn">
-              <span class="row-label">Connection</span>
-              <span class="conn-state" title={h?.raw ?? ""}>{sentence}</span>
+              <span title={h?.raw ?? ""}>{row.name}</span>
               <span class="row-ctl auto">
                 {#if !off && h?.error === "Needs Node.js"}
                   <button class="sbtn" on:click={() => openOutside("https://nodejs.org")}>Get Node.js</button>
@@ -400,7 +384,7 @@
                 {:else if !off && h?.state === "error"}
                   <button class="sbtn" on:click={() => check(row.id, true)}>Try again</button>
                 {/if}
-                <button class="sbtn onoff" title={off ? `Turn ${row.name} on` : `Turn ${row.name} off`} on:click={() => toggle(row.id)}>{off ? "On" : "Off"}</button>
+                <button class="sbtn" title={off ? `Connect ${row.name}` : `Disconnect ${row.name}`} on:click={() => toggle(row.id)}>{off ? "Disconnected" : "Connected"}</button>
                 <button class="icon-btn" class:armed={delConn === row.id} use:tooltip={delConn === row.id ? "Click again to remove" : `Remove ${row.name}`} aria-label={delConn === row.id ? `Confirm remove ${row.name}` : `Remove ${row.name}`} on:click={() => removeServer(row.id)}>
                   <Icon name="trash" size={12} />
                 </button>
@@ -452,21 +436,6 @@
   }
   .row.off .row-label {
     color: var(--muted);
-  }
-  .conn > .row-label {
-    flex: none;
-  }
-  .conn-state {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--muted);
-    font-size: var(--fs-md);
-  }
-  .conn .sbtn {
-    height: calc(var(--space) * 8);
   }
   .as-toggle {
     color: var(--muted);
