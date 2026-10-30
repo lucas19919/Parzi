@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Parzi</title>
+  <meta name="description" content="Parzi is a desktop app where one composer talks to Claude, Codex, OpenCode, Grok, Antigravity, and Cursor, beside a normal browser with connectors, plans, and math rendering." />
+  <link rel="preload" href="./fonts/figtree-latin.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="icon" type="image/svg+xml" href="./parzi-mark.svg" />
+  <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <meta name="theme-color" content="#161616" />
+  <link rel="stylesheet" href="./styles.css?v=3" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#top">Parzi</a>
+    <div class="top-actions">
+      <a class="top-btn ghost" href="https://github.com/lucas19919/Parzi/releases">Download</a>
+      <a class="top-btn filled star" href="https://github.com/lucas19919/Parzi" target="_blank" rel="noopener"><svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1.2l1.7 3.8 4.2.5-3.1 2.8.9 4.1L8 10.5 4.3 12.4l.9-4.1L2.1 5.5l4.2-.5L8 1.2z"/></svg>Star</a>
+    </div>
+  </header>
+
+  <main id="top">
+    <header class="hero">
+      <h1>Build with the agents you already pay for in one place.</h1>
+      <div class="hero-cta">
+        <a class="btn primary" href="https://github.com/lucas19919/Parzi/releases">Download for Windows or macOS</a>
+        <a class="btn" href="https://github.com/lucas19919/Parzi">Read the source</a>
+      </div>
+      <a class="scroll-cue" href="#home" aria-label="Scroll to content"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></a>
+    </header>
+
+    <section class="row" id="home">
+      <div class="visual">
+        <figure class="shot">
+          <img src="./home.png" alt="Parzi home screen with the composer centered and the project and branch above it" loading="lazy" />
+        </figure>
+      </div>
+      <div class="copy">
+        <h2>A harness made to look and feel good for your agents.</h2>
+        <p>Parzi combines your Claude, Codex, OpenCode, Grok, Antigravity, and Cursor subscriptions, in one place, in a harness that is fully agent driven.</p>
+      </div>
+    </section>
+
+    <section class="row flip" id="agents">
+      <div class="copy">
+        <h2>One window for the agents you already pay for.</h2>
+        <p>Set up installs each agent with its own installer and login. Parzi lists every ready model in one picker, and each session sticks to the agent it started with.</p>
+      </div>
+      <div class="visual">
+        <div class="logos">
+          <div class="logo"><img src="./logos/claude.webp" alt="Claude, Claude Code" width="512" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/openai.webp" alt="OpenAI, Codex" width="512" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/opencode.webp" alt="OpenCode" width="512" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/xai.webp" alt="xAI, Grok" width="1061" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/antigravity.webp" alt="Antigravity" width="556" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/cursor.webp" alt="Cursor" width="512" height="512" loading="lazy" /></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="row" id="browser">
+      <div class="visual">
+        <figure class="shot">
+          <img src="./browser.webp" alt="A Parzi page tab grouped with its session in the tab bar" width="1904" height="1006" loading="lazy" />
+        </figure>
+      </div>
+      <div class="copy">
+        <h2>Pages are a normal browser, next to the agent.</h2>
+        <p>Each page tab owns a native web view that stays alive while hidden, so switching tabs never reloads, and the slot behind it takes the page background color so there is never a white flash. The bar has back, forward, reload, address, shield, and pin, with suggestions that show a search row, phrases, then history and bookmark matches.</p>
+      </div>
+    </section>
+
+    <section class="row flip" id="connectors">
+      <div class="copy">
+        <h2>Keep working with your tools through built-in MCP connectors.</h2>
+        <p>Sign in once and provide your agents with the tools it needs or build custom connectors for the custom tools you use.</p>
+      </div>
+      <div class="visual">
+        <div class="logos wide">
+          <div class="logo"><img src="./logos/github.webp" alt="GitHub, repositories, issues, pull requests" width="512" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/notion.webp" alt="Notion, pages and databases" width="512" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/linear.webp" alt="Linear, issues and projects" width="512" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/sentry.webp" alt="Sentry, errors and traces" width="512" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/stripe.webp" alt="Stripe, payments" width="512" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/huggingface.webp" alt="Hugging Face, models and datasets" width="546" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/slack.webp" alt="Slack, team chat" width="512" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/figma.webp" alt="Figma, design" width="341" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/gitlab.webp" alt="GitLab, repositories" width="554" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/asana.webp" alt="Asana, tasks" width="512" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/jira.webp" alt="Jira, issues" width="512" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/googledrive.webp" alt="Google Drive, docs" width="589" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/postgresql.webp" alt="PostgreSQL, database" width="512" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/supabase.webp" alt="Supabase, database" width="512" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/cloudflare.webp" alt="Cloudflare, infrastructure" width="1600" height="512" loading="lazy" /></div>
+          <div class="logo"><img src="./logos/discord.webp" alt="Discord, community" width="512" height="512" loading="lazy" /></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="row" id="math">
+      <div class="visual">
+        <figure class="shot">
+          <img src="./math.webp" alt="A Parzi thread rendering an integral and Euler's identity as typeset math" width="1917" height="1005" loading="lazy" />
+        </figure>
+      </div>
+      <div class="copy">
+        <h2>Math renders as math.</h2>
+        <p>Inline expressions use single dollars and display blocks use double dollars, then KaTeX renders them in the thread at the surrounding text size. Code blocks keep the language tag, the line count, and a copy button, with diff tinting for additions and deletions and a clamp at thirty lines so long output stays skimmable.</p>
+      </div>
+    </section>
+
+    <section class="row flip" id="visuals">
+      <div class="copy">
+        <h2>Charts render inline, in the thread.</h2>
+        <p>Answers arrive with the picture attached: bars, lines, histograms, sparklines, timelines, and tables, drawn from the same data the agent just read.</p>
+      </div>
+      <div class="visual">
+        <figure class="shot">
+          <img src="./charts.webp" alt="A Parzi thread answering with a bar chart of Nvidia quarterly revenue and a line chart of quarter over quarter growth" width="1918" height="1007" loading="lazy" />
+        </figure>
+      </div>
+    </section>
+
+    <section class="signoff">
+      <div class="ghost-card">
+        <h2>Download Parzi.</h2>
+        <p>One installer, automatic updates, your data stays home.</p>
+        <div class="hero-cta">
+          <a class="btn primary" href="https://github.com/lucas19919/Parzi/releases">Download for Windows or macOS</a>
+          <a class="btn" href="https://github.com/lucas19919/Parzi">Read the source</a>
+        </div>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <div class="foot-panel">
+        <div class="foot-top">
+          <p>Build with the agents you already pay for in one place.</p>
+          <a href="https://github.com/lucas19919/Parzi/releases">Install</a>
+        </div>
+        <a class="foot-big" href="https://github.com/lucas19919/Parzi">
+          <span>lucas19919/Parzi</span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19L19 5M19 5H8M19 5v11" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        </a>
+        <div class="foot-cols">
+          <p>A harness made to look and feel good for your agents.</p>
+          <nav aria-label="On this page">
+            <a href="#home">Sessions</a>
+            <a href="#agents">Agents</a>
+            <a href="#connectors">Connectors</a>
+            <a href="#browser">Browser</a>
+            <a href="#visuals">Charts</a>
+          </nav>
+          <nav aria-label="Repository">
+            <a href="https://github.com/lucas19919/Parzi">GitHub</a>
+            <a href="https://github.com/lucas19919/Parzi">Star</a>
+          </nav>
+        </div>
+        <div class="foot-line">
+          <span>MIT licensed</span>
+        </div>
+      </div>
+      <div class="mega-band">
+        <svg class="wordmark" viewBox="0 54 1200 300" preserveAspectRatio="xMinYMin meet" role="img" aria-label="parzi"><text x="0" y="230" font-size="240" textLength="1200" lengthAdjust="spacingAndGlyphs">parzi</text></svg>
+      </div>
+    </footer>
+  </main>
+
+  <div class="viewer" id="viewer" role="dialog" aria-modal="true" aria-label="Image viewer"><img alt="" /></div>
+  <script>
+  (function () {
+    var viewer = document.getElementById('viewer');
+    var pic = viewer.querySelector('img');
+    function close() { viewer.classList.remove('open'); document.body.style.overflow = ''; }
+    document.querySelectorAll('.shot img').forEach(function (img) {
+      img.addEventListener('click', function () {
+        pic.src = img.currentSrc || img.src;
+        pic.alt = img.alt || '';
+        viewer.classList.add('open');
+        document.body.style.overflow = 'hidden';
+      });
+    });
+    viewer.addEventListener('click', close);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
+  })();
+  </script>
+</body>
+</html>
