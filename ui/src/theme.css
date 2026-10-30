@@ -370,7 +370,7 @@ a:hover { color: var(--link); }
 .msg a.cite {
   display: inline-flex; align-items: center; justify-content: center; min-width: 17px; height: 17px; padding: 0 var(--space); margin: 0 var(--space) 0 var(--space);
   vertical-align: 1px; border-radius: var(--radius); background: color-mix(in srgb, var(--link) 16%, transparent); color: var(--link);
-  font-size: 11px; font-weight: 600; line-height: 1; text-decoration: none;
+  font-size: var(--fs-xs); font-weight: 600; line-height: 1; text-decoration: none;
 }
 .msg a.cite:hover { background: color-mix(in srgb, var(--link) 28%, transparent); color: var(--link); }
 .msg blockquote { margin: 1em 0; padding: calc(var(--space) * 2) calc(var(--space) * 3); border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 var(--radius) var(--radius) 0; color: var(--muted); }
