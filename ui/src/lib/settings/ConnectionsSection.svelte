@@ -4,14 +4,13 @@
   import Icon from "../Icon.svelte";
   import { tooltip } from "../tooltip";
   import { api, type ParziConfig } from "../api";
-  import { classifyPaste, nameFromProgram, splitLine } from "../cmdline";
   import type { ProviderStatus } from "../api";
   import { remote, remoteBoard, remoteInfo as linked, type RemoteInfo } from "../remote";
   import { PROVIDER_ORDER, nameOf, stateLabel } from "../providerRows";
   import SegControl from "./SegControl.svelte";
-  import Switch from "./Switch.svelte";
+  import ConnectMcp from "./ConnectMcp.svelte";
   import { updateConfig } from "../config";
-  import { CATALOG, hostedServer, nameFromUrl, type CatalogConnector, type ServerCfg as Server } from "../connectorCatalog";
+  import { CATALOG, type ServerCfg as Server } from "../connectorCatalog";
   import ConnectorLogo from "../ConnectorLogo.svelte";
   import "./shared.css";
 
@@ -24,9 +23,7 @@
   let loadError = "";
   let info: RemoteInfo | null = null;
   let saving = false;
-  let adding = false;
-  let pasted = "";
-  let customName = "";
+  let connectOpen = false;
 
   interface Health {
     state: "checking" | "signing" | "signin" | "ok" | "error";
@@ -114,49 +111,38 @@
     }
   }
 
-  let found: { name: string; source: string; server: Server }[] = [];
-
   interface AppRow {
     id: string;
     name: string;
     site: string;
-    about: string;
-    kind: "found" | "ready" | "added";
-    server?: Server;
+    server: Server;
   }
 
-  function appList(config: ParziConfig | null, hits: typeof found, titles: Record<string, string>): AppRow[] {
+  function dotState(off: boolean, h: Health | undefined): string {
+    if (off) return "off";
+    if (!h) return "idle";
+    if (h.state === "ok") return "ok";
+    if (h.state === "error") return "bad";
+    return "warn";
+  }
+
+  // Only connected connectors live here now; connecting happens in the modal.
+  function appList(config: ParziConfig | null, titles: Record<string, string>): AppRow[] {
     const map = (config?.mcp.servers ?? {}) as Record<string, Server>;
-    const have = new Set(Object.keys(map));
     const knownIds = new Set(CATALOG.map((c) => c.id));
     const rows: AppRow[] = [];
     for (const c of CATALOG) {
-      if (have.has(c.id)) rows.push({ id: c.id, name: c.name, site: c.site, about: c.about, kind: "added", server: map[c.id] });
-      else {
-        const hit = hits.find((f) => f.name === c.id);
-        if (hit) rows.push({ id: c.id, name: c.name, site: c.site, about: "Already on this computer", kind: "found", server: hit.server });
-        else rows.push({ id: c.id, name: c.name, site: c.site, about: c.about, kind: "ready" });
-      }
-    }
-    for (const f of hits) {
-      if (have.has(f.name) || knownIds.has(f.name)) continue;
-      let site = "";
-      try {
-        site = f.server.url ? new URL(f.server.url).origin : "";
-      } catch {
-        site = "";
-      }
-      rows.push({ id: f.name, name: f.name, site, about: "Already on this computer", kind: "found", server: f.server });
+      if (map[c.id]) rows.push({ id: c.id, name: c.name, site: c.site, server: map[c.id] });
     }
     for (const [id, server] of Object.entries(map).sort(([a], [b]) => a.localeCompare(b))) {
       if (knownIds.has(id)) continue;
-      rows.push({ id, name: titles[id] || id, site: "", about: "", kind: "added", server });
+      rows.push({ id, name: titles[id] || id, site: "", server });
     }
     return rows;
   }
 
   $: titles = Object.fromEntries(Object.entries(details).map(([id, d]) => [id, d.title || ""]));
-  $: rows = which === "apps" ? appList(cfg, found, titles) : [];
+  $: rows = which === "apps" ? appList(cfg, titles) : [];
   const catalogIds = new Set(CATALOG.map((c) => c.id));
   $: mcpRows = rows.filter((row) => catalogIds.has(row.id));
   $: customRows = rows.filter((row) => !catalogIds.has(row.id));
@@ -167,92 +153,15 @@
 
   const openOutside = (url: string) => api.openConfirmedUrl(url).catch((e) => notify(String(e), true));
 
-  function connectRow(row: AppRow) {
-    if (row.kind === "found" && row.server) void addFound(row.id, row.server);
-    else if (row.kind === "ready") {
-      const c = CATALOG.find((item) => item.id === row.id);
-      if (c) void addKnown(c);
-    }
-  }
-
-  async function addKnown(c: CatalogConnector) {
-    const server = hostedServer(c.url, { auth: c.auth === "gh" ? "gh" : "" });
-    if (!(await save((cf) => (cf.mcp.servers[c.id] = server), ""))) return;
-    if (c.auth === "signin") void signIn(c.id);
-    else void check(c.id);
-  }
-
-  async function addFound(name: string, server: Server) {
-    if (cfg?.mcp.servers[name]) return notify(`${name} is already here`, true);
-    if (await save((c) => (c.mcp.servers[name] = { ...server, enabled: true }), "")) void check(name, true);
-  }
-
-  function freeName(base: string): string {
-    const have = cfg?.mcp.servers ?? {};
-    let id = base.slice(0, 32);
-    if (!have[id]) return id;
-    let n = 2;
-    while (have[`${id.slice(0, 28)}${n}`]) n += 1;
-    return `${id.slice(0, 28)}${n}`.slice(0, 32);
-  }
-
-  const NAME_OK = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
-
-  function slugId(raw: string): string {
-    let id = raw.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
-    if (!id) return "";
-    if (!/^[a-z0-9]/.test(id)) id = `app${id}`;
-    id = id.slice(0, 32);
-    return NAME_OK.test(id) ? id : "";
-  }
-
-  function chosenName(fallback: string): string | null {
-    const raw = customName.trim();
-    if (!raw) return freeName(fallback || "app");
-    const id = slugId(raw);
-    if (!id) return null;
-    return freeName(id);
-  }
-
-  async function addPasted() {
-    const text = pasted.trim();
-    const kind = classifyPaste(text);
-    if (!kind) return;
-    let list: [string, Server][];
-    if (kind === "link") {
-      const id = chosenName(nameFromUrl(text));
-      if (!id) return notify("Use letters and numbers for the name", true);
-      list = [[id, hostedServer(text)]];
-    } else if (kind === "block") {
-      list = ((await api.connectorsFromText(text).catch(() => [])) as [string, Server][]).filter(([id]) => NAME_OK.test(id));
-      if (!list.length) return notify("That did not include a connector", true);
-    } else {
-      const words = splitLine(text);
-      if (!words.length) return notify("Paste a link, a config block, or a command", true);
-      const id = chosenName(nameFromProgram(text));
-      if (!id) return notify("Use letters and numbers for the name", true);
-      list = [[id, { command: words[0], args: words.slice(1), env: {}, enabled: true }]];
-    }
-    const fresh = list.filter(([id]) => !cfg?.mcp.servers[id]);
-    if (!fresh.length) return notify(list.length === 1 ? `${list[0][0]} is already here` : "Those are already here", true);
-    if (await save((c) => fresh.forEach(([id, srv]) => (c.mcp.servers[id] = srv)), "")) {
-      pasted = "";
-      customName = "";
-      adding = false;
-      for (const [id] of fresh) void check(id, true);
-    }
+  function reloadAfterAdd() {
+    connectOpen = false;
+    void load();
   }
 
   $: if ($linked) info = $linked;
 
   onMount(() => {
     void load();
-    if (which === "apps") {
-      void api
-        .connectorsFound()
-        .then((all) => (found = all as typeof found))
-        .catch(() => {});
-    }
     const onFocus = () => {
       if (which === "remote" && info && agents.length) void checkAgents(true);
     };
@@ -456,81 +365,72 @@
 {:else}
   <div class="pref-section">
     {#each groups as group (group.id)}
-      {#if group.id === "mcp"}
-        <h3 class="section-title">MCPs</h3>
-      {:else}
-        <div class="section-head-with-action">
-          <h3 class="section-title">Connectors</h3>
-          <button class="sbtn" aria-expanded={adding} on:click={() => (adding = !adding)}>Add custom</button>
-        </div>
-        {#if adding}
-          <div class="paste">
-            <input class="tin" bind:value={customName} placeholder="Name (optional)" aria-label="Name" spellcheck="false" />
-            <textarea class="tin" rows="4" bind:value={pasted} placeholder="Paste a link, a config block, or a command" aria-label="Paste a link, a config block, or a command" spellcheck="false"></textarea>
-            <button class="sbtn primary" disabled={saving || !pasted.trim()} on:click={() => void addPasted()}>Add</button>
-          </div>
-        {/if}
-        {#if !group.rows.length && !adding}
-          <p class="section-desc">None yet.</p>
-        {/if}
+      <div class="section-head-with-action">
+        <h3 class="section-title">{group.id === "mcp" ? "MCPs" : "Connectors"}</h3>
+        <button class="sbtn" on:click={() => (connectOpen = true)}>Connect</button>
+      </div>
+      {#if !group.rows.length}
+        <p class="section-desc">None yet.</p>
       {/if}
       {#if group.rows.length}
-        {#each group.rows as row (row.kind + row.id)}
+        {#each group.rows as row (row.id)}
           {@const h = health[row.id]}
-          {@const added = row.kind === "added"}
           {@const off = !!row.server && row.server.enabled === false}
           {@const open = openTools === row.id}
           {@const tools = details[row.id]?.tools ?? []}
-          {@const sentence = !added ? "" : off ? "Off" : h?.state === "checking" ? "Connecting…" : h?.state === "signing" ? "Finish signing in in your browser" : h?.state === "signin" ? "Sign in to use it" : h?.state === "error" ? (h.error ?? "Couldn't connect") : h?.state === "ok" ? "Connected" : "Added"}
-          <div class="rows" class:off={added && off}>
-            <div class="row">
+          {@const sentence = off ? "Off" : h?.state === "checking" ? "Connecting…" : h?.state === "signing" ? "Finish signing in in your browser" : h?.state === "signin" ? "Sign in to use it" : h?.state === "error" ? (h.error ?? "Couldn't connect") : h?.state === "ok" ? "Connected" : "Added"}
+          <div class="rows" class:off={off}>
+            <div class="row row-title">
               <button class="logo-pick" use:tooltip={"Choose a logo"} aria-label="Choose a logo for {row.name}" on:click={() => chooseLogo(row.id)}>
                 <ConnectorLogo id={row.id} name={row.name} site={row.site} src={details[row.id]?.icon ?? null} size={20} />
               </button>
-              <span class="row-label">{row.name}<small class:ok={added && !off && h?.state === "ok"} class:bad={added && !off && h?.state === "error"} title={h?.raw ?? row.about}>{sentence || row.about}</small></span>
+              <span class="row-label">{row.name}</span>
               <span class="row-ctl auto">
-                {#if !added}
-                  <button class="sbtn" disabled={saving} on:click={() => connectRow(row)}>{row.kind === "found" ? "Add" : "Connect"}</button>
-                {:else if !off && h?.error === "Needs Node.js"}
+                <span class="status-dot {dotState(off, h)}" use:tooltip={sentence} />
+              </span>
+            </div>
+            <div class="row conn">
+              <span class="row-label">Connection</span>
+              <span class="conn-state" title={h?.raw ?? ""}>{sentence}</span>
+              <span class="row-ctl auto">
+                {#if !off && h?.error === "Needs Node.js"}
                   <button class="sbtn" on:click={() => openOutside("https://nodejs.org")}>Get Node.js</button>
                 {:else if !off && (h?.state === "signin" || h?.state === "signing")}
                   <button class="sbtn primary" disabled={h?.state === "signing"} on:click={() => signIn(row.id)}>{h?.state === "signing" ? "Signing in…" : "Sign in"}</button>
                 {:else if !off && h?.state === "error"}
                   <button class="sbtn" on:click={() => check(row.id, true)}>Try again</button>
-                {:else if off || h?.state === "ok" || !h}
-                  <Switch on={!off} title={off ? `Turn ${row.name} on` : `Turn ${row.name} off`} on:toggle={() => toggle(row.id)} />
                 {/if}
-                {#if added}
-                  <button class="icon-btn" class:armed={delConn === row.id} use:tooltip={delConn === row.id ? "Click again to remove" : `Remove ${row.name}`} aria-label={delConn === row.id ? `Confirm remove ${row.name}` : `Remove ${row.name}`} on:click={() => removeServer(row.id)}>
-                    <Icon name="trash" size={12} />
-                  </button>
-                {/if}
+                <button class="sbtn onoff" title={off ? `Turn ${row.name} on` : `Turn ${row.name} off`} on:click={() => toggle(row.id)}>{off ? "On" : "Off"}</button>
+                <button class="icon-btn" class:armed={delConn === row.id} use:tooltip={delConn === row.id ? "Click again to remove" : `Remove ${row.name}`} aria-label={delConn === row.id ? `Confirm remove ${row.name}` : `Remove ${row.name}`} on:click={() => removeServer(row.id)}>
+                  <Icon name="trash" size={12} />
+                </button>
               </span>
             </div>
-            {#if added}
-              <button class="row as-toggle" aria-expanded={open} on:click={() => toggleTools(row.id)}>
-                <span class="disclosure"><Icon name={open ? "chevDown" : "chevRight"} size={12} /></span>
-                <span>Tools{#if tools.length} · {tools.length}{/if}</span>
-              </button>
-              {#if open}
-                <div class="details">
-                  {#each tools as t (t.name)}
-                    {@const m = effective(t.mode)}
-                    <div class="row" class:off={m === "off"}>
-                      <span class="row-label" title={t.description || t.name}>{t.name}</span>
-                      <SegControl label={t.name} options={TOOL_OPTIONS} value={m} on:pick={(e) => pickMode(row.id, t.name, e.detail)} />
-                    </div>
-                  {:else}
-                    <div class="row"><span class="row-label">{#if h}Connect it to see its tools.{:else}Not connected yet.{/if}</span></div>
-                  {/each}
-                </div>
-              {/if}
+            <button class="row as-toggle" aria-expanded={open} on:click={() => toggleTools(row.id)}>
+              <span class="disclosure"><Icon name={open ? "chevDown" : "chevRight"} size={12} /></span>
+              <span>Tools{#if tools.length} · {tools.length}{/if}</span>
+            </button>
+            {#if open}
+              <div class="details">
+                {#each tools as t (t.name)}
+                  {@const m = effective(t.mode)}
+                  <div class="row" class:off={m === "off"}>
+                    <span class="row-label" title={t.description || t.name}>{t.name}</span>
+                    <SegControl label={t.name} options={TOOL_OPTIONS} value={m} on:pick={(e) => pickMode(row.id, t.name, e.detail)} />
+                  </div>
+                {:else}
+                  <div class="row"><span class="row-label">{#if h}Connect it to see its tools.{:else}Not connected yet.{/if}</span></div>
+                {/each}
+              </div>
             {/if}
           </div>
         {/each}
       {/if}
     {/each}
   </div>
+  {#if connectOpen}
+    <ConnectMcp {notify} on:close={() => (connectOpen = false)} on:added={reloadAfterAdd} />
+  {/if}
 {/if}
 
 <style>
@@ -553,6 +453,21 @@
   .row.off .row-label {
     color: var(--muted);
   }
+  .conn > .row-label {
+    flex: none;
+  }
+  .conn-state {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
+    font-size: var(--fs-md);
+  }
+  .conn .sbtn {
+    height: calc(var(--space) * 8);
+  }
   .as-toggle {
     color: var(--muted);
   }
@@ -562,20 +477,5 @@
   .disclosure {
     display: inline-flex;
     flex: none;
-  }
-  .paste {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: calc(var(--space) * 2);
-    width: 100%;
-  }
-  .paste .tin,
-  .paste textarea {
-    width: 100%;
-  }
-  .paste textarea {
-    min-height: 88px;
-    resize: vertical;
   }
 </style>

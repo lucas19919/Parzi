@@ -315,28 +315,10 @@
   .usage-num { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
   .usage-reset { font-size: var(--fs-md); color: var(--muted); flex: none; }
 
-  /* Status marker: a quiet dot, top right — green when ready. */
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    flex: none;
-    border-radius: 50%;
-    background: var(--muted);
-  }
-  .status-dot.ok { background: var(--ok); }
-  .status-dot.bad { background: var(--bad); }
-  .status-dot.warn { background: var(--warn); }
-  .status-dot.off { background: var(--faint); }
-  .status-dot.idle { background: transparent; border: 1px solid var(--line); }
-
   /* Program/Command fields always visible; same 32px inputs as theme cards. */
   .details .tin,
   .details .sbtn {
     height: calc(var(--space) * 8);
-  }
-  .onoff {
-    min-width: calc(var(--space) * 14);
-    justify-content: center;
   }
   /* Registry grid uses the same card theme as Appearance packs. */
   .packs {

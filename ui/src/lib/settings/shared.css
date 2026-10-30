@@ -158,3 +158,21 @@
 
 /* Control cell for right-aligned actions (buttons, switches). */
 .row-ctl.auto { justify-content: flex-end; }
+
+/* Status marker: a quiet dot, top right of a card — green when ready. */
+.status-dot {
+  width: 8px; height: 8px; flex: none;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.status-dot.ok { background: var(--ok); }
+.status-dot.bad { background: var(--bad); }
+.status-dot.warn { background: var(--warn); }
+.status-dot.off { background: var(--faint); }
+.status-dot.idle { background: transparent; border: 1px solid var(--line); }
+
+/* Text on/off control used inline next to a row's primary action. */
+.onoff {
+  min-width: calc(var(--space) * 14);
+  justify-content: center;
+}
