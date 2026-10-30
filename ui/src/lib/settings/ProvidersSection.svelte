@@ -215,7 +215,7 @@
 
           <div class="details">
             {#if id === "acp"}
-              <label class="row">
+              <label class="row prog">
                 <span class="row-label">Name</span>
                 <input
                   class="tin fixed"
@@ -228,7 +228,7 @@
                 />
               </label>
             {/if}
-            <div class="row">
+            <div class="row prog">
               <span class="row-label">{id === "acp" ? "Command" : "Program"}</span>
               <input
                 class="tin mono"
@@ -357,6 +357,18 @@
     flex: none;
     width: 280px;
     max-width: 100%;
+  }
+  /* Fixed label column so every input shares one left edge. */
+  .rows > .details > div.row.prog,
+  .rows > .details > label.row.prog {
+    justify-content: flex-start;
+  }
+  .rows > .details > .row.prog > .row-label {
+    flex: none;
+    width: 96px;
+  }
+  .rows > .details > .row.prog > .row-ctl {
+    margin-left: auto;
   }
   /* Registry grid uses the same card theme as Appearance packs. */
   .packs {
