@@ -4,6 +4,7 @@
   import { brain, type Project, type SessionMeta } from "./api";
   import { folderName } from "./tabs";
   import { byDay } from "./time";
+  import { toast } from "./toast";
   import { tooltip } from "./tooltip";
 
   export let threads: SessionMeta[] = [];
@@ -20,13 +21,42 @@
   let field: HTMLInputElement | null = null;
   let projectFilter: string | null = null;
   let projects: Project[] = [];
+  let projectsError = false;
+  let adding = false;
+  let newTitle = "";
+  let newFolder = "";
+  let saving = false;
+
+  async function loadProjects() {
+    projectsError = false;
+    try {
+      projects = (await brain.projects()) ?? [];
+    } catch {
+      projects = [];
+      projectsError = true;
+    }
+  }
+
+  async function addProject() {
+    const title = newTitle.trim();
+    if (!title || saving) return;
+    saving = true;
+    try {
+      await brain.upsertProject(title, newFolder.trim());
+      newTitle = "";
+      newFolder = "";
+      adding = false;
+      await loadProjects();
+    } catch (e) {
+      toast(`Could not add the project: ${e}`, true);
+    } finally {
+      saving = false;
+    }
+  }
 
   onMount(() => {
     field?.focus();
-    brain
-      .projects()
-      .then((p: Project[]) => (projects = p ?? []))
-      .catch(() => {});
+    void loadProjects();
   });
 
   const projectOf = (slug: string): Project | undefined => projects.find((p) => p.slug === slug);
@@ -75,20 +105,44 @@
 
 <div class="manager">
   <aside class="rail" aria-label="Projects">
-    <div class="rail-head"><span>Projects</span></div>
+    <div class="rail-head">
+      <span>Projects</span>
+      <button class="mini-btn" aria-label="Add project" use:tooltip={"Add project"} on:click={() => (adding = !adding)}>
+        <Icon name="plus" size={12} />
+      </button>
+    </div>
+    {#if adding}
+      <div class="add-form">
+        <input class="tin" bind:value={newTitle} placeholder="Project name" aria-label="Project name" spellcheck="false" />
+        <input class="tin" bind:value={newFolder} placeholder="Folder (optional)" aria-label="Project folder" spellcheck="false" />
+        <div class="add-acts">
+          <button class="sbtn" on:click={() => (adding = false)}>Cancel</button>
+          <button class="sbtn primary" disabled={saving || !newTitle.trim()} on:click={addProject}>{saving ? "Adding…" : "Add"}</button>
+        </div>
+      </div>
+    {/if}
     <div class="proj-list">
-      {#each projects as p (p.slug)}
-        <button
-          class="proj"
-          class:on={projectFilter === p.slug}
-          title={projectFilter === p.slug ? "Show all sessions" : `Show only ${p.title}`}
-          on:click={() => toggleProject(p.slug)}
-        >
-          <span class="badge" style="--badge-h: {hueOf(p.slug)}">{p.title.trim().charAt(0).toUpperCase()}</span>
-          <span class="name">{p.title}</span>
-          {#if counts.get(p.slug)}<span class="count">{counts.get(p.slug)}</span>{/if}
-        </button>
-      {/each}
+      {#if projectsError}
+        <div class="rail-note">
+          <span>Couldn't load projects</span>
+          <button class="sbtn" on:click={loadProjects}>Retry</button>
+        </div>
+      {:else}
+        {#each projects as p (p.slug)}
+          <button
+            class="proj"
+            class:on={projectFilter === p.slug}
+            title={projectFilter === p.slug ? "Show all sessions" : `Show only ${p.title}`}
+            on:click={() => toggleProject(p.slug)}
+          >
+            <span class="badge" style="--badge-h: {hueOf(p.slug)}">{p.title.trim().charAt(0).toUpperCase()}</span>
+            <span class="name">{p.title}</span>
+            {#if counts.get(p.slug)}<span class="count">{counts.get(p.slug)}</span>{/if}
+          </button>
+        {:else}
+          <p class="rail-note">No projects yet</p>
+        {/each}
+      {/if}
     </div>
     <div class="rail-foot">
       <button class="foot" on:click={() => dispatch("settings")}><Icon name="settings" size={12} /><span>Settings</span></button>
@@ -146,9 +200,58 @@
     display: flex;
     align-items: center;
     min-height: 36px;
-    padding: 0 calc(var(--space) * 3);
+    padding: 0 var(--space) 0 calc(var(--space) * 3);
     color: var(--muted);
     font-size: var(--fs-sm);
+  }
+  .rail-head > span {
+    flex: 1;
+  }
+  .mini-btn {
+    width: 28px;
+    height: 28px;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .mini-btn:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .add-form {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space);
+    padding: var(--space) calc(var(--space) * 2);
+  }
+  .add-form .tin {
+    width: 100%;
+  }
+  .add-acts {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space);
+  }
+  .add-acts .sbtn {
+    height: calc(var(--space) * 7);
+  }
+  .rail-note {
+    margin: 0;
+    padding: var(--space) calc(var(--space) * 3);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space) * 2);
+    align-items: flex-start;
   }
   .proj-list {
     flex: 1;
@@ -252,9 +355,11 @@
   }
   .top .page-search {
     flex: 1;
+    height: calc(var(--space) * 8);
   }
   .new {
     flex: none;
+    height: calc(var(--space) * 8);
   }
   .list {
     flex: 1;
