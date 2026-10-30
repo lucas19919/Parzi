@@ -262,7 +262,11 @@
     border-radius: var(--radius);
   }
   .row.on {
-    background: var(--hover);
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .row.on .pick {
+    color: var(--text);
   }
   .pick {
     flex: 1;

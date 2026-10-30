@@ -478,10 +478,9 @@
     display: inline-flex;
     align-items: center;
     gap: var(--space);
-    padding: var(--space);
-    border-radius: var(--radius-lg);
-    background: color-mix(in srgb, var(--text) 5%, transparent);
-    box-shadow: inset 0 0 0 1px var(--line);
+    padding: 0;
+    background: none;
+    border: none;
   }
 
   .close.count {

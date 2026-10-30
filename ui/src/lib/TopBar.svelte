@@ -217,8 +217,9 @@
     background: none;
     color: var(--muted);
   }
+  .menu-pill .icon-btn:hover,
   .menu-pill.open .icon-btn:hover {
-    background: var(--hover);
+    background: transparent;
     color: var(--text);
   }
   .opts {
@@ -266,7 +267,7 @@
     }
   }
   .opt:hover {
-    background: var(--hover);
+    background: transparent;
     color: var(--text);
   }
   .opt.update {

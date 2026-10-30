@@ -21,6 +21,7 @@
   export let fallbackKind = "text";
   export let superseded = false;
   export let reader = false;
+  export let bare = false;
 
   const d = data ?? {};
   const id: string = String(d.id ?? fallbackId ?? "artifact");
@@ -137,6 +138,7 @@
 </script>
 
 <div class="art" class:bad class:reader class:old={superseded && !open}>
+  {#if !bare}
   <div class="head">
     <button class="name" aria-expanded={superseded ? open : undefined} disabled={reader || bad} on:click={nameClick}>
       <Icon name={icon} size={12} />
@@ -147,6 +149,7 @@
       <button class="tool" aria-label="More actions" use:tooltip={"More actions"} on:click={toggleMenu} bind:this={menuBtn}><Icon name="more" size={12} /></button>
     </span>
   </div>
+  {/if}
   {#if menuOpen}
     <div class="menu-pop" data-ui-list style={menuStyle} use:popover={{ anchor: menuBtn, close: () => (menuOpen = false) }} transition:fly={{ y: 6, duration: 140, easing: cubicOut }}>
       {#if canRender && open}

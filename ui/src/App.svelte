@@ -46,6 +46,8 @@
 import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, moveId, putFront, saveHeld, stillWorking, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
   import { addNotification, dropNotification, markSessionRead, type NotificationItem } from "./lib/notificationStore";
   import { covered } from "./lib/overlay";
+  import { popover, placeAbove } from "./lib/popover";
+  import { saveFile } from "./lib/saveFile";
   import { tooltip } from "./lib/tooltip";
   import type { Approval, LiveTool } from "./lib/live";
   import { deskRows, type DeskCmd } from "./lib/desk";
@@ -349,6 +351,35 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function clearCover() {
     cover = null;
     coverFor = "";
+    docMenuOpen = false;
+  }
+
+  let docMenuOpen = false;
+  let docMenuBtn: HTMLButtonElement | null = null;
+  let docMenuStyle = "";
+  let docCopied = false;
+
+  function toggleDocMenu() {
+    docMenuOpen = !docMenuOpen;
+    if (docMenuOpen && docMenuBtn) docMenuStyle = placeAbove(docMenuBtn, 220);
+  }
+
+  function copyPinnedDoc() {
+    docMenuOpen = false;
+    if (!pinnedDoc) return;
+    navigator.clipboard.writeText(pinnedDoc.content).then(
+      () => {
+        docCopied = true;
+        setTimeout(() => (docCopied = false), 1200);
+      },
+      (e) => toast(`Couldn't copy: ${e}`, true),
+    );
+  }
+
+  function savePinnedDoc() {
+    docMenuOpen = false;
+    if (!pinnedDoc) return;
+    void saveFile(`${pinnedDoc.title.replace(/\.[a-z0-9]{1,8}$/i, "") || "note"}.md`, pinnedDoc.content);
   }
 
   function sessionHost(): string {
@@ -1845,8 +1876,17 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             {:else if coverOn && cover === "doc"}
               <div class="cover" transition:fly|global={{ y: 8, ...motion }}>
                 {#if pinnedDoc}
+                  <div class="doc-tools">
+                    <button class="tool" aria-label="Document actions" use:tooltip={"Document actions"} on:click={toggleDocMenu} bind:this={docMenuBtn}><Icon name="more" size={12} /></button>
+                  </div>
+                  {#if docMenuOpen}
+                    <div class="menu-pop" style={docMenuStyle} use:popover={{ anchor: docMenuBtn, close: () => (docMenuOpen = false) }}>
+                      <button class="opt" on:click={copyPinnedDoc}><Icon name={docCopied ? "check" : "copy"} size={12} /><span class="name">{docCopied ? "Copied" : "Copy"}</span></button>
+                      <button class="opt" on:click={savePinnedDoc}><Icon name="download" size={12} /><span class="name">Save as file</span></button>
+                    </div>
+                  {/if}
                   {#key `${pinnedDoc.id}:${pinnedDoc.version}`}
-                    <ArtifactCard data={pinnedDoc} reader />
+                    <ArtifactCard data={pinnedDoc} reader bare />
                   {/key}
                 {/if}
               </div>
@@ -2160,6 +2200,54 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     top: calc(var(--space) * 2);
     right: calc(var(--space) * 4);
     z-index: 5;
+  }
+  .doc-tools {
+    position: absolute;
+    top: calc(var(--space) * 2);
+    right: calc(var(--space) * 4 + var(--space) * 7 + var(--space));
+    z-index: 5;
+  }
+  .doc-tools .tool {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--muted);
+    cursor: pointer;
+  }
+  .doc-tools .tool:hover {
+    background: transparent;
+    color: var(--text);
+  }
+  .menu-pop .opt {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space) * 2);
+    width: 100%;
+    height: 32px;
+    padding: 0 calc(var(--space) * 2);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius);
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+  }
+  .menu-pop .opt:hover {
+    background: transparent;
+  }
+  .menu-pop .opt .name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--fs-md);
   }
 
 
