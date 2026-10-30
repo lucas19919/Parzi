@@ -26,7 +26,6 @@
     newSession: void;
     newPage: void;
     settings: void;
-    history: void;
     previews: void;
     setup: void;
   }>();
@@ -64,7 +63,6 @@
   const ACTIONS: Omit<Item, "group">[] = [
     { id: "new-session", icon: "chat", title: "New session", sub: "", keys: "draft chat", run: () => dispatch("newSession") },
     { id: "new-page", icon: "globe", title: "New page", sub: "", keys: "web browser", run: () => dispatch("newPage") },
-    { id: "history", icon: "clock", title: "History", sub: "", keys: "pages visited bookmarks downloads", run: () => dispatch("history") },
     ...(import.meta.env.DEV
       ? [{ id: "previews", icon: "spark" as IconName, title: "Component previews", sub: "", keys: "omnibar gallery", run: () => dispatch("previews") }]
       : []),

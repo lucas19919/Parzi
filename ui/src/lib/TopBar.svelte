@@ -1,7 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import ChromeIcon from "./ChromeIcon.svelte";
-  import type { ChromeIconName } from "./ChromeIcon.svelte";
   import Icon from "./Icon.svelte";
   import TabBar from "./TabBar.svelte";
   import WinControls from "./WinControls.svelte";
@@ -25,23 +24,8 @@
     newTab: void;
     manager: void;
     settings: void;
-    update: void;
-    history: void;
-    setup: void;
-    report: void;
     panel: void;
   }>();
-
-
-
-  let menuOpen = false;
-
-  const MENU: { label: string; key: string; icon: ChromeIconName; run: () => void }[] = [
-    { label: "History", key: "Ctrl+H", icon: "clock", run: () => dispatch("history") },
-    { label: "Settings", key: "Ctrl+,", icon: "settings", run: () => dispatch("settings") },
-    { label: "Set up Parzi", key: "", icon: "wrench", run: () => dispatch("setup") },
-    { label: "Report a problem", key: "", icon: "alert", run: () => dispatch("report") },
-  ];
 
 </script>
 
@@ -49,48 +33,15 @@
 <div class="chrome">
 <header class="topbar" on:mousedown={startWindowDrag}>
   <div class="left">
-    
-    <div class="menu-pill" class:open={menuOpen}>
       <button
         class="icon-btn"
-        class:active={menuOpen}
-        aria-haspopup="menu"
-        aria-expanded={menuOpen}
-        use:tooltip={$updateVersion ? "Menu, update available" : "Menu"}
-        on:click={() => (menuOpen = !menuOpen)}
+        aria-label="Settings"
+        use:tooltip={$updateVersion ? "Settings, update available" : "Settings (Ctrl+,)"}
+        on:click={() => dispatch("settings")}
       >
-        <ChromeIcon name="menu" />
+        <ChromeIcon name="settings" />
         {#if $updateVersion}<span class="dot" />{/if}
       </button>
-      {#if menuOpen}
-        <div class="opts" role="menu" data-ui-list>
-          {#each MENU as item, i}
-            <button
-              class="opt"
-              style="--i: {i}"
-              role="menuitem"
-              aria-label={item.key ? `${item.label} (${item.key})` : item.label}
-              use:tooltip={item.key ? `${item.label} (${item.key})` : item.label}
-              on:click={() => item.run()}
-            >
-              <ChromeIcon name={item.icon} />
-            </button>
-          {/each}
-          {#if $updateVersion}
-            <button
-              class="opt update"
-              style="--i: {MENU.length}"
-              role="menuitem"
-              aria-label="Update to v{$updateVersion}"
-              use:tooltip={"Update to v" + $updateVersion}
-              on:click={() => dispatch("update")}
-            >
-              <ChromeIcon name="arrowDown" />
-            </button>
-          {/if}
-        </div>
-      {/if}
-      </div>
       <button
         class="icon-btn manager-btn"
         aria-label="Session manager"
@@ -152,7 +103,7 @@
   .left {
     display: flex;
     align-items: center;
-    gap: var(--space);
+    gap: calc(var(--space) * 2);
     height: 100%;
     flex: 1;
     min-width: 0;
@@ -207,80 +158,6 @@
   .panel-btn.active {
     background: transparent;
     border-color: var(--line);
-    color: var(--text);
-  }
-  .menu-pill {
-    display: flex;
-    align-items: center;
-    flex: none;
-    height: 28px;
-    background: none;
-    border: 1px solid transparent;
-  }
-  .menu-pill.open {
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-  }
-  .menu-pill.open .icon-btn,
-  .menu-pill.open .icon-btn.active {
-    background: transparent;
-    color: var(--muted);
-  }
-  .menu-pill .icon-btn:hover,
-  .menu-pill.open .icon-btn:hover {
-    background: transparent;
-    color: var(--text);
-  }
-  .opts {
-    display: flex;
-    align-items: center;
-    flex: none;
-    height: 28px;
-    background: none;
-    border: none;
-    transform-origin: left center;
-    animation: menu-in 200ms var(--ease-out);
-  }
-  @keyframes menu-in {
-    from {
-      opacity: 0;
-      transform: translateX(-10px);
-    }
-  }
-  .opt {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex: none;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
-    animation: opt-in 180ms var(--ease-out) backwards;
-    animation-delay: calc(var(--i, 0) * 30ms);
-  }
-  @keyframes opt-in {
-    from {
-      opacity: 0;
-      transform: translateX(-6px) scale(0.92);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .opt,
-    .opts {
-      animation: none;
-    }
-  }
-  .opt:hover {
-    background: transparent;
-    color: var(--text);
-  }
-  .opt.update {
     color: var(--text);
   }
 </style>

@@ -6,6 +6,8 @@
   import { toast } from "./toast";
 
   export let section = "general";
+  export let onSetup: () => void = () => {};
+  export let onReport: () => void = () => {};
 
   $: if (section === "skills" || section === "remote" || section === "system") section = "general";
 
@@ -38,7 +40,7 @@
       {:else if section === "appearance"}
         <AppearanceSection {notify} />
       {:else}
-        <GeneralSection {notify} on:setupRemote />
+        <GeneralSection {notify} {onSetup} {onReport} on:setupRemote />
       {/if}
     </div>
   </div>

@@ -558,11 +558,10 @@ try {
     : [];
   const title = (id: string) => sessions.find((x) => x.id === id)?.title ?? "Session";
   const tabs = [tab("t-home", "session", "New session"), tab("t-s1", "session", title("s1"), "s1", { quotes }), tab("t-s2", "session", title("s2"), "s2")];
-  if (view === "history") tabs.push(tab("t-history", "history", "History"));
   tabs.push(tab("t-work", "work", "Work"));
   const saved: unknown[] = [...tabs];
   if (view === "page") saved.push({ id: "t-page", kind: "page", title: "Example", url: "https://example.com/" });
-  const active = { home: "t-home", session: "t-s1", history: "t-history", page: "t-page" }[view] ?? "t-s1";
+  const active = { home: "t-home", session: "t-s1", page: "t-page" }[view] ?? "t-s1";
   localStorage.setItem("parzi.tabs.v1", JSON.stringify({ tabs: saved, active }));
   const sites = [
     ["https://github.com/lucas19919/Parzi", "Parzi on GitHub"],

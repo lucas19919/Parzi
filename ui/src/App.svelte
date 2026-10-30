@@ -21,7 +21,6 @@
   import PlanInline from "./lib/PlanInline.svelte";
   import Thread from "./lib/Thread.svelte";
   import PageView from "./lib/PageView.svelte";
-  import HistoryView from "./lib/HistoryView.svelte";
   import ManagerView from "./lib/ManagerView.svelte";
   import PreviewView from "./lib/PreviewView.svelte";
   import ArtifactCard from "./lib/widgets/ArtifactCard.svelte";
@@ -343,8 +342,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     project = ctx?.project ? { slug: ctx.project.slug, title: ctx.project.title, tokens: ctx.tokens } : null;
   }
 
-  let historyView: "sessions" | "history" | "bookmarks" | "downloads" = "sessions";
-  let cover: "settings" | "history" | "doc" | null = null;
+  let cover: "settings" | "doc" | null = null;
   let coverFor = "";
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
   $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
@@ -401,17 +399,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     return draft.id;
   }
 
-  function showCover(kind: "settings" | "history" | "doc") {
+  function showCover(kind: "settings" | "doc") {
     switcherOpen = false;
     const id = sessionHost();
     cover = kind;
     coverFor = id;
     if (activeId !== id) selectTab(id);
-  }
-
-  function openHistory(view = historyView) {
-    historyView = view;
-    showCover("history");
   }
 
   let managerOpen = false;
@@ -1376,7 +1369,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       comp = comp;
       omnibar?.focus();
       void refreshThreads();
-      toast("Rewound. Change the message and send; the full conversation stays in History.");
+      toast("Rewound. Change the message and send; the full conversation stays in the thread.");
     } catch (e) {
       toastError(e);
     }
@@ -1573,11 +1566,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       else if (cover === "settings") clearCover();
       else openSettings();
     } else if (name === "ctrl+j" || name === "ctrl+shift+a") toggleInfo();
-    else if (name === "ctrl+h") {
-      if (tab.kind === "history") closeTab(activeId);
-      else if (cover === "history") clearCover();
-      else openHistory();
-    } else if (name === "ctrl+shift+t") reopenClosed();
+    else if (name === "ctrl+shift+t") reopenClosed();
     else if (name === "f11") void setImmersive(!immersive);
     else if (name === "ctrl+l") {
       if (tab.kind === "page") {
@@ -1657,8 +1646,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
       }
     } else if (cmd.what === "settings") openSettings(cmd.section || "general");
-    else if (cmd.what === "projects" || (cmd.what as string) === "brain") toast("Notes live in the vault now ΓÇö there is no notes panel.");
-    else if (cmd.what === "history") openHistory(cmd.view ?? "sessions");
+    else if (cmd.what === "projects" || (cmd.what as string) === "brain") toast("Notes live in the vault now — there is no notes panel.");
+    else if (cmd.what === "history") toast("History is gone — open sessions from the manager.");
     else if (cmd.what === "plan" || cmd.what === "work" || cmd.what === "tasks") showPlan();
     else if (cmd.what === "home") newSession();
   }
@@ -1795,10 +1784,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     on:newTab={newSession}
       on:manager={() => (managerOpen = true)}
       on:settings={() => openSettings()}
-      on:update={() => openSettings("system")}
-      on:history={() => openHistory()}
-      on:setup={openSetup}
-      on:report={reportProblem}
       panelable={tab.kind === "session"}
       panelOpen={infoShown}
       panelCount={familyActive}
@@ -1811,20 +1796,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     {#if tab.kind === "settings"}
       <div class="fill col" in:fly={{ y: 8, ...motion }}>
         <PanelHeader title="Settings" on:close={() => closeTab(activeId)} />
-        <Settings bind:section={settingsSection} on:close={() => closeTab(activeId)} on:setupRemote={openRemoteSetup} />
-      </div>
-    {:else if tab.kind === "history"}
-      <div class="fill col" in:fly={{ y: 8, ...motion }}>
-        <PanelHeader title="History" on:close={() => closeTab(activeId)} />
-        <HistoryView
-          {threads}
-          {running}
-          bind:view={historyView}
-          on:open={(e) => openPageNext(e.detail.url)}
-          on:openSession={(e) => openSession(e.detail.id)}
-          on:deleteSession={(e) => remove(e.detail.id)}
-          on:clearSessions={clearFinishedSessions}
-        />
+        <Settings bind:section={settingsSection} on:close={() => closeTab(activeId)} on:setupRemote={openRemoteSetup} onSetup={openSetup} onReport={reportProblem} />
       </div>
     {:else if tab.kind === "preview"}
       <div class="fill col" in:fade={{ duration: 150 }}>
@@ -1869,19 +1841,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             {/if}
             {#if coverOn && cover === "settings"}
               <div class="cover" transition:fly|global={{ y: 8, ...motion }}>
-                <Settings bind:section={settingsSection} on:setupRemote={openRemoteSetup} />
-              </div>
-            {:else if coverOn && cover === "history"}
-              <div class="cover" transition:fly|global={{ y: 8, ...motion }}>
-                <HistoryView
-                  {threads}
-                  {running}
-                  bind:view={historyView}
-                  on:open={(e) => openPageNext(e.detail.url)}
-                  on:openSession={(e) => openSession(e.detail.id)}
-                  on:deleteSession={(e) => remove(e.detail.id)}
-                  on:clearSessions={clearFinishedSessions}
-                />
+                <Settings bind:section={settingsSection} on:setupRemote={openRemoteSetup} onSetup={openSetup} onReport={reportProblem} />
               </div>
             {:else if coverOn && cover === "doc"}
               <div class="cover" transition:fly|global={{ y: 8, ...motion }}>
@@ -2073,7 +2033,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     on:settings={() => openSettings()}
     on:previews={() => openPreview()}
     on:setup={openSetup}
-    on:history={() => openHistory()}
   />
 
   {#if setupOpen}

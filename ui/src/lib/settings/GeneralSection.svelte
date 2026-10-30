@@ -11,6 +11,8 @@
   import "./shared.css";
 
   export let notify: (msg: string, err?: boolean) => void = () => {};
+  export let onSetup: () => void = () => {};
+  export let onReport: () => void = () => {};
 
   let blockAds = true;
   let pw: VaultState | null = null;
@@ -196,6 +198,26 @@
     <div class="row">
       <span class="row-label">{sessions} {sessions === 1 ? "session" : "sessions"}</span>
       <span class="row-ctl auto"><button class="sbtn" on:click={clearSessions}><Icon name="trash" size={12} /><span>Delete</span></button></span>
+    </div>
+  </div>
+</div>
+
+<div class="pref-section">
+  <div class="rows">
+    <div class="row row-title"><span>Set up Parzi</span></div>
+    <div class="row">
+      <span class="row-label">Guided setup<small>Agents, browser and the remote, step by step</small></span>
+      <span class="row-ctl auto"><button class="sbtn" on:click={onSetup}><Icon name="wrench" size={12} /><span>Set up</span></button></span>
+    </div>
+  </div>
+</div>
+
+<div class="pref-section">
+  <div class="rows">
+    <div class="row row-title"><span>Report a problem</span></div>
+    <div class="row">
+      <span class="row-label">Something broken?<small>Open a GitHub issue with the details filled in</small></span>
+      <span class="row-ctl auto"><button class="sbtn" on:click={onReport}><Icon name="alert" size={12} /><span>Report</span></button></span>
     </div>
   </div>
 </div>

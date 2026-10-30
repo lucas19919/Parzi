@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ensureComposer, folderName, hostOf, isExplicitUrl, isSystemTab, sessionTab, pageTab, historyTab, settingsTab, toAddress, restoreTab } from "../src/lib/tabs.ts";
+import { ensureComposer, folderName, hostOf, isExplicitUrl, isSystemTab, sessionTab, pageTab, settingsTab, toAddress, restoreTab } from "../src/lib/tabs.ts";
 
 test("hostOf strips protocol and path", () => {
   assert.equal(hostOf("https://github.com/lucas/parzi"), "github.com");
@@ -28,7 +28,6 @@ test("folderName takes the leaf", () => {
 test("system tabs split from working tabs", () => {
   assert.equal(isSystemTab(sessionTab()), false);
   assert.equal(isSystemTab(pageTab("https://example.com")), false);
-  assert.equal(isSystemTab(historyTab()), true);
   assert.equal(isSystemTab(settingsTab()), true);
 });
 
@@ -52,11 +51,12 @@ test("a composer always has quote and attachment lists", () => {
   assert.deepEqual(sessionTab().composer.attachments, []);
 });
 
-test("saved Work, Tasks, Brain and Projects tabs don't come back", () => {
+test("saved Work, Tasks, Brain, Projects and History tabs don't come back", () => {
   assert.equal(restoreTab({ id: "t1", kind: "tasks", title: "Tasks" }), null);
   assert.equal(restoreTab({ id: "t2", kind: "work", title: "Work" }), null);
   assert.equal(restoreTab({ id: "t5", kind: "brain", title: "Brain" }), null);
   assert.equal(restoreTab({ id: "t6", kind: "projects", title: "Projects" }), null);
+  assert.equal(restoreTab({ id: "t7", kind: "history", title: "History" }), null);
   assert.equal(restoreTab({ id: "t3", kind: "settings", title: "Settings" }), null);
   assert.equal(restoreTab({ id: "t4", kind: "mystery", title: "?" }), null);
 });

@@ -424,14 +424,14 @@
   </div>
 
 {:else}
-  <div class="pref-section">
-    {#if rows.length}
-      {#each rows as row (row.id)}
-          {@const h = health[row.id]}
-          {@const off = !!row.server && row.server.enabled === false}
-          {@const open = openTools === row.id}
-          {@const tools = details[row.id]?.tools ?? []}
-          <div class="rows" class:off={off}>
+  {#if rows.length}
+    {#each rows as row (row.id)}
+      {@const h = health[row.id]}
+      {@const off = !!row.server && row.server.enabled === false}
+      {@const open = openTools === row.id}
+      {@const tools = details[row.id]?.tools ?? []}
+      <div class="pref-section">
+        <div class="rows" class:off={off}>
             <div class="row row-title">
               <button class="logo-pick" use:tooltip={"Choose a logo"} aria-label="Choose a logo for {row.name}" on:click={() => chooseLogo(row.id)}>
                 <ConnectorLogo id={row.id} name={row.name} site={row.site} src={details[row.id]?.icon ?? null} size={20} />
@@ -469,43 +469,47 @@
               </div>
             {/if}
           </div>
-        {/each}
+        </div>
+      {/each}
     {/if}
-    <div class="rows">
-      <div class="row row-title"><span>Catalogue</span></div>
-      <div class="row">
-        <div class="packs">
-          {#each CATALOG as c (c.id)}
-            {@const isHave = have.has(c.id)}
-            {@const hit = fresh.find((f) => f.name === c.id)}
-            <button class="pack-btn" type="button" disabled={isHave || saving} title={isHave ? `${c.name} — added` : `${c.name} — ${c.about}`} on:click={() => (hit ? addFound(hit.name, hit.server) : addKnown(c.id))}>
-              <span class="pack-top"><ConnectorLogo id={c.id} name={c.name} site={c.site} src={null} size={20} /><span class="pack-name">{c.name}</span></span>
-              <span class="pack-cmd">{isHave ? "Added" : c.about}</span>
-            </button>
-          {/each}
-          {#each freshCustom as f (f.name)}
-            <button class="pack-btn" type="button" disabled={saving} title={`${f.name} — already on this computer`} on:click={() => addFound(f.name, f.server)}>
-              <span class="pack-top"><ConnectorLogo id={f.name} name={f.name} site="" src={null} size={20} /><span class="pack-name">{f.name}</span></span>
-              <span class="pack-cmd">Already on this computer</span>
-            </button>
-          {/each}
+    <div class="pref-section">
+      <div class="rows">
+        <div class="row row-title"><span>Catalogue</span></div>
+        <div class="row">
+          <div class="packs">
+            {#each CATALOG as c (c.id)}
+              {@const isHave = have.has(c.id)}
+              {@const hit = fresh.find((f) => f.name === c.id)}
+              <button class="pack-btn" type="button" disabled={isHave || saving} title={isHave ? `${c.name} — added` : `${c.name} — ${c.about}`} on:click={() => (hit ? addFound(hit.name, hit.server) : addKnown(c.id))}>
+                <span class="pack-top"><ConnectorLogo id={c.id} name={c.name} site={c.site} src={null} size={20} /><span class="pack-name">{c.name}</span></span>
+                <span class="pack-cmd">{isHave ? "Added" : c.about}</span>
+              </button>
+            {/each}
+            {#each freshCustom as f (f.name)}
+              <button class="pack-btn" type="button" disabled={saving} title={`${f.name} — already on this computer`} on:click={() => addFound(f.name, f.server)}>
+                <span class="pack-top"><ConnectorLogo id={f.name} name={f.name} site="" src={null} size={20} /><span class="pack-name">{f.name}</span></span>
+                <span class="pack-cmd">Already on this computer</span>
+              </button>
+            {/each}
+          </div>
         </div>
       </div>
     </div>
-    <div class="rows">
-      <div class="row row-title"><span>Custom</span></div>
-      <label class="row">
-        <span class="row-label">Name</span>
-        <input class="tin fixed" bind:value={customName} placeholder="Name (optional)" aria-label="Name" spellcheck="false" />
-      </label>
-      <div class="row">
-        <textarea class="tin" rows="3" bind:value={pasted} placeholder="Paste a link, a config block, or a command" aria-label="Paste a link, a config block, or a command" spellcheck="false"></textarea>
-      </div>
-      <div class="row end">
-        <span class="row-ctl auto"><button class="sbtn primary" disabled={saving || !pasted.trim()} on:click={() => void addPasted()}>Add</button></span>
+    <div class="pref-section">
+      <div class="rows">
+        <div class="row row-title"><span>Custom connectors</span></div>
+        <label class="row">
+          <span class="row-label">Name</span>
+          <input class="tin fixed" bind:value={customName} placeholder="Name (optional)" aria-label="Name" spellcheck="false" />
+        </label>
+        <div class="row">
+          <textarea class="tin" rows="3" bind:value={pasted} placeholder="Paste a link, a config block, or a command" aria-label="Paste a link, a config block, or a command" spellcheck="false"></textarea>
+        </div>
+        <div class="row end">
+          <span class="row-ctl auto"><button class="sbtn primary" disabled={saving || !pasted.trim()} on:click={() => void addPasted()}>Add</button></span>
+        </div>
       </div>
     </div>
-  </div>
 {/if}
 
 <style>
