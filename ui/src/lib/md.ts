@@ -5,7 +5,7 @@ import { toast } from "./toast";
 import { splitSegments, type Segment } from "./segments";
 import { reportMarkdown } from "./mdReport";
 import { mathAt } from "./mdMath";
-import { vaultRefs } from "./linkRules";
+import { gitRefs, vaultRefs } from "./linkRules";
 
 export const richReady = writable(false);
 
@@ -300,7 +300,13 @@ md.core.ruler.push("parzi-file-links", (state) => {
         continue;
       }
       if (tok.type !== "text" || depth > 0) continue;
-      const refs = vaultRefs(tok.content);
+      // Vault notes win ties: a SHA inside a note path stays one link.
+      const refs = [
+        ...vaultRefs(tok.content).map((r) => ({ ...r, pri: 0 })),
+        ...gitRefs(tok.content).map((r) => ({ ...r, pri: 1 })),
+      ]
+        .sort((a, b) => a.index - b.index || a.pri - b.pri)
+        .filter((r, i, all) => !all.slice(0, i).some((p) => r.index < p.index + p.length));
       if (!refs.length) continue;
       const nodes: typeof kids = [];
       let at = 0;

@@ -89,6 +89,67 @@ export function vaultRefs(text: string): VaultRef[] {
   return out;
 }
 
+/** A commit SHA, optionally a range (`abc1234..def5678`, `...` works too). */
+const SHA_RANGE =
+  /(?<![A-Za-z0-9_/])([0-9a-f]{7,40}(?:\.{2,3}[0-9a-f]{7,40})?)(?![A-Za-z0-9_])/gi;
+
+/** A slashed name that reads like a branch (`plan/sidebar-polish`). */
+const BRANCH_PATH =
+  /(?<![A-Za-z0-9_/.])([A-Za-z0-9._-]{2,}(?:\/[A-Za-z0-9._-]+)+)(?![A-Za-z0-9_/])/gi;
+
+export interface GitRef extends VaultRef {
+  kind: "sha" | "branch";
+}
+
+/** Commit SHAs, ranges and branch-like `a/b` names in plain prose. */
+export function gitRefs(text: string): GitRef[] {
+  const out: GitRef[] = [];
+  const take = (re: RegExp, kind: GitRef["kind"]) => {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    let guard = 0;
+    while ((m = re.exec(text)) !== null && guard++ < 1000) {
+      if (m[0].length === 0) {
+        re.lastIndex++;
+        continue;
+      }
+      let path = m[1];
+      const trail = TRAIL.exec(path);
+      if (trail) path = path.slice(0, -trail[0].length);
+      if (!path) continue;
+      if (text[m.index - 1] === "`" || text[m.index + path.length] === "`") {
+        re.lastIndex = m.index + m[0].length;
+        continue;
+      }
+      if (kind === "branch" && !isBranchLike(path)) continue;
+      out.push({ path, index: m.index, length: path.length, kind });
+      re.lastIndex = m.index + path.length;
+    }
+    re.lastIndex = 0;
+  };
+  take(SHA_RANGE, "sha");
+  take(BRANCH_PATH, "branch");
+  out.sort((a, b) => a.index - b.index);
+  return out;
+}
+
+/**
+ * Whether a `a/b/c` path could name a branch (vault notes, dotted file
+ * names and single-letter segments excluded). Checked against the repo's
+ * real branches on click; anything else falls back to a file open.
+ */
+export function isBranchLike(path: string): boolean {
+  if (!/^[A-Za-z0-9._-]{2,}(?:\/[A-Za-z0-9._-]+)+$/.test(path)) return false;
+  if (path.includes("..")) return false;
+  if (/\.md$/i.test(path)) return false;
+  const leaf = path.slice(path.lastIndexOf("/") + 1);
+  if (/\.[A-Za-z][A-Za-z0-9]{0,4}$/.test(leaf)) return false;
+  // Plain lowercase words ("either/or", "read/write") are prose, not
+  // branches: require a digit, dash, underscore or capital letter.
+  if (!/[-_0-9A-Z]/.test(path)) return false;
+  return true;
+}
+
 export type WebLink = { kind: "open"; url: string } | { kind: "tab"; url: string } | { kind: "refuse"; reason: string };
 
 const LOCAL_HOST = /^(localhost|127(?:\.\d{1,3}){3}|\[::1\]|0\.0\.0\.0|[^/:]+\.localhost)(:\d+)?$/i;

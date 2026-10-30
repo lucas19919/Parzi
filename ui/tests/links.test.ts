@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fileLink, safeDecode, vaultRefs, webLink } from "../src/lib/linkRules.ts";
+import { fileLink, gitRefs, isBranchLike, safeDecode, vaultRefs, webLink } from "../src/lib/linkRules.ts";
 
 test("safeDecode survives malformed escapes", () => {
   assert.equal(safeDecode("a%20b"), "a b");
@@ -84,6 +84,37 @@ test("vault refs ignore code ticks, links-in-words and plain words", () => {
   assert.deepEqual(vaultRefs("footnotes/foo.md"), []);
   assert.deepEqual(vaultRefs("release notes for fun"), []);
   assert.deepEqual(vaultRefs("no refs here.txt"), []);
+});
+
+test("commit shas and ranges are found with their kind", () => {
+  assert.deepEqual(gitRefs("pushed 1f0a4718..da9f463f live"), [
+    { path: "1f0a4718..da9f463f", index: 7, length: 18, kind: "sha" },
+  ]);
+  assert.deepEqual(gitRefs("see abc1234...def5678 and cafe010"), [
+    { path: "abc1234...def5678", index: 4, length: 17, kind: "sha" },
+    { path: "cafe010", index: 26, length: 7, kind: "sha" },
+  ]);
+  assert.deepEqual(gitRefs("no hex here, just words"), []);
+  assert.deepEqual(gitRefs("deadbeef is 8 hex chars"), [
+    { path: "deadbeef", index: 0, length: 8, kind: "sha" },
+  ]);
+});
+
+test("branch-like paths are found, files and noise are not", () => {
+  assert.deepEqual(gitRefs("on plan/sidebar-polish now").map((r) => r.path), ["plan/sidebar-polish"]);
+  assert.deepEqual(gitRefs("on release/42 now").map((r) => r.path), ["release/42"]);
+  assert.deepEqual(gitRefs("open src/main.rs"), []);
+  assert.deepEqual(gitRefs("either/or is prose"), []);
+  assert.deepEqual(gitRefs("read/write the docs"), []);
+  assert.deepEqual(gitRefs("backtick `a/bc12` stays plain"), []);
+  assert.deepEqual(gitRefs("notes/a.md stays a vault ref"), []);
+  assert.ok(isBranchLike("plan/sidebar-polish"));
+  assert.ok(isBranchLike("release/42"));
+  assert.ok(!isBranchLike("src/main.rs"));
+  assert.ok(!isBranchLike("notes/a.md"));
+  assert.ok(!isBranchLike("a/b"));
+  assert.ok(!isBranchLike("either/or"));
+  assert.ok(!isBranchLike("a/b/../c"));
 });
 
 test("web links: plain http upgrades, local http opens in a tab", () => {
