@@ -316,7 +316,7 @@
               {:else if tab.kind === "session" && !tab.sessionId}
                 <Icon name="home" />
               {:else}
-                <Icon name={tab.kind === "page" ? "globe" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.kind === "artifact" ? "file" : tab.kind === "manager" ? "chat" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : "bot"} />
+                <Icon name={tab.kind === "page" ? "globe" : tab.kind === "history" ? "clock" : tab.kind === "settings" ? "settings" : tab.kind === "preview" ? "spark" : tab.kind === "artifact" ? "file" : tab.sessionId?.startsWith("r:") || tab.sessionId?.startsWith("m:") ? "server" : "bot"} />
               {/if}
             </span>
         <span class="title">{tab.title || (tab.kind === "page" ? "New page" : "New session")}</span>
