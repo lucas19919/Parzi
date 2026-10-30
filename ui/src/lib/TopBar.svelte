@@ -2,6 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import ChromeIcon from "./ChromeIcon.svelte";
   import type { ChromeIconName } from "./ChromeIcon.svelte";
+  import Icon from "./Icon.svelte";
   import TabBar from "./TabBar.svelte";
   import WinControls from "./WinControls.svelte";
   import type { Tab } from "./tabs";
@@ -22,6 +23,7 @@
     close: { id: string };
     move: { id: string; to: number };
     newTab: void;
+    manager: void;
     settings: void;
     update: void;
     history: void;
@@ -88,7 +90,15 @@
           {/if}
         </div>
       {/if}
-    </div>
+      </div>
+      <button
+        class="icon-btn manager-btn"
+        aria-label="Session manager"
+        use:tooltip={"Sessions"}
+        on:click={() => dispatch("manager")}
+      >
+        <Icon name="chat" />
+      </button>
       <TabBar
         {tabs}
         {activeTabId}

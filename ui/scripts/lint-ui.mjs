@@ -2,7 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { checkUrl } from "lintapple";
 
 const BASE = process.env.PARZI_UI_URL ?? "http://localhost:1420/mock.html";
-const VIEWS = ["home", "session", "request", "question", "approval", "history", "settings", "setup", "page"];
+const VIEWS = ["home", "session", "request", "question", "approval", "history", "manager", "settings", "setup", "page"];
 const QUERY = { request: "view=session&request=file", question: "view=session&question=1", approval: "view=session&approval=1" };
 
 const click = (name, selector, ready) => ({ name, action: "click", selector, ready: { selector: ready } });
@@ -28,6 +28,10 @@ const STATES = {
     { name: "held", action: "press", selector: ".ob textarea", key: "Enter", ready: { selector: ".ob .queue-item" } },
   ],
   history: [2, 3, 4].map((i) => click(`library ${i}`, nth(".seg", i), `${nth(".seg", i)}[aria-pressed="true"]`)),
+  manager: [
+    { name: "manager search", action: "fill", selector: ".manager input", value: "sidebar", ready: { selector: ".manager .row .open" } },
+    click("manager open", ".manager .row .open", ".stagerow .session"),
+  ],
   settings: [
     ...[2, 3].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
     click("connector connected", ".rows .row-title .row-ctl .sbtn", ".rows .row.as-toggle"),

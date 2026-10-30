@@ -1,7 +1,7 @@
 import type { PlanQuote } from "./api";
 
 export type ComposerMode = "search" | "build";
-type TabKind = "session" | "page" | "history" | "settings" | "preview" | "artifact";
+type TabKind = "session" | "page" | "history" | "settings" | "preview" | "artifact" | "manager";
 
 export interface TabComposerState {
   input: string;
@@ -118,6 +118,10 @@ export function pageTab(url = "", id = tabId(), owner: string | null = null, gro
 
 export function historyTab(): Tab {
   return { id: tabId(), kind: "history", title: "History", composer: defaultComposer() };
+}
+
+export function managerTab(): Tab {
+  return { id: tabId(), kind: "manager", title: "Manager", composer: defaultComposer() };
 }
 
 const RESTORED = new Set(["session", "page", "history"]);

@@ -38,6 +38,11 @@
       "reason": "Options show their title as text; a row half scrolled out of its list reads as unlabeled to the check."
     },
     {
+      "selector": ".seg-btn",
+      "rules": ["icon-button-tooltip"],
+      "reason": "Segmented options show their label as text; an option half scrolled out of a tools list reads as unlabeled to the check."
+    },
+    {
       "selector": ".tab .title",
       "rules": ["content-clipping"],
       "reason": "Tabs share the strip at equal widths; a long title ends in an ellipsis and shows in full on hover."

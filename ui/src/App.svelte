@@ -22,6 +22,7 @@
   import Thread from "./lib/Thread.svelte";
   import PageView from "./lib/PageView.svelte";
   import HistoryView from "./lib/HistoryView.svelte";
+  import ManagerView from "./lib/ManagerView.svelte";
   import PreviewView from "./lib/PreviewView.svelte";
   import ArtifactCard from "./lib/widgets/ArtifactCard.svelte";
   import Onboarding from "./lib/Onboarding.svelte";
@@ -35,7 +36,7 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, previewTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
+  import { artifactTab, ensureComposer, hostOf, isExplicitUrl, managerTab, pageTab, previewTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
 
   import { sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
   import { addQuote, MAX_QUOTES, quoteBlock, sameSlug, splitQuotes } from "./lib/planModel";
@@ -411,6 +412,18 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function openHistory(view = historyView) {
     historyView = view;
     showCover("history");
+  }
+
+  function openManager() {
+    const existing = tabs.find((t) => t.kind === "manager");
+    if (existing) {
+      selectTab(existing.id);
+      return;
+    }
+    const t = managerTab();
+    const idx = tabs.findIndex((x) => x.id === activeId);
+    tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
+    selectTab(t.id);
   }
 
   function reopenClosed() {
@@ -1790,6 +1803,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       on:close={(e) => closeTab(e.detail.id)}
       on:move={(e) => moveTab(e.detail.id, e.detail.to)}
       on:newTab={newSession}
+      on:manager={openManager}
       on:settings={() => openSettings()}
       on:update={() => openSettings("system")}
       on:history={() => openHistory()}
@@ -1820,6 +1834,17 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           on:openSession={(e) => openSession(e.detail.id)}
           on:deleteSession={(e) => remove(e.detail.id)}
           on:clearSessions={clearFinishedSessions}
+        />
+      </div>
+    {:else if tab.kind === "manager"}
+      <div class="fill col ghost" in:fade={{ duration: 150 }}>
+        <ManagerView
+          {threads}
+          on:openSession={(e) => openSession(e.detail.id)}
+          on:deleteSession={(e) => remove(e.detail.id)}
+          on:newSession={newSession}
+          on:settings={() => openSettings()}
+          on:setup={openSetup}
         />
       </div>
     {:else if tab.kind === "preview"}

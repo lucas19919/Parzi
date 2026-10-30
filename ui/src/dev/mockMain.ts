@@ -7,6 +7,9 @@ await new Promise((r) => setTimeout(r, 300));
 if (mockView === "settings") {
   window.dispatchEvent(new KeyboardEvent("keydown", { key: ",", ctrlKey: true }));
 }
+if (mockView === "manager") {
+  document.querySelector<HTMLElement>(".topbar .manager-btn")?.click();
+}
 if (mockView === "page") {
   await emit("parzi://browser-ask", { kind: "permission", id: "p1", tab: "t-page", origin: "https://meet.google.com", permission: "camera" });
 }
