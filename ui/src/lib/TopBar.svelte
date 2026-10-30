@@ -185,6 +185,17 @@
     background: var(--panel);
     color: var(--text);
   }
+  .panel-btn {
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+  }
+  .panel-btn:hover,
+  .panel-btn.active {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text);
+  }
   .count {
     position: absolute;
     top: 0;
@@ -206,15 +217,16 @@
     flex: none;
     height: 28px;
     background: none;
-    border: none;
+    border: 1px solid transparent;
   }
   .menu-pill.open {
-    background: none;
-    border: none;
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 999px;
   }
   .menu-pill.open .icon-btn,
   .menu-pill.open .icon-btn.active {
-    background: none;
+    background: transparent;
     color: var(--muted);
   }
   .menu-pill .icon-btn:hover,
