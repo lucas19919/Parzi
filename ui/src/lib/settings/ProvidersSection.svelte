@@ -5,7 +5,6 @@
   import { formatCommand, splitCommand } from "../acpCommand";
   import { board, checking, ensureBoard, nextStep, refreshBoard, refreshStale, setupWaits } from "../providerStore";
   import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "../providerRows";
-  import Switch from "./Switch.svelte";
   import { updateConfig } from "../config";
   import { tooltip } from "../tooltip";
   import "./shared.css";
@@ -57,6 +56,15 @@
           : (c.providers?.[id]?.binary ?? ""),
       ]),
     );
+
+  function dotState(p: ProviderStatus | undefined, enabled: boolean, busy: boolean): string {
+    if (!enabled) return "off";
+    if (busy) return "warn";
+    if (!p || p.state === "unchecked" || p.state === "disabled") return "idle";
+    if (p.state === "error") return "bad";
+    if (isUsable(p)) return "ok";
+    return "warn";
+  }
 
   function statusLine(p: ProviderStatus | undefined, enabled: boolean, busy: boolean): string {
     if (!enabled) return "Off";
@@ -172,21 +180,14 @@
         {@const ready = entry.enabled && isUsable(p)}
       <div class="pref-section">
         <div class="rows" class:off={!entry.enabled}>
-          <div class="row">
+          <div class="row row-title">
             <ProviderLogo provider={id} size={20} />
-            <span class="row-label">{nameOf(id)}{#if id === "acp" && entry.label} · {entry.label}{/if}
-              <small class:ok={ready && p?.state === "ready"} title={p?.state === "error" ? (p.hint ?? "") : ""}>{wait?.note ?? statusLine(p, entry.enabled, busy)}</small>
-            </span>
+            <span class="row-label">{nameOf(id)}{#if id === "acp" && entry.label} · {entry.label}{/if}</span>
             {#if ready && p && !p.gated}
               <span class="chip warn" use:tooltip={"It changes files on its own. Parzi cannot ask you first or keep it inside the project folder."}>Edits without asking</span>
             {/if}
             <span class="row-ctl auto">
-              {#if step}
-                <button class="sbtn primary" disabled={busy} on:click={() => step.run(id)}>{busy && step.label === "Try again" ? "Checking…" : step.label}</button>
-              {:else if wait}
-                <span class="waiting">{wait.action === "install" ? "Installing…" : "Signing in…"}</span>
-              {/if}
-              <Switch on={entry.enabled} title={entry.enabled ? `Turn ${nameOf(id)} off` : `Turn ${nameOf(id)} on`} on:toggle={() => setEnabled(id, !entry.enabled)} />
+              <span class="status-dot {dotState(p, entry.enabled, busy)}" use:tooltip={statusLine(p, entry.enabled, busy)} />
             </span>
           </div>
 
@@ -208,7 +209,6 @@
           {/if}
 
           <div class="details">
-            <div class="row row-title"><span>{id === "acp" ? "Command" : "Program"}</span></div>
             {#if id === "acp"}
               <label class="row">
                 <span class="row-label">Name</span>
@@ -223,8 +223,8 @@
                 />
               </label>
             {/if}
-            <label class="row">
-              <span class="row-label">{id === "acp" ? "Command" : "Path"}</span>
+            <div class="row">
+              <span class="row-label">{id === "acp" ? "Command" : "Program"}</span>
               <input
                 class="tin mono"
                 placeholder={id === "acp" ? "gemini --acp" : `Found automatically (${PROGRAM[id]})`}
@@ -234,7 +234,15 @@
                 on:change={() => savePath(id)}
                 on:keydown={(e) => e.key === "Enter" && savePath(id)}
               />
-            </label>
+              <span class="row-ctl auto">
+                {#if step}
+                  <button class="sbtn primary" disabled={busy} on:click={() => step.run(id)}>{busy && step.label === "Try again" ? "Checking…" : step.label}</button>
+                {:else if wait}
+                  <span class="waiting">{wait.action === "install" ? "Installing…" : "Signing in…"}</span>
+                {/if}
+                <button class="sbtn onoff" title={entry.enabled ? `Turn ${nameOf(id)} off` : `Turn ${nameOf(id)} on`} on:click={() => setEnabled(id, !entry.enabled)}>{entry.enabled ? "On" : "Off"}</button>
+              </span>
+            </div>
             {#if id === "acp"}
               <div class="row row-title">
                 <span>Custom</span>
@@ -307,9 +315,28 @@
   .usage-num { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
   .usage-reset { font-size: var(--fs-md); color: var(--muted); flex: none; }
 
+  /* Status marker: a quiet dot, top right — green when ready. */
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .status-dot.ok { background: var(--ok); }
+  .status-dot.bad { background: var(--bad); }
+  .status-dot.warn { background: var(--warn); }
+  .status-dot.off { background: var(--faint); }
+  .status-dot.idle { background: transparent; border: 1px solid var(--line); }
+
   /* Program/Command fields always visible; same 32px inputs as theme cards. */
-  .details .tin {
+  .details .tin,
+  .details .sbtn {
     height: calc(var(--space) * 8);
+  }
+  .onoff {
+    min-width: calc(var(--space) * 14);
+    justify-content: center;
   }
   /* Registry grid uses the same card theme as Appearance packs. */
   .packs {
