@@ -56,9 +56,11 @@
   });
 </script>
 
-{#if jobs.length}
   <InfoCard id="jobs" title="Background tasks">
-    <svelte:fragment slot="aside">{running.length ? `${running.length} running` : `${done.length} finished`}</svelte:fragment>
+    <svelte:fragment slot="aside">{running.length ? `${running.length} running` : done.length ? `${done.length} finished` : ""}</svelte:fragment>
+    {#if !jobs.length}
+      <div class="line"><span class="v quiet">No background tasks</span></div>
+    {/if}
     {#each running as j (j.id)}
       <div class="line job">
         <Icon name="terminal" size={12} />
@@ -86,7 +88,6 @@
       {/if}
     {/if}
   </InfoCard>
-{/if}
 
 <style>
   .line {

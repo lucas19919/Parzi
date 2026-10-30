@@ -239,18 +239,19 @@
 
   <JobsCard {session} />
 
-  {#if helpers.length}
-    <InfoCard id="agents" title="Agents">
-      <svelte:fragment slot="aside">{busy ? `${busy} running` : helpers.length}</svelte:fragment>
-      {#each helpers as h (h.id)}
-        {@const tone = sessionTone(h, running, waiting)}
-        <button class="line row" use:tooltip={TONE_WORDS[tone]} on:click={() => dispatch("openSession", { id: h.id })}>
-          <i class="dot t-{tone}" />
-          <span class="v">{h.title || "Untitled"}</span>
-        </button>
-      {/each}
-    </InfoCard>
-  {/if}
+  <InfoCard id="agents" title="Agents">
+    <svelte:fragment slot="aside">{busy ? `${busy} running` : helpers.length ? helpers.length : ""}</svelte:fragment>
+    {#if !helpers.length}
+      <div class="line"><span class="v quiet">No agents yet</span></div>
+    {/if}
+    {#each helpers as h (h.id)}
+      {@const tone = sessionTone(h, running, waiting)}
+      <button class="line row" use:tooltip={TONE_WORDS[tone]} on:click={() => dispatch("openSession", { id: h.id })}>
+        <i class="dot t-{tone}" />
+        <span class="v">{h.title || "Untitled"}</span>
+      </button>
+    {/each}
+  </InfoCard>
 </aside>
 
 <style>
