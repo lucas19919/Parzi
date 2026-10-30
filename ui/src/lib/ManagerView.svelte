@@ -351,7 +351,7 @@
     align-items: center;
     gap: calc(var(--space) * 2);
     min-height: 36px;
-    padding: calc(var(--space) * 2) calc(var(--space) * 4);
+    padding: calc(var(--space) * 4);
   }
   .top .page-search {
     flex: 1;
