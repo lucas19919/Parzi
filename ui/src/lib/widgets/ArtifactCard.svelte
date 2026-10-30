@@ -22,8 +22,12 @@
   export let superseded = false;
   export let reader = false;
   export let bare = false;
-  /** Start collapsed (older artifacts stay one line until opened). */
-  export let folded = false;
+  /**
+   * Inline thread rendering: textual artifacts dissolve into the thread as
+   * plain markdown/code, while visual ones (images, showcases, demos) render
+   * as just an outline with no header chrome.
+   */
+  export let inline = false;
 
   const d = data ?? {};
   const id: string = String(d.id ?? fallbackId ?? "artifact");
@@ -62,10 +66,10 @@
   let frame: HTMLIFrameElement | null = null;
   let svgBroken = false;
   let open = reader || !superseded;
-  let touched = false;
-  // New arrivals collapse the older cards, unless already handled by hand.
-  $: if (!touched) open = reader || (!superseded && !folded);
   let copied = false;
+
+  const TEXTUAL = new Set(["markdown", "md", "text", "txt", "code", "diff", "json", "jsonl", "csv", "tsv", "log"]);
+  $: textual = TEXTUAL.has((kind || "text").toLowerCase());
 
   let body: HTMLDivElement | null = null;
   let tall = false;
@@ -102,10 +106,8 @@
   }
 
   function nameClick() {
-    if ((superseded || folded) && !reader) {
-      touched = true;
-      open = !open;
-    } else if (!reader && !bad) openToRead();
+    if (superseded && !reader) open = !open;
+    else if (!reader && !bad) openToRead();
   }
 
   function codeClick(e: MouseEvent) {
@@ -144,10 +146,21 @@
   });
 </script>
 
-<div class="art" class:bad class:reader class:old={superseded && !open}>
-  {#if !bare}
+{#if inline && !bad && textual}
+  {#if kind === "markdown" || kind === "text" || kind === "md" || !kind}
+    <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
+    <div class="doc msg" on:click={(e) => void docClick(e)}>{@html mdHtml(content, $richReady)}</div>
+  {:else}
+    <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
+    <div class="code" on:click={codeClick}>
+      {@html mdHtml("```" + (language || kind) + "\n" + content.slice(0, 60000) + "\n```", $richReady)}
+    </div>
+  {/if}
+{:else}
+<div class="art" class:bad class:reader class:outline={inline} class:old={superseded && !open}>
+  {#if !bare && !inline}
   <div class="head">
-    <button class="name" aria-expanded={superseded || folded ? open : undefined} disabled={reader || bad} on:click={nameClick}>
+    <button class="name" aria-expanded={superseded ? open : undefined} disabled={reader || bad} on:click={nameClick}>
       <Icon name={icon} size={12} />
       {#if !reader}<span class="title">{title}</span>{/if}
       {#if superseded && !open}<span class="meta">updated below</span>{/if}
@@ -212,6 +225,7 @@
     {/if}
   {/if}
 </div>
+{/if}
 
 <style>
   .art {
@@ -230,6 +244,17 @@
     background: none;
     border: none;
     border-radius: 0;
+  }
+  /* Inline showcases: just an outline, no header chrome. */
+  .art.outline {
+    background: transparent;
+    border-radius: var(--radius);
+  }
+  .art.outline .zoom img {
+    max-height: 340px;
+    width: auto;
+    max-width: 100%;
+    margin: 0 auto;
   }
   .reader .head,
   .reader .body {

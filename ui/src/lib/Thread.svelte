@@ -220,14 +220,6 @@
     for (const it of items) if (it.kind === "artifact") m.set(it.id, Math.max(m.get(it.id) ?? 0, it.version ?? 1));
     return m;
   })();
-  // Only the latest artifact stays open; older ones collapse to a line.
-  $: lastArt = (() => {
-    let at = -1;
-    items.forEach((it, i) => {
-      if (it.kind === "artifact") at = i;
-    });
-    return at;
-  })();
   $: userNth = (() => {
     const m = new Map<string, number>();
     let n = 0;
@@ -628,8 +620,8 @@ ${e.text}` : e.text;
                 <div class="msg">{@html mdHtml(seg.body, $richReady)}</div>
               {:else if seg.kind === "widget"}
                 <Widget data={seg.body} />
-              {:else if seg.kind === "artifact"}
-                <ArtifactCard data={seg.body} />
+      {:else if seg.kind === "artifact"}
+        <ArtifactCard data={seg.body} inline />
               {:else if seg.kind === "viz"}
                 <Viz spec={seg.body} />
               {/if}
@@ -712,14 +704,15 @@ ${e.text}` : e.text;
           <div class="msg">{@html mdHtml("```" + item.fence + "\n" + JSON.stringify(item.payload, null, 2) + "\n```", $richReady)}</div>
         {/if}
     {:else if item.kind === "artifact"}
-      <ArtifactCard
-        data={item.payload}
-        fallbackId={item.id}
-        fallbackTitle={item.title}
-        fallbackKind={item.artifact_kind}
-        superseded={(item.version ?? 1) < (newest.get(item.id) ?? 0)}
-        folded={i !== lastArt}
-      />
+      {#if (item.version ?? 1) >= (newest.get(item.id) ?? 0)}
+        <ArtifactCard
+          data={item.payload}
+          fallbackId={item.id}
+          fallbackTitle={item.title}
+          fallbackKind={item.artifact_kind}
+          inline
+        />
+      {/if}
         {/if}
     {/if}
   {/each}
@@ -748,7 +741,7 @@ ${e.text}` : e.text;
     {:else if seg.kind === "widget"}
       <Widget data={seg.body} />
     {:else if seg.kind === "artifact"}
-      <ArtifactCard data={seg.body} />
+      <ArtifactCard data={seg.body} inline />
     {:else if seg.kind === "viz"}
       <Viz spec={seg.body} />
     {/if}

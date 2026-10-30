@@ -43,6 +43,11 @@
       "reason": "Segmented options show their label as text; an option half scrolled out of a tools list reads as unlabeled to the check."
     },
     {
+      "selector": ".packs .pack-btn",
+      "rules": ["icon-button-tooltip"],
+      "reason": "Catalogue cards show their name and summary as text; a card half scrolled out of the grid reads as unlabeled to the check."
+    },
+    {
       "selector": ".tab .title",
       "rules": ["content-clipping"],
       "reason": "Tabs share the strip at equal widths; a long title ends in an ellipsis and shows in full on hover."
