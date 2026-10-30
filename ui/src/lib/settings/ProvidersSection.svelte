@@ -1,12 +1,11 @@
 <script lang="ts">
   import ProviderLogo from "../ProviderLogo.svelte";
   import { onMount } from "svelte";
-  import { api, type ParziConfig, type ProviderEntry, type ProviderStatus, type RegistryAgent } from "../api";
+  import { api, type ParziConfig, type ProviderEntry, type RegistryAgent } from "../api";
   import { formatCommand, splitCommand } from "../acpCommand";
   import { board, checking, ensureBoard, nextStep, refreshBoard, refreshStale, setupWaits } from "../providerStore";
-  import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "../providerRows";
+  import { PROVIDER_ORDER, isUsable, nameOf } from "../providerRows";
   import { updateConfig } from "../config";
-  import { tooltip } from "../tooltip";
   import "./shared.css";
 
   export let notify: (msg: string, err?: boolean) => void = () => {};
@@ -48,24 +47,6 @@
           : (c.providers?.[id]?.binary ?? ""),
       ]),
     );
-
-  function dotState(p: ProviderStatus | undefined, enabled: boolean, busy: boolean): string {
-    if (!enabled) return "off";
-    if (busy) return "warn";
-    if (!p || p.state === "unchecked" || p.state === "disabled") return "idle";
-    if (p.state === "error") return "bad";
-    if (isUsable(p)) return "ok";
-    return "warn";
-  }
-
-  function statusLine(p: ProviderStatus | undefined, enabled: boolean, busy: boolean): string {
-    if (!enabled) return "Off";
-    if (!p || p.state === "unchecked" || p.state === "disabled") return busy ? "Checking…" : "Not checked yet";
-    if (p.state === "error") return p.hint || "Check failed";
-    const parts = [stateLabel(p)];
-    if (p.version && p.state === "ready") parts.push(p.version);
-    return parts.join(" · ");
-  }
 
   function resetsIn(at?: number): string {
     if (!at) return "";
@@ -176,12 +157,13 @@
             <ProviderLogo provider={id} size={20} />
             <span>{nameOf(id)}{#if id === "acp" && entry.label} · {entry.label}{/if}</span>
             <span class="row-ctl auto">
-              <button
-                class="status-dot {dotState(p, entry.enabled, busy)}"
-                aria-label={entry.enabled ? `Turn ${nameOf(id)} off` : `Turn ${nameOf(id)} on`}
-                use:tooltip={`${statusLine(p, entry.enabled, busy)} · Click to turn ${entry.enabled ? "off" : "on"}`}
-                on:click={() => setEnabled(id, !entry.enabled)}
-              />
+              {#if step}
+                <button class="sbtn primary" disabled={busy} on:click={() => step.run(id)}>{busy && step.label === "Try again" ? "Checking…" : step.label}</button>
+              {:else if wait}
+                <span class="waiting">{wait.action === "install" ? "Installing…" : "Signing in…"}</span>
+              {:else if !entry.enabled}
+                <button class="sbtn" title={`Turn ${nameOf(id)} on`} on:click={() => setEnabled(id, true)}>On</button>
+              {/if}
             </span>
           </div>
 
@@ -294,38 +276,6 @@
   .usage-fill.hot { background: var(--warn); }
   .usage-num { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
   .usage-reset { font-size: var(--fs-md); color: var(--muted); flex: none; }
-
-  /* Status dot is a real control: 24px hit area, 8px visual. */
-  button.status-dot {
-    width: calc(var(--space) * 6);
-    height: calc(var(--space) * 6);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: none;
-    border: none;
-  }
-  button.status-dot.ok,
-  button.status-dot.bad,
-  button.status-dot.warn,
-  button.status-dot.off,
-  button.status-dot.idle {
-    background: none;
-    border: none;
-  }
-  button.status-dot::after {
-    content: "";
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--muted);
-  }
-  button.status-dot.ok::after { background: var(--ok); }
-  button.status-dot.bad::after { background: var(--bad); }
-  button.status-dot.warn::after { background: var(--warn); }
-  button.status-dot.off::after { background: var(--faint); }
-  button.status-dot.idle::after { background: transparent; border: 1px solid var(--line); }
 
   /* Program/Command fields always visible; same 32px inputs as theme cards. */
   .details .tin,
