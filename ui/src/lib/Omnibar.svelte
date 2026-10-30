@@ -571,8 +571,8 @@
             draggable="true"
             role="button"
             tabindex="0"
-            aria-label="Drag to reorder: {item.text}"
-            title="Drag to reorder"
+          aria-label="Drag to reorder: {item.text}"
+          use:tooltip={"Drag to reorder"}
             on:dragstart={() => (dragId = item.id)}
             on:dragend={() => ((dragId = null), (dragOver = -1))}
             on:keydown={(e) => {
@@ -1171,7 +1171,7 @@
     flex: none;
     display: inline-flex;
     align-items: center;
-    gap: var(--space);
+    gap: calc(var(--space) * 2);
   }
   .queue-acts button {
     width: 22px;

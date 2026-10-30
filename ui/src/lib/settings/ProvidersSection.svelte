@@ -187,7 +187,7 @@
               <span class="chip warn" use:tooltip={"It changes files on its own. Parzi cannot ask you first or keep it inside the project folder."}>Edits without asking</span>
             {/if}
             <span class="row-ctl auto">
-              <span class="status-dot {dotState(p, entry.enabled, busy)}" use:tooltip={statusLine(p, entry.enabled, busy)} />
+              <span class="status-dot {dotState(p, entry.enabled, busy)}" role="img" aria-label={statusLine(p, entry.enabled, busy)} use:tooltip={statusLine(p, entry.enabled, busy)} />
             </span>
           </div>
 

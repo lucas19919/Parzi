@@ -35,7 +35,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--fs-md);
+    font-size: var(--fs-base);
     font-weight: 600;
     color: var(--text);
   }

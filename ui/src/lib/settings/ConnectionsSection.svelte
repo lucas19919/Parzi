@@ -367,7 +367,7 @@
     {#each groups as group (group.id)}
       <div class="section-head-with-action">
         <h3 class="section-title">{group.id === "mcp" ? "MCPs" : "Connectors"}</h3>
-        <button class="sbtn" on:click={() => (connectOpen = true)}>Connect</button>
+        <button class="sbtn connect-mcp" on:click={() => (connectOpen = true)}>Connect</button>
       </div>
       {#if !group.rows.length}
         <p class="section-desc">None yet.</p>
@@ -386,7 +386,7 @@
               </button>
               <span class="row-label">{row.name}</span>
               <span class="row-ctl auto">
-                <span class="status-dot {dotState(off, h)}" use:tooltip={sentence} />
+                <span class="status-dot {dotState(off, h)}" role="img" aria-label={sentence} use:tooltip={sentence} />
               </span>
             </div>
             <div class="row conn">

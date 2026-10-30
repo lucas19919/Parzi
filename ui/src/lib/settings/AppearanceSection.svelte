@@ -360,7 +360,7 @@
                 on:click={() => deleteWall(b)}>{#if delWall === b.name}Sure?{:else}<Icon name="close" size={12} />{/if}</button>
             </div>
           {/each}
-          <button class="thumb add" on:click={pickFile} title="Add image" aria-label="Add image"><Icon name="plus" size={12} /></button>
+          <button class="thumb add" on:click={pickFile} use:tooltip={"Add image"} aria-label="Add image"><Icon name="plus" size={12} /></button>
         </div>
       </div>
       {#if theme.background.image}

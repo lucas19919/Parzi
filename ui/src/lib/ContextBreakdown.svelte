@@ -178,7 +178,7 @@
     border: none;
     background: none;
     font-size: var(--fs-sm);
-    line-height: 1;
+    line-height: 1.4;
   }
   .dot {
     display: block;

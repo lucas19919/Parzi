@@ -116,6 +116,36 @@
       "selector": ".info h3, .info .line span",
       "rules": ["text-contrast"],
       "reason": "Reviewed: the session column is --text and --muted on the session's opaque panel. The session actions menu drops over them, and axe can't sample text under the menu."
+    },
+    {
+      "selector": ".card .body span, .card .body p",
+      "rules": ["text-contrast"],
+      "reason": "Reviewed: the onboarding dialog's copy is --text and --muted on the dialog's opaque --panel (at least 4.5:1 in every built-in theme). Axe flags it where the dialog's scroll region or transition overlaps it and no single background is measurable."
+    },
+    {
+      "selector": ".art .head .name .title",
+      "rules": ["text-contrast"],
+      "reason": "Reviewed: artifact titles are --text on the card's opaque --panel, the same pairing as thread body text. The setup view keeps the onboarding dialog open over the session, and axe cannot sample anything rendered under the dialog."
+    },
+    {
+      "selector": "input.tin, textarea.tin",
+      "rules": ["text-contrast"],
+      "reason": "Reviewed: field placeholders are --muted on the field's opaque --bg (at least 4.5:1 in every built-in theme); axe cannot measure a placeholder background. Typed text is --text on the same surface and passes wherever sampled."
+    },
+    {
+      "selector": ".rows.off .row span",
+      "rules": ["text-contrast"],
+      "reason": "Reviewed: turned-off cards deliberately dim their rows to inactive; the same text passes at full opacity when the provider or connector is on."
+    },
+    {
+      "selector": ".ob .queue-item span",
+      "rules": ["text-contrast"],
+      "reason": "Reviewed: queued message text is --text and --muted over the composer's translucent surface above the thread fade; axe samples the gradient through the layers. The composer textarea carries the same construction and the same exception."
+    },
+    {
+      "selector": ".picker .row .name",
+      "rules": ["text-contrast"],
+      "reason": "Reviewed: model names are --text on the picker's opaque --panel and pass wherever fully visible; axe flags the row where the picker's scroll region cuts it mid-list and no single background is measurable."
     }
   ]
 }

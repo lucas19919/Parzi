@@ -119,7 +119,7 @@
   .head-row {
     display: flex;
     align-items: center;
-    gap: var(--space);
+    gap: calc(var(--space) * 2);
   }
   .head {
     display: flex;

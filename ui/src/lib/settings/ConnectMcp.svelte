@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount } from "svelte";
+  import { createEventDispatcher, onMount, tick } from "svelte";
   import { api, type ParziConfig } from "../api";
   import { updateConfig } from "../config";
   import { CATALOG, hostedServer, nameFromUrl, type ServerCfg as Server } from "../connectorCatalog";
   import { classifyPaste, nameFromProgram, splitLine } from "../cmdline";
   import ConnectorLogo from "../ConnectorLogo.svelte";
   import Icon from "../Icon.svelte";
+  import { tooltip } from "../tooltip";
   import { setOverlay } from "../overlay";
   import "./shared.css";
 
@@ -19,10 +20,12 @@
   let pasted = "";
   let saving = false;
   let loadError = "";
+  let card: HTMLDivElement;
 
   onMount(() => {
     setOverlay("connect-mcp", true);
     void load();
+    void tick().then(() => card?.focus());
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") dispatch("close");
     };
@@ -135,10 +138,10 @@
 </script>
 
 <div class="backdrop" role="presentation" on:click|self={() => dispatch("close")}>
-  <div class="box" role="dialog" aria-modal="true" aria-label="Connect MCP">
+  <div class="box" role="dialog" aria-modal="true" aria-label="Connect MCP" tabindex="-1" bind:this={card}>
     <div class="head">
       <span class="title">Connect MCP</span>
-      <button class="x" aria-label="Close" on:click={() => dispatch("close")}><Icon name="close" size={12} /></button>
+      <button class="x" aria-label="Close" use:tooltip={"Close"} on:click={() => dispatch("close")}><Icon name="close" size={12} /></button>
     </div>
     {#if loadError}
       <div class="load-err"><span>{loadError}</span></div>
