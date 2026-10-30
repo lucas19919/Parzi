@@ -199,7 +199,8 @@
     flex: none;
     display: flex;
     align-items: center;
-    min-height: 36px;
+    /* Same 64px band as .top (16px inset + 32px control) so rail and search share a line. */
+    min-height: calc(var(--space) * 16);
     padding: 0 var(--space) 0 calc(var(--space) * 3);
     color: var(--muted);
     font-size: var(--fs-sm);
