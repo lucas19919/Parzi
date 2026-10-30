@@ -12,6 +12,8 @@
   $: finished = items.length > 0 && done === items.length;
 
   let open: boolean | null = null;
+  // Done plans collapse away even if they were opened mid-run; reopening to review still works.
+  $: if (finished) open = false;
   $: shown = open ?? !finished;
 </script>
 

@@ -164,7 +164,7 @@
               on:click={() => choose(item)}
               on:mouseenter={() => (index = i)}
             >
-              <span class="ico">{#if item.provider && hasMark(item.provider)}<ProviderLogo provider={item.provider} size={16} mono />{:else}<Icon name={item.icon} />{/if}</span>
+              {#if item.group === "Actions"}<span class="ico">{#if item.provider && hasMark(item.provider)}<ProviderLogo provider={item.provider} size={16} mono />{:else}<Icon name={item.icon} />{/if}</span>{/if}
               <span class="info">
                 <span class="title">{item.title}</span>
                 {#if item.sub}<span class="sub">{item.sub}</span>{/if}
