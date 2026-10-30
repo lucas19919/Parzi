@@ -3,8 +3,6 @@
   import type { Question } from "./api";
 
   export let question: Question;
-  export let from = "";
-  export let about = "";
 
   const dispatch = createEventDispatcher<{ answer: { text: string } }>();
   const SKIPPED = "Skipped: decide yourself and say what you assumed.";
@@ -55,12 +53,6 @@
 </script>
 
 <div class="q" role="group" aria-label="Question">
-  {#if from || about}
-    <div class="from">
-      {#if from}<span>{from} asks</span>{/if}
-      {#if about}<span class="about" title={about}>Re: {about}</span>{/if}
-    </div>
-  {/if}
   <div class="head">{question.question}</div>
   <div class="list" role={multi ? "group" : "radiogroup"} data-ui-list>
     {#each question.options as opt, i (i)}
@@ -112,20 +104,6 @@
     border-radius: var(--radius-lg);
     font-size: var(--fs-md);
     color: var(--text);
-  }
-  .from {
-    display: flex;
-    gap: calc(var(--space) * 2);
-    min-width: 0;
-    padding: calc(var(--space) * 3) calc(var(--space) * 4) 0;
-    font-size: var(--fs-sm);
-    color: var(--muted);
-  }
-  .about {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .head {
     padding: calc(var(--space) * 3) calc(var(--space) * 4);

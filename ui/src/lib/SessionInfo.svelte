@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
-  import InfoCard from "./InfoCard.svelte";
+  import InfoCard, { unfold } from "./InfoCard.svelte";
   import ContextBreakdown from "./ContextBreakdown.svelte";
   import JobsCard from "./JobsCard.svelte";
   import NotificationsCard from "./NotificationsCard.svelte";
@@ -36,6 +36,7 @@
   export let questions: Question[] = [];
   export let planInline = false;
   export let doc: { title: string; content: string; version: number } | null = null;
+  $: if (doc) unfold("doc");
   export let width = 264;
   // Open or shut: the column animates its own width instead of mounting
   // in and out, so the thread never jumps.

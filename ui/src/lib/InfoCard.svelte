@@ -17,6 +17,16 @@
     } catch {
     }
   });
+
+  /** Opening something in the sidebar always expands its card. */
+  export function unfold(id: string) {
+    folded.update((s) => {
+      if (!s.has(id)) return s;
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  }
 </script>
 
 <script lang="ts">

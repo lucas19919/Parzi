@@ -25,16 +25,6 @@
   import LiveLine from "./LiveLine.svelte";
   import { board, nextStep, setupWaits } from "./providerStore";
 
-  $: askContext = (() => {
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i];
-      if ((e.kind === "assistant" || e.kind === "user") && e.text.trim()) {
-        const line = e.text.trim().split("\n")[0];
-        return line.length > 140 ? `${line.slice(0, 140)}…` : line;
-      }
-    }
-    return "";
-  })();
   function when(at: number | undefined): string {
     if (!at) return "";
     return formatTime(at * 1000);
@@ -790,7 +780,7 @@ ${e.text}` : e.text;
 
   {#if question}
     <div transition:fade={spring}>
-      <QuestionCard {question} from={askerTitle} about={askContext} on:answer={(e) => respond(e.detail.text)} />
+      <QuestionCard {question} on:answer={(e) => respond(e.detail.text)} />
     </div>
   {/if}
 
