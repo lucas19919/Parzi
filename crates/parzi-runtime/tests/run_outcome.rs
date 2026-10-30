@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use common::*;
-use parzi_core::store::{Check, FileTouch, RunEndKind, SessionMeta, SessionStore, Via};
+use parzi_core::store::{Check, FileTouch, RunEndKind, SessionMeta, SessionStatus, SessionStore, Via};
 use parzi_providers::{ProviderError, TurnEnd};
 use serde_json::json;
 
@@ -348,4 +348,53 @@ async fn a_relative_folder_is_refused_before_the_agent_starts() {
     assert!(err.contains("not a full path"), "{err}");
     assert!(fake.seen().is_empty(), "the agent never started");
     let _ = store;
+}
+
+#[tokio::test]
+async fn a_runaway_tool_loop_is_stopped_instead_of_spinning_forever() {
+    home("outcome");
+    let fake = Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            for i in 0..120u32 {
+                if a.cancel.is_cancelled() {
+                    return Ok(TurnEnd::Interrupted);
+                }
+                a.own_tool(
+                    &format!("t{i}"),
+                    "Edit",
+                    serde_json::json!({"file_path": "x.ts"}),
+                    || async { (true, "ok".to_string()) },
+                )
+                .await;
+            }
+            Ok(TurnEnd::Completed)
+        }),
+    );
+    let (orch, store) = orch(std::slice::from_ref(&fake));
+    let (meta, _rx) = orch
+        .spawn(
+            "outcome-tests",
+            "claude",
+            "keep editing",
+            None,
+            "",
+            "low",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap();
+    let m = recorded(&store, &meta.id).await;
+    let out = m.last_run.unwrap();
+    assert_eq!(out.end, RunEndKind::Failed, "the looping turn fails");
+    assert!(
+        out.summary.contains("kept calling tools"),
+        "the thread says why it stopped: {out:?}"
+    );
+    assert_eq!(
+        store.get(&meta.id).unwrap().status,
+        SessionStatus::Idle,
+        "the session is usable again, not stuck active"
+    );
 }

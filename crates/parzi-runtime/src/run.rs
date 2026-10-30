@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use parzi_core::config::Budget;
 use parzi_core::context::{AttachedFile, InterSessionMessage};
@@ -25,6 +25,14 @@ use crate::tools::{display_name, edit_paths, humanize_tool_call, shell_command};
 
 const MAX_TURNS: u32 = 8;
 const HISTORY_CHARS: usize = 12_000;
+/// A turn that produces no provider events for this long is treated as stuck.
+/// Deliberately longer than the approval auto-deny (900s) and the longest
+/// tool timeout (600s), so only a truly wedged agent trips it.
+const IDLE_LIMIT: Duration = Duration::from_mins(20);
+/// A turn that keeps calling tools past this count is treated as looping.
+const TURN_TOOL_LIMIT: u32 = 100;
+/// How long to let a cancelled turn wind down before giving up on it.
+const POST_CANCEL_GRACE: Duration = Duration::from_secs(15);
 
 const SUMMARIZE: &str = "Summarize this conversation so a fresh session can carry on from it alone. \
 Keep: the goal and what the person asked for, decisions made and why, files and places touched, \
@@ -75,6 +83,11 @@ enum Outcome {
     Closed(String),
     Paused(String),
     Failed(ProviderError),
+}
+
+enum TurnHalt {
+    Quiet,
+    Loopy,
 }
 
 #[derive(Default)]
@@ -530,7 +543,7 @@ impl EngineRun {
         };
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let turn_cancel = self.p.cancel.child_token();
-        let task = {
+        let mut task = {
             let provider = self.p.provider.clone();
             let gate: Arc<dyn PermissionGate> = self.p.host.clone();
             let cancel = turn_cancel.clone();
@@ -539,17 +552,67 @@ impl EngineRun {
         let mut turn = Turn::default();
         let mut paused: Option<String> = None;
         let mut closed: Option<String> = None;
-        while let Some(ev) = rx.recv().await {
-            if let ProviderEvent::Notice(ref text) = ev {
-                if text.contains("exited before it answered") {
-                    closed = Some(text.clone());
+        let mut tool_calls = 0u32;
+        let mut idle_since = tokio::time::Instant::now();
+        let mut halt: Option<TurnHalt> = None;
+        loop {
+            match tokio::time::timeout_at(idle_since + IDLE_LIMIT, rx.recv()).await {
+                Err(_) => {
+                    // No provider events for a long while: the agent went
+                    // quiet. Stop waiting on it instead of hanging forever.
+                    tracing::warn!(session = %self.p.session_id, "turn went quiet with no provider events; cancelling");
+                    turn_cancel.cancel();
+                    halt = Some(TurnHalt::Quiet);
+                    break;
+                }
+                Ok(None) => break,
+                Ok(Some(ev)) => {
+                    idle_since = tokio::time::Instant::now();
+                    if matches!(ev, ProviderEvent::ToolStarted { .. }) {
+                        tool_calls += 1;
+                        if tool_calls > TURN_TOOL_LIMIT {
+                            // The agent keeps calling tools without ever finishing:
+                            // stop it instead of looping forever.
+                            tracing::warn!(session = %self.p.session_id, tools = tool_calls, "turn kept calling tools without finishing; cancelling");
+                            turn_cancel.cancel();
+                            halt = Some(TurnHalt::Loopy);
+                            break;
+                        }
+                    }
+                    if let ProviderEvent::Notice(ref text) = ev {
+                        if text.contains("exited before it answered") {
+                            closed = Some(text.clone());
+                        }
+                    }
+                    if let Some(reason) = self.on_event(ev, &mut turn) {
+                        if paused.is_none() {
+                            paused = Some(reason);
+                            turn_cancel.cancel();
+                        }
+                    }
                 }
             }
-            if let Some(reason) = self.on_event(ev, &mut turn) {
-                if paused.is_none() {
-                    paused = Some(reason);
-                    turn_cancel.cancel();
-                }
+        }
+        if let Some(kind) = halt {
+            // Give a wedged driver a short grace period to wind down, then
+            // stop waiting no matter what. select! pins the branches itself.
+            tokio::select! {
+                biased;
+                _ = &mut task => {}
+                () = tokio::time::sleep(POST_CANCEL_GRACE) => {}
+            }
+            task.abort();
+            if paused.is_none() {
+                let name = parzi_providers::display_name(&self.p.provider_id);
+                let msg = match kind {
+                    TurnHalt::Quiet => format!(
+                        "{name} went quiet for too long with no output, so the turn was stopped. Send again to continue."
+                    ),
+                    TurnHalt::Loopy => format!(
+                        "{name} kept calling tools without finishing (over {TURN_TOOL_LIMIT} calls), so the turn was stopped. Send again to continue."
+                    ),
+                };
+                return Outcome::Failed(ProviderError::process(msg));
             }
         }
         let result = task
