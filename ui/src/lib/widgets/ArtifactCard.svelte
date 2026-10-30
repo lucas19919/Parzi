@@ -22,6 +22,8 @@
   export let superseded = false;
   export let reader = false;
   export let bare = false;
+  /** Start collapsed (older artifacts stay one line until opened). */
+  export let folded = false;
 
   const d = data ?? {};
   const id: string = String(d.id ?? fallbackId ?? "artifact");
@@ -60,6 +62,9 @@
   let frame: HTMLIFrameElement | null = null;
   let svgBroken = false;
   let open = reader || !superseded;
+  let touched = false;
+  // New arrivals collapse the older cards, unless already handled by hand.
+  $: if (!touched) open = reader || (!superseded && !folded);
   let copied = false;
 
   let body: HTMLDivElement | null = null;
@@ -97,8 +102,10 @@
   }
 
   function nameClick() {
-    if (superseded && !reader) open = !open;
-    else if (!reader && !bad) openToRead();
+    if ((superseded || folded) && !reader) {
+      touched = true;
+      open = !open;
+    } else if (!reader && !bad) openToRead();
   }
 
   function codeClick(e: MouseEvent) {
@@ -140,7 +147,7 @@
 <div class="art" class:bad class:reader class:old={superseded && !open}>
   {#if !bare}
   <div class="head">
-    <button class="name" aria-expanded={superseded ? open : undefined} disabled={reader || bad} on:click={nameClick}>
+    <button class="name" aria-expanded={superseded || folded ? open : undefined} disabled={reader || bad} on:click={nameClick}>
       <Icon name={icon} size={12} />
       {#if !reader}<span class="title">{title}</span>{/if}
       {#if superseded && !open}<span class="meta">updated below</span>{/if}

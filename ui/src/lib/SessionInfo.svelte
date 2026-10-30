@@ -240,7 +240,7 @@
   <JobsCard {session} />
 
   {#if helpers.length}
-    <InfoCard id="helpers" title="Side tasks">
+    <InfoCard id="agents" title="Agents">
       <svelte:fragment slot="aside">{busy ? `${busy} running` : helpers.length}</svelte:fragment>
       {#each helpers as h (h.id)}
         {@const tone = sessionTone(h, running, waiting)}
