@@ -32,7 +32,7 @@
     panel: void;
   }>();
 
-  $: panelAgents = panelCount > 99 ? "99+" : String(panelCount);
+
 
   let menuOpen = false;
 
@@ -117,12 +117,11 @@
           class="icon-btn panel-btn"
           class:active={panelOpen}
           aria-pressed={panelOpen}
-          aria-label={panelCount > 0 ? `Session column, ${panelAgents} agents running` : "Session column"}
+          aria-label={panelCount > 0 ? `Session column, ${panelCount} agents running` : "Session column"}
           use:tooltip={"Session column (Ctrl+J)"}
           on:click={() => dispatch("panel")}
         >
-          <ChromeIcon name="panel" />
-          {#if panelCount > 0}<span class="count">{panelAgents}</span>{/if}
+        <ChromeIcon name="panel" />
         </button>
       {/if}
       <WinControls />
@@ -209,21 +208,6 @@
     background: transparent;
     border-color: var(--line);
     color: var(--text);
-  }
-  .count {
-    position: absolute;
-    top: 0;
-    right: -1px;
-    min-width: 14px;
-    height: 14px;
-    padding: 0 var(--space);
-    border-radius: 999px;
-    background: var(--ok);
-    color: var(--on-ok);
-    font-size: var(--fs-xs);
-    font-weight: 700;
-    line-height: 14px;
-    text-align: center;
   }
   .menu-pill {
     display: flex;
