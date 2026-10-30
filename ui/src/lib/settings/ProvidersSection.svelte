@@ -182,12 +182,17 @@
         <div class="rows" class:off={!entry.enabled}>
           <div class="row row-title">
             <ProviderLogo provider={id} size={20} />
-            <span class="row-label">{nameOf(id)}{#if id === "acp" && entry.label} · {entry.label}{/if}</span>
+            <span>{nameOf(id)}{#if id === "acp" && entry.label} · {entry.label}{/if}</span>
             {#if ready && p && !p.gated}
               <span class="chip warn" use:tooltip={"It changes files on its own. Parzi cannot ask you first or keep it inside the project folder."}>Edits without asking</span>
             {/if}
             <span class="row-ctl auto">
-              <span class="status-dot {dotState(p, entry.enabled, busy)}" role="img" aria-label={statusLine(p, entry.enabled, busy)} use:tooltip={statusLine(p, entry.enabled, busy)} />
+              <button
+                class="status-dot {dotState(p, entry.enabled, busy)}"
+                aria-label={entry.enabled ? `Turn ${nameOf(id)} off` : `Turn ${nameOf(id)} on`}
+                use:tooltip={`${statusLine(p, entry.enabled, busy)} · Click to turn ${entry.enabled ? "off" : "on"}`}
+                on:click={() => setEnabled(id, !entry.enabled)}
+              />
             </span>
           </div>
 
@@ -240,7 +245,6 @@
                 {:else if wait}
                   <span class="waiting">{wait.action === "install" ? "Installing…" : "Signing in…"}</span>
                 {/if}
-                <button class="sbtn onoff" title={entry.enabled ? `Turn ${nameOf(id)} off` : `Turn ${nameOf(id)} on`} on:click={() => setEnabled(id, !entry.enabled)}>{entry.enabled ? "On" : "Off"}</button>
               </span>
             </div>
             {#if id === "acp"}
@@ -282,11 +286,6 @@
     flex: none;
     margin-left: calc(var(--space) * 2);
   }
-  /* Rows inherit the muted secondary tone; names and values opt back in. */
-  .rows .row {
-    font-size: var(--fs-md);
-    color: var(--muted);
-  }
   .chip {
     font-size: var(--fs-xs); font-weight: 600; padding: var(--space) calc(var(--space) * 2); border-radius: 999px; white-space: nowrap; cursor: default;
   }
@@ -315,10 +314,49 @@
   .usage-num { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
   .usage-reset { font-size: var(--fs-md); color: var(--muted); flex: none; }
 
+  /* Status dot is a real control: 24px hit area, 8px visual. */
+  button.status-dot {
+    width: calc(var(--space) * 6);
+    height: calc(var(--space) * 6);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    background: none;
+    border: none;
+  }
+  button.status-dot.ok,
+  button.status-dot.bad,
+  button.status-dot.warn,
+  button.status-dot.off,
+  button.status-dot.idle {
+    background: none;
+    border: none;
+  }
+  button.status-dot::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  button.status-dot.ok::after { background: var(--ok); }
+  button.status-dot.bad::after { background: var(--bad); }
+  button.status-dot.warn::after { background: var(--warn); }
+  button.status-dot.off::after { background: var(--faint); }
+  button.status-dot.idle::after { background: transparent; border: 1px solid var(--line); }
+
   /* Program/Command fields always visible; same 32px inputs as theme cards. */
   .details .tin,
   .details .sbtn {
     height: calc(var(--space) * 8);
+  }
+  /* One textbox width everywhere so rows stop bouncing. */
+  .rows > .details > .row > input.tin.mono,
+  .rows > .details > .row > input.tin.fixed {
+    flex: none;
+    width: 280px;
+    max-width: 100%;
   }
   /* Registry grid uses the same card theme as Appearance packs. */
   .packs {

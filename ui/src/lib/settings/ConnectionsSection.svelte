@@ -384,7 +384,7 @@
               <button class="logo-pick" use:tooltip={"Choose a logo"} aria-label="Choose a logo for {row.name}" on:click={() => chooseLogo(row.id)}>
                 <ConnectorLogo id={row.id} name={row.name} site={row.site} src={details[row.id]?.icon ?? null} size={20} />
               </button>
-              <span class="row-label">{row.name}</span>
+              <span>{row.name}</span>
               <span class="row-ctl auto">
                 <span class="status-dot {dotState(off, h)}" role="img" aria-label={sentence} use:tooltip={sentence} />
               </span>

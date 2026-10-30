@@ -155,6 +155,13 @@
 
 /* In-card title row: same size as a label, semibold. */
 .row.row-title span { font-weight: 600; }
+.row.row-title > span:first-of-type {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Control cell for right-aligned actions (buttons, switches). */
 .row-ctl.auto { justify-content: flex-end; }
@@ -162,9 +169,13 @@
 /* Status marker: a quiet dot, top right of a card — green when ready. */
 .status-dot {
   width: 8px; height: 8px; flex: none;
+  padding: 0;
+  border: none;
   border-radius: 50%;
   background: var(--muted);
+  cursor: default;
 }
+button.status-dot { cursor: pointer; }
 .status-dot.ok { background: var(--ok); }
 .status-dot.bad { background: var(--bad); }
 .status-dot.warn { background: var(--warn); }
