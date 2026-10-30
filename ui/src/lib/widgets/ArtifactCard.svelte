@@ -141,7 +141,7 @@
     <button class="name" aria-expanded={superseded ? open : undefined} disabled={reader || bad} on:click={nameClick}>
       <Icon name={icon} size={12} />
       {#if !reader}<span class="title">{title}</span>{/if}
-      {#if version > 1 || (superseded && !open)}<span class="meta">{version > 1 ? `v${version}` : ""}{(superseded && !open) ? `${version > 1 ? " · " : ""}updated below` : ""}</span>{/if}
+      {#if superseded && !open}<span class="meta">updated below</span>{/if}
     </button>
     <span class="tools">
       <button class="tool" aria-label="More actions" use:tooltip={"More actions"} on:click={toggleMenu} bind:this={menuBtn}><Icon name="more" size={12} /></button>
@@ -254,7 +254,7 @@
     min-height: 40px;
     padding: 0 calc(var(--space) * 2) 0 calc(var(--space) * 4);
   }
-  .art:not(.old) .head {
+  .art:not(.old):not(.reader) .head {
     border-bottom: 1px solid var(--line);
   }
   .name {

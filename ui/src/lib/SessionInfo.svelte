@@ -134,10 +134,10 @@
   />
   <NotificationsCard on:openSession />
   {#if doc}
-    <InfoCard id="doc" title={doc.version > 1 ? `${doc.title} · v${doc.version}` : doc.title}>
+    <InfoCard id="doc" title={doc.title}>
       <svelte:fragment slot="aside">
         <span class="doc-acts">
-          <button class="doc-btn" use:tooltip={"Open in its own tab"} aria-label="Open document in its own tab" on:click={() => dispatch("openDoc")}><Icon name="external" size={12} /></button>
+          <button class="doc-btn" use:tooltip={"Open in this tab"} aria-label="Open document in this tab" on:click={() => dispatch("openDoc")}><Icon name="external" size={12} /></button>
           <button class="doc-btn" use:tooltip={"Unpin"} aria-label="Unpin document" on:click={() => dispatch("closeDoc")}><Icon name="close" size={12} /></button>
         </span>
       </svelte:fragment>

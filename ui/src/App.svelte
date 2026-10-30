@@ -341,7 +341,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   let historyView: "sessions" | "history" | "bookmarks" | "downloads" = "sessions";
-  let cover: "settings" | "history" | null = null;
+  let cover: "settings" | "history" | "doc" | null = null;
   let coverFor = "";
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
   $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
@@ -363,7 +363,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     return draft.id;
   }
 
-  function showCover(kind: "settings" | "history") {
+  function showCover(kind: "settings" | "history" | "doc") {
     switcherOpen = false;
     const id = sessionHost();
     cover = kind;
@@ -1791,7 +1791,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         <PreviewView which={tab.url ?? "omnibar"} />
       </div>
     {:else if tab.kind === "artifact" && tab.doc}
-      <div class="fill col" in:fade={{ duration: 150 }}>
+      <div class="fill col ghost" in:fade={{ duration: 150 }}>
         <PanelHeader title={tab.title} on:close={() => closeTab(activeId)} />
         {#key `${tab.id}:${tab.doc.version}`}
           <ArtifactCard data={tab.doc} reader />
@@ -1841,6 +1841,14 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                   on:deleteSession={(e) => remove(e.detail.id)}
                   on:clearSessions={clearFinishedSessions}
                 />
+              </div>
+            {:else if coverOn && cover === "doc"}
+              <div class="cover" transition:fly|global={{ y: 8, ...motion }}>
+                {#if pinnedDoc}
+                  {#key `${pinnedDoc.id}:${pinnedDoc.version}`}
+                    <ArtifactCard data={pinnedDoc} reader />
+                  {/key}
+                {/if}
               </div>
             {:else if hasSession}
             <div class="workarea">
@@ -1922,7 +1930,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             width={infoWidth}
             open={infoShown}
             on:resize={resizeInfo}
-            on:openDoc={() => pinnedDoc && openArtifact(pinnedDoc, true)}
+            on:openDoc={() => showCover("doc")}
             on:closeDoc={closePinnedDoc}
             tokensIn={meta?.tokens_in ?? 0}
             tokensOut={meta?.tokens_out ?? 0}
@@ -2108,6 +2116,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   .fill.col {
     flex-direction: column;
+  }
+  .fill.ghost {
+    background: none;
   }
   .stagerow {
     flex: 1;
