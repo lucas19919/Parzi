@@ -154,24 +154,23 @@
 </script>
 
 {#if loading}
-  <div class="pref-section">
-    <div class="skel" />
-    <div class="skel" />
-    <div class="skel" />
-  </div>
+  {#each [0, 1, 2] as i (i)}
+    <div class="pref-section">
+      <div class="skel" />
+    </div>
+  {/each}
 {:else if err}
   <div class="load-err"><span>{err}</span></div>
 {:else}
-  <div class="pref-section">
     {#each AGENT_ORDER as id (id)}
         {@const p = statusOf(id)}
         {@const entry = entryOf(id)}
         {@const busy = allChecking || $checking.has(id)}
         {@const wait = $setupWaits.get(id)}
         {@const rawStep = entry.enabled && !wait ? nextStep(p) : null}
-        
         {@const step = id === "acp" && rawStep?.label !== "Try again" ? null : rawStep}
         {@const ready = entry.enabled && isUsable(p)}
+      <div class="pref-section">
         <div class="rows" class:off={!entry.enabled}>
           <div class="row">
             <ProviderLogo provider={id} size={20} />
@@ -263,8 +262,8 @@
             {/if}
           </div>
         </div>
+      </div>
       {/each}
-  </div>
 {/if}
 
 <style>
