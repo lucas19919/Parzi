@@ -12,7 +12,7 @@
   const SECTIONS = [
     { id: "general", label: "General" },
     { id: "providers", label: "Providers" },
-    { id: "connections", label: "MCPs and Connectors" },
+    { id: "connections", label: "Connectors" },
     { id: "appearance", label: "Appearance" },
   ];
 

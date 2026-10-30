@@ -212,6 +212,17 @@
   min-width: 0;
   width: 100%;
 }
+.pack-top > .pack-name,
+.pack-head > .pack-name {
+  flex: 1;
+}
+.pack-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space);
+  min-width: 0;
+  width: 100%;
+}
 .pack-name {
   min-width: 0;
   overflow: hidden;

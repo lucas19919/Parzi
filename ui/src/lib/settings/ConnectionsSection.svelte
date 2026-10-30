@@ -425,7 +425,6 @@
 
 {:else}
   <div class="pref-section">
-    <h3 class="section-title">Connectors</h3>
     {#if rows.length}
       {#each rows as row (row.id)}
           {@const h = health[row.id]}

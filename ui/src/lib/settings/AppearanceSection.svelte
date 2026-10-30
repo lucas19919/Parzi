@@ -305,7 +305,7 @@
                   <span class="pp-line" /><span class="pp-line short" />
                   <span class="pp-bar"><i /></span>
                 </span>
-                <span class="pack-name">{#if renamingPack === p.name && !p.builtin}<input class="pack-rename" aria-label="New name for {packLabel(p.name)}" bind:value={renameDraft} use:focusRename on:click|stopPropagation on:keydown={(e) => { if (e.key === "Enter") commitPackRename(p); else if (e.key === "Escape") renamingPack = null; }} />{:else}{packLabel(p.name)}{/if}</span>{#if p.has_art}<span class="art-dot" use:tooltip={"Comes with a wallpaper"}><Icon name="image" size={12} /></span>{/if}
+                <span class="pack-head"><span class="pack-name">{#if renamingPack === p.name && !p.builtin}<input class="pack-rename" aria-label="New name for {packLabel(p.name)}" bind:value={renameDraft} use:focusRename on:click|stopPropagation on:keydown={(e) => { if (e.key === "Enter") commitPackRename(p); else if (e.key === "Escape") renamingPack = null; }} />{:else}{packLabel(p.name)}{/if}</span>{#if p.has_art}<span class="art-dot" use:tooltip={"Comes with a wallpaper"}><Icon name="image" size={12} /></span>{/if}</span>
               </button>
               {#if !p.builtin}
                 <div class="pack-actions">
@@ -425,12 +425,6 @@
 <style>
   .packs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: calc(var(--space) * 3); }
   .pack { position: relative; }
-  .pack-btn {
-    width: 100%; display: flex; flex-direction: column; gap: calc(var(--space) * 2); padding: var(--space);
-    background: transparent; border: 1px solid transparent; border-radius: var(--radius-lg);
-    cursor: pointer; text-align: left; font: inherit; color: var(--muted);
-  }
-  .pack-btn:hover { background: var(--panel); border-color: var(--line); color: var(--text); }
   .pack.on .pack-btn { border-color: var(--accent); background: var(--line); color: var(--text); }
   .pp {
     position: relative; display: flex; flex-direction: column; gap: var(--space); height: 68px; padding: calc(var(--space) * 3) calc(var(--space) * 3) 0;
@@ -445,7 +439,6 @@
     border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
   }
   .pp-bar i { position: absolute; right: 4px; top: 3px; width: 8px; height: 8px; border-radius: var(--radius-sm); background: var(--pp-ac); }
-  .pack-name { font-size: var(--fs-sm); padding: 0 var(--space); }
   .art-dot { display: inline-flex; flex: none; color: var(--muted); }
   .pack-actions { position: absolute; top: 9px; right: 9px; display: flex; gap: var(--space); opacity: 0; }
   .pack:hover .pack-actions, .pack-actions:focus-within { opacity: 1; }
