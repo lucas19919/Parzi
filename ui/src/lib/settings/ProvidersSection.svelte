@@ -256,7 +256,7 @@
     transform-origin: left; animation: fill var(--eta) linear forwards;
   }
   .progress.sweep > span { width: 30%; animation: sweep 1.4s ease-in-out infinite; }
-  @keyframes fill { from { transform: scaleX(0); } to { transform: scaleX(0.95); } }
+  @keyframes fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
   @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
   @media (prefers-reduced-motion: reduce) {
     .progress > span, .progress.sweep > span { animation: none; }

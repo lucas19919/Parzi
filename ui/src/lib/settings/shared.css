@@ -166,6 +166,12 @@
 /* Control cell for right-aligned actions (buttons, switches). */
 .row-ctl.auto { justify-content: flex-end; }
 
+/* Header actions share one width so state changes never bounce the row. */
+.settings .rows .row-title > .row-ctl .sbtn {
+  min-width: calc(var(--space) * 28);
+  justify-content: center;
+}
+
 /* Status marker: a quiet dot, top right of a card — green when ready. */
 .status-dot {
   width: 8px; height: 8px; flex: none;
