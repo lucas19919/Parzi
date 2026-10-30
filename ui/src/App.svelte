@@ -382,6 +382,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     void saveFile(`${pinnedDoc.title.replace(/\.[a-z0-9]{1,8}$/i, "") || "note"}.md`, pinnedDoc.content);
   }
 
+  function openPinnedDocFolder() {
+    docMenuOpen = false;
+    if (!pinnedDoc) return;
+    void brain.open(pinnedDoc.id, "folder").catch(toastError);
+  }
+
   function sessionHost(): string {
     if (tab.kind === "session") return tab.id;
     const home = tabs.find((t) => t.kind === "session" && !t.sessionId);
@@ -1883,6 +1889,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                     <div class="menu-pop" style={docMenuStyle} use:popover={{ anchor: docMenuBtn, close: () => (docMenuOpen = false) }}>
                       <button class="opt" on:click={copyPinnedDoc}><Icon name={docCopied ? "check" : "copy"} size={12} /><span class="name">{docCopied ? "Copied" : "Copy"}</span></button>
                       <button class="opt" on:click={savePinnedDoc}><Icon name="download" size={12} /><span class="name">Save as file</span></button>
+                    <button class="opt" on:click={openPinnedDocFolder}><Icon name="folder" size={12} /><span class="name">Open in file explorer</span></button>
                     </div>
                   {/if}
                   {#key `${pinnedDoc.id}:${pinnedDoc.version}`}
@@ -2269,6 +2276,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     min-height: 0;
     display: flex;
     flex-direction: column;
+  }
+  /* Doc covers start one message gap below the top, like thread turns. */
+  .cover :global(.art.reader .doc) {
+    padding-top: calc(var(--space) * 3);
   }
   .scroll {
     flex: 1;
