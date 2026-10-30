@@ -5,7 +5,7 @@ import { toast } from "./toast";
 import { splitSegments, type Segment } from "./segments";
 import { reportMarkdown } from "./mdReport";
 import { mathAt } from "./mdMath";
-import { gitRefs, vaultRefs } from "./linkRules";
+import { gitRefs, vaultRefs, wholeRef } from "./linkRules";
 
 export const richReady = writable(false);
 
@@ -177,6 +177,15 @@ const PLAIN_FENCES = new Set([
 
 let streamingFence = false;
 
+function linkWholeLine(l: string): string {
+  // Fenced code stays code: only a line that is exactly one vault/SHA/
+  // branch/UUID ref becomes the same file-ref chip used in prose.
+  const ref = wholeRef(l);
+  if (!ref) return escapeHtml(l) || " ";
+  const m = /^(\s*)(.*?)(\s*)$/.exec(l) ?? ["", "", l, ""];
+  return `${escapeHtml(m[1])}<a class="file-ref" href="${escapeHtml(ref)}">${escapeHtml(ref)}</a>${escapeHtml(m[3])}`;
+}
+
 md.renderer.rules.fence = (tokens, idx) => {
   const tok = tokens[idx];
   const lang = (tok.info || "").trim().split(/\s+/)[0] || "";
@@ -188,15 +197,18 @@ md.renderer.rules.fence = (tokens, idx) => {
     code = lines
       .map((l) => {
         const cls = l.startsWith("+") && !l.startsWith("+++") ? " dl-add" : l.startsWith("-") && !l.startsWith("---") ? " dl-del" : "";
-        return `<span class="dl-line${cls}">${escapeHtml(l) || " "}</span>`;
+        return `<span class="dl-line${cls}">${linkWholeLine(l)}</span>`;
       })
       .join("\n");
   } else {
     const plain = streamingFence || !hljs || PLAIN_FENCES.has(lang.toLowerCase()) || !hljs.getLanguage(lang);
     try {
-      code = plain || !hljs ? escapeHtml(body) : hljs.highlight(body, { language: lang }).value;
+      code =
+        plain || !hljs
+          ? lines.map(linkWholeLine).join("\n")
+          : hljs.highlight(body, { language: lang }).value;
     } catch {
-      code = escapeHtml(body);
+      code = lines.map(linkWholeLine).join("\n");
     }
   }
   const label = PLAIN_FENCES.has(lang.toLowerCase()) ? "" : `<span class="code-lang">${safeLang}</span>`;
@@ -299,7 +311,25 @@ md.core.ruler.push("parzi-file-links", (state) => {
         depth = Math.max(0, depth - 1);
         continue;
       }
-      if (tok.type !== "text" || depth > 0) continue;
+      if (depth > 0) continue;
+      if (tok.type === "code_inline") {
+        // Inline code stays code — unless the whole span is one ref, in
+        // which case it becomes the same chip used in prose.
+        const ref = wholeRef(tok.content);
+        if (!ref) continue;
+        const open = new state.Token("link_open", "a", 1);
+        open.attrs = [
+          ["href", ref],
+          ["class", "file-ref"],
+        ];
+        const label = new state.Token("text", "", 0);
+        label.content = ref;
+        const close = new state.Token("link_close", "a", -1);
+        kids.splice(i, 1, open, label, close);
+        i += 2;
+        continue;
+      }
+      if (tok.type !== "text") continue;
       // Vault notes win ties: a SHA inside a note path stays one link.
       const refs = [
         ...vaultRefs(tok.content).map((r) => ({ ...r, pri: 0 })),

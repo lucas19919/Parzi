@@ -298,14 +298,14 @@ a:hover { color: var(--link); }
   position: relative; margin: 1em 0; background: var(--bg);
   border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden;
 }
-.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-template-tag { color: var(--accent); font-weight: 600; }
-.hljs-string, .hljs-regexp, .hljs-meta .hljs-string { color: var(--text); }
-.hljs-number, .hljs-literal { color: var(--text); }
-.hljs-title, .hljs-title.function_, .hljs-section { color: var(--text); }
-.hljs-comment, .hljs-quote { color: var(--muted); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-template-tag { color: var(--text); font-weight: 700; }
+.hljs-string, .hljs-regexp, .hljs-meta .hljs-string { color: var(--text); font-weight: 400; }
+.hljs-number, .hljs-literal { color: var(--text); font-variant-numeric: tabular-nums; }
+.hljs-title, .hljs-title.function_, .hljs-section { color: var(--text); font-weight: 600; }
+.hljs-comment, .hljs-quote { color: var(--muted); font-style: italic; font-weight: 400; }
 .hljs-variable, .hljs-template-variable, .hljs-attr, .hljs-attribute,
-.hljs-name, .hljs-selector-id, .hljs-selector-class { color: var(--accent); }
-.hljs-type, .hljs-built_in { color: var(--muted); }
+.hljs-name, .hljs-selector-id, .hljs-selector-class { color: var(--text); font-weight: 500; }
+.hljs-type, .hljs-built_in { color: var(--text); font-weight: 500; }
 .hljs-symbol, .hljs-bullet, .hljs-link { color: var(--accent); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }

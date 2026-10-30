@@ -37,6 +37,7 @@
 .settings .rows > .details > .row > .tin { flex: 1; min-width: 0; }
 .settings .rows button.row { width: 100%; background: none; border: none; font: inherit; text-align: left; color: var(--muted); cursor: pointer; }
 .settings .rows button.row:hover { color: var(--text); }
+.settings .rows button.row.as-toggle { gap: calc(var(--space) * 2); min-height: 36px; font-size: var(--fs-sm); font-weight: 500; }
 .settings .rows .row .tin:not(.fixed) { flex: 1; min-width: 0; }
 
 /* Icon-only button for row actions (open, delete, refresh). */

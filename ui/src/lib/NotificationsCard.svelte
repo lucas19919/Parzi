@@ -71,7 +71,7 @@
   .list {
     display: flex;
     flex-direction: column;
-    gap: calc(var(--space) * 2);
+    gap: var(--space);
     max-height: calc(var(--space) * 48);
     overflow-y: auto;
   }
@@ -98,16 +98,18 @@
     flex-wrap: wrap;
     align-items: baseline;
     column-gap: calc(var(--space) * 2);
-    row-gap: var(--space);
+    row-gap: calc(var(--space) / 2);
     width: 100%;
+    min-height: 36px;
     margin: 0;
-    padding: var(--space) calc(var(--space) * 2);
+    padding: calc(var(--space) * 2) calc(var(--space) * 3);
     background: none;
     border: none;
     border-radius: var(--radius);
-    color: var(--text);
+    color: var(--muted);
     font: inherit;
     font-size: var(--fs-sm);
+    font-weight: 500;
     text-align: left;
     cursor: pointer;
   }
@@ -124,8 +126,12 @@
   .unread .dot {
     background: var(--accent);
   }
+  .unread {
+    color: var(--text);
+  }
   .unread .name {
     font-weight: 600;
+    color: var(--text);
   }
   .name {
     flex: 1;

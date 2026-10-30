@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { fileLink, gitRefs, isBranchLike, safeDecode, vaultRefs, webLink } from "../src/lib/linkRules.ts";
+import { fileLink, gitRefs, isBranchLike, safeDecode, vaultRefs, webLink, wholeRef } from "../src/lib/linkRules.ts";
 
 test("safeDecode survives malformed escapes", () => {
   assert.equal(safeDecode("a%20b"), "a b");
@@ -98,6 +98,30 @@ test("commit shas and ranges are found with their kind", () => {
   assert.deepEqual(gitRefs("deadbeef is 8 hex chars"), [
     { path: "deadbeef", index: 0, length: 8, kind: "sha" },
   ]);
+});
+
+test("uuids copy like shas, and shas inside uuids never match", () => {
+  assert.deepEqual(gitRefs("see 123e4567-e89b-12d3-a456-426614174000 done"), [
+    { path: "123e4567-e89b-12d3-a456-426614174000", index: 4, length: 36, kind: "sha" },
+  ]);
+  assert.deepEqual(gitRefs("123e4567-e89b-12d3-a456-426614174000"), [
+    { path: "123e4567-e89b-12d3-a456-426614174000", index: 0, length: 36, kind: "sha" },
+  ]);
+  // No bare 8-hex fragment from inside the UUID.
+  assert.equal(gitRefs("123e4567-e89b-12d3-a456-426614174000").length, 1);
+});
+
+test("dashes do not smuggle refs out of longer words", () => {
+  assert.deepEqual(vaultRefs("my-notes/a.md"), []);
+  assert.deepEqual(
+    gitRefs("foo-plan/sidebar-polish").map((r) => r.path),
+    ["foo-plan/sidebar-polish"],
+  );
+  assert.deepEqual(wholeRef("  notes/a.md  "), "notes/a.md");
+  assert.deepEqual(wholeRef("`plan/sidebar-polish`"), "plan/sidebar-polish");
+  assert.deepEqual(wholeRef("123e4567-e89b-12d3-a456-426614174000"), "123e4567-e89b-12d3-a456-426614174000");
+  assert.equal(wholeRef("two refs notes/a.md"), null);
+  assert.equal(wholeRef("not a ref"), null);
 });
 
 test("branch-like paths are found, files and noise are not", () => {

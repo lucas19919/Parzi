@@ -62,13 +62,14 @@
     align-items: center;
     gap: calc(var(--space) * 2);
     width: 100%;
-    height: calc(var(--space) * 9);
-    padding: 0 var(--pad);
+    height: 36px;
+    padding: 0 calc(var(--space) * 3);
     background: none;
     border: none;
     border-radius: var(--r);
     color: var(--text);
     font: inherit;
+    font-size: var(--fs-sm);
     text-align: left;
     cursor: pointer;
   }

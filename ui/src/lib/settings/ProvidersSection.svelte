@@ -1,5 +1,4 @@
 <script lang="ts">
-  import Icon from "../Icon.svelte";
   import ProviderLogo from "../ProviderLogo.svelte";
   import { onMount } from "svelte";
   import { api, type ParziConfig, type ProviderEntry, type ProviderStatus, type RegistryAgent } from "../api";
@@ -24,7 +23,6 @@
   let cfg: ParziConfig | null = null;
   let loading = true;
   let err = "";
-  let open = new Set<string>();
   let paths: Record<string, string> = {};
   let registry: RegistryAgent[] = [];
   let registryErr = "";
@@ -76,13 +74,6 @@
     if (s < 3600) return `resets in ${Math.round(s / 60)} min`;
     if (s < 86400) return `resets in ${Math.round(s / 3600)} h`;
     return `resets in ${Math.round(s / 86400)} d`;
-  }
-
-  function toggleOpen(id: string) {
-    const next = new Set(open);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    open = next;
   }
 
   async function update(change: (c: ParziConfig) => void, msg?: string): Promise<boolean> {
@@ -181,7 +172,6 @@
         
         {@const step = id === "acp" && rawStep?.label !== "Try again" ? null : rawStep}
         {@const ready = entry.enabled && isUsable(p)}
-        {@const isOpen = open.has(id)}
         <div class="rows" class:off={!entry.enabled}>
           <div class="row">
             <ProviderLogo provider={id} size={20} />
@@ -218,18 +208,14 @@
             {/each}
           {/if}
 
-          <button class="row as-toggle" aria-expanded={isOpen} on:click={() => toggleOpen(id)}>
-            <span class="disclosure"><Icon name={isOpen ? "chevDown" : "chevRight"} size={12} /></span>
-            <span>Program</span>
-          </button>
-
-          {#if isOpen}
+          <div class="details">
+            <div class="row row-title"><span>{id === "acp" ? "Command" : "Program"}</span></div>
             {#if id === "acp"}
               <label class="row">
                 <span class="row-label">Name</span>
                 <input
                   class="tin fixed"
-                  placeholder="ACP"
+                  placeholder="Custom"
                   aria-label="ACP name"
                   spellcheck="false"
                   bind:value={acpLabel}
@@ -238,11 +224,11 @@
                 />
               </label>
             {/if}
-              <label class="row">
-                <span class="row-label">{id === "acp" ? "Command" : "Program"}</span>
-                <input
-                  class="tin mono"
-                  placeholder={id === "acp" ? "gemini --acp" : `Found automatically (${PROGRAM[id]})`}
+            <label class="row">
+              <span class="row-label">{id === "acp" ? "Command" : "Path"}</span>
+              <input
+                class="tin mono"
+                placeholder={id === "acp" ? "gemini --acp" : `Found automatically (${PROGRAM[id]})`}
                 aria-label={id === "acp" ? "ACP command" : `${nameOf(id)} program path`}
                 spellcheck="false"
                 bind:value={paths[id]}
@@ -251,29 +237,38 @@
               />
             </label>
             {#if id === "acp"}
-              <div class="row">
-                <button class="sbtn" type="button" disabled={registryBusy} on:click={loadRegistry}>
-                  {registryBusy ? "Loading registry…" : "Add from registry"}
-                </button>
+              <div class="row row-title">
+                <span>Custom</span>
+                <span class="row-ctl auto">
+                  <button class="sbtn" type="button" disabled={registryBusy} on:click={loadRegistry}>
+                    {registryBusy ? "Loading…" : "Registry"}
+                  </button>
+                </span>
               </div>
               {#if registryErr}
                 <div class="row"><span class="row-label bad">{registryErr}</span></div>
               {/if}
-              {#each registry as row (row.id)}
-                <button class="row" type="button" on:click={() => useRegistry(row)}>
-                  <span class="row-label">{row.name}<small class="mono">{formatCommand(row.command, row.args)}</small></span>
-                </button>
-              {/each}
+              {#if registry.length}
+                <div class="row">
+                  <div class="packs">
+                    {#each registry as row (row.id)}
+                      <button class="pack-btn" type="button" title={formatCommand(row.command, row.args)} on:click={() => useRegistry(row)}>
+                        <span class="pack-name">{row.name}</span>
+                        <span class="pack-cmd">{formatCommand(row.command, row.args)}</span>
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
             {/if}
-          {/if}
+          </div>
         </div>
       {/each}
   </div>
 {/if}
 
 <style>
-  .rows.off .row:first-child > :not(.row-ctl),
-  .rows.off .as-toggle {
+  .rows.off .row:first-child > :not(.row-ctl) {
     opacity: 0.55;
   }
   .row .chip {
@@ -313,7 +308,51 @@
   .usage-num { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); flex: none; }
   .usage-reset { font-size: var(--fs-md); color: var(--muted); flex: none; }
 
-  .as-toggle { color: var(--muted); }
-  .as-toggle:hover { color: var(--text); }
-  .disclosure { display: inline-flex; flex: none; }
+  /* Program/Command fields always visible; same 32px inputs as theme cards. */
+  .details .tin {
+    height: calc(var(--space) * 8);
+  }
+  /* Registry grid uses the same card theme as Appearance packs. */
+  .packs {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: calc(var(--space) * 3);
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+  }
+  .pack-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space);
+    min-width: 0;
+    padding: calc(var(--space) * 2);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-lg);
+    color: var(--muted);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .pack-btn:hover {
+    background: var(--panel);
+    border-color: var(--line);
+    color: var(--text);
+  }
+  .pack-name {
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    color: var(--text);
+  }
+  .pack-cmd {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--mono), ui-monospace, monospace;
+    font-size: var(--fs-xs);
+    color: var(--muted);
+  }
 </style>

@@ -35,10 +35,13 @@ export async function handleLinkClick(e: MouseEvent, folder = ""): Promise<boole
   const href = anchor.getAttribute("href") ?? "";
   if (!href) return true;
 
-  // A commit SHA or range chip copies on click: there is nowhere to open
-  // it to without a known remote.
+  // A commit SHA, UUID or range chip copies on click: there is nowhere
+  // to open it to without a known remote.
   const ref = safeDecode(href.split("#")[0]);
-  if (/^[0-9a-f]{7,40}(\.{2,3}[0-9a-f]{7,40})?$/i.test(ref)) {
+  if (
+    /^[0-9a-f]{7,40}(\.{2,3}[0-9a-f]{7,40})?$/i.test(ref) ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref)
+  ) {
     await copyText(ref, ref);
     return true;
   }

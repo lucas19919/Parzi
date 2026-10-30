@@ -54,7 +54,7 @@ export function fileLink(href: string): FileLink {
   return { kind: "open", path: /^[a-z]:\//i.test(path) ? path.replace(/\//g, "\\") : path };
 }
 
-const VAULT_RE = /(?<![A-Za-z0-9_/])(?:(?:projects|notes|widgets)\/[^\s<>\]()`"'*|]+?\.md|brain:\/\/[^\s<>\]()`"'*|]+)(?::\d+(?::\d+)?)?/gi;
+const VAULT_RE = /(?<![A-Za-z0-9_/\-.])(?:(?:projects|notes|widgets)\/[^\s<>\]()`"'*|]+?\.md|brain:\/\/[^\s<>\]()`"'*|]+)(?::\d+(?::\d+)?)?/gi;
 
 const TRAIL = /[.,;:!?)\]}>]+$/;
 
@@ -89,19 +89,23 @@ export function vaultRefs(text: string): VaultRef[] {
   return out;
 }
 
-/** A commit SHA, optionally a range (`abc1234..def5678`, `...` works too). */
+/** A commit SHA, optionally a range (`abc1234..def5678`, `...` works too). Dashes excluded so UUID segments never match. */
 const SHA_RANGE =
-  /(?<![A-Za-z0-9_/])([0-9a-f]{7,40}(?:\.{2,3}[0-9a-f]{7,40})?)(?![A-Za-z0-9_])/gi;
+  /(?<![A-Za-z0-9_/\-])([0-9a-f]{7,40}(?:\.{2,3}[0-9a-f]{7,40})?)(?![A-Za-z0-9_\-])/gi;
+
+/** A full UUID (`123e4567-e89b-12d3-a456-426614174000`): copies on click like a SHA. */
+const UUID_RE =
+  /(?<![A-Za-z0-9_/\-])([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![A-Za-z0-9_\-])/gi;
 
 /** A slashed name that reads like a branch (`plan/sidebar-polish`). */
 const BRANCH_PATH =
-  /(?<![A-Za-z0-9_/.])([A-Za-z0-9._-]{2,}(?:\/[A-Za-z0-9._-]+)+)(?![A-Za-z0-9_/])/gi;
+  /(?<![A-Za-z0-9_/.\-])([A-Za-z0-9._-]{2,}(?:\/[A-Za-z0-9._-]+)+)(?![A-Za-z0-9_/])/gi;
 
 export interface GitRef extends VaultRef {
   kind: "sha" | "branch";
 }
 
-/** Commit SHAs, ranges and branch-like `a/b` names in plain prose. */
+/** Commit SHAs, UUIDs, ranges and branch-like `a/b` names in plain prose. */
 export function gitRefs(text: string): GitRef[] {
   const out: GitRef[] = [];
   const take = (re: RegExp, kind: GitRef["kind"]) => {
@@ -117,20 +121,36 @@ export function gitRefs(text: string): GitRef[] {
       const trail = TRAIL.exec(path);
       if (trail) path = path.slice(0, -trail[0].length);
       if (!path) continue;
-      if (text[m.index - 1] === "`" || text[m.index + path.length] === "`") {
+      const at = m.index + m[0].indexOf(m[1]);
+      if (text[at - 1] === "`" || text[at + path.length] === "`") {
         re.lastIndex = m.index + m[0].length;
         continue;
       }
       if (kind === "branch" && !isBranchLike(path)) continue;
-      out.push({ path, index: m.index, length: path.length, kind });
-      re.lastIndex = m.index + path.length;
+      out.push({ path, index: at, length: path.length, kind });
+      re.lastIndex = at + path.length;
     }
     re.lastIndex = 0;
   };
+  take(UUID_RE, "sha");
   take(SHA_RANGE, "sha");
   take(BRANCH_PATH, "branch");
-  out.sort((a, b) => a.index - b.index);
-  return out;
+  out.sort((a, b) => a.index - b.index || b.length - a.length);
+  // Continuation-safe: keep the longest ref at each position, drop overlaps
+  // so a UUID/SHA never double-links its own segments and a SHA inside a
+  // note path stays one link (vault wins ties in md.ts).
+  return out.filter((r, i, all) => !all.slice(0, i).some((p) => r.index < p.index + p.length));
+}
+
+/** True when the whole trimmed line is exactly one linkable ref. */
+export function wholeRef(line: string): string | null {
+  const t = line.trim().replace(/^`+|`+$/g, "").trim();
+  if (!t || /\s/.test(t)) return null;
+  const v = vaultRefs(t);
+  if (v.length === 1 && v[0].index === 0 && v[0].length === t.length) return v[0].path;
+  const g = gitRefs(t);
+  if (g.length === 1 && g[0].index === 0 && g[0].length === t.length) return g[0].path;
+  return null;
 }
 
 /**

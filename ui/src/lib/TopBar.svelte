@@ -205,16 +205,16 @@
     align-items: center;
     flex: none;
     height: 28px;
+    background: none;
+    border: none;
   }
   .menu-pill.open {
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 999px;
+    background: none;
+    border: none;
   }
   .menu-pill.open .icon-btn,
   .menu-pill.open .icon-btn.active {
-    background: transparent;
-    border-radius: 999px;
+    background: none;
     color: var(--muted);
   }
   .menu-pill.open .icon-btn:hover {
@@ -247,7 +247,7 @@
     padding: 0;
     background: none;
     border: none;
-    border-radius: 999px;
+    border-radius: var(--radius);
     color: var(--muted);
     cursor: pointer;
     animation: opt-in 180ms var(--ease-out) backwards;
