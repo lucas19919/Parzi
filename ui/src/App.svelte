@@ -1855,11 +1855,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                     clearCover();
                     newSession();
                   }}
-                  on:settings={() => openSettings()}
-                  on:setup={() => {
-                    clearCover();
-                    openSetup();
-                  }}
                 />
               </div>
             {:else if coverOn && cover === "doc"}

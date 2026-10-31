@@ -1,6 +1,5 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
-  import ChromeIcon from "./ChromeIcon.svelte";
   import Icon from "./Icon.svelte";
   import TabBar from "./TabBar.svelte";
   import WinControls from "./WinControls.svelte";
@@ -39,7 +38,7 @@
         use:tooltip={$updateVersion ? "Settings, update available" : "Settings (Ctrl+,)"}
         on:click={() => dispatch("settings")}
       >
-        <ChromeIcon name="menu" />
+        <Icon name="menu" />
         {#if $updateVersion}<span class="dot" />{/if}
       </button>
       <button
@@ -72,7 +71,7 @@
           use:tooltip={"Session column (Ctrl+J)"}
           on:click={() => dispatch("panel")}
         >
-        <ChromeIcon name="panel" />
+        <Icon name="panel" />
         </button>
       {/if}
       <WinControls />

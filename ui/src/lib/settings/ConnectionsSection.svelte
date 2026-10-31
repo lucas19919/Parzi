@@ -449,7 +449,7 @@
           <div class="conn" class:off>
             <div class="row">
               <button class="logo-pick" use:tooltip={"Choose a logo"} aria-label="Choose a logo for {row.name}" on:click={() => chooseLogo(row.id)}>
-                <ConnectorLogo id={row.id} name={row.name} site={row.site} src={details[row.id]?.icon ?? null} size={20} />
+                <ConnectorLogo id={row.id} name={row.name} site={row.site} src={details[row.id]?.icon ?? null} size={28} />
               </button>
               <button class="conn-main" aria-expanded={open} on:click={() => toggleTools(row.id)}>
                 <span class="row-label">{row.name}
@@ -496,13 +496,13 @@
             {#each addable as c (c.id)}
               {@const hit = fresh.find((f) => f.name === c.id)}
               <button class="add" type="button" disabled={saving} on:click={() => (hit ? addFound(hit.name, hit.server) : addKnown(c.id))}>
-                <ConnectorLogo id={c.id} name={c.name} site={c.site} src={null} size={20} />
+                <ConnectorLogo id={c.id} name={c.name} site={c.site} src={null} size={28} />
                 <span class="add-text"><span class="t-label">{c.name}</span><span class="t-hint">{c.about}</span></span>
               </button>
             {/each}
             {#each freshCustom as f (f.name)}
               <button class="add" type="button" disabled={saving} on:click={() => addFound(f.name, f.server)}>
-                <ConnectorLogo id={f.name} name={f.name} site="" src={null} size={20} />
+                <ConnectorLogo id={f.name} name={f.name} site="" src={null} size={28} />
                 <span class="add-text"><span class="t-label">{f.name}</span><span class="t-hint">Found in {f.source}</span></span>
               </button>
             {/each}

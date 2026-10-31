@@ -1,6 +1,5 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from "svelte";
-  import ChromeIcon from "./ChromeIcon.svelte";
   import Icon from "./Icon.svelte";
   import ProviderLogo from "./ProviderLogo.svelte";
   import { hasMark } from "./providerMarks";
@@ -348,7 +347,7 @@
 </div>
 {#if !vertical}
   <button class="new" use:tooltip={"New session (Ctrl+T)"} on:click={() => dispatch("newTab")}>
-    <ChromeIcon name="plus" />
+    <Icon name="plus" />
   </button>
 {/if}
 

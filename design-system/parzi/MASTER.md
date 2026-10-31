@@ -17,8 +17,11 @@ selected, and link are mixed from those in `theme.css`. `--ok` `--warn`
 `resolveColor()` in `lib/theme.ts`.
 
 Spacing is `--space` (4px). Legal steps are 1, 2, 3, 4, 6, and 8 times that.
+Icons come only from `Icon.svelte`, at 16 (12 for the small glyphs in a row).
+Logos and letter badges are 28 in a list row, so the glyph inside is 16, and 20
+in a compact list.
 Motion is `--dur` (140ms) and `--dur-fast` (60ms) with `--ease-out`. Disabled
-is `--disabled` (0.5) everywhere; dimmed rows are `0.55`; icons are 12 or 16 only.
+is `--disabled` (0.5) everywhere; dimmed rows are `0.55`.
 Control heights are `--h-sm` (24), `--h` (28), `--h-row` (36), `--h-row-lg` (46).
 Popovers sit at `--z-pop`, tooltips at `--z-tip`.
 
@@ -60,9 +63,11 @@ grade: surfaces are solid `--panel` on `--bg`.
 
 ## Layout
 
-- Top bar (44px): manager, tabs, settings, window controls. The bar is the drag region.
-- Tabs are sessions and pages. Settings opens inside the session, with a back
-  arrow at the top right, and the session column stays.
+- Top bar (44px): settings (the hamburger), sessions, tabs, window controls. The
+  bar is the drag region.
+- Tabs are sessions and pages. Settings and Sessions open inside the session,
+  with a back arrow at the top right, and the session column stays. Both use the
+  page bar, the 840px column and the same `.rows` cards.
   Drag reorders tabs (pointer events,
   not HTML5 drag, which WebView2 hands to the file-drop handler);
   Ctrl+Shift+←/→ moves the focused tab. A session tab shows the thread card

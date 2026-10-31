@@ -6,6 +6,7 @@
   import { byDay } from "./time";
   import { tooltip } from "./tooltip";
   import { toast } from "./toast";
+  import { invoke } from "@tauri-apps/api/core";
 
   export let threads: SessionMeta[] = [];
 
@@ -13,27 +14,26 @@
     openSession: { id: string };
     deleteSession: { id: string };
     newSession: void;
-    settings: void;
-    setup: void;
   }>();
 
   let query = "";
   let field: HTMLInputElement | null = null;
   let projectFilter: string | null = null;
   let projects: Project[] = [];
-  let projectsError = false;
+  let projectsError = "";
   let adding = false;
   let newTitle = "";
   let newFolder = "";
   let saving = false;
 
   async function loadProjects() {
-    projectsError = false;
+    projectsError = "";
     try {
       projects = (await brain.projects()) ?? [];
-    } catch {
+    } catch (e) {
       projects = [];
-      projectsError = true;
+      projectsError = String(e);
+      void invoke("ui_error", { message: `projects did not load: ${e}` }).catch(() => {});
     }
   }
 
@@ -103,12 +103,13 @@
   }
 </script>
 
-<div class="manager">
+<!-- Same cards as Settings: shared.css styles rows under .settings. -->
+<div class="manager settings">
   <aside class="rail" aria-label="Projects">
-    <div class="rail-head t-section">
-      <span>Projects</span>
-      <button class="mini-btn" aria-label="Add project" use:tooltip={"Add project"} on:click={() => (adding = !adding)}>
-        <Icon name="plus" size={12} />
+    <div class="rail-head">
+      <span class="t-section">Projects</span>
+      <button class="icon-btn" aria-label="Add project" use:tooltip={"Add project"} on:click={() => (adding = !adding)}>
+        <Icon name="plus" />
       </button>
     </div>
     {#if adding}
@@ -124,7 +125,7 @@
     <div class="proj-list">
       {#if projectsError}
         <div class="rail-note">
-          <span>Couldn't load projects</span>
+          <span class="t-hint" title={projectsError}>Couldn't load projects</span>
           <button class="btn" on:click={loadProjects}>Retry</button>
         </div>
       {:else}
@@ -135,47 +136,50 @@
             title={projectFilter === p.slug ? "Show all sessions" : `Show only ${p.title}`}
             on:click={() => toggleProject(p.slug)}
           >
-            <span class="badge" style="--badge-h: {hueOf(p.slug)}">{p.title.trim().charAt(0).toUpperCase()}</span>
-            <span class="name">{p.title}</span>
-            {#if counts.get(p.slug)}<span class="count">{counts.get(p.slug)}</span>{/if}
+            <span class="badge small" style="--badge-h: {hueOf(p.slug)}">{p.title.trim().charAt(0).toUpperCase()}</span>
+            <span class="name t-label">{p.title}</span>
+            {#if counts.get(p.slug)}<span class="t-hint">{counts.get(p.slug)}</span>{/if}
           </button>
         {:else}
-          <p class="rail-note">No projects yet</p>
+          <p class="rail-note t-hint">No projects yet</p>
         {/each}
       {/if}
     </div>
-    <div class="rail-foot">
-      <button class="foot" on:click={() => dispatch("settings")}><Icon name="settings" size={12} /><span>Settings</span></button>
-      <button class="foot" on:click={() => dispatch("setup")}><Icon name="alert" size={12} /><span>Help</span></button>
-    </div>
   </aside>
   <div class="main">
-    <div class="top page-bar">
-      <div class="page-search">
-        <Icon name="search" />
-        <input bind:this={field} bind:value={query} placeholder="Search sessions" aria-label="Search sessions" spellcheck="false" />
-      </div>
-      <button class="btn new" on:click={() => dispatch("newSession")}><Icon name="pencil" size={12} /><span>New session</span></button>
-    </div>
-    <div class="list" data-ui-list>
-      {#each days as day (day.label)}
-        <h3 class="t-group">{day.label}</h3>
-        {#each day.items as s (s.id)}
-          {@const place = placeOf(s)}
-          <div class="row">
-            <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
-              <span class="badge" style="--badge-h: {hueOf(s.project || place || s.id)}">{initialOf(s)}</span>
-              <span class="title">{s.title || "Untitled session"}</span>
-              {#if place}<span class="tag">{place}</span>{/if}
-            </button>
-            <button class="x" use:tooltip={"Delete session"} aria-label={`Delete ${s.title || "session"}`} on:click={() => dispatch("deleteSession", { id: s.id })}>
-              <Icon name="trash" size={12} />
-            </button>
+    <div class="top page-bar"><span class="t-page">Sessions</span></div>
+    <div class="body">
+      <div class="column">
+        <div class="tools">
+          <div class="page-search">
+            <Icon name="search" />
+            <input bind:this={field} bind:value={query} placeholder="Search sessions" aria-label="Search sessions" spellcheck="false" />
           </div>
-        {/each}
-      {:else}
-        <p class="empty">{q || projectFilter ? "Nothing matches." : "No sessions yet. Start one above."}</p>
-      {/each}
+          <button class="btn new" on:click={() => dispatch("newSession")}><Icon name="pencil" size={12} /><span>New session</span></button>
+        </div>
+        <div class="days" data-ui-list>
+          {#each days as day (day.label)}
+            <div class="rows">
+              <div class="row row-title"><span>{day.label}</span></div>
+              {#each day.items as s (s.id)}
+                {@const place = placeOf(s)}
+                <div class="row sess">
+                  <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
+                    <span class="badge" style="--badge-h: {hueOf(s.project || place || s.id)}">{initialOf(s)}</span>
+                    <span class="title t-label">{s.title || "Untitled session"}</span>
+                    {#if place}<span class="t-hint">{place}</span>{/if}
+                  </button>
+                  <button class="icon-btn x" use:tooltip={"Delete session"} aria-label={`Delete ${s.title || "session"}`} on:click={() => dispatch("deleteSession", { id: s.id })}>
+                    <Icon name="trash" size={12} />
+                  </button>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <p class="empty t-hint">{q || projectFilter ? "Nothing matches." : "No sessions yet. Start one above."}</p>
+          {/each}
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -185,7 +189,7 @@
     flex: 1;
     min-height: 0;
     display: flex;
-    background: transparent;
+    flex-direction: row;
   }
   .rail {
     width: 220px;
@@ -193,43 +197,22 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    border-right: 1px solid var(--line);
   }
+  /* The same band as the page bar beside it: 8px + 36px tab height + 8px. */
   .rail-head {
     flex: none;
     display: flex;
     align-items: center;
-    /* Same 64px band as .top (16px inset + 32px control) so rail and search share a line. */
-    min-height: calc(var(--space) * 16);
-    padding: calc(var(--space) * 4);
-  }
-  .rail-head > span {
-    flex: 1;
-  }
-  .mini-btn {
-    width: 28px;
-    height: var(--h);
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .mini-btn:hover {
-    background: var(--hover);
-    color: var(--text);
+    justify-content: space-between;
+    min-height: calc(var(--space) * 13);
+    padding: 0 calc(var(--space) * 2) 0 calc(var(--space) * 4);
   }
   .add-form {
     flex: none;
     display: flex;
     flex-direction: column;
-    gap: var(--space);
-    padding: var(--space) calc(var(--space) * 2);
+    gap: calc(var(--space) * 2);
+    padding: 0 calc(var(--space) * 2) calc(var(--space) * 3) calc(var(--space) * 4);
   }
   .add-form .tin {
     width: 100%;
@@ -237,16 +220,11 @@
   .add-acts {
     display: flex;
     justify-content: flex-end;
-    gap: var(--space);
-  }
-  .add-acts .btn {
-    height: calc(var(--space) * 7);
+    gap: calc(var(--space) * 2);
   }
   .rail-note {
     margin: 0;
-    padding: var(--space) calc(var(--space) * 3);
-    color: var(--muted);
-    font-size: var(--fs-sm);
+    padding: var(--space) calc(var(--space) * 2);
     display: flex;
     flex-direction: column;
     gap: calc(var(--space) * 2);
@@ -258,45 +236,45 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: calc(var(--space) * 2);
-    padding: 0 var(--space);
+    gap: var(--space);
+    padding: 0 calc(var(--space) * 2);
   }
   .proj {
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 2);
-    min-height: 36px;
-    padding: var(--space) calc(var(--space) * 2);
+    min-height: var(--h-row);
+    padding: 0 calc(var(--space) * 2);
     background: none;
     border: none;
     border-radius: var(--radius);
-    color: var(--muted);
     font: inherit;
-    font-size: var(--fs-sm);
     text-align: left;
     cursor: pointer;
   }
   .proj:hover {
     background: var(--hover);
-    color: var(--text);
   }
   .proj.on {
-    background: transparent;
-    box-shadow: inset 0 0 0 1px var(--line);
-    color: var(--text);
+    background: var(--selected);
   }
   .badge {
     flex: none;
-    width: 20px;
-    height: 20px;
+    width: 28px;
+    height: 28px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     border-radius: var(--radius-sm);
     background: hsl(var(--badge-h, 210) 40% 36%);
     color: var(--text);
-    font-size: var(--fs-xs);
+    font-size: var(--fs-sm);
     font-weight: 600;
+  }
+  .badge.small {
+    width: 20px;
+    height: 20px;
+    font-size: var(--fs-xs);
   }
   .proj .name {
     flex: 1;
@@ -304,38 +282,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .proj .count {
-    flex: none;
-    font-variant-numeric: tabular-nums;
-    color: var(--muted);
-  }
-  .rail-foot {
-    flex: none;
-    display: flex;
-    flex-direction: column;
-    gap: calc(var(--space) * 2);
-    padding: calc(var(--space) * 2) var(--space);
-    border-top: 1px solid var(--line);
-  }
-  .foot {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    min-height: 32px;
-    padding: 0 calc(var(--space) * 2);
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    font: inherit;
-    font-size: var(--fs-sm);
-    text-align: left;
-    cursor: pointer;
-  }
-  .foot:hover {
-    background: var(--hover);
-    color: var(--text);
   }
   .main {
     flex: 1;
@@ -345,57 +291,57 @@
     flex-direction: column;
   }
   .top {
-    flex: none;
+    min-height: calc(var(--space) * 13);
+  }
+  /* The same column as Settings' content. */
+  .body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .column {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space) * 6);
+    width: 100%;
+    max-width: 840px;
+    margin: 0 auto;
+    padding: calc(var(--space) * 6) calc(var(--space) * 8) calc(var(--space) * 8);
+  }
+  .tools {
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 2);
-    min-height: 36px;
-    padding: calc(var(--space) * 4);
   }
-  .top .page-search {
+  .tools .page-search {
     flex: 1;
     height: calc(var(--space) * 8);
   }
   .new {
     flex: none;
     height: calc(var(--space) * 8);
+    padding-block: 0;
   }
-  .list {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
+  .days {
     display: flex;
     flex-direction: column;
-    gap: var(--space);
-    padding: 0 calc(var(--space) * 4) calc(var(--space) * 4);
+    gap: calc(var(--space) * 6);
   }
-  h3 {
-    margin: calc(var(--space) * 3) 0 var(--space);
-  }
-  h3:first-child {
-    margin-top: var(--space);
-  }
-  .row {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    border-radius: var(--radius);
-    min-height: var(--h-row);
-  }
-  .row:hover {
+  .sess:hover {
     background: var(--hover);
   }
+  /* The whole row opens the session, up to the delete button. */
   .open {
     flex: 1;
     min-width: 0;
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 3);
-    min-height: 36px;
-    padding: 0 var(--space) 0 calc(var(--space) * 2);
+    align-self: stretch;
+    margin: calc(var(--space) * -2) 0 calc(var(--space) * -2) calc(var(--space) * -4);
+    padding: calc(var(--space) * 2) 0 calc(var(--space) * 2) calc(var(--space) * 4);
     background: none;
     border: none;
-    color: inherit;
     font: inherit;
     text-align: left;
     cursor: pointer;
@@ -406,43 +352,20 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--fs-md);
-    font-weight: 600;
-    color: var(--text);
-  }
-  .tag {
-    flex: none;
-    font-size: var(--fs-sm);
-    color: var(--muted);
-    white-space: nowrap;
   }
   .x {
-    width: 28px;
-    height: 28px;
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
     opacity: 0;
   }
-  .row:hover .x,
-  .row:focus-within .x {
+  .sess:hover .x,
+  .sess:focus-within .x {
     opacity: 1;
   }
-  .x:hover {
-    background: var(--selected);
+  .x:hover:not(:disabled) {
     color: var(--bad);
   }
   .empty {
+    margin: 0;
     padding: calc(var(--space) * 8) calc(var(--space) * 4);
     text-align: center;
-    font-size: var(--fs-md);
-    color: var(--muted);
   }
 </style>
