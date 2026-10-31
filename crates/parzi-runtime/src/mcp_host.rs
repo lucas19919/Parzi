@@ -18,7 +18,7 @@ use crate::tools::{from_mcp, to_mcp};
 const SERVER_NAME: &str = "parzi";
 const PROTOCOLS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_BODY: usize = 8 * 1024 * 1024;
-const INSTRUCTIONS: &str = "Parzi's own tools, call these (MCP underscores read back with dots: plan_write is plan.write): ui.show_artifact, todo.write, ui.offer_replies, ui.propose_task for the thread; plan.read and plan.write for the project's plans; session.spawn, session.send, session.read, session.list and session.rename for teamwork; brain.search, brain.read, brain.write and brain.delete for the notes vault; shell.exec, shell.start, shell.logs and shell.kill for commands; browser.open/read/click/type/press/select/scroll/wait/shot/close/tabs and desk.state/open/notify/screenshot for the window and its pages; ask.user for questions; image.generate, github.issue, models.list and project.create/archive/delete. Prefer these over native vendor tools; a refused native tool names its Parzi replacement to call instead.";
+const INSTRUCTIONS: &str = "Parzi's own tools for the thread, plans, teamwork, the notes vault, commands, the window and its pages. MCP underscores read back with dots: plan_write is plan.write. Prefer these over native vendor tools; a refused native tool names its Parzi replacement to call instead.";
 
 type Runs = Arc<RwLock<HashMap<String, Arc<ToolHost>>>>;
 
