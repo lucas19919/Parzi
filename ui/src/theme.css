@@ -311,6 +311,9 @@ kbd {
 .row-label small.mono { font-family: var(--mono), ui-monospace, monospace; }
 .row-ctl { display: flex; align-items: center; gap: calc(var(--space) * 2); flex: none; }
 .row-ctl.auto { justify-content: flex-end; }
+/* One height for every card's title row, with or without a control in it, so
+   cards side by side line up row for row. */
+.page .rows > .row.row-title { height: var(--h-row-lg); padding-block: 0; }
 .row.row-title span { font-size: var(--fs-base); font-weight: 600; color: var(--text); }
 .row.row-title > span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

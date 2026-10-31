@@ -1840,11 +1840,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
               </button>
             {/if}
             {#if coverOn && cover === "settings"}
-              <div class="cover" transition:fly|global={{ y: 8, ...motion }}>
+              <div class="cover" transition:fade|global={motion}>
                 <Settings bind:section={settingsSection} on:setupRemote={openRemoteSetup} onSetup={openSetup} onReport={reportProblem} />
               </div>
             {:else if coverOn && cover === "sessions"}
-              <div class="cover" transition:fly|global={{ y: 8, ...motion }}>
+              <div class="cover" transition:fade|global={motion}>
                 <ManagerView
                   {threads}
                   on:openSession={(e) => {
@@ -1859,7 +1859,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                 />
               </div>
             {:else if coverOn && cover === "doc"}
-              <div class="cover" transition:fly|global={{ y: 8, ...motion }}>
+              <div class="cover" transition:fade|global={motion}>
                 {#if pinnedDoc}
                   <div class="doc-tools">
                     <button class="tool" aria-label="Document actions" use:tooltip={"Document actions"} on:click={toggleDocMenu} bind:this={docMenuBtn}><Icon name="more" size={12} /></button>
@@ -2244,6 +2244,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   .cover :global(.bar),
   .cover :global(.page-bar) {
     anchor-name: --cover-bar;
+  }
+  /* Room for the back arrow. A bar on the page's tracks already stays clear of it. */
+  .cover :global(nav:not(.tracks)),
+  .cover :global(header),
+  .cover :global(.bar) {
     padding-right: calc(var(--space) * 4 + var(--space) * 7 + var(--space) * 2);
   }
   .session:has(.cover) .back {
@@ -2251,10 +2256,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     top: anchor(center, calc(var(--space) * 2 + 14px));
     translate: 0 -50%;
   }
+  /* Out of flow: while one cover fades into another, neither takes space from the other. */
   .cover {
-    flex: 1;
-    min-width: 0;
-    min-height: 0;
+    position: absolute;
+    inset: 0;
     display: flex;
     flex-direction: column;
   }

@@ -105,7 +105,13 @@
 </script>
 
 <Page>
-  <div slot="bar" class="page-tabs"><span class="page-title">Sessions</span></div>
+  <svelte:fragment slot="tools">
+    <div class="page-search">
+      <Icon name="search" />
+      <input bind:this={field} bind:value={query} placeholder="Search sessions" aria-label="Search sessions" spellcheck="false" />
+    </div>
+    <button class="btn" on:click={() => dispatch("newSession")}><Icon name="pencil" size={12} /><span>New session</span></button>
+  </svelte:fragment>
 
   <div slot="rail" class="rows">
     <div class="row row-title">
@@ -145,13 +151,6 @@
     {/if}
   </div>
 
-  <div class="tools">
-    <div class="page-search">
-      <Icon name="search" />
-      <input bind:this={field} bind:value={query} placeholder="Search sessions" aria-label="Search sessions" spellcheck="false" />
-    </div>
-    <button class="btn" on:click={() => dispatch("newSession")}><Icon name="pencil" size={12} /><span>New session</span></button>
-  </div>
   {#each days as day (day.label)}
     <div class="rows">
       <div class="row row-title"><span>{day.label}</span></div>
@@ -196,12 +195,7 @@
     font-size: var(--fs-sm);
     font-weight: 600;
   }
-  .tools {
-    display: flex;
-    align-items: stretch;
-    gap: calc(var(--space) * 2);
-  }
-  .tools .page-search {
+  .page-search {
     height: auto;
   }
   .x {
