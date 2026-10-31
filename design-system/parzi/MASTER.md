@@ -109,7 +109,7 @@ grade: surfaces are solid `--panel` on `--bg`.
   model, effort, and permission as plain text on the left; a browser icon,
   attach, and send on the right. Send is the arrow, with no circle, and it
   takes the text color once there is text. The browser icon turns the box
-  into one search row under the tab (Tab does the same on a new tab). Above
+  into the web search in place, at the same size (Tab does the same on a new tab). Above
   the box, "Let's build in {project} on {branch}" is plain text and opens the
   same pickers. `/` opens commands, `@` lists files. Esc stops a run.
 - Buttons: `.btn` is the one button, an outline (transparent, text color,

@@ -4,7 +4,6 @@
   import { cubicOut } from "svelte/easing";
   import { open } from "@tauri-apps/plugin-dialog";
   import Icon from "./Icon.svelte";
-  import { glideHeight } from "./glide";
   import ModelPicker from "./ModelPicker.svelte";
   import { api, brain, type ComposerMode, type PlanQuote, type Project, type ProviderStatus } from "./api";
   import { remote as server } from "./remote";
@@ -184,14 +183,6 @@
   }
 
   $: web = mode === "search";
-  let boxEl: HTMLDivElement | null = null;
-  let glidedWeb = web;
-  $: if (boxEl && glidedWeb !== web) {
-    glidedWeb = web;
-    const el = boxEl;
-    const before = el.getBoundingClientRect();
-    void tick().then(() => glideHeight(el, before));
-  }
   $: placeholder = streaming
     ? "Queue a message for when it's done"
     : web
@@ -648,7 +639,7 @@
     {/if}
   {/if}
 
-  <div class="box" class:web bind:this={boxEl} role="group" aria-label="Composer" on:dragover|preventDefault on:drop|preventDefault={onDrop}>
+  <div class="box" role="group" aria-label="Composer" on:dragover|preventDefault on:drop|preventDefault={onDrop}>
     {#if webOpen}
       <div class="web-suggest" class:below={hero}>
         <SuggestList rows={webRows} active={webActive} typed={webTyped} on:pick={(e) => pickWeb(e.detail.row)} on:hover={(e) => (webActive = e.detail.index)} />
@@ -750,6 +741,9 @@
         {/if}
       {/if}
       <div class="acts">
+        {#if !web}
+          <button class="icon" aria-label="Attach files" use:tooltip={"Attach files"} on:click={pickFiles}><Icon name="paperclip" /></button>
+        {/if}
         {#if !started}
           <button
             class="icon"
@@ -759,9 +753,6 @@
             use:tooltip={web ? "Back to the agent" : "Browse the web"}
             on:click={() => setWeb(!web)}
           ><Icon name="globe" /></button>
-        {/if}
-        {#if !web}
-          <button class="icon" aria-label="Attach files" use:tooltip={"Attach files"} on:click={pickFiles}><Icon name="paperclip" /></button>
         {/if}
         
         {#if streaming && !canSubmit}
@@ -931,20 +922,6 @@
     border: 1px solid var(--line);
     border-radius: var(--radius);
     box-shadow: none;
-  }
-  .box.web {
-    flex-direction: row;
-    align-items: center;
-  }
-  .box.web textarea {
-    flex: 1;
-    height: calc(var(--space) * 6);
-    min-height: calc(var(--space) * 6);
-    line-height: calc(var(--space) * 6);
-    overflow: hidden;
-  }
-  .box.web .tools {
-    flex: none;
   }
   textarea {
     width: 100%;

@@ -44,7 +44,6 @@
   import { follower } from "./lib/follow";
   import { draftKey, flushDrafts, loadDrafts, sameDraft, saveDrafts, withDraft } from "./lib/drafts";
 import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, moveId, putFront, saveHeld, stillWorking, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
-  import { glideTo } from "./lib/glide";
   import { addNotification, dropNotification, markSessionRead, newsKey, type NotificationItem } from "./lib/notificationStore";
   import { covered } from "./lib/overlay";
   import { popover, placeAbove } from "./lib/popover";
@@ -237,18 +236,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let settingsSection = "general";
   let scrollEl: HTMLElement | null = null;
   let dockHeight = 90;
-  let composerEl: HTMLDivElement | null = null;
-  let glideFrom = { tab: "", mode: "" };
-  // On Home the box moves between the middle and the top, which cannot transition.
-  $: if (composerEl && (glideFrom.tab !== activeId || glideFrom.mode !== comp.mode)) {
-    const toggled = glideFrom.tab === activeId;
-    glideFrom = { tab: activeId, mode: comp.mode };
-    if (toggled && !hasSession) {
-      const el = composerEl;
-      const before = el.getBoundingClientRect();
-      void tick().then(() => glideTo(el, before));
-    }
-  }
   let omnibar: Omnibar;
   let page: PageView;
   let immersive = false;
@@ -1994,10 +1981,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       <div
         class="composer"
         class:docked={hasSession}
-        class:browse={comp.mode === "search"}
         style:--shift="{shift}px"
         bind:clientHeight={dockHeight}
-        bind:this={composerEl}
       >
         <Omnibar
           bind:this={omnibar}
@@ -2316,10 +2301,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     transition: width 300ms var(--ease-out), bottom 300ms var(--ease-out), transform 300ms var(--ease-out);
   }
 
-  .composer.browse:not(.docked) {
-    top: 0;
-    bottom: auto;
-  }
   .composer.docked {
     bottom: 14px;
 
