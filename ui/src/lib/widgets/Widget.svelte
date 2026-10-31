@@ -267,7 +267,7 @@
   {#if bad || title}
   <div class="w-head">
     {#if bad}<span class="w-kind">Widget</span>{/if}
-    {#if title}<span class="w-title">{title}</span>{/if}
+    {#if title}<span class="w-title t-section">{title}</span>{/if}
   </div>
   {/if}
   {#if bad}
@@ -374,13 +374,13 @@
   }
   .widget-card.bad {
     border: 1px solid var(--bad);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     background: var(--panel);
     overflow: hidden;
   }
   .w-head { display: flex; align-items: center; gap: calc(var(--space) * 2); padding: var(--space) 0; font-size: var(--fs-xs); }
   .w-kind { font-size: var(--fs-xs); color: var(--muted); }
-  .w-title { font-weight: 600; color: var(--text); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .w-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .xbar { display: flex; gap: calc(var(--space) * 2); padding: var(--space) 0 var(--space); }
   .w-error { padding: calc(var(--space) * 2) calc(var(--space) * 3); font-size: var(--fs-xs); color: var(--bad); }
   .w-source { margin: 0 calc(var(--space) * 3); padding: calc(var(--space) * 2); font-size: var(--fs-xs); overflow: auto; background: var(--bg); border-radius: var(--radius); }

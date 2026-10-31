@@ -5,11 +5,6 @@ export function agentOf(s: SessionMeta): string {
   return (s.model ?? "").split("/")[0];
 }
 
-export function whereOf(s: SessionMeta): string {
-  if (!s.cwd || /[\\/]\.parzi[\\/]scratch[\\/]/.test(s.cwd)) return "";
-  return folderName(s.cwd);
-}
-
 let clearer: (() => Promise<void>) | null = null;
 
 export function provideClearSessions(fn: () => Promise<void>): () => void {

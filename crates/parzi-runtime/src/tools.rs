@@ -533,15 +533,13 @@ fn desk_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "desk.open".into(),
-            description: "Open something in the Parzi window for the human: what=session (id; default this session), settings (section: general, providers, connections, appearance, system), brain (path of a note), history (view: sessions, history, bookmarks or downloads), or home. Opens in the background unless focus=true.".into(),
+            description: "Open something in the Parzi window for the human: what=session (id; default this session), settings (section: general, providers, connections, appearance), or home. Opens in the background unless focus=true.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "what": {"type": "string", "enum": ["session", "settings", "brain", "history", "home"]},
+                    "what": {"type": "string", "enum": ["session", "settings", "home"]},
                     "id": {"type": "string"},
                     "section": {"type": "string"},
-                    "path": {"type": "string"},
-                    "view": {"type": "string", "enum": ["sessions", "history", "bookmarks", "downloads"]},
                     "focus": {"type": "boolean"},
                 },
                 "required": ["what"],

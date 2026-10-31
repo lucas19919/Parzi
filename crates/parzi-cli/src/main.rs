@@ -232,12 +232,8 @@ enum ApprovalCmd {
 enum OpenCmd {
     #[command(about = "A session, in its own tab")]
     Session { id: String },
-    #[command(about = "Settings: general, providers, connections, appearance or system")]
+    #[command(about = "Settings: general, providers, connections or appearance")]
     Settings { section: Option<String> },
-    #[command(about = "The brain, at a note (a path inside the vault)")]
-    Brain { path: Option<String> },
-    #[command(about = "History: sessions, history, bookmarks or downloads")]
-    History { view: Option<String> },
     #[command(about = "The home tab")]
     Home,
     #[command(about = "A web page")]
@@ -1326,8 +1322,6 @@ fn open_body(what: OpenCmd, background: bool, raise: bool) -> Value {
     let (kind, extra) = match what {
         OpenCmd::Session { id } => ("session", json!({ "id": id })),
         OpenCmd::Settings { section } => ("settings", json!({ "section": section })),
-        OpenCmd::Brain { path } => ("brain", json!({ "path": path })),
-        OpenCmd::History { view } => ("history", json!({ "view": view })),
         OpenCmd::Home => ("home", json!({})),
         OpenCmd::Url { url } => ("url", json!({ "url": normalize_url(&url) })),
     };
@@ -1564,11 +1558,9 @@ mod tests {
         assert_eq!(body["id"], "abc123");
         assert_eq!(body["focus"], false);
         assert_eq!(body["raise"], true);
-        let body = open(&["open", "brain"]);
-        assert!(body.get("path").is_none());
         let body = open(&["open", "url", "localhost:1420"]);
         assert_eq!(body["url"], "http://localhost:1420");
-        for gone in ["plan", "work", "tasks"] {
+        for gone in ["plan", "work", "tasks", "brain", "history"] {
             assert!(parse(&["open", gone]).is_err(), "{gone}");
         }
         assert!(parse(&["open", "nowhere"]).is_err());

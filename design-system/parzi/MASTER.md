@@ -12,18 +12,42 @@ Silent failures are bugs, so every action toasts success or error.
 A theme sets four colors: `--bg`, `--text`, `--accent`, and `--panel` (empty
 panel means text at 6% over the background). Muted, line, faint, hover,
 selected, and link are mixed from those in `theme.css`. `--ok` `--warn`
-`--bad` are fixed status colors. `npm run lint:tokens` rejects a raw px
-padding, margin, gap, or an off-scale radius. No hex in a `<style>` block.
+`--bad` are fixed status colors. No hex in a `<style>` block.
 `user.css` loads last and may override any token. Charts read tokens through
 `resolveColor()` in `lib/theme.ts`.
 
 Spacing is `--space` (4px). Legal steps are 1, 2, 3, 4, 6, and 8 times that.
-`--radius` is 12px, the chat window's corner, and `--radius-lg` is the same.
-A box inside a rounded box sets its radius to `calc(var(--r) - var(--pad))`
-and does not redefine `--r` (that cycles). `--radius-sm` is one `--space`
-step, for chips and thin bars. Pills are `999px`, dots are `50%`, marks may use `25%`.
-Motion is `--ease-out` and `140ms`. Disabled is `0.5` everywhere; dimmed
-rows are `0.55`; icons are 12 or 16 only.
+Motion is `--dur` (140ms) and `--dur-fast` (60ms) with `--ease-out`. Disabled
+is `--disabled` (0.5) everywhere; dimmed rows are `0.55`; icons are 12 or 16 only.
+Control heights are `--h-sm` (24), `--h` (28), `--h-row` (36), `--h-row-lg` (46).
+Popovers sit at `--z-pop`, tooltips at `--z-tip`.
+
+Radius has one rule and no nesting maths; spacing separates a box from what
+is inside it, so an outer corner is never larger to stay concentric:
+
+| What | Radius |
+|---|---|
+| Anything 24px or taller: cards, popovers, tooltips, buttons, inputs, segmented controls, chips | `--radius` (12px) |
+| Anything shorter: inline code, kbd, progress tracks, small badges, logos | `--radius-sm` (4px) |
+| Dots, knobs, spinners | `50%` |
+| Only the switch and the slider track | `999px` |
+
+Text has four roles, global classes in `theme.css`. Use the class and set no
+font size, weight or colour next to it:
+
+| Role | Class | Size / weight / colour |
+|---|---|---|
+| Page title, section title | `.t-page`, `.t-section` | 14 / 600 / text |
+| Label | `.t-label` | 13 / 500 / text |
+| Hint | `.t-hint` | 12 / 400 / muted |
+| Group label in a list | `.t-group` | 11 / 600 / muted |
+
+Position gives the hierarchy, so a page title and a section title match. In
+Settings the tabs are the page title and `.row-title` is the section title.
+
+`npm run lint:tokens` runs in CI. It rejects raw px spacing, radii and font
+sizes off the rules above, other font weights, hex outside `theme.css`,
+`var()` of anything undefined, and tokens nothing uses.
 
 Appearance UI (`settings/AppearanceSection.svelte`) edits the four input
 colours, type and the one home backdrop picture (plus which slice of it
@@ -36,9 +60,9 @@ grade: surfaces are solid `--panel` on `--bg`.
 
 ## Layout
 
-- Top bar (38px): menu, home, tabs, window controls. The bar is the drag region.
-- Tabs are sessions and pages. Settings and history open inside the
-  session, with a back arrow at the top right, and the session column stays.
+- Top bar (44px): manager, tabs, settings, window controls. The bar is the drag region.
+- Tabs are sessions and pages. Settings opens inside the session, with a back
+  arrow at the top right, and the session column stays.
   Drag reorders tabs (pointer events,
   not HTML5 drag, which WebView2 hands to the file-drop handler);
   Ctrl+Shift+←/→ moves the focused tab. A session tab shows the thread card
@@ -61,8 +85,6 @@ grade: surfaces are solid `--panel` on `--bg`.
   phrases, then history/bookmark matches; inline completion selects the
   completed part. Over a page, the native view hides while the list is open
   and a JPEG snapshot of the page (taken on focus) stands in for it.
-- History opens in the session (Ctrl+H): Sessions, Pages, Bookmarks, Downloads, one search field, rows
-  grouped by day with a hover ×. A new tab focuses the composer.
 - An empty session tab is Home: the composer. New tab and the Home button land here.
 - Switcher (Ctrl+P / Ctrl+K): actions, open tabs, sessions. Settings opens in
   the session (Ctrl+,).
@@ -84,14 +106,15 @@ grade: surfaces are solid `--panel` on `--bg`.
   into one search row under the tab (Tab does the same on a new tab). Above
   the box, "Let's build in {project} on {branch}" is plain text and opens the
   same pickers. `/` opens commands, `@` lists files. Esc stops a run.
-- Buttons: `.btn` and settings `.sbtn` are the same outline (transparent,
-  text color, line border, hover wash). `.primary` is the accent fill with
-  the background as its label. Every button presses (scale 0.97). Disabled is 45%.
+- Buttons: `.btn` is the one button, an outline (transparent, text color,
+  line border, hover wash). `.primary` is the accent fill with the background
+  as its label, `.danger` the bad outline. `.icon-btn` is the one square icon
+  button and `.tin` the one text input. Every button presses (scale 0.97).
 - Model picker: one list sized to its content. Search, Starred
   (set in Settings › Providers), then each ready agent's models under its
   name, and agents that are not set up last. Opens from its button.
 - Popovers go through `lib/popover.ts` (portal, placement, outside click, Esc).
-- Thread: user bubbles right (14px radius), tool stacks (running / ok / failed with
+- Thread: user bubbles right (`--radius`), tool stacks (running / ok / failed with
   output), reasoning rail, code blocks (ext badge, lines, copy, gutter, diff
   tint, 30-line clamp), per-message copy under the message.
 - Icons come from `lib/icons.ts` through `Icon.svelte`; no inline SVG paths

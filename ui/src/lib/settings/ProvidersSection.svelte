@@ -170,13 +170,13 @@
             <span class="row-label">{wait?.note ?? statusLine(p, entry.enabled, busy)}</span>
             <span class="row-ctl auto">
               {#if step}
-                <button class="sbtn primary" disabled={busy} on:click={() => step.run(id)}>{busy && step.label === "Try again" ? "Checking…" : step.label}</button>
+                <button class="btn primary" disabled={busy} on:click={() => step.run(id)}>{busy && step.label === "Try again" ? "Checking…" : step.label}</button>
               {:else if wait}
                 <span class="waiting">{wait.action === "install" ? "Installing…" : "Signing in…"}</span>
               {:else if ready}
-                <button class="sbtn" title={`Disconnect ${nameOf(id)}`} on:click={() => setEnabled(id, false)}>Connected</button>
+                <button class="btn" title={`Disconnect ${nameOf(id)}`} on:click={() => setEnabled(id, false)}>Connected</button>
               {:else}
-                <button class="sbtn" title={`Connect ${nameOf(id)}`} on:click={() => setEnabled(id, true)}>Disconnected</button>
+                <button class="btn" title={`Connect ${nameOf(id)}`} on:click={() => setEnabled(id, true)}>Disconnected</button>
               {/if}
             </span>
           </div>
@@ -227,7 +227,7 @@
               <div class="row row-title">
                 <span>Custom</span>
                 <span class="row-ctl auto">
-                  <button class="sbtn" type="button" disabled={registryBusy} on:click={loadRegistry}>
+                  <button class="btn" type="button" disabled={registryBusy} on:click={loadRegistry}>
                     {registryBusy ? "Loading…" : "Registry"}
                   </button>
                 </span>
@@ -284,7 +284,7 @@
 
   /* Program/Command fields always visible; same 32px inputs as theme cards. */
   .details .tin,
-  .details .sbtn {
+  .details .btn {
     height: calc(var(--space) * 8);
   }
   /* One textbox width everywhere so rows stop bouncing. */

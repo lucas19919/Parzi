@@ -49,13 +49,13 @@
   }
   .win-btn {
     width: 28px;
-    height: 24px;
+    height: var(--h-sm);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     background: transparent;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     color: var(--muted);
     cursor: pointer;
   }

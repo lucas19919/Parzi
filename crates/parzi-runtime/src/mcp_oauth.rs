@@ -1,4 +1,3 @@
-
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -49,9 +48,15 @@ fn save(name: &str, t: &Token) -> Result<(), String> {
     let path = store_path(name).ok_or("no place to keep the sign-in")?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+                .map_err(|e| e.to_string())?;
+        }
     }
     let text = serde_json::to_string_pretty(t).map_err(|e| e.to_string())?;
-    parzi_core::atomic_write(&path, text.as_bytes()).map_err(|e| e.to_string())
+    parzi_core::atomic_write_private(&path, text.as_bytes()).map_err(|e| e.to_string())
 }
 
 pub fn forget(name: &str) {

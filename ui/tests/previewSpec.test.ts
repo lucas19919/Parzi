@@ -10,7 +10,6 @@ test("a preview mounts the omnibar and keeps token overrides", () => {
   assert.equal("tokens" in live.extra, false);
   assert.match(live.style, /--radius:20px/);
   assert.match(live.style, /--panel:#ffffff/);
-  assert.match(live.style, /--radius-lg:var\(--radius\)/);
   assert.doesNotMatch(live.style, /nope/);
 });
 

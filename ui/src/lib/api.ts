@@ -213,7 +213,6 @@ export const api = {
       worktree: a.worktree || null,
     }),
   saveAnswer: (content: string) => invoke<NoteMeta>("brain_save_answer", { content }),
-  renameThread: (id: string, title: string) => invoke<void>("rename_thread", { id, title }),
   deleteThread: (id: string) => invoke<number>("delete_thread", { id }),
   forkThread: (id: string) => invoke<SessionMeta>("fork_thread", { id }),
   rewindThread: (id: string, nth: number) => invoke<SessionMeta>("rewind_thread", { id, nth }),
@@ -255,7 +254,6 @@ export const api = {
   connectorSetIcon: (name: string, path: string) => invoke<string>("connector_set_icon", { name, path }),
   connectorsFound: () => invoke<{ name: string; source: string; server: Record<string, unknown> }[]>("connectors_found"),
   connectorsFromText: (text: string) => invoke<[string, Record<string, unknown>][]>("connectors_from_text", { text }),
-  runDoctorQuick: () => invoke<Check[]>("run_doctor_quick"),
 
   getTheme: () => invoke<Theme>("get_theme"),
   getThemeCss: () => invoke<string>("get_theme_css"),
@@ -354,7 +352,6 @@ interface BrainContext {
   tokens: number;
 }
 
-export type ObsidianState = "missing" | "unregistered" | "ready";
 
 interface BrowserSource {
   id: string;
@@ -407,20 +404,14 @@ interface ImportReport {
 
 export const brain = {
   dir: () => invoke<string>("brain_dir"),
-  list: () => invoke<NoteMeta[]>("brain_list"),
   read: (path: string) => invoke<string>("brain_read", { path }),
   write: (path: string, content: string) => invoke<NoteMeta>("brain_write", { path, content }),
   remove: (path: string) => invoke<void>("brain_delete", { path }),
   projects: () => invoke<Project[]>("brain_projects"),
   upsertProject: (title: string, folder: string, slug?: string) =>
     invoke<Project>("brain_project_upsert", { title, folder, slug: slug ?? null }),
-  map: (note: string, project: string, on: boolean) => invoke<NoteMeta>("brain_map", { note, project, on }),
   context: (cwd: string) => invoke<BrainContext | null>("brain_context", { cwd }),
-  pin: (path: string, on: boolean) => invoke<NoteMeta>("brain_pin", { path, on }),
-  overflow: () => invoke<Record<string, string[]>>("brain_overflow"),
-  resolveConflict: (path: string, keepCopy: boolean) => invoke<string>("brain_resolve_conflict", { path, keepCopy }),
   open: (path: string, target: "file" | "folder" | "obsidian") => invoke<void>("brain_open", { path, target }),
-  obsidian: () => invoke<ObsidianState>("brain_obsidian"),
 };
 
 export const onboard = {
@@ -548,6 +539,10 @@ export function onBrowserKey(cb: (key: string) => void) {
 
 export function onRunEvent(cb: (e: UiEvent) => void) {
   return listen<UiEvent>("parzi://run-event", (ev) => cb(ev.payload));
+}
+
+export function onResync(cb: () => void) {
+  return listen("parzi://resync", () => cb());
 }
 
 export function onProviders(cb: (board: ProviderStatus[]) => void) {

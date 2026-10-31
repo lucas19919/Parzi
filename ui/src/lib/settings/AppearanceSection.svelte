@@ -281,7 +281,7 @@
 {:else if err || !theme}
   <div class="load-err">
     <span>{err || "Theme failed to load"}</span>
-    <button class="sbtn" on:click={load}>Retry</button>
+    <button class="btn" on:click={load}>Retry</button>
   </div>
 {:else}
   <section class="pref-section">
@@ -329,7 +329,7 @@
           on:keydown={(e) => e.key === "Enter" && savePack()}
           spellcheck="false"
         />
-        <button class="sbtn" disabled={!packName.trim()} on:click={savePack}>Save</button>
+        <button class="btn" disabled={!packName.trim()} on:click={savePack}>Save</button>
       </div>
     </div>
   </section>
@@ -418,7 +418,7 @@
   </section>
 
   <div class="actions-row-end">
-    <button class="sbtn" on:click={resetAppearance}>Reset appearance</button>
+    <button class="btn" on:click={resetAppearance}>Reset appearance</button>
   </div>
 {/if}
 
@@ -499,7 +499,7 @@
     min-width: 0;
   }
   .save-row > .tin,
-  .save-row > .sbtn {
+  .save-row > .btn {
     height: calc(var(--space) * 8);
   }
   .rows > .row > .tin:not(.fixed) {
@@ -531,7 +531,7 @@
     padding: var(--space) calc(var(--space) * 3);
     background: none;
     border: 1px solid var(--line);
-    border-radius: 999px;
+    border-radius: var(--radius-sm);
     color: var(--muted);
     font: inherit;
     font-size: var(--fs-sm);

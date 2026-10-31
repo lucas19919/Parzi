@@ -29,8 +29,11 @@ const HISTORY_CHARS: usize = 12_000;
 /// Deliberately longer than the approval auto-deny (900s) and the longest
 /// tool timeout (600s), so only a truly wedged agent trips it.
 const IDLE_LIMIT: Duration = Duration::from_mins(20);
-/// A turn that keeps calling tools past this count is treated as looping.
-const TURN_TOOL_LIMIT: u32 = 100;
+/// An agent repeating the very same tool call this many times in a row is
+/// looping. Long turns of different calls are fine: budget and Stop cover those.
+const REPEAT_LIMIT: u32 = 30;
+/// How often a quiet turn says so in the log, so a hang leaves evidence.
+const QUIET_LOG_EVERY: Duration = Duration::from_mins(2);
 /// How long to let a cancelled turn wind down before giving up on it.
 const POST_CANCEL_GRACE: Duration = Duration::from_secs(15);
 
@@ -552,48 +555,57 @@ impl EngineRun {
         let mut turn = Turn::default();
         let mut paused: Option<String> = None;
         let mut closed: Option<String> = None;
-        let mut tool_calls = 0u32;
-        let mut idle_since = tokio::time::Instant::now();
+        let mut watch = TurnWatch::new();
+        let mut next_quiet_log = tokio::time::Instant::now() + QUIET_LOG_EVERY;
+        let mut stop_logged = false;
         let mut halt: Option<TurnHalt> = None;
         loop {
-            match tokio::time::timeout_at(idle_since + IDLE_LIMIT, rx.recv()).await {
-                Err(_) => {
-                    // No provider events for a long while: the agent went
-                    // quiet. Stop waiting on it instead of hanging forever.
-                    tracing::warn!(session = %self.p.session_id, "turn went quiet with no provider events; cancelling");
-                    turn_cancel.cancel();
-                    halt = Some(TurnHalt::Quiet);
-                    break;
+            let wake = next_quiet_log.min(watch.last_at + IDLE_LIMIT);
+            tokio::select! {
+                () = self.p.cancel.cancelled(), if !stop_logged => {
+                    stop_logged = true;
+                    self.log_quiet("stop asked", &watch);
                 }
-                Ok(None) => break,
-                Ok(Some(ev)) => {
-                    idle_since = tokio::time::Instant::now();
-                    if matches!(ev, ProviderEvent::ToolStarted { .. }) {
-                        tool_calls += 1;
-                        if tool_calls > TURN_TOOL_LIMIT {
-                            // The agent keeps calling tools without ever finishing:
-                            // stop it instead of looping forever.
-                            tracing::warn!(session = %self.p.session_id, tools = tool_calls, "turn kept calling tools without finishing; cancelling");
+                got = tokio::time::timeout_at(wake, rx.recv()) => match got {
+                    Err(_) if watch.last_at.elapsed() < IDLE_LIMIT => {
+                        self.log_quiet("turn is quiet", &watch);
+                        next_quiet_log = tokio::time::Instant::now() + QUIET_LOG_EVERY;
+                    }
+                    Err(_) => {
+                        // No provider events for a long while: the agent went
+                        // quiet. Stop waiting on it instead of hanging forever.
+                        self.log_quiet("turn went quiet for too long; cancelling", &watch);
+                        turn_cancel.cancel();
+                        halt = Some(TurnHalt::Quiet);
+                        break;
+                    }
+                    Ok(None) => break,
+                    Ok(Some(ev)) => {
+                        next_quiet_log = tokio::time::Instant::now() + QUIET_LOG_EVERY;
+                        if watch.saw(&ev) >= REPEAT_LIMIT {
+                            // The agent keeps making the same call without ever
+                            // finishing: stop it instead of looping forever.
+                            self.log_quiet("turn keeps repeating one tool call; cancelling", &watch);
                             turn_cancel.cancel();
                             halt = Some(TurnHalt::Loopy);
                             break;
                         }
-                    }
-                    if let ProviderEvent::Notice(ref text) = ev {
-                        if text.contains("exited before it answered") {
-                            closed = Some(text.clone());
+                        if let ProviderEvent::Notice(ref text) = ev {
+                            if text.contains("exited before it answered") {
+                                closed = Some(text.clone());
+                            }
                         }
-                    }
-                    if let Some(reason) = self.on_event(ev, &mut turn) {
-                        if paused.is_none() {
-                            paused = Some(reason);
-                            turn_cancel.cancel();
+                        if let Some(reason) = self.on_event(ev, &mut turn) {
+                            if paused.is_none() {
+                                paused = Some(reason);
+                                turn_cancel.cancel();
+                            }
                         }
                     }
                 }
             }
         }
-        if let Some(kind) = halt {
+        let result = if let Some(kind) = halt {
             // Give a wedged driver a short grace period to wind down, then
             // stop waiting no matter what. select! pins the branches itself.
             tokio::select! {
@@ -602,22 +614,23 @@ impl EngineRun {
                 () = tokio::time::sleep(POST_CANCEL_GRACE) => {}
             }
             task.abort();
-            if paused.is_none() {
-                let name = parzi_providers::display_name(&self.p.provider_id);
-                let msg = match kind {
-                    TurnHalt::Quiet => format!(
-                        "{name} went quiet for too long with no output, so the turn was stopped. Send again to continue."
-                    ),
-                    TurnHalt::Loopy => format!(
-                        "{name} kept calling tools without finishing (over {TURN_TOOL_LIMIT} calls), so the turn was stopped. Send again to continue."
-                    ),
-                };
-                return Outcome::Failed(ProviderError::process(msg));
+            while let Ok(ev) = rx.try_recv() {
+                let _ = self.on_event(ev, &mut turn);
             }
-        }
-        let result = task
-            .await
-            .unwrap_or_else(|e| Err(ProviderError::process(format!("the provider stopped: {e}"))));
+            let name = parzi_providers::display_name(&self.p.provider_id);
+            Err(ProviderError::process(match kind {
+                TurnHalt::Quiet => format!(
+                    "{name} went quiet for too long with no output, so the turn was stopped. Send again to continue."
+                ),
+                TurnHalt::Loopy => format!(
+                    "{name} kept calling the same tool without finishing ({REPEAT_LIMIT} times in a row), so the turn was stopped. Send again to continue."
+                ),
+            }))
+        } else {
+            task.await.unwrap_or_else(|e| {
+                Err(ProviderError::process(format!("the provider stopped: {e}")))
+            })
+        };
         drop(registration);
         let completed = paused.is_none() && matches!(result, Ok(TurnEnd::Completed));
         if !completed {
@@ -644,6 +657,17 @@ impl EngineRun {
             Err(_) if self.p.cancel.is_cancelled() => Outcome::Interrupted,
             Err(e) => Outcome::Failed(e),
         }
+    }
+
+    fn log_quiet(&self, what: &str, watch: &TurnWatch) {
+        tracing::warn!(
+            session = %self.p.session_id,
+            provider = %self.p.provider_id,
+            quiet_secs = watch.last_at.elapsed().as_secs(),
+            last_event = watch.last_kind,
+            pending_tools = %watch.pending_names(),
+            "{what}"
+        );
     }
 
     async fn stopped(&self, closed: Option<String>) {
@@ -905,7 +929,84 @@ impl EngineRun {
         } else {
             status
         };
-        let _ = self.p.store.set_status(&self.p.session_id, status);
+        if let Err(e) = self.p.store.set_status(&self.p.session_id, status) {
+            tracing::warn!(session = %self.p.session_id, "session status not kept: {e}");
+        }
+    }
+}
+
+/// What a turn last heard from its agent: the evidence a hang leaves behind,
+/// and the count of one tool call repeated in a row.
+struct TurnWatch {
+    last_at: tokio::time::Instant,
+    last_kind: &'static str,
+    pending: HashMap<String, String>,
+    last_call: Option<(String, Value)>,
+    repeats: u32,
+}
+
+impl TurnWatch {
+    fn new() -> Self {
+        Self {
+            last_at: tokio::time::Instant::now(),
+            last_kind: "none",
+            pending: HashMap::new(),
+            last_call: None,
+            repeats: 0,
+        }
+    }
+
+    /// Notes an event and returns how many times in a row its tool call has
+    /// been made. Some agents send no input with a call; those never count,
+    /// since nothing says the calls are the same.
+    fn saw(&mut self, ev: &ProviderEvent) -> u32 {
+        self.last_at = tokio::time::Instant::now();
+        self.last_kind = match ev {
+            ProviderEvent::Session { .. } => "session",
+            ProviderEvent::TextDelta(_) | ProviderEvent::Message(_) => "text",
+            ProviderEvent::ReasoningDelta(_) | ProviderEvent::Reasoning(_) => "reasoning",
+            ProviderEvent::ToolStarted { .. } => "tool_started",
+            ProviderEvent::ToolFinished { .. } => "tool_finished",
+            ProviderEvent::Usage { .. } | ProviderEvent::Context { .. } => "usage",
+            ProviderEvent::Limits(_) => "limits",
+            ProviderEvent::Notice(_) => "notice",
+            ProviderEvent::Compacted { .. } => "compacted",
+        };
+        match ev {
+            ProviderEvent::ToolStarted { id, name, input } => {
+                self.pending.insert(id.clone(), name.clone());
+                let empty = input.is_null() || input.as_object().is_some_and(|o| o.is_empty());
+                let same = self
+                    .last_call
+                    .as_ref()
+                    .is_some_and(|(n, i)| n == name && i == input);
+                self.repeats = match (empty, same) {
+                    (true, _) => 0,
+                    (false, true) => self.repeats + 1,
+                    (false, false) => 1,
+                };
+                self.last_call = Some((name.clone(), input.clone()));
+                self.repeats
+            }
+            ProviderEvent::ToolFinished { id, .. } => {
+                self.pending.remove(id);
+                0
+            }
+            _ => 0,
+        }
+    }
+
+    fn pending_names(&self) -> String {
+        let mut names: Vec<&str> = self.pending.values().map(String::as_str).collect();
+        names.sort_unstable();
+        let more = names.len().saturating_sub(5);
+        names.truncate(5);
+        let list = names.join(",");
+        if more > 0 {
+            format!("{list} and {more} more")
+        } else {
+            list
+        }
     }
 }
 

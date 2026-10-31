@@ -4,7 +4,7 @@
   import { cubicOut } from "svelte/easing";
   import { ask } from "@tauri-apps/plugin-dialog";
   import {
-    api, brain, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onRunEvent,
+    api, brain, deskSync, onBrowser, onBrowserKey, onBrowserOpen, onDesk, onResync, onRunEvent,
     type AgentRequest, type ChatEvent, type ComposerMode, type PageEvent, type PlanQuote, type Question, type SessionMeta, type UiEvent,
   } from "./lib/api";
   import { downloads as downloadApi, onBrowserAsk, onDownload, type Download } from "./lib/api";
@@ -624,9 +624,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function closeTab(id: string) {
     const idx = tabs.findIndex((t) => t.id === id);
     if (idx < 0) return;
-    const under = tabs[idx].kind === "page" ? (tabs[idx].owner ?? tabs[idx].group ?? null) : null;
+    const closed = tabs[idx];
+    const under = closed.kind === "page" ? (closed.owner ?? closed.group ?? null) : null;
     const doomed = new Set([id]);
-    const closingSession = tabs[idx].kind === "session" ? tabs[idx].sessionId : null;
+    const closingSession = closed.kind === "session" ? closed.sessionId : null;
     for (const t of tabs) {
       if (t.kind === "page" && t.owner && closingSession && t.owner === closingSession) doomed.add(t.id);
     }
@@ -653,8 +654,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       selectTab(home.id);
       return;
     }
-    if (tabs[idx].kind === "artifact" && tabs[idx].group) {
-      const g = tabs[idx].group as string;
+    if (closed.kind === "artifact" && closed.group) {
+      const g = closed.group as string;
       const parent = kept.find((t) => t.id === g) ?? kept.find((t) => t.kind === "session" && t.sessionId === g);
       if (parent) {
         selectTab(parent.id);
@@ -1646,8 +1647,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         tabs = [...tabs.slice(0, idx + 1), t, ...tabs.slice(idx + 1)];
       }
     } else if (cmd.what === "settings") openSettings(cmd.section || "general");
-    else if (cmd.what === "projects" || (cmd.what as string) === "brain") toast("Notes live in the vault now — there is no notes panel.");
-    else if (cmd.what === "history") toast("History is gone — open sessions from the manager.");
     else if (cmd.what === "plan" || cmd.what === "work" || cmd.what === "tasks") showPlan();
     else if (cmd.what === "home") newSession();
   }
@@ -1664,6 +1663,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
   onMount(() => {
     const unRun = onRunEvent(onEvent);
+    const unResync = onResync(() => void refreshThreads());
     const unDesk = onDesk((cmd) => {
       if (typeof cmd.rev === "number") deskRev = Math.max(deskRev, cmd.rev);
       onDeskCmd(cmd);
@@ -1759,6 +1759,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       document.removeEventListener("parzi:pin-note", onPinNote);
       unRun.then((f) => f()).catch(() => {});
       unDesk.then((f) => f()).catch(() => {});
+      unResync.then((f) => f()).catch(() => {});
       unRemote.then((f) => f()).catch(() => {});
       for (const un of [unPage, unOpen, unKey, unAsk, unDownload]) un.then((f) => f()).catch(() => {});
       document.removeEventListener("parzi:bg", onBg);
@@ -1830,7 +1831,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           <section class="session" out:fade|local={{ duration: motion.duration }}>
             {#if coverOn || parent}
               <button
-                class="back back-btn"
+                class="back icon-btn"
                 aria-label={coverOn ? "Back" : `Back to ${parent?.title || "Untitled"}`}
                 use:tooltip={coverOn ? "Back" : `Back to ${parent?.title || "Untitled"}`}
                 transition:fly|global={{ x: 28, ...motion }}
@@ -2146,7 +2147,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     background: var(--panel);
     border: 1px solid var(--line);
     border-bottom: none;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-radius: var(--radius) var(--radius) 0 0;
   }
   .fill.col {
     flex-direction: column;
@@ -2174,7 +2175,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     background: none;
     border: 1px solid var(--line);
     border-bottom: none;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-radius: var(--radius) var(--radius) 0 0;
     animation: enter 600ms var(--ease-out);
   }
   @keyframes enter {
@@ -2373,7 +2374,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     width: 64px;
     height: 4px;
     margin-left: calc(var(--space) * 2);
-    border-radius: 999px;
+    border-radius: var(--radius-sm);
     background: var(--line);
     overflow: hidden;
   }

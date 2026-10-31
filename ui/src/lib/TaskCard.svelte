@@ -32,7 +32,7 @@
   <div class="task" class:started={state?.state === "started"}>
     <div class="head">
       <Icon name="fork" size={12} />
-      <span class="title">{t.title}</span>
+      <span class="title t-section">{t.title}</span>
       {#if t.project}<span class="proj">{t.project}</span>{/if}
     </div>
     <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
@@ -58,7 +58,7 @@
     padding: calc(var(--space) * 3) calc(var(--space) * 4);
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
   }
   .head {
     display: flex;
@@ -75,14 +75,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--fs-md);
-    font-weight: 600;
-    color: var(--text);
-  }
+              }
   .proj {
     flex: none;
     padding: 0 calc(var(--space) * 2);
-    border-radius: 999px;
+    border-radius: var(--radius-sm);
     background: var(--hover);
     color: var(--muted);
     font-size: var(--fs-xs);

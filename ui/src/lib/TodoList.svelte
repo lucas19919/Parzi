@@ -21,7 +21,7 @@
   <section class="todo" aria-label="Tasks">
     <button class="head" aria-expanded={shown} on:click={() => (open = !shown)}>
       <Icon name={shown ? "chevDown" : "chevRight"} size={12} />
-      <span class="title">Tasks</span>
+      <span class="title t-section">Tasks</span>
       <span class="count">{done} of {items.length}</span>
     </button>
     {#if shown}
@@ -42,7 +42,7 @@
     margin: var(--space) 0 0;
     padding: calc(var(--space) * 2) calc(var(--space) * 2);
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
   }
   .head {
     display: flex;
@@ -63,9 +63,7 @@
   }
   .title {
     flex: 1;
-    font-weight: 600;
-    color: var(--text);
-  }
+          }
   .count {
     flex: none;
     font-variant-numeric: tabular-nums;

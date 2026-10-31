@@ -48,7 +48,6 @@ export function tokenStyle(raw: unknown): string {
     );
   }
   if (set.space) derived.push("--gap:calc(var(--space) * 2)", "--radius-sm:calc(var(--space))");
-  if (set.radius) derived.push("--radius-lg:var(--radius)");
   const explicit = Object.entries(set).map(([k, v]) => `--${k}:${v}`);
   return [...derived, ...explicit].join(";");
 }

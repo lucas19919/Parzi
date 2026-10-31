@@ -237,7 +237,7 @@
           <button role="tab" aria-selected={i === step} disabled={locked} on:click={() => (step = i)}>{s}</button>
         {/each}
       </div>
-      <button class="back-btn" use:tooltip={locked ? "Wait for the remote setup" : "Back"} disabled={locked} on:click={() => finish()}><Icon name="arrowLeft" /></button>
+      <button class="icon-btn" use:tooltip={locked ? "Wait for the remote setup" : "Back"} disabled={locked} on:click={() => finish()}><Icon name="arrowLeft" /></button>
     </header>
 
     <div class="body">
@@ -261,7 +261,7 @@
                 {/key}
               {/if}
               {#if next}
-                <button class="sbtn" disabled={$checking.has(a.provider) || $checking.has("*")} on:click={() => next.run(a.provider)}>{next.label}</button>
+                <button class="btn" disabled={$checking.has(a.provider) || $checking.has("*")} on:click={() => next.run(a.provider)}>{next.label}</button>
               {/if}
             </div>
           {/each}
@@ -291,7 +291,7 @@
             <label><input type="checkbox" bind:checked={wantHistory} /> History</label>
           </div>
           <div class="action">
-            <button class="sbtn primary" disabled={busy || !browserPick || (!wantBookmarks && !wantHistory)} on:click={importFromBrowser}>
+            <button class="btn primary" disabled={busy || !browserPick || (!wantBookmarks && !wantHistory)} on:click={importFromBrowser}>
               {busy ? "Importing…" : "Import"}
             </button>
             {#if browserResult}<span class="result">{browserResult}</span>{/if}
@@ -330,7 +330,7 @@
             {/each}
           </div>
           <div class="action">
-            <button class="sbtn primary" disabled={busy || !picked.size} on:click={importFromTools}>{busy ? "Importing…" : "Import"}</button>
+            <button class="btn primary" disabled={busy || !picked.size} on:click={importFromTools}>{busy ? "Importing…" : "Import"}</button>
             {#if toolResult}<span class="result">{toolResult}</span>{/if}
           </div>
           {#if skipped.length}
@@ -372,7 +372,7 @@
               </label>
             </div>
             <div class="action">
-              <button class="sbtn primary" disabled={!remoteUser.trim() || !remoteHost.trim() || locked} on:click={setupRemote}>
+              <button class="btn primary" disabled={!remoteUser.trim() || !remoteHost.trim() || locked} on:click={setupRemote}>
                 {locked ? "Setting up…" : remoteInfo ? "Set up again" : "Set up"}
               </button>
               {#if setupMsg}<span class="result" class:bad={setupState === "error"}>{setupMsg}</span>{/if}
@@ -397,13 +397,13 @@
     </div>
 
     <footer>
-      {#if step > 0}<button class="sbtn" disabled={locked} on:click={() => (step -= 1)}>Back</button>{/if}
+      {#if step > 0}<button class="btn" disabled={locked} on:click={() => (step -= 1)}>Back</button>{/if}
       <span class="grow" />
       {#if step < LAST}
         <button class="link" on:click={() => (step += 1)}>Skip</button>
-        <button class="sbtn primary" disabled={busy} on:click={next}>{busy ? "Importing…" : "Next"}</button>
+        <button class="btn primary" disabled={busy} on:click={next}>{busy ? "Importing…" : "Next"}</button>
       {:else}
-        <button class="sbtn primary" disabled={locked} on:click={() => finish()}>Done</button>
+        <button class="btn primary" disabled={locked} on:click={() => finish()}>Done</button>
       {/if}
     </footer>
   </div>
@@ -432,7 +432,7 @@
     flex-direction: column;
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     overflow: hidden;
     outline: none;
   }
@@ -477,7 +477,7 @@
     border: 1px solid transparent;
     border-radius: var(--radius);
     cursor: default;
-    transition: background 140ms ease, border-color 140ms ease;
+    transition: background var(--dur) ease, border-color var(--dur) ease;
   }
   .item.on {
     background: color-mix(in srgb, var(--accent) 8%, transparent);
@@ -662,7 +662,7 @@
     height: 10px;
     border: 2px solid var(--line);
     border-top-color: var(--accent);
-    border-radius: 999px;
+    border-radius: 50%;
     animation: turn 0.8s linear infinite;
   }
   @keyframes turn {
@@ -738,7 +738,7 @@
     gap: calc(var(--space) * 3);
     margin-top: calc(var(--space) * 4);
   }
-  .action .sbtn {
+  .action .btn {
     flex: none;
     white-space: nowrap;
   }

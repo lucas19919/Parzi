@@ -53,10 +53,6 @@ export function hostedServer(url: string, opts: { token?: string; auth?: string 
   return { command: "", url, headers, auth: opts.auth ?? "", enabled: true, timeout_ms: 60_000 };
 }
 
-export function serverLine(srv: ServerCfg): string {
-  return srv.url || [srv.command ?? "", ...(srv.args ?? [])].join(" ").trim();
-}
-
 export function nameFromUrl(url: string): string {
   try {
     const host = new URL(url).hostname.replace(/^(www|mcp|api)\./, "");

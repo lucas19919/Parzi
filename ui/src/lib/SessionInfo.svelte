@@ -356,7 +356,7 @@
     cursor: pointer;
   }
   .row:hover {
-    background: color-mix(in srgb, var(--text) 6%, transparent);
+    background: var(--hover);
   }
   .v {
     flex: 1;

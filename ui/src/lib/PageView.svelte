@@ -473,7 +473,7 @@
     {:else if tab.crashed}
       <div class="crash">
         <Icon name="alert" />
-        <p class="crash-title">{tab.crashed === "unresponsive" ? "This page isn't responding" : "This page crashed"}</p>
+        <p class="crash-title t-page">{tab.crashed === "unresponsive" ? "This page isn't responding" : "This page crashed"}</p>
         <p class="crash-hint">
           {tab.crashed === "unresponsive" ? "You can wait for it or reload it." : "Reload it to pick up where it was."}
         </p>
@@ -502,7 +502,7 @@
     padding: 0 calc(var(--space) * 2);
     background: var(--hover);
     border: none;
-    border-radius: 999px;
+    border-radius: var(--radius-sm);
     color: var(--muted);
     font: inherit;
     font-size: var(--fs-xs);
@@ -612,7 +612,7 @@
     padding: 0 calc(var(--space) * 3);
     background: var(--panel);
     border: 1px solid transparent;
-    border-radius: 999px;
+    border-radius: var(--radius);
     overflow: hidden;
   }
   .address:hover {
@@ -750,10 +750,7 @@
   }
   .crash-title {
     margin: var(--space) 0 0;
-    font-size: var(--fs-lg);
-    font-weight: 600;
-    color: var(--text);
-  }
+              }
   .crash-hint {
     margin: 0;
     font-size: var(--fs-md);

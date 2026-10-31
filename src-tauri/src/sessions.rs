@@ -343,31 +343,6 @@ fn read_only(id: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn rename_thread(
-    state: State<'_, AppState>,
-    far: State<'_, RemoteState>,
-    id: String,
-    title: String,
-) -> Result<(), String> {
-    read_only(&id)?;
-    if let Some(rid) = remote_id(&id) {
-        return remote::call(
-            &state.app,
-            &far,
-            "session.rename",
-            json!({ "id": rid, "title": title }),
-        )
-        .await
-        .map(drop);
-    }
-    state
-        .orch
-        .store()
-        .set_title(&id, &title)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
 pub async fn delete_thread(
     state: State<'_, AppState>,
     far: State<'_, RemoteState>,

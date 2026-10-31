@@ -53,7 +53,7 @@
 </script>
 
 <div class="q" role="group" aria-label="Question">
-  <div class="head">{question.question}</div>
+  <div class="head t-section">{question.question}</div>
   <div class="list" role={multi ? "group" : "radiogroup"} data-ui-list>
     {#each question.options as opt, i (i)}
       <button class="choice" class:on={picked.has(i)} role={multi ? "checkbox" : "radio"} aria-checked={picked.has(i)} on:click={() => pick(i)}>
@@ -101,14 +101,13 @@
     overflow: hidden;
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     font-size: var(--fs-md);
     color: var(--text);
   }
   .head {
     padding: calc(var(--space) * 3) calc(var(--space) * 4);
-    font-weight: 600;
-    border-bottom: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
   }
   .list {
     display: flex;

@@ -313,14 +313,6 @@ pub async fn warm_agent(state: State<'_, AppState>, provider: String) -> Result<
     Ok(())
 }
 
-#[tauri::command]
-pub async fn run_doctor_quick(
-    state: State<'_, AppState>,
-) -> Result<Vec<parzi_runtime::doctor::Check>, String> {
-    let cfg = state.orch.config();
-    Ok(parzi_runtime::doctor::Doctor::new(cfg).run_quick().await)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

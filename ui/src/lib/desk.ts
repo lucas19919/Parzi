@@ -2,7 +2,7 @@ import type { Tab } from "./tabs";
 
 export interface DeskTab {
   id: string;
-  kind: "browser" | "session" | "settings" | "preview" | "projects" | "brain" | "history" | "artifact";
+  kind: "browser" | "session" | "settings" | "preview" | "artifact";
   title: string;
   url: string;
   session_id: string;
@@ -16,11 +16,9 @@ export interface DeskCmd {
   rev?: number;
   owner?: string | null;
   focus?: boolean;
-  what?: "session" | "settings" | "projects" | "brain" | "history" | "plan" | "work" | "tasks" | "home";
+  what?: "session" | "settings" | "plan" | "work" | "tasks" | "home";
   title?: string;
   section?: string;
-  path?: string;
-  view?: "sessions" | "history" | "bookmarks" | "downloads";
   text?: string;
   session?: string;
   key?: string;

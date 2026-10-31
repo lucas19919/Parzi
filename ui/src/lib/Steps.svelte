@@ -108,7 +108,7 @@
     align-items: center;
     gap: calc(var(--space) * 2);
     max-width: 100%;
-    min-height: 24px;
+    min-height: var(--h-sm);
     padding: 0;
     background: none;
     border: none;
@@ -138,7 +138,7 @@
     display: inline-flex;
     flex: none;
     transform: rotate(-90deg);
-    transition: transform 140ms ease;
+    transition: transform var(--dur) ease;
   }
   .chev.open {
     transform: none;

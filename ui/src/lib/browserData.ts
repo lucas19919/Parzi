@@ -72,14 +72,6 @@ export function titleVisit(url: string, title: string) {
   history.update((all) => all.map((v) => (v.url === url ? { ...v, title } : v)));
 }
 
-export function removeVisit(url: string) {
-  history.update((all) => all.filter((v) => v.url !== url));
-}
-
-export function clearHistory() {
-  history.set([]);
-}
-
 export function completeAddress(typed: string, visits: Visit[], marks: { url: string }[]): string {
   const t = typed.toLowerCase();
   if (t.length < 2 || /\s/.test(t) || /^https?:/.test(t)) return "";
@@ -147,10 +139,6 @@ export interface Bookmark {
 }
 
 export const bookmarks = persisted<Bookmark[]>("parzi.bookmarks.v1", []);
-
-export function removeBookmark(url: string) {
-  bookmarks.update((all) => all.filter((b) => b.url !== url));
-}
 
 export function importBrowser(data: {
   bookmarks: Bookmark[];

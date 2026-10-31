@@ -56,7 +56,7 @@
     justify-content: center;
     gap: var(--space);
     border-radius: 50%;
-    background: color-mix(in srgb, var(--text) 10%, transparent);
+    background: var(--selected);
     border: 1px solid color-mix(in srgb, var(--text) 16%, transparent);
     animation: bob 2.4s ease-in-out infinite;
   }

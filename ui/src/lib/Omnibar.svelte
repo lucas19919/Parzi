@@ -920,7 +920,7 @@
     padding: calc(var(--space) * 3);
     background: none;
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     box-shadow: none;
   }
   .box.web {
@@ -980,7 +980,7 @@
   }
   .go:active:not(:disabled) {
     transform: scale(0.94);
-    transition-duration: 60ms;
+    transition-duration: var(--dur-fast);
   }
   .go:disabled {
     cursor: default;
@@ -1086,7 +1086,7 @@
     padding: var(--space) calc(var(--space) * 3);
     background: var(--text);
     border: none;
-    border-radius: 999px;
+    border-radius: var(--radius-sm);
     color: var(--bg);
     font-size: var(--fs-xs);
     font-weight: 600;
@@ -1293,7 +1293,7 @@
     color: var(--text);
   }
   .chip.quote {
-    border-radius: 999px;
+    border-radius: var(--radius);
   }
   .error {
     padding: var(--space) calc(var(--space) * 3) 0;
@@ -1325,7 +1325,7 @@
     overflow-y: auto;
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
   }
   .suggest button {
     display: flex;
@@ -1414,7 +1414,7 @@
     color: var(--accent);
   }
   .opt:disabled {
-    opacity: 0.5;
+    opacity: var(--disabled);
     cursor: default;
   }
   .opt-row {

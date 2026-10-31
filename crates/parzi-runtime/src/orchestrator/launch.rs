@@ -187,9 +187,7 @@ impl Orchestrator {
         mode_override: Option<String>,
     ) -> Result<mpsc::UnboundedReceiver<RunEvent>> {
         let meta = self.store.get(id)?;
-        if cause.from_person()
-            && matches!(meta.status, SessionStatus::Active | SessionStatus::Queued)
-        {
+        if cause.from_person() && meta.status == SessionStatus::Queued {
             tracing::info!(
                 session = %id,
                 status = meta.status.word(),
@@ -211,6 +209,12 @@ impl Orchestrator {
                 return Err(ParziError::Store(format!(
                     "run {id} is active; kill it first"
                 )));
+            }
+            if meta.status == SessionStatus::Active {
+                // Nothing is running it: a status write was lost, so the
+                // session must not refuse every message from here on.
+                tracing::warn!(session = %id, "session read active with no run behind it; reset");
+                self.store.set_status(id, SessionStatus::Idle)?;
             }
         }
         let spec = model_override
@@ -580,7 +584,7 @@ impl Orchestrator {
             host,
             mcp: p.tools_server().await,
             status: p.status.clone(),
-            sink,
+            sink: sink.clone(),
             cancel: cancel.clone(),
             budget: snap.budget,
             prompt_recorded: q.prompt_recorded,
@@ -619,13 +623,16 @@ impl Orchestrator {
             done: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             cancel: cancel.clone(),
             tally,
+            sink,
         };
         let prompt = q.prompt.clone();
         let done = end.done.clone();
         let task = tokio::spawn(async move {
             let _end = end;
-            let _ = run.run(&prompt).await;
-            done.store(true, std::sync::atomic::Ordering::SeqCst);
+            match run.run(&prompt).await {
+                Ok(()) => done.store(true, std::sync::atomic::Ordering::SeqCst),
+                Err(e) => tracing::warn!("run could not go on: {e}"),
+            }
         });
         if let Some(h) = p.handles.lock().await.get_mut(&q.session_id) {
             if h.id == id {
@@ -643,6 +650,7 @@ struct RunEnd {
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
     cancel: CancellationToken,
     tally: crate::run_hooks::Tally,
+    sink: RunSink,
 }
 
 impl Drop for RunEnd {
@@ -651,6 +659,7 @@ impl Drop for RunEnd {
         let done = self.done.clone();
         let cancel = self.cancel.clone();
         let tally = self.tally.clone();
+        let sink = self.sink.clone();
         let Ok(rt) = tokio::runtime::Handle::try_current() else {
             return;
         };
@@ -680,6 +689,8 @@ impl Drop for RunEnd {
                 if t.end.is_none() {
                     t.end = Some((RunEndKind::Interrupted, Some(sentence.into())));
                 }
+                drop(t);
+                sink.emit(RunEvent::Error(sentence.into()));
             }
             p.notify.notify_one();
             let settled = done.load(std::sync::atomic::Ordering::SeqCst);

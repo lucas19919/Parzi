@@ -40,7 +40,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 25%;
+    border-radius: var(--radius-sm);
     background: color-mix(in srgb, var(--brand) 14%, var(--panel));
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 22%, transparent);
     color: var(--brand);
@@ -50,7 +50,7 @@
     object-fit: contain;
   }
   .letter {
-    font-weight: 650;
+    font-weight: 600;
     color: var(--text);
   }
 </style>

@@ -1,6 +1,5 @@
-use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use parzi_core::brain::{self, BrainContext, NoteMeta, Project, Vault};
 
@@ -22,11 +21,6 @@ pub async fn brain_dir() -> Result<String, String> {
     parzi_core::paths::brain_dir()
         .map(|p| p.to_string_lossy().into_owned())
         .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn brain_list() -> Result<Vec<NoteMeta>, String> {
-    blocking(brain::list).await
 }
 
 #[tauri::command]
@@ -116,19 +110,6 @@ pub async fn brain_project_upsert(
 }
 
 #[tauri::command]
-pub async fn brain_map(
-    app: tauri::AppHandle,
-    note: String,
-    project: String,
-    on: bool,
-) -> Result<NoteMeta, String> {
-    synced(
-        &app,
-        blocking(move || brain::map(&note, &project, on)).await,
-    )
-}
-
-#[tauri::command]
 pub async fn brain_context(cwd: String) -> Result<Option<BrainContext>, String> {
     if remote_or_device(&cwd) {
         return Ok(None);
@@ -137,48 +118,10 @@ pub async fn brain_context(cwd: String) -> Result<Option<BrainContext>, String> 
 }
 
 #[tauri::command]
-pub async fn brain_pin(app: tauri::AppHandle, path: String, on: bool) -> Result<NoteMeta, String> {
-    synced(&app, blocking(move || brain::pin(&path, on)).await)
-}
-
-#[tauri::command]
-pub async fn brain_overflow() -> Result<BTreeMap<String, Vec<String>>, String> {
-    blocking(brain::overflow).await
-}
-
-#[tauri::command]
-pub async fn brain_resolve_conflict(
-    app: tauri::AppHandle,
-    path: String,
-    keep_copy: bool,
-) -> Result<String, String> {
-    synced(
-        &app,
-        blocking(move || brain::resolve_conflict(&path, keep_copy)).await,
-    )
-}
-
-#[tauri::command]
 pub async fn brain_open(path: String, target: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let vault = Vault::open().map_err(|e| e.to_string())?;
         launch(&plan(&vault, &path, &target)?)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-pub async fn brain_obsidian() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let brain = parzi_core::paths::brain_dir().map_err(|e| e.to_string())?;
-        let state = match obsidian_config().map(std::fs::read_to_string) {
-            None => "missing",
-            Some(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => "missing",
-            Some(Err(_)) => "unregistered",
-            Some(Ok(raw)) => obsidian_state(&raw, &brain),
-        };
-        Ok(state.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -220,55 +163,10 @@ fn percent_encode(s: &str) -> String {
     out
 }
 
-fn obsidian_config() -> Option<PathBuf> {
-    #[cfg(windows)]
-    let base = std::env::var_os("APPDATA")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from);
-    #[cfg(target_os = "macos")]
-    let base = std::env::home_dir().map(|h| h.join("Library").join("Application Support"));
-    #[cfg(not(any(windows, target_os = "macos")))]
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::home_dir().map(|h| h.join(".config")));
-    base.map(|b| b.join("obsidian").join("obsidian.json"))
-}
-
-fn obsidian_state(raw: &str, brain: &Path) -> &'static str {
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(raw) else {
-        return "unregistered";
-    };
-    let ready = v
-        .get("vaults")
-        .and_then(serde_json::Value::as_object)
-        .is_some_and(|vaults| {
-            vaults
-                .values()
-                .filter_map(|x| x.get("path")?.as_str())
-                .any(|p| sees(Path::new(p), brain))
-        });
-    if ready {
-        "ready"
-    } else {
-        "unregistered"
-    }
-}
-
-fn sees(vault: &Path, brain: &Path) -> bool {
-    brain::inside(vault, brain)
-        && brain
-            .ancestors()
-            .take_while(|a| !brain::inside(a, vault))
-            .all(|a| {
-                a.file_name()
-                    .is_none_or(|n| !n.to_string_lossy().starts_with('.'))
-            })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use crate::files::OPEN;
     use std::ffi::OsString;
 
@@ -277,37 +175,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    #[test]
-    fn obsidian_is_ready_only_when_a_vault_sees_the_brain() {
-        let base = std::env::temp_dir().join("parzi-obsidian-nowhere");
-        let brain = base.join("home").join(".parzi").join("brain");
-        let state = |vault: &Path| {
-            let raw = serde_json::json!({"vaults": {"a1": {"path": vault, "ts": 1, "open": true}}});
-            obsidian_state(&raw.to_string(), &brain)
-        };
-        assert_eq!(state(&brain), "ready");
-        assert_eq!(state(&base.join("home").join(".parzi")), "ready");
-        assert_eq!(state(&base.join("home")), "unregistered");
-        assert_eq!(state(&base.join("elsewhere")), "unregistered");
-        assert_eq!(state(&brain.join("sub")), "unregistered");
-        assert_eq!(state(&base.join("home").join(".par")), "unregistered");
-        assert_eq!(obsidian_state("not json", &brain), "unregistered");
-        assert_eq!(obsidian_state("{}", &brain), "unregistered");
-        assert_eq!(
-            obsidian_state(r#"{"vaults": {"x": {"path": 3}}}"#, &brain),
-            "unregistered"
-        );
-        let open = base.join("notes").join("brain");
-        let raw = serde_json::json!({"vaults": {"b": {"path": brain}, "c": {"path": base.join("notes")}}});
-        assert_eq!(obsidian_state(&raw.to_string(), &open), "ready");
-        #[cfg(windows)]
-        {
-            let shouty = brain.to_string_lossy().to_uppercase().replace('\\', "/");
-            let raw = serde_json::json!({"vaults": {"x": {"path": format!("{shouty}/")}}});
-            assert_eq!(obsidian_state(&raw.to_string(), &brain), "ready");
-        }
     }
 
     #[test]

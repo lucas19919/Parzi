@@ -97,11 +97,27 @@ fn write_atomic(path: &Path, bytes: &[u8], mode: Option<u32>) -> Result<()> {
         let _ = std::fs::remove_file(&tmp);
         return Err(io_at(path, e));
     }
-    if let Err(e) = std::fs::rename(&tmp, path) {
+    if let Err(e) = rename_patiently(&tmp, path) {
         let _ = std::fs::remove_file(&tmp);
         return Err(io_at(path, e));
     }
     Ok(())
+}
+
+/// On Windows an antivirus or indexer can hold the destination for a moment,
+/// which fails the rename with access denied. Those clear quickly.
+fn rename_patiently(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut wait = std::time::Duration::from_millis(20);
+    for _ in 0..4 {
+        match std::fs::rename(from, to) {
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                std::thread::sleep(wait);
+                wait *= 2;
+            }
+            done => return done,
+        }
+    }
+    std::fs::rename(from, to)
 }
 
 #[cfg(unix)]

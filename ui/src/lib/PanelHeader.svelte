@@ -10,9 +10,9 @@
 
 <div class="head page-bar">
   <div class="left">
-    <h2>{title}</h2>
+    <h2 class="t-page">{title}</h2>
   </div>
-  <button class="back-btn" use:tooltip={"Close"} on:click={() => dispatch("close")}>
+  <button class="icon-btn" use:tooltip={"Close"} on:click={() => dispatch("close")}>
     <Icon name="close" />
   </button>
 </div>
@@ -35,8 +35,5 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--fs-base);
-    font-weight: 600;
-    color: var(--text);
-  }
+              }
 </style>

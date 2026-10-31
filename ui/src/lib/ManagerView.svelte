@@ -128,7 +128,7 @@
   <div class="box" role="dialog" aria-modal="true" aria-label="Session manager" transition:fade={{ duration: 140 }}>
 <div class="manager">
   <aside class="rail" aria-label="Projects">
-    <div class="rail-head">
+    <div class="rail-head t-section">
       <span>Projects</span>
       <button class="mini-btn" aria-label="Add project" use:tooltip={"Add project"} on:click={() => (adding = !adding)}>
         <Icon name="plus" size={12} />
@@ -139,8 +139,8 @@
         <input class="tin" bind:value={newTitle} placeholder="Project name" aria-label="Project name" spellcheck="false" />
         <input class="tin" bind:value={newFolder} placeholder="Folder (optional)" aria-label="Project folder" spellcheck="false" />
         <div class="add-acts">
-          <button class="sbtn" on:click={() => (adding = false)}>Cancel</button>
-          <button class="sbtn primary" disabled={saving || !newTitle.trim()} on:click={addProject}>{saving ? "Adding…" : "Add"}</button>
+          <button class="btn" on:click={() => (adding = false)}>Cancel</button>
+          <button class="btn primary" disabled={saving || !newTitle.trim()} on:click={addProject}>{saving ? "Adding…" : "Add"}</button>
         </div>
       </div>
     {/if}
@@ -148,7 +148,7 @@
       {#if projectsError}
         <div class="rail-note">
           <span>Couldn't load projects</span>
-          <button class="sbtn" on:click={loadProjects}>Retry</button>
+          <button class="btn" on:click={loadProjects}>Retry</button>
         </div>
       {:else}
         {#each projects as p (p.slug)}
@@ -178,11 +178,11 @@
         <Icon name="search" />
         <input bind:this={field} bind:value={query} placeholder="Search sessions" aria-label="Search sessions" spellcheck="false" />
       </div>
-      <button class="sbtn new" on:click={() => dispatch("newSession")}><Icon name="pencil" size={12} /><span>New session</span></button>
+      <button class="btn new" on:click={() => dispatch("newSession")}><Icon name="pencil" size={12} /><span>New session</span></button>
     </div>
     <div class="list" data-ui-list>
       {#each days as day (day.label)}
-        <h3>{day.label}</h3>
+        <h3 class="t-group">{day.label}</h3>
         {#each day.items as s (s.id)}
           {@const place = placeOf(s)}
           <div class="row">
@@ -225,7 +225,7 @@
     flex-direction: column;
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     overflow: hidden;
     outline: none;
   }
@@ -259,7 +259,7 @@
   }
   .mini-btn {
     width: 28px;
-    height: 28px;
+    height: var(--h);
     flex: none;
     display: inline-flex;
     align-items: center;
@@ -290,7 +290,7 @@
     justify-content: flex-end;
     gap: var(--space);
   }
-  .add-acts .sbtn {
+  .add-acts .btn {
     height: calc(var(--space) * 7);
   }
   .rail-note {
@@ -422,10 +422,7 @@
   }
   h3 {
     margin: calc(var(--space) * 3) 0 var(--space);
-    font-size: var(--fs-md);
-    font-weight: 500;
-    color: var(--muted);
-  }
+              }
   h3:first-child {
     margin-top: var(--space);
   }
@@ -434,7 +431,7 @@
     align-items: center;
     gap: calc(var(--space) * 2);
     border-radius: var(--radius);
-    min-height: 36px;
+    min-height: var(--h-row);
   }
   .row:hover {
     background: var(--hover);

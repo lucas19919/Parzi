@@ -62,7 +62,7 @@
     padding: var(--space);
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
   }
   .row {
     display: flex;

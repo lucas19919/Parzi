@@ -851,7 +851,7 @@ ${e.text}` : e.text;
   .fold .chev {
     display: inline-flex;
     transform: rotate(-90deg);
-    transition: transform 140ms ease;
+    transition: transform var(--dur) ease;
   }
   .fold .chev.open {
     transform: none;
@@ -884,14 +884,14 @@ ${e.text}` : e.text;
     padding: calc(var(--space) * 4);
     background: color-mix(in srgb, var(--text) 5%, var(--bg));
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     color: var(--text);
     font-size: var(--fs-base);
     line-height: 1.5;
     overflow-wrap: break-word;
   }
   .bubble:has(p + p, pre, ul, ol, blockquote) {
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
   }
   .bubble :global(h1),
   .bubble :global(h2),
@@ -928,7 +928,7 @@ ${e.text}` : e.text;
     height: 26px;
     padding: 0 calc(var(--space) * 3);
     border: 1px solid var(--line);
-    border-radius: 999px;
+    border-radius: var(--radius);
     background: var(--hover);
     color: var(--muted);
     font-size: var(--fs-sm);
@@ -985,7 +985,7 @@ ${e.text}` : e.text;
     color: var(--muted);
     cursor: pointer;
     opacity: 0;
-    transition: opacity 140ms ease;
+    transition: opacity var(--dur) ease;
   }
   .row:hover .copy,
   .copy:focus-visible {
@@ -998,7 +998,7 @@ ${e.text}` : e.text;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
     opacity: 0;
-    transition: opacity 140ms ease;
+    transition: opacity var(--dur) ease;
     cursor: default;
   }
   .row:hover .when {
@@ -1095,7 +1095,7 @@ ${e.text}` : e.text;
     padding: calc(var(--space) * 3) calc(var(--space) * 4);
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     font-size: var(--fs-md);
     color: var(--text);
   }

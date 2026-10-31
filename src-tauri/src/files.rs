@@ -477,6 +477,9 @@ pub async fn tool_image(
     session: String,
     path: String,
 ) -> Result<String, String> {
+    if remote_or_device(&path) {
+        return Err("pictures on network paths are not shown".into());
+    }
     let orch = state.orch.clone();
     off_thread(move || {
         let fold = |s: &str| s.replace('\\', "/").to_lowercase();

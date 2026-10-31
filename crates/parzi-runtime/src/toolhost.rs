@@ -1725,8 +1725,6 @@ impl ToolHost {
                     "what": what,
                     "id": id,
                     "section": s("section"),
-                    "path": s("path"),
-                    "view": s("view"),
                     "focus": args.get("focus").and_then(Value::as_bool).unwrap_or(false),
                 });
                 match self.desk_call("desk.open", body).await {

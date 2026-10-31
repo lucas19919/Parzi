@@ -207,7 +207,7 @@
     overflow: hidden;
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
   }
   .head {
     display: flex;
@@ -286,7 +286,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--line);
     color: var(--muted);
   }
@@ -322,7 +322,7 @@
     justify-content: center;
     background: transparent;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     color: var(--muted);
     cursor: pointer;
     opacity: 0;

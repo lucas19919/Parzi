@@ -147,7 +147,7 @@
     height: 26px;
     padding: 0 calc(var(--space) * 2);
     margin: 0 calc(var(--space) * -2);
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
   }
   .row.on {
     background: var(--hover);

@@ -34,6 +34,15 @@
 <header class="topbar" on:mousedown={startWindowDrag}>
   <div class="left">
       <button
+        class="icon-btn"
+        aria-label="Settings"
+        use:tooltip={$updateVersion ? "Settings, update available" : "Settings (Ctrl+,)"}
+        on:click={() => dispatch("settings")}
+      >
+        <ChromeIcon name="menu" />
+        {#if $updateVersion}<span class="dot" />{/if}
+      </button>
+      <button
         class="icon-btn manager-btn"
         aria-label="Session manager"
         use:tooltip={"Sessions"}
@@ -54,15 +63,6 @@
   </div>
 
   <div class="right">
-      <button
-        class="icon-btn"
-        aria-label="Settings"
-        use:tooltip={$updateVersion ? "Settings, update available" : "Settings (Ctrl+,)"}
-        on:click={() => dispatch("settings")}
-      >
-        <ChromeIcon name="settings" />
-        {#if $updateVersion}<span class="dot" />{/if}
-      </button>
       {#if panelable}
         <button
           class="icon-btn panel-btn"
@@ -116,21 +116,6 @@
     flex: none;
     padding-right: var(--space);
   }
-  .icon-btn {
-    position: relative;
-    width: 28px;
-    height: 28px;
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
-  }
   .dot {
     position: absolute;
     top: 5px;
@@ -148,7 +133,7 @@
   .panel-btn {
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 999px;
+    border-radius: var(--radius);
   }
   .panel-btn:hover {
     background: transparent;

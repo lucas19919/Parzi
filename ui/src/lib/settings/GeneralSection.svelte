@@ -110,11 +110,11 @@
       </span>
       <span class="row-ctl auto">
         {#if $updateState === "ready"}
-          <button class="sbtn" on:click={installUpdate}>Install {$updateVersion}</button>
+          <button class="btn" on:click={installUpdate}>Install {$updateVersion}</button>
         {:else if $updateState === "available" || $updateState === "downloading"}
           <span class="progress-text">Downloading {$updateVersion}{pct ? ` · ${pct}%` : "…"}</span>
         {:else}
-          <button class="sbtn" disabled={$updateState === "checking"} on:click={() => checkUpdates(true)}>
+          <button class="btn" disabled={$updateState === "checking"} on:click={() => checkUpdates(true)}>
             {$updateState === "checking" ? "Checking…" : "Check for updates"}
           </button>
         {/if}
@@ -150,9 +150,9 @@
       </span>
       <span class="row-ctl auto">
         {#if pw?.status === "missing"}
-          <button class="sbtn" disabled={pwBusy} on:click={installVault}>{pwBusy ? "Installing…" : "Install"}</button>
+          <button class="btn" disabled={pwBusy} on:click={installVault}>{pwBusy ? "Installing…" : "Install"}</button>
         {:else if pw}
-          <button class="sbtn" disabled={pwBusy} on:click={pwAction}>
+          <button class="btn" disabled={pwBusy} on:click={pwAction}>
             {pwBusy ? "Waiting…" : pw.status === "unlocked" ? "Lock" : pw.status === "unauthenticated" ? "Sign in" : "Unlock"}
           </button>
         {/if}
@@ -197,7 +197,7 @@
     <div class="row row-title"><span>Sessions</span></div>
     <div class="row">
       <span class="row-label">{sessions} {sessions === 1 ? "session" : "sessions"}</span>
-      <span class="row-ctl auto"><button class="sbtn" on:click={clearSessions}><Icon name="trash" size={12} /><span>Delete</span></button></span>
+      <span class="row-ctl auto"><button class="btn" on:click={clearSessions}><Icon name="trash" size={12} /><span>Delete</span></button></span>
     </div>
   </div>
 </div>
@@ -207,7 +207,7 @@
     <div class="row row-title"><span>Set up Parzi</span></div>
     <div class="row">
       <span class="row-label">Guided setup<small>Agents, browser and the remote, step by step</small></span>
-      <span class="row-ctl auto"><button class="sbtn" on:click={onSetup}><Icon name="wrench" size={12} /><span>Set up</span></button></span>
+      <span class="row-ctl auto"><button class="btn" on:click={onSetup}><Icon name="wrench" size={12} /><span>Set up</span></button></span>
     </div>
   </div>
 </div>
@@ -217,7 +217,7 @@
     <div class="row row-title"><span>Report a problem</span></div>
     <div class="row">
       <span class="row-label">Something broken?<small>Open a GitHub issue with the details filled in</small></span>
-      <span class="row-ctl auto"><button class="sbtn" on:click={onReport}><Icon name="alert" size={12} /><span>Report</span></button></span>
+      <span class="row-ctl auto"><button class="btn" on:click={onReport}><Icon name="alert" size={12} /><span>Report</span></button></span>
     </div>
   </div>
 </div>

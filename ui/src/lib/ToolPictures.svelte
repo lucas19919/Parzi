@@ -1,12 +1,13 @@
 <script lang="ts" context="module">
   const IMAGE = /\.(png|jpe?g|webp|gif)$/i;
-  const FULL = /(?:[A-Za-z]:[\\/]|\/)[^\s"'`<>|*?]+?\.(?:png|jpe?g|webp|gif)\b/gi;
+  const FULL = /(?<![\w.\\/:~-])(?:[A-Za-z]:[\\/]|\/(?![\\/]))[^\s"'`<>|*?]+?\.(?:png|jpe?g|webp|gif)\b/gi;
+  const REMOTE = /^[\\/]{2}/;
 
   export function picturesIn(outputs: string[]): string[] {
     const out: string[] = [];
     const add = (p: string) => {
       const clean = p.trim();
-      if (IMAGE.test(clean) && !out.includes(clean)) out.push(clean);
+      if (IMAGE.test(clean) && !REMOTE.test(clean) && !out.includes(clean)) out.push(clean);
     };
     for (const text of outputs) {
       if (!text) continue;
@@ -42,12 +43,18 @@
         <button class="pic" aria-label="View {name(p)}" title={name(p)} on:click={() => viewImage(url, name(p))}>
           <img src={url} alt={name(p)} draggable="false" />
         </button>
+      {:catch}
+        <span class="gone">{name(p)} is not available</span>
       {/await}
     {/each}
   </div>
 {/if}
 
 <style>
+  .gone {
+    color: var(--muted);
+    font-size: var(--fs-xs);
+  }
   .pics {
     display: flex;
     flex-wrap: wrap;

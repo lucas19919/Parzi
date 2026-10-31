@@ -54,7 +54,7 @@
     display: block;
     height: 6px;
     overflow: hidden;
-    border-radius: 999px;
+    border-radius: var(--radius-sm);
     background: var(--selected);
   }
   .track i {

@@ -384,18 +384,18 @@
               }</small>
           </span>
           <span class="row-ctl auto">
-            <button class="sbtn" on:click={() => dispatch("setupRemote")}>Set up again</button>
-            <button class="sbtn danger" on:click={unlink}>Unlink</button>
+            <button class="btn" on:click={() => dispatch("setupRemote")}>Set up again</button>
+            <button class="btn danger" on:click={unlink}>Unlink</button>
           </span>
         </div>
         <div class="row">
           <span class="row-label">Sync<small>{syncedLine}</small></span>
-          <span class="row-ctl auto"><button class="sbtn" disabled={syncing} on:click={syncNow}>{syncing ? "Syncing…" : "Sync now"}</button></span>
+          <span class="row-ctl auto"><button class="btn" disabled={syncing} on:click={syncNow}>{syncing ? "Syncing…" : "Sync now"}</button></span>
         </div>
       {:else}
         <div class="row">
           <span class="row-label">Not linked</span>
-          <span class="row-ctl auto"><button class="sbtn" on:click={() => dispatch("setupRemote")}>Set up</button></span>
+          <span class="row-ctl auto"><button class="btn" on:click={() => dispatch("setupRemote")}>Set up</button></span>
         </div>
       {/if}
     </div>
@@ -403,7 +403,7 @@
       <div class="rows">
         <div class="row row-title">
           <span>Agents on the remote</span>
-          <span class="row-ctl auto"><button class="sbtn" disabled={checking} on:click={() => checkAgents(true)}>{checking ? "Checking…" : "Check again"}</button></span>
+          <span class="row-ctl auto"><button class="btn" disabled={checking} on:click={() => checkAgents(true)}>{checking ? "Checking…" : "Check again"}</button></span>
         </div>
         {#each agents as a (a.provider)}
           <div class="row">
@@ -412,9 +412,9 @@
             </span>
             <span class="row-ctl auto">
               {#if a.state === "not_installed"}
-                <button class="sbtn" on:click={() => agentAction(a.provider, "install")}>Install</button>
+                <button class="btn" on:click={() => agentAction(a.provider, "install")}>Install</button>
               {:else if a.state !== "ready" && a.state !== "disabled"}
-                <button class="sbtn" on:click={() => agentAction(a.provider, "login")}>Sign in</button>
+                <button class="btn" on:click={() => agentAction(a.provider, "login")}>Sign in</button>
               {/if}
             </span>
           </div>
@@ -439,13 +439,13 @@
               <span title={h?.raw ?? ""}>{row.name}</span>
               <span class="row-ctl auto">
                 {#if !off && h?.error === "Needs Node.js"}
-                  <button class="sbtn" on:click={() => openOutside("https://nodejs.org")}>Get Node.js</button>
+                  <button class="btn" on:click={() => openOutside("https://nodejs.org")}>Get Node.js</button>
                 {:else if !off && (h?.state === "signin" || h?.state === "signing")}
-                  <button class="sbtn primary" disabled={h?.state === "signing"} on:click={() => signIn(row.id)}>{h?.state === "signing" ? "Signing in…" : "Sign in"}</button>
+                  <button class="btn primary" disabled={h?.state === "signing"} on:click={() => signIn(row.id)}>{h?.state === "signing" ? "Signing in…" : "Sign in"}</button>
                 {:else if !off && h?.state === "error"}
-                  <button class="sbtn" on:click={() => check(row.id, true)}>Try again</button>
+                  <button class="btn" on:click={() => check(row.id, true)}>Try again</button>
                 {/if}
-                <button class="sbtn" title={off ? `Connect ${row.name}` : `Disconnect ${row.name}`} on:click={() => toggle(row.id)}>{off ? "Disconnected" : "Connected"}</button>
+                <button class="btn" title={off ? `Connect ${row.name}` : `Disconnect ${row.name}`} on:click={() => toggle(row.id)}>{off ? "Disconnected" : "Connected"}</button>
                 <button class="icon-btn" class:armed={delConn === row.id} use:tooltip={delConn === row.id ? "Click again to remove" : `Remove ${row.name}`} aria-label={delConn === row.id ? `Confirm remove ${row.name}` : `Remove ${row.name}`} on:click={() => removeServer(row.id)}>
                   <Icon name="trash" size={12} />
                 </button>
@@ -506,7 +506,7 @@
           <textarea class="tin" rows="3" bind:value={pasted} placeholder="Paste a link, a config block, or a command" aria-label="Paste a link, a config block, or a command" spellcheck="false"></textarea>
         </div>
         <div class="row end">
-          <span class="row-ctl auto"><button class="sbtn primary" disabled={saving || !pasted.trim()} on:click={() => void addPasted()}>Add</button></span>
+          <span class="row-ctl auto"><button class="btn primary" disabled={saving || !pasted.trim()} on:click={() => void addPasted()}>Add</button></span>
         </div>
       </div>
     </div>

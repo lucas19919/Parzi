@@ -225,7 +225,7 @@
     color: var(--text);
   }
   .compact:disabled {
-    opacity: 0.4;
+    opacity: var(--disabled);
     cursor: default;
   }
 </style>

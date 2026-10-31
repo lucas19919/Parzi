@@ -9,8 +9,6 @@
   export let onSetup: () => void = () => {};
   export let onReport: () => void = () => {};
 
-  $: if (section === "skills" || section === "remote" || section === "system") section = "general";
-
   const SECTIONS = [
     { id: "general", label: "General" },
     { id: "providers", label: "Providers" },

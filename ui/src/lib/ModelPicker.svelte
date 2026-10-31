@@ -171,7 +171,7 @@
     </div>
     <div class="list" bind:this={listEl} data-ui-list>
       {#each groups as g, gi (g.key)}
-        <div class="head">{g.label}</div>
+        <div class="head t-group">{g.label}</div>
         {#each g.rows as row, j (g.key + row.value)}
           {@const i = offsets[gi] + j}
           <button
@@ -279,10 +279,7 @@
   }
   .head {
     padding: calc(var(--space) * 2) calc(var(--space) * 2) var(--space);
-    font-size: var(--fs-md);
-    font-weight: 600;
-    color: var(--muted);
-  }
+              }
   .row {
     display: flex;
     align-items: center;

@@ -55,7 +55,7 @@
     <div class="head-row">
       <button class="head" aria-expanded={open} on:click={() => (open = !open)}>
         <Icon name={open ? "chevDown" : "chevRight"} size={12} />
-        <span class="title">{plan?.title || "Plan"}</span>
+        <span class="title t-section">{plan?.title || "Plan"}</span>
         {#if plan}<span class="count">{count.done} of {count.total}</span>{/if}
       </button>
       <button class="x" use:tooltip={"Hide plan"} aria-label="Hide plan" on:click={() => dispatch("close")}>
@@ -114,7 +114,7 @@
     margin: var(--space) 0 0;
     padding: calc(var(--space) * 2) calc(var(--space) * 2);
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
   }
   .head-row {
     display: flex;
@@ -152,7 +152,7 @@
     cursor: pointer;
   }
   .x:hover {
-    background: color-mix(in srgb, var(--text) 6%, transparent);
+    background: var(--hover);
     color: var(--text);
   }
   .empty {
@@ -174,9 +174,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-weight: 600;
-    color: var(--text);
-  }
+          }
   .count {
     flex: none;
     font-variant-numeric: tabular-nums;
@@ -205,7 +203,7 @@
     cursor: pointer;
   }
   .item:hover {
-    background: color-mix(in srgb, var(--text) 6%, transparent);
+    background: var(--hover);
   }
   .item.mine .t {
     font-weight: 600;

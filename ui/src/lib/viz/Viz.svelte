@@ -21,7 +21,7 @@
 
 {#if s}
   <figure class="viz" class:bare data-viz={s.type} aria-label={bare || !title ? title || undefined : undefined}>
-    {#if title && !bare}<figcaption>{title}</figcaption>{/if}
+    {#if title && !bare}<figcaption class="t-section">{title}</figcaption>{/if}
     {#if s.type === "stat"}
       <div class="stats">
         {#each s.stats as st}<Stat stat={st} unit={s.unit} />{/each}
@@ -75,7 +75,7 @@
   .viz.bad {
     padding: calc(var(--space) * 3) calc(var(--space) * 4);
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     background: var(--panel);
   }
   .viz.bare {
@@ -84,11 +84,6 @@
     border: none;
     border-radius: 0;
     background: none;
-  }
-  figcaption {
-    font-size: var(--fs-md);
-    font-weight: 600;
-    color: var(--text);
   }
   .stats {
     display: grid;

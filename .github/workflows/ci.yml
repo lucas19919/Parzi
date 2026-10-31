@@ -48,6 +48,7 @@ jobs:
         with: { node-version: 24, cache: npm, cache-dependency-path: ui/package-lock.json }
       - run: npm --prefix ui ci
       - run: npm --prefix ui run check
+      - run: npm --prefix ui run lint:tokens
       - run: npm --prefix ui run test
       - run: npm --prefix ui run build
       - run: npm --prefix ui audit --omit=dev --audit-level=high

@@ -386,7 +386,7 @@
   .tab {
     display: inline-flex;
     align-items: center;
-    height: 28px;
+    height: var(--h);
     max-width: 220px;
     flex: 0 1 auto;
     min-width: 96px;
@@ -399,7 +399,7 @@
     white-space: nowrap;
     cursor: pointer;
     user-select: none;
-    transition: background 140ms ease, color 140ms ease, transform 160ms ease;
+    transition: background var(--dur) ease, color var(--dur) ease, transform 160ms ease;
   }
   .tab.dragging {
     position: relative;
@@ -407,7 +407,7 @@
     background: var(--panel);
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
     cursor: grabbing;
-    transition: background 140ms ease, color 140ms ease;
+    transition: background var(--dur) ease, color var(--dur) ease;
   }
   .tab:hover {
     background: var(--hover);
@@ -489,7 +489,7 @@
     min-width: 18px;
     height: 18px;
     padding: 0 var(--space);
-    border-radius: 999px;
+    border-radius: var(--radius-sm);
     background: var(--hover);
     background-clip: border-box;
     font-size: var(--fs-xs);

@@ -162,7 +162,7 @@
   <div class="head">
     <button class="name" aria-expanded={superseded ? open : undefined} disabled={reader || bad} on:click={nameClick}>
       <Icon name={icon} size={12} />
-      {#if !reader}<span class="title">{title}</span>{/if}
+      {#if !reader}<span class="title t-section">{title}</span>{/if}
       {#if superseded && !open}<span class="meta">updated below</span>{/if}
     </button>
     <span class="tools">
@@ -234,7 +234,7 @@
     overflow: hidden;
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
   }
 
   .art.reader {
@@ -317,9 +317,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--fs-md);
-    font-weight: 600;
-  }
+          }
   .meta {
     flex: none;
     font-size: var(--fs-sm);

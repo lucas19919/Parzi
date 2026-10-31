@@ -49,7 +49,7 @@
 
 <section class="card" class:open>
   <button class="head" aria-expanded={open} on:click={toggle}>
-    <span class="title">{title}</span>
+    <span class="title t-section">{title}</span>
     <span class="aside">{#if !open || !foldedAside}<slot name="aside" />{/if}</span>
     <span class="chev"><Icon name="chevDown" size={12} /></span>
   </button>
@@ -60,23 +60,21 @@
 
 <style>
   .card {
-    --pad: calc(var(--space) * 3);
-    --r: var(--radius);
     flex: none;
     background: none;
     border: 1px solid var(--line);
-    border-radius: var(--r);
+    border-radius: var(--radius);
   }
   .head {
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 2);
     width: 100%;
-    height: 36px;
+    height: var(--h-row);
     padding: 0 calc(var(--space) * 3);
     background: none;
     border: none;
-    border-radius: var(--r);
+    border-radius: var(--radius);
     color: var(--text);
     font: inherit;
     font-size: var(--fs-sm);
@@ -87,15 +85,11 @@
     background: var(--hover);
   }
   .open .head {
-    border-radius: var(--r) var(--r) 0 0;
+    border-radius: var(--radius) var(--radius) 0 0;
   }
   .title {
     flex: none;
-    font-size: var(--fs-sm);
-    font-weight: 500;
-    letter-spacing: 0;
-    color: var(--muted);
-  }
+                  }
   .aside {
     flex: 1;
     min-width: 0;
@@ -121,6 +115,6 @@
     display: flex;
     flex-direction: column;
     gap: calc(var(--space) * 2);
-    padding: 0 var(--pad) var(--pad);
+    padding: 0 calc(var(--space) * 3) calc(var(--space) * 3);
   }
 </style>

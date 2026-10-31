@@ -136,4 +136,3 @@ export function fitEffort(current: string, efforts: string[]): string {
 export const effortLabel = (e: string): string =>
   e === "xhigh" ? "Extra high" : e ? e[0].toUpperCase() + e.slice(1) : e;
 
-export const effortShort = (e: string): string => (e === "xhigh" ? "Extra" : effortLabel(e));

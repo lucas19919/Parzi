@@ -1,11 +1,12 @@
-
 mod common;
 
 use std::path::Path;
 use std::sync::Arc;
 
 use common::*;
-use parzi_core::store::{Check, FileTouch, RunEndKind, SessionMeta, SessionStatus, SessionStore, Via};
+use parzi_core::store::{
+    Check, FileTouch, RunEndKind, SessionMeta, SessionStatus, SessionStore, Via,
+};
 use parzi_providers::{ProviderError, TurnEnd};
 use serde_json::json;
 
@@ -389,7 +390,7 @@ async fn a_runaway_tool_loop_is_stopped_instead_of_spinning_forever() {
     let out = m.last_run.unwrap();
     assert_eq!(out.end, RunEndKind::Failed, "the looping turn fails");
     assert!(
-        out.summary.contains("kept calling tools"),
+        out.summary.contains("kept calling the same tool"),
         "the thread says why it stopped: {out:?}"
     );
     assert_eq!(
@@ -397,4 +398,108 @@ async fn a_runaway_tool_loop_is_stopped_instead_of_spinning_forever() {
         SessionStatus::Idle,
         "the session is usable again, not stuck active"
     );
+}
+
+#[tokio::test]
+async fn a_long_turn_of_different_tool_calls_is_left_to_finish() {
+    home("outcome");
+    let fake = Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            for i in 0..150u32 {
+                a.own_tool(
+                    &format!("t{i}"),
+                    "Edit",
+                    serde_json::json!({"file_path": format!("f{i}.ts")}),
+                    || async { (true, "ok".to_string()) },
+                )
+                .await;
+            }
+            Ok(TurnEnd::Completed)
+        }),
+    );
+    let (orch, store) = orch(std::slice::from_ref(&fake));
+    let (meta, _rx) = orch
+        .spawn(
+            "outcome-tests",
+            "claude",
+            "edit them all",
+            None,
+            "",
+            "low",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap();
+    let m = recorded(&store, &meta.id).await;
+    assert_eq!(m.last_run.unwrap().end, RunEndKind::Completed);
+}
+
+#[tokio::test]
+async fn a_halted_turn_keeps_the_reply_it_had_so_far() {
+    home("outcome");
+    let fake = Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            a.say("half an answer");
+            for i in 0..40u32 {
+                a.own_tool(
+                    &format!("t{i}"),
+                    "Edit",
+                    serde_json::json!({"file_path": "x.ts"}),
+                    || async { (true, "ok".to_string()) },
+                )
+                .await;
+            }
+            Ok(TurnEnd::Completed)
+        }),
+    );
+    let (orch, store) = orch(std::slice::from_ref(&fake));
+    let (meta, _rx) = orch
+        .spawn(
+            "outcome-tests",
+            "claude",
+            "keep editing",
+            None,
+            "",
+            "low",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap();
+    recorded(&store, &meta.id).await;
+    let kept = store.events(&meta.id).unwrap().iter().any(|e| {
+        matches!(e, parzi_core::store::Event::Assistant { text, .. } if text.contains("half an answer"))
+    });
+    assert!(kept, "the text before the halt stays in the thread");
+}
+
+#[tokio::test]
+async fn a_session_marked_active_with_no_run_takes_the_next_message() {
+    home("outcome");
+    let fake = Fake::new(
+        "claude",
+        script(|_a: Agent| async move { Ok(TurnEnd::Completed) }),
+    );
+    let (orch, store) = orch(std::slice::from_ref(&fake));
+    let (meta, _rx) = orch
+        .spawn(
+            "outcome-tests",
+            "claude",
+            "first",
+            None,
+            "",
+            "low",
+            vec![],
+            None,
+        )
+        .await
+        .unwrap();
+    recorded(&store, &meta.id).await;
+    store.set_status(&meta.id, SessionStatus::Active).unwrap();
+    orch.send_to(&meta.id, "second", None, "", "low", vec![], None, None)
+        .await
+        .expect("a lost status write does not lock the session");
 }

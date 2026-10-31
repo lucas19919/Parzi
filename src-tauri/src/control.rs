@@ -31,9 +31,7 @@ const SETTINGS: &[&str] = &[
     "providers",
     "connections",
     "appearance",
-    "system",
 ];
-const HISTORY: &[&str] = &["sessions", "history", "bookmarks", "downloads"];
 const NO_TAB: &str = "this session has no page tab yet: open one with browser.open";
 const ALLOW_A_WHILE: &str = "Allow for 10 minutes";
 const ALLOW_ONCE: &str = "Allow once";
@@ -1000,21 +998,6 @@ async fn desk_state(ctx: &Ctx, req: &Value) -> Value {
     })
 }
 
-fn note_path(raw: &str) -> Result<String, String> {
-    let p = raw.trim().replace('\\', "/");
-    if p.is_empty() {
-        return Ok(String::new());
-    }
-    if p.starts_with('/') || p.contains(':') || p.split('/').any(|s| s == "..") {
-        return Err("a brain note is a path inside the vault, like projects/parzi.md".into());
-    }
-    Ok(if p.to_ascii_lowercase().ends_with(".md") {
-        p
-    } else {
-        format!("{p}.md")
-    })
-}
-
 async fn desk_open(ctx: &Ctx, req: &Value) -> Value {
     let session = str_arg(req, "session");
     let focus = bool_arg(req, "focus", session.is_empty());
@@ -1052,28 +1035,6 @@ async fn desk_open(ctx: &Ctx, req: &Value) -> Value {
                 format!("opened settings, {section}"),
             )
         }
-        "brain" => {
-            let path = match note_path(&str_arg(req, "path")) {
-                Ok(p) => p,
-                Err(e) => return fail(e),
-            };
-            (
-                json!({ "op": "show", "what": "brain", "path": path, "focus": true }),
-                "opened the brain".to_string(),
-            )
-        }
-        "history" => {
-            let view = Some(str_arg(req, "view"))
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "sessions".into());
-            if !HISTORY.contains(&view.as_str()) {
-                return fail(format!("history shows {}", HISTORY.join(", ")));
-            }
-            (
-                json!({ "op": "show", "what": "history", "view": view, "focus": true }),
-                "opened history".to_string(),
-            )
-        }
         "plan" | "work" | "tasks" => (
             json!({ "op": "show", "what": "plan", "focus": true }),
             "opened the plan".to_string(),
@@ -1083,7 +1044,7 @@ async fn desk_open(ctx: &Ctx, req: &Value) -> Value {
             "opened home".to_string(),
         ),
         _ => {
-            return fail("what must be session, settings, brain, history, plan, home or url");
+            return fail("what must be session, settings, plan, home or url");
         }
     };
     if bool_arg(req, "raise", false) {
@@ -1647,16 +1608,6 @@ mod tests {
         desk.allow_for_a_while("t1");
         assert!(desk.consented("t1"));
         assert!(!desk.consented("t2"));
-    }
-
-    #[test]
-    fn note_paths_stay_in_the_vault() {
-        assert_eq!(note_path("projects/parzi").unwrap(), "projects/parzi.md");
-        assert_eq!(note_path("a\\b.MD").unwrap(), "a/b.MD");
-        assert_eq!(note_path("").unwrap(), "");
-        for bad in ["../x", "/etc/x", "C:/x", "a/../../b"] {
-            assert!(note_path(bad).is_err(), "{bad}");
-        }
     }
 
     #[test]

@@ -462,6 +462,8 @@ async fn forward_host_bus(app: AppHandle, mut rx: broadcast::Receiver<(String, R
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
                 tracing::warn!("host bus lagged by {n} event(s)");
+                // A lost end-of-run would leave a spinner on: read the truth again.
+                let _ = app.emit("parzi://resync", ());
             }
             Err(broadcast::error::RecvError::Closed) => break,
         }
@@ -753,27 +755,20 @@ fn main() {
             vault::vault_logins,
             vault::vault_fill,
             brain::brain_dir,
-            brain::brain_list,
             brain::brain_read,
             brain::brain_write,
             brain::brain_save_answer,
             brain::brain_delete,
             brain::brain_projects,
             brain::brain_project_upsert,
-            brain::brain_map,
             brain::brain_context,
-            brain::brain_pin,
-            brain::brain_overflow,
-            brain::brain_resolve_conflict,
             brain::brain_open,
-            brain::brain_obsidian,
             sessions::list_threads,
             sessions::get_thread,
             sessions::send_message,
             sessions::kill_run,
             sessions::compact_thread,
             sessions::fork_thread,
-            sessions::rename_thread,
             sessions::delete_thread,
             sessions::purge_sessions,
             sessions::approve_tool,
@@ -796,7 +791,6 @@ fn main() {
             settings::provider_statuses,
             settings::refresh_providers,
             settings::warm_agent,
-            settings::run_doctor_quick,
             appearance::get_theme_css,
             appearance::get_theme,
             appearance::save_theme,

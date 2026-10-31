@@ -45,7 +45,7 @@
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius);
     cursor: default;
   }
   .x {
@@ -78,7 +78,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     border: 1px solid var(--line);
-    border-radius: 999px;
+    border-radius: var(--radius);
     background: var(--panel);
     color: var(--text);
     font-size: var(--fs-sm);

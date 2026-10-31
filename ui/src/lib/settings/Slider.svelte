@@ -46,7 +46,7 @@
   input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
     background: var(--text); border: none; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-    transition: transform 140ms ease;
+    transition: transform var(--dur) ease;
   }
   input[type="range"]:hover::-webkit-slider-thumb,
   input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.15); }
