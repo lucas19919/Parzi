@@ -200,7 +200,6 @@ kbd {
   min-width: 0;
   width: 100%;
   padding: calc(var(--space) * 2) calc(var(--space) * 4);
-  border-bottom: none;
 }
 .page-search {
   flex: 1;
@@ -234,20 +233,24 @@ kbd {
   min-width: 0;
   overflow-x: auto;
 }
-.page-tabs > button {
+.page-tabs > button, .page-title {
   height: var(--h-row);
   display: inline-flex;
   align-items: center;
   flex: none;
+  margin: 0;
   padding: 0 calc(var(--space) * 3);
+  font-size: var(--fs-base);
+  line-height: 1;
+  white-space: nowrap;
+}
+.page-title { font-weight: 600; color: var(--text); }
+.page-tabs > button {
   background: transparent;
   border: none;
   border-radius: 0;
   color: var(--muted);
-  font-size: var(--fs-base);
-  line-height: 1;
   cursor: pointer;
-  white-space: nowrap;
 }
 .page-tabs > button:hover:not(:disabled) {
   background: transparent;
@@ -263,6 +266,53 @@ kbd {
   color: var(--text);
   font-weight: 600;
 }
+
+/* Cards inside a Page: a title row, then divided rows. */
+.page .rows {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.page .rows .row {
+  display: flex; align-items: center; justify-content: space-between; gap: calc(var(--space) * 3);
+  padding: calc(var(--space) * 2) calc(var(--space) * 4);
+  min-height: var(--h-row-lg);
+}
+.page .rows > .row:first-child { padding-top: calc(var(--space) * 3); }
+.page .rows > .row:last-child { padding-bottom: calc(var(--space) * 3); }
+.page .rows .row + .row { border-top: 1px solid var(--line); }
+.page .rows .row .tin:not(.fixed) { flex: 1; min-width: 0; }
+.page .rows .details { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.page .rows button.row {
+  width: 100%; background: none; border-left: none; border-right: none; border-bottom: none;
+  font: inherit; text-align: left; color: var(--text); cursor: pointer;
+}
+.page .rows > button.row:first-child { border-top: none; }
+.page .rows button.row:hover { background: var(--hover); }
+.page .rows .row:has(> .row-main):hover { background: var(--hover); }
+/* The clickable part of a row: reaches the row's edges, up to the controls after it. */
+.page .rows .row-main {
+  flex: 1; min-width: 0; align-self: stretch;
+  display: flex; align-items: center; gap: calc(var(--space) * 3);
+  margin: calc(var(--space) * -2) 0; padding: calc(var(--space) * 2) 0;
+  background: none; border: none; font: inherit; text-align: left; color: inherit; cursor: pointer;
+}
+.page .rows .row-main:first-child { margin-left: calc(var(--space) * -4); padding-left: calc(var(--space) * 4); }
+.row-label { font-size: var(--fs-md); font-weight: 500; color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-label small {
+  display: block;
+  margin-top: calc(var(--space) / 2);
+  font-size: var(--fs-sm); font-weight: 400; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.row-label small.ok { color: var(--ok); }
+.row-label small.bad { color: var(--bad); }
+.row-label small.mono { font-family: var(--mono), ui-monospace, monospace; }
+.row-ctl { display: flex; align-items: center; gap: calc(var(--space) * 2); flex: none; }
+.row-ctl.auto { justify-content: flex-end; }
+.row.row-title span { font-size: var(--fs-base); font-weight: 600; color: var(--text); }
+.row.row-title > span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .thread-col { line-height: 1.65; font-size: var(--fs-base); }
 .msg { line-height: 1.65; user-select: text; font-variant-numeric: tabular-nums; }

@@ -10,7 +10,7 @@
 
 <div class="head page-bar">
   <div class="left">
-    <h2 class="t-page">{title}</h2>
+    <h2 class="page-title">{title}</h2>
   </div>
   <button class="icon-btn" use:tooltip={"Close"} on:click={() => dispatch("close")}>
     <Icon name="close" />
@@ -30,10 +30,8 @@
     flex: 1;
   }
   h2 {
-    margin: 0;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
   }
 </style>

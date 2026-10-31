@@ -65,8 +65,10 @@ grade: surfaces are solid `--panel` on `--bg`.
 - Top bar (44px): settings (the hamburger), sessions, tabs, window controls. The
   bar is the drag region.
 - Tabs are sessions and pages. Settings and Sessions open inside the session,
-  with a back arrow at the top right, and the session column stays. Both use the
-  page bar, the 840px column and the same `.rows` cards.
+  with a back arrow at the top right, and the session column stays. Both render
+  through `Page.svelte`, which owns every position: the bar, a title or tab's text
+  edge (28px), the 840px column and an optional rail on the same text edge. Pages
+  fill its slots with `.rows` cards from `theme.css` and set no positions themselves.
   Drag reorders tabs (pointer events,
   not HTML5 drag, which WebView2 hands to the file-drop handler);
   Ctrl+Shift+←/→ moves the focused tab. A session tab shows the thread card

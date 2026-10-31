@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
+  import Page from "./Page.svelte";
   import { brain, type Project, type SessionMeta } from "./api";
   import { folderName } from "./tabs";
   import { byDay } from "./time";
@@ -103,158 +104,81 @@
   }
 </script>
 
-<!-- Same cards as Settings: shared.css styles rows under .settings. -->
-<div class="manager settings">
-  <aside class="rail" aria-label="Projects">
-    <div class="rail-head">
-      <span class="t-section">Projects</span>
-      <button class="icon-btn" aria-label="Add project" use:tooltip={"Add project"} on:click={() => (adding = !adding)}>
-        <Icon name="plus" />
-      </button>
+<Page>
+  <div slot="bar" class="page-tabs"><span class="page-title">Sessions</span></div>
+
+  <div slot="rail" class="rows">
+    <div class="row row-title">
+      <span>Projects</span>
+      <span class="row-ctl"><button class="icon-btn" aria-label="Add project" use:tooltip={"Add project"} on:click={() => (adding = !adding)}><Icon name="plus" /></button></span>
     </div>
     {#if adding}
-      <div class="add-form">
+      <div class="row stack">
         <input class="tin" bind:value={newTitle} placeholder="Project name" aria-label="Project name" spellcheck="false" />
         <input class="tin" bind:value={newFolder} placeholder="Folder (optional)" aria-label="Project folder" spellcheck="false" />
-        <div class="add-acts">
+        <span class="row-ctl auto">
           <button class="btn" on:click={() => (adding = false)}>Cancel</button>
           <button class="btn primary" disabled={saving || !newTitle.trim()} on:click={addProject}>{saving ? "Adding…" : "Add"}</button>
-        </div>
+        </span>
       </div>
     {/if}
-    <div class="proj-list">
-      {#if projectsError}
-        <div class="rail-note">
-          <span class="t-hint" title={projectsError}>Couldn't load projects</span>
-          <button class="btn" on:click={loadProjects}>Retry</button>
-        </div>
-      {:else}
-        {#each projects as p (p.slug)}
-          <button
-            class="proj"
-            class:on={projectFilter === p.slug}
-            title={projectFilter === p.slug ? "Show all sessions" : `Show only ${p.title}`}
-            on:click={() => toggleProject(p.slug)}
-          >
-            <span class="badge" style="--badge-h: {hueOf(p.slug)}">{p.title.trim().charAt(0).toUpperCase()}</span>
-            <span class="name t-label">{p.title}</span>
-            {#if counts.get(p.slug)}<span class="t-hint">{counts.get(p.slug)}</span>{/if}
-          </button>
-        {:else}
-          <p class="rail-note t-hint">No projects yet</p>
-        {/each}
-      {/if}
-    </div>
-  </aside>
-  <div class="main">
-    <div class="top page-bar"><span class="t-page">Sessions</span></div>
-    <div class="body">
-      <div class="column">
-        <div class="tools">
-          <div class="page-search">
-            <Icon name="search" />
-            <input bind:this={field} bind:value={query} placeholder="Search sessions" aria-label="Search sessions" spellcheck="false" />
-          </div>
-          <button class="btn new" on:click={() => dispatch("newSession")}><Icon name="pencil" size={12} /><span>New session</span></button>
-        </div>
-        <div class="days" data-ui-list>
-          {#each days as day (day.label)}
-            <div class="rows">
-              <div class="row row-title"><span>{day.label}</span></div>
-              {#each day.items as s (s.id)}
-                {@const place = placeOf(s)}
-                <div class="row sess">
-                  <button class="open" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
-                    <span class="badge" style="--badge-h: {hueOf(s.project || place || s.id)}">{initialOf(s)}</span>
-                    <span class="title t-label">{s.title || "Untitled session"}</span>
-                    {#if place}<span class="t-hint">{place}</span>{/if}
-                  </button>
-                  <button class="icon-btn x" use:tooltip={"Delete session"} aria-label={`Delete ${s.title || "session"}`} on:click={() => dispatch("deleteSession", { id: s.id })}>
-                    <Icon name="trash" size={12} />
-                  </button>
-                </div>
-              {/each}
-            </div>
-          {:else}
-            <p class="empty t-hint">{q || projectFilter ? "Nothing matches." : "No sessions yet. Start one above."}</p>
-          {/each}
-        </div>
+    {#if projectsError}
+      <div class="row">
+        <span class="t-hint" title={projectsError}>Couldn't load projects</span>
+        <button class="btn" on:click={loadProjects}>Retry</button>
       </div>
-    </div>
+    {:else}
+      {#each projects as p (p.slug)}
+        <button
+          class="row proj"
+          class:on={projectFilter === p.slug}
+          title={projectFilter === p.slug ? "Show all sessions" : `Show only ${p.title}`}
+          on:click={() => toggleProject(p.slug)}
+        >
+          <span class="badge" style="--badge-h: {hueOf(p.slug)}">{p.title.trim().charAt(0).toUpperCase()}</span>
+          <span class="row-label">{p.title}</span>
+          {#if counts.get(p.slug)}<span class="t-hint">{counts.get(p.slug)}</span>{/if}
+        </button>
+      {:else}
+        <div class="row"><span class="t-hint">No projects yet</span></div>
+      {/each}
+    {/if}
   </div>
-</div>
+
+  <div class="tools">
+    <div class="page-search">
+      <Icon name="search" />
+      <input bind:this={field} bind:value={query} placeholder="Search sessions" aria-label="Search sessions" spellcheck="false" />
+    </div>
+    <button class="btn" on:click={() => dispatch("newSession")}><Icon name="pencil" size={12} /><span>New session</span></button>
+  </div>
+  {#each days as day (day.label)}
+    <div class="rows">
+      <div class="row row-title"><span>{day.label}</span></div>
+      {#each day.items as s (s.id)}
+        {@const place = placeOf(s)}
+        <div class="row sess">
+          <button class="row-main" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
+            <span class="badge" style="--badge-h: {hueOf(s.project || place || s.id)}">{initialOf(s)}</span>
+            <span class="row-label">{s.title || "Untitled session"}</span>
+            {#if place}<span class="t-hint">{place}</span>{/if}
+          </button>
+          <button class="icon-btn x" use:tooltip={"Delete session"} aria-label={`Delete ${s.title || "session"}`} on:click={() => dispatch("deleteSession", { id: s.id })}>
+            <Icon name="trash" size={12} />
+          </button>
+        </div>
+      {/each}
+    </div>
+  {:else}
+    <p class="empty t-hint">{q || projectFilter ? "Nothing matches." : "No sessions yet. Start one above."}</p>
+  {/each}
+</Page>
 
 <style>
-  .manager {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: row;
-  }
-  .rail {
-    width: 220px;
-    flex: none;
-    display: flex;
+  .stack {
     flex-direction: column;
-    min-height: 0;
-  }
-  /* The same band as the page bar beside it: 8px + 36px tab height + 8px. */
-  .rail-head {
-    flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    min-height: calc(var(--space) * 13);
-    padding: 0 calc(var(--space) * 2) 0 calc(var(--space) * 4);
-  }
-  .add-form {
-    flex: none;
-    display: flex;
-    flex-direction: column;
+    align-items: stretch;
     gap: calc(var(--space) * 2);
-    padding: 0 calc(var(--space) * 2) calc(var(--space) * 3) calc(var(--space) * 4);
-  }
-  .add-form .tin {
-    width: 100%;
-  }
-  .add-acts {
-    display: flex;
-    justify-content: flex-end;
-    gap: calc(var(--space) * 2);
-  }
-  .rail-note {
-    margin: 0;
-    padding: var(--space) calc(var(--space) * 2);
-    display: flex;
-    flex-direction: column;
-    gap: calc(var(--space) * 2);
-    align-items: flex-start;
-  }
-  .proj-list {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    padding: calc(var(--space) * 4) calc(var(--space) * 2) 0;
-  }
-  /* The same row as the sessions beside it, lined up with the search field. */
-  .proj {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 3);
-    min-height: var(--h-row-lg);
-    padding: 0 calc(var(--space) * 2);
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-  }
-  .proj:hover {
-    background: var(--hover);
   }
   .proj.on {
     background: var(--selected);
@@ -272,82 +196,13 @@
     font-size: var(--fs-sm);
     font-weight: 600;
   }
-  .proj .name {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .main {
-    flex: 1;
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .top {
-    min-height: calc(var(--space) * 13);
-  }
-  /* The same column as Settings' content. */
-  .body {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-  }
-  .column {
-    display: flex;
-    flex-direction: column;
-    gap: calc(var(--space) * 6);
-    width: 100%;
-    max-width: 840px;
-    margin: 0 auto;
-    padding: calc(var(--space) * 6) calc(var(--space) * 8) calc(var(--space) * 8);
-  }
   .tools {
     display: flex;
-    align-items: center;
+    align-items: stretch;
     gap: calc(var(--space) * 2);
   }
   .tools .page-search {
-    flex: 1;
-    height: calc(var(--space) * 8);
-  }
-  .new {
-    flex: none;
-    height: calc(var(--space) * 8);
-    padding-block: 0;
-  }
-  .days {
-    display: flex;
-    flex-direction: column;
-    gap: calc(var(--space) * 6);
-  }
-  .sess:hover {
-    background: var(--hover);
-  }
-  /* The whole row opens the session, up to the delete button. */
-  .open {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 3);
-    align-self: stretch;
-    margin: calc(var(--space) * -2) 0 calc(var(--space) * -2) calc(var(--space) * -4);
-    padding: calc(var(--space) * 2) 0 calc(var(--space) * 2) calc(var(--space) * 4);
-    background: none;
-    border: none;
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-  }
-  .title {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    height: auto;
   }
   .x {
     opacity: 0;

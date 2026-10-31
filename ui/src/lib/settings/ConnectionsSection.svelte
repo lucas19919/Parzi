@@ -436,7 +436,6 @@
   </div>
 
 {:else}
-  <div class="cards">
     {#if rows.length}
       <div class="rows">
         <div class="row row-title"><span>Connected</span></div>
@@ -451,7 +450,7 @@
               <button class="logo-pick" use:tooltip={"Choose a logo"} aria-label="Choose a logo for {row.name}" on:click={() => chooseLogo(row.id)}>
                 <ConnectorLogo id={row.id} name={row.name} site={row.site} src={details[row.id]?.icon ?? null} size={28} />
               </button>
-              <button class="conn-main" aria-expanded={open} on:click={() => toggleTools(row.id)}>
+              <button class="row-main" aria-expanded={open} on:click={() => toggleTools(row.id)}>
                 <span class="row-label">{row.name}
                   <small class:bad={h?.state === "error"} title={h?.raw ?? ""}>{line}</small>
                 </span>
@@ -520,15 +519,9 @@
         <button class="btn primary" disabled={saving || !pasted.trim()} on:click={() => void addPasted()}>Add</button>
       </div>
     </div>
-  </div>
 {/if}
 
 <style>
-  .cards {
-    display: flex;
-    flex-direction: column;
-    gap: calc(var(--space) * 6);
-  }
   .logo-pick {
     flex: none;
     display: inline-flex;
@@ -543,54 +536,14 @@
   .conn {
     border-top: 1px solid var(--line);
   }
-  .conn > .row {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 3);
-    padding: calc(var(--space) * 2) calc(var(--space) * 4);
-    min-height: var(--h-row-lg);
-  }
   .conn.off .logo-pick,
-  .conn.off .conn-main {
+  .conn.off .row-main {
     opacity: 0.55;
   }
-  .conn-main {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    padding: 0;
-    background: none;
-    border: none;
-    color: var(--muted);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-  }
-  .conn-main:hover {
-    color: var(--text);
-  }
-  .conn .details {
-    display: flex;
-    flex-direction: column;
-    border-top: 1px solid var(--line);
-  }
-  .conn .details .row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: calc(var(--space) * 4);
-    padding: calc(var(--space) * 2) calc(var(--space) * 4);
-    min-height: var(--h-row-lg);
-  }
-  .conn .details .row + .row {
-    border-top: 1px solid var(--line);
-  }
-  .conn .details .row.off .row-label {
+  .row.off .row-label {
     color: var(--muted);
   }
-  .conn .details .row.end {
+  .row.end {
     justify-content: flex-end;
   }
   .add-grid {

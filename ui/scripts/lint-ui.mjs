@@ -28,13 +28,12 @@ const STATES = {
     { name: "held", action: "press", selector: ".ob textarea", key: "Enter", ready: { selector: ".ob .queue-item" } },
   ],
   manager: [
-    { name: "manager search", action: "fill", selector: ".manager input", value: "sidebar", ready: { selector: ".manager .row .open" } },
-    click("manager open", ".manager .row .open", ".stagerow .session"),
+    { name: "manager search", action: "fill", selector: ".page input", value: "sidebar", ready: { selector: ".page .sess .row-main" } },
+    click("manager open", ".page .sess .row-main", ".stagerow .session"),
   ],
   settings: [
     ...[2, 3].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
-    click("connector connected", ".rows .row-title .row-ctl .sbtn", ".rows .row.as-toggle"),
-    click("connector tools", ".rows .row.as-toggle", ".rows .details .row:first-child"),
+    click("connector tools", ".rows .conn .row-main", ".rows .details .row:first-child"),
     click("section 4", nth(".sections", 4), `${nth(".sections", 4)}[aria-selected="true"]`),
   ],
   setup: [
