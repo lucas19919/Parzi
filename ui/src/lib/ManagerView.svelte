@@ -189,7 +189,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     background: hsl(var(--badge-h, 210) 40% 36%);
     color: var(--on-badge);
     font-size: var(--fs-sm);

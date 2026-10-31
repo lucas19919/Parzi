@@ -40,7 +40,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius);
     background: color-mix(in srgb, var(--brand) 14%, var(--panel));
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 22%, transparent);
     color: var(--brand);
