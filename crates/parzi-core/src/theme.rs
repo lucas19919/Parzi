@@ -624,8 +624,6 @@ pub fn import_background(name: &str, bytes: &[u8]) -> Result<String> {
     Ok(file)
 }
 
-
-
 #[cfg(test)]
 mod css_tests {
     use super::*;
@@ -709,14 +707,11 @@ mod css_tests {
             toml::from_str("[background]\nimage = \"backgrounds/a.png\"\ndim = 0.5\n").unwrap();
         assert_eq!(old.background.image, "backgrounds/a.png");
         assert!(old.colors.panel.is_empty());
-        let low: Theme =
-            toml::from_str("[background]\nimage = \"\"\ny = 2.0\n").unwrap();
+        let low: Theme = toml::from_str("[background]\nimage = \"\"\ny = 2.0\n").unwrap();
         assert!(low.to_css_vars().contains("--bg-y:100%;"));
-        let tall: Theme =
-            toml::from_str("[background]\nimage = \"\"\nheight = 1.0\n").unwrap();
+        let tall: Theme = toml::from_str("[background]\nimage = \"\"\nheight = 1.0\n").unwrap();
         assert!(tall.to_css_vars().contains("--bg-height:60%;"));
     }
-
 }
 
 #[cfg(test)]

@@ -1,4 +1,3 @@
-
 #[must_use]
 pub fn clip(s: &str, n: usize) -> String {
     if s.char_indices().nth(n).is_none() {

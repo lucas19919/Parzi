@@ -131,7 +131,7 @@ async fn workdir_outside_the_folder_is_refused() {
         .call("shell.exec", &json!({"cmd": "echo hi", "workdir": away}))
         .await;
     assert!(!ok, "outside the fence must not run: {out}");
-    assert!(out.contains("outside"), "{out}"); 
+    assert!(out.contains("outside"), "{out}");
     let here = workdir();
     let (ok, out) = h
         .call("shell.exec", &json!({"cmd": "echo hi", "workdir": here}))
@@ -160,7 +160,7 @@ async fn vendor_shell_is_rerouted_not_carded() {
         if let PermissionDecision::Deny(why) = d {
             assert!(why.contains("shell.exec"), "{tool}: {why}");
         }
-    } 
+    }
     for tool in ["shell", "execute", "run_command"] {
         let d = h
             .decide(PermissionRequest {

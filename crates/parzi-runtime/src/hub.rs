@@ -1,4 +1,3 @@
-
 use std::path::{Path, PathBuf};
 
 use parzi_core::brain::Vault;
