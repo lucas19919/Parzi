@@ -1,0 +1,26 @@
+[package]
+name = "parzi-setup"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "The one-click Windows setup window. Carries the NSIS installer and runs it silently."
+
+# Its own workspace, like src-tauri: it embeds an installer built by src-tauri,
+# so it can't be built along with the crates that go into that installer.
+[workspace]
+
+[target.'cfg(windows)'.dependencies]
+tao = "0.35"
+wry = { version = "0.55", default-features = false, features = ["protocol", "os-webview"] }
+winreg = "0.55"
+
+[target.'cfg(windows)'.build-dependencies]
+tauri-winres = "0.3"
+
+[profile.release]
+opt-level = "z"
+lto = "thin"
+strip = true
+codegen-units = 1
+panic = "abort"

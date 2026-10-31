@@ -59,14 +59,16 @@ jobs:
 
             | Your machine | Pick this file |
             | --- | --- |
-            | Windows 10 / 11, 64-bit (recommended) | `Parzi_*_x64-setup.exe` — per-user install, no admin needed |
+            | Windows 10 / 11, 64-bit | `Parzi-Setup.exe` — one click, no admin needed, opens Parzi when it's done |
             | macOS, Apple Silicon | `Parzi_*_aarch64.dmg` — drag Parzi into Applications |
             | Command line, not the app | `parzi-cli-windows-x64.exe` or `parzi-cli-macos-arm64` — drives sessions and tabs from scripts |
             | Your own Linux server (ParziOS) | `parzi-linux-x64` or `parzi-linux-arm64` — the desktop's *Set up remote* installs it for you |
 
+            `Parzi_*_x64-setup.exe` is the file the in-app updater downloads. You don't need it.
+
             ### First launch (once per machine)
 
-            - **Windows:** SmartScreen asks once because the installer isn't Authenticode-signed yet — *More info → Run anyway*.
+            - **Windows:** SmartScreen asks once because setup isn't Authenticode-signed yet — *More info → Run anyway*.
             - **macOS:** Gatekeeper asks once because the build isn't Apple-notarized — right-click (or Ctrl-click) Parzi in Applications → *Open* → *Open*. Afterwards it launches normally.
 
             ### Updates
@@ -95,6 +97,21 @@ jobs:
             [ -f "$f" ] || continue
             gh release upload "${{ github.ref_name }}" "$f" --clobber
           done
+
+      # The one-click setup people download: a small window around the NSIS
+      # installer above, which stays what the in-app updater runs.
+      - name: Build and attach Parzi-Setup.exe
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${{ github.ref_name }}"
+          export PARZI_INSTALLER="$PWD/src-tauri/target/release/bundle/nsis/Parzi_${version#v}_x64-setup.exe"
+          test -f "$PARZI_INSTALLER"
+          cargo build --release --locked --manifest-path setup/Cargo.toml
+          cp setup/target/release/parzi-setup.exe Parzi-Setup.exe
+          gh release upload "${{ github.ref_name }}" Parzi-Setup.exe --clobber
 
   cli:
     permissions:

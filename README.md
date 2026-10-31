@@ -22,7 +22,7 @@ The latest build is on [GitHub Releases](https://github.com/lucas19919/Parzi/rel
 
 | Your machine | File |
 | --- | --- |
-| Windows 10 or 11, 64-bit | `Parzi_*_x64-setup.exe`. Per-user install, no admin. |
+| Windows 10 or 11, 64-bit | `Parzi-Setup.exe`. One click, no admin, opens Parzi when it's done. |
 | macOS, Apple Silicon | `Parzi_*_aarch64.dmg`. Drag Parzi into Applications. |
 | A Linux server you own | Nothing to download. Set up remote installs `parzi-linux-x64` or `-arm64` there. |
 

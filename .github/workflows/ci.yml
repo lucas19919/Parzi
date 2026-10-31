@@ -28,6 +28,9 @@ jobs:
       - run: npm --prefix ui ci
       - run: npm --prefix ui run build
       - run: cargo check --manifest-path src-tauri/Cargo.toml
+      - name: Check the Windows setup window
+        if: runner.os == 'Windows'
+        run: cargo clippy --locked --manifest-path setup/Cargo.toml -- -D clippy::correctness -D clippy::suspicious -D clippy::complexity -D clippy::perf
   # The engine is what runs on a ParziOS server: it must build and pass on Linux.
   linux-engine:
     runs-on: ubuntu-22.04

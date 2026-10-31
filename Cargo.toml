@@ -5,7 +5,7 @@ members = [
     "crates/parzi-runtime",
     "crates/parzi-cli",
 ]
-exclude = ["src-tauri"]
+exclude = ["src-tauri", "setup"]
 resolver = "2"
 
 [workspace.package]

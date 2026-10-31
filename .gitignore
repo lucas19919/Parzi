@@ -1,5 +1,6 @@
 /target/
 src-tauri/target/
+setup/target/
 src-tauri/gen/
 **/*.rs.bk
 Cargo.lock.bak

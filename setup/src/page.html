@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Parzi Setup</title>
+<style>
+  /* The app's graphite tokens, from ui/src/theme.css. */
+  :root {
+    --bg: #161616;
+    --text: #ececec;
+    --muted: color-mix(in srgb, var(--text) 78%, var(--bg));
+    --line: color-mix(in srgb, var(--text) 12%, var(--bg));
+    --hover: color-mix(in srgb, var(--text) 6%, transparent);
+    --space: 4px;
+    --radius: 12px;
+    --h: 28px;
+    --dur: 140ms;
+  }
+  @font-face { font-family: "Inter"; font-weight: 400; src: url(inter-400.woff2) format("woff2"); }
+  @font-face { font-family: "Inter"; font-weight: 600; src: url(inter-600.woff2) format("woff2"); }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); }
+  body {
+    display: flex;
+    flex-direction: column;
+    padding: calc(var(--space) * 7);
+    color: var(--text);
+    font: 400 13px/1.45 Inter, "Segoe UI Variable", "Segoe UI", sans-serif;
+    user-select: none;
+    cursor: default;
+  }
+  svg { display: block; width: 36px; height: 36px; flex: none; }
+  h1 { margin-top: calc(var(--space) * 5); font-size: 18px; font-weight: 600; line-height: 1.3; }
+  p { margin-top: var(--space); color: var(--muted); }
+  footer {
+    margin-top: auto;
+    min-height: var(--h);
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    gap: calc(var(--space) * 2);
+  }
+  .track { width: 100%; height: 2px; overflow: hidden; background: var(--line); }
+  .bar { width: 36%; height: 100%; background: var(--text); animation: slide 1.3s ease-in-out infinite; }
+  .done .bar { width: 100%; animation: none; }
+  @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(280%); } }
+  button {
+    height: var(--h);
+    padding: 0 calc(var(--space) * 3);
+    color: var(--text);
+    font: inherit;
+    font-weight: 400;
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    transition: background var(--dur);
+  }
+  button:hover { background: var(--hover); }
+  button:focus-visible { outline: 1px solid var(--text); outline-offset: 1px; }
+  button.primary { color: var(--bg); background: var(--text); border-color: var(--text); }
+  button.primary:hover { background: var(--muted); }
+  [hidden] { display: none; }
+</style>
+</head>
+<body>
+  <svg viewBox="0 0 1024 1024" aria-hidden="true">
+    <defs><clipPath id="inner"><circle cx="512" cy="512" r="256"/></clipPath></defs>
+    <g clip-path="url(#inner)" stroke="#ececec" stroke-width="80">
+      <path d="M 240 240 L 784 784"/><path d="M 342 116 L 908 682"/><path d="M 116 342 L 682 908"/>
+    </g>
+    <circle cx="512" cy="512" r="340" fill="none" stroke="#ececec" stroke-width="84"/>
+  </svg>
+  <h1 id="title">Installing Parzi</h1>
+  <p id="note">This takes a few seconds.</p>
+  <footer id="footer">
+    <div class="track" id="track"><div class="bar"></div></div>
+    <button id="second" hidden></button>
+    <button id="first" class="primary" hidden></button>
+  </footer>
+<script>
+  const STATES = {
+    installing: { title: "Installing Parzi", note: "This takes a few seconds.", track: true },
+    opening: { title: "Opening Parzi", note: "All set.", track: true, done: true },
+    open: {
+      title: "Parzi is open",
+      note: "It has to close to update. Anything running in it will stop.",
+      first: ["Close Parzi and install", "install"],
+      second: ["Cancel", "close"],
+    },
+    failed: {
+      title: "Setup couldn't finish",
+      first: ["Try again", "install"],
+      second: ["Close", "close"],
+    },
+  };
+  const $ = (id) => document.getElementById(id);
+  const send = (m) => window.ipc.postMessage(m);
+
+  function button(el, spec) {
+    el.hidden = !spec;
+    if (spec) {
+      el.textContent = spec[0];
+      el.onclick = () => send(spec[1]);
+    }
+  }
+
+  function show(name, detail) {
+    const s = STATES[name];
+    $("title").textContent = s.title;
+    $("note").textContent = detail || s.note || "";
+    $("track").hidden = !s.track;
+    $("footer").classList.toggle("done", !!s.done);
+    button($("first"), s.first);
+    button($("second"), s.second);
+  }
+
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+  document.addEventListener("mousedown", (e) => {
+    if (e.button === 0 && !e.target.closest("button")) send("drag");
+  });
+  // Show the window only once this has really drawn.
+  document.fonts.ready.then(() =>
+    requestAnimationFrame(() => requestAnimationFrame(() => send("ready")))
+  );
+</script>
+</body>
+</html>

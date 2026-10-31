@@ -388,8 +388,8 @@ fn opened_with_nothing_to_do() -> bool {
 fn explain_and_wait() -> Result<()> {
     Cli::command().print_help()?;
     println!("\n\nThis is Parzi's command-line tool, not the app. Nothing was installed.");
-    println!("To install Parzi, download the file ending in x64-setup.exe from:");
-    println!("  https://github.com/lucas19919/Parzi/releases/latest\n");
+    println!("To install Parzi, download Parzi-Setup.exe:");
+    println!("  https://github.com/lucas19919/Parzi/releases/latest/download/Parzi-Setup.exe\n");
     println!("Press Enter to close.");
     std::io::stdin().read_line(&mut String::new())?;
     Ok(())
