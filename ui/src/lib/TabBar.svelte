@@ -291,6 +291,7 @@
       bind:this={els[tab.id]}
       class="tab"
       class:active={tab.id === activeTabId}
+      class:linked={attached.length > 0}
       class:dragging={tab.id === dragId}
       style={tab.id === dragId ? `transform: ${vertical ? "translateY" : "translateX"}(${dragX}px)` : ""}
       use:pressDrag={drag(tab.id)}
@@ -469,17 +470,31 @@
   }
 
   .tab.sub {
-    height: 24px;
     max-width: 168px;
     min-width: 80px;
   }
+  /* Connected tabs sit in one shell, so they read as one thing. */
   .group {
+    flex: 0 1 auto;
+    min-width: 0;
     display: inline-flex;
     align-items: center;
     gap: var(--space);
-    padding: 0;
-    background: none;
-    border: none;
+    padding: calc(var(--space) / 4);
+    background: var(--hover);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+  .group .tab.active {
+    background: var(--selected);
+    border-color: transparent;
+  }
+  .group .tab:hover:not(.active) {
+    background: var(--hover);
+  }
+  /* Connected tabs folded away: a second edge behind this one, like a stack. */
+  .tab.linked {
+    box-shadow: 3px 0 0 -1px var(--bg), 3px 0 0 0 var(--line);
   }
 
   .close.count {
@@ -488,8 +503,8 @@
     min-width: 18px;
     height: 18px;
     padding: 0 var(--space);
-    border-radius: var(--radius-sm);
-    background: var(--hover);
+    border-radius: var(--radius);
+    background: var(--selected);
     background-clip: border-box;
     font-size: var(--fs-xs);
     font-weight: 600;

@@ -1318,6 +1318,9 @@ impl ToolHost {
     }
 
     async fn execute_project(&self, id: &str, name: &str, args: &Value) -> (bool, String) {
+        if name == "project.switch" {
+            return self.switch_project(id, name, args).await;
+        }
         if name == "project.archive" {
             let slug = args
                 .get("slug")
@@ -1427,6 +1430,55 @@ impl ToolHost {
             );
         }
         (true, format!("project {} ready at {folder}", project.slug))
+    }
+
+    async fn switch_project(&self, id: &str, name: &str, args: &Value) -> (bool, String) {
+        let wanted = args
+            .get("slug")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if wanted.is_empty() {
+            return (false, "project.switch needs a `slug`".into());
+        }
+        let projects = parzi_core::brain::projects().unwrap_or_default();
+        let Some(project) = projects
+            .iter()
+            .find(|p| p.slug == wanted || p.title.eq_ignore_ascii_case(wanted))
+        else {
+            return (
+                false,
+                format!("no project `{wanted}`; brain.search with no query lists them"),
+            );
+        };
+        if project.folder.trim().is_empty() {
+            return (false, format!("project {} has no folder", project.slug));
+        }
+        // Ask mode has already asked. Auto covers work inside a project, and
+        // leaving it is the person's call; only full access skips that.
+        if self.p.mode == ApprovalMode::Auto && !self.p.full {
+            let card = serde_json::json!({
+                "slug": format!("{} ({})", project.title, project.folder),
+            });
+            if !self.ask(id, name, &card).await {
+                return (false, format!("declined: stayed out of {}", project.slug));
+            }
+        }
+        let moved = self
+            .p
+            .store
+            .set_cwd(&self.p.session_id, &project.folder)
+            .and_then(|()| self.p.store.set_project(&self.p.session_id, &project.slug));
+        match moved {
+            Ok(()) => (
+                true,
+                format!(
+                    "this session is now in project {} at {}; pass workdir for commands until your next turn",
+                    project.slug, project.folder
+                ),
+            ),
+            Err(e) => (false, format!("could not move to {}: {e}", project.slug)),
+        }
     }
 
     fn shell_cwd(&self, args: &Value) -> std::result::Result<PathBuf, String> {

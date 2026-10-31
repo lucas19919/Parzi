@@ -296,8 +296,16 @@ button.info-line {
   background: none; border: none; font: inherit; font-size: var(--fs-sm); text-align: left; cursor: pointer;
 }
 button.info-line:hover { color: var(--text); }
-button.info-line.row { padding: calc(var(--space) * 2); border-radius: var(--radius); }
+/* A row's hover reaches past the card's inset; its content stays on the same edge as every other line. */
+button.info-line.row {
+  width: calc(100% + var(--space) * 4);
+  margin-inline: calc(var(--space) * -2);
+  padding-inline: calc(var(--space) * 2);
+  border-radius: var(--radius);
+}
 button.info-line.row:hover { background: var(--hover); }
+/* A status dot takes an icon's place, so text starts in one column. */
+.info-dot { width: 8px; height: 8px; flex: none; margin-right: var(--space); border-radius: 50%; background: var(--muted); }
 .info-v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .info-v.mono { font-family: var(--mono); font-size: var(--fs-xs); }
 .info-time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }

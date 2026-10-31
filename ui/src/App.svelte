@@ -112,7 +112,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let permission = permissionFor("");
   let policy = "";
   let mode: ComposerMode = "build";
-  let sending = false;
+  let sendingTabs = new Set<string>();
+  $: sending = sendingTabs.has(activeId);
   let held: HoldQueue = loadHeld();
   $: saveHeld(held);
   let queuePaused = new Set<string>();
@@ -489,6 +490,12 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (meta?.id === id) meta = { ...meta, title: t.title };
   }
 
+  async function moved(id: string) {
+    await refreshThreads();
+    const t = threads.find((x) => x.id === id);
+    if (t && meta?.id === id) meta = { ...meta, cwd: t.cwd, project: t.project };
+  }
+
   function openRemoteSetup() {
     setupStep = 3;
     setupServer = true;
@@ -676,8 +683,17 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     omnibar?.focus();
   }
 
+  /** The folder of the session last worked on, leaving out throwaway scratch folders. */
+  function recentFolder(): string | undefined {
+    if (remoteOn) return undefined;
+    const recent = threads
+      .filter((t) => t.cwd && !/scratch/i.test(t.cwd) && !t.parent_id)
+      .reduce<SessionMeta | null>((a, t) => (!a || t.updated > a.updated ? t : a), null);
+    return recent?.cwd;
+  }
+
   function newSession() {
-    const draft: Tab = { ...sessionTab(), cwd: folder || undefined };
+    const draft: Tab = { ...sessionTab(), cwd: folder || recentFolder() };
     draft.composer = ensureComposer(draft.composer);
     const idx = tabs.findIndex((x) => x.id === activeId);
     tabs = [...tabs.slice(0, idx + 1), draft, ...tabs.slice(idx + 1)];
@@ -945,10 +961,10 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       comp = comp;
       return;
     }
-    if (sending) return;
+    if (sendingTabs.has(target.id)) return;
     if (target.sessionId && otherAgent) toast(`New session on ${nameOf(agentOf(draft.model))}: a thread stays with the agent it started on`);
     const optimistic: ChatEvent = { kind: "user", text: [prompt, ...quotes.map(quoteBlock)].filter(Boolean).join("\n\n") };
-    sending = true;
+    sendingTabs = new Set(sendingTabs).add(target.id);
     if (!fresh && target.sessionId) {
       inflight.add(target.sessionId);
       markLive(target.sessionId);
@@ -1020,7 +1036,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       comp = comp;
       toastError(e);
     } finally {
-      sending = false;
+      sendingTabs.delete(target.id);
+      sendingTabs = sendingTabs;
     }
   }
 
@@ -1536,6 +1553,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       running = new Set(running).add(e.session);
     }
     if (e.kind === "tool_result" && e.name === "session.rename" && e.ok) void renamed(e.session);
+    if (e.kind === "tool_result" && (e.name === "project.switch" || e.name === "project.create") && e.ok) void moved(e.session);
     if (e.session !== shown) return;
     if (e.kind === "text") {
       pending += e.text;

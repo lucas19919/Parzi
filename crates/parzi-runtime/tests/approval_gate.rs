@@ -389,6 +389,44 @@ async fn project_create_outside_the_folder_asks() {
 }
 
 #[tokio::test]
+async fn moving_to_another_project_needs_a_yes() {
+    home("approval");
+    let base = std::env::temp_dir().join(format!("parzi-switch-{}", std::process::id()));
+    let elsewhere = base.join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let folder = elsewhere.display().to_string();
+    let project = parzi_core::brain::project_upsert(None, "Elsewhere", &folder).unwrap();
+    let here = base.display().to_string();
+    let store = parzi_core::store::SessionStore::open().unwrap();
+    let in_project = |store: &parzi_core::store::SessionStore| {
+        store
+            .list()
+            .unwrap()
+            .into_iter()
+            .filter(|m| m.project == project.slug && m.cwd == folder)
+            .count()
+    };
+
+    let refused = auto_host(&here, Arc::new(DenyAll), Arc::new(NoHarness));
+    let args = json!({"slug": project.slug});
+    let (ok, out) = refused.call("project.switch", &args).await;
+    assert!(!ok && out.contains("declined"), "{out}");
+    assert_eq!(in_project(&store), 0, "nothing moves without a yes");
+
+    let unknown = auto_host(&here, Arc::new(Allow), Arc::new(NoHarness));
+    let (ok, out) = unknown
+        .call("project.switch", &json!({"slug": "no-such-project"}))
+        .await;
+    assert!(!ok && out.contains("no project"), "{out}");
+
+    let allowed = auto_host(&here, Arc::new(Allow), Arc::new(NoHarness));
+    let (ok, out) = allowed.call("project.switch", &args).await;
+    assert!(ok, "{out}");
+    assert_eq!(in_project(&store), 1, "the session moved: {out}");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[tokio::test]
 async fn grok_reaches_parzis_tools_through_its_use_tool() {
     home("approval");
     let ask = host(vec!["*".into()], ApprovalMode::Ask);

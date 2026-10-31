@@ -159,6 +159,7 @@ fn named(shown: &str, args: &Value) -> Option<(String, String, DetailKind)> {
         "WebSearch" | "web_search" => ("search the web", "query", DetailKind::Text),
         "github.issue" => ("file a GitHub issue", "title", DetailKind::Text),
         "project.create" => ("create a project", "title", DetailKind::Text),
+        "project.switch" => ("move this session to a project", "slug", DetailKind::Text),
         "project.archive" => ("archive a project", "slug", DetailKind::Text),
         "project.delete" => ("delete a project", "slug", DetailKind::Text),
         "brain.write" => ("write a note", "path", DetailKind::Paths),

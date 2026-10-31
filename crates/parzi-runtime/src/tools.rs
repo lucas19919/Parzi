@@ -748,7 +748,7 @@ pub(crate) fn is_question_tool(name: &str) -> bool {
 pub(crate) fn is_project_tool(name: &str) -> bool {
     matches!(
         name,
-        "project.create" | "project.archive" | "project.delete"
+        "project.create" | "project.switch" | "project.archive" | "project.delete"
     )
 }
 
@@ -847,6 +847,17 @@ fn project_defs() -> Vec<ToolDef> {
                     "folder": {"type": "string"},
                 },
                 "required": ["title", "folder"],
+            }),
+        },
+        ToolDef {
+            name: "project.switch".into(),
+            description: "Move this session into another existing project when the work turns out to belong there, such as being asked about project y from project x. The human approves it unless they gave you full access. slug comes from brain.search with no query. Commands this turn still start in the old folder, so pass workdir until your next turn.".into(),
+            schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "slug": {"type": "string"},
+                },
+                "required": ["slug"],
             }),
         },
         ToolDef {
@@ -1157,6 +1168,10 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         "project.create" => format!(
             "Creating project {}",
             one_line(&str_arg("title").unwrap_or_else(|| "untitled".into()), 40)
+        ),
+        "project.switch" => format!(
+            "Moving to project {}",
+            one_line(&str_arg("slug").unwrap_or_else(|| "?".into()), 40)
         ),
         "project.archive" => format!(
             "Archiving project {}",

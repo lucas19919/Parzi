@@ -33,7 +33,7 @@
 
 {#if todoOpen(todo)}
   {#if docked}
-    <ul>
+    <ul class="docked">
       {#each items as it, i (i)}
         <li class="item {it.state}">
           <span class="mark {it.state}" class:spin={working && it.state === "active"} aria-hidden="true" />
@@ -121,6 +121,23 @@
     min-height: var(--h);
     color: var(--text);
     font-size: var(--fs-md);
+  }
+  /* In a side card the list reads as that card's lines. */
+  .docked {
+    gap: calc(var(--space) * 2);
+  }
+  .docked .item {
+    gap: calc(var(--space) * 2);
+    min-height: var(--h-sm);
+    font-size: var(--fs-sm);
+  }
+  .docked .mark {
+    width: 12px;
+    height: 12px;
+  }
+  .docked .mark.done::after {
+    left: 2.5px;
+    top: 0.5px;
   }
   .item.done {
     color: var(--muted);

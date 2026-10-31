@@ -351,6 +351,7 @@ impl Orchestrator {
             "brain.write",
             "brain.delete",
             "project.create",
+            "project.switch",
             "project.archive",
             "project.delete",
             "plan.read",

@@ -185,6 +185,7 @@
     width: 8px;
     height: 8px;
     flex: none;
+    margin-right: var(--space);
     border-radius: 50%;
   }
   .label {

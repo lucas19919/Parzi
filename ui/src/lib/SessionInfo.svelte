@@ -258,7 +258,7 @@
     {#each helpers as h (h.id)}
       {@const tone = sessionTone(h, running, waiting)}
       <button class="info-line row" use:tooltip={TONE_WORDS[tone]} on:click={() => dispatch("openSession", { id: h.id })}>
-        <i class="dot t-{tone}" />
+        <i class="info-dot t-{tone}" />
         <span class="info-v">{h.title || "Untitled"}</span>
       </button>
     {/each}
@@ -352,23 +352,16 @@
   .checks.fail :global(svg) {
     color: var(--bad-text);
   }
-  .dot {
-    width: calc(var(--space) * 2);
-    height: calc(var(--space) * 2);
-    flex: none;
-    border-radius: 50%;
-    background: var(--muted);
-  }
-  .dot.t-live {
+  .info-dot.t-live {
     background: var(--accent);
   }
-  .dot.t-need {
+  .info-dot.t-need {
     background: var(--warn);
   }
-  .dot.t-bad {
+  .info-dot.t-bad {
     background: var(--bad);
   }
-  .dot.t-ok {
+  .info-dot.t-ok {
     background: var(--ok);
   }
 </style>

@@ -31,7 +31,7 @@ is inside it, so an outer corner is never larger to stay concentric:
 | What | Radius |
 |---|---|
 | Anything 24px or taller: cards, popovers, tooltips, buttons, inputs, segmented controls, chips, logos and letter badges | `--radius` (12px) |
-| Anything shorter: inline code, kbd, progress tracks, small badges | `--radius-sm` (4px) |
+| Anything shorter: inline code, kbd, progress tracks, small badges, except count chips on tabs, which stay `--radius` | `--radius-sm` (4px) |
 | Dots, knobs, spinners | `50%` |
 | Only the switch and the slider track | `999px` |
 
