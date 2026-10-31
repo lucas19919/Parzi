@@ -504,30 +504,33 @@ impl ShellRegistry {
     pub fn jobs(&self) -> Vec<ShellJob> {
         let mut reg = self.reg();
         let mut expired = vec![];
+        let now = now_ms();
+        // Foreground first: the sort is stable, and a command that finished and
+        // the one started right after it can share a millisecond.
         let mut out: Vec<ShellJob> = reg
-            .shells
-            .iter_mut()
-            .map(|(id, sh)| {
-                let (running, gone) = sh.enforce();
-                expired.extend(gone);
-                let ms = sh.exited_at.unwrap_or_else(Instant::now) - sh.started;
-                ShellJob {
-                    id: id.clone(),
-                    cmd: sh.cmd.clone(),
-                    background: true,
-                    running,
-                    exit: sh.exit,
-                    started: sh.started_at,
-                    ms: u64::try_from(ms.as_millis()).unwrap_or(u64::MAX),
+            .foreground
+            .iter()
+            .cloned()
+            .map(|mut j| {
+                if j.running {
+                    j.ms = u64::try_from(now - j.started).unwrap_or(0);
                 }
+                j
             })
             .collect();
-        let now = now_ms();
-        out.extend(reg.foreground.iter().cloned().map(|mut j| {
-            if j.running {
-                j.ms = u64::try_from(now - j.started).unwrap_or(0);
+        out.extend(reg.shells.iter_mut().map(|(id, sh)| {
+            let (running, gone) = sh.enforce();
+            expired.extend(gone);
+            let ms = sh.exited_at.unwrap_or_else(Instant::now) - sh.started;
+            ShellJob {
+                id: id.clone(),
+                cmd: sh.cmd.clone(),
+                background: true,
+                running,
+                exit: sh.exit,
+                started: sh.started_at,
+                ms: u64::try_from(ms.as_millis()).unwrap_or(u64::MAX),
             }
-            j
         }));
         drop(reg);
         for child in expired {
