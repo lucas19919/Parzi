@@ -1048,40 +1048,19 @@ impl ToolHost {
     }
 
     fn models_list(&self) -> String {
-        let cfg = &self.p.cfg;
-        let mut order = cfg.routing.order.clone();
-        for id in cfg.providers.keys() {
-            if !order.contains(id) {
-                order.push(id.clone());
-            }
-        }
-        let mut lines = vec!["The bench:".to_string()];
-        for id in &order {
-            let entry = cfg.provider(id);
-            if !entry.enabled {
-                continue;
-            }
-            let model = if entry.default_model.trim().is_empty() {
-                "vendor default".to_string()
-            } else {
-                entry.default_model.clone()
-            };
-            lines.push(format!("- {id}: {} (default: {model})", display_name(id)));
-        }
-        let off: Vec<&String> = order
-            .iter()
-            .filter(|id| !cfg.provider(id).enabled)
-            .collect();
-        if !off.is_empty() {
-            lines.push(format!(
-                "Switched off: {}",
-                off.iter()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-        lines.join("\n")
+        let statuses = self
+            .p
+            .harness
+            .as_ref()
+            .map(|h| h.provider_statuses())
+            .unwrap_or_default();
+        let own = self
+            .p
+            .store
+            .get(&self.p.session_id)
+            .map(|m| m.model)
+            .unwrap_or_default();
+        crate::bench::text(&self.p.cfg, &statuses, &own)
     }
 
     async fn execute_github_issue(&self, args: &Value) -> (bool, String) {

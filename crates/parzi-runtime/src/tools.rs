@@ -902,7 +902,7 @@ fn image_defs() -> Vec<ToolDef> {
 fn team_defs() -> Vec<ToolDef> {
     vec![ToolDef {
         name: "models.list".into(),
-            description: "List the agent bench: enabled providers with display names. Check this before staffing subagents.".into(),
+            description: "List the models you can staff a subsession with: the real model ids of every agent that can run now, and which agents can't and why. Check this before passing `model` to session.spawn.".into(),
         schema: serde_json::json!({
             "type": "object",
             "properties": {},
@@ -921,14 +921,14 @@ fn session_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "session.spawn".into(),
-            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder and model unless overridden. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id at once, and Parzi messages you when it ends (waking you if you are idle), so never poll.".into(),
+            description: "Start a subsession: a background agent working its own prompt with the same tools you have. It inherits your project, folder and model; to use another model, pass an id from models.list. Anything else is refused and nothing starts. wait=true (default) blocks until it finishes and returns its result; wait=false returns its session id at once, and Parzi messages you when it ends (waking you if you are idle), so never poll.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "title": {"type": "string"},
                     "prompt": {"type": "string"},
                     "is_subsession": {"type": "boolean"},
-                    "model": {"type": "string"},
+                    "model": {"type": "string", "description": "An id from models.list, such as claude/opus. Leave it out to use your own model."},
                     "effort": {"type": "string"},
                     "wait": {"type": "boolean"},
                 },

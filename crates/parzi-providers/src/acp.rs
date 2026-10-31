@@ -29,6 +29,7 @@ pub struct Agent {
     args: &'static [&'static str],
     env: fn() -> Vec<(String, String)>,
     locate: fn() -> Option<PathBuf>,
+    error_log: fn() -> Option<PathBuf>,
     gated: bool,
     slow_start: bool,
     compacts: bool,
@@ -78,6 +79,13 @@ fn nowhere() -> Option<PathBuf> {
     None
 }
 
+fn opencode_log() -> Option<PathBuf> {
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".local").join("share")))?;
+    Some(data.join("opencode").join("log").join("opencode.log"))
+}
+
 pub fn agent(id: &str) -> Option<Agent> {
     Some(match id {
         "opencode" => Agent {
@@ -87,6 +95,7 @@ pub fn agent(id: &str) -> Option<Agent> {
             args: &["acp"],
             env: opencode_env,
             locate: nowhere,
+            error_log: opencode_log,
             gated: true,
             slow_start: false,
             compacts: true,
@@ -100,6 +109,7 @@ pub fn agent(id: &str) -> Option<Agent> {
             args: &["--permission-mode", "default", "agent", "stdio"],
             env: no_env,
             locate: nowhere,
+            error_log: nowhere,
             gated: false,
             slow_start: false,
             compacts: true,
@@ -113,6 +123,7 @@ pub fn agent(id: &str) -> Option<Agent> {
             args: &[],
             env: antigravity_env,
             locate: setup::antigravity_program,
+            error_log: nowhere,
             gated: false,
             slow_start: true,
             compacts: false,
@@ -126,6 +137,7 @@ pub fn agent(id: &str) -> Option<Agent> {
             args: &["acp"],
             env: no_env,
             locate: nowhere,
+            error_log: nowhere,
             gated: false,
             slow_start: false,
             compacts: false,
@@ -167,6 +179,7 @@ fn custom_agent(label: &str, args: &[String]) -> Agent {
         args,
         env: no_env,
         locate: nowhere,
+        error_log: nowhere,
         gated: true,
         slow_start: false,
         compacts: false,
@@ -360,7 +373,7 @@ fn models_cache(agent: &str) -> Option<PathBuf> {
     )
 }
 
-fn cached_models(agent: &str) -> Vec<ModelInfo> {
+pub fn cached_models(agent: &str) -> Vec<ModelInfo> {
     models_cache(agent)
         .and_then(|p| std::fs::read_to_string(p).ok())
         .and_then(|t| serde_json::from_str(&t).ok())
@@ -1166,8 +1179,10 @@ async fn drive(
     if let Some(model) = wanted.filter(|_| !same_model) {
         let chosen = select_model(peer, &session, &sid, model, agent, events);
         let chosen = answers.meanwhile(chosen, incoming, &mut held);
-        if or_cancel(cancel, chosen).await.is_none() {
-            return Ok(TurnEnd::Interrupted);
+        match or_cancel(cancel, chosen).await {
+            None => return Ok(TurnEnd::Interrupted),
+            Some(Err(e)) => return Err(e),
+            Some(Ok(())) => {}
         }
     }
     if let Some(effort) = spec.effort.as_deref().filter(|e| !e.is_empty()) {
@@ -1291,6 +1306,7 @@ async fn drive(
             }
         }
     }
+    let mut silent = (agent.error_log)().map(|path| LoggedFailure::new(path, &sid));
     let mut interrupting = false;
     let mut stop_by: Option<tokio::time::Instant> = None;
     let mut open = true;
@@ -1373,6 +1389,17 @@ async fn drive(
                     _ => Ok(TurnEnd::Completed),
                 };
             }
+            () = sleep_until(silent.as_ref().map(|w| w.next)), if !interrupting => {
+                let Some(watch) = silent.as_mut() else { continue };
+                if let Some(why) = watch.check().await {
+                    tracing::warn!(session = %sid, "{} went silent after an error it logged: {why}", agent.name);
+                    seen.buffers.flush(events);
+                    return Err(ProviderError::sniffed(
+                        ErrorClass::Unknown,
+                        format!("{} stopped: {why}", agent.name),
+                    ));
+                }
+            }
         }
     }
 }
@@ -1398,7 +1425,7 @@ async fn select_model(
     model: &str,
     agent: Agent,
     events: &EventTx,
-) {
+) -> Result<(), ProviderError> {
     let limit = Duration::from_secs(30);
     let has_model_option = session
         .get("configOptions")
@@ -1430,12 +1457,103 @@ async fn select_model(
         )));
         Ok(())
     };
-    if let Err(e) = result {
-        let _ = events.send(ProviderEvent::Notice(format!(
-            "{} kept its own model: {model} was refused ({e})",
+    // Going on would run the work on a model nobody chose, so the turn stops here.
+    result.map_err(|e| {
+        let why = format!(
+            "{} would not switch to {model}, so nothing ran: {e}",
             agent.name
-        )));
+        );
+        if e.code == RpcError::TIMEOUT || e.code == RpcError::CLOSED {
+            ProviderError::process(why)
+        } else {
+            ProviderError::new(ErrorClass::BadRequest, why)
+        }
+    })
+}
+
+/// OpenCode can log a failed model call, such as a used-up quota, and then wait
+/// with nothing on the protocol and no answer to the prompt. Its log is the only
+/// place that says why, so a turn reads it. A call it retries moves on in the
+/// log, so only an error that stays the session's last word counts.
+struct LoggedFailure {
+    path: PathBuf,
+    sid: String,
+    next: tokio::time::Instant,
+    seen: Option<(String, tokio::time::Instant)>,
+}
+
+const LOG_CHECK_EVERY: Duration = Duration::from_millis(if cfg!(test) { 20 } else { 15_000 });
+const LOG_STUCK_AFTER: Duration = Duration::from_millis(if cfg!(test) { 60 } else { 60_000 });
+const LOG_TAIL: u64 = 256 * 1024;
+
+impl LoggedFailure {
+    fn new(path: PathBuf, sid: &str) -> Self {
+        Self {
+            path,
+            sid: sid.to_string(),
+            next: tokio::time::Instant::now() + LOG_CHECK_EVERY,
+            seen: None,
+        }
     }
+
+    async fn check(&mut self) -> Option<String> {
+        self.next = tokio::time::Instant::now() + LOG_CHECK_EVERY;
+        let (path, sid) = (self.path.clone(), self.sid.clone());
+        let last = tokio::task::spawn_blocking(move || last_log_line(&path, &sid))
+            .await
+            .ok()
+            .flatten();
+        let Some((line, error)) = last.and_then(|l| logged_error(&l).map(|e| (l, e))) else {
+            self.seen = None;
+            return None;
+        };
+        match &self.seen {
+            Some((old, since)) if *old == line => {
+                (since.elapsed() >= LOG_STUCK_AFTER).then_some(error)
+            }
+            _ => {
+                self.seen = Some((line, tokio::time::Instant::now()));
+                None
+            }
+        }
+    }
+}
+
+/// The session's last line, leaving out its side job of naming the session.
+fn last_log_line(path: &Path, sid: &str) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(LOG_TAIL)))
+        .ok()?;
+    let mut bytes = vec![];
+    file.read_to_end(&mut bytes).ok()?;
+    let tag = format!("session.id={sid}");
+    String::from_utf8_lossy(&bytes)
+        .lines()
+        .rev()
+        .find(|l| l.contains(&tag) && !l.contains(" small=true "))
+        .map(str::to_string)
+}
+
+fn logged_error(line: &str) -> Option<String> {
+    if !line.contains(r#"message="stream error""#) {
+        return None;
+    }
+    let text = line
+        .split_once(r#"error.error=""#)
+        .map_or("", |(_, t)| t.split("\" ").next().unwrap_or(t))
+        .trim_end_matches('"');
+    let text = text
+        .split_once(": ")
+        .filter(|(kind, _)| kind.ends_with("Error"))
+        .map_or(text, |(_, message)| message)
+        .replace("\\\"", "\"");
+    Some(if text.is_empty() {
+        "its model call failed and it is not saying why".to_string()
+    } else {
+        text
+    })
 }
 
 async fn select_effort(peer: &Peer, session: &Value, sid: &str, effort: &str) {
@@ -2607,5 +2725,194 @@ mod tests {
         let asked = gate.1.lock().unwrap();
         assert_eq!(asked[0].tool, "other");
         assert_eq!(asked[0].name, "image_gen");
+    }
+
+    const STREAM_ERROR: &str = r#"timestamp=2026-10-31T13:00:42.545Z level=ERROR run=0c1778f0 message="stream error" providerID=opencode modelID=big-pickle session.id=S0 small=false agent=build mode=primary error.error="AI_APICallError: Free usage limit reached. Subscribe to keep going: https://opencode.ai/go""#;
+    const TITLE_ERROR: &str = r#"timestamp=2026-10-31T13:00:43.000Z level=ERROR run=0c1778f0 message="stream error" providerID=opencode modelID=nano session.id=S0 small=true agent=title mode=primary error.error="AI_APICallError: Insufficient account funds""#;
+    const MOVED_ON: &str = "timestamp=2026-10-31T13:00:50.000Z level=INFO run=0c1778f0 message=loop session.id=S0 step=2";
+
+    fn log_with(name: &str, lines: &[&str]) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("parzi-oc-{name}-{}.log", std::process::id()));
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+        path
+    }
+
+    #[test]
+    fn a_logged_error_reads_as_what_went_wrong() {
+        assert_eq!(
+            logged_error(STREAM_ERROR).unwrap(),
+            "Free usage limit reached. Subscribe to keep going: https://opencode.ai/go"
+        );
+        assert_eq!(logged_error(MOVED_ON), None);
+        let bare = r#"level=ERROR message="stream error" session.id=S0 small=false"#;
+        assert!(logged_error(bare).unwrap().contains("not saying why"));
+    }
+
+    #[test]
+    fn only_the_session_s_own_work_counts_in_the_log() {
+        let path = log_with("own", &[STREAM_ERROR, TITLE_ERROR]);
+        assert_eq!(last_log_line(&path, "S0").as_deref(), Some(STREAM_ERROR));
+        assert_eq!(last_log_line(&path, "other"), None);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(last_log_line(&path, "S0"), None, "no log, no opinion");
+    }
+
+    #[tokio::test]
+    async fn an_error_it_recovers_from_is_not_a_failure() {
+        let path = log_with("recovers", &[STREAM_ERROR]);
+        let mut watch = LoggedFailure::new(path.clone(), "S0");
+        assert_eq!(
+            watch.check().await,
+            None,
+            "first sight only starts the clock"
+        );
+        std::fs::write(&path, format!("{STREAM_ERROR}\n{MOVED_ON}\n")).unwrap();
+        tokio::time::sleep(LOG_STUCK_AFTER * 2).await;
+        assert_eq!(watch.check().await, None);
+        assert!(watch.seen.is_none(), "moving on clears the clock");
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    fn silent_log() -> Option<PathBuf> {
+        Some(std::env::temp_dir().join(format!("parzi-oc-silent-{}.log", std::process::id())))
+    }
+
+    #[tokio::test]
+    async fn an_agent_silent_after_a_logged_error_ends_the_turn_with_that_error() {
+        std::fs::write(silent_log().unwrap(), format!("{STREAM_ERROR}\n")).unwrap();
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        // It takes the prompt and never answers, as OpenCode does on a used-up quota.
+        let server = tokio::spawn(async move {
+            let (r, w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let prompt = read(&mut lines).await;
+            assert_eq!(prompt["method"], "session/prompt");
+            let _ = lines.next_line().await;
+            drop(w);
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let mut opencode = agent("opencode").unwrap();
+        opencode.error_log = silent_log;
+        let spec = spec(Some(json!({"session_id": "S0"})));
+        let failed = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            opencode,
+            &spec,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+            Some(Reused {
+                sid: "S0".into(),
+                session: json!({"sessionId": "S0"}),
+                model: None,
+                commands: vec![],
+            }),
+            &mut Opened::default(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            failed
+                .message
+                .starts_with("OpenCode stopped: Free usage limit reached"),
+            "{}",
+            failed.message
+        );
+        drop(peer);
+        server.abort();
+        std::fs::remove_file(silent_log().unwrap()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_model_it_will_not_switch_to_stops_the_turn_before_the_prompt() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let new = read(&mut lines).await;
+            assert_eq!(new["method"], "session/new");
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": new["id"], "result": {
+                    "sessionId": "S1",
+                    "configOptions": [{"id": "model", "currentValue": "opencode/big-pickle"}],
+                }}),
+            )
+            .await;
+            let set = read(&mut lines).await;
+            assert_eq!(set["method"], "session/set_config_option");
+            send(&mut w, json!({"jsonrpc": "2.0", "id": set["id"], "error": {"code": -32602, "message": "unknown model"}})).await;
+            // The turn ends here: nothing more arrives, and certainly no prompt.
+            let more = tokio::time::timeout(Duration::from_millis(200), lines.next_line()).await;
+            assert!(more.map_or(true, |line| line.unwrap_or(None).is_none()));
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let mut spec = spec(None);
+        spec.model = Some("opencode-go/muse".into());
+        let mut opencode = agent("opencode").unwrap();
+        opencode.error_log = nowhere;
+        let failed = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            opencode,
+            &spec,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+            None,
+            &mut Opened::default(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(failed.class, ErrorClass::BadRequest);
+        assert!(
+            failed
+                .message
+                .contains("would not switch to opencode-go/muse, so nothing ran"),
+            "{}",
+            failed.message
+        );
+        drop(peer);
+        drop(incoming);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "needs OpenCode installed with its free model out of quota"]
+    async fn opencode_live_says_why_a_used_up_model_went_silent() {
+        let provider = Acp::new(agent("opencode").unwrap(), "");
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let mut spec = spec(None);
+        spec.prompt = "Reply with the single word: ok".into();
+        spec.cwd = std::env::temp_dir();
+        let failed = provider
+            .run_turn(spec, gate, tx, CancellationToken::new())
+            .await
+            .unwrap_err();
+        println!("{:?}: {}", failed.class, failed.message);
+        assert!(
+            failed.message.starts_with("OpenCode stopped: "),
+            "{}",
+            failed.message
+        );
     }
 }

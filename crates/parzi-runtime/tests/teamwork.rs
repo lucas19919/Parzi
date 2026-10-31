@@ -548,7 +548,8 @@ async fn project_create_makes_a_home() {
 #[tokio::test]
 async fn a_child_that_cannot_start_fails_the_call_instead_of_promising_a_report() {
     let (orch, store) = team(4, answer());
-    let parent = store.create("boss", "t", "claude/model").unwrap();
+    // Inherited, so it gets past the check a model that was asked for has to pass.
+    let parent = store.create("boss", "t", "nobody/x").unwrap();
     let h = orch.harness();
     for wait in [false, true] {
         let err = h
@@ -558,7 +559,7 @@ async fn a_child_that_cannot_start_fails_the_call_instead_of_promising_a_report(
                     title: "nowhere".into(),
                     prompt: "do x".into(),
                     is_subsession: true,
-                    model: Some("nobody/x".into()),
+                    model: None,
                     wait,
                     mode_override: None,
                     effort: None,
@@ -591,4 +592,36 @@ async fn a_child_that_cannot_start_fails_the_call_instead_of_promising_a_report(
         .to_string();
     assert!(err.contains("did not start"), "{err}");
     assert!(err.contains("switched off"), "{err}");
+}
+
+#[tokio::test]
+async fn a_subsession_on_a_model_nobody_offers_never_starts() {
+    let fake = answer();
+    let (orch, store) = team(4, fake.clone());
+    let caller = store.create("lead", "", "claude").unwrap();
+
+    let refused = orch
+        .harness()
+        .spawn(
+            &caller.id,
+            SpawnSpec {
+                title: "helper".into(),
+                prompt: "look".into(),
+                is_subsession: true,
+                model: Some("made-up-model".into()),
+                wait: true,
+                mode_override: Some("auto".into()),
+                effort: None,
+            },
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(refused.contains("made-up-model"), "{refused}");
+    assert!(
+        store.list_children(&caller.id).unwrap().is_empty(),
+        "a refused spawn leaves no dead session behind"
+    );
+    assert!(fake.turns.lock().unwrap().is_empty());
 }

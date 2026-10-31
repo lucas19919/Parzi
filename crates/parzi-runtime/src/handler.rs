@@ -115,6 +115,9 @@ pub trait HarnessBridge: Send + Sync {
         tail_events: Option<usize>,
     ) -> Result<String>;
     async fn list_sessions(&self, caller_id: &str, only_subsessions: bool) -> Result<String>;
+    fn provider_statuses(&self) -> Vec<parzi_providers::ProviderStatus> {
+        vec![]
+    }
 }
 
 pub(crate) fn user_event_text(

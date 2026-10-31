@@ -1,7 +1,7 @@
 mod acp;
 mod registry;
 
-pub use acp::drop_live_in;
+pub use acp::{cached_models, drop_live_in};
 mod claude;
 mod codex;
 mod jsonrpc;

@@ -64,6 +64,7 @@ impl Pump {
             "session_id": session_id,
             "status": status,
             "title": meta.title,
+            "model": meta.model,
             "response": reply,
         });
         let last_error = events.iter().rev().find_map(|e| match e {
@@ -121,7 +122,15 @@ impl Pump {
             "" | "subsession" => parzi_core::text::name_from_prompt(&prompt),
             t => t.chars().take(80).collect(),
         };
-        let model_spec = model.unwrap_or_else(|| caller.model.clone());
+        let cfg = self.cfg_snapshot();
+        let statuses = self.status.all();
+        let model_spec = match model {
+            Some(asked) => crate::bench::resolve(&asked, &cfg, &statuses, &caller.model)
+                .map_err(ParziError::Validation)?,
+            // Its own model is running right now, whatever the list says.
+            None => crate::bench::resolve(&caller.model, &cfg, &statuses, &caller.model)
+                .unwrap_or_else(|_| caller.model.clone()),
+        };
         let crippled = mode_override.is_none();
         let parent = if is_subsession { Some(caller_id) } else { None };
         let meta = self
@@ -157,6 +166,7 @@ impl Pump {
                     "session_id": meta.id,
                     "status": "queued",
                     "title": meta.title,
+                    "model": meta.model,
                     "note": "no run slot free; it runs when one frees",
                     "report": REPORTS,
                 });
@@ -187,6 +197,7 @@ impl Pump {
                 "session_id": meta.id,
                 "status": meta.status.word(),
                 "title": meta.title,
+                "model": meta.model,
                 "report": REPORTS,
             });
             if crippled {
@@ -259,6 +270,10 @@ fn not_started(session_id: &str, e: &ParziError) -> ParziError {
 impl HarnessBridge for Pump {
     async fn spawn(&self, caller_id: &str, spec: SpawnSpec) -> Result<String> {
         self.spawn_child(caller_id, spec).await
+    }
+
+    fn provider_statuses(&self) -> Vec<parzi_providers::ProviderStatus> {
+        self.status.all()
     }
 
     async fn send_message(
