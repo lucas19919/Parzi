@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use clap::{ArgGroup, Parser, Subcommand};
+use clap::{ArgGroup, CommandFactory, Parser, Subcommand};
 use parzi_core::config::ParziConfig;
 use parzi_core::paths;
 use parzi_core::store::{RunCause, SessionStatus, SessionStore};
@@ -374,8 +374,32 @@ impl Approver for CliApprover {
     }
 }
 
+/// Double-clicked on Windows, the usage text flashes up and the window closes,
+/// which looks like a broken installer. So with nothing to do at an interactive
+/// console it says what it is and waits. Scripts and pipes still get plain usage.
+fn opened_with_nothing_to_do() -> bool {
+    use std::io::IsTerminal;
+    cfg!(windows)
+        && std::env::args_os().len() == 1
+        && std::io::stdin().is_terminal()
+        && std::io::stdout().is_terminal()
+}
+
+fn explain_and_wait() -> Result<()> {
+    Cli::command().print_help()?;
+    println!("\n\nThis is Parzi's command-line tool, not the app. Nothing was installed.");
+    println!("To install Parzi, download the file ending in x64-setup.exe from:");
+    println!("  https://github.com/lucas19919/Parzi/releases/latest\n");
+    println!("Press Enter to close.");
+    std::io::stdin().read_line(&mut String::new())?;
+    Ok(())
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
+    if opened_with_nothing_to_do() {
+        return explain_and_wait();
+    }
     let cli = Cli::parse();
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::WARN)
