@@ -912,7 +912,12 @@ mod tests {
         let cwd = h.join("src").join("app").display().to_string();
         for bad in [
             gui.clone(),
-            gui.to_uppercase(),
+            // Linux paths are case sensitive: the upper case spelling is another file.
+            if cfg!(target_os = "linux") {
+                gui.clone()
+            } else {
+                gui.to_uppercase()
+            },
             "~/.parzi/gui.json".to_string(),
             "~\\.parzi\\serve.json".to_string(),
             "$HOME/.parzi/config.toml".to_string(),

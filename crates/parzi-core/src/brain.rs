@@ -1577,21 +1577,25 @@ mod tests {
 
     #[test]
     fn new_projects_go_beside_the_others_never_into_parzis_own_folders() {
-        let own = Path::new("C:/Users/me/.parzi");
+        // A drive path is only absolute on Windows.
+        let top = if cfg!(windows) { "D:/" } else { "/" };
+        let at = |rest: &str| format!("{top}{rest}");
+        let own = at("Users/me/.parzi");
         let folders = [
-            "D:/Repos/Parzi".to_string(),
-            "D:/IsarWebsites".to_string(),
-            "D:/Repos/sepia".to_string(),
-            "C:/Users/me/.parzi/scratch/3bbf/strohmann".to_string(),
-            "C:/Users/me/.parzi/scratch/aa11/x".to_string(),
-            "C:/Users/me/.parzi/scratch/bb22/y".to_string(),
+            at("Repos/Parzi"),
+            at("IsarWebsites"),
+            at("Repos/sepia"),
+            at("Users/me/.parzi/scratch/3bbf/strohmann"),
+            at("Users/me/.parzi/scratch/aa11/x"),
+            at("Users/me/.parzi/scratch/bb22/y"),
         ];
+        let own = Path::new(&own);
         assert_eq!(
             root_of(&folders, Some(own)),
-            Some(PathBuf::from("D:/Repos"))
+            Some(PathBuf::from(at("Repos")))
         );
         assert_eq!(root_of(&folders[3..], Some(own)), None);
-        assert_eq!(root_of(&["D:/".to_string()], Some(own)), None);
+        assert_eq!(root_of(&[top.to_string()], Some(own)), None);
     }
 
     fn vault() -> (tempfile::TempDir, Vault) {
