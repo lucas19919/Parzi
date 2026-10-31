@@ -65,7 +65,7 @@ fn widget_series_validate_per_series() {
 
 #[test]
 fn artifact_validation_versions_and_dedups() {
-    use parzi_core::artifacts::{is_same_content, next_version, slugify_id, validate_artifact};
+    use parzi_core::artifacts::{is_unchanged, next_version, slugify_id, validate_artifact};
     assert_eq!(slugify_id("Hello World!"), "hello-world");
     assert!(!slugify_id("!!!").is_empty());
     let good = serde_json::json!({
@@ -111,7 +111,24 @@ fn artifact_validation_versions_and_dedups() {
         "artifact": 1, "id": "omni-html", "title": "Omnibar redesign",
         "kind": "html", "content": "<div class=\"omnibar\">mock</div>",
     });
-    assert!(validate_artifact(&mock).is_err());
+    assert_eq!(
+        validate_artifact(&mock).unwrap().kind,
+        "html",
+        "a page that mentions the omnibar is still a page"
+    );
+    let bad_json = serde_json::json!({
+        "artifact": 1, "id": "omni-bad", "kind": "json",
+        "content": "{\"component\":\"omnibar\",\"variant\":9}",
+    });
+    assert!(validate_artifact(&bad_json).is_err());
+    let plain_json = serde_json::json!({"id": "data", "kind": "json", "content": "{\"a\":1}"});
+    assert_eq!(validate_artifact(&plain_json).unwrap().kind, "json");
+    let no_id = serde_json::json!({"title": "My Report", "kind": "markdown", "content": "# Hi"});
+    let named = validate_artifact(&no_id).unwrap();
+    assert_eq!(
+        named.id, "my-report",
+        "the schema makes id and artifact optional"
+    );
     let as_json = serde_json::json!({
         "artifact": 1, "id": "omni-json", "title": "Omnibar",
         "kind": "json", "content": "{\"component\":\"omnibar\",\"variant\":1,\"tokens\":{\"radius\":\"16px\"}}",
@@ -119,16 +136,19 @@ fn artifact_validation_versions_and_dedups() {
     assert_eq!(validate_artifact(&as_json).unwrap().kind, "preview");
     let v2 = next_version("auth-hook", std::slice::from_ref(&a));
     assert_eq!(v2, 2);
-    assert!(is_same_content(
-        "auth-hook",
-        "fn main() {}",
-        std::slice::from_ref(&a)
-    ));
-    assert!(!is_same_content(
-        "auth-hook",
-        "different",
-        std::slice::from_ref(&a)
-    ));
+    let existing = std::slice::from_ref(&a);
+    let mut same = a.clone();
+    same.version = 9;
+    assert!(is_unchanged(&same, existing));
+    let mut edited = a.clone();
+    edited.content = "different".into();
+    assert!(!is_unchanged(&edited, existing));
+    let mut retitled = a.clone();
+    retitled.title = "New title".into();
+    assert!(
+        !is_unchanged(&retitled, existing),
+        "a new title is a new version"
+    );
 }
 
 #[test]

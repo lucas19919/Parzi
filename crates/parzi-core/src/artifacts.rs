@@ -13,7 +13,9 @@ const ARTIFACT_KINDS: &[&str] = &[
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactV1 {
+    #[serde(default = "default_format")]
     pub artifact: u64,
+    #[serde(default)]
     pub id: String,
     #[serde(default)]
     pub title: String,
@@ -37,6 +39,10 @@ fn kind_named(raw: &str) -> String {
         "table" => "csv".into(),
         _ => k,
     }
+}
+
+fn default_format() -> u64 {
+    ARTIFACT_VERSION
 }
 
 fn default_kind() -> String {
@@ -115,10 +121,10 @@ fn validate_preview(content: &str) -> Result<()> {
     Ok(())
 }
 
-fn mentions_live_ui(title: &str, content: &str) -> bool {
-    format!("{title}\n{content}")
-        .to_ascii_lowercase()
-        .contains("omnibar")
+/// JSON naming a component is an attempt at a preview, so it should say what is wrong.
+fn names_a_component(content: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(content)
+        .is_ok_and(|v| v.get("component").is_some_and(serde_json::Value::is_string))
 }
 
 pub fn validate_artifact(v: &serde_json::Value) -> Result<ArtifactV1> {
@@ -177,10 +183,8 @@ pub fn validate_artifact(v: &serde_json::Value) -> Result<ArtifactV1> {
     if a.kind == "html" || a.kind == "json" {
         if validate_preview(&a.content).is_ok() {
             a.kind = "preview".into();
-        } else if mentions_live_ui(&a.title, &a.content) {
-            return Err(ParziError::Validation(
-                "Parzi UI renders as kind preview, not html or json. content is {\"component\":\"omnibar\",\"variant\":1} (1 agent, 2 web). tokens restyle the real component: bg, text, accent, panel as #hex, radius and space as Npx.".into(),
-            ));
+        } else if a.kind == "json" && names_a_component(&a.content) {
+            validate_preview(&a.content)?;
         }
     }
     if a.kind == "preview" {
@@ -203,11 +207,16 @@ pub fn next_version(id: &str, existing: &[ArtifactV1]) -> u32 {
     max + 1
 }
 
-pub fn is_same_content(id: &str, content: &str, existing: &[ArtifactV1]) -> bool {
-    let slug = slugify_id(id);
+/// Nothing a person would see differs from the latest version.
+pub fn is_unchanged(candidate: &ArtifactV1, existing: &[ArtifactV1]) -> bool {
     existing
         .iter()
-        .filter(|a| a.id == slug)
+        .filter(|a| a.id == candidate.id)
         .max_by_key(|a| a.version)
-        .is_some_and(|latest| latest.content == content)
+        .is_some_and(|latest| {
+            latest.content == candidate.content
+                && latest.title == candidate.title
+                && latest.kind == candidate.kind
+                && latest.language == candidate.language
+        })
 }

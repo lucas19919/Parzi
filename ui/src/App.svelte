@@ -102,6 +102,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let liveReasoning = "";
   let liveTodo: unknown = null;
   let threadTodo: unknown = null;
+  let liveArtifacts: Extract<UiEvent, { kind: "artifact" }>[] = [];
   let liveTools: LiveTool[] = [];
   let pending = "";
   let revealing = 0;
@@ -513,6 +514,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     liveReasoning = "";
     liveTodo = null;
     liveTools = [];
+    liveArtifacts = [];
   }
 
   const follow = follower();
@@ -1542,6 +1544,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       liveReasoning += e.text;
     } else if (e.kind === "todo") {
       liveTodo = e.todo;
+    } else if (e.kind === "artifact") {
+      liveArtifacts = [...liveArtifacts.filter((a) => a.id !== e.id), e];
     } else if (e.kind === "tool_call") {
       if (!liveTools.some((t) => t.id === e.id)) {
         liveTools = [...liveTools, { id: e.id, name: e.name, label: e.label || e.name, running: true, ok: true, ms: 0 }];
@@ -1884,6 +1888,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                   liveText={live}
                   {liveReasoning}
                 {liveTodo}
+                  {liveArtifacts}
                   bind:todo={threadTodo}
                   {liveTools}
                   {approval}

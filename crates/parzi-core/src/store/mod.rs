@@ -39,6 +39,12 @@ impl SessionStore {
         })
     }
 
+    /// Files a session's artifacts keep, so they outlive whatever they were made from.
+    #[must_use]
+    pub fn artifact_dir(&self, id: &str) -> std::path::PathBuf {
+        self.dir(id).join("artifacts")
+    }
+
     fn dir(&self, id: &str) -> std::path::PathBuf {
         if uuid::Uuid::parse_str(id).is_ok() {
             self.root.join(id)

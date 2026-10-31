@@ -36,7 +36,6 @@
 </script>
 
 {#if $notifications.length}
-  <div class="pin">
     <InfoCard id="notifications" title="Notifications">
       <svelte:fragment slot="aside">{#if unread}{unread} new{/if}</svelte:fragment>
       <div class="list">
@@ -50,18 +49,9 @@
       </div>
       <button class="btn sm" on:click={clearNotifications}>Clear</button>
     </InfoCard>
-  </div>
 {/if}
 
 <style>
-  .pin {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    flex: none;
-    background: var(--bg);
-    border-radius: var(--radius);
-  }
   .list {
     display: flex;
     flex-direction: column;

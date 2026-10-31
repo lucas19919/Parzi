@@ -27,6 +27,7 @@ export function splitSegments(text: string, cache = true): Segment[] {
     try {
       const payload = JSON.parse(m[2]);
       if (m[1] === "parzi-widget") out.push({ kind: "widget", body: payload });
+      else if (payload?.kind === "image") out.push({ kind: "md", body: m[0] });
       else out.push({ kind: "artifact", body: payload });
     } catch {
       out.push({ kind: "md", body: m[0] });

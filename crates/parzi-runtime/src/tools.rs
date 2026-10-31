@@ -290,7 +290,7 @@ fn ui_defs() -> Vec<ToolDef> {
                     "language": {"type": "string"},
                     "content": {"type": "string"},
                 },
-                "required": ["artifact", "content"],
+                "required": ["content"],
             }),
         },
         ToolDef {

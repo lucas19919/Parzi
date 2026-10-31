@@ -2,6 +2,7 @@
   import { onMount, tick } from "svelte";
   import { fly } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
+  import { convertFileSrc } from "@tauri-apps/api/core";
   import { api } from "../api";
   import { codeBlockClick, mdHtml, richReady } from "../md";
   import { handleLinkClick } from "../links";
@@ -19,13 +20,12 @@
   export let fallbackId = "";
   export let fallbackTitle = "";
   export let fallbackKind = "text";
-  export let superseded = false;
   export let reader = false;
   export let bare = false;
   /**
    * Inline thread rendering: textual artifacts dissolve into the thread as
    * plain markdown/code, while visual ones (images, showcases, demos) render
-   * as just an outline with no header chrome.
+   * as just an outline with no header chrome. Actions sit under it on hover.
    */
   export let inline = false;
 
@@ -56,6 +56,9 @@
     preview: "spark",
   };
   const icon = ICONS[kind] ?? "file";
+  // A picture's content is its path and a preview's a spec: neither is what a person wants to copy.
+  const copyable = kind !== "image" && kind !== "preview";
+  const savable = kind !== "preview";
 
   $: preview = kind === "preview" ? previewSpecOf(content) : null;
   $: previewProps = preview ? preview.entry.props(preview.variant, preview.extra) : {};
@@ -65,7 +68,19 @@
   let showCode = false;
   let frame: HTMLIFrameElement | null = null;
   let svgBroken = false;
-  let open = reader || !superseded;
+  // Pages load from their own origin so their scripts run; see artifact_frame.rs.
+  // Only the mock has no such origin, and it has no policy to get around either.
+  let pageSrc = "";
+  let pageFallback = false;
+  if (kind === "html" && content.trim()) {
+    api.artifactFrame(RESIZE + content).then(
+      (token) => {
+        if (token) pageSrc = convertFileSrc(token, "parzi-art");
+        else pageFallback = true;
+      },
+      () => (pageFallback = true),
+    );
+  }
   let copied = false;
 
   const TEXTUAL = new Set(["markdown", "md", "text", "txt", "code", "diff", "json", "jsonl", "csv", "tsv", "log"]);
@@ -92,7 +107,7 @@
     await tick();
     tall = foldable && !!body && body.scrollHeight > FOLD + 40;
   }
-  $: if (open && $richReady !== undefined) void measure();
+  $: if ($richReady !== undefined) void measure();
 
   function svgImage(src: string): string {
     const svg = new DOMParser().parseFromString(src, "text/html").querySelector("svg");
@@ -106,8 +121,7 @@
   }
 
   function nameClick() {
-    if (superseded && !reader) open = !open;
-    else if (!reader && !bad) openToRead();
+    if (!reader && !bad) openToRead();
   }
 
   function codeClick(e: MouseEvent) {
@@ -129,7 +143,14 @@
     );
   }
 
-  function download() {
+  async function download() {
+    if (imageUrl) {
+      const url = await imageUrl.catch(() => "");
+      const ext = /^data:image\/([a-z0-9]+)/i.exec(url)?.[1] ?? "png";
+      if (url) void saveFile(`${title.replace(/\.[a-z0-9]{1,8}$/i, "") || id}.${ext}`, url);
+      else toast("The picture is no longer there", true);
+      return;
+    }
     const ext = kind === "code" && language ? language : kind === "markdown" ? "md" : kind === "svg" ? "svg" : kind === "html" ? "html" : kind === "json" ? "json" : kind === "csv" ? "csv" : "txt";
     void saveFile(`${title.replace(/\.[a-z0-9]{1,8}$/i, "") || id}.${ext}`, content);
   }
@@ -146,6 +167,7 @@
   });
 </script>
 
+<div class="holder">
 {#if inline && !bad && textual}
   {#if kind === "markdown" || kind === "text" || kind === "md" || !kind}
     <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
@@ -153,17 +175,16 @@
   {:else}
     <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
     <div class="code" on:click={codeClick}>
-      {@html mdHtml("```" + (language || kind) + "\n" + content.slice(0, 60000) + "\n```", $richReady)}
+      {@html mdHtml("```" + (language || kind) + "\n" + content + "\n```", $richReady)}
     </div>
   {/if}
 {:else}
-<div class="art" class:bad class:reader class:outline={inline} class:old={superseded && !open}>
+<div class="art" class:bad class:reader class:outline={inline}>
   {#if !bare && !inline}
   <div class="head">
-    <button class="name" aria-expanded={superseded ? open : undefined} disabled={reader || bad} on:click={nameClick}>
+    <button class="name" disabled={reader || bad} on:click={nameClick}>
       <Icon name={icon} size={12} />
       {#if !reader}<span class="title t-section">{title}</span>{/if}
-      {#if superseded && !open}<span class="meta">updated below</span>{/if}
     </button>
     <span class="tools">
       <button class="tool" aria-label="More actions" use:tooltip={"More actions"} on:click={toggleMenu} bind:this={menuBtn}><Icon name="more" size={12} /></button>
@@ -172,17 +193,20 @@
   {/if}
   {#if menuOpen}
     <div class="menu-pop" data-ui-list style={menuStyle} use:popover={{ anchor: menuBtn, close: () => (menuOpen = false) }} transition:fly={{ y: 6, duration: 140, easing: cubicOut }}>
-      {#if canRender && open}
+      {#if canRender}
         <button class="opt" on:click={() => act(() => (showCode = !showCode))}><Icon name="file" size={12} /><span class="name">{showCode ? "Preview" : "Source"}</span></button>
       {/if}
       {#if !reader && !bad}
         <button class="opt" on:click={() => act(openToRead)}><Icon name="external" size={12} /><span class="name">Open to read</span></button>
       {/if}
-      <button class="opt" on:click={() => act(copy)}><Icon name={copied ? "check" : "copy"} size={12} /><span class="name">{copied ? "Copied" : "Copy"}</span></button>
-      <button class="opt" on:click={() => act(download)}><Icon name="download" size={12} /><span class="name">Save as file</span></button>
+      {#if copyable}
+        <button class="opt" on:click={() => act(copy)}><Icon name={copied ? "check" : "copy"} size={12} /><span class="name">{copied ? "Copied" : "Copy"}</span></button>
+      {/if}
+      {#if savable}
+        <button class="opt" on:click={() => act(() => void download())}><Icon name="download" size={12} /><span class="name">Save as file</span></button>
+      {/if}
     </div>
   {/if}
-  {#if open}
     <div class="body" class:folded={tall && !all} bind:this={body}>
       {#if bad}
         <div class="err">Couldn't render this. Showing what came.</div>
@@ -209,25 +233,61 @@
           <div class="err">Couldn't load the image: {e}</div>
         {/await}
       {:else if kind === "html" && canRender && !showCode}
-        <iframe bind:this={frame} class="page" {title} sandbox="allow-scripts" scrolling="auto" srcdoc={LOCAL_ONLY + RESIZE + content}></iframe>
+        {#if pageSrc}
+          <iframe bind:this={frame} class="page" {title} sandbox="allow-scripts" scrolling="auto" src={pageSrc}></iframe>
+        {:else if pageFallback}
+          <iframe bind:this={frame} class="page" {title} sandbox="allow-scripts" scrolling="auto" srcdoc={LOCAL_ONLY + RESIZE + content}></iframe>
+        {/if}
       {:else}
         {#if kind === "svg" && !showCode}
           <div class="err">Couldn't draw this SVG. Showing its source.</div>
         {/if}
         <!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
         <div class="code" on:click={codeClick}>
-          {@html mdHtml("```" + (language || kind) + "\n" + content.slice(0, 60000) + "\n```", $richReady)}
+          {@html mdHtml("```" + (language || kind) + "\n" + content + "\n```", $richReady)}
         </div>
       {/if}
     </div>
     {#if tall}
       <button class="more" on:click={() => (all = !all)}>{all ? "Show less" : "Show all"}</button>
     {/if}
-  {/if}
 </div>
 {/if}
+{#if inline && !bad}
+  <div class="acts">
+    {#if canRender}
+      <button class="tool" aria-label={showCode ? "Show the preview" : "Show the source"} use:tooltip={showCode ? "Preview" : "Source"} on:click={() => (showCode = !showCode)}><Icon name={showCode ? "image" : "file"} size={12} /></button>
+    {/if}
+    <button class="tool" aria-label="Open to read" use:tooltip={"Open to read"} on:click={openToRead}><Icon name="external" size={12} /></button>
+    {#if copyable}
+      <button class="tool" aria-label="Copy" use:tooltip={copied ? "Copied" : "Copy"} on:click={copy}><Icon name={copied ? "check" : "copy"} size={12} /></button>
+    {/if}
+    {#if savable}
+      <button class="tool" aria-label="Save as file" use:tooltip={"Save as file"} on:click={() => void download()}><Icon name="download" size={12} /></button>
+    {/if}
+  </div>
+{/if}
+</div>
 
 <style>
+  /* Reserved under the artifact so showing them moves nothing. */
+  .acts {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space);
+    min-height: var(--h-sm);
+    opacity: 0;
+    transition: opacity var(--dur) ease;
+  }
+  .holder:hover .acts,
+  .acts:focus-within {
+    opacity: 1;
+  }
+  .acts .tool {
+    min-width: var(--h-sm);
+    height: var(--h-sm);
+    padding: 0;
+  }
   .art {
     display: flex;
     flex-direction: column;
@@ -289,7 +349,7 @@
     min-height: 40px;
     padding: 0 calc(var(--space) * 2) 0 calc(var(--space) * 4);
   }
-  .art:not(.old):not(.reader) .head {
+  .art:not(.reader) .head {
     border-bottom: 1px solid var(--line);
   }
   .name {
@@ -317,11 +377,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .meta {
-    flex: none;
-    font-size: var(--fs-sm);
-    color: var(--muted);
   }
   .tools {
     display: inline-flex;

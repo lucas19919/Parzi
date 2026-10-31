@@ -1808,9 +1808,17 @@ impl ToolHost {
     }
 
     fn store_artifact(&self, args: &Value) -> std::result::Result<String, String> {
+        // Agents publish in parallel: reading the next version and appending must be one step.
+        static PUBLISH: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _one_at_a_time = PUBLISH
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut candidate = artifacts::validate_artifact(args).map_err(|e| e.to_string())?;
+        if candidate.kind == "image" {
+            candidate.content = self.keep_image(candidate.content.trim())?;
+        }
         let existing = self.existing_artifacts(&candidate.id);
-        if artifacts::is_same_content(&candidate.id, &candidate.content, &existing) {
+        if artifacts::is_unchanged(&candidate, &existing) {
             return Ok(format!(
                 "artifact {} unchanged (no new version)",
                 candidate.id
@@ -1827,14 +1835,51 @@ impl ToolHost {
                     title: candidate.title.clone(),
                     artifact_kind: candidate.kind.clone(),
                     version: candidate.version,
-                    payload,
+                    payload: payload.clone(),
                 },
             )
             .map_err(|e| e.to_string())?;
+        self.p.sink.emit(RunEvent::Artifact {
+            id: candidate.id.clone(),
+            title: candidate.title.clone(),
+            artifact_kind: candidate.kind.clone(),
+            version: candidate.version,
+            payload,
+        });
         Ok(format!(
             "rendered artifact {} v{}",
             candidate.id, candidate.version
         ))
+    }
+
+    /// Copies a picture into the session, so its card outlives the file it came
+    /// from. Named by its bytes, so publishing the same picture twice is one file.
+    fn keep_image(&self, raw: &str) -> std::result::Result<String, String> {
+        const MAX_BYTES: u64 = 8 * 1024 * 1024;
+        if parzi_core::paths::is_network_path(raw) {
+            return Err("images on network paths are not kept; copy it to this computer".into());
+        }
+        let source = std::path::Path::new(&self.p.tools.cwd).join(raw);
+        let meta = std::fs::metadata(&source).map_err(|e| format!("{raw}: {e}"))?;
+        if !meta.is_file() || meta.len() > MAX_BYTES {
+            return Err(format!("{raw} is not an image file of at most 8 MiB"));
+        }
+        let bytes = std::fs::read(&source).map_err(|e| format!("{raw}: {e}"))?;
+        if !parzi_core::context::is_image_bytes(&bytes) {
+            return Err(format!("{raw} is not a supported image"));
+        }
+        let ext = source
+            .extension()
+            .map_or_else(String::new, |e| e.to_string_lossy().to_ascii_lowercase());
+        let kept = self
+            .p
+            .store
+            .artifact_dir(&self.p.session_id)
+            .join(format!("{}.{ext}", parzi_core::hash::fnv_hex(&bytes)));
+        if !kept.exists() {
+            parzi_core::atomic_write(&kept, &bytes).map_err(|e| e.to_string())?;
+        }
+        Ok(kept.to_string_lossy().into_owned())
     }
 
     fn existing_artifacts(&self, id: &str) -> Vec<artifacts::ArtifactV1> {

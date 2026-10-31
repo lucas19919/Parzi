@@ -1,19 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
-test("the artifact height script is allowed by the app CSP", async () => {
-  const card = await readFile(new URL("../src/lib/widgets/ArtifactCard.svelte", import.meta.url), "utf8");
-  const open = "const RESIZE = `<script>";
-  const start = card.indexOf(open) + open.length;
-  const end = card.indexOf("/script>`;", start) - 2;
-  assert.ok(start > open.length && end > start, "RESIZE script not found");
-  const hash = createHash("sha256").update(card.slice(start, end), "utf8").digest("base64");
+test("the app's policy lets HTML artifacts load from their own origin", async () => {
   const conf = JSON.parse(await readFile(new URL("../../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
-  const scriptSrc = String(conf.app.security.csp)
+  const frameSrc = String(conf.app.security.csp)
     .split(";")
     .map((d) => d.trim())
-    .find((d) => d.startsWith("script-src "));
-  assert.ok(scriptSrc?.split(/\s+/).includes(`'sha256-${hash}'`), `add 'sha256-${hash}' to script-src`);
+    .find((d) => d.startsWith("frame-src "));
+  assert.ok(frameSrc?.includes("parzi-art"), "add the parzi-art scheme to frame-src");
+});
+
+test("an artifact frame stays sandboxed with no way to the app", async () => {
+  const card = await readFile(new URL("../src/lib/widgets/ArtifactCard.svelte", import.meta.url), "utf8");
+  for (const m of card.matchAll(/sandbox="([^"]*)"/g)) assert.equal(m[1], "allow-scripts");
+  assert.match(card, /sandbox="allow-scripts"/);
 });

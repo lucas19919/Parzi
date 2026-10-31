@@ -44,6 +44,7 @@
   export let streaming = false;
   export let session = "";
   export let liveTodo: unknown = null;
+  export let liveArtifacts: { id: string; title: string; artifact_kind: string; version: number; payload: unknown }[] = [];
   export let todo: unknown = null;
   export let approval: Approval | null = null;
   export let question: Question | null = null;
@@ -749,7 +750,12 @@ ${e.text}` : e.text;
     {/if}
   {/each}
 
-  
+    {#each liveArtifacts.filter((a) => a.version > (newest.get(a.id) ?? 0)) as a (a.id)}
+    {#key a.version}
+      <ArtifactCard data={a.payload} fallbackId={a.id} fallbackTitle={a.title} fallbackKind={a.artifact_kind} inline />
+    {/key}
+  {/each}
+
   {#if todo && !$dockedTodos.has(session)}<TodoList {todo} working={streaming} on:dock={() => setTodoDocked(session, true)} />{/if}
   {#if streaming}<LiveLine text={lineText} tokens={lineTokens} />{/if}
   {#if !streaming && replyAt >= 0}

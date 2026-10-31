@@ -49,6 +49,12 @@ pub fn image_media_type(path: &str) -> Option<&'static str> {
 pub const IMAGE_RAW_CAP: u64 = 4_000_000;
 const IMAGE_MAX_DIM: u32 = 1568;
 
+/// The bytes themselves are a picture, whatever the file is called.
+#[must_use]
+pub fn is_image_bytes(bytes: &[u8]) -> bool {
+    image::guess_format(bytes).is_ok()
+}
+
 pub fn encode_image(path: &str, bytes: &[u8]) -> Option<ImageData> {
     let media = image_media_type(path)?.to_string();
     if (bytes.len() as u64) <= IMAGE_RAW_CAP {

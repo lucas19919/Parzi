@@ -109,6 +109,7 @@ export type UiEvent =
   | { kind: "text"; session: string; text: string }
   | { kind: "reasoning"; session: string; text: string }
   | { kind: "todo"; session: string; todo: unknown }
+  | { kind: "artifact"; session: string; id: string; title: string; artifact_kind: string; version: number; payload: unknown }
   | { kind: "tool_call"; session: string; id: string; name: string; label: string }
   | { kind: "tool_result"; session: string; id: string; name: string; ok: boolean; ms: number }
   | { kind: "notice"; session: string; text: string }
@@ -230,6 +231,7 @@ export const api = {
   gitBranches: (cwd: string) => invoke<{ current: string; all: string[] }>("git_branches", { cwd }),
   gitStatus: (cwd: string) => invoke<GitStatus | null>("git_status", { cwd }),
   stageImage: (name: string, base64Data: string) => invoke<string>("stage_image", { name, base64Data }),
+  artifactFrame: (html: string) => invoke<string>("artifact_frame", { html }),
   readImageDataUrl: (path: string, cwd: string) => invoke<string>("read_image_data_url", { path, cwd }),
   toolImage: (session: string, path: string) => invoke<string>("tool_image", { session, path }),
 

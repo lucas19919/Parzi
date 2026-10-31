@@ -18,6 +18,7 @@ use tokio::sync::{broadcast, oneshot, Mutex};
 mod dwm;
 
 mod adblock;
+mod artifact_frame;
 mod appearance;
 mod brain;
 mod browser;
@@ -74,6 +75,14 @@ pub(crate) enum UiEvent {
     Notice {
         session: String,
         text: String,
+    },
+    Artifact {
+        session: String,
+        id: String,
+        title: String,
+        artifact_kind: String,
+        version: u32,
+        payload: serde_json::Value,
     },
     Todo {
         session: String,
@@ -363,6 +372,20 @@ fn ui_from_run(session: String, ev: RunEvent) -> Option<UiEvent> {
         },
         RunEvent::Notice { text } => UiEvent::Notice { session, text },
         RunEvent::Todo { todo } => UiEvent::Todo { session, todo },
+        RunEvent::Artifact {
+            id,
+            title,
+            artifact_kind,
+            version,
+            payload,
+        } => UiEvent::Artifact {
+            session,
+            id,
+            title,
+            artifact_kind,
+            version,
+            payload,
+        },
         RunEvent::Context { used, limit } => UiEvent::Context {
             session,
             used,
@@ -708,7 +731,11 @@ fn main() {
             });
             Ok(())
         })
+        .register_uri_scheme_protocol(artifact_frame::SCHEME, |_ctx, request| {
+            artifact_frame::respond(request.uri().path())
+        })
         .invoke_handler(tauri::generate_handler![
+            artifact_frame::artifact_frame,
             app_version,
             ui_error,
             window_fullscreen,

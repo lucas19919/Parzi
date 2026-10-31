@@ -41,6 +41,13 @@ pub enum RunEvent {
     Todo {
         todo: serde_json::Value,
     },
+    Artifact {
+        id: String,
+        title: String,
+        artifact_kind: String,
+        version: u32,
+        payload: serde_json::Value,
+    },
     Done {
         turns: u32,
     },
@@ -164,6 +171,16 @@ pub fn ui_event(session: &str, ev: &RunEvent) -> Option<serde_json::Value> {
         }
         RunEvent::Notice { text } => json!({ "kind": "notice", "session": session, "text": text }),
         RunEvent::Todo { todo } => json!({ "kind": "todo", "session": session, "todo": todo }),
+        RunEvent::Artifact {
+            id,
+            title,
+            artifact_kind,
+            version,
+            payload,
+        } => json!({
+            "kind": "artifact", "session": session, "id": id, "title": title,
+            "artifact_kind": artifact_kind, "version": version, "payload": payload,
+        }),
         RunEvent::Context { used, limit } => {
             json!({ "kind": "context", "session": session, "used": used, "limit": limit })
         }
