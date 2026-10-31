@@ -17,7 +17,7 @@ pub mod urls;
 pub mod wallpaper;
 pub mod widgets;
 
-pub use error::{atomic_write, atomic_write_private, ParziError, Result};
+pub use error::{atomic_write, atomic_write_private, read_settled, ParziError, Result};
 
 #[must_use]
 pub fn now_ms() -> u64 {

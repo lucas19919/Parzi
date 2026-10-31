@@ -97,19 +97,19 @@ fn write_atomic(path: &Path, bytes: &[u8], mode: Option<u32>) -> Result<()> {
         let _ = std::fs::remove_file(&tmp);
         return Err(io_at(path, e));
     }
-    if let Err(e) = rename_patiently(&tmp, path) {
+    if let Err(e) = patiently(|| std::fs::rename(&tmp, path)) {
         let _ = std::fs::remove_file(&tmp);
         return Err(io_at(path, e));
     }
     Ok(())
 }
 
-/// On Windows an antivirus or indexer can hold the destination for a moment,
-/// which fails the rename with access denied. Those clear quickly.
-fn rename_patiently(from: &Path, to: &Path) -> std::io::Result<()> {
+/// On Windows an antivirus, an indexer or another write can hold a file for a
+/// moment, which fails with access denied. Those clear quickly.
+fn patiently<T>(mut step: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
     let mut wait = std::time::Duration::from_millis(20);
     for _ in 0..4 {
-        match std::fs::rename(from, to) {
+        match step() {
             Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
                 std::thread::sleep(wait);
                 wait *= 2;
@@ -117,7 +117,12 @@ fn rename_patiently(from: &Path, to: &Path) -> std::io::Result<()> {
             done => return done,
         }
     }
-    std::fs::rename(from, to)
+    step()
+}
+
+/// Reads a file that atomic_write may be replacing right now.
+pub fn read_settled(path: &Path) -> std::io::Result<String> {
+    patiently(|| std::fs::read_to_string(path))
 }
 
 #[cfg(unix)]
@@ -177,7 +182,7 @@ mod tests {
                 s.spawn(move || {
                     for _ in 0..40 {
                         atomic_write(path, p.as_bytes()).unwrap();
-                        let now = std::fs::read_to_string(path).unwrap();
+                        let now = read_settled(path).unwrap();
                         assert_eq!(now.len(), 4096, "a reader saw a torn file");
                     }
                 });

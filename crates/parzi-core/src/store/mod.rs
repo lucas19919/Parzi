@@ -107,7 +107,7 @@ impl SessionStore {
 
     pub fn get(&self, id: &str) -> Result<SessionMeta> {
         count_read(1);
-        let text = std::fs::read_to_string(self.dir(id).join("meta.json"))
+        let text = crate::read_settled(&self.dir(id).join("meta.json"))
             .map_err(|_| ParziError::Store(format!("session not found: {id}")))?;
         let mut meta: SessionMeta = serde_json::from_str(&text)?;
         self.cache().overlay(&mut meta);
