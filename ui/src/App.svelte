@@ -44,7 +44,7 @@
   import { follower } from "./lib/follow";
   import { draftKey, flushDrafts, loadDrafts, sameDraft, saveDrafts, withDraft } from "./lib/drafts";
 import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, moveId, putFront, saveHeld, stillWorking, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
-  import { addNotification, dropNotification, markSessionRead, type NotificationItem } from "./lib/notificationStore";
+  import { addNotification, dropNotification, markSessionRead, newsKey, type NotificationItem } from "./lib/notificationStore";
   import { covered } from "./lib/overlay";
   import { popover, placeAbove } from "./lib/popover";
   import { saveFile } from "./lib/saveFile";
@@ -1475,8 +1475,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function announce(session: string, what: string, kind: NotificationItem["kind"], opts: { key?: string; chime?: boolean } = {}) {
     if (session === shown && tab.kind === "session" && document.hasFocus()) return;
     const title = titleOf(session);
-    notify(`${title} ${what}`, session);
-    addNotification({ title, body: what[0].toUpperCase() + what.slice(1), kind, sessionId: session, key: opts.key });
+    // The card shows it when the column is open; a toast would say it twice.
+    if (!infoShown) notify(`${title} ${what}`, session);
+    addNotification({ title, body: what[0].toUpperCase() + what.slice(1), kind, sessionId: session, key: opts.key ?? newsKey(session) });
     if (opts.chime !== undefined) chime(opts.chime);
   }
 
@@ -1533,7 +1534,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       running = new Set(running).add(e.session);
     }
     if (e.kind === "tool_result" && e.name === "session.rename" && e.ok) void renamed(e.session);
-    if (e.kind === "tool_result" && e.name === "ui.show_artifact" && e.ok) announce(e.session, "published an artifact", "success", { chime: false });
     if (e.session !== shown) return;
     if (e.kind === "text") {
       pending += e.text;

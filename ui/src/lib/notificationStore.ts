@@ -6,20 +6,36 @@ export interface NotificationItem {
   body: string;
   kind: "info" | "success" | "error" | "question" | "approval" | "subagent";
   sessionId?: string;
-  key?: string;
+  /** What this is about. One line per key: new news on a key replaces the old. */
+  key: string;
   time: number;
   read: boolean;
 }
 
+/** A session's latest news. A pending ask keeps its own key until it is answered. */
+export const newsKey = (session: string) => `news:${session}`;
+
 const STORAGE_KEY = "parzi.notifications";
 const MAX_NOTIFICATIONS = 40;
+
+function oneForEachKey(list: NotificationItem[]): NotificationItem[] {
+  const seen = new Set<string>();
+  const out: NotificationItem[] = [];
+  for (const n of list) {
+    const key = n.key || newsKey(n.sessionId ?? n.id);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...n, key });
+  }
+  return out;
+}
 
 function loadInitial(): NotificationItem[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) return oneForEachKey(parsed);
     }
   } catch {}
   return [];
@@ -41,7 +57,7 @@ export function addNotification(item: Omit<NotificationItem, "id" | "time" | "re
     read: false,
   };
   notifications.update((list) => {
-    const updated = [next, ...list].slice(0, MAX_NOTIFICATIONS);
+    const updated = [next, ...list.filter((n) => n.key !== next.key)].slice(0, MAX_NOTIFICATIONS);
     persist(updated);
     return updated;
   });
