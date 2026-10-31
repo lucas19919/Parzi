@@ -5,6 +5,8 @@
   import ContextBreakdown from "./ContextBreakdown.svelte";
   import JobsCard from "./JobsCard.svelte";
   import NotificationsCard from "./NotificationsCard.svelte";
+  import TodoList, { todoItems, todoOpen } from "./TodoList.svelte";
+  import { dockedTodos, setTodoDocked } from "./todoDock";
   import { board } from "./providerStore";
   import { nameOf } from "./providerRows";
   import { api, onRunEvent, type GitStatus, type Question, type SessionMeta } from "./api";
@@ -35,8 +37,12 @@
   export let approvals: Approval[] = [];
   export let questions: Question[] = [];
   export let planInline = false;
+  export let todo: unknown = null;
   export let doc: { title: string; content: string; version: number } | null = null;
   $: if (doc) unfold("doc");
+  $: tasksHere = !!todo && $dockedTodos.has(session) && todoOpen(todo);
+  $: if (tasksHere) unfold("tasks");
+  $: taskItems = todoItems(todo);
   export let width = 264;
   // Open or shut: the column animates its own width instead of mounting
   // in and out, so the thread never jumps.
@@ -134,13 +140,20 @@
     on:pointercancel={endResize}
   />
   <NotificationsCard on:openSession />
+  {#if tasksHere}
+    <InfoCard id="tasks" title="Tasks">
+      <svelte:fragment slot="aside">{taskItems.filter((i) => i.state === "done").length} of {taskItems.length}</svelte:fragment>
+      <svelte:fragment slot="actions">
+        <button class="doc-btn" use:tooltip={"Move to the thread"} aria-label="Move tasks to the thread" on:click={() => setTodoDocked(session, false)}><Icon name="external" size={12} /></button>
+      </svelte:fragment>
+      <TodoList {todo} working={streaming} docked />
+    </InfoCard>
+  {/if}
   {#if doc}
     <InfoCard id="doc" title={doc.title}>
-      <svelte:fragment slot="aside">
-        <span class="doc-acts">
-          <button class="doc-btn" use:tooltip={"Open in this tab"} aria-label="Open document in this tab" on:click={() => dispatch("openDoc")}><Icon name="external" size={12} /></button>
-          <button class="doc-btn" use:tooltip={"Unpin"} aria-label="Unpin document" on:click={() => dispatch("closeDoc")}><Icon name="close" size={12} /></button>
-        </span>
+      <svelte:fragment slot="actions">
+        <button class="doc-btn" use:tooltip={"Open in this tab"} aria-label="Open document in this tab" on:click={() => dispatch("openDoc")}><Icon name="external" size={12} /></button>
+        <button class="doc-btn" use:tooltip={"Unpin"} aria-label="Unpin document" on:click={() => dispatch("closeDoc")}><Icon name="close" size={12} /></button>
       </svelte:fragment>
       {#key `${doc.title}:${doc.version}`}
         <div class="doc msg">{@html mdHtml(doc.content, $richReady)}</div>
@@ -295,10 +308,6 @@
   }
   .grip:hover::after {
     background: color-mix(in srgb, var(--text) 18%, transparent);
-  }
-  .doc-acts {
-    display: inline-flex;
-    gap: var(--space);
   }
   .doc-btn {
     flex: none;

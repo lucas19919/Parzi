@@ -136,7 +136,7 @@
             title={projectFilter === p.slug ? "Show all sessions" : `Show only ${p.title}`}
             on:click={() => toggleProject(p.slug)}
           >
-            <span class="badge small" style="--badge-h: {hueOf(p.slug)}">{p.title.trim().charAt(0).toUpperCase()}</span>
+            <span class="badge" style="--badge-h: {hueOf(p.slug)}">{p.title.trim().charAt(0).toUpperCase()}</span>
             <span class="name t-label">{p.title}</span>
             {#if counts.get(p.slug)}<span class="t-hint">{counts.get(p.slug)}</span>{/if}
           </button>
@@ -236,14 +236,15 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: var(--space);
-    padding: 0 calc(var(--space) * 2);
+    padding: calc(var(--space) * 4) calc(var(--space) * 2) 0;
   }
+  /* The same row as the sessions beside it, lined up with the search field. */
   .proj {
+    flex: none;
     display: flex;
     align-items: center;
-    gap: calc(var(--space) * 2);
-    min-height: var(--h-row);
+    gap: calc(var(--space) * 3);
+    min-height: var(--h-row-lg);
     padding: 0 calc(var(--space) * 2);
     background: none;
     border: none;
@@ -270,11 +271,6 @@
     color: var(--text);
     font-size: var(--fs-sm);
     font-weight: 600;
-  }
-  .badge.small {
-    width: 20px;
-    height: 20px;
-    font-size: var(--fs-xs);
   }
   .proj .name {
     flex: 1;

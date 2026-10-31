@@ -101,6 +101,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   let live = "";
   let liveReasoning = "";
   let liveTodo: unknown = null;
+  let threadTodo: unknown = null;
   let liveTools: LiveTool[] = [];
   let pending = "";
   let revealing = 0;
@@ -1883,6 +1884,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                   liveText={live}
                   {liveReasoning}
                 {liveTodo}
+                  bind:todo={threadTodo}
                   {liveTools}
                   {approval}
                   question={openQuestion}
@@ -1951,6 +1953,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             {approvals}
             questions={asks}
             {planInline}
+            todo={threadTodo}
             doc={pinnedDoc}
             width={infoWidth}
             open={infoShown}

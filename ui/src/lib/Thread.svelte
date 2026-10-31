@@ -20,6 +20,7 @@
   import ReplyButtons from "./ReplyButtons.svelte";
   import TaskCard from "./TaskCard.svelte";
   import TodoList from "./TodoList.svelte";
+  import { dockedTodos, setTodoDocked } from "./todoDock";
   import QuestionCard from "./QuestionCard.svelte";
   import ToolPictures, { picturesIn } from "./ToolPictures.svelte";
   import LiveLine from "./LiveLine.svelte";
@@ -43,6 +44,7 @@
   export let streaming = false;
   export let session = "";
   export let liveTodo: unknown = null;
+  export let todo: unknown = null;
   export let approval: Approval | null = null;
   export let question: Question | null = null;
   export let request: AgentRequest | null = null;
@@ -748,7 +750,7 @@ ${e.text}` : e.text;
   {/each}
 
   
-  {#if todo}<TodoList {todo} working={streaming} />{/if}
+  {#if todo && !$dockedTodos.has(session)}<TodoList {todo} working={streaming} on:dock={() => setTodoDocked(session, true)} />{/if}
   {#if streaming}<LiveLine text={lineText} tokens={lineTokens} />{/if}
   {#if !streaming && replyAt >= 0}
     {@const offer = items[replyAt]}

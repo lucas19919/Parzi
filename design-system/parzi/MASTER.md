@@ -18,8 +18,7 @@ selected, and link are mixed from those in `theme.css`. `--ok` `--warn`
 
 Spacing is `--space` (4px). Legal steps are 1, 2, 3, 4, 6, and 8 times that.
 Icons come only from `Icon.svelte`, at 16 (12 for the small glyphs in a row).
-Logos and letter badges are 28 in a list row, so the glyph inside is 16, and 20
-in a compact list.
+Logos and letter badges are 28 in a list row, so the glyph inside is 16.
 Motion is `--dur` (140ms) and `--dur-fast` (60ms) with `--ease-out`. Disabled
 is `--disabled` (0.5) everywhere; dimmed rows are `0.55`.
 Control heights are `--h-sm` (24), `--h` (28), `--h-row` (36), `--h-row-lg` (46).

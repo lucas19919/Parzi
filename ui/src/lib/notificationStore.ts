@@ -47,14 +47,6 @@ export function addNotification(item: Omit<NotificationItem, "id" | "time" | "re
   });
 }
 
-export function markAllRead() {
-  notifications.update((list) => {
-    const updated = list.map((n) => ({ ...n, read: true }));
-    persist(updated);
-    return updated;
-  });
-}
-
 export function markRead(id: string) {
   notifications.update((list) => {
     const updated = list.map((n) => (n.id === id ? { ...n, read: true } : n));

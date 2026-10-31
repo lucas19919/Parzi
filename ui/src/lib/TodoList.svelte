@@ -1,60 +1,96 @@
+<script lang="ts" context="module">
+  export type TodoItem = { title: string; state: "pending" | "active" | "done" };
+
+  export function todoItems(todo: unknown): TodoItem[] {
+    return (((todo ?? {}) as { items?: TodoItem[] }).items ?? []).filter((i) => i && typeof i.title === "string");
+  }
+
+  /** A list with work left. A finished one has nothing to say, so it goes away. */
+  export function todoOpen(todo: unknown): boolean {
+    return todoItems(todo).some((i) => i.state !== "done");
+  }
+</script>
+
 <script lang="ts">
+  import { createEventDispatcher } from "svelte";
   import { slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
+  import { tooltip } from "./tooltip";
 
   export let todo: unknown;
   export let working = false;
+  // In the session column the card around it already has the title and count.
+  export let docked = false;
 
-  type Item = { title: string; state: "pending" | "active" | "done" };
-  $: items = (((todo ?? {}) as { items?: Item[] }).items ?? []).filter((i) => i && typeof i.title === "string");
+  const dispatch = createEventDispatcher<{ dock: void }>();
+
+  $: items = todoItems(todo);
   $: done = items.filter((i) => i.state === "done").length;
-  $: finished = items.length > 0 && done === items.length;
 
-  let open: boolean | null = null;
-  // Done plans collapse away even if they were opened mid-run; reopening to review still works.
-  $: if (finished) open = false;
-  $: shown = open ?? !finished;
+  let shown = true;
 </script>
 
-{#if items.length}
-  <section class="todo" aria-label="Tasks">
-    <button class="head" aria-expanded={shown} on:click={() => (open = !shown)}>
-      <Icon name={shown ? "chevDown" : "chevRight"} size={12} />
-      <span class="title t-section">Tasks</span>
-      <span class="count">{done} of {items.length}</span>
-    </button>
-    {#if shown}
-      <ul transition:slide={{ duration: 160, easing: cubicOut }}>
-        {#each items as it, i (i)}
-          <li class="item {it.state}">
-            <span class="mark {it.state}" class:spin={working && it.state === "active"} aria-hidden="true" />
-            <span class="t">{it.title}</span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-  </section>
+{#if todoOpen(todo)}
+  {#if docked}
+    <ul>
+      {#each items as it, i (i)}
+        <li class="item {it.state}">
+          <span class="mark {it.state}" class:spin={working && it.state === "active"} aria-hidden="true" />
+          <span class="t">{it.title}</span>
+        </li>
+      {/each}
+    </ul>
+  {:else}
+    <section class="todo" aria-label="Tasks">
+      <div class="bar">
+        <button class="head" aria-expanded={shown} on:click={() => (shown = !shown)}>
+          <span class="title t-section">Tasks</span>
+          <span class="count t-hint">{done} of {items.length}</span>
+          <Icon name={shown ? "chevDown" : "chevRight"} size={12} />
+        </button>
+        <button class="icon-btn" use:tooltip={"Move to the session column"} aria-label="Move tasks to the session column" on:click={() => dispatch("dock")}>
+          <Icon name="close" size={12} />
+        </button>
+      </div>
+      {#if shown}
+        <ul transition:slide={{ duration: 160, easing: cubicOut }}>
+          {#each items as it, i (i)}
+            <li class="item {it.state}">
+              <span class="mark {it.state}" class:spin={working && it.state === "active"} aria-hidden="true" />
+              <span class="t">{it.title}</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+  {/if}
 {/if}
 
 <style>
   .todo {
     margin: var(--space) 0 0;
-    padding: calc(var(--space) * 2) calc(var(--space) * 2);
     border: 1px solid var(--line);
     border-radius: var(--radius);
   }
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space);
+    padding-right: var(--space);
+  }
   .head {
+    flex: 1;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 2);
-    width: 100%;
-    padding: var(--space) calc(var(--space) * 2) calc(var(--space) * 2);
+    height: var(--h-row);
+    padding: 0 calc(var(--space) * 3);
     background: none;
     border: none;
     color: var(--muted);
     font: inherit;
-    font-size: var(--fs-sm);
     text-align: left;
     cursor: pointer;
   }
@@ -68,6 +104,9 @@
     flex: none;
     font-variant-numeric: tabular-nums;
   }
+  .todo ul {
+    padding: 0 calc(var(--space) * 3) calc(var(--space) * 2);
+  }
   ul {
     display: flex;
     flex-direction: column;
@@ -79,8 +118,7 @@
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 3);
-    min-height: 30px;
-    padding: var(--space) calc(var(--space) * 2);
+    min-height: var(--h);
     color: var(--text);
     font-size: var(--fs-md);
   }

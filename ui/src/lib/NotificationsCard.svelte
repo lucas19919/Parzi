@@ -1,15 +1,43 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import Icon from "./Icon.svelte";
   import InfoCard from "./InfoCard.svelte";
-  import { notifications, markAllRead, markRead, clearNotifications, type NotificationItem } from "./notificationStore";
+  import { tooltip } from "./tooltip";
+  import { notifications, markRead, clearNotifications, type NotificationItem } from "./notificationStore";
 
   const dispatch = createEventDispatcher<{ openSession: { id: string } }>();
 
   $: unread = $notifications.filter((n) => !n.read).length;
 
+  interface Row {
+    ids: string[];
+    title: string;
+    body: string;
+    sessionId?: string;
+    time: number;
+    unread: boolean;
+  }
+
+  // The same news from the same session in a row reads as one line with a count.
+  function group(list: NotificationItem[]): Row[] {
+    const rows: Row[] = [];
+    for (const n of list) {
+      const last = rows[rows.length - 1];
+      if (last && last.sessionId === n.sessionId && last.title === n.title && last.body === n.body) {
+        last.ids.push(n.id);
+        last.unread ||= !n.read;
+      } else {
+        rows.push({ ids: [n.id], title: n.title, body: n.body, sessionId: n.sessionId, time: n.time, unread: !n.read });
+      }
+    }
+    return rows;
+  }
+
+  $: rows = group($notifications);
+
   function timeAgo(ms: number): string {
     const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
-    if (s < 60) return "just now";
+    if (s < 60) return "now";
     const m = Math.floor(s / 60);
     if (m < 60) return `${m}m`;
     const h = Math.floor(m / 60);
@@ -17,29 +45,32 @@
     return `${Math.floor(h / 24)}d`;
   }
 
-  function open(n: NotificationItem) {
-    markRead(n.id);
-    if (n.sessionId) dispatch("openSession", { id: n.sessionId });
+  function open(r: Row) {
+    r.ids.forEach(markRead);
+    if (r.sessionId) dispatch("openSession", { id: r.sessionId });
   }
 </script>
 
-{#if $notifications.length}
+{#if rows.length}
   <div class="pin">
     <InfoCard id="notifications" title="Notifications">
-      <svelte:fragment slot="aside">{#if unread}<span class="fresh"><b>{unread}</b> new</span>{/if}</svelte:fragment>
+      <svelte:fragment slot="aside">{#if unread}{unread} new{/if}</svelte:fragment>
+      <svelte:fragment slot="actions">
+        <button class="icon-btn" use:tooltip={"Clear all"} aria-label="Clear all notifications" on:click={clearNotifications}>
+          <Icon name="close" size={12} />
+        </button>
+      </svelte:fragment>
       <div class="list">
-        {#each $notifications as n (n.id)}
-          <button class="item" class:unread={!n.read} on:click={() => open(n)}>
-            <i class="dot" />
-            <span class="name">{n.title}</span>
-            <span class="time">{timeAgo(n.time)}</span>
-            {#if n.body}<span class="body">{n.body}</span>{/if}
+        {#each rows as r (r.ids[0])}
+          <button class="item" class:unread={r.unread} on:click={() => open(r)}>
+            <span class="top">
+              <span class="name t-label">{r.title}</span>
+              {#if r.ids.length > 1}<span class="t-hint">×{r.ids.length}</span>{/if}
+              <span class="time t-hint">{timeAgo(r.time)}</span>
+            </span>
+            {#if r.body}<span class="body t-hint">{r.body}</span>{/if}
           </button>
         {/each}
-      </div>
-      <div class="acts">
-        {#if unread}<button type="button" on:click={markAllRead}>Mark read</button>{/if}
-        <button type="button" on:click={clearNotifications}>Clear</button>
       </div>
     </InfoCard>
   </div>
@@ -51,57 +82,40 @@
     top: 0;
     z-index: 2;
     flex: none;
+    background: var(--bg);
+    border-radius: var(--radius);
   }
+  /* Rows run to the card's edges, divided like the rows in Settings. */
   .list {
     display: flex;
     flex-direction: column;
-    gap: var(--space);
     max-height: calc(var(--space) * 48);
+    margin: 0 calc(var(--space) * -3) calc(var(--space) * -3);
     overflow-y: auto;
-  }
-  .fresh b {
-    color: var(--text);
-    font-weight: 600;
+    border-radius: 0 0 var(--radius) var(--radius);
   }
   .item {
     display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    column-gap: calc(var(--space) * 2);
-    row-gap: calc(var(--space) / 2);
+    flex-direction: column;
+    gap: var(--space);
     width: 100%;
-    min-height: 36px;
-    margin: 0;
+    flex: none;
     padding: calc(var(--space) * 2) calc(var(--space) * 3);
     background: none;
     border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
+    border-top: 1px solid var(--line);
     font: inherit;
-    font-size: var(--fs-sm);
-    font-weight: 500;
     text-align: left;
     cursor: pointer;
   }
   .item:hover {
     background: var(--hover);
   }
-  .dot {
-    align-self: center;
-    width: 8px;
-    height: 8px;
-    flex: none;
-    border-radius: 50%;
-  }
-  .unread .dot {
-    background: var(--accent);
-  }
-  .unread {
-    color: var(--text);
-  }
-  .unread .name {
-    font-weight: 600;
-    color: var(--text);
+  .top {
+    display: flex;
+    align-items: baseline;
+    gap: calc(var(--space) * 2);
+    min-width: 0;
   }
   .name {
     flex: 1;
@@ -110,41 +124,17 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .time {
+  .item:not(.unread) .name {
     color: var(--muted);
-    font-size: var(--fs-xs);
+    font-weight: 400;
+  }
+  .time {
+    flex: none;
     font-variant-numeric: tabular-nums;
-    white-space: nowrap;
   }
   .body {
-    flex: 1 1 100%;
-    margin-left: calc(var(--space) * 4);
-    color: var(--muted);
-    font-size: var(--fs-xs);
-    line-height: 1.35;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .acts {
-    display: flex;
-    justify-content: flex-end;
-    gap: calc(var(--space) * 2);
-  }
-  .acts button {
-    height: calc(var(--space) * 6);
-    padding: 0 calc(var(--space) * 3);
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    color: var(--muted);
-    font: inherit;
-    font-size: var(--fs-sm);
-    font-weight: 500;
-    cursor: pointer;
-  }
-  .acts button:hover {
-    background: var(--hover);
-    color: var(--text);
   }
 </style>

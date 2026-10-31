@@ -48,11 +48,14 @@
 </script>
 
 <section class="card" class:open>
-  <button class="head" aria-expanded={open} on:click={toggle}>
-    <span class="title t-section">{title}</span>
-    <span class="aside">{#if !open || !foldedAside}<slot name="aside" />{/if}</span>
-    <span class="chev"><Icon name="chevDown" size={12} /></span>
-  </button>
+  <div class="bar">
+    <button class="head" aria-expanded={open} on:click={toggle}>
+      <span class="title t-section">{title}</span>
+      <span class="aside">{#if !open || !foldedAside}<slot name="aside" />{/if}</span>
+      <span class="chev"><Icon name="chevDown" size={12} /></span>
+    </button>
+    {#if open && $$slots.actions}<span class="actions"><slot name="actions" /></span>{/if}
+  </div>
   {#if open}
     <div class="body"><slot /></div>
   {/if}
@@ -65,27 +68,38 @@
     border: 1px solid var(--line);
     border-radius: var(--radius);
   }
+  .bar {
+    display: flex;
+    align-items: center;
+    border-radius: var(--radius);
+  }
+  .bar:hover {
+    background: var(--hover);
+  }
+  .open .bar {
+    border-radius: var(--radius) var(--radius) 0 0;
+  }
+  .actions {
+    flex: none;
+    display: inline-flex;
+    gap: var(--space);
+    padding-right: var(--space);
+  }
   .head {
+    flex: 1;
+    min-width: 0;
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 2);
-    width: 100%;
     height: var(--h-row);
     padding: 0 calc(var(--space) * 3);
     background: none;
     border: none;
-    border-radius: var(--radius);
     color: var(--text);
     font: inherit;
     font-size: var(--fs-sm);
     text-align: left;
     cursor: pointer;
-  }
-  .head:hover {
-    background: var(--hover);
-  }
-  .open .head {
-    border-radius: var(--radius) var(--radius) 0 0;
   }
   .title {
     flex: none;
