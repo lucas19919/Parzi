@@ -164,6 +164,16 @@ kbd {
 .btn:active:not(:disabled) { transform: translateY(0) scale(0.97); transition-duration: var(--dur-fast); }
 .btn:disabled { opacity: var(--disabled); cursor: default; box-shadow: none; }
 
+/* The small quiet button at the foot of a side card. */
+.btn.sm {
+  align-self: flex-end;
+  height: var(--h-sm);
+  padding: 0 calc(var(--space) * 3);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.btn.sm:hover:not(:disabled) { color: var(--text); border-color: var(--line); }
+
 .icon-btn {
   position: relative;
   width: var(--h); height: var(--h); flex: none; display: inline-flex; align-items: center; justify-content: center;
@@ -266,6 +276,25 @@ kbd {
   color: var(--text);
   font-weight: 600;
 }
+
+/* One line in a side card: icon, text, a figure on the right. */
+.info-line {
+  display: flex; align-items: center; gap: calc(var(--space) * 2);
+  min-height: var(--h-sm);
+  color: var(--text); font-size: var(--fs-sm);
+}
+.info-line svg { flex: none; color: var(--muted); }
+.info-line.quiet, .info-line .quiet { color: var(--muted); }
+button.info-line {
+  flex: none; width: 100%; margin: 0; padding: 0;
+  background: none; border: none; font: inherit; font-size: var(--fs-sm); text-align: left; cursor: pointer;
+}
+button.info-line:hover { color: var(--text); }
+button.info-line.row { padding: calc(var(--space) * 2); border-radius: var(--radius); }
+button.info-line.row:hover { background: var(--hover); }
+.info-v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.info-v.mono { font-family: var(--mono); font-size: var(--fs-xs); }
+.info-time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* Cards inside a Page: a title row, then divided rows. */
 .page .rows {

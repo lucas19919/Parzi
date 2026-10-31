@@ -2,6 +2,7 @@
   import { createEventDispatcher } from "svelte";
   import Icon from "./Icon.svelte";
   import InfoCard from "./InfoCard.svelte";
+  import type { IconName } from "./icons";
   import { tooltip } from "./tooltip";
   import { notifications, markRead, clearNotifications, type NotificationItem } from "./notificationStore";
 
@@ -9,10 +10,20 @@
 
   $: unread = $notifications.filter((n) => !n.read).length;
 
+  const ICONS: Record<NotificationItem["kind"], IconName> = {
+    info: "bell",
+    success: "checkCircle",
+    error: "xCircle",
+    question: "alert",
+    approval: "alert",
+    subagent: "bot",
+  };
+
   interface Row {
     ids: string[];
     title: string;
     body: string;
+    kind: NotificationItem["kind"];
     sessionId?: string;
     time: number;
     unread: boolean;
@@ -27,7 +38,7 @@
         last.ids.push(n.id);
         last.unread ||= !n.read;
       } else {
-        rows.push({ ids: [n.id], title: n.title, body: n.body, sessionId: n.sessionId, time: n.time, unread: !n.read });
+        rows.push({ ids: [n.id], title: n.title, body: n.body, kind: n.kind, sessionId: n.sessionId, time: n.time, unread: !n.read });
       }
     }
     return rows;
@@ -55,23 +66,16 @@
   <div class="pin">
     <InfoCard id="notifications" title="Notifications">
       <svelte:fragment slot="aside">{#if unread}{unread} new{/if}</svelte:fragment>
-      <svelte:fragment slot="actions">
-        <button class="icon-btn" use:tooltip={"Clear all"} aria-label="Clear all notifications" on:click={clearNotifications}>
-          <Icon name="close" size={12} />
-        </button>
-      </svelte:fragment>
       <div class="list">
         {#each rows as r (r.ids[0])}
-          <button class="item" class:unread={r.unread} on:click={() => open(r)}>
-            <span class="top">
-              <span class="name t-label">{r.title}</span>
-              {#if r.ids.length > 1}<span class="t-hint">×{r.ids.length}</span>{/if}
-              <span class="time t-hint">{timeAgo(r.time)}</span>
-            </span>
-            {#if r.body}<span class="body t-hint">{r.body}</span>{/if}
+          <button class="info-line" class:quiet={!r.unread} use:tooltip={r.body} on:click={() => open(r)}>
+            <Icon name={ICONS[r.kind] ?? "bell"} size={12} />
+            <span class="info-v">{r.title}</span>
+            <span class="info-time">{r.ids.length > 1 ? `×${r.ids.length} · ` : ""}{timeAgo(r.time)}</span>
           </button>
         {/each}
       </div>
+      <button class="btn sm" on:click={clearNotifications}>Clear</button>
     </InfoCard>
   </div>
 {/if}
@@ -85,56 +89,11 @@
     background: var(--bg);
     border-radius: var(--radius);
   }
-  /* Rows run to the card's edges, divided like the rows in Settings. */
   .list {
     display: flex;
     flex-direction: column;
-    max-height: calc(var(--space) * 48);
-    margin: 0 calc(var(--space) * -3) calc(var(--space) * -3);
-    overflow-y: auto;
-    border-radius: 0 0 var(--radius) var(--radius);
-  }
-  .item {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space);
-    width: 100%;
-    flex: none;
-    padding: calc(var(--space) * 2) calc(var(--space) * 3);
-    background: none;
-    border: none;
-    border-top: 1px solid var(--line);
-    font: inherit;
-    text-align: left;
-    cursor: pointer;
-  }
-  .item:hover {
-    background: var(--hover);
-  }
-  .top {
-    display: flex;
-    align-items: baseline;
     gap: calc(var(--space) * 2);
-    min-width: 0;
-  }
-  .name {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .item:not(.unread) .name {
-    color: var(--muted);
-    font-weight: 400;
-  }
-  .time {
-    flex: none;
-    font-variant-numeric: tabular-nums;
-  }
-  .body {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    max-height: calc(var(--space) * 48);
+    overflow-y: auto;
   }
 </style>

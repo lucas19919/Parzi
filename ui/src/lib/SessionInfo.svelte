@@ -162,18 +162,18 @@
   {/if}
   <InfoCard id="env" title="Environment" foldedAside>
     <svelte:fragment slot="aside">{remoteHost ? "Remote" : "Local"}</svelte:fragment>
-    <div class="line">
+    <div class="info-line">
       <Icon name={remoteHost ? "server" : "desktop"} size={12} />
-      <span class="v">{remoteHost || "This computer"}</span>
+      <span class="info-v">{remoteHost || "This computer"}</span>
     </div>
-    <div class="line" title={folder}>
+    <div class="info-line" title={folder}>
       <Icon name={project ? "project" : "folder"} size={12} />
-      <span class="v">{projectTitle || (folder ? folderName(folder) : "No folder")}</span>
+      <span class="info-v">{projectTitle || (folder ? folderName(folder) : "No folder")}</span>
     </div>
     {#if branch}
-      <div class="line">
+      <div class="info-line">
         <Icon name="branch" size={12} />
-        <span class="v mono">{branch}</span>
+        <span class="info-v mono">{branch}</span>
       </div>
     {/if}
   </InfoCard>
@@ -195,11 +195,11 @@
     <InfoCard id="usage" title="Usage">
       <svelte:fragment slot="aside">{costUsd > 0 ? `$${costUsd.toFixed(2)}` : ""}</svelte:fragment>
       {#if tokensIn || tokensOut}
-        <div class="line"><span class="v">{kTok(tokensIn)} in · {kTok(tokensOut)} out</span></div>
+        <div class="info-line"><span class="info-v">{kTok(tokensIn)} in · {kTok(tokensOut)} out</span></div>
       {/if}
       {#each limits as w (w.label)}
-        <div class="line quiet">
-          <span class="v">{nameOf(provider)} {w.label}</span>
+        <div class="info-line quiet">
+          <span class="info-v">{nameOf(provider)} {w.label}</span>
           <span class="pct">{Math.round(w.used_percent)}%</span>
         </div>
       {/each}
@@ -213,18 +213,18 @@
           <span class="add">+{git.added.toLocaleString()}</span>&nbsp;<span class="del">−{git.removed.toLocaleString()}</span>
         {/if}
       </svelte:fragment>
-      <div class="line">
-        <span class="v" class:quiet={!git.changed && !git.untracked}>
+      <div class="info-line">
+        <span class="info-v" class:quiet={!git.changed && !git.untracked}>
           {git.changed || git.untracked ? [git.changed ? `${git.changed} changed` : "", git.untracked ? `${git.untracked} new` : ""].filter(Boolean).join(" · ") : "No changes"}
         </span>
       </div>
       {#if git.upstream && (git.ahead || git.behind)}
-        <div class="line quiet"><span class="v">{[git.ahead ? `${git.ahead} ahead` : "", git.behind ? `${git.behind} behind` : ""].filter(Boolean).join(" · ")}</span></div>
+        <div class="info-line quiet"><span class="info-v">{[git.ahead ? `${git.ahead} ahead` : "", git.behind ? `${git.behind} behind` : ""].filter(Boolean).join(" · ")}</span></div>
       {/if}
       {#if pr}
-        <button class="line row" use:tooltip={pr.title} on:click={() => pr && dispatch("openUrl", { url: pr.url })}>
+        <button class="info-line row" use:tooltip={pr.title} on:click={() => pr && dispatch("openUrl", { url: pr.url })}>
           <Icon name="pr" size={12} />
-          <span class="v">PR #{pr.number}</span>
+          <span class="info-v">PR #{pr.number}</span>
           {#if pr.checks !== "none"}
             <span class="checks {pr.checks}"><Icon name={pr.checks === "pass" ? "checkCircle" : pr.checks === "fail" ? "xCircle" : "clock"} size={12} /></span>
           {/if}
@@ -237,14 +237,14 @@
     <InfoCard id="plan" title="Project plan">
       <svelte:fragment slot="aside">{planAside}</svelte:fragment>
       {#if plan && planCount}
-        <button class="line row plan-row" use:tooltip={planInline ? "Hide the plan checklist" : "Show the plan checklist"} on:click={() => dispatch("plan")}>
+        <button class="info-line row plan-row" use:tooltip={planInline ? "Hide the plan checklist" : "Show the plan checklist"} on:click={() => dispatch("plan")}>
           <Icon name="plan" size={12} />
-          <span class="v">{planInline ? "Hide plan" : plan.title || "Plan"}</span>
+          <span class="info-v">{planInline ? "Hide plan" : plan.title || "Plan"}</span>
         </button>
       {:else}
-        <button class="line row plan-row" use:tooltip={"Show why the plan can't be read"} on:click={() => dispatch("plan")}>
+        <button class="info-line row plan-row" use:tooltip={"Show why the plan can't be read"} on:click={() => dispatch("plan")}>
           <Icon name="plan" size={12} />
-          <span class="v">Plan unreadable</span>
+          <span class="info-v">Plan unreadable</span>
         </button>
       {/if}
     </InfoCard>
@@ -253,13 +253,13 @@
   <InfoCard id="agents" title="Agents">
     <svelte:fragment slot="aside">{busy ? `${busy} running` : helpers.length ? helpers.length : ""}</svelte:fragment>
     {#if !helpers.length}
-      <div class="line"><span class="v quiet">No agents yet</span></div>
+      <div class="info-line"><span class="info-v quiet">No agents yet</span></div>
     {/if}
     {#each helpers as h (h.id)}
       {@const tone = sessionTone(h, running, waiting)}
-      <button class="line row" use:tooltip={TONE_WORDS[tone]} on:click={() => dispatch("openSession", { id: h.id })}>
+      <button class="info-line row" use:tooltip={TONE_WORDS[tone]} on:click={() => dispatch("openSession", { id: h.id })}>
         <i class="dot t-{tone}" />
-        <span class="v">{h.title || "Untitled"}</span>
+        <span class="info-v">{h.title || "Untitled"}</span>
       </button>
     {/each}
   </InfoCard>
@@ -335,48 +335,6 @@
     font-size: var(--fs-md);
     line-height: 1.55;
     overflow-wrap: anywhere;
-  }
-  .line {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    min-height: calc(var(--space) * 6);
-    color: var(--text);
-    font-size: var(--fs-sm);
-  }
-  .line :global(svg) {
-    flex: none;
-    color: var(--muted);
-  }
-  .line.quiet,
-  .quiet {
-    color: var(--muted);
-  }
-  .row {
-    width: 100%;
-    margin: 0;
-    padding: calc(var(--space) * 2);
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    font: inherit;
-    font-size: var(--fs-sm);
-    text-align: left;
-    cursor: pointer;
-  }
-  .row:hover {
-    background: var(--hover);
-  }
-  .v {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .mono {
-    font-family: var(--mono);
-    font-size: var(--fs-xs);
   }
   .pct {
     flex: none;

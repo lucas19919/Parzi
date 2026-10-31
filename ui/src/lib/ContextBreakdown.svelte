@@ -89,7 +89,7 @@
       <span class="p">{share(free)}</span>
     </div>
   </div>
-  <button class="compact" disabled={compacting || streaming} on:click={() => dispatch("compact")}>
+  <button class="btn sm" disabled={compacting || streaming} on:click={() => dispatch("compact")}>
     {compacting ? "Compacting…" : "Compact session"}
   </button>
 </div>
@@ -206,26 +206,5 @@
   .note {
     font-size: var(--fs-sm);
     color: var(--muted);
-  }
-  .compact {
-    align-self: flex-end;
-    height: calc(var(--space) * 6);
-    padding: 0 calc(var(--space) * 3);
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    color: var(--muted);
-    font: inherit;
-    font-size: var(--fs-sm);
-    font-weight: 500;
-    cursor: pointer;
-  }
-  .compact:hover:not(:disabled) {
-    background: var(--hover);
-    color: var(--text);
-  }
-  .compact:disabled {
-    opacity: var(--disabled);
-    cursor: default;
   }
 </style>
