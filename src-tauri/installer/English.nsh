@@ -1,12 +1,31 @@
-; Parzi English overrides for the Tauri NSIS template strings.
-; Included AFTER the stock English.nsh, so these win. Keep $vars intact.
+; Parzi's English strings for the Tauri NSIS template.
+; This replaces the stock file, it does not add to it: a string missing here
+; shows up blank in the installer. Keep $vars intact.
 
-LangString alreadyInstalledLong ${LANG_ENGLISH} "${PRODUCTNAME} ${VERSION} is already here. Pick what to do and press Next to continue."
+LangString addOrReinstall ${LANG_ENGLISH} "Install it again"
+LangString alreadyInstalled ${LANG_ENGLISH} "Already installed"
+LangString alreadyInstalledLong ${LANG_ENGLISH} "${PRODUCTNAME} ${VERSION} is already on this computer."
 LangString appRunning ${LANG_ENGLISH} "${PRODUCTNAME} is running. Close it first, then continue."
 LangString appRunningOkKill ${LANG_ENGLISH} "${PRODUCTNAME} is running.$\nPress OK and the installer will close it for you."
+LangString chooseMaintenanceOption ${LANG_ENGLISH} "What would you like to do?"
+LangString chooseHowToInstall ${LANG_ENGLISH} "How should this version go on?"
 LangString createDesktop ${LANG_ENGLISH} "Put Parzi on my desktop"
 LangString deleteAppData ${LANG_ENGLISH} "Also delete my threads, notes and settings (.parzi)"
+LangString dontUninstall ${LANG_ENGLISH} "Install over it"
+LangString dontUninstallDowngrade ${LANG_ENGLISH} "Install over it (not possible with an older version)"
 LangString failedToKillApp ${LANG_ENGLISH} "Could not close ${PRODUCTNAME}. Close it yourself, then try again."
-LangString unableToUninstall ${LANG_ENGLISH} "Could not uninstall - is Parzi still running?"
+LangString installingWebview2 ${LANG_ENGLISH} "Installing WebView2..."
+LangString newerVersionInstalled ${LANG_ENGLISH} "A newer version of ${PRODUCTNAME} is on this computer. To go back to ${VERSION}, remove it first. Your sessions and settings stay."
+LangString older ${LANG_ENGLISH} "older"
+LangString olderOrUnknownVersionInstalled ${LANG_ENGLISH} "An $R4 version of ${PRODUCTNAME} is on this computer. Removing it first is the cleanest. Your sessions and settings stay either way."
+LangString silentDowngrades ${LANG_ENGLISH} "This installer cannot go back to an older version silently. Run it normally instead.$\n"
+LangString unableToUninstall ${LANG_ENGLISH} "Could not uninstall. Is Parzi still running?"
 LangString uninstallApp ${LANG_ENGLISH} "Uninstall ${PRODUCTNAME}"
-LangString uninstallBeforeInstalling ${LANG_ENGLISH} "Uninstall first, then install fresh"
+LangString uninstallBeforeInstalling ${LANG_ENGLISH} "Remove it first, then install"
+LangString unknown ${LANG_ENGLISH} "unknown"
+LangString webview2AbortError ${LANG_ENGLISH} "Could not install WebView2, and Parzi cannot run without it. Try running the installer again."
+LangString webview2DownloadError ${LANG_ENGLISH} "Could not download WebView2: $0"
+LangString webview2DownloadSuccess ${LANG_ENGLISH} "WebView2 downloaded"
+LangString webview2Downloading ${LANG_ENGLISH} "Downloading WebView2..."
+LangString webview2InstallError ${LANG_ENGLISH} "Could not install WebView2, exit code $1"
+LangString webview2InstallSuccess ${LANG_ENGLISH} "WebView2 installed"

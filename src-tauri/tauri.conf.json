@@ -37,7 +37,6 @@
     "publisher": "Parzi",
     "copyright": "Copyright © 2026 Parzi",
     "homepage": "https://github.com/lucas19919/Parzi",
-    "licenseFile": "../LICENSE",
     "category": "DeveloperTool",
     "shortDescription": "Lean multi-model agent harness",
     "longDescription": "Parzi runs Claude Code, Codex, OpenCode, Grok, Antigravity and Cursor through one harness, on your own sign-ins.",
@@ -59,8 +58,7 @@
         "sidebarImage": "installer/sidebar.bmp",
         "installerIcon": "icons/icon.ico",
         "uninstallerIcon": "icons/icon.ico",
-        "uninstallerHeaderImage": "installer/header.bmp",
-        "startMenuFolder": "Parzi"
+        "uninstallerHeaderImage": "installer/header.bmp"
       }
     },
     "macOS": {
