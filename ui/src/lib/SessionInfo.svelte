@@ -237,8 +237,6 @@
     </InfoCard>
   {/if}
 
-  <JobsCard {session} />
-
   <InfoCard id="agents" title="Agents">
     <svelte:fragment slot="aside">{busy ? `${busy} running` : helpers.length ? helpers.length : ""}</svelte:fragment>
     {#if !helpers.length}
@@ -252,6 +250,8 @@
       </button>
     {/each}
   </InfoCard>
+
+  <JobsCard {session} />
 </aside>
 
 <style>

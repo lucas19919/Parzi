@@ -425,9 +425,11 @@
 <style>
   .packs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: calc(var(--space) * 3); }
   .pack { position: relative; }
+  .pack > .pack-btn { width: 100%; }
   .pack.on .pack-btn { border-color: var(--accent); background: var(--line); color: var(--text); }
   .pp {
     position: relative; display: flex; flex-direction: column; gap: var(--space); height: 68px; padding: calc(var(--space) * 3) calc(var(--space) * 3) 0;
+    width: 100%; box-sizing: border-box;
     border-radius: var(--radius); overflow: hidden; background: var(--pp-st);
     border: 1px solid color-mix(in srgb, var(--pp-tx) 12%, var(--pp-st));
   }

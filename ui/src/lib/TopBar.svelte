@@ -34,15 +34,6 @@
 <header class="topbar" on:mousedown={startWindowDrag}>
   <div class="left">
       <button
-        class="icon-btn"
-        aria-label="Settings"
-        use:tooltip={$updateVersion ? "Settings, update available" : "Settings (Ctrl+,)"}
-        on:click={() => dispatch("settings")}
-      >
-        <ChromeIcon name="settings" />
-        {#if $updateVersion}<span class="dot" />{/if}
-      </button>
-      <button
         class="icon-btn manager-btn"
         aria-label="Session manager"
         use:tooltip={"Sessions"}
@@ -63,6 +54,15 @@
   </div>
 
   <div class="right">
+      <button
+        class="icon-btn"
+        aria-label="Settings"
+        use:tooltip={$updateVersion ? "Settings, update available" : "Settings (Ctrl+,)"}
+        on:click={() => dispatch("settings")}
+      >
+        <ChromeIcon name="settings" />
+        {#if $updateVersion}<span class="dot" />{/if}
+      </button>
       {#if panelable}
         <button
           class="icon-btn panel-btn"
