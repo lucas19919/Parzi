@@ -332,7 +332,7 @@
     opacity: 1;
   }
   .del:hover {
-    color: var(--bad);
+    color: var(--bad-text);
     background: transparent;
   }
   .empty {

@@ -275,7 +275,7 @@
   }
 
   .usage-label { width: 96px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .row-label.bad { color: var(--bad); }
+  .row-label.bad { color: var(--bad-text); }
   .usage-bar { flex: 1; min-width: 40px; height: 5px; border-radius: var(--radius-sm); background: var(--line); overflow: hidden; }
   .usage-fill { display: block; height: 100%; background: var(--accent); border-radius: var(--radius-sm); }
   .usage-fill.hot { background: var(--warn); }

@@ -494,7 +494,7 @@
   .err {
     padding: calc(var(--space) * 3) calc(var(--space) * 4) 0;
     font-size: var(--fs-sm);
-    color: var(--bad);
+    color: var(--bad-text);
   }
   .source {
     margin: calc(var(--space) * 2) calc(var(--space) * 4) calc(var(--space) * 4);

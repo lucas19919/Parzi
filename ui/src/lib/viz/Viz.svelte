@@ -117,7 +117,7 @@
   }
   .why :global(svg) {
     margin-top: var(--space);
-    color: var(--warn);
+    color: var(--warn-text);
   }
   summary {
     display: inline-flex;

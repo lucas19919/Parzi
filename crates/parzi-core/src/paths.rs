@@ -164,8 +164,8 @@ text_dim = \"#9B9B9B\"\nbar = \"#1C1C1C\"\nborder = \"#2A2A2A\"\n\n\
     (
         "light",
         "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
-[colors]\nsidebar = \"#F6F0E6\"\nstage = \"#F6F0E6\"\naccent = \"#6B6156\"\ntext = \"#6B6156\"\n\
-text_dim = \"#9A8C7A\"\nbar = \"#FBF7F1\"\nborder = \"#E6DCCE\"\npanel = \"#FBF7F1\"\n\n\
+[colors]\nsidebar = \"#F6F0E6\"\nstage = \"#F6F0E6\"\naccent = \"#4A4238\"\ntext = \"#4A4238\"\n\
+text_dim = \"#70685E\"\nbar = \"#FBF7F1\"\nborder = \"#E6DCCE\"\npanel = \"#FBF7F1\"\n\n\
 [background]\nimage = \"\"\n",
     ),
     (
@@ -242,6 +242,13 @@ text_dim = \"#71717A\"\nbar = \"#FFFFFF\"\nborder = \"#E4E4E7\"\npanel = \"#FFFF
 text_dim = \"#71717A\"\nbar = \"#FFFFFF\"\nborder = \"#ECECEE\"\npanel = \"#FFFFFF\"\n\n\
 [background]\nimage = \"\"\ndim = 0.06\nvignette = 0.02\nblur = 0.0\ngrain = 0.0\n",
     ),
+    (
+        "light",
+        "[font]\nfamily = \"Inter\"\nsize = 14\nmono = \"JetBrains Mono\"\nmono_size = 13\n\n\
+[colors]\nsidebar = \"#F6F0E6\"\nstage = \"#F6F0E6\"\naccent = \"#6B6156\"\ntext = \"#6B6156\"\n\
+text_dim = \"#9A8C7A\"\nbar = \"#FBF7F1\"\nborder = \"#E6DCCE\"\npanel = \"#FBF7F1\"\n\n\
+[background]\nimage = \"\"\n",
+    ),
 ];
 
 const GLASS_TAIL: &str = "\n[glass]\nopacity = 0.85\nradius = 12\nblur_px = 20\nshadow = true\n";
@@ -307,6 +314,73 @@ fn retire_legacy_packs(root: &std::path::Path) {
 
 #[cfg(test)]
 mod tests {
+    fn rgb(hex: &str) -> [f64; 3] {
+        let n = u32::from_str_radix(hex.trim().trim_start_matches('#'), 16).unwrap();
+        [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(f64::from)
+    }
+
+    fn mix(a: [f64; 3], pct: f64, b: [f64; 3]) -> [f64; 3] {
+        [0, 1, 2].map(|i| a[i] * pct / 100.0 + b[i] * (1.0 - pct / 100.0))
+    }
+
+    fn luminance(c: [f64; 3]) -> f64 {
+        let [r, g, b] = c.map(|v| {
+            let v = v / 255.0;
+            if v <= 0.039_28 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        });
+        0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+
+    fn contrast(a: [f64; 3], b: [f64; 3]) -> f64 {
+        let (x, y) = (luminance(a), luminance(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    /// The value after `--name:` in theme.css, up to the semicolon.
+    fn token<'a>(css: &'a str, name: &str) -> &'a str {
+        let from = css.find(&format!("--{name}:")).unwrap() + name.len() + 3;
+        css[from..].split(';').next().unwrap().trim()
+    }
+
+    fn percent(css: &str, name: &str) -> f64 {
+        let value = token(css, name);
+        let end = value.find('%').unwrap();
+        let start = value[..end].rfind(' ').unwrap() + 1;
+        value[start..end].parse().unwrap()
+    }
+
+    #[test]
+    fn every_built_in_theme_has_readable_text() {
+        const AA: f64 = 4.5;
+        let css = include_str!("../../../ui/src/theme.css");
+        for (name, pack) in super::BUILTIN_PACKS {
+            let pack: toml::Value = toml::from_str(pack).unwrap();
+            let colors = &pack["colors"];
+            let color = |key: &str| colors.get(key).and_then(toml::Value::as_str);
+            let text = rgb(color("text").unwrap());
+            let bg = rgb(color("stage").unwrap());
+            let panel = color("panel").map_or_else(|| mix(text, 6.0, bg), rgb);
+            let muted = mix(text, percent(css, "muted"), bg);
+            let mut shown = vec![("text", text), ("muted", muted)];
+            for status in ["ok", "warn", "bad"] {
+                let pure = rgb(token(css, status));
+                let label = format!("{status}-text");
+                let at = percent(css, &label);
+                shown.push((status, mix(pure, at, text)));
+            }
+            for (what, ink) in shown {
+                for (surface, under) in [("background", bg), ("panel", panel)] {
+                    let got = contrast(ink, under);
+                    assert!(got >= AA, "{name}: {what} on {surface} is {got:.2}:1");
+                }
+            }
+        }
+    }
+
     use super::*;
 
     #[test]

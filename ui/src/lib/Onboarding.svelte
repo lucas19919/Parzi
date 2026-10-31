@@ -528,7 +528,7 @@
     color: var(--muted);
   }
   .sub.ok {
-    color: var(--ok);
+    color: var(--ok-text);
   }
   .line {
     flex: 1;
@@ -623,7 +623,7 @@
     border-color: var(--accent);
   }
   .result.bad {
-    color: var(--bad);
+    color: var(--bad-text);
   }
   .setup-log {
     list-style: none;
@@ -652,10 +652,10 @@
     align-self: center;
   }
   .mark.ok {
-    color: var(--ok);
+    color: var(--ok-text);
   }
   .mark.fail {
-    color: var(--bad);
+    color: var(--bad-text);
   }
   .spin {
     width: 10px;
@@ -744,7 +744,7 @@
   }
   .result {
     font-size: var(--fs-sm);
-    color: var(--ok);
+    color: var(--ok-text);
   }
   .empty {
     font-size: var(--fs-md);

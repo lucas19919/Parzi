@@ -975,7 +975,7 @@
     color: var(--text);
   }
   .go.stop:hover {
-    color: var(--bad);
+    color: var(--bad-text);
   }
   .square {
     width: 9px;
@@ -1219,7 +1219,7 @@
   }
   .held.blind > :global(svg) {
     flex: none;
-    color: var(--warn);
+    color: var(--warn-text);
   }
   .held button:hover {
     color: var(--text);
@@ -1284,7 +1284,7 @@
   .error {
     padding: var(--space) calc(var(--space) * 3) 0;
     font-size: var(--fs-xs);
-    color: var(--bad);
+    color: var(--bad-text);
   }
   .web-suggest {
     position: absolute;
@@ -1357,7 +1357,7 @@
     color: var(--muted);
   }
   .pop-empty.err {
-    color: var(--bad);
+    color: var(--bad-text);
   }
   .pop-head {
     margin: 0;
@@ -1448,7 +1448,7 @@
     color: var(--text);
   }
   .opt-row .del.armed {
-    color: var(--bad);
+    color: var(--bad-text);
     font-weight: 600;
   }
   .name {

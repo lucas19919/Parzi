@@ -116,7 +116,7 @@
     background: var(--text);
   }
   .status.bad :global(svg) {
-    color: color-mix(in srgb, var(--bad) 62%, var(--text));
+    color: var(--bad-text);
   }
   .chev {
     display: inline-flex;

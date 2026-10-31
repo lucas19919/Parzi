@@ -112,10 +112,10 @@
     color: var(--text);
   }
   .pct.warn {
-    color: var(--warn);
+    color: var(--warn-text);
   }
   .pct.bad {
-    color: var(--bad);
+    color: var(--bad-text);
   }
   .of,
   .n,

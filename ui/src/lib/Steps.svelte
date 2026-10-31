@@ -132,7 +132,7 @@
     white-space: nowrap;
   }
   .failed {
-    color: var(--bad);
+    color: var(--bad-text);
   }
   .chev {
     display: inline-flex;
@@ -194,7 +194,7 @@
     color: var(--muted);
   }
   .meta.bad {
-    color: var(--bad);
+    color: var(--bad-text);
   }
   .meta.live {
     animation: breathe 1.6s ease-in-out infinite;

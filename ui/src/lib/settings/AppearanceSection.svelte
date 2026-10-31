@@ -451,7 +451,7 @@
     display: inline-flex; align-items: center; justify-content: center;
   }
   .mini-icon:hover { color: var(--text); }
-  .mini-icon.armed { color: var(--bad); font-weight: 600; }
+  .mini-icon.armed { color: var(--bad-text); font-weight: 600; }
   .pack-rename {
     font: inherit; font-size: var(--fs-sm); color: var(--text);
     background: var(--bg); border: 1px solid var(--accent); border-radius: var(--radius-sm);

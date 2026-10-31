@@ -1064,7 +1064,7 @@ ${e.text}` : e.text;
   }
   .err-class {
     font-weight: 600;
-    color: var(--bad);
+    color: var(--bad-text);
   }
   .err-msg {
     color: var(--muted);
@@ -1131,7 +1131,7 @@ ${e.text}` : e.text;
   }
   .ask-note {
     font-size: var(--fs-sm);
-    color: var(--warn);
+    color: var(--warn-text);
   }
   .ask-raw {
     max-height: 160px;

@@ -625,7 +625,7 @@
   .scheme {
     display: inline-flex;
     flex: none;
-    color: var(--warn);
+    color: var(--warn-text);
   }
   .scheme.secure {
     color: var(--muted);

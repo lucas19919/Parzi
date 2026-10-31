@@ -382,7 +382,7 @@
   .w-kind { font-size: var(--fs-xs); color: var(--muted); }
   .w-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .xbar { display: flex; gap: calc(var(--space) * 2); padding: var(--space) 0 var(--space); }
-  .w-error { padding: calc(var(--space) * 2) calc(var(--space) * 3); font-size: var(--fs-xs); color: var(--bad); }
+  .w-error { padding: calc(var(--space) * 2) calc(var(--space) * 3); font-size: var(--fs-xs); color: var(--bad-text); }
   .w-source { margin: 0 calc(var(--space) * 3); padding: calc(var(--space) * 2); font-size: var(--fs-xs); overflow: auto; background: var(--bg); border-radius: var(--radius); }
   .w-sub { padding: var(--space) 0; font-size: var(--fs-xs); color: var(--muted); }
   .w-empty { padding: calc(var(--space) * 2) 0; font-size: var(--fs-xs); font-style: italic; color: var(--muted); }

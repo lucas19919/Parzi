@@ -113,7 +113,7 @@
     display: inline-flex;
     align-items: center;
     gap: calc(var(--space) * 2);
-    color: var(--ok);
+    color: var(--ok-text);
     font-size: var(--fs-sm);
     font-weight: 600;
   }

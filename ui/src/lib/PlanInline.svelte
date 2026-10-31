@@ -229,7 +229,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: var(--fs-sm);
-    color: var(--warn);
+    color: var(--warn-text);
   }
 
   .mark {

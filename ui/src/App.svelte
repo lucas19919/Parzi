@@ -2353,7 +2353,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   .toast.err {
     border-color: var(--bad);
-    color: var(--bad);
+    color: var(--bad-text);
   }
   .toast.acts {
     display: flex;

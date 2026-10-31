@@ -35,6 +35,12 @@
   --ok: #22c55e;
   --warn: #f59e0b;
   --bad: #ef4444;
+  /* The same as text. Pure status colours are too light to read on a light theme. */
+  --ok-text: color-mix(in srgb, var(--ok) 40%, var(--text));
+  --warn-text: color-mix(in srgb, var(--warn) 35%, var(--text));
+  --bad-text: color-mix(in srgb, var(--bad) 62%, var(--text));
+  /* On a saturated dark badge, whatever the theme's text colour is. */
+  --on-badge: #ffffff;
 
   --space: 4px;
   --radius: 12px;
@@ -159,7 +165,7 @@ kbd {
 .btn.primary:hover:not(:disabled) {
   background: var(--accent-hover);
 }
-.btn.danger { border-color: var(--bad); color: var(--bad); }
+.btn.danger { border-color: var(--bad); color: var(--bad-text); }
 .btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: var(--bad); }
 .btn:active:not(:disabled) { transform: translateY(0) scale(0.97); transition-duration: var(--dur-fast); }
 .btn:disabled { opacity: var(--disabled); cursor: default; box-shadow: none; }
@@ -181,7 +187,7 @@ kbd {
 }
 .icon-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .icon-btn:disabled { opacity: var(--disabled); cursor: default; }
-.icon-btn.armed { color: var(--bad); }
+.icon-btn.armed { color: var(--bad-text); }
 .icon-btn .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .icon-btn .spin { animation: none; } }
@@ -335,8 +341,8 @@ button.info-line.row:hover { background: var(--hover); }
   font-size: var(--fs-sm); font-weight: 400; color: var(--muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.row-label small.ok { color: var(--ok); }
-.row-label small.bad { color: var(--bad); }
+.row-label small.ok { color: var(--ok-text); }
+.row-label small.bad { color: var(--bad-text); }
 .row-label small.mono { font-family: var(--mono), ui-monospace, monospace; }
 .row-ctl { display: flex; align-items: center; gap: calc(var(--space) * 2); flex: none; }
 .row-ctl.auto { justify-content: flex-end; }
@@ -403,8 +409,8 @@ a:hover { color: var(--link); }
 .hljs-symbol, .hljs-bullet, .hljs-link { color: var(--accent); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
-.hljs-addition { color: var(--ok); }
-.hljs-deletion { color: var(--bad); }
+.hljs-addition { color: var(--ok-text); }
+.hljs-deletion { color: var(--bad-text); }
 .hljs-code { color: var(--muted); }
 .code-tools {
   position: absolute; top: 6px; right: 6px; z-index: 1; display: flex; align-items: center; gap: calc(var(--space) * 2);

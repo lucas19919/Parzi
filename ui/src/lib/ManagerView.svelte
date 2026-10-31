@@ -191,7 +191,7 @@
     justify-content: center;
     border-radius: var(--radius-sm);
     background: hsl(var(--badge-h, 210) 40% 36%);
-    color: var(--text);
+    color: var(--on-badge);
     font-size: var(--fs-sm);
     font-weight: 600;
   }
@@ -206,7 +206,7 @@
     opacity: 1;
   }
   .x:hover:not(:disabled) {
-    color: var(--bad);
+    color: var(--bad-text);
   }
   .empty {
     margin: 0;

@@ -341,16 +341,16 @@
     font-variant-numeric: tabular-nums;
   }
   .add {
-    color: color-mix(in srgb, var(--ok) 75%, var(--text));
+    color: var(--ok-text);
   }
   .del {
-    color: color-mix(in srgb, var(--bad) 62%, var(--text));
+    color: var(--bad-text);
   }
   .checks.pass :global(svg) {
-    color: var(--ok);
+    color: var(--ok-text);
   }
   .checks.fail :global(svg) {
-    color: var(--bad);
+    color: var(--bad-text);
   }
   .dot {
     width: calc(var(--space) * 2);
