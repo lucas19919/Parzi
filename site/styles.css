@@ -380,8 +380,7 @@ footer.foot { margin-top: calc(var(--space) * 8); background: var(--teal); color
 .foot-big span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .foot-big svg { flex: none; width: 0.62em; height: 0.62em; transition: transform 0.45s cubic-bezier(0.2, 0.7, 0.2, 1); }
 .foot-big:hover svg { transform: translate(0.12em, -0.12em); }
-.foot-cols { display: grid; grid-template-columns: minmax(14rem, 1.15fr) 1fr 1fr; gap: clamp(1.5rem, 4vw, 4rem); margin-top: clamp(2.75rem, 8vh, 5.5rem); }
-.foot-cols p { margin: 0; max-width: 28ch; font-size: 0.95rem; line-height: 1.45; color: var(--muted); }
+.foot-cols { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(1.5rem, 4vw, 4rem); margin-top: clamp(2.75rem, 8vh, 5.5rem); }
 .foot-cols nav { display: grid; align-content: start; gap: 0.4rem; }
 .foot-cols a { font-size: 0.95rem; font-weight: 550; letter-spacing: -0.015em; text-decoration: none; cursor: pointer; width: fit-content; color: var(--text); }
 .foot-cols a:hover { border-bottom: 1px solid currentColor; }
