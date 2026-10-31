@@ -342,7 +342,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     project = ctx?.project ? { slug: ctx.project.slug, title: ctx.project.title, tokens: ctx.tokens } : null;
   }
 
-  let cover: "settings" | "doc" | null = null;
+  let cover: "settings" | "doc" | "sessions" | null = null;
   let coverFor = "";
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
   $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
@@ -399,15 +399,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     return draft.id;
   }
 
-  function showCover(kind: "settings" | "doc") {
+  function showCover(kind: "settings" | "doc" | "sessions") {
     switcherOpen = false;
     const id = sessionHost();
     cover = kind;
     coverFor = id;
     if (activeId !== id) selectTab(id);
   }
-
-  let managerOpen = false;
 
   function reopenClosed() {
     const [last, rest] = popClosed($closedTabs);
@@ -1783,7 +1781,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       on:close={(e) => closeTab(e.detail.id)}
       on:move={(e) => moveTab(e.detail.id, e.detail.to)}
     on:newTab={newSession}
-      on:manager={() => (managerOpen = true)}
+      on:manager={() => showCover("sessions")}
       on:settings={() => openSettings()}
       panelable={tab.kind === "session"}
       panelOpen={infoShown}
@@ -1843,6 +1841,26 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             {#if coverOn && cover === "settings"}
               <div class="cover" transition:fly|global={{ y: 8, ...motion }}>
                 <Settings bind:section={settingsSection} on:setupRemote={openRemoteSetup} onSetup={openSetup} onReport={reportProblem} />
+              </div>
+            {:else if coverOn && cover === "sessions"}
+              <div class="cover" transition:fly|global={{ y: 8, ...motion }}>
+                <ManagerView
+                  {threads}
+                  on:openSession={(e) => {
+                    clearCover();
+                    openSession(e.detail.id);
+                  }}
+                  on:deleteSession={(e) => remove(e.detail.id)}
+                  on:newSession={() => {
+                    clearCover();
+                    newSession();
+                  }}
+                  on:settings={() => openSettings()}
+                  on:setup={() => {
+                    clearCover();
+                    openSetup();
+                  }}
+                />
               </div>
             {:else if coverOn && cover === "doc"}
               <div class="cover" transition:fly|global={{ y: 8, ...motion }}>
@@ -2040,29 +2058,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     <Onboarding startStep={setupStep} server={setupServer} on:close={() => (setupOpen = false)} />
   {/if}
 
-  {#if managerOpen}
-    <ManagerView
-      {threads}
-      on:openSession={(e) => {
-        openSession(e.detail.id);
-        managerOpen = false;
-      }}
-      on:deleteSession={(e) => remove(e.detail.id)}
-      on:newSession={() => {
-        newSession();
-        managerOpen = false;
-      }}
-      on:settings={() => {
-        openSettings();
-        managerOpen = false;
-      }}
-      on:setup={() => {
-        openSetup();
-        managerOpen = false;
-      }}
-      on:close={() => (managerOpen = false)}
-    />
-  {/if}
 
   
   <div class="toasts" class:chrome={toastsUp} aria-live="polite">

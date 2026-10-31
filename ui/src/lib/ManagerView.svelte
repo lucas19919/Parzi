@@ -1,13 +1,11 @@
 <script lang="ts">
-  import { createEventDispatcher, onDestroy, onMount } from "svelte";
-  import { fade } from "svelte/transition";
+  import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
   import { brain, type Project, type SessionMeta } from "./api";
   import { folderName } from "./tabs";
   import { byDay } from "./time";
   import { tooltip } from "./tooltip";
   import { toast } from "./toast";
-  import { setOverlay } from "./overlay";
 
   export let threads: SessionMeta[] = [];
 
@@ -17,19 +15,7 @@
     newSession: void;
     settings: void;
     setup: void;
-    close: void;
   }>();
-
-  function close() {
-    dispatch("close");
-  }
-
-  function onKey(e: KeyboardEvent) {
-    if (e.key === "Escape" && !e.defaultPrevented) {
-      e.preventDefault();
-      close();
-    }
-  }
 
   let query = "";
   let field: HTMLInputElement | null = null;
@@ -69,12 +55,8 @@
   }
 
   onMount(() => {
-    setOverlay("manager", true);
     field?.focus();
     void loadProjects();
-  });
-  onDestroy(() => {
-    setOverlay("manager", false);
   });
 
   const projectOf = (slug: string): Project | undefined => projects.find((p) => p.slug === slug);
@@ -121,11 +103,6 @@
   }
 </script>
 
-<svelte:window on:keydown={onKey} />
-
-<!-- svelte-ignore a11y-no-static-element-interactions a11y-click-events-have-key-events -->
-<div class="backdrop" on:click|self={close} transition:fade={{ duration: 140 }}>
-  <div class="box" role="dialog" aria-modal="true" aria-label="Session manager" transition:fade={{ duration: 140 }}>
 <div class="manager">
   <aside class="rail" aria-label="Projects">
     <div class="rail-head t-section">
@@ -173,7 +150,7 @@
     </div>
   </aside>
   <div class="main">
-    <div class="top">
+    <div class="top page-bar">
       <div class="page-search">
         <Icon name="search" />
         <input bind:this={field} bind:value={query} placeholder="Search sessions" aria-label="Search sessions" spellcheck="false" />
@@ -202,33 +179,8 @@
     </div>
   </div>
 </div>
-  </div>
-</div>
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 1000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: calc(var(--space) * 6);
-    background: var(--scrim);
-  }
-  .box {
-    width: min(920px, 100%);
-    height: min(680px, 100%);
-    min-height: 0;
-    flex: none;
-    display: flex;
-    flex-direction: column;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    overflow: hidden;
-    outline: none;
-  }
   .manager {
     flex: 1;
     min-height: 0;
@@ -250,9 +202,6 @@
     /* Same 64px band as .top (16px inset + 32px control) so rail and search share a line. */
     min-height: calc(var(--space) * 16);
     padding: calc(var(--space) * 4);
-    color: var(--muted);
-    font-size: var(--fs-md);
-    font-weight: 600;
   }
   .rail-head > span {
     flex: 1;
