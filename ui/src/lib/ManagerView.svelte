@@ -422,7 +422,7 @@
   }
   h3 {
     margin: calc(var(--space) * 3) 0 var(--space);
-              }
+  }
   h3:first-child {
     margin-top: var(--space);
   }

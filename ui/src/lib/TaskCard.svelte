@@ -75,7 +75,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-              }
+  }
   .proj {
     flex: none;
     padding: 0 calc(var(--space) * 2);

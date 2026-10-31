@@ -317,7 +317,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-          }
+  }
   .meta {
     flex: none;
     font-size: var(--fs-sm);

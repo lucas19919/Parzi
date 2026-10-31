@@ -17,7 +17,13 @@
 .settings .rows > .details { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
 .settings .rows > .details > .row { display: flex; align-items: center; justify-content: space-between; gap: calc(var(--space) * 4); padding: calc(var(--space) * 2) calc(var(--space) * 4); min-height: var(--h-row-lg); }
 .settings .rows > .details > .row + .row { border-top: 1px solid var(--line); }
-.settings .rows > .details > .row > .segmented-control {
+.settings .rows > .details > .row > .settings .rows > .details > .row > .tin { flex: 1; min-width: 0; }
+.settings .rows button.row { width: 100%; background: none; border: none; font: inherit; text-align: left; color: var(--muted); cursor: pointer; }
+.settings .rows button.row:hover { color: var(--text); }
+.settings .rows button.row.as-toggle { gap: calc(var(--space) * 2); min-height: var(--h-row); font-size: var(--fs-sm); font-weight: 500; }
+.settings .rows .row .tin:not(.fixed) { flex: 1; min-width: 0; }
+
+.segmented-control {
   display: inline-flex; background: var(--bg);
   border: 1px solid var(--line);
   border-radius: var(--radius); padding: var(--space); gap: var(--space); flex: none;

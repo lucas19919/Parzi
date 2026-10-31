@@ -107,7 +107,7 @@
   }
   .head {
     padding: calc(var(--space) * 3) calc(var(--space) * 4);
-        border-bottom: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
   }
   .list {
     display: flex;

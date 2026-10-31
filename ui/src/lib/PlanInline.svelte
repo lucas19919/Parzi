@@ -174,7 +174,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-          }
+  }
   .count {
     flex: none;
     font-variant-numeric: tabular-nums;

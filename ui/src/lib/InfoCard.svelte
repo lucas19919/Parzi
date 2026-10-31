@@ -89,7 +89,7 @@
   }
   .title {
     flex: none;
-                  }
+  }
   .aside {
     flex: 1;
     min-width: 0;

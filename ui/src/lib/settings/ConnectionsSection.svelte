@@ -9,6 +9,7 @@
   import { remote, remoteBoard, remoteInfo as linked, type RemoteInfo } from "../remote";
   import { PROVIDER_ORDER, nameOf, stateLabel } from "../providerRows";
   import SegControl from "./SegControl.svelte";
+  import Switch from "./Switch.svelte";
   import { updateConfig } from "../config";
   import { CATALOG, hostedServer, nameFromUrl, type CatalogConnector, type ServerCfg as Server } from "../connectorCatalog";
   import ConnectorLogo from "../ConnectorLogo.svelte";
@@ -141,6 +142,17 @@
   $: have = new Set(Object.keys(cfg?.mcp.servers ?? {}));
   $: fresh = found.filter((f) => !have.has(f.name));
   $: freshCustom = fresh.filter((f) => !CATALOG.some((c) => c.id === f.name));
+
+  $: addable = CATALOG.filter((c) => !have.has(c.id));
+
+  function statusLine(h: Health | undefined, off: boolean): string {
+    if (off) return "Off";
+    if (!h || h.state === "checking") return "Checking…";
+    if (h.state === "signing") return "Signing in…";
+    if (h.state === "signin") return "Needs sign-in";
+    if (h.state === "error") return h.error || "Couldn't connect";
+    return h.tools === 1 ? "1 tool" : `${h.tools ?? 0} tools`;
+  }
 
   const openOutside = (url: string) => api.openConfirmedUrl(url).catch((e) => notify(String(e), true));
 
@@ -424,19 +436,27 @@
   </div>
 
 {:else}
-  {#if rows.length}
-    {#each rows as row (row.id)}
-      {@const h = health[row.id]}
-      {@const off = !!row.server && row.server.enabled === false}
-      {@const open = openTools === row.id}
-      {@const tools = details[row.id]?.tools ?? []}
-      <div class="pref-section">
-        <div class="rows" class:off={off}>
-            <div class="row row-title">
+  <div class="cards">
+    {#if rows.length}
+      <div class="rows">
+        <div class="row row-title"><span>Connected</span></div>
+        {#each rows as row (row.id)}
+          {@const h = health[row.id]}
+          {@const off = row.server.enabled === false}
+          {@const open = openTools === row.id}
+          {@const tools = details[row.id]?.tools ?? []}
+          {@const line = statusLine(h, off)}
+          <div class="conn" class:off>
+            <div class="row">
               <button class="logo-pick" use:tooltip={"Choose a logo"} aria-label="Choose a logo for {row.name}" on:click={() => chooseLogo(row.id)}>
                 <ConnectorLogo id={row.id} name={row.name} site={row.site} src={details[row.id]?.icon ?? null} size={20} />
               </button>
-              <span title={h?.raw ?? ""}>{row.name}</span>
+              <button class="conn-main" aria-expanded={open} on:click={() => toggleTools(row.id)}>
+                <span class="row-label">{row.name}
+                  <small class:bad={h?.state === "error"} title={h?.raw ?? ""}>{line}</small>
+                </span>
+                <Icon name={open ? "chevDown" : "chevRight"} size={12} />
+              </button>
               <span class="row-ctl auto">
                 {#if !off && h?.error === "Needs Node.js"}
                   <button class="btn" on:click={() => openOutside("https://nodejs.org")}>Get Node.js</button>
@@ -445,16 +465,9 @@
                 {:else if !off && h?.state === "error"}
                   <button class="btn" on:click={() => check(row.id, true)}>Try again</button>
                 {/if}
-                <button class="btn" title={off ? `Connect ${row.name}` : `Disconnect ${row.name}`} on:click={() => toggle(row.id)}>{off ? "Disconnected" : "Connected"}</button>
-                <button class="icon-btn" class:armed={delConn === row.id} use:tooltip={delConn === row.id ? "Click again to remove" : `Remove ${row.name}`} aria-label={delConn === row.id ? `Confirm remove ${row.name}` : `Remove ${row.name}`} on:click={() => removeServer(row.id)}>
-                  <Icon name="trash" size={12} />
-                </button>
+                <Switch on={!off} title={off ? `Turn ${row.name} on` : `Turn ${row.name} off`} on:toggle={() => toggle(row.id)} />
               </span>
             </div>
-            <button class="row as-toggle" aria-expanded={open} on:click={() => toggleTools(row.id)}>
-              <span class="disclosure"><Icon name={open ? "chevDown" : "chevRight"} size={12} /></span>
-              <span>Tools{#if tools.length} · {tools.length}{/if}</span>
-            </button>
             {#if open}
               <div class="details">
                 {#each tools as t (t.name)}
@@ -464,85 +477,153 @@
                     <SegControl label={t.name} options={TOOL_OPTIONS} value={m} on:pick={(e) => pickMode(row.id, t.name, e.detail)} />
                   </div>
                 {:else}
-                  <div class="row"><span class="row-label">{#if h}Connect it to see its tools.{:else}Not connected yet.{/if}</span></div>
+                  <div class="row"><span class="row-label"><small>{off ? "Turn it on to see its tools." : "No tools to show yet."}</small></span></div>
                 {/each}
+                <div class="row end">
+                  <button class="btn danger" on:click={() => removeServer(row.id)}>{delConn === row.id ? "Click again to remove" : "Remove"}</button>
+                </div>
               </div>
             {/if}
           </div>
-        </div>
-      {/each}
+        {/each}
+      </div>
     {/if}
-    <div class="pref-section">
+    {#if addable.length || freshCustom.length}
       <div class="rows">
-        <div class="row row-title"><span>Catalogue</span></div>
+        <div class="row row-title"><span>Add a connector</span></div>
         <div class="row">
-          <div class="packs">
-            {#each CATALOG as c (c.id)}
-              {@const isHave = have.has(c.id)}
+          <div class="add-grid">
+            {#each addable as c (c.id)}
               {@const hit = fresh.find((f) => f.name === c.id)}
-              <button class="pack-btn" type="button" disabled={isHave || saving} title={isHave ? `${c.name} — added` : `${c.name} — ${c.about}`} on:click={() => (hit ? addFound(hit.name, hit.server) : addKnown(c.id))}>
-                <span class="pack-top"><ConnectorLogo id={c.id} name={c.name} site={c.site} src={null} size={20} /><span class="pack-name">{c.name}</span></span>
-                <span class="pack-cmd">{isHave ? "Added" : c.about}</span>
+              <button class="add" type="button" disabled={saving} on:click={() => (hit ? addFound(hit.name, hit.server) : addKnown(c.id))}>
+                <ConnectorLogo id={c.id} name={c.name} site={c.site} src={null} size={20} />
+                <span class="add-text"><span class="t-label">{c.name}</span><span class="t-hint">{c.about}</span></span>
               </button>
             {/each}
             {#each freshCustom as f (f.name)}
-              <button class="pack-btn" type="button" disabled={saving} title={`${f.name} — already on this computer`} on:click={() => addFound(f.name, f.server)}>
-                <span class="pack-top"><ConnectorLogo id={f.name} name={f.name} site="" src={null} size={20} /><span class="pack-name">{f.name}</span></span>
-                <span class="pack-cmd">Already on this computer</span>
+              <button class="add" type="button" disabled={saving} on:click={() => addFound(f.name, f.server)}>
+                <ConnectorLogo id={f.name} name={f.name} site="" src={null} size={20} />
+                <span class="add-text"><span class="t-label">{f.name}</span><span class="t-hint">Found in {f.source}</span></span>
               </button>
             {/each}
           </div>
         </div>
       </div>
-    </div>
-    <div class="pref-section">
-      <div class="rows">
-        <div class="row row-title"><span>Custom connectors</span></div>
-        <label class="row">
-          <span class="row-label">Name</span>
-          <input class="tin fixed" bind:value={customName} placeholder="Name (optional)" aria-label="Name" spellcheck="false" />
-        </label>
-        <div class="row">
-          <textarea class="tin" rows="3" bind:value={pasted} placeholder="Paste a link, a config block, or a command" aria-label="Paste a link, a config block, or a command" spellcheck="false"></textarea>
-        </div>
-        <div class="row end">
-          <span class="row-ctl auto"><button class="btn primary" disabled={saving || !pasted.trim()} on:click={() => void addPasted()}>Add</button></span>
-        </div>
+    {/if}
+    <div class="rows">
+      <div class="row row-title"><span>Add your own</span></div>
+      <div class="row">
+        <textarea class="tin" rows="3" bind:value={pasted} placeholder="Paste a link, a config block, or a command" aria-label="Paste a link, a config block, or a command" spellcheck="false"></textarea>
+      </div>
+      <div class="row">
+        <input class="tin" bind:value={customName} placeholder="Name (optional)" aria-label="Name" spellcheck="false" />
+        <button class="btn primary" disabled={saving || !pasted.trim()} on:click={() => void addPasted()}>Add</button>
       </div>
     </div>
+  </div>
 {/if}
 
 <style>
-  .rows.off .row:first-child > :not(.row-ctl),
-  .rows.off .as-toggle {
-    opacity: 0.55;
+  .cards {
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space) * 6);
   }
   .logo-pick {
     flex: none;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 0;
     padding: 0;
     background: none;
     border: none;
     border-radius: var(--radius-sm);
     cursor: pointer;
   }
-  .row.off .row-label {
-    color: var(--muted);
+  .conn {
+    border-top: 1px solid var(--line);
   }
-  .as-toggle {
-    color: var(--muted);
+  .conn > .row {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space) * 3);
+    padding: calc(var(--space) * 2) calc(var(--space) * 4);
+    min-height: var(--h-row-lg);
   }
-  .as-toggle:hover {
+  .conn.off .logo-pick,
+  .conn.off .conn-main {
+    opacity: 0.55;
+  }
+  .conn-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space) * 2);
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--muted);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .conn-main:hover {
     color: var(--text);
   }
-  .disclosure {
-    display: inline-flex;
-    flex: none;
+  .conn .details {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--line);
   }
-  .row.end {
+  .conn .details .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: calc(var(--space) * 4);
+    padding: calc(var(--space) * 2) calc(var(--space) * 4);
+    min-height: var(--h-row-lg);
+  }
+  .conn .details .row + .row {
+    border-top: 1px solid var(--line);
+  }
+  .conn .details .row.off .row-label {
+    color: var(--muted);
+  }
+  .conn .details .row.end {
     justify-content: flex-end;
+  }
+  .add-grid {
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: var(--space);
+    margin: 0 calc(var(--space) * -2);
+  }
+  .add {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--space) * 3);
+    min-width: 0;
+    padding: calc(var(--space) * 2);
+    background: none;
+    border: none;
+    border-radius: var(--radius);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .add:hover:not(:disabled) {
+    background: var(--hover);
+  }
+  .add:disabled {
+    opacity: var(--disabled);
+    cursor: default;
+  }
+  .add-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
   }
 </style>

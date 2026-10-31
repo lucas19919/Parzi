@@ -63,7 +63,7 @@
   }
   .title {
     flex: 1;
-          }
+  }
   .count {
     flex: none;
     font-variant-numeric: tabular-nums;

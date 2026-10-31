@@ -750,7 +750,7 @@
   }
   .crash-title {
     margin: var(--space) 0 0;
-              }
+  }
   .crash-hint {
     margin: 0;
     font-size: var(--fs-md);

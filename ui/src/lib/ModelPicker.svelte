@@ -279,7 +279,7 @@
   }
   .head {
     padding: calc(var(--space) * 2) calc(var(--space) * 2) var(--space);
-              }
+  }
   .row {
     display: flex;
     align-items: center;
