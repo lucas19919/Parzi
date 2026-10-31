@@ -447,8 +447,19 @@ pub fn delete_pack(name: &str) -> Result<()> {
 pub fn apply_pack(name: &str) -> Result<Theme> {
     check_pack_name(name)?;
     let dir = themes_dir()?.join(name);
-    let mut theme: Theme = toml::from_str(&std::fs::read_to_string(dir.join("theme.toml"))?)?;
+    let raw = std::fs::read_to_string(dir.join("theme.toml"))?;
+    let mut theme: Theme = toml::from_str(&raw)?;
     let current = Theme::load().unwrap_or_default();
+
+    // Where the wallpaper sits belongs to the person, unless a pack says otherwise.
+    let sets = toml::from_str::<toml::Value>(&raw)?;
+    let sets = |key: &str| sets.get("background").and_then(|b| b.get(key)).is_some();
+    if !sets("height") {
+        theme.background.height = current.background.height;
+    }
+    if !sets("y") {
+        theme.background.y = current.background.y;
+    }
 
     let bgs = paths::backgrounds_dir()?;
     let mut art = vec![];
