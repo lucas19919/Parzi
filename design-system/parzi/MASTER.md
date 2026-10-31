@@ -17,7 +17,8 @@ selected, and link are mixed from those in `theme.css`. `--ok` `--warn`
 `resolveColor()` in `lib/theme.ts`.
 
 Spacing is `--space` (4px). Legal steps are 1, 2, 3, 4, 6, and 8 times that.
-Icons come only from `Icon.svelte`, at 16 (12 for the small glyphs in a row).
+Icons come only from `Icon.svelte`, Lucide outlines at a constant 1px stroke, the
+weight of the window controls, at 16 (12 for the small glyphs in a row).
 Logos and letter badges are 28 in a list row, so the glyph inside is 16.
 Motion is `--dur` (140ms) and `--dur-fast` (60ms) with `--ease-out`. Disabled
 is `--disabled` (0.5) everywhere; dimmed rows are `0.55`.

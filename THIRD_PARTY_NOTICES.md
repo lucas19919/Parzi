@@ -15,12 +15,12 @@ owners' trademarks and show only to name the service a connector reaches.
 
 Upstream: https://github.com/simple-icons/simple-icons
 
-## Octicons (MIT)
+## Lucide (ISC)
 
-Interface icons in `ui/src/lib/icons.ts` are GitHub's Octicons, generated
-from the `@primer/octicons` package by `ui/scripts/icons.mjs`.
+Interface icons in `ui/src/lib/icons.ts` are Lucide icons, generated from the
+`lucide-static` package by `ui/scripts/icons.mjs`.
 
-Upstream: https://github.com/primer/octicons
+Upstream: https://github.com/lucide-icons/lucide
 
 ## Fonts (SIL Open Font License 1.1)
 

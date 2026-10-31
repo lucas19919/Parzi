@@ -4,12 +4,22 @@
   export let name: IconName;
   export let size: 12 | 16 = 16;
 
-  $: icon = ICONS[name];
-  $: grid = size === 12 && icon[12] ? 12 : 16;
+  // One pixel at either size, the same weight as the window controls.
+  $: weight = 24 / size;
 </script>
 
-<svg width={size} height={size} viewBox="0 0 {grid} {grid}" fill="currentColor" aria-hidden="true">
-  {@html grid === 12 ? icon[12] : icon[16]}
+<svg
+  width={size}
+  height={size}
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width={weight}
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  aria-hidden="true"
+>
+  {@html ICONS[name]}
 </svg>
 
 <style>
