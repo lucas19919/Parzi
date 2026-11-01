@@ -3,14 +3,81 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Parzi</title>
-  <meta name="description" content="A desktop app for the coding agents you already pay for: Claude, Codex, OpenCode, Grok, Antigravity and Cursor, with a browser beside them." />
+  <title>Parzi: Claude Code, Codex, Cursor and more in one desktop app</title>
+  <meta name="description" content="Parzi is a free, open source desktop app that runs the coding agents you already pay for (Claude Code, Codex, Cursor, Grok, OpenCode and Antigravity) in one window, with a real browser beside them. Built in Rust for Windows and macOS." />
+  <link rel="canonical" href="https://lucas19919.github.io/Parzi/" />
+  <meta name="robots" content="index, follow, max-image-preview:large" />
+  <meta name="author" content="lucas19919" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Parzi" />
+  <meta property="og:url" content="https://lucas19919.github.io/Parzi/" />
+  <meta property="og:title" content="Parzi: every coding agent you pay for, in one desktop app" />
+  <meta property="og:description" content="Claude Code, Codex, Cursor, Grok, OpenCode and Antigravity in one window, with a real browser beside them. Free, open source, built in Rust." />
+  <meta property="og:image" content="https://lucas19919.github.io/Parzi/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Parzi, every coding agent you already pay for in one desktop app" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Parzi: every coding agent you pay for, in one desktop app" />
+  <meta name="twitter:description" content="Claude Code, Codex, Cursor, Grok, OpenCode and Antigravity in one window, with a real browser beside them. Free, open source, built in Rust." />
+  <meta name="twitter:image" content="https://lucas19919.github.io/Parzi/og.png" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "SoftwareApplication",
+        "@id": "https://lucas19919.github.io/Parzi/#app",
+        "name": "Parzi",
+        "url": "https://lucas19919.github.io/Parzi/",
+        "description": "A desktop app that runs the coding agents you already pay for (Claude Code, Codex, Cursor, Grok, OpenCode and Antigravity) in one window, with a real browser, MCP connectors, math and charts in the thread. The core is written in Rust.",
+        "applicationCategory": "DeveloperApplication",
+        "applicationSubCategory": "AI coding agent harness",
+        "operatingSystem": "Windows 10, Windows 11, macOS (Apple Silicon)",
+        "downloadUrl": "https://github.com/lucas19919/Parzi/releases/latest",
+        "installUrl": "https://github.com/lucas19919/Parzi/releases/latest/download/Parzi-Setup.exe",
+        "fileSize": "8MB",
+        "image": "https://lucas19919.github.io/Parzi/og.png",
+        "screenshot": [
+          "https://lucas19919.github.io/Parzi/home.png",
+          "https://lucas19919.github.io/Parzi/browser.webp",
+          "https://lucas19919.github.io/Parzi/charts.webp",
+          "https://lucas19919.github.io/Parzi/math.webp"
+        ],
+        "license": "https://opensource.org/licenses/MIT",
+        "isAccessibleForFree": true,
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "programmingLanguage": ["Rust", "TypeScript"],
+        "featureList": [
+          "Runs Claude Code, Codex, Cursor, Grok, OpenCode and Antigravity on your own subscriptions",
+          "One model picker across every agent",
+          "Built-in browser with tabs the agent can open beside yours",
+          "MCP connectors for GitHub, Notion, Linear, Sentry, Stripe and any MCP server",
+          "LaTeX math and charts rendered in the thread",
+          "Rust core and the system web view: an 8 MB installer, about 60 MB of memory",
+          "Automatic updates; sessions stay on your machine"
+        ],
+        "sameAs": ["https://github.com/lucas19919/Parzi"]
+      },
+      {
+        "@type": "WebSite",
+        "@id": "https://lucas19919.github.io/Parzi/#site",
+        "name": "Parzi",
+        "url": "https://lucas19919.github.io/Parzi/",
+        "about": { "@id": "https://lucas19919.github.io/Parzi/#app" }
+      }
+    ]
+  }
+  </script>
+
   <link rel="preload" href="./fonts/figtree-latin.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="icon" type="image/svg+xml" href="./parzi-mark.svg" />
   <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png" />
   <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
   <meta name="theme-color" content="#161616" />
-  <link rel="stylesheet" href="./styles.css?v=3" />
+  <link rel="stylesheet" href="./styles.css?v=4" />
 </head>
 <body>
   <header class="topbar">
@@ -24,6 +91,7 @@
   <main id="top">
     <header class="hero">
       <h1>Build with the agents you already pay for in one place.</h1>
+      <p class="hero-sub">Parzi is a free, open source desktop app for Claude Code, Codex, Cursor, Grok, OpenCode and Antigravity.</p>
       <div class="hero-cta">
         <a class="btn primary" href="https://github.com/lucas19919/Parzi/releases/latest/download/Parzi-Setup.exe">Download for Windows</a>
         <a class="btn" href="https://github.com/lucas19919/Parzi/releases/latest">macOS</a>
@@ -35,7 +103,7 @@
     <section class="row" id="home">
       <div class="visual">
         <figure class="shot">
-          <img src="./home.png" alt="Parzi home screen with the composer centered and the project and branch above it" loading="lazy" />
+          <img src="./home.png" alt="Parzi home screen with the composer centered and the project and branch above it" width="2560" height="1600" loading="lazy" />
         </figure>
       </div>
       <div class="copy">
@@ -124,6 +192,20 @@
       </div>
     </section>
 
+    <section class="row" id="rust">
+      <div class="visual">
+        <dl class="stats">
+          <div class="stat"><dt>Windows installer</dt><dd>7.8<span>MB</span></dd></div>
+          <div class="stat"><dt>macOS download</dt><dd>9<span>MB</span></dd></div>
+          <div class="stat wide"><dt>Memory for the core, with sessions running</dt><dd>~60<span>MB</span></dd></div>
+        </dl>
+      </div>
+      <div class="copy">
+        <h2>Built in Rust, so it stays light.</h2>
+        <p>The core is Rust and the window is your system's own web view, not a bundled copy of Chrome. It opens fast, stays small and leaves the memory to your agents.</p>
+      </div>
+    </section>
+
     <section class="signoff">
       <div class="ghost-card">
         <h2>Download Parzi.</h2>
@@ -153,6 +235,7 @@
             <a href="#connectors">Connectors</a>
             <a href="#math">Math</a>
             <a href="#visuals">Charts</a>
+            <a href="#rust">Built in Rust</a>
           </nav>
           <nav aria-label="Repository">
             <a href="https://github.com/lucas19919/Parzi">GitHub</a>

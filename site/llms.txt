@@ -1,0 +1,29 @@
+# Parzi
+
+> Parzi is a free, open source (MIT) desktop app for Windows and macOS that runs the coding agents you already pay for in one window: Claude Code, Codex, Cursor, Grok, OpenCode and Antigravity. It has a real browser beside the agent, MCP connectors, and renders math and charts in the thread. The core is written in Rust.
+
+## What it does
+
+- One composer and one model picker for every agent. Each agent runs on your own subscription or sign-in; Parzi does not resell model access.
+- Setup installs each agent and signs you in. A session stays with the agent it started on.
+- A built-in browser: page tabs stay alive while hidden, ads are blocked, and agents open their own tabs beside yours.
+- MCP connectors: GitHub, Notion, Linear, Sentry and Stripe in one click; any other MCP server by link, config block or command.
+- Agents write LaTeX and it renders as math. Bars, lines, histograms, sparklines, timelines and tables render in the thread.
+- Sessions, threads and settings stay on your machine in `~/.parzi`. Updates install from inside the app.
+
+## Built in Rust
+
+The core is Rust (Tauri) and the window uses the system's own web view instead of a bundled Chromium. The Windows installer is 7.8 MB, the macOS download is 9 MB, and the core uses about 60 MB of memory with sessions running.
+
+## Download
+
+- Windows 10 and 11, 64-bit: https://github.com/lucas19919/Parzi/releases/latest/download/Parzi-Setup.exe
+- macOS, Apple Silicon, and all other files: https://github.com/lucas19919/Parzi/releases/latest
+- Source code: https://github.com/lucas19919/Parzi
+
+## FAQ
+
+- Is Parzi free? Yes. Parzi is MIT licensed. You pay only for the agent subscriptions you already have.
+- Which agents does it support? Claude Code, Codex, Cursor, Grok, OpenCode and Antigravity.
+- Does my code leave my machine? Parzi itself keeps sessions locally. Each agent talks to its own provider as it would on its own.
+- Is there a command line tool? Yes, `parzi-cli` drives sessions and tabs from scripts. It is on the releases page.
