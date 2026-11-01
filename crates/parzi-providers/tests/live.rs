@@ -108,6 +108,70 @@ async fn claude_answers_a_turn() {
 }
 
 #[tokio::test]
+#[ignore = "spends a few tokens of the Claude plan"]
+async fn claude_waits_for_its_background_agents() {
+    // Claude ends its first turn while the agent runs, then reports in a
+    // turn of its own. Killing the process at the first result lost both.
+    let gate = Arc::new(Refuse::default());
+    let prompt = "Start ONE subagent with the Agent tool, run_in_background true, \
+        subagent_type general-purpose, prompt: 'Reply with the single word DONE. Use no tools.' \
+        After launching it, end your turn right away with the word LAUNCHED. \
+        When it finishes, reply with the word REPORTED.";
+    let (end, events) = one_turn("claude", Some("haiku"), folder("claude-bg"), prompt, gate).await;
+    show("claude", &end, &events);
+    assert_eq!(end.unwrap(), TurnEnd::Completed);
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, ProviderEvent::Message(m) if m.contains("REPORTED"))));
+}
+
+#[tokio::test]
+#[ignore = "spends a little of the Grok plan"]
+async fn grok_waits_for_its_background_subagent() {
+    // Grok answers the prompt at LAUNCHED; the subagent then asks for
+    // permissions and wakes Grok to report. All of it belongs to this turn.
+    let cfg = ParziConfig::default();
+    let p = parzi_providers::provider("grok", &cfg).unwrap();
+    let spec = TurnSpec {
+        cwd: folder("grok-bg"),
+        model: None,
+        effort: None,
+        instructions: None,
+        resume: None,
+        prompt: "Start ONE subagent in the background (do not wait for it) whose task is: \
+            list the files in this folder, then reply DONE. Right after starting it, end your \
+            turn with the single word LAUNCHED. When it finishes, reply REPORTED."
+            .into(),
+        images: vec![],
+        compact: false,
+        tools: None,
+    };
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let end = p
+        .run_turn(spec, Arc::new(Allow), tx, CancellationToken::new())
+        .await;
+    let mut events = vec![];
+    while let Ok(e) = rx.try_recv() {
+        events.push(e);
+    }
+    show("grok", &end, &events);
+    assert_eq!(end.unwrap(), TurnEnd::Completed);
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, ProviderEvent::Message(m) if m.contains("REPORTED"))));
+}
+
+struct Allow;
+
+#[async_trait::async_trait]
+impl PermissionGate for Allow {
+    async fn decide(&self, r: PermissionRequest) -> PermissionDecision {
+        println!("  gate allowed: {} ({})", r.title, r.tool);
+        PermissionDecision::Allow
+    }
+}
+
+#[tokio::test]
 #[ignore = "spends a free OpenCode model's quota"]
 async fn opencode_answers_a_turn() {
     let gate = Arc::new(Refuse::default());

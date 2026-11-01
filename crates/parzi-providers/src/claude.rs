@@ -354,6 +354,9 @@ fn turn_args(spec: &TurnSpec, files: &TurnFiles) -> Result<Vec<String>, Provider
         "--input-format",
         "stream-json",
         "--include-partial-messages",
+        // Echoes our message back, so a result Claude sends for a turn of its
+        // own (a stopped-agent notice on resume) is not taken for ours.
+        "--replay-user-messages",
         "--permission-prompt-tool",
         "stdio",
         "--permission-mode",
@@ -573,6 +576,13 @@ struct TurnState {
     on_plan: bool,
     resuming: bool,
     saw_init: bool,
+    /// Claude echoed our message, so the next result answers it.
+    prompt_seen: bool,
+    /// Background subagents still running. Claude runs another turn of its
+    /// own when they finish, so the process must outlive this result.
+    agents: usize,
+    /// What the CLI has already reported: its cost is cumulative per process.
+    cost_sent: f64,
 }
 
 async fn drive<R, W>(
@@ -763,6 +773,15 @@ async fn handle(
                     after: None,
                 });
             }
+            "background_tasks_changed" => {
+                st.agents = v.get("tasks").and_then(Value::as_array).map_or(0, |t| {
+                    t.iter()
+                        .filter(|t| {
+                            t.get("task_type").and_then(Value::as_str) == Some("local_agent")
+                        })
+                        .count()
+                });
+            }
             _ => {}
         },
         "stream_event" if main => {
@@ -856,6 +875,9 @@ async fn handle(
                 }
             }
         }
+        "user" if v.get("isReplay").and_then(Value::as_bool) == Some(true) => {
+            st.prompt_seen = true;
+        }
         "user" => {
             let msg = v.get("message").unwrap_or(&Value::Null);
             for block in msg
@@ -900,7 +922,21 @@ async fn handle(
                 let _ = events.send(ProviderEvent::Limits(vec![w]));
             }
         }
-        "result" => return finish(v, st, events).map(Some),
+        "result" => {
+            let ok = v.get("subtype").and_then(Value::as_str) == Some("success")
+                && v.get("is_error").and_then(Value::as_bool) != Some(true);
+            if ok && !st.prompt_seen {
+                // A turn Claude ran before reading our message.
+                return Ok(None);
+            }
+            if ok && st.agents > 0 && !st.interrupting {
+                // Background agents are still working; Claude reports on
+                // them in a turn of its own once they finish.
+                report(v, st, events);
+                return Ok(None);
+            }
+            return finish(v, st, events).map(Some);
+        }
         _ => {}
     }
     Ok(None)
@@ -985,17 +1021,22 @@ fn usage_window(info: &Value) -> Option<UsageWindow> {
     })
 }
 
-fn finish(v: &Value, st: &TurnState, events: &EventTx) -> Result<TurnEnd, ProviderError> {
+/// Cost and context from a result, whether or not it ends the turn.
+fn report(v: &Value, st: &mut TurnState, events: &EventTx) {
     if let Some(cost) = v
         .get("total_cost_usd")
         .and_then(Value::as_f64)
         .filter(|_| !st.on_plan)
     {
-        let _ = events.send(ProviderEvent::Usage {
-            input: 0,
-            output: 0,
-            cost_usd: Some(cost),
-        });
+        let new = cost - st.cost_sent;
+        if new > 0.0 {
+            st.cost_sent = cost;
+            let _ = events.send(ProviderEvent::Usage {
+                input: 0,
+                output: 0,
+                cost_usd: Some(new),
+            });
+        }
     }
     let limit = v
         .get("modelUsage")
@@ -1008,6 +1049,10 @@ fn finish(v: &Value, st: &TurnState, events: &EventTx) -> Result<TurnEnd, Provid
     if let (Some(used), Some(limit)) = (st.last_context, limit) {
         let _ = events.send(ProviderEvent::Context { used, limit });
     }
+}
+
+fn finish(v: &Value, st: &mut TurnState, events: &EventTx) -> Result<TurnEnd, ProviderError> {
+    report(v, st, events);
     let subtype = v.get("subtype").and_then(Value::as_str).unwrap_or("");
     let is_error = v.get("is_error").and_then(Value::as_bool).unwrap_or(false);
     if !is_error && subtype == "success" {
@@ -1095,8 +1140,22 @@ mod tests {
         seen.push(init);
         let ok = json!({"type": "control_response", "response": {"subtype": "success", "request_id": rid, "response": {}}});
         w.write_all(format!("{ok}\n").as_bytes()).await.unwrap();
-        seen.push(serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap());
+        let prompt: Value =
+            serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+        // Like --replay-user-messages: echo the prompt, first unless the
+        // script places it with an "_echo" step.
+        let echo = json!({"type": "user", "isReplay": true, "message": prompt["message"].clone()});
+        seen.push(prompt);
+        let mut script = script;
+        if !script.iter().any(|m| m["type"] == "_echo") {
+            script.insert(0, json!({"type": "_echo"}));
+        }
         for msg in script {
+            let msg = if msg["type"] == "_echo" {
+                echo.clone()
+            } else {
+                msg
+            };
             let is_permission = msg["type"] == "control_request";
             w.write_all(format!("{msg}\n").as_bytes()).await.unwrap();
             if is_permission {
@@ -1207,6 +1266,78 @@ mod tests {
                 "{e:?}"
             );
         }
+    }
+
+    async fn run_script(script: Vec<Value>) -> (TurnEnd, Vec<ProviderEvent>) {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let cli = tokio::spawn(fake_cli(theirs, script));
+        let (r, w) = tokio::io::split(ours);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
+        let end = drive(r, w, &spec(), gate, &tx, &CancellationToken::new())
+            .await
+            .unwrap();
+        cli.await.unwrap();
+        drop(tx);
+        let mut got = vec![];
+        while let Some(e) = rx.recv().await {
+            got.push(e);
+        }
+        (end, got)
+    }
+
+    #[tokio::test]
+    async fn a_result_before_our_message_is_echoed_is_not_ours() {
+        // On resume Claude first runs an empty turn for agents the last
+        // process left behind, then answers us.
+        let (end, got) = run_script(vec![
+            json!({"type": "system", "subtype": "task_notification", "status": "stopped"}),
+            json!({"type": "system", "subtype": "init", "session_id": "s"}),
+            json!({"type": "result", "subtype": "success", "is_error": false, "result": ""}),
+            json!({"type": "_echo"}),
+            json!({"type": "assistant", "parent_tool_use_id": null, "message": {"id": "m1", "content": [{"type": "text", "text": "Here is the status"}]}}),
+            json!({"type": "result", "subtype": "success", "is_error": false}),
+        ])
+        .await;
+        assert_eq!(end, TurnEnd::Completed);
+        assert!(
+            got.contains(&ProviderEvent::Message("Here is the status".into())),
+            "{got:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn background_agents_keep_the_turn_open_until_claude_reports() {
+        let agent = json!({"task_id": "a1", "task_type": "local_agent", "description": "Review"});
+        let (end, got) = run_script(vec![
+            json!({"type": "system", "subtype": "background_tasks_changed", "tasks": [agent]}),
+            json!({"type": "assistant", "parent_tool_use_id": null, "message": {"id": "m1", "content": [{"type": "text", "text": "LAUNCHED"}]}}),
+            json!({"type": "result", "subtype": "success", "is_error": false, "total_cost_usd": 0.01}),
+            json!({"type": "system", "subtype": "background_tasks_changed", "tasks": []}),
+            json!({"type": "system", "subtype": "init", "session_id": "s"}),
+            json!({"type": "assistant", "parent_tool_use_id": null, "message": {"id": "m2", "content": [{"type": "text", "text": "REPORTED"}]}}),
+            json!({"type": "result", "subtype": "success", "is_error": false, "total_cost_usd": 0.03}),
+        ])
+        .await;
+        assert_eq!(end, TurnEnd::Completed);
+        assert!(got.contains(&ProviderEvent::Message("LAUNCHED".into())));
+        assert!(
+            got.contains(&ProviderEvent::Message("REPORTED".into())),
+            "{got:?}"
+        );
+        let cost: f64 = got
+            .iter()
+            .filter_map(|e| match e {
+                ProviderEvent::Usage {
+                    cost_usd: Some(c), ..
+                } => Some(*c),
+                _ => None,
+            })
+            .sum();
+        assert!(
+            (cost - 0.03).abs() < 1e-9,
+            "cumulative cost counted once: {cost}"
+        );
     }
 
     #[test]

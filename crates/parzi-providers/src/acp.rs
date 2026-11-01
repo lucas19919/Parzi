@@ -974,6 +974,83 @@ fn listed_commands(u: &Value) -> Option<Vec<String>> {
     )
 }
 
+/// Subagents an agent runs in the background (Grok's spawn_subagent). The
+/// prompt answers as soon as the agent ends its own turn, but the subagents
+/// keep working, ask for permissions, and wake the agent for a turn of its
+/// own when they finish. The process has to stay with the turn until then.
+#[derive(Default)]
+struct Background {
+    running: HashSet<String>,
+    /// A finished subagent will wake the agent for one more turn.
+    wake: bool,
+    /// The prompt we sent: its own turn_completed is not the wake turn.
+    prompt: Option<String>,
+}
+
+impl Background {
+    fn note(&mut self, u: &Value) {
+        let id = || {
+            u.get("subagent_id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string()
+        };
+        match u.get("sessionUpdate").and_then(Value::as_str).unwrap_or("") {
+            "subagent_spawned" => {
+                self.running.insert(id());
+                if self.prompt.is_none() {
+                    self.prompt = u
+                        .get("parent_prompt_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                }
+            }
+            "subagent_finished" => {
+                self.running.remove(&id());
+                if u.get("will_wake").and_then(Value::as_bool) == Some(true) {
+                    self.wake = true;
+                }
+            }
+            "turn_completed" => {
+                let of = u.get("prompt_id").and_then(Value::as_str);
+                if of.is_none() || of != self.prompt.as_deref() {
+                    self.wake = false;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn busy(&self) -> bool {
+        !self.running.is_empty() || self.wake
+    }
+}
+
+/// A turn the agent ran on its own after subagents woke it has no prompt
+/// answer to carry its usage, so take it from its turn_completed.
+fn woken_usage(u: &Value, ours: Option<&str>, events: &EventTx) {
+    if u.get("sessionUpdate").and_then(Value::as_str) != Some("turn_completed") {
+        return;
+    }
+    let of = u.get("prompt_id").and_then(Value::as_str);
+    if of.is_some() && of == ours {
+        return;
+    }
+    let Some(usage) = u.get("usage").filter(|v| v.is_object()) else {
+        return;
+    };
+    let n = |k: &str| usage.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let cost = usage
+        .get("costUsdTicks")
+        .and_then(Value::as_f64)
+        .map(|t| t / 1e10);
+    let _ = events.send(ProviderEvent::Usage {
+        input: n("inputTokens"),
+        output: n("outputTokens"),
+        cost_usd: cost,
+    });
+}
+
 fn update_of<'a>(method: &str, params: &'a Value, sid: &str) -> Option<&'a Value> {
     if !matches!(method, "session/update" | "_x.ai/session_notification") {
         return None;
@@ -1310,6 +1387,9 @@ async fn drive(
     let mut interrupting = false;
     let mut stop_by: Option<tokio::time::Instant> = None;
     let mut open = true;
+    let mut background = Background::default();
+    // The prompt was answered but background subagents still work.
+    let mut answered = false;
     loop {
         tokio::select! {
             biased;
@@ -1326,12 +1406,24 @@ async fn drive(
             msg = incoming.recv(), if open => {
                 let Some(msg) = msg else {
                     open = false;
+                    if answered {
+                        seen.buffers.flush(events);
+                        return Ok(TurnEnd::Completed);
+                    }
                     continue;
                 };
                 match msg {
                     Incoming::Notification { method, params } => {
                         if let Some(u) = update_of(&method, &params, &sid) {
+                            background.note(u);
                             update(u, &sid, can_resume, &mut seen, events);
+                            if answered {
+                                woken_usage(u, background.prompt.as_deref(), events);
+                                if !background.busy() {
+                                    seen.buffers.flush(events);
+                                    return Ok(TurnEnd::Completed);
+                                }
+                            }
                         }
                     }
                     Incoming::Request { id, method, params } => {
@@ -1340,7 +1432,7 @@ async fn drive(
                     Incoming::Raw(_) => {}
                 }
             }
-            done = &mut done_rx => {
+            done = &mut done_rx, if !answered => {
                 seen.buffers.flush(events);
                 opened.commands.clone_from(&seen.commands);
                 let answer = done.unwrap_or_else(|_| {
@@ -1374,7 +1466,7 @@ async fn drive(
                         let _ = events.send(ProviderEvent::Context { used, limit });
                     }
                 }
-                return match answer.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn") {
+                let end = match answer.get("stopReason").and_then(Value::as_str).unwrap_or("end_turn") {
                     "cancelled" => Ok(TurnEnd::Interrupted),
                     "refusal" => Err(ProviderError::new(ErrorClass::BadRequest, format!("{} refused to continue", agent.name))),
                     "max_tokens" => {
@@ -1388,6 +1480,11 @@ async fn drive(
                     _ if interrupting => Ok(TurnEnd::Interrupted),
                     _ => Ok(TurnEnd::Completed),
                 };
+                if matches!(end, Ok(TurnEnd::Completed)) && background.busy() && open {
+                    answered = true;
+                    continue;
+                }
+                return end;
             }
             () = sleep_until(silent.as_ref().map(|w| w.next)), if !interrupting => {
                 let Some(watch) = silent.as_mut() else { continue };
@@ -1922,6 +2019,106 @@ mod tests {
             limit: 256_000
         }));
         assert!(got.iter().any(|e| matches!(e, ProviderEvent::Usage { input: 17803, output: 193, cost_usd: Some(c) } if (c - 0.011_651_12).abs() < 1e-9)));
+    }
+
+    #[tokio::test]
+    async fn grok_keeps_the_turn_until_its_background_subagent_reports() {
+        // Recorded from grok 1.0.70: the prompt is answered at LAUNCHED, the
+        // subagent then asks for a permission, finishes, and wakes Grok.
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let server = tokio::spawn(async move {
+            let (r, mut w) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let prompt = read(&mut lines).await;
+            let note = |sid: &str, update: Value| json!({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": sid, "update": update}});
+            send(&mut w, note("S0", json!({"sessionUpdate": "subagent_spawned", "subagent_id": "A1", "parent_prompt_id": "P1"}))).await;
+            send(&mut w, note("S0", json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "LAUNCHED"}}))).await;
+            send(&mut w, note("S0", json!({"sessionUpdate": "turn_completed", "prompt_id": "P1", "usage": {"inputTokens": 100, "outputTokens": 5}}))).await;
+            send(
+                &mut w,
+                json!({"jsonrpc": "2.0", "id": prompt["id"], "result": {"stopReason": "end_turn"}}),
+            )
+            .await;
+            send(&mut w, json!({"jsonrpc": "2.0", "id": 7, "method": "session/request_permission", "params": {
+                "sessionId": "A1", "toolCall": {"toolCallId": "t1", "title": "Run ls"},
+                "options": [{"optionId": "ok", "kind": "allow_once", "name": "Allow"}]
+            }})).await;
+            let answered = read(&mut lines).await;
+            assert_eq!(
+                answered["id"], 7,
+                "the subagent's ask is answered after the prompt: {answered}"
+            );
+            send(&mut w, note("A1", json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "subagent words"}}))).await;
+            send(&mut w, note("S0", json!({"sessionUpdate": "subagent_finished", "subagent_id": "A1", "will_wake": true}))).await;
+            send(&mut w, note("S0", json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "REPORTED"}}))).await;
+            send(
+                &mut w,
+                note(
+                    "S0",
+                    json!({"sessionUpdate": "turn_completed", "prompt_id": "subagent-completed-A1",
+                "usage": {"inputTokens": 200, "outputTokens": 7, "costUsdTicks": 30_000_000}}),
+                ),
+            )
+            .await;
+            // Hold the line open: the turn must end on the wake turn, not on a close.
+            let _ = tokio::time::timeout(Duration::from_secs(2), lines.next_line()).await;
+        });
+        let (r, w) = tokio::io::split(ours);
+        let (peer, mut incoming) = Peer::start("Test", r, w);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let gate = Arc::new(Gate(
+            PermissionDecision::Allow,
+            std::sync::Mutex::new(vec![]),
+        ));
+        let spec = spec(Some(json!({"session_id": "S0"})));
+        let started = std::time::Instant::now();
+        let end = drive(
+            &peer,
+            &mut incoming,
+            &init(),
+            agent("grok").unwrap(),
+            &spec,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+            Some(Reused {
+                sid: "S0".into(),
+                session: json!({"sessionId": "S0"}),
+                model: None,
+                commands: vec![],
+            }),
+            &mut Opened::default(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(end, TurnEnd::Completed);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "ended on the wake turn, not the close"
+        );
+        server.await.unwrap();
+        drop(tx);
+        let mut got = vec![];
+        while let Some(e) = rx.recv().await {
+            got.push(e);
+        }
+        assert!(
+            got.contains(&ProviderEvent::Message("LAUNCHED".into())),
+            "{got:?}"
+        );
+        assert!(
+            got.contains(&ProviderEvent::Message("REPORTED".into())),
+            "{got:?}"
+        );
+        assert!(!got
+            .iter()
+            .any(|e| matches!(e, ProviderEvent::Message(m) if m.contains("subagent words"))));
+        assert!(got.iter().any(|e| matches!(e, ProviderEvent::Usage { input: 200, output: 7, cost_usd: Some(c) } if (c - 0.003).abs() < 1e-9)), "{got:?}");
+        assert!(
+            !got.iter()
+                .any(|e| matches!(e, ProviderEvent::Usage { input: 100, .. })),
+            "the first turn is counted once, by its answer"
+        );
     }
 
     #[tokio::test]
