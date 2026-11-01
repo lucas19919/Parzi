@@ -16,7 +16,9 @@ jobs:
           - platform: windows-latest
             args: "--bundles nsis"
           - platform: macos-latest
-            args: "--target aarch64-apple-darwin --bundles dmg"
+            # app is what produces the updater archive; dmg alone leaves macOS
+            # out of latest.json.
+            args: "--target aarch64-apple-darwin --bundles app,dmg"
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v7
@@ -64,12 +66,12 @@ jobs:
             | Command line, not the app | `parzi-cli-windows-x64.exe` or `parzi-cli-macos-arm64` — drives sessions and tabs from scripts |
             | Your own Linux server (ParziOS) | `parzi-linux-x64` or `parzi-linux-arm64` — the desktop's *Set up remote* installs it for you |
 
-            `Parzi_*_x64-setup.exe` is the file the in-app updater downloads. You don't need it.
+            `Parzi_*_x64-setup.exe` and `Parzi*.app.tar.gz` are the files the in-app updater downloads. You don't need them.
 
             ### First launch (once per machine)
 
             - **Windows:** SmartScreen asks once because setup isn't Authenticode-signed yet — *More info → Run anyway*.
-            - **macOS:** Gatekeeper asks once because the build isn't Apple-notarized — right-click (or Ctrl-click) Parzi in Applications → *Open* → *Open*. Afterwards it launches normally.
+            - **macOS:** Gatekeeper blocks the first open because the build isn't Apple-notarized — open Parzi once, then *System Settings → Privacy & Security → Open Anyway*. Afterwards it launches normally.
 
             ### Updates
 
@@ -97,6 +99,19 @@ jobs:
             [ -f "$f" ] || continue
             gh release upload "${{ github.ref_name }}" "$f" --clobber
           done
+
+      # Without notarization Gatekeeper still asks once, but an unsealed bundle
+      # reads as "damaged" with no way past it. Check the dmg people download.
+      - name: Check the Mac app is sealed and updatable
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bundle=src-tauri/target/aarch64-apple-darwin/release/bundle
+          mount=$(mktemp -d)
+          hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$bundle"/dmg/*.dmg
+          codesign --verify --deep --strict --verbose=2 "$mount/Parzi.app"
+          hdiutil detach "$mount"
+          test -f "$bundle/macos/Parzi.app.tar.gz.sig"
 
       # The one-click setup people download: a small window around the NSIS
       # installer above, which stays what the in-app updater runs.
