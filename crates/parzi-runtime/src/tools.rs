@@ -371,14 +371,13 @@ fn browser_defs() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "browser.open".into(),
-            description: "Open a URL in one of your page tabs and return its tab id. Without tab or new, your last tab navigates (a first call opens one). new=true opens another tab; tab=<id> navigates that one. Tabs open in the background; focus=true also shows the tab to the human. A bare host is https, a phrase is a search.".into(),
+            description: "Open a URL in one of your page tabs and return its tab id. Without tab or new, your last tab navigates (a first call opens one). new=true opens another tab; tab=<id> navigates that one. Tabs always open in the background, so they never pull the human away from what they are doing. A bare host is https, a phrase is a search.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "url": {"type": "string"},
                     "new": {"type": "boolean"},
                     "tab": tab_arg(),
-                    "focus": {"type": "boolean"},
                 },
                 "required": ["url"],
             }),
@@ -533,14 +532,13 @@ fn desk_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "desk.open".into(),
-            description: "Open something in the Parzi window for the human: what=session (id; default this session), settings (section: general, providers, connections, appearance), or home. Opens in the background unless focus=true.".into(),
+            description: "Open something in the Parzi window for the human: what=session (id; default this session), settings (section: general, providers, connections, appearance), or home. A session opens as a background tab and never switches the human to it.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "what": {"type": "string", "enum": ["session", "settings", "home"]},
                     "id": {"type": "string"},
                     "section": {"type": "string"},
-                    "focus": {"type": "boolean"},
                 },
                 "required": ["what"],
             }),

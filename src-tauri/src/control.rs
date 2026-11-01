@@ -815,13 +815,19 @@ async fn page_op(ctx: &Ctx, out: &Out, req: &Value, op: &str) -> Value {
     }
 }
 
+/// An agent never pulls the person to a tab, whatever it asks for. Only the
+/// person's own commands (the command line, which sends no session) come forward.
+fn takes_focus(session: &str, req: &Value) -> bool {
+    session.is_empty() && bool_arg(req, "focus", true)
+}
+
 async fn tab_open(ctx: &Ctx, req: &Value) -> Value {
     let url = match check_page_url(&str_arg(req, "url")) {
         Ok(u) => u,
         Err(e) => return fail(e),
     };
     let session = str_arg(req, "session");
-    let focus = bool_arg(req, "focus", session.is_empty());
+    let focus = takes_focus(&session, req);
     if bool_arg(req, "raise", false) {
         raise(&ctx.app);
     }
@@ -1000,7 +1006,7 @@ async fn desk_state(ctx: &Ctx, req: &Value) -> Value {
 
 async fn desk_open(ctx: &Ctx, req: &Value) -> Value {
     let session = str_arg(req, "session");
-    let focus = bool_arg(req, "focus", session.is_empty());
+    let focus = takes_focus(&session, req);
     let what = str_arg(req, "what");
     let (payload, done) = match what.as_str() {
         "url" | "page" => return tab_open(ctx, req).await,
@@ -1562,6 +1568,15 @@ mod tests {
             desk.own_tab("s1", "t2").is_err(),
             "the person's tab is not the agent's to navigate"
         );
+    }
+
+    #[test]
+    fn an_agent_can_never_take_the_focus() {
+        let asked = json!({ "focus": true });
+        assert!(!takes_focus("s1", &asked), "even when it asks");
+        assert!(!takes_focus("s1", &json!({})));
+        assert!(takes_focus("", &json!({})), "the person's own command comes forward");
+        assert!(!takes_focus("", &json!({ "focus": false })), "--background still works");
     }
 
     #[test]

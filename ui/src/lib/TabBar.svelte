@@ -291,7 +291,6 @@
       bind:this={els[tab.id]}
       class="tab"
       class:active={tab.id === activeTabId}
-      class:linked={attached.length > 0}
       class:dragging={tab.id === dragId}
       style={tab.id === dragId ? `transform: ${vertical ? "translateY" : "translateX"}(${dragX}px)` : ""}
       use:pressDrag={drag(tab.id)}
@@ -492,11 +491,6 @@
   .group .tab:hover:not(.active) {
     background: var(--hover);
   }
-  /* Connected tabs folded away: a second edge behind this one, like a stack. */
-  .tab.linked {
-    box-shadow: 3px 0 0 -1px var(--bg), 3px 0 0 0 var(--line);
-  }
-
   .close.count {
     opacity: 1;
     width: auto;

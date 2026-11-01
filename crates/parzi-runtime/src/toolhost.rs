@@ -1652,7 +1652,6 @@ impl ToolHost {
         let mut body = serde_json::json!({
             "url": url,
             "session": self.p.session_id,
-            "focus": flag("focus"),
             "new": flag("new"),
         });
         if let Some(tab) = args.get("tab").and_then(Value::as_str) {
@@ -1662,11 +1661,10 @@ impl ToolHost {
             Ok(v) => {
                 let id = v.get("id").and_then(Value::as_str).unwrap_or("");
                 let shown = v.get("url").and_then(Value::as_str).unwrap_or(&url);
-                let mut out = format!("opened {shown} in tab {id}");
-                if !flag("focus") {
-                    out.push_str(" (in the background)");
-                }
-                (true, out)
+                (
+                    true,
+                    format!("opened {shown} in tab {id} (in the background)"),
+                )
             }
             Err(e) => (false, e),
         }
@@ -1756,7 +1754,6 @@ impl ToolHost {
                     "what": what,
                     "id": id,
                     "section": s("section"),
-                    "focus": args.get("focus").and_then(Value::as_bool).unwrap_or(false),
                 });
                 match self.desk_call("desk.open", body).await {
                     Ok(v) => (
