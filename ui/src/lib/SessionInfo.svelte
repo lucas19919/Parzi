@@ -112,13 +112,6 @@
   const kTok = (n: number) => (n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${+(n / 1_000).toFixed(1)}k` : String(n));
   $: planCount = plan ? progress(deriveItems(plan, { project, threads, running, waiting: new Map(), prs: $planState.prs, activity: $activity })) : null;
   $: planAside = planError ? "Unreadable" : planInline ? "Shown" : planCount ? `${planCount.done} of ${planCount.total}` : "";
-  // What the folded Details card says about itself.
-  $: detailsAside = [
-    contextLimit > 0 ? `${pct}% context` : "",
-    git && (git.changed || git.untracked) ? `${git.changed + git.untracked} changed` : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
 
   onMount(() => {
     const onFocus = () => void loadGit();
@@ -166,6 +159,79 @@
       {/key}
     </InfoCard>
   {/if}
+  <InfoCard id="env" title="Environment" foldedAside>
+    <svelte:fragment slot="aside">{remoteHost ? "Remote" : "Local"}</svelte:fragment>
+    <div class="info-line">
+      <Icon name={remoteHost ? "server" : "desktop"} size={12} />
+      <span class="info-v">{remoteHost || "This computer"}</span>
+    </div>
+    <div class="info-line" title={folder}>
+      <Icon name={project ? "project" : "folder"} size={12} />
+      <span class="info-v">{projectTitle || (folder ? folderName(folder) : "No folder")}</span>
+    </div>
+    {#if branch}
+      <div class="info-line">
+        <Icon name="branch" size={12} />
+        <span class="info-v mono">{branch}</span>
+      </div>
+    {/if}
+  </InfoCard>
+
+  {#if contextLimit > 0}
+    <InfoCard id="context" title="Context" foldedAside>
+      <svelte:fragment slot="aside">{pct}%</svelte:fragment>
+      <ContextBreakdown
+        used={contextUsed}
+        limit={contextLimit}
+        {folder}
+        {compacting}
+        {streaming}
+        on:compact={() => dispatch("compact")}
+      />
+    </InfoCard>
+  {:else if tokensIn || tokensOut || limits.length}
+    
+    <InfoCard id="usage" title="Usage">
+      <svelte:fragment slot="aside">{costUsd > 0 ? `$${costUsd.toFixed(2)}` : ""}</svelte:fragment>
+      {#if tokensIn || tokensOut}
+        <div class="info-line"><span class="info-v">{kTok(tokensIn)} in · {kTok(tokensOut)} out</span></div>
+      {/if}
+      {#each limits as w (w.label)}
+        <div class="info-line quiet">
+          <span class="info-v">{nameOf(provider)} {w.label}</span>
+          <span class="pct">{Math.round(w.used_percent)}%</span>
+        </div>
+      {/each}
+    </InfoCard>
+  {/if}
+
+  {#if git}
+    <InfoCard id="changes" title="Changes">
+      <svelte:fragment slot="aside">
+        {#if git.added || git.removed}
+          <span class="add">+{git.added.toLocaleString()}</span>&nbsp;<span class="del">−{git.removed.toLocaleString()}</span>
+        {/if}
+      </svelte:fragment>
+      <div class="info-line">
+        <span class="info-v" class:quiet={!git.changed && !git.untracked}>
+          {git.changed || git.untracked ? [git.changed ? `${git.changed} changed` : "", git.untracked ? `${git.untracked} new` : ""].filter(Boolean).join(" · ") : "No changes"}
+        </span>
+      </div>
+      {#if git.upstream && (git.ahead || git.behind)}
+        <div class="info-line quiet"><span class="info-v">{[git.ahead ? `${git.ahead} ahead` : "", git.behind ? `${git.behind} behind` : ""].filter(Boolean).join(" · ")}</span></div>
+      {/if}
+      {#if pr}
+        <button class="info-line row" use:tooltip={pr.title} on:click={() => pr && dispatch("openUrl", { url: pr.url })}>
+          <Icon name="pr" size={12} />
+          <span class="info-v">PR #{pr.number}</span>
+          {#if pr.checks !== "none"}
+            <span class="checks {pr.checks}"><Icon name={pr.checks === "pass" ? "checkCircle" : pr.checks === "fail" ? "xCircle" : "clock"} size={12} /></span>
+          {/if}
+        </button>
+      {/if}
+    </InfoCard>
+  {/if}
+
   {#if (plan && planCount) || planError}
     <InfoCard id="plan" title="Plan">
       <svelte:fragment slot="aside">{planAside}</svelte:fragment>
@@ -184,82 +250,7 @@
   {/if}
 
   <RunningCard {session} {helpers} {running} {waiting} on:openSession />
-
-  <InfoCard id="details" title="Details" startShut>
-    <svelte:fragment slot="aside">{detailsAside}</svelte:fragment>
-    <div class="group">
-      <span class="t-group">Where</span>
-      <div class="info-line">
-        <Icon name={remoteHost ? "server" : "desktop"} size={12} />
-        <span class="info-v">{remoteHost || "This computer"}</span>
-      </div>
-      <div class="info-line" title={folder}>
-        <Icon name={project ? "project" : "folder"} size={12} />
-        <span class="info-v">{projectTitle || (folder ? folderName(folder) : "No folder")}</span>
-      </div>
-      {#if branch}
-        <div class="info-line">
-          <Icon name="branch" size={12} />
-          <span class="info-v mono">{branch}</span>
-        </div>
-      {/if}
-    </div>
-
-    {#if contextLimit > 0}
-      <div class="group">
-        <span class="t-group">Context</span>
-        <ContextBreakdown
-          used={contextUsed}
-          limit={contextLimit}
-          {folder}
-          {compacting}
-          {streaming}
-          on:compact={() => dispatch("compact")}
-        />
-      </div>
-    {:else if tokensIn || tokensOut || limits.length}
-      <div class="group">
-        <span class="t-group">Usage{costUsd > 0 ? ` · $${costUsd.toFixed(2)}` : ""}</span>
-        {#if tokensIn || tokensOut}
-          <div class="info-line"><span class="info-v">{kTok(tokensIn)} in · {kTok(tokensOut)} out</span></div>
-        {/if}
-        {#each limits as w (w.label)}
-          <div class="info-line quiet">
-            <span class="info-v">{nameOf(provider)} {w.label}</span>
-            <span class="pct">{Math.round(w.used_percent)}%</span>
-          </div>
-        {/each}
-      </div>
-    {/if}
-
-    {#if git}
-      <div class="group">
-        <span class="t-group">
-          Changes
-          {#if git.added || git.removed}
-            <span class="add">+{git.added.toLocaleString()}</span> <span class="del">−{git.removed.toLocaleString()}</span>
-          {/if}
-        </span>
-        <div class="info-line">
-          <span class="info-v" class:quiet={!git.changed && !git.untracked}>
-            {git.changed || git.untracked ? [git.changed ? `${git.changed} changed` : "", git.untracked ? `${git.untracked} new` : ""].filter(Boolean).join(" · ") : "No changes"}
-          </span>
-        </div>
-        {#if git.upstream && (git.ahead || git.behind)}
-          <div class="info-line quiet"><span class="info-v">{[git.ahead ? `${git.ahead} ahead` : "", git.behind ? `${git.behind} behind` : ""].filter(Boolean).join(" · ")}</span></div>
-        {/if}
-        {#if pr}
-          <button class="info-line row" use:tooltip={pr.title} on:click={() => pr && dispatch("openUrl", { url: pr.url })}>
-            <Icon name="pr" size={12} />
-            <span class="info-v">PR #{pr.number}</span>
-            {#if pr.checks !== "none"}
-              <span class="checks {pr.checks}"><Icon name={pr.checks === "pass" ? "checkCircle" : pr.checks === "fail" ? "xCircle" : "clock"} size={12} /></span>
-            {/if}
-          </button>
-        {/if}
-      </div>
-    {/if}
-  </InfoCard></aside>
+</aside>
 
 <style>
   .info {
@@ -329,14 +320,6 @@
     font-size: var(--fs-md);
     line-height: 1.55;
     overflow-wrap: anywhere;
-  }
-  .group {
-    display: flex;
-    flex-direction: column;
-    gap: calc(var(--space) * 2);
-  }
-  .group + .group {
-    margin-top: calc(var(--space) * 2);
   }
   .pct {
     flex: none;
