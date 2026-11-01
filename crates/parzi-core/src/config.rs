@@ -84,10 +84,28 @@ impl Budget {
     }
 }
 
+/// What an agent may bill: its own subscription login, or a key per token.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Billing {
+    #[default]
+    Subscription,
+    ApiKey,
+}
+
+impl Billing {
+    #[must_use]
+    pub fn is_subscription(&self) -> bool {
+        *self == Self::Subscription
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderEntry {
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Billing::is_subscription")]
+    pub billing: Billing,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub binary: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -102,6 +120,7 @@ impl Default for ProviderEntry {
     fn default() -> Self {
         Self {
             enabled: true,
+            billing: Billing::Subscription,
             binary: String::new(),
             default_model: String::new(),
             args: Vec::new(),
@@ -124,6 +143,9 @@ pub struct LaneDefaults {
 pub struct McpConfig {
     #[serde(default)]
     pub servers: HashMap<String, McpServerCfg>,
+    /// Default connectors already offered, so one the user removes stays removed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub seeded: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -233,8 +255,29 @@ fn default_approval_wait() -> u64 {
     900
 }
 
+fn default_connectors() -> Vec<(&'static str, McpServerCfg)> {
+    vec![(
+        "diagonaldiagrams",
+        McpServerCfg {
+            command: "uvx".into(),
+            args: vec!["diagonaldiagrams".into(), "mcp".into()],
+            timeout_ms: default_timeout_ms(),
+            enabled: true,
+            ..McpServerCfg::default()
+        },
+    )]
+}
+
 impl Default for ParziConfig {
     fn default() -> Self {
+        let mut cfg = Self::blank();
+        cfg.seed_connectors();
+        cfg
+    }
+}
+
+impl ParziConfig {
+    fn blank() -> Self {
         Self {
             version: CONFIG_VERSION,
             providers: HashMap::new(),
@@ -249,6 +292,16 @@ impl Default for ParziConfig {
             budget: Budget::default(),
             favorite_models: vec![],
             image: ImageConfig::default(),
+        }
+    }
+
+    fn seed_connectors(&mut self) {
+        for (id, server) in default_connectors() {
+            if self.mcp.seeded.iter().any(|s| s == id) {
+                continue;
+            }
+            self.mcp.seeded.push(id.to_string());
+            self.mcp.servers.entry(id.to_string()).or_insert(server);
         }
     }
 }
@@ -274,6 +327,7 @@ impl ParziConfig {
         let mut cfg: Self = toml::from_str(&text)?;
         cfg.check_version()?;
         cfg.migrate();
+        cfg.seed_connectors();
         Ok(cfg)
     }
 
@@ -346,6 +400,39 @@ impl ParziConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_default_connector_arrives_once_and_stays_removed() {
+        let fresh = ParziConfig::default();
+        let srv = &fresh.mcp.servers["diagonaldiagrams"];
+        assert_eq!(srv.command, "uvx");
+        assert_eq!(srv.args, ["diagonaldiagrams", "mcp"]);
+        assert!(srv.enabled && srv.timeout_ms > 0);
+
+        // An install from before the default gets it on its next load.
+        let mut older = ParziConfig::blank();
+        older.seed_connectors();
+        assert!(older.mcp.servers.contains_key("diagonaldiagrams"));
+
+        // Removed by the user, and saved: it does not come back.
+        older.mcp.servers.remove("diagonaldiagrams");
+        let text = toml::to_string(&older).unwrap();
+        let mut again: ParziConfig = toml::from_str(&text).unwrap();
+        again.seed_connectors();
+        assert!(!again.mcp.servers.contains_key("diagonaldiagrams"));
+
+        // A server the user already set up under that name is theirs.
+        let mut theirs = ParziConfig::blank();
+        theirs.mcp.servers.insert(
+            "diagonaldiagrams".into(),
+            McpServerCfg {
+                command: "mine".into(),
+                ..McpServerCfg::default()
+            },
+        );
+        theirs.seed_connectors();
+        assert_eq!(theirs.mcp.servers["diagonaldiagrams"].command, "mine");
+    }
 
     #[test]
     fn a_v1_file_moves_to_v2() {

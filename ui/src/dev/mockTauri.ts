@@ -1,6 +1,7 @@
 import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 
 const params = new URLSearchParams(location.search);
+const mockKeys = new Set<string>();
 const view = params.get("view") ?? "session";
 const turns = Math.max(1, Number(params.get("turns")) || 40);
 
@@ -328,6 +329,7 @@ const config = {
   lanes: { default_mode: "full", default_allowed_tools: [] },
   mcp: {
     servers: {
+      diagonaldiagrams: { command: "uvx", args: ["diagonaldiagrams", "mcp"], enabled: true, timeout_ms: 60000 },
       github: { command: "", url: "https://api.githubcopilot.com/mcp/", auth: "gh", enabled: true, timeout_ms: 60000 },
     },
   },
@@ -406,6 +408,13 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   provider_statuses: () => board,
   refresh_providers: () => board,
   get_config: () => structuredClone(config),
+  agent_keys: () => [...mockKeys],
+  set_agent_key: (a) => {
+    const { provider, key } = a as { provider: string; key: string | null };
+    if (key) mockKeys.add(provider);
+    else mockKeys.delete(provider);
+    return null;
+  },
   acp_registry: () => [
     { id: "gemini", name: "Gemini CLI", command: "gemini", args: ["--acp"] },
     { id: "github-copilot-cli", name: "GitHub Copilot", command: "copilot", args: ["--acp"] },
@@ -431,7 +440,6 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   ],
   connectors_from_text: () => [],
   connector_forget: () => null,
-  connector_set_icon: () => "",
   connector_details: () => ({
     title: "GitHub",
     icon: null,

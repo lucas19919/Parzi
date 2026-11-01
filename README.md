@@ -14,7 +14,7 @@ A project can have a plan. Ask an agent to plan the work and the thread shows th
 
 The Brain (`Ctrl+B`) is markdown in `~/.parzi/brain`. A note can go to every session or to the projects you name. Pinned notes are sent in full. The rest are one line, and the agent reads a note when it needs it.
 
-Connectors, in Settings under Connections, add tools: GitHub, Notion, Linear, and the other presets, or any MCP server by its address or command. You sign in to that service in the browser. Pages are a normal browser, with an address bar, back and forward, downloads, and bookmarks imported from Brave, Chrome, or Edge. Passwords come from Bitwarden if you install its CLI. An ad blocker is on until you turn it off.
+Connectors, in Settings, add tools: diagonaldiagrams for diagrams and charts comes on by default (it needs [uv](https://docs.astral.sh/uv/)), GitHub, Notion, Linear, and the other presets, or any MCP server by its address or command. You sign in to that service in the browser. Pages are a normal browser, with an address bar, back and forward, downloads, and bookmarks imported from Brave, Chrome, or Edge. Passwords come from Bitwarden if you install its CLI. An ad blocker is on until you turn it off.
 
 ## Install
 
@@ -30,7 +30,11 @@ Windows SmartScreen asks once: More info, then Run anyway. macOS builds are not 
 
 ## Agents
 
-Set up Parzi installs each agent with that vendor's installer and signs you in with the agent's own login. Parzi does not keep the keys.
+Set up Parzi installs each agent with that vendor's installer and signs you in with the agent's own login. Parzi does not keep those logins.
+
+Each agent runs on its subscription unless you choose API key in Settings, under Providers, and add a key there. A key you add stays in `~/.parzi/keys` on this computer, does not sync to a server, and goes only to that agent. Your subscription login stays as it was, so you can switch back. OpenCode keeps a key per provider, so its Add key button opens OpenCode's own sign-in.
+
+On a subscription, Parzi hides that agent's API key variables from it, so a key set for something else on your machine costs nothing. Commands the agent runs do not see those variables either. If a login would still bill per token, the agent shows as not signed in, and you can sign in with your subscription or choose API key. OpenCode on a subscription offers OpenCode Go and plans you signed in to, not Zen or provider keys.
 
 | Agent | Program | How Parzi talks to it | Asks before every change |
 | --- | --- | --- | --- |

@@ -11,6 +11,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::jsonrpc::{read_line, Line, MAX_LINE};
 use crate::process::{self, Proc, STOP_GRACE};
+use parzi_core::config::Billing;
+
+use crate::billing::{agent_env, enforce, key_login, AgentEnv};
 use crate::types::{
     sleep_until, tail, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
     PermissionRequest, Provider, ProviderError, ProviderEvent, ProviderStatus, State, TurnEnd,
@@ -21,12 +24,14 @@ pub const ID: &str = "claude";
 
 pub struct Claude {
     binary: String,
+    billing: Billing,
 }
 
 impl Claude {
-    pub fn new(binary: &str) -> Self {
+    pub fn new(binary: &str, billing: Billing) -> Self {
         Self {
             binary: binary.to_string(),
+            billing,
         }
     }
 
@@ -56,7 +61,8 @@ impl Provider for Claude {
         let version = process::first_line(&program, &["--version"])
             .await
             .map(|l| l.split_whitespace().next().unwrap_or(&l).to_string());
-        let auth = process::output(&program, &["auth", "status"], 30)
+        let env = agent_env(ID, self.billing);
+        let auth = process::output(&program, &["auth", "status"], 30, &env)
             .await
             .and_then(|out| first_json_object(&out));
         let mut status = match &auth {
@@ -74,12 +80,15 @@ impl Provider for Claude {
         };
         status.version = version;
         if status.state == State::Ready {
-            match handshake(&program).await {
-                Ok(init) => status.models = models_from_init(&init),
+            match handshake(&program, &env).await {
+                Ok(init) => {
+                    status.models = models_from_init(&init);
+                    settle_login(&mut status, &init);
+                }
                 Err(e) => status.hint = format!("Signed in, but the model list failed: {e}"),
             }
         }
-        status
+        enforce(status, self.billing)
     }
 
     async fn run_turn(
@@ -104,7 +113,8 @@ impl Provider for Claude {
         process::existing_folder(&spec.cwd)?;
         let scratch = TurnFiles::write(&spec)?;
         let args = turn_args(&spec, &scratch)?;
-        let mut proc = Proc::spawn(&program, &args, &spec.cwd, &[]).map_err(|e| {
+        let env = agent_env(ID, self.billing);
+        let mut proc = Proc::spawn(&program, &args, &spec.cwd, &env).map_err(|e| {
             ProviderError::process(process::start_error("Claude Code", &program, &e))
         })?;
         let stdin = proc.child.stdin.take();
@@ -113,7 +123,7 @@ impl Provider for Claude {
             proc.kill().await;
             return Err(ProviderError::process("Claude Code started without stdio"));
         };
-        let outcome = drive(stdout, stdin, &spec, gate, &events, &cancel).await;
+        let outcome = drive(stdout, stdin, &spec, self.billing, gate, &events, &cancel).await;
         let outcome = match outcome {
             Err(e) if e.class == ErrorClass::Process => Err(ProviderError::process(format!(
                 "{} {}",
@@ -144,6 +154,31 @@ fn account_label(auth: &Value) -> String {
             Some(m) if m.contains("key") => "API key".into(),
             _ => "Claude account".into(),
         },
+    }
+}
+
+fn key_in_use(init: &Value) -> bool {
+    init.pointer("/account/apiKeySource")
+        .and_then(Value::as_str)
+        .is_some_and(|s| !s.is_empty() && s != "none")
+}
+
+/// `auth status` also reads settings.json, which turns skip with
+/// `--setting-sources=`. The handshake runs like a turn, so it has the last word.
+fn settle_login(status: &mut ProviderStatus, init: &Value) {
+    if key_in_use(init) {
+        status.account = Some("API key".into());
+    } else if status.account.as_deref() == Some("API key") {
+        let token = init
+            .pointer("/account/tokenSource")
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.is_empty() && s != "none");
+        if token {
+            status.account = init.get("account").map(account_label);
+        } else {
+            status.account = None;
+            status.state = State::SignedOut;
+        }
     }
 }
 
@@ -186,7 +221,7 @@ fn models_from_init(init: &Value) -> Vec<ModelInfo> {
         .collect()
 }
 
-async fn handshake(program: &Path) -> Result<Value, ProviderError> {
+async fn handshake(program: &Path, env: &AgentEnv) -> Result<Value, ProviderError> {
     let args: Vec<String> = [
         "-p",
         "--input-format",
@@ -202,7 +237,7 @@ async fn handshake(program: &Path) -> Result<Value, ProviderError> {
     .map(|s| s.to_string())
     .collect();
     let cwd = std::env::temp_dir();
-    let mut proc = Proc::spawn(program, &args, &cwd, &[])
+    let mut proc = Proc::spawn(program, &args, &cwd, env)
         .map_err(|e| ProviderError::process(process::start_error("Claude Code", program, &e)))?;
     let (Some(stdin), Some(stdout)) = (proc.child.stdin.take(), proc.child.stdout.take()) else {
         proc.kill().await;
@@ -589,6 +624,7 @@ async fn drive<R, W>(
     reader: R,
     writer: W,
     spec: &TurnSpec,
+    billing: Billing,
     gate: Arc<dyn PermissionGate>,
     events: &EventTx,
     cancel: &CancellationToken,
@@ -598,7 +634,7 @@ where
     W: AsyncWrite + Send + Unpin + 'static,
 {
     let (link, incoming) = Link::start(reader, writer);
-    let outcome = converse(&link, incoming, spec, gate, events, cancel).await;
+    let outcome = converse(&link, incoming, spec, billing, gate, events, cancel).await;
     let _ = tokio::time::timeout(Duration::from_millis(500), link.close()).await;
     outcome
 }
@@ -607,6 +643,7 @@ async fn converse(
     link: &Arc<Link>,
     mut incoming: mpsc::UnboundedReceiver<Value>,
     spec: &TurnSpec,
+    billing: Billing,
     gate: Arc<dyn PermissionGate>,
     events: &EventTx,
     cancel: &CancellationToken,
@@ -630,7 +667,10 @@ async fn converse(
                 }
             }
             r = &mut init => {
-                r?;
+                // Nothing has been sent to a model yet, so stopping here costs nothing.
+                if billing == Billing::Subscription && key_in_use(&r?) {
+                    return Err(ProviderError::new(ErrorClass::Auth, key_login("Claude")));
+                }
                 break;
             }
         }
@@ -1167,6 +1207,73 @@ mod tests {
         seen
     }
 
+    async fn answer_init_with_key(io: tokio::io::DuplexStream) -> Option<String> {
+        let (r, mut w) = tokio::io::split(io);
+        let mut lines = BufReader::new(r).lines();
+        let init: Value = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
+        let account = json!({"tokenSource": "none", "apiKeySource": "ANTHROPIC_API_KEY"});
+        let ok = json!({"type": "control_response", "response": {"subtype": "success",
+            "request_id": init["request_id"], "response": {"account": account}}});
+        w.write_all(format!("{ok}\n").as_bytes()).await.unwrap();
+        lines.next_line().await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_key_is_refused_on_a_subscription_before_the_prompt_goes_out() {
+        let (ours, theirs) = tokio::io::duplex(1 << 16);
+        let cli = tokio::spawn(answer_init_with_key(theirs));
+        let (r, w) = tokio::io::split(ours);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
+        let err = drive(
+            r,
+            w,
+            &spec(),
+            Billing::Subscription,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.class, ErrorClass::Auth);
+        assert!(err.message.contains("API key"), "{}", err.message);
+        let next = cli.await.unwrap();
+        assert!(
+            !next.as_deref().unwrap_or("").contains("\"type\":\"user\""),
+            "{next:?}"
+        );
+    }
+
+    #[test]
+    fn the_handshake_decides_what_a_turn_would_bill() {
+        let init = |account: Value| json!({"account": account});
+        let keyed = || {
+            let mut s = ProviderStatus::new(ID, State::Ready, "");
+            s.account = Some("API key".into());
+            s
+        };
+
+        let mut s = ProviderStatus::new(ID, State::Ready, "");
+        s.account = Some("Claude Max".into());
+        settle_login(&mut s, &init(json!({"apiKeySource": "ANTHROPIC_API_KEY"})));
+        assert_eq!(s.account.as_deref(), Some("API key"));
+
+        // A key only in settings.json, which turns skip, over a real login.
+        let mut s = keyed();
+        settle_login(
+            &mut s,
+            &init(json!({"tokenSource": "claude.ai", "subscriptionType": "max"})),
+        );
+        assert_eq!(s.account.as_deref(), Some("Claude Max"));
+        assert_eq!(s.state, State::Ready);
+
+        // The same key with no login behind it: a turn would have nothing.
+        let mut s = keyed();
+        settle_login(&mut s, &init(json!({"tokenSource": "none"})));
+        assert_eq!(s.state, State::SignedOut);
+    }
+
     #[tokio::test]
     async fn a_turn_streams_every_tool_call_and_asks_the_gate() {
         let (ours, theirs) = tokio::io::duplex(1 << 16);
@@ -1192,9 +1299,17 @@ mod tests {
         let (r, w) = tokio::io::split(ours);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
-        let end = drive(r, w, &spec(), gate, &tx, &CancellationToken::new())
-            .await
-            .unwrap();
+        let end = drive(
+            r,
+            w,
+            &spec(),
+            Billing::ApiKey,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         assert_eq!(end, TurnEnd::Completed);
         let seen = cli.await.unwrap();
         assert_eq!(seen[0]["request"]["subtype"], "initialize");
@@ -1249,9 +1364,17 @@ mod tests {
         let (r, w) = tokio::io::split(ours);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
-        drive(r, w, &spec(), gate, &tx, &CancellationToken::new())
-            .await
-            .unwrap();
+        drive(
+            r,
+            w,
+            &spec(),
+            Billing::ApiKey,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         cli.await.unwrap();
         drop(tx);
         while let Some(e) = rx.recv().await {
@@ -1274,9 +1397,17 @@ mod tests {
         let (r, w) = tokio::io::split(ours);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
-        let end = drive(r, w, &spec(), gate, &tx, &CancellationToken::new())
-            .await
-            .unwrap();
+        let end = drive(
+            r,
+            w,
+            &spec(),
+            Billing::ApiKey,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         cli.await.unwrap();
         drop(tx);
         let mut got = vec![];
@@ -1359,9 +1490,17 @@ mod tests {
         let (r, w) = tokio::io::split(ours);
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
-        let err = drive(r, w, &spec(), gate, &tx, &CancellationToken::new())
-            .await
-            .unwrap_err();
+        let err = drive(
+            r,
+            w,
+            &spec(),
+            Billing::ApiKey,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err.class, ErrorClass::Auth);
         assert!(
             err.message.contains("Invalid API key") && err.message.contains("401"),
@@ -1400,9 +1539,17 @@ mod tests {
         let (r, w) = tokio::io::split(ours);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
-        drive(r, w, &spec(), gate, &tx, &CancellationToken::new())
-            .await
-            .unwrap();
+        drive(
+            r,
+            w,
+            &spec(),
+            Billing::ApiKey,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         cli.await.unwrap();
         drop(tx);
         let mut got = vec![];
@@ -1443,9 +1590,17 @@ mod tests {
         let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
         let mut s = spec();
         s.resume = Some(json!({"session_id": "gone"}));
-        let err = drive(r, w, &s, gate, &tx, &CancellationToken::new())
-            .await
-            .unwrap_err();
+        let err = drive(
+            r,
+            w,
+            &s,
+            Billing::ApiKey,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err.class, ErrorClass::SessionLost);
         assert!(err.message.contains("No conversation found"), "{err}");
         cli.await.unwrap();
@@ -1462,9 +1617,17 @@ mod tests {
         let (r, w) = tokio::io::split(ours);
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
-        let err = drive(r, w, &spec(), gate, &tx, &CancellationToken::new())
-            .await
-            .unwrap_err();
+        let err = drive(
+            r,
+            w,
+            &spec(),
+            Billing::ApiKey,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err.class, ErrorClass::Process, "{err}");
         cli.await.unwrap();
     }
@@ -1540,7 +1703,9 @@ mod tests {
         let (r, w) = tokio::io::split(ours);
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
-        let end = drive(r, w, &spec(), gate, &tx, &cancel).await.unwrap();
+        let end = drive(r, w, &spec(), Billing::ApiKey, gate, &tx, &cancel)
+            .await
+            .unwrap();
         assert_eq!(end, TurnEnd::Interrupted);
         cli.await.unwrap();
     }
@@ -1564,9 +1729,17 @@ mod tests {
         let (r, w) = tokio::io::split(ours);
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let gate: Arc<dyn PermissionGate> = Arc::new(Gate(PermissionDecision::Allow));
-        let err = drive(r, w, &spec(), gate, &tx, &CancellationToken::new())
-            .await
-            .unwrap_err();
+        let err = drive(
+            r,
+            w,
+            &spec(),
+            Billing::ApiKey,
+            gate,
+            &tx,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
         assert!(err.message.contains("boom"), "{err}");
         cli.await.unwrap();
     }

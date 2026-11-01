@@ -50,7 +50,14 @@ pub async fn save_config(
             return Err("change cancelled".into());
         }
     }
+    let rebill = cfg
+        .providers
+        .iter()
+        .any(|(id, e)| e.billing != old.provider(id).billing);
     cfg.save().map_err(|e| e.to_string())?;
+    if rebill {
+        parzi_providers::drop_parked();
+    }
     state.orch.apply_config(cfg).await;
     crate::remote::sync_soon(&app);
     Ok(())
@@ -92,6 +99,19 @@ fn registry_agent() -> &'static ureq::Agent {
             .build()
             .into()
     })
+}
+
+/// Which agents have a saved key. The keys themselves stay in the backend.
+#[tauri::command]
+pub fn agent_keys() -> Vec<String> {
+    parzi_providers::saved_keys()
+}
+
+#[tauri::command]
+pub fn set_agent_key(provider: String, key: Option<String>) -> Result<(), String> {
+    parzi_providers::save_key(&provider, key.as_deref())?;
+    parzi_providers::drop_parked();
+    Ok(())
 }
 
 #[tauri::command]
@@ -234,15 +254,6 @@ pub async fn connector_details(
         icon,
         tools,
     })
-}
-
-#[tauri::command]
-pub async fn connector_set_icon(name: String, path: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        parzi_runtime::connector_icon::set_picked(&name, std::path::Path::new(&path))
-    })
-    .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

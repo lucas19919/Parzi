@@ -1,7 +1,8 @@
 mod acp;
+mod billing;
 mod registry;
 
-pub use acp::{cached_models, drop_live_in};
+pub use acp::{cached_models, drop_live_in, drop_parked};
 mod claude;
 mod codex;
 mod jsonrpc;
@@ -12,7 +13,7 @@ mod types;
 use std::sync::Arc;
 
 use base64::Engine as _;
-use parzi_core::config::ParziConfig;
+use parzi_core::config::{Billing, ParziConfig};
 
 pub use types::{
     now_secs, ErrorClass, EventTx, ModelInfo, PermissionDecision, PermissionGate,
@@ -30,6 +31,7 @@ pub const PROVIDERS: &[&str] = &[
     "acp",
 ];
 
+pub use billing::{save_key, saved_keys};
 pub use registry::{parse_registry, registry_url, RegistryAgent};
 
 pub fn display_name(id: &str) -> &'static str {
@@ -73,17 +75,22 @@ fn binary(id: &str, cfg: &ParziConfig) -> String {
         .unwrap_or_default()
 }
 
+fn billing(id: &str, cfg: &ParziConfig) -> Billing {
+    cfg.providers.get(id).map(|e| e.billing).unwrap_or_default()
+}
+
 pub fn provider(id: &str, cfg: &ParziConfig) -> Option<Arc<dyn Provider>> {
     let id = canonical_id(id)?;
+    let bills = billing(id, cfg);
     let binary = binary(id, cfg);
     Some(match id {
-        claude::ID => Arc::new(claude::Claude::new(&binary)),
-        codex::ID => Arc::new(codex::Codex::new(&binary)),
+        claude::ID => Arc::new(claude::Claude::new(&binary, bills)),
+        codex::ID => Arc::new(codex::Codex::new(&binary, bills)),
         "acp" => {
             let entry = cfg.provider("acp");
             Arc::new(acp::Acp::custom(&binary, &entry.args, &entry.label))
         }
-        other => Arc::new(acp::Acp::new(acp::agent(other)?, &binary)),
+        other => Arc::new(acp::Acp::new(acp::agent(other)?, &binary, bills)),
     })
 }
 
@@ -93,12 +100,12 @@ pub fn install_script(id: &str) -> Option<String> {
 
 pub fn login_script(id: &str, cfg: &ParziConfig) -> Option<String> {
     let id = canonical_id(id)?;
-    setup::login_script(id, &binary(id, cfg))
+    setup::login_script(id, &binary(id, cfg), billing(id, cfg))
 }
 
 pub fn warm(id: &str, cfg: &ParziConfig) {
     if let Some((id, agent)) = canonical_id(id).and_then(|id| Some((id, acp::agent(id)?))) {
-        acp::Acp::new(agent, &binary(id, cfg)).warm();
+        acp::Acp::new(agent, &binary(id, cfg), billing(id, cfg)).warm();
     }
 }
 
@@ -113,7 +120,7 @@ pub async fn sign_in(
             format!("{} signs in with its own command", display_name(id)),
         ));
     };
-    acp::Acp::new(agent, &binary(id, cfg))
+    acp::Acp::new(agent, &binary(id, cfg), billing(id, cfg))
         .sign_in(started)
         .await
 }

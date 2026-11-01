@@ -3,9 +3,10 @@
   import { onMount } from "svelte";
   import { api, type ParziConfig, type ProviderEntry, type ProviderStatus, type RegistryAgent } from "../api";
   import { formatCommand, splitCommand } from "../acpCommand";
-  import { board, checking, ensureBoard, nextStep, refreshBoard, refreshStale, setupWaits } from "../providerStore";
-  import { PROVIDER_ORDER, isUsable, nameOf, stateLabel } from "../providerRows";
+  import { board, checking, ensureBoard, nextStep, refreshBoard, refreshStale, setupWaits, signInAgent } from "../providerStore";
+  import { BILLING_OPTIONS, PROVIDER_ORDER, billingNote, isUsable, nameOf, stateLabel, type Billing } from "../providerRows";
   import { updateConfig } from "../config";
+  import SegControl from "./SegControl.svelte";
   import "./shared.css";
 
   export let notify: (msg: string, err?: boolean) => void = () => {};
@@ -18,12 +19,15 @@
   let registryErr = "";
   let registryBusy = false;
   let acpLabel = "";
+  let savedKeys = new Set<string>();
+  let keyDrafts: Record<string, string> = {};
   const AGENT_ORDER = [...PROVIDER_ORDER, "acp"];
 
   onMount(async () => {
     try {
-      const [, c] = await Promise.all([ensureBoard(), api.getConfig()]);
+      const [, c, keys] = await Promise.all([ensureBoard(), api.getConfig(), api.agentKeys()]);
       cfg = c;
+      savedKeys = new Set(keys);
       paths = pathsOf(c);
       acpLabel = c.providers?.acp?.label ?? "";
     } catch (e) {
@@ -51,7 +55,7 @@
   function statusLine(p: ProviderStatus | undefined, enabled: boolean, busy: boolean): string {
     if (!enabled) return "Off";
     if (!p || p.state === "unchecked" || p.state === "disabled") return busy ? "Checking…" : "Not checked yet";
-    if (p.state === "error") return p.hint || "Check failed";
+    if (p.state === "error" || p.state === "signed_out") return p.hint || stateLabel(p);
     const parts = [stateLabel(p)];
     if (p.version && p.state === "ready") parts.push(p.version);
     return parts.join(" · ");
@@ -92,6 +96,24 @@
 
   async function setEnabled(id: string, on: boolean) {
     if (await update(patchEntry(id, { enabled: on }))) void recheck([id]);
+  }
+
+  async function setBilling(id: string, picked: string) {
+    const billing = picked as Billing;
+    if (billing === (entryOf(id).billing ?? "subscription")) return;
+    if (await update(patchEntry(id, { billing }))) void recheck([id]);
+  }
+
+  async function setKey(id: string, key: string | null) {
+    try {
+      await api.setAgentKey(id, key);
+      savedKeys = new Set(await api.agentKeys());
+      keyDrafts = { ...keyDrafts, [id]: "" };
+      notify(key ? "API key saved" : "API key removed");
+      void recheck([id]);
+    } catch (e) {
+      notify(`Could not save: ${e}`, true);
+    }
   }
 
   function sameArgs(a: string[], b: string[]): boolean {
@@ -158,7 +180,9 @@
         {@const busy = allChecking || $checking.has(id)}
         {@const wait = $setupWaits.get(id)}
         {@const rawStep = entry.enabled && !wait ? nextStep(p) : null}
-        {@const step = id === "acp" && rawStep?.label !== "Try again" ? null : rawStep}
+        {@const billing = entry.billing ?? "subscription"}
+        {@const keyField = billing === "api_key" && id !== "acp" && id !== "opencode"}
+        {@const step = (id === "acp" || keyField) && rawStep?.label !== "Try again" && rawStep?.label !== "Install" ? null : rawStep}
         {@const ready = entry.enabled && isUsable(p)}
       <div class="pref-section">
         <div class="rows" class:off={!entry.enabled}>
@@ -185,6 +209,40 @@
             {#key wait.note}
               <div class="bar"><span class="progress" class:sweep={!wait.eta} style:--eta="{wait.eta}ms"><span /></span></div>
             {/key}
+          {/if}
+
+          {#if id !== "acp" && entry.enabled}
+            <div class="row">
+              <span class="row-label" class:keyed={billing === "api_key"}>{billingNote(id, billing)}</span>
+              <span class="row-ctl auto">
+                <SegControl label={`What ${nameOf(id)} bills`} options={BILLING_OPTIONS} value={billing} on:pick={(e) => setBilling(id, e.detail)} />
+              </span>
+            </div>
+            {#if keyField && savedKeys.has(id)}
+              <div class="row">
+                <span class="row-label">API key saved on this computer</span>
+                <span class="row-ctl auto"><button class="btn" on:click={() => setKey(id, null)}>Remove</button></span>
+              </div>
+            {:else if keyField}
+              <div class="row">
+                <input
+                  class="tin mono key"
+                  type="password"
+                  placeholder="Paste API key"
+                  aria-label={`${nameOf(id)} API key`}
+                  autocomplete="off"
+                  spellcheck="false"
+                  bind:value={keyDrafts[id]}
+                  on:keydown={(e) => e.key === "Enter" && keyDrafts[id]?.trim() && setKey(id, keyDrafts[id])}
+                />
+                <span class="row-ctl auto"><button class="btn primary" disabled={!keyDrafts[id]?.trim()} on:click={() => setKey(id, keyDrafts[id])}>Add key</button></span>
+              </div>
+            {:else if id === "opencode" && billing === "api_key"}
+              <div class="row">
+                <span class="row-label">OpenCode keeps a key per provider</span>
+                <span class="row-ctl auto"><button class="btn" on:click={() => signInAgent(id)}>Add key</button></span>
+              </div>
+            {/if}
           {/if}
 
           {#if ready && p?.usage?.length}
@@ -276,6 +334,8 @@
 
   .usage-label { width: 96px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .row-label.bad { color: var(--bad-text); }
+  .row-label.keyed { color: var(--warn); }
+  .tin.key { flex: 1; min-width: 0; height: calc(var(--space) * 8); }
   .usage-bar { flex: 1; min-width: 40px; height: 5px; border-radius: var(--radius-sm); background: var(--line); overflow: hidden; }
   .usage-fill { display: block; height: 100%; background: var(--accent); border-radius: var(--radius-sm); }
   .usage-fill.hot { background: var(--warn); }

@@ -33,7 +33,7 @@ const STATES = {
   ],
   settings: [
     ...[2, 3].map((i) => click(`section ${i}`, nth(".sections", i), `${nth(".sections", i)}[aria-selected="true"]`)),
-    click("connector tools", ".rows .conn .row-main", ".rows .details .row:first-child"),
+    click("connector tools", ".rows .conn:last-child .row-main", ".rows .details .row:first-child"),
     click("section 4", nth(".sections", 4), `${nth(".sections", 4)}[aria-selected="true"]`),
   ],
   setup: [

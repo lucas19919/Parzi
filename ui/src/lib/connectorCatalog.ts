@@ -3,14 +3,29 @@ export interface CatalogConnector {
   id: string;
   name: string;
   about: string;
-  url: string;
+  url?: string;
+  command?: string;
+  args?: string[];
   site: string;
   auth: "signin" | "gh" | "token" | "none";
   tokenUrl?: string;
   tokenName?: string;
 }
 
+export const CONNECTOR_ASSETS: Record<string, string> = {
+  diagonaldiagrams: "/connectors/diagonaldiagrams.svg",
+};
+
 export const CATALOG: CatalogConnector[] = [
+  {
+    id: "diagonaldiagrams",
+    name: "diagonaldiagrams",
+    about: "Draw diagrams and charts, and check their layout",
+    command: "uvx",
+    args: ["diagonaldiagrams", "mcp"],
+    site: "https://lucas19919.github.io/diagonaldiagrams/",
+    auth: "none",
+  },
   {
     id: "github",
     name: "GitHub",
@@ -46,6 +61,11 @@ export interface ServerCfg {
   enabled?: boolean;
   timeout_ms?: number;
   [k: string]: unknown;
+}
+
+export function serverOf(c: CatalogConnector): ServerCfg {
+  if (c.command) return { command: c.command, args: c.args ?? [], env: {}, enabled: true, timeout_ms: 60_000 };
+  return hostedServer(c.url ?? "", { auth: c.auth === "gh" ? "gh" : "" });
 }
 
 export function hostedServer(url: string, opts: { token?: string; auth?: string } = {}): ServerCfg {

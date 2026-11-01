@@ -373,7 +373,7 @@
             </div>
             <div class="action">
               <button class="btn primary" disabled={!remoteUser.trim() || !remoteHost.trim() || locked} on:click={setupRemote}>
-                {locked ? "Setting up…" : remoteInfo ? "Set up again" : "Set up"}
+                <Icon name="wrench" size={12} /><span>{locked ? "Setting up…" : remoteInfo ? "Set up again" : "Set up"}</span>
               </button>
               {#if setupMsg}<span class="result" class:bad={setupState === "error"}>{setupMsg}</span>{/if}
             </div>

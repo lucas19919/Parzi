@@ -2,6 +2,7 @@
   const SCALE = [11, 12, 13, 14, 16, 18, 22];
   const letterSize = (badge: number) => SCALE.reduce((best, n) => (Math.abs(n - badge * 0.42) < Math.abs(best - badge * 0.42) ? n : best), SCALE[0]);
   import { CONNECTOR_MARKS } from "./connectorMarks";
+  import { CONNECTOR_ASSETS } from "./connectorCatalog";
 
   export let id = "";
   export let name = "";
@@ -12,6 +13,7 @@
   let broken = false;
 
   $: mark = CONNECTOR_MARKS[id];
+  $: asset = CONNECTOR_ASSETS[id];
   $: dark = mark ? luma(mark.hex) < 0.25 : false;
   $: icon = site ? `${site.replace(/\/+$/, "")}/favicon.ico` : "";
 
@@ -22,9 +24,11 @@
   }
 </script>
 
-<span class="logo" style:width="{size}px" style:height="{size}px" style:--brand={mark && !dark ? mark.hex : "var(--text)"} aria-hidden="true">
+<span class="logo" class:bare={asset && !src} style:width="{size}px" style:height="{size}px" style:--brand={mark && !dark ? mark.hex : "var(--text)"} aria-hidden="true">
   {#if src}
     <img class="own" {src} alt="" width={Math.round(size * 0.62)} height={Math.round(size * 0.62)} />
+  {:else if asset}
+    <img src={asset} alt="" width={size} height={size} />
   {:else if mark}
     <svg viewBox="0 0 24 24" width={Math.round(size * 0.56)} height={Math.round(size * 0.56)}><path d={mark.path} fill="currentColor" /></svg>
   {:else if icon && !broken}
@@ -44,6 +48,11 @@
     background: color-mix(in srgb, var(--brand) 14%, var(--panel));
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 22%, transparent);
     color: var(--brand);
+  }
+  /* A mark that brings its own tile needs no second one around it. */
+  .logo.bare {
+    background: none;
+    box-shadow: none;
   }
   img {
     border-radius: var(--radius-sm);

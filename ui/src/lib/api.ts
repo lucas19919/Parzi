@@ -130,6 +130,7 @@ export interface Check {
 
 export interface ProviderEntry {
   enabled: boolean;
+  billing?: "subscription" | "api_key";
   binary?: string;
   default_model?: string;
   args?: string[];
@@ -240,6 +241,8 @@ export const api = {
   warmAgent: (provider: string) => invoke<void>("warm_agent", { provider }),
   getConfig: () => invoke<ParziConfig>("get_config"),
   saveConfig: (cfg: ParziConfig) => invoke<void>("save_config", { cfg }),
+  agentKeys: () => invoke<string[]>("agent_keys"),
+  setAgentKey: (provider: string, key: string | null) => invoke<void>("set_agent_key", { provider, key }),
   acpRegistry: () => invoke<RegistryAgent[]>("acp_registry"),
   shellJobs: (session: string) => invoke<ShellJob[]>("shell_jobs", { session }),
   shellKill: (session: string, id: string) => invoke<boolean>("shell_kill", { session, id }),
@@ -253,7 +256,6 @@ export const api = {
       icon: string | null;
       tools: { name: string; description: string; read_only: boolean; destructive: boolean; mode: "" | "auto" | "ask" | "off" }[];
     }>("connector_details", { name }),
-  connectorSetIcon: (name: string, path: string) => invoke<string>("connector_set_icon", { name, path }),
   connectorsFound: () => invoke<{ name: string; source: string; server: Record<string, unknown> }[]>("connectors_found"),
   connectorsFromText: (text: string) => invoke<[string, Record<string, unknown>][]>("connectors_from_text", { text }),
 

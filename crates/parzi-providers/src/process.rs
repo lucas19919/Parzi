@@ -1,3 +1,4 @@
+use crate::billing::AgentEnv;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -355,7 +356,7 @@ impl Proc {
         program: &Path,
         args: &[String],
         cwd: &Path,
-        env: &[(String, String)],
+        env: &AgentEnv,
     ) -> std::io::Result<Self> {
         let (program, args) = launch_parts(program, args);
         let mut cmd = Command::new(&program);
@@ -365,9 +366,7 @@ impl Proc {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(false);
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
+        apply_env(&mut cmd, env);
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
         tracing::info!(path = %program.display(), ?args, "spawn");
@@ -458,8 +457,23 @@ fn descendants(root: u32) -> Vec<u32> {
 
 pub const STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
 
-async fn probe(program: &Path, args: &[&str], secs: u64) -> Option<(String, String)> {
+fn apply_env(cmd: &mut Command, env: &AgentEnv) {
+    for name in env.remove {
+        cmd.env_remove(name);
+    }
+    for (k, v) in &env.set {
+        cmd.env(k, v);
+    }
+}
+
+async fn probe(
+    program: &Path,
+    args: &[&str],
+    secs: u64,
+    env: &AgentEnv,
+) -> Option<(String, String)> {
     let mut cmd = Command::new(program);
+    apply_env(&mut cmd, env);
     cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -506,21 +520,31 @@ fn kill_probe(pid: u32) {
 }
 
 pub(crate) async fn first_line(program: &Path, args: &[&str]) -> Option<String> {
-    let (out, _) = probe(program, args, 15).await?;
+    let (out, _) = probe(program, args, 15, &AgentEnv::default()).await?;
     out.lines()
         .map(str::trim)
         .find(|l| !l.is_empty())
         .map(str::to_string)
 }
 
-pub(crate) async fn output(program: &Path, args: &[&str], secs: u64) -> Option<String> {
-    let (mut out, err) = probe(program, args, secs).await?;
+pub(crate) async fn output(
+    program: &Path,
+    args: &[&str],
+    secs: u64,
+    env: &AgentEnv,
+) -> Option<String> {
+    let (mut out, err) = probe(program, args, secs, env).await?;
     out.push_str(&err);
     Some(out)
 }
 
-pub(crate) async fn stdout(program: &Path, args: &[&str], secs: u64) -> Option<String> {
-    probe(program, args, secs).await.map(|(out, _)| out)
+pub(crate) async fn stdout(
+    program: &Path,
+    args: &[&str],
+    secs: u64,
+    env: &AgentEnv,
+) -> Option<String> {
+    probe(program, args, secs, env).await.map(|(out, _)| out)
 }
 
 #[cfg(test)]
@@ -673,7 +697,7 @@ mod tests {
                 format!("sleep 60 & echo $! > '{}'; wait", pidfile.display()),
             ],
         );
-        let proc = Proc::spawn(&program, &script, &dir, &[]).unwrap();
+        let proc = Proc::spawn(&program, &script, &dir, &AgentEnv::default()).unwrap();
         let mut pid = None;
         for _ in 0..300 {
             pid = std::fs::read_to_string(&pidfile)

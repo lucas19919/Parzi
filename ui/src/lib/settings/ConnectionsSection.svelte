@@ -1,8 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from "svelte";
-  import { ask, open as pickFile } from "@tauri-apps/plugin-dialog";
+  import { ask } from "@tauri-apps/plugin-dialog";
   import Icon from "../Icon.svelte";
-  import { tooltip } from "../tooltip";
   import { api, type ParziConfig } from "../api";
   import type { ProviderStatus } from "../api";
   import { classifyPaste, nameFromProgram, splitLine } from "../cmdline";
@@ -11,7 +10,7 @@
   import SegControl from "./SegControl.svelte";
   import Switch from "./Switch.svelte";
   import { updateConfig } from "../config";
-  import { CATALOG, hostedServer, nameFromUrl, type CatalogConnector, type ServerCfg as Server } from "../connectorCatalog";
+  import { CATALOG, hostedServer, nameFromUrl, serverOf, type CatalogConnector, type ServerCfg as Server } from "../connectorCatalog";
   import ConnectorLogo from "../ConnectorLogo.svelte";
   import "./shared.css";
 
@@ -26,6 +25,7 @@
   let saving = false;
   let customName = "";
   let pasted = "";
+  let ownOpen = false;
 
   let found: { name: string; source: string; server: Server }[] = [];
 
@@ -38,9 +38,11 @@
   let health: Record<string, Health> = {};
 
   const SIGN_IN = "sign-in needed";
+  const NEEDS: Record<string, string> = { "Needs Node.js": "https://nodejs.org", "Needs uv": "https://docs.astral.sh/uv/" };
 
   function failureOf(raw: string): { text: string; title: string } {
     if (raw.includes("isn't installed") && raw.includes("npx")) return { text: "Needs Node.js", title: raw };
+    if (raw.includes("isn't installed") && raw.includes("uvx")) return { text: "Needs uv", title: raw };
     if (/timed out/i.test(raw)) return { text: "Didn't answer in time", title: raw };
     const clean = raw.replace(/^tool `[^`]*`: /, "").replace(/^`[^`]*`: /, "").split("\n")[0].trim();
     const text = clean.length > 80 ? `${clean.slice(0, 77)}...` : clean;
@@ -118,6 +120,7 @@
   interface AppRow {
     id: string;
     name: string;
+    about: string;
     site: string;
     server: Server;
   }
@@ -128,11 +131,11 @@
     const knownIds = new Set(CATALOG.map((c) => c.id));
     const rows: AppRow[] = [];
     for (const c of CATALOG) {
-      if (map[c.id]) rows.push({ id: c.id, name: c.name, site: c.site, server: map[c.id] });
+      if (map[c.id]) rows.push({ id: c.id, name: c.name, about: c.about, site: c.site, server: map[c.id] });
     }
     for (const [id, server] of Object.entries(map).sort(([a], [b]) => a.localeCompare(b))) {
       if (knownIds.has(id)) continue;
-      rows.push({ id, name: titles[id] || id, site: "", server });
+      rows.push({ id, name: titles[id] || id, about: "", site: "", server });
     }
     return rows;
   }
@@ -159,7 +162,7 @@
   async function addKnown(id: string) {
     const c = CATALOG.find((item) => item.id === id) as CatalogConnector | undefined;
     if (!c || cfg?.mcp.servers[id]) return;
-    const server = hostedServer(c.url, { auth: c.auth === "gh" ? "gh" : "" });
+    const server = serverOf(c);
     if (!(await save((cf) => (cf.mcp.servers[id] = server), `${c.name} added`))) return;
     if (c.auth === "signin") void signIn(id);
     else void check(id);
@@ -221,6 +224,7 @@
     if (await save((c) => freshList.forEach(([id, srv]) => (c.mcp.servers[id] = srv)), "")) {
       pasted = "";
       customName = "";
+      ownOpen = false;
       for (const [id] of freshList) void check(id, true);
     }
   }
@@ -286,17 +290,6 @@
     openTools = openTools === id ? null : id;
   }
 
-  async function chooseLogo(id: string) {
-    const picked = await pickFile({ multiple: false, filters: [{ name: "Pictures", extensions: ["png", "jpg", "jpeg", "svg", "ico", "gif", "webp"] }] }).catch(() => null);
-    if (typeof picked !== "string" || !picked) return;
-    try {
-      const url = await api.connectorSetIcon(id, picked);
-      details = { ...details, [id]: { ...(details[id] ?? { title: "", tools: [] }), icon: url } };
-    } catch (e) {
-      notify(`Could not set the logo: ${e}`, true);
-    }
-  }
-
   // Always visible: first click arms it, second click removes.
   let delConn: string | null = null;
   async function removeServer(id: string) {
@@ -336,7 +329,7 @@
     }
   }
 
-  const agentState = (a: ProviderStatus) => (a.state === "error" && a.hint ? a.hint : stateLabel(a));
+  const agentState = (a: ProviderStatus) => ((a.state === "error" || a.state === "signed_out") && a.hint ? a.hint : stateLabel(a));
 
   async function unlink() {
     if (!info) return;
@@ -396,7 +389,7 @@
               }</small>
           </span>
           <span class="row-ctl auto">
-            <button class="btn" on:click={() => dispatch("setupRemote")}>Set up again</button>
+            <button class="btn" on:click={() => dispatch("setupRemote")}><Icon name="wrench" size={12} /><span>Set up again</span></button>
             <button class="btn danger" on:click={unlink}>Unlink</button>
           </span>
         </div>
@@ -407,7 +400,7 @@
       {:else}
         <div class="row">
           <span class="row-label">Not linked</span>
-          <span class="row-ctl auto"><button class="btn" on:click={() => dispatch("setupRemote")}>Set up</button></span>
+          <span class="row-ctl auto"><button class="btn" on:click={() => dispatch("setupRemote")}><Icon name="wrench" size={12} /><span>Set up</span></button></span>
         </div>
       {/if}
     </div>
@@ -445,20 +438,19 @@
           {@const open = openTools === row.id}
           {@const tools = details[row.id]?.tools ?? []}
           {@const line = statusLine(h, off)}
+          {@const need = !off && h?.state === "error" ? NEEDS[h.error ?? ""] : undefined}
           <div class="conn" class:off>
             <div class="row">
-              <button class="logo-pick" use:tooltip={"Choose a logo"} aria-label="Choose a logo for {row.name}" on:click={() => chooseLogo(row.id)}>
-                <ConnectorLogo id={row.id} name={row.name} site={row.site} src={details[row.id]?.icon ?? null} size={28} />
-              </button>
               <button class="row-main" aria-expanded={open} on:click={() => toggleTools(row.id)}>
+                <ConnectorLogo id={row.id} name={row.name} site={row.site} src={details[row.id]?.icon ?? null} size={32} />
                 <span class="row-label">{row.name}
-                  <small class:bad={h?.state === "error"} title={h?.raw ?? ""}>{line}</small>
+                  <small title={h?.raw ?? ""}><span class:st-ok={h?.state === "ok" && !off} class:st-bad={h?.state === "error" && !off}>{line}</span>{row.about ? ` · ${row.about}` : ""}</small>
                 </span>
                 <Icon name={open ? "chevDown" : "chevRight"} size={12} />
               </button>
               <span class="row-ctl auto">
-                {#if !off && h?.error === "Needs Node.js"}
-                  <button class="btn" on:click={() => openOutside("https://nodejs.org")}>Get Node.js</button>
+                {#if need}
+                  <button class="btn" on:click={() => openOutside(need)}>Get {h?.error?.replace("Needs ", "")}</button>
                 {:else if !off && (h?.state === "signin" || h?.state === "signing")}
                   <button class="btn primary" disabled={h?.state === "signing"} on:click={() => signIn(row.id)}>{h?.state === "signing" ? "Signing in…" : "Sign in"}</button>
                 {:else if !off && h?.state === "error"}
@@ -472,7 +464,7 @@
                 {#each tools as t (t.name)}
                   {@const m = effective(t.mode)}
                   <div class="row" class:off={m === "off"}>
-                    <span class="row-label" title={t.description || t.name}>{t.name}</span>
+                    <span class="row-label" title={t.description || t.name}>{t.name}{#if t.description}<small>{t.description}</small>{/if}</span>
                     <SegControl label={t.name} options={TOOL_OPTIONS} value={m} on:pick={(e) => pickMode(row.id, t.name, e.detail)} />
                   </div>
                 {:else}
@@ -487,22 +479,33 @@
         {/each}
       </div>
     {/if}
-    {#if addable.length || freshCustom.length}
+    {#if addable.length}
       <div class="rows">
         <div class="row row-title"><span>Add a connector</span></div>
         <div class="row">
-          <div class="add-grid">
+          <div class="tiles">
             {#each addable as c (c.id)}
               {@const hit = fresh.find((f) => f.name === c.id)}
-              <button class="add" type="button" disabled={saving} on:click={() => (hit ? addFound(hit.name, hit.server) : addKnown(c.id))}>
-                <ConnectorLogo id={c.id} name={c.name} site={c.site} src={null} size={28} />
-                <span class="add-text"><span class="t-label">{c.name}</span><span class="t-hint">{c.about}</span></span>
+              <button class="tile" type="button" disabled={saving} on:click={() => (hit ? addFound(hit.name, hit.server) : addKnown(c.id))}>
+                <ConnectorLogo id={c.id} name={c.name} site={c.site} src={null} size={32} />
+                <span class="tile-text"><span class="t-label">{c.name}</span><span class="t-hint">{c.about}</span></span>
+                <Icon name="plus" size={16} />
               </button>
             {/each}
+          </div>
+        </div>
+      </div>
+    {/if}
+    {#if freshCustom.length}
+      <div class="rows">
+        <div class="row row-title"><span>Found on this computer</span></div>
+        <div class="row">
+          <div class="tiles">
             {#each freshCustom as f (f.name)}
-              <button class="add" type="button" disabled={saving} on:click={() => addFound(f.name, f.server)}>
-                <ConnectorLogo id={f.name} name={f.name} site="" src={null} size={28} />
-                <span class="add-text"><span class="t-label">{f.name}</span><span class="t-hint">Found in {f.source}</span></span>
+              <button class="tile" type="button" disabled={saving} on:click={() => addFound(f.name, f.server)}>
+                <ConnectorLogo id={f.name} name={f.name} site="" src={null} size={32} />
+                <span class="tile-text"><span class="t-label">{f.name}</span><span class="t-hint">From {f.source}</span></span>
+                <Icon name="plus" size={16} />
               </button>
             {/each}
           </div>
@@ -510,33 +513,31 @@
       </div>
     {/if}
     <div class="rows">
-      <div class="row row-title"><span>Add your own</span></div>
-      <div class="row">
-        <textarea class="tin" rows="3" bind:value={pasted} placeholder="Paste a link, a config block, or a command" aria-label="Paste a link, a config block, or a command" spellcheck="false"></textarea>
-      </div>
-      <div class="row">
-        <input class="tin" bind:value={customName} placeholder="Name (optional)" aria-label="Name" spellcheck="false" />
-        <button class="btn primary" disabled={saving || !pasted.trim()} on:click={() => void addPasted()}>Add</button>
-      </div>
+      {#if ownOpen}
+        <div class="row row-title">
+          <span>Add your own</span>
+          <span class="row-ctl auto"><button class="btn" on:click={() => (ownOpen = false)}>Cancel</button></span>
+        </div>
+        <div class="row">
+          <textarea class="tin" rows="3" bind:value={pasted} placeholder="Paste a link, a config block, or a command" aria-label="Paste a link, a config block, or a command" spellcheck="false"></textarea>
+        </div>
+        <div class="row">
+          <input class="tin" bind:value={customName} placeholder="Name (optional)" aria-label="Name" spellcheck="false" />
+          <button class="btn primary" disabled={saving || !pasted.trim()} on:click={() => void addPasted()}>Add</button>
+        </div>
+      {:else}
+        <div class="row ctl-row">
+          <span class="row-label">Add your own</span>
+          <span class="row-ctl auto"><button class="btn" on:click={() => (ownOpen = true)}>Add</button></span>
+        </div>
+      {/if}
     </div>
 {/if}
 
 <style>
-  .logo-pick {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    cursor: pointer;
-  }
   .conn {
     border-top: 1px solid var(--line);
   }
-  .conn.off .logo-pick,
   .conn.off .row-main {
     opacity: 0.55;
   }
@@ -545,38 +546,53 @@
   }
   .row.end {
     justify-content: flex-end;
+    gap: calc(var(--space) * 2);
   }
-  .add-grid {
+  .st-ok {
+    color: var(--ok-text);
+  }
+  .st-bad {
+    color: var(--bad-text);
+  }
+  .tiles {
     flex: 1;
     min-width: 0;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: var(--space);
-    margin: 0 calc(var(--space) * -2);
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: calc(var(--space) * 2);
   }
-  .add {
+  .tile {
     display: flex;
     align-items: center;
     gap: calc(var(--space) * 3);
     min-width: 0;
-    padding: calc(var(--space) * 2);
+    padding: calc(var(--space) * 3);
     background: none;
-    border: none;
+    border: 1px solid var(--line);
     border-radius: var(--radius);
+    color: var(--muted);
     font: inherit;
     text-align: left;
     cursor: pointer;
+    transition: background var(--dur) ease, color var(--dur) ease;
   }
-  .add:hover:not(:disabled) {
+  .tile:hover:not(:disabled) {
     background: var(--hover);
+    color: var(--text);
   }
-  .add:disabled {
+  .tile:disabled {
     opacity: var(--disabled);
     cursor: default;
   }
-  .add-text {
+  .tile-text {
+    flex: 1;
     display: flex;
     flex-direction: column;
     min-width: 0;
+  }
+  .tile-text > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>

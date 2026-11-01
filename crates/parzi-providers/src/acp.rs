@@ -8,6 +8,9 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use parzi_core::config::Billing;
+
+use crate::billing::{self, AgentEnv};
 use crate::jsonrpc::{Incoming, Peer, RpcError};
 use crate::process::{self, Proc, STOP_GRACE};
 use crate::setup;
@@ -80,10 +83,7 @@ fn nowhere() -> Option<PathBuf> {
 }
 
 fn opencode_log() -> Option<PathBuf> {
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".local").join("share")))?;
-    Some(data.join("opencode").join("log").join("opencode.log"))
+    Some(billing::opencode_data()?.join("log").join("opencode.log"))
 }
 
 pub fn agent(id: &str) -> Option<Agent> {
@@ -193,18 +193,21 @@ fn custom_agent(label: &str, args: &[String]) -> Agent {
 pub struct Acp {
     agent: Agent,
     binary: String,
+    billing: Billing,
 }
 
 impl Acp {
-    pub fn new(agent: Agent, binary: &str) -> Self {
+    pub fn new(agent: Agent, binary: &str, billing: Billing) -> Self {
         Self {
             agent,
             binary: binary.to_string(),
+            billing,
         }
     }
 
     pub fn custom(binary: &str, args: &[String], label: &str) -> Self {
-        Self::new(custom_agent(label, args), binary)
+        // Parzi cannot know what a command of the user's own bills, so it is left alone.
+        Self::new(custom_agent(label, args), binary, Billing::ApiKey)
     }
 
     fn program(&self) -> Option<PathBuf> {
@@ -223,7 +226,8 @@ impl Acp {
 
     async fn open(&self, program: &Path, cwd: &Path) -> Result<Conn, ProviderError> {
         let args: Vec<String> = self.agent.args.iter().map(|a| (*a).to_string()).collect();
-        let env = (self.agent.env)();
+        let mut env = billing::agent_env(self.agent.id, self.billing);
+        env.set.extend((self.agent.env)());
         let mut proc = Proc::spawn(program, &args, cwd, &env).map_err(|e| {
             ProviderError::process(process::start_error(self.agent.name, program, &e))
         })?;
@@ -320,6 +324,29 @@ impl Acp {
 }
 
 impl Acp {
+    /// What a turn on a subscription needs first: what would bill a key here is
+    /// a stored login or a model choice, which the environment cannot change.
+    fn refusal(&self, model: Option<&str>) -> Option<String> {
+        if self.billing != Billing::Subscription {
+            return None;
+        }
+        match self.agent.probe {
+            Probe::GeminiSettings => gemini_status(self.agent)
+                .account
+                .is_some_and(|a| billing::is_key_label(&a))
+                .then(|| billing::key_login(self.agent.name)),
+            Probe::OpencodeModels => model
+                .filter(|m| !m.is_empty() && !billing::opencode_allows(m))
+                .map(|m| {
+                    format!(
+                        "{m} bills per token. Pick a model from your subscription, \
+                         or choose API key for OpenCode in Settings, Providers."
+                    )
+                }),
+            _ => None,
+        }
+    }
+
     async fn learn_models(&self, conn: &Conn) -> bool {
         let session = conn
             .peer
@@ -351,7 +378,7 @@ impl Acp {
         if is_warm(&program) || WARMING.swap(true, Ordering::SeqCst) {
             return;
         }
-        let acp = Acp::new(self.agent, &self.binary);
+        let acp = Acp::new(self.agent, &self.binary, self.billing);
         tokio::spawn(async move {
             if let Ok(conn) = acp.open(&program, &std::env::temp_dir()).await {
                 let learned = acp.learn_models(&conn).await;
@@ -525,6 +552,17 @@ fn take_live(program: &Path, sid: &str, cwd: &Path, tools: Option<&str>) -> Opti
     (!asked).then_some(l)
 }
 
+/// Parked agents keep the environment they started with, so they go when what
+/// an agent may bill changes.
+pub fn drop_parked() {
+    if let Ok(mut live) = LIVE.lock() {
+        live.clear();
+    }
+    if let Ok(mut warm) = WARM.lock() {
+        warm.clear();
+    }
+}
+
 pub fn drop_live_in(cwd: &Path) -> usize {
     let Ok(mut live) = LIVE.lock() else {
         return 0;
@@ -600,10 +638,19 @@ impl Provider for Acp {
             };
             return ProviderStatus::new(self.agent.id, State::NotInstalled, hint);
         };
+        let env = billing::agent_env(self.agent.id, self.billing);
         let mut status = match self.agent.probe {
-            Probe::OpencodeModels => opencode_status(&program, self.agent).await,
-            Probe::GrokModels => grok_status(&program, self.agent).await,
-            Probe::CursorStatus => cursor_status(&program, self.agent).await,
+            Probe::OpencodeModels => opencode_status(&program, self.agent, &env).await,
+            Probe::GrokModels => grok_status(&program, self.agent, &env).await,
+            Probe::CursorStatus => cursor_status(&program, self.agent, &env).await,
+            Probe::GeminiSettings
+                if self.billing == Billing::ApiKey
+                    && billing::saved_key(self.agent.id).is_some() =>
+            {
+                let mut s = ProviderStatus::new(self.agent.id, State::Ready, "");
+                s.account = Some("Gemini API key".into());
+                s
+            }
             Probe::GeminiSettings => gemini_status(self.agent),
             Probe::ListedBySession => ProviderStatus::new(self.agent.id, State::Ready, ""),
         };
@@ -637,7 +684,7 @@ impl Provider for Acp {
             }
             conn.proc.kill().await;
         }
-        status
+        billing::enforce(status, self.billing)
     }
 
     async fn run_turn(
@@ -649,6 +696,9 @@ impl Provider for Acp {
     ) -> Result<TurnEnd, ProviderError> {
         let program = self.program().ok_or_else(|| self.not_installed())?;
         process::existing_folder(&spec.cwd)?;
+        if let Some(why) = self.refusal(spec.model.as_deref()) {
+            return Err(ProviderError::new(ErrorClass::Auth, why));
+        }
         let tools = spec.tools.as_ref().map(|t| t.url.clone());
         let earlier = spec
             .resume
@@ -733,6 +783,10 @@ fn gemini_auth_type(settings: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+fn is_keyed_gemini(kind: &str) -> bool {
+    matches!(kind, "gemini-api-key" | "agent-platform" | "vertex-ai")
+}
+
 fn read_gemini_settings() -> Option<Value> {
     serde_json::from_str(&std::fs::read_to_string(gemini_settings()?).ok()?).ok()
 }
@@ -760,7 +814,7 @@ fn remember_gemini_auth(method: &str) {
         return;
     };
     let mut settings = read_gemini_settings().unwrap_or_else(|| json!({}));
-    if gemini_auth_type(&settings).is_some() {
+    if gemini_auth_type(&settings).is_some_and(|t| !is_keyed_gemini(&t)) {
         return;
     }
     let Some(root) = settings.as_object_mut() else {
@@ -776,8 +830,8 @@ fn remember_gemini_auth(method: &str) {
     }
 }
 
-async fn cursor_status(program: &Path, agent: Agent) -> ProviderStatus {
-    match process::output(program, &["status", "--format", "json"], 60).await {
+async fn cursor_status(program: &Path, agent: Agent, env: &AgentEnv) -> ProviderStatus {
+    match process::output(program, &["status", "--format", "json"], 60, env).await {
         Some(out) => cursor_read(&out, agent),
         None => ProviderStatus::new(
             agent.id,
@@ -814,10 +868,10 @@ fn cursor_read(out: &str, agent: Agent) -> ProviderStatus {
     }
 }
 
-async fn opencode_status(program: &Path, agent: Agent) -> ProviderStatus {
-    let out = match process::stdout(program, &["models", "--verbose"], 60).await {
+async fn opencode_status(program: &Path, agent: Agent, env: &AgentEnv) -> ProviderStatus {
+    let out = match process::stdout(program, &["models", "--verbose"], 60, env).await {
         Some(out) => Some(out),
-        None => process::stdout(program, &["models"], 60).await,
+        None => process::stdout(program, &["models"], 60, env).await,
     };
     let Some(out) = out else {
         return ProviderStatus::new(agent.id, State::Error, "`opencode models` gave no answer.");
@@ -873,8 +927,8 @@ fn opencode_read(out: &str, agent: Agent) -> ProviderStatus {
     s
 }
 
-async fn grok_status(program: &Path, agent: Agent) -> ProviderStatus {
-    match process::output(program, &["models"], 60).await {
+async fn grok_status(program: &Path, agent: Agent, env: &AgentEnv) -> ProviderStatus {
+    match process::output(program, &["models"], 60, env).await {
         Some(out) => grok_read(&out, agent),
         None => ProviderStatus::new(agent.id, State::Error, "`grok models` gave no answer."),
     }
@@ -885,6 +939,8 @@ fn grok_read(out: &str, agent: Agent) -> ProviderStatus {
     let mut s = ProviderStatus::new(agent.id, State::Ready, "");
     if lower.contains("you are logged in") {
         s.account = Some("Grok account".into());
+    } else if lower.contains("you are using") && lower.contains("api_key") {
+        s.account = Some("API key".into());
     }
     for line in out.lines().map(str::trim) {
         let Some(rest) = line.strip_prefix("* ").or_else(|| line.strip_prefix("- ")) else {
@@ -2650,7 +2706,7 @@ mod tests {
     async fn opencode_live_lists_models_with_image_support() {
         let opencode = agent("opencode").unwrap();
         let program = process::resolve("opencode").expect("opencode on PATH");
-        let s = opencode_status(&program, opencode).await;
+        let s = opencode_status(&program, opencode, &AgentEnv::default()).await;
         assert_eq!(s.state, State::Ready, "{}", s.hint);
         for m in &s.models {
             println!("{} images={:?}", m.id, m.images);
@@ -3092,7 +3148,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "needs OpenCode installed with its free model out of quota"]
     async fn opencode_live_says_why_a_used_up_model_went_silent() {
-        let provider = Acp::new(agent("opencode").unwrap(), "");
+        let provider = Acp::new(agent("opencode").unwrap(), "", Billing::ApiKey);
         let (tx, _rx) = mpsc::unbounded_channel();
         let gate = Arc::new(Gate(
             PermissionDecision::Allow,

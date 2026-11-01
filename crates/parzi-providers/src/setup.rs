@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 
+use parzi_core::config::Billing;
+
 use crate::process;
 
 const ANTIGRAVITY_VERSION: &str = "1.3.0";
@@ -26,9 +28,12 @@ pub fn install_script(id: &str) -> Option<String> {
     })
 }
 
-pub fn login_script(id: &str, binary: &str) -> Option<String> {
+pub fn login_script(id: &str, binary: &str, billing: Billing) -> Option<String> {
+    let keyed = billing == Billing::ApiKey;
     let (program, args): (&str, &[&str]) = match id {
-        "claude" => ("claude", &["auth", "login"]),
+        "claude" if keyed => ("claude", &["auth", "login", "--console"]),
+        "claude" => ("claude", &["auth", "login", "--claudeai"]),
+        "codex" if keyed => ("codex", &["login", "--with-api-key"]),
         "codex" => ("codex", &["login"]),
         "opencode" => ("opencode", &["auth", "login"]),
         "grok" => ("grok", &["login"]),
@@ -169,9 +174,24 @@ mod tests {
 
     #[test]
     fn logins_run_the_agents_own_command_and_antigravity_signs_in_over_acp() {
-        assert!(login_script("codex", "").unwrap().ends_with(" login"));
-        assert!(login_script("cursor", "").unwrap().ends_with(" login"));
-        assert!(login_script("antigravity", "").is_none());
+        let sub = Billing::Subscription;
+        assert!(login_script("codex", "", sub).unwrap().ends_with(" login"));
+        assert!(login_script("cursor", "", sub).unwrap().ends_with(" login"));
+        assert!(login_script("antigravity", "", sub).is_none());
+    }
+
+    #[test]
+    fn signing_in_asks_for_what_the_agent_is_set_to_bill() {
+        let (sub, key) = (Billing::Subscription, Billing::ApiKey);
+        assert!(login_script("claude", "", sub)
+            .unwrap()
+            .ends_with("--claudeai"));
+        assert!(login_script("claude", "", key)
+            .unwrap()
+            .ends_with("--console"));
+        assert!(login_script("codex", "", key)
+            .unwrap()
+            .ends_with("--with-api-key"));
     }
 
     #[test]

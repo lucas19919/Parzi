@@ -44,33 +44,6 @@ fn data_url(bytes: &[u8], hint: &str) -> String {
     )
 }
 
-pub fn set_picked(name: &str, file: &std::path::Path) -> Result<String, String> {
-    let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
-    if bytes.len() as u64 > 2 * MAX_ICON {
-        return Err("that picture is too big for a logo (1 MB at most)".into());
-    }
-    let dir = picked_dir().ok_or("no place to keep it")?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let safe = parzi_core::connectors::connector_name(name);
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for e in entries.flatten() {
-            if e.file_name()
-                .to_string_lossy()
-                .starts_with(&format!("{safe}."))
-            {
-                let _ = std::fs::remove_file(e.path());
-            }
-        }
-    }
-    let ext = file
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("png")
-        .to_ascii_lowercase();
-    std::fs::write(dir.join(format!("{safe}.{ext}")), &bytes).map_err(|e| e.to_string())?;
-    Ok(data_url(&bytes, &format!("x.{ext}")))
-}
-
 fn picked(name: &str) -> Option<String> {
     let safe = parzi_core::connectors::connector_name(name);
     let entry = std::fs::read_dir(picked_dir()?).ok()?.flatten().find(|e| {

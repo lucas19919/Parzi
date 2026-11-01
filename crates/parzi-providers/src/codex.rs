@@ -7,6 +7,9 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use parzi_core::config::Billing;
+
+use crate::billing::{agent_env, enforce, key_login};
 use crate::jsonrpc::{Incoming, Peer, RpcError};
 use crate::process::{self, Proc, STOP_GRACE};
 use crate::types::{
@@ -19,12 +22,14 @@ pub const ID: &str = "codex";
 
 pub struct Codex {
     binary: String,
+    billing: Billing,
 }
 
 impl Codex {
-    pub fn new(binary: &str) -> Self {
+    pub fn new(binary: &str, billing: Billing) -> Self {
         Self {
             binary: binary.to_string(),
+            billing,
         }
     }
 
@@ -44,9 +49,10 @@ struct Server {
     version: Option<String>,
 }
 
-async fn open(program: &Path, cwd: &Path) -> Result<Server, ProviderError> {
+async fn open(program: &Path, cwd: &Path, billing: Billing) -> Result<Server, ProviderError> {
     process::existing_folder(cwd)?;
-    let mut proc = Proc::spawn(program, &["app-server".to_string()], cwd, &[])
+    let env = agent_env(ID, billing);
+    let mut proc = Proc::spawn(program, &["app-server".to_string()], cwd, &env)
         .map_err(|e| ProviderError::process(process::start_error("Codex", program, &e)))?;
     let (Some(stdin), Some(stdout)) = (proc.child.stdin.take(), proc.child.stdout.take()) else {
         proc.kill().await;
@@ -100,13 +106,13 @@ impl Provider for Codex {
         let Some(program) = self.program() else {
             return ProviderStatus::new(ID, State::NotInstalled, "");
         };
-        let mut server = match open(&program, &std::env::temp_dir()).await {
+        let mut server = match open(&program, &std::env::temp_dir(), self.billing).await {
             Ok(s) => s,
             Err(e) => return ProviderStatus::new(ID, State::Error, e.message),
         };
         let status = probe(&server.peer, server.version.clone()).await;
         server.proc.kill().await;
-        status
+        enforce(status, self.billing)
     }
 
     async fn run_turn(
@@ -119,10 +125,14 @@ impl Provider for Codex {
         let program = self.program().ok_or_else(|| {
             ProviderError::process(format!("Codex is not installed. {INSTALL_HINT}"))
         })?;
-        let Some(server) = or_cancel(&cancel, open(&program, &spec.cwd)).await else {
+        let Some(server) = or_cancel(&cancel, open(&program, &spec.cwd, self.billing)).await else {
             return Ok(TurnEnd::Interrupted);
         };
         let mut server = server?;
+        if self.billing == Billing::Subscription && on_api_key(&server.peer).await {
+            server.proc.kill().await;
+            return Err(ProviderError::new(ErrorClass::Auth, key_login("Codex")));
+        }
         let outcome = drive(
             &server.peer,
             &mut server.incoming,
@@ -143,6 +153,16 @@ impl Provider for Codex {
         server.proc.kill().await;
         outcome
     }
+}
+
+async fn on_api_key(peer: &Peer) -> bool {
+    peer.request_within("account/read", json!({}), Duration::from_secs(20))
+        .await
+        .is_ok_and(|a| is_api_key(&a))
+}
+
+fn is_api_key(account: &Value) -> bool {
+    account.pointer("/account/type").and_then(Value::as_str) == Some("apiKey")
 }
 
 async fn probe(peer: &Peer, version: Option<String>) -> ProviderStatus {
@@ -166,7 +186,7 @@ async fn probe(peer: &Peer, version: Option<String>) -> ProviderStatus {
     s.version = version;
     s.account = account.get("account").and_then(account_label);
     s.models = list_models(peer).await;
-    if account.pointer("/account/type").and_then(Value::as_str) != Some("apiKey") {
+    if !is_api_key(&account) {
         if let Ok(r) = peer
             .request_within("account/rateLimits/read", Value::Null, limit)
             .await

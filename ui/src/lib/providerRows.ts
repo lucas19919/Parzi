@@ -82,6 +82,24 @@ function rowsOf(p: ProviderStatus): PickRow[] {
 
 export const allRows = (board: ProviderStatus[]): PickRow[] => board.flatMap(rowsOf);
 
+export type Billing = "subscription" | "api_key";
+
+export const BILLING_OPTIONS: { value: Billing; label: string }[] = [
+  { value: "subscription", label: "Subscription" },
+  { value: "api_key", label: "API key" },
+];
+
+const BILLING_NOTE: Record<string, Record<Billing, string>> = {
+  claude: { subscription: "Claude Pro or Max", api_key: "Anthropic API key, billed per token" },
+  codex: { subscription: "ChatGPT plan", api_key: "OpenAI API key, billed per token" },
+  opencode: { subscription: "OpenCode Go or a linked plan", api_key: "Zen and provider keys, billed per token" },
+  grok: { subscription: "grok.com sign-in", api_key: "xAI API key, billed per token" },
+  antigravity: { subscription: "Google account", api_key: "Gemini API key, billed per token" },
+  cursor: { subscription: "Cursor plan", api_key: "Cursor API key" },
+};
+
+export const billingNote = (id: string, billing: Billing): string => BILLING_NOTE[id]?.[billing] ?? "";
+
 export function stateLabel(p: ProviderStatus): string {
   switch (p.state) {
     case "ready":
