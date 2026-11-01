@@ -38,6 +38,9 @@ mod vault;
 mod watchdog;
 mod worktree;
 
+/// Cap on the threads the runtime keeps for `spawn_blocking` (tokio's own default is 512).
+const BLOCKING_THREADS: usize = 64;
+
 pub(crate) type Pending = Arc<Mutex<HashMap<String, (String, oneshot::Sender<Approval>)>>>;
 pub(crate) type PendingQuestions = Arc<Mutex<HashMap<String, (String, oneshot::Sender<String>)>>>;
 
@@ -606,9 +609,11 @@ fn main() {
     }));
     // Several sessions, probes and commands share these workers. A few tasks that
     // block (a slow disk write, a child process spawn) must not leave none free.
+    // Blocking work (dialogs, disk, page captures, tool calls like session.rename)
+    // queues once this is full, and every one behind it waits too. Keep it roomy.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(8)
-        .max_blocking_threads(8)
+        .max_blocking_threads(BLOCKING_THREADS)
         .enable_all()
         .build()
         .unwrap_or_else(|e| fatal(&format!("The task runtime did not start: {e}")));

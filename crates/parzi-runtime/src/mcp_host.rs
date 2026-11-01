@@ -18,6 +18,7 @@ use crate::tools::{from_mcp, to_mcp};
 const SERVER_NAME: &str = "parzi";
 const PROTOCOLS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_BODY: usize = 8 * 1024 * 1024;
+const SLOW_CALL: std::time::Duration = std::time::Duration::from_secs(30);
 const INSTRUCTIONS: &str = "Parzi's own tools for the thread, plans, teamwork, the notes vault, commands, the window and its pages. MCP underscores read back with dots: plan_write is plan.write. Prefer these over native vendor tools; a refused native tool names its Parzi replacement to call instead.";
 
 type Runs = Arc<RwLock<HashMap<String, Arc<ToolHost>>>>;
@@ -256,7 +257,23 @@ async fn dispatch(msg: &Value, host: &ToolHost) -> Option<Value> {
                 .iter()
                 .find(|d| to_mcp(&d.name) == asked)
                 .map_or_else(|| from_mcp(asked), |d| d.name.clone());
-            let (ok, output) = host.call(&name, &args).await;
+            let started = std::time::Instant::now();
+            // These wait on people or long commands by design; the rest should be quick.
+            let waits = name.starts_with("shell.")
+                || name.starts_with("ask.")
+                || matches!(name.as_str(), "session.spawn" | "session.send");
+            let call = host.call(&name, &args);
+            tokio::pin!(call);
+            let (ok, output) = loop {
+                tokio::select! {
+                    done = &mut call => break done,
+                    () = tokio::time::sleep(SLOW_CALL), if !waits => tracing::warn!(
+                        tool = %name,
+                        running_s = started.elapsed().as_secs(),
+                        "a tool call through Parzi's MCP server is still running"
+                    ),
+                }
+            };
             json!({"content": [{"type": "text", "text": output}], "isError": !ok})
         }
         other => {

@@ -13,13 +13,19 @@ const UI_TICK: Duration = Duration::from_secs(2);
 const LATE: Duration = Duration::from_millis(1500);
 const UI_GIVE_UP: Duration = Duration::from_secs(5);
 const UI_REPEAT: Duration = Duration::from_secs(10);
+const BLOCKING_TICK: Duration = Duration::from_secs(3);
+
+fn ms(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+}
 
 pub fn start(app: &AppHandle) {
     runtime_beat();
+    blocking_beat();
     ui_beat(app.clone());
 }
 
-/// A task that wakes every second. If it wakes late, the runtime's few worker
+/// A task that wakes every second. If it wakes late, the runtime's worker
 /// threads were all busy or blocked, so every session and command waited too.
 fn runtime_beat() {
     tauri::async_runtime::spawn(async {
@@ -29,8 +35,32 @@ fn runtime_beat() {
             let late = asked.elapsed().saturating_sub(RUNTIME_TICK);
             if late >= LATE {
                 tracing::warn!(
-                    late_ms = late.as_millis() as u64,
+                    late_ms = ms(late),
                     "async runtime stalled: its worker threads were blocked, so sessions and commands waited"
+                );
+            }
+        }
+    });
+}
+
+/// Hands the blocking pool a no-op every few seconds and times how long it takes
+/// to start. Tool calls, dialogs, wallpaper and project commands all run there,
+/// so when this waits, they wait too: the pool is full of jobs that do not finish.
+fn blocking_beat() {
+    tauri::async_runtime::spawn(async {
+        loop {
+            tokio::time::sleep(BLOCKING_TICK).await;
+            let asked = Instant::now();
+            let mut probe = tokio::task::spawn_blocking(|| ());
+            if tokio::time::timeout(LATE, &mut probe).await.is_err() {
+                tracing::warn!(
+                    "blocking pool is full: a no-op has waited {} ms to start, so tool calls and commands that use it are waiting",
+                    ms(asked.elapsed())
+                );
+                let _ = probe.await;
+                tracing::warn!(
+                    "blocking pool is free again after {} s",
+                    asked.elapsed().as_secs()
                 );
             }
         }
@@ -59,7 +89,7 @@ fn ui_beat(app: AppHandle) {
                     let took = asked.elapsed();
                     if took >= LATE {
                         tracing::warn!(
-                            took_ms = took.as_millis() as u64,
+                            took_ms = ms(took),
                             "UI thread was slow to answer"
                         );
                     }
