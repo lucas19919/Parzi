@@ -30,6 +30,7 @@
 
 {#if ok && state?.state !== "dismissed"}
   <div class="task" class:started={state?.state === "started"}>
+    <span class="kind t-hint">Suggested session</span>
     <div class="head">
       <Icon name="fork" size={12} />
       <span class="title t-section">{t.title}</span>
@@ -59,6 +60,9 @@
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius);
+  }
+  .kind {
+    margin-bottom: calc(var(--space) * -1);
   }
   .head {
     display: flex;

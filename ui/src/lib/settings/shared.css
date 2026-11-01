@@ -50,11 +50,15 @@
   border-radius: var(--radius); padding: calc(var(--space) * 3) calc(var(--space) * 4);
 }
 
-/* Even insets: the horizontal spacing matches the vertical. */
-.page .rows.pad-even > .row,
-.page .rows.pad-even > .row:first-of-type,
-.page .rows.pad-even > .row:last-of-type {
+/* Even insets: the horizontal spacing matches the vertical. Rows that hold one
+   control (`ctl-row`) and title rows keep the standard row height instead. */
+.page .rows.pad-even > .row:not(.ctl-row):not(.row-title) {
   padding: calc(var(--space) * 4);
+}
+/* A row with one control is as tall as one with a 32px field: 8px, the field, 8px,
+   and the 1px line above it. */
+.page .rows .row.ctl-row {
+  min-height: calc(var(--space) * 12 + 1px);
 }
 
 /* Header actions share one width so state changes never bounce the row. */

@@ -42,14 +42,14 @@
       {/each}
     </ul>
   {:else}
-    <section class="todo" aria-label="Tasks">
+    <section class="todo" aria-label="Steps">
       <div class="bar">
         <button class="head" aria-expanded={shown} on:click={() => (shown = !shown)}>
-          <span class="title t-section">Tasks</span>
+          <span class="title t-section">Steps</span>
           <span class="count t-hint">{done} of {items.length}</span>
           <Icon name={shown ? "chevDown" : "chevRight"} size={12} />
         </button>
-        <button class="icon-btn" use:tooltip={"Move to the session column"} aria-label="Move tasks to the session column" on:click={() => dispatch("dock")}>
+        <button class="icon-btn" use:tooltip={"Move to the session column"} aria-label="Move steps to the session column" on:click={() => dispatch("dock")}>
           <Icon name="close" size={12} />
         </button>
       </div>

@@ -20,7 +20,7 @@
   }
 </script>
 
-<div class="row" class:bare>
+<div class="slider" class:bare>
   {#if !bare}
     <div class="info">
       <span class="lab">{label}</span>
@@ -33,8 +33,9 @@
 </div>
 
 <style>
-  .row { display: grid; grid-template-columns: 132px 1fr; align-items: center; gap: calc(var(--space) * 4); width: 100%; }
-  .row.bare { grid-template-columns: 1fr; }
+  /* Not named `row`: a Settings card's rows would add their padding and height a second time. */
+  .slider { display: grid; grid-template-columns: 132px 1fr; align-items: center; gap: calc(var(--space) * 4); width: 100%; }
+  .slider.bare { grid-template-columns: 1fr; }
   .info { display: flex; flex-direction: column; gap: var(--space); min-width: 0; }
   .lab { font-size: var(--fs-md); font-weight: 500; color: var(--text); }
   .sctl { display: flex; align-items: center; gap: calc(var(--space) * 3); min-width: 0; }

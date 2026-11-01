@@ -271,7 +271,7 @@
                   <Icon name="globe" />
                 {/if}
               </span>
-              <span class="title">{sub.title || (sub.kind === "session" ? "Side task" : "New page")}</span>
+              <span class="title">{sub.title || (sub.kind === "session" ? "Side session" : "New page")}</span>
               {#if markOf(sub.sessionId) === "waiting"}<span class="waiting" />{/if}
             </div>
             <button

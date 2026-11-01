@@ -60,20 +60,34 @@ export function appFor(url: string): string {
   return APPS[scheme] ?? (scheme ? `the app for ${scheme} links` : "another app");
 }
 
+/** A closed tab Ctrl+Shift+T can bring back: a web page (url) or a session (sessionId). */
 export interface Closed {
   url: string;
   title: string;
   at: number;
+  sessionId?: string;
 }
 
 export function pushClosed(list: Closed[], entry: Closed, max = 25): Closed[] {
-  if (!/^https?:\/\//i.test(entry.url)) return list;
-  return [...list.filter((c) => c.url !== entry.url), entry].slice(-max);
+  const same = (c: Closed) => (entry.sessionId ? c.sessionId === entry.sessionId : !c.sessionId && c.url === entry.url);
+  if (!entry.sessionId && !/^https?:\/\//i.test(entry.url)) return list;
+  return [...list.filter((c) => !same(c)), entry].slice(-max);
 }
 
 export function popClosed(list: Closed[]): [Closed | null, Closed[]] {
   if (!list.length) return [null, list];
   return [list[list.length - 1], list.slice(0, -1)];
+}
+
+/** The newest closed tab that can still open: a session deleted since is skipped and dropped. */
+export function popReopenable(list: Closed[], sessionExists: (id: string) => boolean): [Closed | null, Closed[]] {
+  let rest = list;
+  while (rest.length) {
+    const [last, tail] = popClosed(rest);
+    rest = tail;
+    if (last && (!last.sessionId || sessionExists(last.sessionId))) return [last, rest];
+  }
+  return [null, rest];
 }
 
 export function originOf(url: string): string {

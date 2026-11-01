@@ -576,7 +576,7 @@ ${e.text}` : e.text;
         {@const said = splitQuotes(stripMarker(item.text))}
         {@const from = sideFrom(item.text)}
         <div class="row user">
-          {#if from}<span class="side-from">Side task from {from}</span>{/if}
+          {#if from}<span class="side-from">Side session from {from}</span>{/if}
           <div class="user-line">
             {#if when(item.at)}<span class="when">{when(item.at)}</span>{/if}
             {#if said.text}

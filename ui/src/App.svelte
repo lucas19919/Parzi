@@ -10,7 +10,7 @@
   import { downloads as downloadApi, onBrowserAsk, onDownload, type Download } from "./lib/api";
   import { addPrompt, downloadList, dropTabPrompts, upsertDownload } from "./lib/browserState";
   import { closedTabs, recordFavicon } from "./lib/browserData";
-  import { downloadShare, popClosed, pushClosed } from "./lib/pageRules";
+  import { downloadShare, popReopenable, pushClosed } from "./lib/pageRules";
   import TopBar from "./lib/TopBar.svelte";
   import Switcher from "./lib/Switcher.svelte";
   import DefaultArt from "./lib/DefaultArt.svelte";
@@ -411,10 +411,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   function reopenClosed() {
-    const [last, rest] = popClosed($closedTabs);
-    if (!last) return;
+    // Sessions of another machine ("r:", "m:" ids) are not in this list, so they are taken as still there.
+    const exists = (id: string) => /^[a-z]:/.test(id) || threads.some((t) => t.id === id);
+    const [last, rest] = popReopenable($closedTabs, exists);
     closedTabs.set(rest);
-    openPageNext(last.url);
+    if (!last) return;
+    if (last.sessionId) openSession(last.sessionId);
+    else openPageNext(last.url);
   }
 
   $: planProject = (hasSession ? meta?.project : "") || project?.slug || "";
@@ -647,6 +650,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         const url = t.url;
         if (url) closedTabs.update((list) => pushClosed(list, { url, title: t.title, at: Date.now() }));
       }
+    }
+    // Pushed last, so the tab the person closed is the first one Ctrl+Shift+T brings back.
+    if (closed.kind === "session" && closed.sessionId) {
+      const sessionId = closed.sessionId;
+      closedTabs.update((list) => pushClosed(list, { url: "", title: closed.title, at: Date.now(), sessionId }));
     }
     const kept = tabs.filter((t) => !doomed.has(t.id));
     if (!kept.length) {
@@ -1313,7 +1321,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     running = new Set(running).add(id);
     void refreshThreads();
     const busySame = !aimed.folder && running.has(parent);
-    toast(busySame ? "Side task started in this folder too: the two may edit the same files" : `Side task started${aimed.title ? ` in ${aimed.title}` : ""}`);
+    toast(busySame ? "Side session started in this folder too: the two may edit the same files" : `Side session started${aimed.title ? ` in ${aimed.title}` : ""}`);
     return id;
   }
 

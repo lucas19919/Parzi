@@ -18,6 +18,28 @@
     }
   });
 
+  // Cards that start shut are shut the first time only; after that the person's choice stands.
+  const SEEN = "parzi.info.seen";
+  const seen = new Set<string>(
+    (() => {
+      try {
+        const v = JSON.parse(localStorage.getItem(SEEN) ?? "[]");
+        return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+      } catch {
+        return [];
+      }
+    })(),
+  );
+  function startShutOnce(id: string) {
+    if (seen.has(id)) return;
+    seen.add(id);
+    try {
+      localStorage.setItem(SEEN, JSON.stringify([...seen]));
+    } catch {
+    }
+    folded.update((s) => new Set(s).add(id));
+  }
+
   /** Opening something in the sidebar always expands its card. */
   export function unfold(id: string) {
     folded.update((s) => {
@@ -35,6 +57,9 @@
   export let id: string;
   export let title: string;
   export let foldedAside = false;
+  /** Closed until the person opens it once. */
+  export let startShut = false;
+  if (startShut) startShutOnce(id);
 
   $: open = !$folded.has(id);
   function toggle() {

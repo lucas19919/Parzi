@@ -587,7 +587,7 @@
           </button>
           <span class="queue-acts">
             <button aria-label="Send now: {item.text}" use:tooltip={"Send now: stop the agent and send this"} on:click={() => dispatch("sendHeldNow", { id: item.id })}><Icon name="arrowUp" size={12} /></button>
-            <button aria-label="Side task: {item.text}" use:tooltip={"Side task: run it now, beside this session"} on:click={() => dispatch("sideHeld", { id: item.id })}><Icon name="fork" size={12} /></button>
+            <button aria-label="Side session: {item.text}" use:tooltip={"Side session: run it now, beside this one"} on:click={() => dispatch("sideHeld", { id: item.id })}><Icon name="fork" size={12} /></button>
             <button aria-label="Edit: {item.text}" use:tooltip={"Edit"} on:click={() => dispatch("unhold", { id: item.id })}><Icon name="pencil" size={12} /></button>
             <button aria-label="Drop: {item.text}" use:tooltip={"Drop this message"} on:click={() => dispatch("dropHeld", { id: item.id })}><Icon name="close" size={12} /></button>
           </span>

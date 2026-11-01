@@ -10,6 +10,7 @@ import {
   permissionName,
   permissionText,
   popClosed,
+  popReopenable,
   pushClosed,
   rememberIcon,
   tipSpot,
@@ -30,6 +31,30 @@ test("closed tabs keep the newest last, once per address, web pages only", () =>
   assert.equal(last?.title, "A again");
   assert.deepEqual(rest.map((c) => c.title), ["B"]);
   assert.deepEqual(popClosed([]), [null, []]);
+});
+
+test("a closed session comes back like a closed page, the newest first", () => {
+  let list = pushClosed([], { url: "https://a.com/", title: "A", at: 1 });
+  list = pushClosed(list, { url: "", title: "Chat", at: 2, sessionId: "s1" });
+  list = pushClosed(list, { url: "", title: "Chat again", at: 3, sessionId: "s1" });
+  assert.deepEqual(
+    list.map((c) => c.title),
+    ["A", "Chat again"],
+    "a session is kept once",
+  );
+  assert.equal(pushClosed(list, { url: "", title: "x", at: 4 }), list, "no page and no session is kept out");
+  const [first, rest] = popReopenable(list, () => true);
+  assert.equal(first?.sessionId, "s1");
+  assert.equal(popReopenable(rest, () => true)[0]?.url, "https://a.com/");
+});
+
+test("a session deleted since it was closed is skipped, and the page under it still opens", () => {
+  let list = pushClosed([], { url: "https://a.com/", title: "A", at: 1 });
+  list = pushClosed(list, { url: "", title: "Gone", at: 2, sessionId: "dead" });
+  const [got, rest] = popReopenable(list, (id) => id !== "dead");
+  assert.equal(got?.url, "https://a.com/");
+  assert.deepEqual(rest, []);
+  assert.deepEqual(popReopenable([{ url: "", title: "Gone", at: 1, sessionId: "dead" }], () => false), [null, []]);
 });
 
 test("favicons: a reported icon wins, else the site's /favicon.ico", () => {

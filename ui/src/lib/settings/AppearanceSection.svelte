@@ -320,7 +320,7 @@
           {/each}
         </div>
       </div>
-      <div class="row save-row">
+      <div class="row save-row ctl-row">
         <input
           class="tin"
           placeholder="Save the current look as…"
@@ -364,11 +364,11 @@
         </div>
       </div>
       {#if theme.background.image}
-        <div class="row">
+        <div class="row ctl-row">
           <span class="row-label">Height</span>
           <div class="pos"><Slider bare label="Wallpaper height" bind:value={hPct} min={20} max={60} unit="%" on:input={(e) => onHeight(e.detail)} /></div>
         </div>
-        <div class="row">
+        <div class="row ctl-row">
           <span class="row-label">Position</span>
           <div class="pos"><Slider bare label="Wallpaper position" bind:value={yPct} min={0} max={100} unit="%" on:input={(e) => onPos(e.detail)} /></div>
         </div>
@@ -528,7 +528,8 @@
   .panel-wrap > :global(.cf) { flex: 1; min-width: 0; }
   .mini {
     flex: none;
-    padding: var(--space) calc(var(--space) * 3);
+    height: calc(var(--space) * 8);
+    padding: 0 calc(var(--space) * 3);
     background: none;
     border: 1px solid var(--line);
     border-radius: var(--radius-sm);

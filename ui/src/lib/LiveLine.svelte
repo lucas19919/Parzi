@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import ThinkingFace from "./ThinkingFace.svelte";
 
   export let text = "";
   export let tokens = 0;
@@ -15,7 +16,7 @@
 </script>
 
 <div class="live" role="status" aria-live="polite">
-  <span class="face" aria-hidden="true"><span class="eye" /><span class="eye" /></span>
+  <ThinkingFace />
   <span class="what">{text}</span>
   <span class="meta">{clock}{written ? ` · ${written}` : ""}</span>
 </div>
@@ -47,47 +48,6 @@
     font-size: var(--fs-sm);
     font-variant-numeric: tabular-nums;
   }
-  .face {
-    width: 22px;
-    height: 22px;
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space);
-    border-radius: 50%;
-    background: var(--selected);
-    border: 1px solid color-mix(in srgb, var(--text) 16%, transparent);
-    animation: bob 2.4s ease-in-out infinite;
-  }
-  .eye {
-    width: 3px;
-    height: 4.5px;
-    border-radius: var(--radius-sm);
-    background: var(--text);
-    opacity: 0.85;
-    animation: blink 4.4s ease-in-out infinite;
-    transform-origin: center;
-  }
-  @keyframes bob {
-    0%,
-    100% {
-      transform: translateY(0);
-    }
-    50% {
-      transform: translateY(-1.5px);
-    }
-  }
-  @keyframes blink {
-    0%,
-    91%,
-    100% {
-      transform: scaleY(1);
-    }
-    94.5% {
-      transform: scaleY(0.12);
-    }
-  }
   @keyframes shimmer {
     from {
       background-position: 100% 0;
@@ -97,8 +57,6 @@
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .face,
-    .eye,
     .what {
       animation: none;
     }

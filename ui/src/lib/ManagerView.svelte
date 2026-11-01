@@ -2,6 +2,7 @@
   import { createEventDispatcher, onMount } from "svelte";
   import Icon from "./Icon.svelte";
   import Page from "./Page.svelte";
+  import { sessionMarks } from "./activity";
   import { brain, type Project, type SessionMeta } from "./api";
   import { folderName } from "./tabs";
   import { byDay } from "./time";
@@ -77,6 +78,22 @@
     return h;
   };
 
+  // What the tab bar shows, from the same marks; the saved status covers a session that
+  // was already running before this window opened.
+  type Mark = "running" | "waiting" | "queued" | "";
+  $: markOf = (s: SessionMeta): Mark => {
+    const m = $sessionMarks[s.id];
+    if (m === "waiting") return "waiting";
+    if (m === "running" || s.status === "active") return "running";
+    return s.status === "queued" ? "queued" : "";
+  };
+  const markWord: Record<string, string> = { running: "Working", waiting: "Waiting for you", queued: "Queued" };
+  $: runningIn = (() => {
+    const m = new Map<string, number>();
+    for (const t of threads) if (markOf(t) === "running") m.set(t.project || "", (m.get(t.project || "") ?? 0) + 1);
+    return m;
+  })();
+
   $: q = query.trim().toLowerCase();
   $: hits = threads
     .filter((t) => !t.parent_id || threads.some((p) => p.id === t.parent_id))
@@ -141,7 +158,10 @@
           title={projectFilter === p.slug ? "Show all sessions" : `Show only ${p.title}`}
           on:click={() => toggleProject(p.slug)}
         >
-          <span class="badge" style="--badge-h: {hueOf(p.slug)}">{p.title.trim().charAt(0).toUpperCase()}</span>
+          <span class="badge-wrap">
+            <span class="badge" style="--badge-h: {hueOf(p.slug)}">{p.title.trim().charAt(0).toUpperCase()}</span>
+            {#if runningIn.get(p.slug)}<span class="mark running" role="img" aria-label={`${runningIn.get(p.slug)} working`} title={`${runningIn.get(p.slug)} working`} />{/if}
+          </span>
           <span class="row-label">{p.title}</span>
           {#if counts.get(p.slug)}<span class="t-hint">{counts.get(p.slug)}</span>{/if}
         </button>
@@ -156,9 +176,13 @@
       <div class="row row-title"><span>{day.label}</span></div>
       {#each day.items as s (s.id)}
         {@const place = placeOf(s)}
+        {@const mark = markOf(s)}
         <div class="row sess">
           <button class="row-main" title={s.title} on:click={() => dispatch("openSession", { id: s.id })}>
-            <span class="badge" style="--badge-h: {hueOf(s.project || place || s.id)}">{initialOf(s)}</span>
+            <span class="badge-wrap">
+              <span class="badge" style="--badge-h: {hueOf(s.project || place || s.id)}">{initialOf(s)}</span>
+              {#if mark}<span class="mark {mark}" role="img" aria-label={markWord[mark]} title={markWord[mark]} />{/if}
+            </span>
             <span class="row-label">{s.title || "Untitled session"}</span>
             {#if place}<span class="t-hint">{place}</span>{/if}
           </button>
@@ -197,6 +221,49 @@
   }
   .page-search {
     height: auto;
+  }
+  /* The tab bar's marks, on the corner of the letter badge: they take no room, so the
+     list never shifts when something starts or stops. */
+  .badge-wrap {
+    position: relative;
+    flex: none;
+    display: inline-flex;
+  }
+  .mark {
+    position: absolute;
+    right: -4px;
+    top: -4px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    background: var(--panel);
+    box-shadow: 0 0 0 2px var(--panel);
+  }
+  .mark.running {
+    width: 12px;
+    height: 12px;
+    border: 1.6px solid var(--line);
+    border-top-color: var(--accent);
+    animation: mgr-spin 0.8s linear infinite;
+  }
+  .mark.waiting {
+    width: 9px;
+    height: 9px;
+    background: var(--warn);
+  }
+  .mark.queued {
+    width: 9px;
+    height: 9px;
+    border: 1.6px solid var(--muted);
+  }
+  @keyframes mgr-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mark.running {
+      animation: none;
+    }
   }
   .x {
     opacity: 0;
