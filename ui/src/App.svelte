@@ -925,6 +925,18 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     showCover("settings");
   }
 
+  // The top-left buttons act as Back when their own page is already open.
+  function toggleSettings() {
+    if (tab.kind === "settings") closeTab(activeId);
+    else if (coverOn && cover === "settings") clearCover();
+    else openSettings();
+  }
+
+  function toggleManager() {
+    if (coverOn && cover === "sessions") clearCover();
+    else showCover("sessions");
+  }
+
   async function send() {
     const target = tab;
     const draft = target.composer;
@@ -1583,11 +1595,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     else if (name === "ctrl+w") {
       closeTab(activeId);
     }
-    else if (name === "ctrl+comma") {
-      if (tab.kind === "settings") closeTab(activeId);
-      else if (cover === "settings") clearCover();
-      else openSettings();
-    } else if (name === "ctrl+j" || name === "ctrl+shift+a") toggleInfo();
+    else if (name === "ctrl+comma") toggleSettings();
+    else if (name === "ctrl+j" || name === "ctrl+shift+a") toggleInfo();
     else if (name === "ctrl+shift+t") reopenClosed();
     else if (name === "f11") void setImmersive(!immersive);
     else if (name === "ctrl+l") {
@@ -1761,16 +1770,17 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
           .catch(() => {});
       }
     });
-    (async () => {
-      try {
-        applyThemeCss(await api.getThemeCss());
-        bg = await api.backgroundUrl();
-        await ensureBoard();
-        checkForUpdatesSoon();
-      } catch (e) {
-        toast(`Startup: ${e}`, true);
-      }
-    })();
+    // Each load stands alone: one failing must not leave the others undone.
+    void api
+      .getThemeCss()
+      .then(applyThemeCss)
+      .catch((e) => toast(`Couldn't load the theme: ${e}`, true));
+    void api
+      .backgroundUrl()
+      .then((url) => (bg = url))
+      .catch((e) => toast(`Couldn't load the wallpaper: ${e}`, true));
+    void ensureBoard().catch((e) => toast(`Couldn't load the agents: ${e}`, true));
+    checkForUpdatesSoon();
     return () => {
       unActivity();
       unClear();
@@ -1804,8 +1814,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       on:close={(e) => closeTab(e.detail.id)}
       on:move={(e) => moveTab(e.detail.id, e.detail.to)}
     on:newTab={newSession}
-      on:manager={() => showCover("sessions")}
-      on:settings={() => openSettings()}
+      on:manager={toggleManager}
+      on:settings={toggleSettings}
       panelable={tab.kind === "session"}
       panelOpen={infoShown}
       panelCount={familyActive}

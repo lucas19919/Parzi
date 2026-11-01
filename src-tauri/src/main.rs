@@ -35,6 +35,7 @@ mod sessions;
 mod settings;
 mod siteprefs;
 mod vault;
+mod watchdog;
 mod worktree;
 
 pub(crate) type Pending = Arc<Mutex<HashMap<String, (String, oneshot::Sender<Approval>)>>>;
@@ -603,8 +604,10 @@ fn main() {
             }
         }
     }));
+    // Several sessions, probes and commands share these workers. A few tasks that
+    // block (a slow disk write, a child process spawn) must not leave none free.
     let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(3)
+        .worker_threads(8)
         .max_blocking_threads(8)
         .enable_all()
         .build()
@@ -708,6 +711,7 @@ fn main() {
                 }
             }
             adblock::start();
+            watchdog::start(app.handle());
             browser::warm_up();
             let bus_rx = o.subscribe();
             let bus_app = app.handle().clone();
@@ -717,6 +721,16 @@ fn main() {
             let board = o.clone();
             let board_app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                // Every check starts the agents' own programs. With a saved list the
+                // composer already has its models, so let queued runs launch first
+                // instead of racing them.
+                if board
+                    .provider_statuses()
+                    .iter()
+                    .any(|s| !s.models.is_empty())
+                {
+                    tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+                }
                 let all = settings::in_roster_order(board.refresh_providers(&[]).await);
                 let _ = board_app.emit("parzi://providers", &all);
             });

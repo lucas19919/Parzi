@@ -118,6 +118,10 @@ export function effortsFor(value: string, board: ProviderStatus[]): string[] {
   const listed = m?.efforts ?? [];
   if (listed.length) return listed;
   if (["opencode", "grok", "cursor", "antigravity", "acp"].includes(p)) return [...FALLBACK_EFFORTS];
+  // Claude and Codex list efforts per model. With no list at all the check has not
+  // come back yet or failed; keep the picker instead of dropping it. A model that
+  // is listed with no efforts really has none.
+  if (["claude", "codex"].includes(p) && !models.length) return [...FALLBACK_EFFORTS];
   return [];
 }
 

@@ -1,6 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { chipOf, modelLabel, prettyModel } from "../src/lib/providerRows.ts";
+import { chipOf, effortsFor, modelLabel, prettyModel } from "../src/lib/providerRows.ts";
+
+const status = (provider: string, models: { id: string; efforts: string[]; is_default?: boolean }[]) =>
+  ({ provider, state: "ready", models }) as never;
+
+test("Claude keeps an effort picker while its model list is missing", () => {
+  assert.deepEqual(effortsFor("claude/sonnet", [status("claude", [])]), ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(effortsFor("codex/gpt-5", []), ["low", "medium", "high", "xhigh", "max"]);
+});
+
+test("a listed model decides its own efforts", () => {
+  const board = [
+    status("claude", [
+      { id: "sonnet", efforts: ["low", "high"], is_default: true },
+      { id: "haiku", efforts: [] },
+    ]),
+  ];
+  assert.deepEqual(effortsFor("claude/sonnet", board), ["low", "high"]);
+  assert.deepEqual(effortsFor("claude/haiku", board), [], "a model with no efforts really has none");
+});
 
 test("model ids read as names", () => {
   assert.equal(prettyModel("opencode/muse-spark-1.3-contributor-free"), "Muse Spark 1.3 Contributor Free");

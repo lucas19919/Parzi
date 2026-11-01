@@ -11,9 +11,34 @@ pub(crate) fn roster_source() -> ProviderSource {
     Arc::new(|id: &str, cfg: &ParziConfig| parzi_providers::provider(id, cfg))
 }
 
+/// A usable provider with a model list checked this recently is not probed again.
+/// Each Claude check starts a second `claude.exe`, which is heavy while turns launch.
+const REUSE_SECS: u64 = 15;
+
 pub struct StatusBoard {
     map: RwLock<HashMap<String, ProviderStatus>>,
     persist: bool,
+    /// One refresh at a time: opening the model picker twice must not start two probes.
+    probing: tokio::sync::Mutex<()>,
+}
+
+/// A failed or empty check must not wipe the models the last good check found.
+/// Without them the composer loses its model names and effort levels.
+fn keep_models(fresh: &mut ProviderStatus, old: Option<&ProviderStatus>) {
+    if !fresh.models.is_empty() || !matches!(fresh.state, State::Ready | State::Error) {
+        return;
+    }
+    let Some(old) = old.filter(|o| !o.models.is_empty()) else {
+        return;
+    };
+    tracing::warn!(
+        provider = %fresh.provider,
+        state = ?fresh.state,
+        hint = %fresh.hint,
+        kept = old.models.len(),
+        "status check found no models; keeping the list from the last good check"
+    );
+    fresh.models.clone_from(&old.models);
 }
 
 fn file() -> Option<std::path::PathBuf> {
@@ -34,6 +59,7 @@ impl StatusBoard {
         Self {
             map: RwLock::new(map),
             persist: true,
+            probing: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -41,6 +67,7 @@ impl StatusBoard {
         Self {
             map: RwLock::new(HashMap::new()),
             persist: false,
+            probing: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -111,6 +138,7 @@ impl StatusBoard {
         } else {
             ids.to_vec()
         };
+        let _one_at_a_time = self.probing.lock().await;
         let mut set = tokio::task::JoinSet::new();
         for id in ids {
             let Some(canon) = parzi_providers::canonical_id(&id) else {
@@ -127,6 +155,15 @@ impl StatusBoard {
                 ));
                 continue;
             }
+            let now = parzi_providers::now_secs();
+            let fresh_enough = self.get(canon).is_some_and(|s| {
+                s.state == State::Ready
+                    && !s.models.is_empty()
+                    && now.saturating_sub(s.checked_at) < REUSE_SECS
+            });
+            if fresh_enough {
+                continue;
+            }
             set.spawn(async move {
                 tokio::time::timeout(std::time::Duration::from_secs(90), provider.status())
                     .await
@@ -137,8 +174,13 @@ impl StatusBoard {
         }
         while let Some(done) = set.join_next().await {
             if let Ok(mut s) = done {
+                let old = self.get(&s.provider);
+                if s.state == State::Error || (s.state == State::Ready && !s.hint.is_empty()) {
+                    tracing::warn!(provider = %s.provider, state = ?s.state, hint = %s.hint, "status check did not come back clean");
+                }
+                keep_models(&mut s, old.as_ref());
                 if s.usage.is_empty() {
-                    if let Some(old) = self.get(&s.provider) {
+                    if let Some(old) = old {
                         let now = parzi_providers::now_secs();
                         s.usage = old.usage.into_iter().filter(|w| w.current(now)).collect();
                     }
@@ -230,6 +272,85 @@ mod tests {
         let s = board.get("opencode").unwrap();
         assert_eq!(s.usage.len(), 2);
         assert!((s.usage[0].used_percent - 55.0).abs() < 1e-9);
+    }
+
+    fn one_model() -> Vec<parzi_providers::ModelInfo> {
+        vec![parzi_providers::ModelInfo {
+            id: "sonnet".into(),
+            name: "Sonnet".into(),
+            is_default: true,
+            efforts: vec!["low".into(), "high".into()],
+            images: None,
+        }]
+    }
+
+    #[test]
+    fn a_failed_check_keeps_the_models_of_the_last_good_one() {
+        let mut old = ProviderStatus::new("claude", State::Ready, "");
+        old.models = one_model();
+
+        let mut no_list = ProviderStatus::new("claude", State::Ready, "the model list failed");
+        keep_models(&mut no_list, Some(&old));
+        assert_eq!(no_list.models.len(), 1, "signed in, list failed");
+
+        let mut errored = ProviderStatus::new("claude", State::Error, "no answer");
+        keep_models(&mut errored, Some(&old));
+        assert_eq!(errored.models.len(), 1, "the check itself failed");
+
+        let mut out = ProviderStatus::new("claude", State::SignedOut, "");
+        keep_models(&mut out, Some(&old));
+        assert!(
+            out.models.is_empty(),
+            "signing out really does end the list"
+        );
+
+        let mut nothing_before = ProviderStatus::new("claude", State::Error, "no answer");
+        keep_models(&mut nothing_before, None);
+        assert!(nothing_before.models.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_provider_that_just_listed_its_models_is_not_probed_again() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Counted(Arc<AtomicUsize>);
+
+        #[async_trait::async_trait]
+        impl Provider for Counted {
+            fn id(&self) -> &'static str {
+                "claude"
+            }
+            fn gated(&self) -> bool {
+                true
+            }
+            async fn status(&self) -> ProviderStatus {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                let mut s = ProviderStatus::new("claude", State::Ready, "");
+                s.models = one_model();
+                s
+            }
+            async fn run_turn(
+                &self,
+                _spec: TurnSpec,
+                _gate: Arc<dyn PermissionGate>,
+                _events: EventTx,
+                _cancel: CancellationToken,
+            ) -> Result<TurnEnd, ProviderError> {
+                Ok(TurnEnd::Completed)
+            }
+        }
+
+        let probes = Arc::new(AtomicUsize::new(0));
+        let seen = probes.clone();
+        let source: ProviderSource = Arc::new(
+            move |_id: &str, _cfg: &ParziConfig| -> Option<Arc<dyn Provider>> {
+                Some(Arc::new(Counted(seen.clone())))
+            },
+        );
+        let board = StatusBoard::in_memory();
+        let ids = ["claude".to_string()];
+        board.refresh(&ParziConfig::default(), &ids, &source).await;
+        board.refresh(&ParziConfig::default(), &ids, &source).await;
+        assert_eq!(probes.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
