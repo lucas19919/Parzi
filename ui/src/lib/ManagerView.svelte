@@ -81,22 +81,49 @@
   // What the tab bar shows, from the same marks; the saved status covers a session that
   // was already running before this window opened.
   type Mark = "running" | "waiting" | "queued" | "";
-  $: markOf = (s: SessionMeta): Mark => {
-    const m = $sessionMarks[s.id];
+  const ownMark = (s: SessionMeta, marks: Record<string, string>): Mark => {
+    const m = marks[s.id];
     if (m === "waiting") return "waiting";
     if (m === "running" || s.status === "active") return "running";
     return s.status === "queued" ? "queued" : "";
   };
   const markWord: Record<string, string> = { running: "Working", waiting: "Waiting for you", queued: "Queued" };
+
+  // Subagent sessions live under the session that spawned them, not in this list. Their
+  // work still shows: a helper that is running or waiting marks the session it belongs to.
+  // A child whose parent is gone stays visible so it can't get lost.
+  $: byId = new Map(threads.map((t) => [t.id, t]));
+  $: tops = threads.filter((t) => !t.parent_id || !byId.has(t.parent_id));
+  $: below = (() => {
+    const rank: Record<Mark, number> = { "": 0, queued: 1, running: 2, waiting: 3 };
+    const m = new Map<string, Mark>();
+    for (const t of threads) {
+      const mark = ownMark(t, $sessionMarks);
+      if (!mark) continue;
+      const seen = new Set<string>();
+      let cur = t.parent_id ? byId.get(t.parent_id) : undefined;
+      while (cur && !seen.has(cur.id)) {
+        seen.add(cur.id);
+        if (rank[mark] > rank[m.get(cur.id) ?? ""]) m.set(cur.id, mark);
+        cur = cur.parent_id ? byId.get(cur.parent_id) : undefined;
+      }
+    }
+    return m;
+  })();
+  $: markOf = (s: SessionMeta): Mark => {
+    const own = ownMark(s, $sessionMarks);
+    const kid = below.get(s.id) ?? "";
+    // a queued helper is not news; a running or waiting one is
+    return own === "waiting" || kid === "waiting" ? "waiting" : own === "running" || kid === "running" ? "running" : own;
+  };
   $: runningIn = (() => {
     const m = new Map<string, number>();
-    for (const t of threads) if (markOf(t) === "running") m.set(t.project || "", (m.get(t.project || "") ?? 0) + 1);
+    for (const t of tops) if (markOf(t) === "running") m.set(t.project || "", (m.get(t.project || "") ?? 0) + 1);
     return m;
   })();
 
   $: q = query.trim().toLowerCase();
-  $: hits = threads
-    .filter((t) => !t.parent_id || threads.some((p) => p.id === t.parent_id))
+  $: hits = tops
     .filter((t) => !projectFilter || t.project === projectFilter)
     .filter((t) => {
       if (!q) return true;
@@ -112,7 +139,7 @@
   $: days = byDay(hits);
   $: counts = (() => {
     const m = new Map<string, number>();
-    for (const t of threads) m.set(t.project || "", (m.get(t.project || "") ?? 0) + 1);
+    for (const t of tops) m.set(t.project || "", (m.get(t.project || "") ?? 0) + 1);
     return m;
   })();
 
