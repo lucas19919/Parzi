@@ -408,6 +408,14 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   provider_statuses: () => board,
   refresh_providers: () => board,
   get_config: () => structuredClone(config),
+  "plugin:updater|check": () =>
+    params.get("update") ? { rid: 1, currentVersion: "1.2.9", version: "1.3.0", date: null, body: "", rawJson: {} } : null,
+  "plugin:updater|download": () => null,
+  "plugin:updater|install": () => null,
+  restart_app: () => {
+    (window as unknown as { mockRestarted: boolean }).mockRestarted = true;
+    return null;
+  },
   agent_keys: () => [...mockKeys],
   set_agent_key: (a) => {
     const { provider, key } = a as { provider: string; key: string | null };

@@ -195,6 +195,7 @@ export type ComposerMode = "search" | "build";
 
 export const api = {
   appVersion: () => invoke<string>("app_version"),
+  restartApp: () => invoke<void>("restart_app"),
   openConfirmedUrl: (url: string) => invoke<void>("open_confirmed_url", { url }),
   openFilePath: (path: string) => invoke<void>("open_file_path", { path }),
 

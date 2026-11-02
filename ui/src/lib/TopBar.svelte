@@ -4,7 +4,7 @@
   import TabBar from "./TabBar.svelte";
   import WinControls from "./WinControls.svelte";
   import type { Tab } from "./tabs";
-  import { updateVersion } from "./updateStore";
+  import { installUpdate, updateState, updateVersion } from "./updateStore";
   import { startWindowDrag } from "./windowChrome";
   import { tooltip } from "./tooltip";
 
@@ -35,11 +35,10 @@
       <button
         class="icon-btn"
         aria-label="Settings"
-        use:tooltip={$updateVersion ? "Settings, update available" : "Settings (Ctrl+,)"}
+        use:tooltip={"Settings (Ctrl+,)"}
         on:click={() => dispatch("settings")}
       >
         <Icon name="menu" />
-        {#if $updateVersion}<span class="dot" />{/if}
       </button>
       <button
         class="icon-btn manager-btn"
@@ -62,6 +61,16 @@
   </div>
 
   <div class="right">
+      {#if $updateState === "ready"}
+        <button
+          class="update"
+          aria-label={`Update to ${$updateVersion} and restart Parzi`}
+          use:tooltip={`Update to ${$updateVersion} and restart`}
+          on:click={installUpdate}
+        >
+          <Icon name="arrowUp" />
+        </button>
+      {/if}
       {#if panelable}
         <button
           class="icon-btn panel-btn"
@@ -115,14 +124,24 @@
     flex: none;
     padding-right: var(--space);
   }
-  .dot {
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
+  /* The composer's send button, ready to send. */
+  .update {
+    width: calc(var(--space) * 6);
+    height: calc(var(--space) * 6);
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
     background: var(--accent);
+    border: none;
+    border-radius: 50%;
+    color: var(--bg);
+    cursor: pointer;
+  }
+  .update:active {
+    transform: scale(0.94);
+    transition-duration: var(--dur-fast);
   }
   .icon-btn:hover,
   .icon-btn.active {

@@ -1,4 +1,5 @@
-import { writable } from "svelte/store";
+import { get, writable } from "svelte/store";
+import { api } from "./api";
 import { toast } from "./toast";
 
 export type UpdateStatus = "idle" | "checking" | "available" | "downloading" | "ready" | "uptodate" | "error";
@@ -21,37 +22,23 @@ let pending: PendingUpdate | null = null;
 let downloading = false;
 let readyVersion = "";
 
-const CHECK_KEY = "parzi.update.last-check";
-const CHECK_EVERY = 24 * 3600 * 1000;
+const CHECK_EVERY = 6 * 3600 * 1000;
 
-function lastCheck(): number {
-  try {
-    return Number(localStorage.getItem(CHECK_KEY)) || 0;
-  } catch {
-    return 0;
-  }
-}
-
-function markChecked() {
-  try {
-    localStorage.setItem(CHECK_KEY, String(Date.now()));
-  } catch {}
-}
-
+// A found update does not survive a restart, so every launch looks again.
 export function checkForUpdatesSoon(ms = 12000) {
   if (scheduled) return;
   scheduled = true;
   setTimeout(() => void check(false), ms);
+  setInterval(() => void check(false), CHECK_EVERY);
 }
 
 export async function check(force = false) {
   if (downloading) return;
-  if (!force && Date.now() - lastCheck() < CHECK_EVERY) return;
+  if (!force && get(updateState) === "ready") return;
   updateState.set("checking");
   try {
     const { check } = await import("@tauri-apps/plugin-updater");
     const u = (await check()) as PendingUpdate | null;
-    markChecked();
     if (!u) {
       updateState.set("uptodate");
       updateMsg.set("You're on the latest version.");
@@ -90,7 +77,6 @@ async function downloadInBackground() {
     readyVersion = pending.version;
     updateState.set("ready");
     updateMsg.set("Update downloaded. Restart Parzi to use it.");
-    toast("Update downloaded. Restart Parzi to use it");
   } catch (e) {
     downloading = false;
     updateState.set("error");
@@ -104,11 +90,17 @@ export async function installUpdate() {
   updateMsg.set("Finishing install…");
   try {
     await pending.install();
-    updateState.set("ready");
-    updateMsg.set("Update installed. Restart Parzi to finish.");
-    toast("Restart Parzi to finish");
   } catch (e) {
     updateState.set("error");
     updateMsg.set(`Install failed: ${e}`);
+    return;
+  }
+  // The Windows installer has closed Parzi by now; elsewhere the new app waits for a restart.
+  try {
+    await api.restartApp();
+  } catch {
+    updateState.set("ready");
+    updateMsg.set("Update installed. Restart Parzi to finish.");
+    toast("Restart Parzi to finish");
   }
 }

@@ -325,6 +325,11 @@ async fn app_version() -> Result<String, String> {
 }
 
 #[tauri::command]
+fn restart_app(app: tauri::AppHandle) {
+    app.request_restart();
+}
+
+#[tauri::command]
 fn ui_error(message: &str) {
     static BUDGET: std::sync::Mutex<(u64, u32)> = std::sync::Mutex::new((0, 0));
     let minute = parzi_core::now_ms() / 60_000;
@@ -756,6 +761,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             artifact_frame::artifact_frame,
             app_version,
+            restart_app,
             ui_error,
             window_fullscreen,
             begin_window_drag,
