@@ -52,10 +52,22 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Parzi ${{ github.ref_name }}"
+          # Replace "What changed" on every release. A stale section ships
+          # on the next tag, because this file is the published body.
           releaseBody: |
             ## Parzi ${{ github.ref_name }}
 
             One harness, six providers — Claude, Codex, Antigravity, OpenCode, Grok, Cursor.
+
+            ### What changed
+
+            - Markdown and notes open in a card to the right of the session sidebar, under the window buttons. Drag the card's left edge to resize it. Parzi remembers the width.
+            - Select a file starts in the project you have open. Parzi reads text files inside that workspace, up to 1 MB. A file outside the workspace is refused.
+            - Code blocks, math, and tables in a markdown file render the same way they do in the thread. A file that is not markdown is plain text.
+            - Ctrl+P and Ctrl+K open your sessions. The old command menu is gone.
+            - The session sidebar no longer keeps its own copy of the open document.
+
+            A markdown block already in the thread stays there until you choose Open to read. Pasting a file path still asks before opening it outside the card. On a narrow window the file card stays hidden until there is room.
 
             ### Download
 
