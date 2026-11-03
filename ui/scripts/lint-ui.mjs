@@ -16,8 +16,8 @@ const STATES = {
   ],
   session: [
     { name: "viz readout", action: "hover", selector: '.viz[data-viz="line"] svg.plot', ready: { selector: ".viz-tip:not([hidden])" } },
-    { name: "switcher", action: "press", selector: ".ob textarea", key: "Control+p", ready: { selector: '.box[role="dialog"]' } },
-    { name: "switcher closed", action: "press", selector: '.box[role="dialog"] input', key: "Escape", ready: { selector: '.box[role="dialog"]', state: "hidden" } },
+    { name: "sessions", action: "press", selector: ".ob textarea", key: "Control+p", ready: { selector: 'input[aria-label="Search sessions"]' } },
+    { name: "sessions closed", action: "press", selector: 'input[aria-label="Search sessions"]', key: "Escape", ready: { selector: 'input[aria-label="Search sessions"]', state: "hidden" } },
     click("model picker", ".ob .model", ".picker"),
     click("permission menu", ".ob .perm-btn", ".menu-pop"),
     click("plan checklist", ".info .plan-row", ".thread-col .plan ul"),

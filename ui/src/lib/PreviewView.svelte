@@ -17,7 +17,7 @@
   {:else}
     <p class="hint">No preview named "{which}" yet.</p>
   {/each}
-  <p class="hint">Dev builds open this gallery with <span class="mono">Ctrl+P → Component previews</span>.</p>
+  <p class="hint">Dev builds open this gallery as a preview tab.</p>
 </div>
 
 <style>
@@ -49,10 +49,6 @@
   }
   .hint {
     font-size: var(--fs-sm);
-    color: var(--muted);
-  }
-  .mono {
-    font-family: var(--mono);
     color: var(--muted);
   }
 </style>

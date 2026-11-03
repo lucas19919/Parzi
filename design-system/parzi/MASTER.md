@@ -77,9 +77,8 @@ grade: surfaces are solid `--panel` on `--bg`.
 - Each page tab owns a native WebView2 child that stays alive while hidden,
   so switching tabs never reloads. It fills everything under the address bar
   (back, forward, reload, address, shield, pin); F11 or a page's own
-  fullscreen hides all chrome. Any HTML overlay above it (top menu, switcher,
-  popovers) registers in `lib/overlay.ts` so the page hides while the overlay
-  is open.
+  fullscreen hides all chrome. Any HTML overlay above it (popovers) registers
+  in `lib/overlay.ts` so the page hides while the overlay is open.
 - No white flashes: a page webview starts in the theme background, and the
   slot under it takes the page's own background colour (read after each
   load), so switching tabs never shows a mismatched frame. Restored page
@@ -93,8 +92,12 @@ grade: surfaces are solid `--panel` on `--bg`.
   completed part. Over a page, the native view hides while the list is open
   and a JPEG snapshot of the page (taken on focus) stands in for it.
 - An empty session tab is Home: the composer. New tab and the Home button land here.
-- Switcher (Ctrl+P / Ctrl+K): actions, open tabs, sessions. Settings opens in
-  the session (Ctrl+,).
+- Ctrl+P and Ctrl+K open Sessions inside the session (the same list as the
+  sessions button). Settings opens in the session (Ctrl+,). Markdown opens in
+  a floating file card to the right of the session sidebar, under the top bar,
+  with the same outline and a resize grip. The note is the card, not a frame
+  inside it, and the lines wrap. Its top-right button toggles it. Open file
+  starts in the project folder.
 
 ## Components (states: default / hover / active / focus-visible / disabled)
 
@@ -104,8 +107,7 @@ grade: surfaces are solid `--panel` on `--bg`.
   itself: first click arms ("Sure?"), second removes the project record
   (its notes stay in the vault). There is no notes UI: notes are vault
   files for agents (`projects/<slug>/<name>.md` plus plan notes). A note
-  link anywhere pins the note into the session's side column; outside a
-  session it toasts instead of opening anything.
+  link opens that file in the file column.
 - Composer: one evenly padded box. The textarea sits above a quiet row:
   model, effort, and permission as plain text on the left; a browser icon,
   attach, and send on the right. Send is the arrow, with no circle, and it

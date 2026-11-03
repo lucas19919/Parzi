@@ -16,7 +16,6 @@
   import { activity } from "./activity";
   import { folderName } from "./tabs";
   import { tooltip } from "./tooltip";
-  import { mdHtml, richReady } from "./md";
 
   export let session = "";
   export let project = "";
@@ -38,8 +37,6 @@
   export let questions: Question[] = [];
   export let planInline = false;
   export let todo: unknown = null;
-  export let doc: { title: string; content: string; version: number } | null = null;
-  $: if (doc) unfold("doc");
   $: stepsHere = !!todo && $dockedTodos.has(session) && todoOpen(todo);
   $: if (stepsHere) unfold("steps");
   $: stepItems = todoItems(todo);
@@ -53,8 +50,6 @@
     openUrl: { url: string };
     compact: void;
     plan: void;
-    openDoc: void;
-    closeDoc: void;
     resize: { width: number };
   }>();
 
@@ -146,17 +141,6 @@
         <button class="doc-btn" use:tooltip={"Move to the thread"} aria-label="Move steps to the thread" on:click={() => setTodoDocked(session, false)}><Icon name="external" size={12} /></button>
       </svelte:fragment>
       <TodoList {todo} working={streaming} docked />
-    </InfoCard>
-  {/if}
-  {#if doc}
-    <InfoCard id="doc" title={doc.title}>
-      <svelte:fragment slot="actions">
-        <button class="doc-btn" use:tooltip={"Open in this tab"} aria-label="Open document in this tab" on:click={() => dispatch("openDoc")}><Icon name="external" size={12} /></button>
-        <button class="doc-btn" use:tooltip={"Unpin"} aria-label="Unpin document" on:click={() => dispatch("closeDoc")}><Icon name="close" size={12} /></button>
-      </svelte:fragment>
-      {#key `${doc.title}:${doc.version}`}
-        <div class="doc msg">{@html mdHtml(doc.content, $richReady)}</div>
-      {/key}
     </InfoCard>
   {/if}
   <InfoCard id="env" title="Environment" foldedAside>
@@ -311,15 +295,6 @@
   .doc-btn:hover {
     background: color-mix(in srgb, var(--text) 8%, transparent);
     color: var(--text);
-  }
-  .doc {
-    min-height: 0;
-    max-height: 46vh;
-    overflow-y: auto;
-    padding: 0;
-    font-size: var(--fs-md);
-    line-height: 1.55;
-    overflow-wrap: anywhere;
   }
   .pct {
     flex: none;

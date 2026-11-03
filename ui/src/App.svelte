@@ -12,11 +12,11 @@
   import { closedTabs, recordFavicon } from "./lib/browserData";
   import { downloadShare, popReopenable, pushClosed } from "./lib/pageRules";
   import TopBar from "./lib/TopBar.svelte";
-  import Switcher from "./lib/Switcher.svelte";
   import DefaultArt from "./lib/DefaultArt.svelte";
   import Omnibar from "./lib/Omnibar.svelte";
   import PanelHeader from "./lib/PanelHeader.svelte";
   import SessionInfo from "./lib/SessionInfo.svelte";
+  import FilePanel from "./lib/FilePanel.svelte";
   import ImageViewer from "./lib/ImageViewer.svelte";
   import PlanInline from "./lib/PlanInline.svelte";
   import Thread from "./lib/Thread.svelte";
@@ -35,7 +35,7 @@
   import { applyThemeCss } from "./lib/theme";
   import { coalesce } from "./lib/threadList";
   import { checkForUpdatesSoon } from "./lib/updateStore";
-  import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, previewTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
+  import { artifactTab, ensureComposer, hostOf, isExplicitUrl, pageTab, rememberModel, sessionTab, toAddress, type ArtifactDoc, type Tab, type TabComposerState } from "./lib/tabs";
 
   import { sessionMarks, watchActivity, type SessionMark } from "./lib/activity";
   import { addQuote, MAX_QUOTES, quoteBlock, sameSlug, splitQuotes } from "./lib/planModel";
@@ -46,8 +46,6 @@
 import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, moveId, putFront, saveHeld, stillWorking, takeAll, takeHead, takeId, type HeldItem, type HoldQueue } from "./lib/held";
   import { addNotification, dropNotification, markSessionRead, newsKey, type NotificationItem } from "./lib/notificationStore";
   import { covered } from "./lib/overlay";
-  import { popover, placeAbove } from "./lib/popover";
-  import { saveFile } from "./lib/saveFile";
   import { tooltip } from "./lib/tooltip";
   import type { Approval, LiveTool } from "./lib/live";
   import { deskRows, type DeskCmd } from "./lib/desk";
@@ -220,7 +218,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   })();
 
 
-  let switcherOpen = false;
   let infoOpen = true;
   try {
     infoOpen = localStorage.getItem("parzi.info.open") !== "0";
@@ -229,6 +226,16 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   try {
     const w = parseInt(localStorage.getItem("parzi.info.width") ?? "", 10);
     if (w >= 220 && w <= 520) infoWidth = w;
+  } catch {}
+  let fileOpen = false;
+  try {
+    fileOpen = localStorage.getItem("parzi.file.open") === "1";
+  } catch {}
+  let fileWidth = 420;
+  try {
+    const w = parseInt(localStorage.getItem("parzi.file.width") ?? "", 10);
+    // 264 was the first default, the same width as the session column.
+    if (w >= 220 && w <= 640 && w !== 264) fileWidth = w;
   } catch {}
   let innerWidth = 1280;
   let planForced: Set<string> = new Set();
@@ -345,7 +352,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     project = ctx?.project ? { slug: ctx.project.slug, title: ctx.project.title, tokens: ctx.tokens } : null;
   }
 
-  let cover: "settings" | "doc" | "sessions" | null = null;
+  let cover: "settings" | "sessions" | null = null;
   let coverFor = "";
   $: coverOn = cover !== null && tab.kind === "session" && activeId === coverFor;
   $: showWallpaper = tab.kind === "session" && !hasSession && !coverOn;
@@ -353,41 +360,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   function clearCover() {
     cover = null;
     coverFor = "";
-    docMenuOpen = false;
-  }
-
-  let docMenuOpen = false;
-  let docMenuBtn: HTMLButtonElement | null = null;
-  let docMenuStyle = "";
-  let docCopied = false;
-
-  function toggleDocMenu() {
-    docMenuOpen = !docMenuOpen;
-    if (docMenuOpen && docMenuBtn) docMenuStyle = placeAbove(docMenuBtn, 220);
-  }
-
-  function copyPinnedDoc() {
-    docMenuOpen = false;
-    if (!pinnedDoc) return;
-    navigator.clipboard.writeText(pinnedDoc.content).then(
-      () => {
-        docCopied = true;
-        setTimeout(() => (docCopied = false), 1200);
-      },
-      (e) => toast(`Couldn't copy: ${e}`, true),
-    );
-  }
-
-  function savePinnedDoc() {
-    docMenuOpen = false;
-    if (!pinnedDoc) return;
-    void saveFile(`${pinnedDoc.title.replace(/\.[a-z0-9]{1,8}$/i, "") || "note"}.md`, pinnedDoc.content);
-  }
-
-  function openPinnedDocFolder() {
-    docMenuOpen = false;
-    if (!pinnedDoc) return;
-    void brain.open(pinnedDoc.id, "folder").catch(toastError);
   }
 
   function sessionHost(): string {
@@ -402,8 +374,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     return draft.id;
   }
 
-  function showCover(kind: "settings" | "doc" | "sessions") {
-    switcherOpen = false;
+  function showCover(kind: "settings" | "sessions") {
     const id = sessionHost();
     cover = kind;
     coverFor = id;
@@ -424,6 +395,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   $: planTitle = project && sameSlug(project.slug, planProject) ? project.title : "";
   $: if (tab.kind === "session") watchPlan(planProject, folder);
   $: infoShown = tab.kind === "session" && infoOpen && innerWidth >= 900;
+  $: fileShown = fileOpen && innerWidth >= 900;
 
   $: shift = Math.round((infoShown ? infoWidth + 8 : 0) / 2);
 
@@ -439,6 +411,21 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     infoWidth = Math.min(520, Math.max(220, Math.round(e.detail.width)));
     try {
       localStorage.setItem("parzi.info.width", String(infoWidth));
+    } catch {}
+  }
+
+  function toggleFiles(open = !fileOpen) {
+    fileOpen = open;
+    try {
+      localStorage.setItem("parzi.file.open", open ? "1" : "0");
+    } catch {}
+    if (open && innerWidth < 900) toast("Widen the window to see the file");
+  }
+
+  function resizeFile(e: { detail: { width: number } }) {
+    fileWidth = Math.min(640, Math.max(220, Math.round(e.detail.width)));
+    try {
+      localStorage.setItem("parzi.file.width", String(fileWidth));
     } catch {}
   }
 
@@ -741,21 +728,30 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   let pinnedDocs: Record<string, ArtifactDoc> = {};
+  let looseDoc: ArtifactDoc | null = null;
   $: pinnedDoc = shown ? (pinnedDocs[shown] ?? null) : null;
+  $: fileDoc = pinnedDoc ?? (shown ? null : looseDoc);
 
-  function closePinnedDoc() {
-    if (!shown) return;
-    if (!(shown in pinnedDocs)) return;
-    const { [shown]: _, ...rest } = pinnedDocs;
-    pinnedDocs = rest;
+  function closeFile() {
+    if (shown && shown in pinnedDocs) {
+      const { [shown]: _, ...rest } = pinnedDocs;
+      pinnedDocs = rest;
+      return;
+    }
+    looseDoc = null;
+  }
+
+  function putFile(group: string | null, doc: ArtifactDoc) {
+    const prev = group ? pinnedDocs[group] : looseDoc;
+    const version = prev && prev.id === doc.id ? Math.max(prev.version + 1, doc.version || 1) : doc.version || 1;
+    const next = { ...doc, version };
+    if (group) pinnedDocs = { ...pinnedDocs, [group]: next };
+    else looseDoc = next;
+    toggleFiles(true);
   }
 
   async function pinNote(path: string) {
     const group = tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null);
-    if (!group) {
-      toast("Open a session to pin this note beside it.");
-      return;
-    }
     let content: string | null = null;
     try {
       content = await brain.read(path);
@@ -766,18 +762,14 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       toast("That note can't be read.", true);
       return;
     }
-    const prev = pinnedDocs[group];
-    const version = prev && prev.id === path ? prev.version + 1 : 1;
     const title = path.split("/").pop()?.replace(/\.md$/i, "") || path;
-    pinnedDocs = { ...pinnedDocs, [group]: { id: path, title, kind: "markdown", content, version } };
-    if (!infoShown) toggleInfo(true);
+    putFile(group, { id: path, title, kind: "markdown", content, version: 1 });
   }
 
-  function openArtifact(doc: ArtifactDoc, forceTab = false) {
+  function openArtifact(doc: ArtifactDoc) {
     const group = tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null);
-    if (doc.kind === "markdown" && group && !forceTab) {
-      pinnedDocs = { ...pinnedDocs, [group]: doc };
-      if (!infoShown) toggleInfo(true);
+    if (doc.kind === "markdown" || doc.kind === "md") {
+      putFile(group, doc);
       return;
     }
     const existing = tabs.find((t) => t.kind === "artifact" && t.doc?.id === doc.id && (t.group ?? null) === group);
@@ -921,12 +913,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     }
   }
 
-
-  function openPreview(which = "omnibar") {
-    const existing = tabs.find((t) => t.kind === "preview" && t.url === which);
-    if (existing) selectTab(existing.id);
-    else addTab(previewTab(which));
-  }
 
   function openSettings(section = "general") {
     settingsSection = section === "system" || section === "remote" || section === "skills" ? "general" : section;
@@ -1598,7 +1584,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   function shortcut(name: string): boolean {
-    if (name === "ctrl+p" || name === "ctrl+k") switcherOpen = !switcherOpen;
+    if (name === "ctrl+p" || name === "ctrl+k") toggleManager();
     else if (name === "ctrl+t") newSession();
     else if (name === "ctrl+w") {
       closeTab(activeId);
@@ -1828,6 +1814,8 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       panelOpen={infoShown}
       panelCount={familyActive}
       on:panel={() => toggleInfo()}
+      fileOpen={fileShown}
+      on:file={() => toggleFiles()}
     />
   {/if}
 
@@ -1897,24 +1885,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                     newSession();
                   }}
                 />
-              </div>
-            {:else if coverOn && cover === "doc"}
-              <div class="cover" transition:fade|global={motion}>
-                {#if pinnedDoc}
-                  <div class="doc-tools">
-                    <button class="tool" aria-label="Document actions" use:tooltip={"Document actions"} on:click={toggleDocMenu} bind:this={docMenuBtn}><Icon name="more" size={12} /></button>
-                  </div>
-                  {#if docMenuOpen}
-                    <div class="menu-pop" style={docMenuStyle} use:popover={{ anchor: docMenuBtn, close: () => (docMenuOpen = false) }}>
-                      <button class="opt" on:click={copyPinnedDoc}><Icon name={docCopied ? "check" : "copy"} size={12} /><span class="name">{docCopied ? "Copied" : "Copy"}</span></button>
-                      <button class="opt" on:click={savePinnedDoc}><Icon name="download" size={12} /><span class="name">Save as file</span></button>
-                    <button class="opt" on:click={openPinnedDocFolder}><Icon name="folder" size={12} /><span class="name">Open in file explorer</span></button>
-                    </div>
-                  {/if}
-                  {#key `${pinnedDoc.id}:${pinnedDoc.version}`}
-                    <ArtifactCard data={pinnedDoc} reader bare />
-                  {/key}
-                {/if}
               </div>
             {:else if hasSession}
             <div class="workarea">
@@ -1995,12 +1965,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
             questions={asks}
             {planInline}
             todo={threadTodo}
-            doc={pinnedDoc}
             width={infoWidth}
             open={infoShown}
             on:resize={resizeInfo}
-            on:openDoc={() => showCover("doc")}
-            on:closeDoc={closePinnedDoc}
             tokensIn={meta?.tokens_in ?? 0}
             tokensOut={meta?.tokens_out ?? 0}
             costUsd={meta?.cost_usd ?? 0}
@@ -2070,27 +2037,20 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       {/if}
     {/if}
     </main>
+    {#if !immersive}
+      <FilePanel
+        doc={fileDoc}
+        {folder}
+        width={fileWidth}
+        shown={fileShown}
+        on:close={closeFile}
+        on:resize={resizeFile}
+        on:pick={(e) => putFile(tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null), e.detail)}
+      />
+    {/if}
   </div>
 
   <ImageViewer />
-  <Switcher
-    open={switcherOpen}
-    {threads}
-    {tabs}
-    activeTabId={activeId}
-    on:close={() => {
-      switcherOpen = false;
-      omnibar?.focus();
-    }}
-    on:selectTab={(e) => selectTab(e.detail.id)}
-    on:openSession={(e) => openSession(e.detail.id)}
-    on:deleteSession={(e) => remove(e.detail.id)}
-    on:newSession={newSession}
-    on:newPage={() => addTab(pageTab())}
-    on:settings={() => openSettings()}
-    on:previews={() => openPreview()}
-    on:setup={openSetup}
-  />
 
   {#if setupOpen}
     <Onboarding startStep={setupStep} server={setupServer} on:close={() => (setupOpen = false)} />
@@ -2229,56 +2189,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     right: calc(var(--space) * 4);
     z-index: 5;
   }
-  .doc-tools {
-    position: absolute;
-    top: calc(var(--space) * 2);
-    right: calc(var(--space) * 4 + var(--space) * 7 + var(--space));
-    z-index: 5;
-  }
-  .doc-tools .tool {
-    width: 28px;
-    height: 28px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--muted);
-    cursor: pointer;
-  }
-  .doc-tools .tool:hover {
-    background: transparent;
-    color: var(--text);
-  }
-  .menu-pop .opt {
-    display: flex;
-    align-items: center;
-    gap: calc(var(--space) * 2);
-    width: 100%;
-    height: 32px;
-    padding: 0 calc(var(--space) * 2);
-    background: transparent;
-    border: none;
-    border-radius: var(--radius);
-    color: var(--text);
-    text-align: left;
-    cursor: pointer;
-  }
-  .menu-pop .opt:hover {
-    background: transparent;
-  }
-  .menu-pop .opt .name {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: var(--fs-md);
-  }
-
-
   .cover :global(nav),
   .cover :global(header),
   .cover :global(.bar),
@@ -2302,10 +2212,6 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     inset: 0;
     display: flex;
     flex-direction: column;
-  }
-  /* Doc covers start one message gap below the top, like thread turns. */
-  .cover :global(.art.reader .doc) {
-    padding-top: calc(var(--space) * 3);
   }
   .scroll {
     flex: 1;

@@ -15,6 +15,7 @@
   export let panelable = false;
   export let panelOpen = false;
   export let panelCount = 0;
+  export let fileOpen = false;
 
   const dispatch = createEventDispatcher<{
     select: { id: string };
@@ -24,6 +25,7 @@
     manager: void;
     settings: void;
     panel: void;
+    file: void;
   }>();
 
 </script>
@@ -73,7 +75,7 @@
       {/if}
       {#if panelable}
         <button
-          class="icon-btn panel-btn"
+          class="icon-btn panel-btn flip"
           class:active={panelOpen}
           aria-pressed={panelOpen}
           aria-label={panelCount > 0 ? `Session column, ${panelCount} agents running` : "Session column"}
@@ -83,6 +85,16 @@
         <Icon name="panel" />
         </button>
       {/if}
+      <button
+        class="icon-btn panel-btn"
+        class:active={fileOpen}
+        aria-pressed={fileOpen}
+        aria-label="Files"
+        use:tooltip={"Files"}
+        on:click={() => dispatch("file")}
+      >
+        <Icon name="file" />
+      </button>
       <WinControls />
   </div>
 </header>
@@ -105,7 +117,7 @@
     padding-left: var(--gap);
     user-select: none;
   }
-  .panel-btn :global(svg) {
+  .panel-btn.flip :global(svg) {
     transform: scaleX(-1);
   }
   .left {

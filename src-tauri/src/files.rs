@@ -431,6 +431,28 @@ pub async fn list_files(
 }
 
 const READ_IMAGE_MAX: u64 = 8 * 1024 * 1024;
+const READ_TEXT_MAX: u64 = 1_000_000;
+
+#[tauri::command]
+pub async fn read_text_file(state: State<'_, AppState>, path: String) -> Result<String, String> {
+    let orch = state.orch.clone();
+    off_thread(move || {
+        let p = confined_path(orch.store(), &path)?;
+        let meta = std::fs::metadata(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+        if !meta.is_file() {
+            return Err(format!("{} is not a file", p.display()));
+        }
+        if meta.len() > READ_TEXT_MAX {
+            return Err("That file is too large to open here".into());
+        }
+        let bytes = std::fs::read(&p).map_err(|e| e.to_string())?;
+        if bytes.contains(&0) {
+            return Err("That file isn't text".into());
+        }
+        String::from_utf8(bytes).map_err(|_| "That file isn't text".into())
+    })
+    .await
+}
 
 #[tauri::command]
 pub async fn read_image_data_url(

@@ -235,6 +235,7 @@ export const api = {
   stageImage: (name: string, base64Data: string) => invoke<string>("stage_image", { name, base64Data }),
   artifactFrame: (html: string) => invoke<string>("artifact_frame", { html }),
   readImageDataUrl: (path: string, cwd: string) => invoke<string>("read_image_data_url", { path, cwd }),
+  readTextFile: (path: string) => invoke<string>("read_text_file", { path }),
   toolImage: (session: string, path: string) => invoke<string>("tool_image", { session, path }),
 
   providerStatuses: () => invoke<ProviderStatus[]>("provider_statuses"),
