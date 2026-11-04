@@ -73,6 +73,53 @@ export function hostedServer(url: string, opts: { token?: string; auth?: string 
   return { command: "", url, headers, auth: opts.auth ?? "", enabled: true, timeout_ms: 60_000 };
 }
 
+export function asBearer(raw: string): string {
+  const value = raw.trim();
+  const bearer = /^bearer\s+/i.exec(value);
+  if (bearer) return `Bearer ${value.slice(bearer[0].length).trim()}`;
+  if (/^[A-Za-z]+ /.test(value)) return value;
+  return `Bearer ${value}`;
+}
+
+function normalizeAuthorization(headers: Record<string, string>) {
+  const key = Object.keys(headers).find((k) => k.toLowerCase() === "authorization");
+  if (!key) return;
+  const value = headers[key]?.trim() ?? "";
+  delete headers[key];
+  if (value) headers.Authorization = asBearer(value);
+}
+
+function headerLine(line: string): [string, string] | null {
+  const match = /^([A-Za-z][A-Za-z0-9-]*)\s*:\s*(\S.*)$/.exec(line);
+  if (!match) return null;
+  return [match[1], match[2].trim()];
+}
+
+export function remoteFromPaste(text: string): ServerCfg | null {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const url = lines[0] ?? "";
+  if (!/^https?:\/\/\S+$/i.test(url)) return null;
+  const headers: Record<string, string> = {};
+  for (const line of lines.slice(1)) {
+    const header = headerLine(line);
+    if (header) headers[header[0]] = header[1];
+    else if (!Object.keys(headers).some((k) => k.toLowerCase() === "authorization")) headers.Authorization = line;
+  }
+  normalizeAuthorization(headers);
+  return { command: "", url, headers, auth: "", enabled: true, timeout_ms: 60_000 };
+}
+
+export function withBearer(server: ServerCfg, token: string): ServerCfg {
+  const raw = token.trim();
+  if (!raw || !(server.url ?? "").trim()) return server;
+  const headers = { ...(server.headers ?? {}) };
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === "authorization") delete headers[key];
+  }
+  headers.Authorization = asBearer(raw);
+  return { ...server, headers };
+}
+
 export function nameFromUrl(url: string): string {
   try {
     const host = new URL(url).hostname.replace(/^(www|mcp|api)\./, "");

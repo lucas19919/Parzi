@@ -71,17 +71,30 @@
     return d;
   }
 
+  // Labels by measured room, not by count: agents often label only some
+  // points ("00:00", "", "", ...), and the first and last labels hang off
+  // one side (start and end anchored) while the rest are centred.
   function pickLabels(count: number, width: number, text: string[]): number[] {
     if (!count) return [];
-    const longest = Math.max(...text.map((t) => t.length), 1);
-    const fit = Math.max(2, Math.floor(width / (longest * CH + 16)));
-    if (count <= fit) return text.map((_, i) => i);
-    const every = Math.ceil((count - 1) / (fit - 1));
-    const out: number[] = [];
-    for (let i = 0; i < count; i += every) out.push(i);
-    if (count - 1 - out[out.length - 1] < every / 2) out.pop();
-    out.push(count - 1);
-    return out;
+    const named = text.slice(0, count).flatMap((t, i) => (t ? [i] : []));
+    if (!named.length) return [];
+    const px = (i: number) => (count > 1 ? (i * width) / (count - 1) : 0);
+    const len = (i: number) => text[i].length * CH;
+    const from = (i: number) => (i === 0 ? px(i) : i === count - 1 ? px(i) - len(i) : px(i) - len(i) / 2);
+    const to = (i: number) => (i === 0 ? px(i) + len(i) : i === count - 1 ? px(i) : px(i) + len(i) / 2);
+    const fits = (a: number, b: number) => from(b) >= to(a) + 16;
+    const last = named[named.length - 1];
+    // The smallest even stride through the named points that leaves room
+    // between every pair, always ending on the last one.
+    for (let k = 1; k < named.length; k++) {
+      const out = named.filter((_, j) => j % k === 0);
+      if (out[out.length - 1] !== last) {
+        if (!fits(out[out.length - 1], last)) out.pop();
+        out.push(last);
+      }
+      if (out.every((i, j) => j === 0 || fits(out[j - 1], i))) return out;
+    }
+    return [named[0]];
   }
 
   function move(e: PointerEvent) {

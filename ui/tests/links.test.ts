@@ -1,6 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chipLabel, fileLink, gitRefs, isBranchLike, safeDecode, vaultRefs, webLink, wholeRef } from "../src/lib/linkRules.ts";
+import { chipLabel, fileLink, gitRefs, isBranchLike, joinPath, safeDecode, vaultRefs, webLink, wholeRef } from "../src/lib/linkRules.ts";
+
+test("relative links resolve beside the note or file they sit in", () => {
+  assert.equal(joinPath("projects/parzi", "mobile-viewers.md"), "projects/parzi/mobile-viewers.md");
+  assert.equal(joinPath("projects/parzi", "./a/b.md"), "projects/parzi/a/b.md");
+  assert.equal(joinPath("projects/parzi", "../other.md"), "projects/other.md");
+  assert.equal(joinPath(".", "inbox.md"), "inbox.md");
+  assert.equal(joinPath("D:\\Repos\\Parzi\\docs", "../README.md"), "D:/Repos/Parzi/README.md");
+  assert.equal(joinPath("D:/x", "../../../y.md"), "D:/y.md");
+  assert.equal(joinPath("/home/me", "../../etc/x"), "/etc/x");
+});
 
 test("safeDecode survives malformed escapes", () => {
   assert.equal(safeDecode("a%20b"), "a b");

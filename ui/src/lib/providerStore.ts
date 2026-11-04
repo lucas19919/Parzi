@@ -70,6 +70,11 @@ export function ensureBoard(): Promise<ProviderStatus[]> {
   return loading;
 }
 
+/** Re-read the board without probing any agent. A turn updates its limits there. */
+export async function reloadBoard(): Promise<void> {
+  merge(await api.providerStatuses().catch(() => [] as ProviderStatus[]));
+}
+
 export async function refreshBoard(ids: string[] = []): Promise<ProviderStatus[]> {
   listen();
   const keys = ids.length ? ids : ["*"];

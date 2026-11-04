@@ -10,7 +10,7 @@
   import SegControl from "./SegControl.svelte";
   import Switch from "./Switch.svelte";
   import { updateConfig } from "../config";
-  import { CATALOG, hostedServer, nameFromUrl, serverOf, type CatalogConnector, type ServerCfg as Server } from "../connectorCatalog";
+  import { CATALOG, nameFromUrl, remoteFromPaste, serverOf, withBearer, type CatalogConnector, type ServerCfg as Server } from "../connectorCatalog";
   import ConnectorLogo from "../ConnectorLogo.svelte";
   import "./shared.css";
 
@@ -25,7 +25,9 @@
   let saving = false;
   let customName = "";
   let pasted = "";
+  let bearer = "";
   let ownOpen = false;
+  let tokenDrafts: Record<string, string> = {};
 
   let found: { name: string; source: string; server: Server }[] = [];
 
@@ -206,11 +208,15 @@
     if (!kind) return;
     let list: [string, Server][];
     if (kind === "link") {
-      const id = chosenName(nameFromUrl(text));
+      const built = remoteFromPaste(text);
+      if (!built?.url) return notify("That link is not a connector", true);
+      const id = chosenName(nameFromUrl(built.url));
       if (!id) return notify("Use letters and numbers for the name", true);
-      list = [[id, hostedServer(text)]];
+      list = [[id, withBearer(built, bearer)]];
     } else if (kind === "block") {
-      list = ((await api.connectorsFromText(text).catch(() => [])) as [string, Server][]).filter(([id]) => NAME_OK.test(id));
+      list = ((await api.connectorsFromText(text).catch(() => [])) as [string, Server][])
+        .filter(([id]) => NAME_OK.test(id))
+        .map(([id, srv]) => [id, withBearer(srv, bearer)]);
       if (!list.length) return notify("That did not include a connector", true);
     } else {
       const words = splitLine(text);
@@ -224,6 +230,7 @@
     if (await save((c) => freshList.forEach(([id, srv]) => (c.mcp.servers[id] = srv)), "")) {
       pasted = "";
       customName = "";
+      bearer = "";
       ownOpen = false;
       for (const [id] of freshList) void check(id, true);
     }
@@ -275,6 +282,33 @@
     } finally {
       saving = false;
     }
+  }
+
+  function wantsToken(row: AppRow, h: Health | undefined): boolean {
+    if (!row.server.url || row.server.auth === "gh") return false;
+    const known = CATALOG.find((c) => c.id === row.id);
+    if (known && known.auth !== "token") return false;
+    if (h?.state === "signin") return true;
+    return h?.state === "error" && /bearer|token|unauthorized|sign-in/i.test(`${h.error ?? ""} ${h.raw ?? ""}`);
+  }
+
+  function setTokenDraft(id: string, event: Event) {
+    const value = (event.currentTarget as HTMLInputElement).value;
+    tokenDrafts = { ...tokenDrafts, [id]: value };
+  }
+
+  async function saveToken(id: string) {
+    const token = (tokenDrafts[id] ?? "").trim();
+    const srv = cfg?.mcp.servers[id] as Server | undefined;
+    if (!token || !srv) return;
+    const next = withBearer(srv, token);
+    const ok = await save((c) => {
+      const cur = c.mcp.servers[id] as Server | undefined;
+      if (cur) cur.headers = next.headers;
+    }, "");
+    if (!ok) return;
+    tokenDrafts = { ...tokenDrafts, [id]: "" };
+    void check(id);
   }
 
   async function toggle(id: string) {
@@ -451,14 +485,30 @@
               <span class="row-ctl auto">
                 {#if need}
                   <button class="btn" on:click={() => openOutside(need)}>Get {h?.error?.replace("Needs ", "")}</button>
-                {:else if !off && (h?.state === "signin" || h?.state === "signing")}
+                {:else if !off && (h?.state === "signin" || h?.state === "signing") && !wantsToken(row, h)}
                   <button class="btn primary" disabled={h?.state === "signing"} on:click={() => signIn(row.id)}>{h?.state === "signing" ? "Signing in…" : "Sign in"}</button>
-                {:else if !off && h?.state === "error"}
+                {:else if !off && h?.state === "error" && !wantsToken(row, h)}
                   <button class="btn" on:click={() => check(row.id, true)}>Try again</button>
                 {/if}
                 <Switch on={!off} title={off ? `Turn ${row.name} on` : `Turn ${row.name} off`} on:toggle={() => toggle(row.id)} />
               </span>
             </div>
+            {#if wantsToken(row, h)}
+              <div class="row">
+                <input
+                  class="tin mono"
+                  type="password"
+                  placeholder="Bearer token"
+                  aria-label={`Bearer token for ${row.name}`}
+                  autocomplete="off"
+                  spellcheck="false"
+                  value={tokenDrafts[row.id] ?? ""}
+                  on:input={(e) => setTokenDraft(row.id, e)}
+                  on:keydown={(e) => { if (e.key === "Enter" && (tokenDrafts[row.id] ?? "").trim()) void saveToken(row.id); }}
+                />
+                <button class="btn primary" disabled={!(tokenDrafts[row.id] ?? "").trim()} on:click={() => saveToken(row.id)}>Save token</button>
+              </div>
+            {/if}
             {#if open}
               <div class="details">
                 {#each tools as t (t.name)}
@@ -522,7 +572,10 @@
           <textarea class="tin" rows="3" bind:value={pasted} placeholder="Paste a link, a config block, or a command" aria-label="Paste a link, a config block, or a command" spellcheck="false"></textarea>
         </div>
         <div class="row">
-          <input class="tin" bind:value={customName} placeholder="Name (optional)" aria-label="Name" spellcheck="false" />
+          <input class="tin mono" type="password" bind:value={bearer} placeholder="Bearer token" aria-label="Bearer token" autocomplete="off" spellcheck="false" on:keydown={(e) => { if (e.key === "Enter" && pasted.trim()) void addPasted(); }} />
+        </div>
+        <div class="row">
+          <input class="tin" bind:value={customName} placeholder="Name (optional)" aria-label="Name" spellcheck="false" on:keydown={(e) => { if (e.key === "Enter" && pasted.trim()) void addPasted(); }} />
           <button class="btn primary" disabled={saving || !pasted.trim()} on:click={() => void addPasted()}>Add</button>
         </div>
       {:else}

@@ -23,6 +23,10 @@ impl Approver for Allow {
 }
 
 fn host(cwd: &str) -> ToolHost {
+    host_with(cwd, false)
+}
+
+fn host_with(cwd: &str, full: bool) -> ToolHost {
     home("shell-tools");
     let store = SessionStore::open().unwrap();
     let sid = store.create("shell", "", "claude/m").unwrap().id;
@@ -31,7 +35,7 @@ fn host(cwd: &str) -> ToolHost {
         session_id: sid.clone(),
         mode: ApprovalMode::Auto,
         edits_auto: false,
-        full: false,
+        full,
         cfg: ParziConfig::default(),
         store,
         tools: Arc::new(ToolExecutor {
@@ -137,6 +141,27 @@ async fn workdir_outside_the_folder_is_refused() {
         .call("shell.exec", &json!({"cmd": "echo hi", "workdir": here}))
         .await;
     assert!(ok, "the session's own folder runs: {out}");
+}
+
+#[tokio::test]
+async fn the_shell_follows_a_project_switch_in_the_same_turn() {
+    let h = host_with(&workdir(), true);
+    let there = std::env::temp_dir().join(format!("parzi-switch-{}", std::process::id()));
+    std::fs::create_dir_all(&there).unwrap();
+    let there = there.display().to_string();
+    let project = parzi_core::brain::project_upsert(None, "Switch target", &there).unwrap();
+    let (ok, out) = h
+        .call("project.switch", &json!({"slug": project.slug}))
+        .await;
+    assert!(ok, "{out}");
+    let (ok, out) = h.call("shell.exec", &json!({"cmd": "pwd"})).await;
+    assert!(ok, "{out}");
+    let leaf = std::path::Path::new(&there).file_name().unwrap().to_string_lossy().into_owned();
+    assert!(out.contains(&leaf), "runs in the new folder: {out}");
+    let (ok, out) = h
+        .call("shell.exec", &json!({"cmd": "echo hi", "workdir": there}))
+        .await;
+    assert!(ok, "the new folder is inside the fence: {out}");
 }
 
 #[tokio::test]

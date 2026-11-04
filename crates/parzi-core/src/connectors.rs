@@ -80,7 +80,44 @@ fn one_from_json(v: &Value) -> Option<McpServerCfg> {
         ..Default::default()
     };
     unwrap_remote(&mut srv);
+    normalize_authorization(&mut srv.headers);
     Some(srv)
+}
+
+fn normalize_authorization(headers: &mut HashMap<String, String>) {
+    let Some(key) = headers
+        .keys()
+        .find(|k| k.eq_ignore_ascii_case("authorization"))
+        .cloned()
+    else {
+        return;
+    };
+    let Some(value) = headers.remove(&key) else {
+        return;
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return;
+    }
+    headers.insert("Authorization".into(), authorization_value(value));
+}
+
+fn authorization_value(value: &str) -> String {
+    if let Some(rest) = strip_prefix_ignore(value, "bearer ") {
+        return format!("Bearer {}", rest.trim());
+    }
+    if let Some((scheme, rest)) = value.split_once(' ') {
+        if !rest.is_empty() && scheme.chars().all(|c| c.is_ascii_alphabetic()) {
+            return format!("{scheme} {}", rest.trim());
+        }
+    }
+    format!("Bearer {value}")
+}
+
+fn strip_prefix_ignore<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = value.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then_some(&value[prefix.len()..])
 }
 
 #[must_use]
@@ -135,30 +172,68 @@ pub fn from_pasted(text: &str) -> Vec<(String, McpServerCfg)> {
             .map(|v| from_json(&v))
             .unwrap_or_default();
     }
-    if t.starts_with("http://") || t.starts_with("https://") {
-        let name = t
-            .split("://")
-            .nth(1)
-            .and_then(|rest| rest.split(['/', ':']).next())
-            .map(|host| {
-                let host = host
-                    .trim_start_matches("www.")
-                    .trim_start_matches("mcp.")
-                    .trim_start_matches("api.");
-                host.split('.').next().unwrap_or(host).to_string()
-            })
-            .unwrap_or_default();
-        return vec![(
-            connector_name(&name),
-            McpServerCfg {
-                url: t.to_string(),
-                enabled: true,
-                timeout_ms: 30_000,
-                ..Default::default()
-            },
-        )];
+    if let Some(one) = pasted_remote(t) {
+        return vec![one];
     }
     vec![]
+}
+
+fn pasted_remote(text: &str) -> Option<(String, McpServerCfg)> {
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    let url = lines.next()?;
+    if !(url.starts_with("http://") || url.starts_with("https://"))
+        || url.split_whitespace().nth(1).is_some()
+    {
+        return None;
+    }
+    let mut headers = HashMap::new();
+    for line in lines {
+        if let Some((k, v)) = header_line(line) {
+            headers.insert(k, v);
+        } else if !headers
+            .keys()
+            .any(|k| k.eq_ignore_ascii_case("authorization"))
+        {
+            headers.insert("Authorization".into(), line.to_string());
+        }
+    }
+    normalize_authorization(&mut headers);
+    let name = url
+        .split("://")
+        .nth(1)
+        .and_then(|rest| rest.split(['/', ':']).next())
+        .map(|host| {
+            let host = host
+                .trim_start_matches("www.")
+                .trim_start_matches("mcp.")
+                .trim_start_matches("api.");
+            host.split('.').next().unwrap_or(host).to_string()
+        })
+        .unwrap_or_default();
+    Some((
+        connector_name(&name),
+        McpServerCfg {
+            url: url.to_string(),
+            headers,
+            enabled: true,
+            timeout_ms: 30_000,
+            ..Default::default()
+        },
+    ))
+}
+
+fn header_line(line: &str) -> Option<(String, String)> {
+    let (k, v) = line.split_once(':')?;
+    let k = k.trim();
+    let v = v.trim();
+    if k.is_empty()
+        || v.is_empty()
+        || !k.chars().next()?.is_ascii_alphabetic()
+        || !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return None;
+    }
+    Some((k.to_string(), v.to_string()))
 }
 
 pub fn unwrap_remote(srv: &mut McpServerCfg) {
@@ -319,6 +394,41 @@ mod tests {
             "a"
         );
         assert!(from_pasted("not a server").is_empty());
+        let authed = from_pasted("https://os.example.com/mcp\nAuthorization: Bearer secret\n");
+        assert_eq!(authed[0].0, "os");
+        assert_eq!(authed[0].1.url, "https://os.example.com/mcp");
+        assert_eq!(
+            authed[0].1.headers.get("Authorization").map(String::as_str),
+            Some("Bearer secret")
+        );
+        assert_eq!(
+            from_pasted("https://os.example.com/mcp\nsecret")[0]
+                .1
+                .headers
+                .get("Authorization")
+                .map(String::as_str),
+            Some("Bearer secret")
+        );
+    }
+
+    #[test]
+    fn a_raw_token_is_sent_as_bearer() {
+        let raw = from_json(&json!({
+            "url": "https://os.example.com/mcp",
+            "headers": {"Authorization": "secret"}
+        }));
+        assert_eq!(
+            raw[0].1.headers.get("Authorization").map(String::as_str),
+            Some("Bearer secret")
+        );
+        let basic = from_json(&json!({
+            "url": "https://os.example.com/mcp",
+            "headers": {"authorization": "Basic abc"}
+        }));
+        assert_eq!(
+            basic[0].1.headers.get("Authorization").map(String::as_str),
+            Some("Basic abc")
+        );
     }
 
     #[test]

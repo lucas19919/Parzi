@@ -477,6 +477,7 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   ],
   brain_read: (a) => widgetNotes[String(a.path)] ?? `# ${String(a.path)}\n\nA note for the mock backend.\n`,
   brain_dir: () => "C:\\Users\\dev\\.parzi\\brain",
+  read_text_file: (a) => `# ${String(a.path).split(/[\\/]/).pop()}\n\nA file for the mock backend. See [the sibling](./sibling.md), main.rs and github.com/parzi.\n`,
   git_branch: () => "main",
   git_status: () => ({ branch: "main", upstream: true, ahead: 2, behind: 0, changed: 3, untracked: 1, added: 214, removed: 57, last_subject: "matte surfaces, one icon size", last_time: Math.floor(now / 1000) - 3600 }),
   list_files: (a) => ["src/App.svelte", "src/lib/Omnibar.svelte", "src/lib/Thread.svelte"].filter((f) => f.includes(String(a.query ?? ""))),

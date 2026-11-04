@@ -7,6 +7,22 @@ export function safeDecode(s: string): string {
   }
 }
 
+/** `dir/../a/./b.md` → `a/b.md`, keeping a leading drive or slash. */
+export function joinPath(dir: string, rel: string): string {
+  const out: string[] = [];
+  `${dir}/${rel}`
+    .replace(/\\/g, "/")
+    .split("/")
+    .forEach((seg, i) => {
+      if (seg === "." || (seg === "" && i > 0)) return;
+      if (seg !== "..") return void out.push(seg);
+      const last = out[out.length - 1];
+      // Never climb above a drive or the filesystem root.
+      if (out.length && last !== "" && !/^[a-z]:$/i.test(last)) out.pop();
+    });
+  return out.join("/");
+}
+
 const RUNS_CODE =
   /\.(exe|bat|cmd|com|ps1|psm1|vbs|vbe|js|jse|wsf|wsh|msi|msp|lnk|scr|hta|jar|reg|cpl|pif|msc|url|scf|application|appref-ms|settingcontent-ms)$/i;
 

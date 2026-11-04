@@ -42,6 +42,9 @@ pub struct ToolHostParts {
 pub struct ToolHost {
     p: ToolHostParts,
     defs: tokio::sync::OnceCell<Vec<ToolDef>>,
+    /// The folder project.switch or project.create moved this session to during
+    /// the turn. The shell runs there at once instead of waiting for the next turn.
+    moved_to: std::sync::Mutex<Option<String>>,
 }
 
 fn worktree_relative(cwd: &str, path: &str) -> Option<String> {
@@ -593,6 +596,22 @@ impl ToolHost {
         Self {
             p: parts,
             defs: tokio::sync::OnceCell::new(),
+            moved_to: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Where the shell runs: the session's folder, or the one it moved to this turn.
+    fn shell_home(&self) -> String {
+        self.moved_to
+            .lock()
+            .ok()
+            .and_then(|m| m.clone())
+            .unwrap_or_else(|| self.p.tools.cwd.clone())
+    }
+
+    fn moved(&self, folder: &str) {
+        if let Ok(mut m) = self.moved_to.lock() {
+            *m = Some(folder.to_string());
         }
     }
 
@@ -758,7 +777,7 @@ impl ToolHost {
                 return self.execute_shell_logs(args).await;
             }
             let cmd = args.get("cmd").and_then(Value::as_str).unwrap_or("");
-            if crate::desk::mentions_protected(cmd, &self.p.tools.cwd) {
+            if crate::desk::mentions_protected(cmd, &self.shell_home()) {
                 return (false, format!("refused: {SECRET_FILE}"));
             }
             if !self.approved(id, name, args).await {
@@ -1408,7 +1427,14 @@ impl ToolHost {
                 ),
             );
         }
-        (true, format!("project {} ready at {folder}", project.slug))
+        self.moved(folder);
+        (
+            true,
+            format!(
+                "project {} ready at {folder}; shell commands run there from now on",
+                project.slug
+            ),
+        )
     }
 
     async fn switch_project(&self, id: &str, name: &str, args: &Value) -> (bool, String) {
@@ -1449,13 +1475,16 @@ impl ToolHost {
             .set_cwd(&self.p.session_id, &project.folder)
             .and_then(|()| self.p.store.set_project(&self.p.session_id, &project.slug));
         match moved {
-            Ok(()) => (
-                true,
-                format!(
-                    "this session is now in project {} at {}; pass workdir for commands until your next turn",
-                    project.slug, project.folder
-                ),
-            ),
+            Ok(()) => {
+                self.moved(&project.folder);
+                (
+                    true,
+                    format!(
+                        "this session is now in project {} at {}; shell commands run there from now on",
+                        project.slug, project.folder
+                    ),
+                )
+            }
             Err(e) => (false, format!("could not move to {}: {e}", project.slug)),
         }
     }
@@ -1466,8 +1495,9 @@ impl ToolHost {
             .and_then(Value::as_str)
             .map(str::trim)
             .unwrap_or("");
+        let home = self.shell_home();
         if raw.is_empty() {
-            return Ok(PathBuf::from(&self.p.tools.cwd));
+            return Ok(PathBuf::from(home));
         }
         let same = |a: &str, b: &str| {
             std::fs::canonicalize(a)
@@ -1475,12 +1505,12 @@ impl ToolHost {
                 .zip(std::fs::canonicalize(b).ok())
                 .is_some_and(|(a, b)| a == b)
         };
-        if same(raw, &self.p.tools.cwd) {
-            return Ok(PathBuf::from(&self.p.tools.cwd));
+        if same(raw, &home) {
+            return Ok(PathBuf::from(home));
         }
-        let rel = worktree_relative(&self.p.tools.cwd, raw)
+        let rel = worktree_relative(&home, raw)
             .ok_or_else(|| format!("workdir `{raw}` is outside this session's folder"))?;
-        Ok(PathBuf::from(&self.p.tools.cwd).join(rel))
+        Ok(PathBuf::from(home).join(rel))
     }
 
     async fn execute_shell(&self, name: &str, args: &Value) -> (bool, String) {

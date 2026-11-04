@@ -90,6 +90,27 @@ const md = new MarkdownIt({
   html: false,
   linkify: true,
 });
+// linkify takes any two-letter country code as a domain, so README.md, main.rs
+// and app.py became web links to http://README.md. A bare name (no scheme, no
+// www.) stays a link only when it ends like a web address.
+const WEB_ENDINGS = new Set(
+  "com net org edu gov int mil io dev app ai co me info biz xyz tech site online page cloud blog news shop store wiki de uk us eu fr nl be ch at es it pt pl se no dk fi ie ca au nz jp kr cn in br mx ru ua tv fm gg ly".split(" "),
+);
+md.core.ruler.after("linkify", "parzi-bare-names", (state) => {
+  for (const block of state.tokens) {
+    const kids = block.type === "inline" ? block.children : null;
+    if (!kids) continue;
+    for (let i = 0; i + 2 < kids.length; i++) {
+      const [open, text, close] = [kids[i], kids[i + 1], kids[i + 2]];
+      if (open.type !== "link_open" || open.markup !== "linkify" || close.type !== "link_close") continue;
+      const shown = text.content;
+      if (/^[a-z][a-z0-9+.-]*:|^www\./i.test(shown) || shown.includes("@")) continue;
+      const host = shown.split(/[/?#:]/)[0];
+      if (WEB_ENDINGS.has(host.slice(host.lastIndexOf(".") + 1).toLowerCase())) continue;
+      kids.splice(i, 3, text);
+    }
+  }
+});
 
 const defaultValidateLink = md.validateLink.bind(md);
 md.validateLink = (url: string) => {

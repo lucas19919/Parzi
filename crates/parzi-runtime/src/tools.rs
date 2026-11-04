@@ -849,7 +849,7 @@ fn project_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "project.switch".into(),
-            description: "Move this session into another existing project when the work turns out to belong there, such as being asked about project y from project x. The human approves it unless they gave you full access. slug comes from brain.search with no query. Commands this turn still start in the old folder, so pass workdir until your next turn.".into(),
+            description: "Move this session into another existing project when the work turns out to belong there, such as being asked about project y from project x. The human approves it unless they gave you full access. slug comes from brain.search with no query. Shell commands run in the new folder right away.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {

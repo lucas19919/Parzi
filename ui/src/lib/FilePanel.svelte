@@ -1,15 +1,31 @@
+<script lang="ts" context="module">
+  import type { ArtifactDoc } from "./tabs";
+
+  export const FILE_MIN = 220;
+  export const FILE_MAX = 640;
+  const MD = /\.(md|markdown)$/i;
+  const ABSOLUTE = /^([a-zA-Z]:[\\/]|\/|\\\\)/;
+
+  /** A file read from disk as a card document: markdown renders, the rest stays plain. */
+  export function fileDoc(id: string, content: string): ArtifactDoc {
+    const name = id.split(/[\\/]/).pop() || id;
+    const md = MD.test(name);
+    return { id, title: md ? name.replace(MD, "") || name : name, kind: md ? "markdown" : "text", content, version: 1 };
+  }
+</script>
+
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import { open as pickPath } from "@tauri-apps/plugin-dialog";
   import InfoCard, { unfold } from "./InfoCard.svelte";
   import Icon from "./Icon.svelte";
+  import ResizeGrip from "./ResizeGrip.svelte";
   import { api, brain } from "./api";
   import { saveFile } from "./saveFile";
   import { codeBlockClick, mdHtml, richReady } from "./md";
   import { handleLinkClick } from "./links";
   import { toast, toastError } from "./toast";
   import { tooltip } from "./tooltip";
-  import type { ArtifactDoc } from "./tabs";
 
   export let doc: ArtifactDoc | null = null;
   export let folder = "";
@@ -18,71 +34,30 @@
 
   const dispatch = createEventDispatcher<{
     close: void;
-    resize: { width: number };
     pick: ArtifactDoc;
   }>();
 
-  let dragging = false;
   let copied = false;
   let picker: HTMLInputElement | null = null;
 
-  $: onDisk = !!doc && /[\\/]/.test(doc.id);
   $: markdown = !!doc && (doc.kind === "markdown" || doc.kind === "md");
+  // A file's id is its absolute path, a note's id its vault path.
+  $: revealable = !!doc && /[\\/]/.test(doc.id);
+  $: onDisk = !!doc && ABSOLUTE.test(doc.id);
+  $: isNote = !!doc && !onDisk && MD.test(doc.id);
+  // Relative links resolve beside the open file or note, not at the project root.
+  $: linkFolder = onDisk ? doc!.id.replace(/[\\/][^\\/]*$/, "") : folder;
+  $: noteDir = isNote ? doc!.id.replace(/\\/g, "/").replace(/\/?[^/]*$/, "") : null;
   $: if (doc) unfold("reader");
 
-  function startResize(e: PointerEvent) {
-    dragging = true;
-    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-    e.preventDefault();
-  }
-  function onResize(e: PointerEvent) {
-    if (!dragging) return;
-    const aside = (e.currentTarget as HTMLElement).closest(".files") as HTMLElement | null;
-    const rect = aside?.getBoundingClientRect();
-    const next = rect ? rect.right - e.clientX : window.innerWidth - e.clientX;
-    dispatch("resize", { width: Math.round(Math.min(640, Math.max(220, next))) });
-  }
-  function endResize() {
-    dragging = false;
-  }
-
-  function fromFile(id: string, name: string, content: string) {
-    const isMd = /\.(md|markdown)$/i.test(name);
-    const title = name.replace(/\.(md|markdown)$/i, "") || name;
-    dispatch("pick", {
-      id,
-      title,
-      kind: isMd ? "markdown" : "text",
-      content,
-      version: 1,
-    });
-  }
-
-  async function loadPath(path: string) {
-    let content = "";
-    try {
-      content = await api.readTextFile(path);
-    } catch (err) {
-      toast(String(err), true);
-      return;
-    }
-    const name = path.split(/[\\/]/).pop() || path;
-    fromFile(path, name, content);
-  }
+  const show = (id: string, content: string) => dispatch("pick", fileDoc(id, content));
 
   async function browse() {
-    if (location.pathname.endsWith("mock.html")) {
-      picker?.click();
-      return;
-    }
+    // The dev mock has no system dialog, so it uses the browser's picker.
+    if (location.pathname.endsWith("mock.html")) return picker?.click();
     try {
-      const picked = await pickPath({
-        multiple: false,
-        directory: false,
-        defaultPath: folder || undefined,
-        title: "Open file",
-      });
-      if (typeof picked === "string" && picked) await loadPath(picked);
+      const picked = await pickPath({ multiple: false, directory: false, defaultPath: folder || undefined, title: "Open file" });
+      if (typeof picked === "string" && picked) show(picked, await api.readTextFile(picked));
     } catch (err) {
       toast(`Couldn't open that file: ${err}`, true);
     }
@@ -93,18 +68,12 @@
     const file = input.files?.[0];
     input.value = "";
     if (!file) return;
-    if (file.size > 1_000_000) {
-      toast("That file is too large to open here", true);
-      return;
-    }
-    let content = "";
+    if (file.size > 1_000_000) return toast("That file is too large to open here", true);
     try {
-      content = await file.text();
+      show(file.name, await file.text());
     } catch (err) {
       toast(`Couldn't read that file: ${err}`, true);
-      return;
     }
-    fromFile(file.name, file.name, content);
   }
 
   function copy() {
@@ -120,48 +89,34 @@
 
   function save() {
     if (!doc) return;
-    const base = doc.title.replace(/\.[a-z0-9]{1,8}$/i, "") || "note";
-    void saveFile(`${base}.md`, doc.content);
+    // Markdown titles drop ".md"; other files keep their own name.
+    void saveFile(markdown ? `${doc.title || "note"}.md` : doc.title || "file.txt", doc.content);
   }
 
   function reveal() {
     if (!doc) return;
-    const abs = /^[a-zA-Z]:[\\/]/.test(doc.id) || doc.id.startsWith("/") || doc.id.startsWith("\\\\");
-    if (abs) {
-      const dir = doc.id.replace(/[\\/][^\\/]*$/, "") || doc.id;
-      void api.openFilePath(dir).catch(toastError);
-      return;
-    }
-    void brain.open(doc.id, "folder").catch(toastError);
+    if (onDisk) void api.openFilePath(linkFolder || doc.id).catch(toastError);
+    else void brain.open(doc.id, "folder").catch(toastError);
   }
 
   function onDocClick(e: MouseEvent) {
     void (async () => {
-      if (await handleLinkClick(e, folder)) return;
+      if (await handleLinkClick(e, linkFolder, noteDir)) return;
       codeBlockClick(e.target as HTMLElement);
     })();
   }
 </script>
 
 <aside class="files" class:shut={!shown} class:reading={!!doc} aria-label="Files" style="width: {shown ? width : 0}px" inert={!shown}>
-  <div
-    class="grip"
-    role="separator"
-    aria-orientation="vertical"
-    aria-label="Resize files"
-    title="Drag to resize"
-    on:pointerdown={startResize}
-    on:pointermove={onResize}
-    on:pointerup={endResize}
-    on:pointercancel={endResize}
-  />
+  <ResizeGrip label="Resize files" min={FILE_MIN} max={FILE_MAX} on:resize />
+  <div class="col">
   <InfoCard id="reader" title={doc?.title || "File"}>
     <svelte:fragment slot="actions">
       {#if doc}
         <button class="icon-btn" aria-label="Open file" use:tooltip={"Open file"} on:click={browse}><Icon name="file" /></button>
         <button class="icon-btn" aria-label={copied ? "Copied" : "Copy"} use:tooltip={copied ? "Copied" : "Copy"} on:click={copy}><Icon name={copied ? "check" : "copy"} /></button>
         <button class="icon-btn" aria-label="Save as file" use:tooltip={"Save as file"} on:click={save}><Icon name="download" /></button>
-        {#if onDisk}
+        {#if revealable}
           <button class="icon-btn" aria-label="Open in file explorer" use:tooltip={"Open in file explorer"} on:click={reveal}><Icon name="folder" /></button>
         {/if}
         <button class="icon-btn" aria-label="Close file" use:tooltip={"Close file"} on:click={() => dispatch("close")}><Icon name="close" /></button>
@@ -182,10 +137,12 @@
       <button class="btn" type="button" on:click={browse}>Select a file</button>
     {/if}
   </InfoCard>
+  </div>
   <input class="pick" bind:this={picker} type="file" tabindex="-1" aria-hidden="true" on:change={onPick} />
 </aside>
 
 <style>
+  /* The column itself must not clip: the resize grip sits just left of it. */
   .files {
     position: relative;
     flex: none;
@@ -194,40 +151,24 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: calc(var(--space) * 2);
     margin: 0 var(--gap) 0 0;
+    background: none;
+    transition: width 300ms var(--ease-out), margin-right 300ms var(--ease-out);
+  }
+  .col {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space) * 2);
     padding-bottom: calc(var(--space) * 3);
     overflow-x: hidden;
     overflow-y: auto;
     scrollbar-width: none;
-    background: none;
-    transition: width 300ms var(--ease-out), margin-right 300ms var(--ease-out);
   }
   .files.shut {
     margin-right: 0;
-  }
-  .grip {
-    position: absolute;
-    left: calc(-1 * var(--gap));
-    top: 0;
-    bottom: 0;
-    width: var(--gap);
-    cursor: ew-resize;
-    touch-action: none;
-  }
-  .grip::after {
-    content: "";
-    position: absolute;
-    left: 3px;
-    top: 12px;
-    bottom: 12px;
-    width: 2px;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    transition: background 120ms ease;
-  }
-  .grip:hover::after {
-    background: color-mix(in srgb, var(--text) 18%, transparent);
   }
   .files :global(.card) {
     min-height: 0;

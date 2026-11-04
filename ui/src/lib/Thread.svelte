@@ -10,7 +10,7 @@
   import Viz from "./viz/Viz.svelte";
   import Steps from "./Steps.svelte";
   import Icon from "./Icon.svelte";
-  import { api, type AgentRequest, type ChatEvent, type PlanQuote, type Question } from "./api";
+  import { api, type AgentRequest, type ChatEvent, type PlanQuote, type ProviderStatus, type Question } from "./api";
   import type { Approval, LiveTool, Step } from "./live";
   import { splitQuotes } from "./planModel";
   import { toast, toastError } from "./toast";
@@ -71,8 +71,9 @@
     pickModel: void;
   }>();
 
-  function resetLine(p: string): string {
-    const windows = $board.find((b) => b.provider === p)?.usage ?? [];
+  // The board is a parameter so the template re-runs this when limits arrive.
+  function resetLine(p: string, all: ProviderStatus[]): string {
+    const windows = all.find((b) => b.provider === p)?.usage ?? [];
     const now = Date.now() / 1000;
     const spent = windows.filter((w) => w.used_percent >= 100 && (w.resets_at ?? 0) > now);
     const pick = (spent.length ? spent : [...windows].sort((a, b) => b.used_percent - a.used_percent).slice(0, 1)).filter((w) => w.resets_at && w.resets_at > now);
@@ -670,7 +671,7 @@ ${e.text}` : e.text;
           {#if msg.more}
             <details class="err-more"><summary>Details</summary><pre>{msg.more}</pre></details>
           {/if}
-          {#if item.class === "rate_limit" && resetLine(provider)}<span class="err-hint">{resetLine(provider)}</span>{/if}
+          {#if item.class === "rate_limit" && resetLine(provider, $board)}<span class="err-hint">{resetLine(provider, $board)}</span>{/if}
           {#if ERROR_HINT[item.class]}<span class="err-hint">{ERROR_HINT[item.class]}</span>{/if}
           {#if item.key === lastError && !streaming}
             {#if fix || fixWait}

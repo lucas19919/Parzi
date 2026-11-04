@@ -16,7 +16,7 @@
   import Omnibar from "./lib/Omnibar.svelte";
   import PanelHeader from "./lib/PanelHeader.svelte";
   import SessionInfo from "./lib/SessionInfo.svelte";
-  import FilePanel from "./lib/FilePanel.svelte";
+  import FilePanel, { FILE_MAX, FILE_MIN, fileDoc as diskDoc } from "./lib/FilePanel.svelte";
   import ImageViewer from "./lib/ImageViewer.svelte";
   import PlanInline from "./lib/PlanInline.svelte";
   import Thread from "./lib/Thread.svelte";
@@ -235,7 +235,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   try {
     const w = parseInt(localStorage.getItem("parzi.file.width") ?? "", 10);
     // 264 was the first default, the same width as the session column.
-    if (w >= 220 && w <= 640 && w !== 264) fileWidth = w;
+    if (w >= FILE_MIN && w <= FILE_MAX && w !== 264) fileWidth = w;
   } catch {}
   let innerWidth = 1280;
   let planForced: Set<string> = new Set();
@@ -423,7 +423,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
 
   function resizeFile(e: { detail: { width: number } }) {
-    fileWidth = Math.min(640, Math.max(220, Math.round(e.detail.width)));
+    fileWidth = Math.min(FILE_MAX, Math.max(FILE_MIN, Math.round(e.detail.width)));
     try {
       localStorage.setItem("parzi.file.width", String(fileWidth));
     } catch {}
@@ -727,31 +727,32 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     selectTab(t.id);
   }
 
-  let pinnedDocs: Record<string, ArtifactDoc> = {};
+  // The file card holds one document per session; tabs outside a session share one.
+  let sessionDocs: Record<string, ArtifactDoc> = {};
   let looseDoc: ArtifactDoc | null = null;
-  $: pinnedDoc = shown ? (pinnedDocs[shown] ?? null) : null;
-  $: fileDoc = pinnedDoc ?? (shown ? null : looseDoc);
+  $: group = tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null);
+  $: fileDoc = group ? (sessionDocs[group] ?? null) : looseDoc;
 
   function closeFile() {
-    if (shown && shown in pinnedDocs) {
-      const { [shown]: _, ...rest } = pinnedDocs;
-      pinnedDocs = rest;
-      return;
+    if (!group) looseDoc = null;
+    else if (group in sessionDocs) {
+      const { [group]: _, ...rest } = sessionDocs;
+      sessionDocs = rest;
     }
-    looseDoc = null;
   }
 
-  function putFile(group: string | null, doc: ArtifactDoc) {
-    const prev = group ? pinnedDocs[group] : looseDoc;
-    const version = prev && prev.id === doc.id ? Math.max(prev.version + 1, doc.version || 1) : doc.version || 1;
+  function putFile(doc: ArtifactDoc, at = group) {
+    const prev = at ? sessionDocs[at] : looseDoc;
+    // Reopening the same file bumps the version so the card re-renders.
+    const version = prev?.id === doc.id ? Math.max(prev.version + 1, doc.version || 1) : doc.version || 1;
     const next = { ...doc, version };
-    if (group) pinnedDocs = { ...pinnedDocs, [group]: next };
+    if (at) sessionDocs = { ...sessionDocs, [at]: next };
     else looseDoc = next;
     toggleFiles(true);
   }
 
   async function pinNote(path: string) {
-    const group = tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null);
+    const at = group;
     let content: string | null = null;
     try {
       content = await brain.read(path);
@@ -763,13 +764,25 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       return;
     }
     const title = path.split("/").pop()?.replace(/\.md$/i, "") || path;
-    putFile(group, { id: path, title, kind: "markdown", content, version: 1 });
+    putFile({ id: path, title, kind: "markdown", content, version: 1 }, at);
+  }
+
+  /** A linked file opens in the file card; one that isn't workspace text opens outside Parzi. */
+  async function openFileInCard(path: string) {
+    const at = group;
+    let content: string;
+    try {
+      content = await api.readTextFile(path);
+    } catch {
+      await api.openFilePath(path).catch(toastError);
+      return;
+    }
+    putFile(diskDoc(path, content), at);
   }
 
   function openArtifact(doc: ArtifactDoc) {
-    const group = tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null);
     if (doc.kind === "markdown" || doc.kind === "md") {
-      putFile(group, doc);
+      putFile(doc);
       return;
     }
     const existing = tabs.find((t) => t.kind === "artifact" && t.doc?.id === doc.id && (t.group ?? null) === group);
@@ -1441,9 +1454,9 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       held = takeAll(held, id).queue;
       queuePaused = new Set([...queuePaused].filter((x) => x !== id));
       queuePaused = queuePaused;
-      if (pinnedDocs[id]) {
-        const { [id]: _, ...rest } = pinnedDocs;
-        pinnedDocs = rest;
+      if (sessionDocs[id]) {
+        const { [id]: _, ...rest } = sessionDocs;
+        sessionDocs = rest;
       }
       const open = tabs.filter((t) => t.sessionId === id).map((t) => t.id);
       for (const tid of open) closeTab(tid);
@@ -1729,6 +1742,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       if (path) void pinNote(path);
     };
     document.addEventListener("parzi:pin-note", onPinNote);
+    const onOpenFile = (e: Event) => {
+      const path = (e as CustomEvent<string>).detail ?? "";
+      if (path) void openFileInCard(path);
+    };
+    document.addEventListener("parzi:open-file", onOpenFile);
     const unClear = provideClearSessions(clearFinishedSessions);
     api
       .getConfig()
@@ -1782,6 +1800,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
       document.removeEventListener("parzi:open-page", onOpenPage);
       document.removeEventListener("parzi:open-artifact", onOpenArtifact);
       document.removeEventListener("parzi:pin-note", onPinNote);
+      document.removeEventListener("parzi:open-file", onOpenFile);
       unRun.then((f) => f()).catch(() => {});
       unDesk.then((f) => f()).catch(() => {});
       unResync.then((f) => f()).catch(() => {});
@@ -2045,7 +2064,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
         shown={fileShown}
         on:close={closeFile}
         on:resize={resizeFile}
-        on:pick={(e) => putFile(tab.kind === "session" ? (tab.sessionId ?? null) : (tab.group ?? null), e.detail)}
+        on:pick={(e) => putFile(e.detail)}
       />
     {/if}
   </div>

@@ -1,6 +1,6 @@
 import { api } from "./api";
 import { toast, toastError } from "./toast";
-import { fileLink, isBranchLike, safeDecode, webLink } from "./linkRules";
+import { fileLink, isBranchLike, joinPath, safeDecode, webLink } from "./linkRules";
 
 async function copyText(text: string, label: string) {
   try {
@@ -18,7 +18,8 @@ async function openFile(href: string) {
   } else if (link.kind === "refuse") {
     toast(link.reason, true);
   } else {
-    await api.openFilePath(link.path).catch(toastError);
+    // The file card reads text in the workspace; anything else opens outside Parzi.
+    document.dispatchEvent(new CustomEvent<string>("parzi:open-file", { detail: link.path.replace(/:\d+(?::\d+)?$/, "") }));
   }
 }
 
@@ -27,7 +28,11 @@ function pinNote(path: string) {
   document.dispatchEvent(new CustomEvent<string>("parzi:pin-note", { detail: unlined }));
 }
 
-export async function handleLinkClick(e: MouseEvent, folder = ""): Promise<boolean> {
+/**
+ * `folder` is where relative links resolve. `noteDir` is set when the link sits
+ * in a vault note, so `other.md` or `../x.md` there opens the note beside it.
+ */
+export async function handleLinkClick(e: MouseEvent, folder = "", noteDir: string | null = null): Promise<boolean> {
   const anchor = (e.target as HTMLElement).closest?.("a");
   if (!anchor) return false;
   e.preventDefault();
@@ -59,7 +64,13 @@ export async function handleLinkClick(e: MouseEvent, folder = ""): Promise<boole
 
   if (!/^https?:\/\//i.test(href)) {
     const path = safeDecode(href.split("#")[0]).replace(/\\/g, "/");
-    const note = /^(projects|notes|widgets)\//i.test(path) || (!folder && /\.md$/i.test(path));
+    if (!path) return true;
+    const vaultRoot = /^(projects|notes|widgets)\//i.test(path);
+    if (noteDir !== null && !vaultRoot && !/^([a-z]:\/|\/)/i.test(path)) {
+      pinNote(joinPath(noteDir || ".", path));
+      return true;
+    }
+    const note = vaultRoot || (!folder && /\.md$/i.test(path));
     if (note) {
       pinNote(path);
     } else if (isBranchLike(path)) {

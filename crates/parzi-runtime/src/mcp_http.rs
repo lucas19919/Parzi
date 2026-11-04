@@ -78,6 +78,16 @@ impl HttpConn {
             let bearer = self.bearer()?;
             let (status, www_auth, session, ctype, body) =
                 self.post(msg, bearer.as_deref(), timeout)?;
+            if let Some(err) = refused(
+                self.headers
+                    .keys()
+                    .any(|k| k.eq_ignore_ascii_case("authorization")),
+                status,
+                www_auth.as_deref(),
+                &body,
+            ) {
+                return Err(err);
+            }
             if status == 401 || (status == 403 && www_auth.is_some()) {
                 if !retried
                     && self.auth == Auth::Headers
@@ -239,6 +249,35 @@ pub fn events(body: &str) -> Vec<Value> {
     out
 }
 
+fn refused(
+    static_auth: bool,
+    status: u16,
+    www_auth: Option<&str>,
+    body: &str,
+) -> Option<HttpError> {
+    let wall = status == 401 || (status == 403 && www_auth.is_some());
+    if !wall {
+        return None;
+    }
+    if static_auth || (www_auth.is_none() && body.to_ascii_lowercase().contains("bearer")) {
+        return Some(HttpError::Other(bearer_detail(body)));
+    }
+    None
+}
+
+fn bearer_detail(body: &str) -> String {
+    let owned = serde_json::from_str::<Value>(body).ok().and_then(|v| {
+        v.get("detail")
+            .or_else(|| v.get("message"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    });
+    let text = owned.unwrap_or_else(|| "the server rejected the bearer token".into());
+    text.chars().take(200).collect()
+}
+
 fn gh_token() -> Result<String, HttpError> {
     let gh = parzi_providers::process::which("gh").ok_or_else(|| {
         HttpError::Other(
@@ -268,6 +307,26 @@ fn gh_token() -> Result<String, HttpError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bearer_rejection_is_not_a_sign_in() {
+        let body = r#"{"detail":"MCP bearer required"}"#;
+        assert_eq!(
+            refused(true, 401, None, body).unwrap().to_string(),
+            "MCP bearer required"
+        );
+        assert_eq!(
+            refused(false, 401, None, body).unwrap().to_string(),
+            "MCP bearer required"
+        );
+        assert!(refused(false, 401, Some("Bearer realm=\"x\""), body).is_none());
+        assert!(refused(false, 401, None, "no").is_none());
+        assert!(refused(false, 200, None, body).is_none());
+        assert_eq!(
+            bearer_detail("not json"),
+            "the server rejected the bearer token"
+        );
+    }
 
     #[test]
     fn an_event_stream_yields_its_messages() {

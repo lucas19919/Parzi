@@ -951,15 +951,19 @@ async fn handle(
             }
         }
         "rate_limit_event" => {
-            let info = v.get("rate_limit_info").unwrap_or(&Value::Null);
-            if let Some(w) = usage_window(info) {
-                if info.get("status").and_then(Value::as_str) == Some("rejected") {
+            let windows = usage_windows(v.get("rate_limit_info").unwrap_or(&Value::Null));
+            for (w, rejected) in &windows {
+                if *rejected {
                     let _ = events.send(ProviderEvent::Notice(format!(
                         "Claude's {} limit is used up",
                         w.label.to_lowercase()
                     )));
                 }
-                let _ = events.send(ProviderEvent::Limits(vec![w]));
+            }
+            if !windows.is_empty() {
+                let _ = events.send(ProviderEvent::Limits(
+                    windows.into_iter().map(|(w, _)| w).collect(),
+                ));
             }
         }
         "result" => {
@@ -1044,21 +1048,43 @@ fn result_text(content: Option<&Value>) -> String {
     }
 }
 
-fn usage_window(info: &Value) -> Option<UsageWindow> {
-    let kind = info.get("rateLimitType").and_then(Value::as_str)?;
-    let label = match kind {
+/// Every window in a `rate_limit_event`, with whether it is used up.
+/// The CLI names one window at the top level and lists all of them under
+/// `unifiedWindows`; older CLIs send only the top-level one.
+fn usage_windows(info: &Value) -> Vec<(UsageWindow, bool)> {
+    let one = |kind: &str, w: &Value| {
+        let rejected = w.get("status").and_then(Value::as_str) == Some("rejected");
+        let used = w
+            .get("utilization")
+            .and_then(Value::as_f64)
+            .or(rejected.then_some(1.0))?;
+        Some((
+            UsageWindow {
+                label: window_label(kind),
+                used_percent: (used * 100.0).clamp(0.0, 100.0),
+                resets_at: w.get("resetsAt").and_then(Value::as_u64),
+            },
+            rejected,
+        ))
+    };
+    if let Some(all) = info.get("unifiedWindows").and_then(Value::as_object) {
+        return all.iter().filter_map(|(k, w)| one(k, w)).collect();
+    }
+    info.get("rateLimitType")
+        .and_then(Value::as_str)
+        .and_then(|k| one(k, info))
+        .into_iter()
+        .collect()
+}
+
+fn window_label(kind: &str) -> String {
+    match kind {
         "five_hour" => "Session".to_string(),
         "seven_day" => "Weekly".to_string(),
         "seven_day_opus" => "Weekly · Opus".to_string(),
         "seven_day_sonnet" => "Weekly · Sonnet".to_string(),
         other => other.replace('_', " "),
-    };
-    let used = info.get("utilization").and_then(Value::as_f64)?;
-    Some(UsageWindow {
-        label,
-        used_percent: (used * 100.0).clamp(0.0, 100.0),
-        resets_at: info.get("resetsAt").and_then(Value::as_u64),
-    })
+    }
 }
 
 /// Cost and context from a result, whether or not it ends the turn.
@@ -1243,6 +1269,29 @@ mod tests {
             !next.as_deref().unwrap_or("").contains("\"type\":\"user\""),
             "{next:?}"
         );
+    }
+
+    #[test]
+    fn every_window_in_a_rate_limit_event_is_read() {
+        // Shape sent by Claude Code 2.1.316: the top level names only the
+        // window nearest its threshold, the rest sit under unifiedWindows.
+        let info = json!({"status": "allowed_warning", "resetsAt": 1_794_009_600u64, "rateLimitType": "seven_day", "utilization": 0.97,
+            "unifiedWindows": {
+                "five_hour": {"utilization": 0.01, "resetsAt": 1_793_805_000u64, "status": "allowed"},
+                "seven_day": {"utilization": 0.97, "resetsAt": 1_794_009_600u64, "status": "allowed_warning"},
+                "seven_day_opus": {"resetsAt": 1_794_009_600u64, "status": "rejected"}
+            }});
+        let got = usage_windows(&info);
+        let find = |l: &str| got.iter().find(|(w, _)| w.label == l).cloned().unwrap();
+        assert_eq!(got.len(), 3);
+        assert!((find("Session").0.used_percent - 1.0).abs() < 1e-9);
+        assert!((find("Weekly").0.used_percent - 97.0).abs() < 1e-9);
+        let (opus, rejected) = find("Weekly · Opus");
+        assert!(rejected && (opus.used_percent - 100.0).abs() < 1e-9);
+        // An older CLI with only the top-level window still counts.
+        let old = usage_windows(&json!({"status": "allowed", "rateLimitType": "five_hour", "utilization": 0.37}));
+        assert_eq!(old.len(), 1);
+        assert_eq!(old[0].0.label, "Session");
     }
 
     #[test]

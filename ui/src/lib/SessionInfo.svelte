@@ -7,7 +7,8 @@
   import NotificationsCard from "./NotificationsCard.svelte";
   import TodoList, { todoItems, todoOpen } from "./TodoList.svelte";
   import { dockedTodos, setTodoDocked } from "./todoDock";
-  import { board } from "./providerStore";
+  import { board, reloadBoard } from "./providerStore";
+  import ResizeGrip from "./ResizeGrip.svelte";
   import { nameOf } from "./providerRows";
   import { api, onRunEvent, type GitStatus, type Question, type SessionMeta } from "./api";
   import type { Approval } from "./live";
@@ -53,23 +54,6 @@
     resize: { width: number };
   }>();
 
-  let dragging = false;
-  function startResize(e: PointerEvent) {
-    dragging = true;
-    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-    e.preventDefault();
-  }
-  function onResize(e: PointerEvent) {
-    if (!dragging) return;
-    const aside = (e.currentTarget as HTMLElement).closest(".info") as HTMLElement | null;
-    const rect = aside?.getBoundingClientRect();
-    const next = rect ? rect.right - e.clientX : window.innerWidth - e.clientX - 16;
-    dispatch("resize", { width: Math.round(Math.min(520, Math.max(220, next))) });
-  }
-  function endResize() {
-    dragging = false;
-  }
-
   $: pct = contextLimit > 0 ? Math.min(100, Math.round((contextUsed / contextLimit) * 100)) : 0;
 
   let git: GitStatus | null = null;
@@ -112,7 +96,10 @@
     const onFocus = () => void loadGit();
     window.addEventListener("focus", onFocus);
     const un = onRunEvent((e) => {
-      if (e.kind === "done" || e.kind === "error" || e.kind === "paused") void loadGit();
+      if (e.kind === "done" || e.kind === "error" || e.kind === "paused") {
+        void loadGit();
+        void reloadBoard();
+      }
     });
     return () => {
       window.removeEventListener("focus", onFocus);
@@ -122,17 +109,8 @@
 </script>
 
 <aside class="info" class:shut={!open} aria-label="Session" style="width: {open ? width : 0}px" inert={!open}>
-  <div
-    class="grip"
-    role="separator"
-    aria-orientation="vertical"
-    aria-label="Resize session column"
-    title="Drag to resize"
-    on:pointerdown={startResize}
-    on:pointermove={onResize}
-    on:pointerup={endResize}
-    on:pointercancel={endResize}
-  />
+  <ResizeGrip label="Resize session column" min={220} max={520} on:resize />
+  <div class="col">
   <NotificationsCard on:openSession />
   {#if stepsHere}
     <InfoCard id="steps" title="Steps">
@@ -173,11 +151,11 @@
         on:compact={() => dispatch("compact")}
       />
     </InfoCard>
-  {:else if tokensIn || tokensOut || limits.length}
-    
+  {/if}
+  {#if limits.length || (!contextLimit && (tokensIn || tokensOut))}
     <InfoCard id="usage" title="Usage">
       <svelte:fragment slot="aside">{costUsd > 0 ? `$${costUsd.toFixed(2)}` : ""}</svelte:fragment>
-      {#if tokensIn || tokensOut}
+      {#if !contextLimit && (tokensIn || tokensOut)}
         <div class="info-line"><span class="info-v">{kTok(tokensIn)} in · {kTok(tokensOut)} out</span></div>
       {/if}
       {#each limits as w (w.label)}
@@ -234,9 +212,11 @@
   {/if}
 
   <RunningCard {session} {helpers} {running} {waiting} on:openSession />
+  </div>
 </aside>
 
 <style>
+  /* The column itself must not clip: the resize grip sits just left of it. */
   .info {
     position: relative;
     flex: none;
@@ -244,39 +224,23 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: calc(var(--space) * 2);
     margin: 0 var(--gap) 0 0;
+    transition: width 300ms var(--ease-out), margin-right 300ms var(--ease-out);
+  }
+  .col {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: calc(var(--space) * 2);
     padding-bottom: calc(var(--space) * 3);
     overflow-x: hidden;
     overflow-y: auto;
     scrollbar-width: none;
-    transition: width 300ms var(--ease-out), margin-right 300ms var(--ease-out);
   }
   .info.shut {
     margin-right: 0;
-  }
-  .grip {
-    position: absolute;
-    left: calc(-1 * var(--gap));
-    top: 0;
-    bottom: 0;
-    width: var(--gap);
-    cursor: ew-resize;
-    touch-action: none;
-  }
-  .grip::after {
-    content: "";
-    position: absolute;
-    left: 3px;
-    top: 12px;
-    bottom: 12px;
-    width: 2px;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    transition: background 120ms ease;
-  }
-  .grip:hover::after {
-    background: color-mix(in srgb, var(--text) 18%, transparent);
   }
   .doc-btn {
     flex: none;
