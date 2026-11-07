@@ -39,9 +39,13 @@ pub struct ToolHostParts {
     pub cancel: CancellationToken,
 }
 
+mod relay;
+
 pub struct ToolHost {
     p: ToolHostParts,
     defs: tokio::sync::OnceCell<Vec<ToolDef>>,
+    /// The connectors' tools this run offers, listed once.
+    relay: tokio::sync::OnceCell<crate::mcp_relay::Relay>,
     /// The folder project.switch or project.create moved this session to during
     /// the turn. The shell runs there at once instead of waiting for the next turn.
     moved_to: std::sync::Mutex<Option<String>>,
@@ -596,6 +600,7 @@ impl ToolHost {
         Self {
             p: parts,
             defs: tokio::sync::OnceCell::new(),
+            relay: tokio::sync::OnceCell::new(),
             moved_to: std::sync::Mutex::new(None),
         }
     }

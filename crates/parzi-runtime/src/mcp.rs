@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use parzi_core::config::McpServerCfg;
 use parzi_core::error::{ParziError, Result};
+use serde_json::Value;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
@@ -13,13 +14,30 @@ const HTTP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 const HANDSHAKE_FLOOR: Duration = Duration::from_secs(10);
 
-#[derive(Debug, Clone, serde::Serialize)]
+/// How long a session waits, all connectors together, for ones it has never
+/// listed. The rest finish in the background for the next turn.
+pub const COLD_LIST_BUDGET: Duration = Duration::from_secs(2);
+/// A remembered list older than this is used, and listed again behind it.
+const STALE_AFTER: Duration = Duration::from_secs(30 * 60);
+/// A connector that failed to list is not tried again for a session this soon.
+const FAIL_BACKOFF: Duration = Duration::from_secs(60);
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct McpTool {
     pub server: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub title: String,
+    #[serde(default)]
     pub description: String,
+    #[serde(default)]
     pub read_only: bool,
+    #[serde(default)]
     pub destructive: bool,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub input_schema: Value,
+    #[serde(default, skip_serializing_if = "Value::is_null")]
+    pub annotations: Value,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -34,6 +52,33 @@ impl McpTool {
     pub fn qualified(&self) -> String {
         format!("{}.{}", self.server, self.name)
     }
+
+    fn from_listing(server: &str, t: &Value) -> Self {
+        let text = |v: Option<&Value>| v.and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let hint = |k: &str| {
+            t.pointer(&format!("/annotations/{k}"))
+                .and_then(Value::as_bool)
+                == Some(true)
+        };
+        let mut title = text(t.get("title"));
+        if title.is_empty() {
+            title = text(t.pointer("/annotations/title"));
+        }
+        Self {
+            server: server.to_string(),
+            name: t.get("name").and_then(Value::as_str).unwrap_or("?").into(),
+            title,
+            description: text(t.get("description")),
+            read_only: hint("readOnlyHint"),
+            destructive: hint("destructiveHint"),
+            input_schema: t.get("inputSchema").cloned().unwrap_or(Value::Null),
+            annotations: t
+                .get("annotations")
+                .filter(|a| a.is_object())
+                .cloned()
+                .unwrap_or(Value::Null),
+        }
+    }
 }
 
 enum Conn {
@@ -47,7 +92,7 @@ enum Conn {
 
 struct LiveServer {
     conn: Conn,
-    info: serde_json::Value,
+    info: Value,
     next_id: u64,
     tools: Option<Vec<McpTool>>,
     last_used: Instant,
@@ -56,12 +101,28 @@ struct LiveServer {
 
 type Slot = Arc<tokio::sync::Mutex<Option<LiveServer>>>;
 
+/// A connector's tool list as last seen, from a listing or from disk.
+struct Known {
+    key: String,
+    tools: Vec<McpTool>,
+    saved_ms: u64,
+}
+
 pub struct McpManager {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
     configs: std::sync::RwLock<HashMap<String, McpServerCfg>>,
     slots: tokio::sync::Mutex<HashMap<String, Slot>>,
     idle_kill: Duration,
     epoch: AtomicU64,
     exposed_calls: AtomicU64,
+    starts: AtomicU64,
+    known: std::sync::Mutex<HashMap<String, Known>>,
+    listing: std::sync::Mutex<HashMap<String, Instant>>,
+    failed: std::sync::Mutex<HashMap<String, (String, Instant)>>,
+    settled: tokio::sync::watch::Sender<u64>,
 }
 
 const CHILD_ENV_PASSTHROUGH: &[&str] = &[
@@ -137,9 +198,9 @@ fn tool_err(msg: String) -> ParziError {
 async fn http_send(
     conn: Arc<std::sync::Mutex<crate::mcp_http::HttpConn>>,
     name: &str,
-    msg: serde_json::Value,
+    msg: Value,
     timeout: Duration,
-) -> Result<Option<serde_json::Value>> {
+) -> Result<Option<Value>> {
     let name = name.to_string();
     let out = tokio::task::spawn_blocking(move || {
         let mut c = conn
@@ -166,9 +227,9 @@ async fn rpc_round_trip<W, R>(
     stdout: &mut R,
     id: u64,
     method: &str,
-    params: serde_json::Value,
+    params: Value,
     timeout: Duration,
-) -> Result<std::result::Result<serde_json::Value, String>>
+) -> Result<std::result::Result<Value, String>>
 where
     W: AsyncWrite + Unpin,
     R: AsyncBufRead + Unpin,
@@ -199,7 +260,7 @@ where
         if line.is_empty() {
             continue;
         }
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
             tracing::warn!(
                 "mcp: skipping non-json stdout line: {}",
                 line.chars().take(200).collect::<String>()
@@ -215,10 +276,7 @@ where
         if let Some(err) = v.get("error") {
             return Ok(Err(format!("server error: {err}")));
         }
-        return Ok(Ok(v
-            .get("result")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null)));
+        return Ok(Ok(v.get("result").cloned().unwrap_or(Value::Null)));
     }
 }
 
@@ -232,20 +290,217 @@ async fn kill_tree(child: &mut Child) {
 impl McpManager {
     pub fn new(configs: HashMap<String, McpServerCfg>, idle_kill_secs: u64) -> Self {
         Self {
-            configs: std::sync::RwLock::new(configs),
-            slots: tokio::sync::Mutex::new(HashMap::new()),
-            idle_kill: Duration::from_secs(idle_kill_secs.max(10)),
-            epoch: AtomicU64::new(0),
-            exposed_calls: AtomicU64::new(0),
+            inner: Arc::new(Inner {
+                configs: std::sync::RwLock::new(configs),
+                slots: tokio::sync::Mutex::new(HashMap::new()),
+                idle_kill: Duration::from_secs(idle_kill_secs.max(10)),
+                epoch: AtomicU64::new(0),
+                exposed_calls: AtomicU64::new(0),
+                starts: AtomicU64::new(0),
+                known: std::sync::Mutex::default(),
+                listing: std::sync::Mutex::default(),
+                failed: std::sync::Mutex::default(),
+                settled: tokio::sync::watch::channel(0).0,
+            }),
         }
     }
 
     pub fn exposed_tools_calls(&self) -> u64 {
-        self.exposed_calls.load(Ordering::Relaxed)
+        self.inner.exposed_calls.load(Ordering::Relaxed)
     }
 
+    /// How many times a connector was started or connected to.
+    pub fn live_starts(&self) -> u64 {
+        self.inner.starts.load(Ordering::Relaxed)
+    }
+
+    pub(crate) async fn set_configs(&self, configs: HashMap<String, McpServerCfg>) {
+        let dead: Vec<String> = {
+            let old = self
+                .inner
+                .configs
+                .read()
+                .map(|c| c.clone())
+                .unwrap_or_default();
+            let slots = self.inner.slots.lock().await;
+            slots
+                .keys()
+                .filter(|k| match (configs.get(*k), old.get(*k)) {
+                    (Some(c), Some(o)) => {
+                        !c.enabled || crate::mcp_cache::key(k, c) != crate::mcp_cache::key(k, o)
+                    }
+                    (Some(c), None) => !c.enabled,
+                    (None, _) => true,
+                })
+                .cloned()
+                .collect()
+        };
+        for k in dead {
+            self.stop(&k).await;
+        }
+        if let Ok(mut w) = self.inner.configs.write() {
+            *w = configs;
+        }
+    }
+
+    pub fn is_tool_exposed(&self, server: &str, tool: &str) -> bool {
+        self.inner.is_tool_exposed(server, tool)
+    }
+
+    pub fn tool_mode(&self, server: &str, tool: &str) -> Option<String> {
+        self.inner.config_for(server)?.tool_mode(tool)
+    }
+
+    pub async fn exposed_tools(&self, name: &str) -> Result<Vec<McpTool>> {
+        self.inner.exposed_calls.fetch_add(1, Ordering::Relaxed);
+        let all = self.inner.list_tools(name, false).await?;
+        Ok(all
+            .into_iter()
+            .filter(|t| self.is_tool_exposed(name, &t.name))
+            .collect())
+    }
+
+    /// Every enabled connector's tools for a session, from what was listed
+    /// before. A connector never listed gets a short try, at most `budget`
+    /// for all of them together, and lists on in the background otherwise;
+    /// an old list is used while a new one is fetched behind it.
+    pub async fn session_tools(&self, budget: Duration) -> Vec<McpTool> {
+        let mut configs: Vec<(String, McpServerCfg)> = self
+            .inner
+            .configs
+            .read()
+            .map(|c| {
+                c.iter()
+                    .filter(|(_, c)| c.enabled)
+                    .map(|(k, c)| (k.clone(), c.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        configs.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut out = vec![];
+        let mut cold = vec![];
+        for (name, cfg) in &configs {
+            match self.inner.cached(name, cfg) {
+                Some((tools, stale)) => {
+                    if stale {
+                        Inner::start_listing(&self.inner, name);
+                    }
+                    out.extend(tools);
+                }
+                None => {
+                    if Inner::start_listing(&self.inner, name) {
+                        cold.push(name.clone());
+                    }
+                }
+            }
+        }
+        if !cold.is_empty() {
+            self.inner.wait_listed(&cold, budget).await;
+            for (name, cfg) in configs.iter().filter(|(n, _)| cold.contains(n)) {
+                if let Some((tools, _)) = self.inner.cached(name, cfg) {
+                    out.extend(tools);
+                }
+            }
+        }
+        out.retain(|t| self.is_tool_exposed(&t.server, &t.name));
+        out
+    }
+
+    pub async fn details(&self, name: &str) -> Result<ServerDetails> {
+        let tools = self.inner.list_tools(name, false).await?;
+        let slot = self.inner.slot_for(name).await;
+        let info = slot
+            .lock()
+            .await
+            .as_ref()
+            .map(|sv| sv.info.clone())
+            .unwrap_or_default();
+        let text = |k: &str| {
+            info.get(k)
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        };
+        let icons = info
+            .get("icons")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|i| i.get("src").and_then(Value::as_str))
+            .filter(|s| s.starts_with("https://") || s.starts_with("data:image/"))
+            .map(str::to_string)
+            .collect();
+        Ok(ServerDetails {
+            title: if text("title").is_empty() {
+                text("name")
+            } else {
+                text("title")
+            },
+            website: text("websiteUrl"),
+            icons,
+            tools,
+        })
+    }
+
+    pub async fn call_tool(&self, server: &str, tool: &str, args: Value) -> (bool, String) {
+        match self.call_raw(server, tool, args).await {
+            Ok(res) => {
+                let (ok, blocks) = crate::mcp_relay::relay_result(&res);
+                let text = crate::mcp_relay::text_of(&blocks);
+                if ok {
+                    (true, text)
+                } else {
+                    (false, ParziError::Tool(server.into(), text).to_string())
+                }
+            }
+            Err(e) => (false, e.to_string()),
+        }
+    }
+
+    /// A `tools/call` as the connector answered it, `isError` and all; `Err`
+    /// when the connector could not be reached or broke the protocol.
+    pub async fn call_raw(&self, server: &str, tool: &str, args: Value) -> Result<Value> {
+        if !self.is_tool_exposed(server, tool) {
+            return Err(tool_err(format!(
+                "`{tool}` is switched off for the connector `{server}`"
+            )));
+        }
+        self.inner.call(server, tool, args).await
+    }
+
+    pub async fn stop(&self, name: &str) {
+        let slot = self.inner.slots.lock().await.get(name).cloned();
+        if let Some(slot) = slot {
+            let mut guard = slot.lock().await;
+            Inner::drop_live(&mut guard).await;
+        }
+    }
+
+    pub async fn shutdown(&self) {
+        let slots: Vec<Slot> = {
+            let mut reg = self.inner.slots.lock().await;
+            reg.drain().map(|(_, s)| s).collect()
+        };
+        for slot in slots {
+            let mut guard = slot.lock().await;
+            Inner::drop_live(&mut guard).await;
+        }
+    }
+}
+
+fn age(saved_ms: u64) -> Duration {
+    Duration::from_millis(parzi_core::now_ms().saturating_sub(saved_ms))
+}
+
+impl Inner {
     fn config_for(&self, name: &str) -> Option<McpServerCfg> {
         self.configs.read().ok()?.get(name).cloned()
+    }
+
+    fn is_tool_exposed(&self, server: &str, tool: &str) -> bool {
+        self.config_for(server)
+            .is_some_and(|c| c.is_tool_exposed(tool))
     }
 
     async fn slot_for(&self, name: &str) -> Slot {
@@ -257,53 +512,127 @@ impl McpManager {
             .clone()
     }
 
-    pub(crate) async fn set_configs(&self, configs: HashMap<String, McpServerCfg>) {
-        let dead: Vec<String> = {
-            let slots = self.slots.lock().await;
-            slots
-                .keys()
-                .filter(|k| match configs.get(*k) {
-                    None => true,
-                    Some(c) => !c.enabled,
-                })
-                .cloned()
-                .collect()
+    /// What `name` offered when last listed, and whether that is old.
+    fn cached(&self, name: &str, cfg: &McpServerCfg) -> Option<(Vec<McpTool>, bool)> {
+        let key = crate::mcp_cache::key(name, cfg);
+        if let Ok(known) = self.known.lock() {
+            if let Some(k) = known.get(name).filter(|k| k.key == key) {
+                return Some((k.tools.clone(), age(k.saved_ms) > STALE_AFTER));
+            }
+        }
+        let saved = crate::mcp_cache::load(name, cfg)?;
+        let stale = age(saved.saved_ms) > STALE_AFTER;
+        if let Ok(mut known) = self.known.lock() {
+            known.insert(
+                name.to_string(),
+                Known {
+                    key,
+                    tools: saved.tools.clone(),
+                    saved_ms: saved.saved_ms,
+                },
+            );
+        }
+        Some((saved.tools, stale))
+    }
+
+    fn remember(&self, name: &str, tools: &[McpTool]) {
+        let Some(cfg) = self.config_for(name) else {
+            return;
         };
-        for k in dead {
-            self.stop(&k).await;
+        let key = crate::mcp_cache::key(name, &cfg);
+        let saved_ms = crate::mcp_cache::save(name, &cfg, tools)
+            .map_or_else(parzi_core::now_ms, |s| s.saved_ms);
+        if let Ok(mut known) = self.known.lock() {
+            known.insert(
+                name.to_string(),
+                Known {
+                    key,
+                    tools: tools.to_vec(),
+                    saved_ms,
+                },
+            );
         }
-        if let Ok(mut w) = self.configs.write() {
-            *w = configs;
+        if let Ok(mut f) = self.failed.lock() {
+            f.remove(name);
         }
     }
 
-    pub fn is_tool_exposed(&self, server: &str, tool: &str) -> bool {
-        match self.config_for(server) {
-            Some(c) => c.is_tool_exposed(tool),
-            None => false,
+    /// Lists `name` in the background unless that is under way already.
+    /// False when it failed a moment ago and is left alone for now.
+    fn start_listing(me: &Arc<Self>, name: &str) -> bool {
+        let Some(cfg) = me.config_for(name).filter(|c| c.enabled) else {
+            return false;
+        };
+        let key = crate::mcp_cache::key(name, &cfg);
+        let backing_off = me.failed.lock().is_ok_and(|f| {
+            f.get(name)
+                .is_some_and(|(k, at)| *k == key && at.elapsed() < FAIL_BACKOFF)
+        });
+        if backing_off {
+            return false;
         }
+        {
+            let Ok(mut l) = me.listing.lock() else {
+                return false;
+            };
+            if l.contains_key(name) {
+                return true;
+            }
+            l.insert(name.to_string(), Instant::now());
+        }
+        let (me, name) = (me.clone(), name.to_string());
+        tokio::spawn(async move {
+            let res = me.list_tools(&name, true).await;
+            if let Ok(mut l) = me.listing.lock() {
+                l.remove(&name);
+            }
+            if let Err(e) = res {
+                tracing::info!(server = %name, "connector did not list its tools: {e}");
+                if let Ok(mut f) = me.failed.lock() {
+                    f.insert(name, (key, Instant::now()));
+                }
+            }
+            me.settled.send_modify(|n| *n = n.wrapping_add(1));
+        });
+        true
     }
 
-    pub fn tool_mode(&self, server: &str, tool: &str) -> Option<String> {
-        self.config_for(server)?.tool_mode(tool)
-    }
-
-    pub async fn exposed_tools(&self, name: &str) -> Result<Vec<McpTool>> {
-        self.exposed_calls.fetch_add(1, Ordering::Relaxed);
-        let all = self.list_tools(name).await?;
-        Ok(all
-            .into_iter()
-            .filter(|t| self.is_tool_exposed(name, &t.name))
-            .collect())
+    /// Waits for the listings of `names`, each at most `budget` from when it
+    /// started, and never longer than `budget` from now.
+    async fn wait_listed(&self, names: &[String], budget: Duration) {
+        let mut settled = self.settled.subscribe();
+        let latest = Instant::now() + budget;
+        loop {
+            let due = self.listing.lock().ok().and_then(|l| {
+                names
+                    .iter()
+                    .filter_map(|n| l.get(n))
+                    .map(|started| *started + budget)
+                    .max()
+            });
+            let Some(due) = due.map(|d| d.min(latest)) else {
+                return;
+            };
+            if Instant::now() >= due {
+                return;
+            }
+            let until = tokio::time::Instant::from_std(due);
+            if tokio::time::timeout_at(until, settled.changed())
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
     }
 
     async fn request(
         sv: &mut LiveServer,
         name: &str,
         method: &str,
-        params: serde_json::Value,
+        params: Value,
         timeout: Duration,
-    ) -> Result<std::result::Result<serde_json::Value, String>> {
+    ) -> Result<std::result::Result<Value, String>> {
         sv.next_id += 1;
         let id = sv.next_id;
         match &mut sv.conn {
@@ -314,13 +643,10 @@ impl McpManager {
                 let msg = serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
                 let reply = http_send(h.clone(), name, msg, timeout)
                     .await?
-                    .unwrap_or(serde_json::Value::Null);
+                    .unwrap_or(Value::Null);
                 Ok(match reply.get("error") {
                     Some(err) => Err(format!("server error: {err}")),
-                    None => Ok(reply
-                        .get("result")
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null)),
+                    None => Ok(reply.get("result").cloned().unwrap_or(Value::Null)),
                 })
             }
         }
@@ -363,10 +689,7 @@ impl McpManager {
         let res = Self::request(sv, name, "initialize", init, timeout)
             .await?
             .map_err(tool_err)?;
-        sv.info = res
-            .get("serverInfo")
-            .cloned()
-            .unwrap_or(serde_json::Value::Null);
+        sv.info = res.get("serverInfo").cloned().unwrap_or(Value::Null);
         match res.get("protocolVersion").and_then(|v| v.as_str()) {
             Some(v) => {
                 if v != offered {
@@ -402,6 +725,7 @@ impl McpManager {
         if !cfg.enabled {
             return Err(tool_err(format!("server `{name}` disabled")));
         }
+        self.starts.fetch_add(1, Ordering::Relaxed);
         let epoch = self.epoch.fetch_add(1, Ordering::Relaxed) + 1;
         let timeout = Duration::from_millis(cfg.timeout_ms.max(1_000));
         let handshake = timeout.max(HANDSHAKE_FLOOR);
@@ -412,7 +736,7 @@ impl McpManager {
                 ))),
                 next_id: 0,
                 tools: None,
-                info: serde_json::Value::Null,
+                info: Value::Null,
                 last_used: Instant::now(),
                 epoch,
             };
@@ -457,7 +781,7 @@ impl McpManager {
             },
             next_id: 0,
             tools: None,
-            info: serde_json::Value::Null,
+            info: Value::Null,
             last_used: Instant::now(),
             epoch,
         };
@@ -503,20 +827,21 @@ impl McpManager {
     fn timeout_for(&self, name: &str) -> Duration {
         Duration::from_millis(
             self.config_for(name)
-                .map(|c| c.timeout_ms)
-                .unwrap_or(30_000)
+                .map_or(30_000, |c| c.timeout_ms)
                 .max(1_000),
         )
     }
 
-    async fn list_tools(&self, name: &str) -> Result<Vec<McpTool>> {
+    /// The connector's tools; `fresh` asks it again even when this connection
+    /// listed them already.
+    async fn list_tools(&self, name: &str, fresh: bool) -> Result<Vec<McpTool>> {
         let slot = self.slot_for(name).await;
         let mut guard = slot.lock().await;
         self.ensure_live(&slot, &mut guard, name).await?;
         let cached = {
             let sv = guard.as_mut().expect("live after ensure");
             sv.last_used = Instant::now();
-            sv.tools.clone()
+            sv.tools.clone().filter(|_| !fresh)
         };
         if let Some(t) = cached {
             return Ok(t);
@@ -534,90 +859,22 @@ impl McpManager {
                 return Err(e);
             }
         };
-        let mut out = vec![];
-        if let Some(arr) = res.get("tools").and_then(|t| t.as_array()) {
-            for t in arr {
-                let hint = |k: &str| {
-                    t.pointer(&format!("/annotations/{k}"))
-                        .and_then(serde_json::Value::as_bool)
-                        == Some(true)
-                };
-                out.push(McpTool {
-                    server: name.to_string(),
-                    name: t.get("name").and_then(|n| n.as_str()).unwrap_or("?").into(),
-                    description: t
-                        .get("description")
-                        .and_then(|d| d.as_str())
-                        .unwrap_or("")
-                        .trim()
-                        .to_string(),
-                    read_only: hint("readOnlyHint"),
-                    destructive: hint("destructiveHint"),
-                });
-            }
-        }
+        let out: Vec<McpTool> = res
+            .get("tools")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|t| McpTool::from_listing(name, t))
+            .collect();
         if let Some(sv) = guard.as_mut() {
             sv.tools = Some(out.clone());
         }
+        drop(guard);
+        self.remember(name, &out);
         Ok(out)
     }
 
-    pub async fn details(&self, name: &str) -> Result<ServerDetails> {
-        let tools = self.list_tools(name).await?;
-        let slot = self.slot_for(name).await;
-        let info = slot
-            .lock()
-            .await
-            .as_ref()
-            .map(|sv| sv.info.clone())
-            .unwrap_or_default();
-        let text = |k: &str| {
-            info.get(k)
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("")
-                .trim()
-                .to_string()
-        };
-        let icons = info
-            .get("icons")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|i| i.get("src").and_then(serde_json::Value::as_str))
-            .filter(|s| s.starts_with("https://") || s.starts_with("data:image/"))
-            .map(str::to_string)
-            .collect();
-        Ok(ServerDetails {
-            title: if text("title").is_empty() {
-                text("name")
-            } else {
-                text("title")
-            },
-            website: text("websiteUrl"),
-            icons,
-            tools,
-        })
-    }
-
-    pub async fn call_tool(
-        &self,
-        server: &str,
-        tool: &str,
-        args: serde_json::Value,
-    ) -> (bool, String) {
-        let res = self.call_inner(server, tool, args).await;
-        match res {
-            Ok(t) => (true, t),
-            Err(e) => (false, e.to_string()),
-        }
-    }
-
-    async fn call_inner(
-        &self,
-        server: &str,
-        tool: &str,
-        args: serde_json::Value,
-    ) -> Result<String> {
+    async fn call(&self, server: &str, tool: &str, args: Value) -> Result<Value> {
         let slot = self.slot_for(server).await;
         let mut guard = slot.lock().await;
         self.ensure_live(&slot, &mut guard, server).await?;
@@ -628,52 +885,13 @@ impl McpManager {
             sv.last_used = Instant::now();
             Self::request(sv, server, "tools/call", params, timeout).await
         };
-        let res = match res {
-            Ok(Ok(v)) => v,
-            Ok(Err(msg)) => return Err(tool_err(msg)),
+        match res {
+            Ok(Ok(v)) => Ok(v),
+            Ok(Err(msg)) => Err(tool_err(msg)),
             Err(e) => {
                 Self::drop_live(&mut guard).await;
-                return Err(e);
+                Err(e)
             }
-        };
-        let is_err = res
-            .get("isError")
-            .and_then(|b| b.as_bool())
-            .unwrap_or(false);
-        let mut text = String::new();
-        if let Some(arr) = res.get("content").and_then(|c| c.as_array()) {
-            for c in arr {
-                if let Some(t) = c.get("text").and_then(|t| t.as_str()) {
-                    text.push_str(t);
-                    text.push('\n');
-                }
-            }
-        }
-        if text.is_empty() {
-            text = res.to_string();
-        }
-        if is_err {
-            return Err(ParziError::Tool(server.into(), text));
-        }
-        Ok(text)
-    }
-
-    pub async fn stop(&self, name: &str) {
-        let slot = self.slots.lock().await.get(name).cloned();
-        if let Some(slot) = slot {
-            let mut guard = slot.lock().await;
-            Self::drop_live(&mut guard).await;
-        }
-    }
-
-    pub async fn shutdown(&self) {
-        let slots: Vec<Slot> = {
-            let mut reg = self.slots.lock().await;
-            reg.drain().map(|(_, s)| s).collect()
-        };
-        for slot in slots {
-            let mut guard = slot.lock().await;
-            Self::drop_live(&mut guard).await;
         }
     }
 }
@@ -744,6 +962,27 @@ mod tests {
             Some("C:\\Windows")
         );
         assert_eq!(env.get("Path").map(String::as_str), Some("C:\\bin"));
+    }
+
+    #[test]
+    fn a_listed_tool_keeps_its_schema_title_and_hints() {
+        let t = McpTool::from_listing(
+            "dd",
+            &serde_json::json!({
+                "name": "render",
+                "description": " Draw it ",
+                "inputSchema": {"type": "object", "properties": {"spec": {"type": "string"}}},
+                "annotations": {"title": "Draw and audit", "readOnlyHint": false, "destructiveHint": true},
+            }),
+        );
+        assert_eq!(t.qualified(), "dd.render");
+        assert_eq!(t.title, "Draw and audit");
+        assert_eq!(t.description, "Draw it");
+        assert!(t.destructive && !t.read_only);
+        assert_eq!(t.input_schema["properties"]["spec"]["type"], "string");
+        let back: McpTool = serde_json::from_value(serde_json::to_value(&t).unwrap()).unwrap();
+        assert_eq!(back.input_schema, t.input_schema);
+        assert_eq!(back.annotations, t.annotations);
     }
 
     #[tokio::test]

@@ -98,6 +98,19 @@ impl ToolExecutor {
             return None;
         }
         let (server, tool) = name.split_once('.')?;
+        self.connector_mode(server, tool)
+    }
+
+    /// Whether this session may use the connector `server` at all.
+    pub fn connector_allowed(&self, server: &str) -> bool {
+        self.allowed
+            .iter()
+            .any(|p| p == "*" || p.strip_prefix(CONNECTOR_ENTRY) == Some(server))
+    }
+
+    /// The person's choice for one connector tool (Settings › Connections);
+    /// `None` leaves it to the session's approval mode.
+    pub(crate) fn connector_mode(&self, server: &str, tool: &str) -> Option<ApprovalMode> {
         match self.mcp.tool_mode(server, tool).as_deref() {
             Some("auto") => Some(ApprovalMode::Auto),
             Some("deny") => Some(ApprovalMode::Deny),
@@ -149,6 +162,16 @@ impl ToolExecutor {
         }
         (false, format!("unknown tool `{name}`"))
     }
+}
+
+/// An allowlist entry for a whole connector. It has its own prefix, so a
+/// connector called `shell` or `github` never lets Parzi's tools of that
+/// name through.
+pub const CONNECTOR_ENTRY: &str = "connector:";
+
+#[must_use]
+pub fn connector_entry(server: &str) -> String {
+    format!("{CONNECTOR_ENTRY}{server}")
 }
 
 pub(crate) fn is_vendor_category(name: &str) -> bool {
@@ -1250,6 +1273,13 @@ pub fn to_mcp(name: &str) -> String {
 }
 
 pub(crate) fn from_mcp(tool: &str) -> String {
+    // A connector tool relayed by Parzi reads `<server>__<tool>`; Parzi's own
+    // names never hold `__`, so a connector called `github` stays itself.
+    if let Some((server, rest)) = tool.split_once("__") {
+        if !server.is_empty() && !rest.is_empty() {
+            return format!("{server}.{rest}");
+        }
+    }
     for ns in NAMESPACES {
         if let Some(rest) = tool.strip_prefix(ns).and_then(|r| r.strip_prefix('_')) {
             return format!("{ns}.{rest}");
@@ -1393,6 +1423,30 @@ mod tests {
         }
         assert_eq!(display_name("parzi__ui_propose_task"), "ui.propose_task");
         assert_eq!(display_name("search_tool"), "search_tool");
+    }
+
+    #[test]
+    fn relayed_connector_tools_read_back_as_their_connector() {
+        assert_eq!(display_name("mcp__parzi__github__get_me"), "github.get_me");
+        assert_eq!(
+            display_name("mcp__parzi__diagonaldiagrams__render"),
+            "diagonaldiagrams.render"
+        );
+        assert_eq!(display_name("mcp__parzi__github_issue"), "github.issue");
+        assert!(!is_parzi_tool(&display_name(
+            "mcp__parzi__github__issue_read"
+        )));
+        let tools = ToolExecutor {
+            cwd: String::new(),
+            mcp: std::sync::Arc::new(McpManager::new(Default::default(), 60)),
+            allowed: vec![connector_entry("github"), "shell.exec".into()],
+        };
+        assert!(tools.connector_allowed("github"));
+        assert!(!tools.connector_allowed("linear"));
+        assert!(
+            !tools.is_allowed("github.issue"),
+            "a connector entry is no Parzi tool"
+        );
     }
 
     #[test]
