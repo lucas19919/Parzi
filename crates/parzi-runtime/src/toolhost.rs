@@ -665,11 +665,132 @@ fn shell_detour(tool: &str, input: &Value, names: &CallNames) -> String {
     }
 }
 
+/// The plan tools' own refusal. `ToolHost::unavailable` and the read-only
+/// check before them say why first, so this is only the last word.
 fn denied(name: &str) -> (bool, String) {
     (
         false,
-        format!("tool `{name}` denied (by the approval mode or the person)"),
+        format!("`{name}` did not run: agents are read-only or it is off in Settings"),
     )
+}
+
+/// Why a call did not run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refusal {
+    /// Agents are read-only (Settings).
+    ReadOnly,
+    /// Not in this session's tools (Settings).
+    NotEnabled,
+    /// The shell is switched off in Settings.
+    ShellOff,
+    /// Its connector sets it to Deny (Settings).
+    ConnectorOff,
+    /// The person said no on the card.
+    Declined,
+    /// The card's wait ran out with no answer.
+    Unanswered,
+    /// This run has no one who can answer a card.
+    NoOneToAsk,
+    /// The run was stopped while the card waited.
+    Stopped,
+}
+
+/// What happened to a call of `what` (the tool, named as the agent calls it)
+/// and what the agent can do next.
+fn refusal_text(what: &str, why: Refusal) -> String {
+    match why {
+        Refusal::ReadOnly => format!(
+            "{what} was denied: agents are read-only in Settings. Reading still works; say what you would do instead, and the person can allow changes in Settings."
+        ),
+        Refusal::NotEnabled => format!(
+            "{what} is not enabled for agents in Settings. Do it another way, or ask the person to turn it on."
+        ),
+        Refusal::ShellOff => format!(
+            "{what} was denied: the shell is switched off in Settings. Do it without a command, or ask the person to turn the shell on."
+        ),
+        Refusal::ConnectorOff => format!(
+            "{what} is set to Deny for its connector in Settings. Do it another way, or ask the person to allow it there."
+        ),
+        Refusal::Declined => format!(
+            "The person declined {what}. Do not retry it as is: ask them in chat what they want instead."
+        ),
+        Refusal::Unanswered => format!(
+            "Nobody answered the approval for {what} in time, so it did not run. Ask the person in chat whether they still want it, then try again."
+        ),
+        Refusal::NoOneToAsk => format!(
+            "{what} needs the person's approval, and no one can answer an approval in this run, so it did not run. Say what you would do, so the person can do it or allow it."
+        ),
+        Refusal::Stopped => "stopped: the run was cancelled".into(),
+    }
+}
+
+/// An approver's answer, read with how long it took: an approver that reports
+/// a card that ran out as a plain no answers at the end of the wait.
+fn answered(
+    answer: Approval,
+    waited: Duration,
+    wait: Duration,
+) -> std::result::Result<(), Refusal> {
+    match answer {
+        Approval::Allow => Ok(()),
+        Approval::Expired => Err(Refusal::Unanswered),
+        Approval::Deny if waited + Duration::from_secs(1) >= wait => Err(Refusal::Unanswered),
+        Approval::Deny => Err(Refusal::Declined),
+    }
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut diagonal = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let above = row[j + 1];
+            row[j + 1] = if ca == *cb {
+                diagonal
+            } else {
+                1 + diagonal.min(above).min(row[j])
+            };
+            diagonal = above;
+        }
+    }
+    row[b.len()]
+}
+
+/// Up to three offered tools an agent asking for `asked` most likely meant:
+/// the same namespace, a near spelling, or one name inside the other.
+fn close_matches(asked: &str, offered: &[String]) -> Vec<String> {
+    let want = crate::tools::to_mcp(&display_name(asked)).to_lowercase();
+    let space = |s: &str| s.split('_').next().unwrap_or("").to_string();
+    let mut near: Vec<(usize, &String)> = offered
+        .iter()
+        .filter_map(|name| {
+            let have = crate::tools::to_mcp(name).to_lowercase();
+            let d = edit_distance(&want, &have);
+            let longest = want.chars().count().max(have.chars().count());
+            let close = d <= longest / 3
+                || space(&want) == space(&have)
+                || have.contains(&want)
+                || want.contains(&have);
+            close.then_some((d, name))
+        })
+        .collect();
+    near.sort();
+    near.into_iter().take(3).map(|(_, n)| n.clone()).collect()
+}
+
+fn no_such_tool(asked: &str, offered: &[String], names: &CallNames) -> String {
+    let near: Vec<String> = close_matches(asked, offered)
+        .iter()
+        .map(|n| names.short(n))
+        .collect();
+    let head = format!("There is no tool {}.", names.tool(asked));
+    match near.as_slice() {
+        [] => format!("{head} Call one of the tools Parzi lists."),
+        [one] => format!("{head} Did you mean {one}?"),
+        [first @ .., last] => format!("{head} Did you mean {} or {last}?", first.join(", ")),
+    }
 }
 
 impl ToolHost {
@@ -766,14 +887,15 @@ impl ToolHost {
             ) {
                 return (
                     false,
-                    format!("`{name}` needs the Parzi window, and this run has none"),
+                    format!(
+                        "{} needs the Parzi window, and this run has none; do it another way",
+                        self.names.short(name)
+                    ),
                 );
             }
             let every_tab = name == "browser.tabs" && bool_arg(args, "all") == Some(true);
             let allowed = if every_tab {
-                self.p.mode != ApprovalMode::Deny
-                    && self.p.tools.is_allowed(name)
-                    && (self.p.full || self.ask(id, name, args).await)
+                self.asked_unless_full(id, name, args).await
             } else if matches!(
                 name,
                 "browser.open"
@@ -787,24 +909,24 @@ impl ToolHost {
             ) {
                 self.approved(id, name, args).await
             } else {
-                self.p.tools.is_allowed(name)
+                self.enabled(name)
             };
-            if !allowed {
-                return denied(name);
+            if let Err(why) = allowed {
+                return self.refused(name, why);
             }
             if is_desk_tool(name) {
                 return self.execute_desk(name, args).await;
             }
             return self.execute_browser(name, args).await;
         }
+        if let Some(refused) = self.unavailable(name).await {
+            return refused;
+        }
         if is_brain_tool(name) {
-            let allowed = if name == "brain.write" || name == "brain.delete" {
-                self.approved(id, name, args).await
-            } else {
-                self.p.tools.is_allowed(name)
-            };
-            if !allowed {
-                return denied(name);
+            if name == "brain.write" || name == "brain.delete" {
+                if let Err(why) = self.approved(id, name, args).await {
+                    return self.refused(name, why);
+                }
             }
             let (name, args) = (name.to_string(), args.clone());
             return tokio::task::spawn_blocking(move || execute_brain(&name, &args))
@@ -837,98 +959,144 @@ impl ToolHost {
             };
         }
         if is_session_tool(name) {
-            let reads = matches!(name, "session.read" | "session.list");
-            let allowed = if reads {
-                self.p.tools.is_allowed(name)
-            } else {
-                self.approved(id, name, args).await
-            };
-            if !allowed {
-                return denied(name);
+            if !matches!(name, "session.read" | "session.list") {
+                if let Err(why) = self.approved(id, name, args).await {
+                    return self.refused(name, why);
+                }
             }
             return self.execute_session_tool(name, args).await;
         }
         if is_image_tool(name) {
-            if !self.approved(id, name, args).await {
-                return denied(name);
+            if let Err(why) = self.approved(id, name, args).await {
+                return self.refused(name, why);
             }
             return self.execute_image(args).await;
         }
         if is_github_tool(name) {
-            if self.p.mode == ApprovalMode::Deny || !self.p.tools.is_allowed(name) {
-                return denied(name);
-            }
-            if !self.p.full && !self.ask(id, name, args).await {
-                return denied(name);
+            if let Err(why) = self.asked_unless_full(id, name, args).await {
+                return self.refused(name, why);
             }
             return self.execute_github_issue(args).await;
         }
         if is_question_tool(name) {
-            if !self.p.tools.is_allowed(name) {
-                return denied(name);
-            }
             return self.execute_question(id, args).await;
         }
         if is_project_tool(name) {
-            if !self.approved(id, name, args).await {
-                return denied(name);
+            if let Err(why) = self.approved(id, name, args).await {
+                return self.refused(name, why);
             }
             return self.execute_project(id, name, args).await;
         }
         if is_shell_tool(name) {
             if name == "shell.logs" {
-                if !self.p.tools.is_allowed(name) {
-                    return denied(name);
-                }
                 return self.execute_shell_logs(args).await;
             }
             if crate::desk::mentions_protected(&command_text(args), &self.shell_home()) {
                 return (false, format!("refused: {SECRET_FILE}"));
             }
-            if !self.approved(id, name, args).await {
-                return denied(name);
+            if let Err(why) = self.approved(id, name, args).await {
+                return self.refused(name, why);
             }
             return self.execute_shell(name, args).await;
         }
         if is_models_tool(name) {
-            if !self.p.tools.is_allowed(name) {
-                return denied(name);
-            }
             return (true, self.models_list());
         }
-        if !self.approved(id, name, args).await {
-            return denied(name);
+        if let Err(why) = self.approved(id, name, args).await {
+            return self.refused(name, why);
         }
         self.p.tools.execute(name, args).await
     }
 
-    async fn approved(&self, id: &str, name: &str, args: &Value) -> bool {
-        if self.p.mode == ApprovalMode::Deny {
-            return false;
+    /// A refused call's result, naming the tool as this agent calls it.
+    fn refused(&self, name: &str, why: Refusal) -> (bool, String) {
+        let what = if crate::tools::is_parzi_tool(name) {
+            self.names.tool(name)
+        } else {
+            format!("`{name}`")
+        };
+        (false, refusal_text(&what, why))
+    }
+
+    /// Whether Settings give this session the tool at all.
+    fn enabled(&self, name: &str) -> std::result::Result<(), Refusal> {
+        if self.p.tools.is_allowed(name) {
+            Ok(())
+        } else if is_shell_tool(name) && self.p.cfg.lanes.no_shell {
+            Err(Refusal::ShellOff)
+        } else {
+            Err(Refusal::NotEnabled)
         }
-        if !self.p.tools.is_allowed(name) {
-            return false;
+    }
+
+    /// A call that cannot run whatever anyone answers: a name in Parzi's own
+    /// namespaces that no tool has, or a tool Settings leave out.
+    async fn unavailable(&self, name: &str) -> Option<(bool, String)> {
+        if crate::tools::is_parzi_tool(name) {
+            if let Err(why) = self.enabled(name) {
+                return Some(self.refused(name, why));
+            }
+            // The plan tools refuse these in read-only mode too, without saying why.
+            if self.p.mode == ApprovalMode::Deny && matches!(name, "plan.write" | "session.rename")
+            {
+                return Some(self.refused(name, Refusal::ReadOnly));
+            }
+            return None;
+        }
+        if crate::tools::in_parzi_namespace(name) || !name.contains('.') {
+            let offered: Vec<String> = self.defs().await.into_iter().map(|d| d.name).collect();
+            return Some((false, no_such_tool(name, &offered, &self.names)));
+        }
+        None
+    }
+
+    async fn approved(
+        &self,
+        id: &str,
+        name: &str,
+        args: &Value,
+    ) -> std::result::Result<(), Refusal> {
+        if self.p.mode == ApprovalMode::Deny {
+            return Err(Refusal::ReadOnly);
+        }
+        self.enabled(name)?;
+        let connector = self.p.tools.approval_override(name);
+        if connector == Some(ApprovalMode::Deny) {
+            return Err(Refusal::ConnectorOff);
         }
         if self.p.full {
-            return !matches!(
-                self.p.tools.approval_override(name),
-                Some(ApprovalMode::Deny)
-            );
+            return Ok(());
         }
-        match self.p.tools.approval_override(name) {
-            Some(ApprovalMode::Deny) => return false,
-            Some(ApprovalMode::Auto) => return true,
+        match connector {
+            Some(ApprovalMode::Auto) => return Ok(()),
             Some(ApprovalMode::Ask) => return self.ask(id, name, args).await,
-            None => {}
+            _ => {}
         }
         match self.p.mode {
-            ApprovalMode::Auto => true,
-            ApprovalMode::Deny => false,
+            ApprovalMode::Auto => Ok(()),
+            ApprovalMode::Deny => Err(Refusal::ReadOnly),
             ApprovalMode::Ask => self.ask(id, name, args).await,
         }
     }
 
-    async fn ask(&self, id: &str, name: &str, args: &Value) -> bool {
+    /// For calls the person approves even in Auto mode; full access skips the card.
+    async fn asked_unless_full(
+        &self,
+        id: &str,
+        name: &str,
+        args: &Value,
+    ) -> std::result::Result<(), Refusal> {
+        if self.p.mode == ApprovalMode::Deny {
+            return Err(Refusal::ReadOnly);
+        }
+        self.enabled(name)?;
+        if self.p.full {
+            return Ok(());
+        }
+        self.ask(id, name, args).await
+    }
+
+    async fn ask(&self, id: &str, name: &str, args: &Value) -> std::result::Result<(), Refusal> {
         let info = ToolCallInfo {
             id: id.into(),
             name: name.into(),
@@ -938,9 +1106,15 @@ impl ToolHost {
         self.p
             .sink
             .emit(RunEvent::ApprovalRequest { call: info.clone() });
+        let unseen = !self.p.approver.asks_a_person();
+        let wait = Duration::from_secs(self.p.cfg.orchestrator.approval_wait_secs.max(10));
+        let started = std::time::Instant::now();
         tokio::select! {
-            () = self.p.cancel.cancelled() => false,
-            r = self.p.approver.approve(&info) => matches!(r, Approval::Allow),
+            () = self.p.cancel.cancelled() => Err(Refusal::Stopped),
+            r = self.p.approver.approve(&info) => match answered(r, started.elapsed(), wait) {
+                Err(Refusal::Declined) if unseen => Err(Refusal::NoOneToAsk),
+                other => other,
+            },
         }
     }
 
@@ -958,11 +1132,18 @@ impl ToolHost {
         if let Some(why) = self.secret_guard(req, kind) {
             return PermissionDecision::Deny(why);
         }
+        let asked = if req.tool == "other" && !req.name.is_empty() {
+            req.name.as_str()
+        } else {
+            req.tool.as_str()
+        };
+        let own = format!("`{asked}`");
+        let refuse = |what: &str, why| PermissionDecision::Deny(refusal_text(what, why));
         if self.p.mode == ApprovalMode::Deny {
             if kind == Some("fs.read") {
                 return PermissionDecision::Allow;
             }
-            return PermissionDecision::Deny("agents are read-only (Settings)".into());
+            return refuse(&own, Refusal::ReadOnly);
         }
         if let Some(k) = kind {
             let lists_kinds = self.p.tools.allowed.iter().any(|a| {
@@ -970,14 +1151,20 @@ impl ToolHost {
                     && !crate::tools::is_parzi_tool(a)
             });
             if lists_kinds && !self.p.tools.is_allowed(k) {
-                return PermissionDecision::Deny(format!("Settings do not allow {k}"));
+                let doing = match k {
+                    "fs.read" => "reading files",
+                    "fs.list" => "listing folders",
+                    "fs.write" => "editing files",
+                    _ => "running commands",
+                };
+                return refuse(&format!("{own} ({doing})"), Refusal::NotEnabled);
             }
         }
         if VENDOR_SHELL.contains(&req.tool.as_str()) && self.offers_shell() {
             return PermissionDecision::Deny(shell_detour(&req.tool, &req.input, &self.names));
         }
         if kind == Some("shell.exec") && self.p.cfg.lanes.no_shell {
-            return PermissionDecision::Deny("the shell is switched off in Settings".into());
+            return refuse(&own, Refusal::ShellOff);
         }
         let mut outside = false;
         if kind == Some("fs.write") {
@@ -1006,8 +1193,10 @@ impl ToolHost {
             return PermissionDecision::Allow;
         }
         let allowed = match self.p.mode {
-            ApprovalMode::Auto if !outside => true,
-            ApprovalMode::Ask if self.p.edits_auto && kind == Some("fs.write") && !outside => true,
+            ApprovalMode::Auto if !outside => Ok(()),
+            ApprovalMode::Ask if self.p.edits_auto && kind == Some("fs.write") && !outside => {
+                Ok(())
+            }
             _ => {
                 let mut args = req.input.clone();
                 if !args.is_object() {
@@ -1020,18 +1209,13 @@ impl ToolHost {
                         o.insert("outside".into(), Value::Bool(true));
                     }
                 }
-                let asked = if req.tool == "other" && !req.name.is_empty() {
-                    req.name.as_str()
-                } else {
-                    req.tool.as_str()
-                };
                 self.ask(&req.id, asked, &args).await
             }
         };
-        if !allowed {
-            return PermissionDecision::Deny("declined".into());
+        match allowed {
+            Ok(()) => PermissionDecision::Allow,
+            Err(why) => refuse(&own, why),
         }
-        PermissionDecision::Allow
     }
 
     fn secret_guard(&self, req: &PermissionRequest, kind: Option<&str>) -> Option<String> {
@@ -1540,11 +1724,12 @@ impl ToolHost {
                     )),
                 );
             }
-            if !self.ask(id, name, &card).await {
+            if let Err(why) = self.ask(id, name, &card).await {
+                let (_, text) = self.refused(name, why);
                 return (
                     false,
                     format!(
-                        "declined: {} is outside this session's folder",
+                        "{text} ({} is outside this session's folder.)",
                         path.display()
                     ),
                 );
@@ -1616,8 +1801,12 @@ impl ToolHost {
             let card = serde_json::json!({
                 "slug": format!("{} ({})", project.title, project.folder),
             });
-            if !self.ask(id, name, &card).await {
-                return (false, format!("declined: stayed out of {}", project.slug));
+            if let Err(why) = self.ask(id, name, &card).await {
+                let (_, text) = self.refused(name, why);
+                return (
+                    false,
+                    format!("{text} (This session stays out of {}.)", project.slug),
+                );
             }
         }
         let moved = self
@@ -1670,11 +1859,12 @@ impl ToolHost {
             Ok(d) => d,
             Err(e) => return (false, e),
         };
+        let needs = |what: &str| (false, format!("{} needs {what}", self.names.tool(name)));
         match name {
             "shell.exec" => {
                 let cmd = command_text(args);
                 if cmd.trim().is_empty() {
-                    return (false, "shell.exec needs a `cmd`".into());
+                    return needs("`cmd`: the command to run, as one string");
                 }
                 // `timeout` is Bash's name for it, in milliseconds as well.
                 let timeout = int_arg(args, "timeout_ms")
@@ -1684,7 +1874,16 @@ impl ToolHost {
                 match self.p.shell.exec(&cmd, &cwd, timeout).await {
                     Ok(out) => {
                         let mut head = if out.timed_out {
-                            "timed out — use shell.start\n".to_string()
+                            let ran = timeout.clamp(
+                                Duration::from_secs(1),
+                                crate::shell::FOREGROUND_MAX_TIMEOUT,
+                            );
+                            format!(
+                                "timed out after {}s; run it in the background with {} and read its output with {}\n",
+                                ran.as_secs(),
+                                self.names.short("shell.start"),
+                                self.names.short("shell.logs")
+                            )
                         } else {
                             match out.exit {
                                 Some(0) => String::new(),
@@ -1701,7 +1900,7 @@ impl ToolHost {
             "shell.start" => {
                 let cmd = command_text(args);
                 if cmd.trim().is_empty() {
-                    return (false, "shell.start needs a `cmd`".into());
+                    return needs("`cmd`: the command to start, as one string");
                 }
                 match self.p.shell.start(&cmd, &cwd) {
                     Ok(id) => (true, format!("started {id}")),
@@ -1711,7 +1910,10 @@ impl ToolHost {
             "shell.kill" => {
                 let id = str_arg("id").unwrap_or_default();
                 if id.trim().is_empty() {
-                    return (false, "shell.kill needs an `id`".into());
+                    return needs(&format!(
+                        "an `id`: the one {} returned",
+                        self.names.short("shell.start")
+                    ));
                 }
                 if self.p.shell.kill(&id) {
                     (true, format!("killed {id}"))
@@ -1726,7 +1928,14 @@ impl ToolHost {
     async fn execute_shell_logs(&self, args: &Value) -> (bool, String) {
         let id = args.get("id").and_then(Value::as_str).unwrap_or("").trim();
         if id.is_empty() {
-            return (false, "shell.logs needs an `id`".into());
+            return (
+                false,
+                format!(
+                    "{} needs an `id`: the one {} returned",
+                    self.names.tool("shell.logs"),
+                    self.names.short("shell.start")
+                ),
+            );
         }
         let offset = int_arg(args, "offset").unwrap_or(0);
         let tail = int_arg(args, "tail")
@@ -2309,6 +2518,105 @@ mod tests {
         assert_eq!(
             page_done(&serde_json::json!({"done": "clicked button", "label": "Go \"now\""})),
             "clicked button \"Go \\\"now\\\"\""
+        );
+    }
+
+    #[test]
+    fn each_refusal_says_what_happened_and_what_to_do() {
+        let all = [
+            (Refusal::ReadOnly, "agents are read-only in Settings"),
+            (Refusal::NotEnabled, "not enabled for agents in Settings"),
+            (Refusal::ShellOff, "the shell is switched off in Settings"),
+            (Refusal::ConnectorOff, "set to Deny for its connector"),
+            (Refusal::Declined, "The person declined `x`"),
+            (
+                Refusal::Unanswered,
+                "Nobody answered the approval for `x` in time",
+            ),
+            (
+                Refusal::NoOneToAsk,
+                "no one can answer an approval in this run",
+            ),
+        ];
+        let texts: Vec<String> = all.iter().map(|(r, _)| refusal_text("`x`", *r)).collect();
+        for ((why, says), text) in all.iter().zip(&texts) {
+            assert!(text.contains(says), "{why:?}: {text}");
+            assert!(text.contains("`x`"), "{why:?} names the tool: {text}");
+            assert!(
+                !text.contains("approval mode or the person"),
+                "{why:?} says which: {text}"
+            );
+        }
+        assert!(texts[4].contains("ask them in chat"), "{}", texts[4]);
+        assert!(texts[5].contains("then try again"), "{}", texts[5]);
+        let mut unique = texts.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), texts.len(), "no two reasons read alike");
+    }
+
+    #[test]
+    fn a_no_at_the_end_of_the_wait_is_nobody_answering() {
+        let wait = Duration::from_secs(90);
+        let quick = Duration::from_secs(4);
+        assert_eq!(answered(Approval::Allow, quick, wait), Ok(()));
+        assert_eq!(
+            answered(Approval::Deny, quick, wait),
+            Err(Refusal::Declined)
+        );
+        assert_eq!(
+            answered(Approval::Expired, quick, wait),
+            Err(Refusal::Unanswered)
+        );
+        assert_eq!(
+            answered(Approval::Deny, wait, wait),
+            Err(Refusal::Unanswered),
+            "an approver that reports a card that ran out as a plain no"
+        );
+        assert_eq!(answered(Approval::Allow, wait, wait), Ok(()));
+    }
+
+    #[test]
+    fn an_unknown_tool_names_the_close_ones() {
+        assert_eq!(edit_distance("kitten", "sitting"), 3);
+        assert_eq!(edit_distance("", "abc"), 3);
+        assert_eq!(edit_distance("same", "same"), 0);
+        let offered: Vec<String> = [
+            "shell.exec",
+            "shell.start",
+            "shell.logs",
+            "shell.kill",
+            "brain.read",
+            "brain.search",
+            "todo.write",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+        let near = close_matches("shell.run", &offered);
+        assert_eq!(near.len(), 3, "{near:?}");
+        assert!(near.iter().all(|n| n.starts_with("shell.")), "{near:?}");
+        assert_eq!(close_matches("brain.raed", &offered)[0], "brain.read");
+        assert_eq!(close_matches("todo_list", &offered), ["todo.write"]);
+        assert!(close_matches("zzz", &offered).is_empty());
+        let claude = CallNames::for_agent("claude");
+        let text = no_such_tool("brain.raed", &offered, &claude);
+        assert!(
+            text.starts_with("There is no tool `mcp__parzi__brain_raed`.")
+                && text.contains("`mcp__parzi__brain_read`"),
+            "{text}"
+        );
+        let text = no_such_tool("zzz", &offered, &CallNames::default());
+        assert_eq!(
+            text,
+            "There is no tool `zzz` on the `parzi` server. Call one of the tools Parzi lists."
+        );
+        let text = no_such_tool("shell.run", &offered, &CallNames::default());
+        assert!(text.contains(" or `shell_"), "{text}");
+        assert_eq!(
+            text.matches("server").count(),
+            1,
+            "the server is named once: {text}"
         );
     }
 

@@ -145,7 +145,7 @@ impl Approver for ParkedApprover {
         } else {
             let text = format!("Nobody answered in time, so it was denied: {label}");
             let _ = self.store.append(&call.session, &Event::System { text });
-            Approval::Deny
+            Approval::Expired
         }
     }
 }

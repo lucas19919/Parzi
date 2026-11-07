@@ -40,11 +40,19 @@ pub struct ToolCallInfo {
 pub enum Approval {
     Allow,
     Deny,
+    /// Nobody answered before the card's wait ran out.
+    Expired,
 }
 
 #[async_trait::async_trait]
 pub trait Approver: Send + Sync {
     async fn approve(&self, call: &ToolCallInfo) -> Approval;
+
+    /// Whether a person sees the cards. One that refuses unseen says so, so
+    /// its refusals never read as the person's own.
+    fn asks_a_person(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +85,10 @@ impl Approver for AutoApprover {
 impl Approver for DenyApprover {
     async fn approve(&self, _call: &ToolCallInfo) -> Approval {
         Approval::Deny
+    }
+
+    fn asks_a_person(&self) -> bool {
+        false
     }
 }
 
@@ -126,18 +138,18 @@ impl ToolExecutor {
     }
 
     pub async fn execute(&self, name: &str, args: &serde_json::Value) -> (bool, String) {
-        if !self.is_allowed(name) {
-            return (
+        let off = || {
+            (
                 false,
-                format!("tool `{name}` is not allowed here (Settings)"),
-            );
+                format!("`{name}` is not enabled for agents in Settings; do it another way, or ask the person to turn it on"),
+            )
+        };
+        if !self.is_allowed(name) {
+            return off();
         }
         if let Some((server, tool)) = name.split_once('.') {
             if is_vendor_category(name) {
-                return (
-                    false,
-                    format!("tool `{name}` is not allowed here (Settings)"),
-                );
+                return off();
             }
             if is_ui_tool(name)
                 || is_brain_tool(name)
@@ -149,13 +161,13 @@ impl ToolExecutor {
             if !self.mcp.is_tool_exposed(server, tool) {
                 return (
                     false,
-                    format!("tool `{name}` is disabled for this connector"),
+                    format!("`{tool}` is turned off for the {server} connector in Settings; ask the person to turn it on"),
                 );
             }
             if self.mcp.tool_mode(server, tool).as_deref() == Some("deny") {
                 return (
                     false,
-                    format!("tool `{name}` is blocked by connector policy"),
+                    format!("`{tool}` is set to Deny for the {server} connector in Settings; ask the person to allow it there"),
                 );
             }
             return self.mcp.call_tool(server, tool, args.clone()).await;
@@ -1338,6 +1350,12 @@ const NAMESPACES: &[&str] = &[
 /// The MCP server agents reach Parzi's own tools on.
 pub const PARZI_SERVER: &str = "parzi";
 
+/// A name Parzi would serve, such as `shell.run`, whether or not a tool has it.
+pub(crate) fn in_parzi_namespace(name: &str) -> bool {
+    name.split_once('.')
+        .is_some_and(|(ns, _)| NAMESPACES.contains(&ns))
+}
+
 pub fn to_mcp(name: &str) -> String {
     name.replace('.', "_")
 }
@@ -1365,11 +1383,17 @@ impl CallNames {
     /// `shell_exec` on the `parzi` server to everyone else.
     #[must_use]
     pub fn tool(&self, name: &str) -> String {
-        let mcp = to_mcp(current_name(&display_name(name)));
         match &self.prefix {
-            Some(p) => format!("`{p}{mcp}`"),
-            None => format!("`{mcp}` on the `{PARZI_SERVER}` server"),
+            Some(_) => self.short(name),
+            None => format!("{} on the `{PARZI_SERVER}` server", self.short(name)),
         }
+    }
+
+    /// The name alone, for a list after the server was named once.
+    #[must_use]
+    pub fn short(&self, name: &str) -> String {
+        let mcp = to_mcp(current_name(&display_name(name)));
+        format!("`{}{mcp}`", self.prefix.as_deref().unwrap_or(""))
     }
 }
 
