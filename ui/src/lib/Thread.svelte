@@ -61,7 +61,7 @@
 
   const dispatch = createEventDispatcher<{
     voted: { key: string };
-    answered: { key: string };
+    answered: { key: string; session?: string; text?: string };
     edited: { text: string; quotes: PlanQuote[] };
     forked: void;
     retry: void;
@@ -533,7 +533,7 @@ ${e.text}` : e.text;
     } catch (e) {
       toastError(e);
     } finally {
-      dispatch("answered", { key });
+      dispatch("answered", { key, session, text: answer.trim() });
     }
   }
 

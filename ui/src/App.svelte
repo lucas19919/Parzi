@@ -445,6 +445,13 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     if (next.has(shown)) void tick().then(() => scrollEl?.querySelector(".plan")?.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" }));
   }
 
+  /** Opens the plan in a session's thread, without toggling it shut. */
+  function revealPlan(session: string) {
+    if (planForced.has(session)) return;
+    planForced = new Set(planForced).add(session);
+    if (session === shown) void tick().then(() => scrollEl?.querySelector(".plan")?.scrollIntoView({ block: "nearest", behavior: reduced ? "auto" : "smooth" }));
+  }
+
   function hidePlan() {
     if (!shown) return;
     const next = new Set(planForced);
@@ -1572,6 +1579,16 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
     } else if (e.kind === "artifact") {
       liveArtifacts = [...liveArtifacts.filter((a) => a.id !== e.id), e];
     } else if (e.kind === "tool_call") {
+      // What the agent said before a step is narration ("I'll check the
+      // plan..."), not its reply: it joins the folded working, and the reply
+      // starts again after the step. Cards and reply buttons come after the
+      // final text, so they leave it be.
+      const said = (live + pending).trim();
+      if (said && !e.name.startsWith("ui.") && e.name !== "todo.write") {
+        liveReasoning = liveReasoning ? `${liveReasoning}\n\n${said}` : said;
+        live = "";
+        pending = "";
+      }
       if (!liveTools.some((t) => t.id === e.id)) {
         liveTools = [...liveTools, { id: e.id, name: e.name, label: e.label || e.name, running: true, ok: true, ms: 0 }];
       }
@@ -2011,7 +2028,11 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
                   provider={threads.find((t) => t.id === shown)?.model.split("/")[0] ?? ""}
                   sessionTitle={titleOf}
                   on:voted={(e) => settle(e.detail.key)}
-                  on:answered={(e) => settle(e.detail.key)}
+                  on:answered={(e) => {
+                    settle(e.detail.key);
+                    // An accepted plan opens in the thread (plan_tools.rs USE_PLAN).
+                    if (e.detail.text === "Use this plan" && e.detail.session) revealPlan(e.detail.session);
+                  }}
                   on:edited={(e) => {
                     comp.input = e.detail.text;
                     if (e.detail.quotes.length) comp.quotes = e.detail.quotes.slice(0, MAX_QUOTES);

@@ -3,6 +3,7 @@
   import { slide } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import Icon from "./Icon.svelte";
+  import PlanMark from "./PlanMark.svelte";
   import type { PlanQuote, Question, SessionMeta } from "./api";
   import type { Approval } from "./live";
   import { activity } from "./activity";
@@ -82,7 +83,7 @@
                   use:tooltip={quoted(v) ? "Quoted. Click to remove it." : `${STATE_WORDS[v.state]}. Click to quote it.`}
                   on:click={() => quote(v)}
                 >
-                  <span class="mark {v.state}" aria-label={STATE_WORDS[v.state]} />
+                  <PlanMark state={v.state} />
                   <span class="t">{v.item.title}</span>
                   {#if quoted(v)}<span class="why">Quoted</span>
                   {:else if itemNote(v)}<span class="why" class:asks={v.state === "needs"}>{itemNote(v)}</span>{/if}
@@ -95,7 +96,7 @@
           {#if groups.closed.length}
             <li>
               <button class="item fold" on:click={() => (showDone = !showDone)}>
-                <span class="mark done" />
+                <PlanMark state="done" quiet />
                 <span class="t">{showDone ? "Hide done" : `Done · ${groups.closed.length}`}</span>
               </button>
             </li>
@@ -103,7 +104,7 @@
               {#each groups.closed as v (v.item.id)}
                 <li>
                   <button class="item closed" class:picked={quoted(v)} on:click={() => quote(v)}>
-                    <span class="mark {v.state}" />
+                    <PlanMark state={v.state} quiet />
                     <span class="t" class:struck={v.state === "dropped"}>{v.item.title}</span>
                   </button>
                 </li>
@@ -250,62 +251,4 @@
     margin: calc(var(--space) * 2) calc(var(--space) * 2) var(--space);
   }
 
-  .mark {
-    position: relative;
-    width: 14px;
-    height: 14px;
-    flex: none;
-    border: 1.5px solid var(--muted);
-    border-radius: 50%;
-  }
-  .mark.started {
-    border-style: dashed;
-  }
-  .mark.working {
-    border-color: var(--line);
-    border-top-color: var(--accent);
-    animation: spin 0.9s linear infinite;
-  }
-  .mark.review {
-    border-color: var(--accent);
-  }
-  .mark.review::after {
-    content: "";
-    position: absolute;
-    inset: 3px;
-    border-radius: 50%;
-    background: var(--accent);
-  }
-  .mark.needs {
-    border-color: var(--warn);
-    background: var(--warn);
-  }
-  .mark.done {
-    border-color: var(--ok);
-    background: var(--ok);
-  }
-  .mark.done::after {
-    content: "";
-    position: absolute;
-    left: 3.5px;
-    top: 1.5px;
-    width: 3px;
-    height: 6px;
-    border: solid var(--bg);
-    border-width: 0 1.5px 1.5px 0;
-    transform: rotate(45deg);
-  }
-  .mark.dropped {
-    border-color: var(--line);
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .mark.working {
-      animation: none;
-    }
-  }
 </style>

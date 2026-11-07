@@ -13,7 +13,8 @@
   import { api, onRunEvent, type GitStatus, type Question, type SessionMeta } from "./api";
   import type { Approval } from "./live";
   import { planState } from "./planStore";
-  import { isTrunk, progress, deriveItems } from "./planModel";
+  import { isTrunk, progress, deriveItems, groupItems } from "./planModel";
+  import PlanMark from "./PlanMark.svelte";
   import { activity } from "./activity";
   import { folderName } from "./tabs";
   import { tooltip } from "./tooltip";
@@ -89,8 +90,12 @@
   $: planError = $planState.project === project ? $planState.error : "";
   $: limits = $board.find((b) => b.provider === provider)?.usage ?? [];
   const kTok = (n: number) => (n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${+(n / 1_000).toFixed(1)}k` : String(n));
-  $: planCount = plan ? progress(deriveItems(plan, { project, threads, running, waiting: new Map(), prs: $planState.prs, activity: $activity })) : null;
-  $: planAside = planError ? "Unreadable" : planInline ? "Shown" : planCount ? `${planCount.done} of ${planCount.total}` : "";
+  $: planViews = plan ? deriveItems(plan, { project, threads, running, waiting: new Map(), prs: $planState.prs, activity: $activity }) : [];
+  $: planCount = plan ? progress(planViews) : null;
+  $: planAside = planError ? "Unreadable" : planCount ? `${planCount.done} of ${planCount.total}` : "";
+  // The open items in plan order, the first few; the thread shows them all.
+  const PLAN_ROWS = 6;
+  $: planOpen = plan ? groupItems(plan, planViews).open.flatMap((g) => g.items) : [];
 
   onMount(() => {
     const onFocus = () => void loadGit();
@@ -194,13 +199,25 @@
     </InfoCard>
   {/if}
 
-  {#if (plan && planCount) || planError}
-    <InfoCard id="plan" title="Plan">
+  <!-- While the plan is open in the thread, the column does not repeat it. -->
+  {#if ((plan && planCount) || planError) && !planInline}
+    <InfoCard id="plan" title={plan?.title ? `Plan · ${plan.title}` : "Plan"}>
       <svelte:fragment slot="aside">{planAside}</svelte:fragment>
       {#if plan && planCount}
-        <button class="info-line row plan-row" use:tooltip={planInline ? "Hide the plan checklist" : "Show the plan checklist"} on:click={() => dispatch("plan")}>
+        {#each planOpen.slice(0, PLAN_ROWS) as v (v.item.id)}
+          <button class="info-line row plan-item" use:tooltip={"Show the plan in the thread"} on:click={() => dispatch("plan")}>
+            <PlanMark state={v.state} />
+            <span class="info-v">{v.item.title}</span>
+          </button>
+        {:else}
+          <div class="info-line quiet">Everything is done</div>
+        {/each}
+        {#if planOpen.length > PLAN_ROWS}
+          <div class="info-line quiet">and {planOpen.length - PLAN_ROWS} more</div>
+        {/if}
+        <button class="info-line row plan-row" on:click={() => dispatch("plan")}>
           <Icon name="plan" size={12} />
-          <span class="info-v">{planInline ? "Hide plan" : plan.title || "Plan"}</span>
+          <span class="info-v">Show in the thread</span>
         </button>
       {:else}
         <button class="info-line row plan-row" use:tooltip={"Show why the plan can't be read"} on:click={() => dispatch("plan")}>
@@ -275,5 +292,9 @@
   }
   .checks.fail :global(svg) {
     color: var(--bad-text);
+  }
+  .plan-item :global(.mark) {
+    width: 12px;
+    height: 12px;
   }
 </style>
