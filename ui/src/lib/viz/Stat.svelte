@@ -4,6 +4,7 @@
 
   export let stat: StatItem;
   export let unit = "";
+  export let draw = 1;
 </script>
 
 <div class="stat">
@@ -13,7 +14,7 @@
     {#if stat.delta}<span class="delta">{stat.delta}</span>{/if}
   </div>
   {#if stat.spark.length}
-    <Spark values={stat.spark} height={28} {unit} label={stat.label} />
+    <Spark values={stat.spark} height={28} {unit} label={stat.label} {draw} />
   {/if}
 </div>
 

@@ -16,8 +16,8 @@
       </thead>
     {/if}
     <tbody>
-      {#each rows as r}
-        <tr>{#each r as c, i}<td class:num={numeric[i]}>{c}</td>{/each}</tr>
+      {#each rows as r, ri}
+        <tr class="rise" style:--i={ri}>{#each r as c, i}<td class:num={numeric[i]}>{c}</td>{/each}</tr>
       {/each}
     </tbody>
   </table>
