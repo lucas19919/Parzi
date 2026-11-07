@@ -162,6 +162,10 @@ export interface Theme {
     image: string;
     height: number;
     y: number;
+    /** Where the wallpaper shows on Home. */
+    fill?: "band" | "full";
+    /** How cards look over it. */
+    cards?: "clear" | "glass" | "solid";
   };
 }
 

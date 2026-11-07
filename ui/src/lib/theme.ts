@@ -36,15 +36,29 @@ function themeVars(t: Theme): Record<string, string> {
     "--panel": t.colors.panel?.trim() ? t.colors.panel : "color-mix(in srgb, var(--text) 6%, var(--bg))",
     "--bg-height": `${Math.round(t.background.height * 100)}%`,
     "--bg-y": `${Math.round(t.background.y * 100)}%`,
+    "--art-fill": t.background.fill ?? "band",
+    "--art-cards": t.background.cards ?? "clear",
   };
+}
+
+/** The wallpaper's fill and the cards' look arrive as theme variables; as
+ *  attributes on the page, plain CSS can style by them. */
+function syncArt() {
+  const root = document.documentElement;
+  const css = getComputedStyle(root);
+  const fill = css.getPropertyValue("--art-fill").trim();
+  const cards = css.getPropertyValue("--art-cards").trim();
+  root.dataset.artFill = fill === "full" ? "full" : "band";
+  root.dataset.artCards = cards === "glass" || cards === "solid" ? cards : "clear";
 }
 
 export function previewTheme(t: Theme) {
   const s = document.documentElement.style;
   for (const [k, v] of Object.entries(themeVars(t))) s.setProperty(k, v);
+  syncArt();
 }
 
-const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--panel", "--bg-height", "--bg-y"];
+const THEME_VARS = ["--font", "--font-size", "--mono", "--mono-size", "--bg", "--accent", "--text", "--muted", "--panel", "--bg-height", "--bg-y", "--art-fill", "--art-cards"];
 
 function clearPreview() {
   const s = document.documentElement.style;
@@ -58,6 +72,7 @@ export function applyThemeCss(css: string) {
   style.textContent = css;
   document.head.appendChild(style);
   clearPreview();
+  syncArt();
 }
 
 export async function refreshBackground() {

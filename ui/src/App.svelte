@@ -1795,7 +1795,7 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
 
 <svelte:window on:keydown={onKey} on:pagehide={persistDrafts} on:beforeunload={persistDrafts} bind:innerWidth />
 
-<div class="shell">
+<div class="shell" class:over-art={showWallpaper && !!bg}>
   <DefaultArt bg={showWallpaper ? bg : ""} />
 
   {#if !immersive}
@@ -2115,6 +2115,22 @@ import { dropId, enqueue, flushHeld, heldLabel, loadHeld, MAX_HELD, moveHeld, mo
   }
   :global(html.parzi-maximized) .shell {
     border-radius: 0;
+  }
+  /* Cards over the wallpaper on Home: clear (outlined, the default), glass
+     (frosted) or solid (the panel colour), as set in Appearance. Only here:
+     everywhere else surfaces stay solid. */
+  .over-art :global(:is(.info .card, .ob .box)) {
+    transition:
+      background var(--dur) ease,
+      backdrop-filter var(--dur) ease;
+  }
+  :global(html[data-art-cards="glass"]) .over-art :global(:is(.info .card, .ob .box)) {
+    background: color-mix(in srgb, var(--panel) 52%, transparent);
+    -webkit-backdrop-filter: blur(18px) saturate(1.2);
+    backdrop-filter: blur(18px) saturate(1.2);
+  }
+  :global(html[data-art-cards="solid"]) .over-art :global(:is(.info .card, .ob .box)) {
+    background: var(--panel);
   }
 
   main {

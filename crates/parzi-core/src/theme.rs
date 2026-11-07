@@ -53,6 +53,14 @@ pub struct BackgroundTheme {
     pub height: f64,
     #[serde(default = "d_bg_y")]
     pub y: f64,
+    /// Where the wallpaper shows on Home: "band", a strip across the top,
+    /// or "full", the whole window.
+    #[serde(default = "d_bg_fill")]
+    pub fill: String,
+    /// How cards look over the wallpaper: "clear" (see-through, outlined),
+    /// "glass" (frosted) or "solid" (the panel colour).
+    #[serde(default = "d_bg_cards")]
+    pub cards: String,
 }
 
 fn d_ui_font() -> String {
@@ -123,6 +131,12 @@ fn d_bg_height() -> f64 {
 fn d_bg_y() -> f64 {
     0.5
 }
+fn d_bg_fill() -> String {
+    "band".into()
+}
+fn d_bg_cards() -> String {
+    "clear".into()
+}
 
 impl Default for FontTheme {
     fn default() -> Self {
@@ -154,6 +168,8 @@ impl Default for BackgroundTheme {
             image: d_bg_image(),
             height: d_bg_height(),
             y: d_bg_y(),
+            fill: d_bg_fill(),
+            cards: d_bg_cards(),
         }
     }
 }
@@ -181,6 +197,12 @@ impl Theme {
         t.colors.panel = t.colors.panel.trim().to_string();
         t.background.height = t.background.height.clamp(0.2, 0.6);
         t.background.y = t.background.y.clamp(0.0, 1.0);
+        if !matches!(t.background.fill.as_str(), "band" | "full") {
+            t.background.fill = d_bg_fill();
+        }
+        if !matches!(t.background.cards.as_str(), "clear" | "glass" | "solid") {
+            t.background.cards = d_bg_cards();
+        }
         t.font.size = t.font.size.clamp(10, 20);
         t.font.mono_size = t.font.mono_size.clamp(9, 18);
         t
@@ -196,7 +218,8 @@ impl Theme {
         };
         format!(
             ":root{{--font:{};--font-size:{}px;--mono:{};--mono-size:{}px;\
-            --bg:{};--text:{};--accent:{};--panel:{};--bg-height:{}%;--bg-y:{}%;}}\n",
+            --bg:{};--text:{};--accent:{};--panel:{};--bg-height:{}%;--bg-y:{}%;\
+            --art-fill:{};--art-cards:{};}}\n",
             css_font_list(&t.font.family),
             t.font.size,
             css_font_list(&t.font.mono),
@@ -207,6 +230,8 @@ impl Theme {
             panel,
             (t.background.height * 100.0).round(),
             (t.background.y * 100.0).round(),
+            t.background.fill,
+            t.background.cards,
         )
     }
 }
@@ -658,6 +683,7 @@ mod css_tests {
         assert!(css.contains("--panel:color-mix(in srgb, var(--text) 6%, var(--bg));"));
         assert!(css.contains("--bg-height:34%;"));
         assert!(css.contains("--bg-y:50%;"));
+        assert!(css.contains("--art-fill:band;--art-cards:clear;"));
         assert!(!css.contains("--muted:"));
         assert!(!css.contains("--bg-dim:"));
         assert!(!css.contains("--glass"));
@@ -757,6 +783,7 @@ mod background_name_tests {
 
 #[cfg(test)]
 mod default_migration_tests {
+    use super::Theme;
     #[test]
     fn the_untouched_old_default_moves_to_slate_and_a_chosen_look_stays() {
         let mut old = super::ColorTheme::default();
@@ -786,5 +813,27 @@ mod default_migration_tests {
             panel: String::new(),
         };
         assert!(slate.is_old_default());
+    }
+
+    #[test]
+    fn the_wallpaper_fill_and_card_look_are_kept_and_checked() {
+        let mut t = Theme::default();
+        t.background.fill = "full".into();
+        t.background.cards = "glass".into();
+        assert!(t
+            .to_css_vars()
+            .contains("--art-fill:full;--art-cards:glass;"));
+        t.background.fill = "everywhere".into();
+        t.background.cards = "neon".into();
+        assert!(
+            t.to_css_vars()
+                .contains("--art-fill:band;--art-cards:clear;"),
+            "unknown values fall back"
+        );
+        let old: Theme = toml::from_str("[background]\nimage = \"a.jpg\"\n").unwrap();
+        assert_eq!(
+            (old.background.fill.as_str(), old.background.cards.as_str()),
+            ("band", "clear")
+        );
     }
 }

@@ -4,6 +4,34 @@ await import("../main");
 const { emit } = await import("@tauri-apps/api/event");
 await new Promise((r) => setTimeout(r, 300));
 
+// ?bg=1 paints a wallpaper on a canvas (the mock has no files to serve).
+if (new URLSearchParams(location.search).get("bg")) {
+  const c = document.createElement("canvas");
+  c.width = 1600;
+  c.height = 1000;
+  const g = c.getContext("2d")!;
+  const sky = g.createLinearGradient(0, 0, 0, c.height);
+  sky.addColorStop(0, "#1d3b6b");
+  sky.addColorStop(0.55, "#d9825b");
+  sky.addColorStop(1, "#2a1a2e");
+  g.fillStyle = sky;
+  g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = "#f6d28b";
+  g.beginPath();
+  g.arc(1080, 560, 120, 0, Math.PI * 2);
+  g.fill();
+  for (const [y, color] of [[640, "#3b2a4a"], [720, "#2a2038"], [820, "#1b1526"]] as const) {
+    g.fillStyle = color;
+    g.beginPath();
+    g.moveTo(0, y);
+    for (let x = 0; x <= c.width; x += 80) g.lineTo(x, y - 60 * Math.sin(x / 210 + y));
+    g.lineTo(c.width, c.height);
+    g.lineTo(0, c.height);
+    g.fill();
+  }
+  document.dispatchEvent(new CustomEvent("parzi:bg", { detail: c.toDataURL("image/jpeg", 0.85) }));
+}
+
 if (mockView === "settings") {
   window.dispatchEvent(new KeyboardEvent("keydown", { key: ",", ctrlKey: true }));
 }

@@ -64,8 +64,12 @@ shows, `--bg-y`). Edits preview through inline vars (`lib/theme.ts`
 `previewTheme`), persist after 400 ms, then the authoritative stylesheet
 from Rust replaces the preview (`applyThemeCss` always clears inline
 vars). Theme packs live in `~/.parzi/themes/<slug>/`; a pack without art
-keeps the current backdrop. There is no glass, no blur, no wallpaper
-grade: surfaces are solid `--panel` on `--bg`.
+keeps the current backdrop. Surfaces are solid `--panel` on `--bg`, with one
+exception the person chooses: on Home the wallpaper shows as a band across the
+top or the full window, and the cards and composer over it are Clear (outlined,
+the default), Glass (frosted, the only `backdrop-filter` in the app) or Solid.
+That lives in `App.svelte` under `.over-art`, keyed by `html[data-art-fill]`
+and `html[data-art-cards]`, which `lib/theme.ts` sets from the theme.
 
 ## Layout
 
@@ -150,7 +154,7 @@ grade: surfaces are solid `--panel` on `--bg`.
 
 ## Anti-patterns (instant reject in review)
 
-- `backdrop-filter` anywhere: surfaces are solid, there is nothing to blur through.
+- `backdrop-filter` anywhere but the Glass cards over the Home wallpaper.
 - Dead controls: every visible button and command has a handler.
 - Hardcoded hex where a token exists; spacing or radii off the `--space` / `--radius` scale.
 - Silent catch blocks in UI code; missing toast on failure paths.

@@ -29,6 +29,15 @@
   const MONO_FONTS = ["JetBrains Mono", "Cascadia Code", "Fira Code", "Consolas", "SF Mono", "ui-monospace"];
   const SIZES_UI = [12, 13, 14, 15, 16].map((n) => ({ value: String(n), label: String(n) }));
   const SIZES_MONO = [11, 12, 13, 14, 15].map((n) => ({ value: String(n), label: String(n) }));
+  const FILLS = [
+    { value: "band", label: "Band" },
+    { value: "full", label: "Full window" },
+  ];
+  const CARDS = [
+    { value: "clear", label: "Clear" },
+    { value: "glass", label: "Glass" },
+    { value: "solid", label: "Solid" },
+  ];
   const COLOR_KEYS = ["stage", "accent", "text"] as const;
   type ColorKey = (typeof COLOR_KEYS)[number] | "panel";
 
@@ -250,6 +259,18 @@
     theme.colors.panel = "";
     touch();
   }
+  function setFill(v: string) {
+    if (!theme) return;
+    theme.background.fill = v === "full" ? "full" : "band";
+    touch();
+  }
+
+  function setCards(v: string) {
+    if (!theme) return;
+    theme.background.cards = v === "glass" || v === "solid" ? v : "clear";
+    touch();
+  }
+
   function setSize(key: "size" | "mono_size", v: string) {
     if (!theme) return;
     theme.font[key] = Number(v);
@@ -365,9 +386,21 @@
       </div>
       {#if theme.background.image}
         <div class="row ctl-row">
+          <span class="row-label">Show it as</span>
+          <SegControl label="Wallpaper on Home" options={FILLS} value={theme.background.fill ?? "band"} on:pick={(e) => setFill(e.detail)} />
+        </div>
+        <div class="row ctl-row">
+          <span class="row-label">Cards over it</span>
+          <SegControl label="Cards over the wallpaper" options={CARDS} value={theme.background.cards ?? "clear"} on:pick={(e) => setCards(e.detail)} />
+        </div>
+      {/if}
+      {#if theme.background.image && (theme.background.fill ?? "band") === "band"}
+        <div class="row ctl-row">
           <span class="row-label">Height</span>
           <div class="pos"><Slider bare label="Wallpaper height" bind:value={hPct} min={20} max={60} unit="%" on:input={(e) => onHeight(e.detail)} /></div>
         </div>
+      {/if}
+      {#if theme.background.image}
         <div class="row ctl-row">
           <span class="row-label">Position</span>
           <div class="pos"><Slider bare label="Wallpaper position" bind:value={yPct} min={0} max={100} unit="%" on:input={(e) => onPos(e.detail)} /></div>
