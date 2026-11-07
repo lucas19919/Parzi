@@ -43,7 +43,7 @@
   --on-badge: #ffffff;
 
   --space: 4px;
-  --radius: 8px;
+  --radius: 12px;
   --gap: calc(var(--space) * 2);
   --radius-sm: calc(var(--space));
 

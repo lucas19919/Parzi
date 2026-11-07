@@ -25,14 +25,15 @@ is `--disabled` (0.5) everywhere; dimmed rows are `0.55`.
 Control heights are `--h-sm` (24), `--h` (28), `--h-row` (36), `--h-row-lg` (46).
 Popovers sit at `--z-pop`, tooltips at `--z-tip`.
 
-Corners are constant: every box has the same corner, whatever its size or
-what it sits in. There is no height rule and no nesting maths, so nothing
-turns into a pill because it happens to be short, and a button inside a card
-has the card's corner. 8px is also the corner Windows 11 gives the window.
+Corners are constant: every box has the same 12px corner, whatever its size
+or what it sits in. There is no height rule and no nesting maths, so a small
+icon button never drops to a sharper corner than its neighbour, and a button
+inside a card has the card's corner. At 24 to 28px that corner is about half
+the height, so short buttons, tabs and chips read as pills; that is the look.
 
 | What | Radius |
 |---|---|
-| Every box: cards, popovers, menus, tooltips, toasts, inputs, buttons and icon buttons of any size, tabs, chips, tags, rows, logos, images, code blocks, tables | `--radius` (8px) |
+| Every box: cards, popovers, menus, tooltips, toasts, inputs, buttons and icon buttons of any size, tabs, chips, tags, rows, logos, images, code blocks, tables | `--radius` (12px) |
 | Marks drawn inside text or inside a control: inline code, kbd, citation and file links in a reply, progress and usage tracks, legend swatches, checkboxes, favicons and thumbnails inside a row, the stop square | `--radius-sm` (4px) |
 | Dots, knobs, spinners | `50%` |
 | Only the switch and the slider track | `999px` |

@@ -49,7 +49,7 @@
 
   --space: 4px;
   --page: 1400px;
-  --radius: 8px;
+  --radius: 12px;
   --gap: calc(var(--space) * 2);
   --radius-sm: calc(var(--space));
   --radius-lg: var(--radius);
