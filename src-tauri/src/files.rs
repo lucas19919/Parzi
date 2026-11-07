@@ -16,7 +16,8 @@ static SESSION_ROOTS: Mutex<Option<(Instant, Vec<PathBuf>)>> = Mutex::new(None);
 const ROOTS_TTL: Duration = Duration::from_secs(5);
 const OUTSIDE: &str = "that location is outside the workspace, choose the folder first";
 
-async fn off_thread<T, F>(f: F) -> Result<T, String>
+/// Runs blocking work off the async threads; the one helper every command uses.
+pub(crate) async fn off_thread<T, F>(f: F) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, String> + Send + 'static,

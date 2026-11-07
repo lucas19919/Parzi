@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 use crate::desk;
 use crate::handler::ui_event;
 use crate::orchestrator::Orchestrator;
-use crate::rpc::{self, fail, str_arg};
+use crate::rpc::{self, fail, str_arg, tokens_equal};
 use crate::tools::{
     humanize_tool_call, Approval, Approver, AskRequest, Asker, AutoApprover, ToolCallInfo,
 };
@@ -433,18 +433,6 @@ fn write_serve_file(path: &Path, body: &str) -> Result<(), String> {
     {
         parzi_core::atomic_write(path, body.as_bytes()).map_err(|e| e.to_string())
     }
-}
-
-fn tokens_equal(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }
 
 async fn answer(sock: tokio::net::TcpStream, state: &State) -> Result<(), String> {

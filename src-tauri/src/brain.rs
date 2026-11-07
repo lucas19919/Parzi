@@ -10,10 +10,7 @@ where
     T: Send + 'static,
     F: FnOnce() -> parzi_core::Result<T> + Send + 'static,
 {
-    tauri::async_runtime::spawn_blocking(f)
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())
+    crate::files::off_thread(move || f().map_err(|e| e.to_string())).await
 }
 
 #[tauri::command]

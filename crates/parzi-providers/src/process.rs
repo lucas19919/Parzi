@@ -94,6 +94,29 @@ pub fn shell_program() -> (String, Vec<String>) {
     }
 }
 
+/// One argument for a POSIX shell: single quoted, with each quote closed,
+/// escaped and reopened.
+#[must_use]
+pub fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', r"'\''"))
+}
+
+/// One argument for PowerShell: single quoted, with every kind of single
+/// quote PowerShell honours doubled.
+#[must_use]
+pub fn ps_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for c in s.chars() {
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(c);
+        }
+        out.push(c);
+    }
+    out.push('\'');
+    out
+}
+
 pub(crate) fn private_temp(agent: &str) -> Option<PathBuf> {
     let dir = parzi_core::paths::parzi_dir().ok()?.join("tmp").join(agent);
     std::fs::create_dir_all(&dir).ok()?;

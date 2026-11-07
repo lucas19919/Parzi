@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use parzi_core::store::RunCause;
 use parzi_runtime::desk::{check_page_url, GuiFile};
 use parzi_runtime::handler::{ui_event, RunEvent};
+use parzi_runtime::rpc::{bool_arg, fail, str_arg, tokens_equal};
 use parzi_runtime::tools::{humanize_tool_call, Approval, Approver, AutoApprover, ToolCallInfo};
 use parzi_runtime::Orchestrator;
 use serde::{Deserialize, Serialize};
@@ -321,18 +322,9 @@ impl Desk {
 
     fn approval_key(&self, asked: &str) -> Result<(String, Value), String> {
         let rows = locked(&self.approvals);
-        if let Some(row) = rows.get(asked) {
-            return Ok((asked.to_string(), row.clone()));
-        }
-        let hits: Vec<_> = rows
-            .iter()
-            .filter(|(k, _)| asked.len() >= 4 && k.starts_with(asked))
-            .collect();
-        match hits.as_slice() {
-            [(k, row)] => Ok(((*k).clone(), (*row).clone())),
-            [] => Err("approval expired or unknown".into()),
-            _ => Err("that prefix fits more than one approval".into()),
-        }
+        let key = parzi_runtime::rpc::match_key(rows.keys(), asked)?;
+        let row = rows.get(&key).cloned().unwrap_or(Value::Null);
+        Ok((key, row))
     }
 
     fn consented(&self, tab: &str) -> bool {
@@ -502,18 +494,6 @@ fn restrict_to_owner(path: &std::path::Path, body: &str) {
     }
 }
 
-fn tokens_equal(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
 enum Gate {
     Reply(Value),
     Run(Value),
@@ -639,22 +619,6 @@ async fn dispatch(ctx: &Ctx, out: &Out, req: &Value) -> Value {
         "session.delete" => session_delete(ctx, out, req).await,
         _ => fail(format!("unknown op `{op}`")),
     }
-}
-
-fn fail(error: impl Into<String>) -> Value {
-    json!({ "ok": false, "error": error.into() })
-}
-
-fn str_arg(req: &Value, key: &str) -> String {
-    req.get(key)
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string()
-}
-
-fn bool_arg(req: &Value, key: &str, dflt: bool) -> bool {
-    req.get(key).and_then(Value::as_bool).unwrap_or(dflt)
 }
 
 fn raise(app: &AppHandle) {
