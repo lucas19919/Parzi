@@ -441,7 +441,16 @@ const handlers: Record<string, (a: Record<string, unknown>) => unknown> = {
   git_branches: () => ({ current: "main", all: ["main", "plan/sidebar-polish", "release/0.1"] }),
   rewind_thread: () => sessions[0],
   context_parts: () => ({ instructions: 6400, notes: 1800, tools: 9200 }),
-  connector_check: () => new Promise((r) => setTimeout(() => r(14), 900)),
+  connector_check: () =>
+    new Promise((r, no) =>
+      setTimeout(
+        () =>
+          params.get("connector") === "fail"
+            ? no("tool `diagonaldiagrams`: initialize: server closed the pipe\nuvx: error: Failed to fetch: https://pypi.org/simple/diagonaldiagrams/\n  Caused by: dns error: failed to lookup address information")
+            : r(14),
+        900,
+      ),
+    ),
   connector_sign_in: () => new Promise((r) => setTimeout(() => r(12), 1200)),
   connectors_found: () => [
     { name: "isar", source: "Claude Code", server: { command: "node", args: ["mcp/src/index.js"], enabled: true } },
