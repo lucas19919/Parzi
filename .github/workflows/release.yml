@@ -61,13 +61,17 @@ jobs:
 
             ### What changed
 
-            - Markdown and notes open in a card to the right of the session sidebar, under the window buttons. Drag the card's left edge to resize it. Parzi remembers the width.
-            - Select a file starts in the project you have open. Parzi reads text files inside that workspace, up to 1 MB. A file outside the workspace is refused.
-            - Code blocks, math, and tables in a markdown file render the same way they do in the thread. A file that is not markdown is plain text.
-            - Ctrl+P and Ctrl+K open your sessions. The old command menu is gone.
-            - The session sidebar no longer keeps its own copy of the open document.
+            - Connectors work in sessions. Agents can now call the tools of every connector you turned on in Settings, such as diagonaldiagrams, GitHub, Notion and Linear, with the same approvals as Parzi's own tools. Before, connectors could be tested in Settings but no session could use them.
+            - Diagrams come from diagonaldiagrams and show in the thread. Agents no longer draw their own SVG or HTML pages, and charts all use one style.
+            - Plans wait for your yes. When an agent starts a plan or adds, drops or rewords work, you see the change and choose Use this plan, Not now, or say what to change. Progress still updates on its own. The plan card shows phases, the goal, and who is on each item.
+            - Far fewer failed tool calls. Claude no longer reaches for a shell Parzi refuses, Codex waits long enough for long commands and your approvals, tools accept the arguments agents send, and every refusal says why and what to do next.
+            - Helper sessions started from an Ask or Edits session ask you instead of failing quietly.
+            - Connectors install behind a company proxy, run calls side by side, and show their full error when you open one that fails. Agents are told which connectors work, so they say so instead of guessing.
+            - Corners are the same 12px everywhere, small icon buttons included.
+            - Browser fixes: a page no longer hides behind the loading shimmer after a quick second click, Ctrl+B and Ctrl+H work inside pages again, and the shield always shows the current site. The web box and a page's address bar suggest the same way.
+            - Agent instructions are rewritten in plain words, with you in the loop on big work and at the end of each plan phase.
 
-            A markdown block already in the thread stays there until you choose Open to read. Pasting a file path still asks before opening it outside the card. On a narrow window the file card stays hidden until there is room.
+            Sessions saved before this still show their old HTML and SVG cards and old charts.
 
             ### Download
 
