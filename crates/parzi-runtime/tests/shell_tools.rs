@@ -98,6 +98,60 @@ async fn foreground_failure_reports_its_exit() {
 }
 
 #[tokio::test]
+async fn bash_s_argument_names_run_too() {
+    let h = host(&workdir());
+    let (ok, out) = h
+        .call("shell.exec", &json!({"command": "echo as-command"}))
+        .await;
+    assert!(ok && out.contains("as-command"), "{out}");
+    let (ok, out) = h
+        .call("shell.exec", &json!({"command": ["echo", "as", "words"]}))
+        .await;
+    assert!(ok && out.contains("as words"), "{out}");
+    let (nap, sleep) = if cfg!(windows) {
+        ("Start-Sleep -Seconds 5", "Start-Sleep -Seconds 30")
+    } else {
+        ("sleep 5", "sleep 30")
+    };
+    for (key, timeout) in [
+        ("timeout", json!(1000)),
+        ("timeout", json!("1000")),
+        ("timeout_ms", json!(1000.0)),
+    ] {
+        let (ok, out) = h
+            .call("shell.exec", &json!({"command": nap, key: timeout}))
+            .await;
+        assert!(
+            ok && out.starts_with("timed out"),
+            "{key}={timeout} is the limit, not the 120s default: {out}"
+        );
+    }
+    let (ok, out) = h.call("shell.start", &json!({"command": sleep})).await;
+    assert!(ok && out.starts_with("started sh-"), "{out}");
+    let id = out
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or_default()
+        .to_string();
+    let (ok, out) = h
+        .call(
+            "shell.logs",
+            &json!({"id": id, "offset": "0", "tail": 100.0}),
+        )
+        .await;
+    assert!(ok && out.contains("running"), "{out}");
+    let (ok, _) = h.call("shell.kill", &json!({"id": id})).await;
+    assert!(ok);
+    let (ok, out) = h
+        .call("shell.exec", &json!({"command": "cat ~/.codex/auth.json"}))
+        .await;
+    assert!(
+        !ok && out.contains("refused"),
+        "the secret-file guard reads `command` too: {out}"
+    );
+}
+
+#[tokio::test]
 async fn background_start_logs_kill() {
     let h = host(&workdir());
     let sleep = if cfg!(windows) {

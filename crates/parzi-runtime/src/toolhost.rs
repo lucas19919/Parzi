@@ -17,10 +17,11 @@ use tokio_util::sync::CancellationToken;
 use crate::ask_text::makes_media;
 use crate::handler::{HarnessBridge, RunEvent, RunSink, SpawnSpec};
 use crate::tools::{
-    category, current_name, display_name, edit_paths, is_brain_tool, is_browser_tool, is_desk_tool,
-    is_github_tool, is_image_tool, is_models_tool, is_plan_tool, is_project_tool, is_question_tool,
-    is_session_tool, is_shell_tool, is_ui_tool, window_tool_offered, Approval, ApprovalMode,
-    Approver, AskRequest, Asker, CallNames, ToolCallInfo, ToolDef, ToolExecutor,
+    bool_arg, category, command_arg, current_name, display_name, edit_paths, int_arg,
+    is_brain_tool, is_browser_tool, is_desk_tool, is_github_tool, is_image_tool, is_models_tool,
+    is_plan_tool, is_project_tool, is_question_tool, is_session_tool, is_shell_tool, is_ui_tool,
+    lenient_bool, lenient_u64, window_tool_offered, Approval, ApprovalMode, Approver, AskRequest,
+    Asker, CallNames, ToolCallInfo, ToolDef, ToolExecutor,
 };
 
 pub struct ToolHostParts {
@@ -190,15 +191,26 @@ fn named_paths(req: &PermissionRequest) -> Vec<String> {
 }
 
 fn command_text(input: &Value) -> String {
-    match input.get("command").or_else(|| input.get("cmd")) {
-        Some(Value::Array(parts)) => parts
-            .iter()
-            .filter_map(Value::as_str)
-            .collect::<Vec<_>>()
-            .join(" "),
-        Some(v) => v.as_str().unwrap_or_default().to_string(),
-        None => String::new(),
+    command_arg(input).unwrap_or_default()
+}
+
+/// Page tools pass their arguments to the window as they came; a switch or a
+/// count spelled as text ("true", "5000") is made the value the page expects.
+fn page_args(args: &Value) -> Value {
+    let mut out = args.clone();
+    if let Value::Object(o) = &mut out {
+        for (k, v) in o.iter_mut() {
+            let fixed = match k.as_str() {
+                "new" | "all" | "append" | "submit" | "gone" => lenient_bool(v).map(Value::from),
+                "timeout_ms" | "offset" | "limit" => lenient_u64(v).map(Value::from),
+                _ => None,
+            };
+            if let Some(f) = fixed {
+                *v = f;
+            }
+        }
     }
+    out
 }
 
 const SECRET_FILE: &str =
@@ -638,14 +650,14 @@ fn shell_detour(tool: &str, input: &Value, names: &CallNames) -> String {
             call("shell.start", serde_json::json!({"cmd": command})),
             names.tool("shell.logs")
         ),
-        _ if input.get("run_in_background").and_then(Value::as_bool) == Some(true) => format!(
+        _ if bool_arg(input, "run_in_background") == Some(true) => format!(
             "{off} Call {}, then read its output with {}.",
             call("shell.start", serde_json::json!({"cmd": command})),
             names.tool("shell.logs")
         ),
         _ => {
             let mut args = serde_json::json!({"cmd": command});
-            if let Some(ms) = input.get("timeout").and_then(Value::as_u64) {
+            if let Some(ms) = int_arg(input, "timeout") {
                 args["timeout_ms"] = Value::from(ms);
             }
             format!("{off} Call {}.", call("shell.exec", args))
@@ -757,8 +769,7 @@ impl ToolHost {
                     format!("`{name}` needs the Parzi window, and this run has none"),
                 );
             }
-            let every_tab =
-                name == "browser.tabs" && args.get("all").and_then(Value::as_bool) == Some(true);
+            let every_tab = name == "browser.tabs" && bool_arg(args, "all") == Some(true);
             let allowed = if every_tab {
                 self.p.mode != ApprovalMode::Deny
                     && self.p.tools.is_allowed(name)
@@ -871,8 +882,7 @@ impl ToolHost {
                 }
                 return self.execute_shell_logs(args).await;
             }
-            let cmd = args.get("cmd").and_then(Value::as_str).unwrap_or("");
-            if crate::desk::mentions_protected(cmd, &self.shell_home()) {
+            if crate::desk::mentions_protected(&command_text(args), &self.shell_home()) {
                 return (false, format!("refused: {SECRET_FILE}"));
             }
             if !self.approved(id, name, args).await {
@@ -1076,7 +1086,7 @@ impl ToolHost {
         };
         let sid = &self.p.session_id;
         let str_arg = |k: &str| args.get(k).and_then(|v| v.as_str()).map(str::to_string);
-        let bool_arg = |k: &str, dflt: bool| args.get(k).and_then(Value::as_bool).unwrap_or(dflt);
+        let flag = |k: &str, dflt: bool| bool_arg(args, k).unwrap_or(dflt);
         let out: Result<String> = match name {
             "session.spawn" => {
                 let title = str_arg("title").unwrap_or_else(|| "subsession".into());
@@ -1090,9 +1100,9 @@ impl ToolHost {
                         SpawnSpec {
                             title,
                             prompt,
-                            is_subsession: bool_arg("is_subsession", true),
+                            is_subsession: flag("is_subsession", true),
                             model: str_arg("model").filter(|s| !s.trim().is_empty()),
-                            wait: bool_arg("wait", true),
+                            wait: flag("wait", true),
                             mode_override: self.child_mode(),
                             effort: str_arg("effort").filter(|s| !s.trim().is_empty()),
                         },
@@ -1112,7 +1122,7 @@ impl ToolHost {
                         &target,
                         &message,
                         kind,
-                        bool_arg("wait", false),
+                        flag("wait", false),
                         str_arg("effort").filter(|s| !s.trim().is_empty()),
                     )
                     .await
@@ -1122,15 +1132,12 @@ impl ToolHost {
                 if target.trim().is_empty() {
                     return (false, "session.read needs `session_id`".into());
                 }
-                let tail = args
-                    .get("tail_events")
-                    .and_then(Value::as_u64)
-                    .map(|n| (n.min(60)) as usize);
+                let tail = int_arg(args, "tail_events").map(|n| (n.min(60)) as usize);
                 bridge.read_session(sid, &target, tail).await
             }
             "session.list" => {
                 bridge
-                    .list_sessions(sid, bool_arg("only_subsessions", false))
+                    .list_sessions(sid, flag("only_subsessions", false))
                     .await
             }
             _ => return (false, format!("unknown session tool `{name}`")),
@@ -1394,7 +1401,7 @@ impl ToolHost {
             })
             .take(6)
             .unzip();
-        let multi = args.get("multi").and_then(Value::as_bool).unwrap_or(false);
+        let multi = bool_arg(args, "multi").unwrap_or(false);
         let kind = match args.get("kind").and_then(Value::as_str).map(str::trim) {
             Some(k @ ("file" | "image" | "text")) if options.is_empty() => k.to_string(),
             _ => String::new(),
@@ -1475,10 +1482,7 @@ impl ToolHost {
             if slug.is_empty() {
                 return (false, "project.archive needs a `slug`".into());
             }
-            let on = args
-                .get("archived")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
+            let on = bool_arg(args, "archived").unwrap_or(true);
             return match parzi_core::brain::archive_project(slug, on) {
                 Ok(_) if on => (true, format!("project {slug} archived")),
                 Ok(_) => (true, format!("project {slug} unarchived")),
@@ -1668,14 +1672,14 @@ impl ToolHost {
         };
         match name {
             "shell.exec" => {
-                let cmd = str_arg("cmd").unwrap_or_default();
+                let cmd = command_text(args);
                 if cmd.trim().is_empty() {
                     return (false, "shell.exec needs a `cmd`".into());
                 }
-                let timeout = args
-                    .get("timeout_ms")
-                    .and_then(Value::as_u64)
-                    .map(|ms| Duration::from_millis(ms))
+                // `timeout` is Bash's name for it, in milliseconds as well.
+                let timeout = int_arg(args, "timeout_ms")
+                    .or_else(|| int_arg(args, "timeout"))
+                    .map(Duration::from_millis)
                     .unwrap_or(crate::shell::FOREGROUND_DEFAULT_TIMEOUT);
                 match self.p.shell.exec(&cmd, &cwd, timeout).await {
                     Ok(out) => {
@@ -1695,7 +1699,7 @@ impl ToolHost {
                 }
             }
             "shell.start" => {
-                let cmd = str_arg("cmd").unwrap_or_default();
+                let cmd = command_text(args);
                 if cmd.trim().is_empty() {
                     return (false, "shell.start needs a `cmd`".into());
                 }
@@ -1724,10 +1728,8 @@ impl ToolHost {
         if id.is_empty() {
             return (false, "shell.logs needs an `id`".into());
         }
-        let offset = args.get("offset").and_then(Value::as_u64).unwrap_or(0);
-        let tail = args
-            .get("tail")
-            .and_then(Value::as_u64)
+        let offset = int_arg(args, "offset").unwrap_or(0);
+        let tail = int_arg(args, "tail")
             .map(|n| n.min(16_384) as usize)
             .unwrap_or(4096);
         match self.p.shell.logs(id, offset, tail) {
@@ -1751,7 +1753,7 @@ impl ToolHost {
     }
 
     fn page_body(&self, args: &Value) -> Value {
-        let mut body = serde_json::json!({ "session": self.p.session_id, "args": args });
+        let mut body = serde_json::json!({ "session": self.p.session_id, "args": page_args(args) });
         if let Some(tab) = args
             .get("tab")
             .and_then(Value::as_str)
@@ -1825,11 +1827,10 @@ impl ToolHost {
             Ok(u) => u,
             Err(e) => return (false, e),
         };
-        let flag = |k: &str| args.get(k).and_then(Value::as_bool).unwrap_or(false);
         let mut body = serde_json::json!({
             "url": url,
             "session": self.p.session_id,
-            "new": flag("new"),
+            "new": bool_arg(args, "new").unwrap_or(false),
         });
         if let Some(tab) = args.get("tab").and_then(Value::as_str) {
             body["tab"] = Value::String(tab.trim().to_string());
@@ -1848,7 +1849,7 @@ impl ToolHost {
     }
 
     async fn browser_tabs(&self, args: &Value) -> (bool, String) {
-        let all = args.get("all").and_then(Value::as_bool) == Some(true);
+        let all = bool_arg(args, "all") == Some(true);
         let body = serde_json::json!({ "session": self.p.session_id, "all": all });
         let v = match self.desk_call("tab.list", body).await {
             Ok(v) => v,
@@ -1893,7 +1894,7 @@ impl ToolHost {
     async fn browser_read(&self, args: &Value) -> (bool, String) {
         let mut body = self.page_body(args);
         for k in ["offset", "limit"] {
-            if let Some(n) = args.get(k).and_then(Value::as_u64) {
+            if let Some(n) = int_arg(args, k) {
                 body[k] = Value::from(n);
             }
         }
@@ -2308,6 +2309,43 @@ mod tests {
         assert_eq!(
             page_done(&serde_json::json!({"done": "clicked button", "label": "Go \"now\""})),
             "clicked button \"Go \\\"now\\\"\""
+        );
+    }
+
+    #[test]
+    fn page_switches_and_counts_reach_the_window_as_values() {
+        let sent = serde_json::json!({
+            "text": "true",
+            "submit": "false",
+            "append": 1,
+            "gone": "yes",
+            "timeout_ms": "5000",
+            "limit": 2000.0,
+            "selector": "#go",
+            "new": "sometimes",
+        });
+        let out = page_args(&sent);
+        assert_eq!(
+            out["submit"], false,
+            "\"false\" must not read as true in the page"
+        );
+        assert_eq!(out["append"], true);
+        assert_eq!(out["gone"], true);
+        assert_eq!(out["timeout_ms"], 5000);
+        assert_eq!(out["limit"], 2000);
+        assert_eq!(out["text"], "true", "text is what is typed, never a switch");
+        assert_eq!(out["selector"], "#go");
+        assert_eq!(
+            out["new"], "sometimes",
+            "what reads as neither is left alone"
+        );
+        assert_eq!(
+            crate::desk::deadline("tab.wait", &serde_json::json!({"args": out})),
+            crate::desk::deadline(
+                "tab.wait",
+                &serde_json::json!({"args": {"timeout_ms": 5000}})
+            ),
+            "the wait's deadline follows the timeout it was given"
         );
     }
 

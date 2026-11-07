@@ -257,16 +257,83 @@ pub fn shell_command(tool: &str, args: &serde_json::Value) -> Option<String> {
     if !matches!(tool, "shell.exec" | "shell.start") && category(tool) != Some("shell.exec") {
         return None;
     }
-    let cmd = match args.get("command").or_else(|| args.get("cmd")) {
-        Some(serde_json::Value::Array(parts)) => parts
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .collect::<Vec<_>>()
-            .join(" "),
-        Some(v) => v.as_str().unwrap_or_default().to_string(),
-        None => String::new(),
+    command_arg(args)
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty())
+}
+
+/// The command a shell call runs: `cmd`, or `command` as Bash and most agents
+/// name it, as one string or a list of words joined with spaces.
+#[must_use]
+pub fn command_arg(args: &serde_json::Value) -> Option<String> {
+    let words = |v: &serde_json::Value| match v {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Array(parts) => Some(
+            parts
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" "),
+        ),
+        _ => None,
     };
-    Some(cmd.trim().to_string()).filter(|c| !c.is_empty())
+    ["cmd", "command"]
+        .iter()
+        .filter_map(|k| args.get(*k).and_then(words))
+        .find(|c| !c.trim().is_empty())
+}
+
+/// A count or a duration however an agent sends it: 120000, 120000.0 or
+/// "120000". A fraction is dropped; a negative number or a word is no count.
+#[must_use]
+pub fn lenient_u64(v: &serde_json::Value) -> Option<u64> {
+    // Finite and not negative, so the cast only saturates past u64::MAX.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let whole = |f: f64| (f.is_finite() && f >= 0.0).then(|| f.trunc() as u64);
+    match v {
+        serde_json::Value::Number(n) => n.as_u64().or_else(|| n.as_f64().and_then(whole)),
+        serde_json::Value::String(s) => {
+            let s = s.trim();
+            s.parse::<u64>()
+                .ok()
+                .or_else(|| s.parse::<f64>().ok().and_then(whole))
+        }
+        _ => None,
+    }
+}
+
+/// A switch however an agent sends it: true, "true", "yes", "on" or 1, and
+/// their opposites. Anything else is no answer, so the tool's default holds.
+#[must_use]
+pub fn lenient_bool(v: &serde_json::Value) -> Option<bool> {
+    match v {
+        serde_json::Value::Bool(b) => Some(*b),
+        serde_json::Value::Number(n) if n.as_f64().is_some_and(|f| f.fract() == 0.0) => {
+            match lenient_u64(v) {
+                Some(1) => Some(true),
+                Some(0) => Some(false),
+                _ => None,
+            }
+        }
+        serde_json::Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "yes" | "on" | "1" => Some(true),
+            "false" | "no" | "off" | "0" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// `args[key]` read with [`lenient_u64`].
+#[must_use]
+pub fn int_arg(args: &serde_json::Value, key: &str) -> Option<u64> {
+    args.get(key).and_then(lenient_u64)
+}
+
+/// `args[key]` read with [`lenient_bool`].
+#[must_use]
+pub fn bool_arg(args: &serde_json::Value, key: &str) -> Option<bool> {
+    args.get(key).and_then(lenient_bool)
 }
 
 pub(crate) fn is_parzi_tool(name: &str) -> bool {
@@ -1117,9 +1184,7 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
             "Opening {}",
             one_line(&str_arg("url").unwrap_or_else(|| "a page".into()), 60)
         ),
-        "browser.tabs" if args.get("all").and_then(serde_json::Value::as_bool) == Some(true) => {
-            "Listing every open tab".into()
-        }
+        "browser.tabs" if bool_arg(args, "all") == Some(true) => "Listing every open tab".into(),
         "browser.tabs" => "Listing tabs".into(),
         "browser.read" if str_arg("tab").as_deref() == Some("active") => {
             "Reading the page you have open".into()
@@ -1169,7 +1234,7 @@ pub fn humanize_tool_call(name: &str, args: &serde_json::Value) -> String {
         "models.list" => "Listing models".into(),
         "shell.start" => format!(
             "Starting {}",
-            one_line(&str_arg("cmd").unwrap_or_else(|| "a command".into()), 60)
+            one_line(&command_arg(args).unwrap_or_else(|| "a command".into()), 60)
         ),
         "shell.logs" => "Reading command output".into(),
         "shell.kill" => "Stopping a command".into(),
@@ -1551,6 +1616,79 @@ mod tests {
             assert!(is_parzi_tool(name), "{name}");
         }
         assert!(is_plan_tool("plan.write") && is_session_tool("session.rename"));
+    }
+
+    #[test]
+    fn counts_and_switches_read_however_the_agent_spells_them() {
+        use serde_json::json;
+        for (v, want) in [
+            (json!(120_000), Some(120_000)),
+            (json!(120_000.0), Some(120_000)),
+            (json!("120000"), Some(120_000)),
+            (json!(" 5000 "), Some(5000)),
+            (json!("2.5"), Some(2)),
+            (json!(0), Some(0)),
+            (json!(-1), None),
+            (json!("-3"), None),
+            (json!("soon"), None),
+            (json!(true), None),
+            (json!(null), None),
+            (json!(f64::MAX), Some(u64::MAX)),
+        ] {
+            assert_eq!(lenient_u64(&v), want, "{v}");
+        }
+        for (v, want) in [
+            (json!(true), Some(true)),
+            (json!(false), Some(false)),
+            (json!("false"), Some(false)),
+            (json!("True"), Some(true)),
+            (json!("no"), Some(false)),
+            (json!("on"), Some(true)),
+            (json!(1), Some(true)),
+            (json!(0.0), Some(false)),
+            (json!(0.5), None),
+            (json!(2), None),
+            (json!("maybe"), None),
+            (json!(null), None),
+        ] {
+            assert_eq!(lenient_bool(&v), want, "{v}");
+        }
+        let args = json!({"wait": "false", "timeout_ms": "9000"});
+        assert_eq!(
+            bool_arg(&args, "wait"),
+            Some(false),
+            "\"false\" does not block"
+        );
+        assert_eq!(int_arg(&args, "timeout_ms"), Some(9000));
+        assert_eq!(int_arg(&args, "missing"), None);
+    }
+
+    #[test]
+    fn a_shell_command_comes_as_cmd_or_as_command() {
+        use serde_json::json;
+        assert_eq!(command_arg(&json!({"cmd": "ls"})).as_deref(), Some("ls"));
+        assert_eq!(
+            command_arg(&json!({"command": "cargo test"})).as_deref(),
+            Some("cargo test")
+        );
+        assert_eq!(
+            command_arg(&json!({"command": ["git", "status", "-s"]})).as_deref(),
+            Some("git status -s")
+        );
+        assert_eq!(
+            command_arg(&json!({"cmd": "", "command": "pwd"})).as_deref(),
+            Some("pwd"),
+            "an empty cmd does not hide the command"
+        );
+        assert_eq!(command_arg(&json!({"cmd": 7})), None);
+        assert_eq!(
+            shell_command("shell.start", &json!({"command": "npm run dev"})).as_deref(),
+            Some("npm run dev")
+        );
+        assert_eq!(
+            humanize_tool_call("shell.start", &json!({"command": "npm run dev"})),
+            "Starting npm run dev"
+        );
     }
 
     #[test]
