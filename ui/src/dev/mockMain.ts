@@ -35,7 +35,17 @@ if (mockRequest) {
   };
   await emit("parzi://run-event", { kind: "request", key: "r1", session: "s1", request: asks[mockRequest] ?? asks.text, req_kind: mockRequest });
 }
-if (mockQuestion) {
+if (mockQuestion === "plan") {
+  await emit("parzi://run-event", {
+    kind: "question",
+    key: "q1",
+    session: "s1",
+    question: 'Change the plan "0.1.28"?\nGoal: A calmer sidebar driven by plans\n~ Short session names (was Session names)\n~ Plan panel waits for names\n- Work view (dropped)\n+ Plan history (Next)\n+ Plan sign-off (Now)',
+    options: ["Use this plan", "Not now"],
+    details: ["Save it. Agents in this project work from it.", "Nothing is saved. The agent carries on without it."],
+    multi: false,
+  });
+} else if (mockQuestion) {
   await emit("parzi://run-event", {
     kind: "question",
     key: "q1",

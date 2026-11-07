@@ -928,6 +928,168 @@ pub fn write(vault: &Vault, slug: &str, w: PlanWrite, by: &str) -> Result<Writte
     })
 }
 
+/// The longest change the person is shown before they say yes.
+const PROPOSAL_LINES: usize = 30;
+
+/// A plan change as the person reads it before it is saved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Proposal {
+    /// The change is the person's call: a new or replaced plan, work added,
+    /// dropped or reworded, a new goal, other phases or another order.
+    /// Progress alone (an item started or done, a note, a branch) is not.
+    pub review: bool,
+    /// One line: what the person is asked.
+    pub question: String,
+    /// The change, one line each. A plain line is a heading (a phase, the
+    /// goal); `+ ` is work added, `- ` work dropped, `~ ` work changed.
+    pub lines: Vec<String>,
+}
+
+impl Proposal {
+    /// The question and its lines as one text, the first line the question.
+    #[must_use]
+    pub fn text(&self) -> String {
+        let mut out = self.question.clone();
+        for l in &self.lines {
+            out.push('\n');
+            out.push_str(l);
+        }
+        out
+    }
+}
+
+fn whole(plan: &Plan, lines: &mut Vec<String>) {
+    if !plan.goal.trim().is_empty() {
+        lines.push(format!("Goal: {}", clip(&fold(&plan.goal), 200)));
+    }
+    for (phase, items) in grouped(plan) {
+        let open: Vec<&&PlanItem> = items.iter().filter(|i| !i.state.settled()).collect();
+        if open.is_empty() {
+            continue;
+        }
+        if !phase.is_empty() {
+            lines.push(phase);
+        }
+        for i in open {
+            lines.push(format!("+ {}", i.title));
+        }
+    }
+}
+
+fn reworded(was: &PlanItem, now: &PlanItem) -> Vec<String> {
+    let mut out = vec![];
+    if was.title != now.title {
+        out.push(format!("~ {} (was {})", now.title, was.title));
+    }
+    if was.phase != now.phase && !now.phase.is_empty() {
+        out.push(format!("~ {} moves to {}", now.title, now.phase));
+    }
+    if was.needs != now.needs {
+        out.push(if now.needs.is_empty() {
+            format!("~ {} can start any time", now.title)
+        } else {
+            format!("~ {} waits for {}", now.title, now.needs.join(", "))
+        });
+    }
+    if was.detail != now.detail && !now.detail.is_empty() {
+        out.push(format!(
+            "~ {}: {}",
+            now.title,
+            clip(&fold(&now.detail), 120)
+        ));
+    }
+    if was.state != PlanState::Dropped && now.state == PlanState::Dropped {
+        out.push(format!("- {} (dropped)", now.title));
+    }
+    out
+}
+
+/// What saving `new` over `old` changes, for the person to approve.
+/// `replace` means `new` starts over and `old` goes to the history.
+#[must_use]
+pub fn propose(slug: &str, old: Option<&Plan>, new: &Plan, replace: bool) -> Proposal {
+    let name = if new.title.trim().is_empty() {
+        slug.to_string()
+    } else {
+        fold(&new.title)
+    };
+    let mut lines = vec![];
+    let (review, question) = match old {
+        None => {
+            whole(new, &mut lines);
+            (true, format!("Start the plan \"{name}\" for {slug}?"))
+        }
+        Some(_) if replace => {
+            whole(new, &mut lines);
+            (
+                true,
+                format!(
+                    "Replace the plan for {slug} with \"{name}\"? The old one stays in the brain."
+                ),
+            )
+        }
+        Some(old) => {
+            if old.title != new.title && !new.title.is_empty() {
+                lines.push(format!("Title: {name}"));
+            }
+            if old.goal != new.goal && !new.goal.trim().is_empty() {
+                lines.push(format!("Goal: {}", clip(&fold(&new.goal), 200)));
+            }
+            if old.phases != new.phases && !new.phases.is_empty() {
+                lines.push(format!("Phases: {}", new.phases.join(", ")));
+            }
+            for i in &new.items {
+                match old.item(&i.id) {
+                    None => lines.push(if i.phase.is_empty() {
+                        format!("+ {}", i.title)
+                    } else {
+                        format!("+ {} ({})", i.title, i.phase)
+                    }),
+                    Some(was) => lines.extend(reworded(was, i)),
+                }
+            }
+            for i in old.items.iter().filter(|i| new.item(&i.id).is_none()) {
+                lines.push(format!("- {}", i.title));
+            }
+            (!lines.is_empty(), format!("Change the plan \"{name}\"?"))
+        }
+    };
+    if lines.len() > PROPOSAL_LINES {
+        let more = lines.len() - (PROPOSAL_LINES - 1);
+        lines.truncate(PROPOSAL_LINES - 1);
+        lines.push(format!("and {more} more"));
+    }
+    Proposal {
+        review,
+        question,
+        lines,
+    }
+}
+
+/// What `write` would change, without saving: the same checks, so a write
+/// that would fail fails here before anyone is asked.
+pub fn preview(vault: &Vault, slug: &str, w: &PlanWrite, by: &str) -> Result<Proposal, String> {
+    let slug = check_slug(slug)?.to_string();
+    let path = note_path(&slug);
+    let old = match read_note(vault, &path)? {
+        None => None,
+        Some(t) => match parse(&t) {
+            Ok(p) => Some(p),
+            Err(e) if !w.replace => {
+                return Err(format!(
+                    "the plan note {path} cannot be read ({e}); fix it with brain.write, or start over with replace: true"
+                ))
+            }
+            Err(_) => None,
+        },
+    };
+    let (plan, _) = apply(old.clone(), w.clone(), by, crate::now_ms())?;
+    if plan.items.is_empty() && plan.title.is_empty() && (old.is_none() || w.replace) {
+        return Err("a new plan needs a title and its items".into());
+    }
+    Ok(propose(&slug, old.as_ref(), &plan, w.replace))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1394,6 +1556,117 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("unknown field `project`"), "{err}");
+    }
+
+    fn planned(items: serde_json::Value) -> Plan {
+        apply(
+            None,
+            serde_json::from_value(serde_json::json!({
+                "title": "Release", "phases": ["Now", "Next"], "items": items
+            }))
+            .unwrap(),
+            "s",
+            0,
+        )
+        .unwrap()
+        .0
+    }
+
+    fn changed_by(old: &Plan, w: serde_json::Value) -> Proposal {
+        let w: PlanWrite = serde_json::from_value(w).unwrap();
+        let replace = w.replace;
+        let (new, _) = apply(Some(old.clone()), w, "s", 1).unwrap();
+        propose("demo", Some(old), &new, replace)
+    }
+
+    #[test]
+    fn a_new_plan_is_shown_whole_and_asked_for() {
+        let p = planned(serde_json::json!([
+            {"id": "a", "title": "Session names", "phase": "Now"},
+            {"id": "b", "title": "Plan panel", "phase": "Next"},
+            {"id": "c", "title": "Old work", "phase": "Now", "state": "done"},
+        ]));
+        let got = propose("demo", None, &p, false);
+        assert!(got.review);
+        assert_eq!(got.question, "Start the plan \"Release\" for demo?");
+        assert_eq!(
+            got.lines,
+            vec!["Now", "+ Session names", "Next", "+ Plan panel"],
+            "finished work is not news"
+        );
+        assert_eq!(
+            got.text(),
+            "Start the plan \"Release\" for demo?\nNow\n+ Session names\nNext\n+ Plan panel"
+        );
+    }
+
+    #[test]
+    fn progress_alone_is_not_asked_for() {
+        let old = planned(serde_json::json!([{"id": "a", "title": "Session names"}]));
+        let got = changed_by(
+            &old,
+            serde_json::json!({"items": [{"id": "a", "state": "done", "note": "shipped", "branch": "plan/a"}]}),
+        );
+        assert!(!got.review, "{got:?}");
+        assert!(got.lines.is_empty(), "{got:?}");
+    }
+
+    #[test]
+    fn added_dropped_and_reworded_work_is_asked_for() {
+        let old = planned(serde_json::json!([
+            {"id": "a", "title": "Session names", "phase": "Now"},
+            {"id": "b", "title": "Plan panel", "phase": "Now"},
+            {"id": "c", "title": "Work view", "phase": "Next"},
+        ]));
+        let got = changed_by(
+            &old,
+            serde_json::json!({
+                "goal": "A calmer sidebar",
+                "items": [
+                    {"id": "a", "title": "Short session names"},
+                    {"id": "b", "phase": "Next", "needs": ["a"]},
+                    {"id": "c", "state": "dropped"},
+                    {"id": "d", "title": "Plan history", "phase": "Next"},
+                ],
+            }),
+        );
+        assert!(got.review);
+        assert_eq!(got.question, "Change the plan \"Release\"?");
+        assert_eq!(
+            got.lines,
+            vec![
+                "Goal: A calmer sidebar",
+                "~ Short session names (was Session names)",
+                "~ Plan panel moves to Next",
+                "~ Plan panel waits for a",
+                "- Work view (dropped)",
+                "+ Plan history (Next)",
+            ]
+        );
+        let gone = changed_by(
+            &old,
+            serde_json::json!({"items": [{"id": "b", "remove": true}]}),
+        );
+        assert!(gone.review);
+        assert_eq!(gone.lines, vec!["- Plan panel"]);
+    }
+
+    #[test]
+    fn a_replaced_plan_says_the_old_one_is_kept_and_long_changes_are_cut() {
+        let old = planned(serde_json::json!([{"id": "a", "title": "Session names"}]));
+        let items: Vec<serde_json::Value> = (0..35)
+            .map(|n| serde_json::json!({"id": format!("i{n}"), "title": format!("Item {n}")}))
+            .collect();
+        let got = changed_by(
+            &old,
+            serde_json::json!({"replace": true, "title": "Next release", "items": items}),
+        );
+        assert!(got.review);
+        assert!(got
+            .question
+            .starts_with("Replace the plan for demo with \"Next release\"?"));
+        assert_eq!(got.lines.len(), PROPOSAL_LINES);
+        assert_eq!(got.lines.last().unwrap(), "and 6 more");
     }
 
     #[test]

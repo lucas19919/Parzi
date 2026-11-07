@@ -722,13 +722,25 @@ impl ToolHost {
             if !self.p.tools.is_allowed(name) || (writes && self.p.mode == ApprovalMode::Deny) {
                 return denied(name);
             }
+            let mut approved = "";
+            if name == "plan.write" {
+                match self.plan_review(id, args).await {
+                    Ok(note) => approved = note,
+                    Err(answer) => return answer,
+                }
+            }
             let (store, sid) = (self.p.store.clone(), self.p.session_id.clone());
             let (name, args) = (name.to_string(), args.clone());
-            return tokio::task::spawn_blocking(move || {
+            let (ok, text) = tokio::task::spawn_blocking(move || {
                 crate::plan_tools::execute(&store, &sid, &name, &args)
             })
             .await
             .unwrap_or_else(|e| (false, e.to_string()));
+            return if ok && !approved.is_empty() {
+                (ok, format!("{approved} {text}"))
+            } else {
+                (ok, text)
+            };
         }
         if is_session_tool(name) {
             let reads = matches!(name, "session.read" | "session.list");
@@ -1220,6 +1232,59 @@ impl ToolHost {
         match self.store_artifact(&payload) {
             Ok(msg) => (true, msg),
             Err(e) => (false, e.to_string()),
+        }
+    }
+
+    /// A plan is the person's: a write that adds, drops or rewords work is
+    /// shown to them first and saved only on their yes. Progress (an item
+    /// started or done, a note, a branch) is saved without asking, and so is
+    /// everything when no one is there to ask. `Ok` carries what to tell the
+    /// agent with the saved result; `Err` is the tool's answer instead.
+    async fn plan_review(
+        &self,
+        id: &str,
+        args: &Value,
+    ) -> std::result::Result<&'static str, (bool, String)> {
+        let Some(asker) = &self.p.asker else {
+            return Ok("");
+        };
+        let (store, sid, raw) = (
+            self.p.store.clone(),
+            self.p.session_id.clone(),
+            args.clone(),
+        );
+        let proposal =
+            tokio::task::spawn_blocking(move || crate::plan_tools::proposal(&store, &sid, &raw))
+                .await
+                .map_err(|e| (false, e.to_string()))?
+                .map_err(|e| (false, e))?;
+        if !proposal.review {
+            return Ok("");
+        }
+        let req = AskRequest {
+            id: id.into(),
+            question: proposal.text(),
+            options: vec![
+                crate::plan_tools::USE_PLAN.into(),
+                crate::plan_tools::NOT_NOW.into(),
+            ],
+            details: vec![
+                "Save it. Agents in this project work from it.".into(),
+                "Nothing is saved. The agent carries on without it.".into(),
+            ],
+            multi: false,
+            kind: String::new(),
+            session: self.p.session_id.clone(),
+        };
+        let answer = tokio::select! {
+            () = self.p.cancel.cancelled() => {
+                return Err((false, "the turn stopped before the person answered; the plan was not saved".into()));
+            }
+            a = asker.ask(&req) => a,
+        };
+        match crate::plan_tools::verdict(&answer) {
+            crate::plan_tools::Verdict::Save(note) => Ok(note),
+            crate::plan_tools::Verdict::Hold(why) => Err((true, why)),
         }
     }
 

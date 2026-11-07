@@ -43,11 +43,80 @@ fn rename(store: &SessionStore, sid: &str, args: &Value) -> Result<String, Strin
     Ok(format!("This session is now called \"{title}\"."))
 }
 
-fn write(store: &SessionStore, sid: &str, args: &Value) -> Result<String, String> {
+/// The project a write goes to and what it says. Agents often name the
+/// project the way plan.read takes it; that is fine when it is this
+/// session's own, the only plan a session writes.
+fn parse_write(
+    store: &SessionStore,
+    sid: &str,
+    args: &Value,
+) -> Result<(String, PlanWrite), String> {
     let meta = store.get(sid).map_err(|e| e.to_string())?;
     let slug = plan::check_slug(&meta.project)?.to_string();
-    let w: PlanWrite =
-        serde_json::from_value(args.clone()).map_err(|e| format!("plan.write: {e}"))?;
+    let mut args = args.clone();
+    if let Some(named) = args.as_object_mut().and_then(|o| o.remove("project")) {
+        let named = named.as_str().map(str::trim).unwrap_or_default();
+        if !named.is_empty() && !plan::check_slug(named).is_ok_and(|n| n == slug) {
+            return Err(format!(
+                "plan.write changes this session's project, {slug}. To plan {named}, move there with project.switch first"
+            ));
+        }
+    }
+    let w: PlanWrite = serde_json::from_value(args).map_err(|e| format!("plan.write: {e}"))?;
+    Ok((slug, w))
+}
+
+/// What a plan.write would change, for the person to approve before it is
+/// saved. The same checks as the write, so a bad write fails before anyone
+/// is asked.
+pub(crate) fn proposal(
+    store: &SessionStore,
+    sid: &str,
+    args: &Value,
+) -> Result<plan::Proposal, String> {
+    let (slug, w) = parse_write(store, sid, args)?;
+    plan::preview(&vault()?, &slug, &w, sid)
+}
+
+/// The two answers offered under a plan proposal. Anything else the person
+/// types is what they want changed.
+pub(crate) const USE_PLAN: &str = "Use this plan";
+pub(crate) const NOT_NOW: &str = "Not now";
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Verdict {
+    /// Save it. `note` is what to tell the agent besides the saved result.
+    Save(&'static str),
+    /// Nothing is saved; the text goes back to the agent.
+    Hold(String),
+}
+
+pub(crate) fn verdict(answer: &str) -> Verdict {
+    let a = answer.trim();
+    if a == USE_PLAN {
+        return Verdict::Save("The person approved this plan.");
+    }
+    if a == NOT_NOW {
+        return Verdict::Hold(
+            "The person said not now, so nothing was saved. Carry on without changing the plan, and do not propose it again unless they ask.".into(),
+        );
+    }
+    let lower = a.to_ascii_lowercase();
+    if lower.starts_with("skipped") {
+        return Verdict::Save("The person skipped the review, so it is saved as you wrote it.");
+    }
+    if a.is_empty() || lower.starts_with("the user didn't answer") {
+        return Verdict::Hold(
+            "Nobody answered, so nothing was saved. Say in your reply what plan you would propose; the person can ask you to save it.".into(),
+        );
+    }
+    Verdict::Hold(format!(
+        "The person wants changes before this plan is saved: \"{a}\". Nothing was saved. Change it and call plan.write again."
+    ))
+}
+
+fn write(store: &SessionStore, sid: &str, args: &Value) -> Result<String, String> {
+    let (slug, w) = parse_write(store, sid, args)?;
     let done = plan::write(&vault()?, &slug, w, sid)?;
     let (finished, counted) = done.plan.progress();
     let mut out = format!(
@@ -236,6 +305,33 @@ mod tests {
             created: now,
             updated: now,
         }
+    }
+
+    #[test]
+    fn the_persons_answer_decides_whether_the_plan_is_saved() {
+        assert!(matches!(verdict(USE_PLAN), Verdict::Save(_)));
+        assert!(matches!(
+            verdict("Skipped: decide yourself and say what you assumed."),
+            Verdict::Save(_)
+        ));
+        let Verdict::Hold(why) = verdict(NOT_NOW) else {
+            panic!("not now holds")
+        };
+        assert!(why.contains("nothing was saved"), "{why}");
+        let Verdict::Hold(why) =
+            verdict("the user didn't answer — decide yourself and say what you assumed")
+        else {
+            panic!("no answer holds")
+        };
+        assert!(why.starts_with("Nobody answered"), "{why}");
+        let Verdict::Hold(why) = verdict("Drop the panel, ship names first") else {
+            panic!("a typed answer holds")
+        };
+        assert!(
+            why.contains("\"Drop the panel, ship names first\"")
+                && why.contains("call plan.write again"),
+            "{why}"
+        );
     }
 
     #[test]
