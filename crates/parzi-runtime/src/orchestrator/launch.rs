@@ -564,7 +564,7 @@ impl Orchestrator {
                 display_name(&provider_id)
             )));
         }
-        let host = Arc::new(ToolHost::new(ToolHostParts {
+        let parts = ToolHostParts {
             session_id: q.session_id.clone(),
             mode,
             edits_auto,
@@ -582,7 +582,8 @@ impl Orchestrator {
             harness: Some(bridge),
             sink: sink.clone(),
             cancel: cancel.clone(),
-        }));
+        };
+        let host = Arc::new(ToolHost::new(parts).calling_as(&provider_id));
         let run = EngineRun::new(EngineRunParts {
             session_id: q.session_id.clone(),
             provider_id,

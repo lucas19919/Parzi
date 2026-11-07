@@ -180,7 +180,9 @@ pub(crate) fn is_vendor_category(name: &str) -> bool {
 
 pub(crate) fn category(tool: &str) -> Option<&'static str> {
     match tool {
-        "Bash" | "BashOutput" | "KillShell" | "shell" | "execute" => Some("shell.exec"),
+        "Bash" | "BashOutput" | "KillShell" | "PowerShell" | "Monitor" | "shell" | "execute" => {
+            Some("shell.exec")
+        }
         "Edit" | "MultiEdit" | "Write" | "NotebookEdit" | "edit" | "delete" | "move" => {
             Some("fs.write")
         }
@@ -1268,8 +1270,42 @@ const NAMESPACES: &[&str] = &[
     "ask", "todo", "github",
 ];
 
+/// The MCP server agents reach Parzi's own tools on.
+pub const PARZI_SERVER: &str = "parzi";
+
 pub fn to_mcp(name: &str) -> String {
     name.replace('.', "_")
+}
+
+/// How the agent on the other end names Parzi's tools, so a message names one
+/// it can call as written.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CallNames {
+    prefix: Option<String>,
+}
+
+impl CallNames {
+    /// Claude Code calls them `mcp__parzi__<tool>`. Other agents name them in
+    /// ways Parzi never sees, so for them a message names the MCP tool and its server.
+    #[must_use]
+    pub fn for_agent(provider: &str) -> Self {
+        let prefix = match parzi_providers::canonical_id(provider) {
+            Some("claude") => Some(format!("mcp__{PARZI_SERVER}__")),
+            _ => None,
+        };
+        Self { prefix }
+    }
+
+    /// `shell.exec` reads `mcp__parzi__shell_exec` to Claude and
+    /// `shell_exec` on the `parzi` server to everyone else.
+    #[must_use]
+    pub fn tool(&self, name: &str) -> String {
+        let mcp = to_mcp(current_name(&display_name(name)));
+        match &self.prefix {
+            Some(p) => format!("`{p}{mcp}`"),
+            None => format!("`{mcp}` on the `{PARZI_SERVER}` server"),
+        }
+    }
 }
 
 pub(crate) fn from_mcp(tool: &str) -> String {
@@ -1515,6 +1551,29 @@ mod tests {
             assert!(is_parzi_tool(name), "{name}");
         }
         assert!(is_plan_tool("plan.write") && is_session_tool("session.rename"));
+    }
+
+    #[test]
+    fn messages_name_parzis_tools_the_way_the_agent_calls_them() {
+        let claude = CallNames::for_agent("claude");
+        assert_eq!(claude.tool("shell.exec"), "`mcp__parzi__shell_exec`");
+        assert_eq!(
+            claude.tool("mcp__parzi__ask_user"),
+            "`mcp__parzi__ask_user`"
+        );
+        assert_eq!(
+            claude.tool("session.send_message"),
+            "`mcp__parzi__session_send`",
+            "an old name reads as the one it is now"
+        );
+        for other in ["codex", "opencode", "grok", "nobody"] {
+            assert_eq!(
+                CallNames::for_agent(other).tool("shell.exec"),
+                "`shell_exec` on the `parzi` server",
+                "{other}"
+            );
+        }
+        assert_eq!(CallNames::default(), CallNames::for_agent("codex"));
     }
 
     #[test]

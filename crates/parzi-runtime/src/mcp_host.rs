@@ -13,9 +13,9 @@ use serde_json::{json, Value};
 use tokio::net::TcpListener;
 
 use crate::toolhost::ToolHost;
-use crate::tools::{from_mcp, to_mcp};
+use crate::tools::{from_mcp, to_mcp, PARZI_SERVER};
 
-const SERVER_NAME: &str = "parzi";
+const SERVER_NAME: &str = PARZI_SERVER;
 const PROTOCOLS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 const MAX_BODY: usize = 8 * 1024 * 1024;
 const SLOW_CALL: std::time::Duration = std::time::Duration::from_secs(30);
@@ -96,12 +96,13 @@ impl McpHost {
         }
         Registration {
             runs: self.runs.clone(),
-            host,
             server: ToolServer {
                 name: SERVER_NAME.into(),
                 url: format!("http://{}/mcp/{token}", self.addr),
                 token: token.clone(),
+                shell: host.offers_shell(),
             },
+            host,
             token,
         }
     }

@@ -168,28 +168,90 @@ async fn the_shell_follows_a_project_switch_in_the_same_turn() {
     assert!(ok, "the new folder is inside the fence: {out}");
 }
 
+fn vendor(tool: &str, input: serde_json::Value) -> PermissionRequest {
+    PermissionRequest {
+        name: String::new(),
+        id: "req-1".into(),
+        tool: tool.into(),
+        title: tool.into(),
+        input,
+        paths: vec![],
+    }
+}
+
+fn refusal(d: PermissionDecision) -> String {
+    match d {
+        PermissionDecision::Deny(why) => why,
+        PermissionDecision::Allow => panic!("must be refused"),
+    }
+}
+
 #[tokio::test]
 async fn vendor_shell_is_rerouted_not_carded() {
     let h = host(&workdir());
-    for tool in ["Bash", "bash"] {
-        let d = h
-            .decide(PermissionRequest {
-                name: String::new(),
-                id: "req-1".into(),
-                tool: tool.into(),
-                title: tool.into(),
-                input: json!({}),
-                paths: vec![],
-            })
-            .await;
-        assert!(
-            matches!(d, PermissionDecision::Deny(_)),
-            "{tool} must be refused"
+    for tool in ["Bash", "bash", "PowerShell"] {
+        let why = refusal(h.decide(vendor(tool, json!({"command": "ls -la"}))).await);
+        assert_eq!(
+            why,
+            format!(
+                r#"{tool} is off in Parzi. Call `shell_exec` on the `parzi` server with {{"cmd":"ls -la"}}."#
+            ),
+            "an agent whose prefix Parzi cannot know gets the MCP tool and its server"
         );
-        if let PermissionDecision::Deny(why) = d {
-            assert!(why.contains("shell.exec"), "{tool}: {why}");
-        }
     }
+    let claude = host(&workdir()).calling_as("claude");
+    let why = refusal(
+        claude
+            .decide(vendor(
+                "Bash",
+                json!({"command": "cargo test", "timeout": 300000}),
+            ))
+            .await,
+    );
+    assert_eq!(
+        why,
+        r#"Bash is off in Parzi. Call `mcp__parzi__shell_exec` with {"cmd":"cargo test","timeout_ms":300000}."#,
+        "Claude gets the name it can call and the same command"
+    );
+    let why = refusal(
+        claude
+            .decide(vendor(
+                "Bash",
+                json!({"command": "npm run dev", "run_in_background": true}),
+            ))
+            .await,
+    );
+    assert!(
+        why.contains(r#"`mcp__parzi__shell_start` with {"cmd":"npm run dev"}"#)
+            && why.contains("`mcp__parzi__shell_logs`"),
+        "a background command starts in the background: {why}"
+    );
+    let why = refusal(
+        claude
+            .decide(vendor("BashOutput", json!({"bash_id": "sh-7"})))
+            .await,
+    );
+    assert!(
+        why.contains(r#"`mcp__parzi__shell_logs` with {"id":"sh-7"}"#),
+        "{why}"
+    );
+    let why = refusal(
+        claude
+            .decide(vendor("KillShell", json!({"shell_id": "b1"})))
+            .await,
+    );
+    assert!(why.contains("`mcp__parzi__shell_kill` with"), "{why}");
+    let why = refusal(
+        claude
+            .decide(vendor("Monitor", json!({"command": "tail -f log"})))
+            .await,
+    );
+    assert!(
+        why.contains(r#"`mcp__parzi__shell_start` with {"cmd":"tail -f log"}"#),
+        "{why}"
+    );
+    let why = refusal(claude.decide(vendor("Bash", json!({}))).await);
+    assert!(why.contains("<the same command>"), "{why}");
     for tool in ["shell", "execute", "run_command"] {
         let d = h
             .decide(PermissionRequest {
@@ -201,10 +263,38 @@ async fn vendor_shell_is_rerouted_not_carded() {
                 paths: vec![],
             })
             .await;
-        assert_ne!(
-            d,
-            PermissionDecision::Deny("use shell.exec".into()),
-            "{tool}"
+        assert!(
+            !matches!(&d, PermissionDecision::Deny(why) if why.contains("is off in Parzi")),
+            "{tool}: an agent whose only shell is its own keeps it: {d:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_agent_hears_whether_parzi_serves_its_shell() {
+    home("shell-tools");
+    let fake = Fake::new(
+        "claude",
+        script(|a: Agent| async move {
+            a.say("hi");
+            Ok(parzi_providers::TurnEnd::Completed)
+        }),
+    );
+    for (no_shell, serves) in [(false, true), (true, false)] {
+        let mut cfg = ParziConfig::default();
+        cfg.lanes.default_mode = "auto".into();
+        cfg.lanes.no_shell = no_shell;
+        let (orch, store) = orch_with(cfg, std::slice::from_ref(&fake));
+        let (meta, _rx) = orch
+            .spawn("t", "claude", "hi", None, &workdir(), "low", vec![], None)
+            .await
+            .unwrap();
+        settle(&store, &meta.id).await;
+        let spec = fake.seen().pop().unwrap();
+        assert_eq!(
+            spec.tools.map(|t| t.shell),
+            Some(serves),
+            "shell off in Settings: {no_shell}"
         );
     }
 }

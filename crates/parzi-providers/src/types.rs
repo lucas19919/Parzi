@@ -206,11 +206,14 @@ impl ProviderStatus {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ToolServer {
     pub name: String,
     pub url: String,
     pub token: String,
+    /// Parzi serves the shell in this session (shell.exec and the rest) and
+    /// refuses the agent's own shell tools, so an agent that can hide those should.
+    pub shell: bool,
 }
 
 #[derive(Debug, Clone)]

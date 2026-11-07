@@ -20,7 +20,7 @@ use crate::tools::{
     category, current_name, display_name, edit_paths, is_brain_tool, is_browser_tool, is_desk_tool,
     is_github_tool, is_image_tool, is_models_tool, is_plan_tool, is_project_tool, is_question_tool,
     is_session_tool, is_shell_tool, is_ui_tool, window_tool_offered, Approval, ApprovalMode,
-    Approver, AskRequest, Asker, ToolCallInfo, ToolDef, ToolExecutor,
+    Approver, AskRequest, Asker, CallNames, ToolCallInfo, ToolDef, ToolExecutor,
 };
 
 pub struct ToolHostParts {
@@ -49,6 +49,8 @@ pub struct ToolHost {
     /// The folder project.switch or project.create moved this session to during
     /// the turn. The shell runs there at once instead of waiting for the next turn.
     moved_to: std::sync::Mutex<Option<String>>,
+    /// How the agent calls Parzi's tools, for messages that name one.
+    names: CallNames,
 }
 
 fn worktree_relative(cwd: &str, path: &str) -> Option<String> {
@@ -588,6 +590,69 @@ fn legacy_args(name: &str, args: &Value) -> Value {
     a
 }
 
+/// Agents' own shell tools, refused while Parzi serves the shell.
+const VENDOR_SHELL: &[&str] = &[
+    "Bash",
+    "bash",
+    "PowerShell",
+    "Monitor",
+    "BashOutput",
+    "KillShell",
+];
+
+/// Why an agent's own shell tool was refused, and the Parzi call that does the
+/// same, with its arguments filled in from the refused call.
+fn shell_detour(tool: &str, input: &Value, names: &CallNames) -> String {
+    let command = command_text(input);
+    let command = if command.trim().is_empty() {
+        "<the same command>".to_string()
+    } else {
+        command
+    };
+    let id = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|k| input.get(*k).and_then(Value::as_str))
+            .filter(|id| id.starts_with("sh-"))
+            .unwrap_or("<the id shell_start returned>")
+            .to_string()
+    };
+    let call = |name: &str, args: Value| format!("{} with {args}", names.tool(name));
+    let off = format!("{tool} is off in Parzi.");
+    match tool {
+        "BashOutput" => format!(
+            "{off} Read a background command's output: call {}.",
+            call(
+                "shell.logs",
+                serde_json::json!({"id": id(&["bash_id", "shell_id", "id"])})
+            )
+        ),
+        "KillShell" => format!(
+            "{off} Stop a background command: call {}.",
+            call(
+                "shell.kill",
+                serde_json::json!({"id": id(&["shell_id", "bash_id", "id"])})
+            )
+        ),
+        "Monitor" => format!(
+            "{off} Start the script: call {}, then read its new lines with {} and the id it returns.",
+            call("shell.start", serde_json::json!({"cmd": command})),
+            names.tool("shell.logs")
+        ),
+        _ if input.get("run_in_background").and_then(Value::as_bool) == Some(true) => format!(
+            "{off} Call {}, then read its output with {}.",
+            call("shell.start", serde_json::json!({"cmd": command})),
+            names.tool("shell.logs")
+        ),
+        _ => {
+            let mut args = serde_json::json!({"cmd": command});
+            if let Some(ms) = input.get("timeout").and_then(Value::as_u64) {
+                args["timeout_ms"] = Value::from(ms);
+            }
+            format!("{off} Call {}.", call("shell.exec", args))
+        }
+    }
+}
+
 fn denied(name: &str) -> (bool, String) {
     (
         false,
@@ -602,7 +667,20 @@ impl ToolHost {
             defs: tokio::sync::OnceCell::new(),
             relay: tokio::sync::OnceCell::new(),
             moved_to: std::sync::Mutex::new(None),
+            names: CallNames::default(),
         }
+    }
+
+    /// Names Parzi's tools in refusals and errors the way this agent calls them.
+    #[must_use]
+    pub fn calling_as(mut self, provider: &str) -> Self {
+        self.names = CallNames::for_agent(provider);
+        self
+    }
+
+    /// Parzi runs this session's shell, so the agent's own shell tools are refused.
+    pub(crate) fn offers_shell(&self) -> bool {
+        self.p.tools.is_allowed("shell.exec") && !self.p.cfg.lanes.no_shell
     }
 
     /// Where the shell runs: the session's folder, or the one it moved to this turn.
@@ -885,9 +963,8 @@ impl ToolHost {
                 return PermissionDecision::Deny(format!("Settings do not allow {k}"));
             }
         }
-        const VENDOR_SHELL: &[&str] = &["Bash", "bash", "BashOutput", "KillShell"];
-        if VENDOR_SHELL.contains(&req.tool.as_str()) && self.p.tools.is_allowed("shell.exec") {
-            return PermissionDecision::Deny("use shell.exec".into());
+        if VENDOR_SHELL.contains(&req.tool.as_str()) && self.offers_shell() {
+            return PermissionDecision::Deny(shell_detour(&req.tool, &req.input, &self.names));
         }
         if kind == Some("shell.exec") && self.p.cfg.lanes.no_shell {
             return PermissionDecision::Deny("the shell is switched off in Settings".into());
@@ -2042,6 +2119,8 @@ mod tests {
     #[test]
     fn vendor_tools_fall_into_the_right_categories() {
         assert_eq!(category("Bash"), Some("shell.exec"));
+        assert_eq!(category("Monitor"), Some("shell.exec"), "it runs a script");
+        assert_eq!(category("PowerShell"), Some("shell.exec"));
         assert_eq!(category("shell"), Some("shell.exec"));
         assert_eq!(category("execute"), Some("shell.exec"));
         assert_eq!(category("Edit"), Some("fs.write"));
