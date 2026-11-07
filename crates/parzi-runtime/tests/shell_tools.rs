@@ -107,7 +107,10 @@ async fn bash_s_argument_names_run_too() {
     let (ok, out) = h
         .call("shell.exec", &json!({"command": ["echo", "as", "words"]}))
         .await;
-    assert!(ok && out.contains("as words"), "{out}");
+    // The words are joined into one command line; PowerShell's echo then
+    // prints each argument on its own line, so compare the words, not spacing.
+    let said: Vec<&str> = out.split_whitespace().collect();
+    assert!(ok && said.windows(2).any(|w| w == ["as", "words"]), "{out}");
     let (nap, sleep) = if cfg!(windows) {
         ("Start-Sleep -Seconds 5", "Start-Sleep -Seconds 30")
     } else {

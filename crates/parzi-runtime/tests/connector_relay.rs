@@ -262,7 +262,20 @@ async fn a_slow_connector_waits_for_the_next_turn_not_this_one() {
         .await
         .unwrap();
     settle(&store, &meta.id).await;
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    // Wait for the background listing to land rather than a fixed nap: a
+    // Node child starts much slower on a Windows runner than here.
+    let listed = async {
+        loop {
+            let tools = orch.mcp().session_tools(std::time::Duration::ZERO).await;
+            if tools.iter().any(|t| t.server == "slow" && t.name == "echo") {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(30), listed)
+        .await
+        .expect("the connector lists in the background");
     orch.send_to(&meta.id, "again", None, "", "low", vec![], None, None)
         .await
         .unwrap();

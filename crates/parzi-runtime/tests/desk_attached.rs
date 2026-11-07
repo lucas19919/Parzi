@@ -64,7 +64,7 @@ async fn acting_on_a_page_asks_and_listing_every_tab_always_asks() {
         let (ok, out) = work
             .call(tool, &json!({ "text": "x", "key": "Enter", "option": "a" }))
             .await;
-        assert!(!ok && out.contains("denied"), "{tool}: {out}");
+        assert!(!ok && out.contains("declined"), "{tool}: {out}");
         assert_eq!(asked.0.load(Ordering::SeqCst), before + 1, "{tool} asks");
     }
     let before = asked.0.load(Ordering::SeqCst);
@@ -76,7 +76,7 @@ async fn acting_on_a_page_asks_and_listing_every_tab_always_asks() {
     assert_eq!(asked.0.load(Ordering::SeqCst), before, "a read never asks");
     let build = host(ApprovalMode::Auto, false, asked.clone());
     let (ok, out) = build.call("browser.tabs", &json!({ "all": true })).await;
-    assert!(!ok && out.contains("denied"), "{out}");
+    assert!(!ok && out.contains("declined"), "{out}");
     assert_eq!(
         asked.0.load(Ordering::SeqCst),
         before + 1,
