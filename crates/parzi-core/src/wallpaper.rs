@@ -109,34 +109,18 @@ fn fit(src_w: u32, src_h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
     )
 }
 
-fn blur_sigma(blur: f64, scale: f64, out_w: u32, screen_w: u32) -> f32 {
-    if blur <= 0.0 || out_w == 0 || screen_w == 0 {
-        return 0.0;
-    }
-    let device = blur * scale.clamp(0.5, 4.0);
-    (device * out_w as f64 / screen_w as f64).max(0.0) as f32
-}
-
-fn cache_key(src: &Path, mtime: u64, len: u64, sigma: f32, out_w: u32, out_h: u32) -> String {
+/// The last number once held a blur strength. Surfaces are solid now and
+/// nothing blurs, but it stays 0 so cached renders keep their names.
+fn cache_key(src: &Path, mtime: u64, len: u64, out_w: u32, out_h: u32) -> String {
     let mut h = crate::hash::fnv1a(src.to_string_lossy().as_bytes());
-    for n in [
-        mtime,
-        len,
-        out_w as u64,
-        out_h as u64,
-        (sigma * 100.0).round().max(0.0) as u64,
-    ] {
+    for n in [mtime, len, out_w as u64, out_h as u64, 0] {
         h = crate::hash::fnv1a_from(h, &n.to_le_bytes());
     }
     format!("{h:016x}")
 }
 
-fn cache_name(key: &str, sigma: f32) -> String {
-    if sigma > 0.0 {
-        format!("bg-{key}.webp")
-    } else {
-        format!("bg-{key}.jpg")
-    }
+fn cache_name(key: &str) -> String {
+    format!("bg-{key}.jpg")
 }
 
 fn mtime_secs(m: &std::fs::Metadata) -> u64 {
@@ -149,23 +133,16 @@ fn mtime_secs(m: &std::fs::Metadata) -> u64 {
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
-pub fn prepare(
-    src: &Path,
-    cache_dir: &Path,
-    blur: f64,
-    screen_w: u32,
-    screen_h: u32,
-    scale: f64,
-) -> Result<PathBuf> {
+/// The wallpaper fitted to the screen, cached as a JPEG beside the others.
+pub fn prepare(src: &Path, cache_dir: &Path, screen_w: u32, screen_h: u32) -> Result<PathBuf> {
     let meta = std::fs::symlink_metadata(src)?;
     if !meta.is_file() {
         return Err(ParziError::Config("wallpaper is not a file".into()));
     }
     let (sw, sh) = check_source(src)?;
     let (out_w, out_h) = fit(sw, sh, screen_w, screen_h);
-    let sigma = blur_sigma(blur, scale, out_w, screen_w);
-    let key = cache_key(src, mtime_secs(&meta), meta.len(), sigma, out_w, out_h);
-    let dest = cache_dir.join(cache_name(&key, sigma));
+    let key = cache_key(src, mtime_secs(&meta), meta.len(), out_w, out_h);
+    let dest = cache_dir.join(cache_name(&key));
     if dest.is_file() {
         sweep(cache_dir, &dest);
         return Ok(dest);
@@ -180,10 +157,7 @@ pub fn prepare(
     } else {
         img.resize_exact(out_w, out_h, imageops::FilterType::CatmullRom)
     };
-    let mut rgb = img.into_rgb8();
-    if sigma > 0.0 {
-        rgb = imageops::fast_blur(&rgb, sigma);
-    }
+    let rgb = img.into_rgb8();
 
     let tmp = cache_dir.join(format!(
         "{key}.{}.{}.tmp",
@@ -192,21 +166,12 @@ pub fn prepare(
     ));
     let write = (|| -> Result<()> {
         let mut w = std::io::BufWriter::new(std::fs::File::create(&tmp)?);
-        let r = if sigma > 0.0 {
-            image::codecs::webp::WebPEncoder::new_lossless(&mut w).encode(
-                rgb.as_raw(),
-                out_w,
-                out_h,
-                image::ExtendedColorType::Rgb8,
-            )
-        } else {
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut w, 85).encode(
-                rgb.as_raw(),
-                out_w,
-                out_h,
-                image::ExtendedColorType::Rgb8,
-            )
-        };
+        let r = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut w, 85).encode(
+            rgb.as_raw(),
+            out_w,
+            out_h,
+            image::ExtendedColorType::Rgb8,
+        );
         r.map_err(|e| ParziError::Config(format!("cannot encode wallpaper: {e}")))?;
         w.into_inner()
             .map_err(|e| ParziError::Config(format!("cannot write wallpaper: {e}")))?
@@ -267,29 +232,19 @@ mod tests {
     }
 
     #[test]
-    fn sigma_follows_dpi_and_the_downscale() {
-        assert_eq!(blur_sigma(0.0, 1.5, 1920, 1920), 0.0);
-        assert_eq!(blur_sigma(8.0, 1.5, 1920, 1920), 12.0);
-        assert_eq!(blur_sigma(8.0, 1.5, 960, 1920), 6.0);
-        assert_eq!(blur_sigma(8.0, 1.5, 0, 1920), 0.0);
-    }
-
-    #[test]
     fn cache_key_moves_with_every_render_input() {
         let p = Path::new("/home/x/.parzi/backgrounds/a.jpg");
-        let base = cache_key(p, 100, 2000, 3.0, 1920, 1080);
-        assert_eq!(base, cache_key(p, 100, 2000, 3.0, 1920, 1080));
-        assert_ne!(base, cache_key(p, 101, 2000, 3.0, 1920, 1080));
-        assert_ne!(base, cache_key(p, 100, 2001, 3.0, 1920, 1080));
-        assert_ne!(base, cache_key(p, 100, 2000, 4.0, 1920, 1080));
-        assert_ne!(base, cache_key(p, 100, 2000, 3.0, 2560, 1080));
+        let base = cache_key(p, 100, 2000, 1920, 1080);
+        assert_eq!(base, cache_key(p, 100, 2000, 1920, 1080));
+        assert_ne!(base, cache_key(p, 101, 2000, 1920, 1080));
+        assert_ne!(base, cache_key(p, 100, 2001, 1920, 1080));
+        assert_ne!(base, cache_key(p, 100, 2000, 2560, 1080));
         assert_ne!(
             base,
-            cache_key(Path::new("/home/x/b.jpg"), 100, 2000, 3.0, 1920, 1080)
+            cache_key(Path::new("/home/x/b.jpg"), 100, 2000, 1920, 1080)
         );
         assert_eq!(base.len(), 16);
-        assert_eq!(cache_name(&base, 3.0), format!("bg-{base}.webp"));
-        assert_eq!(cache_name(&base, 0.0), format!("bg-{base}.jpg"));
+        assert_eq!(cache_name(&base), format!("bg-{base}.jpg"));
     }
 
     #[test]
@@ -313,26 +268,25 @@ mod tests {
     }
 
     #[test]
-    fn prepare_downscales_blurs_caches_and_sweeps() {
+    fn prepare_downscales_caches_and_sweeps() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("wall.png");
         png(&src, 2400, 1200);
         let cache = dir.path().join("cache");
 
-        let a = prepare(&src, &cache, 6.0, 1200, 800, 1.0).unwrap();
+        let a = prepare(&src, &cache, 1200, 800).unwrap();
         assert!(a.is_file());
-        assert_eq!(a.extension().unwrap(), "webp");
+        assert_eq!(a.extension().unwrap(), "jpg");
         assert_eq!(source_size(&a).unwrap(), (1200, 600));
 
         let before = std::fs::metadata(&a).unwrap().len();
-        let b = prepare(&src, &cache, 6.0, 1200, 800, 1.0).unwrap();
+        let b = prepare(&src, &cache, 1200, 800).unwrap();
         assert_eq!(a, b);
         assert_eq!(std::fs::metadata(&b).unwrap().len(), before);
 
-        let c = prepare(&src, &cache, 0.0, 1200, 800, 1.0).unwrap();
+        let c = prepare(&src, &cache, 600, 400).unwrap();
         assert_ne!(a, c);
-        assert_eq!(c.extension().unwrap(), "jpg");
-        assert!(!a.exists());
+        assert!(!a.exists(), "the old size is swept");
         assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 1);
     }
 
@@ -360,7 +314,7 @@ mod tests {
         png(&src, MAX_SOURCE_EDGE + 1, 16);
         let err = check_source(&src).unwrap_err().to_string();
         assert!(err.contains("4096"), "{err}");
-        assert!(prepare(&src, &dir.path().join("cache"), 0.0, 1920, 1200, 1.0).is_err());
+        assert!(prepare(&src, &dir.path().join("cache"), 1920, 1200).is_err());
         let ok = dir.path().join("edge.png");
         png(&ok, MAX_SOURCE_EDGE, 16);
         assert!(check_source(&ok).is_ok());

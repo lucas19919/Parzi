@@ -66,19 +66,19 @@ pub async fn background_url(app: AppHandle) -> Result<String, String> {
     let Some(abs) = checked_background(abs) else {
         return Ok(String::new());
     };
-    let (sw, sh, scale) = app
+    let (sw, sh) = app
         .available_monitors()
         .ok()
         .and_then(|ms| {
             ms.into_iter()
                 .max_by_key(|m| u64::from(m.size().width) * u64::from(m.size().height))
         })
-        .map(|m| (m.size().width, m.size().height, m.scale_factor()))
-        .unwrap_or((1920, 1080, 1.0));
+        .map(|m| (m.size().width, m.size().height))
+        .unwrap_or((1920, 1080));
     let cache = parzi_core::paths::cache_dir().map_err(|e| e.to_string())?;
     let src = abs.clone();
     let rendered = tauri::async_runtime::spawn_blocking(move || {
-        parzi_core::wallpaper::prepare(&src, &cache, 0.0, sw, sh, scale)
+        parzi_core::wallpaper::prepare(&src, &cache, sw, sh)
     })
     .await
     .map_err(|e| e.to_string())?;
