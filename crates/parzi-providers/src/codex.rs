@@ -305,6 +305,23 @@ fn windows(snapshot: &Value) -> Vec<UsageWindow> {
 const APPROVAL: &str = "untrusted";
 const SANDBOX: &str = "read-only";
 
+/// How long Codex lets one call to Parzi's tools run. Codex's own default
+/// (60s) cuts off the calls that wait on purpose: an approval card waits up to
+/// 15 minutes by default and the shell.exec it allows then runs up to 10,
+/// ask.user waits 5 and a spawn that waits for its child 3.
+const PARZI_TOOL_TIMEOUT_SECS: f64 = 1800.0;
+/// Parzi's tool server is already listening on this machine; this only covers a
+/// slow start on a busy one.
+const PARZI_STARTUP_TIMEOUT_SECS: f64 = 30.0;
+
+fn tools_config(t: &crate::types::ToolServer) -> Value {
+    json!({"mcp_servers": {t.name.clone(): {
+        "url": t.url,
+        "startup_timeout_sec": PARZI_STARTUP_TIMEOUT_SECS,
+        "tool_timeout_sec": PARZI_TOOL_TIMEOUT_SECS,
+    }}})
+}
+
 fn thread_id(v: &Value) -> Option<String> {
     v.pointer("/thread/id")
         .and_then(Value::as_str)
@@ -342,7 +359,7 @@ async fn drive(
         thread["developerInstructions"] = json!(i);
     }
     if let Some(t) = &spec.tools {
-        thread["config"] = json!({"mcp_servers": {t.name.clone(): {"url": t.url}}});
+        thread["config"] = tools_config(t);
     }
     let limit = Duration::from_secs(60);
     let resume = spec
@@ -857,6 +874,31 @@ mod tests {
             effort("minimal"),
             "minimal",
             "Codex's own word passes through"
+        );
+    }
+
+    #[test]
+    fn parzis_tools_get_time_for_the_calls_that_wait_on_a_person() {
+        let server = crate::types::ToolServer {
+            name: "parzi".into(),
+            url: "http://127.0.0.1:1/mcp/t".into(),
+            token: "t".into(),
+            shell: true,
+        };
+        let cfg = tools_config(&server);
+        let entry = &cfg["mcp_servers"]["parzi"];
+        assert_eq!(entry["url"], "http://127.0.0.1:1/mcp/t");
+        let tool = entry["tool_timeout_sec"].as_f64().unwrap();
+        assert!(
+            tool >= 900.0 + 600.0,
+            "an approval wait and the longest shell.exec fit in one call: {tool}"
+        );
+        let startup = entry["startup_timeout_sec"].as_f64().unwrap();
+        assert!((10.0..=120.0).contains(&startup), "{startup}");
+        assert_eq!(
+            entry.as_object().unwrap().len(),
+            3,
+            "nothing else rides along: {entry}"
         );
     }
 
