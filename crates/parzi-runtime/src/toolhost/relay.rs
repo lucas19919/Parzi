@@ -22,6 +22,7 @@ impl ToolHost {
                     return Relay::default();
                 }
                 let tools = &self.p.tools;
+                tools.mcp.note_folder(&tools.cwd);
                 let mut found = tools.mcp.session_tools(crate::mcp::COLD_LIST_BUDGET).await;
                 found.retain(|t| {
                     tools.connector_allowed(&t.server)

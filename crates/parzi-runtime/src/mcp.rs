@@ -1,16 +1,25 @@
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
 use parzi_core::config::McpServerCfg;
 use parzi_core::error::{ParziError, Result};
-use serde_json::Value;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use parzi_core::text::clip;
+use parzi_providers::jsonrpc::{Incoming, Peer, RpcError};
+use serde_json::{json, Value};
+use tokio::process::{Child, Command};
+use tokio::sync::mpsc::UnboundedReceiver;
 
-const PROTOCOL_VERSION: &str = "2024-11-05";
-const HTTP_PROTOCOL_VERSION: &str = "2025-06-18";
+/// The MCP version Parzi offers on both transports.
+const PROTOCOL_VERSION: &str = "2025-06-18";
+/// The versions a server may answer with. Parzi uses tools, pings, roots and
+/// cancellation, which read the same in all of them.
+const SUPPORTED: &[&str] = &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+const MAX_PAGES: usize = 100;
+/// How long an error waits for the last of a stopped connector's stderr.
+const STDERR_WAIT: Duration = Duration::from_millis(300);
+const ROOTS_KEPT: usize = 8;
 
 const HANDSHAKE_FLOOR: Duration = Duration::from_secs(10);
 
@@ -81,25 +90,78 @@ impl McpTool {
     }
 }
 
+/// A connector run as a program, spoken to over its stdin and stdout.
+struct Stdio {
+    peer: Arc<Peer>,
+    child: std::sync::Mutex<Option<Child>>,
+    stderr: Arc<std::sync::Mutex<String>>,
+    stderr_done: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    broken: AtomicBool,
+}
+
+impl Stdio {
+    fn dead(&self) -> bool {
+        self.peer.is_closed() || self.broken.load(Ordering::SeqCst)
+    }
+
+    /// The end of what the program wrote to stderr, once it has had a moment
+    /// to finish writing.
+    async fn tail(&self) -> String {
+        let done = self.stderr_done.lock().ok().and_then(|mut d| d.take());
+        if let Some(done) = done {
+            let _ = tokio::time::timeout(STDERR_WAIT, done).await;
+        }
+        self.stderr.lock().map(|s| s.clone()).unwrap_or_default()
+    }
+}
+
 enum Conn {
-    Stdio {
-        child: Box<Child>,
-        stdin: Box<ChildStdin>,
-        stdout: Box<BufReader<ChildStdout>>,
+    Stdio(Stdio),
+    Http {
+        conn: Arc<std::sync::Mutex<crate::mcp_http::HttpConn>>,
+        next_id: AtomicU64,
     },
-    Http(Arc<std::sync::Mutex<crate::mcp_http::HttpConn>>),
 }
 
 struct LiveServer {
     conn: Conn,
     info: Value,
-    next_id: u64,
-    tools: Option<Vec<McpTool>>,
-    last_used: Instant,
+    tools: std::sync::Mutex<Option<Vec<McpTool>>>,
+    last_used: std::sync::Mutex<Instant>,
+    busy: AtomicUsize,
     epoch: u64,
 }
 
-type Slot = Arc<tokio::sync::Mutex<Option<LiveServer>>>;
+/// A call in flight: the idle reaper leaves the connector alone meanwhile.
+struct Busy<'a>(&'a LiveServer);
+
+impl Drop for Busy<'_> {
+    fn drop(&mut self) {
+        self.0.busy.fetch_sub(1, Ordering::SeqCst);
+        self.0.touch();
+    }
+}
+
+impl LiveServer {
+    fn touch(&self) {
+        if let Ok(mut t) = self.last_used.lock() {
+            *t = Instant::now();
+        }
+    }
+
+    fn idle_for(&self) -> Duration {
+        self.last_used
+            .lock()
+            .map_or(Duration::ZERO, |t| t.elapsed())
+    }
+
+    fn busy(&self) -> Busy<'_> {
+        self.busy.fetch_add(1, Ordering::SeqCst);
+        Busy(self)
+    }
+}
+
+type Slot = Arc<tokio::sync::Mutex<Option<Arc<LiveServer>>>>;
 
 /// A connector's tool list as last seen, from a listing or from disk.
 struct Known {
@@ -123,6 +185,7 @@ struct Inner {
     listing: std::sync::Mutex<HashMap<String, Instant>>,
     failed: std::sync::Mutex<HashMap<String, (String, Instant)>>,
     settled: tokio::sync::watch::Sender<u64>,
+    folders: std::sync::Mutex<Vec<String>>,
 }
 
 const CHILD_ENV_PASSTHROUGH: &[&str] = &[
@@ -191,8 +254,43 @@ fn child_env_from(
     out
 }
 
-fn tool_err(msg: String) -> ParziError {
-    ParziError::Tool("mcp".into(), msg)
+/// An error that names the connector it came from.
+fn conn_err(name: &str, msg: impl Into<String>) -> ParziError {
+    ParziError::Tool(name.into(), msg.into())
+}
+
+/// `msg`, then the last thing the connector said on stderr: its last line on
+/// the same line, a few before it below.
+fn with_tail(msg: &str, tail: &str) -> String {
+    let lines: Vec<&str> = tail
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    let Some(last) = lines.last() else {
+        return msg.to_string();
+    };
+    let recent = lines[lines.len().saturating_sub(8)..].join("\n");
+    format!("{msg}: {}\n{}", clip(last.trim(), 300), clip(&recent, 1500))
+}
+
+fn file_uri(path: &str) -> String {
+    let p = path.replace('\\', "/");
+    let p = if p.starts_with('/') {
+        p
+    } else {
+        format!("/{p}")
+    };
+    let mut out = String::from("file://");
+    for b in p.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'_' | b'.' | b'~' | b':' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 async fn http_send(
@@ -209,82 +307,206 @@ async fn http_send(
         c.send(&msg, timeout)
     })
     .await
-    .map_err(|e| tool_err(e.to_string()))?;
+    .map_err(|e| conn_err(&name, e.to_string()))?;
     out.map_err(|e| match e {
         crate::mcp_http::HttpError::SignIn(challenge) => {
             crate::mcp_http::remember_challenge(&name, challenge);
-            tool_err(format!(
-                "{}: sign in to {name} in Settings › Connections",
-                crate::mcp_http::SIGN_IN
-            ))
+            conn_err(
+                &name,
+                format!(
+                    "{}: sign in to {name} in Settings › Connections",
+                    crate::mcp_http::SIGN_IN
+                ),
+            )
         }
-        crate::mcp_http::HttpError::Other(e) => tool_err(format!("`{name}`: {e}")),
+        crate::mcp_http::HttpError::Other(e) => conn_err(&name, e),
     })
 }
 
-async fn rpc_round_trip<W, R>(
-    stdin: &mut W,
-    stdout: &mut R,
-    id: u64,
-    method: &str,
-    params: Value,
-    timeout: Duration,
-) -> Result<std::result::Result<Value, String>>
-where
-    W: AsyncWrite + Unpin,
-    R: AsyncBufRead + Unpin,
-{
-    let mut wire = serde_json::to_string(&serde_json::json!({
-        "jsonrpc": "2.0", "id": id, "method": method, "params": params,
-    }))?;
-    wire.push('\n');
-    stdin
-        .write_all(wire.as_bytes())
-        .await
-        .map_err(|e| tool_err(format!("write failed: {e}")))?;
-    stdin
-        .flush()
-        .await
-        .map_err(|e| tool_err(format!("flush failed: {e}")))?;
-    let deadline = tokio::time::Instant::now() + timeout;
-    loop {
-        let mut out = String::new();
-        let n = tokio::time::timeout_at(deadline, stdout.read_line(&mut out))
-            .await
-            .map_err(|_| tool_err(format!("{method} timed out")))?
-            .map_err(|e| tool_err(format!("read failed: {e}")))?;
-        if n == 0 {
-            return Err(tool_err(format!("{method}: server closed the pipe")));
+impl Conn {
+    fn dead(&self) -> bool {
+        match self {
+            Self::Stdio(s) => s.dead(),
+            Self::Http { .. } => false,
         }
-        let line = out.trim();
-        if line.is_empty() {
-            continue;
+    }
+
+    /// One request. `Ok(Err(..))` is the connector refusing it; `Err` is the
+    /// connector unreachable, stopped or too slow.
+    async fn request(
+        &self,
+        name: &str,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<std::result::Result<Value, String>> {
+        match self {
+            Self::Stdio(s) => {
+                let id = s.peer.fresh_id();
+                match tokio::time::timeout(timeout, s.peer.request_as(id, method, params)).await {
+                    Ok(Ok(v)) => Ok(Ok(v)),
+                    Ok(Err(e)) if e.code == RpcError::CLOSED => {
+                        s.broken.store(true, Ordering::SeqCst);
+                        let tail = s.tail().await;
+                        Err(conn_err(
+                            name,
+                            with_tail(&format!("{method}: it stopped before it answered"), &tail),
+                        ))
+                    }
+                    Ok(Err(e)) => Ok(Err(format!("server error {}: {e}", e.code))),
+                    Err(_) => {
+                        // The server keeps running; it is told to drop the work.
+                        if method != "initialize" {
+                            let note = json!({"requestId": id, "reason": "Parzi stopped waiting"});
+                            if s.peer
+                                .notify("notifications/cancelled", note)
+                                .await
+                                .is_err()
+                            {
+                                s.broken.store(true, Ordering::SeqCst);
+                            }
+                        }
+                        Err(conn_err(
+                            name,
+                            format!("{method} timed out after {}s", timeout.as_secs().max(1)),
+                        ))
+                    }
+                }
+            }
+            Self::Http { conn, next_id } => {
+                let id = next_id.fetch_add(1, Ordering::Relaxed) + 1;
+                let msg = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
+                let reply = http_send(conn.clone(), name, msg, timeout)
+                    .await?
+                    .unwrap_or(Value::Null);
+                Ok(match reply.get("error") {
+                    Some(err) => Err(format!("server error: {err}")),
+                    None => Ok(reply.get("result").cloned().unwrap_or(Value::Null)),
+                })
+            }
         }
-        let Ok(v) = serde_json::from_str::<Value>(line) else {
-            tracing::warn!(
-                "mcp: skipping non-json stdout line: {}",
-                line.chars().take(200).collect::<String>()
-            );
-            continue;
+    }
+
+    async fn notify(&self, name: &str, method: &str, timeout: Duration) -> Result<()> {
+        match self {
+            Self::Stdio(s) => s.peer.notify(method, Value::Null).await.map_err(|e| {
+                s.broken.store(true, Ordering::SeqCst);
+                conn_err(name, e.to_string())
+            }),
+            Self::Http { conn, .. } => {
+                let note = json!({"jsonrpc": "2.0", "method": method});
+                http_send(conn.clone(), name, note, timeout)
+                    .await
+                    .map(|_| ())
+            }
+        }
+    }
+
+    async fn shut(&self) {
+        let Self::Stdio(s) = self else {
+            return;
         };
-        if v.get("method").is_some() {
-            continue;
+        let child = s.child.lock().ok().and_then(|mut c| c.take());
+        if let Some(mut child) = child {
+            if let Some(pid) = child.id() {
+                let _ =
+                    tokio::task::spawn_blocking(move || parzi_providers::process::kill_tree(pid))
+                        .await;
+            }
+            let _ = child.kill().await;
         }
-        if v.get("id").and_then(|i| i.as_u64()) != Some(id) {
-            continue;
-        }
-        if let Some(err) = v.get("error") {
-            return Ok(Err(format!("server error: {err}")));
-        }
-        return Ok(Ok(v.get("result").cloned().unwrap_or(Value::Null)));
     }
 }
 
-async fn kill_tree(child: &mut Child) {
-    if let Some(pid) = child.id() {
-        let _ = tokio::task::spawn_blocking(move || parzi_providers::process::kill_tree(pid)).await;
+/// `initialize`, then `notifications/initialized`; the server's own info.
+async fn handshake(conn: &Conn, name: &str, timeout: Duration) -> Result<Value> {
+    let capabilities = match conn {
+        Conn::Stdio(_) => json!({"roots": {"listChanged": false}}),
+        Conn::Http { .. } => json!({}),
+    };
+    let init = json!({
+        "protocolVersion": PROTOCOL_VERSION,
+        "capabilities": capabilities,
+        "clientInfo": {"name": "parzi", "version": env!("CARGO_PKG_VERSION")},
+    });
+    let res = conn
+        .request(name, "initialize", init, timeout)
+        .await?
+        .map_err(|m| conn_err(name, m))?;
+    let version = res
+        .get("protocolVersion")
+        .and_then(Value::as_str)
+        .ok_or_else(|| conn_err(name, "initialize answered without protocolVersion"))?;
+    if !SUPPORTED.contains(&version) {
+        return Err(conn_err(
+            name,
+            format!(
+                "it speaks MCP {version}, which Parzi does not (Parzi speaks {})",
+                SUPPORTED.join(", ")
+            ),
+        ));
     }
-    let _ = child.kill().await;
+    if version != PROTOCOL_VERSION {
+        tracing::debug!(server = name, version, "mcp: server answered {version}");
+    }
+    if let Conn::Http { conn: h, .. } = conn {
+        if let Ok(mut c) = h.lock() {
+            c.set_protocol(version);
+        }
+    }
+    conn.notify(name, "notifications/initialized", timeout)
+        .await?;
+    Ok(res.get("serverInfo").cloned().unwrap_or(Value::Null))
+}
+
+/// What a stdio connector asks or tells Parzi on its own.
+async fn serve_incoming(
+    inner: Weak<Inner>,
+    name: String,
+    peer: Arc<Peer>,
+    mut incoming: UnboundedReceiver<Incoming>,
+) {
+    while let Some(msg) = incoming.recv().await {
+        match msg {
+            Incoming::Request { id, method, .. } => {
+                let answered = match method.as_str() {
+                    "ping" => peer.respond(id, json!({})).await,
+                    "roots/list" => {
+                        let roots = inner.upgrade().map(|i| i.roots()).unwrap_or_default();
+                        if roots.is_empty() {
+                            peer.respond_error(id, -32601, "no session folder is open")
+                                .await
+                        } else {
+                            peer.respond(id, json!({"roots": roots})).await
+                        }
+                    }
+                    other => {
+                        tracing::debug!(server = %name, method = other, "connector asked for something Parzi does not offer");
+                        peer.respond_error(id, -32601, &format!("Parzi does not offer {other}"))
+                            .await
+                    }
+                };
+                if answered.is_err() {
+                    break;
+                }
+            }
+            Incoming::Notification { method, params } => match method.as_str() {
+                "notifications/tools/list_changed" => {
+                    tracing::info!(server = %name, "connector changed its tools; listing again");
+                    if let Some(i) = inner.upgrade() {
+                        Inner::start_listing(&i, &name);
+                    }
+                }
+                "notifications/message" => {
+                    tracing::debug!(server = %name, "connector log: {}", clip(&params.to_string(), 500));
+                }
+                other => tracing::trace!(server = %name, method = other, "connector notification"),
+            },
+            Incoming::Raw(line) => {
+                tracing::debug!(server = %name, "connector wrote a line that is not JSON: {}", clip(&line, 200));
+            }
+        }
+    }
 }
 
 impl McpManager {
@@ -301,6 +523,7 @@ impl McpManager {
                 listing: std::sync::Mutex::default(),
                 failed: std::sync::Mutex::default(),
                 settled: tokio::sync::watch::channel(0).0,
+                folders: std::sync::Mutex::default(),
             }),
         }
     }
@@ -312,6 +535,25 @@ impl McpManager {
     /// How many times a connector was started or connected to.
     pub fn live_starts(&self) -> u64 {
         self.inner.starts.load(Ordering::Relaxed)
+    }
+
+    /// A folder a session works in: what a connector's `roots/list` answers.
+    pub fn note_folder(&self, folder: &str) {
+        let folder = folder.trim();
+        if folder.is_empty() {
+            return;
+        }
+        let scratch = parzi_core::paths::parzi_dir()
+            .map(|d| d.join("scratch"))
+            .ok();
+        if scratch.is_some_and(|s| std::path::Path::new(folder).starts_with(s)) {
+            return;
+        }
+        if let Ok(mut f) = self.inner.folders.lock() {
+            f.retain(|x| x != folder);
+            f.insert(0, folder.to_string());
+            f.truncate(ROOTS_KEPT);
+        }
     }
 
     pub(crate) async fn set_configs(&self, configs: HashMap<String, McpServerCfg>) {
@@ -408,13 +650,7 @@ impl McpManager {
 
     pub async fn details(&self, name: &str) -> Result<ServerDetails> {
         let tools = self.inner.list_tools(name, false).await?;
-        let slot = self.inner.slot_for(name).await;
-        let info = slot
-            .lock()
-            .await
-            .as_ref()
-            .map(|sv| sv.info.clone())
-            .unwrap_or_default();
+        let info = self.inner.live(name).await?.info.clone();
         let text = |k: &str| {
             info.get(k)
                 .and_then(Value::as_str)
@@ -451,7 +687,7 @@ impl McpManager {
                 if ok {
                     (true, text)
                 } else {
-                    (false, ParziError::Tool(server.into(), text).to_string())
+                    (false, conn_err(server, text).to_string())
                 }
             }
             Err(e) => (false, e.to_string()),
@@ -462,9 +698,10 @@ impl McpManager {
     /// when the connector could not be reached or broke the protocol.
     pub async fn call_raw(&self, server: &str, tool: &str, args: Value) -> Result<Value> {
         if !self.is_tool_exposed(server, tool) {
-            return Err(tool_err(format!(
-                "`{tool}` is switched off for the connector `{server}`"
-            )));
+            return Err(conn_err(
+                server,
+                format!("`{tool}` is switched off for this connector"),
+            ));
         }
         self.inner.call(server, tool, args).await
     }
@@ -501,6 +738,22 @@ impl Inner {
     fn is_tool_exposed(&self, server: &str, tool: &str) -> bool {
         self.config_for(server)
             .is_some_and(|c| c.is_tool_exposed(tool))
+    }
+
+    fn roots(&self) -> Vec<Value> {
+        self.folders
+            .lock()
+            .map(|f| {
+                f.iter()
+                    .map(|p| {
+                        let name = std::path::Path::new(p)
+                            .file_name()
+                            .map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned());
+                        json!({"uri": file_uri(p), "name": name})
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     async fn slot_for(&self, name: &str) -> Slot {
@@ -626,130 +879,68 @@ impl Inner {
         }
     }
 
-    async fn request(
-        sv: &mut LiveServer,
-        name: &str,
-        method: &str,
-        params: Value,
-        timeout: Duration,
-    ) -> Result<std::result::Result<Value, String>> {
-        sv.next_id += 1;
-        let id = sv.next_id;
-        match &mut sv.conn {
-            Conn::Stdio { stdin, stdout, .. } => {
-                rpc_round_trip(stdin, stdout, id, method, params, timeout).await
+    /// The live connection to `name`, started or reconnected if need be.
+    /// Only starting holds the connector's slot; calls to a live one overlap.
+    async fn live(self: &Arc<Self>, name: &str) -> Result<Arc<LiveServer>> {
+        let slot = self.slot_for(name).await;
+        let mut guard = slot.lock().await;
+        if let Some(sv) = guard.as_ref() {
+            if !sv.conn.dead() {
+                sv.touch();
+                return Ok(sv.clone());
             }
-            Conn::Http(h) => {
-                let msg = serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-                let reply = http_send(h.clone(), name, msg, timeout)
-                    .await?
-                    .unwrap_or(Value::Null);
-                Ok(match reply.get("error") {
-                    Some(err) => Err(format!("server error: {err}")),
-                    None => Ok(reply.get("result").cloned().unwrap_or(Value::Null)),
-                })
-            }
+            Self::drop_live(&mut guard).await;
         }
+        let sv = Arc::new(self.connect(name).await?);
+        *guard = Some(sv.clone());
+        Self::spawn_reaper(name.to_string(), slot.clone(), self.idle_kill, sv.epoch);
+        Ok(sv)
     }
 
-    async fn notify(
-        sv: &mut LiveServer,
-        name: &str,
-        method: &str,
-        timeout: Duration,
-    ) -> Result<()> {
-        let note = serde_json::json!({"jsonrpc": "2.0", "method": method});
-        match &mut sv.conn {
-            Conn::Stdio { stdin, .. } => {
-                let mut wire = serde_json::to_string(&note)?;
-                wire.push('\n');
-                stdin
-                    .write_all(wire.as_bytes())
-                    .await
-                    .map_err(|e| tool_err(format!("write failed: {e}")))?;
-                stdin
-                    .flush()
-                    .await
-                    .map_err(|e| tool_err(format!("flush failed: {e}")))
-            }
-            Conn::Http(h) => http_send(h.clone(), name, note, timeout).await.map(|_| ()),
-        }
-    }
-
-    async fn handshake(sv: &mut LiveServer, name: &str, timeout: Duration) -> Result<()> {
-        let offered = match sv.conn {
-            Conn::Stdio { .. } => PROTOCOL_VERSION,
-            Conn::Http(_) => HTTP_PROTOCOL_VERSION,
-        };
-        let init = serde_json::json!({
-            "protocolVersion": offered,
-            "capabilities": {},
-            "clientInfo": {"name": "parzi", "version": env!("CARGO_PKG_VERSION")},
-        });
-        let res = Self::request(sv, name, "initialize", init, timeout)
-            .await?
-            .map_err(tool_err)?;
-        sv.info = res.get("serverInfo").cloned().unwrap_or(Value::Null);
-        match res.get("protocolVersion").and_then(|v| v.as_str()) {
-            Some(v) => {
-                if v != offered {
-                    tracing::debug!(server = name, version = v, "mcp: server negotiated {v}");
-                }
-                if let Conn::Http(h) = &sv.conn {
-                    if let Ok(mut c) = h.lock() {
-                        c.set_protocol(v);
-                    }
-                }
-            }
-            None => {
-                return Err(tool_err(format!(
-                    "`{name}`: initialize answered without protocolVersion"
-                )))
-            }
-        }
-        Self::notify(sv, name, "notifications/initialized", timeout).await
-    }
-
-    async fn ensure_live(
-        &self,
-        slot: &Slot,
-        guard: &mut Option<LiveServer>,
-        name: &str,
-    ) -> Result<()> {
-        if guard.is_some() {
-            return Ok(());
-        }
+    async fn connect(self: &Arc<Self>, name: &str) -> Result<LiveServer> {
         let cfg = self
             .config_for(name)
-            .ok_or_else(|| tool_err(format!("unknown server `{name}`")))?;
+            .ok_or_else(|| conn_err(name, "no such connector"))?;
         if !cfg.enabled {
-            return Err(tool_err(format!("server `{name}` disabled")));
+            return Err(conn_err(name, "the connector is switched off"));
         }
         self.starts.fetch_add(1, Ordering::Relaxed);
         let epoch = self.epoch.fetch_add(1, Ordering::Relaxed) + 1;
         let timeout = Duration::from_millis(cfg.timeout_ms.max(1_000));
-        let handshake = timeout.max(HANDSHAKE_FLOOR);
-        if !cfg.url.trim().is_empty() {
-            let mut sv = LiveServer {
-                conn: Conn::Http(Arc::new(std::sync::Mutex::new(
-                    crate::mcp_http::HttpConn::new(name, &cfg),
+        let wait = timeout.max(HANDSHAKE_FLOOR);
+        let conn = if cfg.url.trim().is_empty() {
+            self.spawn_stdio(name, &cfg)?
+        } else {
+            Conn::Http {
+                conn: Arc::new(std::sync::Mutex::new(crate::mcp_http::HttpConn::new(
+                    name, &cfg,
                 ))),
-                next_id: 0,
-                tools: None,
-                info: Value::Null,
-                last_used: Instant::now(),
-                epoch,
-            };
-            Self::handshake(&mut sv, name, handshake).await?;
-            *guard = Some(sv);
-            Self::spawn_reaper(name.to_string(), slot.clone(), self.idle_kill, epoch);
-            return Ok(());
-        }
+                next_id: AtomicU64::new(0),
+            }
+        };
+        let info = match handshake(&conn, name, wait).await {
+            Ok(info) => info,
+            Err(e) => {
+                conn.shut().await;
+                return Err(e);
+            }
+        };
+        Ok(LiveServer {
+            conn,
+            info,
+            tools: std::sync::Mutex::new(None),
+            last_used: std::sync::Mutex::new(Instant::now()),
+            busy: AtomicUsize::new(0),
+            epoch,
+        })
+    }
+
+    fn spawn_stdio(self: &Arc<Self>, name: &str, cfg: &McpServerCfg) -> Result<Conn> {
         let program = parzi_providers::process::which(&cfg.command).ok_or_else(|| {
-            tool_err(format!(
-                "`{}` isn't installed on this computer",
-                cfg.command
-            ))
+            conn_err(
+                name,
+                format!("`{}` isn't installed on this computer", cfg.command),
+            )
         })?;
         let mut cmd = Command::new(program);
         cmd.args(&cfg.args)
@@ -757,41 +948,35 @@ impl Inner {
             .envs(child_env(&cfg.env))
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
         #[cfg(windows)]
         cmd.creation_flags(parzi_providers::process::CREATE_NO_WINDOW);
         let mut child: Child = cmd
             .spawn()
-            .map_err(|e| tool_err(format!("spawn `{name}`: {e}")))?;
+            .map_err(|e| conn_err(name, format!("could not start `{}`: {e}", cfg.command)))?;
         parzi_providers::process::adopt(&child);
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| tool_err("no stdin".into()))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| tool_err("no stdout".into()))?;
-        let mut sv = LiveServer {
-            conn: Conn::Stdio {
-                child: Box::new(child),
-                stdin: Box::new(stdin),
-                stdout: Box::new(BufReader::new(stdout)),
-            },
-            next_id: 0,
-            tools: None,
-            info: Value::Null,
-            last_used: Instant::now(),
-            epoch,
+        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            return Err(conn_err(name, "its pipes did not open"));
         };
-        if let Err(e) = Self::handshake(&mut sv, name, handshake).await {
-            Self::drop_live(&mut Some(sv)).await;
-            return Err(e);
-        }
-        *guard = Some(sv);
-        Self::spawn_reaper(name.to_string(), slot.clone(), self.idle_kill, epoch);
-        Ok(())
+        let (stderr, done) = match child.stderr.take() {
+            Some(pipe) => parzi_providers::process::keep_tail(pipe),
+            None => (Arc::default(), tokio::spawn(async {})),
+        };
+        let (peer, incoming) = Peer::start(name.to_string(), stdout, stdin);
+        tokio::spawn(serve_incoming(
+            Arc::downgrade(self),
+            name.to_string(),
+            peer.clone(),
+            incoming,
+        ));
+        Ok(Conn::Stdio(Stdio {
+            peer,
+            child: std::sync::Mutex::new(Some(child)),
+            stderr,
+            stderr_done: std::sync::Mutex::new(Some(done)),
+            broken: AtomicBool::new(false),
+        }))
     }
 
     fn spawn_reaper(name: String, slot: Slot, idle: Duration, epoch: u64) {
@@ -802,7 +987,9 @@ impl Inner {
                 let mut guard = slot.lock().await;
                 match guard.as_ref() {
                     Some(sv) if sv.epoch == epoch => {
-                        if sv.last_used.elapsed() >= idle {
+                        let gone = sv.conn.dead();
+                        let idle_now = sv.busy.load(Ordering::SeqCst) == 0 && sv.idle_for() >= idle;
+                        if gone || idle_now {
                             Self::drop_live(&mut guard).await;
                             tracing::debug!(server = %name, "mcp: reaped idle server");
                             return;
@@ -814,13 +1001,9 @@ impl Inner {
         });
     }
 
-    async fn drop_live(guard: &mut Option<LiveServer>) {
-        if let Some(LiveServer {
-            conn: Conn::Stdio { mut child, .. },
-            ..
-        }) = guard.take()
-        {
-            kill_tree(&mut child).await;
+    async fn drop_live(guard: &mut Option<Arc<LiveServer>>) {
+        if let Some(sv) = guard.take() {
+            sv.conn.shut().await;
         }
     }
 
@@ -832,67 +1015,58 @@ impl Inner {
         )
     }
 
-    /// The connector's tools; `fresh` asks it again even when this connection
-    /// listed them already.
-    async fn list_tools(&self, name: &str, fresh: bool) -> Result<Vec<McpTool>> {
-        let slot = self.slot_for(name).await;
-        let mut guard = slot.lock().await;
-        self.ensure_live(&slot, &mut guard, name).await?;
-        let cached = {
-            let sv = guard.as_mut().expect("live after ensure");
-            sv.last_used = Instant::now();
-            sv.tools.clone().filter(|_| !fresh)
-        };
-        if let Some(t) = cached {
-            return Ok(t);
-        }
-        let timeout = self.timeout_for(name);
-        let res = {
-            let sv = guard.as_mut().expect("live after ensure");
-            Self::request(sv, name, "tools/list", serde_json::json!({}), timeout).await
-        };
-        let res = match res {
-            Ok(Ok(v)) => v,
-            Ok(Err(msg)) => return Err(tool_err(msg)),
-            Err(e) => {
-                Self::drop_live(&mut guard).await;
-                return Err(e);
+    /// The connector's tools, every page of them; `fresh` asks again even
+    /// when this connection listed them already.
+    async fn list_tools(self: &Arc<Self>, name: &str, fresh: bool) -> Result<Vec<McpTool>> {
+        let sv = self.live(name).await?;
+        if !fresh {
+            if let Some(t) = sv.tools.lock().ok().and_then(|t| t.clone()) {
+                return Ok(t);
             }
-        };
-        let out: Vec<McpTool> = res
-            .get("tools")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .map(|t| McpTool::from_listing(name, t))
-            .collect();
-        if let Some(sv) = guard.as_mut() {
-            sv.tools = Some(out.clone());
         }
-        drop(guard);
+        let _busy = sv.busy();
+        let timeout = self.timeout_for(name);
+        let mut out: Vec<McpTool> = vec![];
+        let mut cursor: Option<String> = None;
+        let mut seen = HashSet::new();
+        for _ in 0..MAX_PAGES {
+            let params = cursor
+                .as_ref()
+                .map_or_else(|| json!({}), |c| json!({"cursor": c}));
+            let page = sv
+                .conn
+                .request(name, "tools/list", params, timeout)
+                .await?
+                .map_err(|m| conn_err(name, m))?;
+            out.extend(
+                page.get("tools")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|t| McpTool::from_listing(name, t)),
+            );
+            match page.get("nextCursor").and_then(Value::as_str) {
+                Some(c) if !c.is_empty() && seen.insert(c.to_string()) => {
+                    cursor = Some(c.to_string());
+                }
+                _ => break,
+            }
+        }
+        if let Ok(mut t) = sv.tools.lock() {
+            *t = Some(out.clone());
+        }
         self.remember(name, &out);
         Ok(out)
     }
 
-    async fn call(&self, server: &str, tool: &str, args: Value) -> Result<Value> {
-        let slot = self.slot_for(server).await;
-        let mut guard = slot.lock().await;
-        self.ensure_live(&slot, &mut guard, server).await?;
-        let timeout = self.timeout_for(server);
-        let params = serde_json::json!({"name": tool, "arguments": args});
-        let res = {
-            let sv = guard.as_mut().expect("live after ensure");
-            sv.last_used = Instant::now();
-            Self::request(sv, server, "tools/call", params, timeout).await
-        };
-        match res {
-            Ok(Ok(v)) => Ok(v),
-            Ok(Err(msg)) => Err(tool_err(msg)),
-            Err(e) => {
-                Self::drop_live(&mut guard).await;
-                Err(e)
-            }
-        }
+    async fn call(self: &Arc<Self>, server: &str, tool: &str, args: Value) -> Result<Value> {
+        let sv = self.live(server).await?;
+        let _busy = sv.busy();
+        let params = json!({"name": tool, "arguments": args});
+        sv.conn
+            .request(server, "tools/call", params, self.timeout_for(server))
+            .await?
+            .map_err(|m| conn_err(server, m))
     }
 }
 
@@ -985,82 +1159,31 @@ mod tests {
         assert_eq!(back.annotations, t.annotations);
     }
 
-    #[tokio::test]
-    async fn round_trip_skips_notifications_and_stale_ids() {
-        let (client, server) = tokio::io::duplex(4096);
-        let (rx, mut tx) = tokio::io::split(client);
-        let mut rx = BufReader::new(rx);
-        tokio::spawn(async move {
-            let (srx, mut stx) = tokio::io::split(server);
-            let mut line = String::new();
-            BufReader::new(srx).read_line(&mut line).await.unwrap();
-            for frame in [
-                "[info] listening on stdio",
-                r#"{"jsonrpc":"2.0","method":"notifications/message","params":{}}"#,
-                r#"{"jsonrpc":"2.0","id":41,"result":{"stale":true}}"#,
-                r#"{"jsonrpc":"2.0","id":7,"method":"sampling/createMessage","params":{}}"#,
-                r#"{"jsonrpc":"2.0","id":7,"result":{"ok":true}}"#,
-            ] {
-                stx.write_all(format!("{frame}\n").as_bytes())
-                    .await
-                    .unwrap();
-            }
-        });
-        let got = rpc_round_trip(
-            &mut tx,
-            &mut rx,
-            7,
-            "tools/list",
-            serde_json::json!({}),
-            Duration::from_secs(5),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        assert_eq!(got, serde_json::json!({"ok": true}));
+    #[test]
+    fn an_error_carries_the_last_of_stderr() {
+        let tail =
+            "starting\n\nTraceback (most recent call last):\n  File x\nKeyError: 'API_KEY'\n";
+        let got = with_tail("initialize: it stopped before it answered", tail);
+        let first = got.lines().next().unwrap();
+        assert_eq!(
+            first,
+            "initialize: it stopped before it answered: KeyError: 'API_KEY'"
+        );
+        assert!(got.contains("Traceback"), "{got}");
+        assert_eq!(with_tail("quiet", "  \n"), "quiet");
+        let shown = conn_err("diagonaldiagrams", got).to_string();
+        assert!(shown.starts_with("tool `diagonaldiagrams`: "), "{shown}");
     }
 
-    #[tokio::test]
-    async fn round_trip_times_out_on_silence() {
-        let (client, _server) = tokio::io::duplex(4096);
-        let (rx, mut tx) = tokio::io::split(client);
-        let mut rx = BufReader::new(rx);
-        let err = rpc_round_trip(
-            &mut tx,
-            &mut rx,
-            1,
-            "tools/call",
-            serde_json::json!({}),
-            Duration::from_millis(80),
-        )
-        .await
-        .unwrap_err();
-        assert!(err.to_string().contains("timed out"), "{err}");
+    #[test]
+    fn folders_read_as_file_uris() {
+        assert_eq!(file_uri("/home/u/my app"), "file:///home/u/my%20app");
+        assert_eq!(file_uri(r"C:\Repos\x"), "file:///C:/Repos/x");
     }
 
-    #[tokio::test]
-    async fn server_error_object_keeps_the_connection() {
-        let (client, server) = tokio::io::duplex(4096);
-        let (rx, mut tx) = tokio::io::split(client);
-        let mut rx = BufReader::new(rx);
-        tokio::spawn(async move {
-            let (srx, mut stx) = tokio::io::split(server);
-            let mut line = String::new();
-            BufReader::new(srx).read_line(&mut line).await.unwrap();
-            stx.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32601}}\n")
-                .await
-                .unwrap();
-        });
-        let got = rpc_round_trip(
-            &mut tx,
-            &mut rx,
-            1,
-            "tools/call",
-            serde_json::json!({}),
-            Duration::from_secs(5),
-        )
-        .await
-        .unwrap();
-        assert!(got.unwrap_err().contains("server error"));
+    #[test]
+    fn the_offered_version_is_one_parzi_accepts() {
+        assert!(SUPPORTED.contains(&PROTOCOL_VERSION));
+        assert!(!SUPPORTED.contains(&"2099-01-01"));
     }
 }

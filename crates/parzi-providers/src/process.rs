@@ -369,6 +369,35 @@ fn follow_npm_shim(path: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Keeps the last 16 KiB a child writes to `pipe`, for errors that name what
+/// went wrong. The task ends when the pipe does.
+pub fn keep_tail<R>(mut pipe: R) -> (Arc<Mutex<String>>, tokio::task::JoinHandle<()>)
+where
+    R: tokio::io::AsyncRead + Send + Unpin + 'static,
+{
+    let tail = Arc::new(Mutex::new(String::new()));
+    let sink = tail.clone();
+    let task = tokio::spawn(async move {
+        let mut buf = [0u8; 4096];
+        while let Ok(n) = pipe.read(&mut buf).await {
+            if n == 0 {
+                break;
+            }
+            if let Ok(mut s) = sink.lock() {
+                s.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if s.len() > STDERR_KEEP {
+                    let mut cut = s.len() - STDERR_KEEP;
+                    while !s.is_char_boundary(cut) {
+                        cut += 1;
+                    }
+                    s.drain(..cut);
+                }
+            }
+        }
+    });
+    (tail, task)
+}
+
 pub(crate) struct Proc {
     pub child: Child,
     stderr: Arc<Mutex<String>>,
@@ -397,28 +426,10 @@ impl Proc {
             tracing::warn!(path = %program.display(), bytes = %file_head(&program), "spawn failed: {e}");
         })?;
         adopt(&child);
-        let stderr = Arc::new(Mutex::new(String::new()));
-        if let Some(mut pipe) = child.stderr.take() {
-            let sink = stderr.clone();
-            tokio::spawn(async move {
-                let mut buf = [0u8; 4096];
-                while let Ok(n) = pipe.read(&mut buf).await {
-                    if n == 0 {
-                        break;
-                    }
-                    if let Ok(mut s) = sink.lock() {
-                        s.push_str(&String::from_utf8_lossy(&buf[..n]));
-                        if s.len() > STDERR_KEEP {
-                            let mut cut = s.len() - STDERR_KEEP;
-                            while !s.is_char_boundary(cut) {
-                                cut += 1;
-                            }
-                            s.drain(..cut);
-                        }
-                    }
-                }
-            });
-        }
+        let stderr = match child.stderr.take() {
+            Some(pipe) => keep_tail(pipe).0,
+            None => Arc::new(Mutex::new(String::new())),
+        };
         Ok(Self { child, stderr })
     }
 

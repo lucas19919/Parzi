@@ -5,7 +5,7 @@ mod registry;
 pub use acp::{cached_models, drop_live_in, drop_parked};
 mod claude;
 mod codex;
-mod jsonrpc;
+pub mod jsonrpc;
 pub mod process;
 mod setup;
 mod types;
