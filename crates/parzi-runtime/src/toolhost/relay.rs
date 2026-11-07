@@ -3,7 +3,7 @@
 
 use serde_json::{json, Value};
 
-use super::ToolHost;
+use super::{Refusal, ToolHost};
 use crate::handler::RunEvent;
 use crate::mcp_relay::{relay_result, text_of, Relay};
 use crate::tools::ApprovalMode;
@@ -56,16 +56,11 @@ impl ToolHost {
                     said(format!("blocked by a workspace hook: {reason}")),
                 );
             }
-            if !self
+            if let Err(why) = self
                 .connector_approved(&id, &server, &tool, &qualified, args)
                 .await
             {
-                return (
-                    false,
-                    said(format!(
-                        "tool `{qualified}` denied (by the approval mode or the person)"
-                    )),
-                );
+                return (false, said(super::refusal_text(&format!("`{asked}`"), why)));
             }
             match self
                 .p
@@ -110,21 +105,24 @@ impl ToolHost {
         tool: &str,
         qualified: &str,
         args: &Value,
-    ) -> bool {
-        if self.p.mode == ApprovalMode::Deny || !self.p.tools.connector_allowed(server) {
-            return false;
+    ) -> std::result::Result<(), Refusal> {
+        if self.p.mode == ApprovalMode::Deny {
+            return Err(Refusal::ReadOnly);
+        }
+        if !self.p.tools.connector_allowed(server) {
+            return Err(Refusal::NotEnabled);
         }
         let choice = self.p.tools.connector_mode(server, tool);
         if choice == Some(ApprovalMode::Deny) {
-            return false;
+            return Err(Refusal::ConnectorOff);
         }
         if self.p.full {
-            return true;
+            return Ok(());
         }
         match choice.unwrap_or(self.p.mode) {
-            ApprovalMode::Auto => true,
+            ApprovalMode::Auto => Ok(()),
             ApprovalMode::Ask => self.ask(id, qualified, args).await,
-            ApprovalMode::Deny => false,
+            ApprovalMode::Deny => Err(Refusal::ConnectorOff),
         }
     }
 }
