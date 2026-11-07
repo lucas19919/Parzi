@@ -588,6 +588,26 @@ fn desk_state_text(v: &Value) -> String {
     out.join("\n")
 }
 
+/// A session name over the limits, cut to fit at a word boundary instead of
+/// refused, with the note the result carries.
+fn fitted_name(name: &str, args: &Value) -> Option<(Value, String)> {
+    use parzi_core::text::{fit_name, fold, NAME_CHARS, NAME_WORDS};
+    if name != "session.rename" {
+        return None;
+    }
+    let asked = fold(args.get("title")?.as_str()?);
+    if asked.chars().count() <= NAME_CHARS && asked.split(' ').count() <= NAME_WORDS {
+        return None;
+    }
+    let fitted = fit_name(&asked);
+    let mut out = args.clone();
+    out["title"] = Value::String(fitted.clone());
+    let note = format!(
+        " \"{asked}\" was over {NAME_WORDS} words or {NAME_CHARS} characters, so it was cut to \"{fitted}\"; rename again for a better short name."
+    );
+    Some((out, note))
+}
+
 fn legacy_args(name: &str, args: &Value) -> Value {
     let mut a = args.clone();
     if name == "ask.user" {
@@ -845,7 +865,12 @@ impl ToolHost {
 
     pub async fn call(&self, name: &str, args: &Value) -> (bool, String) {
         let name = current_name(name);
-        let args = &legacy_args(name, args);
+        let mut args = legacy_args(name, args);
+        let fitted = fitted_name(name, &args).map(|(fit, note)| {
+            args = fit;
+            note
+        });
+        let args = &args;
         let id = uuid::Uuid::new_v4().to_string();
         if is_ui_tool(name) {
             return self.execute_ui_tool(name, args);
@@ -861,7 +886,7 @@ impl ToolHost {
             }
             Ok(self.execute_inner(&id, name, args).await)
         };
-        let (ok, output) = tokio::select! {
+        let (ok, mut output) = tokio::select! {
             r = guarded => match r {
                 Ok(done) => done,
                 Err(blocked) => return (false, blocked),
@@ -870,6 +895,9 @@ impl ToolHost {
                 return (false, "stopped: the run was cancelled".into());
             }
         };
+        if let Some(note) = fitted.filter(|_| ok) {
+            output.push_str(&note);
+        }
         for n in crate::hooks::post_tool(&self.p.store, &self.p.session_id, name, args, ok, &output)
             .await
         {
@@ -2195,17 +2223,30 @@ impl ToolHost {
                 Err(e) => (false, e),
             },
             "ui.offer_replies" => match widgets::replies(args) {
-                Ok(payload) => {
+                Ok((payload, cut)) => {
                     widget("parzi-replies", payload);
-                    (true, "the buttons show under your reply; a click arrives as the person's next message".into())
+                    let mut said = String::from("the buttons show under your reply; a click arrives as the person's next message");
+                    if !cut.is_empty() {
+                        said.push_str(&format!(
+                            ". Shortened to fit a button: {}. Next time keep labels to one to four words and put the rest in message",
+                            cut.join("; ")
+                        ));
+                    }
+                    (true, said)
                 }
                 Err(e) => (false, e),
             },
             "todo.write" => match widgets::todo(args) {
                 Ok(payload) => {
+                    let cleared = payload["items"].as_array().is_some_and(Vec::is_empty);
                     widget("parzi-todo", payload.clone());
                     self.p.sink.emit(RunEvent::Todo { todo: payload });
-                    (true, "the checklist shows under your replies".into())
+                    let said = if cleared {
+                        "the checklist is cleared"
+                    } else {
+                        "the checklist shows under your replies"
+                    };
+                    (true, said.into())
                 }
                 Err(e) => (false, e),
             },

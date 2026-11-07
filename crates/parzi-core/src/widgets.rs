@@ -257,7 +257,14 @@ fn check_kind(w: &WidgetV1) -> Result<()> {
     Ok(())
 }
 
-pub fn replies(args: &serde_json::Value) -> std::result::Result<serde_json::Value, String> {
+/// The longest reply label a button takes.
+pub const LABEL_CHARS: usize = 30;
+
+/// The reply buttons, and a note for each label that was cut to fit one. A cut
+/// label's click still sends the whole label, unless it has its own message.
+pub fn replies(
+    args: &serde_json::Value,
+) -> std::result::Result<(serde_json::Value, Vec<String>), String> {
     let text = |v: Option<&serde_json::Value>| {
         v.and_then(|s| s.as_str())
             .map(str::trim)
@@ -272,44 +279,50 @@ pub fn replies(args: &serde_json::Value) -> std::result::Result<serde_json::Valu
         return Err("offer one to three replies".into());
     }
     let mut out = vec![];
+    let mut notes = vec![];
     for r in list {
-        let label = text(r.get("label"));
-        if label.is_empty() {
+        let full = text(r.get("label"));
+        if full.is_empty() {
             return Err("every reply needs a label".into());
         }
-        if label.chars().count() > 30 {
-            return Err(format!("label `{label}` is over 30 characters: one to four words, the detail goes in message"));
+        let label = crate::text::cut_at_word(&full, LABEL_CHARS);
+        if label != full {
+            notes.push(format!(
+                "\"{full}\" is over {LABEL_CHARS} characters, so its button reads \"{label}\""
+            ));
         }
         let message = text(r.get("message"));
         if message.chars().count() > 1000 {
             return Err("a reply's message is over 1000 characters".into());
         }
-        let message = if message.is_empty() {
-            label.clone()
-        } else {
-            message
-        };
+        let message = if message.is_empty() { full } else { message };
         out.push(serde_json::json!({"label": label, "message": message}));
     }
     let question = text(args.get("question"));
     if question.chars().count() > 160 {
         return Err("the question is over 160 characters: one short line".into());
     }
-    Ok(serde_json::json!({"question": question, "replies": out}))
+    Ok((
+        serde_json::json!({"question": question, "replies": out}),
+        notes,
+    ))
 }
 
+/// This session's checklist. An empty list clears it; the states agents use
+/// for their own lists (`in_progress`, `completed`) read as Parzi's.
 pub fn todo(args: &serde_json::Value) -> std::result::Result<serde_json::Value, String> {
     let list = args
         .get("items")
         .and_then(|r| r.as_array())
         .ok_or("items must be a list of {title, state}")?;
-    if list.is_empty() || list.len() > 20 {
-        return Err("a checklist has one to twenty items".into());
+    if list.len() > 20 {
+        return Err("a checklist has at most twenty items".into());
     }
     let mut out = vec![];
     for it in list {
         let title = it
             .get("title")
+            .or_else(|| it.get("content"))
             .and_then(|s| s.as_str())
             .map(str::trim)
             .unwrap_or("");
@@ -321,13 +334,17 @@ pub fn todo(args: &serde_json::Value) -> std::result::Result<serde_json::Value, 
                 "`{title}` is over 120 characters: a short imperative"
             ));
         }
-        let state = it
+        let said = it
             .get("state")
+            .or_else(|| it.get("status"))
             .and_then(|s| s.as_str())
             .unwrap_or("pending");
-        if !matches!(state, "pending" | "active" | "done") {
-            return Err(format!("state `{state}` is not pending, active or done"));
-        }
+        let state = match said.trim().to_ascii_lowercase().as_str() {
+            "pending" | "" => "pending",
+            "active" | "in_progress" | "in-progress" => "active",
+            "done" | "completed" => "done",
+            _ => return Err(format!("state `{said}` is not pending, active or done")),
+        };
         out.push(serde_json::json!({"title": title, "state": state}));
     }
     Ok(serde_json::json!({"items": out}))
@@ -421,15 +438,27 @@ mod reply_tests {
     }
 
     #[test]
-    fn replies_default_their_message_and_refuse_long_labels() {
-        let ok = replies(&json!({"replies": [{"label": "Release 0.1.36"}, {"label": "Not yet", "message": "Not yet, more first."}]})).unwrap();
+    fn replies_default_their_message_and_cut_long_labels() {
+        let (ok, notes) = replies(&json!({"replies": [{"label": "Release 0.1.36"}, {"label": "Not yet", "message": "Not yet, more first."}]})).unwrap();
         assert_eq!(ok["replies"][0]["message"], "Release 0.1.36");
         assert_eq!(ok["replies"][1]["message"], "Not yet, more first.");
+        assert!(notes.is_empty());
         assert!(replies(&json!({"replies": []})).is_err());
-        assert!(replies(
-            &json!({"replies": [{"label": "a label that is far too long to be a button"}]})
-        )
-        .is_err());
+        let long = "a label that is far too long to be a button";
+        let (cut, notes) = replies(&json!({"replies": [{"label": long}]})).unwrap();
+        assert_eq!(cut["replies"][0]["label"], "a label that is far too long");
+        assert_eq!(
+            cut["replies"][0]["message"], long,
+            "the click still sends all of it"
+        );
+        assert_eq!(notes.len(), 1);
+        assert!(
+            notes[0].contains(long) && notes[0].contains("\"a label that is far too long\""),
+            "{notes:?}"
+        );
+        let (own, _) =
+            replies(&json!({"replies": [{"label": long, "message": "Go ahead"}]})).unwrap();
+        assert_eq!(own["replies"][0]["message"], "Go ahead");
         assert!(replies(
             &json!({"replies": [{"label": "a"}, {"label": "b"}, {"label": "c"}, {"label": "d"}]})
         )
@@ -442,7 +471,30 @@ mod reply_tests {
         assert_eq!(t["items"][0]["title"], "Read the code");
         assert_eq!(t["items"][1]["state"], "active");
         assert!(todo(&json!({"items": [{"title": "x", "state": "maybe"}]})).is_err());
-        assert!(todo(&json!({"items": []})).is_err());
+        assert_eq!(
+            todo(&json!({"items": []})).unwrap(),
+            json!({"items": []}),
+            "an empty list clears the checklist"
+        );
+    }
+
+    #[test]
+    fn a_checklist_reads_the_states_agents_use_for_their_own() {
+        let t = todo(&json!({"items": [
+            {"title": "Read", "state": "completed"},
+            {"title": "Fix", "state": "in_progress"},
+            {"title": "Test", "state": "In-Progress"},
+            {"content": "Ship", "status": "pending"},
+        ]}))
+        .unwrap();
+        let states: Vec<&str> = t["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["state"].as_str().unwrap())
+            .collect();
+        assert_eq!(states, ["done", "active", "active", "pending"]);
+        assert_eq!(t["items"][3]["title"], "Ship");
     }
 
     #[test]

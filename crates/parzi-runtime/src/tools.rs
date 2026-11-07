@@ -398,13 +398,12 @@ fn ui_defs() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "todo.write".into(),
-            description: "This session's checklist, shown live under your replies: for work of three steps or more. Send the whole list each time (it replaces the last one): each item a short imperative title and a state, pending, active or done. Keep one item active while you work, mark each done as it is, and finish with every item done or removed. It is this session's own list; a project's long-lived plan is plan.write.".into(),
+            description: "This session's checklist, shown live under your replies: for work of three steps or more. Send the whole list each time (it replaces the last one): each item a short imperative title and a state, pending, active or done. Keep one item active while you work, mark each done as it is, and finish with every item done or removed; an empty list clears it. It is this session's own list; a project's long-lived plan is plan.write.".into(),
             schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "items": {
                         "type": "array",
-                        "minItems": 1,
                         "maxItems": 20,
                         "items": {
                             "type": "object",
