@@ -322,6 +322,13 @@ fn hide_pages(app: &AppHandle, keep: &str) {
     }
 }
 
+/// Hides every page. None of them counts as shown any more, so all of them
+/// can be trimmed and put to sleep while hidden.
+fn hide_all_pages(app: &AppHandle) {
+    locked(&SHOWN).clear();
+    hide_pages(app, "");
+}
+
 fn rest_pages(app: &AppHandle) {
     let shown = locked(&SHOWN).clone();
     let awake: Vec<String> = locked(&TABS)
@@ -426,11 +433,11 @@ pub fn browser_show(
         return Ok(());
     };
     let Some((x, y, width, height)) = page_bounds(&window, x, y, width, height) else {
-        hide_pages(&app, "");
+        hide_all_pages(&app);
         return Ok(());
     };
     if app.get_webview(&label).is_none() {
-        let url = http_page(url).inspect_err(|_| hide_pages(&app, ""))?;
+        let url = http_page(url).inspect_err(|_| hide_all_pages(&app))?;
         let agent = owner.is_some_and(|o| !o.is_empty());
         locked(&TABS)
             .entry(label.clone())
@@ -1159,8 +1166,7 @@ pub async fn browser_snapshot(app: AppHandle, tab: String) -> Result<String, Str
 #[tauri::command]
 pub fn browser_hide(app: AppHandle) {
     GEN.fetch_add(1, Ordering::Relaxed);
-    locked(&SHOWN).clear();
-    hide_pages(&app, "");
+    hide_all_pages(&app);
 }
 
 #[tauri::command]
