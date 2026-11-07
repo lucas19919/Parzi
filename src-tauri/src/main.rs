@@ -193,7 +193,7 @@ impl Approver for GuiApprover {
             Ok(Ok(a)) => a,
             _ => {
                 expired(&self.app, &key, &call.session);
-                Approval::Deny
+                Approval::Expired
             }
         }
     }
