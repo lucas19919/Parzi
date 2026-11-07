@@ -7,7 +7,7 @@
   import type { Approval } from "./live";
   import { activity } from "./activity";
   import { planState } from "./planStore";
-  import { deriveItems, groupItems, progress, sameSlug, STATE_WORDS, type ItemView } from "./planModel";
+  import { deriveItems, groupItems, itemNote, progress, sameSlug, STATE_WORDS, type ItemView } from "./planModel";
   import { tooltip } from "./tooltip";
 
   export let project = "";
@@ -33,7 +33,7 @@
   ]);
   $: views = plan ? deriveItems(plan, { project, threads, running, waiting, prs: $planState.prs, activity: $activity }) : [];
   $: groups = plan ? groupItems(plan, views) : { open: [], closed: [] };
-  $: items = groups.open.flatMap((g) => g.items);
+  $: phased = groups.open.length > 1 || !!groups.open[0]?.phase;
   $: count = progress(views);
   $: shown = !!project && force;
   $: visible = shown;
@@ -55,7 +55,7 @@
     <div class="head-row">
       <button class="head" aria-expanded={open} on:click={() => (open = !open)}>
         <Icon name={open ? "chevDown" : "chevRight"} size={12} />
-        <span class="title t-section">{plan?.title || "Plan"}</span>
+        <span class="title t-section">{plan?.title ? `Plan · ${plan.title}` : "Plan"}</span>
         {#if plan}<span class="count">{count.done} of {count.total}</span>{/if}
       </button>
       <button class="x" use:tooltip={"Hide plan"} aria-label="Hide plan" on:click={() => dispatch("close")}>
@@ -68,23 +68,30 @@
       {:else if !plan}
         <p class="empty">No plan yet. Ask the agent for one when the work spans sessions.</p>
       {:else}
-        <ul transition:slide={{ duration: 160, easing: cubicOut }}>
-          {#each items as v (v.item.id)}
-            <li>
-              <button
-                class="item"
-                class:mine={v.sessions.some((s) => s.id === session)}
-                class:picked={quoted(v)}
-                use:tooltip={quoted(v) ? "Quoted. Click to remove it." : `${STATE_WORDS[v.state]}. Click to quote it.`}
-                on:click={() => quote(v)}
-              >
-                <span class="mark {v.state}" aria-label={STATE_WORDS[v.state]} />
-                <span class="t">{v.item.title}</span>
-                {#if quoted(v)}<span class="why">Quoted</span>
-                {:else if v.state === "needs" && v.reason}<span class="why">{v.reason}</span>{/if}
-              </button>
-            </li>
-          {/each}
+        <div class="groups" transition:slide={{ duration: 160, easing: cubicOut }}>
+        {#if plan.goal}<p class="goal t-hint">{plan.goal}</p>{/if}
+        {#each groups.open as g (g.phase)}
+          {#if phased && g.phase}<div class="phase t-group">{g.phase}</div>{/if}
+          <ul>
+            {#each g.items as v (v.item.id)}
+              <li>
+                <button
+                  class="item"
+                  class:mine={v.sessions.some((s) => s.id === session)}
+                  class:picked={quoted(v)}
+                  use:tooltip={quoted(v) ? "Quoted. Click to remove it." : `${STATE_WORDS[v.state]}. Click to quote it.`}
+                  on:click={() => quote(v)}
+                >
+                  <span class="mark {v.state}" aria-label={STATE_WORDS[v.state]} />
+                  <span class="t">{v.item.title}</span>
+                  {#if quoted(v)}<span class="why">Quoted</span>
+                  {:else if itemNote(v)}<span class="why" class:asks={v.state === "needs"}>{itemNote(v)}</span>{/if}
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/each}
+        <ul>
           {#if groups.closed.length}
             <li>
               <button class="item fold" on:click={() => (showDone = !showDone)}>
@@ -104,6 +111,7 @@
             {/if}
           {/if}
         </ul>
+        </div>
       {/if}
     {/if}
   </section>
@@ -229,7 +237,17 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .why.asks {
     color: var(--warn-text);
+  }
+  .goal {
+    margin: 0 calc(var(--space) * 2) calc(var(--space) * 2);
+    line-height: 1.5;
+  }
+  .phase {
+    margin: calc(var(--space) * 2) calc(var(--space) * 2) var(--space);
   }
 
   .mark {
