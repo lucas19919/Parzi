@@ -272,6 +272,13 @@ function transcript() {
         version: 1,
         payload: { id: "autosize", title: "autosize.ts", kind: "code", language: "typescript", version: 1, content: "export function autosize(el: HTMLTextAreaElement) {\n  el.style.height = \"auto\";\n  el.style.height = `${Math.min(el.scrollHeight, 180)}px`;\n}" },
       });
+      if (params.get("widget")) {
+        out.push({
+          kind: "widget",
+          fence: "parzi-widget",
+          payload: { type: "chart-line", title: "Second reply (s)", labels: ["Mon", "Tue", "Wed", "Thu", "Fri"], series: [{ name: "Before", points: [4.4, 4.1, 4.6, 4.3, 4.5] }, { name: "After", points: [1.2, 1.1, 0.9, 1.0, 0.8] }] },
+        });
+      }
       out.push({
         kind: "widget",
         fence: "parzi-todo",

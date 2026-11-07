@@ -13,8 +13,8 @@ A theme sets four colors: `--bg`, `--text`, `--accent`, and `--panel` (empty
 panel means text at 6% over the background). Muted, line, faint, hover,
 selected, and link are mixed from those in `theme.css`. `--ok` `--warn`
 `--bad` are fixed status colors. No hex in a `<style>` block.
-`user.css` loads last and may override any token. Charts read tokens through
-`resolveColor()` in `lib/theme.ts`.
+`user.css` loads last and may override any token. Charts are the `viz`
+components, which style with the tokens directly; there is one chart style.
 
 Spacing is `--space` (4px). Legal steps are 1, 2, 3, 4, 6, and 8 times that.
 Icons come only from `Icon.svelte`, Lucide outlines at a constant 1px stroke, the
