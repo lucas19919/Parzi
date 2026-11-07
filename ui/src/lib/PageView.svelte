@@ -36,6 +36,7 @@
   let reported = false;
   let chain: Promise<void> = Promise.resolve();
   let shield: AdblockState | null = null;
+  let shieldSeq = 0;
   let keyBtn: HTMLButtonElement | null = null;
   let choices: VaultLogin[] = [];
   let choiceStyle = "";
@@ -89,8 +90,22 @@
     }
   }
 
+  // Shield replies can arrive out of order when the address changes quickly,
+  // so only the reply to the newest request may set the shield.
   async function loadShield(host: string) {
-    shield = host ? await adblock.state(url).catch(() => null) : null;
+    const seq = ++shieldSeq;
+    if (!host) {
+      shield = null;
+      return;
+    }
+    try {
+      const next = await adblock.state(url);
+      if (seq === shieldSeq && alive) shield = next;
+    } catch (e) {
+      if (seq !== shieldSeq || !alive) return;
+      shield = null;
+      dispatch("error", { text: String(e) });
+    }
   }
 
   async function toggleShield() {
@@ -99,9 +114,12 @@
       toast("Ad blocking works on Windows only for now");
       return;
     }
+    const seq = ++shieldSeq;
     try {
       const blocking = shield.enabled && !shield.allowed;
-      shield = await adblock.site(url, blocking);
+      const next = await adblock.site(url, blocking);
+      if (seq !== shieldSeq || !alive) return;
+      shield = next;
       nav("reload");
     } catch (e) {
       dispatch("error", { text: String(e) });
