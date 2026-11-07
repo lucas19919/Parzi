@@ -14,6 +14,7 @@
   import { appFor, permissionText } from "./pageRules";
   import { toAddress, type Tab } from "./tabs";
   import { tooltip } from "./tooltip";
+  import { NO_VEIL, stepVeil, type Veil } from "./veil";
 
   export let tab: Tab;
   export let immersive = false;
@@ -46,8 +47,7 @@
   let snapshot = "";
   let snapAt = 0;
   let shownNow = false;
-  let freshUrl = "";
-  let fresh = false;
+  let veil: Veil = NO_VEIL;
   let freshTimer: number | null = null;
   let remoteSeq = 0;
   let remoteTimer = 0;
@@ -55,29 +55,15 @@
 
   $: url = tab.url ?? "";
   $: if (!editing) address = url;
-  // Fresh navigations veil behind a blurred placeholder until first paint
-  // (or a failsafe timeout) so a blank webview never flashes in.
-  let wasLoading = false;
-  $: if (url && url !== freshUrl) {
-    freshUrl = url;
-    fresh = true;
-    snapshot = "";
-    if (freshTimer) clearTimeout(freshTimer);
-    freshTimer = window.setTimeout(() => {
-      fresh = false;
-      freshTimer = null;
-    }, 8000);
-  }
-  $: if (wasLoading && !tab.loading) {
-    fresh = false;
-    if (freshTimer) clearTimeout(freshTimer);
-    freshTimer = null;
-  }
-  $: wasLoading = !!tab.loading;
-  $: veiled = !!url && !tab.crashed && !!tab.loading && fresh;
+  // Fresh navigations veil behind a blurred snapshot of the page being left
+  // until the new one loads (or a failsafe timeout) so a blank webview never
+  // flashes in. Keep this above `veiled`: the order of these statements is
+  // the order Svelte runs them in.
+  $: trackLoad(url, !!tab.loading);
+  $: veiled = !!url && !tab.crashed && !!tab.loading && veil.fresh;
   $: secure = url.startsWith("https://");
   $: pinned = $pins.some((p) => p.url === url);
-  $: url, immersive, $covered, slot, tab.crashed, tab.loading, fresh, schedule();
+  $: url, immersive, $covered, slot, tab.crashed, veiled, schedule();
   $: void loadShield(hostOf(url));
   $: open = editing && rows.length > 0;
   $: setOverlay(`address-${tab.id}`, open);
@@ -89,6 +75,25 @@
       return new URL(u).hostname;
     } catch {
       return "";
+    }
+  }
+
+  function trackLoad(now: string, loading: boolean) {
+    const step = stepVeil(veil, now, loading);
+    veil = step.veil;
+    if (step.started) {
+      if (freshTimer) clearTimeout(freshTimer);
+      freshTimer = window.setTimeout(() => {
+        veil = { ...veil, fresh: false };
+        freshTimer = null;
+      }, 8000);
+    }
+    if (step.finished) {
+      if (freshTimer) clearTimeout(freshTimer);
+      freshTimer = null;
+      // The snapshot pictures a page that is gone now; the next cover takes a new one.
+      snapshot = "";
+      snapAt = 0;
     }
   }
 
@@ -326,6 +331,7 @@
     return () => {
       alive = false;
       clearTimeout(remoteTimer);
+      if (freshTimer) clearTimeout(freshTimer);
       setOverlay(`address-${tab.id}`, false);
       setPageArea(null);
       cancelAnimationFrame(frame);
