@@ -19,8 +19,14 @@ test("the shell does not start a window drag from the page", () => {
 });
 
 test("showing a page does not take focus from the shell", () => {
-  const page = src("PageView.svelte");
-  const api = src("api.ts");
-  assert.ok(page.includes("browserShow(tab.id, rect, url, tab.owner ?? null, false)"));
-  assert.ok(api.includes("focus = false"));
+  const call = src("api.ts").match(/invoke<void>\("browser_show", \{([^}]*)\}\)/);
+  assert.ok(call, "api.ts calls browser_show");
+  assert.equal(call[1].includes("focus"), false);
+  const rust = readFileSync(new URL("../../src-tauri/src/browser.rs", import.meta.url), "utf8");
+  const between = (from: string, to: string) => rust.slice(rust.indexOf(from), rust.indexOf(to, rust.indexOf(from)));
+  const show = between("pub fn browser_show(", "\n}\n");
+  const mount = between("fn mount_page(", "\n}\n");
+  assert.ok(show.length > 0 && mount.length > 0, "browser.rs still has browser_show and mount_page");
+  assert.equal(show.includes("focus"), false, "browser_show takes no focus switch");
+  assert.equal(mount.includes("set_focus"), false, "mounting a page never focuses it");
 });

@@ -166,7 +166,7 @@
       const x = Math.floor(r.x);
       const y = Math.floor(r.y);
       const rect = { x, y, width: Math.ceil(r.x + r.width) - x, height: Math.ceil(r.y + r.height) - y };
-      await api.browserShow(tab.id, rect, url, tab.owner ?? null, false);
+      await api.browserShow(tab.id, rect, url, tab.owner ?? null);
       shownNow = true;
       setPageArea({ left: rect.x, top: rect.y, right: rect.x + rect.width, bottom: rect.y + rect.height });
     } catch (e) {

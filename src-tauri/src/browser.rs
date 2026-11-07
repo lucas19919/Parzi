@@ -58,7 +58,6 @@ struct Fit {
     width: f64,
     height: f64,
     scale: f64,
-    focus: bool,
 }
 
 enum Work {
@@ -419,7 +418,6 @@ pub fn browser_show(
     height: f64,
     url: &str,
     owner: Option<String>,
-    focus: Option<bool>,
 ) -> Result<(), String> {
     let label = page_label(&tab)?;
     let gen = GEN.fetch_add(1, Ordering::Relaxed) + 1;
@@ -447,7 +445,6 @@ pub fn browser_show(
         width,
         height,
         scale: window.scale_factor().unwrap_or(1.0),
-        focus: focus.unwrap_or(false),
     };
     work(Work::Show(app, job));
     Ok(())
@@ -512,7 +509,6 @@ fn open_background(app: &AppHandle, label: String, evict: bool) {
         width: f64::from(inner.width) / scale,
         height: f64::from(inner.height) / scale,
         scale,
-        focus: false,
     };
     let Some(wv) = open_page(app, &window, &job) else {
         return;
@@ -565,13 +561,7 @@ fn mount_page(app: &AppHandle, job: &Fit) -> bool {
         crate::dwm::wake_page(&wv);
     }
     evict_lru(app, &[&job.label]);
-    let mut shown = locked(&SHOWN);
-    if *shown != job.label {
-        shown.clone_from(&job.label);
-        if job.focus {
-            let _ = wv.set_focus();
-        }
-    }
+    locked(&SHOWN).clone_from(&job.label);
     true
 }
 
@@ -1037,14 +1027,9 @@ pub async fn browser_external(id: String, open: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn browser_permission(
-    app: AppHandle,
-    id: String,
-    allow: bool,
-    remember: bool,
-) -> Result<(), String> {
+pub async fn browser_permission(app: AppHandle, id: String, allow: bool) -> Result<(), String> {
     let asked = locked(&ASKING).remove(&id);
-    if let (true, Some((origin, kind))) = (remember, asked) {
+    if let Some((origin, kind)) = asked {
         crate::siteprefs::remember(origin, kind, allow).await?;
     }
     #[cfg(windows)]
