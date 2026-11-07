@@ -66,6 +66,7 @@ jobs:
             - Plans wait for your yes. When an agent starts a plan or adds, drops or rewords work, you see the change and choose Use this plan, Not now, or say what to change. Progress still updates on its own. The plan card shows phases, the goal, and who is on each item.
             - Far fewer failed tool calls. Claude no longer reaches for a shell Parzi refuses, Codex waits long enough for long commands and your approvals, tools accept the arguments agents send, and every refusal says why and what to do next.
             - Helper sessions started from an Ask or Edits session ask you instead of failing quietly.
+            - Test runs get a card in the thread: passed or failed at a glance, which tests failed, and the first failure's message. It reads cargo, node, Jest, Vitest, pytest and go test output.
             - Connectors install behind a company proxy, run calls side by side, and show their full error when you open one that fails. Agents are told which connectors work, so they say so instead of guessing.
             - Corners are the same 12px everywhere, small icon buttons included.
             - Browser fixes: a page no longer hides behind the loading shimmer after a quick second click, Ctrl+B and Ctrl+H work inside pages again, and the shield always shows the current site. The web box and a page's address bar suggest the same way.

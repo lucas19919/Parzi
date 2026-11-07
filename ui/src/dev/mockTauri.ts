@@ -239,6 +239,20 @@ function transcript() {
     out.push({ kind: "reasoning", text: "Checking the composer and the thread renderer." });
     out.push({ kind: "tool_call", id: `t${i}`, name: "fs.read", args: { path: "ui/src/lib/Omnibar.svelte" } });
     out.push({ kind: "tool_result", id: `t${i}`, name: "fs.read", ok: true, output: "ok", ms: 12 });
+    if (last) {
+      const failing = params.get("tests") === "fail";
+      out.push({ kind: "tool_call", id: "tests", name: "shell.exec", args: { cmd: "cargo test -p parzi-core" } });
+      out.push({
+        kind: "tool_result",
+        id: "tests",
+        name: "shell.exec",
+        ok: true,
+        ms: 8400,
+        output: failing
+          ? "exit 101\ntest plan::tests::caps ... FAILED\ntest plan::tests::summary ... FAILED\n\nfailures:\n\n---- plan::tests::caps stdout ----\n\nthread 'plan::tests::caps' (88) panicked at crates/parzi-core/src/plan.rs:1142:9:\nassertion `left == right` failed\n  left: 41\n right: 40\n\ntest result: FAILED. 97 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s\n"
+          : "test result: ok. 99 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.29s\n",
+      });
+    }
     out.push({ kind: "assistant", text: ANSWER, done: true });
     if (last) {
       out.push({ kind: "assistant", text: VIZ_ANSWER, done: true });

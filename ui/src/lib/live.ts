@@ -7,6 +7,8 @@ export interface Step {
   ok?: boolean;
   ms?: number;
   output?: string;
+  /** The command, for a shell step. */
+  cmd?: string;
 }
 
 export interface LiveTool {
